@@ -9,7 +9,7 @@ cd hpcperfstats
 
 git checkout sharrell-docker
 
-# Create env.dev file, contents:
+# Create .env.dev file, contents:
 DEBUG=1
 SECRET_KEY=foo
 # end contents
