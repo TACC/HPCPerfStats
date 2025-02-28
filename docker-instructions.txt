@@ -18,6 +18,10 @@ SECRET_KEY=foo
 
 cp services-conf/nginx-nossl.conf services-conf/nginx.conf
 
+sudo mkdir -p /home/username/s3-stats/hpcperfstats_data/
+
+sudo mkdir -p /home/username/s3-stats/hpcperfstats_log
+
 docker compose up --build -d
 
 # to see the startup
