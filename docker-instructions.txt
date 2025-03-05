@@ -7,25 +7,31 @@ git clone https://github.com/TACC/hpcperfstats.git
 
 cd hpcperfstats
 
-git checkout sharrell-docker
+git checkout master
 
 # Create env.dev file, contents:
 DEBUG=1
 SECRET_KEY=foo
 # end contents
 
-# In service-conf, nginx.conf needs to be chosen, to make things easier for development, use the nossl config, if its production use the ssl version, you can copy the nginx-nossl.conf to nginx.conf and build.
-
+# In service-conf, nginx.conf needs to be chosen, to make things easier for development, use the nossl config, if its production use the ssl version, you can copy the nginx-nossl.conf to nginx.conf and build:
 cp services-conf/nginx-nossl.conf services-conf/nginx.conf
 
-docker compose up --build -d
+NOTE: 
+ - Please change all the paths in the docker-compose.yml file to your paths.
+ - Please change the hpcperfstats.ini file contents to your configurations
 
-# to see the startup
-docker compose logs 
+# Create paths for data and log directories:
+sudo mkdir -p /home/sg99/s3-stats/hpcperfstats_data
+sudo mkdir -p /home/sg99/s3-stats/hpcperfstats_log
+
+# Build:
+sudo docker compose up --build -d
+
+# To see the startup
+sudo docker compose logs 
 
 #you should be able to get to the website at this point, will error if no data
-
-
 
 
 
