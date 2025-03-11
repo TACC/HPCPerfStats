@@ -49,7 +49,7 @@ setup(
     include_package_data = True,
     scripts = scripts,
     install_requires = ['argparse','numpy', 'psycopg2-binary', 'pandas', 'pgcopy',
-                        'bokeh', 'django==3.1.14', 'python-hostlist', 'PyMySQL',
+                        'bokeh', 'django==4.2.17', 'python-hostlist', 'PyMySQL',
                         'mysql-connector-python', 'python-memcached', 'pika', 'mysqlclient'],
     platforms = 'any',
     classifiers = [
