@@ -49,8 +49,9 @@ setup(
     include_package_data = True,
     scripts = scripts,
     install_requires = ['argparse','numpy', 'psycopg2-binary', 'pandas', 'pgcopy',
-                        'bokeh', 'django==3.1.14', 'python-hostlist', 'PyMySQL',
-                        'mysql-connector-python', 'python-memcached', 'pika', 'mysqlclient'],
+                        'bokeh', 'django', 'python-hostlist', 'PyMySQL',
+                        'mysql-connector-python', 'python-memcached', 'pika', 
+                        'mysqlclient', 'gunicorn', 'authlib'],
     platforms = 'any',
     classifiers = [
         'Development Status :: 5 - Production',
