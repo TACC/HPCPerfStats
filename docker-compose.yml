@@ -22,6 +22,7 @@ services:
     command: /home/hpcperfstats/services-conf/supervisor_startup.sh
     volumes:
       - hpcperfstatsdata:/hpcperfstats/
+      # The ssh keys don't have to be a user's, they just have to be a .ssh directory
       - /home/sharrell/.ssh:/hpcperfstats/.ssh/
     env_file:
       - ./.env.dev
