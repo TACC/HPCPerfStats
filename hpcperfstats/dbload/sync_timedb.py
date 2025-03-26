@@ -12,6 +12,7 @@ import subprocess
 import pytz
 import tarfile
 import random
+import uuid
 
 #pandas.set_option('display.max_rows', 100)
 from pandas import DataFrame, to_datetime, Timedelta, Timestamp, concat
@@ -358,8 +359,9 @@ def archive_stats_files(archive_info):
             existing_archive_file[tar_member_data.name] = tar_member_data.size
 
         for stats_fname_path in stats_files:
+
             if ((stats_fname_path[1:] in existing_archive_file.keys()) and 
-               (tarfile.open('/tmp/test.tar', 'w').gettarinfo(stats_fname_path).size == 
+               (tarfile.open('/tmp/%s.tar' % uuid.uuid4(), 'w').gettarinfo(stats_fname_path).size == 
                    existing_archive_file[stats_fname_path[1:]])):
                print("removing stats file:" + stats_fname_path)
                os.remove(stats_fname_path)
