@@ -323,7 +323,7 @@ def archive_stats_files(archive_info):
     archive_fname, stats_files = archive_info
     archive_tar_fname = archive_fname[:-3]
     if os.path.exists(archive_fname):
-        print(subprocess.check_output(['/usr/bin/gunzip', '-v', archive_fname]))
+        print(subprocess.check_output(['/bin/gunzip', '-v', archive_fname]))
 
     existing_archive_file = {}
     if os.path.exists(archive_tar_fname):
