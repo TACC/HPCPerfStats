@@ -3,9 +3,6 @@ import os
 import sys
 import time
 
-# Append your local repository path here:
-# sys.path.append("/home/username/hpcperfstats")
-
 cfg = configparser.ConfigParser()
 
 # Append your local repository path here:
@@ -25,7 +22,7 @@ def get_archive_dir_path():
     return archive_dir_path
 
 def get_host_name_ext():
-    host_name_ext = cfg.get('PORTAL', 'host_name_ext')
+    host_name_ext = cfg.get('DEFAULT', 'host_name_ext')
     return host_name_ext
 
 def get_accounting_path():
