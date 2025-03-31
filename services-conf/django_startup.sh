@@ -16,5 +16,5 @@ chown -R hpcperfstats:hpcperfstats /hpcperfstats/
 /usr/local/bin/python3 hpcperfstats/site/manage.py migrate
 
 # gunicorn is the django web server - this is configued for a 40 core machine
-/usr/local/bin/gunicorn hpcperfstats.site.hpcperfstats_site.wsgi --bind 0.0.0.0:8000  --env DJANGO_SETTINGS_MODULE=hpcperfstats.site.hpcperfstats_site.settings -u hpcperfstats --workers=81
+/usr/local/bin/gunicorn hpcperfstats.site.hpcperfstats_site.wsgi --bind 0.0.0.0:8000  --env DJANGO_SETTINGS_MODULE=hpcperfstats.site.hpcperfstats_site.settings -u hpcperfstats --workers=81 --access-logfile - --error-logfile -
 
