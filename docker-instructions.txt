@@ -32,6 +32,12 @@ sudo docker compose up --build -d
 sudo docker compose logs 
 
 #you should be able to get to the website at this point, will error if no data
-
-
+#
+#
+# USEFUL COMMANDS
+#
+# ACCESS the DB
+# docker exec -it hpcperfstats_db_1 psql -h localhost -U hpcperfstats
+#
+#
 
