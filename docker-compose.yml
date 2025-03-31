@@ -10,8 +10,6 @@ services:
     command: /home/hpcperfstats/services-conf/django_startup.sh
     env_file:
       - ./.env.dev
-    volumes:
-      - hpcperfstatsweblog:/hpcperfstats/logs/
 
   pipeline:
     image: hpcperfstats
@@ -24,10 +22,14 @@ services:
     depends_on:
       - web
     command: /home/hpcperfstats/services-conf/supervisor_startup.sh
+    # uncomment this in order allow syslogs to be captured
+    #ports:
+    #    - 514:514/udp
     volumes:
       - hpcperfstatsdata:/hpcperfstats/
       # The ssh keys don't have to be a user's, they just have to be a .ssh directory
       - /home/sharrell/.ssh:/hpcperfstats/.ssh/
+      - hpcperfstatsnodelog:/hpcperfstatslog/
     env_file:
       - ./.env.dev
 
@@ -82,7 +84,7 @@ volumes:
           device: /home/sharrell/s3-stats/hpcperfstats_data/
           o: bind
       
-      hpcperfstatsweblog:
+      hpcperfstatsnodelog:
         driver: local
         driver_opts:
           type: none
