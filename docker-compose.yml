@@ -3,6 +3,8 @@ services:
     build: ./
     image: hpcperfstats
     container_name: hpcperfstats_web_1
+    security_opt:
+      - seccomp:unconfined
     links:
       - db
     command: /home/hpcperfstats/services-conf/django_startup.sh
@@ -14,6 +16,8 @@ services:
   pipeline:
     image: hpcperfstats
     container_name: hpcperfstats_pipeline_1
+    security_opt:
+      - seccomp:unconfined
     links:
       - db
       - rabbitmq
@@ -31,6 +35,8 @@ services:
     restart: always
     image: nginx:1-alpine
     container_name: hpcperfstats_proxy_1
+    security_opt:
+      - seccomp:unconfined
     links:
       - web
     ports:
@@ -43,6 +49,8 @@ services:
   db:
     image: timescale/timescaledb:latest-pg15
     container_name: hpcperfstats_db_1
+    security_opt:
+      - seccomp:unconfined
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:
@@ -52,6 +60,8 @@ services:
   rabbitmq:
     image: rabbitmq:4-alpine
     container_name: hpcperfstats_rabbitmq_1
+    security_opt:
+      - seccomp:unconfined
     ports:
         - 5672:5672
     # Admin Console

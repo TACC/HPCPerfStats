@@ -6,7 +6,7 @@ WORKDIR /home/hpcperfstats
 
 # run as root
 RUN apt-get update && apt-get upgrade -y
-RUN apt-get install netcat supervisor rsync -y
+RUN apt-get install netcat supervisor rsync vim -y
 
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
