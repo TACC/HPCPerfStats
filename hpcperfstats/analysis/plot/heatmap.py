@@ -1,3 +1,5 @@
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '4'
 from hpcperfstats.analysis.gen import utils
 import numpy
 from bokeh.plotting import figure

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import time, string
 from pandas import DataFrame, to_datetime, Timedelta, concat, read_sql
 import pandas
+os.environ['OPENBLAS_NUM_THREADS'] = '4'
 import numpy as np
 #from hpcperfstats.analysis.gen.utils import read_sql, clean_dataframe
 

@@ -1,5 +1,7 @@
-from pandas import read_sql as rsql
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '4'
 import numpy as np
+from pandas import read_sql as rsql
 
 class utils():
   def __init__(self, job):

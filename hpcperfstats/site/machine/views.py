@@ -1,3 +1,5 @@
+import os
+import pwd
 import sys
 import traceback
 # Append your local repository path here:
@@ -15,7 +17,6 @@ from django.contrib import messages
 from cryptography.fernet import Fernet
 from django.http import HttpRequest
 
-import os,pwd
 
 from hpcperfstats.analysis.metrics import metrics
 from hpcperfstats.analysis.gen import jid_table
@@ -28,6 +29,9 @@ import hpcperfstats.analysis.plot as plots
 from hpcperfstats.site.xalt.models import run, join_run_object, lib
 
 from datetime import datetime, timedelta
+
+os.environ['OPENBLAS_NUM_THREADS'] = '4'
+
 
 from numpy import array, histogram, log, linspace, isnan
 from math import ceil

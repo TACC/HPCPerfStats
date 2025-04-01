@@ -1,3 +1,5 @@
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '4'
 import sys
 import operator, traceback
 import multiprocessing
