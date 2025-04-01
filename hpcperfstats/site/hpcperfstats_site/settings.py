@@ -1,8 +1,6 @@
 # Django settings for hpcperfstats_site project.
 import os
 import sys
-# Append your local repository path here:
-# sys.path.append("/home/sg99/hpcperfstats")
 import hpcperfstats.conf_parser as cfg
 
 import hpcperfstats.site.hpcperfstats_site as hpcperfstats_site
@@ -167,18 +165,6 @@ INTERNAL_IPS = ['127.0.0.1']
 SESSION_SERIALIZER = 'django.contrib.sessions.serializers.JSONSerializer'
 SESSION_ENGINE = 'django.contrib.sessions.backends.file'
 
-CACHES = {
-    'normal': {
-        'BACKEND': 'django.core.cache.backends.memcached.MemcachedCache',
-        'LOCATION': '127.0.0.1:11211',
-        },
-    'default': {
-        'BACKEND': 'hpcperfstats.site.hpcperfstats_site.cache.LargeMemcachedCache',
-        'LOCATION': '127.0.0.1:11211',
-        'TIMEOUT' : None,
-        },
-}
-
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -202,22 +188,24 @@ LOGGING = {
             'level': 'DEBUG',
             'class': 'logging.StreamHandler',
             'formatter': 'default',
+            'stream': sys.stdout,
         },
         'opbeat': {
             'level': 'ERROR',
             'class': 'logging.StreamHandler',
+            'stream': sys.stdout,
         },
         'metrics': {
             'level': 'INFO',
             'class': 'logging.StreamHandler',
             'formatter': 'metrics',
+            'stream': sys.stdout,
         },
+
         'logfile': {
             'level':'INFO',
-            'class':'logging.handlers.RotatingFileHandler',
-            'filename': os.path.join('/hpcperfstats/logs/', 'hpcperfstats_site.log'),
-            'maxBytes': 1024*1024*15, # 15MB
-            'backupCount': 10,
+            'class': 'logging.StreamHandler',
+            'stream': sys.stdout,
         },
 
     },
