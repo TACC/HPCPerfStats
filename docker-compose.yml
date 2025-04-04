@@ -3,6 +3,7 @@ services:
     build: ./
     image: hpcperfstats
     container_name: hpcperfstats_web_1
+    restart: always
     security_opt:
       - seccomp:unconfined
     links:
@@ -14,6 +15,7 @@ services:
   pipeline:
     image: hpcperfstats
     container_name: hpcperfstats_pipeline_1
+    restart: always
     security_opt:
       - seccomp:unconfined
     links:
@@ -23,8 +25,9 @@ services:
       - web
     command: /home/hpcperfstats/services-conf/supervisor_startup.sh
     # uncomment this in order allow syslogs to be captured
-    #ports:
-    #    - 514:514/udp
+    ports:
+        - 514:514/udp
+        - 514:514/tcp
     volumes:
       - hpcperfstatsdata:/hpcperfstats/
       # The ssh keys don't have to be a user's, they just have to be a .ssh directory
@@ -34,9 +37,9 @@ services:
       - ./.env.dev
 
   proxy:
-    restart: always
     image: nginx:1-alpine
     container_name: hpcperfstats_proxy_1
+    restart: always
     security_opt:
       - seccomp:unconfined
     links:
@@ -51,6 +54,7 @@ services:
   db:
     image: timescale/timescaledb:latest-pg15
     container_name: hpcperfstats_db_1
+    restart: always
     security_opt:
       - seccomp:unconfined
     volumes:
@@ -62,6 +66,7 @@ services:
   rabbitmq:
     image: rabbitmq:4-alpine
     container_name: hpcperfstats_rabbitmq_1
+    restart: always
     security_opt:
       - seccomp:unconfined
     ports:
