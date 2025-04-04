@@ -39,5 +39,7 @@ sudo docker compose logs
 # ACCESS the DB
 # docker exec -it hpcperfstats_db_1 psql -h localhost -U hpcperfstats
 #
+# ACCESS the Pipeline (where data is stored)
+#  docker exec -it hpcperfstats_pipeline_1 su hpcperfstats
 #
 
