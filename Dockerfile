@@ -4,10 +4,11 @@ FROM python:3.6.15
 RUN useradd -ms /bin/bash hpcperfstats
 WORKDIR /home/hpcperfstats
 
+
 # run as root
 RUN apt-get update -y 
+RUN apt-get install netcat supervisor rsync syslog-ng vim net-tools lsof -y
 RUN apt-get upgrade -y
-RUN apt-get install netcat supervisor rsync syslog-ng vim net-tools -y
 
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
