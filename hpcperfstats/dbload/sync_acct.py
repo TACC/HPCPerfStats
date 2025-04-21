@@ -14,7 +14,8 @@ import hostlist
 from hpcperfstats.analysis.gen.utils import read_sql
 
 import hpcperfstats.conf_parser as cfg
-
+from django.conf import settings
+settings.configure()
 
 def sync_acct(acct_file, date_str):
     print(date_str)
@@ -32,7 +33,29 @@ def sync_acct(acct_file, date_str):
                          'NNodes' : 'nhosts', 'ReqCPUS' : 'ncores', 'NodeList' : 'host_list'}, inplace = True)
     df["jid"] = df["jid"].apply(str)
 
- # Junjie: in case newer slurm gives "None" time for unstarted jobs.  Older slurm prints start_time=end_time=cancelled_time.
+    restricted_queue_keywords = cfg.get_restricted_queue_keywords()
+
+    df_len = len(df)
+    queue_col_index = df.columns.get_loc("queue")
+    job_id_col_index = df.columns.get_loc("jid")
+
+    restricted_job_ids = []
+
+    restricted_df_indices = []
+
+    for i in range(df_len):
+        for q in restricted_queue_keywords:
+            if q in df.iloc[i,queue_col_index]:
+                if(settings.DEBUG):
+                    restricted_job_ids.append(df.iloc[i,job_id_col_index])
+                    restricted_df_indices.append(i)
+
+    df = df.drop(restricted_df_indices)
+
+    if len(restricted_job_ids) > 0:
+        print("The following jobs are restricted and will be skipped: "+ str(restricted_job_ids))
+
+# Junjie: in case newer slurm gives "None" time for unstarted jobs.  Older slurm prints start_time=end_time=cancelled_time.
     df['start_time'].replace('^None$', pd.NA, inplace=True, regex=True)
     df['start_time'].replace('^Unknown$', pd.NA, inplace=True, regex=True)
     df['start_time'].fillna(df['end_time'], inplace=True)
