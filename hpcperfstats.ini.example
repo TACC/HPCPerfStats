@@ -1,0 +1,80 @@
+# The RMQ and Portal sections have been configured to work for the docker installation. You will only need to edit the Default section and the host_name_ext variable under the Portal section, and we recommend editing just these and performing the installation using our instructions. If you need to edit some variables, please note that a lot of them are tied to the docker yml file.
+
+[DEFAULT]
+# Short name of your cluster i.e. frontera
+machine		          = cluster_name
+
+# FQDN for your cluster. i.e. frontera.tacc.utexas.edu
+host_name_ext      = %(machine)s.domain.edu
+
+# Path you would like all of HPCPerfStats' data to be stored. It will be the central location where all the file operations occur.
+data_dir 	          = /hpcperfstats/
+
+# FQDN for the web server host
+server 		          = servername.domain.edu
+
+[OAUTH2]
+# File where oauth secrets are kept - format: {"result": {"client_id": "oauth_client", "client_key": "SECRET KEY"}}
+oauth_secret_file    = 
+access_token_url     =
+access_token_params  =  None
+authorize_url        =
+authorize_params     =  None
+api_base_url         =
+client_kwargs        =  {'scope': 'user:email'}
+
+
+[RMQ]
+# Rabbit MQ server (pre-configured for container installation)
+rmq_server 	       = rabbitmq
+
+# Rabbit MQ queue (pre-configured for container installation)
+rmq_queue 	       = %(machine)s
+
+
+[PORTAL]
+# Path where all of the slurm logs for job accounting data will be stored (pre-configured for container installation)
+acct_path          = %(data_dir)s/accounting
+
+# Path for the Rabbit MQ working directory for all intermediate data (pre-configured for container installation)
+archive_dir	       = %(data_dir)s/archive
+
+
+
+# Name of the postgres database (pre-configured for container installation)
+dbname             = hpcperfstats
+
+# Path where all of the aggregate, raw Rabbit MQ data is stored, which can be used to potentially recreate the database. (pre-configured for container installation)
+daily_archive_dir  = %(data_dir)s/daily_archive
+
+# Django engine backend (pre-configured for container installation)
+engine_name        = django.db.backends.postgresql_psycopg2 
+
+# Postgres username (pre-configured for container installation)
+username           = hpcperfstats
+
+# Postgres password (pre-configured for container installation)
+password           = hpcperfstats
+
+# Database host (pre-configured for container installation)
+host               = db
+
+# Database port (pre-configured for container installation)
+port               = 5432
+
+
+[XALT]
+# Name of XALT engine
+xalt_engine        = 
+
+# XALT name
+xalt_name          =
+
+# XALT username
+xalt_user          =
+
+# XALT password
+xalt_password      =
+
+# XALT host
+xalt_host          =
