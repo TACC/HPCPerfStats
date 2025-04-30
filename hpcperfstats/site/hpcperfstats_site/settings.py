@@ -13,7 +13,8 @@ MESSAGE_TAGS = {
 
 # For dockerization 
 SECRET_KEY = os.environ.get("SECRET_KEY")
-DEBUG = bool(os.environ.get("DEBUG", default=0))
+#DEBUG = bool(os.environ.get("DEBUG", default=0))
+DEBUG = cfg.get_debug()
 
 ADMINS = (
     ('Stephen Lien Harrell', 'sharrell@tacc.utexas.edu'),
