@@ -17,6 +17,10 @@ def get_db_name():
     db_name = cfg.get('PORTAL', 'dbname')
     return db_name
 
+def get_debug():
+    debug = cfg.get('DEFAULT', 'debug')
+    return debug
+
 def get_archive_dir_path():
     archive_dir_path = cfg.get('PORTAL', 'archive_dir')
     return archive_dir_path

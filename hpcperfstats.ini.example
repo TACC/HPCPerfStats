@@ -13,6 +13,9 @@ data_dir 	          = /hpcperfstats/
 # FQDN for the web server host
 server 		          = servername.domain.edu
 
+# Debug Output in the docker logs
+debug                 = True
+
 [OAUTH2]
 # File where oauth secrets are kept - format: {"result": {"client_id": "oauth_client", "client_key": "SECRET KEY"}}
 oauth_secret_file    = 
