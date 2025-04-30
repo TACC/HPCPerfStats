@@ -22,13 +22,22 @@ def sync_acct(acct_file, date_str):
     edf = read_sql("select jid from job_data where date(end_time) = '{0}' ".format(date_str), conn)
     print("Total number of existing entries:", edf.shape[0])
 
-# Junjie: ensure job name is treated as str. 
+# Junjie: ensure job name is treated as str.
     data_types = {8: str}
- 
+
+    columns_to_read = ['JobID', 'User', 'Account','Start', 'End', 'Submit', 'Partition',
+                       'Timelimit', 'JobName', 'State', 'NNodes', 'ReqCPUS', 'NodeList']
     df = read_csv(acct_file, sep='|')
-    df.rename(columns = {'JobID': 'jid', 'User': 'username', 'Account' : 'account', 'Start' : 'start_time', 
-                         'End' : 'end_time', 'Submit' : 'submit_time', 'Partition' : 'queue', 
-                         'Timelimit' : 'timelimit', 'JobName' : 'jobname', 'State' : 'state', 
+    # cycle through collumns so we can remove those we don't want to import.
+    for c in df:
+        if c in columns_to_read:
+            continue
+        df.drop(columns=c, inplace=True)
+
+
+    df.rename(columns = {'JobID': 'jid', 'User': 'username', 'Account' : 'account', 'Start' : 'start_time',
+                         'End' : 'end_time', 'Submit' : 'submit_time', 'Partition' : 'queue',
+                         'Timelimit' : 'timelimit', 'JobName' : 'jobname', 'State' : 'state',
                          'NNodes' : 'nhosts', 'ReqCPUS' : 'ncores', 'NodeList' : 'host_list'}, inplace = True)
     df["jid"] = df["jid"].apply(str)
 
@@ -41,10 +50,10 @@ def sync_acct(acct_file, date_str):
     df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize('US/Central')
     df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize('US/Central')
 
-    df["runtime"] = to_timedelta(df["end_time"] - df["start_time"]).dt.total_seconds()    
+    df["runtime"] = to_timedelta(df["end_time"] - df["start_time"]).dt.total_seconds()
     df["timelimit"] = df["timelimit"].str.replace('-', ' days ')
     df["timelimit"] = to_timedelta(df["timelimit"]).dt.total_seconds()
-                         
+
     df["host_list"] = df["host_list"].apply(hostlist.expand_hostlist)
     df["node_hrs"] = df["nhosts"]*df["runtime"]/3600.
 
@@ -56,7 +65,7 @@ def sync_acct(acct_file, date_str):
     mgr.copy(df.values.tolist())
     conn.commit()
     conn.close()
-    
+
 if __name__ == "__main__":
         CONNECTION = cfg.get_db_connection_string()
         conn = psycopg2.connect(CONNECTION)
@@ -80,8 +89,8 @@ if __name__ == "__main__":
         start = time.time()
         directory = cfg.get_accounting_path()
 
-        
-        while startdate <= enddate:            
+
+        while startdate <= enddate:
             for entry in os.scandir(directory):
                 if not entry.is_file(): continue
                 if entry.name.startswith(str(startdate.date())):
