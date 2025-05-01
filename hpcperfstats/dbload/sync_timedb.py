@@ -24,8 +24,8 @@ import hpcperfstats.conf_parser as cfg
 # archive toggle
 should_archive = True
 
-# debug messages
-debug = False
+# DEBUG message toggle
+DEBUG =  fg.get_debug()
 
 # Thread count for database loading and archival
 thread_count = 1
@@ -96,6 +96,10 @@ def add_stats_file_to_db(stats_data):
                 need_archival=False
                 break
             last_idx = i
+
+    if DEBUG:
+        if need_archival == False:
+            print("Skipping file: %s" % stats_file)
 
     if start_idx == -1: return((stats_file, need_archival))
 
@@ -216,7 +220,7 @@ def add_stats_file_to_db(stats_data):
     stats["time"] = to_datetime(stats["time"], unit = 's').dt.tz_localize('UTC').dt.tz_convert('US/Central')
     
     # drop rows from first timestamp
-    stats=stats.dropna()  #junjie debug
+    stats=stats.dropna()  #junjie DEBUG
     print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - start))
 
     # bulk insertion using pgcopy
@@ -227,7 +231,7 @@ def add_stats_file_to_db(stats_data):
     try:
         mgr2.copy(proc_stats.values.tolist())
     except Exception as e:
-        if debug:
+        if DEBUG:
             print("error in mrg2.copy: " , str(e))
         conn.rollback()
         copy_data_to_pgsql_individually(conn, proc_stats, 'proc_data', all_compressed_chunks)
@@ -239,7 +243,7 @@ def add_stats_file_to_db(stats_data):
     try:
         mgr.copy(stats.values.tolist())
     except Exception as e:
-        if debug:
+        if DEBUG:
             print("error in mrg.copy: " , str(e)) 
         conn.rollback()
         need_archival = copy_data_to_pgsql_individually(conn, stats, 'host_data', all_compressed_chunks)
@@ -282,7 +286,7 @@ def copy_data_to_pgsql_individually(conn, data, table, all_compressed_chunks):
                 for chunk_name in chunks_needing_decompression:
                     try:
                         curs.execute("SELECT decompress_chunk('%s', true);" % chunk_name)
-                        if debug:
+                        if DEBUG:
                             print("Chunk decompressed:" + str(curs.fetchall()))
                     except Exception as e:
                         print("error in decompressing chunks: " , str(e))
@@ -315,7 +319,7 @@ def copy_data_to_pgsql_individually(conn, data, table, all_compressed_chunks):
                 conn.rollback()
             else:
                 conn.commit()
-    if debug:
+    if DEBUG:
         print("Existing Rows Found in DB: %s" % unique_violations)
 
     return need_archival
@@ -371,7 +375,7 @@ def archive_stats_files(archive_info):
 
 def database_startup():
     conn = psycopg2.connect(CONNECTION)
-    if debug:
+    if DEBUG:
         print("Postgresql server version: " + str(conn.server_version))
 
     with conn.cursor() as cur:
@@ -379,7 +383,7 @@ def database_startup():
         cur.execute("SELECT pg_size_pretty(pg_database_size('{0}'));".format(cfg.get_db_name()))
         for x in cur.fetchall():
             print("Database Size:", x[0])
-        if debug:
+        if DEBUG:
             cur.execute("SELECT chunk_name,before_compression_total_bytes/(1024*1024*1024),after_compression_total_bytes/(1024*1024*1024) FROM chunk_compression_stats('host_data');")
             for x in cur.fetchall():
                 try: print("{0} Size: {1:8.1f} {2:8.1f}".format(*x))
@@ -392,7 +396,7 @@ def database_startup():
         for x in cur.fetchall():
             try:
                 all_compressed_chunks.append(x)
-                if debug:
+                if DEBUG:
                      print("{0} Range: {1} -> {2}".format(*x))
             except: pass
         conn.commit()    
