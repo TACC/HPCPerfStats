@@ -67,7 +67,7 @@ def add_stats_file_to_db(stats_data):
     except:
         if DEBUG:
             print("Unable to read timestamp from filename %s" % stats_file)
-        return(stats_file, False
+        return(stats_file, False)
 
     
     sql = "select distinct(time) from host_data where host = '{0}' and time >= '{1}'::timestamp - interval '24h' and time < '{1}'::timestamp + interval '48h' order by time;".format(hostname, fdate)
