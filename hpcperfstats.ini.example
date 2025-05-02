@@ -13,6 +13,9 @@ data_dir 	          = /hpcperfstats/
 # FQDN for the web server host
 server 		          = servername.domain.edu
 
+# Keywords from queues which should be ignored
+restricted_queue_keywords = ['secure', 'secret']
+
 # Debug Output in the docker logs
 debug                 = True
 
