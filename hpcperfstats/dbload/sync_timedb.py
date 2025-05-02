@@ -64,7 +64,10 @@ def add_stats_file_to_db(stats_data):
     hostname, create_time = stats_file.split('/')[-2:]
     try:
         fdate = datetime.fromtimestamp(int(create_time))
-    except: return(stats_file, False)
+    except:
+        if DEBUG:
+            print("Unable to read timestamp from filename %s" % stats_file)
+        return(stats_file, False
 
     
     sql = "select distinct(time) from host_data where host = '{0}' and time >= '{1}'::timestamp - interval '24h' and time < '{1}'::timestamp + interval '48h' order by time;".format(hostname, fdate)
@@ -97,11 +100,9 @@ def add_stats_file_to_db(stats_data):
                 break
             last_idx = i
 
-    if DEBUG:
-        if need_archival == False:
-            print("Skipping file: %s" % stats_file)
-
-    if start_idx == -1: return((stats_file, need_archival))
+    if start_idx == -1: 
+        print("No missing timestamps found for %s" % stats_file)
+        return((stats_file, need_archival))
 
     schema = {}
     stats  = []
@@ -197,6 +198,8 @@ def add_stats_file_to_db(stats_data):
 
     stats = DataFrame.from_records(stats)
     if stats.empty: 
+        if DEBUG:
+            print("Unable to proccess stats file %s" % stats_file)
         return((stats_file, False))
 
     # Always drop the first timestamp. For new file this is just first timestamp (at random rotate time). 
@@ -232,7 +235,7 @@ def add_stats_file_to_db(stats_data):
         mgr2.copy(proc_stats.values.tolist())
     except Exception as e:
         if DEBUG:
-            print("error in mrg2.copy: " , str(e))
+            print("error in mrg2.copy: %s\nFile %s" %  (e, stats_file)
         conn.rollback()
         copy_data_to_pgsql_individually(conn, proc_stats, 'proc_data', all_compressed_chunks)
     else: 
@@ -254,6 +257,8 @@ def add_stats_file_to_db(stats_data):
 
     conn.close()
 
+    if DEBUG:
+        print("File successfully added to DB")
     return((stats_file, need_archival))
 
 
