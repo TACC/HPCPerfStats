@@ -25,7 +25,7 @@ import hpcperfstats.conf_parser as cfg
 should_archive = True
 
 # DEBUG message toggle
-DEBUG =  fg.get_debug()
+DEBUG =  cfg.get_debug()
 
 # Thread count for database loading and archival
 thread_count = 1
