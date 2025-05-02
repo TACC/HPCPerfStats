@@ -488,4 +488,11 @@ if __name__ == '__main__':
         with multiprocessing.get_context('spawn').Pool(processes = archive_thread_count) as pool:
             for stats_files_archived in pool.imap_unordered(archive_stats_files, list(ar_file_mapping.items())):
                 print("[{0:.1f}%] completed".format(100*stats_files.index(stats_fname)/len(stats_files)), end = "\r", flush=True)
+
+        if DEBUG:
+            print("sync_timedb sleeping")
         time.sleep(900)
+        if DEBUG:
+            print("sync_timedb finished")
+           
+
