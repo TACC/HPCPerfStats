@@ -29,6 +29,10 @@ def get_host_name_ext():
     host_name_ext = cfg.get('DEFAULT', 'host_name_ext')
     return host_name_ext
 
+def get_restricted_queue_keywords():
+    restricted_queue_keywords = cfg.get('DEFAULT', 'restricted_queue_keywords')
+    return restricted_queue_keywords
+
 def get_accounting_path():
     accounting_path = cfg.get('PORTAL', 'acct_path')
     return accounting_path
