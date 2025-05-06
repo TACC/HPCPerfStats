@@ -30,6 +30,7 @@ DEBUG =  cfg.get_debug()
 # Thread count for database loading and archival
 thread_count = 1
 archive_thread_count = 8
+days_to_process = 5
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
 
@@ -62,36 +63,46 @@ exclude_types = ["ib", "ib_sw", "intel_skx_cha", "ps", "sysv_shm", "tmpfs", "vfs
 def add_stats_file_to_db(stats_data):
     stats_file, all_compressed_chunks = stats_data
     hostname, create_time = stats_file.split('/')[-2:]
-    try:
-        fdate = datetime.fromtimestamp(int(create_time))
-    except:
-        if DEBUG:
-            print("Unable to read timestamp from filename %s" % stats_file)
-        return(stats_file, False)
-
-    
-    sql = "select distinct(time) from host_data where host = '{0}' and time >= '{1}'::timestamp - interval '24h' and time < '{1}'::timestamp + interval '48h' order by time;".format(hostname, fdate)
+#    try:
+#        fdate = datetime.fromtimestamp(int(create_time))
+#    except:
+#        if DEBUG:
+#            print("Unable to read timestamp from filename %s" % stats_file)
+#        return(stats_file, False)
    
+#    if len(times) > 0 and max(times) > time.time() - 600: return stats_file
     conn = psycopg2.connect(CONNECTION)
-
-    times = [float(t.timestamp()) for t in read_sql(sql, conn)["time"].tolist()]
-    itimes = [int(t) for t in times]
-    #if len(times) > 0 and max(times) > time.time() - 600: return stats_file
-
     with open(stats_file, 'r') as fd:
         lines = fd.readlines()
+
+    for l in lines:
+        if l[0].isdigit():
+            t, jid, host = l.split()
+            break
+    else:
+        print("initial timestamp not found")
+
+    timestamp = datetime.fromtimestamp(int(float(t)))
+    sql = "select distinct(time) from host_data where host = '{0}' and time >= '{1}'::timestamp - interval '48h' and time < '{1}'::timestamp + interval '72h' order by time;".format(hostname, timestamp) 
+    times = [float(t.timestamp()) for t in read_sql(sql, conn)["time"].tolist()]
+    itimes = [int(t) for t in times]
+
 
     # start reading stats data from file at first - 1 missing time
     start_idx = -1
     last_idx  = 0
     need_archival=True
     first_ts = True
+    timestamps_found = 0
+    counters_found = 0
+    labels_found = 0
+    unprocessable_lines = 0
     for i, line in enumerate(lines): 
         if not line[0]: continue    
         if line[0].isdigit():
-            if first_ts:
-                first_ts = False
-                continue
+#            if first_ts:
+#                first_ts = False
+#                continue
             t, jid, host = line.split()
 
             if (float(t) not in times) and (int(float(t)) not in itimes):
@@ -103,6 +114,7 @@ def add_stats_file_to_db(stats_data):
     if start_idx == -1: 
         print("No missing timestamps found for %s" % stats_file)
         return((stats_file, need_archival))
+
 
     schema = {}
     stats  = []
@@ -116,6 +128,7 @@ def add_stats_file_to_db(stats_data):
 
             if line[0].isalpha() and insert:
                 typ, dev, vals = line.split(maxsplit = 2)        
+                counters_found += 1
                 vals = vals.split()
                 if typ in exclude_types: continue
 
@@ -178,13 +191,17 @@ def add_stats_file_to_db(stats_data):
                 
             elif i >= start_idx and line[0].isdigit():
                 t, jid, host = line.split()
+                timestamps_found += 1
                 insert = True
                 tags = { "time" : float(t), "host" : host, "jid" : jid }
                 tags2 = {"jid": jid, "host" : host}           
             elif line[0] == '!':
                 label, events = line.split(maxsplit = 1)
+                labels_found += 1
                 typ, events = label[1:], events.split()
                 schema[typ] = events 
+            else:
+                unprocessable_lines += 1
         
     except Exception as e:
         print("error: process data failed: ", str(e)) 
@@ -192,14 +209,19 @@ def add_stats_file_to_db(stats_data):
         return((stats_file, False))
 
     unique_entries = set(tuple(d.items()) for d in proc_stats)                                        
+
     # Convert set of tuples back to a list of dictionaries                                            
     proc_stats = [dict(entry) for entry in unique_entries]                                            
     proc_stats = DataFrame.from_records(proc_stats)                                                   
 
     stats = DataFrame.from_records(stats)
-    if stats.empty: 
+
+    if DEBUG:
+        print("File Stats for %s:\n %s labels found, %s timestamps found,  %s counters found, %s unprocessable lines" % (stats_file, labels_found, timestamps_found, counters_found, unprocessable_lines))
+
+    if stats.empty and proc_stats.empty: 
         if DEBUG:
-            print("Unable to proccess stats file %s" % stats_file)
+            print("Unable to process stats file %s" % stats_file)
         return((stats_file, False))
 
     # Always drop the first timestamp. For new file this is just first timestamp (at random rotate time). 
@@ -235,7 +257,7 @@ def add_stats_file_to_db(stats_data):
         mgr2.copy(proc_stats.values.tolist())
     except Exception as e:
         if DEBUG:
-            print("error in mrg2.copy: %s\nFile %s" %  (e, stats_file)
+            print("error in mrg2.copy: %s\nFile %s" %  (e, stats_file))
         conn.rollback()
         copy_data_to_pgsql_individually(conn, proc_stats, 'proc_data', all_compressed_chunks)
     else: 
@@ -416,16 +438,17 @@ if __name__ == '__main__':
         try:
             startdate = datetime.strptime(sys.argv[1], "%Y-%m-%d")
         except: 
-            startdate = datetime.combine(datetime.today(), datetime.min.time()) - timedelta(days = 10)
+            startdate = datetime.combine(datetime.today(), datetime.min.time()) - timedelta(days = days_to_process)
         try:
             enddate   = datetime.strptime(sys.argv[2], "%Y-%m-%d")
         except:
-            enddate = startdate + timedelta(days = 10)
+            enddate = startdate + timedelta(days = days_to_process)
 
         if (len(sys.argv) > 1):  
             if sys.argv[1] == 'all':
                 startdate = 'all'
-                enddate = datetime.combine(datetime.today(), datetime.min.time()) 
+                enddate = datetime.combine(datetime.today(), datetime.min.time()) - timedelta(days = days_to_process)
+
 
         print("###Date Range of stats files to ingest: {0} -> {1}####".format(startdate, enddate))
         #################################################################
