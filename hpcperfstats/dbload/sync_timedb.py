@@ -60,8 +60,7 @@ exclude_types = ["ib", "ib_sw", "intel_skx_cha", "ps", "sysv_shm", "tmpfs", "vfs
 
 
 # This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
-def add_stats_file_to_db(stats_data):
-    stats_file, all_compressed_chunks = stats_data
+def add_stats_file_to_db(stats_file):
     hostname, create_time = stats_file.split('/')[-2:]
 #    try:
 #        fdate = datetime.fromtimestamp(int(create_time))
@@ -72,8 +71,14 @@ def add_stats_file_to_db(stats_data):
    
 #    if len(times) > 0 and max(times) > time.time() - 600: return stats_file
     conn = psycopg2.connect(CONNECTION)
-    with open(stats_file, 'r') as fd:
-        lines = fd.readlines()
+
+    try:
+        with open(stats_file, 'r') as fd:
+            lines = fd.readlines()
+    except FileNotFoundError:
+        print("Stats file disappeared: %s" % stats_file)
+        return((stats_file, False))
+        
 
     for l in lines:
         if l[0].isdigit():
@@ -259,7 +264,7 @@ def add_stats_file_to_db(stats_data):
         if DEBUG:
             print("error in mrg2.copy: %s\nFile %s" %  (e, stats_file))
         conn.rollback()
-        copy_data_to_pgsql_individually(conn, proc_stats, 'proc_data', all_compressed_chunks)
+        copy_data_to_pgsql_individually(conn, proc_stats, 'proc_data')
     else: 
         conn.commit()
 
@@ -271,7 +276,7 @@ def add_stats_file_to_db(stats_data):
         if DEBUG:
             print("error in mrg.copy: " , str(e)) 
         conn.rollback()
-        need_archival = copy_data_to_pgsql_individually(conn, stats, 'host_data', all_compressed_chunks)
+        need_archival = copy_data_to_pgsql_individually(conn, stats, 'host_data')
     else:
         conn.commit()
 
@@ -284,44 +289,7 @@ def add_stats_file_to_db(stats_data):
     return((stats_file, need_archival))
 
 
-def copy_data_to_pgsql_individually(conn, data, table, all_compressed_chunks):
-    # Decompress chunks if needed
-    a_day = timedelta(days=1)
-    if table is 'host_data':
-        first_date = to_datetime(data["time"].values[0]).replace(tzinfo=pytz.timezone('US/Central'))
-        last_date = to_datetime(data["time"].values[-1]).replace(tzinfo=pytz.timezone('US/Central'))
-        day_before_date = first_date - a_day
-        day_after_date = last_date + a_day
-
-        chunks_needing_decompression = []
-
-        for i, chunk_data in enumerate(all_compressed_chunks):
-            chunk_name, chunk_start_date, chunk_end_date, is_compressed, chunk_schema = chunk_data
-
-            # decompress previous, current, and next chunk in case of overlap.
-            if is_compressed and (
-              (chunk_start_date <= first_date <= chunk_end_date) or
-              (chunk_start_date <= last_date <= chunk_end_date) or
-              (chunk_start_date <= day_before_date <= chunk_end_date) or
-              (chunk_start_date <= day_after_date <= chunk_end_date)):
-
-                chunks_needing_decompression.append(all_compressed_chunks[i][4] + "." +  all_compressed_chunks[i][0])
-
-        compression_lock = Lock()
-        with compression_lock:
-            with conn.cursor() as curs:
-                for chunk_name in chunks_needing_decompression:
-                    try:
-                        curs.execute("SELECT decompress_chunk('%s', true);" % chunk_name)
-                        if DEBUG:
-                            print("Chunk decompressed:" + str(curs.fetchall()))
-                    except Exception as e:
-                        print("error in decompressing chunks: " , str(e))
-                        conn.rollback()
-                        continue
-                    else:
-                        conn.commit()
-
+def copy_data_to_pgsql_individually(conn, data, table):
     
     need_archival = True
     unique_violations = 0
@@ -418,21 +386,10 @@ def database_startup():
         else:
             print("Reading Chunk Data")
 
-        all_compressed_chunks = []
-        cur.execute("SELECT chunk_name, range_start,range_end,is_compressed,chunk_schema FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';")
-        for x in cur.fetchall():
-            try:
-                all_compressed_chunks.append(x)
-                if DEBUG:
-                     print("{0} Range: {1} -> {2}".format(*x))
-            except: pass
-        conn.commit()    
-    conn.close()
-    return all_compressed_chunks
 
 if __name__ == '__main__':
 
-        all_compressed_chunks = database_startup()
+        database_startup()
         #################################################################
 
         try:
@@ -447,7 +404,7 @@ if __name__ == '__main__':
         if (len(sys.argv) > 1):  
             if sys.argv[1] == 'all':
                 startdate = 'all'
-                enddate = datetime.combine(datetime.today(), datetime.min.time()) - timedelta(days = days_to_process)
+                enddate = datetime.combine(datetime.today(), datetime.min.time()) - timedelta(days = days_to_process + 1)
 
 
         print("###Date Range of stats files to ingest: {0} -> {1}####".format(startdate, enddate))
@@ -486,7 +443,7 @@ if __name__ == '__main__':
         print("Number of host stats files to process = ", len(stats_files))
         files_to_be_archived = []
         with multiprocessing.get_context('spawn').Pool(processes = thread_count) as pool:
-            for stats_fname, need_archival in pool.imap_unordered(add_stats_file_to_db, zip(stats_files, itertools.repeat(all_compressed_chunks))):
+            for stats_fname, need_archival in pool.imap_unordered(add_stats_file_to_db, stats_files):
                 if should_archive and need_archival: files_to_be_archived.append(stats_fname)
                 print("[{0:.1f}%] completed".format(100*stats_files.index(stats_fname)/len(stats_files)), end = "\r", flush=True)
 
