@@ -30,16 +30,17 @@ def sync_acct(acct_file, date_str):
                        'Timelimit', 'JobName', 'State', 'NNodes', 'ReqCPUS', 'NodeList']
     df = read_csv(acct_file, sep='|')
     # cycle through collumns so we can remove those we don't want to import.
-    for c in df:
-        if c in columns_to_read:
-            continue
-        df.drop(columns=c, inplace=True)
 
 
     df.rename(columns = {'JobID': 'jid', 'User': 'username', 'Account' : 'account', 'Start' : 'start_time',
                          'End' : 'end_time', 'Submit' : 'submit_time', 'Partition' : 'queue',
                          'Timelimit' : 'timelimit', 'JobName' : 'jobname', 'State' : 'state',
                          'NNodes' : 'nhosts', 'ReqCPUS' : 'ncores', 'NodeList' : 'host_list'}, inplace = True)
+    for c in df:
+        if c in columns_to_read:
+            continue
+        df.drop(columns=c, inplace=True)
+
     df["jid"] = df["jid"].apply(str)
 
     restricted_queue_keywords = cfg.get_restricted_queue_keywords()
