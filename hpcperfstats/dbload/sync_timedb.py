@@ -530,7 +530,7 @@ if __name__ == '__main__':
             if DEBUG:
                 print("files to be archived: %s" % ar_file_mapping)
             
-            archive_job = archive_pool.map(archive_stats_files, list(ar_file_mapping.items()))
+            archive_job = archive_pool.map_async(archive_stats_files, list(ar_file_mapping.items()))
 
             print("Archival running in the background")
 
