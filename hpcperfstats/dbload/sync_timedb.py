@@ -4,6 +4,7 @@ from pgcopy import CopyManager
 import os, sys, stat
 import multiprocessing
 import itertools
+from functools import partial
 from multiprocessing import Pool, get_context, Lock, set_start_method
 
 from datetime import datetime, timedelta, date
@@ -28,9 +29,16 @@ should_archive = True
 DEBUG =  cfg.get_debug()
 
 # Thread count for database loading and archival
-thread_count = 1
-archive_thread_count = 8
+thread_count = 8
+
+# amount of concurrent pigz using thread_count*2 cores
+archive_thread_count = 2
+
+# How many days to process if run without any arguments
 days_to_process = 5
+
+# How many files to proccess and archive at once
+chunk_size = 100
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
 
@@ -60,16 +68,9 @@ exclude_types = ["ib", "ib_sw", "intel_skx_cha", "ps", "sysv_shm", "tmpfs", "vfs
 
 
 # This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
-def add_stats_file_to_db(stats_file):
+def add_stats_file_to_db(lock, stats_file):
     hostname, create_time = stats_file.split('/')[-2:]
-#    try:
-#        fdate = datetime.fromtimestamp(int(create_time))
-#    except:
-#        if DEBUG:
-#            print("Unable to read timestamp from filename %s" % stats_file)
-#        return(stats_file, False)
-   
-#    if len(times) > 0 and max(times) > time.time() - 600: return stats_file
+
     conn = psycopg2.connect(CONNECTION)
 
     try:
@@ -97,18 +98,11 @@ def add_stats_file_to_db(stats_file):
     start_idx = -1
     last_idx  = 0
     need_archival=True
-    first_ts = True
-    timestamps_found = 0
-    counters_found = 0
-    labels_found = 0
-    unprocessable_lines = 0
     for i, line in enumerate(lines): 
         if not line[0]: continue    
         if line[0].isdigit():
-#            if first_ts:
-#                first_ts = False
-#                continue
             t, jid, host = line.split()
+            if jid == '-': continue                                     
 
             if (float(t) not in times) and (int(float(t)) not in itimes):
                 start_idx = last_idx
@@ -120,18 +114,27 @@ def add_stats_file_to_db(stats_file):
         print("No missing timestamps found for %s" % stats_file)
         return((stats_file, need_archival))
 
+    # instrument the code to see what is actually proccessing in each file
+    timestamps_found = 0
+    counters_found = 0
+    labels_found = 0
+    unprocessable_lines = 0
+    jobs_missing_found = 0
 
     schema = {}
     stats  = []
     proc_stats = [] #process stats
     insert = False
+    timestamp_job_missing = False
     start = time.time()
     try:
         for i, line in enumerate(lines): 
             if not line[0]: continue
-            if jid == '-': continue                                     
 
             if line[0].isalpha() and insert:
+                # Skip any data from a time stamp that doesn't have a jid associated
+                if timestamp_job_missing:
+                    continue
                 typ, dev, vals = line.split(maxsplit = 2)        
                 counters_found += 1
                 vals = vals.split()
@@ -196,6 +199,11 @@ def add_stats_file_to_db(stats_file):
                 
             elif i >= start_idx and line[0].isdigit():
                 t, jid, host = line.split()
+                if jid == '-':
+                    timestamp_job_missing = True
+                    jobs_missing_found += 1
+                    continue
+                timestamp_job_missing = False
                 timestamps_found += 1
                 insert = True
                 tags = { "time" : float(t), "host" : host, "jid" : jid }
@@ -222,7 +230,7 @@ def add_stats_file_to_db(stats_file):
     stats = DataFrame.from_records(stats)
 
     if DEBUG:
-        print("File Stats for %s:\n %s labels found, %s timestamps found,  %s counters found, %s unprocessable lines" % (stats_file, labels_found, timestamps_found, counters_found, unprocessable_lines))
+        print("File Stats for %s:\n %s labels found, %s timestamps found,  %s counters found, %s unprocessable lines, %s timestamps missing jids" % (stats_file, labels_found, timestamps_found, counters_found, unprocessable_lines, jobs_missing_found))
 
     if stats.empty and proc_stats.empty: 
         if DEBUG:
@@ -257,6 +265,7 @@ def add_stats_file_to_db(stats_file):
     sqltime = time.time()
 
 
+    lock.acquire()
     mgr2 = CopyManager(conn, 'proc_data', proc_stats.columns)
     try:
         mgr2.copy(proc_stats.values.tolist())
@@ -264,11 +273,15 @@ def add_stats_file_to_db(stats_file):
         if DEBUG:
             print("error in mrg2.copy: %s\nFile %s" %  (e, stats_file))
         conn.rollback()
+        lock.release()
         copy_data_to_pgsql_individually(conn, proc_stats, 'proc_data')
     else: 
         conn.commit()
+        lock.release()
 
 
+
+    lock.acquire()
     mgr = CopyManager(conn, 'host_data', stats.columns)
     try:
         mgr.copy(stats.values.tolist())
@@ -276,9 +289,11 @@ def add_stats_file_to_db(stats_file):
         if DEBUG:
             print("error in mrg.copy: " , str(e)) 
         conn.rollback()
+        lock.release()
         need_archival = copy_data_to_pgsql_individually(conn, stats, 'host_data')
     else:
         conn.commit()
+        lock.release()
 
     #print("sql insert time for {0} {1:.1f}s".format(stats_file, time.time() - sqltime))
 
@@ -322,8 +337,12 @@ def copy_data_to_pgsql_individually(conn, data, table):
 def archive_stats_files(archive_info):
     archive_fname, stats_files = archive_info
     archive_tar_fname = archive_fname[:-3]
-    if os.path.exists(archive_fname):
-        print(subprocess.check_output(['/bin/gunzip', '-v', archive_fname]))
+    if not os.path.exists(archive_tar_fname):
+        try:
+            # If the file is missing, it will error, catch that error and continue
+            print(subprocess.check_output(['/usr/bin/pigz', '-v', '-d', archive_fname]))
+        except subprocess.CalledProcessError:
+            pass
 
     existing_archive_file = {}
     if os.path.exists(archive_tar_fname):
@@ -338,6 +357,7 @@ def archive_stats_files(archive_info):
         except Exception as e:
              pass
 
+    stats_files_to_tar = []
     for stats_fname_path in stats_files:
         fname_parts = stats_fname_path.split('/')
         
@@ -346,10 +366,12 @@ def archive_stats_files(archive_info):
 
             print("file %s found in archive, skipping" % stats_fname_path)
             continue
+        stats_files_to_tar.append(stats_fname_path)
 
-        print(subprocess.check_output(['/bin/tar', 'ufv', archive_tar_fname, stats_fname_path]), flush=True)
-        print("Archived: " + stats_fname_path)
-
+    tar_output = subprocess.check_output(['/bin/tar', 'uvf', archive_tar_fname] + stats_files_to_tar)
+    if DEBUG:
+        print(tar_output, flush=True)
+    print("Archived: " + str(stats_files_to_tar))
 
     ### VERIFY TAR AND DELETE DATA IF IT IS ARCHIVED AND HAS THE SAME FILE SIZE
     with tarfile.open(archive_tar_fname, 'r') as archive_tarfile:
@@ -366,7 +388,7 @@ def archive_stats_files(archive_info):
                os.remove(stats_fname_path)
 
 
-    print(subprocess.check_output(['/bin/gzip', '-8', '-v', archive_tar_fname]), flush=True)
+    print(subprocess.check_output(['/usr/bin/pigz', '-f', '-8', '-v', '-p', str(thread_count*2), archive_tar_fname]), flush=True)
 
 def database_startup():
     conn = psycopg2.connect(CONNECTION)
@@ -415,13 +437,9 @@ if __name__ == '__main__':
         directory = cfg.get_archive_dir_path()
 
         stats_files = []
-        ar_file_mapping = {}
         for entry in os.scandir(directory):
             if entry.is_file() or not (entry.name.startswith("c") or entry.name.startswith("v")): continue
             for stats_file in os.scandir(entry.path):
-                if startdate == 'all':
-                    stats_files += [stats_file.path]
-                    continue
                 if not stats_file.is_file() or stats_file.name.startswith('.'): continue
                 if stats_file.name.startswith("current"): continue
                 fdate=None
@@ -437,46 +455,94 @@ if __name__ == '__main__':
                 except Exception as e:
                        print("error in obtaining timestamp of raw data files: ", str(e))
                        continue
+                if startdate == 'all':
+                    if fdate > enddate: continue
+                    stats_files += [stats_file.path]
+                    continue
+
                 if  fdate <= startdate - timedelta(days = 1) or fdate > enddate: continue
                 stats_files += [stats_file.path]
 
+
+        # sort files by oldest first, not based on the node (default os.scandir)
+        stats_files.sort(key = lambda x:x.split('/')[-1])
         print("Number of host stats files to process = ", len(stats_files))
-        files_to_be_archived = []
-        with multiprocessing.get_context('spawn').Pool(processes = thread_count) as pool:
-            for stats_fname, need_archival in pool.imap_unordered(add_stats_file_to_db, stats_files):
-                if should_archive and need_archival: files_to_be_archived.append(stats_fname)
-                print("[{0:.1f}%] completed".format(100*stats_files.index(stats_fname)/len(stats_files)), end = "\r", flush=True)
 
-        print("loading time", time.time() - start)
-        
-        for stats_fname in files_to_be_archived:
-           stats_start = open(stats_fname, 'r').readlines(8192) # grab first 8k bytes
-           archive_fname = ''
-           for line in stats_start:
-               if line[0].isdigit():
-                   t, jid, host = line.split()
-                   file_date = datetime.fromtimestamp(float(t))
-                   archive_fname =  os.path.join(tgz_archive_dir, file_date.strftime("%Y-%m-%d.tar.gz"))
-                   break
+        archive_pool = multiprocessing.get_context('spawn').Pool(processes = archive_thread_count)
+        archive_job = None
+        # Process and archive chunk_size files before continuing to process more
+        for i in range(int(len(stats_files)/chunk_size) + 1):
+            j = i + 1
+            if DEBUG:
+                print("Begining Chunk(%s) #%s Processing" % (chunk_size, i))
 
-           if file_date.date == datetime.today().date:
-               continue
+            ar_file_mapping = {}
+            files_to_be_archived = []
+
+            try:
+               stats_files[j*chunk_size]
+               stats_files_chunk = stats_files[i*chunk_size:j*chunk_size:]
+            except IndexError:
+                stats_files_chunk = stats_files[i*chunk_size:]
+
+            print("%s files per chunk" % chunk_size)
+
+            with multiprocessing.get_context('spawn').Pool(processes = thread_count) as pool:
+                manager = multiprocessing.Manager()
+                manager_lock = manager.Lock()
+                add_stats_file = partial(add_stats_file_to_db, manager_lock)
+                k = 0
+                for stats_fname, need_archival in pool.imap_unordered(add_stats_file, stats_files_chunk):
+                    k += 1
+                    if should_archive and need_archival: files_to_be_archived.append(stats_fname)
+                    print("chunk %s: completed file %s out of %s\n" % (i, k, chunk_size), flush=True)
+
+            print("loading time", time.time() - start)
+         
+            for stats_fname in files_to_be_archived:
+               stats_start = open(stats_fname, 'r').readlines(8192) # grab first 8k bytes
+               archive_fname = ''
+               for line in stats_start:
+                   if line[0].isdigit():
+                       t, jid, host = line.split()
+                       file_date = datetime.fromtimestamp(float(t))
+                       archive_fname =  os.path.join(tgz_archive_dir, file_date.strftime("%Y-%m-%d.tar.gz"))
+                       break
+
+               if file_date.date == datetime.today().date:
+                   continue
+
+               if not archive_fname:
+                   print("Unable to find first timestamp in %s, skipping archiving" % stats_fname)
+                   continue
+               if archive_fname not in ar_file_mapping: ar_file_mapping[archive_fname] = []
+               ar_file_mapping[archive_fname].append(stats_fname)
+
+            # skip first iteration, on first there will be no archive_job
+            if i:
+                if DEBUG:
+                    print("Checking/waiting for background archival proccesses")
+
+                # Wait until last archive_job is complete before starting another one
+                for stats_files_archived in archive_job.get():
+                    print("[{0:.1f}%] completed".format(100*stats_files.index(stats_fname)/len(stats_files)), end = "\r", flush=True)
+
+            if DEBUG:
+                print("files to be archived: %s" % ar_file_mapping)
+            
+            archive_job = archive_pool.map(archive_stats_files, list(ar_file_mapping.items()))
+
+            print("Archival running in the background")
+
+        archive_job.get()
 
 
-           if not archive_fname:
-               print("Unable to find first timestamp in %s, skipping archiving" % stats_fname)
-               continue
-           if archive_fname not in ar_file_mapping: ar_file_mapping[archive_fname] = []
-           ar_file_mapping[archive_fname].append(stats_fname)
-
-        
-        with multiprocessing.get_context('spawn').Pool(processes = archive_thread_count) as pool:
-            for stats_files_archived in pool.imap_unordered(archive_stats_files, list(ar_file_mapping.items())):
-                print("[{0:.1f}%] completed".format(100*stats_files.index(stats_fname)/len(stats_files)), end = "\r", flush=True)
 
         if DEBUG:
             print("sync_timedb sleeping")
+
         time.sleep(900)
+
         if DEBUG:
             print("sync_timedb finished")
            

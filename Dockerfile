@@ -7,7 +7,8 @@ WORKDIR /home/hpcperfstats
 
 # run as root
 RUN apt-get update -y 
-RUN apt-get install netcat supervisor rsync syslog-ng vim net-tools lsof -y
+RUN apt-get install netcat supervisor rsync syslog-ng vim net-tools lsof pigz -y
+RUN apt-get update -y 
 RUN apt-get upgrade -y
 
 ENV PYTHONDONTWRITEBYTECODE 1
