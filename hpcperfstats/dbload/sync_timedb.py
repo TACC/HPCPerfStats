@@ -112,7 +112,7 @@ def add_stats_file_to_db(lock, stats_file):
 
     if start_idx == -1: 
         print("No missing timestamps found for %s" % stats_file)
-        return((stats_file, need_archival))
+        return((stats_file, True))
 
     # instrument the code to see what is actually proccessing in each file
     timestamps_found = 0
@@ -298,7 +298,7 @@ def add_stats_file_to_db(lock, stats_file):
     #print("sql insert time for {0} {1:.1f}s".format(stats_file, time.time() - sqltime))
 
     conn.close()
-
+    need_archival = True
     if DEBUG:
         print("File successfully added to DB")
     return((stats_file, need_archival))
