@@ -19,7 +19,13 @@ cp services-conf/nginx-nossl.conf services-conf/nginx.conf
 
 NOTE: 
  - Please change all the paths in the docker-compose.yml file to your paths.
+        - Under pipeline -> volumes - change the path to the ssh keys. It doesn't have to be a user's, it just has to be a .ssh directory.
+        - Under volumes -> hpcperfstatsdata -> device - change the path to your path with the correct username and directory name for your data.
+        - Under volumes -> hpcperfstatsnodelog -> device - change the path to your path with the correct username and directory name for your data.
  - Please change the hpcperfstats.ini file contents to your configurations
+        - Under [DEFAULT] -> machine - change the machine name to that of your cluster.
+        - Under [DEFAULT] -> host_name_ext - change it to the FQDN of your cluster.
+        - Under [DEFAULT] -> server - change it to the FQDN for your web server host.
 
 # Create paths for data and log directories:
 sudo mkdir -p /home/sg99/s3-stats/hpcperfstats_data
