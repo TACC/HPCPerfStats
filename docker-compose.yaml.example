@@ -55,6 +55,7 @@ services:
     image: timescale/timescaledb:latest-pg15
     container_name: hpcperfstats_db_1
     restart: always
+    stop_grace_period: 60s
     security_opt:
       - seccomp:unconfined
     volumes:
