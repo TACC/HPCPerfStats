@@ -2,6 +2,7 @@
 import os, sys, pwd, time
 from datetime import timedelta, datetime
 import psycopg2
+import multiprocessing
 
 os.environ['DJANGO_SETTINGS_MODULE']='hpcperfstats.site.hpcperfstats_site.settings'
 import django
@@ -23,7 +24,7 @@ def update_metrics(date, rerun = False):
         jobs_list = [job for job in jobs_list if not job.metrics_data_set.all().exists() or job.metrics_data_set.all().filter(value__isnull = True).count() > 0]
 
     # Set up metric computation manager
-    metrics_manager = metrics.Metrics(processes = 2)
+    metrics_manager = metrics.Metrics()
 
     print("Compute for following metrics for date {0} on {1} jobs".format(date, len(jobs_list)))
     for name in metrics_manager.metrics_list:
@@ -48,8 +49,17 @@ if __name__ == "__main__":
     #################################################################
 
     date = startdate
+    all_dates = []
     while date <= enddate:
-        update_metrics(date, rerun = False)
+        all_dates.append(date)
         date += timedelta(days=1)
+
+    print(all_dates)
+    with multiprocessing.Pool(processes=20) as pool:
+        for result in pool.imap_unordered(update_metrics, all_dates):
+            print(result)
+
+
+   #update_metrics(date, rerun = False)
 
     time.sleep(3600)

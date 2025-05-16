@@ -17,8 +17,7 @@ def _unwrap(args):
 
 class Metrics():
 
-  def __init__(self, processes = 1):
-    self.processes = processes
+  def __init__(self):
 
     self.metrics_list = {
       "avg_blockbw" : { "typename" : "block", "events" : ["rd_sectors", "wr_sectors"], "conv" : 1.0/(1024*1024), "units" : "GB/s"},
@@ -38,8 +37,6 @@ class Metrics():
     if not job_list: 
       print("Please specify a job list.")
       return
-    #pool = multiprocessing.Pool(processes = self.processes) 
-    #pool.map(_unwrap, zip([self]*len(job_list), job_list))
     list(map(self.compute_metrics, job_list))
 
 
