@@ -71,7 +71,6 @@ exclude_types = ["ib", "ib_sw", "intel_skx_cha", "ps", "sysv_shm", "tmpfs", "vfs
 def add_stats_file_to_db(lock, stats_file):
     hostname, create_time = stats_file.split('/')[-2:]
 
-    conn = psycopg2.connect(CONNECTION)
 
     try:
         with open(stats_file, 'r') as fd:
@@ -89,215 +88,216 @@ def add_stats_file_to_db(lock, stats_file):
         print("initial timestamp not found")
 
     timestamp = datetime.fromtimestamp(int(float(t)))
-    sql = "select distinct(time) from host_data where host = '{0}' and time >= '{1}'::timestamp - interval '48h' and time < '{1}'::timestamp + interval '72h' order by time;".format(hostname, timestamp) 
-    times = [float(t.timestamp()) for t in read_sql(sql, conn)["time"].tolist()]
-    itimes = [int(t) for t in times]
 
-
-    # start reading stats data from file at first - 1 missing time
-    start_idx = -1
-    last_idx  = 0
-    need_archival=True
-    for i, line in enumerate(lines): 
-        if not line[0]: continue    
-        if line[0].isdigit():
-            t, jid, host = line.split()
-            if jid == '-': continue                                     
-
-            if (float(t) not in times) and (int(float(t)) not in itimes):
-                start_idx = last_idx
-                need_archival=False
-                break
-            last_idx = i
-
-    if start_idx == -1: 
-        print("No missing timestamps found for %s" % stats_file)
-        return((stats_file, True))
-
-    # instrument the code to see what is actually proccessing in each file
-    timestamps_found = 0
-    counters_found = 0
-    labels_found = 0
-    unprocessable_lines = 0
-    jobs_missing_found = 0
-
-    schema = {}
-    stats  = []
-    proc_stats = [] #process stats
-    insert = False
-    timestamp_job_missing = False
-    start = time.time()
-    try:
+    with psycopg2.connect(CONNECTION) as conn:
+        sql = "select distinct(time) from host_data where host = '{0}' and time >= '{1}'::timestamp - interval '48h' and time < '{1}'::timestamp + interval '72h' order by time;".format(hostname, timestamp) 
+        times = [float(t.timestamp()) for t in read_sql(sql, conn)["time"].tolist()]
+        itimes = [int(t) for t in times]
+    
+    
+        # start reading stats data from file at first - 1 missing time
+        start_idx = -1
+        last_idx  = 0
+        need_archival=True
         for i, line in enumerate(lines): 
-            if not line[0]: continue
-
-            if line[0].isalpha() and insert:
-                # Skip any data from a time stamp that doesn't have a jid associated
-                if timestamp_job_missing:
-                    continue
-                typ, dev, vals = line.split(maxsplit = 2)        
-                counters_found += 1
-                vals = vals.split()
-                if typ in exclude_types: continue
-
-                # Mapping hardware counters to events 
-                if typ == "amd64_pmc" or typ == "amd64_df" or typ == "intel_8pmc3" or typ == "intel_skx_imc":
-                    if typ == "amd64_pmc": eventmap = amd64_pmc_eventmap
-                    if typ == "amd64_df": eventmap = amd64_df_eventmap
-                    if typ == "intel_8pmc3": eventmap = intel_8pmc3_eventmap
-                    if typ == "intel_skx_imc": eventmap = intel_skx_imc_eventmap
-                    n = {}
-                    rm_idx = []
-                    schema_mod = []*len(schema[typ])
-
-                    for idx, eve in enumerate(schema[typ]):
-                
-                        eve = eve.split(',')[0]
-                        if "CTL" in eve:
-                            try:
-                                n[eve.lstrip("CTL")] = eventmap[int(vals[idx])]
-                            except:
-                                n[eve.lstrip("CTL")] = "OTHER"                    
-                            rm_idx += [idx]
-                        
-                        elif "FIXED_CTR" in eve: 
-                            schema_mod += [eventmap[eve]]
-
-                        elif "CTR" in eve:
-                            schema_mod += [n[eve.lstrip("CTR")]]
-                        else:
-                            schema_mod += [eve]
-                    
-                    for idx in sorted(rm_idx, reverse = True): del vals[idx]
-                    vals = dict(zip(schema_mod, vals))
-                elif typ == "proc":                                                                   
-                     proc_name=(line.split()[1]).split('/')[0]                                        
-                     proc_stats += [ { **tags2, "proc": proc_name } ]                                 
-                     continue                                                                         
-                else:
-                    # Software counters are not programmable and do not require mapping
-                    vals = dict(zip(schema[typ], vals))
-
-                rec  =  { **tags, "type" : typ, "dev" : dev }   
-
-                for eve, val in vals.items():
-                    eve = eve.split(',')
-                    width = 64
-                    mult = 1
-                    unit = "#"
-                    
-                    for ele in eve[1:]:                    
-                        if "W=" in ele: width = int(ele.lstrip("W="))
-                        if "U=" in ele: 
-                            ele = ele.lstrip("U=")
-                            try:    mult = float(''.join(filter(str.isdigit, ele)))
-                            except: pass
-                            try:    unit = ''.join(filter(str.isalpha, ele))
-                            except: pass
-                    
-                    stats += [ { **rec, "event" : eve[0], "value" : float(val), "wid" : width, "mult" : mult, "unit" : unit } ]
-                
-            elif i >= start_idx and line[0].isdigit():
+            if not line[0]: continue    
+            if line[0].isdigit():
                 t, jid, host = line.split()
-                if jid == '-':
-                    timestamp_job_missing = True
-                    jobs_missing_found += 1
-                    continue
-                timestamp_job_missing = False
-                timestamps_found += 1
-                insert = True
-                tags = { "time" : float(t), "host" : host, "jid" : jid }
-                tags2 = {"jid": jid, "host" : host}           
-            elif line[0] == '!':
-                label, events = line.split(maxsplit = 1)
-                labels_found += 1
-                typ, events = label[1:], events.split()
-                schema[typ] = events 
-            else:
-                unprocessable_lines += 1
+                if jid == '-': continue                                     
+    
+                if (float(t) not in times) and (int(float(t)) not in itimes):
+                    start_idx = last_idx
+                    need_archival=False
+                    break
+                last_idx = i
+    
+        if start_idx == -1: 
+            print("No missing timestamps found for %s" % stats_file)
+            return((stats_file, True))
+    
+        # instrument the code to see what is actually proccessing in each file
+        timestamps_found = 0
+        counters_found = 0
+        labels_found = 0
+        unprocessable_lines = 0
+        jobs_missing_found = 0
+    
+        schema = {}
+        stats  = []
+        proc_stats = [] #process stats
+        insert = False
+        timestamp_job_missing = False
+        start = time.time()
+        try:
+            for i, line in enumerate(lines): 
+                if not line[0]: continue
+    
+                if line[0].isalpha() and insert:
+                    # Skip any data from a time stamp that doesn't have a jid associated
+                    if timestamp_job_missing:
+                        continue
+                    typ, dev, vals = line.split(maxsplit = 2)        
+                    counters_found += 1
+                    vals = vals.split()
+                    if typ in exclude_types: continue
+    
+                    # Mapping hardware counters to events 
+                    if typ == "amd64_pmc" or typ == "amd64_df" or typ == "intel_8pmc3" or typ == "intel_skx_imc":
+                        if typ == "amd64_pmc": eventmap = amd64_pmc_eventmap
+                        if typ == "amd64_df": eventmap = amd64_df_eventmap
+                        if typ == "intel_8pmc3": eventmap = intel_8pmc3_eventmap
+                        if typ == "intel_skx_imc": eventmap = intel_skx_imc_eventmap
+                        n = {}
+                        rm_idx = []
+                        schema_mod = []*len(schema[typ])
+    
+                        for idx, eve in enumerate(schema[typ]):
+                    
+                            eve = eve.split(',')[0]
+                            if "CTL" in eve:
+                                try:
+                                    n[eve.lstrip("CTL")] = eventmap[int(vals[idx])]
+                                except:
+                                    n[eve.lstrip("CTL")] = "OTHER"                    
+                                rm_idx += [idx]
+                            
+                            elif "FIXED_CTR" in eve: 
+                                schema_mod += [eventmap[eve]]
+    
+                            elif "CTR" in eve:
+                                schema_mod += [n[eve.lstrip("CTR")]]
+                            else:
+                                schema_mod += [eve]
+                        
+                        for idx in sorted(rm_idx, reverse = True): del vals[idx]
+                        vals = dict(zip(schema_mod, vals))
+                    elif typ == "proc":                                                                   
+                         proc_name=(line.split()[1]).split('/')[0]                                        
+                         proc_stats += [ { **tags2, "proc": proc_name } ]                                 
+                         continue                                                                         
+                    else:
+                        # Software counters are not programmable and do not require mapping
+                        vals = dict(zip(schema[typ], vals))
+    
+                    rec  =  { **tags, "type" : typ, "dev" : dev }   
+    
+                    for eve, val in vals.items():
+                        eve = eve.split(',')
+                        width = 64
+                        mult = 1
+                        unit = "#"
+                        
+                        for ele in eve[1:]:                    
+                            if "W=" in ele: width = int(ele.lstrip("W="))
+                            if "U=" in ele: 
+                                ele = ele.lstrip("U=")
+                                try:    mult = float(''.join(filter(str.isdigit, ele)))
+                                except: pass
+                                try:    unit = ''.join(filter(str.isalpha, ele))
+                                except: pass
+                        
+                        stats += [ { **rec, "event" : eve[0], "value" : float(val), "wid" : width, "mult" : mult, "unit" : unit } ]
+                    
+                elif i >= start_idx and line[0].isdigit():
+                    t, jid, host = line.split()
+                    if jid == '-':
+                        timestamp_job_missing = True
+                        jobs_missing_found += 1
+                        continue
+                    timestamp_job_missing = False
+                    timestamps_found += 1
+                    insert = True
+                    tags = { "time" : float(t), "host" : host, "jid" : jid }
+                    tags2 = {"jid": jid, "host" : host}           
+                elif line[0] == '!':
+                    label, events = line.split(maxsplit = 1)
+                    labels_found += 1
+                    typ, events = label[1:], events.split()
+                    schema[typ] = events 
+                else:
+                    unprocessable_lines += 1
+            
+        except Exception as e:
+            print("error: process data failed: ", str(e)) 
+            print("Possibly corrupt file: %s" % stats_file)
+            return((stats_file, False))
+    
+        unique_entries = set(tuple(d.items()) for d in proc_stats)                                        
+    
+        # Convert set of tuples back to a list of dictionaries                                            
+        proc_stats = [dict(entry) for entry in unique_entries]                                            
+        proc_stats = DataFrame.from_records(proc_stats)                                                   
+    
+        stats = DataFrame.from_records(stats)
+    
+        if DEBUG:
+            print("File Stats for %s:\n %s labels found, %s timestamps found,  %s counters found, %s unprocessable lines, %s timestamps missing jids" % (stats_file, labels_found, timestamps_found, counters_found, unprocessable_lines, jobs_missing_found))
+    
+        if stats.empty and proc_stats.empty: 
+            if DEBUG:
+                print("Unable to process stats file %s" % stats_file)
+            return((stats_file, False))
+    
+        # Always drop the first timestamp. For new file this is just first timestamp (at random rotate time). 
+        # For update from existing file this is timestamp already in database.
         
-    except Exception as e:
-        print("error: process data failed: ", str(e)) 
-        print("Possibly corrupt file: %s" % stats_file)
-        return((stats_file, False))
-
-    unique_entries = set(tuple(d.items()) for d in proc_stats)                                        
-
-    # Convert set of tuples back to a list of dictionaries                                            
-    proc_stats = [dict(entry) for entry in unique_entries]                                            
-    proc_stats = DataFrame.from_records(proc_stats)                                                   
-
-    stats = DataFrame.from_records(stats)
-
-    if DEBUG:
-        print("File Stats for %s:\n %s labels found, %s timestamps found,  %s counters found, %s unprocessable lines, %s timestamps missing jids" % (stats_file, labels_found, timestamps_found, counters_found, unprocessable_lines, jobs_missing_found))
-
-    if stats.empty and proc_stats.empty: 
-        if DEBUG:
-            print("Unable to process stats file %s" % stats_file)
-        return((stats_file, False))
-
-    # Always drop the first timestamp. For new file this is just first timestamp (at random rotate time). 
-    # For update from existing file this is timestamp already in database.
+        # compute difference between time adjacent stats. if new file first na time diff is backfilled by second time diff
+        stats["delta"] = (stats.groupby(["host", "type", "dev", "event"])["value"].diff())
     
-    # compute difference between time adjacent stats. if new file first na time diff is backfilled by second time diff
-    stats["delta"] = (stats.groupby(["host", "type", "dev", "event"])["value"].diff())
-
-    # correct stats for rollover and units (must be done before aggregation over devices)
-    stats["delta"].mask(stats["delta"] < 0, 2**stats["wid"] + stats["delta"], inplace = True)
-    stats["delta"] = stats["delta"] * stats["mult"]
-    del stats["wid"], stats["mult"]
-
-    # aggregate over devices
-    stats = stats.groupby(["host", "jid", "type", "event", "unit", "time"]).sum().reset_index()            
-    stats = stats.sort_values(by=["host", "type", "event", "time"])
+        # correct stats for rollover and units (must be done before aggregation over devices)
+        stats["delta"].mask(stats["delta"] < 0, 2**stats["wid"] + stats["delta"], inplace = True)
+        stats["delta"] = stats["delta"] * stats["mult"]
+        del stats["wid"], stats["mult"]
     
-    # compute average rate of change. 
-    deltat = stats.groupby(["host", "type", "event"])["time"].diff()
-    stats["arc"] = stats["delta"]/deltat
-    stats["time"] = to_datetime(stats["time"], unit = 's').dt.tz_localize('UTC').dt.tz_convert('US/Central')
+        # aggregate over devices
+        stats = stats.groupby(["host", "jid", "type", "event", "unit", "time"]).sum().reset_index()            
+        stats = stats.sort_values(by=["host", "type", "event", "time"])
+        
+        # compute average rate of change. 
+        deltat = stats.groupby(["host", "type", "event"])["time"].diff()
+        stats["arc"] = stats["delta"]/deltat
+        stats["time"] = to_datetime(stats["time"], unit = 's').dt.tz_localize('UTC').dt.tz_convert('US/Central')
+        
+        # drop rows from first timestamp
+        stats=stats.dropna()  #junjie DEBUG
+        print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - start))
     
-    # drop rows from first timestamp
-    stats=stats.dropna()  #junjie DEBUG
-    print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - start))
-
-    # bulk insertion using pgcopy
-    sqltime = time.time()
-
-
-    lock.acquire()
-    mgr2 = CopyManager(conn, 'proc_data', proc_stats.columns)
-    try:
-        mgr2.copy(proc_stats.values.tolist())
-    except Exception as e:
-        if DEBUG:
-            print("error in mrg2.copy: %s\nFile %s" %  (e, stats_file))
-        conn.rollback()
-        lock.release()
-        copy_data_to_pgsql_individually(conn, proc_stats, 'proc_data')
-    else: 
-        conn.commit()
-        lock.release()
-
-
-
-    lock.acquire()
-    mgr = CopyManager(conn, 'host_data', stats.columns)
-    try:
-        mgr.copy(stats.values.tolist())
-    except Exception as e:
-        if DEBUG:
-            print("error in mrg.copy: " , str(e)) 
-        conn.rollback()
-        lock.release()
-        need_archival = copy_data_to_pgsql_individually(conn, stats, 'host_data')
-    else:
-        conn.commit()
-        lock.release()
-
+        # bulk insertion using pgcopy
+        sqltime = time.time()
+    
+    
+        lock.acquire()
+        mgr2 = CopyManager(conn, 'proc_data', proc_stats.columns)
+        try:
+            mgr2.copy(proc_stats.values.tolist())
+        except Exception as e:
+            if DEBUG:
+                print("error in mrg2.copy: %s\nFile %s" %  (e, stats_file))
+            conn.rollback()
+            lock.release()
+            copy_data_to_pgsql_individually(conn, proc_stats, 'proc_data')
+        else: 
+            conn.commit()
+            lock.release()
+    
+    
+    
+        lock.acquire()
+        mgr = CopyManager(conn, 'host_data', stats.columns)
+        try:
+            mgr.copy(stats.values.tolist())
+        except Exception as e:
+            if DEBUG:
+                print("error in mrg.copy: " , str(e)) 
+            conn.rollback()
+            lock.release()
+            need_archival = copy_data_to_pgsql_individually(conn, stats, 'host_data')
+        else:
+            conn.commit()
+            lock.release()
+    
     #print("sql insert time for {0} {1:.1f}s".format(stats_file, time.time() - sqltime))
 
-    conn.close()
     need_archival = True
     if DEBUG:
         print("File successfully added to DB")
@@ -391,22 +391,23 @@ def archive_stats_files(archive_info):
     print(subprocess.check_output(['/usr/bin/pigz', '-f', '-8', '-v', '-p', str(thread_count*2), archive_tar_fname]), flush=True)
 
 def database_startup():
-    conn = psycopg2.connect(CONNECTION)
-    if DEBUG:
-        print("Postgresql server version: " + str(conn.server_version))
-
-    with conn.cursor() as cur:
-
-        cur.execute("SELECT pg_size_pretty(pg_database_size('{0}'));".format(cfg.get_db_name()))
-        for x in cur.fetchall():
-            print("Database Size:", x[0])
+    with psycopg2.connect(CONNECTION) as conn:
         if DEBUG:
-            cur.execute("SELECT chunk_name,before_compression_total_bytes/(1024*1024*1024),after_compression_total_bytes/(1024*1024*1024) FROM chunk_compression_stats('host_data');")
+            print("Postgresql server version: " + str(conn.server_version))
+
+        with conn.cursor() as cur:
+
+            cur.execute("SELECT pg_size_pretty(pg_database_size('{0}'));".format(cfg.get_db_name()))
             for x in cur.fetchall():
-                try: print("{0} Size: {1:8.1f} {2:8.1f}".format(*x))
-                except: pass
-        else:
-            print("Reading Chunk Data")
+                print("Database Size:", x[0])
+            if DEBUG:
+                cur.execute("SELECT chunk_name,before_compression_total_bytes/(1024*1024*1024),after_compression_total_bytes/(1024*1024*1024) FROM chunk_compression_stats('host_data');")
+                for x in cur.fetchall():
+                    try: print("{0} Size: {1:8.1f} {2:8.1f}".format(*x))
+                    except: pass
+            else:
+                print("Reading Chunk Data")
+
 
 
 if __name__ == '__main__':
@@ -468,82 +469,83 @@ if __name__ == '__main__':
         stats_files.sort(key = lambda x:x.split('/')[-1])
         print("Number of host stats files to process = ", len(stats_files))
 
-        archive_pool = multiprocessing.get_context('spawn').Pool(processes = archive_thread_count)
-        archive_job = None
-        # Process and archive chunk_size files before continuing to process more
-        for i in range(int(len(stats_files)/chunk_size) + 1):
-            j = i + 1
-            if DEBUG:
-                print("Begining Chunk(%s) #%s Processing" % (chunk_size, i))
-
-            ar_file_mapping = {}
-            files_to_be_archived = []
-
-            try:
-               stats_files[j*chunk_size]
-               stats_files_chunk = stats_files[i*chunk_size:j*chunk_size:]
-            except IndexError:
-                stats_files_chunk = stats_files[i*chunk_size:]
-
-            print("%s files per chunk" % chunk_size)
-
-            with multiprocessing.get_context('spawn').Pool(processes = thread_count) as pool:
-                manager = multiprocessing.Manager()
-                manager_lock = manager.Lock()
-                add_stats_file = partial(add_stats_file_to_db, manager_lock)
-                k = 0
-                for stats_fname, need_archival in pool.imap_unordered(add_stats_file, stats_files_chunk):
-                    k += 1
-                    if should_archive and need_archival: files_to_be_archived.append(stats_fname)
-                    print("chunk %s: completed file %s out of %s\n" % (i, k, chunk_size), flush=True)
-
-            print("loading time", time.time() - start)
-         
-            for stats_fname in files_to_be_archived:
-               stats_start = open(stats_fname, 'r').readlines(8192) # grab first 8k bytes
-               archive_fname = ''
-               for line in stats_start:
-                   if line[0].isdigit():
-                       t, jid, host = line.split()
-                       file_date = datetime.fromtimestamp(float(t))
-                       archive_fname =  os.path.join(tgz_archive_dir, file_date.strftime("%Y-%m-%d.tar.gz"))
-                       break
-
-               if file_date.date == datetime.today().date:
-                   continue
-
-               if not archive_fname:
-                   print("Unable to find first timestamp in %s, skipping archiving" % stats_fname)
-                   continue
-               if archive_fname not in ar_file_mapping: ar_file_mapping[archive_fname] = []
-               ar_file_mapping[archive_fname].append(stats_fname)
-
-            # skip first iteration, on first there will be no archive_job
-            if i:
+        with multiprocessing.get_context('spawn').Pool(processes = archive_thread_count) as archive_pool:
+            archive_job = None
+            # Process and archive chunk_size files before continuing to process more
+            for i in range(int(len(stats_files)/chunk_size) + 1):
+                function_time = time.time()
+                j = i + 1
                 if DEBUG:
-                    print("Checking/waiting for background archival proccesses")
-
-                # Wait until last archive_job is complete before starting another one
-                for stats_files_archived in archive_job.get():
-                    print("[{0:.1f}%] completed".format(100*stats_files.index(stats_fname)/len(stats_files)), end = "\r", flush=True)
-
+                    print("Begining Chunk(%s) #%s Processing" % (chunk_size, i))
+    
+                ar_file_mapping = {}
+                files_to_be_archived = []
+    
+                try:
+                   stats_files[j*chunk_size]
+                   stats_files_chunk = stats_files[i*chunk_size:j*chunk_size:]
+                except IndexError:
+                    stats_files_chunk = stats_files[i*chunk_size:]
+    
+                print("%s files per chunk" % chunk_size)
+    
+                with multiprocessing.get_context('spawn').Pool(processes = thread_count) as pool:
+                    manager = multiprocessing.Manager()
+                    manager_lock = manager.Lock()
+                    add_stats_file = partial(add_stats_file_to_db, manager_lock)
+                    k = 0
+                    for stats_fname, need_archival in pool.imap_unordered(add_stats_file, stats_files_chunk):
+                        k += 1
+                        if should_archive and need_archival: files_to_be_archived.append(stats_fname)
+                        print("chunk %s: completed file %s out of %s\n" % (i, k, chunk_size), flush=True)
+    
+                print("loading time", time.time() - start)
+             
+                for stats_fname in files_to_be_archived:
+                   stats_start = open(stats_fname, 'r').readlines(8192) # grab first 8k bytes
+                   archive_fname = ''
+                   for line in stats_start:
+                       if line[0].isdigit():
+                           t, jid, host = line.split()
+                           file_date = datetime.fromtimestamp(float(t))
+                           archive_fname =  os.path.join(tgz_archive_dir, file_date.strftime("%Y-%m-%d.tar.gz"))
+                           break
+    
+                   if file_date.date == datetime.today().date:
+                       continue
+    
+                   if not archive_fname:
+                       print("Unable to find first timestamp in %s, skipping archiving" % stats_fname)
+                       continue
+                   if archive_fname not in ar_file_mapping: ar_file_mapping[archive_fname] = []
+                   ar_file_mapping[archive_fname].append(stats_fname)
+    
+                # skip first iteration, on first there will be no archive_job
+                if i:
+                    if DEBUG:
+                        print("Checking/waiting for background archival proccesses")
+    
+                    # Wait until last archive_job is complete before starting another one
+                    for stats_files_archived in archive_job.get():
+                        print("[{0:.1f}%] completed".format(100*stats_files.index(stats_fname)/len(stats_files)), end = "\r", flush=True)
+    
+                if DEBUG:
+                    print("files to be archived: %s" % ar_file_mapping)
+                
+                archive_job = archive_pool.map_async(archive_stats_files, list(ar_file_mapping.items()))
+    
+                print("Archival running in the background")
+    
+            archive_job.get()
+    
+    
+    
             if DEBUG:
-                print("files to be archived: %s" % ar_file_mapping)
-            
-            archive_job = archive_pool.map_async(archive_stats_files, list(ar_file_mapping.items()))
-
-            print("Archival running in the background")
-
-        archive_job.get()
-
-
-
-        if DEBUG:
-            print("sync_timedb sleeping")
-
-        time.sleep(900)
-
-        if DEBUG:
-            print("sync_timedb finished")
+                print("sync_timedb sleeping")
+    
+            time.sleep(900)
+    
+            if DEBUG:
+                print("sync_timedb finished")
            
 
