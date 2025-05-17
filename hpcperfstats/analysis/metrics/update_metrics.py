@@ -14,6 +14,8 @@ from hpcperfstats.analysis.metrics import metrics
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.progress import progress
 
+thread_count = 20
+
 def update_metrics(date, rerun = False):
 
     min_time = 300
@@ -55,7 +57,7 @@ if __name__ == "__main__":
         date += timedelta(days=1)
 
     print(all_dates)
-    with multiprocessing.Pool(processes=20) as pool:
+    with multiprocessing.Pool(processes=thread_count) as pool:
         for result in pool.imap_unordered(update_metrics, all_dates):
             print(result)
 
