@@ -15,22 +15,21 @@ from hpcperfstats.analysis.gen.utils import read_sql
 
 import hpcperfstats.conf_parser as cfg
 from django.conf import settings
+
 settings.configure()
 
-def sync_acct(acct_file, date_str):
-    print(date_str)
-    conn = psycopg2.connect(CONNECTION)
-    edf = read_sql("select jid from job_data where date(end_time) = '{0}' ".format(date_str), conn)
-    print("Total number of existing entries:", edf.shape[0])
+CONNECTION = cfg.get_db_connection_string()
 
-# Junjie: ensure job name is treated as str.
+def sync_acct(acct_file, jobs_in_db):
+
+    # Junjie: ensure job name is treated as str.
     data_types = {8: str}
 
     columns_to_read = ['JobID', 'User', 'Account','Start', 'End', 'Submit', 'Partition',
                        'Timelimit', 'JobName', 'State', 'NNodes', 'ReqCPUS', 'NodeList']
     df = read_csv(acct_file, sep='|')
-    # cycle through collumns so we can remove those we don't want to import.
 
+    # cycle through collumns so we can remove those we don't want to import.
     for c in df:
         if c in columns_to_read:
             continue
@@ -40,7 +39,8 @@ def sync_acct(acct_file, date_str):
                          'End' : 'end_time', 'Submit' : 'submit_time', 'Partition' : 'queue',
                          'Timelimit' : 'timelimit', 'JobName' : 'jobname', 'State' : 'state',
                          'NNodes' : 'nhosts', 'ReqCPUS' : 'ncores', 'NodeList' : 'host_list'}, inplace = True)
-
+                         
+    df = df[~df["jid"].isin(jobs_in_db["jid"])]
     df["jid"] = df["jid"].apply(str)
 
     restricted_queue_keywords = cfg.get_restricted_queue_keywords()
@@ -65,7 +65,7 @@ def sync_acct(acct_file, date_str):
     if len(restricted_job_ids) > 0:
         print("The following jobs are restricted and will be skipped: "+ str(restricted_job_ids))
 
-# Junjie: in case newer slurm gives "None" time for unstarted jobs.  Older slurm prints start_time=end_time=cancelled_time.
+    # Junjie: in case newer slurm gives "None" time for unstarted jobs.  Older slurm prints start_time=end_time=cancelled_time.
     df['start_time'].replace('^None$', pd.NA, inplace=True, regex=True)
     df['start_time'].replace('^Unknown$', pd.NA, inplace=True, regex=True)
     df['start_time'].fillna(df['end_time'], inplace=True)
@@ -81,19 +81,44 @@ def sync_acct(acct_file, date_str):
     df["host_list"] = df["host_list"].apply(hostlist.expand_hostlist)
     df["node_hrs"] = df["nhosts"]*df["runtime"]/3600.
 
-    df = df[~df["jid"].isin(edf["jid"])]
+
+
     print("Total number of new entries:", df.shape[0])
 
 
-    mgr = CopyManager(conn, 'job_data', df.columns)
-    mgr.copy(df.values.tolist())
-    conn.commit()
-    conn.close()
+    with psycopg2.connect(CONNECTION) as conn:
+        mgr = CopyManager(conn, 'job_data', df.columns)
+        try:
+            mgr.copy(df.values.tolist())
+        except Exception as e:
+            print("error in mrg.copy: " , str(e))
+            conn.rollback()
+            copy_data_to_pgsql_individually(conn, df, 'job_data')
+        else:
+            conn.commit()
+
+
+def copy_data_to_pgsql_individually(conn, data, table):
+    with conn.cursor() as curs:
+        for row in data.values.tolist():
+
+            sql_columns = ','.join(['"%s"' % value for value in data.columns.values])
+
+            sql_insert = 'INSERT INTO "%s" (%s) VALUES ' % (table, sql_columns)
+            sql_insert = sql_insert + "(" + ','.join(["%s" for i in row]) + ");"
+
+
+            try:
+                curs.execute(sql_insert, row)
+            except psycopg2.errors.UniqueViolation as uv:
+                conn.rollback()
+            except Exception as e:
+                print("error in single insert: ", e.pgcode, " ", str(e), "while executing", str(sql_insert))
+                conn.rollback()
+            else:
+                conn.commit()
 
 if __name__ == "__main__":
-        CONNECTION = cfg.get_db_connection_string()
-        conn = psycopg2.connect(CONNECTION)
-
 #    while True:
 
         #################################################################
@@ -114,12 +139,18 @@ if __name__ == "__main__":
         directory = cfg.get_accounting_path()
 
 
+        searchdate = startdate - timedelta(days = 2)
+        with psycopg2.connect(CONNECTION) as conn:
+            jobs_in_db = read_sql("select jid from job_data where date(end_time) >=  '{0}' ".format(searchdate.date()), conn)
+        
+        print("Jobs found in DB in this date range: %s" % jobs_in_db.shape[0])
+
         while startdate <= enddate:
             for entry in os.scandir(directory):
                 if not entry.is_file(): continue
                 if entry.name.startswith(str(startdate.date())):
                     print(entry.path)
-                    sync_acct(entry.path, str(startdate.date()))
+                    sync_acct(entry.path, jobs_in_db)
             startdate += timedelta(days=1)
         print("loading time", time.time() - start)
 
