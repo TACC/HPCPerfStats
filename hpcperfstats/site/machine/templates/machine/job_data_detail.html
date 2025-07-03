@@ -7,7 +7,7 @@
   <table class="table table-condensed table-bordered">
     <thead>
       <th>Job ID</th><th>user</th><th>project</th><th>start time</th><th>end time</th>
-      <th>run time (s)</th><th>requested time (m)</th><th>queue</th><th>name</th><th>status</th><th>ncores</th><th>nnodes</th>
+      <th>run time (s)</th><th>requested time (s)</th><th>queue</th><th>name</th><th>status</th><th>ncores</th><th>nnodes</th>
     </thead>
     <tbody>
       <tr bgcolor="{{job_data.color}}"><td><a href="{% url 'machine:job_data'  job_data.jid %}">{{ job_data.jid }}</a></td>
