@@ -70,9 +70,9 @@ def sync_acct(acct_file, jobs_in_db):
     df['start_time'].replace('^Unknown$', pd.NA, inplace=True, regex=True)
     df['start_time'].fillna(df['end_time'], inplace=True)
 
-    df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize('US/Central')
-    df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize('US/Central')
-    df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize('US/Central')
+    df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize('US/Central', ambiguous=True)
+    df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize('US/Central', ambiguous=True)
+    df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize('US/Central', ambiguous=True)
 
     df["runtime"] = to_timedelta(df["end_time"] - df["start_time"]).dt.total_seconds()
     df["timelimit"] = df["timelimit"].str.replace('-', ' days ')
