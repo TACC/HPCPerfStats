@@ -1,27 +1,12 @@
-hpcperfstats Documentation               {#mainpage}
-========================
+HPCPerfStats
+-----------------
 (The package formerly known as TACC Stats)
-
-[![DOI](https://zenodo.org/badge/21212519.svg)](https://zenodo.org/badge/latestdoi/21212519)
-
-Developers and Maintainers
--------
-Amit Ruhela  (<mailto:aruhela@tacc.utexas.edu>) <br />
-Stephen Lien Harrell  (<mailto:sharrell@tacc.utexas.edu>) <br />
-John McCalpin  (<mailto:mccalpin@tacc.utexas.edu>) <br />
-Sangamithra Goutham (<mailto:sgoutham@tacc.utexas.edu>) <br />
-
-Developer Emeritus
--------
-John Hammond <br />
-R. Todd Evans  <br />
-Bill Barth <br />
-Albert Lu <br />
-Junjie Li <br />
 
 Description
 -----------------
 The hpcperfstats package provides the tools to monitor resource usage of HPC systems at multiple levels of resolution.
+
+[Collected Data Definitions](docs/attributes-definition.md)
 
 We are currently in the proccess of updating our documentation. Please stand by.
 
@@ -252,6 +237,32 @@ or for a short version
 
     jobid.get_schema('intel_snb').desc
 --->
+
+Publications
+-------
+[Comprehensive Resource Use Monitoring for HPC Systems with TACC Stats](http://doi.org/10.1109/HUST.2014.7)
+
+[Understanding application and system performance through system-wide monitoring](http://doi.org/10.1109/IPDPSW.2016.145)
+
+[![DOI](https://zenodo.org/badge/21212519.svg)](https://zenodo.org/badge/latestdoi/21212519)
+
+
+Developers and Maintainers
+-------
+Amit Ruhela  (<mailto:aruhela@tacc.utexas.edu>) <br />
+Stephen Lien Harrell  (<mailto:sharrell@tacc.utexas.edu>) <br />
+Sangamithra Goutham (<mailto:sgoutham@tacc.utexas.edu>) <br />
+
+Developer Emeritus
+-------
+John Hammond <br />
+R. Todd Evans  <br />
+Bill Barth <br />
+Albert Lu <br />
+Junjie Li <br />
+John McCalpin <br />
+
+
 ----------------------------------------------------------------------------
 
 ## Copyright
