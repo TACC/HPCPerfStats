@@ -252,6 +252,7 @@ Developers and Maintainers
 Amit Ruhela  (<mailto:aruhela@tacc.utexas.edu>) <br />
 Stephen Lien Harrell  (<mailto:sharrell@tacc.utexas.edu>) <br />
 Sangamithra Goutham (<mailto:sgoutham@tacc.utexas.edu>) <br />
+Chris Ramos (<mailto:cramos@tacc.utexas.edu>) <br />
 
 Developer Emeritus
 -------
