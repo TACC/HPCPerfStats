@@ -22,6 +22,11 @@ ADMINS = (
 
 MANAGERS = ADMINS
 
+# Set cookies properly
+SESSION_COOKIE_HTTPONLY = True
+
+
+
 # Give a name that is unique for the computing platform
 DATABASES = {
     'default': {
