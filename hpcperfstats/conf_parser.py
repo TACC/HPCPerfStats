@@ -19,7 +19,8 @@ def get_db_name():
 
 def get_debug():
     debug = cfg.get('DEFAULT', 'debug')
-    return debug
+    # cast this as a bool instead of a string
+    return debug.lower() in ("yes", "true", "1")
 
 def get_archive_dir_path():
     archive_dir_path = cfg.get('PORTAL', 'archive_dir')
