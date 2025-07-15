@@ -1,7 +1,7 @@
 # pull official base image
 FROM python:3.6.15
 
-RUN useradd -ms /bin/bash hpcperfstats
+RUN useradd -u 901860  -ms /bin/bash hpcperfstats 
 WORKDIR /home/hpcperfstats
 
 
