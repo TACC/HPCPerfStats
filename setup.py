@@ -52,7 +52,7 @@ setup(
                         'bokeh', 'django', 'python-hostlist', 'PyMySQL',
                         'mysql-connector-python', 'pika', 'configparser',
                         'mysqlclient', 'gunicorn', 'authlib', 'requests',
-                        'requests-toolbelt'],
+                        'requests-toolbelt', 'PyMySQL'],
     platforms = 'any',
     classifiers = [
         'Development Status :: 5 - Production',

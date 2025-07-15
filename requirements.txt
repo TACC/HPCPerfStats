@@ -1,10 +1,6 @@
 bokeh==2.3.3
-Django==3.1.14
-pandas==1.1.5
+Django==3.2.25
 PyMySQL==1.0.2
 mysqlclient==2.1.1
-numpy==1.19.5
-pgcopy==1.5.0
-pika==1.2.0
 psycopg2==2.9.2
 psycopg2-binary==2.9.2
