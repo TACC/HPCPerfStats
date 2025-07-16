@@ -1,5 +1,4 @@
-from django.conf.urls import include
-from django.urls import path
+from django.urls import include, path
 from django.views.static import serve
 from hpcperfstats.site.hpcperfstats_site import settings
 from django.contrib import admin

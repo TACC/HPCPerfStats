@@ -1,4 +1,3 @@
-from django.conf.urls import url
 from django.urls import path
 from django.views.generic import DetailView, ListView
 from hpcperfstats.site.machine.models import job_data
