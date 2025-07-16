@@ -7,12 +7,12 @@ WORKDIR /home/hpcperfstats
 
 # run as root
 RUN apt-get update -y 
-RUN apt-get install netcat-openbsd supervisor rsync syslog-ng vim net-tools lsof pigz -y
-RUN apt-get update -y 
 RUN apt-get upgrade -y
+RUN apt-get install netcat-openbsd supervisor rsync syslog-ng vim net-tools lsof pigz -y
 
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
+ENV PIP_ROOT_USER_ACTION ignore
 
 # install dependencies
 RUN pip install --upgrade pip
@@ -30,4 +30,5 @@ COPY --chown=hpcperfstats:hpcperfstats . .
 RUN pip install .
 
 # Keep the VM updated everytime it runs, even when previous steps are cached
+RUN apt-get update -y 
 RUN apt-get upgrade -y
