@@ -34,7 +34,7 @@ class SummaryPlot():
     if math.isnan(y_range_end):
         y_range_end = 0
 
-    plot = figure(plot_width=400, plot_height=150, x_axis_type = "datetime",
+    plot = figure(width=400, height=150, x_axis_type = "datetime",
                   y_range = Range1d(-0.1, y_range_end), y_axis_label = label)
 
     for h in self.host_list:

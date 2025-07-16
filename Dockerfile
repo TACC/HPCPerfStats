@@ -1,5 +1,5 @@
 # pull official base image
-FROM python:3.6.15
+FROM python:3.12
 
 RUN useradd -u 901860  -ms /bin/bash hpcperfstats 
 WORKDIR /home/hpcperfstats
@@ -7,7 +7,7 @@ WORKDIR /home/hpcperfstats
 
 # run as root
 RUN apt-get update -y 
-RUN apt-get install netcat supervisor rsync syslog-ng vim net-tools lsof pigz -y
+RUN apt-get install netcat-openbsd supervisor rsync syslog-ng vim net-tools lsof pigz -y
 RUN apt-get update -y 
 RUN apt-get upgrade -y
 

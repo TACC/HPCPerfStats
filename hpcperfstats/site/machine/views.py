@@ -206,7 +206,7 @@ def job_hist(df, metric, label):
 
     hist, edges = histogram(values, bins = linspace(0, max(values), max(3, int(5*log(len(values))))))
 
-    plot = figure(title = metric, toolbar_location = None, plot_height = 400, plot_width = 600, 
+    plot = figure(title = metric, toolbar_location = None, height = 400, width = 600, 
                   y_range = (1, max(hist)), tools = TOOLS) #  y_axis_type = "log",
     plot.xaxis.axis_label = label
     plot.yaxis.axis_label = "# jobs"
