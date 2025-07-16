@@ -28,3 +28,6 @@ RUN chown hpcperfstats:hpcperfstats /home/hpcperfstats/.ssh/
 # Copy and install the hpcperfstats package
 COPY --chown=hpcperfstats:hpcperfstats . .
 RUN pip install .
+
+# Keep the VM updated everytime it runs, even when previous steps are cached
+RUN apt-get upgrade -y
