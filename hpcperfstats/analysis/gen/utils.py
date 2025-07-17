@@ -1,7 +1,14 @@
 import os
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
 import numpy as np
+import sqlalchemy
+
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 from pandas import read_sql as rsql
+
+import hpcperfstats.conf_parser as cfg
 
 class utils():
   def __init__(self, job):
@@ -47,9 +54,10 @@ class utils():
           stats[hostname][devname] = host.stats[typename][devname].astype(float)
     return schema, stats
 
-def read_sql(*args, **kwargs):
-
-    df = rsql(*args, **kwargs)
+def read_sql(sql, conn, **kwargs):
+    # Pandas changed to only accepting sqlalchemy objects, so we will replace the old conn with sqlalchemy
+    sa_conn = sqlalchemy.create_engine(cfg.get_db_sqlalchemy_connection_string())
+    df = rsql(sql, sa_conn, **kwargs)
 
     #df = clean_dataframe(df)
     return df

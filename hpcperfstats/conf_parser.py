@@ -13,6 +13,9 @@ def get_db_connection_string():
     connection_string = temp_string.format(cfg.get('PORTAL', 'dbname'))
     return connection_string
 
+def get_db_sqlalchemy_connection_string():
+    return "postgresql+psycopg2://" + cfg.get('PORTAL', 'username') + ":" + cfg.get('PORTAL', 'password') + "@" + cfg.get('PORTAL', 'host') + ":" + cfg.get('PORTAL', 'port') + "/" + cfg.get('PORTAL', 'dbname')
+
 def get_db_name():
     db_name = cfg.get('PORTAL', 'dbname')
     return db_name
