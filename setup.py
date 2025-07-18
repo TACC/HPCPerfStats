@@ -48,7 +48,7 @@ setup(
     package_data = {'hpcperfstats' : ['cfg.py']},
     include_package_data = True,
     scripts = scripts,
-    install_requires = ['numpy', 'psycopg2', 'pgcopy', 'sqlalchemy',
+    install_requires = ['numpy', 'psycopg2', 'pgcopy',
                         'pandas', 'bokeh', 'django', 'python-hostlist', 
                         'pika', 'configparser', 'mysqlclient',
                         'gunicorn', 'authlib', 'requests',
