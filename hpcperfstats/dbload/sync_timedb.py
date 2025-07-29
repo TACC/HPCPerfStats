@@ -68,22 +68,29 @@ exclude_types = ["ib", "ib_sw", "intel_skx_cha", "ps", "sysv_shm", "tmpfs", "vfs
 
 
 # This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
-def add_stats_file_to_db(lock, stats_file):
+def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
+
     hostname, create_time = stats_file.split('/')[-2:]
 
-
-    try:
-        with open(stats_file, 'r') as fd:
-            lines = fd.readlines()
-    except FileNotFoundError:
-        print("Stats file disappeared: %s" % stats_file)
-        return((stats_file, False))
-        
+    if stats_file_contents is not None:
+        lines = stats_file_contents
+    else:
+        try:
+            with open(stats_file, 'r') as fd:
+                lines = fd.readlines()
+        except FileNotFoundError:
+            print("Stats file disappeared: %s" % stats_file)
+            return((stats_file, False))
 
     for l in lines:
-        if l[0].isdigit():
-            t, jid, host = l.split()
-            break
+        if not l:
+            continue
+        try:
+            if l[0].isdigit():
+                t, jid, host = l.split()
+                break
+        except:
+            print("Error on this line: %s" % l)
     else:
         print("initial timestamp not found")
 
@@ -100,7 +107,7 @@ def add_stats_file_to_db(lock, stats_file):
         last_idx  = 0
         need_archival=True
         for i, line in enumerate(lines): 
-            if not line[0]: continue    
+            if not line or not line[0]: continue    
             if line[0].isdigit():
                 t, jid, host = line.split()
                 if jid == '-': continue                                     
@@ -130,7 +137,7 @@ def add_stats_file_to_db(lock, stats_file):
         start = time.time()
         try:
             for i, line in enumerate(lines): 
-                if not line[0]: continue
+                if not line or not line[0]: continue    
     
                 if line[0].isalpha() and insert:
                     # Skip any data from a time stamp that doesn't have a jid associated
