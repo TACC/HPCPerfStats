@@ -1,4 +1,4 @@
-"""The database models of tacc stats"""
+"""The database models of hpcperfstats"""
 
 from django.db import models
 from django.contrib.postgres.fields import ArrayField

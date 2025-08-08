@@ -1,4 +1,4 @@
-"""The database models of tacc stats"""
+"""The database models of xalt"""
 
 from django.db import models
 from django.forms import ModelForm

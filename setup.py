@@ -14,7 +14,7 @@ VERSION = "2.3.5"
 DESCRIPTION = ("A performance monitoring and analysis package for \
 High Performance Computing Platforms")
 LONG_DESCRIPTION = """
-TACC Stats unifies and extends the measurements taken by Linux monitoring utilities such as systat/SAR, iostat, etc.~and resolves measurements by job and hardware device so that individual job/applications can be analyzed separately.  It also provides a set of analysis and reporting tools which analyze TACC Stats resource use data and flags jobs/applications with low resource use efficiency.
+HPCPerfStats unifies and extends the measurements taken by Linux monitoring utilities such as systat/SAR, iostat, etc.~and resolves measurements by job and hardware device so that individual job/applications can be analyzed separately.  It also provides a set of analysis and reporting tools which analyze resource use data and flags jobs/applications with low resource use efficiency.
 """
 
 scripts=[
