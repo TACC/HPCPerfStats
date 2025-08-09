@@ -1,6 +1,7 @@
 # pull official base image
 FROM python:3.12
 
+# Setup Users and Directories
 RUN useradd -u 901860  -ms /bin/bash hpcperfstats 
 WORKDIR /home/hpcperfstats
 
@@ -15,18 +16,19 @@ RUN apt-get update -y
 RUN apt-get upgrade -y
 RUN apt-get install netcat-openbsd supervisor rsync syslog-ng vim net-tools lsof pigz -y
 
-# install dependencies
+# Set python install variables
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 ENV PIP_ROOT_USER_ACTION ignore
 
-RUN pip install --upgrade pip
-
+# install version specific python dependencies
 COPY --chown=hpcperfstats:hpcperfstats ./requirements.txt .
+RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-# Copy and install the hpcperfstats package
+# Copy and install the hpcperfstats package with all it's dependencies
 COPY --chown=hpcperfstats:hpcperfstats . .
+RUN pip install --upgrade pip
 RUN pip install .
 
 # Keep the container updated everytime it is built, even when previous steps are cached
