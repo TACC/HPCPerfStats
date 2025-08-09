@@ -101,3 +101,21 @@ def get_xalt_password():
 def get_xalt_host():
     xalt_host = cfg.get('XALT', 'xalt_host')
     return xalt_host
+
+def get_oauth_client_id():
+    return cfg.get('OAUTH2', 'client_id')
+
+def get_oauth_client_key():
+    return cfg.get('OAUTH2', 'client_key')
+
+def get_oauth_authorize_url():
+    return cfg.get('OAUTH2', 'authorize_url')
+
+def get_oauth_base_url():
+    return cfg.get('OAUTH2', 'oauth_base_url')
+
+def get_staff_email_domain():
+    return cfg.get('DEFAULT', 'staff_email_domain')
+
+
+

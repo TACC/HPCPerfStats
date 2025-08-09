@@ -5,34 +5,26 @@ from django.conf import settings
 import os, json, requests
 import logging
 from requests.auth import HTTPBasicAuth
+import hpcperfstats.conf_parser as cfg
 
 logging.basicConfig()
 logger = logging.getLogger('logger')
 
-client_id = getattr(settings, "TAPIS_CLIENT_ID")
-client_key = getattr(settings, "TAPIS_CLIENT_KEY")
-
-if not client_id or not client_key:
-    with open("/home1/01623/sharrell/.tapis/current", 'r') as fd:
-        data = json.load(fd)
-    client_id = data["result"]["client_id"]
-    client_key = data["result"]["client_key"]
-
-tenant_base_url = "https://tacc.tapis.io/v3"
-
+client_id = cfg.get_oauth_client_id()
+client_key = cfg.get_oauth_client_key()
+tenant_base_url = cfg.get_oauth_base_url()
+staff_email_domain = cfg.get_staff_email_domain()
 
 def login_oauth(request):
     session = request.session
     session['auth_state'] = os.urandom(24).hex()
 
-    redirect_uri = 'https://{}{}'.format(request.get_host(), reverse('agave_oauth_callback'))
+    redirect_uri = 'https://{}{}'.format(request.get_host(), reverse('oauth_callback'))
     if redirect_uri.endswith('/'):
       redirect_uri = redirect_uri[:-1]
 
     authorization_url = (
-        '%s/oauth2/authorize?client_id=%s&redirect_uri=%s&response_type=code&state=%s' %(
-            tenant_base_url,
-            client_id,
+        cfg.get_oauth_authorize_url() %(
             redirect_uri,
             session['auth_state']
         )
@@ -41,7 +33,7 @@ def login_oauth(request):
     return HttpResponseRedirect(authorization_url)
 
 
-def agave_oauth_callback(request):
+def oauth_callback(request):
     state = request.GET.get('state')
 
     if request.session['auth_state'] != state:
@@ -49,7 +41,7 @@ def agave_oauth_callback(request):
 
     if 'code' in request.GET:
         redirect_uri = 'https://{}{}'.format(request.get_host(),
-            reverse('agave_oauth_callback'))
+            reverse('oauth_callback'))
         code = request.GET['code']
         if redirect_uri.endswith('/'):
           redirect_uri = redirect_uri[:-1]
@@ -75,10 +67,11 @@ def agave_oauth_callback(request):
         request.session['refresh_token'] = token_data["result"]["refresh_token"]["refresh_token"]
         request.session['username'] = user_data['result']['username']
         logger.error(request.session['access_token'])
-        # For now we determine whether a user is staff by seeing if hey have an @tacc.utexas.edu email.
+
+
+        # For now we determine whether a user is staff by seeing if hey have a specific email domain set in ini
         request.session['email'] = user_data['result']['email']
-        request.session['is_staff'] = user_data['result']['email'].split('@')[-1] == 'tacc.utexas.edu'
-        #request.session['is_staff'] = False
+        request.session['is_staff'] = user_data['result']['email'].split('@')[-1] == staff_email_domain
         return HttpResponseRedirect("/")
 
 

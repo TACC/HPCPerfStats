@@ -19,15 +19,21 @@ restricted_queue_keywords = ['secure', 'secret']
 # Debug Output in the docker logs
 debug                 = True
 
+# This is used to determine if a user (presumably a staff member) can see all jobs
+staff_email_domain   = lab.hpcisgreat.edu
+
 [OAUTH2]
-# File where oauth secrets are kept - format: {"result": {"client_id": "oauth_client", "client_key": "SECRET KEY"}}
-oauth_secret_file    = 
-access_token_url     =
-access_token_params  =  None
-authorize_url        =
-authorize_params     =  None
-api_base_url         =
-client_kwargs        =  {'scope': 'user:email'}
+# oauth client id
+client_id =
+
+# oauth secret key
+client_key =
+
+# Base OAUTH URL
+oauth_base_url = https://tacc.tapis.io/v3
+
+# URL for authorization
+authorize_url     = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redirect_uri=%%s&response_type=code&state=%%s
 
 
 [RMQ]

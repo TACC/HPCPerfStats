@@ -2,8 +2,6 @@ import os
 import pwd
 import sys
 import traceback
-# Append your local repository path here:
-# sys.path.append("/home/sg99/hpcperfstats")
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import render
 from django.views.generic import DetailView, ListView
@@ -41,10 +39,7 @@ from bokeh.layouts import gridplot
 from bokeh.plotting import figure
 from bokeh.models import HoverTool
 import time
-#try:
-#from hpcperfstats.site.machine.agave_auth import check_for_tokens
-#except:
-#pass
+from hpcperfstats.site.machine.oauth2 import check_for_tokens
 
 import psycopg2
 from pandas import DataFrame, to_timedelta
@@ -224,18 +219,14 @@ class job_dataDetailView(DetailView):
     model = job_data
 
     def get_queryset(self):
-        queryset = super(job_dataDetailView, self).get_queryset()
-        return queryset
-        """
         if "is_staff" in self.request.session and self.request.session["is_staff"]:
             return queryset
         return queryset.filter(user = self.request.session["username"])
-        """
+
     def get(self, request, *args, **kwargs):
-        """
         if not check_for_tokens(self.request):
             return HttpResponseRedirect("/login_prompt")
-        """
+
         return super().get(request, *args, **kwargs)
 
     def get_context_data(self, **kwargs):
@@ -326,10 +317,9 @@ class job_dataDetailView(DetailView):
         return context
 
 def type_detail(request, jid, type_name):
-    """
     if not check_for_tokens(request):
         return HttpResponseRedirect("/login_prompt")
-    """
+
     conj = psycopg2.connect(CONNECTION)
 
     # Get job accounting data
@@ -422,10 +412,8 @@ class host_table:
 
 
 def host_detail(request):
-    """
     if not check_for_tokens(request):
         return HttpResponseRedirect("/login_prompt")
-    """
 
     fields = request.GET.dict()
     print(fields)
@@ -452,10 +440,9 @@ def host_detail(request):
 
 
 def proc_detail(request, pk, proc_name):
-    """
     if not check_for_tokens(request):
         return HttpResponseRedirect("/login_prompt")
-    """
+
     data = get_data(pk)
     
     host_map = {}
