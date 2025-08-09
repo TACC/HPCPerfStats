@@ -331,7 +331,7 @@ def copy_data_to_pgsql_individually(conn, data, table):
                 unique_violations += 1
                 conn.rollback()
             except Exception as e:
-                print("error in single insert: ", e.pgcode, " ", str(e), "while executing", str(sql_insert))
+                print("error in single insert: ", e.pgcode, " ", str(e), "while executing", str(sql_insert) + ", " + str(row))
                 need_archival = False
                 conn.rollback()
             else:
