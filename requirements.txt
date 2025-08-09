@@ -1,4 +1,4 @@
 bokeh==3.7.3
-Django==5.2.4
-psycopg2==2.9.10
+Django~=5.2
+psycopg2~=2
 pandas>=0,<3.0
