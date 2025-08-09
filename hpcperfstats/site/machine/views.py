@@ -219,6 +219,7 @@ class job_dataDetailView(DetailView):
     model = job_data
 
     def get_queryset(self):
+        queryset = super(job_dataDetailView, self).get_queryset()
         if "is_staff" in self.request.session and self.request.session["is_staff"]:
             return queryset
         return queryset.filter(user = self.request.session["username"])
