@@ -33,12 +33,12 @@ def sync_acct(acct_file, jobs_in_db):
     for c in df:
         if c in columns_to_read:
             continue
-        df.drop(columns=c, inplace=True)
+        df = df.drop(columns=c)
 
-    df.rename(columns = {'JobID': 'jid', 'User': 'username', 'Account' : 'account', 'Start' : 'start_time',
+    df = df.rename(columns = {'JobID': 'jid', 'User': 'username', 'Account' : 'account', 'Start' : 'start_time',
                          'End' : 'end_time', 'Submit' : 'submit_time', 'Partition' : 'queue',
                          'Timelimit' : 'timelimit', 'JobName' : 'jobname', 'State' : 'state',
-                         'NNodes' : 'nhosts', 'ReqCPUS' : 'ncores', 'NodeList' : 'host_list'}, inplace = True)
+                         'NNodes' : 'nhosts', 'ReqCPUS' : 'ncores', 'NodeList' : 'host_list'})
                          
     df = df[~df["jid"].isin(jobs_in_db["jid"])]
     df["jid"] = df["jid"].apply(str)
@@ -66,9 +66,9 @@ def sync_acct(acct_file, jobs_in_db):
         print("The following jobs are restricted and will be skipped: "+ str(restricted_job_ids))
 
     # Junjie: in case newer slurm gives "None" time for unstarted jobs.  Older slurm prints start_time=end_time=cancelled_time.
-    df['start_time'].replace('^None$', pd.NA, inplace=True, regex=True)
-    df['start_time'].replace('^Unknown$', pd.NA, inplace=True, regex=True)
-    df['start_time'].fillna(df['end_time'], inplace=True)
+    df = df['start_time'].replace('^None$', pd.NA, regex=True)
+    df = df['start_time'].replace('^Unknown$', pd.NA, regex=True)
+    df = df['start_time'].fillna(df['end_time'])
 
     df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize('US/Central', ambiguous=True)
     df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize('US/Central', ambiguous=True)

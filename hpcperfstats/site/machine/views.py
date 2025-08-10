@@ -355,8 +355,8 @@ def type_detail(request, jid, type_name):
 
     df['dt'] = df['time'].sub(df['time'][0]).astype('timedelta64[s]')
     df1 = df.groupby('dt')[schema].agg(['mean'])
-    df1.set_axis(schema, axis=1, inplace=True)
-    df1.reset_index(inplace=True)
+    df1 = df1.set_axis(schema, axis=1)
+    df1 = df1.reset_index()
 
     stats=[]
 
