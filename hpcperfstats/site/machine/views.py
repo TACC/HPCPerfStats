@@ -67,7 +67,8 @@ def home(request, error = False):
 
     field = {}
     month_dict ={}
-    date_list = DataFrame(job_data.objects.values("end_time"))["end_time"].dt.date.drop_duplicates()
+    jdf = DataFrame(job_data.objects.values("end_time"))
+    date_list = jdf["end_time"].dt.date.drop_duplicates()
     print(date_list)
     
     for date in date_list.sort_values():
