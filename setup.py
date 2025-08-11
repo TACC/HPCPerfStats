@@ -9,7 +9,7 @@ AUTHOR = "Texas Advanced Computing Center"
 EMAIL = "sharrell@tacc.utexas.edu"
 URL = "http://www.tacc.utexas.edu"
 DOWNLOAD_URL = 'https://github.com/TACC/hpcperfstats'
-VERSION = "2.3.5"
+VERSION = "2.4"
 
 DESCRIPTION = ("A performance monitoring and analysis package for \
 High Performance Computing Platforms")
@@ -28,11 +28,6 @@ scripts=[
 
 config = ConfigParser()
 config.read("hpcperfstats.ini")
-
-#with open("hpcperfstats/cfg.py", 'w') as fd:
-#    for s in config.sections():
-#        for key, val in dict(config.items(s)).items():
-#            fd.write(key + " = " + "\"" + val + "\"" + '\n')
 
 setup(
     name = DISTNAME,
@@ -61,7 +56,7 @@ setup(
         'Intended Audience :: Science/Research',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.12',
         'Topic :: Scientific/Engineering',
     ]
 )
