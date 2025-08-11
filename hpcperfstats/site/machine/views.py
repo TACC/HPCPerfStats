@@ -62,6 +62,9 @@ class xalt_data_c:
 CONNECTION = cfg.get_db_connection_string()
 
 def home(request, error = False):
+    if not check_for_tokens(request):
+        return HttpResponseRedirect("/login_prompt")
+
     field = {}
     month_dict ={}
     date_list = DataFrame(job_data.objects.values("end_time"))["end_time"].dt.date.drop_duplicates()
@@ -110,6 +113,8 @@ def search(request):
     
 
 def index(request, **kwargs):
+    if not check_for_tokens(request):
+        return HttpResponseRedirect("/login_prompt")
 
     fields = request.GET.dict()    
     fields = { k:v for k, v in fields.items() if v }
