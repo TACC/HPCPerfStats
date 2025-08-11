@@ -252,7 +252,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         stats["delta"] = (stats.groupby(["host", "type", "dev", "event"])["value"].diff())
     
         # correct stats for rollover and units (must be done before aggregation over devices)
-        stats_delta = stats["delta"].mask(stats["delta"] < 0, 2**stats["wid"] + stats["delta"])
+        stats["delta"] = stats["delta"].mask(stats["delta"] < 0, 2**stats["wid"] + stats["delta"])
         stats["delta"] = stats["delta"] * stats["mult"]
         del stats["wid"], stats["mult"]
     
