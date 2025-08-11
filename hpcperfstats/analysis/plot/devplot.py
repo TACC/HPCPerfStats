@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import psycopg2
+import psycopg
 import os, sys, stat
 from multiprocessing import Pool
 import math

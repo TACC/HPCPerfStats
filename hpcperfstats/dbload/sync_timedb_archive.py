@@ -6,7 +6,7 @@ import tarfile
 import multiprocessing
 from functools import partial
 
-thread_count = 8
+thread_count = 40
 
 if __name__ == '__main__':
 

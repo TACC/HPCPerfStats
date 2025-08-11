@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import psycopg2
+import psycopg
 import os, sys, stat
 from multiprocessing import Pool
 from datetime import datetime, timedelta
@@ -11,7 +11,7 @@ from pandas import DataFrame, to_datetime, Timedelta, concat, read_sql
 
 CONNECTION = "dbname=hpcperfstats user=postgres port=5433"
 
-conn = psycopg2.connect(CONNECTION)
+conn = psycopg.connect(CONNECTION)
 print(conn.server_version)
 cur = conn.cursor()
 

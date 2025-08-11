@@ -3,8 +3,7 @@ import os,sys,time
 
 from datetime import timedelta, datetime
 
-import psycopg2
-from pgcopy import CopyManager
+import psycopg
 
 import pandas as pd
 from pandas import read_csv, to_datetime, to_timedelta, concat
@@ -86,12 +85,14 @@ def sync_acct(acct_file, jobs_in_db):
     print("Total number of new entries:", df.shape[0])
 
 
-    with psycopg2.connect(CONNECTION) as conn:
-        mgr = CopyManager(conn, 'job_data', df.columns)
+    with psycopg.connect(CONNECTION) as conn:
         try:
-            mgr.copy(df.values.tolist())
+            col_names = ", ".join(df.columns)
+            with conn.cursor().copy(f"COPY job_data ({col_names}) FROM STDIN") as copy:
+                for index, row in df.iterrows():
+                    copy.write_row(row.values.tolist()) # Convert row to list
         except Exception as e:
-            print("error in mrg.copy: " , str(e))
+            print("error in COPY: " , str(e))
             conn.rollback()
             copy_data_to_pgsql_individually(conn, df, 'job_data')
         else:
@@ -110,10 +111,10 @@ def copy_data_to_pgsql_individually(conn, data, table):
 
             try:
                 curs.execute(sql_insert, row)
-            except psycopg2.errors.UniqueViolation as uv:
+            except psycopg.errors.UniqueViolation as uv:
                 conn.rollback()
             except Exception as e:
-                print("error in single insert: ", e.pgcode, " ", str(e), "while executing", str(sql_insert))
+                print("error in single insert: ", str(e), "while executing", str(sql_insert))
                 conn.rollback()
             else:
                 conn.commit()
@@ -140,7 +141,7 @@ if __name__ == "__main__":
 
 
         searchdate = startdate - timedelta(days = 2)
-        with psycopg2.connect(CONNECTION) as conn:
+        with psycopg.connect(CONNECTION) as conn:
             jobs_in_db = read_sql("select jid from job_data where date(end_time) >=  '{0}' ".format(searchdate.date()), conn)
         
         print("Jobs found in DB in this date range: %s" % jobs_in_db.shape[0])
@@ -154,6 +155,7 @@ if __name__ == "__main__":
                         sync_acct(entry.path, jobs_in_db)
                     except Exception as e:
                         print("Unable to load file: %s" % entry.path)
+                        continue
             startdate += timedelta(days=1)
         print("loading time", time.time() - start)
 

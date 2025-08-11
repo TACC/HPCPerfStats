@@ -30,7 +30,7 @@ client_id =
 client_key =
 
 # Base OAUTH URL
-oauth_base_url = https://tacc.tapis.io/v3
+oauth_base_url = 
 
 # URL for authorization
 authorize_url     = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redirect_uri=%%s&response_type=code&state=%%s
@@ -60,7 +60,7 @@ dbname             = hpcperfstats
 daily_archive_dir  = %(data_dir)s/daily_archive
 
 # Django engine backend (pre-configured for container installation)
-engine_name        = django.db.backends.postgresql_psycopg2 
+engine_name        = django.db.backends.postgresql
 
 # Postgres username (pre-configured for container installation)
 username           = hpcperfstats

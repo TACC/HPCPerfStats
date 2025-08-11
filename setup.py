@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-from setuptools import setup, find_packages
 import os
 from configparser import ConfigParser
+from setuptools import setup, find_packages
 
 DISTNAME = 'hpcperfstats'
 LICENSE = 'LGPL'
@@ -29,11 +29,6 @@ scripts=[
 config = ConfigParser()
 config.read("hpcperfstats.ini")
 
-#with open("hpcperfstats/cfg.py", 'w') as fd:
-#    for s in config.sections():
-#        for key, val in dict(config.items(s)).items():
-#            fd.write(key + " = " + "\"" + val + "\"" + '\n')
-
 setup(
     name = DISTNAME,
     version = VERSION,
@@ -48,11 +43,11 @@ setup(
     package_data = {'hpcperfstats' : ['cfg.py']},
     include_package_data = True,
     scripts = scripts,
-    install_requires = ['numpy', 'psycopg2', 'pgcopy',
-                        'pandas', 'bokeh', 'django', 'python-hostlist', 
+    install_requires = ['numpy', 'psycopg', 'pandas',
+                        'bokeh', 'django', 'python-hostlist', 
                         'pika', 'configparser', 'mysqlclient',
-                        'gunicorn', 'authlib', 'requests',
-                        'requests-toolbelt','legacy-cgi'],
+                        'gunicorn', 'requests', 'requests-toolbelt',
+                        'legacy-cgi', 'cryptography'],
     platforms = 'any',
     classifiers = [
         'Development Status :: 5 - Production',
@@ -61,7 +56,7 @@ setup(
         'Intended Audience :: Science/Research',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.12',
         'Topic :: Scientific/Engineering',
     ]
 )

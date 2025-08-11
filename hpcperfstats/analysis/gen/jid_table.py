@@ -1,5 +1,5 @@
 import os,sys,time
-import psycopg2
+import psycopg
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import read_sql
 
@@ -13,7 +13,7 @@ class jid_table:
         self.jid = jid
 
         # Open temporary connection
-        self.conj = psycopg2.connect(CONNECTION)
+        self.conj = psycopg.connect(CONNECTION)
 
         # Get job accounting data
         acct_data = read_sql("""select * from job_data where jid = '{0}'""".format(jid), self.conj)

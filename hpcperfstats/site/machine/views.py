@@ -41,7 +41,7 @@ from bokeh.models import HoverTool
 import time
 from hpcperfstats.site.machine.oauth2 import check_for_tokens
 
-import psycopg2
+import psycopg
 from pandas import DataFrame, to_timedelta
 from hpcperfstats.analysis.gen.utils import read_sql, clean_dataframe
 
@@ -321,7 +321,7 @@ def type_detail(request, jid, type_name):
     if not check_for_tokens(request):
         return HttpResponseRedirect("/login_prompt")
 
-    conj = psycopg2.connect(CONNECTION)
+    conj = psycopg.connect(CONNECTION)
 
     # Get job accounting data
     acct_data = read_sql("""select * from job_data where jid = '{0}'""".format(jid), conj)
@@ -385,7 +385,7 @@ class host_table:
         print(sql)
         
         # Open temporary connection
-        self.conj = psycopg2.connect(CONNECTION)
+        self.conj = psycopg.connect(CONNECTION)
         with self.conj.cursor() as cur:
             cur.execute(sql)
         print("query time: {0:.1f}".format(time.time()-qtime))

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import os, sys, pwd, time
 from datetime import timedelta, datetime
-import psycopg2
+import psycopg
 import multiprocessing
 
 os.environ['DJANGO_SETTINGS_MODULE']='hpcperfstats.site.hpcperfstats_site.settings'

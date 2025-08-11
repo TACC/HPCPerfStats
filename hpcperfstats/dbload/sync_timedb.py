@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-import psycopg2
-from pgcopy import CopyManager
+import psycopg
 import os, sys, stat
 import multiprocessing
 import itertools
@@ -96,7 +95,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
 
     timestamp = datetime.fromtimestamp(int(float(t)))
 
-    with psycopg2.connect(CONNECTION) as conn:
+    with psycopg.connect(CONNECTION) as conn:
         sql = "select distinct(time) from host_data where host = '{0}' and time >= '{1}'::timestamp - interval '48h' and time < '{1}'::timestamp + interval '72h' order by time;".format(hostname, timestamp) 
         times = [float(t.timestamp()) for t in read_sql(sql, conn)["time"].tolist()]
         itimes = [int(t) for t in times]
@@ -269,39 +268,34 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         stats=stats.dropna()  #junjie DEBUG
         print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - start))
     
-        # bulk insertion using pgcopy
+        # bulk insertion using postgresql COPY FROM
         sqltime = time.time()
-    
-    
-        lock.acquire()
-        mgr2 = CopyManager(conn, 'proc_data', proc_stats.columns)
+
         try:
-            mgr2.copy(proc_stats.values.tolist())
+            col_names = ", ".join(proc_stats.columns)
+            with conn.cursor().copy(f"COPY proc_data ({col_names}) FROM STDIN") as copy:
+                for index, row in proc_stats.iterrows():
+                    copy.write_row(row.values.tolist()) # Convert row to list
         except Exception as e:
             if DEBUG:
-                print("error in mrg2.copy: %s\nFile %s" %  (e, stats_file))
+                print("Error in COPY " , str(e)) 
             conn.rollback()
-            lock.release()
-            copy_data_to_pgsql_individually(conn, proc_stats, 'proc_data')
-        else: 
+            need_archival = copy_data_to_pgsql_individually(conn, proc_stats, 'proc_data')
+        else:
             conn.commit()
-            lock.release()
-    
-    
-    
-        lock.acquire()
-        mgr = CopyManager(conn, 'host_data', stats.columns)
+
         try:
-            mgr.copy(stats.values.tolist())
+            col_names = ", ".join(stats.columns)
+            with conn.cursor().copy(f"COPY host_data ({col_names}) FROM STDIN") as copy:
+                for index, row in stats.iterrows():
+                    copy.write_row(row.values.tolist()) # Convert row to list
         except Exception as e:
             if DEBUG:
-                print("error in mrg.copy: " , str(e)) 
+                print("Error in COPY " , str(e)) 
             conn.rollback()
-            lock.release()
             need_archival = copy_data_to_pgsql_individually(conn, stats, 'host_data')
         else:
             conn.commit()
-            lock.release()
     
     #print("sql insert time for {0} {1:.1f}s".format(stats_file, time.time() - sqltime))
 
@@ -326,12 +320,12 @@ def copy_data_to_pgsql_individually(conn, data, table):
 
             try:
                 curs.execute(sql_insert, row)
-            except psycopg2.errors.UniqueViolation as uv:
+            except psycopg.errors.UniqueViolation as uv:
                 # count for rows that already exist.
                 unique_violations += 1
                 conn.rollback()
             except Exception as e:
-                print("error in single insert: ", e.pgcode, " ", str(e), "while executing", str(sql_insert) + ", " + str(row))
+                print("error in single insert: ", str(e), "while executing", str(sql_insert) + ", " + str(row))
                 need_archival = False
                 conn.rollback()
             else:
@@ -398,12 +392,8 @@ def archive_stats_files(archive_info):
     print(subprocess.check_output(['/usr/bin/pigz', '-f', '-8', '-v', '-p', str(thread_count*2), archive_tar_fname]), flush=True)
 
 def database_startup():
-    with psycopg2.connect(CONNECTION) as conn:
-        if DEBUG:
-            print("Postgresql server version: " + str(conn.server_version))
-
+    with psycopg.connect(CONNECTION) as conn:
         with conn.cursor() as cur:
-
             cur.execute("SELECT pg_size_pretty(pg_database_size('{0}'));".format(cfg.get_db_name()))
             for x in cur.fetchall():
                 print("Database Size:", x[0])
