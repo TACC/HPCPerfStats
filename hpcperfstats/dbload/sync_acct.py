@@ -65,10 +65,10 @@ def sync_acct(acct_file, jobs_in_db):
     if len(restricted_job_ids) > 0:
         print("The following jobs are restricted and will be skipped: "+ str(restricted_job_ids))
 
-    # Junjie: in case newer slurm gives "None" time for unstarted jobs.  Older slurm prints start_time=end_time=cancelled_time.
-    df = df['start_time'].replace('^None$', pd.NA, regex=True)
-    df = df['start_time'].replace('^Unknown$', pd.NA, regex=True)
-    df = df['start_time'].fillna(df['end_time'])
+    # In case newer slurm gives "None" time for unstarted jobs.  Older slurm prints start_time=end_time=cancelled_time.
+    df['start_time'] = df['start_time'].replace('^None$', pd.NA, regex=True)
+    df['start_time'] = df['start_time'].replace('^Unknown$', pd.NA, regex=True)
+    df['start_time'] = df['start_time'].fillna(df['end_time'])
 
     df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize('US/Central', ambiguous=True)
     df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize('US/Central', ambiguous=True)
@@ -125,7 +125,7 @@ if __name__ == "__main__":
         try:
             startdate = datetime.strptime(sys.argv[1], "%Y-%m-%d")
         except:
-         startdate = datetime.combine(datetime.today(), datetime.min.time())
+            startdate = datetime.combine(datetime.today(), datetime.min.time())
         try:
             enddate   = datetime.strptime(sys.argv[2], "%Y-%m-%d")
         except:
@@ -150,7 +150,10 @@ if __name__ == "__main__":
                 if not entry.is_file(): continue
                 if entry.name.startswith(str(startdate.date())):
                     print(entry.path)
-                    sync_acct(entry.path, jobs_in_db)
+                    try:
+                        sync_acct(entry.path, jobs_in_db)
+                    except Exception as e:
+                        print("Unable to load file: %s" % entry.path)
             startdate += timedelta(days=1)
         print("loading time", time.time() - start)
 
