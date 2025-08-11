@@ -14,12 +14,13 @@ client_id = cfg.get_oauth_client_id()
 client_key = cfg.get_oauth_client_key()
 tenant_base_url = cfg.get_oauth_base_url()
 staff_email_domain = cfg.get_staff_email_domain()
+server_name = cfg.get_server_name()
 
 def login_oauth(request):
     session = request.session
     session['auth_state'] = os.urandom(24).hex()
 
-    redirect_uri = 'https://{}{}'.format(request.get_host(), reverse('oauth_callback'))
+    redirect_uri = 'https://{}{}'.format(server_name, reverse('oauth_callback'))
     if redirect_uri.endswith('/'):
       redirect_uri = redirect_uri[:-1]
 
