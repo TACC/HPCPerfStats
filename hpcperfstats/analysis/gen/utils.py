@@ -6,7 +6,7 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
 import numpy as np
-from pandas import read_sql as rsql
+from django_pandas.io import read_frame
 
 class utils():
   def __init__(self, job):
@@ -54,7 +54,7 @@ class utils():
 
 def read_sql(*args, **kwargs):
 
-    df = rsql(*args, **kwargs)
+    df = read_frame(*args, **kwargs)
 
     #df = clean_dataframe(df)
     return df

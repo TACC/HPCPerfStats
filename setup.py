@@ -47,7 +47,7 @@ setup(
                         'bokeh', 'django', 'python-hostlist', 
                         'pika', 'configparser', 'mysqlclient',
                         'gunicorn', 'requests', 'requests-toolbelt',
-                        'legacy-cgi', 'cryptography'],
+                        'legacy-cgi', 'cryptography', 'django-pandas'],
     platforms = 'any',
     classifiers = [
         'Development Status :: 5 - Production',

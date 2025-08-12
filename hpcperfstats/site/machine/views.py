@@ -62,9 +62,15 @@ class xalt_data_c:
 CONNECTION = cfg.get_db_connection_string()
 
 def home(request, error = False):
+    if not check_for_tokens(request):
+        return HttpResponseRedirect("/login_prompt")
+
     field = {}
     month_dict ={}
-    date_list = DataFrame(job_data.objects.values("end_time"))["end_time"].dt.date.drop_duplicates()
+    job_times = job_data.objects.values("end_time")
+    print(job_times.query)
+    jdf = read_sql(job_times)
+    date_list = jdf["end_time"].dt.date.drop_duplicates()
     print(date_list)
     
     for date in date_list.sort_values():
@@ -83,6 +89,8 @@ def home(request, error = False):
     return render(request, "machine/search.html", field)
 
 def search(request):
+    if not check_for_tokens(request):
+        return HttpResponseRedirect("/login_prompt")
 
     if 'jid' in request.GET:
         try:
@@ -110,6 +118,8 @@ def search(request):
     
 
 def index(request, **kwargs):
+    if not check_for_tokens(request):
+        return HttpResponseRedirect("/login_prompt")
 
     fields = request.GET.dict()    
     fields = { k:v for k, v in fields.items() if v }
