@@ -307,7 +307,7 @@ class job_dataDetailView(DetailView):
             print("failed to extract schema for jid {0}".format(j.jid))
 
         ### Specific to TACC Splunk 
-        urlstring="https://scribe.tacc.utexas.edu:8000/en-US/app/search/search?q=search%20"
+        urlstring="https://scribe.tacc.utexas.edu/en-US/app/search/search?q=search%20"
         hoststring=urlstring + "%20host%3D" + j.acct_host_list[0] + cfg.get_host_name_ext()
         serverstring=urlstring + "%20mds*%20OR%20%20oss*"
         for host in j.acct_host_list[1:]:
