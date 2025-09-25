@@ -23,6 +23,7 @@ scripts=[
     'hpcperfstats/dbload/sacct_gen.py',
     'hpcperfstats/dbload/sync_acct.py',
     'hpcperfstats/dbload/sync_timedb.py',
+    'hpcperfstats/dbload/sync_timedb_archive.py',
     'hpcperfstats/listend.py'
     ]
 
@@ -46,7 +47,7 @@ setup(
     install_requires = ['numpy', 'psycopg2', 'pgcopy',
                         'pandas', 'bokeh', 'django', 'python-hostlist', 
                         'pika', 'configparser', 'mysqlclient',
-                        'gunicorn', 'authlib', 'requests',
+                        'gunicorn', 'cryptography', 'requests',
                         'requests-toolbelt','legacy-cgi'],
     platforms = 'any',
     classifiers = [
