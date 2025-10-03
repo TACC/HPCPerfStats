@@ -1,6 +1,11 @@
-# From a base rocky image
+# From a rocky image
 
-dnf install docker git podman-compose
+# install basic docker/podman components
+sudo dnf install docker git podman-compose
+
+# Setup podman to restart any running containers after reboot
+sudo systemctl enable podman-restart.service
+sudo systemctl start podman-restart.service
 
 # May need to use an ssh git address if you plan to commit to the repo
 git clone https://github.com/TACC/hpcperfstats.git 
