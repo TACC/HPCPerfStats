@@ -83,12 +83,12 @@ volumes:
         driver: local
         driver_opts:
           type: none
-          device: /home/sharrell/s3-stats/hpcperfstats_data/
+          device: /opt/hpcperfstats_data/
           o: bind
       
       hpcperfstatsnodelog:
         driver: local
         driver_opts:
           type: none
-          device: /home/sharrell/s3-stats/hpcperfstats_log
+          device: /opt/hpcperfstats_log
           o: bind
