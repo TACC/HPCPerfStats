@@ -9,8 +9,6 @@ services:
     links:
       - db
     command: /home/hpcperfstats/services-conf/django_startup.sh
-    env_file:
-      - ./.env.dev
 
   pipeline:
     image: hpcperfstats
@@ -33,8 +31,6 @@ services:
       # The ssh keys don't have to be a user's, they just have to be a .ssh directory
       - /home/sharrell/.ssh:/hpcperfstats/.ssh/
       - hpcperfstatsnodelog:/hpcperfstatslog/
-    env_file:
-      - ./.env.dev
 
   proxy:
     image: nginx:1-alpine
