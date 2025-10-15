@@ -1,4 +1,4 @@
-AC_INIT([hpcperfstats], [2.3.5], [rtevans@tacc.utexas.edu])
+AC_INIT([hpcperfstats], [2.4], [rtevans@tacc.utexas.edu])
 AM_INIT_AUTOMAKE([-Wall -Werror -Wno-portability])
 AC_PROG_CC
 AM_PROG_CC_C_O

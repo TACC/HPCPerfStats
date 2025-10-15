@@ -1,6 +1,6 @@
 Summary: Job-level Monitoring Client
 Name: hpcperfstats
-Version: 2.3.5
+Version: 2.4
 Release: 1%{?dist}
 License: GPL
 Vendor: Texas Advanced Computing Center
