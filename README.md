@@ -115,7 +115,8 @@ For quick setup you can configure the stack without SSL (This is not recommened 
 Copy the example supervisord.conf - this contains scripts that will do site-specific data transfer. In the example it is commenented out with instructions how to enable it`
 `cp services-conf/supervisord.conf.example services-conf/supervisord.conf`
 
-For data transfers in or out of the container a basic script is used to rsync. There are a few examples about how we archive and get the accounting data at TACC. These commands will need to be modified for your specific HPC environment. 
+For data transfers in or out of the container a basic script is used to rsync. There are a few examples about how we archive and get the accounting data at TACC. These commands will need to be modified for your specific HPC environment. First copy the example script over and then modify as needed.
+`cp services-conf/rsync_data.sh.example services-conf/rsync_data.sh`
 
 In order to ingest the accounting file you can use this rsync script to rsync/scp the daily accounting file (e.x. 2018-03-03.txt) and write it to `/hpcperfstats/accounting/` in the container. 
 
