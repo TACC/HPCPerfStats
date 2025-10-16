@@ -98,6 +98,15 @@ Please change the hpcperfstats.ini file contents to your configurations
 - Under [DEFAULT] -> host_name_ext - change it to the FQDN of your cluster.
 - Under [DEFAULT] -> server - change it to the FQDN for the machine that will run this container
 
+Copy the example supervisord.conf - this contains scripts that will do site-specific data transfer. In the example it is commenented out with instructions how to enable it.
+`cp services-conf/supervisord.conf.example services-conf/supervisord.conf`
+
+For data transfers in or out of the container a basic script is used to rsync. There are a few examples about how we archive and get the accounting data at TACC. These commands will need to be modified for your specific HPC environment. First copy the example script over and then modify as needed.
+`cp services-conf/rsync_data.sh.example services-conf/rsync_data.sh`
+
+In order to ingest the accounting file you can use this rsync script to rsync/scp the daily accounting file (e.x. 2018-03-03.txt) and write it to `/hpcperfstats/accounting/` in the container. 
+
+
 ### *IF YOU HAVE SSL CERTS*
 `cp services-conf/nginx-withssl.conf services-conf/nginx.conf`
 
@@ -111,13 +120,6 @@ Please keep in mind that the /etc/letsencrypt is passed through in the docker-co
 For quick setup you can configure the stack without SSL (This is not recommened outside of a testing environment):
 `cp services-conf/nginx-nossl.conf services-conf/nginx.conf`
 
-Copy the example supervisord.conf - this contains scripts that will do site-specific data transfer. In the example it is commenented out with instructions how to enable it.
-`cp services-conf/supervisord.conf.example services-conf/supervisord.conf`
-
-For data transfers in or out of the container a basic script is used to rsync. There are a few examples about how we archive and get the accounting data at TACC. These commands will need to be modified for your specific HPC environment. First copy the example script over and then modify as needed.
-`cp services-conf/rsync_data.sh.example services-conf/rsync_data.sh`
-
-In order to ingest the accounting file you can use this rsync script to rsync/scp the daily accounting file (e.x. 2018-03-03.txt) and write it to `/hpcperfstats/accounting/` in the container. 
 
 Build and start a daemomnized container network
 `sudo docker compose up --build -d`
