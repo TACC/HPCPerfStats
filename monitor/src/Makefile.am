@@ -13,7 +13,7 @@ bin_PROGRAMS = hpcperfstatsd
 
 STATS_DIR_PATH = /var/log/hpcperfstats
 STATS_LOCK_PATH = /var/lock/hpcperfstats
-JOBID_FILE_PATH = /var/run/TACC_jobid
+JOBID_FILE_PATH = /var/run/stats_jobid
 
 hpcperfstatsd_CPPFLAGS = \
 	-D_GNU_SOURCE \
