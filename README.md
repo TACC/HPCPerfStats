@@ -1,9 +1,9 @@
 HPCPerfStats
------------------
+============
 (The package formerly known as TACC Stats)
 
 Description
------------------
+============
 The hpcperfstats package provides the tools to monitor resource usage of HPC systems at multiple levels of resolution.
 
 [Collected Data Definitions](docs/attributes-definition.md)
@@ -15,8 +15,8 @@ Building and installing the `hpcperfstats-2.4-1.el9.x86_64.rpm` package with the
 Installing the `hpcperfstats` container orchestration will setup a Django/PostgresGRE data ingest and archival tools, and a rabbitmq server to recieve data from the `monitor` on the nodes.
 
 Installation
---------
-#### `monitor` subpackage
+======
+## `monitor` subpackage
 
 First ensure the RabbitMQ library and header file are installed on the build and compute nodes
 
@@ -49,8 +49,7 @@ The `hpcperfstats.spec` file `sed`s the `hpcperfstats.conf` file to the correct 
 
 `hpcperfstatsd` can be started, stopped, and restarted using `systemctl start hpcperfstats`, `systemctl stop hpcperfstats`, and `systemctl restart hpcperfstats`.
 
-#### Job Scheduler Configuration
--------
+## Job Scheduler Configuration
 In order to notify `hpcperfstats` of a job beginning, echo the job id into `/var/run/stats_jobid` on each node where the job is running.  It order to notify
 it of a job ending echo `-` into `/var/run/stats_jobid` on each node where the job is running.  This can be accomplished in the job scheduler prolog and
 epilog for example.
@@ -65,7 +64,7 @@ This script generates a file for each date with the name format `year-month-day.
 
 If you need to transfer this file accounting from another machine, please see the steps below for rsyncing data into the container data pipeline.
 
-#### `hpcperfstats` subpackage
+## `hpcperfstats` subpackage
 The `hpcperfstats` subpackage is a container orchestration that includes a Django/PostgresSQL website, data ingest and archival tools, and a rabbitmq server to recieve data from the `monitor` on the nodes. The install instructions assume you are starting with a Rocky Linux host.
 
 Install basic docker/podman components\
@@ -99,7 +98,7 @@ Please change the hpcperfstats.ini file contents to your configurations
 - Under [DEFAULT] -> host_name_ext - change it to the FQDN of your cluster.
 - Under [DEFAULT] -> server - change it to the FQDN for the machine that will run this container
 
-#IF YOU HAVE SSL CERTS 
+### *IF YOU HAVE SSL CERTS*
 `cp services-conf/nginx-withssl.conf services-conf/nginx.conf`
 
 Then change the certificate paths in nginx.conf:\
@@ -108,11 +107,11 @@ Then change the certificate paths in nginx.conf:\
 
 Please keep in mind that the /etc/letsencrypt is passed through in the docker-compose.yaml. If you want to use a different path you will need to update the paths in docker-compose.yaml in order to match the paths from the host to container.
 
-#ELSEIF YOU DONT HAVE SSL CERTS
+### ELSEIF YOU DONT HAVE SSL CERTS
 For quick setup you can configure the stack without SSL (This is not recommened outside of a testing environment):
 `cp services-conf/nginx-nossl.conf services-conf/nginx.conf`
 
-Copy the example supervisord.conf - this contains scripts that will do site-specific data transfer. In the example it is commenented out with instructions how to enable it`
+Copy the example supervisord.conf - this contains scripts that will do site-specific data transfer. In the example it is commenented out with instructions how to enable it.
 `cp services-conf/supervisord.conf.example services-conf/supervisord.conf`
 
 For data transfers in or out of the container a basic script is used to rsync. There are a few examples about how we archive and get the accounting data at TACC. These commands will need to be modified for your specific HPC environment. First copy the example script over and then modify as needed.
@@ -129,7 +128,7 @@ To see the logs
 The website should be up at this point however it will error until the accounting ingest is setup.
 
 Useful Commands
-------
+======
  Access the PostgresSQL database\
  `docker exec -it hpcperfstats_db_1 psql -h localhost -U hpcperfstats`
 
@@ -137,7 +136,7 @@ Useful Commands
   `docker exec -it hpcperfstats_pipeline_1 su hpcperfstats`
 
 Publications
--------
+======
 [Comprehensive Resource Use Monitoring for HPC Systems with TACC Stats](http://doi.org/10.1109/HUST.2014.7)
 
 [Understanding application and system performance through system-wide monitoring](http://doi.org/10.1109/IPDPSW.2016.145)
@@ -146,14 +145,14 @@ Publications
 
 
 Developers and Maintainers
--------
+======
 Amit Ruhela  (<mailto:aruhela@tacc.utexas.edu>) <br />
 Stephen Lien Harrell  (<mailto:sharrell@tacc.utexas.edu>) <br />
 Sangamithra Goutham (<mailto:sgoutham@tacc.utexas.edu>) <br />
 Chris Ramos (<mailto:cramos@tacc.utexas.edu>) <br />
 
 Developer Emeritus
--------
+======
 John Hammond <br />
 R. Todd Evans  <br />
 Bill Barth <br />
@@ -162,7 +161,7 @@ Junjie Li <br />
 John McCalpin <br />
 
 
-----------------------------------------------------------------------------
+---------------
 
 ## Copyright
 (C) 2011 University of Texas at Austin
