@@ -56,7 +56,7 @@ epilog for example.
 
 Additionally, in order to contextualize node-level data from the monitor package it is necessary to generate a daily accounting file that contains the following information about all jobs from that day in the following format:\
 
-`JobID|User|Account|Start|End|Submit|Partition|Timelimit|JobName|State|NNodes|ReqCPUS|NodeList`\
+`JobID|User|Account|Start|End|Submit|Partition|Timelimit|JobName|State|NNodes|ReqCPUS|NodeList`
 `1837137|sharrell|project140208|2018-08-01T18:18:51|2018-08-02T11:44:51|2018-07-29T08:05:43|normal|1-00:00:00|jobname|COMPLETED|8|104|c420-[024,073],c421-[051-052,063-064,092-093]`
 
 If you are using SLURM the `sacct_gen.py` script that will be installed with the `hpcperfstats` subpackage may be used. 
@@ -68,13 +68,13 @@ If you need to transfer this file accounting from another machine, please see th
 The `hpcperfstats` subpackage is a container orchestration that includes a Django/PostgresSQL website, data ingest and archival tools, and a rabbitmq server to recieve data from the `monitor` on the nodes. The install instructions assume you are starting with a Rocky Linux host.
 
 Install basic docker/podman components\
-`sudo dnf install docker git podman-compose`\
+`sudo dnf install docker git podman-compose`
 
 Setup podman to restart any running containers after reboot\
-`sudo systemctl enable podman-restart.service`\
-`sudo systemctl start podman-restart.service`\
+`sudo systemctl enable podman-restart.service`
+`sudo systemctl start podman-restart.service`
 
-Copy the package from github. You can git clone or download tar.gz from github.
+Copy the package from github. You can git clone or download tar.gz from github.\
 `git clone https://github.com/TACC/hpcperfstats.git`
 `cd hpcperfstats`
 
@@ -90,7 +90,7 @@ You will need to create the hpcperfstatsdata and hpcperfstatslog directories, th
 `sudo mkdir -p /opt/hpcperfstats_data`
 `sudo mkdir -p /opt/hpcperfstats_log`
 
- Copy the hpcperfstats.ini and make the changes below
+ Copy the hpcperfstats.ini and make the changes below \
 `cp hpcperfstats.ini.example hpcperfstats.ini`
 
 Please change the hpcperfstats.ini file contents to your configurations
@@ -98,10 +98,10 @@ Please change the hpcperfstats.ini file contents to your configurations
 - Under [DEFAULT] -> host_name_ext - change it to the FQDN of your cluster.
 - Under [DEFAULT] -> server - change it to the FQDN for the machine that will run this container
 
-Copy the example supervisord.conf - this contains scripts that will do site-specific data transfer. In the example it is commenented out with instructions how to enable it.
+Copy the example supervisord.conf - this contains scripts that will do site-specific data transfer. In the example it is commenented out with instructions how to enable it.\
 `cp services-conf/supervisord.conf.example services-conf/supervisord.conf`
 
-For data transfers in or out of the container a basic script is used to rsync. There are a few examples about how we archive and get the accounting data at TACC. These commands will need to be modified for your specific HPC environment. First copy the example script over and then modify as needed.
+For data transfers in or out of the container a basic script is used to rsync. There are a few examples about how we archive and get the accounting data at TACC. These commands will need to be modified for your specific HPC environment. First copy the example script over and then modify as needed.\
 `cp services-conf/rsync_data.sh.example services-conf/rsync_data.sh`
 
 In order to ingest the accounting file you can use this rsync script to rsync/scp the daily accounting file (e.x. 2018-03-03.txt) and write it to `/hpcperfstats/accounting/` in the container. 
@@ -114,17 +114,17 @@ Then change the certificate paths in nginx.conf:\
 - `ssl_certificate`
 - `ssl_certificate_key`
 
-Please keep in mind that the /etc/letsencrypt is passed through in the docker-compose.yaml. If you want to use a different path you will need to update the paths in docker-compose.yaml in order to match the paths from the host to container.
+Please keep in mind that the /etc/letsencrypt is passed through in the docker-compose.yaml. If you want to use a different path you will need to update the paths in docker-compose.yaml in order to match the paths from the host to container.\
 
 ### ELSEIF YOU DONT HAVE SSL CERTS
-For quick setup you can configure the stack without SSL (This is not recommened outside of a testing environment):
+For quick setup you can configure the stack without SSL (This is not recommened outside of a testing environment):\
 `cp services-conf/nginx-nossl.conf services-conf/nginx.conf`
 
 
-Build and start a daemomnized container network
+Build and start a daemomnized container network\
 `sudo docker compose up --build -d`
 
-To see the logs
+To see the logs\
 `sudo docker compose logs`
 
 The website should be up at this point however it will error until the accounting ingest is setup.
