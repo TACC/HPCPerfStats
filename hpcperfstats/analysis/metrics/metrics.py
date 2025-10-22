@@ -1,6 +1,7 @@
 import os
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
 import sys
+import time
 import operator, traceback
 import multiprocessing
 from hpcperfstats.analysis.gen import jid_table, utils
@@ -61,12 +62,17 @@ class Metrics():
     # build temporary job view
     jt = jid_table.jid_table(job.jid)
 
+    metric_compute_start = time.time()
     # compute each metric for a jid and update metrics_data table
     for name, metric in self.metrics_list.items():                                                                    
       value = self.job_arc(jt, **metric)
       obj, created = metrics_data.objects.update_or_create(jid = job, type = metric["typename"], metric = name, 
                                                            defaults = {'units' : metric["units"], 
                                                                        'value' : value})
+
+    print("compute metrics time: {0:.1f}".format(time.time() - metric_compute_start))
+
+
 ###########
 # Metrics #
 ###########
