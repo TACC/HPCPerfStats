@@ -116,7 +116,7 @@ Then change the certificate paths in nginx.conf:\
 
 Please keep in mind that the /etc/letsencrypt is passed through in the docker-compose.yaml. If you want to use a different path you will need to update the paths in docker-compose.yaml in order to match the paths from the host to container.\
 
-### ELSEIF YOU DONT HAVE SSL CERTS
+### *ELSEIF YOU DONT HAVE SSL CERTS*
 For quick setup you can configure the stack without SSL (This is not recommened outside of a testing environment):\
 `cp services-conf/nginx-nossl.conf services-conf/nginx.conf`
 
