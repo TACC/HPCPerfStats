@@ -37,8 +37,10 @@ def login_oauth(request):
 def oauth_callback(request):
     state = request.GET.get('state')
 
-    if request.session['auth_state'] != state:
-        return HttpResponseBadRequest('Authorization state failed.')
+    if request.session['auth_state'] and request.session['auth_state'] != state:
+        # If auth_state doesn't exist, redirect to logout.
+        response = HttpResponseRedirect('/logout')
+        return response
 
     if 'code' in request.GET:
         redirect_uri = 'https://{}{}'.format(request.get_host(),
