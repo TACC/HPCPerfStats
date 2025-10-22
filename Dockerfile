@@ -34,3 +34,8 @@ RUN pip install --no-cache-dir .
 # Keep the container updated everytime it is built, even when previous steps are cached
 RUN apt-get update -y 
 RUN apt-get upgrade -y
+
+# Purge any python or apt caching
+RUN apt-get clean
+RUN pip cache purge
+RUN rm -rf /root/.local
