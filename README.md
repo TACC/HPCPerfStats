@@ -110,7 +110,7 @@ In order to ingest the accounting file you can use this rsync script to rsync/sc
 ### *IF YOU HAVE SSL CERTS*
 `cp services-conf/nginx-withssl.conf services-conf/nginx.conf`
 
-Then change the certificate paths in nginx.conf:\
+Then change the certificate paths in nginx.conf:
 - `ssl_certificate`
 - `ssl_certificate_key`
 
