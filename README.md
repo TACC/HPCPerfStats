@@ -106,7 +106,7 @@ For data transfers in or out of the container a basic script is used to rsync. T
 
 In order to ingest the accounting file you can use this rsync script to rsync/scp the daily accounting file (e.x. 2018-03-03.txt) and write it to `/hpcperfstats/accounting/` in the container. 
 
-
+---
 ### *IF YOU HAVE SSL CERTS*
 `cp services-conf/nginx-withssl.conf services-conf/nginx.conf`
 
@@ -114,12 +114,13 @@ Then change the certificate paths in nginx.conf:\
 - `ssl_certificate`
 - `ssl_certificate_key`
 
-Please keep in mind that the /etc/letsencrypt is passed through in the docker-compose.yaml. If you want to use a different path you will need to update the paths in docker-compose.yaml in order to match the paths from the host to container.\
+Please keep in mind that the /etc/letsencrypt is passed through in the docker-compose.yaml. If you want to use a different path you will need to update the paths in docker-compose.yaml in order to match the paths from the host to container.
 
 ### *ELSEIF YOU DONT HAVE SSL CERTS*
 For quick setup you can configure the stack without SSL (This is not recommened outside of a testing environment):\
 `cp services-conf/nginx-nossl.conf services-conf/nginx.conf`
 
+---
 
 Build and start a daemomnized container network\
 `sudo docker compose up --build -d`
