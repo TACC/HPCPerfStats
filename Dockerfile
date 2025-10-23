@@ -1,5 +1,5 @@
 # pull official base image
-FROM python:3.12
+FROM python:3.12.12-trixie
 
 # Setup Users and Directories
 RUN useradd -u 901860  -ms /bin/bash hpcperfstats 
