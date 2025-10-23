@@ -25,7 +25,7 @@ class jid_table:
     
         # Get stats data and use accounting data to narrow down query
         qtime = time.time()
-        sql = """drop table if exists job_{0}; select * into temp job_{0} from host_data where time between '{1}' and '{2}' and jid = '{0}'""".format(jid, self.start_time, self.end_time)
+        sql = """drop table if exists job_{0}; select * into temp job_{0} from host_data where time between '{1}' and '{2}'""".format(jid, self.start_time, self.end_time)
 
         with self.conj.cursor() as cur:
             cur.execute(sql)

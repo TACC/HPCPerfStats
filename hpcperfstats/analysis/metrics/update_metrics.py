@@ -14,6 +14,8 @@ from hpcperfstats.analysis.metrics import metrics
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.progress import progress
 
+DEBUG =  cfg.get_debug()
+
 thread_count = 20
 
 def update_metrics(date, rerun = False):
@@ -25,6 +27,9 @@ def update_metrics(date, rerun = False):
     if not rerun:
         jobs_list = [job for job in jobs_list if not job.metrics_data_set.all().exists() or job.metrics_data_set.all().filter(value__isnull = True).count() > 0]
 
+    if DEBUG:
+        print("jobs that don't have data before run:")
+        print(jobs_list)
     # Set up metric computation manager
     metrics_manager = metrics.Metrics()
 
@@ -33,6 +38,13 @@ def update_metrics(date, rerun = False):
         print(name)        
     
     metrics_manager.run(jobs_list)
+
+    
+    if DEBUG:
+        jobs_list = list(job_data.objects.filter(end_time__date = date.date()).exclude(runtime__lt = min_time))
+        jobs_list = [job for job in jobs_list if not job.metrics_data_set.all().exists() or job.metrics_data_set.all().filter(value__isnull = True).count() > 0]
+        print("jobs that don't have data after run:")
+        print(jobs_list)
 
 
 if __name__ == "__main__":
