@@ -22,10 +22,11 @@ class jid_table:
     
         self.start_time = acct_data["start_time"].dt.tz_convert('US/Central').dt.tz_localize(None).values[0]
         self.end_time = acct_data["end_time"].dt.tz_convert('US/Central').dt.tz_localize(None).values[0]
+
     
         # Get stats data and use accounting data to narrow down query
         qtime = time.time()
-        sql = """drop table if exists job_{0}; select * into temp job_{0} from host_data where time between '{1}' and '{2}'""".format(jid, self.start_time, self.end_time)
+        sql = """drop table if exists job_{0}; select * into temp job_{0} from host_data where time between '{1}' and '{2}' AND host in ({3})""".format(jid, self.start_time, self.end_time, ','.join("'{0}'".format(h) for h in self.acct_host_list))
 
         with self.conj.cursor() as cur:
             cur.execute(sql)
