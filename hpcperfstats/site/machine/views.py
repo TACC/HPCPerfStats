@@ -228,7 +228,7 @@ class job_dataDetailView(DetailView):
         queryset = super(job_dataDetailView, self).get_queryset()
         if "is_staff" in self.request.session and self.request.session["is_staff"]:
             return queryset
-        return queryset.filter(user = self.request.session["username"])
+        return queryset.filter(username = self.request.session["username"])
 
     def get(self, request, *args, **kwargs):
         if not check_for_tokens(self.request):
