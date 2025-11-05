@@ -129,8 +129,8 @@ def index(request, **kwargs):
 
     # Build query and filter iteratively on derived metrics data
     df_fields = []
-    metrics = { k.split('_',1)[1]:v for k,v in fields.items() if k.split('_', 1)[0] == "metrics" }
-    for key, val in metrics.items():
+    cur_metrics = { k.split('_',1)[1]:v for k,v in fields.items() if k.split('_', 1)[0] == "metrics" }
+    for key, val in cur_metrics.items():
         name, op = key.split('__')
         mquery = { "metrics_data__metric" : name, "metrics_data__value__" + op : val }
         job_list = job_list.filter(**mquery)
