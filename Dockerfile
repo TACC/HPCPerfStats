@@ -22,13 +22,11 @@ ENV PYTHONUNBUFFERED 1
 ENV PIP_ROOT_USER_ACTION ignore
 
 # install version specific python dependencies
-COPY --chown=hpcperfstats:hpcperfstats ./requirements.txt .
+COPY --chown=hpcperfstats:hpcperfstats . .
 RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy and install the hpcperfstats package with all it's dependencies
-COPY --chown=hpcperfstats:hpcperfstats . .
-RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir .
 
 # Keep the container updated everytime it is built, even when previous steps are cached
