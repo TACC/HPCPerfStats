@@ -12,7 +12,7 @@ def on_message(channel, method_frame, header_frame, body):
     if DEBUG:
         print("found message: %s" % header_frame)
     try:
-        message = body.decode()    
+        message = body.decode(errors='replace')    
     except: 
         print("Unexpected error at decode:", sys.exc_info()[0])
         #print(body)
