@@ -6,8 +6,13 @@ import operator, traceback
 import multiprocessing
 from hpcperfstats.analysis.gen import jid_table, utils
 from hpcperfstats.site.machine.models import metrics_data
-from numpy import diff, amax, zeros, maximum, mean, isnan, trapz
+from numpy import diff, amax, zeros, maximum, mean, isnan
 from hpcperfstats.analysis.gen.utils import read_sql
+
+try:
+    from numpy import trapz
+except ImportError:
+    from numpy import trapezoid as trapz
 
 def _unwrap(args):
   #try:
