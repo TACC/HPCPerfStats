@@ -55,11 +55,6 @@ The "update_metrics.py" script then reads the database job-level and node-level 
 The website then loads the data from the DB, displays the data and plots data over time in a number of ways. 
 
 
-## Component Design and Software Configuration
-
-## Assumptions and Dependencies
-
-## Glossary
 
 
 
