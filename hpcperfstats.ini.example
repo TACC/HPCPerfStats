@@ -22,6 +22,9 @@ debug                 = True
 # This is used to determine if a user (presumably a staff member) can see all jobs
 staff_email_domain   = lab.hpcisgreat.edu
 
+# The cluster and docker host need to share this timezone.
+timezone = US/Central
+
 [OAUTH2]
 # oauth client id
 client_id =
