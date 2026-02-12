@@ -265,7 +265,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         # compute average rate of change. 
         deltat = stats.groupby(["host", "type", "event"])["time"].diff()
         stats["arc"] = stats["delta"]/deltat
-        stats["time"] = to_datetime(stats["time"], unit = 's').dt.tz_localize('UTC').dt.tz_convert(local_timezone)
+        stats["time"] = to_datetime(stats["time"], unit = 's').dt.tz_convert('UTC').dt.tz_localize(local_timezone)
         
         # drop rows from first timestamp
         stats=stats.dropna()  #junjie DEBUG

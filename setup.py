@@ -48,7 +48,7 @@ setup(
                         'pandas', 'bokeh', 'django', 'python-hostlist', 
                         'pika', 'configparser', 'mysqlclient',
                         'gunicorn', 'cryptography', 'requests',
-                        'requests-toolbelt','legacy-cgi'],
+                        'requests-toolbelt','legacy-cgi', 'pytz', 'tzdata'],
     platforms = 'any',
     classifiers = [
         'Development Status :: 5 - Production',

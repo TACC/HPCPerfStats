@@ -17,6 +17,12 @@ from bokeh.models import HoverTool, ColumnDataSource, Range1d
 from bokeh.models.glyphs import Step
 from bokeh.plotting import figure
 
+import hpcperfstats.conf_parser as cfg
+
+local_timezone = cfg.get_timezone()
+
+
+
 class SummaryPlot():
 
   def __init__(self, jt):
