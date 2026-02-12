@@ -14,7 +14,7 @@ data_dir 	          = /hpcperfstats/
 server 		          = servername.domain.edu
 
 # Keywords from queues which should be ignored
-restricted_queue_keywords = ['secure', 'secret']
+restricted_queue_keywords = ['secure', 'secret', 'corral', 'corralextra', 'corral-secure']
 
 # Debug Output in the docker logs
 debug                 = True
