@@ -45,6 +45,8 @@ import psycopg2
 from pandas import DataFrame, to_timedelta
 from hpcperfstats.analysis.gen.utils import read_sql, clean_dataframe
 
+local_timezone = cfg.get_timezone()
+
 class DataNotFoundException(Exception):
     pass
 
@@ -334,8 +336,8 @@ def type_detail(request, jid, type_name):
     # job_data accounting host names must be converted to fqdn
     acct_host_list = [h + '.' + cfg.get_host_name_ext() for h in acct_data["host_list"].values[0]]
     
-    start_time = acct_data["start_time"].dt.tz_convert('US/Central').dt.tz_localize(None).values[0]
-    end_time = acct_data["end_time"].dt.tz_convert('US/Central').dt.tz_localize(None).values[0]
+    start_time = acct_data["start_time"].dt.tz_convert(local_timezone).dt.tz_localize(None).values[0]
+    end_time = acct_data["end_time"].dt.tz_convert(local_timezone).dt.tz_localize(None).values[0]
     
     # Get stats data and use accounting data to narrow down query
     qtime = time.time()

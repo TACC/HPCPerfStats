@@ -20,6 +20,8 @@ settings.configure()
 
 CONNECTION = cfg.get_db_connection_string()
 
+local_timezone = cfg.get_timezone()
+
 def sync_acct(acct_file, jobs_in_db):
 
     # Junjie: ensure job name is treated as str.
@@ -70,9 +72,9 @@ def sync_acct(acct_file, jobs_in_db):
     df['start_time'] = df['start_time'].replace('^Unknown$', pd.NA, regex=True)
     df['start_time'] = df['start_time'].fillna(df['end_time'])
 
-    df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize('US/Central', ambiguous=True)
-    df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize('US/Central', ambiguous=True)
-    df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize('US/Central', ambiguous=True)
+    df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize(local_timezone, ambiguous=True)
+    df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize(local_timezone, ambiguous=True)
+    df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize(local_timezone, ambiguous=True)
 
     df["runtime"] = to_timedelta(df["end_time"] - df["start_time"]).dt.total_seconds()
     df["timelimit"] = df["timelimit"].str.replace('-', ' days ')

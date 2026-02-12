@@ -14,6 +14,8 @@ from bokeh.models import HoverTool, ColumnDataSource, Range1d
 from bokeh.models.glyphs import Step
 from bokeh.plotting import figure
 
+local_timezone = cfg.get_timezone()
+
 class DevPlot():
 
   def __init__(self, conn, host_list):
@@ -71,7 +73,7 @@ class DevPlot():
       print("time to compute events {0}: {1}".format(event, time.time() -s))
 
     df = df.reset_index()
-    df["time"] = df["time"].dt.tz_convert('US/Central').dt.tz_localize(None)
+    df["time"] = df["time"].dt.tz_convert(local_timezone).dt.tz_localize(None)
 
     df = clean_dataframe(df)
 

@@ -28,6 +28,8 @@ should_archive = True
 # DEBUG message toggle
 DEBUG =  cfg.get_debug()
 
+local_timezone = cfg.get_timezone()
+
 # Thread count for database loading and archival
 thread_count = 8
 
@@ -263,7 +265,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         # compute average rate of change. 
         deltat = stats.groupby(["host", "type", "event"])["time"].diff()
         stats["arc"] = stats["delta"]/deltat
-        stats["time"] = to_datetime(stats["time"], unit = 's').dt.tz_localize('UTC').dt.tz_convert('US/Central')
+        stats["time"] = to_datetime(stats["time"], unit = 's').dt.tz_localize('UTC').dt.tz_convert(local_timezone)
         
         # drop rows from first timestamp
         stats=stats.dropna()  #junjie DEBUG

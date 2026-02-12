@@ -3,6 +3,8 @@ import psycopg2
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import read_sql
 
+local_timezone = cfg.get_timezone()
+
 class jid_table:
 
     def __init__(self, jid):
@@ -20,8 +22,8 @@ class jid_table:
         # job_data accounting host names must be converted to fqdn
         self.acct_host_list = [h + '.' + cfg.get_host_name_ext() for h in acct_data["host_list"].values[0]]
     
-        self.start_time = acct_data["start_time"].dt.tz_convert('US/Central').dt.tz_localize(None).values[0]
-        self.end_time = acct_data["end_time"].dt.tz_convert('US/Central').dt.tz_localize(None).values[0]
+        self.start_time = acct_data["start_time"].dt.tz_convert(local_timezone).dt.tz_localize(None).values[0]
+        self.end_time = acct_data["end_time"].dt.tz_convert(local_timezone).dt.tz_localize(None).values[0]
 
     
         # Get stats data and use accounting data to narrow down query

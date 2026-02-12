@@ -109,7 +109,7 @@ class SummaryPlot():
     df = df.reset_index()
 
     df["time"] = to_datetime(df["time"], utc = True)
-    df["time"] = df["time"].dt.tz_convert('US/Central').dt.tz_localize(None)
+    df["time"] = df["time"].dt.tz_convert(local_timezone).dt.tz_localize(None)
 #    df = clean_dataframe(df)
     
     

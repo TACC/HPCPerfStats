@@ -1,0 +1,20 @@
+diff --git a/hpcperfstats/analysis/metrics/metrics.py b/hpcperfstats/analysis/metrics/metrics.py
+index 4ae0bc3..8394f26 100644
+--- a/hpcperfstats/analysis/metrics/metrics.py
++++ b/hpcperfstats/analysis/metrics/metrics.py
+@@ -6,9 +6,14 @@ import operator, traceback
+ import multiprocessing
+ from hpcperfstats.analysis.gen import jid_table, utils
+ from hpcperfstats.site.machine.models import metrics_data
+-from numpy import diff, amax, zeros, maximum, mean, isnan, trapz
++from numpy import diff, amax, zeros, maximum, mean, isnan
+ from hpcperfstats.analysis.gen.utils import read_sql
+
++try:
++    from numpy import trapz
++except ImportError:
++    from numpy import trapezoid as trapz
++
+ def _unwrap(args):
+   #try:
+   return args[0].compute_metrics(args[1])

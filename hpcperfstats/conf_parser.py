@@ -117,5 +117,7 @@ def get_oauth_base_url():
 def get_staff_email_domain():
     return cfg.get('DEFAULT', 'staff_email_domain')
 
+def get_timezone():
+    return cfg.get('DEFAULT', 'timezone')
 
 
