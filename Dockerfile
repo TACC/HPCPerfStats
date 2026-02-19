@@ -14,7 +14,7 @@ RUN chown hpcperfstats:hpcperfstats /home/hpcperfstats/.ssh/
 # Upgrade the base OS and grab some important packages
 RUN apt-get update -y 
 RUN apt-get upgrade -y
-RUN apt-get install netcat-openbsd supervisor rsync syslog-ng vim net-tools lsof pigz -y
+RUN apt-get install netcat-openbsd supervisor rsync syslog-ng vim net-tools lsof pigz nano -y
 
 # Set python install variables
 ENV PYTHONDONTWRITEBYTECODE 1
