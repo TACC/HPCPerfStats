@@ -77,7 +77,7 @@ class DevPlot():
       print("time to compute events {0}: {1}".format(event, time.time() -s))
 
     df = df.reset_index()
-    df["time"] = df["time"].dt.tz_convert(local_timezone).dt.tz_localize(None)
+    df["time"] = df["time"].dt.tz_convert('UTC').dt.tz_localize(local_timezone)
 
     df = clean_dataframe(df)
 
