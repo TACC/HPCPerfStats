@@ -120,4 +120,11 @@ def get_staff_email_domain():
 def get_timezone():
     return cfg.get('DEFAULT', 'timezone')
 
+def get_slurm_output_utc():
+    """Return True if Slurm sacct outputs timestamps in UTC (vs cluster local time)."""
+    try:
+        return cfg.get('DEFAULT', 'slurm_output_utc').lower() in ('yes', 'true', '1')
+    except (configparser.NoOptionError, configparser.NoSectionError):
+        return False
+
 
