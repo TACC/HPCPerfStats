@@ -3,7 +3,6 @@ import psycopg2
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import read_sql
 
-local_timezone = cfg.get_timezone()
 
 class jid_table:
 
@@ -22,10 +21,12 @@ class jid_table:
         # job_data accounting host names must be converted to fqdn
         self.acct_host_list = [h + '.' + cfg.get_host_name_ext() for h in acct_data["host_list"].values[0]]
     
-        self.start_time = acct_data["start_time"].dt.tz_convert(local_timezone).values[0]
-        self.end_time = acct_data["end_time"].dt.tz_convert(local_timezone).values[0]
+        # Use UTC for host_data query - host_data stores times in UTC (Unix timestamps).
+        # Converting to UTC ensures correct time range matching regardless of timezone config,
+        # fixing the bug where short jobs (duration < |UTC offset|) were not plotted.
+        self.start_time = acct_data["start_time"].dt.tz_convert("UTC").values[0]
+        self.end_time = acct_data["end_time"].dt.tz_convert("UTC").values[0]
 
-    
         # Get stats data and use accounting data to narrow down query
         qtime = time.time()
         sql = """drop table if exists job_{0}; select * into temp job_{0} from host_data where time between '{1}' and '{2}' AND host in ({3})""".format(jid, self.start_time, self.end_time, ','.join("'{0}'".format(h) for h in self.acct_host_list))

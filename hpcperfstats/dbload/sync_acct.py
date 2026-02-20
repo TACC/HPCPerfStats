@@ -72,9 +72,13 @@ def sync_acct(acct_file, jobs_in_db):
     df['start_time'] = df['start_time'].replace('^Unknown$', pd.NA, regex=True)
     df['start_time'] = df['start_time'].fillna(df['end_time'])
 
-    df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize(local_timezone)
-    df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize(local_timezone)
-    df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize(local_timezone)
+    # Slurm sacct output timezone: local by default, UTC if slurm_output_utc=true in config.
+    # Clusters running in UTC must set slurm_output_utc=true or short jobs (duration < |UTC offset|)
+    # will not plot due to timezone mismatch with host_data (which stores UTC).
+    acct_timezone = 'UTC' if cfg.get_slurm_output_utc() else local_timezone
+    df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize(acct_timezone)
+    df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize(acct_timezone)
+    df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize(acct_timezone)
 
     df["runtime"] = to_timedelta(df["end_time"] - df["start_time"]).dt.total_seconds()
     df["timelimit"] = df["timelimit"].str.replace('-', ' days ')
