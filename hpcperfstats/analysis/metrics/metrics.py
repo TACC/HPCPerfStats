@@ -51,8 +51,9 @@ class Metrics():
     if df.empty: return
     # Drop first time sample from each host
     df = df.groupby('host').apply(lambda group: group.iloc[1:])
-    df = df.reset_index(drop = True)
+    #df = df.reset_index(drop = True)
 
+   
     df_n = df.groupby('host')["sum"].mean()
     node_mean, node_max, node_min = df_n.mean(), df_n.max(), df_n.min()
     
