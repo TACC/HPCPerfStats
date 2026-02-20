@@ -336,8 +336,8 @@ def type_detail(request, jid, type_name):
     # job_data accounting host names must be converted to fqdn
     acct_host_list = [h + '.' + cfg.get_host_name_ext() for h in acct_data["host_list"].values[0]]
     
-    start_time = acct_data["start_time"].dt.tz_convert('UTC').dt.tz_localize(local_timezone).values[0]
-    end_time = acct_data["end_time"].dt.tz_convert('UTC').dt.tz_localize(local_timezone).values[0]
+    start_time = acct_data["start_time"].dt.tz_localize('UTC').dt.tz_convert(local_timezone).values[0]
+    end_time = acct_data["end_time"].dt.tz_localize('UTC').dt.tz_convert(local_timezone).values[0]
     
     # Get stats data and use accounting data to narrow down query
     qtime = time.time()
