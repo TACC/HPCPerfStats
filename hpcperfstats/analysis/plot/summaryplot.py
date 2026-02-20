@@ -114,7 +114,7 @@ class SummaryPlot():
       del df["amd_mcycles"], df["amd_acycles"], df["amd_instr"]
     df = df.reset_index()
 
-    #df["time"] = to_datetime(df["time"], utc = True)
+    df["time"] = to_datetime(df["time"], utc = True)
     df["time"] = df["time"].dt.tz_convert(local_timezone)
 #    df = clean_dataframe(df)
     
