@@ -3,6 +3,7 @@ try:
 except ImportError:
     import profile
 import pstats
+
 from cStringIO import StringIO
 from django.conf import settings
 
@@ -26,9 +27,9 @@ class ProfileMiddleware(object):
     http://www.slideshare.net/zeeg/django-con-high-performance-django-presentation.
     """
     def can(self, request):
-        return settings.DEBUG and 'prof' in request.GET 
+        return settings.DEBUG and 'prof' in request.GET
     #and request.user is not None and request.user.is_staff
-    
+
     def process_view(self, request, callback, callback_args, callback_kwargs):
         if self.can(request):
             self.profiler = profile.Profile()

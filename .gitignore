@@ -1,4 +1,6 @@
 .env.dev
+.ruff*/
+.tools/
 hpcperfstats.ini
 docker-compose.yaml
 services-conf/supervisord.conf

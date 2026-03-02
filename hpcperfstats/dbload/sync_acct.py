@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-import os,sys,time
-
-from datetime import timedelta, datetime
-
-import psycopg2
-from pgcopy import CopyManager
-
-import pandas as pd
-from pandas import read_csv, to_datetime, to_timedelta
+import os
+import sys
+import time
+from datetime import datetime, timedelta
 
 import hostlist
-
-from hpcperfstats.analysis.gen.utils import read_sql
+import pandas as pd
+import psycopg2
+from django.conf import settings
+from pandas import read_csv, to_datetime, to_timedelta
+from pgcopy import CopyManager
 
 import hpcperfstats.conf_parser as cfg
-from django.conf import settings
+from hpcperfstats.analysis.gen.utils import read_sql
 
 settings.configure()
 
@@ -41,7 +39,7 @@ def sync_acct(acct_file, jobs_in_db):
                          'End' : 'end_time', 'Submit' : 'submit_time', 'Partition' : 'queue',
                          'Timelimit' : 'timelimit', 'JobName' : 'jobname', 'State' : 'state',
                          'NNodes' : 'nhosts', 'ReqCPUS' : 'ncores', 'NodeList' : 'host_list'})
-                         
+
     df = df[~df["jid"].isin(jobs_in_db["jid"])]
     df["jid"] = df["jid"].apply(str)
 
@@ -112,7 +110,7 @@ def copy_data_to_pgsql_individually(conn, data, table):
 
             try:
                 curs.execute(sql_insert, row)
-            except psycopg2.errors.UniqueViolation as uv:
+            except psycopg2.errors.UniqueViolation:
                 conn.rollback()
             except Exception as e:
                 print("error in single insert: ", e.pgcode, " ", str(e), "while executing", str(sql_insert))
@@ -144,7 +142,7 @@ if __name__ == "__main__":
         searchdate = startdate - timedelta(days = 2)
         with psycopg2.connect(CONNECTION) as conn:
             jobs_in_db = read_sql("select jid from job_data where date(end_time) >=  '{0}' ".format(searchdate.date()), conn)
-        
+
         print("Jobs found in DB in this date range: %s" % jobs_in_db.shape[0])
 
         while startdate <= enddate:
@@ -154,7 +152,7 @@ if __name__ == "__main__":
                     print(entry.path)
                     try:
                         sync_acct(entry.path, jobs_in_db)
-                    except Exception as e:
+                    except Exception:
                         print("Unable to load file: %s" % entry.path)
             startdate += timedelta(days=1)
         print("loading time", time.time() - start)

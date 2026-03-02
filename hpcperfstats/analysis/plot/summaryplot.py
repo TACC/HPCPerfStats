@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-import os
 import math
+import os
 import time
-from pandas import to_datetime, read_sql
+
+from pandas import read_sql, to_datetime
+
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
 #from hpcperfstats.analysis.gen.utils import read_sql, clean_dataframe
 
-from bokeh.palettes import d3
 from bokeh.layouts import gridplot
 from bokeh.models import ColumnDataSource, Range1d
 from bokeh.models.glyphs import Step
+from bokeh.palettes import d3
 from bokeh.plotting import figure
 
 import hpcperfstats.conf_parser as cfg
@@ -56,7 +58,7 @@ class SummaryPlot():
 
     metrics = [
       ("amd64_pmc", "arc", ['FLOPS'], "amd_flops", 1e-9, "FLOPS32b+64b[GF]"),
-      ("amd64_df", "arc", ['MBW_CHANNEL_0', 'MBW_CHANNEL_1', 'MBW_CHANNEL_2', 'MBW_CHANNEL_3'], 
+      ("amd64_df", "arc", ['MBW_CHANNEL_0', 'MBW_CHANNEL_1', 'MBW_CHANNEL_2', 'MBW_CHANNEL_3'],
        "amd_mbw", 2/(1024*1024*1024), "DRAMBW[GB/s]"),
       ("amd64_pmc", "value", ['INST_RETIRED'], "amd_instr", 1, '[#/s]'),
       ("amd64_pmc", "arc", ['MPERF'], "amd_mcycles", 1, '[#/s]'),
@@ -79,7 +81,7 @@ class SummaryPlot():
     ]
 
     df = read_sql("select host, time from job_{0} group by host, time order by host, time".format(self.jid), self.conn)
-    
+
     for typ, val, events, name, conv, label in metrics:
       s = time.time()
       df[name] = conv*read_sql("select sum({0}) from job_{3} where type = '{1}' and event in ('{2}') \
@@ -98,7 +100,7 @@ class SummaryPlot():
       del df["mcycles"], df["acycles"], df["instr"]
 
     if 'amd_acycles' in df.columns and 'amd_mcycles' in df.columns:
-      # instructions retired counter is unreliable in AMD 19h 
+      # instructions retired counter is unreliable in AMD 19h
       # Revision Guide for AMD Family 19h Models 00h-0Fh Processors
       # df["cpi"]  = df["amd_acycles"]/df["amd_instr"]
       # metrics += [("cpi", "arc", [], "cpi", 1, "CPI")]
@@ -112,8 +114,8 @@ class SummaryPlot():
     df["time"] = to_datetime(df["time"], utc = True)
     df["time"] = df["time"].dt.tz_convert(local_timezone)
 #    df = clean_dataframe(df)
-    
-    
+
+
     plots = []
     for typ, val, events, name, conv, label in metrics:
       if name not in df.columns: continue

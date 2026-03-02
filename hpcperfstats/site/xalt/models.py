@@ -2,6 +2,7 @@
 
 from django.db import models
 
+
 class run(models.Model):
     run_id = models.BigIntegerField(primary_key=True)
     job_id = models.CharField(max_length=11)
@@ -54,7 +55,7 @@ class lib(models.Model):
 
     class Meta:
         db_table = "xalt_object"
-    
+
     def __unicode__(self):
         return str(self.obj_id)
 

@@ -1,16 +1,18 @@
 # Django settings for hpcperfstats_site project.
 import os
 import sys
+
 import hpcperfstats.conf_parser as cfg
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 
 from django.contrib.messages import constants as messages
-MESSAGE_TAGS = { 
+
+MESSAGE_TAGS = {
     messages.ERROR: 'danger',
 }
 
-# For dockerization 
+# For dockerization
 SECRET_KEY = os.environ.get("SECRET_KEY")
 #DEBUG = bool(os.environ.get("DEBUG", default=0))
 DEBUG = cfg.get_debug()
@@ -33,8 +35,8 @@ DATABASES = {
         'NAME'  : '{0}'.format(cfg.get_db_name()),
         'USER'  : cfg.get_username(),
         'PASSWORD': cfg.get_password(),
-        'HOST': cfg.get_host(),         
-        'PORT': cfg.get_port(),               
+        'HOST': cfg.get_host(),
+        'PORT': cfg.get_port(),
         },
     # Uncomment this portion if an xalt database exists
     'xalt' : {
@@ -44,7 +46,7 @@ DATABASES = {
         'USER' : cfg.get_xalt_user(),
         'PASSWORD' : cfg.get_xalt_password(),
         'HOST' : cfg.get_xalt_host()
-        }        
+        }
     }
 
 # Hosts/domain names that are valid for this site; required if DEBUG is False

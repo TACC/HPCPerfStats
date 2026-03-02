@@ -1,6 +1,9 @@
-import os, sys
-from datetime import timedelta, datetime
+import os
+import sys
+from datetime import datetime, timedelta
+
 from dateutil.parser import parse
+
 #import hpcperfstats.conf_parser as cfg
 
 #acct_path = cfg.get_accounting_path()

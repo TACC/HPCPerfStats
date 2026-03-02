@@ -1,13 +1,17 @@
 #!/usr/bin/env python
-import os,sys
+import os
+import sys
+
 # Append your local repository path here:
 # sys.path.append("/home/sg99/hpcperfstats")
-from datetime import timedelta,datetime
+from datetime import datetime, timedelta
+
 os.environ['DJANGO_SETTINGS_MODULE']='hpcperfstats.site.hpcperfstats_site.settings'
 import django
+
 django.setup()
 from hpcperfstats.site.machine.models import Job, Libraries
-from hpcperfstats.site.xalt.models import run, join_run_object, lib
+from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
 try:
     start = datetime.strptime(sys.argv[1],"%Y-%m-%d")

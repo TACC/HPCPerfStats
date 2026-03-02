@@ -1,10 +1,12 @@
-import pika
-import os, sys
+import os
+import sys
 import time
+from fcntl import LOCK_EX, LOCK_NB, flock
 
-from fcntl import flock, LOCK_EX, LOCK_NB
+import pika
 
 import hpcperfstats.conf_parser as cfg
+
 DEBUG = cfg.get_debug()
 
 
@@ -12,22 +14,22 @@ def on_message(channel, method_frame, header_frame, body):
     if DEBUG:
         print("found message: %s" % header_frame)
     try:
-        message = body.decode(errors='replace')    
-    except: 
+        message = body.decode(errors='replace')
+    except:
         print("Unexpected error at decode:", sys.exc_info()[0])
         #print(body)
         return
 
-    if message[0] == '$': 
-        host = message.split('\n')[1].split()[1]       
-    else: 
+    if message[0] == '$':
+        host = message.split('\n')[1].split()[1]
+    else:
         host = message.split()[2]
-        
+
     #if host == "localhost.localdomain": return
     host_dir = os.path.join(cfg.get_archive_dir_path(), host)
     if not os.path.exists(host_dir):
         os.makedirs(host_dir)
-    
+
     current_path = os.path.join(host_dir, "current")
     if message[0] == '$':
         if os.path.exists(current_path):

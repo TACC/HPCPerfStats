@@ -38,7 +38,7 @@ def get_accounting_path():
 def get_daily_archive_dir_path():
     daily_archive_dir_path = cfg.get('PORTAL', 'daily_archive_dir')
     return daily_archive_dir_path
-    
+
 def get_rmq_server():
     rmq_server = cfg.get('RMQ', 'rmq_server')
     return rmq_server

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-import psycopg2
 import sys
 import time
+
+import psycopg2
 from pandas import DataFrame, read_sql
+
 #import pandas
 #pandas.set_option('display.max_rows', 100)
 

@@ -1,5 +1,7 @@
 import time
+
 import psycopg2
+
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import read_sql
 
@@ -21,11 +23,11 @@ class jid_table:
         acct_data = read_sql("""select * from job_data where jid = '{0}'""".format(jid), self.conj)
         # job_data accounting host names must be converted to fqdn
         self.acct_host_list = [h + '.' + cfg.get_host_name_ext() for h in acct_data["host_list"].values[0]]
-    
+
         self.start_time = acct_data["start_time"].dt.tz_convert(local_timezone).values[0]
         self.end_time = acct_data["end_time"].dt.tz_convert(local_timezone).values[0]
 
-    
+
         # Get stats data and use accounting data to narrow down query
         qtime = time.time()
         sql = """drop table if exists job_{0}; select * into temp job_{0} from host_data where time between '{1}' and '{2}' AND host in ({3})""".format(jid, self.start_time, self.end_time, ','.join("'{0}'".format(h) for h in self.acct_host_list))
@@ -37,7 +39,7 @@ class jid_table:
         # Compare accounting host list to stats host list
         htime = time.time()
         self.host_list = list(set(read_sql("select distinct on(host) host from job_{0};".format(self.jid), self.conj)["host"].values))
-        if len(self.host_list) == 0: return 
+        if len(self.host_list) == 0: return
         print("host selection time: {0:.1f}".format(time.time()-htime))
 
         # Build Schema for navigation to Type Detail view
@@ -53,4 +55,4 @@ class jid_table:
         sql = """drop table if exists job_{0};""".format(self.jid)
         with self.conj.cursor() as cur:
             cur.execute(sql)
-        self.conj.close() 
+        self.conj.close()

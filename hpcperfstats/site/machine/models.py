@@ -1,7 +1,8 @@
 """The database models of hpcperfstats"""
 
-from django.db import models
 from django.contrib.postgres.fields import ArrayField
+from django.db import models
+
 
 class RealField(models.FloatField):
     # Make type in order to use 32 bit floats (reals) instead of 64 bit floats
@@ -31,12 +32,12 @@ class job_data(models.Model):
     class Meta:
         db_table = 'job_data'
         managed = True
-    
+
     def __unicode__(self):
         return str(self.id)
 
     def color(self):
-        if self.state == 'COMPLETED': 
+        if self.state == 'COMPLETED':
             ret_val = "E1EDFA"
         elif self.state == 'FAILED':
             ret_val = "FFB2B2"

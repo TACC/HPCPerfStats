@@ -1,6 +1,7 @@
 #!/usr/bin/env python
-from setuptools import setup, find_packages
 from configparser import ConfigParser
+
+from setuptools import find_packages, setup
 
 DISTNAME = 'hpcperfstats'
 LICENSE = 'LGPL'
@@ -44,7 +45,7 @@ setup(
     include_package_data = True,
     scripts = scripts,
     install_requires = ['numpy', 'psycopg2', 'pgcopy',
-                        'pandas', 'bokeh', 'django', 'python-hostlist', 
+                        'pandas', 'bokeh', 'django', 'python-hostlist',
                         'pika', 'configparser', 'mysqlclient',
                         'gunicorn', 'cryptography', 'requests',
                         'requests-toolbelt','legacy-cgi', 'pytz', 'tzdata'],

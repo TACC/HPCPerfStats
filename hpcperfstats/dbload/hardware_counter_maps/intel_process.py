@@ -1,14 +1,15 @@
 ## @file intel_process.py
-# Post-processing for core and uncore NHM/WTM/SNB events 
-# are performed in this file for the pickler. 
+# Post-processing for core and uncore NHM/WTM/SNB events
+# are performed in this file for the pickler.
 #
 # The registers must be reported in the following order in the stats file:
 # -# CTL registers
 # -# Programmable CTR registers
 # -# Fixed CTR registers
 # -# If CTL register programming failed it (QPI) it seems to be 0, so this is added to event maps
-# ---->>>> Programmable CTL registers must be in same order as CTR 
+# ---->>>> Programmable CTL registers must be in same order as CTR
 import numpy
+
 
 ## Processor events
 def CORE_PERF_EVENT(event_select, unit_mask):
@@ -28,9 +29,9 @@ cpu_event_map = {
     CORE_PERF_EVENT(0xC7,0x40) : 'FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE,E',
     CORE_PERF_EVENT(0xC7,0x80) : 'FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE,E',
     CORE_PERF_EVENT(0xD0,0x81) : 'LOAD_OPS_ALL,E',
-    CORE_PERF_EVENT(0xD1,0x01) : 'LOAD_OPS_L1_HIT,E', 
-    CORE_PERF_EVENT(0xD1,0x02) : 'LOAD_OPS_L2_HIT,E', 
-    CORE_PERF_EVENT(0xD1,0x04) : 'LOAD_OPS_LLC_HIT,E', 
+    CORE_PERF_EVENT(0xD1,0x01) : 'LOAD_OPS_L1_HIT,E',
+    CORE_PERF_EVENT(0xD1,0x02) : 'LOAD_OPS_L2_HIT,E',
+    CORE_PERF_EVENT(0xD1,0x04) : 'LOAD_OPS_LLC_HIT,E',
     CORE_PERF_EVENT(0xD1,0x20) : 'MEM_LOAD_UOPS_RETIRED_LLC_MISS,E',
     CORE_PERF_EVENT(0xD1,0x40) : 'MEM_LOAD_UOPS_RETIRED_HIT_LFB,E',
     CORE_PERF_EVENT(0xD1,0x08) : 'MEM_LOAD_UOPS_RETIRED_L1_MISS,E',
@@ -44,9 +45,9 @@ cpu_event_map = {
     CORE_PERF_EVENT(0x10,0x10) : 'SSE_DOUBLE_PACKED,E',
     CORE_PERF_EVENT(0xF1,0x07) : 'L2_LINES_IN_ALL,E',
     CORE_PERF_EVENT1(0xD0,0x81) : 'LOAD_OPS_ALL,E',
-    CORE_PERF_EVENT1(0xD1,0x01) : 'LOAD_OPS_L1_HIT,E', 
-    CORE_PERF_EVENT1(0xD1,0x02) : 'LOAD_OPS_L2_HIT,E', 
-    CORE_PERF_EVENT1(0xD1,0x04) : 'LOAD_OPS_LLC_HIT,E', 
+    CORE_PERF_EVENT1(0xD1,0x01) : 'LOAD_OPS_L1_HIT,E',
+    CORE_PERF_EVENT1(0xD1,0x02) : 'LOAD_OPS_L2_HIT,E',
+    CORE_PERF_EVENT1(0xD1,0x04) : 'LOAD_OPS_LLC_HIT,E',
     CORE_PERF_EVENT1(0xD1,0x20) : 'MEM_LOAD_UOPS_RETIRED_LLC_MISS,E',
     CORE_PERF_EVENT1(0xD1,0x40) : 'MEM_LOAD_UOPS_RETIRED_HIT_LFB,E',
     CORE_PERF_EVENT1(0xD1,0x08) : 'MEM_LOAD_UOPS_RETIRED_L1_MISS,E',
@@ -108,8 +109,8 @@ imc_event_map = {
     IMC_PERF_EVENT_SKX(0x04, 0x03) : 'CAS_READS,E',
     IMC_PERF_EVENT_SKX(0x04, 0x0C) : 'CAS_WRITES,E',
     IMC_PERF_EVENT_SKX(0x02, 0x01) : 'PRE_COUNT_MISS,E',
-    IMC_PERF_EVENT(0x02, 0x03) : 'PRE_COUNT_ALL,E',              
-    IMC_PERF_EVENT(0x02, 0x01) : 'PRE_COUNT_MISS,E',              
+    IMC_PERF_EVENT(0x02, 0x03) : 'PRE_COUNT_ALL,E',
+    IMC_PERF_EVENT(0x02, 0x01) : 'PRE_COUNT_MISS,E',
     'FIXED0'                   : 'CYCLES,E',
     }
 
@@ -117,7 +118,7 @@ imc_event_map = {
 cha_event_map = {
     0x0040073d : "SF_EVICTIONS_MES,E",
     0x00403334 : "LLC_LOOKUP_DATA_READ_LOCAL,E",
-    0x00400757 : "BYPASS_CHA_IMC_ALL,E", 
+    0x00400757 : "BYPASS_CHA_IMC_ALL,E",
     0x00400534 : "LLC_LOOKUP_WRITE"
     }
 
@@ -130,9 +131,9 @@ pcu_event_map = {
     PCU_PERF_EVENT(0x06) : 'MAX_OS_CYCLES,E',
     PCU_PERF_EVENT(0x07) : 'MAX_CURRENT_CYCLES,E',
     PCU_PERF_EVENT(0x04) : 'MAX_TEMP_CYCLES,E',
-    PCU_PERF_EVENT(0x05) : 'MAX_POWER_CYCLES,E',              
-    PCU_PERF_EVENT(0x81) : 'MIN_IO_CYCLES,E',              
-    PCU_PERF_EVENT(0x82) : 'MIN_SNOOP_CYCLES,E',              
+    PCU_PERF_EVENT(0x05) : 'MAX_POWER_CYCLES,E',
+    PCU_PERF_EVENT(0x81) : 'MIN_IO_CYCLES,E',
+    PCU_PERF_EVENT(0x82) : 'MIN_SNOOP_CYCLES,E',
     'FIXED0'             : 'C3_CYCLES,E',
     'FIXED1'             : 'C6_CYCLES,E',
     }
@@ -145,7 +146,7 @@ qpi_event_map = {
     QPI_PERF_EVENT(0x00, 0x01) : 'TxL_FLITS_G1_SNP,E',
     QPI_PERF_EVENT(0x00, 0x04) : 'TxL_FLITS_G1_HOM,E',
     QPI_PERF_EVENT(0x02, 0x08) : 'G1_DRS_DATA,E',
-    QPI_PERF_EVENT(0x03, 0x04) : 'G2_NCB_DATA,E',              
+    QPI_PERF_EVENT(0x03, 0x04) : 'G2_NCB_DATA,E',
     }
 
 ## R2PCI Unit events
@@ -156,8 +157,8 @@ r2pci_event_map = {
     R2PCI_PERF_EVENT(0x24, 0x04) : 'TRANSMITS,E',
     R2PCI_PERF_EVENT(0x01, 0x00) : 'CLOCKTICKS,E',
     R2PCI_PERF_EVENT(0x07, 0x0F) : 'ADDRESS_USED,E',
-    R2PCI_PERF_EVENT(0x08, 0x0F) : 'ACKNOWLEDGED_USED,E',              
-    R2PCI_PERF_EVENT(0x09, 0x0F) : 'DATA_USED,E',              
+    R2PCI_PERF_EVENT(0x08, 0x0F) : 'ACKNOWLEDGED_USED,E',
+    R2PCI_PERF_EVENT(0x09, 0x0F) : 'DATA_USED,E',
     }
 
 ## WESTMERE events
@@ -170,7 +171,7 @@ wtm_event_map = {
     WTM_PERF_EVENT(0x10, 0x01) : 'FP_COMP_OPS_EXE_X87,E',
     WTM_PERF_EVENT(0x10, 0x10) : 'FP_COMP_OPS_EXE_SSE_PACKED,E',
     WTM_PERF_EVENT(0x10, 0x20) : 'FP_COMP_OPS_EXE_SSE_SCALAR,E',
-    WTM_PERF_EVENT(0xCB, 0x01) : 'MEM_LOAD_RETIRED_L1D_HIT,E',              
+    WTM_PERF_EVENT(0xCB, 0x01) : 'MEM_LOAD_RETIRED_L1D_HIT,E',
     'FIXED0'                   : 'INSTRUCTIONS_RETIRED,E',
     'FIXED1'                   : 'CLOCKS_UNHALTED_CORE,E',
     'FIXED2'                   : 'CLOCKS_UNHALTED_REF,E',
@@ -187,7 +188,7 @@ wtmunc_event_map = {
     WTMUNC_PERF_EVENT(0x09, 0x02) : 'L3_MISS_WRITE,E',
     WTMUNC_PERF_EVENT(0x09, 0x04) : 'L3_MISS_PROBE,E',
     WTMUNC_PERF_EVENT(0x0A, 0x0F) : 'L3_LINES_IN_ANY,E',
-    WTMUNC_PERF_EVENT(0x0B, 0x1F) : 'L3_LINES_OUT_ANY,E',              
+    WTMUNC_PERF_EVENT(0x0B, 0x1F) : 'L3_LINES_OUT_ANY,E',
     'FIXED0'                      : 'CLOCKS_UNCORE,E',
     }
 
@@ -251,14 +252,14 @@ class reformat_counters:
             if name not in host.stats: return
             stats = host.stats[name]
             break
-        
+
         if stats == None:
             return
 
         schema_desc = job.schemas.get(self.name).desc
         registers = schema_desc.split()
 
-        for reg in registers:    
+        for reg in registers:
             if reg.split(',')[1] != 'C':
                 if reg.find('FIXED') == -1:
                     self.ctr_registers.append(registers.index(reg))
@@ -289,7 +290,7 @@ class reformat_counters:
                             dev_schema[devidx] = "ERROR,E"
                         devidx += 1
 
-        # Schema appended for fixed ctrs 
+        # Schema appended for fixed ctrs
         nr_fixed = len(self.fix_registers)
         for i in range(0,nr_fixed):
             dev_schema.append(event_map['FIXED'+str(i)])
@@ -309,20 +310,20 @@ class reformat_counters:
         for dev, array in stats.items():
             data = dev_stats[dev]
             idx = 0
-            for j in self.ctr_registers:                
+            for j in self.ctr_registers:
                 data[:,idx] = numpy.array(array[:,j], numpy.uint64)
                 idx += 1
-            for j in self.fix_registers:                
+            for j in self.fix_registers:
                 data[:,idx] = numpy.array(array[:,j], numpy.uint64)
                 idx += 1
-                
+
         host.stats[self.name] = dev_stats
 
-intel_xeon = {'intel_snb' : cpu_event_map, 'intel_snb_cbo' : cbo_event_map, 'intel_snb_hau' : hau_event_map, 
+intel_xeon = {'intel_snb' : cpu_event_map, 'intel_snb_cbo' : cbo_event_map, 'intel_snb_hau' : hau_event_map,
               'intel_snb_imc' : imc_event_map,  'intel_snb_qpi' : qpi_event_map, 'intel_snb_pcu' : pcu_event_map, 'intel_snb_r2pci' : r2pci_event_map,
-              'intel_ivb' : cpu_event_map, 'intel_ivb_cbo' : cbo_event_map, 'intel_ivb_hau' : hau_event_map, 
+              'intel_ivb' : cpu_event_map, 'intel_ivb_cbo' : cbo_event_map, 'intel_ivb_hau' : hau_event_map,
               'intel_ivb_imc' : imc_event_map,  'intel_ivb_qpi' : qpi_event_map, 'intel_ivb_pcu' : pcu_event_map, 'intel_ivb_r2pci' : r2pci_event_map,
-              'intel_hsw' : cpu_event_map, 'intel_hsw_cbo' : cbo_event_map, 'intel_hsw_hau' : hau_event_map, 
+              'intel_hsw' : cpu_event_map, 'intel_hsw_cbo' : cbo_event_map, 'intel_hsw_hau' : hau_event_map,
               'intel_hsw_imc' : imc_event_map,  'intel_hsw_qpi' : qpi_event_map, 'intel_hsw_pcu' : pcu_event_map, 'intel_hsw_r2pci' : r2pci_event_map,
               'intel_hsw_ht' : cpu_event_map, 'intel_hsw_cbo_ht' : cbo_event_map,
               'intel_knl' : cpu_event_map, 'intel_skx' : cpu_event_map, 'intel_8pmc3' : cpu_event_map,'intel_4pmc3' : cpu_event_map, 'intel_skx_imc' : imc_event_map, 'intel_skx_cha' : cha_event_map
@@ -338,16 +339,16 @@ def format_knl(job, typename):
             stats = host.stats[typename]
             for device, values in stats.items():
                 func = device.split('.')[-1]
-                if typename == 'intel_knl_edc' and func == '0': 
+                if typename == 'intel_knl_edc' and func == '0':
                     event_map = knl_edc_uclk_event_map
                     name = "intel_knl_edc_uclk"
-                elif typename == 'intel_knl_edc' and func == '2': 
+                elif typename == 'intel_knl_edc' and func == '2':
                     event_map = knl_edc_eclk_event_map
                     name = "intel_knl_edc_eclk"
-                elif typename == 'intel_knl_mc' and func == '0': 
+                elif typename == 'intel_knl_mc' and func == '0':
                     event_map = knl_mc_uclk_event_map
                     name = "intel_knl_mc_uclk"
-                elif typename == 'intel_knl_mc' and func in ['2','3','4']: 
+                elif typename == 'intel_knl_mc' and func in ['2','3','4']:
                     event_map = knl_mc_dclk_event_map
                     name = "intel_knl_mc_dclk"
                 else:
@@ -359,9 +360,9 @@ def format_knl(job, typename):
                 ctr_idx = []
                 for idx, r in enumerate(registers):
                     ctl, c = r.split(',')[0:2]
-                    if c == 'C': 
+                    if c == 'C':
                         try:
-                            if min(values[:,idx]) == max(values[:,idx]):                                
+                            if min(values[:,idx]) == max(values[:,idx]):
                                 schema += [event_map[values[0,idx]]]
                             else:
                                 schema += ["ERROR,E"]
@@ -369,7 +370,7 @@ def format_knl(job, typename):
                         except: continue
                 values = values[:,ctr_idx]
                 host.stats[name][device] = values
-                job.get_schema(name, ' '.join(schema) + '\n')                
+                job.get_schema(name, ' '.join(schema) + '\n')
             del host.stats[typename]
         del job.schemas[typename]
 

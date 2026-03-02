@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-from hpcperfstats.dbload import sync_timedb
-import sys
-import time
-import tarfile
 import multiprocessing
+import sys
+import tarfile
+import time
 from functools import partial
+
+from hpcperfstats.dbload import sync_timedb
 
 thread_count = 8
 

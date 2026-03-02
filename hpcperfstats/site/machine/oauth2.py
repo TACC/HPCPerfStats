@@ -1,9 +1,12 @@
+import logging
+import os
+
+import requests
 from django.http import HttpResponseRedirect
 from django.shortcuts import render
 from django.urls import reverse
-import os, requests
-import logging
 from requests.auth import HTTPBasicAuth
+
 import hpcperfstats.conf_parser as cfg
 
 logging.basicConfig()

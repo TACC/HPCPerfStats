@@ -1,4 +1,5 @@
 from django.urls import path
+
 from hpcperfstats.site.machine.views import *
 
 app_name = "hpcperfstats"
@@ -13,7 +14,7 @@ urlpatterns = [
                        path(r'account/<account>/'  , index, name = 'account_view'),
                        path(r'job/<jid>/<type_name>/', type_detail, name = 'type_detail'),
                        #path(r'proc/<pk>/<proc_name>/', proc_detail, name = 'proc_detail'),
-                       #path(r'exe/<exe__icontains>)/', index, name='exe_view'),                       
+                       #path(r'exe/<exe__icontains>)/', index, name='exe_view'),
                        path(r'search/',search, name='search'),
 ]
 

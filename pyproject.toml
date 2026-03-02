@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hpcperfstats"
+version = "2.4"
+description = "A performance monitoring and analysis package for High Performance Computing Platforms"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Texas Advanced Computing Center", email = "sharrell@tacc.utexas.edu" },
+]
+urls = { 
+  Homepage = "http://www.tacc.utexas.edu",
+  Repository = "https://github.com/TACC/hpcperfstats",
+}
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Console",
+  "Operating System :: POSIX :: Linux",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+]
+dependencies = [
+  "numpy",
+  "psycopg2~=2.9",
+  "pgcopy",
+  "pandas",
+  "bokeh==3.7.3",
+  "Django~=5.2",
+  "python-hostlist",
+  "pika",
+  "configparser",
+  "mysqlclient",
+  "gunicorn",
+  "cryptography",
+  "requests",
+  "requests-toolbelt",
+  "legacy-cgi",
+  "pytz",
+  "tzdata",
+]
+
+[tool.setuptools]
+script-files = [
+  "hpcperfstats/analysis/metrics/update_metrics.py",
+  "hpcperfstats/site/manage.py",
+  "hpcperfstats/dbload/sacct_gen.py",
+  "hpcperfstats/dbload/sync_acct.py",
+  "hpcperfstats/dbload/sync_timedb.py",
+  "hpcperfstats/dbload/sync_timedb_archive.py",
+  "hpcperfstats/listend.py",
+]
+
+[tool.setuptools.packages.find]
+include = ["hpcperfstats*"]
+
+[tool.setuptools.package-data]
+"hpcperfstats" = ["cfg.py"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+extend-exclude = [
+  "migrations",
+  ".venv",
+  "env",
+  ".git",
+  "__pycache__",
+  ".ruff*",
+  ".tools",
+  "build",
+  "dist",
+]
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle errors
+  "F",  # pyflakes
+  "I",  # import sorting
+  "B",  # flake8-bugbear
+  "W",  # pycodestyle warnings
+]
+ignore = [
+  # Add specific rule codes here if Ruff is too strict somewhere.
+]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true

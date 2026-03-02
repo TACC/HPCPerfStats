@@ -1,54 +1,53 @@
 import os
+
+from django import forms
+from django.contrib import messages
+from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
 from django.http import HttpResponseRedirect
 from django.shortcuts import render
 from django.views.generic import DetailView
-from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
-from django import forms
-from django.contrib import messages
 
-
+import hpcperfstats.analysis.plot as plots
+import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.site.machine.models import job_data, metrics_data
-from hpcperfstats.site.xalt.models import run, join_run_object, lib
-import hpcperfstats.conf_parser as cfg
-import hpcperfstats.analysis.plot as plots
+from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
 #xalt
-from hpcperfstats.site.xalt.models import run, join_run_object, lib
 
 
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
 
-from numpy import histogram, log, linspace, isnan
+import time
 from math import ceil
 
+import psycopg2
 from bokeh.embed import components
 from bokeh.layouts import gridplot
-from bokeh.plotting import figure
 from bokeh.models import HoverTool
-import time
-from hpcperfstats.site.machine.oauth2 import check_for_tokens
-
-import psycopg2
+from bokeh.plotting import figure
+from numpy import histogram, isnan, linspace, log
 from pandas import DataFrame, to_timedelta
-from hpcperfstats.analysis.gen.utils import read_sql, clean_dataframe
+
+from hpcperfstats.analysis.gen.utils import clean_dataframe, read_sql
+from hpcperfstats.site.machine.oauth2 import check_for_tokens
 
 local_timezone = cfg.get_timezone()
 
 class DataNotFoundException(Exception):
     pass
 
-class libset_c: 
+class libset_c:
      def __init__(self,object_path,module_name):
          self.module_name=module_name
          self.object_path=object_path
 class xalt_data_c:
-     def __init__(self): 
+     def __init__(self):
          self.exec_path=[]
          self.cwd=[]
          self.libset=[]
-          
+
 
 CONNECTION = cfg.get_db_connection_string()
 
@@ -61,7 +60,7 @@ def home(request, error = False):
     jdf = DataFrame(job_data.objects.values("end_time"))
     date_list = jdf["end_time"].dt.date.drop_duplicates()
     print(date_list)
-    
+
     for date in date_list.sort_values():
         y, m, d = str(date.year), str(date.month), str(date.day)
         month_dict.setdefault(y + '-' + m, [])
@@ -81,14 +80,14 @@ def search(request):
 
     if 'jid' in request.GET:
         try:
-            job_objects = job_data.objects            
+            job_objects = job_data.objects
             job = job_objects.get(jid = request.GET['jid'])
             return HttpResponseRedirect("/machine/job/"+str(job.jid)+"/")
         except:
             messages.error(request, "No result found in search")
             pass
     elif 'host' in request.GET and request.GET["host"]:
-        try: 
+        try:
             print("try to get host")
             return host_detail(request)
         except:
@@ -102,18 +101,18 @@ def search(request):
             pass
 
     return home(request, error = True)
-    
+
 
 def index(request, **kwargs):
     if not check_for_tokens(request):
         return HttpResponseRedirect("/login_prompt")
 
-    fields = request.GET.dict()    
+    fields = request.GET.dict()
     fields = { k:v for k, v in fields.items() if v }
     fields.update(kwargs)
     print(fields)
 
-    ### Filter 
+    ### Filter
     # Build query and filter on job accounting data
     acct_data = { k:v for k,v in fields.items() if k.split('_', 1)[0] != "metrics" and k != "page" }
     job_list = job_data.objects.filter(**acct_data).order_by('-end_time')
@@ -128,7 +127,7 @@ def index(request, **kwargs):
         df_fields += [ name ]
     fields['nj'] = job_list.count()
     df_fields = list(set(df_fields))
-    
+
     # Build dataframe for derived metrics for histograms
     metric_dict = {}
     jid_dict = { "jid" : [] }
@@ -138,7 +137,7 @@ def index(request, **kwargs):
     for job in job_list:
         jid_dict["jid"] += [ job.jid ]
         for name in df_fields:
-            metric_set = job.metrics_data_set.all().filter(metric = name) 
+            metric_set = job.metrics_data_set.all().filter(metric = name)
             hist_metrics += [(name, metric_set[0].units)]
             for m in metric_set:
                 metric_dict.setdefault(m.metric, [])
@@ -147,7 +146,7 @@ def index(request, **kwargs):
     df = DataFrame(jid_dict)
     df = df.set_index("jid")
     hist_metrics = list(set(hist_metrics))
-    
+
     # Build job accounting data columns of dataframe for histograms
     df_fields = ["jid", "start_time", "submit_time", "runtime", "nhosts"]
     df = df.join(DataFrame(job_list.values(*df_fields)).set_index("jid"))
@@ -175,20 +174,20 @@ def index(request, **kwargs):
     fields['job_list'] = jobs
     ###
 
-    ### Build Histogram Plots    
+    ### Build Histogram Plots
     plots = []
     for metric, label in hist_metrics:
-        plots += [job_hist(df, metric, label)]        
+        plots += [job_hist(df, metric, label)]
     fields["script"], fields["div"] = components(gridplot(plots, ncols = 2))
     ###
 
     fields['logged_in'] = True
     if '?' in request.get_full_path():
         fields['current_path'] = request.get_full_path()
-        
+
     return render(request, "machine/index.html", fields)
 
-# Generate Histogram Plots of a List of Metrics    
+# Generate Histogram Plots of a List of Metrics
 def job_hist(df, metric, label):
     hover = HoverTool(tooltips = [ ("jobs", "@top"), ("bin", "[@left, @right]") ], point_policy = "snap_to_data")
     TOOLS = ["pan,wheel_zoom,box_zoom,reset,save,box_select", hover]
@@ -198,16 +197,16 @@ def job_hist(df, metric, label):
 
     hist, edges = histogram(values, bins = linspace(0, max(values), max(3, int(5*log(len(values))))))
 
-    plot = figure(title = metric, toolbar_location = None, height = 400, width = 600, 
+    plot = figure(title = metric, toolbar_location = None, height = 400, width = 600,
                   y_range = (1, max(hist)), tools = TOOLS) #  y_axis_type = "log",
     plot.xaxis.axis_label = label
     plot.yaxis.axis_label = "# jobs"
 
-    plot.quad(top = hist, bottom = 1, left = edges[:-1], right = edges[1:])    
+    plot.quad(top = hist, bottom = 1, left = edges[:-1], right = edges[1:])
 
     return plot
 
-def heat_map(pk):    
+def heat_map(pk):
     data = get_data(pk)
     hm = plots.HeatMap()
     return components(hm.plot(data))
@@ -231,7 +230,7 @@ class job_dataDetailView(DetailView):
 
         context = super(job_dataDetailView, self).get_context_data(**kwargs)
         job = context['job_data']
-        
+
         j = jid_table.jid_table(job.jid)
 
         context["host_list"] = j.acct_host_list
@@ -282,13 +281,13 @@ class job_dataDetailView(DetailView):
         #except:
         #    print("failed to generate summary plot for jid {0}".format(j.jid))
         print("plot time: {0:.1f}".format(time.time()-ptime))
-        
+
         # Compute Lustre Usage
         try:
             llite_rw = read_sql("select event, sum(delta)/(1024*1024) as delta from job_{0} where type = 'llite' \
             and event in ('read_bytes', 'write_bytes') group by event".format(j.jid), j.conj)
 
-            context['fsio'] = { "llite" : [ llite_rw[llite_rw["event"] == "read_bytes"]["delta"].values[0],  
+            context['fsio'] = { "llite" : [ llite_rw[llite_rw["event"] == "read_bytes"]["delta"].values[0],
                                             llite_rw[llite_rw["event"] == "write_bytes"]["delta"].values[0] ] }
         except:
             print("failed to compute Lustre data movement for jid {0}".format(j.jid))
@@ -297,7 +296,7 @@ class job_dataDetailView(DetailView):
         except:
             print("failed to extract schema for jid {0}".format(j.jid))
 
-        ### Specific to TACC Splunk 
+        ### Specific to TACC Splunk
         urlstring="https://scribe.tacc.utexas.edu/en-US/app/search/search?q=search%20"
         hoststring=urlstring + "%20host%3D" + j.acct_host_list[0] + cfg.get_host_name_ext()
         serverstring=urlstring + "%20mds*%20OR%20%20oss*"
@@ -324,10 +323,10 @@ def type_detail(request, jid, type_name):
     acct_data = read_sql("""select * from job_data where jid = '{0}'""".format(jid), conj)
     # job_data accounting host names must be converted to fqdn
     acct_host_list = [h + '.' + cfg.get_host_name_ext() for h in acct_data["host_list"].values[0]]
-    
+
     start_time = acct_data["start_time"].dt.tz_convert(local_timezone).values[0]
     end_time = acct_data["end_time"].dt.tz_convert(local_timezone).values[0]
-    
+
     # Get stats data and use accounting data to narrow down query
     qtime = time.time()
     sql = """drop table if exists type_detail; select * into temp type_detail from host_data where time between '{1}' and '{2}' and jid = '{0}' and type = '{3}'""".format(jid, start_time, end_time, type_name)
@@ -342,12 +341,12 @@ def type_detail(request, jid, type_name):
     data_host_list = set(read_sql("select distinct on(host) host from type_detail;", conj)["host"].values)
     if len(data_host_list) == 0: return context
     print("host selection time: {0:.1f}".format(time.time()-htime))
-    
+
     # Build Type Plot
     ptime = time.time()
     sp = plots.DevPlot(conj, data_host_list)
     df, plot = sp.plot() # AL vvv
-    script,div = components(plot) 
+    script,div = components(plot)
     schema = list(df.columns)[3:]
 
     df['dt'] = df['time'].sub(df['time'][0]).astype('timedelta64[s]')
@@ -363,7 +362,7 @@ def type_detail(request, jid, type_name):
     print("type plot time: {0:.1f}".format(time.time()-ptime))
     conj.close()
     return render(request, "machine/type_detail.html",
-                  {"type_name" : type_name, "jobid" : jid, 
+                  {"type_name" : type_name, "jobid" : jid,
                    "tscript" : script, "tdiv" : div, "logged_in" : True,
                    "stats_data": stats, "schema": schema})
 
@@ -380,7 +379,7 @@ class host_table:
 
         sql = """drop table if exists job_{0}; select * into temp job_{0} from host_data where time between '{1}'::timestamp and '{2}'::timestamp and host = '{3}'""".format(self.jid, start_time, end_time, host_fqdn)
         print(sql)
-        
+
         # Open temporary connection
         self.conj = psycopg2.connect(CONNECTION)
         with self.conj.cursor() as cur:
@@ -390,7 +389,7 @@ class host_table:
         # Compare accounting host list to stats host list
         htime = time.time()
         self.host_list = list(set(read_sql("select distinct on(host) host from job_{0};".format(self.jid), self.conj)["host"].values))
-        if len(self.host_list) == 0: return 
+        if len(self.host_list) == 0: return
         print("host selection time: {0:.1f}".format(time.time()-htime))
 
         # Build Schema for navigation to Type Detail view
@@ -406,7 +405,7 @@ class host_table:
         sql = """drop table if exists job_{0};""".format(self.jid)
         with self.conj.cursor() as cur:
             cur.execute(sql)
-        self.conj.close() 
+        self.conj.close()
 
 
 def host_detail(request):
@@ -423,7 +422,7 @@ def host_detail(request):
         end_time = fields['end_time__lte']
     except:
         end_time = "now()"
-    
+
     ht = host_table(fields['host'], start_time, end_time)
 
     # Build Summary Plot
@@ -433,7 +432,7 @@ def host_detail(request):
     print("plot time: {0:.1f}".format(time.time()-ptime))
 
     return render(request, "machine/type_detail.html",
-                  {"type_name" : fields['host'], "tag" : fields['host'], 
+                  {"type_name" : fields['host'], "tag" : fields['host'],
                    "tscript" : script, "tdiv" : div, "logged_in" : True})
 
 
@@ -442,7 +441,7 @@ def proc_detail(request, pk, proc_name):
         return HttpResponseRedirect("/login_prompt")
 
     data = get_data(pk)
-    
+
     host_map = {}
     schema = data.get_schema('proc')
     vmp_idx = schema['VmPeak'].index
@@ -454,13 +453,13 @@ def proc_detail(request, pk, proc_name):
         for proc_pid, val in host.stats['proc'].items():
 
             host_map.setdefault(host_name, {})
-            proc_, pid, cpu_aff, mem_aff = proc_pid.split('/') 
+            proc_, pid, cpu_aff, mem_aff = proc_pid.split('/')
 
             if  proc_ == proc_name:
                 host_map[host_name][proc_+'/'+pid] = [ val[-1][vmp_idx]/2**20, val[-1][hwm_idx]/2**20, cpu_aff, val[-1][thr_idx] ]
 
     return render(request, "machine/proc_detail.html",
-                  {"proc_name" : proc_name, "jobid" : pk, 
+                  {"proc_name" : proc_name, "jobid" : pk,
                    "host_map" : host_map, "hwm_unit" : hwm_unit, "logged_in" : True})
 
 class ChoiceForm(forms.Form):
@@ -478,7 +477,7 @@ class ChoiceForm(forms.Form):
         QUEUECHOICES = []
     #print(QUEUECHOICES)
     queue = forms.ChoiceField(choices=QUEUECHOICES, widget=forms.Select(choices=QUEUECHOICES))
-    
+
     try:
         STATECHOICES = [('','')] + [(s, s) for s in states]
     except Exception as e:

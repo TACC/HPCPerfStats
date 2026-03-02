@@ -1,16 +1,18 @@
 #!/usr/bin/env python
-import os, sys, time
-from datetime import timedelta, datetime
 import multiprocessing
+import os
+import sys
+import time
+from datetime import datetime, timedelta
 
 os.environ['DJANGO_SETTINGS_MODULE']='hpcperfstats.site.hpcperfstats_site.settings'
 import django
+
 django.setup()
 
-from hpcperfstats.site.machine.models import job_data
-from hpcperfstats.analysis.metrics import metrics
-
 import hpcperfstats.conf_parser as cfg
+from hpcperfstats.analysis.metrics import metrics
+from hpcperfstats.site.machine.models import job_data
 
 DEBUG =  cfg.get_debug()
 
@@ -33,11 +35,11 @@ def update_metrics(date, rerun = False):
 
     print("Compute for following metrics for date {0} on {1} jobs".format(date, len(jobs_list)))
     for name in metrics_manager.metrics_list:
-        print(name)        
-    
+        print(name)
+
     metrics_manager.run(jobs_list)
 
-    
+
     if DEBUG:
         jobs_list = list(job_data.objects.filter(end_time__date = date.date()).exclude(runtime__lt = min_time))
         jobs_list = [job for job in jobs_list if not job.metrics_data_set.all().exists() or job.metrics_data_set.all().filter(value__isnull = True).count() > 0]
@@ -50,7 +52,7 @@ if __name__ == "__main__":
     #################################################################
     try:
         startdate = datetime.strptime(sys.argv[1], "%Y-%m-%d")
-    except: 
+    except:
         startdate = datetime.combine(datetime.today(), datetime.min.time())
     try:
         enddate   = datetime.strptime(sys.argv[2], "%Y-%m-%d")
