@@ -61,7 +61,7 @@ script-files = [
 include = ["hpcperfstats*"]
 
 [tool.setuptools.package-data]
-"hpcperfstats" = ["cfg.py"]
+hpcperfstats = ["cfg.py"]
 
 [tool.ruff]
 target-version = "py312"
