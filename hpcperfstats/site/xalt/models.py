@@ -1,7 +1,6 @@
 """The database models of xalt"""
 
 from django.db import models
-from django.forms import ModelForm
 
 class run(models.Model):
     run_id = models.BigIntegerField(primary_key=True)

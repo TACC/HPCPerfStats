@@ -1,4 +1,4 @@
-import os,sys,time
+import time
 import psycopg2
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import read_sql

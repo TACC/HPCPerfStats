@@ -1,22 +1,12 @@
 import os
-import pwd
-import sys
-import traceback
-from django.http import HttpResponse, HttpResponseRedirect
+from django.http import HttpResponseRedirect
 from django.shortcuts import render
-from django.views.generic import DetailView, ListView
-from django.db.models import Q, F, FloatField, ExpressionWrapper
-from django.core.cache import cache
-from django.db.models.functions import Cast 
+from django.views.generic import DetailView
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django import forms
-from django.shortcuts import get_object_or_404
 from django.contrib import messages
-from cryptography.fernet import Fernet
-from django.http import HttpRequest
 
 
-from hpcperfstats.analysis.metrics import metrics
 from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.site.machine.models import job_data, metrics_data
 from hpcperfstats.site.xalt.models import run, join_run_object, lib
@@ -26,12 +16,11 @@ import hpcperfstats.analysis.plot as plots
 #xalt
 from hpcperfstats.site.xalt.models import run, join_run_object, lib
 
-from datetime import datetime, timedelta
 
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
 
-from numpy import array, histogram, log, linspace, isnan
+from numpy import histogram, log, linspace, isnan
 from math import ceil
 
 from bokeh.embed import components

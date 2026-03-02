@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 from setuptools import setup, find_packages
-import os
 from configparser import ConfigParser
 
 DISTNAME = 'hpcperfstats'

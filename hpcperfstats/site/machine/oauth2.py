@@ -1,8 +1,7 @@
-from django.http import HttpResponseRedirect, HttpResponseBadRequest
+from django.http import HttpResponseRedirect
 from django.shortcuts import render
 from django.urls import reverse
-from django.conf import settings
-import os, json, requests
+import os, requests
 import logging
 from requests.auth import HTTPBasicAuth
 import hpcperfstats.conf_parser as cfg

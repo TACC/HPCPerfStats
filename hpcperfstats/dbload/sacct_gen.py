@@ -1,5 +1,5 @@
 import os, sys
-from datetime import timedelta, date, datetime
+from datetime import timedelta, datetime
 from dateutil.parser import parse
 #import hpcperfstats.conf_parser as cfg
 

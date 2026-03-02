@@ -1,10 +1,7 @@
 import os
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
-import sys
 import time
-import operator, traceback
-import multiprocessing
-from hpcperfstats.analysis.gen import jid_table, utils
+from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.site.machine.models import metrics_data
 from numpy import diff, amax, zeros, maximum, mean, isnan
 from hpcperfstats.analysis.gen.utils import read_sql

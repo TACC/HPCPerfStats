@@ -1,18 +1,16 @@
 #!/usr/bin/env python
-import os, sys, pwd, time
+import os, sys, time
 from datetime import timedelta, datetime
-import psycopg2
 import multiprocessing
 
 os.environ['DJANGO_SETTINGS_MODULE']='hpcperfstats.site.hpcperfstats_site.settings'
 import django
 django.setup()
 
-from hpcperfstats.site.machine.models import job_data, metrics_data
+from hpcperfstats.site.machine.models import job_data
 from hpcperfstats.analysis.metrics import metrics
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.progress import progress
 
 DEBUG =  cfg.get_debug()
 

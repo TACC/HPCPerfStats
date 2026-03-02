@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
-import psycopg2
-import os, sys, stat
+import os
 import math
-from multiprocessing import Pool
-from datetime import datetime, timedelta
-import time, string
-from pandas import DataFrame, to_datetime, Timedelta, concat, read_sql
-import pandas
+import time
+from pandas import to_datetime, read_sql
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
-import numpy as np
 #from hpcperfstats.analysis.gen.utils import read_sql, clean_dataframe
 
 from bokeh.palettes import d3
 from bokeh.layouts import gridplot
-from bokeh.models import HoverTool, ColumnDataSource, Range1d
+from bokeh.models import ColumnDataSource, Range1d
 from bokeh.models.glyphs import Step
 from bokeh.plotting import figure
 

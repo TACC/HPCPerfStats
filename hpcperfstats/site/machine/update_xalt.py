@@ -6,8 +6,6 @@ from datetime import timedelta,datetime
 os.environ['DJANGO_SETTINGS_MODULE']='hpcperfstats.site.hpcperfstats_site.settings'
 import django
 django.setup()
-from hpcperfstats.site.machine import views
-import hpcperfstats.conf_parser as cfg
 from hpcperfstats.site.machine.models import Job, Libraries
 from hpcperfstats.site.xalt.models import run, join_run_object, lib
 

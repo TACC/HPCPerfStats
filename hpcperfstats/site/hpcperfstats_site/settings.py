@@ -3,7 +3,6 @@ import os
 import sys
 import hpcperfstats.conf_parser as cfg
 
-import hpcperfstats.site.hpcperfstats_site as hpcperfstats_site
 DIR = os.path.dirname(os.path.abspath(__file__))
 
 from django.contrib.messages import constants as messages

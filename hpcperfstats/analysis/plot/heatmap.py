@@ -4,8 +4,7 @@ from hpcperfstats.analysis.gen import utils
 import numpy
 from bokeh.plotting import figure
 from bokeh.palettes import brewer
-from bokeh.models import ColumnDataSource, BasicTicker, ColorBar, LinearColorMapper, PrintfTickFormatter, HoverTool 
-from bokeh.transform import transform
+from bokeh.models import ColumnDataSource, BasicTicker, ColorBar, LinearColorMapper, HoverTool 
 
 class HeatMap():
   

@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
 import psycopg2
 from pgcopy import CopyManager
-import os, sys, stat
+import os, sys
 import multiprocessing
-import itertools
 from functools import partial
-from multiprocessing import Pool, get_context, Lock, set_start_method
 
-from datetime import datetime, timedelta, date
-import time, string
+from datetime import datetime, timedelta
+import time
 import subprocess
-import pytz
 import tarfile
-import random
 import uuid
 
 #pandas.set_option('display.max_rows', 100)
-from pandas import DataFrame, to_datetime, Timedelta, Timestamp, concat
+from pandas import DataFrame, to_datetime
 
 from hpcperfstats.analysis.gen.utils import read_sql
 

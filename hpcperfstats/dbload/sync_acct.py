@@ -7,7 +7,7 @@ import psycopg2
 from pgcopy import CopyManager
 
 import pandas as pd
-from pandas import read_csv, to_datetime, to_timedelta, concat
+from pandas import read_csv, to_datetime, to_timedelta
 
 import hostlist
 

@@ -1,7 +1,4 @@
 import configparser
-import os
-import sys
-import time
 
 cfg = configparser.ConfigParser()
 

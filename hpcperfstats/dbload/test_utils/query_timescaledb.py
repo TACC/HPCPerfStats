@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 import psycopg2
-import os, sys, stat
-from multiprocessing import Pool
-from datetime import datetime, timedelta
-import time, string
-from pandas import DataFrame, to_datetime, Timedelta, concat, read_sql
+import sys
+import time
+from pandas import DataFrame, read_sql
 #import pandas
 #pandas.set_option('display.max_rows', 100)
 
