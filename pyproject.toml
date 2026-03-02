@@ -12,10 +12,8 @@ license = { file = "LICENSE" }
 authors = [
   { name = "Texas Advanced Computing Center", email = "sharrell@tacc.utexas.edu" },
 ]
-urls = { 
-  Homepage = "http://www.tacc.utexas.edu",
-  Repository = "https://github.com/TACC/hpcperfstats",
-}
+urls = { homepage = "http://www.tacc.utexas.edu", repository = "https://github.com/TACC/hpcperfstats" }
+
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
