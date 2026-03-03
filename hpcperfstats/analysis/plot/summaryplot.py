@@ -10,6 +10,7 @@ os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
 from bokeh.layouts import gridplot
 from bokeh.models import ColumnDataSource, Range1d
+from bokeh.models import CustomJSTickFormatter
 from bokeh.models.glyphs import Step
 from bokeh.palettes import d3
 from bokeh.plotting import figure
@@ -17,6 +18,38 @@ from bokeh.plotting import figure
 import hpcperfstats.conf_parser as cfg
 
 local_timezone = cfg.get_timezone()
+
+def _make_local_time_tick_formatter():
+    # Must return a fresh model per plot/document (Bokeh models cannot be shared
+    # across documents, e.g. across separate web requests).
+    return CustomJSTickFormatter(
+        args={"tz": local_timezone},
+        code="""
+// Bokeh datetimes are milliseconds since epoch. Render tick labels in tz.
+const dt = new Date(tick)
+
+function pad2(n) { return (n < 10) ? ("0" + n) : ("" + n) }
+
+try {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(dt)
+
+  const out = {}
+  for (const p of parts) out[p.type] = p.value
+  return `${out.year}-${out.month}-${out.day} ${out.hour}:${out.minute}`
+} catch (e) {
+  // Fallback: UTC without Intl timezone support or invalid tz name.
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth()+1)}-${pad2(dt.getUTCDate())} ${pad2(dt.getUTCHours())}:${pad2(dt.getUTCMinutes())}`
+}
+""",
+    )
 
 
 
@@ -39,6 +72,7 @@ class SummaryPlot():
 
     plot = figure(width=400, height=150, x_axis_type = "datetime",
                   y_range = Range1d(-0.1, y_range_end), y_axis_label = label)
+    plot.xaxis.formatter = _make_local_time_tick_formatter()
 
     for h in self.host_list:
       source = ColumnDataSource(df[df.host == h])
