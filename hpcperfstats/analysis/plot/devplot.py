@@ -10,7 +10,7 @@ from bokeh.palettes import d3
 from bokeh.plotting import figure
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.analysis.gen.utils import clean_dataframe, read_sql
+from hpcperfstats.analysis.gen.utils import clean_dataframe, read_sql, tz_aware_bokeh_tick_formatter
 
 local_timezone = cfg.get_timezone()
 
@@ -66,7 +66,7 @@ class DevPlot():
 
     plot = figure(width=400, height=150, x_axis_type = "datetime",
                   y_range = Range1d(-0.1, y_range_end), y_axis_label = ylabel)
-    plot.xaxis.formatter = _make_local_time_tick_formatter()
+    plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
     for h in self.host_list:
       source = ColumnDataSource(df[df.host == h])

@@ -8,6 +8,9 @@ os.environ['OPENBLAS_NUM_THREADS'] = '4'
 import numpy as np
 from pandas import read_sql as rsql
 
+import hpcperfstats.conf_parser as cfg
+
+local_timezone = cfg.get_timezone()
 
 class utils():
   def __init__(self, job):
@@ -64,3 +67,36 @@ def clean_dataframe(df):
     df = df.fillna('')
     df = df.replace([np.inf, -np.inf], '')
     return df
+
+
+def tz_aware_bokeh_tick_formatter():
+    # Must return a fresh model per plot/document (Bokeh models cannot be shared
+    # across documents, e.g. across separate web requests).
+    return CustomJSTickFormatter(
+        args={"tz": local_timezone},
+        code="""
+// Bokeh datetimes are milliseconds since epoch. Render tick labels in tz.
+const dt = new Date(tick)
+
+function pad2(n) { return (n < 10) ? ("0" + n) : ("" + n) }
+
+try {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).formatToParts(dt)
+
+  const out = {}
+  for (const p of parts) out[p.type] = p.value
+  return `${out.hour}:${out.minute}`
+} catch (e) {
+  // Fallback: UTC without Intl timezone support or invalid tz name.
+  return `${pad2(dt.getUTCHours())}:${pad2(dt.getUTCMinutes())}`
+}
+""",
+    )

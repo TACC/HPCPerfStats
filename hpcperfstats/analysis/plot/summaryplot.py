@@ -6,7 +6,7 @@ import time
 from pandas import read_sql, to_datetime
 
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
-#from hpcperfstats.analysis.gen.utils import read_sql, clean_dataframe
+from hpcperfstats.analysis.gen.utils import tz_aware_bokeh_tick_formatter
 
 from bokeh.layouts import gridplot
 from bokeh.models import ColumnDataSource, Range1d
@@ -18,40 +18,6 @@ from bokeh.plotting import figure
 import hpcperfstats.conf_parser as cfg
 
 local_timezone = cfg.get_timezone()
-
-def _make_local_time_tick_formatter():
-    # Must return a fresh model per plot/document (Bokeh models cannot be shared
-    # across documents, e.g. across separate web requests).
-    return CustomJSTickFormatter(
-        args={"tz": local_timezone},
-        code="""
-// Bokeh datetimes are milliseconds since epoch. Render tick labels in tz.
-const dt = new Date(tick)
-
-function pad2(n) { return (n < 10) ? ("0" + n) : ("" + n) }
-
-try {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  }).formatToParts(dt)
-
-  const out = {}
-  for (const p of parts) out[p.type] = p.value
-  return `${out.hour}:${out.minute}`
-} catch (e) {
-  // Fallback: UTC without Intl timezone support or invalid tz name.
-  return `${pad2(dt.getUTCHours())}:${pad2(dt.getUTCMinutes())}`
-}
-""",
-    )
-
-
 
 class SummaryPlot():
 
@@ -72,7 +38,7 @@ class SummaryPlot():
 
     plot = figure(width=400, height=150, x_axis_type = "datetime",
                   y_range = Range1d(-0.1, y_range_end), y_axis_label = label)
-    plot.xaxis.formatter = _make_local_time_tick_formatter()
+    plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
     for h in self.host_list:
       source = ColumnDataSource(df[df.host == h])
