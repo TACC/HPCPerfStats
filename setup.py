@@ -45,7 +45,7 @@ setup(
     include_package_data = True,
     scripts = scripts,
     install_requires = ['numpy', 'psycopg2', 'pgcopy',
-                        'pandas', 'bokeh', 'django', 'python-hostlist',
+                        'pandas', 'bokeh>=3.8.1', 'django', 'python-hostlist',
                         'pika', 'configparser', 'mysqlclient',
                         'gunicorn', 'cryptography', 'requests',
                         'requests-toolbelt','legacy-cgi', 'pytz', 'tzdata'],
