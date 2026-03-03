@@ -26,13 +26,19 @@ const dt = new Date(tick)
 function pad2(n) { return (n < 10) ? ("0" + n) : ("" + n) }
 
 try {
-  const time = new Intl.DateTimeFormat('en-CA', {
+  const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,
-  }).format(dt)
-  return ${time};
+  }).formatToParts(dt)
+
+  const out = {}
+  for (const p of parts) out[p.type] = p.value
+  return `${out.hour}:${out.minute}`
 } catch (e) {
   // Fallback: UTC without Intl timezone support or invalid tz name.
   return `${pad2(dt.getUTCHours())}:${pad2(dt.getUTCMinutes())}`
