@@ -10,7 +10,6 @@ from hpcperfstats.analysis.gen.utils import tz_aware_bokeh_tick_formatter
 
 from bokeh.layouts import gridplot
 from bokeh.models import ColumnDataSource, Range1d
-from bokeh.models import CustomJSTickFormatter
 from bokeh.models.glyphs import Step
 from bokeh.palettes import d3
 from bokeh.plotting import figure
