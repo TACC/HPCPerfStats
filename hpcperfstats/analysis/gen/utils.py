@@ -93,7 +93,7 @@ try {
 
   const out = {}
   for (const p of parts) out[p.type] = p.value
-  return `${out.hour}:${out.minute}`
+  return `${out.hour}:${out.minute} ${out.dayPeriod}`
 } catch (e) {
   // Fallback: UTC without Intl timezone support or invalid tz name.
   return `${pad2(dt.getUTCHours())}:${pad2(dt.getUTCMinutes())}`
