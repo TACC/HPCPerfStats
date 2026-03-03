@@ -38,15 +38,15 @@ try {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    hour12: true,
   }).formatToParts(dt)
 
   const out = {}
   for (const p of parts) out[p.type] = p.value
-  return `${out.year}-${out.month}-${out.day} ${out.hour}:${out.minute}`
+  return `${out.hour}:${out.minute}`
 } catch (e) {
   // Fallback: UTC without Intl timezone support or invalid tz name.
-  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth()+1)}-${pad2(dt.getUTCDate())} ${pad2(dt.getUTCHours())}:${pad2(dt.getUTCMinutes())}`
+  return `${pad2(dt.getUTCHours())}:${pad2(dt.getUTCMinutes())}`
 }
 """,
     )
