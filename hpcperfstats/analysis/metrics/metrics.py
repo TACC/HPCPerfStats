@@ -188,7 +188,7 @@ class Metrics():
       u = utils(job_view) 
 
       for metric_name in self.complex_metrics_list:
-        value, typename, units = getattr(sys.modules[__name__], metric)().compute_metric(u)
+        value, typename, units = getattr(sys.modules[__name__], metric_name)().compute_metric(u)
 
         if value is None:
           continue
