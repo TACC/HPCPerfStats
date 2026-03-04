@@ -2,6 +2,7 @@ import os
 import sys
 import time
 
+import numpy as np
 from numpy import amax, diff, isnan, maximum, mean, zeros
 
 from hpcperfstats.analysis.gen import jid_table
@@ -16,11 +17,100 @@ except ImportError:
 
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
+
+class _EventIndex:
+  def __init__(self, index):
+    self.index = index
+
+
+class _Schema:
+  def __init__(self, events):
+    self.events = list(events)
+    self._index = {name: idx for idx, name in enumerate(self.events)}
+    self.desc = " ".join(self.events) + "\n"
+
+  def __getitem__(self, name):
+    return _EventIndex(self._index[name])
+
+
+class _Host:
+  def __init__(self):
+    self.stats = {}
+
+
+class _JobForMetrics:
+  """Minimal job-like object compatible with hpcperfstats.analysis.gen.utils.utils."""
+
+  def __init__(self, jt):
+    self.jid = jt.jid
+    self.hosts = {}
+    self.schemas = {}
+    self.acct = {"cores": 1, "nodes": 1}
+
+    df = read_sql(
+      "select host, time, type, event, value from job_{0}".format(self.jid),
+      jt.conj,
+    )
+    if df.empty:
+      self.times = np.array([])
+      return
+
+    # Global sorted time axis
+    df = df.sort_values("time")
+    times = df["time"].drop_duplicates().sort_values()
+    # Use float seconds for simplicity; utils only uses differences
+    self.times = times.astype("datetime64[ns]").astype("datetime64[s]").astype(float)
+
+    # Build schemas based on jt.schema (type -> [events])
+    for typename, events in jt.schema.items():
+      self.schemas[typename] = _Schema(events)
+
+    # Prepare host containers
+    host_list = df["host"].drop_duplicates().values
+    for host in host_list:
+      self.hosts[host] = _Host()
+
+    # Populate stats arrays per (host, type)
+    for typename, schema in self.schemas.items():
+      events = schema.events
+      nevents = len(events)
+      if nevents == 0:
+        continue
+
+      type_df = df[df["type"] == typename]
+      if type_df.empty:
+        continue
+
+      event_index = {name: idx for idx, name in enumerate(events)}
+
+      for host, host_df in type_df.groupby("host"):
+        host_obj = self.hosts[host]
+        # Single aggregated "dev" per host suitable for utils
+        stats = np.zeros((len(self.times), nevents), dtype=float)
+
+        # Align host samples to global time axis
+        host_df = host_df.sort_values("time")
+        time_to_row = {
+          t: i for i, t in enumerate(times.values)
+        }
+
+        for _, row in host_df.iterrows():
+          t = row["time"]
+          if t not in time_to_row:
+            continue
+          ti = time_to_row[t]
+          eve = row["event"]
+          if eve not in event_index:
+            continue
+          ei = event_index[eve]
+          stats[ti, ei] = row["value"]
+
+        host_obj.stats.setdefault(typename, {})
+        host_obj.stats[typename]["agg"] = stats
+
+
 def _unwrap(args):
-  #try:
   return args[0].compute_metrics(args[1])
-  #except Exception as e:
-  #  print(traceback.format_exc())
   #  return
 
 class Metrics():
@@ -86,8 +176,11 @@ class Metrics():
 
   def compute_complex_metrics(self, job):
     jt = jid_table.jid_table(job.jid)
-    #df = read_sql("select host, time_bucket('5m', time) as time from job_{0} group by host, time".format(job.jid), jt.conj)
-    u = utils(jt)
+    # Build a job-like view that is compatible with utils()
+    job_view = _JobForMetrics(jt)
+    if job_view.times.size == 0:
+      return
+    u = utils(job_view)
     for metric in self.complex_metrics_list:
       value, typename, units = getattr(sys.modules[__name__], metric)().compute_metric(u)
       if value is None:
