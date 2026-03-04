@@ -7,11 +7,11 @@ import sys
 from datetime import datetime, timedelta
 
 import django
+django.setup()
 
 from hpcperfstats.site.machine.models import Job, Libraries
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
-django.setup()
 
 try:
     start = datetime.strptime(sys.argv[1],"%Y-%m-%d")

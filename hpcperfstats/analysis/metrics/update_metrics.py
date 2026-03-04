@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timedelta
 
 import django
+django.setup()
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
@@ -15,7 +16,7 @@ from hpcperfstats.site.machine.models import job_data
 
 DEBUG =  cfg.get_debug()
 
-django.setup()
+
 
 thread_count = 20
 
