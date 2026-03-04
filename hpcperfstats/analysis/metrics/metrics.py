@@ -1,18 +1,20 @@
 import os
-
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
+import sys
 import time
 
 from numpy import amax, diff, isnan, maximum, mean, zeros
 
 from hpcperfstats.analysis.gen import jid_table
-from hpcperfstats.analysis.gen.utils import read_sql
+from hpcperfstats.analysis.gen.utils import read_sql, utils
 from hpcperfstats.site.machine.models import metrics_data
 
 try:
-    from numpy import trapz
-except ImportError:
     from numpy import trapezoid as trapz
+except ImportError:
+    from numpy import trapz
+
+
+os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
 def _unwrap(args):
   #try:
@@ -25,7 +27,7 @@ class Metrics():
 
   def __init__(self):
 
-    self.metrics_list = {
+    self.simple_metrics_list = {
       "avg_blockbw" : { "typename" : "block", "events" : ["rd_sectors", "wr_sectors"], "conv" : 1.0/(1024*1024), "units" : "GB/s"},
       "avg_cpuusage" : { "typename" : "cpu",   "events" : ["user", "system", "nice"], "conv" : 0.01, "units" : "#cores" },
       "avg_lustreiops" : { "typename" : "llite", "events" : [
@@ -38,12 +40,19 @@ class Metrics():
       "avg_mbw" : { "typename" : "amd64_df", "events" : ["MBW_CHANNEL_0", "MBW_CHANNEL_1", "MBW_CHANNEL_2", "MBW_CHANNEL_3"], "conv" : 2/(1024*1024*1024), "units" : "GB/s" }
                   }
 
+    self.complex_metrics_list = ['avg_freq', 'avg_ethbw', 'avg_gpuutil', 'avg_packetsize', 'max_fabricbw', 
+                                 'max_lnetbw', 'max_mds', 'max_packetrate', 'mem_hwm', 'node_imbalance', 
+                                 'time_imbalance', 'vecpercent_64b', 'avg_vector_width_64b', 'vecpercent_32b', 
+                                 'avg_vector_width_32b'
+                                 ]
+
   # Compute metrics in parallel (Shared memory only)
   def run(self, job_list):
     if not job_list:
       print("Please specify a job list.")
       return
-    list(map(self.compute_metrics, job_list))
+    list(map(self.compute_simple_metrics, job_list))
+    list(map(self.compute_complex_metrics, job_list))
 
 
   def job_arc(self, jt, name = None, typename = None, events = None, conv = 0, units = None):
@@ -57,20 +66,16 @@ class Metrics():
     df_n = df.groupby('host')["sum"].mean()
     node_mean, node_max, node_min = df_n.mean(), df_n.max(), df_n.min()
 
-    #df_t = df.groupby('time')["sum"].sum()
-    #print(df)
-    #print(df_t)
-
     return node_mean
 
   # Compute metric
-  def compute_metrics(self, job):
+  def compute_simple_metrics(self, job):
     # build temporary job view
     jt = jid_table.jid_table(job.jid)
 
     metric_compute_start = time.time()
     # compute each metric for a jid and update metrics_data table
-    for name, metric in self.metrics_list.items():
+    for name, metric in self.simple_metrics_list.items():
       value = self.job_arc(jt, **metric)
       obj, created = metrics_data.objects.update_or_create(jid = job, type = metric["typename"], metric = name,
                                                            defaults = {'units' : metric["units"],
@@ -79,13 +84,27 @@ class Metrics():
     print("compute metrics time: {0:.1f}".format(time.time() - metric_compute_start))
 
 
+  def compute_complex_metrics(self, job):
+    jt = jid_table.jid_table(job.jid)
+    #df = read_sql("select host, time_bucket('5m', time) as time from job_{0} group by host, time".format(job.jid), jt.conj)
+    u = utils(jt)
+    for metric in self.complex_metrics_list:
+      value, typename, units = getattr(sys.modules[__name__], metric)().compute_metric(u)
+      if value is None:
+        continue
+      obj, created = metrics_data.objects.update_or_create(jid = job, type = typename, metric = metric,
+                                                           defaults = {'units' : units,
+                                                                       'value' : value})
+
+
 ###########
-# Metrics #
+# Complex Metrics #
 ###########
 
 class avg_freq():
   def compute_metric(self, u):
-    schema, _stats = u.get_type("pmc")
+    typename = "pmc"
+    schema, _stats = u.get_type(typename)
     cycles = 0
     cycles_ref = 0
     for hostname, stats in _stats.items():
@@ -93,35 +112,42 @@ class avg_freq():
                 stats[0, schema["CLOCKS_UNHALTED_CORE"].index]
       cycles_ref += stats[-1, schema["CLOCKS_UNHALTED_REF"].index] - \
                     stats[0, schema["CLOCKS_UNHALTED_REF"].index]
-    return u.freq*cycles/cycles_ref
+    value = u.freq*cycles/cycles_ref
+    return value, typename,'GHz'
 
 class avg_ethbw():
     def compute_metric(self, u):
-        schema, _stats = u.get_type("net")
+        typename = "net"
+        schema, _stats = u.get_type(typename)
         bw = 0
         for hostname, stats in _stats.items():
             bw += stats[-1, schema["rx_bytes"].index] - stats[0, schema["rx_bytes"].index] + \
                   stats[-1, schema["tx_bytes"].index] - stats[0, schema["tx_bytes"].index]
-        return bw/(u.dt*u.nhosts*1024*1024)
+        value = bw/(u.dt*u.nhosts*1024*1024)
+        return value, typename,'GB/s'
 
 class avg_gpuutil():
     def compute_metric(self, u):
-        schema, _stats = u.get_type("nvidia_gpu")
+        typename = "nvidia_gpu"
+        schema, _stats = u.get_type(typename)
         util = 0
         for hostname, stats in _stats.items():
             util += mean(stats[1:-1, schema["utilization"].index])
-        return util/u.nhosts
+        value = util/u.nhosts
+        return value, typename,'%'
 
 
 class avg_packetsize():
   def compute_metric(self, u):
     try:
-      schema, _stats = u.get_type("ib_ext")
+      typename = "ib_ext"
+      schema, _stats = u.get_type(typename)
       tx, rx = schema["port_xmit_pkts"].index, schema["port_rcv_pkts"].index
       tb, rb = schema["port_xmit_data"].index, schema["port_rcv_data"].index
       conv2mb = 1024*1024
     except:
-      schema, _stats = u.get_type("opa")
+      typename = "opa"
+      schema, _stats = u.get_type(typename)
       tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
       tb, rb = schema["PortXmitData"].index, schema["PortRcvData"].index
       conv2mb = 125000
@@ -133,36 +159,43 @@ class avg_packetsize():
                 stats[0, tx] - stats[0, rx]
       nbytes += stats[-1, tb] + stats[-1, rb] - \
                 stats[0, tb] - stats[0, rb]
-    return nbytes/(npacks*conv2mb)
+    value = nbytes/(npacks*conv2mb)
+    return value, typename,'MB'
 
 class max_fabricbw():
     def compute_metric(self, u):
         max_bw=0
         try:
-            schema, _stats = u.get_type("ib_ext")
+            typename = "ib_ext"
+            schema, _stats = u.get_type(typename)
             tx, rx = schema["port_xmit_data"].index, schema["port_rcv_data"].index
             conv2mb = 1024*1024
         except:
-            schema, _stats = u.get_type("opa")
+            typename = "opa"
+            schema, _stats = u.get_type(typename)
             tx, rx = schema["PortXmitData"].index, schema["PortRcvData"].index
             conv2mb = 125000
         for hostname, stats in _stats.items():
             max_bw = max(max_bw, amax(diff(stats[:, tx] + stats[:, rx])/diff(u.t)))
-        return max_bw/conv2mb
+        value = max_bw/conv2mb
+        return value, typename,'GB/s'
 
 class max_lnetbw():
     def compute_metric(self, u):
+        typename = "lnet"
+        schema, _stats = u.get_type(typename)
         max_bw=0.0
-        schema, _stats = u.get_type("lnet")
         tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
         for hostname, stats in _stats.items():
             max_bw = max(max_bw, amax(diff(stats[:, tx] + stats[:, rx])/diff(u.t)))
-        return max_bw/(1024*1024)
+        value = max_bw/(1024*1024)
+        return value, typename,'GB/s'
 
 class max_mds():
   def compute_metric(self, u):
     max_mds = 0
-    schema, _stats = u.get_type("llite")
+    typename = "llite"
+    schema, _stats = u.get_type(typename)
     for hostname, stats in _stats.items():
       max_mds = max(max_mds, amax(diff(stats[:, schema["open"].index] + \
                                        stats[:, schema["close"].index] + \
@@ -187,21 +220,25 @@ class max_mds():
                                        stats[:, schema["rmdir"].index] + \
                                        stats[:, schema["mknod"].index] + \
                                        stats[:, schema["rename"].index])/diff(u.t)))
-    return max_mds
+    value = max_mds
+    return value, typename,'iops'
 
 class max_packetrate():
     def compute_metric(self, u):
         max_pr=0
         try:
-            schema, _stats = u.get_type("ib_ext")
+            typename = "ib_ext"
+            schema, _stats = u.get_type(typename)
             tx, rx = schema["port_xmit_pkts"].index, schema["port_rcv_pkts"].index
         except:
-            schema, _stats = u.get_type("opa")
+            typename = "opa"
+            schema, _stats = u.get_type(typename)
             tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
 
         for hostname, stats in _stats.items():
             max_pr = max(max_pr, amax(diff(stats[:, tx] + stats[:, rx])/diff(u.t)))
-        return max_pr
+        value = max_pr
+        return value, typename,'#/s'
 
 # This will compute the maximum memory usage recorded
 # by monitor.  It only samples at x mn intervals and
@@ -210,17 +247,20 @@ class mem_hwm():
   def compute_metric(self, u):
     # mem usage in GB
     max_memusage = 0.0
-    schema, _stats = u.get_type("mem")
+    typename = "mem"
+    schema, _stats = u.get_type(typename)
     for hostname, stats in _stats.items():
       max_memusage = max(max_memusage,
                          amax(stats[:, schema["MemUsed"].index] - \
                               stats[:, schema["Slab"].index] - \
                               stats[:, schema["FilePages"].index]))
-    return max_memusage/(2.**30)
+    value = max_memusage/(2.**30)
+    return value, typename,'GB'
 
 class node_imbalance():
   def compute_metric(self, u):
-    schema, _stats = u.get_type("cpu")
+    typename = "cpu"
+    schema, _stats = u.get_type(typename)
     max_usage = zeros(u.nt - 1)
     for hostname, stats in _stats.items():
       max_usage = maximum(max_usage, diff(stats[:, schema["user"].index])/diff(u.t))
@@ -228,13 +268,15 @@ class node_imbalance():
     max_imbalance = []
     for hostname, stats in _stats.items():
       max_imbalance += [mean((max_usage - diff(stats[:, schema["user"].index])/diff(u.t))/max_usage)]
-    return amax([0. if isnan(x) else x for x in max_imbalance])
+    value = amax([0. if isnan(x) else x for x in max_imbalance])
+    return value, typename,'%'
 
 class time_imbalance():
   def compute_metric(self, u):
+    typename = "cpu"
+    schema, _stats = u.get_type(typename)
     tmid=(u.t[:-1] + u.t[1:])/2.0
     dt = diff(u.t)
-    schema, _stats = u.get_type("cpu")
     vals = []
     for hostname, stats in _stats.items():
       #skip first and last two time slices
@@ -249,13 +291,15 @@ class time_imbalance():
         # ratio of integral after time over before time
         vals += [b/a]
     if vals:
-      return min(vals)
+      value = min(vals)
+      return value, typename,'%'
     else:
       return None
 
 class vecpercent_64b():
   def compute_metric(self, u):
-    schema, _stats = u.get_type("pmc")
+    typename = "pmc"
+    schema, _stats = u.get_type(typename)
     vector_widths = {"SSE_D_ALL" : 1, "SIMD_D_256" : 2,
                     "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE" : 1,
                      "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE" : 2,
@@ -273,11 +317,13 @@ class vecpercent_64b():
           flops = (stats[-1, index] - stats[0, index])*vector_widths[eventname]
           if vector_widths[eventname] > 1: vector_flops += flops
           else: scalar_flops += flops
-    return 100*vector_flops/(scalar_flops + vector_flops)
+    value = 100*vector_flops/(scalar_flops + vector_flops)
+    return value, typename,'%'
 
 class avg_vector_width_64b():
   def compute_metric(self, u):
-    schema, _stats = u.get_type("pmc")
+    typename = "pmc"
+    schema, _stats = u.get_type(typename)
     vector_widths = {"SSE_D_ALL" : 1, "SIMD_D_256" : 2,
                     "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE" : 1,
                      "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE" : 2,
@@ -294,11 +340,13 @@ class avg_vector_width_64b():
           index = schema[eventname].index
           instr += (stats[-1, index] - stats[0, index])
           flops += (stats[-1, index] - stats[0, index])*vector_widths[eventname]
-    return flops/instr
+    value = flops/instr
+    return value, typename,'#'
 
 class vecpercent_32b():
   def compute_metric(self, u):
-    schema, _stats = u.get_type("pmc")
+    typename = "pmc"
+    schema, _stats = u.get_type(typename)
     vector_widths = {"FP_ARITH_INST_RETIRED_SCALAR_SINGLE" : 1,
                      "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE" : 4,
                      "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE" : 8,
@@ -312,11 +360,13 @@ class vecpercent_32b():
           flops = (stats[-1, index] - stats[0, index])*vector_widths[eventname]
           if vector_widths[eventname] > 1: vector_flops += flops
           else: scalar_flops += flops
-    return 100*vector_flops/(scalar_flops + vector_flops)
+    value = 100*vector_flops/(scalar_flops + vector_flops)
+    return value, typename,'%'
 
 class avg_vector_width_32b():
   def compute_metric(self, u):
-    schema, _stats = u.get_type("pmc")
+    typename = "pmc"
+    schema, _stats = u.get_type(typename)
     vector_widths = {"FP_ARITH_INST_RETIRED_SCALAR_SINGLE" : 1,
                      "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE" : 4,
                      "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE" : 8,
@@ -329,6 +379,7 @@ class avg_vector_width_32b():
           index = schema[eventname].index
           instr += (stats[-1, index] - stats[0, index])
           flops += (stats[-1, index] - stats[0, index])*vector_widths[eventname]
-    return flops/instr
+    value = flops/instr
+    return value, typename,'#'
 
 
