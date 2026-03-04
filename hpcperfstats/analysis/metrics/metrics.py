@@ -1,3 +1,4 @@
+import multiprocessing
 import os
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
@@ -146,7 +147,10 @@ class Metrics():
     if not job_list:
       print("Please specify a job list.")
       return
-    list(map(self.compute_metrics, job_list))
+    threads = 10  
+    with multiprocessing.Pool(processes=threads) as pool:
+      for _ in pool.imap_unordered(_unwrap, ((self, job) for job in job_list)):
+        pass
 
 
   def job_arc(self, jt, name = None, typename = None, events = None, conv = 0, units = None):

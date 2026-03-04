@@ -6,12 +6,12 @@ import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import read_sql
 
 local_timezone = cfg.get_timezone()
+CONNECTION = cfg.get_db_connection_string()
 
 class jid_table:
 
     def __init__(self, jid):
 
-        CONNECTION = cfg.get_db_connection_string()
         print("Initializing table for job {0}".format(jid))
 
         self.jid = jid

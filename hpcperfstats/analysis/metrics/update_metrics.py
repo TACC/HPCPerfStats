@@ -18,7 +18,7 @@ DEBUG =  cfg.get_debug()
 
 
 
-thread_count = 20
+thread_count = 2
 
 def update_metrics(date, rerun = False):
 
