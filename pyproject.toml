@@ -29,7 +29,7 @@ dependencies = [
   "psycopg2~=2.9",
   "pgcopy",
   "pandas",
-  "bokeh==3.8.1",
+  "bokeh==3.8.2",
   "Django~=5.2",
   "python-hostlist",
   "pika",
