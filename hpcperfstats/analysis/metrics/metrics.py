@@ -175,25 +175,25 @@ class Metrics():
         return
 
       
-      for metric, metric_obj in self.simple_metrics_list.items():
-        value = self.job_arc(jt, **metric)
+      for metric_name, metric_obj in self.simple_metrics_list.items():
+        value = self.job_arc(jt, **metric_obj)
 
         if value is None:
           continue
 
-        obj, created = metrics_data.objects.update_or_create(jid = job, type = metric["typename"], metric = metric,
+        obj, created = metrics_data.objects.update_or_create(jid = job, type = metric_obj["typename"], metric = metric_name,
                                                              defaults = {'units' : metric_obj["units"],
                                                                          'value' : value})
 
       u = utils(job_view) 
 
-      for metric in self.complex_metrics_list:
+      for metric_name in self.complex_metrics_list:
         value, typename, units = getattr(sys.modules[__name__], metric)().compute_metric(u)
 
         if value is None:
           continue
 
-        obj, created = metrics_data.objects.update_or_create(jid = job, type = typename, metric = metric,
+        obj, created = metrics_data.objects.update_or_create(jid = job, type = typename, metric = metric_name,
                                                              defaults = {'units' : units,
                                                                          'value' : value})
 
