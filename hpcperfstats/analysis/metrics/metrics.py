@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
 import sys
@@ -8,6 +9,8 @@ import time
 import numpy as np
 from numpy import amax, diff, isnan, maximum, mean, zeros
 from pandas import to_datetime
+
+from django.db import transaction
 
 from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.analysis.gen.utils import read_sql, utils
@@ -147,10 +150,24 @@ class Metrics():
     if not job_list:
       print("Please specify a job list.")
       return
-    threads = 10  
+    threads = 10
     with multiprocessing.Pool(processes=threads) as pool:
-      for _ in pool.imap_unordered(_unwrap, ((self, job) for job in job_list)):
-        pass
+      for job_results in pool.imap_unordered(_unwrap, ((self, job) for job in job_list)):
+        if not job_results:
+          continue
+        # Perform all ORM writes in the main process to avoid
+        # database-connection and race issues across forked workers.
+        with transaction.atomic():
+          for item in job_results:
+            metrics_data.objects.update_or_create(
+              jid=item["jid"],
+              type=item["type"],
+              metric=item["metric"],
+              defaults={
+                "units": item["units"],
+                "value": item["value"],
+              },
+            )
 
 
   def job_arc(self, jt, name = None, typename = None, events = None, conv = 0, units = None):
@@ -170,24 +187,31 @@ class Metrics():
   def compute_metrics(self, job):
     metric_compute_start = time.time()
 
+    results = []
+
     # build temporary job view
     with jid_table.jid_table(job.jid) as jt:
 
       job_view = _JobForMetrics(jt)
 
       if job_view.times.size == 0:
-        return
+        return []
 
-      
       for metric_name, metric_obj in self.simple_metrics_list.items():
         value = self.job_arc(jt, **metric_obj)
 
         if value is None:
           continue
 
-        obj, created = metrics_data.objects.update_or_create(jid = job, type = metric_obj["typename"], metric = metric_name,
-                                                             defaults = {'units' : metric_obj["units"],
-                                                                         'value' : value})
+        results.append(
+          {
+            "jid": job,
+            "type": metric_obj["typename"],
+            "metric": metric_name,
+            "units": metric_obj["units"],
+            "value": value,
+          }
+        )
 
       u = utils(job_view) 
 
@@ -196,12 +220,18 @@ class Metrics():
 
         if value is None:
           continue
-
-        obj, created = metrics_data.objects.update_or_create(jid = job, type = typename, metric = metric_name,
-                                                             defaults = {'units' : units,
-                                                                         'value' : value})
+        results.append(
+          {
+            "jid": job,
+            "type": typename,
+            "metric": metric_name,
+            "units": units,
+            "value": value,
+          }
+        )
 
     print("compute metrics time: {0:.1f}".format(time.time() - metric_compute_start))
+    return results
 
 
 ###########
