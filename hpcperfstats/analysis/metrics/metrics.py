@@ -173,7 +173,7 @@ class Metrics():
       if job_view.times.size == 0:
         return
 
-      u = utils(job_view)
+      
       for metric, metric_obj in self.simple_metrics_list.items():
         value = self.job_arc(jt, **metric)
 
@@ -183,6 +183,9 @@ class Metrics():
         obj, created = metrics_data.objects.update_or_create(jid = job, type = metric["typename"], metric = metric,
                                                              defaults = {'units' : metric_obj["units"],
                                                                          'value' : value})
+
+      u = utils(job_view) 
+
       for metric in self.complex_metrics_list:
         value, typename, units = getattr(sys.modules[__name__], metric)().compute_metric(u)
 
