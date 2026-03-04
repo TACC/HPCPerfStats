@@ -1,20 +1,21 @@
 #!/usr/bin/env python
 import multiprocessing
 import os
+os.environ['DJANGO_SETTINGS_MODULE']='hpcperfstats.site.hpcperfstats_site.settings'
+
 import sys
 import time
 from datetime import datetime, timedelta
 
-os.environ['DJANGO_SETTINGS_MODULE']='hpcperfstats.site.hpcperfstats_site.settings'
 import django
-
-django.setup()
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
 from hpcperfstats.site.machine.models import job_data
 
 DEBUG =  cfg.get_debug()
+
+django.setup()
 
 thread_count = 20
 

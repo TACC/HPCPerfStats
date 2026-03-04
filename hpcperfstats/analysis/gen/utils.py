@@ -1,5 +1,9 @@
 import os
+os.environ['OPENBLAS_NUM_THREADS'] = '4'
+
 import warnings
+warnings.simplefilter(action='ignore', category=UserWarning)
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 from bokeh.models import CustomJSTickFormatter
 import numpy as np
@@ -7,10 +11,6 @@ from pandas import read_sql as rsql
 
 import hpcperfstats.conf_parser as cfg
 
-warnings.simplefilter(action='ignore', category=UserWarning)
-warnings.simplefilter(action='ignore', category=FutureWarning)
-
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
 local_timezone = cfg.get_timezone()
 

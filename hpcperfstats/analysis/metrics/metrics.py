@@ -1,4 +1,6 @@
 import os
+os.environ['OPENBLAS_NUM_THREADS'] = '4'
+
 import sys
 import time
 
@@ -15,7 +17,6 @@ except ImportError:
     from numpy import trapz
 
 
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
 
 class _EventIndex:

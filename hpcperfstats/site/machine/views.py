@@ -1,37 +1,30 @@
 import os
+os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
+import time
+from math import ceil
+
+from bokeh.embed import components
+from bokeh.layouts import gridplot
+from bokeh.models import HoverTool
+from bokeh.plotting import figure
 from django import forms
 from django.contrib import messages
 from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
 from django.http import HttpResponseRedirect
 from django.shortcuts import render
 from django.views.generic import DetailView
+import psycopg2
+from numpy import histogram, isnan, linspace, log
+from pandas import DataFrame, to_timedelta
 
 import hpcperfstats.analysis.plot as plots
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen import jid_table
-from hpcperfstats.site.machine.models import job_data, metrics_data
-from hpcperfstats.site.xalt.models import join_run_object, lib, run
-
-#xalt
-
-
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
-
-
-import time
-from math import ceil
-
-import psycopg2
-from bokeh.embed import components
-from bokeh.layouts import gridplot
-from bokeh.models import HoverTool
-from bokeh.plotting import figure
-from numpy import histogram, isnan, linspace, log
-from pandas import DataFrame, to_timedelta
-
 from hpcperfstats.analysis.gen.utils import clean_dataframe, read_sql
+from hpcperfstats.site.machine.models import job_data, metrics_data
 from hpcperfstats.site.machine.oauth2 import check_for_tokens
+from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
 local_timezone = cfg.get_timezone()
 

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 import math
 import os
+os.environ['OPENBLAS_NUM_THREADS'] = '4'
+
 import time
 
 from pandas import read_sql, to_datetime
 
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
 from hpcperfstats.analysis.gen.utils import tz_aware_bokeh_tick_formatter
 
 from bokeh.layouts import gridplot

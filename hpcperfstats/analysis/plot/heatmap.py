@@ -1,6 +1,6 @@
 import os
-
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
+
 import numpy
 from bokeh.models import (
   BasicTicker,
