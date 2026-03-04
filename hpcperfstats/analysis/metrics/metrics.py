@@ -208,6 +208,7 @@ class avg_freq():
   def compute_metric(self, u):
     typename = "pmc"
     schema, _stats = u.get_type(typename)
+    if schema is None: return None, typename,'GHz'
     cycles = 0
     cycles_ref = 0
     for hostname, stats in _stats.items():
@@ -224,6 +225,7 @@ class avg_ethbw():
     def compute_metric(self, u):
         typename = "net"
         schema, _stats = u.get_type(typename)
+        if schema is None: return None, typename,'MB/s'
         bw = 0
         for hostname, stats in _stats.items():
             bw += stats[-1, schema["rx_bytes"].index] - stats[0, schema["rx_bytes"].index] + \
@@ -236,6 +238,7 @@ class avg_gpuutil():
     def compute_metric(self, u):
         typename = "nvidia_gpu"
         schema, _stats = u.get_type(typename)
+        if schema is None: return None, typename,'%'
         util = 0
         for hostname, stats in _stats.items():
             util += mean(stats[1:-1, schema["utilization"].index])
@@ -249,12 +252,14 @@ class avg_packetsize():
     try:
       typename = "ib_ext"
       schema, _stats = u.get_type(typename)
+      if schema is None: return None, typename,'MB'
       tx, rx = schema["port_xmit_pkts"].index, schema["port_rcv_pkts"].index
       tb, rb = schema["port_xmit_data"].index, schema["port_rcv_data"].index
       conv2mb = 1024*1024
     except:
       typename = "opa"
       schema, _stats = u.get_type(typename)
+      if schema is None: return None, typename,'MB'
       tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
       tb, rb = schema["PortXmitData"].index, schema["PortRcvData"].index
       conv2mb = 125000
@@ -277,11 +282,13 @@ class max_fabricbw():
         try:
             typename = "ib_ext"
             schema, _stats = u.get_type(typename)
+            if schema is None: return None, typename,'MB'
             tx, rx = schema["port_xmit_data"].index, schema["port_rcv_data"].index
             conv2mb = 1024*1024
         except:
             typename = "opa"
             schema, _stats = u.get_type(typename)
+            if schema is None: return None, typename,'MB'
             tx, rx = schema["PortXmitData"].index, schema["PortRcvData"].index
             conv2mb = 125000
         for hostname, stats in _stats.items():
@@ -294,6 +301,7 @@ class max_lnetbw():
     def compute_metric(self, u):
         typename = "lnet"
         schema, _stats = u.get_type(typename)
+        if schema is None: return None, typename,'MB/s'
         max_bw=0.0
         tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
         for hostname, stats in _stats.items():
@@ -307,6 +315,7 @@ class max_mds():
     max_mds = 0
     typename = "llite"
     schema, _stats = u.get_type(typename)
+    if schema is None: return None, typename,'iops'
     for hostname, stats in _stats.items():
       max_mds = max(max_mds, amax(diff(stats[:, schema["open"].index] + \
                                        stats[:, schema["close"].index] + \
@@ -341,10 +350,12 @@ class max_packetrate():
         try:
             typename = "ib_ext"
             schema, _stats = u.get_type(typename)
+            if schema is None: return None, typename,'#/s'
             tx, rx = schema["port_xmit_pkts"].index, schema["port_rcv_pkts"].index
         except:
             typename = "opa"
             schema, _stats = u.get_type(typename)
+            if schema is None: return None, typename,'#/s'
             tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
 
         for hostname, stats in _stats.items():
@@ -362,6 +373,7 @@ class mem_hwm():
     max_memusage = 0.0
     typename = "mem"
     schema, _stats = u.get_type(typename)
+    if schema is None: return None, typename,'GiB'
     for hostname, stats in _stats.items():
       max_memusage = max(max_memusage,
                          amax(stats[:, schema["MemUsed"].index] - \
@@ -376,6 +388,7 @@ class node_imbalance():
   def compute_metric(self, u):
     typename = "cpu"
     schema, _stats = u.get_type(typename)
+    if schema is None: return None, typename,'%'
     max_usage = zeros(u.nt - 1)
     for hostname, stats in _stats.items():
       max_usage = maximum(max_usage, diff(stats[:, schema["user"].index])/diff(u.t))
@@ -392,6 +405,7 @@ class time_imbalance():
   def compute_metric(self, u):
     typename = "cpu"
     schema, _stats = u.get_type(typename)
+    if schema is None: return None, typename,'%'
     tmid=(u.t[:-1] + u.t[1:])/2.0
     dt = diff(u.t)
     vals = []
@@ -419,6 +433,7 @@ class vecpercent_64b():
   def compute_metric(self, u):
     typename = "pmc"
     schema, _stats = u.get_type(typename)
+    if schema is None: return None, typename,'#'
     vector_widths = {"SSE_D_ALL" : 1, "SIMD_D_256" : 2,
                     "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE" : 1,
                      "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE" : 2,
@@ -446,6 +461,7 @@ class avg_vector_width_64b():
   def compute_metric(self, u):
     typename = "pmc"
     schema, _stats = u.get_type(typename)
+    if schema is None: return None, typename,'#'
     vector_widths = {"SSE_D_ALL" : 1, "SIMD_D_256" : 2,
                     "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE" : 1,
                      "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE" : 2,
@@ -471,6 +487,7 @@ class vecpercent_32b():
   def compute_metric(self, u):
     typename = "pmc"
     schema, _stats = u.get_type(typename)
+    if schema is None: return None, typename,'#'
     vector_widths = {"FP_ARITH_INST_RETIRED_SCALAR_SINGLE" : 1,
                      "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE" : 4,
                      "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE" : 8,
@@ -494,6 +511,7 @@ class avg_vector_width_32b():
   def compute_metric(self, u):
     typename = "pmc"
     schema, _stats = u.get_type(typename)
+    if schema is None: return None, typename,'#'
     vector_widths = {"FP_ARITH_INST_RETIRED_SCALAR_SINGLE" : 1,
                      "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE" : 4,
                      "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE" : 8,
