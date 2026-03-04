@@ -16,5 +16,6 @@ urlpatterns = [
                        #path(r'proc/<pk>/<proc_name>/', proc_detail, name = 'proc_detail'),
                        #path(r'exe/<exe__icontains>)/', index, name='exe_view'),
                        path(r'search/',search, name='search'),
+                       path(r'admin_monitor/', admin_monitor, name='admin_monitor'),
 ]
 

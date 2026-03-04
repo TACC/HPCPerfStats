@@ -1,0 +1,66 @@
+{% extends "hpcperfstats_site/base.html" %}
+
+{% block content %}
+
+<h3>Admin Monitor &mdash; Host Last Seen Timestamps</h3>
+
+<p>
+  Status buckets are encoded by both <strong>color</strong> and <strong>text</strong> for readability:
+</p>
+<ul>
+  <li><span class="badge badge-secondary">OK (≤ 10 minutes)</span></li>
+  <li><span class="badge badge-info">> 10 minutes</span></li>
+  <li><span class="badge badge-warning">> 1 hour</span></li>
+  <li><span class="badge badge-danger">> 1 day</span></li>
+  <li><span class="badge badge-dark">> 1 week</span></li>
+</ul>
+
+<table class="table table-condensed table-bordered">
+  <thead>
+    <tr>
+      <th>Host</th>
+      <th>Last Timestamp</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in host_stats %}
+    <tr
+      {% if row.age_bucket == "gt_week" %}
+        class="table-dark"
+      {% elif row.age_bucket == "gt_day" %}
+        class="table-danger"
+      {% elif row.age_bucket == "gt_hour" %}
+        class="table-warning"
+      {% elif row.age_bucket == "gt_10min" %}
+        class="table-info"
+      {% endif %}
+    >
+      <td>{{ row.host }}</td>
+      <td>
+        {{ row.last_time }}
+      </td>
+      <td>
+        {% if row.age_bucket == "gt_week" %}
+          <span class="badge badge-dark"><strong>> 1 week</strong></span>
+        {% elif row.age_bucket == "gt_day" %}
+          <span class="badge badge-danger"><strong>> 1 day</strong></span>
+        {% elif row.age_bucket == "gt_hour" %}
+          <span class="badge badge-warning"><strong>> 1 hour</strong></span>
+        {% elif row.age_bucket == "gt_10min" %}
+          <span class="badge badge-info"><strong>> 10 minutes</strong></span>
+        {% else %}
+          <span class="badge badge-secondary">OK (≤ 10 minutes)</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% empty %}
+    <tr>
+      <td colspan="2" class="text-center">No host data available.</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}
+

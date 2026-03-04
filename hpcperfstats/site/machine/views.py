@@ -2,6 +2,7 @@ import os
 os.environ['OPENBLAS_NUM_THREADS'] = '4'
 
 import time
+from datetime import timedelta
 from math import ceil
 
 from bokeh.embed import components
@@ -11,8 +12,10 @@ from bokeh.plotting import figure
 from django import forms
 from django.contrib import messages
 from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
+from django.db.models import Max
 from django.http import HttpResponseRedirect
 from django.shortcuts import render
+from django.utils import timezone
 from django.views.generic import DetailView
 import psycopg2
 from numpy import histogram, isnan, linspace, log
@@ -22,7 +25,7 @@ import hpcperfstats.analysis.plot as plots
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.analysis.gen.utils import clean_dataframe, read_sql
-from hpcperfstats.site.machine.models import job_data, metrics_data
+from hpcperfstats.site.machine.models import host_data, job_data, metrics_data
 from hpcperfstats.site.machine.oauth2 import check_for_tokens
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
@@ -454,6 +457,49 @@ def proc_detail(request, pk, proc_name):
     return render(request, "machine/proc_detail.html",
                   {"proc_name" : proc_name, "jobid" : pk,
                    "host_map" : host_map, "hwm_unit" : hwm_unit, "logged_in" : True})
+
+
+def admin_monitor(request):
+    if not check_for_tokens(request):
+        return HttpResponseRedirect("/login_prompt")
+
+    # Restrict to staff users if that flag is present on the session
+    if not request.session.get("is_staff", False):
+        return HttpResponseRedirect("/")
+
+    host_stats_qs = (
+        host_data.objects
+        .values("host")
+        .annotate(last_time=Max("time"))
+        .order_by("host")
+    )
+
+    now = timezone.now()
+    host_stats = []
+    for row in host_stats_qs:
+        last_time = row.get("last_time")
+        if not last_time:
+            bucket = "gt_week"
+        else:
+            age = now - last_time
+            if age > timedelta(weeks=1):
+                bucket = "gt_week"
+            elif age > timedelta(days=1):
+                bucket = "gt_day"
+            elif age > timedelta(hours=1):
+                bucket = "gt_hour"
+            elif age > timedelta(minutes=10):
+                bucket = "gt_10min"
+            else:
+                bucket = "ok"
+        row["age_bucket"] = bucket
+        host_stats.append(row)
+
+    context = {
+        "host_stats": host_stats,
+        "logged_in": True,
+    }
+    return render(request, "machine/admin_monitor.html", context)
 
 class ChoiceForm(forms.Form):
 
