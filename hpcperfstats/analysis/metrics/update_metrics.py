@@ -73,10 +73,8 @@ if __name__ == "__main__":
         date += timedelta(days=1)
 
     print(all_dates)
-    with multiprocessing.Pool(processes=thread_count) as pool:
-        for result in pool.imap_unordered(update_metrics, all_dates):
-            print(result)
-
+    for result in map(update_metrics, all_dates):
+        print(result)
 
    #update_metrics(date, rerun = False)
 
