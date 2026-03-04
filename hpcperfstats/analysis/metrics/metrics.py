@@ -6,6 +6,7 @@ import time
 
 import numpy as np
 from numpy import amax, diff, isnan, maximum, mean, zeros
+from pandas import to_datetime
 
 from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.analysis.gen.utils import read_sql, utils
@@ -58,7 +59,9 @@ class _JobForMetrics:
 
     # Global sorted time axis
     df = df.sort_values("time")
+    df["time"] = to_datetime(df["time"]).dt.tz_localize(None)
     times = df["time"].drop_duplicates().sort_values()
+
     # Use float seconds for simplicity; utils only uses differences
     self.times = times.astype("datetime64[ns]").astype("datetime64[s]").astype(float)
 
