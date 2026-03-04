@@ -112,6 +112,8 @@ class avg_freq():
                 stats[0, schema["CLOCKS_UNHALTED_CORE"].index]
       cycles_ref += stats[-1, schema["CLOCKS_UNHALTED_REF"].index] - \
                     stats[0, schema["CLOCKS_UNHALTED_REF"].index]
+    if cycles_ref == 0:
+      return None, typename, 'GHz'
     value = u.freq*cycles/cycles_ref
     return value, typename,'GHz'
 
@@ -160,7 +162,7 @@ class avg_packetsize():
       nbytes += stats[-1, tb] + stats[-1, rb] - \
                 stats[0, tb] - stats[0, rb]
     if npacks == 0:
-      return None
+      return None, typename,'MB'
     value = nbytes/(npacks*conv2mb)
     return value, typename,'MB'
 
@@ -298,7 +300,7 @@ class time_imbalance():
       value = 100*min(vals)
       return value, typename,'%'
     else:
-      return None
+      return None, typename,'%'
 
 class vecpercent_64b():
   def compute_metric(self, u):
@@ -323,7 +325,7 @@ class vecpercent_64b():
           else: scalar_flops += flops
     denom = scalar_flops + vector_flops
     if denom == 0:
-      return None
+      return None, typename,'%'
     value = 100*vector_flops/denom
     return value, typename,'%'
 
@@ -348,7 +350,7 @@ class avg_vector_width_64b():
           instr += (stats[-1, index] - stats[0, index])
           flops += (stats[-1, index] - stats[0, index])*vector_widths[eventname]
     if instr == 0:
-      return None
+      return None, typename,'#'
     value = flops/instr
     return value, typename,'#'
 
@@ -371,7 +373,7 @@ class vecpercent_32b():
           else: scalar_flops += flops
     denom = scalar_flops + vector_flops
     if denom == 0:
-      return None
+      return None, typename,'%'
     value = 100*vector_flops/denom
     return value, typename,'%'
 
@@ -392,7 +394,7 @@ class avg_vector_width_32b():
           instr += (stats[-1, index] - stats[0, index])
           flops += (stats[-1, index] - stats[0, index])*vector_widths[eventname]
     if instr == 0:
-      return None
+      return None, typename,'#'
     value = flops/instr
     return value, typename,'#'
 
