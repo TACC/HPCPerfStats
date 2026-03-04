@@ -50,6 +50,7 @@ class utils():
     if typename == "cha": typename = self.cha
     if not typename or typename is None: return None, {}
 
+    if typename not in self.job.schemas: return None, {}
     schema = self.job.schemas[typename]
     stats = {}
     for hostname, host in self.job.hosts.items():
