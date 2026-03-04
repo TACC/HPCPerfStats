@@ -62,8 +62,9 @@ class _JobForMetrics:
     df["time"] = to_datetime(df["time"]).dt.tz_localize(None)
     times = df["time"].drop_duplicates().sort_values()
 
-    # Use float seconds for simplicity; utils only uses differences
-    self.times = times.astype("datetime64[ns]").astype("datetime64[s]").astype(float)
+    # Use float seconds (NumPy) for simplicity; utils only uses differences
+    times_values = times.values.astype("datetime64[s]")
+    self.times = times_values.astype("float64")
 
     # Build schemas based on jt.schema (type -> [events])
     for typename, events in jt.schema.items():
