@@ -124,7 +124,7 @@ class avg_ethbw():
             bw += stats[-1, schema["rx_bytes"].index] - stats[0, schema["rx_bytes"].index] + \
                   stats[-1, schema["tx_bytes"].index] - stats[0, schema["tx_bytes"].index]
         value = bw/(u.dt*u.nhosts*1024*1024)
-        return value, typename,'GB/s'
+        return value, typename,'MB/s'
 
 class avg_gpuutil():
     def compute_metric(self, u):
@@ -159,6 +159,8 @@ class avg_packetsize():
                 stats[0, tx] - stats[0, rx]
       nbytes += stats[-1, tb] + stats[-1, rb] - \
                 stats[0, tb] - stats[0, rb]
+    if npacks == 0:
+      return None
     value = nbytes/(npacks*conv2mb)
     return value, typename,'MB'
 
@@ -178,7 +180,7 @@ class max_fabricbw():
         for hostname, stats in _stats.items():
             max_bw = max(max_bw, amax(diff(stats[:, tx] + stats[:, rx])/diff(u.t)))
         value = max_bw/conv2mb
-        return value, typename,'GB/s'
+        return value, typename,'MB/s'
 
 class max_lnetbw():
     def compute_metric(self, u):
@@ -189,7 +191,7 @@ class max_lnetbw():
         for hostname, stats in _stats.items():
             max_bw = max(max_bw, amax(diff(stats[:, tx] + stats[:, rx])/diff(u.t)))
         value = max_bw/(1024*1024)
-        return value, typename,'GB/s'
+        return value, typename,'MB/s'
 
 class max_mds():
   def compute_metric(self, u):
@@ -255,7 +257,7 @@ class mem_hwm():
                               stats[:, schema["Slab"].index] - \
                               stats[:, schema["FilePages"].index]))
     value = max_memusage/(2.**30)
-    return value, typename,'GB'
+    return value, typename,'GiB'
 
 class node_imbalance():
   def compute_metric(self, u):
@@ -268,7 +270,7 @@ class node_imbalance():
     max_imbalance = []
     for hostname, stats in _stats.items():
       max_imbalance += [mean((max_usage - diff(stats[:, schema["user"].index])/diff(u.t))/max_usage)]
-    value = amax([0. if isnan(x) else x for x in max_imbalance])
+    value = 100*amax([0. if isnan(x) else x for x in max_imbalance])
     return value, typename,'%'
 
 class time_imbalance():
@@ -286,12 +288,14 @@ class time_imbalance():
         rate = diff(stats[:, schema["user"].index])/diff(u.t)
         # integral before time slice
         a = trapz(rate[r1], tmid[r1])/(tmid[i] - tmid[0])
+        if a == 0:
+          continue
         # integral after time slice
         b = trapz(rate[r2], tmid[r2])/(tmid[-1] - tmid[i])
         # ratio of integral after time over before time
         vals += [b/a]
     if vals:
-      value = min(vals)
+      value = 100*min(vals)
       return value, typename,'%'
     else:
       return None
@@ -317,7 +321,10 @@ class vecpercent_64b():
           flops = (stats[-1, index] - stats[0, index])*vector_widths[eventname]
           if vector_widths[eventname] > 1: vector_flops += flops
           else: scalar_flops += flops
-    value = 100*vector_flops/(scalar_flops + vector_flops)
+    denom = scalar_flops + vector_flops
+    if denom == 0:
+      return None
+    value = 100*vector_flops/denom
     return value, typename,'%'
 
 class avg_vector_width_64b():
@@ -340,6 +347,8 @@ class avg_vector_width_64b():
           index = schema[eventname].index
           instr += (stats[-1, index] - stats[0, index])
           flops += (stats[-1, index] - stats[0, index])*vector_widths[eventname]
+    if instr == 0:
+      return None
     value = flops/instr
     return value, typename,'#'
 
@@ -360,7 +369,10 @@ class vecpercent_32b():
           flops = (stats[-1, index] - stats[0, index])*vector_widths[eventname]
           if vector_widths[eventname] > 1: vector_flops += flops
           else: scalar_flops += flops
-    value = 100*vector_flops/(scalar_flops + vector_flops)
+    denom = scalar_flops + vector_flops
+    if denom == 0:
+      return None
+    value = 100*vector_flops/denom
     return value, typename,'%'
 
 class avg_vector_width_32b():
@@ -379,6 +391,8 @@ class avg_vector_width_32b():
           index = schema[eventname].index
           instr += (stats[-1, index] - stats[0, index])
           flops += (stats[-1, index] - stats[0, index])*vector_widths[eventname]
+    if instr == 0:
+      return None
     value = flops/instr
     return value, typename,'#'
 
