@@ -229,6 +229,7 @@ class avg_ethbw():
             bw += stats[-1, schema["rx_bytes"].index] - stats[0, schema["rx_bytes"].index] + \
                   stats[-1, schema["tx_bytes"].index] - stats[0, schema["tx_bytes"].index]
         value = bw/(u.dt*u.nhosts*1024*1024)
+        if value == 0: return None, typename,'MB/s'
         return value, typename,'MB/s'
 
 class avg_gpuutil():
@@ -239,6 +240,7 @@ class avg_gpuutil():
         for hostname, stats in _stats.items():
             util += mean(stats[1:-1, schema["utilization"].index])
         value = util/u.nhosts
+        if value == 0: return None, typename,'MB/s'
         return value, typename,'%'
 
 
@@ -284,6 +286,7 @@ class max_fabricbw():
             conv2mb = 125000
         for hostname, stats in _stats.items():
             max_bw = max(max_bw, amax(diff(stats[:, tx] + stats[:, rx])/diff(u.t)))
+        if max_bw == 0: return None, typename,'MB/s'
         value = max_bw/conv2mb
         return value, typename,'MB/s'
 
@@ -295,6 +298,7 @@ class max_lnetbw():
         tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
         for hostname, stats in _stats.items():
             max_bw = max(max_bw, amax(diff(stats[:, tx] + stats[:, rx])/diff(u.t)))
+        if max_bw == 0: return None, typename,'MB/s'
         value = max_bw/(1024*1024)
         return value, typename,'MB/s'
 
@@ -327,6 +331,7 @@ class max_mds():
                                        stats[:, schema["rmdir"].index] + \
                                        stats[:, schema["mknod"].index] + \
                                        stats[:, schema["rename"].index])/diff(u.t)))
+    if max_mds == 0: return None, typename,'iops'
     value = max_mds
     return value, typename,'iops'
 
@@ -344,6 +349,7 @@ class max_packetrate():
 
         for hostname, stats in _stats.items():
             max_pr = max(max_pr, amax(diff(stats[:, tx] + stats[:, rx])/diff(u.t)))
+        if max_pr == 0:    return None, typename,'#/s'
         value = max_pr
         return value, typename,'#/s'
 
@@ -361,6 +367,8 @@ class mem_hwm():
                          amax(stats[:, schema["MemUsed"].index] - \
                               stats[:, schema["Slab"].index] - \
                               stats[:, schema["FilePages"].index]))
+    if max_memusage == 0:
+      return None, typename,'GiB'
     value = max_memusage/(2.**30)
     return value, typename,'GiB'
 
@@ -375,6 +383,8 @@ class node_imbalance():
     max_imbalance = []
     for hostname, stats in _stats.items():
       max_imbalance += [mean((max_usage - diff(stats[:, schema["user"].index])/diff(u.t))/max_usage)]
+    if max_imbalance == []:
+      return None, typename,'%'
     value = 100*amax([0. if isnan(x) else x for x in max_imbalance])
     return value, typename,'%'
 
@@ -428,7 +438,7 @@ class vecpercent_64b():
           else: scalar_flops += flops
     denom = scalar_flops + vector_flops
     if denom == 0:
-      return None, typename,'%'
+      return None, typename,'#'
     value = 100*vector_flops/denom
     return value, typename,'%'
 

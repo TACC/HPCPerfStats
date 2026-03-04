@@ -30,6 +30,10 @@ class utils():
     self.t = job.times
     self.nt = len(job.times)
     self.dt = (job.times[-1] - job.times[0]).astype(float)
+    self.pmc = None
+    self.imc = None
+    self.cha = None
+    self.freq = None
     for typename in  job.schemas.keys():
       if typename in freq_list:
           self.pmc  = typename
@@ -38,12 +42,13 @@ class utils():
           self.imc = typename
       if typename in cha_list:
           self.cha = typename
-
+  
   def get_type(self, typename, aggregate = True):
+
     if typename == "imc": typename = self.imc
     if typename == "pmc": typename = self.pmc
     if typename == "cha": typename = self.cha
-    if not typename: return
+    if not typename or typename is None: return None, []
 
     schema = self.job.schemas[typename]
     stats = {}
