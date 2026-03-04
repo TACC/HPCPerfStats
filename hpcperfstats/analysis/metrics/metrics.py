@@ -145,13 +145,12 @@ class Metrics():
     if not job_list:
       print("Please specify a job list.")
       return
-    list(map(self.compute_simple_metrics, job_list))
-    list(map(self.compute_complex_metrics, job_list))
+    list(map(self.compute_metrics, job_list))
 
 
   def job_arc(self, jt, name = None, typename = None, events = None, conv = 0, units = None):
     df = read_sql("select host, time_bucket('5m', time) as time, sum(arc)*{0} as sum from job_{1} where type = '{2}' and event in ('{3}') group by host, time".format(conv, jt.jid, typename, "','".join(events)), jt.conj)
-    if df.empty: return
+    if df.empty: return None
     # Drop first time sample from each host
     df = df.groupby('host').apply(lambda group: group.iloc[1:])
     #df = df.reset_index(drop = True)
@@ -163,35 +162,38 @@ class Metrics():
     return node_mean
 
   # Compute metric
-  def compute_simple_metrics(self, job):
-    # build temporary job view
-    jt = jid_table.jid_table(job.jid)
-
+  def compute_metrics(self, job):
     metric_compute_start = time.time()
-    # compute each metric for a jid and update metrics_data table
-    for name, metric in self.simple_metrics_list.items():
-      value = self.job_arc(jt, **metric)
-      obj, created = metrics_data.objects.update_or_create(jid = job, type = metric["typename"], metric = name,
-                                                           defaults = {'units' : metric["units"],
-                                                                       'value' : value})
+
+    # build temporary job view
+    with jid_table.jid_table(job.jid) as jt:
+
+      job_view = _JobForMetrics(jt)
+
+      if job_view.times.size == 0:
+        return
+
+      u = utils(job_view)
+      for metric, metric_obj in self.simple_metrics_list.items():
+        value = self.job_arc(jt, **metric)
+
+        if value is None:
+          continue
+
+        obj, created = metrics_data.objects.update_or_create(jid = job, type = metric["typename"], metric = metric,
+                                                             defaults = {'units' : metric_obj["units"],
+                                                                         'value' : value})
+      for metric in self.complex_metrics_list:
+        value, typename, units = getattr(sys.modules[__name__], metric)().compute_metric(u)
+
+        if value is None:
+          continue
+
+        obj, created = metrics_data.objects.update_or_create(jid = job, type = typename, metric = metric,
+                                                             defaults = {'units' : units,
+                                                                         'value' : value})
 
     print("compute metrics time: {0:.1f}".format(time.time() - metric_compute_start))
-
-
-  def compute_complex_metrics(self, job):
-    jt = jid_table.jid_table(job.jid)
-    # Build a job-like view that is compatible with utils()
-    job_view = _JobForMetrics(jt)
-    if job_view.times.size == 0:
-      return
-    u = utils(job_view)
-    for metric in self.complex_metrics_list:
-      value, typename, units = getattr(sys.modules[__name__], metric)().compute_metric(u)
-      if value is None:
-        continue
-      obj, created = metrics_data.objects.update_or_create(jid = job, type = typename, metric = metric,
-                                                           defaults = {'units' : units,
-                                                                       'value' : value})
 
 
 ###########
