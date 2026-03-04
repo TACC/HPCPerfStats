@@ -51,8 +51,26 @@ class jid_table:
             self.schema[t] = list(sorted(schema_df[schema_df["type"] == t]["event"].values))
         print("schema time: {0:.1f}".format(time.time()-etime))
 
-    def __del__(self):
+    def close(self):
+        if getattr(self, "conj", None) is None:
+            return
+        if getattr(self.conj, "closed", True):
+            return
         sql = """drop table if exists job_{0};""".format(self.jid)
         with self.conj.cursor() as cur:
             cur.execute(sql)
         self.conj.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            # Avoid raising from destructor
+            pass
