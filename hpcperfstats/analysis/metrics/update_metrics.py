@@ -36,7 +36,9 @@ def update_metrics(date, rerun = False):
     metrics_manager = metrics.Metrics()
 
     print("Compute for following metrics for date {0} on {1} jobs".format(date, len(jobs_list)))
-    for name in metrics_manager.metrics_list:
+    for name in metrics_manager.simple_metrics_list:
+        print(name)
+    for name in metrics_manager.complex_metrics_list:
         print(name)
 
     metrics_manager.run(jobs_list)
