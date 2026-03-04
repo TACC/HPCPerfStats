@@ -48,7 +48,7 @@ class utils():
     if typename == "imc": typename = self.imc
     if typename == "pmc": typename = self.pmc
     if typename == "cha": typename = self.cha
-    if not typename or typename is None: return None, []
+    if not typename or typename is None: return None, {}
 
     schema = self.job.schemas[typename]
     stats = {}
