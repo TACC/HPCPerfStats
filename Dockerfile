@@ -24,7 +24,6 @@ ENV PIP_ROOT_USER_ACTION ignore
 # install version specific python dependencies and hpcperfstats package
 COPY --chown=hpcperfstats:hpcperfstats . .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir . && \
     pip cache purge
 
