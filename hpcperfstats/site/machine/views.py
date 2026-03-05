@@ -468,11 +468,11 @@ def admin_monitor(request):
         return HttpResponseRedirect("/")
 
     now = timezone.now()
-    # Restrict to recent data so we don't scan the entire table (avoids OOM)
-    #recent_cutoff = now - timedelta(days=90)
+    # Use aggregation by host to get the last sample time per host without
+    # forcing a full-table sort with DISTINCT over all rows (which can cause
+    # excessive memory usage on large datasets).
     host_stats_qs = (
-        host_data.objects.order_by('-time')
-        .values("host").distinct()
+        host_data.objects.values("host")
         .annotate(last_time=Max("time"))
         .order_by("host")
     )
