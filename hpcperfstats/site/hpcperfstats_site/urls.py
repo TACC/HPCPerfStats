@@ -10,11 +10,12 @@ from hpcperfstats.site.machine.oauth2 import (
     logout,
     oauth_callback,
 )
-from hpcperfstats.site.machine.views import home
+from hpcperfstats.site.machine.views import admin_monitor, home
 
 admin.autodiscover()
 urlpatterns = [
     path(r'', home, name="dates"),
+    path(r'admin_monitor/', admin_monitor, name='admin_monitor'),
     path(r'machine/', include(urls, namespace = "machine"), name = "machine"),
     path(r'login/', login_oauth, name='login'),
     path(r'login_prompt', login_prompt, name='login_prompt'),
