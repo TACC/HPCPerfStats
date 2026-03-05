@@ -473,7 +473,7 @@ def admin_monitor(request):
     host_stats_qs = (
         host_data.objects.order_by('-time')
         .values("host").distinct()
-        .annotate(last_time="time")
+        .annotate(last_time=Max("time"))
         .order_by("host")
     )
 
