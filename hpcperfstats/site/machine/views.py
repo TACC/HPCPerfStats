@@ -471,12 +471,14 @@ def admin_monitor(request):
     if not request.session.get("is_staff", False):
         return HttpResponseRedirect("/")
 
+    all_hosts = host_data.objects.order_by("host").distinct("host")
     now = timezone.now()
     # Use aggregation by host to get the last sample time per host without
     # forcing a full-table sort with DISTINCT over all rows (which can cause
     # excessive memory usage on large datasets).
+    time_bounds = now - timedelta(days=8)
     host_stats_qs = (
-        host_data.objects.values("host")
+        host_data.objects.filter(time__gte=time_bounds).values("host")
         .annotate(last_time=Max("time"))
         .order_by("host")
     )
@@ -500,6 +502,10 @@ def admin_monitor(request):
                 bucket = "ok"
         row["age_bucket"] = bucket
         host_stats.append(row)
+
+    for host in all_hosts:
+        if host not in [row.get("host") for row in host_stats]:
+            host_stats.append({"host": host, "last_time": None, "age_bucket": "gt_week"})
 
     context = {
         "host_stats": host_stats,
