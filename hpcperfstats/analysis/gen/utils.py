@@ -1,5 +1,11 @@
+
+import hpcperfstats.conf_parser as cfg
+openblas_threads = int(cfg.get_total_cores())/4
+if openblas_threads < 1:
+    openblas_threads = 1
+
 import os
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
+os.environ['OPENBLAS_NUM_THREADS'] = str(openblas_threads)
 
 import warnings
 warnings.simplefilter(action='ignore', category=UserWarning)
@@ -9,7 +15,6 @@ from bokeh.models import CustomJSTickFormatter
 import numpy as np
 from pandas import read_sql as rsql
 
-import hpcperfstats.conf_parser as cfg
 
 
 local_timezone = cfg.get_timezone()

@@ -117,4 +117,5 @@ def get_staff_email_domain():
 def get_timezone():
     return cfg.get('DEFAULT', 'timezone')
 
-
+def get_total_cores():
+    return cfg.get('DEFAULT', 'total_cores')

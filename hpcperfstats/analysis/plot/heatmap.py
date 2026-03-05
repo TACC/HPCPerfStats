@@ -1,5 +1,10 @@
+import hpcperfstats.conf_parser as cfg
+openblas_threads = int(cfg.get_total_cores())/4
+if openblas_threads < 1:
+    openblas_threads = 1
+
 import os
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
+os.environ['OPENBLAS_NUM_THREADS'] = str(openblas_threads)
 
 import numpy
 from bokeh.models import (

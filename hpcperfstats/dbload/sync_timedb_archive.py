@@ -5,9 +5,10 @@ import tarfile
 import time
 from functools import partial
 
+import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload import sync_timedb
 
-thread_count = 8
+thread_count = int(cfg.get_total_cores())/4
 
 if __name__ == '__main__':
 

@@ -17,9 +17,6 @@ from hpcperfstats.site.machine.models import job_data
 DEBUG =  cfg.get_debug()
 
 
-
-thread_count = 2
-
 def update_metrics(date, rerun = False):
 
     min_time = 300

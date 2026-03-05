@@ -27,10 +27,14 @@ DEBUG =  cfg.get_debug()
 local_timezone = cfg.get_timezone()
 
 # Thread count for database loading and archival
-thread_count = 8
+thread_count =  int(cfg.get_total_cores())/4
+if thread_count < 1:
+    thread_count = 1
 
 # amount of concurrent pigz using thread_count*2 cores
-archive_thread_count = 2
+archive_thread_count = thread_count/2
+if archive_thread_count < 1:
+    archive_thread_count = 1
 
 # How many days to process if run without any arguments
 days_to_process = 5

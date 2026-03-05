@@ -1,9 +1,14 @@
-import os
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
+import hpcperfstats.conf_parser as cfg
+openblas_threads = int(cfg.get_total_cores())/4
+if openblas_threads < 1:
+    openblas_threads = 1
 
-import time
 from datetime import timedelta
 from math import ceil
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = str(openblas_threads)
+
+import time
 
 from bokeh.embed import components
 from bokeh.layouts import gridplot
@@ -22,7 +27,6 @@ from numpy import histogram, isnan, linspace, log
 from pandas import DataFrame, to_timedelta
 
 import hpcperfstats.analysis.plot as plots
-import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.analysis.gen.utils import clean_dataframe, read_sql
 from hpcperfstats.site.machine.models import host_data, job_data, metrics_data

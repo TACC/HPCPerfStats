@@ -1,7 +1,11 @@
+import hpcperfstats.conf_parser as cfg
+openblas_threads = int(cfg.get_total_cores())/4
+if openblas_threads < 1:
+    openblas_threads = 1
+
 import multiprocessing
 import os
-
-os.environ['OPENBLAS_NUM_THREADS'] = '4'
+os.environ['OPENBLAS_NUM_THREADS'] = str(openblas_threads)
 
 import sys
 import time
@@ -150,7 +154,7 @@ class Metrics():
     if not job_list:
       print("Please specify a job list.")
       return
-    threads = 10
+    threads = int(cfg.get_total_cores())/2
     with multiprocessing.Pool(processes=threads) as pool:
       for job_results in pool.imap_unordered(_unwrap, ((self, job) for job in job_list)):
         if not job_results:

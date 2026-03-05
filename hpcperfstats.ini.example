@@ -25,6 +25,9 @@ staff_email_domain   = lab.hpcisgreat.edu
 # The cluster and docker host need to share this timezone.
 timezone = US/Central
 
+# Total amount of cores that are available for this application
+total_cores = 40
+
 [OAUTH2]
 # oauth client id
 client_id =
