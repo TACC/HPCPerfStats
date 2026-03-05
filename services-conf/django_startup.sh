@@ -15,6 +15,7 @@ chown -R hpcperfstats:hpcperfstats /hpcperfstats/
 /usr/local/bin/python3 hpcperfstats/site/manage.py makemigrations
 /usr/local/bin/python3 hpcperfstats/site/manage.py migrate
 
+# Set gunicorn workers to the recommended number of workers
 # determine thread count from conf_parser and set gunicorn workers = thread_count*2+1
 THREAD_COUNT=$(/usr/local/bin/python3 -c "from hpcperfstats import conf_parser; print(conf_parser.get_total_cores())")
 WORKERS=$((THREAD_COUNT * 2 + 1))
