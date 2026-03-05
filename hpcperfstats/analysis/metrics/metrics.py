@@ -154,7 +154,11 @@ class Metrics():
     if not job_list:
       print("Please specify a job list.")
       return
-    threads = int(cfg.get_total_cores())/2
+
+    threads = int(int(cfg.get_total_cores())/2)
+    if threads < 1:
+      threads = 1
+
     with multiprocessing.Pool(processes=threads) as pool:
       for job_results in pool.imap_unordered(_unwrap, ((self, job) for job in job_list)):
         if not job_results:
