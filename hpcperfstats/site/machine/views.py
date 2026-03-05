@@ -469,16 +469,16 @@ def admin_monitor(request):
 
     now = timezone.now()
     # Restrict to recent data so we don't scan the entire table (avoids OOM)
-    recent_cutoff = now - timedelta(days=14)
+    #recent_cutoff = now - timedelta(days=90)
     host_stats_qs = (
-        host_data.objects.filter(time__gte=recent_cutoff)
-        .values("host")
-        .annotate(last_time=Max("time"))
+        host_data.objects.order_by('-time')
+        .values("host").distinct()
+        .annotate(last_time="time")
         .order_by("host")
     )
 
     host_stats = []
-    for row in host_stats_qs.iterator(chunk_size=500):
+    for row in host_stats_qs.iterator(chunk_size=50):
         last_time = row.get("last_time")
         if not last_time:
             bucket = "gt_week"
