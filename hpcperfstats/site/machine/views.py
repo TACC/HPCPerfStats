@@ -467,16 +467,18 @@ def admin_monitor(request):
     if not request.session.get("is_staff", False):
         return HttpResponseRedirect("/")
 
+    now = timezone.now()
+    # Restrict to recent data so we don't scan the entire table (avoids OOM)
+    recent_cutoff = now - timedelta(days=14)
     host_stats_qs = (
-        host_data.objects
+        host_data.objects.filter(time__gte=recent_cutoff)
         .values("host")
         .annotate(last_time=Max("time"))
         .order_by("host")
     )
 
-    now = timezone.now()
     host_stats = []
-    for row in host_stats_qs:
+    for row in host_stats_qs.iterator(chunk_size=500):
         last_time = row.get("last_time")
         if not last_time:
             bucket = "gt_week"
