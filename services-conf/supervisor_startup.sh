@@ -1,5 +1,6 @@
 #!/bin/sh
 
+sleep 2m
 
 chmod -c 755 /hpcperfstats/
 # make directories if they are not there
