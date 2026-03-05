@@ -547,10 +547,7 @@ if __name__ == '__main__':
 
             archive_job.get()
 
-
-
-            if DEBUG:
-                print("sync_timedb sleeping")
+            print("sync_timedb sleeping")
 
             time.sleep(900)
 
