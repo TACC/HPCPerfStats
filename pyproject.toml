@@ -50,6 +50,9 @@ test = [
   "pytest-django>=4.5",
   "pytest-cov>=4.0",
 ]
+dev = [
+  "yapf",  # Google style formatter
+]
 
 [tool.pytest.ini_options]
 testpaths = ["hpcperfstats"]
@@ -80,7 +83,7 @@ hpcperfstats = ["cfg.py"]
 
 [tool.ruff]
 target-version = "py312"
-line-length = 88
+line-length = 80  # Google style guide
 extend-exclude = [
   "migrations",
   ".venv",

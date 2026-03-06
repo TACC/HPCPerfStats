@@ -8,10 +8,11 @@ import pytest
 
 
 def pytest_configure(config):
-    """Set Django settings and run django.setup() when this package's tests are run.
+  """Set Django settings and run django.setup() when this package's tests are run.
 
     AI generated.
     """
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings")
-    import django
-    django.setup()
+  os.environ.setdefault("DJANGO_SETTINGS_MODULE",
+                        "hpcperfstats.site.hpcperfstats_site.settings")
+  import django
+  django.setup()

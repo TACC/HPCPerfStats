@@ -11,34 +11,29 @@ _CACHE_MISS = object()
 
 
 def cached_orm(cache_key, timeout, query_fn):
-    """Execute query_fn() on cache miss; return cached value on hit.
+  """Execute query_fn() on cache miss; return cached value on hit.
 
     query_fn is a callable that takes no arguments and returns the value to cache.
     The value must be picklable (e.g. list of dicts from .values(), or None).
     None is stored as a wrapped tuple so we can distinguish "missing key" from "cached None".
     If the cache backend is unavailable (e.g. memcached down), query_fn() is used and the result is not cached.
     """
-    try:
-        wrapped = cache.get(cache_key, _CACHE_MISS)
-        if wrapped is not _CACHE_MISS:
-            return (
-                wrapped[0]
-                if isinstance(wrapped, tuple) and len(wrapped) == 1
-                else wrapped
-            )
-        value = query_fn()
-        cache.set(
-            cache_key, (value,) if value is None else value, timeout=timeout
-        )
-        return value
-    except Exception:
-        return query_fn()
+  try:
+    wrapped = cache.get(cache_key, _CACHE_MISS)
+    if wrapped is not _CACHE_MISS:
+      return (wrapped[0]
+              if isinstance(wrapped, tuple) and len(wrapped) == 1 else wrapped)
+    value = query_fn()
+    cache.set(cache_key, (value,) if value is None else value, timeout=timeout)
+    return value
+  except Exception:
+    return query_fn()
 
 
 # Default timeouts (seconds)
-TIMEOUT_SHORT = 60       # Job-specific, host-specific (1 min)
-TIMEOUT_MEDIUM = 300     # Reference data: queues, states, date list (5 min)
-TIMEOUT_LONG = 600       # Rarely changing: distinct metrics list (10 min)
+TIMEOUT_SHORT = 60  # Job-specific, host-specific (1 min)
+TIMEOUT_MEDIUM = 300  # Reference data: queues, states, date list (5 min)
+TIMEOUT_LONG = 600  # Rarely changing: distinct metrics list (10 min)
 
 # Key prefixes for namespacing
 KEY_JOB = "job"

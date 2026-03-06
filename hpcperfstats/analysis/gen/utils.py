@@ -3,14 +3,17 @@
 AI generated.
 """
 import hpcperfstats.conf_parser as cfg
-openblas_threads = int(cfg.get_total_cores())/4
+
+openblas_threads = int(cfg.get_total_cores()) / 4
 if openblas_threads < 1:
-    openblas_threads = 1
+  openblas_threads = 1
 
 import os
+
 os.environ['OPENBLAS_NUM_THREADS'] = str(openblas_threads)
 
 import warnings
+
 warnings.simplefilter(action='ignore', category=UserWarning)
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -19,8 +22,9 @@ import numpy as np
 
 local_timezone = cfg.get_timezone()
 
+
 class utils():
-    """Minimal job-like wrapper exposing host stats, schemas, times, and type resolution (pmc/imc/cha) for metrics and plots.
+  """Minimal job-like wrapper exposing host stats, schemas, times, and type resolution (pmc/imc/cha) for metrics and plots.
 
     AI generated.
     """
@@ -28,19 +32,28 @@ class utils():
   def __init__(self, job):
     """Initialize from a job object; set nhosts, hostnames, wayness, hours, t, nt, dt, and resolve pmc/imc/cha/freq from schemas.
 
-    AI generated.
-    """
-    freq_list = {"intel_snb" : 2.7, "intel_ivb" : 2.8, "intel_hsw" : 2.3,
-                 "intel_bdw" : 2.6, "intel_knl" : 1.4, "intel_skx" : 2.1,
-                 "intel_8pmc3" : 2.7, "intel_4pmc3" : 2.7}
-    imc_list  = ["intel_snb_imc", "intel_ivb_imc", "intel_hsw_imc",
-                 "intel_bdw_imc", "intel_knl_mc_dclk", "intel_skx_imc"]
+        AI generated.
+        """
+    freq_list = {
+        "intel_snb": 2.7,
+        "intel_ivb": 2.8,
+        "intel_hsw": 2.3,
+        "intel_bdw": 2.6,
+        "intel_knl": 1.4,
+        "intel_skx": 2.1,
+        "intel_8pmc3": 2.7,
+        "intel_4pmc3": 2.7
+    }
+    imc_list = [
+        "intel_snb_imc", "intel_ivb_imc", "intel_hsw_imc", "intel_bdw_imc",
+        "intel_knl_mc_dclk", "intel_skx_imc"
+    ]
     cha_list = ["intel_knl_cha", "intel_skx_cha"]
     self.job = job
     self.nhosts = len(job.hosts.keys())
-    self.hostnames  = sorted(job.hosts.keys())
-    self.wayness = int(job.acct['cores'])/int(job.acct['nodes'])
-    self.hours = ((job.times[:] - job.times[0])/3600.).astype(float)
+    self.hostnames = sorted(job.hosts.keys())
+    self.wayness = int(job.acct['cores']) / int(job.acct['nodes'])
+    self.hours = ((job.times[:] - job.times[0]) / 3600.).astype(float)
     self.t = job.times
     self.nt = len(job.times)
     self.dt = (job.times[-1] - job.times[0]).astype(float)
@@ -48,26 +61,31 @@ class utils():
     self.imc = None
     self.cha = None
     self.freq = None
-    for typename in  job.schemas.keys():
+    for typename in job.schemas.keys():
       if typename in freq_list:
-          self.pmc  = typename
-          self.freq = freq_list[typename]
+        self.pmc = typename
+        self.freq = freq_list[typename]
       if typename in imc_list:
-          self.imc = typename
+        self.imc = typename
       if typename in cha_list:
-          self.cha = typename
-  
-  def get_type(self, typename, aggregate = True):
+        self.cha = typename
+
+  def get_type(self, typename, aggregate=True):
     """Return (schema, stats) for typename (e.g. pmc/imc/cha); stats is per-host aggregated or per-device dict. Returns (None, {}) if type not in job.
 
-    AI generated.
-    """
-    if typename == "imc": typename = self.imc
-    if typename == "pmc": typename = self.pmc
-    if typename == "cha": typename = self.cha
-    if not typename or typename is None: return None, {}
+        AI generated.
+        """
+    if typename == "imc":
+      typename = self.imc
+    if typename == "pmc":
+      typename = self.pmc
+    if typename == "cha":
+      typename = self.cha
+    if not typename or typename is None:
+      return None, {}
 
-    if typename not in self.job.schemas: return None, {}
+    if typename not in self.job.schemas:
+      return None, {}
     schema = self.job.schemas[typename]
     stats = {}
     for hostname, host in self.job.hosts.items():
@@ -81,36 +99,38 @@ class utils():
           stats[hostname][devname] = host.stats[typename][devname].astype(float)
     return schema, stats
 
+
 def queryset_to_dataframe(qs):
-    """Convert a Django QuerySet to a pandas DataFrame.
+  """Convert a Django QuerySet to a pandas DataFrame.
 
     AI generated.
     """
-    import pandas as pd
-    if qs is None or not hasattr(qs, "values"):
-        return pd.DataFrame()
-    return pd.DataFrame(list(qs.values()))
+  import pandas as pd
+  if qs is None or not hasattr(qs, "values"):
+    return pd.DataFrame()
+  return pd.DataFrame(list(qs.values()))
+
 
 def clean_dataframe(df):
-    """Replace NaN and inf with empty string for display/serialization.
+  """Replace NaN and inf with empty string for display/serialization.
 
     AI generated.
     """
-    df = df.fillna('')
-    df = df.replace([np.inf, -np.inf], '')
-    return df
+  df = df.fillna('')
+  df = df.replace([np.inf, -np.inf], '')
+  return df
 
 
 def tz_aware_bokeh_tick_formatter():
-    """Return a fresh CustomJSTickFormatter that renders datetime ticks in the configured timezone. Must return a new instance per plot/document.
+  """Return a fresh CustomJSTickFormatter that renders datetime ticks in the configured timezone. Must return a new instance per plot/document.
 
     AI generated.
     """
-    # Must return a fresh model per plot/document (Bokeh models cannot be shared
-    # across documents, e.g. across separate web requests).
-    return CustomJSTickFormatter(
-        args={"tz": local_timezone},
-        code="""
+  # Must return a fresh model per plot/document (Bokeh models cannot be shared
+  # across documents, e.g. across separate web requests).
+  return CustomJSTickFormatter(
+      args={"tz": local_timezone},
+      code="""
 // Bokeh datetimes are milliseconds since epoch. Render tick labels in tz.
 const dt = new Date(tick)
 
@@ -135,4 +155,4 @@ try {
   return `${pad2(dt.getUTCHours())}:${pad2(dt.getUTCMinutes())}`
 }
 """,
-    )
+  )

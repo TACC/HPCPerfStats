@@ -18,42 +18,37 @@ SECRET_KEY = os.environ.get("SECRET_KEY")
 #DEBUG = bool(os.environ.get("DEBUG", default=0))
 DEBUG = cfg.get_debug()
 
-ADMINS = (
-    ('Stephen Lien Harrell', 'sharrell@tacc.utexas.edu'),
-)
+ADMINS = (('Stephen Lien Harrell', 'sharrell@tacc.utexas.edu'),)
 
 MANAGERS = ADMINS
 
 # Set cookies properly
 SESSION_COOKIE_HTTPONLY = True
 
-
-
 # Give a name that is unique for the computing platform
 DATABASES = {
     'default': {
         'ENGINE': cfg.get_engine_name(),
-        'NAME'  : '{0}'.format(cfg.get_db_name()),
-        'USER'  : cfg.get_username(),
+        'NAME': '{0}'.format(cfg.get_db_name()),
+        'USER': cfg.get_username(),
         'PASSWORD': cfg.get_password(),
         'HOST': cfg.get_host(),
         'PORT': cfg.get_port(),
-        },
+    },
     # Uncomment this portion if an xalt database exists
-    'xalt' : {
+    'xalt': {
         #'ENGINE' : 'mysql.connector.django',
-        'ENGINE' : cfg.get_xalt_engine(),
-        'NAME' : cfg.get_xalt_name(),
-        'USER' : cfg.get_xalt_user(),
-        'PASSWORD' : cfg.get_xalt_password(),
-        'HOST' : cfg.get_xalt_host()
-        }
+        'ENGINE': cfg.get_xalt_engine(),
+        'NAME': cfg.get_xalt_name(),
+        'USER': cfg.get_xalt_user(),
+        'PASSWORD': cfg.get_xalt_password(),
+        'HOST': cfg.get_xalt_host()
     }
+}
 
 # Hosts/domain names that are valid for this site; required if DEBUG is False
 # See https://docs.djangoproject.com/en/1.5/ref/settings/#allowed-hosts
 ALLOWED_HOSTS = ['*']
-
 
 # Local time zone for this installation. Choices can be found here:
 # http://en.wikipedia.org/wiki/List_of_tz_zones_by_name
@@ -80,7 +75,7 @@ USE_TZ = True
 
 # Absolute filesystem path to the directory that will hold user-uploaded files.
 # Example: "/var/www/example.com/media/"
-MEDIA_ROOT = os.path.join(DIR,'media/')
+MEDIA_ROOT = os.path.join(DIR, 'media/')
 
 # URL that handles the media served from MEDIA_ROOT. Make sure to use a
 # trailing slash.
@@ -98,9 +93,7 @@ STATIC_ROOT = ''
 STATIC_URL = '/static/'
 
 # Additional locations of static files
-STATICFILES_DIRS = (
-    os.path.join(DIR,'static/'),
-)
+STATICFILES_DIRS = (os.path.join(DIR, 'static/'),)
 
 # List of finder classes that know how to find static files in
 # various locations.
@@ -117,7 +110,7 @@ TEMPLATES = [
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
         'DIRS': [
             # insert your TEMPLATE_DIRS here
-        #    'hpcperfstats_site/templates',
+            #    'hpcperfstats_site/templates',
         ],
         'APP_DIRS': True,
         'OPTIONS': {
@@ -201,9 +194,10 @@ LOGGING = {
                       '%(name)s.%(funcName)s:%(lineno)s: %(message)s'
         },
         'metrics': {
-            'format': '[METRICS] %(levelname)s %(module)s %(name)s.%(funcName)s:%(lineno)s:'
-                      ' %(message)s user=%(user)s sessionId=%(sessionId)s op=%(operation)s'
-                      ' info=%(info)s'
+            'format':
+                '[METRICS] %(levelname)s %(module)s %(name)s.%(funcName)s:%(lineno)s:'
+                ' %(message)s user=%(user)s sessionId=%(sessionId)s op=%(operation)s'
+                ' info=%(info)s'
         },
     },
     'handlers': {
@@ -224,13 +218,11 @@ LOGGING = {
             'formatter': 'metrics',
             'stream': sys.stdout,
         },
-
         'logfile': {
-            'level':'INFO',
+            'level': 'INFO',
             'class': 'logging.StreamHandler',
             'stream': sys.stdout,
         },
-
     },
     'loggers': {
         'hpcperfstats_site': {

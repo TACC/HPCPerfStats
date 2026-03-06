@@ -10,32 +10,21 @@ dbname = cfg.get_db_name()
 
 
 class Migration(migrations.Migration):
-    """RunSQL to create statsro user and grant permissions.
+  """RunSQL to create statsro user and grant permissions.
 
     AI generated.
     """
-    dependencies = [
-        ('machine', '0001_initial'),
-    ]
+  dependencies = [
+      ('machine', '0001_initial'),
+  ]
 
-    operations = [
-        migrations.RunSQL(
-            "CREATE USER statsro WITH PASSWORD 'statsro';"
-        ),
-
-        migrations.RunSQL(
-            "GRANT CONNECT ON DATABASE %s TO statsro;" % dbname
-        ),
-
-        migrations.RunSQL(
-            "GRANT USAGE ON SCHEMA public TO statsro;"
-        ),
-
-        migrations.RunSQL(
-            "GRANT SELECT ON ALL TABLES IN SCHEMA public TO statsro;"
-        ),
-
-        migrations.RunSQL(
-            "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO statsro;"
-        ),
-    ]
+  operations = [
+      migrations.RunSQL("CREATE USER statsro WITH PASSWORD 'statsro';"),
+      migrations.RunSQL("GRANT CONNECT ON DATABASE %s TO statsro;" % dbname),
+      migrations.RunSQL("GRANT USAGE ON SCHEMA public TO statsro;"),
+      migrations.RunSQL(
+          "GRANT SELECT ON ALL TABLES IN SCHEMA public TO statsro;"),
+      migrations.RunSQL(
+          "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO statsro;"
+      ),
+  ]

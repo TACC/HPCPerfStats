@@ -7,15 +7,14 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-    """RunSQL to create idx_host index.
+  """RunSQL to create idx_host index.
 
     AI generated.
     """
-    dependencies = [
-        ('machine', '0002_add_read_only_user'),
-    ]
+  dependencies = [
+      ('machine', '0002_add_read_only_user'),
+  ]
 
-    operations = [
-              migrations.RunSQL("CREATE INDEX idx_host ON host_data (host)"),
-    ]
-    
+  operations = [
+      migrations.RunSQL("CREATE INDEX idx_host ON host_data (host)"),
+  ]
