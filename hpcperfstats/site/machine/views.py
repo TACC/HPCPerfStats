@@ -484,14 +484,11 @@ def admin_monitor(request):
 
     host_stats = []
     for host in all_hosts:
-        rows = host_data.objects.filter(time__gte=time_bounds).order_by("time").values("host").annotate(last_time=Max("time")).all()[:1]
-        if len(rows) == 0:
+        row = host_data.objects.filter(host=host, time__gte=time_bounds).order_by("-time").first()
+        last_time = row.time if row else None
+        if last_time is None:
             host_stats.append({"host": host, "last_time": None, "age_bucket": "gt_week"})
             continue
-        last_time = rows[0].get("last_time")
-        if not last_time:
-            last_time = None
-            bucket = "gt_week"
         else:
             age = now - last_time
             if age > timedelta(weeks=1):
