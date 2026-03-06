@@ -471,22 +471,26 @@ def admin_monitor(request):
     if not request.session.get("is_staff", False):
         return HttpResponseRedirect("/")
 
-    all_hosts = host_data.objects.order_by("host").distinct("host")
+    all_hosts = job_data.objects.distinct("host_list").values_list("host_list", flat=True)
+    
+    all_hosts = [host for sublist in all_hosts for host in sublist]
+    all_hosts = list(set(all_hosts))
+    
     now = timezone.now()
     # Use aggregation by host to get the last sample time per host without
     # forcing a full-table sort with DISTINCT over all rows (which can cause
     # excessive memory usage on large datasets).
     time_bounds = now - timedelta(days=8)
-    host_stats_qs = (
-        host_data.objects.filter(time__gte=time_bounds).values("host")
-        .annotate(last_time=Max("time"))
-        .order_by("host")
-    )
 
     host_stats = []
-    for row in host_stats_qs.iterator(chunk_size=50):
-        last_time = row.get("last_time")
+    for host in all_hosts:
+        rows = host_data.objects.filter(time__gte=time_bounds).order_by("time").values("host").annotate(last_time=Max("time")).all()[:1]
+        if len(rows) == 0:
+            host_stats.append({"host": host, "last_time": None, "age_bucket": "gt_week"})
+            continue
+        last_time = rows[0].get("last_time")
         if not last_time:
+            last_time = None
             bucket = "gt_week"
         else:
             age = now - last_time
@@ -500,12 +504,7 @@ def admin_monitor(request):
                 bucket = "gt_10min"
             else:
                 bucket = "ok"
-        row["age_bucket"] = bucket
-        host_stats.append(row)
-
-    for host in all_hosts:
-        if host not in [row.get("host") for row in host_stats]:
-            host_stats.append({"host": host, "last_time": None, "age_bucket": "gt_week"})
+        host_stats.append({"host": host, "last_time": last_time, "age_bucket": bucket})
 
     context = {
         "host_stats": host_stats,
