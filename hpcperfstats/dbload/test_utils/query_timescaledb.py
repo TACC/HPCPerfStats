@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ad-hoc script to query host_data for a job via Django ORM/connection. Uses Django DB connection instead of raw psycopg2. Requires DJANGO_SETTINGS_MODULE.
+"""Ad-hoc script to query host_data for a job via Django ORM/connection. Uses Django DB connection instead of raw psycopg. Requires DJANGO_SETTINGS_MODULE.
 
 AI generated.
 """

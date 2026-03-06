@@ -66,7 +66,7 @@ dbname             = hpcperfstats
 daily_archive_dir  = %(data_dir)s/daily_archive
 
 # Django engine backend (pre-configured for container installation)
-engine_name        = django.db.backends.postgresql_psycopg2 
+engine_name        = django.db.backends.postgresql 
 
 # Postgres username (pre-configured for container installation)
 username           = hpcperfstats
