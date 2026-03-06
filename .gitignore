@@ -1,4 +1,5 @@
 .env.dev
+.venv/
 .ruff*/
 .tools/
 hpcperfstats.ini
