@@ -9,14 +9,17 @@ import uuid
 from datetime import datetime, timedelta
 from functools import partial
 
-import psycopg2
-
-#pandas.set_option('display.max_rows', 100)
+import django
+import pandas as pd
+from django.db import IntegrityError
+from django.utils import timezone as django_tz
 from pandas import DataFrame, to_datetime
-from pgcopy import CopyManager
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.analysis.gen.utils import read_sql
+from hpcperfstats.site.machine.models import host_data, proc_data
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings")
+django.setup()
 
 # archive toggle
 should_archive = True
@@ -43,9 +46,6 @@ days_to_process = 5
 chunk_size = 100
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
-
-
-CONNECTION = cfg.get_db_connection_string()
 
 amd64_pmc_eventmap = { 0x43ff03 : "FLOPS,W=48", 0x4300c2 : "BRANCH_INST_RETIRED,W=48", 0x4300c3: "BRANCH_INST_RETIRED_MISS,W=48",
                        0x4308af : "DISPATCH_STALL_CYCLES1,W=48", 0x43ffae :"DISPATCH_STALL_CYCLES0,W=48" }
@@ -96,15 +96,16 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
     else:
         print("initial timestamp not found")
 
-    timestamp = datetime.fromtimestamp(int(float(t)))
+    timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=django_tz.utc)
+    ts_low = timestamp_utc - timedelta(hours=48)
+    ts_high = timestamp_utc + timedelta(hours=72)
+    times_qs = host_data.objects.filter(
+        host=hostname, time__gte=ts_low, time__lt=ts_high
+    ).values_list("time", flat=True).distinct().order_by("time")
+    times = [float(t.timestamp()) for t in times_qs]
+    itimes = [int(t) for t in times]
 
-    with psycopg2.connect(CONNECTION) as conn:
-        sql = "select distinct(time) from host_data where host = '{0}' and time >= '{1}'::timestamp - interval '48h' and time < '{1}'::timestamp + interval '72h' order by time;".format(hostname, timestamp)
-        times = [float(t.timestamp()) for t in read_sql(sql, conn)["time"].tolist()]
-        itimes = [int(t) for t in times]
-
-
-        # start reading stats data from file at first - 1 missing time
+    # start reading stats data from file at first - 1 missing time
         start_idx = -1
         last_idx  = 0
         need_archival=True
@@ -271,41 +272,48 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         stats=stats.dropna()  #junjie DEBUG
         print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - start))
 
-        # bulk insertion using pgcopy
-        sqltime = time.time()
-
-
+        # bulk insertion using Django ORM
         lock.acquire()
-        mgr2 = CopyManager(conn, 'proc_data', proc_stats.columns)
         try:
-            mgr2.copy(proc_stats.values.tolist())
+            proc_objs = [
+                proc_data(jid=row.jid, host=row.host, proc=row.proc)
+                for row in proc_stats.itertuples(index=False)
+            ]
+            proc_data.objects.bulk_create(proc_objs)
         except Exception as e:
             if DEBUG:
-                print("error in mrg2.copy: %s\nFile %s" %  (e, stats_file))
-            conn.rollback()
+                print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
             lock.release()
-            copy_data_to_pgsql_individually(conn, proc_stats, 'proc_data')
+            _insert_proc_data_individually(proc_stats)
         else:
-            conn.commit()
             lock.release()
-
-
 
         lock.acquire()
-        mgr = CopyManager(conn, 'host_data', stats.columns)
+        need_archival = True
         try:
-            mgr.copy(stats.values.tolist())
+            host_objs = [
+                host_data(
+                    time=row.time.to_pydatetime(),
+                    host=row.host,
+                    jid=row.jid,
+                    type=row.type,
+                    dev=None,
+                    event=row.event,
+                    unit=row.unit,
+                    value=float(row.value) if pd.notna(row.value) else None,
+                    delta=float(row.delta) if pd.notna(row.delta) else None,
+                    arc=float(row.arc) if pd.notna(row.arc) else None,
+                )
+                for row in stats.itertuples(index=False)
+            ]
+            host_data.objects.bulk_create(host_objs)
         except Exception as e:
             if DEBUG:
-                print("error in mrg.copy: " , str(e))
-            conn.rollback()
+                print("error in host_data bulk_create:", str(e))
             lock.release()
-            need_archival = copy_data_to_pgsql_individually(conn, stats, 'host_data')
+            need_archival = _insert_host_data_individually(stats)
         else:
-            conn.commit()
             lock.release()
-
-    #print("sql insert time for {0} {1:.1f}s".format(stats_file, time.time() - sqltime))
 
     need_archival = True
     if DEBUG:
@@ -313,34 +321,45 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
     return((stats_file, need_archival))
 
 
-def copy_data_to_pgsql_individually(conn, data, table):
-
-    need_archival = True
+def _insert_proc_data_individually(proc_stats_df):
+    """Fallback: insert proc_data rows one by one, skipping duplicates."""
     unique_violations = 0
-    with conn.cursor() as curs:
-        for row in data.values.tolist():
-
-            sql_columns = ','.join(['"%s"' % value for value in data.columns.values])
-
-            sql_insert = 'INSERT INTO "%s" (%s) VALUES ' % (table, sql_columns)
-            sql_insert = sql_insert + "(" + ','.join(["%s" for i in row]) + ");"
-
-
-            try:
-                curs.execute(sql_insert, row)
-            except psycopg2.errors.UniqueViolation:
-                # count for rows that already exist.
-                unique_violations += 1
-                conn.rollback()
-            except Exception as e:
-                print("error in single insert: ", e.pgcode, " ", str(e), "while executing", str(sql_insert) + ", " + str(row))
-                need_archival = False
-                conn.rollback()
-            else:
-                conn.commit()
+    for row in proc_stats_df.itertuples(index=False):
+        try:
+            proc_data(jid=row.jid, host=row.host, proc=row.proc).save()
+        except IntegrityError:
+            unique_violations += 1
+        except Exception as e:
+            print("error in single proc_data insert:", str(e), "row:", row)
     if DEBUG:
         print("Existing Rows Found in DB: %s" % unique_violations)
 
+
+def _insert_host_data_individually(stats_df):
+    """Fallback: insert host_data rows one by one, skipping duplicates. Returns need_archival."""
+    need_archival = True
+    unique_violations = 0
+    for row in stats_df.itertuples(index=False):
+        try:
+            host_data(
+                time=row.time.to_pydatetime(),
+                host=row.host,
+                jid=row.jid,
+                type=row.type,
+                dev=None,
+                event=row.event,
+                unit=row.unit,
+                value=float(row.value) if pd.notna(row.value) else None,
+                delta=float(row.delta) if pd.notna(row.delta) else None,
+                arc=float(row.arc) if pd.notna(row.arc) else None,
+            ).save()
+        except IntegrityError:
+            unique_violations += 1
+        except Exception as e:
+            print("error in single host_data insert:", str(e), "row:", row)
+            need_archival = False
+    if DEBUG:
+        print("Existing Rows Found in DB: %s" % unique_violations)
     return need_archival
 
 def archive_stats_files(archive_info):
@@ -400,22 +419,27 @@ def archive_stats_files(archive_info):
     print(subprocess.check_output(['/usr/bin/pigz', '-f', '-8', '-v', '-p', str(thread_count*2), archive_tar_fname]), flush=True)
 
 def database_startup():
-    with psycopg2.connect(CONNECTION) as conn:
+    from django.db import connection
+    with connection.cursor() as cur:
         if DEBUG:
-            print("Postgresql server version: " + str(conn.server_version))
-
-        with conn.cursor() as cur:
-
-            cur.execute("SELECT pg_size_pretty(pg_database_size('{0}'));".format(cfg.get_db_name()))
-            for x in cur.fetchall():
-                print("Database Size:", x[0])
-            if DEBUG:
+            cur.execute("SELECT version();")
+            row = cur.fetchone()
+            print("Postgresql server version:", row[0] if row else "unknown")
+        cur.execute("SELECT pg_size_pretty(pg_database_size(%s));", [cfg.get_db_name()])
+        for x in cur.fetchall():
+            print("Database Size:", x[0])
+        if DEBUG:
+            try:
                 cur.execute("SELECT chunk_name,before_compression_total_bytes/(1024*1024*1024),after_compression_total_bytes/(1024*1024*1024) FROM chunk_compression_stats('host_data');")
                 for x in cur.fetchall():
-                    try: print("{0} Size: {1:8.1f} {2:8.1f}".format(*x))
-                    except: pass
-            else:
-                print("Reading Chunk Data")
+                    try:
+                        print("{0} Size: {1:8.1f} {2:8.1f}".format(*x))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        else:
+            print("Reading Chunk Data")
 
 
 
