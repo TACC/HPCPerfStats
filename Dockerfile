@@ -14,7 +14,21 @@ RUN chown hpcperfstats:hpcperfstats /home/hpcperfstats/.ssh/
 # Upgrade the base OS and grab some important packages
 RUN apt-get update -y && \
     apt-get upgrade -y && \
-    apt-get install netcat-openbsd supervisor rsync syslog-ng vim net-tools lsof pigz nano -y
+    apt-get install netcat-openbsd supervisor rsync syslog-ng  \
+        vim net-tools lsof pigz nano npm nodejs -y
+
+# Copy the package to the container
+COPY --chown=hpcperfstats:hpcperfstats . .
+
+# Keep the container updated everytime it is built, even when previous steps are cached
+RUN apt-get update -y  && \
+    apt-get upgrade -y && \
+    apt-get clean
+
+# install nodejs react dependencies and build the frontend
+RUN npm i npm-check-updates -g && npm-check-updates -u && \
+    npm update && cd hpcperfstats/site/frontend && npm install && \
+    npm run build 
 
 # Set python install variables
 ENV PYTHONDONTWRITEBYTECODE 1
@@ -22,12 +36,6 @@ ENV PYTHONUNBUFFERED 1
 ENV PIP_ROOT_USER_ACTION ignore
 
 # install version specific python dependencies and hpcperfstats package
-COPY --chown=hpcperfstats:hpcperfstats . .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir . && \
     pip cache purge
-
-# Keep the container updated everytime it is built, even when previous steps are cached
-RUN apt-get update -y  && \
-    apt-get upgrade -y && \
-    apt-get clean

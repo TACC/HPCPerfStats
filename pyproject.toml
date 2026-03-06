@@ -42,6 +42,8 @@ dependencies = [
   "pytz",
   "tzdata",
   "pymemcache",
+  "djangorestframework",
+  "django-cors-headers",
 ]
 
 [project.optional-dependencies]

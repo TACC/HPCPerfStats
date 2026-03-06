@@ -146,8 +146,9 @@ CACHE_MIDDLEWARE_SECONDS = 0  # Disable full-page cache by default; ORM uses cac
 CACHE_MIDDLEWARE_KEY_PREFIX = "hpcperfstats"
 
 MIDDLEWARE = (
-    'django.middleware.common.CommonMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
+    "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -160,10 +161,12 @@ ROOT_URLCONF = 'hpcperfstats.site.hpcperfstats_site.urls'
 WSGI_APPLICATION = 'hpcperfstats.site.hpcperfstats_site.wsgi'
 
 INSTALLED_APPS = (
-    'hpcperfstats.site.machine',
-    'hpcperfstats.site.xalt',
-    'hpcperfstats.site.hpcperfstats_site',
-    'django.contrib.auth',
+    "rest_framework",
+    "corsheaders",
+    "hpcperfstats.site.machine",
+    "hpcperfstats.site.xalt",
+    "hpcperfstats.site.hpcperfstats_site",
+    "django.contrib.auth",
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.sites',
@@ -177,7 +180,24 @@ INSTALLED_APPS = (
     # Uncomment the next line to enable admin documentation:
     # 'django.contrib.admindocs',
 )
-INTERNAL_IPS = ['127.0.0.1']
+INTERNAL_IPS = ["127.0.0.1"]
+
+# Django REST Framework: session auth for same-origin; allow credentials for SPA
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+    ],
+}
+# CORS: allow same-origin by default; set CORS_ALLOWED_ORIGINS in production
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
 SESSION_SERIALIZER = 'django.contrib.sessions.serializers.JSONSerializer'
 SESSION_ENGINE = 'django.contrib.sessions.backends.file'
 

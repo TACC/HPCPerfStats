@@ -2,6 +2,7 @@
 .venv/
 .ruff*/
 .tools/
+node_modules/
 hpcperfstats.ini
 docker-compose.yaml
 services-conf/supervisord.conf
