@@ -1,9 +1,11 @@
 import configparser
+import os
 
 cfg = configparser.ConfigParser()
 
-# Append your local repository path here:
-cfg.read('/home/hpcperfstats/hpcperfstats.ini')
+# Config path: HPCPERFSTATS_INI env, or default. Override for testing.
+_CONFIG_PATH = os.environ.get("HPCPERFSTATS_INI", "/home/hpcperfstats/hpcperfstats.ini")
+cfg.read(_CONFIG_PATH)
 
 def get_db_connection_string():
     temp_string = "dbname={0} user="+cfg.get('PORTAL', 'username')+" password="+cfg.get('PORTAL', 'password')+" port="+cfg.get('PORTAL', 'port') + " host="+cfg.get('PORTAL', 'host')

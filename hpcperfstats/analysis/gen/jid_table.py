@@ -21,12 +21,20 @@ class jid_table:
 
         # Get job accounting data
         acct_data = read_sql("""select * from job_data where jid = '{0}'""".format(jid), self.conj)
+        if acct_data.empty or len(acct_data) == 0:
+            self.conj.close()
+            self.conj = None
+            self.acct_host_list = []
+            self.host_list = []
+            self.schema = {}
+            self.start_time = None
+            self.end_time = None
+            return
+
         # job_data accounting host names must be converted to fqdn
         self.acct_host_list = [h + '.' + cfg.get_host_name_ext() for h in acct_data["host_list"].values[0]]
-
         self.start_time = acct_data["start_time"].dt.tz_convert(local_timezone).values[0]
         self.end_time = acct_data["end_time"].dt.tz_convert(local_timezone).values[0]
-
 
         # Get stats data and use accounting data to narrow down query
         qtime = time.time()
@@ -39,7 +47,8 @@ class jid_table:
         # Compare accounting host list to stats host list
         htime = time.time()
         self.host_list = list(set(read_sql("select distinct on(host) host from job_{0};".format(self.jid), self.conj)["host"].values))
-        if len(self.host_list) == 0: return
+        if len(self.host_list) == 0:
+            return
         print("host selection time: {0:.1f}".format(time.time()-htime))
 
         # Build Schema for navigation to Type Detail view

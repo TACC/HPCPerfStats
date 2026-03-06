@@ -58,7 +58,7 @@ class metrics_data(models.Model):
         unique_together = (('jid', 'type', 'metric'),)
 
     def __unicode__(self):
-        return str(self.jid + '_' + type  + '_' + metric)
+        return str(self.jid_id or "") + "_" + str(self.type or "") + "_" + str(self.metric or "")
 
 #Old Table SQL
 """

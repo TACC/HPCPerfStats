@@ -70,11 +70,18 @@ class utils():
     return schema, stats
 
 def read_sql(*args, **kwargs):
-
+    """Execute raw SQL and return a DataFrame. Prefer ORM queries where possible.
+    Admin or legacy use only; new code should use Django ORM and queryset_to_dataframe."""
     df = rsql(*args, **kwargs)
-
-    #df = clean_dataframe(df)
     return df
+
+
+def queryset_to_dataframe(qs):
+    """Convert a Django QuerySet to a pandas DataFrame. Prefer over read_sql for ORM-backed tables."""
+    import pandas as pd
+    if qs is None or not hasattr(qs, "values"):
+        return pd.DataFrame()
+    return pd.DataFrame(list(qs.values()))
 
 def clean_dataframe(df):
     df = df.fillna('')

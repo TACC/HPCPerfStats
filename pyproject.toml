@@ -43,6 +43,23 @@ dependencies = [
   "tzdata",
 ]
 
+[project.optional-dependencies]
+test = [
+  "pytest>=7.0",
+  "pytest-django>=4.5",
+  "pytest-cov>=4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["hpcperfstats"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
+markers = [
+  "django: marks tests requiring Django (dbs, settings).",
+]
+
 [tool.setuptools]
 script-files = [
   "hpcperfstats/analysis/metrics/update_metrics.py",
