@@ -95,8 +95,6 @@ class metrics_data(models.Model):
     query_create_process_index = "CREATE INDEX ON proc_data (jid);"
 """
 
-# TODO: Compression in migration.py
-
 class host_data(models.Model):
     time = models.DateTimeField(primary_key=True)
     host = models.CharField(max_length=64, blank=True, null=True)

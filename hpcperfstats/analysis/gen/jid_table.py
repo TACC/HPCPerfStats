@@ -1,6 +1,5 @@
 """
 Job-scoped host_data access via Django ORM.
-Replaces raw psycopg2 and temp tables with ORM queries.
 """
 import time
 
