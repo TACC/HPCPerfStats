@@ -13,9 +13,6 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 
 from bokeh.models import CustomJSTickFormatter
 import numpy as np
-from pandas import read_sql as rsql
-
-
 
 local_timezone = cfg.get_timezone()
 
@@ -69,15 +66,8 @@ class utils():
           stats[hostname][devname] = host.stats[typename][devname].astype(float)
     return schema, stats
 
-def read_sql(*args, **kwargs):
-    """Execute raw SQL and return a DataFrame. Prefer ORM queries where possible.
-    Admin or legacy use only; new code should use Django ORM and queryset_to_dataframe."""
-    df = rsql(*args, **kwargs)
-    return df
-
-
 def queryset_to_dataframe(qs):
-    """Convert a Django QuerySet to a pandas DataFrame. Prefer over read_sql for ORM-backed tables."""
+    """Convert a Django QuerySet to a pandas DataFrame."""
     import pandas as pd
     if qs is None or not hasattr(qs, "values"):
         return pd.DataFrame()

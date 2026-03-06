@@ -28,10 +28,3 @@ class TestORMHelpers(TestCase):
         self.assertEqual(jt.acct_host_list, [])
         self.assertEqual(jt.host_list, [])
         self.assertEqual(jt.schema, {})
-
-    def test_read_sql_docstring_restricts_usage(self):
-        """read_sql docstring should document admin-only use."""
-        from hpcperfstats.analysis.gen.utils import read_sql
-
-        self.assertIn("admin", read_sql.__doc__.lower())
-        self.assertIn("ORM", read_sql.__doc__)

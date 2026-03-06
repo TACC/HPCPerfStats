@@ -1,4 +1,4 @@
-"""Unit tests for analysis.gen.utils (clean_dataframe, read_sql docstring, queryset_to_dataframe)."""
+"""Unit tests for analysis.gen.utils (clean_dataframe, queryset_to_dataframe)."""
 import numpy as np
 import pandas as pd
 
@@ -20,14 +20,6 @@ def test_clean_dataframe_inf():
     out = clean_dataframe(df)
     assert out["a"].iloc[1] == ""
     assert out["a"].iloc[2] == ""
-
-
-def test_read_sql_docstring():
-    """read_sql docstring mentions admin and ORM."""
-    from hpcperfstats.analysis.gen.utils import read_sql
-    assert read_sql.__doc__ is not None
-    assert "admin" in read_sql.__doc__.lower()
-    assert "ORM" in read_sql.__doc__
 
 
 def test_queryset_to_dataframe_empty():
