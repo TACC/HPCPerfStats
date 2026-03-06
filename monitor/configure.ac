@@ -84,11 +84,11 @@ AC_ARG_ENABLE([gpu],
 [  --enable-gpu		Enable Nvidia GPU support (default is false)],
 [case "${enableval}" in
   yes) gpu=true
-  AC_SEARCH_LIBS([nvmlInit], [nvidia-ml], [have_gpu=yes], 
-  [AC_MSG_ERROR([Unable to find libnvidia-ml.so!])])
+  AC_SEARCH_LIBS([dcgmInit], [dcgm], [have_gpu=yes], 
+  [AC_MSG_ERROR([Unable to find libdcgm.so!])])
   if test "x${have_gpu}" = xyes; then 
-     AC_CHECK_HEADERS([nvml.h], [gpu=true], 
-     [AC_MSG_ERROR([Unable to find nvml.h on this system!])])  
+     AC_CHECK_HEADERS([dcgm_agent.h], [gpu=true], 
+     [AC_MSG_ERROR([Unable to find dcgm_agent.h on this system!])])  
   fi
   ;;
   no)  gpu=false ;;

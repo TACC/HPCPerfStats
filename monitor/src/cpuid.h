@@ -8,7 +8,7 @@ typedef enum {
   NEHALEM, WESTMERE, 
   SANDYBRIDGE, IVYBRIDGE, 
   HASWELL, BROADWELL, KNL,
-  SKYLAKE
+  SKYLAKE, ARM9
 } processor_t;
   
 // Return 1 for true and 0 for false

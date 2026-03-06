@@ -24,7 +24,7 @@ hpcperfstatsd_CPPFLAGS = \
 	-DJOBID_FILE_PATH=\"$(JOBID_FILE_PATH)\"
 
 if DEBUG
-hpcperfstatsd_CPPFLAGS += \
+hpcperfstatsd_CPPFLAGS += \lustre
 	-DDEBUG
 endif
 

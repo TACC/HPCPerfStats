@@ -9,9 +9,10 @@
 #include "trace.h"
 #include "cpuid.h"
 
-#define cpuid(func,ax,bx,cx,dx)\
-  __asm__ __volatile__ ("cpuid": "=a" (ax), "=b" (bx), "=c" (cx), "=d" (dx) : "a" (func));
 
+#define cpuid(func,ax,bx,cx,dx)\
+return ARM9;
+//  __asm__ __volatile__ ("cpuid": "=a" (ax), "=b" (bx), "=c" (cx), "=d" (dx) : "a" (func));
 processor_t signature(int *n_pmcs) {
   uint32_t eax = 0, ebx = 0, ecx = 0, edx = 0;
   char vendor[13];

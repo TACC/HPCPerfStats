@@ -53,7 +53,7 @@ static int send(struct stats_buffer *sf)
   }
 
   amqp_login(conn, "/", 0, 131072, 0, AMQP_SASL_METHOD_PLAIN, 
-	     "hpcperfstats", "hpcperfstats");
+	     "guest", "guest");
   amqp_channel_open(conn, 1);
   amqp_get_rpc_reply(conn);
 
