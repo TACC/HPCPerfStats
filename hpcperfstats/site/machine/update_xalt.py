@@ -1,56 +1,55 @@
 #!/usr/bin/env python
+"""
+XALT data enrichment script.
+Uses Django ORM for xalt DB (run, join_run_object, lib).
+Note: This script originally updated a Job model with exe/exec_path/cwd/threads and
+a Libraries model. The current schema uses job_data (no exe/exec_path/cwd/threads).
+To re-enable XALT enrichment, add compatible fields to job_data or introduce
+a separate model and uncomment/adapt the logic below.
+"""
 import os
-os.environ['DJANGO_SETTINGS_MODULE']='hpcperfstats.site.hpcperfstats_site.settings'
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings")
 
 import sys
-
 from datetime import datetime, timedelta
 
 import django
 django.setup()
 
-from hpcperfstats.site.machine.models import Job, Libraries
+from hpcperfstats.site.machine.models import job_data
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
-
-try:
-    start = datetime.strptime(sys.argv[1],"%Y-%m-%d")
-    try:
-        end   = datetime.strptime(sys.argv[2],"%Y-%m-%d")
-    except:
-        end = start
-except:
-    start = datetime.now()
-    end   = datetime.now()
 
 def daterange(start_date, end_date):
     for n in range(int((end_date - start_date).days) + 1):
         yield start_date + timedelta(n)
 
+
+try:
+    start = datetime.strptime(sys.argv[1], "%Y-%m-%d")
+    try:
+        end = datetime.strptime(sys.argv[2], "%Y-%m-%d")
+    except (IndexError, ValueError):
+        end = start
+except (IndexError, ValueError):
+    start = datetime.now()
+    end = datetime.now()
+
+# Current job_data model does not have exe, exec_path, cwd, threads or a link to Libraries.
+# XALT run data is still available via run.objects.using('xalt').filter(job_id=jid) in views.
+# Optionally, iterate by date and log xalt runs for jobs in job_data for that date:
 for date in daterange(start, end):
     directory = date.strftime("%Y-%m-%d")
-    print (directory)
-    ### If xalt is available add data to the DB
-    #for job in Job.objects.filter(date = directory).filter(exe = None):
-    for job in Job.objects.filter(date = directory).filter(exe = None):
-        obj = Job.objects.get(id = job.id)
-        xd = None
-
-        if not run.objects.using('xalt').filter(job_id = job.id): continue
-        for r in run.objects.using('xalt').filter(job_id = job.id):
-            if "usr" in r.exec_path.split('/'): continue
-            print (r.exec_path)
-            xd = r
-        if not xd: continue
-        obj.exe  = xd.exec_path.split('/')[-1][0:128]
-        obj.exec_path = xd.exec_path
-        obj.cwd     = xd.cwd[0:128]
-        obj.threads = xd.num_threads
-        obj.save()
-        for join in join_run_object.objects.using('xalt').filter(run_id = xd.run_id):
-            object_path = lib.objects.using('xalt').get(obj_id = join.obj_id).object_path
-            module_name = lib.objects.using('xalt').get(obj_id = join.obj_id).module_name
-            if not module_name: module_name = 'none'
-            library = Libraries(object_path = object_path, module_name = module_name)
-            library.save()
-            library.jobs.add(obj)
+    print(directory)
+    # Jobs ending on this date (by day)
+    jobs_on_date = job_data.objects.filter(
+        end_time__date=date
+    ).values_list("jid", flat=True)
+    for jid in jobs_on_date:
+        runs = list(run.objects.using("xalt").filter(job_id=jid))
+        if not runs:
+            continue
+        for r in runs:
+            if "usr" in r.exec_path.split("/"):
+                continue
+            print("  jid=%s exec_path=%s" % (jid, r.exec_path))

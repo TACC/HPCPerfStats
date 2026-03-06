@@ -17,7 +17,7 @@ from pandas import to_datetime
 from django.db import transaction
 
 from hpcperfstats.analysis.gen import jid_table
-from hpcperfstats.analysis.gen.utils import read_sql, utils
+from hpcperfstats.analysis.gen.utils import utils
 from hpcperfstats.site.machine.models import metrics_data
 
 try:
@@ -57,10 +57,7 @@ class _JobForMetrics:
     self.schemas = {}
     self.acct = {"cores": 1, "nodes": 1}
 
-    df = read_sql(
-      "select host, time, type, event, value from job_{0}".format(self.jid),
-      jt.conj,
-    )
+    df = jt.get_full_host_data_df(columns=["host", "time", "type", "event", "value"])
     if df.empty:
       self.times = np.array([])
       return
@@ -178,18 +175,42 @@ class Metrics():
             )
 
 
-  def job_arc(self, jt, name = None, typename = None, events = None, conv = 0, units = None):
-    df = read_sql("select host, time_bucket('5m', time) as time, sum(arc)*{0} as sum from job_{1} where type = '{2}' and event in ('{3}') group by host, time".format(conv, jt.jid, typename, "','".join(events)), jt.conj)
-    if df.empty: return None
+  def job_arc(self, jt, name=None, typename=None, events=None, conv=0, units=None):
+    """Aggregate arc by host and 5m time bucket via Django DB connection (TimescaleDB time_bucket)."""
+    from django.db import connection
+    import pandas as pd
+
+    if not getattr(jt, "_base_filter", None):
+      return None
+    # Use raw SQL for time_bucket (TimescaleDB); params to avoid injection
+    with connection.cursor() as cur:
+      cur.execute(
+        """
+        SELECT host, time_bucket('5m', time) AS time, sum(arc) * %s AS sum
+        FROM host_data
+        WHERE time >= %s AND time <= %s AND host = ANY(%s) AND type = %s AND event = ANY(%s)
+        GROUP BY host, time
+        ORDER BY host, time
+        """,
+        [
+          conv,
+          jt._base_filter["time__gte"],
+          jt._base_filter["time__lte"],
+          jt._base_filter["host__in"],
+          typename,
+          list(events),
+        ],
+      )
+      rows = cur.fetchall()
+    if not rows:
+      return None
+    df = pd.DataFrame(rows, columns=["host", "time", "sum"])
     # Drop first time sample from each host
-    df = df.groupby('host').apply(lambda group: group.iloc[1:])
-    #df = df.reset_index(drop = True)
-
-
-    df_n = df.groupby('host')["sum"].mean()
-    node_mean, node_max, node_min = df_n.mean(), df_n.max(), df_n.min()
-
-    return node_mean
+    df = df.groupby("host", group_keys=False).apply(lambda g: g.iloc[1:]).reset_index(drop=True)
+    if df.empty:
+      return None
+    df_n = df.groupby("host")["sum"].mean()
+    return float(df_n.mean())
 
   # Compute metric
   def compute_metrics(self, job):
@@ -197,7 +218,7 @@ class Metrics():
 
     results = []
 
-    # build temporary job view
+    # Job-scoped host_data via ORM (no temp table)
     with jid_table.jid_table(job.jid) as jt:
 
       job_view = _JobForMetrics(jt)

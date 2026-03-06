@@ -9,7 +9,7 @@ os.environ['OPENBLAS_NUM_THREADS'] = str(openblas_threads)
 
 import time
 
-from pandas import read_sql, to_datetime
+from pandas import to_datetime
 
 from hpcperfstats.analysis.gen.utils import tz_aware_bokeh_tick_formatter
 
@@ -25,7 +25,7 @@ class SummaryPlot():
 
   def __init__(self, jt):
     self.jid = jt.jid
-    self.conn = jt.conj
+    self.jt = jt
     self.host_list = jt.host_list
 
   def plot_metric(self, df, metric, label):
@@ -82,15 +82,20 @@ class SummaryPlot():
       ("mem", "value", ['MemUsed'], "mem", 1/(1024*1024), "MemUsed[GB]")
     ]
 
-    df = read_sql("select host, time from job_{0} group by host, time order by host, time".format(self.jid), self.conn)
+    df = self.jt.get_host_time_df()
 
     for typ, val, events, name, conv, label in metrics:
       s = time.time()
-      df[name] = conv*read_sql("select sum({0}) from job_{3} where type = '{1}' and event in ('{2}') \
-      group by host, time order by host, time".format(val, typ, "','".join(events), self.jid), self.conn)
+      agg = self.jt.get_aggregate_df(typ, val, events, conv)
+      if agg.empty or "sum_val" not in agg.columns:
+        df[name] = float("nan")
+      else:
+        df = df.merge(agg[["host", "time", "sum_val"]], on=["host", "time"], how="left")
+        df[name] = df["sum_val"]
+        df.drop(columns=["sum_val"], inplace=True)
 
       if name == "amd_watts": print(df[name])
-      if df[name].isnull().values.any():
+      if name in df.columns and df[name].isnull().values.any():
         del df[name]
       print("time to compute {0}: {1}".format(name, time.time() -s))
 

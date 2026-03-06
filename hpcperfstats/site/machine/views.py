@@ -22,13 +22,13 @@ from django.http import HttpResponseRedirect
 from django.shortcuts import render
 from django.utils import timezone
 from django.views.generic import DetailView
-import psycopg2
 from numpy import histogram, isnan, linspace, log
 from pandas import DataFrame, to_timedelta
 
 import hpcperfstats.analysis.plot as plots
 from hpcperfstats.analysis.gen import jid_table
-from hpcperfstats.analysis.gen.utils import clean_dataframe, read_sql
+from hpcperfstats.analysis.gen.jid_table import HostDataProvider, TypeDetailDataProvider
+from hpcperfstats.analysis.gen.utils import clean_dataframe
 from hpcperfstats.site.machine.models import host_data, job_data, metrics_data
 from hpcperfstats.site.machine.oauth2 import check_for_tokens
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
@@ -48,8 +48,6 @@ class xalt_data_c:
          self.cwd=[]
          self.libset=[]
 
-
-CONNECTION = cfg.get_db_connection_string()
 
 def home(request, error = False):
     if not check_for_tokens(request):
@@ -235,21 +233,23 @@ class job_dataDetailView(DetailView):
 
         context["host_list"] = j.acct_host_list
 
-
-
-
-# gpu
+        # gpu (ORM)
         try:
-          gpu_data = read_sql("""select type,event,value from host_data where jid = '{0}' and type='nvidia_gpu' and event='utilization'""".format(job.jid), conj)
-          gpu_data = gpu_data.iloc[1:-1]
-          gpu_utilization_max = gpu_data['value'].max()
-          gpu_utilization_mean = gpu_data['value'].mean()
-          if not isnan(gpu_utilization_max):
-            context["gpu_active"]=ceil(gpu_utilization_max/100.0)
-            context["gpu_utilization_max"]=gpu_utilization_max
-            context["gpu_utilization_mean"]=gpu_utilization_mean
-        except:
-          print("error getting gpu data")
+            from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
+            gpu_qs = host_data.objects.filter(
+                jid=job.jid, type='nvidia_gpu', event='utilization'
+            ).values('type', 'event', 'value').order_by('time')
+            gpu_data = queryset_to_dataframe(gpu_qs)
+            if not gpu_data.empty and len(gpu_data) > 2:
+                gpu_data = gpu_data.iloc[1:-1]
+                gpu_utilization_max = gpu_data['value'].max()
+                gpu_utilization_mean = gpu_data['value'].mean()
+                if not isnan(gpu_utilization_max):
+                    context["gpu_active"] = ceil(gpu_utilization_max / 100.0)
+                    context["gpu_utilization_max"] = gpu_utilization_max
+                    context["gpu_utilization_mean"] = gpu_utilization_mean
+        except Exception as e:
+            print("error getting gpu data:", e)
 
 # xalt
         if not cfg.get_xalt_user() == '':
@@ -282,15 +282,18 @@ class job_dataDetailView(DetailView):
         #    print("failed to generate summary plot for jid {0}".format(j.jid))
         print("plot time: {0:.1f}".format(time.time()-ptime))
 
-        # Compute Lustre Usage
+        # Compute Lustre Usage (ORM)
         try:
-            llite_rw = read_sql("select event, sum(delta)/(1024*1024) as delta from job_{0} where type = 'llite' \
-            and event in ('read_bytes', 'write_bytes') group by event".format(j.jid), j.conj)
-
-            context['fsio'] = { "llite" : [ llite_rw[llite_rw["event"] == "read_bytes"]["delta"].values[0],
-                                            llite_rw[llite_rw["event"] == "write_bytes"]["delta"].values[0] ] }
-        except:
-            print("failed to compute Lustre data movement for jid {0}".format(j.jid))
+            llite_df = j.get_llite_delta_by_event()
+            if not llite_df.empty and "delta_sum" in llite_df.columns:
+                llite_df["delta_mb"] = llite_df["delta_sum"].fillna(0) / (1024 * 1024)
+                read_row = llite_df[llite_df["event"] == "read_bytes"]
+                write_row = llite_df[llite_df["event"] == "write_bytes"]
+                read_val = float(read_row["delta_mb"].iloc[0]) if len(read_row) else 0.0
+                write_val = float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0
+                context['fsio'] = {"llite": [read_val, write_val]}
+        except Exception as e:
+            print("failed to compute Lustre data movement for jid {0}: {1}".format(j.jid, e))
         try:
             context["schema"] = j.schema
         except:
@@ -317,95 +320,56 @@ def type_detail(request, jid, type_name):
     if not check_for_tokens(request):
         return HttpResponseRedirect("/login_prompt")
 
-    conj = psycopg2.connect(CONNECTION)
+    # Job accounting via ORM
+    job = job_data.objects.filter(jid=jid).first()
+    if not job:
+        messages.error(request, "Job not found.")
+        return HttpResponseRedirect("/")
 
-    # Get job accounting data
-    acct_data = read_sql("""select * from job_data where jid = '{0}'""".format(jid), conj)
-    # job_data accounting host names must be converted to fqdn
-    acct_host_list = [h + '.' + cfg.get_host_name_ext() for h in acct_data["host_list"].values[0]]
+    acct_host_list = [h + '.' + cfg.get_host_name_ext() for h in (job.host_list or [])]
+    start_time = job.start_time
+    end_time = job.end_time
+    if start_time.tzinfo is None:
+        from django.utils import timezone as django_tz
+        start_time = django_tz.make_aware(start_time, django_tz.utc)
+    if end_time.tzinfo is None:
+        from django.utils import timezone as django_tz
+        end_time = django_tz.make_aware(end_time, django_tz.utc)
+    start_time = start_time.astimezone(local_timezone)
+    end_time = end_time.astimezone(local_timezone)
 
-    start_time = acct_data["start_time"].dt.tz_convert(local_timezone).values[0]
-    end_time = acct_data["end_time"].dt.tz_convert(local_timezone).values[0]
+    provider = TypeDetailDataProvider(jid, type_name, start_time, end_time, acct_host_list)
+    data_host_list = list(
+        host_data.objects.filter(
+            jid=jid, type=type_name,
+            time__gte=start_time, time__lte=end_time,
+            host__in=acct_host_list
+        ).values_list("host", flat=True).distinct()
+    )
+    if len(data_host_list) == 0:
+        return render(request, "machine/type_detail.html",
+                      {"type_name": type_name, "jobid": jid, "tscript": "", "tdiv": "",
+                       "logged_in": True, "stats_data": [], "schema": []})
 
-    # Get stats data and use accounting data to narrow down query
-    qtime = time.time()
-    sql = """drop table if exists type_detail; select * into temp type_detail from host_data where time between '{1}' and '{2}' and jid = '{0}' and type = '{3}'""".format(jid, start_time, end_time, type_name)
-
-    # Open temporary connection
-    with conj.cursor() as cur:
-        cur.execute(sql)
-    print("query time: {0:.1f}".format(time.time()-qtime))
-
-    # Compare accounting host list to stats host list
-    htime = time.time()
-    data_host_list = set(read_sql("select distinct on(host) host from type_detail;", conj)["host"].values)
-    if len(data_host_list) == 0: return context
-    print("host selection time: {0:.1f}".format(time.time()-htime))
-
-    # Build Type Plot
     ptime = time.time()
-    sp = plots.DevPlot(conj, data_host_list)
-    df, plot = sp.plot() # AL vvv
-    script,div = components(plot)
-    schema = list(df.columns)[3:]
+    sp = plots.DevPlot(provider, data_host_list)
+    df, plot = sp.plot()
+    script, div = components(plot)
+    schema = [c for c in df.columns if c not in ("host", "time", "index")] if not df.empty else []
 
-    df['dt'] = df['time'].sub(df['time'][0]).astype('timedelta64[s]')
-    df1 = df.groupby('dt')[schema].agg(['mean'])
-    df1 = df1.set_axis(schema, axis=1)
-    df1 = df1.reset_index()
+    if not df.empty and "time" in df.columns and len(df) > 0 and schema:
+        df = df.copy()
+        df['dt'] = df['time'].sub(df['time'].iloc[0]).astype('timedelta64[s]')
+        df1 = df.groupby('dt')[schema].mean().reset_index()
+        stats = [(df1['dt'].iloc[t], df1.loc[df1.index[t], schema].values.flatten().tolist()) for t in range(len(df1))]
+    else:
+        stats = []
 
-    stats=[]
-
-    for t in range(len(df1)):
-        stats.append((df1['dt'][t], df1.loc[t, schema].values.flatten().tolist())) # AL ^^^
-
-    print("type plot time: {0:.1f}".format(time.time()-ptime))
-    conj.close()
+    print("type plot time: {0:.1f}".format(time.time() - ptime))
     return render(request, "machine/type_detail.html",
-                  {"type_name" : type_name, "jobid" : jid,
-                   "tscript" : script, "tdiv" : div, "logged_in" : True,
+                  {"type_name": type_name, "jobid": jid,
+                   "tscript": script, "tdiv": div, "logged_in": True,
                    "stats_data": stats, "schema": schema})
-
-
-class host_table:
-
-    def __init__(self, host_fqdn, start_time, end_time):
-        print("Initializing table for host {0}".format(host_fqdn))
-
-
-        # Get stats data and use accounting data to narrow down query
-        qtime = time.time()
-        self.jid = host_fqdn.split('.')[0].replace('-', '_')
-
-        sql = """drop table if exists job_{0}; select * into temp job_{0} from host_data where time between '{1}'::timestamp and '{2}'::timestamp and host = '{3}'""".format(self.jid, start_time, end_time, host_fqdn)
-        print(sql)
-
-        # Open temporary connection
-        self.conj = psycopg2.connect(CONNECTION)
-        with self.conj.cursor() as cur:
-            cur.execute(sql)
-        print("query time: {0:.1f}".format(time.time()-qtime))
-
-        # Compare accounting host list to stats host list
-        htime = time.time()
-        self.host_list = list(set(read_sql("select distinct on(host) host from job_{0};".format(self.jid), self.conj)["host"].values))
-        if len(self.host_list) == 0: return
-        print("host selection time: {0:.1f}".format(time.time()-htime))
-
-        # Build Schema for navigation to Type Detail view
-        etime = time.time()
-        schema_df = read_sql("""select distinct on (type,event) type,event from job_{0} where host = '{1}'""".format(self.jid, next(iter(self.host_list))), self.conj)
-        types = sorted(list(set(schema_df["type"].values)))
-        self.schema = {}
-        for t in types:
-            self.schema[t] = list(sorted(schema_df[schema_df["type"] == t]["event"].values))
-        print("schema time: {0:.1f}".format(time.time()-etime))
-
-    def __del__(self):
-        sql = """drop table if exists job_{0};""".format(self.jid)
-        with self.conj.cursor() as cur:
-            cur.execute(sql)
-        self.conj.close()
 
 
 def host_detail(request):
@@ -413,27 +377,42 @@ def host_detail(request):
         return HttpResponseRedirect("/login_prompt")
 
     fields = request.GET.dict()
-    print(fields)
-    fields = { k:v for k, v in fields.items() if v }
-    print(fields)
-    print("here in host_detail")
-    start_time = fields['end_time__gte']
+    fields = {k: v for k, v in fields.items() if v}
+    start_time = fields.get('end_time__gte')
+    end_time = fields.get('end_time__lte', 'now()')
+    host_fqdn = fields.get('host')
+    if not host_fqdn or not start_time:
+        messages.error(request, "Missing host or time range.")
+        return HttpResponseRedirect("/")
+
+    # Parse times; support "now()" for end
+    from datetime import datetime
     try:
-        end_time = fields['end_time__lte']
-    except:
-        end_time = "now()"
+        start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        start_dt = timezone.now() - timedelta(days=1)
+    if end_time == "now()" or not end_time:
+        end_dt = timezone.now()
+    else:
+        try:
+            end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            end_dt = timezone.now()
+    if start_dt.tzinfo is None:
+        start_dt = timezone.make_aware(start_dt)
+    if end_dt.tzinfo is None:
+        end_dt = timezone.make_aware(end_dt)
 
-    ht = host_table(fields['host'], start_time, end_time)
+    ht = HostDataProvider(host_fqdn, start_dt, end_dt)
 
-    # Build Summary Plot
     ptime = time.time()
     sp = plots.SummaryPlot(ht)
     script, div = components(sp.plot())
-    print("plot time: {0:.1f}".format(time.time()-ptime))
+    print("plot time: {0:.1f}".format(time.time() - ptime))
 
     return render(request, "machine/type_detail.html",
-                  {"type_name" : fields['host'], "tag" : fields['host'],
-                   "tscript" : script, "tdiv" : div, "logged_in" : True})
+                  {"type_name": fields['host'], "tag": fields['host'],
+                   "tscript": script, "tdiv": div, "logged_in": True})
 
 
 def proc_detail(request, pk, proc_name):

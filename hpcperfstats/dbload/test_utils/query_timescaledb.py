@@ -1,49 +1,82 @@
 #!/usr/bin/env python3
+"""
+Ad-hoc script to query host_data for a job via Django ORM/connection.
+Uses Django DB connection instead of raw psycopg2. Requires DJANGO_SETTINGS_MODULE.
+"""
+import os
 import sys
 import time
 
-import psycopg2
-from pandas import DataFrame, read_sql
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings")
 
-#import pandas
-#pandas.set_option('display.max_rows', 100)
+import django
+django.setup()
 
+from pandas import DataFrame
 
-CONNECTION = "dbname=hpcperfstats user=postgres port=5433"
-
-conn = psycopg2.connect(CONNECTION)
-print(conn.server_version)
-cur = conn.cursor()
-
-#print(read_sql("select distinct(jid) from host_data;", conn))
-jid = sys.argv[1]
+from django.db import connection
 
 
-qtime = time.time()
-cur.execute("DROP VIEW IF EXISTS job_detail CASCADE;")
-cur.execute("create temp view job_detail as select * from host_data where jid = '{0}' order by host, time;".format(jid))
-print(read_sql("select count(distinct(host)) as nodes from job_detail;", conn))
-print("query time: {0:.1f}".format(time.time()-qtime))
+def run_sql(sql, params=None):
+    """Execute SQL and return a DataFrame (columns from cursor.description)."""
+    with connection.cursor() as cur:
+        cur.execute(sql, params or [])
+        rows = cur.fetchall()
+        cols = [c[0] for c in cur.description] if cur.description else []
+    return DataFrame(rows, columns=cols) if cols else DataFrame()
 
 
-df = DataFrame()
-df = read_sql("select jid, host, time, 1e-9*sum(arc) as flops from job_detail where event in ('FP_ARITH_INST_RETIRED_SCALAR_DOUBLE', 'FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE', 'FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE', 'FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE') group by jid, host, time;", conn)
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: query_timescaledb.py <jid>")
+        sys.exit(1)
 
-df["mbw"] = read_sql("select 64*sum(arc)/(1024*1024*1024) from job_detail where event in ('CAS_READS', 'CAS_WRITES') group by jid, host, time;", conn)
-df["ibbw"] = read_sql("select sum(arc)/(1024*1024) from job_detail where event in ('port_rcv_data', 'port_xmit_data') group by jid, host, time;", conn)
-df["lbw"] = read_sql("select sum(arc)/(1024*1024) from job_detail where event in ('read_bytes', 'write_bytes') group by jid, host, time;", conn)
+    jid = sys.argv[1]
+    print(connection.connection.server_version if hasattr(connection, "connection") else "N/A")
 
+    qtime = time.time()
+    with connection.cursor() as cur:
+        cur.execute("DROP VIEW IF EXISTS job_detail CASCADE;")
+        cur.execute(
+            "CREATE TEMP VIEW job_detail AS SELECT * FROM host_data WHERE jid = %s ORDER BY host, time;",
+            [jid],
+        )
+    df = run_sql("SELECT count(distinct(host)) AS nodes FROM job_detail;")
+    print(df)
+    print("query time: {0:.1f}".format(time.time() - qtime))
 
-df["mem"] = read_sql("select value/(1024*1024) as mem from job_detail where type = 'mem' and event in ('MemUsed') order by jid, host, time;", conn)
-df["cpu"] = read_sql("select 0.01*sum(arc) as cpu from job_detail where event in ('user', 'system', 'nice') group by jid, host, time;", conn)
-df["instr"] = read_sql("select sum(diff) from job_detail where event in ('INST_RETIRED') group by jid, host, time;", conn)
-df["mcycles"] = read_sql("select sum(diff) from job_detail where event in ('MPERF') group by jid, host, time;", conn)
-df["acycles"] = read_sql("select sum(diff) from job_detail where event in ('APERF') group by jid, host, time;", conn)
-df["freq"]  = 2.7*(df["acycles"]/df["mcycles"]).fillna(0)
-df["cpi"]  = (df["acycles"]/df["instr"]).fillna(0)
+    df = run_sql(
+        """SELECT jid, host, time, 1e-9*sum(arc) AS flops FROM job_detail
+           WHERE event IN ('FP_ARITH_INST_RETIRED_SCALAR_DOUBLE', 'FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE',
+                          'FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE', 'FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE')
+           GROUP BY jid, host, time;"""
+    )
+    df["mbw"] = run_sql(
+        "SELECT 64*sum(arc)/(1024*1024*1024) FROM job_detail WHERE event IN ('CAS_READS', 'CAS_WRITES') GROUP BY jid, host, time;"
+    ).iloc[:, 0]
+    df["ibbw"] = run_sql(
+        "SELECT sum(arc)/(1024*1024) FROM job_detail WHERE event IN ('port_rcv_data', 'port_xmit_data') GROUP BY jid, host, time;"
+    ).iloc[:, 0]
+    df["lbw"] = run_sql(
+        "SELECT sum(arc)/(1024*1024) FROM job_detail WHERE event IN ('read_bytes', 'write_bytes') GROUP BY jid, host, time;"
+    ).iloc[:, 0]
+    df["mem"] = run_sql(
+        "SELECT value/(1024*1024) AS mem FROM job_detail WHERE type = 'mem' AND event IN ('MemUsed') ORDER BY jid, host, time;"
+    ).iloc[:, 0]
+    df["cpu"] = run_sql(
+        "SELECT 0.01*sum(arc) AS cpu FROM job_detail WHERE event IN ('user', 'system', 'nice') GROUP BY jid, host, time;"
+    ).iloc[:, 0]
+    df["instr"] = run_sql(
+        "SELECT sum(delta) FROM job_detail WHERE event IN ('INST_RETIRED') GROUP BY jid, host, time;"
+    ).iloc[:, 0]
+    df["mcycles"] = run_sql(
+        "SELECT sum(delta) FROM job_detail WHERE event IN ('MPERF') GROUP BY jid, host, time;"
+    ).iloc[:, 0]
+    df["acycles"] = run_sql(
+        "SELECT sum(delta) FROM job_detail WHERE event IN ('APERF') GROUP BY jid, host, time;"
+    ).iloc[:, 0]
+    df["freq"] = 2.7 * (df["acycles"] / df["mcycles"]).fillna(0)
+    df["cpi"] = (df["acycles"] / df["instr"]).fillna(0)
+    del df["instr"], df["mcycles"], df["acycles"]
 
-del df["instr"], df["mcycles"], df["acycles"]
-
-print(df)
-
-conn.close()
+    print(df)
