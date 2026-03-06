@@ -1,3 +1,7 @@
+"""Summary plot: multi-metric step plots for a job (FLOPS, BW, CPU, etc.) using jid_table aggregate data and Bokeh.
+
+AI generated.
+"""
 import hpcperfstats.conf_parser as cfg
 openblas_threads = int(cfg.get_total_cores())/4
 if openblas_threads < 1:
@@ -22,13 +26,25 @@ from bokeh.plotting import figure
 local_timezone = cfg.get_timezone()
 
 class SummaryPlot():
+    """Builds a grid of Bokeh step plots (one per metric) from jid_table aggregate DataFrames.
+
+    AI generated.
+    """
 
   def __init__(self, jt):
+    """Store jid, jt, and host_list from the given jid_table (or HostDataProvider).
+
+    AI generated.
+    """
     self.jid = jt.jid
     self.jt = jt
     self.host_list = jt.host_list
 
   def plot_metric(self, df, metric, label):
+    """Create one Bokeh figure with step glyphs per host for the given metric column and label.
+
+    AI generated.
+    """
     s = time.time()
 
     df = df[["time", "host", metric]]
@@ -50,7 +66,10 @@ class SummaryPlot():
     return plot
 
   def plot(self):
+    """Build host_time_df, merge all configured metrics (amd64_pmc, intel_8pmc3, llite, cpu, mem, etc.), and return a gridplot of step plots.
 
+    AI generated.
+    """
     self.hc = {}
     colors = d3["Category20"][20]
     for i, hostname in enumerate(self.host_list):

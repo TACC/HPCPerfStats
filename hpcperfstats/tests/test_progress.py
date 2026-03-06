@@ -1,4 +1,7 @@
-"""Unit tests for progress bar module."""
+"""Unit tests for progress bar module.
+
+AI generated.
+"""
 import io
 import sys
 
@@ -6,7 +9,10 @@ import pytest
 
 
 def test_progress_bar_completion(capsys):
-    """progress(100, 100) produces a full bar."""
+    """progress(100, 100) produces a full bar.
+
+    AI generated.
+    """
     from hpcperfstats.progress import progress
     progress(100, 100, status="done")
     captured = capsys.readouterr()
@@ -15,7 +21,10 @@ def test_progress_bar_completion(capsys):
 
 
 def test_progress_bar_half(capsys):
-    """progress(50, 100) produces half bar."""
+    """progress(50, 100) produces half bar.
+
+    AI generated.
+    """
     from hpcperfstats.progress import progress
     progress(50, 100, status="")
     captured = capsys.readouterr()
@@ -23,7 +32,10 @@ def test_progress_bar_half(capsys):
 
 
 def test_progress_bar_zero_total(capsys):
-    """progress with total=0 does not raise (avoids ZeroDivisionError)."""
+    """progress with total=0 does not raise (avoids ZeroDivisionError).
+
+    AI generated.
+    """
     from hpcperfstats.progress import progress
     progress(0, 0, status="")
     captured = capsys.readouterr()

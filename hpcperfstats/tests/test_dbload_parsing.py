@@ -1,11 +1,17 @@
-"""Unit tests for dbload parsing logic (sync_acct column handling, sync_timedb line parsing)."""
+"""Unit tests for dbload parsing logic (sync_acct column handling, sync_timedb line parsing).
+
+AI generated.
+"""
 import pandas as pd
 
 import pytest
 
 
 def test_sync_acct_columns_kept():
-    """Columns to read in sync_acct match expected set."""
+    """Columns to read in sync_acct match expected set.
+
+    AI generated.
+    """
     columns_to_read = [
         "JobID", "User", "Account", "Start", "End", "Submit", "Partition",
         "Timelimit", "JobName", "State", "NNodes", "ReqCPUS", "NodeList",
@@ -16,7 +22,10 @@ def test_sync_acct_columns_kept():
 
 
 def test_sync_acct_rename_map():
-    """Rename map for sync_acct is consistent."""
+    """Rename map for sync_acct is consistent.
+
+    AI generated.
+    """
     renames = {
         "JobID": "jid",
         "User": "username",
@@ -37,7 +46,10 @@ def test_sync_acct_rename_map():
 
 
 def test_sacct_gen_daterange():
-    """daterange yields expected number of days."""
+    """daterange yields expected number of days.
+
+    AI generated.
+    """
     from datetime import datetime, timedelta
     from hpcperfstats.dbload.sacct_gen import daterange
     start = datetime(2024, 1, 1)

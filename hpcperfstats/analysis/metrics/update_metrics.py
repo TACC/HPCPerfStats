@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+"""Update metrics_data for jobs ending on a given date. Filters by runtime, optionally skips jobs that already have metrics, runs Metrics().run(jobs_list).
+
+AI generated.
+"""
 import multiprocessing
 import os
 os.environ['DJANGO_SETTINGS_MODULE']='hpcperfstats.site.hpcperfstats_site.settings'
@@ -18,7 +22,10 @@ DEBUG =  cfg.get_debug()
 
 
 def update_metrics(date, rerun = False):
+    """Compute and persist metrics for all jobs ending on date (runtime >= min_time). If not rerun, skip jobs that already have metrics. Uses metrics.Metrics().run(jobs_list).
 
+    AI generated.
+    """
     min_time = 300
     jobs_list = list(job_data.objects.filter(end_time__date = date.date()).exclude(runtime__lt = min_time))
     print("Total jobs {0}".format(len(jobs_list)) + " for date " + date.strftime("%Y-%m-%d"))

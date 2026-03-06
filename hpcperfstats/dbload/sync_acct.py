@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""Sync Slurm accounting (sacct) data into job_data. Reads pipe-delimited files, filters restricted queues and existing jobs, and bulk-inserts or falls back to per-row insert.
+
+AI generated.
+"""
 import os
 import sys
 import time
@@ -20,7 +24,10 @@ django.setup()
 local_timezone = cfg.get_timezone()
 
 def sync_acct(acct_file, jobs_in_db):
+    """Load accounting CSV from acct_file into job_data, skipping jobs already in jobs_in_db and those matching restricted_queue_keywords.
 
+    AI generated.
+    """
     # Junjie: ensure job name is treated as str.
     data_types = {8: str}
 
@@ -112,7 +119,10 @@ def sync_acct(acct_file, jobs_in_db):
 
 
 def _insert_job_data_individually(df):
-    """Fallback: insert job_data rows one by one, skipping duplicates."""
+    """Fallback: insert job_data rows one by one, skipping duplicates.
+
+    AI generated.
+    """
     for row in df.itertuples(index=False):
         try:
             job_data(

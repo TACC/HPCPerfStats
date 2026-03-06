@@ -8,15 +8,27 @@
 # -# Fixed CTR registers
 # -# If CTL register programming failed it (QPI) it seems to be 0, so this is added to event maps
 # ---->>>> Programmable CTL registers must be in same order as CTR
+"""Intel processor and uncore event encoding (CORE_PERF_EVENT, CBOX, HAU, IMC, QPI, etc.) and reformat_counters/format_knl/process_job for mapping raw counters to event names.
+
+AI generated.
+"""
 import numpy
 
 
 ## Processor events
 def CORE_PERF_EVENT(event_select, unit_mask):
+    """Encode Intel core PERF_EVENT (no any-thread bit).
+
+    AI generated.
+    """
     return event_select | (unit_mask << 8) | (1 << 16) | (1 << 17) | (0 << 21) | (1 << 22)
 
 # bit 21 is any thread (every hardware thread on a core increments on event)
 def CORE_PERF_EVENT1(event_select, unit_mask):
+    """Encode Intel core PERF_EVENT with any-thread bit set.
+
+    AI generated.
+    """
     return event_select | (unit_mask << 8) | (1 << 16) | (1 << 17) | (1 << 21) | (1 << 22)
 ## Processor event map
 cpu_event_map = {
@@ -232,9 +244,16 @@ knl_mc_dclk_event_map = {
 
 ## Reformats the counter arrays with configurable events
 class reformat_counters:
+    """Reformat raw counter arrays to named events using event_map; update job schema and host stats.
 
+    AI generated.
+    """
     ## Constructor
     def __init__(self, job, name, event_map):
+        """Build CTL/CTR/FIXED register lists and new schema from event_map; replace job schema for name.
+
+        AI generated.
+        """
         ## Job Object
         self.job = job
         ## Name of device
@@ -302,6 +321,10 @@ class reformat_counters:
 
     ## Remap data to human readable schema
     def register(self,host):
+        """Remap host stats for this device to new schema (drop CTL columns, keep CTR and FIXED).
+
+        AI generated.
+        """
         # Build stats without ctl registers
         if self.name not in host.stats: return
         stats = host.stats[self.name]
@@ -330,6 +353,10 @@ intel_xeon = {'intel_snb' : cpu_event_map, 'intel_snb_cbo' : cbo_event_map, 'int
 }
 
 def format_knl(job, typename):
+    """Split KNL edc/mc stats by func and apply appropriate event map (uclk/eclk, etc.); replace schema and host stats.
+
+    AI generated.
+    """
     if typename in job.schemas:
         schema_desc = job.schemas.get(typename).desc
         registers = schema_desc.split()
@@ -376,7 +403,10 @@ def format_knl(job, typename):
 
 
 def process_job(job):
+    """Apply reformat_counters for all intel_xeon device types in job.schemas; run format_knl for KNL edc/mc; handle legacy intel_pmc3/wtm/uncore/nhm.
 
+    AI generated.
+    """
     # These events work for SNB,IVB,HSW,BDW,SKX at this time 2015/05/27
     for device, mapping in intel_xeon.items():
         if device in job.schemas:

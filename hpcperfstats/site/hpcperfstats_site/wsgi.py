@@ -1,3 +1,7 @@
+"""WSGI config for hpcperfstats_site. Sets path, MPLCONFIGDIR, DJANGO_SETTINGS_MODULE, and exposes application.
+
+AI generated.
+"""
 import os
 import sys
 

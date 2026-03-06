@@ -17,10 +17,18 @@
 # FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT
 # OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
 # OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+"""Console progress bar. Displays a text progress bar for count/total with optional status.
+
+AI generated.
+"""
 import sys
 
 
 def progress(count, total, status=''):
+    """Write a single-line progress bar to stdout (e.g. [====----] 66.7% ... status). Total=0 is treated as 1 to avoid division by zero.
+
+    AI generated.
+    """
     bar_len = 60
     if total <= 0:
         total = 1

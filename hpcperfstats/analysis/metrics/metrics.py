@@ -1,3 +1,7 @@
+"""Metric computation for jobs: simple metrics (job_arc/time_bucket) and complex metrics (avg_freq, avg_ethbw, mem_hwm, etc.) via utils-compatible job view. Results written to metrics_data.
+
+AI generated.
+"""
 import hpcperfstats.conf_parser as cfg
 openblas_threads = int(cfg.get_total_cores())/4
 if openblas_threads < 1:
@@ -29,11 +33,19 @@ except ImportError:
 
 
 class _EventIndex:
+    """Holds the integer index of an event in a schema. Used by _Schema.__getitem__.
+
+    AI generated.
+    """
   def __init__(self, index):
     self.index = index
 
 
 class _Schema:
+    """Schema for a type: list of event names and a name->index mapping.
+
+    AI generated.
+    """
   def __init__(self, events):
     self.events = list(events)
     self._index = {name: idx for idx, name in enumerate(self.events)}
@@ -44,12 +56,19 @@ class _Schema:
 
 
 class _Host:
+    """Minimal host container with a stats dict (typename -> dev -> array).
+
+    AI generated.
+    """
   def __init__(self):
     self.stats = {}
 
 
 class _JobForMetrics:
-  """Minimal job-like object compatible with hpcperfstats.analysis.gen.utils.utils."""
+    """Minimal job-like object compatible with hpcperfstats.analysis.gen.utils.utils. Built from jid_table full host_data DataFrame.
+
+    AI generated.
+    """
 
   def __init__(self, jt):
     self.jid = jt.jid
@@ -120,13 +139,23 @@ class _JobForMetrics:
 
 
 def _unwrap(args):
-  return args[0].compute_metrics(args[1])
-  #  return
+    """Wrapper for pool: call compute_metrics on the job. Used by Metrics.run.
+
+    AI generated.
+    """
+    return args[0].compute_metrics(args[1])
 
 class Metrics():
+    """Computes simple and complex metrics for a list of jobs in parallel and writes results to metrics_data.
+
+    AI generated.
+    """
 
   def __init__(self):
+    """Initialize simple_metrics_list and complex_metrics_list.
 
+    AI generated.
+    """
     self.simple_metrics_list = {
       "avg_blockbw" : { "typename" : "block", "events" : ["rd_sectors", "wr_sectors"], "conv" : 1.0/(1024*1024), "units" : "GB/s"},
       "avg_cpuusage" : { "typename" : "cpu",   "events" : ["user", "system", "nice"], "conv" : 0.01, "units" : "#cores" },
@@ -148,6 +177,10 @@ class Metrics():
 
   # Compute metrics in parallel (Shared memory only)
   def run(self, job_list):
+    """Run metric computation for each job in job_list in a process pool; persist results via metrics_data.update_or_create.
+
+    AI generated.
+    """
     if not job_list:
       print("Please specify a job list.")
       return
@@ -176,7 +209,10 @@ class Metrics():
 
 
   def job_arc(self, jt, name=None, typename=None, events=None, conv=0, units=None):
-    """Aggregate arc by host and 5m time bucket via Django DB connection (TimescaleDB time_bucket)."""
+    """Aggregate arc by host and 5m time bucket via Django DB connection (TimescaleDB time_bucket). Returns mean of per-host mean sum_val, or None.
+
+    AI generated.
+    """
     from django.db import connection
     import pandas as pd
 
@@ -214,6 +250,10 @@ class Metrics():
 
   # Compute metric
   def compute_metrics(self, job):
+    """Compute all simple and complex metrics for one job using jid_table and utils; return list of result dicts for metrics_data.
+
+    AI generated.
+    """
     metric_compute_start = time.time()
 
     results = []
@@ -268,6 +308,10 @@ class Metrics():
 ###########
 
 class avg_freq():
+    """Average CPU frequency (GHz) from PMC CLOCKS_UNHALTED_CORE/CLOCKS_UNHALTED_REF.
+
+    AI generated.
+    """
   def compute_metric(self, u):
     typename = "pmc"
     schema, _stats = u.get_type(typename)
@@ -285,6 +329,10 @@ class avg_freq():
     return value, typename,'GHz'
 
 class avg_ethbw():
+    """Average Ethernet bandwidth (MB/s) from net rx_bytes/tx_bytes.
+
+    AI generated.
+    """
     def compute_metric(self, u):
         typename = "net"
         schema, _stats = u.get_type(typename)
@@ -298,6 +346,10 @@ class avg_ethbw():
         return value, typename,'MB/s'
 
 class avg_gpuutil():
+    """Average GPU utilization (%) from nvidia_gpu utilization.
+
+    AI generated.
+    """
     def compute_metric(self, u):
         typename = "nvidia_gpu"
         schema, _stats = u.get_type(typename)
@@ -311,6 +363,10 @@ class avg_gpuutil():
 
 
 class avg_packetsize():
+    """Average packet size (MB) from ib_ext or opa port xmit/rcv data and packets.
+
+    AI generated.
+    """
   def compute_metric(self, u):
     try:
       typename = "ib_ext"
@@ -340,6 +396,10 @@ class avg_packetsize():
     return value, typename,'MB'
 
 class max_fabricbw():
+    """Maximum fabric bandwidth (MB/s) from ib_ext or opa port data.
+
+    AI generated.
+    """
     def compute_metric(self, u):
         max_bw=0
         try:
@@ -361,6 +421,10 @@ class max_fabricbw():
         return value, typename,'MB/s'
 
 class max_lnetbw():
+    """Maximum LNET bandwidth (MB/s) from lnet tx_bytes/rx_bytes.
+
+    AI generated.
+    """
     def compute_metric(self, u):
         typename = "lnet"
         schema, _stats = u.get_type(typename)
@@ -374,6 +438,10 @@ class max_lnetbw():
         return value, typename,'MB/s'
 
 class max_mds():
+    """Maximum Lustre MDS operations (iops) from llite open/close/mmap/fsync/... events.
+
+    AI generated.
+    """
   def compute_metric(self, u):
     max_mds = 0
     typename = "llite"
@@ -408,6 +476,10 @@ class max_mds():
     return value, typename,'iops'
 
 class max_packetrate():
+    """Maximum packet rate (#/s) from ib_ext or opa port xmit/rcv packets.
+
+    AI generated.
+    """
     def compute_metric(self, u):
         max_pr=0
         try:
@@ -431,6 +503,10 @@ class max_packetrate():
 # by monitor.  It only samples at x mn intervals and
 # may miss high water marks in between.
 class mem_hwm():
+    """Memory high-water mark (GiB) from mem MemUsed - Slab - FilePages.
+
+    AI generated.
+    """
   def compute_metric(self, u):
     # mem usage in GB
     max_memusage = 0.0
@@ -448,6 +524,10 @@ class mem_hwm():
     return value, typename,'GiB'
 
 class node_imbalance():
+    """CPU node imbalance (%): max deviation of per-node CPU rate from max rate.
+
+    AI generated.
+    """
   def compute_metric(self, u):
     typename = "cpu"
     schema, _stats = u.get_type(typename)
@@ -465,6 +545,10 @@ class node_imbalance():
     return value, typename,'%'
 
 class time_imbalance():
+    """CPU time imbalance (%): minimum ratio of integral after/before a time slice.
+
+    AI generated.
+    """
   def compute_metric(self, u):
     typename = "cpu"
     schema, _stats = u.get_type(typename)
@@ -493,6 +577,10 @@ class time_imbalance():
       return None, typename,'%'
 
 class vecpercent_64b():
+    """Percentage of 64b vectorized FLOPs vs total (from PMC events).
+
+    AI generated.
+    """
   def compute_metric(self, u):
     typename = "pmc"
     schema, _stats = u.get_type(typename)
@@ -521,6 +609,10 @@ class vecpercent_64b():
     return value, typename,'%'
 
 class avg_vector_width_64b():
+    """Average 64b vector width (FLOPs-weighted) from PMC events.
+
+    AI generated.
+    """
   def compute_metric(self, u):
     typename = "pmc"
     schema, _stats = u.get_type(typename)
@@ -547,6 +639,10 @@ class avg_vector_width_64b():
     return value, typename,'#'
 
 class vecpercent_32b():
+    """Percentage of 32b vectorized FLOPs vs total (from PMC events).
+
+    AI generated.
+    """
   def compute_metric(self, u):
     typename = "pmc"
     schema, _stats = u.get_type(typename)
@@ -571,6 +667,10 @@ class vecpercent_32b():
     return value, typename,'%'
 
 class avg_vector_width_32b():
+    """Average 32b vector width (FLOPs-weighted) from PMC events.
+
+    AI generated.
+    """
   def compute_metric(self, u):
     typename = "pmc"
     schema, _stats = u.get_type(typename)

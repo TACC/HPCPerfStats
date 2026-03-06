@@ -1,1 +1,1 @@
-# Unit tests for hpcperfstats (non-Django)
+# Unit tests for hpcperfstats (non-Django). AI generated.

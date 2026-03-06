@@ -1,3 +1,7 @@
+"""AMD64 PMC event encoding and schema; core/socket stats extraction from amd64_pmc for a host/job.
+
+AI generated.
+"""
 import numpy
 
 # amd64
@@ -11,6 +15,10 @@ import numpy
 #  )
 
 def perf_event(event_select, unit_mask):
+    """Encode AMD64 PERF_EVENT from event_select and unit_mask (user+os mode, enable, high bits).
+
+    AI generated.
+    """
     return (event_select & 0xFF) | (unit_mask << 8) | (1 << 16) | (1 << 17) | (1 << 22) | ((event_select & 0xF00) << 24)
 
 #define DRAMaccesses   PERF_EVENT(0xE0, 0x07) /* DCT0 only */
@@ -55,9 +63,17 @@ nr_cores = 16
 nr_socks = 4
 
 def core_to_sock(c):
+    """Map core index to socket index.
+
+    AI generated.
+    """
     return c / (nr_cores / nr_socks)
 
 def process_host(host, times):
+    """Convert host amd64_pmc stats to amd64_core and amd64_sock; replace stats key.
+
+    AI generated.
+    """
     pmc_stats = host.stats['amd64_pmc']
     core_stats = dict((str(i), numpy.zeros((len(times), nr_core_ctrs), numpy.uint64)) \
                       for i in range(0, nr_cores))
@@ -91,6 +107,10 @@ def process_host(host, times):
     del host.stats['amd64_pmc']
 
 def process_job(job):
+    """If job has amd64_pmc schema, add amd64_core/amd64_sock schemas and process each host; remove amd64_pmc.
+
+    AI generated.
+    """
     pmc_schema = job.schemas.get('amd64_pmc')
     if not pmc_schema:
         return

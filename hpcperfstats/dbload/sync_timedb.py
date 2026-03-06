@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files. Runs in parallel with configurable chunk size.
+
+AI generated.
+"""
 import multiprocessing
 import os
 import subprocess
@@ -71,6 +75,10 @@ exclude_types = ["ib", "ib_sw", "intel_skx_cha", "ps", "sysv_shm", "tmpfs", "vfs
 
 # This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
 def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
+    """Parse a stats file, map hardware counters, compute deltas/arc, and bulk-insert into host_data and proc_data. Returns (stats_file, need_archival). Uses lock for DB writes.
+
+    AI generated.
+    """
 
     hostname, create_time = stats_file.split('/')[-2:]
 
@@ -322,7 +330,10 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
 
 
 def _insert_proc_data_individually(proc_stats_df):
-    """Fallback: insert proc_data rows one by one, skipping duplicates."""
+    """Fallback: insert proc_data rows one by one, skipping duplicates.
+
+    AI generated.
+    """
     unique_violations = 0
     for row in proc_stats_df.itertuples(index=False):
         try:
@@ -336,7 +347,10 @@ def _insert_proc_data_individually(proc_stats_df):
 
 
 def _insert_host_data_individually(stats_df):
-    """Fallback: insert host_data rows one by one, skipping duplicates. Returns need_archival."""
+    """Fallback: insert host_data rows one by one, skipping duplicates. Returns need_archival.
+
+    AI generated.
+    """
     need_archival = True
     unique_violations = 0
     for row in stats_df.itertuples(index=False):
@@ -363,6 +377,10 @@ def _insert_host_data_individually(stats_df):
     return need_archival
 
 def archive_stats_files(archive_info):
+    """Append stats files to a daily .tar, compress with pigz, and remove originals after verification.
+
+    AI generated.
+    """
     archive_fname, stats_files = archive_info
     archive_tar_fname = archive_fname[:-3]
     if not os.path.exists(archive_tar_fname):
@@ -419,6 +437,10 @@ def archive_stats_files(archive_info):
     print(subprocess.check_output(['/usr/bin/pigz', '-f', '-8', '-v', '-p', str(thread_count*2), archive_tar_fname]), flush=True)
 
 def database_startup():
+    """Print DB version, database size, and optionally chunk compression stats for host_data.
+
+    AI generated.
+    """
     from django.db import connection
     with connection.cursor() as cur:
         if DEBUG:

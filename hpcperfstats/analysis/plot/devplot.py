@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""Type-detail plot: Bokeh step plots per event for a given type (e.g. llite, cpu) using TypeDetailDataProvider.
+
+AI generated.
+"""
 import math
 import time
 
@@ -15,16 +19,24 @@ local_timezone = cfg.get_timezone()
 
 
 class DevPlot:
-    """
-    Type-detail plot using an ORM data provider (TypeDetailDataProvider).
-    Replaces raw connection + temp table type_detail.
+    """Type-detail plot using an ORM data provider (TypeDetailDataProvider). Replaces raw connection + temp table type_detail.
+
+    AI generated.
     """
 
     def __init__(self, data_provider, host_list):
+        """Store data provider and host list for plotting.
+
+        AI generated.
+        """
         self.data_provider = data_provider
         self.host_list = host_list
 
     def plot_metric(self, df, event, unit=None):
+        """Create one Bokeh figure with step glyphs per host for the given event (and optional unit label).
+
+        AI generated.
+        """
         s = time.time()
 
         df = df[["time", "host", event]]
@@ -54,6 +66,10 @@ class DevPlot:
         return plot
 
     def plot(self):
+        """Build host_time_df, merge aggregate per event, and return (df, gridplot of step plots).
+
+        AI generated.
+        """
         self.hc = {}
         colors = d3["Category20"][20]
         for i, hostname in enumerate(self.host_list):

@@ -1,3 +1,7 @@
+"""Generate sacct commands to export job accounting data for a date range. Prints and optionally runs sacct for each day.
+
+AI generated.
+"""
 import os
 import sys
 from datetime import datetime, timedelta
@@ -9,6 +13,10 @@ from dateutil.parser import parse
 #acct_path = cfg.get_accounting_path()
 
 def daterange(start_date, end_date):
+    """Yield each date from start_date (inclusive) to end_date (exclusive), one day at a time.
+
+    AI generated.
+    """
     for n in range(int((end_date - start_date).days)):
         yield start_date + timedelta(n)
 

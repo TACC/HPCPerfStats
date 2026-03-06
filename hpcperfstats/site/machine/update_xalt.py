@@ -1,11 +1,7 @@
 #!/usr/bin/env python
-"""
-XALT data enrichment script.
-Uses Django ORM for xalt DB (run, join_run_object, lib).
-Note: This script originally updated a Job model with exe/exec_path/cwd/threads and
-a Libraries model. The current schema uses job_data (no exe/exec_path/cwd/threads).
-To re-enable XALT enrichment, add compatible fields to job_data or introduce
-a separate model and uncomment/adapt the logic below.
+"""XALT data enrichment script. Uses Django ORM for xalt DB (run, join_run_object, lib). Note: Current job_data has no exe/exec_path/cwd/threads; XALT run data is still queried in views. This script optionally iterates by date and logs xalt runs for jobs.
+
+AI generated.
 """
 import os
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings")
@@ -21,6 +17,10 @@ from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
 
 def daterange(start_date, end_date):
+    """Yield each date from start_date through end_date (inclusive).
+
+    AI generated.
+    """
     for n in range(int((end_date - start_date).days) + 1):
         yield start_date + timedelta(n)
 

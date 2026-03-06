@@ -1,3 +1,7 @@
+"""Standalone stats file processor for testing. Parses raw stats files with hardware counter maps, computes dif/arc, and can aggregate metrics. Contains script block that runs when executed.
+
+AI generated.
+"""
 import os
 import sys
 import time
@@ -33,7 +37,10 @@ intel_skx_imc_eventmap = {0x400304 : "CAS_READS,W=48", 0x400c04 : "CAS_WRITES,W=
 exclude_typs = ["block", "ib", "ib_sw", "intel_skx_cha", "mdc", "numa", "osc", "proc", "ps", "sysv_shm", "tmpfs", "vfs", "vm"]
 
 def process(stats_file):
+    """Parse a single stats file into a DataFrame with typ, dev, eve, val, dif, arc, and time; applies hardware counter event maps.
 
+    AI generated.
+    """
     with open(stats_file, 'r') as fd:
         lines = fd.readlines()
 
@@ -133,6 +140,10 @@ def process(stats_file):
 
 # Aggregate over devices and events in event_list
 def agg(df, typename, event_list, tags):
+    """Aggregate df by tags for the given typename and event_list (sum).
+
+    AI generated.
+    """
     datam = df[(df["typ"].values == typename) & (df["eve"].isin(event_list))].groupby(tags).sum()
     return datam
 

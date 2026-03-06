@@ -1,3 +1,7 @@
+"""ProfileMiddleware: add ?prof to a URL to profile the view (DEBUG only). Optional ?sort and ?count.
+
+AI generated.
+"""
 try:
     import cProfile as profile
 except ImportError:
@@ -9,28 +13,23 @@ from django.conf import settings
 
 
 class ProfileMiddleware(object):
-    """
-    Simple profile middleware to profile django views. To run it, add ?prof to
-    the URL like this:
-    
-    http://localhost:8000/view/?prof
-    
-    Optionally pass the following to modify the output:
-    
-    ?sort => Sort the output by a given metric. Default is time.
-    See http://docs.python.org/2/library/profile.html#pstats.Stats.sort_stats
-    for all sort options.
-    
-    ?count => The number of rows to display. Default is 100.
+    """Simple profile middleware to profile django views. Add ?prof to URL; optional ?sort and ?count.
 
-    This is adapted from an example found here:
-    http://www.slideshare.net/zeeg/django-con-high-performance-django-presentation.
+    AI generated.
     """
     def can(self, request):
+        """Return True if DEBUG and request has ?prof.
+
+        AI generated.
+        """
         return settings.DEBUG and 'prof' in request.GET
     #and request.user is not None and request.user.is_staff
 
     def process_view(self, request, callback, callback_args, callback_kwargs):
+        """Run callback under profiler when can(request); store profiler for process_response.
+
+        AI generated.
+        """
         if self.can(request):
             self.profiler = profile.Profile()
             args = (request,) + callback_args
@@ -42,6 +41,10 @@ class ProfileMiddleware(object):
                 return
 
     def process_response(self, request, response):
+        """If prof was active, replace response content with profiler stats (pre).
+
+        AI generated.
+        """
         if self.can(request):
             self.profiler.create_stats()
             io = StringIO()

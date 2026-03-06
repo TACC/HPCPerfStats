@@ -1,3 +1,7 @@
+"""OAuth2 login, callback, logout, and token check for Tapis. Session stores access_token, refresh_token, username, email, is_staff.
+
+AI generated.
+"""
 import logging
 import os
 
@@ -19,6 +23,10 @@ staff_email_domain = cfg.get_staff_email_domain()
 server_name = cfg.get_server_name()
 
 def login_oauth(request):
+    """Redirect to OAuth2 authorize URL with state; store state in session.
+
+    AI generated.
+    """
     session = request.session
     session['auth_state'] = os.urandom(24).hex()
 
@@ -37,6 +45,10 @@ def login_oauth(request):
 
 
 def oauth_callback(request):
+    """Exchange code for tokens, fetch userinfo, set session (access_token, username, is_staff by email domain), redirect to /.
+
+    AI generated.
+    """
     state = request.GET.get('state')
 
     if request.session['auth_state'] and request.session['auth_state'] != state:
@@ -81,6 +93,10 @@ def oauth_callback(request):
 
 
 def logout(request):
+    """Revoke token, flush session, redirect to /.
+
+    AI generated.
+    """
     body = {
         'token': request.session['access_token']
     }
@@ -92,12 +108,20 @@ def logout(request):
 
 
 def login_prompt(request):
+    """Render login prompt template unless already authenticated, then redirect to /.
+
+    AI generated.
+    """
     if check_for_tokens(request):
         return HttpResponseRedirect("/")
     return render(request, "registration/login_prompt.html", {"logged_in": False})
 
 
 def check_for_tokens(request):
+    """Return True if session has access_token, else False.
+
+    AI generated.
+    """
     # return True if request.session.get("access_token") else False
     try:
         access_token = request.session.get("access_token")

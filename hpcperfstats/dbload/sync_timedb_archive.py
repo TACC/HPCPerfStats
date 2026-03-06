@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""Load stats from existing .tar archives into the database. Extracts tar members, passes contents to sync_timedb.add_stats_file_to_db in parallel.
+
+AI generated.
+"""
 import multiprocessing
 import sys
 import tarfile

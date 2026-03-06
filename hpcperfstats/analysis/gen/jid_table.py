@@ -1,5 +1,6 @@
-"""
-Job-scoped host_data access via Django ORM.
+"""Job-scoped host_data access via Django ORM. Provides jid_table, TypeDetailDataProvider, and HostDataProvider for querying job/host metrics without raw SQL.
+
+AI generated.
 """
 import time
 
@@ -10,7 +11,10 @@ local_timezone = cfg.get_timezone()
 
 
 def _ensure_tz(dt):
-    """Ensure datetime is timezone-aware in local_timezone for display."""
+    """Ensure datetime is timezone-aware in local_timezone for display.
+
+    AI generated.
+    """
     if dt is None:
         return None
     if dt.tzinfo is None:
@@ -20,7 +24,10 @@ def _ensure_tz(dt):
 
 
 def _queryset_to_dataframe(qs, columns=None):
-    """Convert a Django QuerySet (values() or values_list()) to a pandas DataFrame."""
+    """Convert a Django QuerySet (values() or values_list()) to a pandas DataFrame.
+
+    AI generated.
+    """
     import pandas as pd
     if qs is None:
         return pd.DataFrame()
@@ -32,12 +39,16 @@ def _queryset_to_dataframe(qs, columns=None):
 
 
 class jid_table:
-    """
-    Job-scoped view of job_data and host_data using Django ORM.
-    No raw connection or temp tables; all data via ORM.
+    """Job-scoped view of job_data and host_data using Django ORM. No raw connection or temp tables; all data via ORM.
+
+    AI generated.
     """
 
     def __init__(self, jid):
+        """Build job-scoped filter from job_data and populate host_list and schema from host_data.
+
+        AI generated.
+        """
         print("Initializing table for job {0}".format(jid))
 
         self.jid = jid
@@ -105,11 +116,17 @@ class jid_table:
         print("schema time: {0:.1f}".format(time.time() - etime))
 
     def _host_data_qs(self, **extra_filters):
-        """Base host_data queryset for this job (time range + hosts)."""
+        """Base host_data queryset for this job (time range + hosts).
+
+        AI generated.
+        """
         return host_data.objects.filter(**self._base_filter, **extra_filters)
 
     def get_host_time_df(self):
-        """DataFrame of (host, time) distinct, ordered by host, time."""
+        """DataFrame of (host, time) distinct, ordered by host, time.
+
+        AI generated.
+        """
         from django.db.models import Min
 
         # Distinct (host, time) in same order as legacy: group by host, time
@@ -122,9 +139,9 @@ class jid_table:
         return _queryset_to_dataframe(qs)
 
     def get_aggregate_df(self, typ, val_col, events, conv=1.0):
-        """
-        Aggregate val_col (e.g. 'arc' or 'value') for given type and events.
-        Returns DataFrame with columns host, time, sum_val (sum * conv).
+        """Aggregate val_col (e.g. 'arc' or 'value') for given type and events. Returns DataFrame with columns host, time, sum_val (sum * conv).
+
+        AI generated.
         """
         from django.db.models import Sum
 
@@ -142,13 +159,19 @@ class jid_table:
         return df
 
     def get_full_host_data_df(self, columns=None):
-        """Full host_data for this job as DataFrame (host, time, type, event, value, etc.)."""
+        """Full host_data for this job as DataFrame (host, time, type, event, value, etc.).
+
+        AI generated.
+        """
         cols = columns or ["host", "time", "type", "event", "value", "arc", "delta"]
         qs = self._host_data_qs().values(*cols).order_by("host", "time")
         return _queryset_to_dataframe(qs)
 
     def get_llite_delta_by_event(self):
-        """Lustre read_bytes/write_bytes sum(delta) by event for this job."""
+        """Lustre read_bytes/write_bytes sum(delta) by event for this job.
+
+        AI generated.
+        """
         from django.db.models import Sum
 
         qs = (
@@ -160,7 +183,10 @@ class jid_table:
         return _queryset_to_dataframe(qs)
 
     def close(self):
-        # No-op; no connection to close. Kept for context manager compatibility.
+        """No-op; no connection to close. Kept for context manager compatibility.
+
+        AI generated.
+        """
         pass
 
     def __enter__(self):
@@ -178,12 +204,16 @@ class jid_table:
 
 
 class TypeDetailDataProvider:
-    """
-    ORM-based provider for type-detail view: host_data filtered by jid, type, time range.
-    Used by DevPlot instead of raw connection + temp table type_detail.
+    """ORM-based provider for type-detail view: host_data filtered by jid, type, time range. Used by DevPlot instead of raw connection + temp table type_detail.
+
+    AI generated.
     """
 
     def __init__(self, jid, type_name, start_time, end_time, host_list):
+        """Build base filter for jid, type_name, time range, and optional host_list.
+
+        AI generated.
+        """
         self.jid = jid
         self.type_name = type_name
         self.start_time = start_time
@@ -199,9 +229,17 @@ class TypeDetailDataProvider:
             self._base_filter["host__in"] = self.host_list
 
     def _qs(self, **extra):
+        """Base host_data queryset for this provider (jid, type, time range, optional host_list).
+
+        AI generated.
+        """
         return host_data.objects.filter(**self._base_filter, **extra)
 
     def get_host_time_df(self):
+        """DataFrame of (host, time) distinct, ordered by host, time.
+
+        AI generated.
+        """
         qs = (
             self._qs()
             .values("host", "time")
@@ -211,7 +249,10 @@ class TypeDetailDataProvider:
         return _queryset_to_dataframe(qs)
 
     def get_events_units(self):
-        """List of (event, unit) for one host."""
+        """List of (event, unit) for one host.
+
+        AI generated.
+        """
         if not self.host_list:
             return []
         qs = (
@@ -225,12 +266,20 @@ class TypeDetailDataProvider:
         return list(df[["event", "unit"]].itertuples(index=False, name=None))
 
     def get_type_list(self):
+        """Return sorted list of distinct type names for the first host.
+
+        AI generated.
+        """
         if not self.host_list:
             return []
         qs = self._qs(host=self.host_list[0]).values_list("type", flat=True).distinct()
         return sorted(set(qs))
 
     def get_aggregate_df(self, event, metric="arc"):
+        """Aggregate metric (e.g. arc) by host and time for the given event; returns DataFrame with sum_val.
+
+        AI generated.
+        """
         from django.db.models import Sum
 
         qs = (
@@ -243,12 +292,16 @@ class TypeDetailDataProvider:
 
 
 class HostDataProvider:
-    """
-    ORM-based provider for host-scoped host_data (one host, time range).
-    Same interface as jid_table for SummaryPlot: jid, host_list, get_host_time_df, get_aggregate_df.
+    """ORM-based provider for host-scoped host_data (one host, time range). Same interface as jid_table for SummaryPlot: jid, host_list, get_host_time_df, get_aggregate_df.
+
+    AI generated.
     """
 
     def __init__(self, host_fqdn, start_time, end_time):
+        """Build base filter and schema for one host and time range.
+
+        AI generated.
+        """
         self.jid = host_fqdn.split(".")[0].replace("-", "_")
         self.host_list = [host_fqdn]
         self.conj = None
@@ -275,9 +328,17 @@ class HostDataProvider:
                 )
 
     def _host_data_qs(self, **extra_filters):
+        """Base host_data queryset for this host (time range).
+
+        AI generated.
+        """
         return host_data.objects.filter(**self._base_filter, **extra_filters)
 
     def get_host_time_df(self):
+        """DataFrame of (host, time) distinct, ordered by host, time.
+
+        AI generated.
+        """
         qs = (
             self._host_data_qs()
             .values("host", "time")
@@ -287,6 +348,10 @@ class HostDataProvider:
         return _queryset_to_dataframe(qs)
 
     def get_aggregate_df(self, typ, val_col, events, conv=1.0):
+        """Aggregate val_col for type and events; returns DataFrame with host, time, sum_val (sum * conv).
+
+        AI generated.
+        """
         from django.db.models import Sum
 
         qs = (

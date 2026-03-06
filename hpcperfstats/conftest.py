@@ -1,6 +1,6 @@
-"""
-Pytest configuration for hpcperfstats.
-Sets Django settings for tests under site.machine.tests and provides shared fixtures.
+"""Pytest configuration for hpcperfstats. Sets default HPCPERFSTATS_INI for unit tests; marks site.machine.tests as django_db; provides temp_ini fixture.
+
+AI generated.
 """
 import os
 import sys
@@ -18,7 +18,10 @@ _DEFAULT_INI = None
 
 
 def pytest_configure(config):
-    """Set default INI path for tests. Django is configured only by site.machine.tests conftest."""
+    """Set default INI path for tests. Django is configured only by site.machine.tests conftest.
+
+    AI generated.
+    """
     global _DEFAULT_INI
     if os.environ.get("HPCPERFSTATS_INI"):
         return
@@ -42,7 +45,10 @@ def pytest_configure(config):
 
 
 def pytest_unconfigure(config):
-    """Remove default INI file."""
+    """Remove default INI file.
+
+    AI generated.
+    """
     global _DEFAULT_INI
     if _DEFAULT_INI and os.path.exists(_DEFAULT_INI):
         try:
@@ -52,7 +58,10 @@ def pytest_unconfigure(config):
 
 
 def pytest_collection_modifyitems(config, items):
-    """Mark tests under site.machine.tests as django tests."""
+    """Mark tests under site.machine.tests as django tests.
+
+    AI generated.
+    """
     for item in items:
         if "site.machine.tests" in str(item.fspath):
             item.add_marker(pytest.mark.django_db)
@@ -60,7 +69,10 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture
 def temp_ini(tmp_path):
-    """Create a minimal hpcperfstats.ini for tests that need conf_parser."""
+    """Create a minimal hpcperfstats.ini for tests that need conf_parser.
+
+    AI generated.
+    """
     ini = tmp_path / "hpcperfstats.ini"
     ini.write_text(
         "[DEFAULT]\n"

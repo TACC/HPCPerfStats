@@ -1,3 +1,7 @@
+"""Root URL config: admin_monitor, machine app, login/logout/oauth_callback, media.
+
+AI generated.
+"""
 from django.contrib import admin
 from django.urls import include, path
 from django.views.static import serve
