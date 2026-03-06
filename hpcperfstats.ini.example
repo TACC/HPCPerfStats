@@ -81,6 +81,10 @@ host               = db
 port               = 5432
 
 
+[CACHE]
+# Memcached server for ORM/view caching (host:port)
+memcached_location = memcached:11211
+
 [XALT]
 # Name of XALT engine
 xalt_engine        = 

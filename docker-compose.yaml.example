@@ -8,6 +8,7 @@ services:
       - seccomp:unconfined
     links:
       - db
+      - memcached
     command: /home/hpcperfstats/services-conf/django_startup.sh
 
   pipeline:
@@ -19,6 +20,7 @@ services:
     links:
       - db
       - rabbitmq
+      - memcached
     depends_on:
       - web
     command: /home/hpcperfstats/services-conf/supervisor_startup.sh
@@ -31,6 +33,15 @@ services:
       # The ssh keys don't have to be a user's, they just have to be a .ssh directory
       - /home/sharrell/.ssh:/hpcperfstats/.ssh/
       - hpcperfstatsnodelog:/hpcperfstatslog/
+
+  memcached:
+    image: memcached
+    security_opt:
+      - seccomp:unconfined
+    command:
+      - --conn-limit=1024
+      - --memory-limit=1024
+      - --threads=4
 
   proxy:
     image: nginx:1-alpine

@@ -1,10 +1,18 @@
-"""Job-scoped host_data access via Django ORM. Provides jid_table, TypeDetailDataProvider, and HostDataProvider for querying job/host metrics without raw SQL.
+"""Job-scoped host_data access via Django ORM. Provides jid_table, TypeDetailDataProvider, and HostDataProvider for querying job/host metrics without raw SQL. Uses memcached caching for heavy queries.
 
 AI generated.
 """
 import time
 
 import hpcperfstats.conf_parser as cfg
+from hpcperfstats.site.machine.cache_utils import (
+    KEY_JOB,
+    KEY_JOB_HOST_LIST,
+    KEY_JOB_SCHEMA,
+    KEY_LLITE_DELTA,
+    cached_orm,
+    TIMEOUT_SHORT,
+)
 from hpcperfstats.site.machine.models import host_data, job_data
 
 local_timezone = cfg.get_timezone()
@@ -55,7 +63,11 @@ class jid_table:
         self.conj = None  # Deprecated: no raw connection; kept for API compatibility.
 
         try:
-            job = job_data.objects.filter(jid=jid).first()
+            job = cached_orm(
+                f"{KEY_JOB}:{jid}",
+                TIMEOUT_SHORT,
+                lambda: job_data.objects.filter(jid=jid).first(),
+            )
         except Exception:
             job = None
 
@@ -80,31 +92,49 @@ class jid_table:
             "host__in": self.acct_host_list,
         }
 
-        # Distinct hosts that actually have host_data in range
+        # Distinct hosts that actually have host_data in range (cached)
         qtime = time.time()
-        host_qs = (
-            host_data.objects.filter(**self._base_filter)
-            .values_list("host", flat=True)
-            .distinct()
-        )
-        self.host_list = list(set(host_qs))
+
+        def _host_list_fn():
+            host_qs = (
+                host_data.objects.filter(**self._base_filter)
+                .values_list("host", flat=True)
+                .distinct()
+            )
+            return list(set(host_qs))
+
+        _st = self.start_time.isoformat() if self.start_time else ""
+        _et = self.end_time.isoformat() if self.end_time else ""
+        self.host_list = cached_orm(
+            f"{KEY_JOB_HOST_LIST}:{jid}:{_st}:{_et}",
+            TIMEOUT_SHORT,
+            _host_list_fn,
+        ) or []
         print("query time: {0:.1f}".format(time.time() - qtime))
 
         if len(self.host_list) == 0:
             self.schema = {}
             return
 
-        # Schema: distinct (type, event) for one host
+        # Schema: distinct (type, event) for one host (cached)
         etime = time.time()
-        schema_qs = (
-            host_data.objects.filter(
-                **self._base_filter, host=self.host_list[0]
+
+        def _schema_fn():
+            schema_qs = (
+                host_data.objects.filter(
+                    **self._base_filter, host=self.host_list[0]
+                )
+                .values("type", "event")
+                .distinct()
             )
-            .values("type", "event")
-            .distinct()
+            return _queryset_to_dataframe(schema_qs)
+
+        schema_df = cached_orm(
+            f"{KEY_JOB_SCHEMA}:{jid}:{self.host_list[0]}",
+            TIMEOUT_SHORT,
+            _schema_fn,
         )
-        schema_df = _queryset_to_dataframe(schema_qs)
-        if schema_df.empty:
+        if schema_df is None or schema_df.empty:
             self.schema = {}
         else:
             types = sorted(schema_df["type"].unique().tolist())
@@ -168,19 +198,27 @@ class jid_table:
         return _queryset_to_dataframe(qs)
 
     def get_llite_delta_by_event(self):
-        """Lustre read_bytes/write_bytes sum(delta) by event for this job.
+        """Lustre read_bytes/write_bytes sum(delta) by event for this job (cached).
 
         AI generated.
         """
         from django.db.models import Sum
 
-        qs = (
-            self._host_data_qs(type="llite", event__in=["read_bytes", "write_bytes"])
-            .values("event")
-            .annotate(delta_sum=Sum("delta"))
-            .order_by("event")
-        )
-        return _queryset_to_dataframe(qs)
+        def _llite_fn():
+            qs = (
+                self._host_data_qs(
+                    type="llite",
+                    event__in=["read_bytes", "write_bytes"],
+                )
+                .values("event")
+                .annotate(delta_sum=Sum("delta"))
+                .order_by("event")
+            )
+            return _queryset_to_dataframe(qs)
+
+        key = f"{KEY_LLITE_DELTA}:{self.jid}"
+        result = cached_orm(key, TIMEOUT_SHORT, _llite_fn)
+        return result if result is not None else _queryset_to_dataframe(None)
 
     def close(self):
         """No-op; no connection to close. Kept for context manager compatibility.

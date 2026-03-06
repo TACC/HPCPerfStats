@@ -245,3 +245,13 @@ def get_total_cores():
     AI generated.
     """
     return cfg.get('DEFAULT', 'total_cores')
+
+
+def get_memcached_location():
+    """Return the memcached server location (host:port) from CACHE config.
+
+    Defaults to 127.0.0.1:11211 if [CACHE] or memcached_location is missing.
+    """
+    if cfg.has_section("CACHE") and cfg.has_option("CACHE", "memcached_location"):
+        return cfg.get("CACHE", "memcached_location").strip() or "127.0.0.1:11211"
+    return "127.0.0.1:11211"

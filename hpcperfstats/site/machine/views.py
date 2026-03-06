@@ -9,6 +9,7 @@ if openblas_threads < 1:
 
 from datetime import timedelta
 from math import ceil
+import hashlib
 import os
 os.environ['OPENBLAS_NUM_THREADS'] = str(openblas_threads)
 
@@ -33,6 +34,21 @@ import hpcperfstats.analysis.plot as plots
 from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.analysis.gen.jid_table import HostDataProvider, TypeDetailDataProvider
 from hpcperfstats.analysis.gen.utils import clean_dataframe
+from hpcperfstats.site.machine.cache_utils import (
+    KEY_DATES,
+    KEY_METRICS_DISTINCT,
+    KEY_QUEUES,
+    KEY_STATES,
+    KEY_ALL_HOSTS,
+    KEY_HOST_LAST,
+    KEY_GPU_QS,
+    KEY_XALT,
+    KEY_TYPE_DETAIL_HOSTS,
+    cached_orm,
+    TIMEOUT_MEDIUM,
+    TIMEOUT_SHORT,
+    TIMEOUT_LONG,
+)
 from hpcperfstats.site.machine.models import host_data, job_data, metrics_data
 from hpcperfstats.site.machine.oauth2 import check_for_tokens
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
@@ -82,21 +98,29 @@ def home(request, error = False):
         return HttpResponseRedirect("/login_prompt")
 
     field = {}
-    month_dict ={}
-    jdf = DataFrame(job_data.objects.values("end_time"))
-    date_list = jdf["end_time"].dt.date.drop_duplicates()
-    print(date_list)
+    month_dict = {}
 
-    for date in date_list.sort_values():
-        y, m, d = str(date.year), str(date.month), str(date.day)
-        month_dict.setdefault(y + '-' + m, [])
-        month_dict[y + '-' + m].append((str(date), d))
+    def _dates_fn():
+        jdf = DataFrame(job_data.objects.values("end_time"))
+        return jdf["end_time"].dt.date.drop_duplicates().sort_values().tolist()
+
+    date_list = cached_orm(KEY_DATES, TIMEOUT_MEDIUM, _dates_fn)
+    if date_list:
+        for date in date_list:
+            y, m, d = str(date.year), str(date.month), str(date.day)
+            month_dict.setdefault(y + "-" + m, [])
+            month_dict[y + "-" + m].append((str(date), d))
 
     field["machine_name"] = cfg.get_host_name_ext()
-    field['date_list'] = sorted(month_dict.items())[::-1]
-    field['error'] = error
+    field["date_list"] = sorted(month_dict.items())[::-1]
+    field["error"] = error
 
-    field['metrics'] = metrics_data.objects.distinct("metric").values("metric", "units")
+    def _metrics_fn():
+        return list(
+            metrics_data.objects.distinct("metric").values("metric", "units")
+        )
+
+    field["metrics"] = cached_orm(KEY_METRICS_DISTINCT, TIMEOUT_LONG, _metrics_fn)
 
 
     field["choice"] = ChoiceForm()
@@ -107,15 +131,20 @@ def search(request):
 
     AI generated.
     """
-    if 'jid' in request.GET:
+    if "jid" in request.GET:
         try:
-            job_objects = job_data.objects
-            job = job_objects.get(jid = request.GET['jid'])
-            return HttpResponseRedirect("/machine/job/"+str(job.jid)+"/")
-        except:
+            jid = request.GET["jid"]
+            job = cached_orm(
+                f"{KEY_JOB}:{jid}",
+                TIMEOUT_SHORT,
+                lambda: job_data.objects.filter(jid=jid).first(),
+            )
+            if job:
+                return HttpResponseRedirect("/machine/job/" + str(job.jid) + "/")
             messages.error(request, "No result found in search")
-            pass
-    elif 'host' in request.GET and request.GET["host"]:
+        except Exception:
+            messages.error(request, "No result found in search")
+    elif "host" in request.GET and request.GET["host"]:
         try:
             print("try to get host")
             return host_detail(request)
@@ -291,13 +320,22 @@ class job_dataDetailView(DetailView):
 
         context["host_list"] = j.acct_host_list
 
-        # gpu (ORM)
+        # gpu (ORM, cached)
         try:
-            from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
-            gpu_qs = host_data.objects.filter(
-                jid=job.jid, type='nvidia_gpu', event='utilization'
-            ).values('type', 'event', 'value').order_by('time')
-            gpu_data = queryset_to_dataframe(gpu_qs)
+            gpu_list = cached_orm(
+                f"{KEY_GPU_QS}:{job.jid}",
+                TIMEOUT_SHORT,
+                lambda: list(
+                    host_data.objects.filter(
+                        jid=job.jid,
+                        type="nvidia_gpu",
+                        event="utilization",
+                    )
+                    .values("type", "event", "value")
+                    .order_by("time")
+                ),
+            )
+            gpu_data = DataFrame(gpu_list) if gpu_list else DataFrame()
             if not gpu_data.empty and len(gpu_data) > 2:
                 gpu_data = gpu_data.iloc[1:-1]
                 gpu_utilization_max = gpu_data['value'].max()
@@ -309,25 +347,65 @@ class job_dataDetailView(DetailView):
         except Exception as e:
             print("error getting gpu data:", e)
 
-# xalt
-        if not cfg.get_xalt_user() == '':
-          xalt_data=xalt_data_c()
-          for r in run.objects.using('xalt').filter(job_id = job.jid):
-            if "usr" in r.exec_path.split('/'): continue
-            xalt_data.exec_path.append(r.exec_path)
-            xalt_data.cwd.append(r.cwd[0:128])
-            for join in join_run_object.objects.using('xalt').filter(run_id = r.run_id):
-              object_path = lib.objects.using('xalt').get(obj_id = join.obj_id).object_path
-              module_name = lib.objects.using('xalt').get(obj_id = join.obj_id).module_name
-              if not module_name: module_name = 'none'
-              if any(libtmp.module_name == module_name for libtmp in xalt_data.libset): continue
-              xalt_data.libset.append (libset_c(object_path = object_path, module_name = module_name))
-          xalt_data.exec_path=list(set(xalt_data.exec_path))
-          xalt_data.cwd=list(set(xalt_data.cwd))
-          xalt_data.libset=sorted(xalt_data.libset, key=lambda x:x.module_name)
-          context['xalt_data'] = xalt_data
+        # xalt (cached)
+        if cfg.get_xalt_user() != "":
+            def _xalt_fn():
+                xalt_data = xalt_data_c()
+                for r in run.objects.using("xalt").filter(job_id=job.jid):
+                    if "usr" in r.exec_path.split("/"):
+                        continue
+                    xalt_data.exec_path.append(r.exec_path)
+                    xalt_data.cwd.append(r.cwd[0:128])
+                    for join in join_run_object.objects.using("xalt").filter(
+                        run_id=r.run_id
+                    ):
+                        object_path = lib.objects.using("xalt").get(
+                            obj_id=join.obj_id
+                        ).object_path
+                        module_name = lib.objects.using("xalt").get(
+                            obj_id=join.obj_id
+                        ).module_name
+                        if not module_name:
+                            module_name = "none"
+                        if any(
+                            libtmp.module_name == module_name
+                            for libtmp in xalt_data.libset
+                        ):
+                            continue
+                        xalt_data.libset.append(
+                            libset_c(
+                                object_path=object_path, module_name=module_name
+                            )
+                        )
+                xalt_data.exec_path = list(set(xalt_data.exec_path))
+                xalt_data.cwd = list(set(xalt_data.cwd))
+                xalt_data.libset = sorted(
+                    xalt_data.libset, key=lambda x: x.module_name
+                )
+                return {
+                    "exec_path": xalt_data.exec_path,
+                    "cwd": xalt_data.cwd,
+                    "libset": [
+                        (l.object_path, l.module_name) for l in xalt_data.libset
+                    ],
+                }
+
+            xalt_payload = cached_orm(
+                f"{KEY_XALT}:{job.jid}", TIMEOUT_SHORT, _xalt_fn
+            )
+            if xalt_payload:
+                xalt_data = xalt_data_c()
+                xalt_data.exec_path = xalt_payload["exec_path"]
+                xalt_data.cwd = xalt_payload["cwd"]
+                xalt_data.libset = [
+                    libset_c(object_path=o, module_name=m)
+                    for o, m in xalt_payload["libset"]
+                ]
+                context["xalt_data"] = xalt_data
+            else:
+                context["xalt_data"] = xalt_data_c()
         else:
-          xalt_data = []
+            context["xalt_data"] = []
 
 
 
@@ -382,8 +460,12 @@ def type_detail(request, jid, type_name):
     if not check_for_tokens(request):
         return HttpResponseRedirect("/login_prompt")
 
-    # Job accounting via ORM
-    job = job_data.objects.filter(jid=jid).first()
+    # Job accounting via ORM (cached)
+    job = cached_orm(
+        f"{KEY_JOB}:{jid}",
+        TIMEOUT_SHORT,
+        lambda: job_data.objects.filter(jid=jid).first(),
+    )
     if not job:
         messages.error(request, "Job not found.")
         return HttpResponseRedirect("/")
@@ -401,12 +483,24 @@ def type_detail(request, jid, type_name):
     end_time = end_time.astimezone(local_timezone)
 
     provider = TypeDetailDataProvider(jid, type_name, start_time, end_time, acct_host_list)
-    data_host_list = list(
-        host_data.objects.filter(
-            jid=jid, type=type_name,
-            time__gte=start_time, time__lte=end_time,
-            host__in=acct_host_list
-        ).values_list("host", flat=True).distinct()
+
+    def _type_hosts_fn():
+        return list(
+            host_data.objects.filter(
+                jid=jid,
+                type=type_name,
+                time__gte=start_time,
+                time__lte=end_time,
+                host__in=acct_host_list,
+            ).values_list("host", flat=True).distinct()
+        )
+
+    _st = start_time.isoformat() if start_time else ""
+    _et = end_time.isoformat() if end_time else ""
+    data_host_list = cached_orm(
+        f"{KEY_TYPE_DETAIL_HOSTS}:{jid}:{type_name}:{_st}:{_et}",
+        TIMEOUT_SHORT,
+        _type_hosts_fn,
     )
     if len(data_host_list) == 0:
         return render(request, "machine/type_detail.html",
@@ -524,21 +618,34 @@ def admin_monitor(request):
     if not request.session.get("is_staff", False):
         return HttpResponseRedirect("/")
 
-    all_hosts = job_data.objects.distinct("host_list").values_list("host_list", flat=True)
-    
-    all_hosts = [host for sublist in all_hosts for host in sublist]
-    all_hosts = list(set(all_hosts))
-    
+    def _all_hosts_fn():
+        qs = job_data.objects.distinct("host_list").values_list("host_list", flat=True)
+        flat = [host for sublist in qs for host in sublist]
+        return list(set(flat))
+
+    all_hosts = cached_orm(KEY_ALL_HOSTS, TIMEOUT_MEDIUM, _all_hosts_fn)
+
     now = timezone.now()
-    # Use aggregation by host to get the last sample time per host without
-    # forcing a full-table sort with DISTINCT over all rows (which can cause
-    # excessive memory usage on large datasets).
     time_bounds = now - timedelta(days=8)
+    _tb = time_bounds.isoformat()
 
     host_stats = []
     for host in all_hosts:
-        row = host_data.objects.filter(host__icontains=host, time__gte=time_bounds).order_by("-time").first()
-        last_time = row.time if row else None
+        def _host_last_fn(h=host, tb=_tb):
+            row = (
+                host_data.objects.filter(
+                    host__icontains=h, time__gte=time_bounds
+                )
+                .order_by("-time")
+                .first()
+            )
+            return row.time if row else None
+
+        last_time = cached_orm(
+            f"{KEY_HOST_LAST}:{host}:{_tb}",
+            TIMEOUT_SHORT,
+            _host_last_fn,
+        )
         if last_time is None:
             host_stats.append({"host": host, "last_time": None, "age_bucket": "gt_week"})
             continue
@@ -563,30 +670,40 @@ def admin_monitor(request):
     return render(request, "machine/admin_monitor.html", context)
 
 class ChoiceForm(forms.Form):
-    """Form with queue and state dropdowns populated from job_data. Used on search page.
+    """Form with queue and state dropdowns populated from job_data (cached). Used on search page.
 
     AI generated.
     """
-    queues = job_data.objects.distinct("queue").values_list("queue", flat = True)
-    states = job_data.objects.exclude(state__contains = "CANCELLED by").distinct("state").values_list("state", flat = True)
+    queue = forms.ChoiceField(choices=[], widget=forms.Select())
+    state = forms.ChoiceField(choices=[], widget=forms.Select())
 
-
-    try:
-        QUEUECHOICES = [('','')] + [(q, q) for q in queues]
-    except Exception as e:
-        print(e)
-        print("Continuing in case of makemigrations")
-      #  print(traceback.format_exc())
-        QUEUECHOICES = []
-    #print(QUEUECHOICES)
-    queue = forms.ChoiceField(choices=QUEUECHOICES, widget=forms.Select(choices=QUEUECHOICES))
-
-    try:
-        STATECHOICES = [('','')] + [(s, s) for s in states]
-    except Exception as e:
-        print(e)
-        print("Continuing in case of makemigrations")
-        #print(traceback.format_exc())
-        STATECHOICES = []
-    #print(STATECHOICES)
-    state = forms.ChoiceField(choices=STATECHOICES, widget=forms.Select(choices=STATECHOICES))
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            queues = cached_orm(
+                KEY_QUEUES,
+                TIMEOUT_MEDIUM,
+                lambda: list(
+                    job_data.objects.distinct("queue").values_list(
+                        "queue", flat=True
+                    )
+                ),
+            )
+            states = cached_orm(
+                KEY_STATES,
+                TIMEOUT_MEDIUM,
+                lambda: list(
+                    job_data.objects.exclude(
+                        state__contains="CANCELLED by"
+                    ).distinct("state").values_list("state", flat=True)
+                ),
+            )
+            self.fields["queue"].choices = [("", "")] + [
+                (q, q) for q in (queues or [])
+            ]
+            self.fields["state"].choices = [("", "")] + [
+                (s, s) for s in (states or [])
+            ]
+        except Exception as e:
+            print(e)
+            print("Continuing in case of makemigrations")

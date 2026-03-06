@@ -137,6 +137,21 @@ TEMPLATES = [
     },
 ]
 
+# Memcached for ORM and view caching
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.memcached.PyMemcacheCache",
+        "LOCATION": cfg.get_memcached_location(),
+        "OPTIONS": {},
+        "KEY_PREFIX": "hpcperfstats",
+        "TIMEOUT": 300,
+    }
+}
+# Middleware full-page cache (uses default cache backend)
+CACHE_MIDDLEWARE_ALIAS = "default"
+CACHE_MIDDLEWARE_SECONDS = 0  # Disable full-page cache by default; ORM uses cache_utils
+CACHE_MIDDLEWARE_KEY_PREFIX = "hpcperfstats"
+
 MIDDLEWARE = (
     'django.middleware.common.CommonMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

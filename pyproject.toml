@@ -41,6 +41,7 @@ dependencies = [
   "legacy-cgi",
   "pytz",
   "tzdata",
+  "pymemcache",
 ]
 
 [project.optional-dependencies]

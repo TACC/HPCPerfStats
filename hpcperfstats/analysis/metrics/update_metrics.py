@@ -16,6 +16,11 @@ django.setup()
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
+from hpcperfstats.site.machine.cache_utils import (
+    KEY_UPDATE_METRICS_JOBS,
+    cached_orm,
+    TIMEOUT_SHORT,
+)
 from hpcperfstats.site.machine.models import job_data
 
 DEBUG =  cfg.get_debug()
@@ -27,8 +32,25 @@ def update_metrics(date, rerun = False):
     AI generated.
     """
     min_time = 300
-    jobs_list = list(job_data.objects.filter(end_time__date = date.date()).exclude(runtime__lt = min_time))
-    print("Total jobs {0}".format(len(jobs_list)) + " for date " + date.strftime("%Y-%m-%d"))
+    date_key = date.date().isoformat()
+
+    def _jobs_fn():
+        return list(
+            job_data.objects.filter(end_time__date=date.date()).exclude(
+                runtime__lt=min_time
+            )
+        )
+
+    jobs_list = cached_orm(
+        f"{KEY_UPDATE_METRICS_JOBS}:{date_key}",
+        TIMEOUT_SHORT,
+        _jobs_fn,
+    ) or []
+    print(
+        "Total jobs {0}".format(len(jobs_list))
+        + " for date "
+        + date.strftime("%Y-%m-%d")
+    )
 
     if not rerun:
         jobs_list = [job for job in jobs_list if not job.metrics_data_set.all().exists() or job.metrics_data_set.all().filter(value__isnull = True).count() > 0]
@@ -49,10 +71,19 @@ def update_metrics(date, rerun = False):
 
 
     if DEBUG:
-        jobs_list = list(job_data.objects.filter(end_time__date = date.date()).exclude(runtime__lt = min_time))
-        jobs_list = [job for job in jobs_list if not job.metrics_data_set.all().exists() or job.metrics_data_set.all().filter(value__isnull = True).count() > 0]
+        jobs_list_fresh = list(
+            job_data.objects.filter(end_time__date=date.date()).exclude(
+                runtime__lt=min_time
+            )
+        )
+        jobs_list_fresh = [
+            job
+            for job in jobs_list_fresh
+            if not job.metrics_data_set.all().exists()
+            or job.metrics_data_set.all().filter(value__isnull=True).count() > 0
+        ]
         print("jobs that don't have data after run:")
-        print(jobs_list)
+        print(jobs_list_fresh)
 
 
 if __name__ == "__main__":
