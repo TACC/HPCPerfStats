@@ -26,6 +26,8 @@ urlpatterns = [
     path("", lambda r: HttpResponseRedirect("/machine/")),
     path("machine/", ReactSPAView.as_view()),
     path("machine/<path:path>", ReactSPAView.as_view()),
+    # Legacy machine app views (search, job_data, etc.) under "m/" so {% url 'machine:...' %} resolves
+    path("m/", include("hpcperfstats.site.machine.urls", namespace="machine")),
     path("admin_monitor/", lambda r: HttpResponseRedirect("/machine/admin_monitor/")),
     path("login/", login_oauth, name="login"),
     path("login_prompt", login_prompt, name="login_prompt"),
