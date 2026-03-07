@@ -351,7 +351,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         proc_data(jid=row.jid, host=row.host, proc=row.proc)
         for row in proc_stats.itertuples(index=False)
     ]
-    proc_data.objects.bulk_create(proc_objs)
+    proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
   except Exception as e:
     if DEBUG:
       print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
@@ -377,7 +377,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
             arc=float(row.arc) if pd.notna(row.arc) else None,
         ) for row in stats.itertuples(index=False)
     ]
-    host_data.objects.bulk_create(host_objs)
+    host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
   except Exception as e:
     if DEBUG:
       print("error in host_data bulk_create:", str(e))
