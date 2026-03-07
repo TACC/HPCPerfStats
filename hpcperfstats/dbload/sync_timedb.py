@@ -344,46 +344,46 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   print("processing time for {0} {1:.1f}s".format(stats_file,
                                                   time.time() - start))
 
-  # bulk insertion using Django ORM
+  # bulk insertion using Django ORM (lock serializes all DB writes across workers)
   lock.acquire()
   try:
-    proc_objs = [
-        proc_data(jid=row.jid, host=row.host, proc=row.proc)
-        for row in proc_stats.itertuples(index=False)
-    ]
-    proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
-  except Exception as e:
-    if DEBUG:
-      print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
-    lock.release()
-    _insert_proc_data_individually(proc_stats)
-  else:
+    try:
+      proc_objs = [
+          proc_data(jid=row.jid, host=row.host, proc=row.proc)
+          for row in proc_stats.itertuples(index=False)
+      ]
+      proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
+    except Exception as e:
+      if DEBUG:
+        print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
+      _insert_proc_data_individually(proc_stats)
+  finally:
     lock.release()
 
   lock.acquire()
   need_archival = True
   try:
-    host_objs = [
-        host_data(
-            time=row.time.to_pydatetime(),
-            host=row.host,
-            jid=row.jid,
-            type=row.type,
-            dev=None,
-            event=row.event,
-            unit=row.unit,
-            value=float(row.value) if pd.notna(row.value) else None,
-            delta=float(row.delta) if pd.notna(row.delta) else None,
-            arc=float(row.arc) if pd.notna(row.arc) else None,
-        ) for row in stats.itertuples(index=False)
-    ]
-    host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
-  except Exception as e:
-    if DEBUG:
-      print("error in host_data bulk_create:", str(e))
-    lock.release()
-    need_archival = _insert_host_data_individually(stats)
-  else:
+    try:
+      host_objs = [
+          host_data(
+              time=row.time.to_pydatetime(),
+              host=row.host,
+              jid=row.jid,
+              type=row.type,
+              dev=None,
+              event=row.event,
+              unit=row.unit,
+              value=float(row.value) if pd.notna(row.value) else None,
+              delta=float(row.delta) if pd.notna(row.delta) else None,
+              arc=float(row.arc) if pd.notna(row.arc) else None,
+          ) for row in stats.itertuples(index=False)
+      ]
+      host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
+    except Exception as e:
+      if DEBUG:
+        print("error in host_data bulk_create:", str(e))
+      need_archival = _insert_host_data_individually(stats)
+  finally:
     lock.release()
 
   need_archival = True
