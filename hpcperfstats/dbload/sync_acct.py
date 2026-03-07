@@ -184,8 +184,10 @@ if __name__ == "__main__":
 
   searchdate = startdate - timedelta(days=2)
   jobs_in_db = set(
-      job_data.objects.filter(end_time__date__gte=searchdate).values_list(
-          "jid", flat=True))
+      job_data.objects.filter(end_time__date__gte=searchdate)
+      .values_list("jid", flat=True)
+      .iterator(chunk_size=10000)
+  )
   print("Jobs found in DB in this date range: %s" % len(jobs_in_db))
 
   while startdate <= enddate:

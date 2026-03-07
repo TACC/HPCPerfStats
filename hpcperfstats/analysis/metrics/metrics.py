@@ -242,18 +242,40 @@ class Metrics():
                                              ((self, job) for job in job_list)):
         if not job_results:
           continue
-        # Perform all ORM writes in the main process to avoid
-        # database-connection and race issues across forked workers.
+        # Batch writes: one query to fetch existing, then bulk_create + bulk_update.
         with transaction.atomic():
+          jids = list({item["jid"].jid for item in job_results})
+          existing = list(
+              metrics_data.objects.filter(jid_id__in=jids).only(
+                  "id", "jid_id", "type", "metric", "units", "value"
+              )
+          )
+          existing_by_key = {(r.jid_id, r.type, r.metric): r for r in existing}
+          to_update_list = []
+          to_create = []
           for item in job_results:
-            metrics_data.objects.update_or_create(
-                jid=item["jid"],
-                type=item["type"],
-                metric=item["metric"],
-                defaults={
-                    "units": item["units"],
-                    "value": item["value"],
-                },
+            key = (item["jid"].jid, item["type"], item["metric"])
+            if key in existing_by_key:
+              obj = existing_by_key[key]
+              obj.units = item["units"]
+              obj.value = item["value"]
+              to_update_list.append(obj)
+            else:
+              to_create.append(
+                  metrics_data(
+                      jid_id=item["jid"].jid,
+                      type=item["type"],
+                      metric=item["metric"],
+                      units=item["units"],
+                      value=item["value"],
+                  )
+              )
+          if to_create:
+            metrics_data.objects.bulk_create(to_create)
+          if to_update_list:
+            metrics_data.objects.bulk_update(
+                list({id(o): o for o in to_update_list}.values()),
+                ["units", "value"],
             )
 
   def job_arc(self,

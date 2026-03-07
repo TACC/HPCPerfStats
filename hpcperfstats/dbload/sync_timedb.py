@@ -103,15 +103,18 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
   ts_low = timestamp_utc - timedelta(hours=48)
   ts_high = timestamp_utc + timedelta(hours=72)
-  times_qs = host_data.objects.filter(
-      host=hostname,
-      time__gte=ts_low,
-      time__lt=ts_high,
-  ).values_list("time", flat=True).distinct().order_by("time")
-  itimes_set = set(
-      int(tt.timestamp())
-      for tt in times_qs.iterator(chunk_size=2000)
-  )
+  # Single round-trip: fetch distinct epoch seconds via raw SQL (index-friendly)
+  from django.db import connection
+  with connection.cursor() as cur:
+    cur.execute(
+        """
+        SELECT DISTINCT EXTRACT(EPOCH FROM time)::bigint
+        FROM host_data
+        WHERE host = %s AND time >= %s AND time < %s
+        """,
+        [hostname, ts_low, ts_high],
+    )
+    itimes_set = set(row[0] for row in cur.fetchall())
 
   start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   if start_idx == -1:
@@ -293,14 +296,16 @@ def database_startup():
   """Print DB version, database size, and optionally chunk compression stats for host_data."""
   from django.db import connection
   with connection.cursor() as cur:
-    if DEBUG:
-      cur.execute("SELECT version();")
-      row = cur.fetchone()
-      print("Postgresql server version:", row[0] if row else "unknown")
-    cur.execute("SELECT pg_size_pretty(pg_database_size(%s));",
-                [cfg.get_db_name()])
-    for x in cur.fetchall():
-      print("Database Size:", x[0])
+    # Single round-trip for version + size
+    cur.execute(
+        "SELECT version(), pg_size_pretty(pg_database_size(%s));",
+        [cfg.get_db_name()],
+    )
+    row = cur.fetchone()
+    if row:
+      if DEBUG:
+        print("Postgresql server version:", row[0])
+      print("Database Size:", row[1])
     if DEBUG:
       try:
         cur.execute(

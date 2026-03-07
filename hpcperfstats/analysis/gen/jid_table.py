@@ -179,7 +179,12 @@ class jid_table:
         AI generated.
         """
     cols = columns or ["host", "time", "type", "event", "value", "arc", "delta"]
-    qs = self._host_data_qs().values(*cols).order_by("host", "time")
+    qs = (
+        self._host_data_qs()
+        .values(*cols)
+        .order_by("host", "time")
+        .iterator(chunk_size=10000)
+    )
     return _queryset_to_dataframe(qs)
 
   def get_llite_delta_by_event(self):
