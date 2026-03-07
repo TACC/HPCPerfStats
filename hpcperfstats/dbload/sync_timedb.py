@@ -28,9 +28,19 @@ if not hasattr(_django_tz, "utc"):
 
 from django.db import IntegrityError, close_old_connections
 import pandas as pd
-from pandas import DataFrame, to_datetime
 
 import hpcperfstats.conf_parser as cfg
+from hpcperfstats.dbload.sync_timedb_parsing import (
+    EVENTMAPS_BY_TYPE,
+    build_stats_dataframes,
+    compute_deltas_and_arc,
+    exclude_types,
+    find_processing_start_index,
+    load_stats_file_lines,
+    parse_first_timestamp_line,
+    parse_stats_file_path,
+    parse_stats_lines,
+)
 from hpcperfstats.site.machine.models import host_data, proc_data
 
 
@@ -60,52 +70,6 @@ chunk_size = 100
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
 
-amd64_pmc_eventmap = {
-    0x43ff03: "FLOPS,W=48",
-    0x4300c2: "BRANCH_INST_RETIRED,W=48",
-    0x4300c3: "BRANCH_INST_RETIRED_MISS,W=48",
-    0x4308af: "DISPATCH_STALL_CYCLES1,W=48",
-    0x43ffae: "DISPATCH_STALL_CYCLES0,W=48"
-}
-
-amd64_df_eventmap = {
-    0x403807: "MBW_CHANNEL_0,W=48,U=64B",
-    0x403847: "MBW_CHANNEL_1,W=48,U=64B",
-    0x403887: "MBW_CHANNEL_2,W=48,U=64B",
-    0x4038c7: "MBW_CHANNEL_3,W=48,U=64B",
-    0x433907: "MBW_CHANNEL_4,W=48,U=64B",
-    0x433947: "MBW_CHANNEL_5,W=48,U=64B",
-    0x433987: "MBW_CHANNEL_6,W=48,U=64B",
-    0x4339c7: "MBW_CHANNEL_7,W=48,U=64B"
-}
-
-intel_8pmc3_eventmap = {
-    0x4301c7: 'FP_ARITH_INST_RETIRED_SCALAR_DOUBLE,W=48,U=1',
-    0x4302c7: 'FP_ARITH_INST_RETIRED_SCALAR_SINGLE,W=48,U=1',
-    0x4304c7: 'FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE,W=48,U=2',
-    0x4308c7: 'FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE,W=48,U=4',
-    0x4310c7: 'FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE,W=48,U=4',
-    0x4320c7: 'FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE,W=48,U=8',
-    0x4340c7: 'FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE,W=48,U=8',
-    0x4380c7: 'FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE,W=48,U=16',
-    "FIXED_CTR0": 'INST_RETIRED,W=48',
-    "FIXED_CTR1": 'APERF,W=48',
-    "FIXED_CTR2": 'MPERF,W=48'
-}
-
-intel_skx_imc_eventmap = {
-    0x400304: "CAS_READS,W=48",
-    0x400c04: "CAS_WRITES,W=48",
-    0x400b01: "ACT_COUNT,W=48",
-    0x400102: "PRE_COUNT_MISS,W=48"
-}
-
-exclude_types = [
-    "ib", "ib_sw", "intel_skx_cha", "ps", "sysv_shm", "tmpfs", "vfs"
-]
-
-#exclude_types = ["ib", "ib_sw", "intel_skx_cha", "proc", "ps", "sysv_shm", "tmpfs", "vfs"]
-
 
 # This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
 def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
@@ -113,238 +77,60 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
 
     AI generated.
     """
-  # Ensure this process/thread uses a fresh DB connection (thread-safe for multiprocessing/threaded workers).
   close_old_connections()
 
-  hostname, create_time = stats_file.split('/')[-2:]
+  hostname, _ = parse_stats_file_path(stats_file)
+  if hostname is None:
+    print("Invalid stats file path: %s" % stats_file)
+    return (stats_file, False)
 
-  if stats_file_contents is not None:
-    lines = stats_file_contents
-  else:
-    try:
-      with open(stats_file, 'r') as fd:
-        lines = fd.readlines()
-    except FileNotFoundError:
-      print("Stats file disappeared: %s" % stats_file)
-      return ((stats_file, False))
+  lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)
+  if load_err is not None:
+    print(load_err)
+    return (stats_file, False)
 
-  for l in lines:
-    if not l:
-      continue
-    try:
-      if l[0].isdigit():
-        t, jid, host = l.split()
-        break
-    except:
-      print("Error on this line: %s" % l)
-  else:
+  t, jid, host = parse_first_timestamp_line(lines)
+  if t is None:
     print("initial timestamp not found")
+    return (stats_file, False)
 
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
   ts_low = timestamp_utc - timedelta(hours=48)
   ts_high = timestamp_utc + timedelta(hours=72)
-  times_qs = host_data.objects.filter(host=hostname,
-                                      time__gte=ts_low,
-                                      time__lt=ts_high).values_list(
-                                          "time",
-                                          flat=True).distinct().order_by("time")
-  times = [float(t.timestamp()) for t in times_qs]
-  itimes = [int(t) for t in times]
+  times_qs = host_data.objects.filter(
+      host=hostname,
+      time__gte=ts_low,
+      time__lt=ts_high,
+  ).values_list("time", flat=True).distinct().order_by("time")
+  times = [float(tt.timestamp()) for tt in times_qs]
+  itimes = [int(tt) for tt in times]
 
-  # start reading stats data from file at first - 1 missing time
-  start_idx = -1
-  last_idx = 0
-  need_archival = True
-  for i, line in enumerate(lines):
-    if not line or not line[0]:
-      continue
-    if line[0].isdigit():
-      t, jid, host = line.split()
-      if jid == '-':
-        continue
-
-      if (float(t) not in times) and (int(float(t)) not in itimes):
-        start_idx = last_idx
-        need_archival = False
-        break
-      last_idx = i
-
+  start_idx, need_archival = find_processing_start_index(lines, times, itimes)
   if start_idx == -1:
     print("No missing timestamps found for %s" % stats_file)
-    return ((stats_file, True))
+    return (stats_file, True)
 
-  # instrument the code to see what is actually proccessing in each file
-  timestamps_found = 0
-  counters_found = 0
-  labels_found = 0
-  unprocessable_lines = 0
-  jobs_missing_found = 0
-
-  schema = {}
-  stats = []
-  proc_stats = []  # process stats
-  insert = False
-  timestamp_job_missing = False
   start = time.time()
   try:
-    for i, line in enumerate(lines):
-      if not line or not line[0]:
-        continue
-
-      if line[0].isalpha() and insert:
-        # Skip any data from a time stamp that doesn't have a jid associated
-        if timestamp_job_missing:
-          continue
-        typ, dev, vals = line.split(maxsplit=2)
-        counters_found += 1
-        vals = vals.split()
-        if typ in exclude_types:
-          continue
-
-        # Mapping hardware counters to events
-        if typ == "amd64_pmc" or typ == "amd64_df" or typ == "intel_8pmc3" or typ == "intel_skx_imc":
-          if typ == "amd64_pmc":
-            eventmap = amd64_pmc_eventmap
-          if typ == "amd64_df":
-            eventmap = amd64_df_eventmap
-          if typ == "intel_8pmc3":
-            eventmap = intel_8pmc3_eventmap
-          if typ == "intel_skx_imc":
-            eventmap = intel_skx_imc_eventmap
-          n = {}
-          rm_idx = []
-          schema_mod = [] * len(schema[typ])
-
-          for idx, eve in enumerate(schema[typ]):
-            eve = eve.split(',')[0]
-            if "CTL" in eve:
-              try:
-                n[eve.lstrip("CTL")] = eventmap[int(vals[idx])]
-              except Exception:
-                n[eve.lstrip("CTL")] = "OTHER"
-              rm_idx += [idx]
-
-            elif "FIXED_CTR" in eve:
-              schema_mod += [eventmap[eve]]
-
-            elif "CTR" in eve:
-              schema_mod += [n[eve.lstrip("CTR")]]
-            else:
-              schema_mod += [eve]
-
-          for idx in sorted(rm_idx, reverse=True):
-            del vals[idx]
-          vals = dict(zip(schema_mod, vals))
-        elif typ == "proc":
-          proc_name = (line.split()[1]).split('/')[0]
-          proc_stats += [{**tags2, "proc": proc_name}]
-          continue
-        else:
-          # Software counters are not programmable and do not require mapping
-          vals = dict(zip(schema[typ], vals))
-
-        rec = {**tags, "type": typ, "dev": dev}
-
-        for eve, val in vals.items():
-          eve = eve.split(',')
-          width = 64
-          mult = 1
-          unit = "#"
-
-          for ele in eve[1:]:
-            if "W=" in ele:
-              width = int(ele.lstrip("W="))
-            if "U=" in ele:
-              ele = ele.lstrip("U=")
-              try:
-                mult = float(''.join(filter(str.isdigit, ele)))
-              except Exception:
-                pass
-              try:
-                unit = ''.join(filter(str.isalpha, ele))
-              except Exception:
-                pass
-
-          stats += [{
-              **rec, "event": eve[0],
-              "value": float(val),
-              "wid": width,
-              "mult": mult,
-              "unit": unit
-          }]
-
-      elif i >= start_idx and line[0].isdigit():
-        t, jid, host = line.split()
-        if jid == '-':
-          timestamp_job_missing = True
-          jobs_missing_found += 1
-          continue
-        timestamp_job_missing = False
-        timestamps_found += 1
-        insert = True
-        tags = {"time": float(t), "host": host, "jid": jid}
-        tags2 = {"jid": jid, "host": host}
-      elif line[0] == '!':
-        label, events = line.split(maxsplit=1)
-        labels_found += 1
-        typ, events = label[1:], events.split()
-        schema[typ] = events
-      else:
-        unprocessable_lines += 1
-
+    stats_list, proc_stats_list = parse_stats_lines(
+        lines, start_idx,
+        eventmaps_by_type=EVENTMAPS_BY_TYPE,
+        exclude_types_list=exclude_types,
+    )
   except Exception as e:
     print("error: process data failed: ", str(e))
     print("Possibly corrupt file: %s" % stats_file)
-    return ((stats_file, False))
+    return (stats_file, False)
 
-  unique_entries = set(tuple(d.items()) for d in proc_stats)
-
-  # Convert set of tuples back to a list of dictionaries
-  proc_stats = [dict(entry) for entry in unique_entries]
-  proc_stats = DataFrame.from_records(proc_stats)
-
-  stats = DataFrame.from_records(stats)
-
-  if DEBUG:
-    print(
-        "File Stats for %s:\n %s labels found, %s timestamps found,  %s counters found, %s unprocessable lines, %s timestamps missing jids"
-        % (stats_file, labels_found, timestamps_found, counters_found,
-           unprocessable_lines, jobs_missing_found))
-
+  stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
   if stats.empty and proc_stats.empty:
     if DEBUG:
       print("Unable to process stats file %s" % stats_file)
-    return ((stats_file, False))
+    return (stats_file, False)
 
-  # Always drop the first timestamp. For new file this is just first timestamp (at random rotate time).
-  # For update from existing file this is timestamp already in database.
+  stats = compute_deltas_and_arc(stats)
+  print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - start))
 
-  # compute difference between time adjacent stats. if new file first na time diff is backfilled by second time diff
-  stats["delta"] = (stats.groupby(["host", "type", "dev",
-                                   "event"])["value"].diff())
-
-  # correct stats for rollover and units (must be done before aggregation over devices)
-  stats["delta"] = stats["delta"].mask(stats["delta"] < 0,
-                                       2**stats["wid"] + stats["delta"])
-  stats["delta"] = stats["delta"] * stats["mult"]
-  del stats["wid"], stats["mult"]
-
-  # aggregate over devices
-  stats = stats.groupby(["host", "jid", "type", "event", "unit",
-                         "time"]).sum().reset_index()
-  stats = stats.sort_values(by=["host", "type", "event", "time"])
-
-  # compute average rate of change.
-  deltat = stats.groupby(["host", "type", "event"])["time"].diff()
-  stats["arc"] = stats["delta"] / deltat
-  stats["time"] = to_datetime(stats["time"], unit='s').dt.tz_localize('UTC')
-
-  # drop rows from first timestamp
-  stats = stats.dropna()
-  print("processing time for {0} {1:.1f}s".format(stats_file,
-                                                  time.time() - start))
-
-  # bulk insertion using Django ORM (lock serializes all DB writes across workers)
   lock.acquire()
   try:
     try:
@@ -376,7 +162,8 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
               value=float(row.value) if pd.notna(row.value) else None,
               delta=float(row.delta) if pd.notna(row.delta) else None,
               arc=float(row.arc) if pd.notna(row.arc) else None,
-          ) for row in stats.itertuples(index=False)
+          )
+          for row in stats.itertuples(index=False)
       ]
       host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
     except Exception as e:
@@ -386,10 +173,9 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   finally:
     lock.release()
 
-  need_archival = True
   if DEBUG:
     print("File successfully added to DB")
-  return ((stats_file, need_archival))
+  return (stats_file, need_archival)
 
 
 def _insert_proc_data_individually(proc_stats_df):
