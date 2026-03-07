@@ -30,8 +30,8 @@ class job_data(models.Model):
     AI generated.
     """
   jid = models.CharField(primary_key=True, max_length=32)
-  submit_time = models.DateTimeField(db_index=True)
-  start_time = models.DateTimeField(db_index=True)
+  submit_time = models.DateTimeField()
+  start_time = models.DateTimeField()
   end_time = models.DateTimeField(db_index=True)
   runtime = models.FloatField(blank=True, null=True)
   timelimit = models.FloatField(blank=True, null=True)
