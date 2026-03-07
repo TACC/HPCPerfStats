@@ -18,9 +18,9 @@ SECRET_KEY = os.environ.get("SECRET_KEY")
 #DEBUG = bool(os.environ.get("DEBUG", default=0))
 DEBUG = cfg.get_debug()
 
-ADMINS = (('Stephen Lien Harrell', 'sharrell@tacc.utexas.edu'),)
-
-MANAGERS = ADMINS
+# Django 6+: ADMINS/MANAGERS are list of email strings (name in tuple deprecated).
+ADMINS = ["sharrell@tacc.utexas.edu"]
+MANAGERS = ["sharrell@tacc.utexas.edu"]
 
 # Set cookies properly
 SESSION_COOKIE_HTTPONLY = True
@@ -140,25 +140,22 @@ CACHES = {
         "TIMEOUT": 300,
     }
 }
-# Middleware full-page cache (uses default cache backend)
-CACHE_MIDDLEWARE_ALIAS = "default"
-CACHE_MIDDLEWARE_SECONDS = 0  # Disable full-page cache by default; ORM uses cache_utils
-CACHE_MIDDLEWARE_KEY_PREFIX = "hpcperfstats"
-
+# Full-page cache middleware removed in Django 4.0; ORM uses cache_utils.
 MIDDLEWARE = (
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.cache.UpdateCacheMiddleware',
-    'django.middleware.cache.FetchFromCacheMiddleware',
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
 )
 
 ROOT_URLCONF = 'hpcperfstats.site.hpcperfstats_site.urls'
 # Python dotted path to the WSGI application used by Django's runserver.
 WSGI_APPLICATION = 'hpcperfstats.site.hpcperfstats_site.wsgi'
+
+# Django 6: DEFAULT_AUTO_FIELD defaults to BigAutoField; set explicitly for clarity.
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 INSTALLED_APPS = (
     "rest_framework",
@@ -167,14 +164,13 @@ INSTALLED_APPS = (
     "hpcperfstats.site.xalt",
     "hpcperfstats.site.hpcperfstats_site",
     "django.contrib.auth",
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.sites',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    #'django_extensions',
-    # Uncomment the next line to enable the admin:
-    'django.contrib.admin',
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.sites",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "django.contrib.postgres",  # Required for ArrayField and postgres ops (Django 6 system checks).
+    "django.contrib.admin",
     #'debug_toolbar',
     #'django_pdf',
     # Uncomment the next line to enable admin documentation:

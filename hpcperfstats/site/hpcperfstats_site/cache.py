@@ -5,10 +5,10 @@ AI generated.
 import pickle
 import threading
 
-from django.core.cache.backends.memcached import MemcachedCache
+from django.core.cache.backends.memcached import PyMemcacheCache
 
 
-class LargeMemcachedCache(MemcachedCache):
+class LargeMemcachedCache(PyMemcacheCache):
   """Memcached cache for large objects (e.g. 50MB max value).
 
     AI generated.

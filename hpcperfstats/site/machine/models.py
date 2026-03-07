@@ -50,12 +50,9 @@ class job_data(models.Model):
     db_table = 'job_data'
     managed = True
 
-  def __unicode__(self):
-    """Return string representation (id).
-
-        AI generated.
-        """
-    return str(self.id)
+  def __str__(self):
+    """Return string representation (jid)."""
+    return str(self.jid)
 
   def color(self):
     """Return hex color for state: E1EDFA completed, FFB2B2 failed, silver otherwise.
@@ -91,11 +88,8 @@ class metrics_data(models.Model):
     db_table = 'metrics_data'
     unique_together = (('jid', 'type', 'metric'),)
 
-  def __unicode__(self):
-    """Return string representation jid_type_metric.
-
-        AI generated.
-        """
+  def __str__(self):
+    """Return string representation jid_type_metric."""
     return str(self.jid_id or "") + "_" + str(self.type or "") + "_" + str(
         self.metric or "")
 
@@ -178,9 +172,6 @@ class proc_data(models.Model):
         models.Index(fields=["jid"]),
     ]
 
-  def __unicode__(self):
-    """Return string representation (id).
-
-        AI generated.
-        """
-    return str(self.id)
+  def __str__(self):
+    """Return string representation (jid, host, proc)."""
+    return f"{self.jid}:{self.host}:{self.proc}"

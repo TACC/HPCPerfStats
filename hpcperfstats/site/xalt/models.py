@@ -36,7 +36,7 @@ class run(models.Model):
   module_name = models.CharField(max_length=64, null=True)
   cwd = models.CharField(max_length=1024, null=True)
 
-  def __unicode__(self):
+  def __str__(self):
     """Return string representation (run_id).
 
         AI generated.
@@ -56,7 +56,7 @@ class join_run_object(models.Model):
   class Meta:
     db_table = "join_run_object"
 
-  def __unicode__(self):
+  def __str__(self):
     """Return string representation (run_id).
 
         AI generated.
@@ -80,7 +80,7 @@ class lib(models.Model):
   class Meta:
     db_table = "xalt_object"
 
-  def __unicode__(self):
+  def __str__(self):
     """Return string representation (obj_id).
 
         AI generated.
@@ -101,7 +101,7 @@ class join_link_object(models.Model):
   obj_id = models.PositiveIntegerField()
   link_id = models.PositiveIntegerField()
 
-  def __unicode__(self):
+  def __str__(self):
     """Return string representation (join_id).
 
         AI generated.
@@ -125,7 +125,7 @@ class link(models.Model):
   exit_code = models.IntegerField()
   exec_path = models.CharField(max_length=1024)
 
-  def __unicode__(self):
+  def __str__(self):
     """Return string representation (link_id).
 
         AI generated.

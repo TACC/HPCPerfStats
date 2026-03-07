@@ -19,7 +19,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE",
 import django
 django.setup()
 
-# Django 5.0+ removed django.utils.timezone.utc; ensure it exists for ORM and any code that still references it
+# Django 5.0+ removed django.utils.timezone.utc; ensure it exists for ORM/code that references it (Django 6 still does not provide it).
 import django.utils.timezone as _django_tz
 if not hasattr(_django_tz, "utc"):
   _django_tz.utc = timezone.utc
