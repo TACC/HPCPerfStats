@@ -4,6 +4,7 @@ AI generated.
 """
 import time
 from datetime import timezone as dt_utc
+from zoneinfo import ZoneInfo
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.site.machine.cache_utils import (
@@ -16,7 +17,8 @@ from hpcperfstats.site.machine.cache_utils import (
 )
 from hpcperfstats.site.machine.models import host_data, job_data
 
-local_timezone = cfg.get_timezone()
+_tz_cfg = cfg.get_timezone()
+local_timezone = ZoneInfo(_tz_cfg) if isinstance(_tz_cfg, str) else _tz_cfg
 
 
 def _ensure_tz(dt):
