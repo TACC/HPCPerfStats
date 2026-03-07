@@ -19,6 +19,7 @@ django.setup()
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
+from hpcperfstats.dbload.date_utils import parse_start_end_dates
 from hpcperfstats.site.machine.cache_utils import (
     KEY_UPDATE_METRICS_JOBS,
     cached_orm,
@@ -89,14 +90,8 @@ def update_metrics(date, rerun=False):
 if __name__ == "__main__":
 
   #################################################################
-  try:
-    startdate = datetime.strptime(sys.argv[1], "%Y-%m-%d")
-  except:
-    startdate = datetime.combine(datetime.today(), datetime.min.time())
-  try:
-    enddate = datetime.strptime(sys.argv[2], "%Y-%m-%d")
-  except:
-    enddate = startdate
+  default_start = datetime.combine(datetime.today(), datetime.min.time())
+  startdate, enddate = parse_start_end_dates(sys.argv, default_start, default_start)
 
   print("###Date Range of metrics to update: {0} -> {1}####".format(
       startdate, enddate))

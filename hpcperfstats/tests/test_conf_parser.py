@@ -55,6 +55,18 @@ def test_get_db_connection_string(temp_ini, monkeypatch):
   assert "port=5432" in s
 
 
+def test_get_worker_thread_count(temp_ini, monkeypatch):
+  """get_worker_thread_count returns total_cores // divisor, clamped to at least 1."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  # temp_ini has total_cores = 4
+  assert cfg.get_worker_thread_count(4) == 1
+  assert cfg.get_worker_thread_count(2) == 2
+  assert cfg.get_worker_thread_count(8) == 1  # 4//8 = 0 -> clamped to 1
+
+
 def test_get_memcached_location_default(temp_ini, monkeypatch):
   """get_memcached_location returns default when CACHE section missing."""
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)

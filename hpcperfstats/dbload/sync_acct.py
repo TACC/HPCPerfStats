@@ -16,6 +16,7 @@ from django.db import IntegrityError
 from pandas import read_csv, to_datetime, to_timedelta
 
 import hpcperfstats.conf_parser as cfg
+from hpcperfstats.dbload.date_utils import parse_start_end_dates
 from hpcperfstats.site.machine.models import job_data
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE",
@@ -169,14 +170,9 @@ if __name__ == "__main__":
   #    while True:
 
   #################################################################
-  try:
-    startdate = datetime.strptime(sys.argv[1], "%Y-%m-%d")
-  except:
-    startdate = datetime.combine(datetime.today(), datetime.min.time())
-  try:
-    enddate = datetime.strptime(sys.argv[2], "%Y-%m-%d")
-  except:
-    enddate = startdate + timedelta(days=1)
+  default_start = datetime.combine(datetime.today(), datetime.min.time())
+  default_end = default_start + timedelta(days=1)
+  startdate, enddate = parse_start_end_dates(sys.argv, default_start, default_end)
 
   print("###Date Range of job files to ingest: {0} -> {1}####".format(
       startdate, enddate))

@@ -281,6 +281,12 @@ def get_total_cores():
   return cfg.get('DEFAULT', 'total_cores')
 
 
+def get_worker_thread_count(divisor=4):
+  """Return worker thread count as total_cores / divisor, clamped to at least 1."""
+  n = int(cfg.get('DEFAULT', 'total_cores')) // divisor
+  return max(1, n)
+
+
 def get_memcached_location():
   """Return the memcached server location (host:port) from CACHE config.
 

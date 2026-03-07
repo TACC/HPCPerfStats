@@ -12,10 +12,9 @@ from functools import partial
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload import sync_timedb
+from hpcperfstats.dbload.tar_utils import get_tar_file_tasks
 
-thread_count = int(int(cfg.get_total_cores()) / 4)
-if thread_count < 1:
-  thread_count = 1
+thread_count = cfg.get_worker_thread_count(4)
 
 
 def _process_tar_member(lock, tar_path, member_name):
@@ -42,12 +41,8 @@ if __name__ == '__main__':
   # Build only (tar_path, member_name) pairs; no file contents in main process.
   tasks = []
   for tar_file_name in tar_files:
-    with tarfile.open(tar_file_name, 'r') as archive_tar:
-      print(archive_tar)
-      for member_info in archive_tar.getmembers():
-        if not member_info.isfile():
-          continue
-        tasks.append((tar_file_name, member_info.name))
+    print(tar_file_name)
+    tasks.extend(get_tar_file_tasks(tar_file_name))
 
   with multiprocessing.get_context('spawn').Pool(
       processes=thread_count) as pool:

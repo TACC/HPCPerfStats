@@ -30,6 +30,7 @@ from django.db import IntegrityError, close_old_connections
 import pandas as pd
 
 import hpcperfstats.conf_parser as cfg
+from hpcperfstats.dbload.date_utils import parse_start_end_dates
 from hpcperfstats.dbload.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
     build_stats_dataframes,
@@ -53,9 +54,7 @@ DEBUG = cfg.get_debug()
 local_timezone = cfg.get_timezone()
 
 # Thread count for database loading and archival
-thread_count = int(int(cfg.get_total_cores()) / 4)
-if thread_count < 1:
-  thread_count = 1
+thread_count = cfg.get_worker_thread_count(4)
 
 # amount of concurrent pigz using thread_count*2 cores
 archive_thread_count = int(thread_count / 2)
@@ -331,18 +330,13 @@ if __name__ == '__main__':
   database_startup()
   #################################################################
 
-  try:
-    startdate = datetime.strptime(sys.argv[1], "%Y-%m-%d")
-  except:
-    startdate = datetime.combine(
-        datetime.today(), datetime.min.time()) - timedelta(days=days_to_process)
-  try:
-    enddate = datetime.strptime(sys.argv[2], "%Y-%m-%d")
-  except:
-    enddate = startdate + timedelta(days=days_to_process)
+  default_start = datetime.combine(
+      datetime.today(), datetime.min.time()) - timedelta(days=days_to_process)
+  default_end = default_start + timedelta(days=days_to_process)
+  startdate, enddate = parse_start_end_dates(
+      sys.argv, default_start, default_end)
 
-  if (len(sys.argv) > 1):
-    if sys.argv[1] == 'all':
+  if len(sys.argv) > 1 and sys.argv[1] == 'all':
       startdate = 'all'
       enddate = datetime.combine(
           datetime.today(),
@@ -435,17 +429,13 @@ if __name__ == '__main__':
         stats_start = open(stats_fname,
                            'r').readlines(8192)  # grab first 8k bytes
         archive_fname = ''
-        for line in stats_start:
-          if line[0].isdigit():
-            t, jid, host = line.split()
-            file_date = datetime.fromtimestamp(float(t))
-            archive_fname = os.path.join(tgz_archive_dir,
-                                         file_date.strftime("%Y-%m-%d.tar.gz"))
-            break
-
-        if file_date.date == datetime.today().date:
-          continue
-
+        t, _jid, _host = parse_first_timestamp_line(stats_start)
+        if t is not None:
+          file_date = datetime.fromtimestamp(float(t))
+          archive_fname = os.path.join(tgz_archive_dir,
+                                       file_date.strftime("%Y-%m-%d.tar.gz"))
+          if file_date.date() == datetime.today().date():
+            continue
         if not archive_fname:
           print("Unable to find first timestamp in %s, skipping archiving" %
                 stats_fname)

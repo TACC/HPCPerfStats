@@ -8,18 +8,11 @@ from datetime import datetime, timedelta
 
 from dateutil.parser import parse
 
+from hpcperfstats.dbload.date_utils import daterange
+
 #import hpcperfstats.conf_parser as cfg
 
 #acct_path = cfg.get_accounting_path()
-
-
-def daterange(start_date, end_date):
-  """Yield each date from start_date (inclusive) to end_date (exclusive), one day at a time.
-
-    AI generated.
-    """
-  for n in range(int((end_date - start_date).days)):
-    yield start_date + timedelta(n)
 
 
 if __name__ == "__main__":
