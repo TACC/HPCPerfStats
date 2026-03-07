@@ -39,8 +39,9 @@ def update_metrics(date, rerun=False):
 
   def _jobs_fn():
     return list(
-        job_data.objects.filter(end_time__date=date.date()).exclude(
-            runtime__lt=min_time))
+        job_data.objects.filter(end_time__date=date.date())
+        .exclude(runtime__lt=min_time)
+        .prefetch_related("metrics_data_set"))
 
   jobs_list = cached_orm(
       f"{KEY_UPDATE_METRICS_JOBS}:{date_key}",
@@ -73,8 +74,9 @@ def update_metrics(date, rerun=False):
 
   if DEBUG:
     jobs_list_fresh = list(
-        job_data.objects.filter(end_time__date=date.date()).exclude(
-            runtime__lt=min_time))
+        job_data.objects.filter(end_time__date=date.date())
+        .exclude(runtime__lt=min_time)
+        .prefetch_related("metrics_data_set"))
     jobs_list_fresh = [
         job for job in jobs_list_fresh
         if not job.metrics_data_set.all().exists() or

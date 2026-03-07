@@ -67,7 +67,7 @@ class jid_table:
       job = cached_orm(
           f"{KEY_JOB}:{jid}",
           TIMEOUT_SHORT,
-          lambda: job_data.objects.filter(jid=jid).first(),
+          lambda: job_data.objects.filter(jid=jid).only("host_list", "start_time", "end_time").first(),
       )
     except Exception:
       job = None

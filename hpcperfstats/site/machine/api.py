@@ -79,8 +79,7 @@ def home_options(request):
         return err
 
     def _dates_fn():
-        jdf = DataFrame(job_data.objects.values("end_time"))
-        return jdf["end_time"].dt.date.drop_duplicates().sort_values().tolist()
+        return sorted(job_data.objects.dates("end_time", "day"))
 
     date_list = cached_orm(KEY_DATES, TIMEOUT_MEDIUM, _dates_fn)
     month_dict = {}
@@ -135,13 +134,13 @@ def search_dispatch(request):
 
     if request.GET.get("jid"):
         jid = request.GET["jid"]
-        job = cached_orm(
+        job_jid = cached_orm(
             f"{KEY_JOB}:{jid}",
             TIMEOUT_SHORT,
-            lambda: job_data.objects.filter(jid=jid).first(),
+            lambda: job_data.objects.filter(jid=jid).values_list("jid", flat=True).first(),
         )
-        if job:
-            return Response({"redirect": f"/machine/job/{job.jid}/"})
+        if job_jid:
+            return Response({"redirect": f"/machine/job/{job_jid}/"})
         return Response(
             {"error": "No result found in search"},
             status=status.HTTP_404_NOT_FOUND,
@@ -200,25 +199,30 @@ def job_list(request):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    metric_dict = {}
-    jid_dict = {"jid": []}
-    hist_metrics = []
-    for job in job_list_qs:
-        jid_dict["jid"].append(job.jid)
-        for name in df_fields:
-            metric_set = job.metrics_data_set.all().filter(metric=name)
-            if metric_set:
-                hist_metrics.append((name, metric_set[0].units))
-            for m in metric_set:
-                metric_dict.setdefault(m.metric, []).append(m.value)
-    jid_dict.update(metric_dict)
-    df = DataFrame(jid_dict).set_index("jid")
-
-    hist_metrics = list(set(hist_metrics))
     acc_cols = ["jid", "start_time", "submit_time", "runtime", "nhosts"]
-    df = df.join(
-        DataFrame(job_list_qs.values(*acc_cols)).set_index("jid")
+    job_rows = list(job_list_qs.values(*acc_cols))
+    jids_ordered = [r["jid"] for r in job_rows]
+    job_df = DataFrame(job_rows).set_index("jid")
+
+    metrics_rows = list(
+        metrics_data.objects.filter(jid_id__in=jids_ordered).values(
+            "jid_id", "metric", "units", "value"
+        )
     )
+    metric_dict = {}
+    hist_metrics_set = set()
+    for row in metrics_rows:
+        jid_id = row["jid_id"]
+        metric_dict.setdefault(row["metric"], []).append((jid_id, row["value"]))
+        hist_metrics_set.add((row["metric"], row["units"]))
+
+    jid_dict = {"jid": jids_ordered}
+    for name in df_fields:
+        jid_to_val = {jid: val for jid, val in metric_dict.get(name, [])}
+        jid_dict[name] = [jid_to_val.get(j, None) for jid in jids_ordered]
+    df = DataFrame(jid_dict).set_index("jid")
+    hist_metrics = list(hist_metrics_set)
+    df = df.join(job_df)
     hist_metrics += [("runtime", "hours"), ("nhosts", "#nodes"), ("queue_wait", "hours")]
     df["queue_wait"] = (
         to_timedelta(df["start_time"] - df["submit_time"]).dt.total_seconds() / 3600
@@ -276,7 +280,9 @@ def job_detail(request, pk):
     job = cached_orm(
         f"{KEY_JOB}:{pk}",
         TIMEOUT_SHORT,
-        lambda: job_data.objects.filter(jid=pk).first(),
+        lambda: job_data.objects.filter(jid=pk)
+        .prefetch_related("metrics_data_set")
+        .first(),
     )
     if not job:
         return Response(
@@ -325,13 +331,17 @@ def job_detail(request, pk):
     if cfg.get_xalt_user() != "":
         def _xalt_fn():
             xalt_data = xalt_data_c()
-            for r in run.objects.using("xalt").filter(job_id=job.jid):
+            for r in run.objects.using("xalt").filter(job_id=job.jid).only(
+                "exec_path", "cwd", "run_id"
+            ):
                 if "usr" in r.exec_path.split("/"):
                     continue
                 xalt_data.exec_path.append(r.exec_path)
                 xalt_data.cwd.append(r.cwd[0:128])
                 for join in join_run_object.objects.using("xalt").filter(run_id=r.run_id):
-                    obj = lib.objects.using("xalt").get(obj_id=join.obj_id)
+                    obj = lib.objects.using("xalt").only(
+                        "object_path", "module_name"
+                    ).get(obj_id=join.obj_id)
                     module_name = obj.module_name or "none"
                     if any(libtmp.module_name == module_name for libtmp in xalt_data.libset):
                         continue
@@ -429,7 +439,9 @@ def type_detail(request, jid, type_name):
     job = cached_orm(
         f"{KEY_JOB}:{jid}",
         TIMEOUT_SHORT,
-        lambda: job_data.objects.filter(jid=jid).first(),
+        lambda: job_data.objects.filter(jid=jid)
+        .only("host_list", "start_time", "end_time")
+        .first(),
     )
     if not job:
         return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -530,10 +542,14 @@ def admin_monitor(request):
     host_stats = []
     for host in all_hosts:
         def _host_last_fn(h=host, tb=_tb):
-            row = host_data.objects.filter(
-                host__icontains=h, time__gte=time_bounds
-            ).order_by("-time").first()
-            return row.time if row else None
+            return (
+                host_data.objects.filter(
+                    host__icontains=h, time__gte=time_bounds
+                )
+                .order_by("-time")
+                .values_list("time", flat=True)
+                .first()
+            )
 
         last_time = cached_orm(
             f"{KEY_HOST_LAST}:{host}:{_tb}",
