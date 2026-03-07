@@ -1,4 +1,6 @@
 """Django REST Framework API views for machine app. All data via JSON for React SPA."""
+from datetime import timezone as dt_timezone
+
 import hpcperfstats.conf_parser as cfg
 from bokeh.embed import components
 from bokeh.layouts import gridplot
@@ -436,9 +438,9 @@ def type_detail(request, jid, type_name):
     start_time = job.start_time
     end_time = job.end_time
     if start_time.tzinfo is None:
-        start_time = timezone.make_aware(start_time, timezone.utc)
+        start_time = timezone.make_aware(start_time, dt_timezone.utc)
     if end_time.tzinfo is None:
-        end_time = timezone.make_aware(end_time, timezone.utc)
+        end_time = timezone.make_aware(end_time, dt_timezone.utc)
     start_time = start_time.astimezone(local_timezone)
     end_time = end_time.astimezone(local_timezone)
 

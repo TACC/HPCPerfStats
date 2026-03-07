@@ -12,7 +12,7 @@ import sys
 import tarfile
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import partial
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE",
@@ -22,7 +22,6 @@ import django
 django.setup()
 
 from django.db import IntegrityError, close_old_connections
-from django.utils import timezone as django_tz
 from pandas import DataFrame, to_datetime
 
 import hpcperfstats.conf_parser as cfg
@@ -135,7 +134,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   else:
     print("initial timestamp not found")
 
-  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=django_tz.utc)
+  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
   ts_low = timestamp_utc - timedelta(hours=48)
   ts_high = timestamp_utc + timedelta(hours=72)
   times_qs = host_data.objects.filter(host=hostname,
