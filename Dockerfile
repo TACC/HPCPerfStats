@@ -22,13 +22,12 @@ COPY --chown=hpcperfstats:hpcperfstats . .
 
 # Keep the container updated everytime it is built, even when previous steps are cached
 RUN apt-get update -y  && \
-    apt-get upgrade -y && \
-    apt-get clean
+    apt-get upgrade -y
 
 # install nodejs react dependencies and build the frontend
-RUN npm i npm-check-updates -g && npm-check-updates -u && \
-    npm update && cd hpcperfstats/site/frontend && npm install && \
-    npm run build 
+RUN cd hpcperfstats/site/frontend && npm install && \
+    npm run build && cd .. && rm -rf hpcperfstats/site/frontend  && \
+    apt-get remove -y npm nodejs && apt-get clean
 
 # Set python install variables
 ENV PYTHONDONTWRITEBYTECODE 1
