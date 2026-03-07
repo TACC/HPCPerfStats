@@ -9,9 +9,7 @@ import multiprocessing
 import os
 import subprocess
 import sys
-import tarfile
 import time
-import uuid
 from datetime import datetime, timedelta, timezone
 from functools import partial
 
@@ -31,6 +29,15 @@ import pandas as pd
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.date_utils import parse_start_end_dates
+from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+    build_archive_mapping,
+    collect_stats_files_in_range,
+    filter_files_to_add_to_archive,
+    get_existing_archive_members,
+    get_stats_chunk,
+    get_tar_member_name,
+    get_verified_files_to_remove,
+)
 from hpcperfstats.dbload.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
     build_stats_dataframes,
@@ -225,80 +232,63 @@ def _insert_host_data_individually(stats_df):
   return need_archival
 
 
-def archive_stats_files(archive_info):
-  """Append stats files to a daily .tar, compress with pigz, and remove originals after verification.
 
-    AI generated.
-    """
+
+def _decompress_gz(gz_path):
+  """Decompress .tar.gz with pigz. No-op if path missing or on error."""
+  if not os.path.exists(gz_path):
+    return
+  try:
+    subprocess.check_output(['/usr/bin/pigz', '-v', '-d', gz_path])
+  except subprocess.CalledProcessError:
+    pass
+
+
+def _append_to_tar(tar_path, file_paths):
+  """Append file_paths to tar at tar_path. Does nothing if file_paths is empty."""
+  if not file_paths:
+    return
+  out = subprocess.check_output(['/bin/tar', 'uvf', tar_path] + file_paths)
+  if DEBUG:
+    print(out, flush=True)
+  print("Archived: " + str(file_paths))
+
+
+def _compress_tar_gz(tar_path, num_threads=None):
+  """Compress .tar with pigz. num_threads defaults to thread_count * 2."""
+  if num_threads is None:
+    num_threads = thread_count * 2
+  if not os.path.exists(tar_path):
+    return
+  print(
+      subprocess.check_output([
+          '/usr/bin/pigz', '-f', '-8', '-v', '-p', str(num_threads), tar_path
+      ]),
+      flush=True)
+
+
+def archive_stats_files(archive_info):
+  """Append stats files to a daily .tar, compress with pigz, and remove originals after verification."""
   archive_fname, stats_files = archive_info
   archive_tar_fname = archive_fname[:-3]
-  if not os.path.exists(archive_tar_fname):
-    try:
-      # If the file is missing, it will error, catch that error and continue
-      print(
-          subprocess.check_output(['/usr/bin/pigz', '-v', '-d', archive_fname]))
-    except subprocess.CalledProcessError:
-      pass
 
-  existing_archive_file = {}
-  if os.path.exists(archive_tar_fname):
+  _decompress_gz(archive_fname)
+  existing_members = get_existing_archive_members(archive_tar_fname)
 
-    try:
-      with tarfile.open(archive_tar_fname, 'r') as archive_tarfile:
-        existing_archive_tarinfo = archive_tarfile.getmembers()
+  stats_files_to_tar = filter_files_to_add_to_archive(
+      stats_files, existing_members, debug=DEBUG)
+  _append_to_tar(archive_tar_fname, stats_files_to_tar)
 
-      for tar_member_data in existing_archive_tarinfo:
-        existing_archive_file[tar_member_data.name] = tar_member_data.size
+  existing_members = get_existing_archive_members(archive_tar_fname)
+  for path in get_verified_files_to_remove(stats_files, existing_members):
+    print("removing stats file:" + path)
+    os.remove(path)
 
-    except Exception:
-      pass
-
-  stats_files_to_tar = []
-  for stats_fname_path in stats_files:
-    fname_parts = stats_fname_path.split('/')
-
-    if ((stats_fname_path[1:] in existing_archive_file.keys()) and
-        (tarfile.open('/tmp/test.tar', 'w').gettarinfo(stats_fname_path).size
-         == existing_archive_file[stats_fname_path[1:]])):
-
-      print("file %s found in archive, skipping" % stats_fname_path)
-      continue
-    stats_files_to_tar.append(stats_fname_path)
-
-  tar_output = subprocess.check_output(['/bin/tar', 'uvf', archive_tar_fname] +
-                                       stats_files_to_tar)
-  if DEBUG:
-    print(tar_output, flush=True)
-  print("Archived: " + str(stats_files_to_tar))
-
-  ### VERIFY TAR AND DELETE DATA IF IT IS ARCHIVED AND HAS THE SAME FILE SIZE
-  with tarfile.open(archive_tar_fname, 'r') as archive_tarfile:
-    existing_archive_tarinfo = archive_tarfile.getmembers()
-    for tar_member_data in existing_archive_tarinfo:
-      existing_archive_file[tar_member_data.name] = tar_member_data.size
-
-    for stats_fname_path in stats_files:
-
-      if ((stats_fname_path[1:] in existing_archive_file.keys()) and
-          (tarfile.open('/tmp/%s.tar' % uuid.uuid4(),
-                        'w').gettarinfo(stats_fname_path).size
-           == existing_archive_file[stats_fname_path[1:]])):
-        print("removing stats file:" + stats_fname_path)
-        os.remove(stats_fname_path)
-
-  print(subprocess.check_output([
-      '/usr/bin/pigz', '-f', '-8', '-v', '-p',
-      str(thread_count * 2), archive_tar_fname
-  ]),
-        flush=True)
+  _compress_tar_gz(archive_tar_fname)
 
 
 def database_startup():
-  """Print DB version, database size, and optionally chunk compression stats for host_data.
-
-    AI generated.
-    """
-
+  """Print DB version, database size, and optionally chunk compression stats for host_data."""
   from django.db import connection
   with connection.cursor() as cur:
     if DEBUG:
@@ -346,67 +336,26 @@ if __name__ == '__main__':
       startdate, enddate))
   #################################################################
 
-  # Parse and convert raw stats files to pandas dataframe
   start = time.time()
   directory = cfg.get_archive_dir_path()
-
-  stats_files = []
-  for entry in os.scandir(directory):
-    if entry.is_file() or not (entry.name.startswith("c") or
-                               entry.name.startswith("v")):
-      continue
-    for stats_file in os.scandir(entry.path):
-      if not stats_file.is_file() or stats_file.name.startswith('.'):
-        continue
-      if stats_file.name.startswith("current"):
-        continue
-      fdate = None
-      try:
-        ### different ways to define the date of the file: use timestamp or use the time of the last piece of data
-        # based on filename
-        name_fdate = datetime.fromtimestamp(int(stats_file.name))
-
-        # timestamp of rabbitmq modify
-        mtime_fdate = datetime.fromtimestamp(
-            int(os.path.getmtime(stats_file.path)))
-
-        fdate = mtime_fdate
-      except Exception as e:
-        print("error in obtaining timestamp of raw data files: ", str(e))
-        continue
-      if startdate == 'all':
-        if fdate > enddate:
-          continue
-        stats_files += [stats_file.path]
-        continue
-
-      if fdate <= startdate - timedelta(days=1) or fdate > enddate:
-        continue
-      stats_files += [stats_file.path]
-
-  # sort files by oldest first, not based on the node (default os.scandir)
-  stats_files.sort(key=lambda x: x.split('/')[-1])
+  stats_files = collect_stats_files_in_range(directory, startdate, enddate)
   print("Number of host stats files to process = ", len(stats_files))
 
   with multiprocessing.get_context('spawn').Pool(
       processes=archive_thread_count) as archive_pool:
     archive_job = None
     # Process and archive chunk_size files before continuing to process more
-    for i in range(int(len(stats_files) / chunk_size) + 1):
-      function_time = time.time()
-      j = i + 1
+    num_chunks = (len(stats_files) + chunk_size - 1) // chunk_size if stats_files else 1
+    for i in range(num_chunks):
       if DEBUG:
         print("Begining Chunk(%s) #%s Processing" % (chunk_size, i))
 
+      stats_files_chunk = get_stats_chunk(stats_files, i, chunk_size)
+      if not stats_files_chunk:
+        continue
+
       ar_file_mapping = {}
       files_to_be_archived = []
-
-      try:
-        stats_files[j * chunk_size]
-        stats_files_chunk = stats_files[i * chunk_size:j * chunk_size:]
-      except IndexError:
-        stats_files_chunk = stats_files[i * chunk_size:]
-
       print("%s files per chunk" % chunk_size)
 
       with multiprocessing.get_context('spawn').Pool(
@@ -425,24 +374,8 @@ if __name__ == '__main__':
 
       print("loading time", time.time() - start)
 
-      for stats_fname in files_to_be_archived:
-        stats_start = open(stats_fname,
-                           'r').readlines(8192)  # grab first 8k bytes
-        archive_fname = ''
-        t, _jid, _host = parse_first_timestamp_line(stats_start)
-        if t is not None:
-          file_date = datetime.fromtimestamp(float(t))
-          archive_fname = os.path.join(tgz_archive_dir,
-                                       file_date.strftime("%Y-%m-%d.tar.gz"))
-          if file_date.date() == datetime.today().date():
-            continue
-        if not archive_fname:
-          print("Unable to find first timestamp in %s, skipping archiving" %
-                stats_fname)
-          continue
-        if archive_fname not in ar_file_mapping:
-          ar_file_mapping[archive_fname] = []
-        ar_file_mapping[archive_fname].append(stats_fname)
+      ar_file_mapping = build_archive_mapping(
+          files_to_be_archived, tgz_archive_dir)
 
       # skip first iteration, on first there will be no archive_job
       if i:
@@ -450,11 +383,9 @@ if __name__ == '__main__':
           print("Checking/waiting for background archival proccesses")
 
         # Wait until last archive_job is complete before starting another one
-        for stats_files_archived in archive_job.get():
-          print("[{0:.1f}%] completed".format(
-              100 * stats_files.index(stats_fname) / len(stats_files)),
-                end="\r",
-                flush=True)
+        archive_job.get()
+        print("[{0:.1f}%] completed".format(
+            100 * (i + 1) / num_chunks), end="\r", flush=True)
 
       if DEBUG:
         print("files to be archived: %s" % ar_file_mapping)
