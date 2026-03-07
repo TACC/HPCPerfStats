@@ -15,8 +15,12 @@ import uuid
 from datetime import datetime, timedelta
 from functools import partial
 
+os.environ.setdefault("DJANGO_SETTINGS_MODULE",
+                      "hpcperfstats.site.hpcperfstats_site.settings")
+
 import django
-import pandas as pd
+django.setup()
+
 from django.db import IntegrityError, close_old_connections
 from django.utils import timezone as django_tz
 from pandas import DataFrame, to_datetime
@@ -24,8 +28,6 @@ from pandas import DataFrame, to_datetime
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.site.machine.models import host_data, proc_data
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE",
-                      "hpcperfstats.site.hpcperfstats_site.settings")
 
 # archive toggle
 should_archive = True
@@ -506,7 +508,7 @@ def database_startup():
 
     AI generated.
     """
-  django.setup()
+
   from django.db import connection
   with connection.cursor() as cur:
     if DEBUG:
