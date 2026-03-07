@@ -1,5 +1,7 @@
 """Metric computation for jobs: simple metrics (job_arc/time_bucket) and complex metrics (avg_freq, avg_ethbw, mem_hwm, etc.) via utils-compatible job view. Results written to metrics_data.
 
+DB access is process-safe: _unwrap runs in multiprocessing workers and calls close_old_connections() at entry so each worker uses a fresh connection for reads (e.g. job_arc); writes are done in the main process only.
+
 AI generated.
 """
 import hpcperfstats.conf_parser as cfg
@@ -20,7 +22,7 @@ import numpy as np
 from numpy import amax, diff, isnan, maximum, mean, zeros
 from pandas import to_datetime
 
-from django.db import transaction
+from django.db import transaction, close_old_connections
 
 from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.analysis.gen.utils import utils
@@ -145,6 +147,8 @@ def _unwrap(args):
 
     AI generated.
     """
+  # Ensure this worker process uses a fresh DB connection (thread-safe for multiprocessing).
+  close_old_connections()
   return args[0].compute_metrics(args[1])
 
 

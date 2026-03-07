@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files. Runs in parallel with configurable chunk size.
 
+DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers and calls close_old_connections() at entry so each worker uses a fresh connection. Writes are serialized with a shared lock.
+
 AI generated.
 """
 import multiprocessing
@@ -15,7 +17,7 @@ from functools import partial
 
 import django
 import pandas as pd
-from django.db import IntegrityError
+from django.db import IntegrityError, close_old_connections
 from django.utils import timezone as django_tz
 from pandas import DataFrame, to_datetime
 
@@ -105,6 +107,8 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
 
     AI generated.
     """
+  # Ensure this process/thread uses a fresh DB connection (thread-safe for multiprocessing/threaded workers).
+  close_old_connections()
 
   hostname, create_time = stats_file.split('/')[-2:]
 
