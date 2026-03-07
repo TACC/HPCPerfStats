@@ -3,6 +3,7 @@
 AI generated.
 """
 import time
+from datetime import timezone as dt_utc
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.site.machine.cache_utils import (
@@ -26,8 +27,8 @@ def _ensure_tz(dt):
   if dt is None:
     return None
   if dt.tzinfo is None:
-    import django.utils.timezone as django_tz
-    dt = django_tz.make_aware(dt, django_tz.utc)
+    from django.utils import timezone as django_tz
+    dt = django_tz.make_aware(dt, dt_utc.utc)
   return dt.astimezone(local_timezone)
 
 

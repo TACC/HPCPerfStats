@@ -8,7 +8,7 @@ openblas_threads = int(cfg.get_total_cores()) / 4
 if openblas_threads < 1:
   openblas_threads = 1
 
-from datetime import timedelta
+from datetime import timedelta, timezone as dt_utc
 from math import ceil
 import hashlib
 import os
@@ -495,11 +495,9 @@ def type_detail(request, jid, type_name):
   start_time = job.start_time
   end_time = job.end_time
   if start_time.tzinfo is None:
-    from django.utils import timezone as django_tz
-    start_time = django_tz.make_aware(start_time, django_tz.utc)
+    start_time = timezone.make_aware(start_time, dt_utc.utc)
   if end_time.tzinfo is None:
-    from django.utils import timezone as django_tz
-    end_time = django_tz.make_aware(end_time, django_tz.utc)
+    end_time = timezone.make_aware(end_time, dt_utc.utc)
   start_time = start_time.astimezone(local_timezone)
   end_time = end_time.astimezone(local_timezone)
 
