@@ -69,3 +69,23 @@ def test_sacct_gen_daterange():
   assert len(days) == 3
   assert days[0] == start
   assert days[-1] == start + timedelta(2)
+
+
+def test_sacct_gen_daterange_same_day_empty():
+  """daterange with start == end yields no days."""
+  from datetime import datetime
+  from hpcperfstats.dbload.sacct_gen import daterange
+  d = datetime(2024, 6, 15)
+  days = list(daterange(d, d))
+  assert len(days) == 0
+
+
+def test_sacct_gen_daterange_single_day():
+  """daterange with end == start+1 day yields one date."""
+  from datetime import datetime, timedelta
+  from hpcperfstats.dbload.sacct_gen import daterange
+  start = datetime(2024, 3, 1)
+  end = start + timedelta(days=1)
+  days = list(daterange(start, end))
+  assert len(days) == 1
+  assert days[0] == start

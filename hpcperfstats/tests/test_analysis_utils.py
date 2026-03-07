@@ -59,3 +59,15 @@ def test_queryset_to_dataframe_mock_queryset():
   assert len(out) == 2
   assert list(out.columns) == ["a", "b"]
   assert out["a"].tolist() == [1, 3]
+
+
+def test_tz_aware_bokeh_tick_formatter_returns_formatter():
+  """tz_aware_bokeh_tick_formatter returns a Bokeh CustomJSTickFormatter with tz in args."""
+  from hpcperfstats.analysis.gen.utils import tz_aware_bokeh_tick_formatter
+  from bokeh.models import CustomJSTickFormatter
+
+  formatter = tz_aware_bokeh_tick_formatter()
+  assert isinstance(formatter, CustomJSTickFormatter)
+  assert "tz" in formatter.args
+  assert formatter.code is not None
+  assert "tick" in formatter.code

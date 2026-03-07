@@ -39,3 +39,40 @@ def test_get_debug_true(temp_ini, monkeypatch):
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_debug() is True
+
+
+def test_get_db_connection_string(temp_ini, monkeypatch):
+  """get_db_connection_string returns connection string from PORTAL section."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  s = cfg.get_db_connection_string()
+  assert "dbname=test" in s
+  assert "user=u" in s or " user=u " in s
+  assert "password=p" in s
+  assert "host=localhost" in s
+  assert "port=5432" in s
+
+
+def test_get_memcached_location_default(temp_ini, monkeypatch):
+  """get_memcached_location returns default when CACHE section missing."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_memcached_location() == "127.0.0.1:11211"
+
+
+def test_get_memcached_location_from_config(temp_ini, monkeypatch):
+  """get_memcached_location returns value from [CACHE] when set."""
+  with open(temp_ini) as f:
+    content = f.read()
+  content += "\n[CACHE]\nmemcached_location = 192.168.1.1:11211\n"
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_memcached_location() == "192.168.1.1:11211"
