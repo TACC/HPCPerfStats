@@ -86,8 +86,8 @@ def parse_first_timestamp_line(lines):
   return (None, None, None)
 
 
-def find_processing_start_index(lines, times, itimes):
-  """Find index in lines where we should start processing (first timestamp not in times/itimes). Returns (start_idx, need_archival). start_idx is -1 if all timestamps already present."""
+def find_processing_start_index(lines, itimes_set):
+  """Find index in lines where we should start processing (first timestamp not in itimes_set). itimes_set is a set of int (Unix seconds already in DB). Returns (start_idx, need_archival). start_idx is -1 if all timestamps already present."""
   start_idx = -1
   last_idx = 0
   need_archival = True
@@ -98,7 +98,7 @@ def find_processing_start_index(lines, times, itimes):
       t, jid, host = line.split()
       if jid == '-':
         continue
-      if (float(t) not in times) and (int(float(t)) not in itimes):
+      if int(float(t)) not in itimes_set:
         start_idx = last_idx
         need_archival = False
         break

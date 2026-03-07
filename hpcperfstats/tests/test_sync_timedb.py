@@ -125,27 +125,25 @@ def test_parse_first_timestamp_line_skips_bad_line():
 
 
 def test_find_processing_start_index_all_missing():
-  """When no timestamp is in times, start at first valid timestamp index."""
+  """When no timestamp is in itimes_set, start at first valid timestamp index."""
   lines = [
       "1709123456 job1 cn001\n",
       "1709123460 job1 cn001\n",
   ]
-  times = []
-  itimes = []
-  start_idx, need_archival = find_processing_start_index(lines, times, itimes)
+  itimes_set = set()
+  start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   assert start_idx == 0
   assert need_archival is False
 
 
 def test_find_processing_start_index_all_present():
-  """When all timestamps are in times, start_idx is -1."""
+  """When all timestamps are in itimes_set, start_idx is -1."""
   lines = [
       "1709123456 job1 cn001\n",
       "1709123460 job1 cn001\n",
   ]
-  times = [1709123456.0, 1709123460.0]
-  itimes = [1709123456, 1709123460]
-  start_idx, need_archival = find_processing_start_index(lines, times, itimes)
+  itimes_set = {1709123456, 1709123460}
+  start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   assert start_idx == -1
   assert need_archival is True
 
@@ -157,9 +155,8 @@ def test_find_processing_start_index_one_missing():
       "1709123460 job1 cn001\n",   # 1 - in DB
       "1709123464 job1 cn001\n",   # 2 - missing
   ]
-  times = [1709123456.0, 1709123460.0]
-  itimes = [1709123456, 1709123460]
-  start_idx, need_archival = find_processing_start_index(lines, times, itimes)
+  itimes_set = {1709123456, 1709123460}
+  start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   assert start_idx == 1
   assert need_archival is False
 
@@ -170,9 +167,8 @@ def test_find_processing_start_index_skips_job_missing():
       "1709123456 - cn001\n",
       "1709123460 job1 cn001\n",
   ]
-  times = []
-  itimes = []
-  start_idx, need_archival = find_processing_start_index(lines, times, itimes)
+  itimes_set = set()
+  start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   # First line has jid '-', so last_idx stays 0; second line is first "valid" and missing from times
   assert start_idx == 0
   assert need_archival is False

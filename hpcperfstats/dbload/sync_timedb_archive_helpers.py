@@ -106,7 +106,11 @@ def build_archive_mapping(
   for stats_fname in files_to_be_archived:
     try:
       with open(stats_fname, "r") as f:
-        head = f.readlines(8192)
+        head = []
+        for line in f:
+          head.append(line)
+          if head and head[-1] and head[-1][0].isdigit():
+            break
     except OSError:
       continue
     t, _jid, _host = parse_first_ts_fn(head)

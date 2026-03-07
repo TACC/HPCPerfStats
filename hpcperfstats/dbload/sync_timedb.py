@@ -108,10 +108,12 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
       time__gte=ts_low,
       time__lt=ts_high,
   ).values_list("time", flat=True).distinct().order_by("time")
-  times = [float(tt.timestamp()) for tt in times_qs]
-  itimes = [int(tt) for tt in times]
+  itimes_set = set(
+      int(tt.timestamp())
+      for tt in times_qs.iterator(chunk_size=2000)
+  )
 
-  start_idx, need_archival = find_processing_start_index(lines, times, itimes)
+  start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   if start_idx == -1:
     print("No missing timestamps found for %s" % stats_file)
     return (stats_file, True)

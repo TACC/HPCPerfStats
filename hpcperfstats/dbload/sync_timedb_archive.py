@@ -4,6 +4,7 @@ tar by (path, member_name) so the main process never holds file contents.
 
 AI generated.
 """
+import io
 import multiprocessing
 import sys
 import tarfile
@@ -26,7 +27,10 @@ def _process_tar_member(lock, tar_path, member_name):
     f = tar.extractfile(member)
     if f is None:
       return  # directories / unsupported entries
-    content = f.read().decode('utf-8').split('\n')
+    # Build list of lines by iterating to avoid holding full decoded string in memory
+    wrapper = io.TextIOWrapper(f, encoding="utf-8")
+    content = list(wrapper)
+    wrapper.detach()
   sync_timedb.add_stats_file_to_db(lock, member_name, content)
 
 
