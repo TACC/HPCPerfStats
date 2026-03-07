@@ -11,7 +11,6 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE",
                       "hpcperfstats.site.hpcperfstats_site.settings")
 
 import django
-
 django.setup()
 
 from pandas import DataFrame

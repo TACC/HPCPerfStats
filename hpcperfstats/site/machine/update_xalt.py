@@ -4,15 +4,13 @@
 AI generated.
 """
 import os
+import sys
+from datetime import datetime
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE",
                       "hpcperfstats.site.hpcperfstats_site.settings")
 
-import sys
-from datetime import datetime
-
 import django
-
 django.setup()
 
 from hpcperfstats.dbload.date_utils import daterange, parse_start_end_dates

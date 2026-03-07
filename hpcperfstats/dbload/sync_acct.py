@@ -8,7 +8,12 @@ import sys
 import time
 from datetime import datetime, timedelta
 
+os.environ.setdefault("DJANGO_SETTINGS_MODULE",
+                      "hpcperfstats.site.hpcperfstats_site.settings")
+
 import django
+django.setup()
+
 import hostlist
 import pandas as pd
 from django.conf import settings
@@ -18,10 +23,6 @@ from pandas import read_csv, to_datetime, to_timedelta
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.date_utils import parse_start_end_dates
 from hpcperfstats.site.machine.models import job_data
-
-os.environ.setdefault("DJANGO_SETTINGS_MODULE",
-                      "hpcperfstats.site.hpcperfstats_site.settings")
-django.setup()
 
 local_timezone = cfg.get_timezone()
 

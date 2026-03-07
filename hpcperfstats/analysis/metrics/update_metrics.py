@@ -5,16 +5,14 @@ AI generated.
 """
 import multiprocessing
 import os
-
-os.environ[
-    'DJANGO_SETTINGS_MODULE'] = 'hpcperfstats.site.hpcperfstats_site.settings'
-
 import sys
 import time
 from datetime import datetime, timedelta
 
-import django
+os.environ.setdefault("DJANGO_SETTINGS_MODULE",
+                      "hpcperfstats.site.hpcperfstats_site.settings")
 
+import django
 django.setup()
 
 import hpcperfstats.conf_parser as cfg
