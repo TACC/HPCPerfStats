@@ -27,6 +27,7 @@ if not hasattr(_django_tz, "utc"):
   _django_tz.utc = timezone.utc
 
 from django.db import IntegrityError, close_old_connections
+import pandas as pd
 from pandas import DataFrame, to_datetime
 
 import hpcperfstats.conf_parser as cfg
