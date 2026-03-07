@@ -13,7 +13,7 @@ from functools import partial
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload import sync_timedb
-from hpcperfstats.dbload.tar_utils import get_tar_file_tasks
+from hpcperfstats.dbload.sync_timedb_archive_helpers import get_tar_file_tasks
 
 thread_count = cfg.get_worker_thread_count(4)
 

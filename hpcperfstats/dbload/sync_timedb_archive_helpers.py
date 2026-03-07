@@ -1,4 +1,4 @@
-"""Pure helpers for sync_timedb archiving and file discovery (no Django). Used by sync_timedb and by unit tests."""
+"""Pure helpers for sync_timedb archiving, tar utilities, and file discovery (no Django). Used by sync_timedb and by unit tests."""
 import os
 import tarfile
 from datetime import datetime, timedelta
@@ -20,6 +20,17 @@ def get_existing_archive_members(tar_path):
       return {m.name: m.size for m in tf.getmembers()}
   except Exception:
     return {}
+
+
+def get_tar_file_tasks(tar_path):
+  """Return list of (tar_path, member_name) for file members only (no dirs)."""
+  tasks = []
+  with tarfile.open(tar_path, 'r') as archive_tar:
+    for member_info in archive_tar.getmembers():
+      if not member_info.isfile():
+        continue
+      tasks.append((tar_path, member_info.name))
+  return tasks
 
 
 def filter_files_to_add_to_archive(stats_files, existing_members, debug=False):
