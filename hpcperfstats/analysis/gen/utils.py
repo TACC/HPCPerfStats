@@ -19,6 +19,11 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 
 from bokeh.models import CustomJSTickFormatter
 import numpy as np
+import pandas as pd
+
+from hpcperfstats.analysis.gen.jid_table import jid_table
+from hpcperfstats.site.machine.models import job_data
+
 
 local_timezone = cfg.get_timezone()
 
@@ -98,6 +103,28 @@ class utils():
         for devname in host.stats[typename]:
           stats[hostname][devname] = host.stats[typename][devname].astype(float)
     return schema, stats
+
+
+def get_job_host_data_and_job_dict(jid):
+  """Return (host_data_df, job_dict) for the given job id.
+
+  host_data_df: DataFrame of all host_data rows within the job's start/end
+  times and from only the hosts in the job (from job_data.host_list).
+  job_dict: dictionary of the job_data row matching jid, or None if not found.
+  """
+
+  job_row = job_data.objects.filter(jid=jid).values().first()
+  if job_row is None:
+    return pd.DataFrame(), None
+
+  job_dict = dict(job_row)
+
+  jt = jid_table(jid)
+  if jt.start_time is None or jt.end_time is None:
+    return pd.DataFrame(), job_dict
+
+  host_df = jt.get_full_host_data_df()
+  return host_df, job_dict
 
 
 def queryset_to_dataframe(qs):
