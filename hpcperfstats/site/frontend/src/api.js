@@ -50,6 +50,8 @@ export const api = {
   getHomeOptions: () => request("/home/"),
   search: (params) => request("/search/?" + new URLSearchParams(params).toString()),
   getJobList: (params) => request("/jobs/?" + new URLSearchParams(params).toString()),
+  getJobListHistograms: (params) =>
+    request("/jobs/histograms/?" + new URLSearchParams(params).toString()),
   getJobDetail: (pk) => request(`/jobs/${encodeURIComponent(pk)}/`),
   getTypeDetail: (jid, typeName) =>
     request(`/jobs/${encodeURIComponent(jid)}/${encodeURIComponent(typeName)}/`),

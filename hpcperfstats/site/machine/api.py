@@ -5,6 +5,7 @@ import hpcperfstats.conf_parser as cfg
 from bokeh.embed import components
 from bokeh.layouts import gridplot
 from django.utils import timezone
+from django.views.decorators.cache import cache_page
 from pandas import DataFrame, to_timedelta
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -71,6 +72,7 @@ def session_info(request):
     })
 
 
+@cache_page(TIMEOUT_MEDIUM)
 @api_view(["GET"])
 def home_options(request):
     """Return options for search form: date_list, metrics, queues, states, machine_name."""
@@ -160,13 +162,8 @@ def search_dispatch(request):
     return job_list(request)
 
 
-@api_view(["GET"])
-def job_list(request):
-    """Paginated job list with Bokeh script/div for histograms (same logic as index view)."""
-    err = _require_auth(request)
-    if err is not None:
-        return err
-
+def _job_list_histograms(request):
+    """Build Bokeh script/div for job list histograms from request GET params. Returns (script, div)."""
     fields = request.GET.dict()
     fields = {k: v for k, v in fields.items() if v}
 
@@ -194,10 +191,7 @@ def job_list(request):
     df_fields = list(set(name for name, _ in (key.split("__") for key in cur_metrics)))
 
     if nj == 0:
-        return Response(
-            {"error": "No data found for this search request"},
-            status=status.HTTP_404_NOT_FOUND,
-        )
+        return "", ""
 
     acc_cols = ["jid", "start_time", "submit_time", "runtime", "nhosts"]
     job_rows = list(job_list_qs.values(*acc_cols))
@@ -230,6 +224,67 @@ def job_list(request):
     df["runtime"] = df["runtime"] / 3600
     df = clean_dataframe(df)
 
+    script = ""
+    div = ""
+    try:
+        plot_list = [job_hist(df, metric, label) for metric, label in hist_metrics]
+        plot_list = [p for p in plot_list if p is not None]
+        if plot_list:
+            script, div = components(gridplot(plot_list, ncols=2))
+    except Exception:
+        pass
+    return script, div
+
+
+@api_view(["GET"])
+def job_list_histograms(request):
+    """Return Bokeh script/div for job list histograms (same query params as job list)."""
+    err = _require_auth(request)
+    if err is not None:
+        return err
+    script, div = _job_list_histograms(request)
+    return Response({"script": script, "div": div})
+
+
+@api_view(["GET"])
+def job_list(request):
+    """Paginated job list only (histograms via separate job_list_histograms endpoint)."""
+    err = _require_auth(request)
+    if err is not None:
+        return err
+
+    fields = request.GET.dict()
+    fields = {k: v for k, v in fields.items() if v}
+
+    acct_data = {
+        k: v
+        for k, v in fields.items()
+        if k.split("_", 1)[0] != "metrics" and k != "page"
+    }
+    job_list_qs = job_data.objects.filter(**acct_data).order_by("-end_time")
+
+    cur_metrics = {
+        k.split("_", 1)[1]: v
+        for k, v in fields.items()
+        if k.split("_", 1)[0] == "metrics"
+    }
+    for key, val in cur_metrics.items():
+        name, op = key.split("__")
+        mquery = {
+            "metrics_data__metric": name,
+            "metrics_data__value__" + op: val,
+        }
+        job_list_qs = job_list_qs.filter(**mquery)
+
+    job_list_qs = job_list_qs.prefetch_related("metrics_data_set")
+    nj = job_list_qs.count()
+
+    if nj == 0:
+        return Response(
+            {"error": "No data found for this search request"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
     page_num = request.GET.get("page", 1)
     paginator = Paginator(job_list_qs, min(100, nj))
     try:
@@ -239,24 +294,12 @@ def job_list(request):
     except EmptyPage:
         page = paginator.page(paginator.num_pages)
 
-    script = ""
-    div = ""
-    try:
-        plot_list = [job_hist(df, metric, label) for metric, label in hist_metrics]
-        plot_list = [p for p in plot_list if p is not None]
-        if plot_list:
-            script, div = components(gridplot(plot_list, ncols=2))
-    except Exception as e:
-        pass
-
     current_path = request.get_full_path() if "?" in request.get_full_path() else None
     qname = "Jobs"
 
     return Response({
         "job_list": JobListSerializer(page.object_list, many=True).data,
         "nj": nj,
-        "script": script,
-        "div": div,
         "current_path": current_path,
         "qname": qname,
         "pagination": {
@@ -331,17 +374,36 @@ def job_detail(request, pk):
     if cfg.get_xalt_user() != "":
         def _xalt_fn():
             xalt_data = xalt_data_c()
-            for r in run.objects.using("xalt").filter(job_id=job.jid).only(
-                "exec_path", "cwd", "run_id"
-            ):
-                if "usr" in r.exec_path.split("/"):
+            runs = list(
+                run.objects.using("xalt")
+                .filter(job_id=job.jid)
+                .only("exec_path", "cwd", "run_id")
+            )
+            run_ids = [r.run_id for r in runs]
+            joins = list(
+                join_run_object.objects.using("xalt")
+                .filter(run_id__in=run_ids)
+                .only("run_id", "obj_id")
+            ) if run_ids else []
+            obj_ids = list(set(j.obj_id for j in joins))
+            libs_by_id = {
+                l.obj_id: l
+                for l in lib.objects.using("xalt")
+                .filter(obj_id__in=obj_ids)
+                .only("object_path", "module_name")
+            } if obj_ids else {}
+            joins_by_run = {}
+            for j in joins:
+                joins_by_run.setdefault(j.run_id, []).append(j)
+            for r in runs:
+                if "usr" in (r.exec_path or "").split("/"):
                     continue
                 xalt_data.exec_path.append(r.exec_path)
-                xalt_data.cwd.append(r.cwd[0:128])
-                for join in join_run_object.objects.using("xalt").filter(run_id=r.run_id):
-                    obj = lib.objects.using("xalt").only(
-                        "object_path", "module_name"
-                    ).get(obj_id=join.obj_id)
+                xalt_data.cwd.append((r.cwd or "")[0:128])
+                for join in joins_by_run.get(r.run_id, []):
+                    obj = libs_by_id.get(join.obj_id)
+                    if not obj:
+                        continue
                     module_name = obj.module_name or "none"
                     if any(libtmp.module_name == module_name for libtmp in xalt_data.libset):
                         continue

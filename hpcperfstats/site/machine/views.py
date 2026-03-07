@@ -45,6 +45,7 @@ from hpcperfstats.site.machine.cache_utils import (
     KEY_HOST_LAST,
     KEY_GPU_QS,
     KEY_XALT,
+    KEY_JOB,
     KEY_TYPE_DETAIL_HOSTS,
     cached_orm,
     TIMEOUT_MEDIUM,

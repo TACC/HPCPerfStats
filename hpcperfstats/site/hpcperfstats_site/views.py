@@ -24,4 +24,6 @@ class ReactSPAView(View):
                 content_type="text/plain",
             )
         with open(index_path, "r", encoding="utf-8") as f:
-            return HttpResponse(f.read(), content_type="text/html")
+            response = HttpResponse(f.read(), content_type="text/html")
+            response["Cache-Control"] = "public, max-age=300"
+            return response

@@ -8,6 +8,7 @@ export default function JobList() {
   const paramsFromRoute = useParams();
   const location = useLocation();
   const [data, setData] = useState(null);
+  const [histograms, setHistograms] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -17,9 +18,15 @@ export default function JobList() {
     if (paramsFromRoute.username) params.username = paramsFromRoute.username;
     if (paramsFromRoute.account) params.account = paramsFromRoute.account;
     if (paramsFromRoute.host) params.host = paramsFromRoute.host;
-    api
-      .getJobList(params)
-      .then(setData)
+    setLoading(true);
+    Promise.all([
+      api.getJobList(params),
+      api.getJobListHistograms(params),
+    ])
+      .then(([listData, histData]) => {
+        setData(listData);
+        setHistograms(histData);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [searchParams, paramsFromRoute]);
@@ -31,12 +38,12 @@ export default function JobList() {
   const {
     job_list = [],
     nj = 0,
-    script,
-    div,
     current_path,
     qname,
     pagination = {},
   } = data;
+  const script = histograms?.script ?? "";
+  const div = histograms?.div ?? "";
   const { page, num_pages, has_previous, has_next, previous_page_number, next_page_number } =
     pagination;
 
