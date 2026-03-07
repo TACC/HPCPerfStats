@@ -26,7 +26,6 @@ from hpcperfstats.site.machine.models import host_data, proc_data
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE",
                       "hpcperfstats.site.hpcperfstats_site.settings")
-django.setup()
 
 # archive toggle
 should_archive = True
@@ -507,6 +506,7 @@ def database_startup():
 
     AI generated.
     """
+  django.setup()
   from django.db import connection
   with connection.cursor() as cur:
     if DEBUG:
