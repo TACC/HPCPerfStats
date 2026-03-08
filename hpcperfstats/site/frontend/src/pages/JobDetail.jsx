@@ -121,13 +121,21 @@ export default function JobDetail() {
               </tr>
             </thead>
             <tbody>
-              {Object.entries(fsio).map(([key, val]) => (
-                <tr key={key}>
-                  <td>{key}</td>
-                  <td>{Number(val[0]).toExponential(1)}</td>
-                  <td>{Number(val[1]).toExponential(1)}</td>
+              {Object.keys(fsio).length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="text-muted">
+                    No file system data available.
+                  </td>
                 </tr>
-              ))}
+              ) : (
+                Object.entries(fsio).map(([key, val]) => (
+                  <tr key={key}>
+                    <td>{key}</td>
+                    <td>{Number(val[0]).toExponential(1)}</td>
+                    <td>{Number(val[1]).toExponential(1)}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -137,17 +145,25 @@ export default function JobDetail() {
               <tr>
                 <td>Executable Path</td>
                 <td>
-                  {(xalt_data.exec_path || []).map((item, i) => (
-                    <span key={i}>{item}<br /></span>
-                  ))}
+                  {(xalt_data.exec_path || []).length === 0 ? (
+                    <span className="text-muted">No XALT data available.</span>
+                  ) : (
+                    (xalt_data.exec_path || []).map((item, i) => (
+                      <span key={i}>{item}<br /></span>
+                    ))
+                  )}
                 </td>
               </tr>
               <tr>
                 <td>Working Directory</td>
                 <td>
-                  {(xalt_data.cwd || []).map((item, i) => (
-                    <span key={i}>{item}<br /></span>
-                  ))}
+                  {(xalt_data.cwd || []).length === 0 ? (
+                    <span className="text-muted">No XALT data available.</span>
+                  ) : (
+                    (xalt_data.cwd || []).map((item, i) => (
+                      <span key={i}>{item}<br /></span>
+                    ))
+                  )}
                 </td>
               </tr>
             </tbody>
@@ -228,12 +244,20 @@ export default function JobDetail() {
               </tr>
             </thead>
             <tbody>
-              {(xalt_data.libset || []).map((item, i) => (
-                <tr key={i}>
-                  <td>{item[1] === "none" ? "system" : item[1]}</td>
-                  <td>{item[0]}</td>
+              {(xalt_data.libset || []).length === 0 ? (
+                <tr>
+                  <td colSpan={2} className="text-muted">
+                    No XALT data available.
+                  </td>
                 </tr>
-              ))}
+              ) : (
+                (xalt_data.libset || []).map((item, i) => (
+                  <tr key={i}>
+                    <td>{item[1] === "none" ? "system" : item[1]}</td>
+                    <td>{item[0]}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

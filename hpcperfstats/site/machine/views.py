@@ -435,7 +435,7 @@ class job_dataDetailView(DetailView):
       else:
         context["xalt_data"] = xalt_data_c()
     else:
-      context["xalt_data"] = []
+      context["xalt_data"] = xalt_data_c()
 
     # Build Summary Plot (same placeholder UI as API when no data)
     context["mplot_unavailable_reason"] = None

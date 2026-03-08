@@ -44,7 +44,9 @@
       <thead><th>File System</th><th>MB Read</th><th>MB Written</th><thead>
 	{% for key,val in fsio.items %}
 	<tr align=left><td>{{ key }}</td><td>{{ val.0|stringformat:"0.1e" }}</td><td>{{ val.1|stringformat:"0.1e" }}</td></tr>
-	{% endfor %}	
+	{% empty %}
+	<tr><td colspan="3" class="text-muted">No file system data available.</td></tr>
+	{% endfor %}
     </table>
   </div>
 
@@ -53,11 +55,15 @@
     <tr><td>Executable Path</td><td>
       {% for item in xalt_data.exec_path %}
       {{ item }}<br>
+      {% empty %}
+      <span class="text-muted">No XALT data available.</span>
       {% endfor %}
     </td></tr>
     <tr><td>Working Directory</td><td>
       {% for item in xalt_data.cwd %}
       {{ item }}<br>
+      {% empty %}
+      <span class="text-muted">No XALT data available.</span>
       {% endfor %}
    </td></tr>
 
@@ -135,6 +141,8 @@
 	  {% if obj.module_name == "none" %}
 	  <tr><td align=left>system</td><td align=left>{{ obj.object_path }}</td></tr>
 	  {% endif %}
+	  {% empty %}
+	  <tr><td colspan="2" class="text-muted">No XALT data available.</td></tr>
 	  {% endfor %}
 	</tbody>
       </table>
