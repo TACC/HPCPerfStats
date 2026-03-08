@@ -48,7 +48,10 @@
 
 </div>
 
-<div class="col-sm-20"><a href={{ client_url }}>Client Logs</a> <a href={{ server_url }}>Server Logs</a></div>
+<div class="col-sm-20" style="display:flex; gap:0.5rem;">
+  {% if client_url %}<a href="{{ client_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary btn-sm">Client Logs</a>{% endif %}
+  {% if server_url %}<a href="{{ server_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary btn-sm">Server Logs</a>{% endif %}
+</div>
 
 </br>
 

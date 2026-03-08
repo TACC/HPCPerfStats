@@ -161,9 +161,27 @@ export default function JobDetail() {
         </div>
       </div>
 
-      <div className="col-sm-20">
-        {client_url && <a href={client_url}>Client Logs</a>}
-        {server_url && <a href={server_url}> Server Logs</a>}
+      <div className="col-sm-20" style={{ display: "flex", gap: "0.5rem" }}>
+        {client_url && (
+          <a
+            href={client_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-outline-secondary btn-sm"
+          >
+            Client Logs
+          </a>
+        )}
+        {server_url && (
+          <a
+            href={server_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-outline-secondary btn-sm"
+          >
+            Server Logs
+          </a>
+        )}
       </div>
 
       {gpu_active != null && (
