@@ -46,10 +46,12 @@
             <div class="text-muted small">a job-level resource usage monitoring tool</div>
             {% if machine_name %}<div class="navbar-brand-cluster">{{ machine_name }}</div>{% endif %}
           </div>
+          {% block navbar_right %}
           <form class="d-flex ms-auto" action="{% url 'machine:search' %}" method="get" role="search">
             <input type="text" class="form-control me-2" name="jid" placeholder="Job ID">
             <button type="submit" class="btn btn-outline-secondary">find job</button>
           </form>
+          {% endblock %}
         </div>
       </nav>
 
