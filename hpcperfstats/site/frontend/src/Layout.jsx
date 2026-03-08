@@ -10,7 +10,7 @@ export default function Layout({ session, children }) {
     <div className="container-fluid">
       <nav className="navbar navbar-expand-lg navbar-light bg-light" role="navigation">
         <div className="container-fluid">
-          <Link to="/machine/" className="navbar-brand navbar-header-logo">
+          <Link to="/" className="navbar-brand navbar-header-logo">
             <img
               src="/media/logo.png"
               alt="TACC"

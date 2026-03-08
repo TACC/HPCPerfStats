@@ -19,12 +19,13 @@ body {
   z-index: 1;
 }
 
-/* Logo container: match navbar height so logo can fill it */
+/* Logo container: match navbar height so logo can fill it; re-enable clicks (navbar-brand has pointer-events: none) */
 .navbar-header-logo {
   display: flex;
   align-items: center;
   min-height: 50px;
   padding: 4px 0;
+  pointer-events: auto;
 }
 .navbar-header-logo a {
   display: flex;
