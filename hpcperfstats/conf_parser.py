@@ -176,6 +176,11 @@ def get_timezone():
   return _get('DEFAULT', 'timezone')
 
 
+def get_local_timezone():
+  """Return the local timezone as a ZoneInfo for datetime conversion."""
+  return ZoneInfo(get_timezone())
+
+
 def get_total_cores():
   """Return the total cores count from DEFAULT config."""
   return _get('DEFAULT', 'total_cores')
