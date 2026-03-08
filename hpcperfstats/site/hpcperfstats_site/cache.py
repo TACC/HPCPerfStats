@@ -1,6 +1,5 @@
 """Memcached cache backend with larger server_max_value_length for big objects.
 
-AI generated.
 """
 import pickle
 import threading
@@ -11,10 +10,10 @@ from django.core.cache.backends.memcached import PyMemcacheCache
 class LargeMemcachedCache(PyMemcacheCache):
   """Memcached cache for large objects (e.g. 50MB max value).
 
-    AI generated.
     """
 
   def __init__(self, server, params):
+    """Initialize cache with server/params and a lock for lazy client creation."""
     super().__init__(server, params)
     self._client_lock = threading.Lock()
 

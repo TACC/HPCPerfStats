@@ -1,6 +1,5 @@
 """Heatmap plot: CPI (cycles/instruction) per host per time for a job using utils and Bokeh rects.
 
-AI generated.
 """
 import hpcperfstats.conf_parser as cfg
 
@@ -29,13 +28,11 @@ from hpcperfstats.analysis.gen import utils
 class HeatMap():
   """Builds a Bokeh heatmap of CPI (cycles/instruction) by host and time from a utils-compatible job.
 
-    AI generated.
     """
 
   def plot(self, job):
     """Compute per-host CPI from PMC CLOCKS_UNHALTED_CORE and INSTRUCTIONS_RETIRED, return a Bokeh figure with rect glyphs and color bar.
 
-        AI generated.
         """
     u = utils.utils(job)
     schema, _stats = u.get_type("pmc")

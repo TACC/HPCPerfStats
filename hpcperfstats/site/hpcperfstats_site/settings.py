@@ -1,5 +1,5 @@
 # Django settings for hpcperfstats_site project. Database, auth, templates, static, and app config from conf_parser and env.
-# AI generated.
+#
 import os
 import sys
 

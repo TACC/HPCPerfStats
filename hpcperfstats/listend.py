@@ -1,6 +1,5 @@
 """RabbitMQ listener daemon. Consumes messages from the configured queue and appends payloads to per-host files under the archive directory. Single-instance via file lock.
 
-AI generated.
 """
 import os
 import sys
@@ -17,7 +16,6 @@ DEBUG = cfg.get_debug()
 def on_message(channel, method_frame, header_frame, body):
   """Callback for each message: decode body, determine host, write/append to host's current file and optionally rotate. Acknowledges the message.
 
-    AI generated.
     """
   if DEBUG:
     print("found message: %s" % header_frame)

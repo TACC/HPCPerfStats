@@ -1,6 +1,5 @@
 """Initial migration: CreateModel for job_data, metrics_data, host_data, proc_data.
 
-AI generated.
 """
 import django.contrib.postgres.fields
 from django.db import migrations, models
@@ -13,7 +12,6 @@ import hpcperfstats.site.machine.models
 class Migration(migrations.Migration):
   """Initial schema for machine app models.
 
-    AI generated.
     """
   initial = True
 

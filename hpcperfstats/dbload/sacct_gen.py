@@ -1,6 +1,5 @@
 """Generate sacct commands to export job accounting data for a date range. Prints and optionally runs sacct for each day.
 
-AI generated.
 """
 import os
 import sys

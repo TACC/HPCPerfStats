@@ -1,6 +1,5 @@
 """Unit tests for analysis.gen.utils (clean_dataframe, queryset_to_dataframe).
 
-AI generated.
 """
 import numpy as np
 import pandas as pd
@@ -11,7 +10,6 @@ import pytest
 def test_clean_dataframe_fillna():
   """clean_dataframe replaces NaN with empty string.
 
-    AI generated.
     """
   from hpcperfstats.analysis.gen.utils import clean_dataframe
   df = pd.DataFrame({"a": [1, np.nan, 3]})
@@ -22,7 +20,6 @@ def test_clean_dataframe_fillna():
 def test_clean_dataframe_inf():
   """clean_dataframe replaces inf with empty string.
 
-    AI generated.
     """
   from hpcperfstats.analysis.gen.utils import clean_dataframe
   df = pd.DataFrame({"a": [1.0, np.inf, -np.inf]})
@@ -34,7 +31,6 @@ def test_clean_dataframe_inf():
 def test_queryset_to_dataframe_empty():
   """queryset_to_dataframe returns empty DataFrame for None.
 
-    AI generated.
     """
   from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
   out = queryset_to_dataframe(None)
@@ -45,7 +41,6 @@ def test_queryset_to_dataframe_empty():
 def test_queryset_to_dataframe_mock_queryset():
   """queryset_to_dataframe converts list of dicts-like queryset to DataFrame.
 
-    AI generated.
     """
   from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
 

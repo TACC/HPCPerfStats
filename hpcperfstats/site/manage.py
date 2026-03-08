@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 """Django management script: sets DJANGO_SETTINGS_MODULE and runs execute_from_command_line.
 
-AI generated.
 """
 import os
 import sys

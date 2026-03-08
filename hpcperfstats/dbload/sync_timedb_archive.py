@@ -2,7 +2,6 @@
 """Load stats from existing .tar archives into the database. Workers read from
 tar by (path, member_name) so the main process never holds file contents.
 
-AI generated.
 """
 import io
 import multiprocessing

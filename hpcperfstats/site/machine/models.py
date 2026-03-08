@@ -1,6 +1,5 @@
 """The database models of hpcperfstats: job_data, metrics_data, host_data, proc_data, and RealField. Maps to TimescaleDB/PostgreSQL tables.
 
-AI generated.
 """
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
@@ -9,14 +8,12 @@ from django.db import models
 class RealField(models.FloatField):
   """Django field that uses PostgreSQL real (32-bit float) instead of double precision.
 
-    AI generated.
     """
 
   # Make type in order to use 32 bit floats (reals) instead of 64 bit floats
   def db_type(self, connection):
     """Return PostgreSQL type name 'real'.
 
-        AI generated.
         """
     return "real"
 
@@ -27,7 +24,6 @@ class RealField(models.FloatField):
 class job_data(models.Model):
   """Slurm job accounting record: jid, times, runtime, user, account, queue, state, host_list, etc. Table: job_data.
 
-    AI generated.
     """
   jid = models.CharField(primary_key=True, max_length=32)
   submit_time = models.DateTimeField()
@@ -57,7 +53,6 @@ class job_data(models.Model):
   def color(self):
     """Return hex color for state: E1EDFA completed, FFB2B2 failed, silver otherwise.
 
-        AI generated.
         """
     if self.state == 'COMPLETED':
       ret_val = "E1EDFA"
@@ -71,7 +66,6 @@ class job_data(models.Model):
 class metrics_data(models.Model):
   """Derived metric value per job and (type, metric). Unique on (jid, type, metric). Table: metrics_data.
 
-    AI generated.
     """
   jid = models.ForeignKey(job_data,
                           on_delete=models.CASCADE,
@@ -133,7 +127,6 @@ class metrics_data(models.Model):
 class host_data(models.Model):
   """TimescaleDB hypertable: per (time, host, jid, type, event) value/delta/arc. Table: host_data.
 
-    AI generated.
     """
   time = models.DateTimeField(primary_key=True)
   host = models.CharField(max_length=64, blank=True, null=True)
@@ -158,7 +151,6 @@ class host_data(models.Model):
 class proc_data(models.Model):
   """Process names observed per (jid, host). Table: proc_data.
 
-    AI generated.
     """
   jid = models.CharField(max_length=32, blank=True, null=True)
   host = models.CharField(max_length=64, blank=True, null=True)

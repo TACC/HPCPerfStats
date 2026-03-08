@@ -1,6 +1,5 @@
 """Shared utilities for analysis: job-like utils class (freq/imc/cha, get_type), queryset_to_dataframe, clean_dataframe, and timezone-aware Bokeh tick formatter.
 
-AI generated.
 """
 import hpcperfstats.conf_parser as cfg
 
@@ -31,13 +30,11 @@ local_timezone = cfg.get_timezone()
 class utils():
   """Minimal job-like wrapper exposing host stats, schemas, times, and type resolution (pmc/imc/cha) for metrics and plots.
 
-    AI generated.
     """
 
   def __init__(self, job):
     """Initialize from a job object; set nhosts, hostnames, wayness, hours, t, nt, dt, and resolve pmc/imc/cha/freq from schemas.
 
-        AI generated.
         """
     freq_list = {
         "intel_snb": 2.7,
@@ -78,7 +75,6 @@ class utils():
   def get_type(self, typename, aggregate=True):
     """Return (schema, stats) for typename (e.g. pmc/imc/cha); stats is per-host aggregated or per-device dict. Returns (None, {}) if type not in job.
 
-        AI generated.
         """
     if typename == "imc":
       typename = self.imc
@@ -130,7 +126,6 @@ def get_job_host_data_and_job_dict(jid):
 def queryset_to_dataframe(qs):
   """Convert a Django QuerySet to a pandas DataFrame.
 
-    AI generated.
     """
   import pandas as pd
   if qs is None or not hasattr(qs, "values"):
@@ -141,7 +136,6 @@ def queryset_to_dataframe(qs):
 def clean_dataframe(df):
   """Replace NaN and inf with empty string for display/serialization.
 
-    AI generated.
     """
   df = df.fillna('')
   df = df.replace([np.inf, -np.inf], '')
@@ -151,7 +145,6 @@ def clean_dataframe(df):
 def tz_aware_bokeh_tick_formatter():
   """Return a fresh CustomJSTickFormatter that renders datetime ticks in the configured timezone. Must return a new instance per plot/document.
 
-    AI generated.
     """
   # Must return a fresh model per plot/document (Bokeh models cannot be shared
   # across documents, e.g. across separate web requests).

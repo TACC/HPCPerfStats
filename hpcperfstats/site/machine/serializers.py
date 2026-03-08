@@ -34,13 +34,17 @@ class JobListSerializer(serializers.ModelSerializer):
         ]
 
     def get_has_metrics(self, obj):
+        """Return True if the job has any metrics_data."""
         return obj.metrics_data_set.exists()
 
     def get_color(self, obj):
+        """Return hex color for the job's state (completed/failed/other)."""
         return obj.color()
 
 
 class MetricsDataSerializer(serializers.ModelSerializer):
+    """Metrics data fields (type, metric, units, value) for embedding in job detail."""
+
     class Meta:
         model = metrics_data
         fields = ["type", "metric", "units", "value"]

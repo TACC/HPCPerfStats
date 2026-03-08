@@ -1,6 +1,5 @@
 """URL routing for machine app: home, job detail, host detail, index (date/username/account), type_detail, search.
 
-AI generated.
 """
 from django.urls import path
 

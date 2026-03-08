@@ -1,6 +1,5 @@
 """Unit tests for dbload parsing logic (sync_acct column handling, sync_timedb line parsing).
 
-AI generated.
 """
 import pandas as pd
 
@@ -10,7 +9,6 @@ import pytest
 def test_sync_acct_columns_kept():
   """Columns to read in sync_acct match expected set.
 
-    AI generated.
     """
   columns_to_read = [
       "JobID",
@@ -35,7 +33,6 @@ def test_sync_acct_columns_kept():
 def test_sync_acct_rename_map():
   """Rename map for sync_acct is consistent.
 
-    AI generated.
     """
   renames = {
       "JobID": "jid",

@@ -1,6 +1,5 @@
 """Django views for machine app: home, search, index (job list + histograms), job detail (SummaryPlot, XALT, Lustre), type_detail (DevPlot), host_detail, admin_monitor. Uses OAuth2 and jid_table/plot providers.
 
-AI generated.
 """
 import hpcperfstats.conf_parser as cfg
 
@@ -62,7 +61,6 @@ local_timezone = cfg.get_timezone()
 class DataNotFoundException(Exception):
   """Raised when no job data matches the search (e.g. index filter returns empty).
 
-    AI generated.
     """
   pass
 
@@ -70,13 +68,11 @@ class DataNotFoundException(Exception):
 class libset_c:
   """Simple container for (object_path, module_name) used in XALT libset.
 
-    AI generated.
     """
 
   def __init__(self, object_path, module_name):
     """Store object_path and module_name.
 
-        AI generated.
         """
     self.module_name = module_name
     self.object_path = object_path
@@ -85,13 +81,11 @@ class libset_c:
 class xalt_data_c:
   """Container for XALT data: exec_path list, cwd list, libset list.
 
-    AI generated.
     """
 
   def __init__(self):
     """Initialize empty exec_path, cwd, and libset lists.
 
-        AI generated.
         """
     self.exec_path = []
     self.cwd = []
@@ -101,7 +95,6 @@ class xalt_data_c:
 def home(request, error=False):
   """Render search page with date list and metrics; redirect to login if not authenticated.
 
-    AI generated.
     """
   if not check_for_tokens(request):
     return HttpResponseRedirect("/login_prompt")
@@ -136,7 +129,6 @@ def home(request, error=False):
 def search(request):
   """Dispatch by GET: jid -> job detail redirect; host -> host_detail; else index. On failure return home with error.
 
-    AI generated.
     """
   if "jid" in request.GET:
     try:
@@ -171,7 +163,6 @@ def search(request):
 def index(request, **kwargs):
   """Filter jobs by GET params, build metric histograms, paginate, and render index template with script/div for Bokeh.
 
-    AI generated.
     """
   if not check_for_tokens(request):
     return HttpResponseRedirect("/login_prompt")
@@ -274,7 +265,6 @@ def index(request, **kwargs):
 def job_hist(df, metric, label):
   """Build a Bokeh quad histogram for the given metric column and axis label.
 
-    AI generated.
     """
   hover = HoverTool(tooltips=[("jobs", "@top"), ("bin", "[@left, @right]")],
                     point_policy="snap_to_data")
@@ -305,7 +295,6 @@ def job_hist(df, metric, label):
 def heat_map(pk):
   """Return Bokeh components for HeatMap plot for job pk (legacy; get_data may not be defined in this module).
 
-    AI generated.
     """
   data = get_data(pk)
   hm = plots.HeatMap()
@@ -315,14 +304,12 @@ def heat_map(pk):
 class job_dataDetailView(DetailView):
   """Django DetailView for a single job_data: summary plot, Lustre/XALT context, Splunk URLs. Non-staff users see only their jobs.
 
-    AI generated.
     """
   model = job_data
 
   def get_queryset(self):
     """Restrict to current user's jobs unless is_staff.
 
-        AI generated.
         """
     queryset = super(job_dataDetailView, self).get_queryset()
     if "is_staff" in self.request.session and self.request.session["is_staff"]:
@@ -332,7 +319,6 @@ class job_dataDetailView(DetailView):
   def get(self, request, *args, **kwargs):
     """Redirect to login if not authenticated.
 
-        AI generated.
         """
     if not check_for_tokens(self.request):
       return HttpResponseRedirect("/login_prompt")
@@ -342,7 +328,6 @@ class job_dataDetailView(DetailView):
   def get_context_data(self, **kwargs):
     """Add host_list, summary plot (mscript/mdiv), Lustre fsio, schema, XALT data, Splunk URLs.
 
-        AI generated.
         """
     context = super(job_dataDetailView, self).get_context_data(**kwargs)
     job = context['job_data']
@@ -475,7 +460,6 @@ class job_dataDetailView(DetailView):
 def type_detail(request, jid, type_name):
   """Render type-detail page with DevPlot for the given job and type (e.g. llite, cpu). Uses TypeDetailDataProvider.
 
-    AI generated.
     """
   if not check_for_tokens(request):
     return HttpResponseRedirect("/login_prompt")
@@ -569,7 +553,6 @@ def type_detail(request, jid, type_name):
 def host_detail(request):
   """Render summary plot for a single host and time range (GET host, end_time__gte, end_time__lte). Uses HostDataProvider.
 
-    AI generated.
     """
   if not check_for_tokens(request):
     return HttpResponseRedirect("/login_prompt")
@@ -621,7 +604,6 @@ def host_detail(request):
 def proc_detail(request, pk, proc_name):
   """Render process detail for a job and process name (VmPeak, VmHWM, etc.). Uses get_data(pk) legacy path.
 
-    AI generated.
     """
   if not check_for_tokens(request):
     return HttpResponseRedirect("/login_prompt")
@@ -660,7 +642,6 @@ def proc_detail(request, pk, proc_name):
 def admin_monitor(request):
   """Staff-only view: list all hosts with last host_data sample time and age bucket (ok, gt_10min, gt_hour, etc.).
 
-    AI generated.
     """
   if not check_for_tokens(request):
     return HttpResponseRedirect("/login_prompt")
@@ -734,12 +715,12 @@ def admin_monitor(request):
 class ChoiceForm(forms.Form):
   """Form with queue and state dropdowns populated from job_data (cached). Used on search page.
 
-    AI generated.
     """
   queue = forms.ChoiceField(choices=[], widget=forms.Select())
   state = forms.ChoiceField(choices=[], widget=forms.Select())
 
   def __init__(self, *args, **kwargs):
+    """Populate queue and state choices from cached job_data."""
     super().__init__(*args, **kwargs)
     try:
       queues = cached_orm(

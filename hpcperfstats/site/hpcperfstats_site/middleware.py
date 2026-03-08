@@ -1,6 +1,5 @@
 """ProfileMiddleware: add ?prof to a URL to profile the view (DEBUG only). Optional ?sort and ?count.
 
-AI generated.
 """
 try:
   import cProfile as profile
@@ -15,13 +14,11 @@ from django.conf import settings
 class ProfileMiddleware(object):
   """Simple profile middleware to profile django views. Add ?prof to URL; optional ?sort and ?count.
 
-    AI generated.
     """
 
   def can(self, request):
     """Return True if DEBUG and request has ?prof.
 
-        AI generated.
         """
     return settings.DEBUG and 'prof' in request.GET
 
@@ -30,7 +27,6 @@ class ProfileMiddleware(object):
   def process_view(self, request, callback, callback_args, callback_kwargs):
     """Run callback under profiler when can(request); store profiler for process_response.
 
-        AI generated.
         """
     if self.can(request):
       self.profiler = profile.Profile()
@@ -45,7 +41,6 @@ class ProfileMiddleware(object):
   def process_response(self, request, response):
     """If prof was active, replace response content with profiler stats (pre).
 
-        AI generated.
         """
     if self.can(request):
       self.profiler.create_stats()

@@ -3,7 +3,6 @@
 
 DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers and calls close_old_connections() at entry so each worker uses a fresh connection. Writes are serialized with a shared lock.
 
-AI generated.
 """
 import itertools
 import multiprocessing
@@ -86,7 +85,6 @@ tgz_archive_dir = cfg.get_daily_archive_dir_path()
 def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   """Parse a stats file, map hardware counters, compute deltas/arc, and bulk-insert into host_data and proc_data. Returns (stats_file, need_archival). Uses lock for DB writes.
 
-    AI generated.
     """
   close_old_connections()
 
@@ -223,7 +221,6 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
 def _insert_proc_data_individually(proc_stats_df):
   """Fallback: insert proc_data rows one by one, skipping duplicates.
 
-    AI generated.
     """
   unique_violations = 0
   for row in proc_stats_df.itertuples(index=False):
@@ -240,7 +237,6 @@ def _insert_proc_data_individually(proc_stats_df):
 def _insert_host_data_individually(stats_df):
   """Fallback: insert host_data rows one by one, skipping duplicates. Returns need_archival.
 
-    AI generated.
     """
   need_archival = True
   unique_violations = 0

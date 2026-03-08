@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 """XALT data enrichment script. Uses Django ORM for xalt DB (run, join_run_object, lib). Note: Current job_data has no exe/exec_path/cwd/threads; XALT run data is still queried in views. This script optionally iterates by date and logs xalt runs for jobs.
 
-AI generated.
 """
 import os
 import sys

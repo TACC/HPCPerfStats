@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Test runner for hpcperfstats. Runs pytest over the package. Use --no-django for unit tests only; Django tests need PostgreSQL and HPCPERFSTATS_INI.
 
-AI generated.
 """
 import os
 import sys
@@ -16,7 +15,6 @@ if _root not in sys.path:
 def main():
   """Run pytest with optional --no-django; return exit code from pytest.main.
 
-    AI generated.
     """
   import pytest
   args = list(sys.argv[1:])

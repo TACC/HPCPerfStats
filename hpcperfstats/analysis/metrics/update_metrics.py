@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 """Update metrics_data for jobs ending on a given date. Filters by runtime, optionally skips jobs that already have metrics, runs Metrics().run(jobs_list).
 
-AI generated.
 """
 import os
 import sys

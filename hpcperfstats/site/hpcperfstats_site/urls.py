@@ -1,6 +1,5 @@
 """Root URL config: admin_monitor, machine app, login/logout/oauth_callback, media, static.
 
-AI generated.
 """
 from django.contrib import admin
 from django.http import HttpResponseRedirect

@@ -10,7 +10,6 @@
 # ---->>>> Programmable CTL registers must be in same order as CTR
 """Intel processor and uncore event encoding (CORE_PERF_EVENT, CBOX, HAU, IMC, QPI, etc.) and reformat_counters/format_knl/process_job for mapping raw counters to event names.
 
-AI generated.
 """
 import numpy
 
@@ -19,7 +18,6 @@ import numpy
 def CORE_PERF_EVENT(event_select, unit_mask):
   """Encode Intel core PERF_EVENT (no any-thread bit).
 
-    AI generated.
     """
   return event_select | (unit_mask << 8) | (1 << 16) | (1 << 17) | (0 << 21) | (
       1 << 22)
@@ -29,7 +27,6 @@ def CORE_PERF_EVENT(event_select, unit_mask):
 def CORE_PERF_EVENT1(event_select, unit_mask):
   """Encode Intel core PERF_EVENT with any-thread bit set.
 
-    AI generated.
     """
   return event_select | (unit_mask << 8) | (1 << 16) | (1 << 17) | (1 << 21) | (
       1 << 22)
@@ -89,6 +86,7 @@ cpu_event_map = {
 
 ## CBo events
 def CBOX_PERF_EVENT(event, umask):
+  """Encode Intel CBo (cache box) PERF_EVENT from event select and unit mask."""
   return (event) | (umask << 8) | (0 << 17) | (0 << 18) | (0 << 19) | (
       1 << 22) | (0 << 23) | (1 << 24)
 
@@ -107,6 +105,7 @@ cbo_event_map = {
 
 ## Home Agent Unit events
 def HAU_PERF_EVENT(event, umask):
+  """Encode Intel Home Agent Unit PERF_EVENT from event select and unit mask."""
   return (event) | (umask << 8) | (0 << 18) | (1 << 22) | (0 << 23) | (1 << 24)
 
 
@@ -121,10 +120,12 @@ hau_event_map = {
 
 ## Integrated Memory events
 def IMC_PERF_EVENT(event, umask):
+  """Encode Intel Integrated Memory Controller PERF_EVENT from event select and unit mask."""
   return (event) | (umask << 8) | (0 << 18) | (1 << 22) | (0 << 23) | (1 << 24)
 
 
 def IMC_PERF_EVENT_SKX(event, umask):
+  """Encode Intel SKX IMC PERF_EVENT from event select and unit mask (variant encoding)."""
   return (event) | (umask << 8) | (0 << 18) | (1 << 22) | (0 << 23) | (0 << 24)
 
 
@@ -154,6 +155,7 @@ cha_event_map = {
 
 ## Power Control Unit events
 def PCU_PERF_EVENT(event):
+  """Encode Intel Power Control Unit PERF_EVENT from event select."""
   return (event) | (0 << 14) | (0 << 17) | (0 << 18) | (1 << 22) | (0 << 23) | (
       1 << 24) | (0 << 31)
 
@@ -173,6 +175,7 @@ pcu_event_map = {
 
 ## QPI Unit events
 def QPI_PERF_EVENT(event, umask):
+  """Encode Intel QPI (QuickPath) PERF_EVENT from event select and unit mask."""
   return (event) | (umask << 8) | (0 << 18) | (1 << 21) | (1 << 22) | (0 << 23)
 
 
@@ -187,6 +190,7 @@ qpi_event_map = {
 
 ## R2PCI Unit events
 def R2PCI_PERF_EVENT(event, umask):
+  """Encode Intel R2PCI PERF_EVENT from event select and unit mask."""
   return (event) | (umask << 8) | (0 << 18) | (1 << 22) | (0 << 23) | (1 << 24)
 
 
@@ -202,6 +206,7 @@ r2pci_event_map = {
 
 ## WESTMERE events
 def WTM_PERF_EVENT(event, umask):
+  """Encode Intel Westmere core PERF_EVENT from event select and unit mask."""
   return (event) | (umask << 8) | (1 << 16) | (1 << 17) | (1 << 21) | (1 << 22)
 
 
@@ -221,6 +226,7 @@ wtm_event_map = {
 
 ## WESTMERE UNCORE events
 def WTMUNC_PERF_EVENT(event, umask):
+  """Encode Intel Westmere uncore PERF_EVENT from event select and unit mask."""
   return (event) | (umask << 8) | (1 << 22)
 
 
@@ -240,6 +246,7 @@ wtmunc_event_map = {
 
 ## KNL EDC UCLK events (func 0 dev 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16)
 def KNL_EDC_UCLK_PERF_EVENT(event, umask):
+  """Encode KNL EDC UCLK PERF_EVENT from event select and unit mask."""
   return (event) | (umask << 8) | (1 << 22)
 
 
@@ -253,6 +260,7 @@ knl_edc_uclk_event_map = {
 
 ## KNL EDC ECLK events (func 2 dev 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f)
 def KNL_EDC_ECLK_PERF_EVENT(event, umask):
+  """Encode KNL EDC ECLK PERF_EVENT from event select and unit mask."""
   return (event) | (umask << 8) | (1 << 22)
 
 
@@ -265,6 +273,7 @@ knl_edc_eclk_event_map = {
 
 ## KNL MC UCLK events (func 0 dev 0x0a, 0x0b)
 def KNL_MC_UCLK_PERF_EVENT(event, umask):
+  """Encode KNL MC UCLK PERF_EVENT from event select and unit mask."""
   return (event) | (umask << 8) | (1 << 22)
 
 
@@ -275,6 +284,7 @@ knl_mc_uclk_event_map = {
 
 ## KNL MC DCLK events (func 2, 3, 4 dev 0x08, 0x09)
 def KNL_MC_DCLK_PERF_EVENT(event, umask):
+  """Encode KNL MC DCLK PERF_EVENT from event select and unit mask."""
   return (event) | (umask << 8) | (1 << 22)
 
 
@@ -289,14 +299,12 @@ knl_mc_dclk_event_map = {
 class reformat_counters:
   """Reformat raw counter arrays to named events using event_map; update job schema and host stats.
 
-    AI generated.
     """
 
   ## Constructor
   def __init__(self, job, name, event_map):
     """Build CTL/CTR/FIXED register lists and new schema from event_map; replace job schema for name.
 
-        AI generated.
         """
     ## Job Object
     self.job = job
@@ -371,7 +379,6 @@ class reformat_counters:
   def register(self, host):
     """Remap host stats for this device to new schema (drop CTL columns, keep CTR and FIXED).
 
-        AI generated.
         """
     # Build stats without ctl registers
     if self.name not in host.stats:
@@ -432,7 +439,6 @@ intel_xeon = {
 def format_knl(job, typename):
   """Split KNL edc/mc stats by func and apply appropriate event map (uclk/eclk, etc.); replace schema and host stats.
 
-    AI generated.
     """
   if typename in job.schemas:
     schema_desc = job.schemas.get(typename).desc
@@ -486,7 +492,6 @@ def format_knl(job, typename):
 def process_job(job):
   """Apply reformat_counters for all intel_xeon device types in job.schemas; run format_knl for KNL edc/mc; handle legacy intel_pmc3/wtm/uncore/nhm.
 
-    AI generated.
     """
   # These events work for SNB,IVB,HSW,BDW,SKX at this time 2015/05/27
   for device, mapping in intel_xeon.items():

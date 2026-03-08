@@ -9,6 +9,7 @@ class ReactSPAView(View):
     """Serve the built React app index.html so the SPA handles routing."""
 
     def get(self, request, *args, **kwargs):
+        """Serve the frontend index.html with cache headers."""
         static_dirs = getattr(settings, "STATICFILES_DIRS", ())
         if not static_dirs:
             return HttpResponse(

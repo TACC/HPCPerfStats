@@ -1,6 +1,5 @@
 """Unit tests for conf_parser with a temporary INI file.
 
-AI generated.
 """
 import os
 
@@ -10,7 +9,6 @@ import pytest
 def test_config_path_from_env(temp_ini, monkeypatch):
   """Config is read from HPCPERFSTATS_INI when set.
 
-    AI generated.
     """
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   # Re-import so conf_parser reads the new env
@@ -27,7 +25,6 @@ def test_config_path_from_env(temp_ini, monkeypatch):
 def test_get_debug_true(temp_ini, monkeypatch):
   """get_debug returns True for yes/true/1.
 
-    AI generated.
     """
   with open(temp_ini) as f:
     content = f.read()
