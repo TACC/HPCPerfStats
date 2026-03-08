@@ -44,7 +44,7 @@ from .views import (
     libset_c,
     xalt_data_c,
 )
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Sum
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from datetime import timedelta
 from numpy import isnan
@@ -358,6 +358,11 @@ def job_list(request):
             status=status.HTTP_404_NOT_FOUND,
         )
 
+    # Aggregate over full filtered list (non-paginated) for listing-page metrics
+    agg = job_list_qs.aggregate(total_runtime=Sum("runtime"))
+    total_runtime_seconds = agg.get("total_runtime") or 0
+    total_cpu_hours = total_runtime_seconds / 3600.0
+
     page_num = request.GET.get("page", 1)
     paginator = Paginator(job_list_qs, min(100, nj))
     try:
@@ -375,6 +380,9 @@ def job_list(request):
     return Response({
         "job_list": JobListSerializer(page.object_list, many=True).data,
         "nj": nj,
+        "aggregates": {
+            "total_cpu_hours": round(total_cpu_hours, 4),
+        },
         "current_path": current_path,
         "qname": qname,
         "order_by": order_by,

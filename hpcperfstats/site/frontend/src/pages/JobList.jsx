@@ -41,11 +41,13 @@ export default function JobList() {
   const {
     job_list = [],
     nj = 0,
+    aggregates = {},
     current_path,
     qname,
     order_by: responseOrderBy = "-end_time",
     pagination = {},
   } = data;
+  const totalCpuHours = aggregates.total_cpu_hours;
   const script = histograms?.script ?? "";
   const div = histograms?.div ?? "";
   const plot_item = histograms?.plot_item ?? null;
@@ -113,6 +115,9 @@ export default function JobList() {
       </center>
       <hr />
       <h4>#Jobs = {nj}</h4>
+      {totalCpuHours != null && (
+        <p className="mb-0">Total CPU hours (all matching jobs): {Number(totalCpuHours).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+      )}
 
       {num_pages > 1 && (
         <ul className="pagination">
