@@ -4,6 +4,26 @@ import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
 
+function CollapsibleSection({ title, children, defaultOpen = false, empty = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="col-md-3 mb-2">
+      <button
+        type="button"
+        className="d-flex align-items-center gap-2 w-100 text-start border rounded p-2 bg-light"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <span className="flex-shrink-0" style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform 0.2s", display: "inline-block" }}>
+          ▶
+        </span>
+        <strong>{title}{empty ? " (data unavailable)" : ""}</strong>
+      </button>
+      {open && <div className="border border-top-0 rounded-bottom p-2">{children}</div>}
+    </div>
+  );
+}
+
 export default function JobDetail() {
   const { pk } = useParams();
   const [data, setData] = useState(null);
@@ -179,8 +199,7 @@ export default function JobDetail() {
       )}
 
       <div className="row" style={{ marginTop: "1rem" }}>
-        <div className="col-md-3">
-          <h4>Processes</h4>
+        <CollapsibleSection title="Processes" empty={!(proc_list || []).length}>
           <table className="table table-sm table-bordered">
             <tbody>
               {(proc_list || []).map((proc, i) => (
@@ -190,9 +209,8 @@ export default function JobDetail() {
               ))}
             </tbody>
           </table>
-        </div>
-        <div className="col-md-3">
-          <h4>Job-level Metrics</h4>
+        </CollapsibleSection>
+        <CollapsibleSection title="Job-level Metrics" empty={!metrics_list.length}>
           <table className="table table-sm table-bordered">
             <tbody>
               {metrics_list.map((obj, i) => (
@@ -203,9 +221,15 @@ export default function JobDetail() {
               ))}
             </tbody>
           </table>
-        </div>
-        <div className="col-md-3">
-          <h4>Execution Parameters</h4>
+        </CollapsibleSection>
+        <CollapsibleSection
+          title="Execution Parameters"
+          empty={
+            !(xalt_data.exec_path || []).length &&
+            !(xalt_data.cwd || []).length &&
+            !(xalt_data.libset || []).length
+          }
+        >
           <table className="table table-sm table-bordered">
             <tbody>
               <tr>
@@ -258,9 +282,8 @@ export default function JobDetail() {
               )}
             </tbody>
           </table>
-        </div>
-        <div className="col-md-3">
-          <h4>Hosts</h4>
+        </CollapsibleSection>
+        <CollapsibleSection title="Hosts" empty={!host_list.length}>
           <table className="table table-sm table-bordered">
             <tbody>
               {host_list.map((host, i) => (
@@ -270,7 +293,7 @@ export default function JobDetail() {
               ))}
             </tbody>
           </table>
-        </div>
+        </CollapsibleSection>
       </div>
 
       <hr />
