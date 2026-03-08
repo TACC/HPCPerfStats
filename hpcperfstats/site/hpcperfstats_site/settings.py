@@ -202,7 +202,7 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_RENDERER_CLASSES": [
-        "rest_framework.renderers.JSONRenderer",
+        "hpcperfstats.site.machine.renderers.SafeJSONRenderer",
     ],
 }
 # CORS: allow same-origin by default; set CORS_ALLOWED_ORIGINS in production
