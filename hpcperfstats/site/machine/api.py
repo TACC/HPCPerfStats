@@ -776,6 +776,7 @@ def admin_monitor(request):
         return list(set(flat))
 
     all_hosts = cached_orm(KEY_ALL_HOSTS, TIMEOUT_MEDIUM, _all_hosts_fn)
+    all_hosts = [h for h in all_hosts if not (str(h) or "").startswith("None")]
     now = timezone.now()
     time_bounds = now - timedelta(days=8)
     _tb = time_bounds.isoformat()
