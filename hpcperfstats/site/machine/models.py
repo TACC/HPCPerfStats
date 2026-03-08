@@ -91,6 +91,9 @@ class metrics_data(models.Model):
     managed = True
     db_table = 'metrics_data'
     unique_together = (('jid', 'type', 'metric'),)
+    indexes = [
+        models.Index(fields=["metric"], name="metrics_data_metric_idx"),
+    ]
 
   def __str__(self):
     """Return string representation jid_type_metric."""
