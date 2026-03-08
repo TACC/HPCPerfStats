@@ -5,10 +5,16 @@ import time
 from datetime import timezone as dt_utc
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.site.machine.cache_utils import (
+    KEY_AGG_DF,
     KEY_JOB,
     KEY_JOB_HOST_LIST,
     KEY_JOB_SCHEMA,
+    KEY_HOST_DATA_DF,
+    KEY_HOST_SCHEMA,
+    KEY_HOST_TIME_DF,
     KEY_LLITE_DELTA,
+    KEY_TYPE_DETAIL_AGG,
+    KEY_TYPE_DETAIL_HOST_TIME,
     cached_orm,
     TIMEOUT_SHORT,
 )
@@ -147,19 +153,21 @@ class jid_table:
     return host_data.objects.filter(**self._base_filter, **extra_filters)
 
   def get_host_time_df(self):
-    """DataFrame of (host, time) distinct, ordered by host, time.
+    """DataFrame of (host, time) distinct, ordered by host, time (cached).
 
         """
-    from django.db.models import Min
+    def _fn():
+      qs = (self._host_data_qs().values("host", "time").distinct().order_by(
+          "host", "time"))
+      return _queryset_to_dataframe(qs)
 
-    # Distinct (host, time) in same order as legacy: group by host, time
-    qs = (self._host_data_qs().values("host", "time").distinct().order_by(
-        "host", "time"))
-    return _queryset_to_dataframe(qs)
+    key = f"{KEY_HOST_TIME_DF}:{self.jid}"
+    result = cached_orm(key, TIMEOUT_SHORT, _fn)
+    return result if result is not None else _queryset_to_dataframe(None)
 
   def get_aggregate_df(self, typ, val_col, events, conv=1.0):
     """Aggregate val_col (e.g. 'arc' or 'value') for given type and events. Returns DataFrame with columns host, time, sum_val (sum * conv).
-    Uses raw SQL so GROUP BY host, time is explicit (Django groups by PK only when time is in values()).
+    Uses raw SQL so GROUP BY host, time is explicit (Django groups by PK only when time is in values()). Result is cached per (jid, typ, val_col, events).
         """
     import pandas as pd
     from django.db import connection
@@ -167,46 +175,68 @@ class jid_table:
     _ALLOWED_METRICS = ("arc", "value", "delta")
     if val_col not in _ALLOWED_METRICS:
       val_col = "arc"
-    hosts = self._base_filter["host__in"]
-    host_placeholders = ",".join(["%s"] * len(hosts))
-    event_placeholders = ",".join(["%s"] * len(events))
-    sql = (
-        'SELECT host, time, SUM("%s") AS sum_val FROM host_data '
-        "WHERE host IN (%s) AND time >= %%s AND time <= %%s AND type = %%s AND event IN (%s)"
-    ) % (val_col, host_placeholders, event_placeholders)
-    params = (
-        list(hosts)
-        + [
-            self._base_filter["time__gte"],
-            self._base_filter["time__lte"],
-            typ,
-        ]
-        + list(events)
-    )
-    sql += " GROUP BY host, time ORDER BY host, time"
-    with connection.cursor() as cur:
-      cur.execute(sql, params)
-      columns = [col[0] for col in cur.description] if cur.description else []
-      rows = cur.fetchall()
-    if not rows:
-      return pd.DataFrame(columns=columns or ["host", "time", "sum_val"])
-    df = pd.DataFrame(rows, columns=columns)
-    if not df.empty and "sum_val" in df.columns:
-      df["sum_val"] = df["sum_val"] * conv
-    return df
+    events_key = ":".join(sorted(events))
+
+    def _fn():
+      hosts = self._base_filter["host__in"]
+      host_placeholders = ",".join(["%s"] * len(hosts))
+      event_placeholders = ",".join(["%s"] * len(events))
+      sql = (
+          'SELECT host, time, SUM("%s") AS sum_val FROM host_data '
+          "WHERE host IN (%s) AND time >= %%s AND time <= %%s AND type = %%s AND event IN (%s)"
+      ) % (val_col, host_placeholders, event_placeholders)
+      params = (
+          list(hosts)
+          + [
+              self._base_filter["time__gte"],
+              self._base_filter["time__lte"],
+              typ,
+          ]
+          + list(events)
+      )
+      sql += " GROUP BY host, time ORDER BY host, time"
+      with connection.cursor() as cur:
+        cur.execute(sql, params)
+        columns = [col[0] for col in cur.description] if cur.description else []
+        rows = cur.fetchall()
+      if not rows:
+        return pd.DataFrame(columns=columns or ["host", "time", "sum_val"])
+      df = pd.DataFrame(rows, columns=columns)
+      if not df.empty and "sum_val" in df.columns:
+        df["sum_val"] = df["sum_val"] * conv
+      return df
+
+    key = f"{KEY_AGG_DF}:{self.jid}:{typ}:{val_col}:{events_key}"
+    result = cached_orm(key, TIMEOUT_SHORT, _fn)
+    if result is not None:
+      return result
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
 
   def get_full_host_data_df(self, columns=None):
-    """Full host_data for this job as DataFrame (host, time, type, event, value, etc.).
+    """Full host_data for this job as DataFrame (host, time, type, event, value, etc.). Cached when columns is None.
 
         """
     cols = columns or ["host", "time", "type", "event", "value", "arc", "delta"]
-    qs = (
-        self._host_data_qs()
-        .values(*cols)
-        .order_by("host", "time")
-        .iterator(chunk_size=10000)
-    )
-    return _queryset_to_dataframe(qs)
+    if columns is not None:
+      qs = (
+          self._host_data_qs()
+          .values(*cols)
+          .order_by("host", "time")
+          .iterator(chunk_size=10000)
+      )
+      return _queryset_to_dataframe(qs)
+
+    def _fn():
+      qs = (
+          self._host_data_qs()
+          .values(*cols)
+          .order_by("host", "time")
+      )
+      return _queryset_to_dataframe(qs)
+
+    key = f"{KEY_HOST_DATA_DF}:{self.jid}"
+    result = cached_orm(key, TIMEOUT_SHORT, _fn)
+    return result if result is not None else _queryset_to_dataframe(None)
 
   def get_llite_delta_by_event(self):
     """Lustre read_bytes/write_bytes sum(delta) by event for this job (cached).
@@ -280,11 +310,19 @@ class TypeDetailDataProvider:
     return host_data.objects.filter(**self._base_filter, **extra)
 
   def get_host_time_df(self):
-    """DataFrame of (host, time) distinct, ordered by host, time.
+    """DataFrame of (host, time) distinct, ordered by host, time (cached).
 
         """
-    qs = (self._qs().values("host", "time").distinct().order_by("host", "time"))
-    return _queryset_to_dataframe(qs)
+    _st = self.start_time.isoformat() if self.start_time else ""
+    _et = self.end_time.isoformat() if self.end_time else ""
+    key = f"{KEY_TYPE_DETAIL_HOST_TIME}:{self.jid}:{self.type_name}:{_st}:{_et}"
+
+    def _fn():
+      qs = (self._qs().values("host", "time").distinct().order_by("host", "time"))
+      return _queryset_to_dataframe(qs)
+
+    result = cached_orm(key, TIMEOUT_SHORT, _fn)
+    return result if result is not None else _queryset_to_dataframe(None)
 
   def get_events_units(self):
     """List of (event, unit) for one host.
@@ -309,7 +347,7 @@ class TypeDetailDataProvider:
     return sorted(set(qs))
 
   def get_aggregate_df(self, event, metric="arc"):
-    """Aggregate metric (e.g. arc) by host and time for the given event; returns DataFrame with sum_val.
+    """Aggregate metric (e.g. arc) by host and time for the given event; returns DataFrame with sum_val (cached).
     Uses raw SQL so GROUP BY host, time is explicit (Django groups by PK only when time is in values()).
     """
     import pandas as pd
@@ -318,31 +356,40 @@ class TypeDetailDataProvider:
     _ALLOWED_METRICS = ("arc", "value", "delta")
     if metric not in _ALLOWED_METRICS:
       metric = "arc"
-    # Explicit GROUP BY host, time to avoid PostgreSQL error when model has time as PK
-    sql = (
-        'SELECT host, time, SUM("%s") AS sum_val FROM host_data '
-        "WHERE jid = %%s AND type = %%s AND event = %%s AND time >= %%s AND time <= %%s"
-    ) % (metric,)
-    params = [
-        self._base_filter["jid"],
-        self._base_filter["type"],
-        event,
-        self._base_filter["time__gte"],
-        self._base_filter["time__lte"],
-    ]
-    if "host__in" in self._base_filter:
-      hosts = self._base_filter["host__in"]
-      placeholders = ",".join(["%s"] * len(hosts))
-      sql += " AND host IN (%s)" % placeholders
-      params.extend(hosts)
-    sql += " GROUP BY host, time ORDER BY host, time"
-    with connection.cursor() as cur:
-      cur.execute(sql, params)
-      columns = [col[0] for col in cur.description] if cur.description else []
-      rows = cur.fetchall()
-    if not rows:
-      return pd.DataFrame(columns=columns)
-    return pd.DataFrame(rows, columns=columns)
+    _st = self.start_time.isoformat() if self.start_time else ""
+    _et = self.end_time.isoformat() if self.end_time else ""
+    key = f"{KEY_TYPE_DETAIL_AGG}:{self.jid}:{self.type_name}:{event}:{metric}:{_st}:{_et}"
+
+    def _fn():
+      sql = (
+          'SELECT host, time, SUM("%s") AS sum_val FROM host_data '
+          "WHERE jid = %%s AND type = %%s AND event = %%s AND time >= %%s AND time <= %%s"
+      ) % (metric,)
+      params = [
+          self._base_filter["jid"],
+          self._base_filter["type"],
+          event,
+          self._base_filter["time__gte"],
+          self._base_filter["time__lte"],
+      ]
+      if "host__in" in self._base_filter:
+        hosts = self._base_filter["host__in"]
+        placeholders = ",".join(["%s"] * len(hosts))
+        sql += " AND host IN (%s)" % placeholders
+        params.extend(hosts)
+      sql += " GROUP BY host, time ORDER BY host, time"
+      with connection.cursor() as cur:
+        cur.execute(sql, params)
+        columns = [col[0] for col in cur.description] if cur.description else []
+        rows = cur.fetchall()
+      if not rows:
+        return pd.DataFrame(columns=columns)
+      return pd.DataFrame(rows, columns=columns)
+
+    result = cached_orm(key, TIMEOUT_SHORT, _fn)
+    if result is not None:
+      return result
+    return pd.DataFrame()
 
 
 class HostDataProvider:
@@ -351,7 +398,7 @@ class HostDataProvider:
     """
 
   def __init__(self, host_fqdn, start_time, end_time):
-    """Build base filter and schema for one host and time range.
+    """Build base filter and schema for one host and time range. Schema is cached.
 
         """
     self.jid = host_fqdn.split(".")[0].replace("-", "_")
@@ -362,18 +409,25 @@ class HostDataProvider:
         "time__gte": start_time,
         "time__lte": end_time,
     }
-    # Schema: distinct (type, event) for this host
-    schema_qs = (host_data.objects.filter(**self._base_filter).values(
-        "type", "event").distinct())
-    schema_df = _queryset_to_dataframe(schema_qs)
-    if schema_df.empty:
-      self.schema = {}
-    else:
+    # Schema: distinct (type, event) for this host (cached)
+    _st = start_time.isoformat() if start_time else ""
+    _et = end_time.isoformat() if end_time else ""
+    cache_key = f"{KEY_HOST_SCHEMA}:{host_fqdn}:{_st}:{_et}"
+
+    def _schema_fn():
+      schema_qs = (host_data.objects.filter(**self._base_filter).values(
+          "type", "event").distinct())
+      schema_df = _queryset_to_dataframe(schema_qs)
+      if schema_df.empty:
+        return {}
       types = sorted(schema_df["type"].unique().tolist())
-      self.schema = {}
+      schema = {}
       for t in types:
-        self.schema[t] = sorted(
+        schema[t] = sorted(
             schema_df[schema_df["type"] == t]["event"].unique().tolist())
+      return schema
+
+    self.schema = cached_orm(cache_key, TIMEOUT_SHORT, _schema_fn) or {}
 
   def _host_data_qs(self, **extra_filters):
     """Base host_data queryset for this host (time range).

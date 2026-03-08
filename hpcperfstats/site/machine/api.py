@@ -25,6 +25,8 @@ from .cache_utils import (
     KEY_XALT,
     KEY_TYPE_DETAIL_HOSTS,
     KEY_JOB,
+    KEY_PROC_LIST,
+    KEY_HOST_PLOT,
     cached_orm,
     TIMEOUT_MEDIUM,
     TIMEOUT_SHORT,
@@ -731,8 +733,14 @@ def job_detail(request, pk):
     ]
 
     from .models import proc_data
-    proc_list = list(
-        proc_data.objects.filter(jid=job.jid).values_list("proc", flat=True).distinct()
+    proc_list = cached_orm(
+        f"{KEY_PROC_LIST}:{job.jid}",
+        TIMEOUT_SHORT,
+        lambda: list(
+            proc_data.objects.filter(jid=job.jid)
+            .values_list("proc", flat=True)
+            .distinct()
+        ),
     )
 
     return Response({
@@ -891,14 +899,17 @@ def host_plot(request):
     start_dt = start_dt.astimezone(local_timezone)
     end_dt = end_dt.astimezone(local_timezone)
 
-    plot_item = None
-    try:
-        ht = HostDataProvider(host_fqdn, start_dt, end_dt)
-        sp = plots.SummaryPlot(ht)
-        plot = sp.plot()
-        plot_item = json_item(plot)
-    except Exception:
-        pass
+    def _host_plot_fn():
+        try:
+            ht = HostDataProvider(host_fqdn, start_dt, end_dt)
+            sp = plots.SummaryPlot(ht)
+            plot = sp.plot()
+            return json_item(plot)
+        except Exception:
+            return None
+
+    cache_key = f"{KEY_HOST_PLOT}:{host_fqdn}:{start_dt.isoformat()}:{end_dt.isoformat()}"
+    plot_item = cached_orm(cache_key, TIMEOUT_SHORT, _host_plot_fn)
 
     return Response({
         "host": host_fqdn,

@@ -103,15 +103,23 @@ def get_job_host_data_and_job_dict(jid):
   host_data_df: DataFrame of all host_data rows within the job's start/end
   times and from only the hosts in the job (from job_data.host_list).
   job_dict: dictionary of the job_data row matching jid, or None if not found.
+  Job row lookup is cached.
   """
+  from hpcperfstats.site.machine.cache_utils import (
+    KEY_JOB_DICT,
+    cached_orm,
+    TIMEOUT_SHORT,
+  )
   from hpcperfstats.site.machine.models import job_data
   from hpcperfstats.analysis.gen.jid_table import jid_table
 
-  job_row = job_data.objects.filter(jid=jid).values().first()
-  if job_row is None:
-    return pd.DataFrame(), None
+  def _job_dict_fn():
+    job_row = job_data.objects.filter(jid=jid).values().first()
+    return dict(job_row) if job_row is not None else None
 
-  job_dict = dict(job_row)
+  job_dict = cached_orm(f"{KEY_JOB_DICT}:{jid}", TIMEOUT_SHORT, _job_dict_fn)
+  if job_dict is None:
+    return pd.DataFrame(), None
 
   jt = jid_table(jid)
   if jt.start_time is None or jt.end_time is None:
