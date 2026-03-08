@@ -313,7 +313,7 @@ def _job_list_histograms(request):
     jid_dict = {"jid": jids_ordered}
     for name in df_fields:
         jid_to_val = {jid: val for jid, val in metric_dict.get(name, [])}
-        jid_dict[name] = [jid_to_val.get(j, None) for jid in jids_ordered]
+        jid_dict[name] = [jid_to_val.get(jid, None) for jid in jids_ordered]
     df = DataFrame(jid_dict).set_index("jid")
     hist_metrics = list(hist_metrics_set)
     df = df.join(job_df)
