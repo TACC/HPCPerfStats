@@ -162,16 +162,39 @@ class jid_table:
 
   def get_aggregate_df(self, typ, val_col, events, conv=1.0):
     """Aggregate val_col (e.g. 'arc' or 'value') for given type and events. Returns DataFrame with columns host, time, sum_val (sum * conv).
-
+    Uses raw SQL so GROUP BY host, time is explicit (Django groups by PK only when time is in values()).
         """
-    from django.db.models import Sum
+    import pandas as pd
+    from django.db import connection
 
-    qs = (self._host_data_qs(type=typ, event__in=events).values(
-        "host", "time").annotate(sum_val=Sum(val_col)).order_by("host", "time"))
-    df = _queryset_to_dataframe(qs)
-    if df.empty:
-      return df
-    if "sum_val" in df.columns:
+    _ALLOWED_METRICS = ("arc", "value", "delta")
+    if val_col not in _ALLOWED_METRICS:
+      val_col = "arc"
+    hosts = self._base_filter["host__in"]
+    host_placeholders = ",".join(["%s"] * len(hosts))
+    event_placeholders = ",".join(["%s"] * len(events))
+    sql = (
+        'SELECT host, time, SUM("%s") AS sum_val FROM host_data '
+        "WHERE host IN (%s) AND time >= %%s AND time <= %%s AND type = %%s AND event IN (%s)"
+    ) % (val_col, host_placeholders, event_placeholders)
+    params = (
+        list(hosts)
+        + [
+            self._base_filter["time__gte"],
+            self._base_filter["time__lte"],
+            typ,
+        ]
+        + list(events)
+    )
+    sql += " GROUP BY host, time ORDER BY host, time"
+    with connection.cursor() as cur:
+      cur.execute(sql, params)
+      columns = [col[0] for col in cur.description] if cur.description else []
+      rows = cur.fetchall()
+    if not rows:
+      return pd.DataFrame(columns=columns or ["host", "time", "sum_val"])
+    df = pd.DataFrame(rows, columns=columns)
+    if not df.empty and "sum_val" in df.columns:
       df["sum_val"] = df["sum_val"] * conv
     return df
 
