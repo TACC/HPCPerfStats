@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useSearchParams, useParams, useLocation, Link } from "react-router-dom";
+import { useSearchParams, useParams, useLocation, Link, useNavigate } from "react-router-dom";
+import ReactPaginate from "react-paginate";
 import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
 import HistogramThumbnails from "../components/HistogramThumbnails";
@@ -9,6 +10,7 @@ export default function JobList() {
   const [searchParams] = useSearchParams();
   const paramsFromRoute = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [histograms, setHistograms] = useState(null);
   const [error, setError] = useState(null);
@@ -53,8 +55,7 @@ export default function JobList() {
   const div = histograms?.div ?? "";
   const plot_item = histograms?.plot_item ?? null;
   const histogramsList = histograms?.histograms ?? [];
-  const { page, num_pages, has_previous, has_next, previous_page_number, next_page_number } =
-    pagination;
+  const { page, num_pages } = pagination;
 
   const paginationParams = Object.fromEntries(searchParams.entries());
   if (paramsFromRoute.year) paginationParams.end_time__date = paramsFromRoute.year;
@@ -122,57 +123,52 @@ export default function JobList() {
       )}
 
       {num_pages > 1 && (
-        <ul className="pagination">
+        <div className="pagination-wrapper">
           {page > 1 ? (
-            <li>
-              <Link to={`${location.pathname}?${paginationQuery(1)}`}>First</Link>
-            </li>
+            <Link
+              to={`${location.pathname}?${paginationQuery(1)}`}
+              className="pagination-first"
+            >
+              First
+            </Link>
           ) : (
-            <li className="disabled">
-              <span>First</span>
-            </li>
+            <span className="pagination-first disabled">First</span>
           )}
-          {has_previous ? (
-            <li>
-              <Link to={`${location.pathname}?${paginationQuery(previous_page_number)}`}>
-                &laquo;
-              </Link>
-            </li>
-          ) : (
-            <li className="disabled">
-              <span>&laquo;</span>
-            </li>
-          )}
-          {Array.from({ length: num_pages }, (_, i) => i + 1).map((i) => (
-            <li key={i} className={i === page ? "active" : ""}>
-              {i === page ? (
-                <span>{i}</span>
-              ) : (
-                <Link to={`${location.pathname}?${paginationQuery(i)}`}>{i}</Link>
-              )}
-            </li>
-          ))}
-          {has_next ? (
-            <li>
-              <Link to={`${location.pathname}?${paginationQuery(next_page_number)}`}>
-                &raquo;
-              </Link>
-            </li>
-          ) : (
-            <li className="disabled">
-              <span>&raquo;</span>
-            </li>
-          )}
+          <ReactPaginate
+            forcePage={page - 1}
+            pageCount={num_pages}
+            onPageChange={({ selected }) =>
+              navigate(`${location.pathname}?${paginationQuery(selected + 1)}`)
+            }
+            previousLabel="«"
+            nextLabel="»"
+            breakLabel="..."
+            pageRangeDisplayed={5}
+            marginPagesDisplayed={1}
+            containerClassName="pagination"
+            pageClassName="page-item"
+            pageLinkClassName="page-link"
+            previousClassName="page-item"
+            previousLinkClassName="page-link"
+            nextClassName="page-item"
+            nextLinkClassName="page-link"
+            breakClassName="page-item"
+            breakLinkClassName="page-link"
+            activeClassName="active"
+            disabledClassName="disabled"
+            renderOnZeroPageCount={null}
+          />
           {page < num_pages ? (
-            <li>
-              <Link to={`${location.pathname}?${paginationQuery(num_pages)}`}>Last</Link>
-            </li>
+            <Link
+              to={`${location.pathname}?${paginationQuery(num_pages)}`}
+              className="pagination-last"
+            >
+              Last
+            </Link>
           ) : (
-            <li className="disabled">
-              <span>Last</span>
-            </li>
+            <span className="pagination-last disabled">Last</span>
           )}
-        </ul>
+        </div>
       )}
 
       <table className="table table-sm table-bordered">
