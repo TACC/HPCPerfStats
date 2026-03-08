@@ -28,7 +28,7 @@
 	<td align=right>{{ job_data.end_time }}</td>
 	<td align=right>{{ job_data.runtime }}</td>
 	<td align=right>{{ job_data.timelimit }}</td>
-	<td align=right>{{ job_data.queue }}</td>
+	<td align=right>{% if job_data.queue %}<a href="{% url 'machine:queue_view' job_data.queue %}">{{ job_data.queue }}</a>{% else %}{{ job_data.queue }}{% endif %}</td>
 	<td align=right>{{ job_data.jobname }}</td>
 	<td align=right>{{ job_data.state }}</td>
 

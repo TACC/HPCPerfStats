@@ -94,7 +94,13 @@ export default function JobDetail() {
               <td>{job.end_time}</td>
               <td>{job.runtime}</td>
               <td>{job.timelimit}</td>
-              <td>{job.queue}</td>
+              <td>
+                {job.queue ? (
+                  <Link to={`/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</Link>
+                ) : (
+                  ""
+                )}
+              </td>
               <td>{job.jobname}</td>
               <td>{job.state}</td>
               <td>{job.ncores}</td>

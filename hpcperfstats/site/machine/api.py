@@ -336,6 +336,8 @@ def job_list(request):
 
     current_path = request.get_full_path() if "?" in request.get_full_path() else None
     qname = "Jobs"
+    if fields.get("queue"):
+        qname = f"Jobs in queue {fields['queue']}"
 
     return Response({
         "job_list": JobListSerializer(page.object_list, many=True).data,

@@ -39,6 +39,7 @@ export default function App() {
         <Route path="date/:date" element={<JobList />} />
         <Route path="username/:username" element={<JobList />} />
         <Route path="account/:account" element={<JobList />} />
+        <Route path="queue/:queue" element={<JobList />} />
         <Route path="host/:host" element={<JobList />} />
         <Route path="jobs" element={<JobList />} />
         <Route path="job/:jid/:typeName" element={<TypeDetail />} />

@@ -185,7 +185,7 @@
           <td align=right>{{ job.start_time }}</td>
           <td align=right>{{ job.end_time }}</td>
           <td align=right>{{ job.runtime }}</td>
-          <td align=right>{{ job.queue }}</td>
+          <td align=right>{% if job.queue %}<a href="{% url 'machine:queue_view' job.queue %}">{{ job.queue }}</a>{% else %}{{ job.queue }}{% endif %}</td>
           <td align=right>{{ job.jobname }}</td>
           <td align=right>{{ job.state }}</td>
           <td align=right>{{ job.ncores }}</td>

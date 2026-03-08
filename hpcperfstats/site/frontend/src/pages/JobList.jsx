@@ -18,6 +18,7 @@ export default function JobList() {
     if (paramsFromRoute.date) params.end_time__date = paramsFromRoute.date;
     if (paramsFromRoute.username) params.username = paramsFromRoute.username;
     if (paramsFromRoute.account) params.account = paramsFromRoute.account;
+    if (paramsFromRoute.queue) params.queue = paramsFromRoute.queue;
     if (paramsFromRoute.host) params.host = paramsFromRoute.host;
     setLoading(true);
     Promise.all([
@@ -53,6 +54,7 @@ export default function JobList() {
   if (paramsFromRoute.date) paginationParams.end_time__date = paramsFromRoute.date;
   if (paramsFromRoute.username) paginationParams.username = paramsFromRoute.username;
   if (paramsFromRoute.account) paginationParams.account = paramsFromRoute.account;
+  if (paramsFromRoute.queue) paginationParams.queue = paramsFromRoute.queue;
   if (paramsFromRoute.host) paginationParams.host = paramsFromRoute.host;
 
   const paginationQuery = (pageNum) =>
@@ -151,7 +153,13 @@ export default function JobList() {
               <td>{job.start_time}</td>
               <td>{job.end_time}</td>
               <td>{job.runtime}</td>
-              <td>{job.queue}</td>
+              <td>
+                {job.queue ? (
+                  <Link to={`/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</Link>
+                ) : (
+                  ""
+                )}
+              </td>
               <td>{job.jobname}</td>
               <td>{job.state}</td>
               <td>{job.ncores}</td>
