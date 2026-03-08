@@ -166,8 +166,12 @@
 <table>
   <tr>
     <td>
+      {% if mplot_unavailable_reason %}
+      <div class="bokeh-plot-unavailable" style="min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#666;background-color:#f8f9fa;border:1px dashed #dee2e6;border-radius:4px;padding:12px;text-align:center;">Summary plot: Plot not available — {{ mplot_unavailable_reason }}</div>
+      {% else %}
       {{ mscript|safe }}
       {{ mdiv|safe }}
+      {% endif %}
     </td>
 
     <td>

@@ -5,8 +5,12 @@
     <h2>Job {{ jobid }} / Type {{ type_name }}</h2>
     <h4>Rates Aggregated over devices</h4>
     <div class="graphs">
+      {% if tplot_unavailable_reason %}
+      <div class="bokeh-plot-unavailable" style="min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#666;background-color:#f8f9fa;border:1px dashed #dee2e6;border-radius:4px;padding:12px;text-align:center;">Summary plot: Plot not available — {{ tplot_unavailable_reason }}</div>
+      {% else %}
       {{ tscript|safe }}
       {{ tdiv|safe }}
+      {% endif %}
     </div>
 {% if stats_data %}
 <h4>Counts Aggregated over devices and hosts</h4>

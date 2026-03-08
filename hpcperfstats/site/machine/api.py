@@ -490,7 +490,7 @@ def job_detail(request, pk):
             hscript, hdiv = components(hm_fig)
             hplot_item = json_item(hm_fig)
         else:
-            hplot_unavailable_reason = "No host-level MSR data available"
+            hplot_unavailable_reason = plots.MSG_NO_HOST_MSR_DATA
     except Exception as e:
         logging.getLogger(__name__).warning(
             "Failed to generate heatmap for jid %s: %s", job.jid, e, exc_info=True

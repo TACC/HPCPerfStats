@@ -26,6 +26,8 @@ from bokeh.models.glyphs import Step
 from bokeh.palettes import d3
 from bokeh.plotting import figure
 
+from hpcperfstats.analysis.plot import MSG_NO_METRIC_DATA
+
 _tz_cfg = cfg.get_timezone()
 local_timezone = ZoneInfo(_tz_cfg) if isinstance(_tz_cfg, str) else _tz_cfg
 
@@ -125,10 +127,7 @@ class SummaryPlot():
 
     df = self.jt.get_host_time_df()
     if df.empty or not self.host_list:
-      empty = figure(width=400, height=150, x_axis_type="datetime",
-                    title="No metric data available for this job.")
-      empty.xaxis.formatter = tz_aware_bokeh_tick_formatter()
-      return gridplot([[empty]], toolbar_location=None)
+      raise ValueError(MSG_NO_METRIC_DATA)
 
     for typ, val, events, name, conv, label in metrics:
       s = time.time()
@@ -169,9 +168,5 @@ class SummaryPlot():
       plots += [self.plot_metric(df, name, label)]
 
     if not plots:
-      # Return a single figure with "No data" so components/json_item get valid output
-      empty = figure(width=400, height=150, x_axis_type="datetime",
-                    title="No metric data available for this job.")
-      empty.xaxis.formatter = tz_aware_bokeh_tick_formatter()
-      return gridplot([[empty]], toolbar_location=None)
+      raise ValueError(MSG_NO_METRIC_DATA)
     return gridplot(plots, ncols=len(plots) // 4 + 1)

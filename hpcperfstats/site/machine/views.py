@@ -423,13 +423,15 @@ class job_dataDetailView(DetailView):
     else:
       context["xalt_data"] = []
 
-    # Build Summary Plot
+    # Build Summary Plot (same placeholder UI as API when no data)
+    context["mplot_unavailable_reason"] = None
     ptime = time.time()
-    sp = plots.SummaryPlot(j)
-    #try:
-    context["mscript"], context["mdiv"] = components(sp.plot())
-    #except:
-    #    print("failed to generate summary plot for jid {0}".format(j.jid))
+    try:
+      sp = plots.SummaryPlot(j)
+      context["mscript"], context["mdiv"] = components(sp.plot())
+    except Exception as e:
+      context["mscript"], context["mdiv"] = "", ""
+      context["mplot_unavailable_reason"] = str(e)
     print("plot time: {0:.1f}".format(time.time() - ptime))
 
     # Compute Lustre Usage (ORM)
@@ -602,8 +604,13 @@ def host_detail(request):
   ht = HostDataProvider(host_fqdn, start_dt, end_dt)
 
   ptime = time.time()
-  sp = plots.SummaryPlot(ht)
-  script, div = components(sp.plot())
+  tplot_unavailable_reason = None
+  try:
+    sp = plots.SummaryPlot(ht)
+    script, div = components(sp.plot())
+  except Exception as e:
+    script, div = "", ""
+    tplot_unavailable_reason = str(e)
   print("plot time: {0:.1f}".format(time.time() - ptime))
 
   return render(
@@ -612,6 +619,7 @@ def host_detail(request):
           "tag": fields['host'],
           "tscript": script,
           "tdiv": div,
+          "tplot_unavailable_reason": tplot_unavailable_reason,
           "logged_in": True
       })
 
