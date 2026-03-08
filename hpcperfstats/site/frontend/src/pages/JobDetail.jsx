@@ -10,7 +10,7 @@ function CollapsibleSection({ title, children, defaultOpen = false, empty = fals
     <div className="col-md-3 mb-2">
       <button
         type="button"
-        className="d-flex align-items-center gap-2 w-100 text-start border rounded p-2 bg-light"
+        className="btn btn-outline-secondary btn-sm d-flex align-items-center gap-2 w-100 text-start"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
       >

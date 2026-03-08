@@ -74,7 +74,7 @@ export default function ExtendedSearch({ onClose }) {
           <span className="extended-search-title">Extended search</span>
           <button
             type="button"
-            className="btn btn-sm btn-outline-secondary"
+            className="btn btn-outline-secondary btn-sm"
             onClick={onClose}
             aria-label="Close extended search"
           >
@@ -259,7 +259,7 @@ export default function ExtendedSearch({ onClose }) {
             </div>
           </div>
         ))}
-        <button type="submit" className="btn btn-primary">
+        <button type="submit" className="btn btn-outline-secondary btn-sm">
           Search
         </button>
       </form>

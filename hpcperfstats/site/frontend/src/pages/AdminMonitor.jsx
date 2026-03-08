@@ -55,7 +55,7 @@ export default function AdminMonitor() {
       <div className="admin-monitor-section">
         <button
           type="button"
-          className="admin-monitor-section-header"
+          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
           onClick={() => setHostTimeExpanded((e) => !e)}
           aria-expanded={hostTimeExpanded}
           aria-controls="admin-monitor-host-time"
