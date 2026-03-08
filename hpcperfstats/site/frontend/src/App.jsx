@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { api } from "./api";
 import Layout from "./Layout";
+import LoadingMessage from "./components/LoadingMessage";
 import Search from "./pages/Search";
 import JobList from "./pages/JobList";
 import JobDetail from "./pages/JobDetail";
@@ -22,11 +23,7 @@ export default function App() {
   }, []);
 
   if (loading) {
-    return (
-      <div className="container-fluid text-center" style={{ padding: "2rem" }}>
-        Loading…
-      </div>
-    );
+    return <LoadingMessage message="Loading session…" />;
   }
 
   if (!session || !session.logged_in) {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
+import LoadingMessage from "../components/LoadingMessage";
 
 export default function TypeDetail() {
   const { jid, typeName } = useParams();
@@ -18,7 +19,7 @@ export default function TypeDetail() {
       .finally(() => setLoading(false));
   }, [jid, typeName]);
 
-  if (loading) return <div className="container">Loading…</div>;
+  if (loading) return <LoadingMessage message="Loading type detail…" />;
   if (error) return <div className="container text-danger">Error: {error}</div>;
   if (!data) return null;
 

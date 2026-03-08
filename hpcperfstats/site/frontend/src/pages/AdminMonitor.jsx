@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import LoadingMessage from "../components/LoadingMessage";
 
 const BADGE_MAP = {
   ok: { label: "OK (≤ 10 minutes)", class: "badge-secondary" },
@@ -29,7 +30,7 @@ export default function AdminMonitor() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="container">Loading…</div>;
+  if (loading) return <LoadingMessage message="Loading admin monitor…" />;
   if (error) return <div className="container text-danger">Error: {error}</div>;
   if (!data) return null;
 

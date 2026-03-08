@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { api } from "../api";
+import LoadingMessage from "../components/LoadingMessage";
 
 export default function Search() {
   const navigate = useNavigate();
@@ -60,7 +61,7 @@ export default function Search() {
     navigate(`/jobs?${qs}`);
   };
 
-  if (loading) return <div className="container">Loading…</div>;
+  if (loading) return <LoadingMessage message="Loading search options…" />;
   if (error) return <div className="container text-danger">Error: {error}</div>;
 
   const { date_list = [], metrics = [], queues = [], states = [] } = options || {};

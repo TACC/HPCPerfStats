@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useParams, useLocation, Link } from "react-router-dom";
 import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
+import LoadingMessage from "../components/LoadingMessage";
 
 export default function JobList() {
   const [searchParams] = useSearchParams();
@@ -31,7 +32,7 @@ export default function JobList() {
       .finally(() => setLoading(false));
   }, [searchParams, paramsFromRoute]);
 
-  if (loading) return <div className="container">Loading…</div>;
+  if (loading) return <LoadingMessage message="Loading job list…" />;
   if (error) return <div className="container text-danger">Error: {error}</div>;
   if (!data) return null;
 

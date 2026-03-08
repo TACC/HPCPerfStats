@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
+import LoadingMessage from "../components/LoadingMessage";
 
 export default function HostDetail() {
   const { host } = useParams();
@@ -27,7 +28,7 @@ export default function HostDetail() {
       .finally(() => setLoading(false));
   }, [host, searchParams]);
 
-  if (loading) return <div className="container">Loading…</div>;
+  if (loading) return <LoadingMessage message="Loading host plot…" />;
   if (error) return <div className="container text-danger">Error: {error}</div>;
   if (!data) return null;
 
