@@ -6,6 +6,7 @@ import os
 import sys
 import time
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE",
                       "hpcperfstats.site.hpcperfstats_site.settings")

@@ -8,6 +8,7 @@ if openblas_threads < 1:
   openblas_threads = 1
 
 from datetime import timedelta, timezone as dt_utc
+from zoneinfo import ZoneInfo
 from math import ceil
 import hashlib
 import os
@@ -55,7 +56,8 @@ from hpcperfstats.site.machine.models import host_data, job_data, metrics_data
 from hpcperfstats.site.machine.oauth2 import check_for_tokens
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
-local_timezone = cfg.get_timezone()
+_tz_cfg = cfg.get_timezone()
+local_timezone = ZoneInfo(_tz_cfg) if isinstance(_tz_cfg, str) else _tz_cfg
 
 
 class DataNotFoundException(Exception):

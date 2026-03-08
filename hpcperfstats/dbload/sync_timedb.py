@@ -13,6 +13,7 @@ import time
 import warnings
 from datetime import datetime, timedelta, timezone
 from functools import partial
+from zoneinfo import ZoneInfo
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE",
                       "hpcperfstats.site.hpcperfstats_site.settings")

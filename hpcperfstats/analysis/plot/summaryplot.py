@@ -1,6 +1,8 @@
 """Summary plot: multi-metric step plots for a job (FLOPS, BW, CPU, etc.) using jid_table aggregate data and Bokeh.
 
 """
+from zoneinfo import ZoneInfo
+
 import hpcperfstats.conf_parser as cfg
 
 openblas_threads = int(cfg.get_total_cores()) / 4
