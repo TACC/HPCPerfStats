@@ -204,13 +204,13 @@ def index(request, **kwargs):
   jids_ordered = [r["jid"] for r in job_rows]
   job_df = DataFrame(job_rows).set_index("jid")
 
-  metrics_rows = list(
-      metrics_data.objects.filter(jid_id__in=jids_ordered).values(
-          "jid_id", "metric", "units", "value"
-      ))
+  # Stream metrics in chunks to avoid loading full result set into memory
   metric_dict = {}
   hist_metrics_set = set()
-  for row in metrics_rows:
+  metrics_qs = metrics_data.objects.filter(jid_id__in=jids_ordered).values(
+      "jid_id", "metric", "units", "value"
+  )
+  for row in metrics_qs.iterator(chunk_size=5000):
     metric_dict.setdefault(row["metric"], []).append((row["jid_id"], row["value"]))
     hist_metrics_set.add((row["metric"], row["units"]))
 
@@ -221,6 +221,8 @@ def index(request, **kwargs):
   df = DataFrame(jid_dict).set_index("jid")
   hist_metrics = list(hist_metrics_set)
   df = df.join(job_df)
+  # Drop intermediates no longer needed for histograms
+  del job_rows, job_df, metric_dict, jid_dict, jids_ordered
 
   # Base fields to use in histograms added to derived metrics explicitly searched on
   hist_metrics += [("runtime", "hours"), ("nhosts", "#nodes"),
@@ -270,7 +272,7 @@ def job_hist(df, metric, label):
                     point_policy="snap_to_data")
   TOOLS = ["pan,wheel_zoom,box_zoom,reset,save,box_select", hover]
 
-  values = list(df[metric].values)
+  values = df[metric].values
   if len(values) == 0:
     return None
 
@@ -348,11 +350,10 @@ class job_dataDetailView(DetailView):
                   event="utilization",
               ).values("type", "event", "value").order_by("time")),
       )
-      gpu_data = DataFrame(gpu_list) if gpu_list else DataFrame()
-      if not gpu_data.empty and len(gpu_data) > 2:
-        gpu_data = gpu_data.iloc[1:-1]
-        gpu_utilization_max = gpu_data['value'].max()
-        gpu_utilization_mean = gpu_data['value'].mean()
+      if gpu_list and len(gpu_list) > 2:
+        values = [r["value"] for r in gpu_list[1:-1]]
+        gpu_utilization_max = max(values)
+        gpu_utilization_mean = sum(values) / len(values)
         if not isnan(gpu_utilization_max):
           context["gpu_active"] = ceil(gpu_utilization_max / 100.0)
           context["gpu_utilization_max"] = gpu_utilization_max
@@ -534,6 +535,7 @@ def type_detail(request, jid, type_name):
     stats = [(df1['dt'].iloc[t], df1.loc[df1.index[t],
                                          schema].values.flatten().tolist())
              for t in range(len(df1))]
+    del df, df1
   else:
     stats = []
 
