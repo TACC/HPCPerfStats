@@ -20,6 +20,17 @@ function whenBokehReady(timeoutMs = 10000) {
 }
 
 /**
+ * Bokeh API returns script wrapped in <script type="text/javascript">...</script>.
+ * We must run only the inner JS; putting the full string in a script element's
+ * textContent would not execute it.
+ */
+function extractInlineScript(html) {
+  if (typeof html !== "string" || !html.trim()) return html;
+  const match = html.trim().match(/^\s*<script[^>]*>([\s\S]*?)<\/script>\s*$/i);
+  return match ? match[1].trim() : html;
+}
+
+/**
  * Injects Bokeh script and div from API (dangerouslySetInnerHTML for div, script execution for script).
  * Waits for Bokeh JS to be loaded before running the embed script so plots render correctly.
  */
@@ -31,6 +42,9 @@ export default function BokehEmbed({ script, div, id = "bokeh-embed" }) {
     const wrap = containerRef.current.querySelector(".bokeh-script-wrap");
     if (!wrap) return;
 
+    const scriptToRun = extractInlineScript(script);
+    if (!scriptToRun) return;
+
     let cancelled = false;
     whenBokehReady()
       .then(() => {
@@ -39,7 +53,7 @@ export default function BokehEmbed({ script, div, id = "bokeh-embed" }) {
         if (prev) prev.remove();
         const el = document.createElement("script");
         el.type = "text/javascript";
-        el.textContent = script;
+        el.textContent = scriptToRun;
         wrap.appendChild(el);
       })
       .catch(() => {});
