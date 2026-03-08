@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
+import { formatDateTime } from "../utils/formatDateTime";
 
 export default function HostDetail() {
   const { host } = useParams();
@@ -38,7 +39,7 @@ export default function HostDetail() {
     <div className="container-fluid">
       <h2>Host: {hostName}</h2>
       <p className="text-muted">
-        Time range: {data.end_time__gte} — {data.end_time__lte}
+        Time range: {formatDateTime(data.end_time__gte)} — {data.end_time__lte === "now()" ? "Now" : formatDateTime(data.end_time__lte)}
       </p>
       {plot_item ? (
         <div className="graphs">

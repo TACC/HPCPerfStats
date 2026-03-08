@@ -5,6 +5,7 @@ import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
 import HistogramThumbnails from "../components/HistogramThumbnails";
 import LoadingMessage from "../components/LoadingMessage";
+import { formatDateTime } from "../utils/formatDateTime";
 
 export default function JobList() {
   const [searchParams] = useSearchParams();
@@ -209,8 +210,8 @@ export default function JobList() {
                   "None"
                 )}
               </td>
-              <td>{job.start_time}</td>
-              <td>{job.end_time}</td>
+              <td>{formatDateTime(job.start_time)}</td>
+              <td>{formatDateTime(job.end_time)}</td>
               <td>{job.runtime}</td>
               <td>
                 {job.queue ? (

@@ -3,14 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
-
-/** Format ISO date string for display; returns empty string if invalid or missing. */
-function formatDateTime(isoString) {
-  if (isoString == null || isoString === "") return "";
-  const d = new Date(isoString);
-  if (Number.isNaN(d.getTime())) return String(isoString);
-  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" });
-}
+import { formatDateTime } from "../utils/formatDateTime";
 
 function CollapsibleSection({ title, children, defaultOpen = false, empty = false }) {
   const [open, setOpen] = useState(defaultOpen);
