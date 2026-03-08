@@ -6,8 +6,6 @@ import os
 import sys
 import time
 from datetime import datetime, timedelta
-from itertools import islice
-
 from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
@@ -42,13 +40,20 @@ def _jobs_queryset(date, min_time, rerun):
 
 
 def _iter_chunked_pks(queryset, chunk_size):
-  """Yield (pk_list, total_so_far) in chunks without loading full rows."""
-  pk_iter = queryset.values_list("pk", flat=True).iterator(chunk_size=chunk_size)
+  """Yield (pk_list, total_so_far) in chunks. Uses a new query per chunk to avoid
+  long-lived cursors and connection timeouts (psycopg 'connection is closed').
+  """
   total = 0
+  last_pk = 0
   while True:
-    chunk = list(islice(pk_iter, chunk_size))
+    chunk = list(
+        queryset.filter(pk__gt=last_pk)
+        .order_by("pk")
+        .values_list("pk", flat=True)[:chunk_size]
+    )
     if not chunk:
       break
+    last_pk = chunk[-1]
     total += len(chunk)
     yield chunk, total
 
