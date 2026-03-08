@@ -497,6 +497,22 @@ def job_detail(request, pk):
         )
         hplot_unavailable_reason = str(e)
 
+    rscript, rdiv = "", ""
+    rplot_item = None
+    rplot_unavailable_reason = None
+    try:
+        roof_fig = plots.plot_roofline_from_jid_table(j)
+        if roof_fig is not None:
+            rscript, rdiv = components(roof_fig)
+            rplot_item = json_item(roof_fig)
+        else:
+            rplot_unavailable_reason = plots.MSG_NO_ROOFLINE_DATA
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "Failed to generate roofline for jid %s: %s", job.jid, e, exc_info=True
+        )
+        rplot_unavailable_reason = str(e)
+
     fsio = {}
     try:
         llite_df = j.get_llite_delta_by_event()
@@ -547,6 +563,10 @@ def job_detail(request, pk):
         "hdiv": hdiv,
         "hplot_item": hplot_item,
         "hplot_unavailable_reason": hplot_unavailable_reason,
+        "rscript": rscript,
+        "rdiv": rdiv,
+        "rplot_item": rplot_item,
+        "rplot_unavailable_reason": rplot_unavailable_reason,
         "schema": schema,
         "client_url": hoststring,
         "server_url": serverstring,

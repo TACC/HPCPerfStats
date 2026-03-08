@@ -36,6 +36,10 @@ export default function JobDetail() {
     hdiv,
     hplot_item,
     hplot_unavailable_reason,
+    rscript,
+    rdiv,
+    rplot_item,
+    rplot_unavailable_reason,
     schema = {},
     client_url,
     server_url,
@@ -265,6 +269,18 @@ export default function JobDetail() {
                   id="job-hscript"
                   plotName="Heatmap"
                   unavailableReason={hplot_unavailable_reason}
+                />
+              </td>
+            </tr>
+            <tr>
+              <td colSpan={2}>
+                <BokehEmbed
+                  item={rplot_item}
+                  script={rscript}
+                  div={rdiv}
+                  id="job-roofline"
+                  plotName="Roofline"
+                  unavailableReason={rplot_unavailable_reason}
                 />
               </td>
             </tr>
