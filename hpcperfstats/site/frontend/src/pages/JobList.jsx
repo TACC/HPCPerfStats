@@ -116,6 +116,15 @@ export default function JobList() {
 
       {num_pages > 1 && (
         <ul className="pagination">
+          {page > 1 ? (
+            <li>
+              <Link to={`${location.pathname}?${paginationQuery(1)}`}>First</Link>
+            </li>
+          ) : (
+            <li className="disabled">
+              <span>First</span>
+            </li>
+          )}
           {has_previous ? (
             <li>
               <Link to={`${location.pathname}?${paginationQuery(previous_page_number)}`}>
@@ -145,6 +154,15 @@ export default function JobList() {
           ) : (
             <li className="disabled">
               <span>&raquo;</span>
+            </li>
+          )}
+          {page < num_pages ? (
+            <li>
+              <Link to={`${location.pathname}?${paginationQuery(num_pages)}`}>Last</Link>
+            </li>
+          ) : (
+            <li className="disabled">
+              <span>Last</span>
             </li>
           )}
         </ul>
