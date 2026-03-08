@@ -290,13 +290,39 @@ class TypeDetailDataProvider:
 
   def get_aggregate_df(self, event, metric="arc"):
     """Aggregate metric (e.g. arc) by host and time for the given event; returns DataFrame with sum_val.
+    Uses raw SQL so GROUP BY host, time is explicit (Django groups by PK only when time is in values()).
+    """
+    import pandas as pd
+    from django.db import connection
 
-        """
-    from django.db.models import Sum
-
-    qs = (self._qs(event=event).values(
-        "host", "time").annotate(sum_val=Sum(metric)).order_by("host", "time"))
-    return _queryset_to_dataframe(qs)
+    _ALLOWED_METRICS = ("arc", "value", "delta")
+    if metric not in _ALLOWED_METRICS:
+      metric = "arc"
+    # Explicit GROUP BY host, time to avoid PostgreSQL error when model has time as PK
+    sql = (
+        'SELECT host, time, SUM("%s") AS sum_val FROM host_data '
+        "WHERE jid = %%s AND type = %%s AND event = %%s AND time >= %%s AND time <= %%s"
+    ) % (metric,)
+    params = [
+        self._base_filter["jid"],
+        self._base_filter["type"],
+        event,
+        self._base_filter["time__gte"],
+        self._base_filter["time__lte"],
+    ]
+    if "host__in" in self._base_filter:
+      hosts = self._base_filter["host__in"]
+      placeholders = ",".join(["%s"] * len(hosts))
+      sql += " AND host IN (%s)" % placeholders
+      params.extend(hosts)
+    sql += " GROUP BY host, time ORDER BY host, time"
+    with connection.cursor() as cur:
+      cur.execute(sql, params)
+      columns = [col[0] for col in cur.description] if cur.description else []
+      rows = cur.fetchall()
+    if not rows:
+      return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows, columns=columns)
 
 
 class HostDataProvider:
@@ -345,13 +371,34 @@ class HostDataProvider:
 
   def get_aggregate_df(self, typ, val_col, events, conv=1.0):
     """Aggregate val_col for type and events; returns DataFrame with host, time, sum_val (sum * conv).
+    Uses raw SQL so GROUP BY host, time is explicit (Django groups by PK only when time is in values()).
+    """
+    import pandas as pd
+    from django.db import connection
 
-        """
-    from django.db.models import Sum
-
-    qs = (self._host_data_qs(type=typ, event__in=events).values(
-        "host", "time").annotate(sum_val=Sum(val_col)).order_by("host", "time"))
-    df = _queryset_to_dataframe(qs)
+    _ALLOWED_METRICS = ("arc", "value", "delta")
+    if val_col not in _ALLOWED_METRICS:
+      val_col = "arc"
+    placeholders = ",".join(["%s"] * len(events))
+    sql = (
+        'SELECT host, time, SUM("%s") AS sum_val FROM host_data '
+        "WHERE host = %%s AND time >= %%s AND time <= %%s AND type = %%s AND event IN (%s)"
+    ) % (val_col, placeholders)
+    params = [
+        self._base_filter["host"],
+        self._base_filter["time__gte"],
+        self._base_filter["time__lte"],
+        typ,
+    ]
+    params.extend(events)
+    sql += " GROUP BY host, time ORDER BY host, time"
+    with connection.cursor() as cur:
+      cur.execute(sql, params)
+      columns = [col[0] for col in cur.description] if cur.description else []
+      rows = cur.fetchall()
+    if not rows:
+      return pd.DataFrame(columns=columns)
+    df = pd.DataFrame(rows, columns=columns)
     if not df.empty and "sum_val" in df.columns:
       df["sum_val"] = df["sum_val"] * conv
     return df
