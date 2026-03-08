@@ -7,12 +7,15 @@ openblas_threads = int(cfg.get_total_cores()) / 4
 if openblas_threads < 1:
   openblas_threads = 1
 
+import logging
 import math
 import os
 
 os.environ['OPENBLAS_NUM_THREADS'] = str(openblas_threads)
 
 import time
+
+log = logging.getLogger(__name__)
 
 from pandas import to_datetime
 
@@ -79,7 +82,7 @@ class SummaryPlot():
       legend_items.append((h, [r]))
     if len(self.host_list) > 1:
       plot.add_layout(Legend(items=legend_items), "right")
-    print("time to plot {0}: {1}".format(metric, time.time() - s))
+    log.debug("time to plot %s: %s", metric, time.time() - s)
     return plot
 
   def plot(self):
@@ -91,7 +94,7 @@ class SummaryPlot():
     for i, hostname in enumerate(self.host_list):
       self.hc[hostname] = colors[i % 20]
 
-    print("Host Count:", len(self.host_list))
+    log.debug("Host Count: %s", len(self.host_list))
 
     metrics = [
         ("amd64_pmc", "arc", ['FLOPS'], "amd_flops", 1e-9, "FLOPS32b+64b[GF]"),
@@ -152,10 +155,10 @@ class SummaryPlot():
         df.drop(columns=["sum_val"], inplace=True)
 
       if name == "amd_watts":
-        print(df[name])
+        log.debug("amd_watts: %s", df[name].tolist())
       if name in df.columns and df[name].isnull().values.any():
         del df[name]
-      print("time to compute {0}: {1}".format(name, time.time() - s))
+      log.debug("time to compute %s: %s", name, time.time() - s)
 
     if 'acycles' in df.columns and 'mcycles' in df.columns:
       df["freq"] = 2.7 * df["acycles"] / df["mcycles"]

@@ -188,7 +188,7 @@ def _job_list_histograms_empty_figure():
 
 def _job_list_queue_histogram(job_list_qs, width=600, height=400):
     """Build a Bokeh bar chart of job count per queue from the full filtered job list (non-paginated)."""
-    from bokeh.models import HoverTool
+    from bokeh.models import ColumnDataSource, HoverTool
 
     queue_counts = list(
         job_list_qs.values("queue")
@@ -200,6 +200,7 @@ def _job_list_queue_histogram(job_list_qs, width=600, height=400):
         return None
     queue_names = [q if q else "(no queue)" for q, _ in queue_counts]
     counts = [c for _, c in queue_counts]
+    source = ColumnDataSource(dict(x=queue_names, top=counts))
     p = figure(
         x_range=queue_names,
         height=height,
@@ -213,7 +214,7 @@ def _job_list_queue_histogram(job_list_qs, width=600, height=400):
     )
     p.xaxis.axis_label = "queue"
     p.yaxis.axis_label = "# jobs"
-    p.vbar(x=queue_names, top=counts, width=0.7)
+    p.vbar(x="x", top="top", source=source, width=0.7)
     p.xgrid.visible = False
     p.xaxis.major_label_orientation = "vertical" if len(queue_names) > 5 else "horizontal"
     return p
@@ -221,7 +222,7 @@ def _job_list_queue_histogram(job_list_qs, width=600, height=400):
 
 def _job_list_queue_cpu_hours_histogram(job_list_qs, width=600, height=400):
     """Build a Bokeh bar chart of compute hours (sum of runtime/3600) per queue from the full filtered job list (non-paginated)."""
-    from bokeh.models import HoverTool
+    from bokeh.models import ColumnDataSource, HoverTool
 
     queue_runtime = list(
         job_list_qs.values("queue")
@@ -233,6 +234,7 @@ def _job_list_queue_cpu_hours_histogram(job_list_qs, width=600, height=400):
         return None
     queue_names = [q if q else "(no queue)" for q, _ in queue_runtime]
     cpu_hours = [(rt or 0) / 3600.0 for _, rt in queue_runtime]
+    source = ColumnDataSource(dict(x=queue_names, top=cpu_hours))
     p = figure(
         x_range=queue_names,
         height=height,
@@ -249,7 +251,7 @@ def _job_list_queue_cpu_hours_histogram(job_list_qs, width=600, height=400):
     )
     p.xaxis.axis_label = "queue"
     p.yaxis.axis_label = "compute hours"
-    p.vbar(x=queue_names, top=cpu_hours, width=0.7)
+    p.vbar(x="x", top="top", source=source, width=0.7)
     p.xgrid.visible = False
     p.xaxis.major_label_orientation = "vertical" if len(queue_names) > 5 else "horizontal"
     return p

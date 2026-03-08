@@ -2,8 +2,11 @@
 """Type-detail plot: Bokeh step plots per event for a given type (e.g. llite, cpu) using TypeDetailDataProvider.
 
 """
+import logging
 import math
 import time
+
+log = logging.getLogger(__name__)
 
 from bokeh.layouts import gridplot
 from bokeh.models import ColumnDataSource, HoverTool, Legend, Range1d
@@ -71,7 +74,7 @@ class DevPlot:
       legend_items.append((h, [r]))
     if len(self.host_list) > 1:
       plot.add_layout(Legend(items=legend_items), "right")
-    print("time to plot {0}: {1}".format(event, time.time() - s))
+    log.debug("time to plot %s: %s", event, time.time() - s)
     return plot
 
   def plot(self):
@@ -83,7 +86,7 @@ class DevPlot:
     for i, hostname in enumerate(self.host_list):
       self.hc[hostname] = colors[i % 20]
 
-    print("Host Count:", len(self.host_list))
+    log.debug("Host Count: %s", len(self.host_list))
 
     df = self.data_provider.get_host_time_df()
     event_list = self.data_provider.get_events_units()
@@ -106,7 +109,7 @@ class DevPlot:
         df.drop(columns=["sum_val"], inplace=True)
       if event in df.columns and df[event].isnull().values.any():
         del df[event]
-      print("time to compute events {0}: {1}".format(event, time.time() - s))
+      log.debug("time to compute events %s: %s", event, time.time() - s)
 
     df = df.reset_index()
     if not df.empty and "time" in df.columns:

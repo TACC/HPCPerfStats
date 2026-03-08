@@ -4,7 +4,7 @@ Uses the same PMC sources as SummaryPlot (AMD or Intel). Draws the roofline curv
 """
 import math
 import numpy
-from bokeh.models import ColumnDataSource
+from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.plotting import figure
 
 # Default peak specs (GFLOP/s and GB/s) when not in config; ridge = peak_flops / peak_bw
@@ -94,6 +94,8 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
 
     ai = df["ai"].values
     perf = df["flops_gf"].values
+    host = df["host"].tolist()
+    time_vals = df["time"].astype(str).tolist()
 
     # Clamp AI for plot range (avoid log(0))
     ai_min, ai_max = max(1e-3, float(ai.min())), max(1e-2, float(ai.max()))
@@ -121,9 +123,17 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
     ai_curve.extend(flat_ai)
     perf_curve.extend([peak_flops_gf] * len(flat_ai))
 
-    source = ColumnDataSource(dict(ai=ai, perf=perf))
+    source = ColumnDataSource(dict(ai=ai, perf=perf, host=host, time=time_vals))
     roof_source = ColumnDataSource(dict(ai=ai_curve, perf=perf_curve))
 
+    hover = HoverTool(
+        tooltips=[
+            ("AI (FLOP/byte)", "@ai{0.4f}"),
+            ("Perf (GFLOP/s)", "@perf{0.2f}"),
+            ("host", "@host"),
+            ("time", "@time"),
+        ],
+    )
     p = figure(
         width=500,
         height=400,
@@ -134,7 +144,7 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
         x_axis_label="Arithmetic intensity (FLOP/byte)",
         y_axis_label="Performance (GFLOP/s)",
         title="Roofline (job)",
-        tools="pan,wheel_zoom,box_zoom,reset,save",
+        tools=["pan", "wheel_zoom", "box_zoom", "reset", "save", hover],
     )
     p.line("ai", "perf", source=roof_source, line_width=2, color="navy", legend_label="Roofline")
     p.circle("ai", "perf", source=source, size=4, alpha=0.5, color="coral", legend_label="Job")
