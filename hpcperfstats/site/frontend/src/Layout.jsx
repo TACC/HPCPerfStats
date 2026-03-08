@@ -27,38 +27,40 @@ export default function Layout({ session, children }) {
           </div>
           <div className="text-muted small">a job-level resource usage monitoring tool</div>
         </div>
-        <div className="navbar-form navbar-right" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <div className="navbar-form navbar-right" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "8px" }}>
           <a href="/logout/" className="btn btn-default btn-sm">Logout</a>
-          <button
-            type="button"
-            className="btn btn-default btn-sm"
-            onClick={() => setExtendedSearchOpen((o) => !o)}
-            aria-expanded={extendedSearchOpen}
-            aria-controls="extended-search-collapse"
-          >
-            {extendedSearchOpen ? "Hide extended search" : "Extended search"}
-          </button>
-          <form
-            role="search"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const jid = e.target.jid?.value?.trim();
-              if (jid) navigate(`/job/${jid}`);
-            }}
-            style={{ display: "flex", alignItems: "center", gap: "6px" }}
-          >
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <input
-                type="text"
-                className="form-control"
-                name="jid"
-                placeholder="Job ID"
-              />
-            </div>
-            <button type="submit" className="btn btn-default">
-              find job
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <button
+              type="button"
+              className="btn btn-default btn-sm"
+              onClick={() => setExtendedSearchOpen((o) => !o)}
+              aria-expanded={extendedSearchOpen}
+              aria-controls="extended-search-collapse"
+            >
+              {extendedSearchOpen ? "Hide extended search" : "Extended search"}
             </button>
-          </form>
+            <form
+              role="search"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const jid = e.target.jid?.value?.trim();
+                if (jid) navigate(`/job/${jid}`);
+              }}
+              style={{ display: "flex", alignItems: "center", gap: "6px" }}
+            >
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <input
+                  type="text"
+                  className="form-control"
+                  name="jid"
+                  placeholder="Job ID"
+                />
+              </div>
+              <button type="submit" className="btn btn-default">
+                find job
+              </button>
+            </form>
+          </div>
         </div>
       </nav>
       {session?.is_staff && (
