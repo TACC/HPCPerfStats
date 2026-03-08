@@ -6,6 +6,7 @@ import Search from "./pages/Search";
 import JobList from "./pages/JobList";
 import JobDetail from "./pages/JobDetail";
 import TypeDetail from "./pages/TypeDetail";
+import HostDetail from "./pages/HostDetail";
 import AdminMonitor from "./pages/AdminMonitor";
 
 export default function App() {
@@ -44,6 +45,7 @@ export default function App() {
         <Route path="host/:host" element={<JobList />} />
         <Route path="jobs" element={<JobList />} />
         <Route path="job/:jid/:typeName" element={<TypeDetail />} />
+        <Route path="host/:host/plot" element={<HostDetail />} />
         <Route path="admin_monitor" element={<AdminMonitor />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -26,8 +26,8 @@ class TestJobListHistogramsView:
 
         assert response.status_code == 401
 
-    def test_returns_200_with_script_and_div_when_authenticated(self):
-        """job_list_histograms returns 200 and JSON with script/div when authenticated."""
+    def test_returns_200_with_script_div_and_plot_item_when_authenticated(self):
+        """job_list_histograms returns 200 and JSON with script, div, plot_item when authenticated."""
         from hpcperfstats.site.machine.api import job_list_histograms
 
         factory = RequestFactory()
@@ -40,6 +40,7 @@ class TestJobListHistogramsView:
         data = response.json()
         assert "script" in data
         assert "div" in data
+        assert "plot_item" in data
         assert isinstance(data["script"], str)
         assert isinstance(data["div"], str)
 
@@ -59,7 +60,7 @@ class TestJobListHistogramsView:
 
 
 def test_job_list_histograms_helper_returns_empty_when_no_jobs():
-    """_job_list_histograms returns ('', '') when queryset count is 0."""
+    """_job_list_histograms returns ('', '', None) when queryset count is 0."""
     from hpcperfstats.site.machine.api import _job_list_histograms
 
     factory = RequestFactory()
@@ -70,14 +71,15 @@ def test_job_list_histograms_helper_returns_empty_when_no_jobs():
 
     with patch("hpcperfstats.site.machine.api.job_data") as mock_job_data:
         mock_job_data.objects.filter.return_value.order_by.return_value = mock_qs
-        script, div = _job_list_histograms(request)
+        script, div, plot_item = _job_list_histograms(request)
 
     assert script == ""
     assert div == ""
+    assert plot_item is None
 
 
-def test_job_list_histograms_helper_returns_tuple_of_strings():
-    """_job_list_histograms returns (script, div) as two strings when data and components are mocked."""
+def test_job_list_histograms_helper_returns_tuple_when_mocked():
+    """_job_list_histograms returns (script, div, plot_item) when data and components are mocked."""
     from hpcperfstats.site.machine.api import _job_list_histograms
 
     factory = RequestFactory()
@@ -95,25 +97,29 @@ def test_job_list_histograms_helper_returns_tuple_of_strings():
             "nhosts": 1,
         }
     ]
+    mock_gp = MagicMock()
 
     with patch("hpcperfstats.site.machine.api.job_data") as mock_job_data, patch(
         "hpcperfstats.site.machine.api.metrics_data"
     ) as mock_metrics_data, patch(
         "hpcperfstats.site.machine.api.job_hist", return_value=MagicMock()
     ), patch(
-        "hpcperfstats.site.machine.api.gridplot", return_value=MagicMock()
+        "hpcperfstats.site.machine.api.gridplot", return_value=mock_gp
     ), patch(
         "hpcperfstats.site.machine.api.components",
         return_value=("<script></script>", "<div></div>"),
+    ), patch(
+        "hpcperfstats.site.machine.api.json_item", return_value={"doc": {}, "root_id": "x"}
     ):
         mock_job_data.objects.filter.return_value.order_by.return_value = mock_qs
         mock_metrics_data.objects.filter.return_value.values.return_value = []
-        script, div = _job_list_histograms(request)
+        script, div, plot_item = _job_list_histograms(request)
 
     assert isinstance(script, str)
     assert isinstance(div, str)
     assert script == "<script></script>"
     assert div == "<div></div>"
+    assert plot_item is not None
 
 
 @pytest.mark.django_db

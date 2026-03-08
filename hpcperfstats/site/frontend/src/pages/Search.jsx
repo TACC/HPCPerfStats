@@ -48,6 +48,14 @@ export default function Search() {
       navigate(`/job/${params.jid}`);
       return;
     }
+    if (params.host && params.end_time__gte) {
+      const qs = new URLSearchParams({
+        end_time__gte: params.end_time__gte,
+        end_time__lte: params.end_time__lte || "now()",
+      }).toString();
+      navigate(`/host/${encodeURIComponent(params.host)}/plot?${qs}`);
+      return;
+    }
     const qs = new URLSearchParams(params).toString();
     navigate(`/jobs?${qs}`);
   };

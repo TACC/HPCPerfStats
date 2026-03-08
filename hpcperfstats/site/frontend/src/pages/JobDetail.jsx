@@ -29,6 +29,7 @@ export default function JobDetail() {
     xalt_data = {},
     mscript,
     mdiv,
+    mplot_item,
     hscript,
     hdiv,
     schema = {},
@@ -243,7 +244,12 @@ export default function JobDetail() {
           <tbody>
             <tr>
               <td>
-                <BokehEmbed script={mscript} div={mdiv} id="job-mscript" />
+                <BokehEmbed
+                  item={mplot_item}
+                  script={mscript}
+                  div={mdiv}
+                  id="job-mscript"
+                />
               </td>
               <td>
                 <BokehEmbed script={hscript} div={hdiv} id="job-hscript" />

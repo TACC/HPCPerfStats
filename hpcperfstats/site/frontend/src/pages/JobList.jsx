@@ -44,6 +44,7 @@ export default function JobList() {
   } = data;
   const script = histograms?.script ?? "";
   const div = histograms?.div ?? "";
+  const plot_item = histograms?.plot_item ?? null;
   const { page, num_pages, has_previous, has_next, previous_page_number, next_page_number } =
     pagination;
 
@@ -60,7 +61,12 @@ export default function JobList() {
     <>
       <h4>{qname}</h4>
       <center>
-        <BokehEmbed script={script} div={div} id="index-bokeh" />
+        <BokehEmbed
+          item={plot_item}
+          script={script}
+          div={div}
+          id="index-bokeh"
+        />
       </center>
       <hr />
       <h4>#Jobs = {nj}</h4>

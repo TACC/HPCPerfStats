@@ -22,14 +22,19 @@ export default function TypeDetail() {
   if (error) return <div className="container text-danger">Error: {error}</div>;
   if (!data) return null;
 
-  const { type_name, jobid, tscript, tdiv, stats_data = [], schema = [] } = data;
+  const { type_name, jobid, tscript, tdiv, tplot_item, stats_data = [], schema = [] } = data;
 
   return (
     <div className="container-fluid">
       <h2>Job {jobid} / Type {type_name}</h2>
       <h4>Rates Aggregated over devices</h4>
       <div className="graphs">
-        <BokehEmbed script={tscript} div={tdiv} id="type-bokeh" />
+        <BokehEmbed
+          item={tplot_item}
+          script={tscript}
+          div={tdiv}
+          id="type-bokeh"
+        />
       </div>
       {stats_data.length > 0 && (
         <>

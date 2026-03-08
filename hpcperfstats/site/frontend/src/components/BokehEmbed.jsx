@@ -31,14 +31,38 @@ function extractInlineScript(html) {
 }
 
 /**
- * Injects Bokeh script and div from API (dangerouslySetInnerHTML for div, script execution for script).
- * Waits for Bokeh JS to be loaded before running the embed script so plots render correctly.
+ * Injects Bokeh plot from API.
+ * - If `item` (Bokeh json_item) is provided: renders a div with `id` and calls
+ *   Bokeh.embed.embed_item(item, id). Most reliable for SPAs (e.g. job page).
+ * - Otherwise uses `script` + `div` (strip script tag and run inline).
  */
-export default function BokehEmbed({ script, div, id = "bokeh-embed" }) {
+export default function BokehEmbed({ script, div, item, id = "bokeh-embed" }) {
   const containerRef = useRef(null);
 
   useEffect(() => {
-    if (!script || !containerRef.current) return;
+    if (!item) return;
+
+    let cancelled = false;
+    whenBokehReady()
+      .then(() => {
+        if (cancelled || !containerRef.current) return;
+        const el = document.getElementById(id);
+        if (!el || !window.Bokeh?.embed?.embed_item) return;
+        try {
+          window.Bokeh.embed.embed_item(item, id);
+        } catch (err) {
+          console.warn("Bokeh embed_item failed:", err);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [item, id]);
+
+  useEffect(() => {
+    if (item || !script || !containerRef.current) return;
     const wrap = containerRef.current.querySelector(".bokeh-script-wrap");
     if (!wrap) return;
 
@@ -61,7 +85,15 @@ export default function BokehEmbed({ script, div, id = "bokeh-embed" }) {
     return () => {
       cancelled = true;
     };
-  }, [script]);
+  }, [script, item]);
+
+  if (item) {
+    return (
+      <div ref={containerRef}>
+        <div id={id} className="bokeh-embed" />
+      </div>
+    );
+  }
 
   if (!div && !script) return null;
 

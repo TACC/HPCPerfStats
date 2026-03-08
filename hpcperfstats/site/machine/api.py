@@ -2,7 +2,7 @@
 from datetime import timezone as dt_timezone
 
 import hpcperfstats.conf_parser as cfg
-from bokeh.embed import components
+from bokeh.embed import components, json_item
 from bokeh.layouts import gridplot
 from django.utils import timezone
 from django.views.decorators.cache import cache_page
@@ -43,6 +43,7 @@ from numpy import isnan
 from math import ceil
 
 import hpcperfstats.analysis.gen.jid_table as jid_table
+from hpcperfstats.analysis.gen.jid_table import HostDataProvider
 import hpcperfstats.analysis.plot as plots
 from hpcperfstats.analysis.gen.utils import clean_dataframe
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
@@ -149,21 +150,23 @@ def search_dispatch(request):
         )
 
     if request.GET.get("host"):
-        # Delegate to host_detail logic; return JSON for host plot
-        from .views import host_detail
-        from django.http import HttpResponse
-        # We need to return type_detail-like JSON (tscript, tdiv) for host
-        resp = host_detail(request)
-        if resp.status_code == 302:
-            return Response({"redirect": resp.url}, status=status.HTTP_302_FOUND)
-        # If it's HTML we can't easily return; for API we build the same context
+        # Redirect to SPA host plot page with query params
+        host = request.GET.get("host", "").strip()
+        if host:
+            q = request.GET.copy()
+            q.pop("host", None)
+            query = q.urlencode()
+            path = f"/machine/host/{host}/plot/"
+            if query:
+                path = f"{path}?{query}"
+            return Response({"redirect": path})
         return job_list(request)
 
     return job_list(request)
 
 
 def _job_list_histograms(request):
-    """Build Bokeh script/div for job list histograms from request GET params. Returns (script, div)."""
+    """Build Bokeh script/div and json_item for job list histograms. Returns (script, div, plot_item)."""
     fields = request.GET.dict()
     fields = {k: v for k, v in fields.items() if v}
 
@@ -191,7 +194,7 @@ def _job_list_histograms(request):
     df_fields = list(set(name for name, _ in (key.split("__") for key in cur_metrics)))
 
     if nj == 0:
-        return "", ""
+        return "", "", None
 
     acc_cols = ["jid", "start_time", "submit_time", "runtime", "nhosts"]
     job_rows = list(job_list_qs.values(*acc_cols))
@@ -226,24 +229,27 @@ def _job_list_histograms(request):
 
     script = ""
     div = ""
+    plot_item = None
     try:
         plot_list = [job_hist(df, metric, label) for metric, label in hist_metrics]
         plot_list = [p for p in plot_list if p is not None]
         if plot_list:
-            script, div = components(gridplot(plot_list, ncols=2))
+            gp = gridplot(plot_list, ncols=2)
+            script, div = components(gp)
+            plot_item = json_item(gp)
     except Exception:
         pass
-    return script, div
+    return script, div, plot_item
 
 
 @api_view(["GET"])
 def job_list_histograms(request):
-    """Return Bokeh script/div for job list histograms (same query params as job list)."""
+    """Return Bokeh script/div and plot_item for job list histograms (same query params as job list)."""
     err = _require_auth(request)
     if err is not None:
         return err
-    script, div = _job_list_histograms(request)
-    return Response({"script": script, "div": div})
+    script, div, plot_item = _job_list_histograms(request)
+    return Response({"script": script, "div": div, "plot_item": plot_item})
 
 
 @api_view(["GET"])
@@ -428,9 +434,12 @@ def job_detail(request, pk):
     }
 
     mscript, mdiv = "", ""
+    mplot_item = None
     try:
         sp = plots.SummaryPlot(j)
-        mscript, mdiv = components(sp.plot())
+        plot = sp.plot()
+        mscript, mdiv = components(plot)
+        mplot_item = json_item(plot)
     except Exception:
         pass
 
@@ -478,6 +487,7 @@ def job_detail(request, pk):
         "xalt_data": xalt_data,
         "mscript": mscript,
         "mdiv": mdiv,
+        "mplot_item": mplot_item,
         "hscript": "",
         "hdiv": "",
         "schema": schema,
@@ -547,6 +557,7 @@ def type_detail(request, jid, type_name):
             "jobid": jid,
             "tscript": "",
             "tdiv": "",
+            "tplot_item": None,
             "stats_data": [],
             "schema": [],
         })
@@ -554,6 +565,7 @@ def type_detail(request, jid, type_name):
     sp = plots.DevPlot(provider, data_host_list)
     df, plot = sp.plot()
     tscript, tdiv = components(plot)
+    tplot_item = json_item(plot)
     schema = [
         c for c in df.columns
         if c not in ("host", "time", "index")
@@ -574,8 +586,62 @@ def type_detail(request, jid, type_name):
         "jobid": jid,
         "tscript": tscript,
         "tdiv": tdiv,
+        "tplot_item": tplot_item,
         "stats_data": stats_data,
         "schema": schema,
+    })
+
+
+@api_view(["GET"])
+def host_plot(request):
+    """Return Bokeh plot_item for a single host and time range (GET host, end_time__gte, end_time__lte)."""
+    err = _require_auth(request)
+    if err is not None:
+        return err
+
+    host_fqdn = (request.GET.get("host") or "").strip()
+    start_time = request.GET.get("end_time__gte", "").strip()
+    end_time = (request.GET.get("end_time__lte") or "now()").strip()
+
+    if not host_fqdn or not start_time:
+        return Response(
+            {"error": "Missing host or end_time__gte"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    from datetime import datetime
+    try:
+        start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        start_dt = timezone.now() - timedelta(days=1)
+    if end_time == "now()" or not end_time:
+        end_dt = timezone.now()
+    else:
+        try:
+            end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            end_dt = timezone.now()
+    if start_dt.tzinfo is None:
+        start_dt = timezone.make_aware(start_dt, dt_timezone.utc)
+    if end_dt.tzinfo is None:
+        end_dt = timezone.make_aware(end_dt, dt_timezone.utc)
+    start_dt = start_dt.astimezone(local_timezone)
+    end_dt = end_dt.astimezone(local_timezone)
+
+    plot_item = None
+    try:
+        ht = HostDataProvider(host_fqdn, start_dt, end_dt)
+        sp = plots.SummaryPlot(ht)
+        plot = sp.plot()
+        plot_item = json_item(plot)
+    except Exception:
+        pass
+
+    return Response({
+        "host": host_fqdn,
+        "plot_item": plot_item,
+        "end_time__gte": start_dt.isoformat(),
+        "end_time__lte": end_dt.isoformat(),
     })
 
 
