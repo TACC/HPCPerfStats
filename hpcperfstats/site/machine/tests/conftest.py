@@ -32,5 +32,6 @@ def pytest_configure(config):
     os.environ["HPCPERFSTATS_INI"] = path
   os.environ.setdefault("DJANGO_SETTINGS_MODULE",
                         "hpcperfstats.site.hpcperfstats_site.settings")
+  os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
   import django
   django.setup()
