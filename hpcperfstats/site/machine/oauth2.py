@@ -21,6 +21,9 @@ tenant_base_url = cfg.get_oauth_base_url()
 staff_email_domain = cfg.get_staff_email_domain()
 server_name = cfg.get_server_name().split(',')[0]
 
+# Shared session for OAuth2 token and userinfo requests (connection reuse).
+_http_session = requests.Session()
+
 
 def login_oauth(request):
   """Redirect to OAuth2 authorize URL with state; store state in session.
@@ -59,16 +62,16 @@ def oauth_callback(request):
         'redirect_uri': redirect_uri
     }
 
-    response = requests.post('%s/oauth2/tokens' % tenant_base_url,
-                             json=body,
-                             auth=HTTPBasicAuth(client_id, client_key))
+    response = _http_session.post('%s/oauth2/tokens' % tenant_base_url,
+                                  json=body,
+                                  auth=HTTPBasicAuth(client_id, client_key))
     token_data = response.json()
 
     headers = {
         'x-tapis-token': token_data["result"]["access_token"]["access_token"]
     }
-    user_response = requests.get('%s/oauth2/userinfo' % tenant_base_url,
-                                 headers=headers)
+    user_response = _http_session.get('%s/oauth2/userinfo' % tenant_base_url,
+                                      headers=headers)
     user_data = user_response.json()
 
     request.session['access_token'] = token_data["result"]["access_token"][
@@ -90,7 +93,8 @@ def logout(request):
     """
   access_token = request.session.get('access_token')
   if access_token:
-    requests.post('%s/oauth2/tokens/revoke' % tenant_base_url, json={'token': access_token})
+    _http_session.post('%s/oauth2/tokens/revoke' % tenant_base_url,
+                       json={'token': access_token})
   request.session.flush()
   return HttpResponseRedirect("/")
 
