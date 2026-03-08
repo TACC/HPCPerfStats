@@ -139,36 +139,6 @@ export default function JobDetail() {
             </tbody>
           </table>
         </div>
-        <div className="col-md-3">
-          <table className="table table-condensed">
-            <tbody>
-              <tr>
-                <td>Executable Path</td>
-                <td>
-                  {(xalt_data.exec_path || []).length === 0 ? (
-                    <span className="text-muted">No XALT data available.</span>
-                  ) : (
-                    (xalt_data.exec_path || []).map((item, i) => (
-                      <span key={i}>{item}<br /></span>
-                    ))
-                  )}
-                </td>
-              </tr>
-              <tr>
-                <td>Working Directory</td>
-                <td>
-                  {(xalt_data.cwd || []).length === 0 ? (
-                    <span className="text-muted">No XALT data available.</span>
-                  ) : (
-                    (xalt_data.cwd || []).map((item, i) => (
-                      <span key={i}>{item}<br /></span>
-                    ))
-                  )}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
       </div>
 
       <div className="col-sm-20">
@@ -235,7 +205,35 @@ export default function JobDetail() {
           </table>
         </div>
         <div className="col-md-3">
-          <h4>Modules and Libraries</h4>
+          <h4>Execution Parameters</h4>
+          <table className="table table-condensed table-bordered">
+            <tbody>
+              <tr>
+                <td>Executable Path</td>
+                <td>
+                  {(xalt_data.exec_path || []).length === 0 ? (
+                    <span className="text-muted">No XALT data available.</span>
+                  ) : (
+                    (xalt_data.exec_path || []).map((item, i) => (
+                      <span key={`exec-${i}`}>{item}<br /></span>
+                    ))
+                  )}
+                </td>
+              </tr>
+              <tr>
+                <td>Working Directory</td>
+                <td>
+                  {(xalt_data.cwd || []).length === 0 ? (
+                    <span className="text-muted">No XALT data available.</span>
+                  ) : (
+                    (xalt_data.cwd || []).map((item, i) => (
+                      <span key={`cwd-${i}`}>{item}<br /></span>
+                    ))
+                  )}
+                </td>
+              </tr>
+            </tbody>
+          </table>
           <table className="table table-condensed table-bordered">
             <thead>
               <tr>

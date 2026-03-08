@@ -50,25 +50,6 @@
     </table>
   </div>
 
-  <div class="col-md-3">
-    <table class="table table-condensed" style="max-width:100%;">
-    <tr><td>Executable Path</td><td>
-      {% for item in xalt_data.exec_path %}
-      {{ item }}<br>
-      {% empty %}
-      <span class="text-muted">No XALT data available.</span>
-      {% endfor %}
-    </td></tr>
-    <tr><td>Working Directory</td><td>
-      {% for item in xalt_data.cwd %}
-      {{ item }}<br>
-      {% empty %}
-      <span class="text-muted">No XALT data available.</span>
-      {% endfor %}
-   </td></tr>
-
-    </table>
-  </div>
 </div>
 
 <div class="col-sm-20"><a href={{ client_url }}>Client Logs</a> <a href={{ server_url }}>Server Logs</a></div>
@@ -127,10 +108,26 @@
   </div>
   
   <div class="col-md-3">
-  <button type="button" class="btn btn-primary" data-toggle="collapse" data-target="#libs">
-    Modules and Libraries
+  <button type="button" class="btn btn-primary" data-toggle="collapse" data-target="#execparams">
+    Execution Parameters
   </button>
-    <div id="libs" class="collapse">
+    <div id="execparams" class="collapse">
+      <table class="table table-condensed table-bordered" style="max-width:100%;">
+	<tr><td>Executable Path</td><td>
+	  {% for item in xalt_data.exec_path %}
+	  {{ item }}<br>
+	  {% empty %}
+	  <span class="text-muted">No XALT data available.</span>
+	  {% endfor %}
+	</td></tr>
+	<tr><td>Working Directory</td><td>
+	  {% for item in xalt_data.cwd %}
+	  {{ item }}<br>
+	  {% empty %}
+	  <span class="text-muted">No XALT data available.</span>
+	  {% endfor %}
+	</td></tr>
+      </table>
       <table class="table table-condensed table-bordered" style="max-width:30%;">
 	<thead><th>Module</th><th>Library</th></thead>
 	<tbody>
