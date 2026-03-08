@@ -27,7 +27,12 @@ export default function Layout({ session, children }) {
             )}
           </div>
           <div className="d-flex flex-column align-items-end gap-2 ms-auto">
-          <a href="/logout/" className="btn btn-outline-secondary btn-sm">Logout</a>
+          <div className="d-flex align-items-center gap-2">
+            {session?.is_staff && (
+              <Link to="/admin_monitor" className="btn btn-outline-secondary btn-sm">Admin Monitor</Link>
+            )}
+            <a href="/logout/" className="btn btn-outline-secondary btn-sm">Logout</a>
+          </div>
           <div className="d-flex align-items-center gap-2">
             <button
               type="button"
@@ -63,11 +68,6 @@ export default function Layout({ session, children }) {
         </div>
         </div>
       </nav>
-      {session?.is_staff && (
-        <div style={{ textAlign: "right", marginBottom: "8px" }}>
-          <Link to="/admin_monitor">Admin Monitor</Link>
-        </div>
-      )}
       {extendedSearchOpen && (
         <div
           id="extended-search-collapse"
