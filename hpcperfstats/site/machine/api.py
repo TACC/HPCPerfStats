@@ -53,7 +53,6 @@ from math import ceil
 import hpcperfstats.analysis.gen.jid_table as jid_table
 from hpcperfstats.analysis.gen.jid_table import HostDataProvider
 import hpcperfstats.analysis.plot as plots
-from hpcperfstats.analysis.gen.utils import clean_dataframe
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
 
@@ -326,8 +325,8 @@ def _job_list_histograms(request):
         to_timedelta(df["start_time"] - df["submit_time"]).dt.total_seconds() / 3600
     )
     df["runtime"] = df["runtime"] / 3600
-    df = clean_dataframe(df)
-
+    # Keep df numeric for histograms; do not run clean_dataframe here (it would
+    # replace NaN with '' and break job_hist). job_hist filters to finite values.
     # Only plot metrics that exist as columns (df has filter metrics + runtime/nhosts/queue_wait)
     hist_metrics = [(m, label) for m, label in hist_metrics if m in df.columns]
 
