@@ -11,6 +11,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     filter_files_to_add_to_archive,
     get_existing_archive_members,
     get_stats_chunk,
+    get_tar_file_tasks,
     get_tar_member_name,
     get_verified_files_to_remove,
 )
@@ -32,6 +33,36 @@ def test_get_tar_member_name_relative_path():
 def test_get_tar_member_name_multiple_slashes():
   """Only leading slash is stripped."""
   assert get_tar_member_name("/a/b/c") == "a/b/c"
+
+
+# --- get_existing_archive_members ---
+
+
+# --- get_tar_file_tasks ---
+
+
+def test_get_tar_file_tasks_returns_file_members_only(tmp_path):
+  """get_tar_file_tasks returns (tar_path, member_name) for file members, not directories."""
+  tar_path = tmp_path / "test.tar"
+  a = tmp_path / "a.txt"
+  a.write_text("x")
+  (tmp_path / "subdir").mkdir()
+  sub_f = tmp_path / "subdir" / "b.txt"
+  sub_f.write_text("y")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(a), arcname="a.txt")
+    tf.add(str(tmp_path / "subdir"), arcname="subdir")
+    tf.add(str(sub_f), arcname="subdir/b.txt")
+  tasks = get_tar_file_tasks(str(tar_path))
+  assert set(tasks) == {(str(tar_path), "a.txt"), (str(tar_path), "subdir/b.txt")}
+
+
+def test_get_tar_file_tasks_empty_tar(tmp_path):
+  """Empty tar returns empty list."""
+  tar_path = tmp_path / "empty.tar"
+  with tarfile.open(tar_path, "w"):
+    pass
+  assert get_tar_file_tasks(str(tar_path)) == []
 
 
 # --- get_existing_archive_members ---

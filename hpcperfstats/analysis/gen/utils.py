@@ -20,10 +20,6 @@ from bokeh.models import CustomJSTickFormatter
 import numpy as np
 import pandas as pd
 
-from hpcperfstats.analysis.gen.jid_table import jid_table
-from hpcperfstats.site.machine.models import job_data
-
-
 local_timezone = cfg.get_timezone()
 
 
@@ -108,6 +104,8 @@ def get_job_host_data_and_job_dict(jid):
   times and from only the hosts in the job (from job_data.host_list).
   job_dict: dictionary of the job_data row matching jid, or None if not found.
   """
+  from hpcperfstats.site.machine.models import job_data
+  from hpcperfstats.analysis.gen.jid_table import jid_table
 
   job_row = job_data.objects.filter(jid=jid).values().first()
   if job_row is None:

@@ -85,3 +85,46 @@ def test_get_redis_location_from_config(temp_ini, monkeypatch):
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_redis_location() == "redis://192.168.1.1:6379/2"
+
+
+def test_get_secret_key_missing(temp_ini, monkeypatch):
+  """get_secret_key returns None when DEFAULT.secret_key is not set."""
+  with open(temp_ini) as f:
+    content = f.read()
+  content = "\n".join(
+      line for line in content.splitlines()
+      if not line.strip().startswith("secret_key"))
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_secret_key() is None
+
+
+def test_get_secret_key_from_config(temp_ini, monkeypatch):
+  """get_secret_key returns value from DEFAULT.secret_key when set."""
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "secret_key = test-secret-key-do-not-use-in-production",
+      "secret_key = my-secret-key-value")
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_secret_key() == "my-secret-key-value"
+
+
+def test_get_local_timezone(temp_ini, monkeypatch):
+  """get_local_timezone returns ZoneInfo for DEFAULT.timezone."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  from zoneinfo import ZoneInfo
+  tz = cfg.get_local_timezone()
+  assert tz == ZoneInfo("UTC")
