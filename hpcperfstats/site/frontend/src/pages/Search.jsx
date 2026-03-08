@@ -23,14 +23,6 @@ export default function Search() {
 
   return (
     <div className="row">
-      <div className="col-md-offset-3 col-md-4">
-        <center>
-          <p className="text-muted">
-            Use <strong>Extended search</strong> in the top bar for date, host, queue, metrics, and more.
-          </p>
-        </center>
-      </div>
-
       <hr />
       <div className="container-fluid">
         <h4>List all jobs for a given date</h4>
