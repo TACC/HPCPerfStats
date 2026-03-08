@@ -254,7 +254,9 @@ def index(request, **kwargs):
   ### Build Histogram Plots
   plots = []
   for metric, label in hist_metrics:
-    plots += [job_hist(df, metric, label)]
+    if metric in df.columns:
+      plots += [job_hist(df, metric, label)]
+  plots = [p for p in plots if p is not None]
   fields["script"], fields["div"] = components(gridplot(plots, ncols=2))
   ###
 
@@ -270,6 +272,8 @@ def job_hist(df, metric, label):
   """Build a Bokeh quad histogram for the given metric column and axis label.
 
     """
+  if metric not in df.columns:
+    return None
   hover = HoverTool(tooltips=[("jobs", "@top"), ("bin", "[@left, @right]")],
                     point_policy="snap_to_data")
   TOOLS = ["pan,wheel_zoom,box_zoom,reset,save,box_select", hover]

@@ -242,6 +242,9 @@ def _job_list_histograms(request):
     df["runtime"] = df["runtime"] / 3600
     df = clean_dataframe(df)
 
+    # Only plot metrics that exist as columns (df has filter metrics + runtime/nhosts/queue_wait)
+    hist_metrics = [(m, label) for m, label in hist_metrics if m in df.columns]
+
     script = ""
     div = ""
     plot_item = None
