@@ -35,7 +35,8 @@ async function request(path, options = {}) {
     headers,
   });
   if (res.status === 401) {
-    window.location.href = "/login_prompt";
+    const next = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = next ? `/login_prompt?next=${next}` : "/login_prompt";
     throw new Error("Unauthorized");
   }
   const data = await res.json().catch(() => ({}));

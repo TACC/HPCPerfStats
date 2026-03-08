@@ -3,6 +3,7 @@
 """
 import logging
 import os
+from urllib.parse import quote
 
 import requests
 from django.http import HttpResponseRedirect
@@ -31,12 +32,22 @@ def _get_redirect_uri():
   return uri[:-1] if uri.endswith('/') else uri
 
 
+def _safe_redirect_path(path):
+  """Return path if it is a safe same-origin redirect (starts with /, not //), else None."""
+  if not path or not path.startswith('/') or path.startswith('//') or '\\' in path:
+    return None
+  return path
+
+
 def login_oauth(request):
-  """Redirect to OAuth2 authorize URL with state; store state in session.
+  """Redirect to OAuth2 authorize URL with state; store state and optional next in session.
 
     """
   session = request.session
   session['auth_state'] = os.urandom(24).hex()
+  next_url = request.GET.get('next', '')
+  if _safe_redirect_path(next_url):
+    session['auth_next'] = next_url
 
   redirect_uri = _get_redirect_uri()
   authorization_url = (cfg.get_oauth_authorize_url() %
@@ -85,7 +96,9 @@ def oauth_callback(request):
     request.session['email'] = user_data['result']['email']
     request.session['is_staff'] = user_data['result']['email'].split(
         '@')[-1] == staff_email_domain
-    return HttpResponseRedirect("/")
+    next_url = request.session.pop('auth_next', None)
+    redirect_to = next_url if _safe_redirect_path(next_url) else '/'
+    return HttpResponseRedirect(redirect_to)
 
 
 def logout(request):
@@ -101,12 +114,19 @@ def logout(request):
 
 
 def login_prompt(request):
-  """Render login prompt template unless already authenticated, then redirect to /.
+  """Render login prompt unless already authenticated; then redirect to next or /.
 
     """
+  next_url = request.GET.get('next', '')
   if check_for_tokens(request):
-    return HttpResponseRedirect("/")
-  return render(request, "registration/login_prompt.html", {"logged_in": False})
+    redirect_to = next_url if _safe_redirect_path(next_url) else '/'
+    return HttpResponseRedirect(redirect_to)
+  login_url = reverse('login') + ('?next=' + quote(next_url) if next_url else '')
+  return render(request, "registration/login_prompt.html", {
+      "logged_in": False,
+      "next": next_url,
+      "login_url": login_url,
+  })
 
 
 def check_for_tokens(request):

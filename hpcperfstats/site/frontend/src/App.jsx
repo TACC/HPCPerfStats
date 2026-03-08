@@ -27,7 +27,8 @@ export default function App() {
   }
 
   if (!session || !session.logged_in) {
-    window.location.href = "/login_prompt";
+    const next = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = next ? `/login_prompt?next=${next}` : "/login_prompt";
     return null;
   }
 

@@ -11,6 +11,7 @@ from datetime import timedelta, timezone as dt_utc
 from math import ceil
 import hashlib
 import os
+from urllib.parse import quote
 
 os.environ['OPENBLAS_NUM_THREADS'] = str(openblas_threads)
 
@@ -102,7 +103,7 @@ def home(request, error=False):
 
     """
   if not check_for_tokens(request):
-    return HttpResponseRedirect("/login_prompt")
+    return HttpResponseRedirect("/login_prompt?next=" + quote(request.get_full_path()))
 
   field = {}
   month_dict = {}
@@ -170,7 +171,7 @@ def index(request, **kwargs):
 
     """
   if not check_for_tokens(request):
-    return HttpResponseRedirect("/login_prompt")
+    return HttpResponseRedirect("/login_prompt?next=" + quote(request.get_full_path()))
 
   fields = request.GET.dict()
   fields = {k: v for k, v in fields.items() if v}
@@ -349,7 +350,7 @@ class job_dataDetailView(DetailView):
 
         """
     if not check_for_tokens(self.request):
-      return HttpResponseRedirect("/login_prompt")
+      return HttpResponseRedirect("/login_prompt?next=" + quote(self.request.get_full_path()))
 
     return super().get(request, *args, **kwargs)
 
@@ -491,7 +492,7 @@ def type_detail(request, jid, type_name):
 
     """
   if not check_for_tokens(request):
-    return HttpResponseRedirect("/login_prompt")
+    return HttpResponseRedirect("/login_prompt?next=" + quote(request.get_full_path()))
 
   # Job accounting via ORM (cached)
   job = cached_orm(
@@ -585,7 +586,7 @@ def host_detail(request):
 
     """
   if not check_for_tokens(request):
-    return HttpResponseRedirect("/login_prompt")
+    return HttpResponseRedirect("/login_prompt?next=" + quote(request.get_full_path()))
 
   fields = request.GET.dict()
   fields = {k: v for k, v in fields.items() if v}
@@ -642,7 +643,7 @@ def proc_detail(request, pk, proc_name):
 
     """
   if not check_for_tokens(request):
-    return HttpResponseRedirect("/login_prompt")
+    return HttpResponseRedirect("/login_prompt?next=" + quote(request.get_full_path()))
 
   data = get_data(pk)
 
@@ -680,7 +681,7 @@ def admin_monitor(request):
 
     """
   if not check_for_tokens(request):
-    return HttpResponseRedirect("/login_prompt")
+    return HttpResponseRedirect("/login_prompt?next=" + quote(request.get_full_path()))
 
   # Restrict to staff users if that flag is present on the session
   if not request.session.get("is_staff", False):
