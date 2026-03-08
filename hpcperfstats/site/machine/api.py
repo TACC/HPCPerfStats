@@ -222,7 +222,7 @@ def _job_list_histograms(request):
     if nj == 0:
         gp = _job_list_histograms_empty_figure()
         script, div = components(gp)
-        return script, div, json_item(gp)
+        return script, div, json_item(gp), []
 
     acc_cols = ["jid", "start_time", "submit_time", "runtime", "nhosts"]
     job_rows = list(job_list_qs.values(*acc_cols))
@@ -258,13 +258,27 @@ def _job_list_histograms(request):
     # Only plot metrics that exist as columns (df has filter metrics + runtime/nhosts/queue_wait)
     hist_metrics = [(m, label) for m, label in hist_metrics if m in df.columns]
 
+    THUMB_WIDTH, THUMB_HEIGHT = 280, 200
+    FULL_WIDTH, FULL_HEIGHT = 600, 400
+
     script = ""
     div = ""
     plot_item = None
+    histograms = []
     try:
         plot_list = [job_hist(df, metric, label) for metric, label in hist_metrics]
         plot_list = [p for p in plot_list if p is not None]
         if plot_list:
+            # Per-histogram thumb + full for thumbnail grid with hover-to-show-full
+            for metric, label in hist_metrics:
+                p_thumb = job_hist(df, metric, label, width=THUMB_WIDTH, height=THUMB_HEIGHT)
+                p_full = job_hist(df, metric, label, width=FULL_WIDTH, height=FULL_HEIGHT)
+                if p_thumb is not None and p_full is not None:
+                    histograms.append({
+                        "title": metric,
+                        "plot_item_thumb": json_item(p_thumb),
+                        "plot_item_full": json_item(p_full),
+                    })
             gp = gridplot(plot_list, ncols=2)
             script, div = components(gp)
             plot_item = json_item(gp)
@@ -279,17 +293,22 @@ def _job_list_histograms(request):
         gp = _job_list_histograms_empty_figure()
         script, div = components(gp)
         plot_item = json_item(gp)
-    return script, div, plot_item
+    return script, div, plot_item, histograms
 
 
 @api_view(["GET"])
 def job_list_histograms(request):
-    """Return Bokeh script/div and plot_item for job list histograms (same query params as job list)."""
+    """Return Bokeh script/div, plot_item, and histograms (thumb + full per metric) for job list histograms."""
     err = _require_auth(request)
     if err is not None:
         return err
-    script, div, plot_item = _job_list_histograms(request)
-    return Response({"script": script, "div": div, "plot_item": plot_item})
+    script, div, plot_item, histograms = _job_list_histograms(request)
+    return Response({
+        "script": script,
+        "div": div,
+        "plot_item": plot_item,
+        "histograms": histograms,
+    })
 
 
 @api_view(["GET"])

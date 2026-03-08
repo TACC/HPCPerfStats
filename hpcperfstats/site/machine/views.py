@@ -287,10 +287,11 @@ def index(request, **kwargs):
 
 
 # Generate Histogram Plots of a List of Metrics
-def job_hist(df, metric, label):
+def job_hist(df, metric, label, width=600, height=400):
   """Build a Bokeh quad histogram for the given metric column and axis label.
 
-    """
+  Optional width/height allow thumbnail (e.g. 280x200) vs full (600x400) sizes.
+  """
   if metric not in df.columns:
     return None
   hover = HoverTool(tooltips=[("jobs", "@top"), ("bin", "[@left, @right]")],
@@ -307,8 +308,8 @@ def job_hist(df, metric, label):
 
   plot = figure(title=metric,
                 toolbar_location=None,
-                height=400,
-                width=600,
+                height=height,
+                width=width,
                 y_range=(1, max(hist)),
                 tools=TOOLS)  #  y_axis_type = "log",
   plot.xaxis.axis_label = label

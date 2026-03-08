@@ -77,3 +77,33 @@ body {
   padding-bottom: 0.5rem;
   border-bottom: 1px solid #dee2e6;
 }
+
+/* Histogram thumbnails: popover shows full plot on hover */
+.histogram-thumbnail-popover {
+  position: fixed;
+  z-index: 1050;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  pointer-events: auto;
+}
+.histogram-thumbnail-popover-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+.histogram-thumbnail-popover-plot {
+  position: relative;
+}
+.histogram-thumbnail-popover-plot .bokeh-embed-wrapper {
+  min-height: 400px;
+}
+.histogram-thumbnail-wrapper {
+  display: flex;
+  justify-content: center;
+}

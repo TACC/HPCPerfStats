@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useParams, useLocation, Link } from "react-router-dom";
 import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
+import HistogramThumbnails from "../components/HistogramThumbnails";
 import LoadingMessage from "../components/LoadingMessage";
 
 export default function JobList() {
@@ -48,6 +49,7 @@ export default function JobList() {
   const script = histograms?.script ?? "";
   const div = histograms?.div ?? "";
   const plot_item = histograms?.plot_item ?? null;
+  const histogramsList = histograms?.histograms ?? [];
   const { page, num_pages, has_previous, has_next, previous_page_number, next_page_number } =
     pagination;
 
@@ -97,13 +99,17 @@ export default function JobList() {
     <>
       <h4>{qname}</h4>
       <center>
-        <BokehEmbed
-          item={plot_item}
-          script={script}
-          div={div}
-          id="index-bokeh"
-          plotName="Job list histograms"
-        />
+        {histogramsList.length > 0 ? (
+          <HistogramThumbnails histograms={histogramsList} />
+        ) : (
+          <BokehEmbed
+            item={plot_item}
+            script={script}
+            div={div}
+            id="index-bokeh"
+            plotName="Job list histograms"
+          />
+        )}
       </center>
       <hr />
       <h4>#Jobs = {nj}</h4>

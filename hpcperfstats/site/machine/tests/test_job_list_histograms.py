@@ -26,8 +26,8 @@ class TestJobListHistogramsView:
 
         assert response.status_code == 401
 
-    def test_returns_200_with_script_div_and_plot_item_when_authenticated(self):
-        """job_list_histograms returns 200 and JSON with script, div, plot_item when authenticated."""
+    def test_returns_200_with_script_div_plot_item_and_histograms_when_authenticated(self):
+        """job_list_histograms returns 200 and JSON with script, div, plot_item, histograms when authenticated."""
         from hpcperfstats.site.machine.api import job_list_histograms
 
         factory = RequestFactory()
@@ -41,8 +41,10 @@ class TestJobListHistogramsView:
         assert "script" in data
         assert "div" in data
         assert "plot_item" in data
+        assert "histograms" in data
         assert isinstance(data["script"], str)
         assert isinstance(data["div"], str)
+        assert isinstance(data["histograms"], list)
 
     def test_histograms_endpoint_uses_same_query_params_as_job_list(self):
         """job_list_histograms accepts the same GET params as job list (e.g. page ignored for histograms)."""
@@ -71,11 +73,12 @@ def test_job_list_histograms_helper_returns_empty_figure_when_no_jobs():
 
     with patch("hpcperfstats.site.machine.api.job_data") as mock_job_data:
         mock_job_data.objects.filter.return_value.order_by.return_value = mock_qs
-        script, div, plot_item = _job_list_histograms(request)
+        script, div, plot_item, histograms = _job_list_histograms(request)
 
     assert script != ""
     assert div != ""
     assert plot_item is not None
+    assert histograms == []
 
 
 def test_job_list_histograms_helper_returns_tuple_when_mocked():
@@ -113,13 +116,14 @@ def test_job_list_histograms_helper_returns_tuple_when_mocked():
     ):
         mock_job_data.objects.filter.return_value.order_by.return_value = mock_qs
         mock_metrics_data.objects.filter.return_value.values.return_value = []
-        script, div, plot_item = _job_list_histograms(request)
+        script, div, plot_item, histograms = _job_list_histograms(request)
 
     assert isinstance(script, str)
     assert isinstance(div, str)
     assert script == "<script></script>"
     assert div == "<div></div>"
     assert plot_item is not None
+    assert isinstance(histograms, list)
 
 
 @pytest.mark.django_db
