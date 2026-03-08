@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import time
+import warnings
 from datetime import datetime, timedelta, timezone
 from functools import partial
 
@@ -161,21 +162,27 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   need_archival = True
   try:
     try:
-      host_objs = [
-          host_data(
-              time=row.time.to_pydatetime(),
-              host=row.host,
-              jid=row.jid,
-              type=row.type,
-              dev=None,
-              event=row.event,
-              unit=row.unit,
-              value=float(row.value) if pd.notna(row.value) else None,
-              delta=float(row.delta) if pd.notna(row.delta) else None,
-              arc=float(row.arc) if pd.notna(row.arc) else None,
-          )
-          for row in stats.itertuples(index=False)
-      ]
+      with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*[Dd]iscarding nonzero nanoseconds.*",
+            category=UserWarning,
+        )
+        host_objs = [
+            host_data(
+                time=row.time.to_pydatetime(),
+                host=row.host,
+                jid=row.jid,
+                type=row.type,
+                dev=None,
+                event=row.event,
+                unit=row.unit,
+                value=float(row.value) if pd.notna(row.value) else None,
+                delta=float(row.delta) if pd.notna(row.delta) else None,
+                arc=float(row.arc) if pd.notna(row.arc) else None,
+            )
+            for row in stats.itertuples(index=False)
+        ]
       host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
     except Exception as e:
       if DEBUG:
@@ -213,25 +220,31 @@ def _insert_host_data_individually(stats_df):
     """
   need_archival = True
   unique_violations = 0
-  for row in stats_df.itertuples(index=False):
-    try:
-      host_data(
-          time=row.time.to_pydatetime(),
-          host=row.host,
-          jid=row.jid,
-          type=row.type,
-          dev=None,
-          event=row.event,
-          unit=row.unit,
-          value=float(row.value) if pd.notna(row.value) else None,
-          delta=float(row.delta) if pd.notna(row.delta) else None,
-          arc=float(row.arc) if pd.notna(row.arc) else None,
-      ).save()
-    except IntegrityError:
-      unique_violations += 1
-    except Exception as e:
-      print("error in single host_data insert:", str(e), "row:", row)
-      need_archival = False
+  with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message=".*[Dd]iscarding nonzero nanoseconds.*",
+        category=UserWarning,
+    )
+    for row in stats_df.itertuples(index=False):
+      try:
+        host_data(
+            time=row.time.to_pydatetime(),
+            host=row.host,
+            jid=row.jid,
+            type=row.type,
+            dev=None,
+            event=row.event,
+            unit=row.unit,
+            value=float(row.value) if pd.notna(row.value) else None,
+            delta=float(row.delta) if pd.notna(row.delta) else None,
+            arc=float(row.arc) if pd.notna(row.arc) else None,
+        ).save()
+      except IntegrityError:
+        unique_violations += 1
+      except Exception as e:
+        print("error in single host_data insert:", str(e), "row:", row)
+        need_archival = False
   if DEBUG:
     print("Existing Rows Found in DB: %s" % unique_violations)
   return need_archival
