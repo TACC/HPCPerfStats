@@ -51,7 +51,7 @@ const PLACEHOLDER_STYLE = {
  * - Otherwise uses `script` + `div` (strip script tag and run inline).
  * Shows "Plot not available" in the plot area when there is no data or when the plot fails to load.
  */
-export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plotName }) {
+export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plotName, unavailableReason }) {
   const containerRef = useRef(null);
   const [plotReady, setPlotReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -137,7 +137,8 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
   }, [script, item]);
 
   const base = plotName ? `${plotName}: Plot not available` : "Plot not available";
-  const message = loadFailed && failureReason ? `${base} — ${failureReason}` : base;
+  const reason = loadFailed ? failureReason : unavailableReason;
+  const message = reason ? `${base} — ${reason}` : base;
   const placeholder = (
     <div className="bokeh-plot-unavailable" style={PLACEHOLDER_STYLE} aria-live="polite">
       {message}

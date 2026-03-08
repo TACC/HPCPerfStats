@@ -469,6 +469,7 @@ def job_detail(request, pk):
 
     mscript, mdiv = "", ""
     mplot_item = None
+    mplot_unavailable_reason = None
     try:
         sp = plots.SummaryPlot(j)
         plot = sp.plot()
@@ -478,18 +479,23 @@ def job_detail(request, pk):
         logging.getLogger(__name__).warning(
             "Failed to generate summary plot for jid %s: %s", job.jid, e, exc_info=True
         )
+        mplot_unavailable_reason = str(e)
 
     hscript, hdiv = "", ""
     hplot_item = None
+    hplot_unavailable_reason = None
     try:
         hm_fig = plots.plot_from_jid_table(j)
         if hm_fig is not None:
             hscript, hdiv = components(hm_fig)
             hplot_item = json_item(hm_fig)
+        else:
+            hplot_unavailable_reason = "No host-level MSR data available"
     except Exception as e:
         logging.getLogger(__name__).warning(
             "Failed to generate heatmap for jid %s: %s", job.jid, e, exc_info=True
         )
+        hplot_unavailable_reason = str(e)
 
     fsio = {}
     try:
@@ -536,9 +542,11 @@ def job_detail(request, pk):
         "mscript": mscript,
         "mdiv": mdiv,
         "mplot_item": mplot_item,
+        "mplot_unavailable_reason": mplot_unavailable_reason,
         "hscript": hscript,
         "hdiv": hdiv,
         "hplot_item": hplot_item,
+        "hplot_unavailable_reason": hplot_unavailable_reason,
         "schema": schema,
         "client_url": hoststring,
         "server_url": serverstring,

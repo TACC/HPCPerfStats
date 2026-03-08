@@ -31,9 +31,11 @@ export default function JobDetail() {
     mscript,
     mdiv,
     mplot_item,
+    mplot_unavailable_reason,
     hscript,
     hdiv,
     hplot_item,
+    hplot_unavailable_reason,
     schema = {},
     client_url,
     server_url,
@@ -252,6 +254,7 @@ export default function JobDetail() {
                   div={mdiv}
                   id="job-mscript"
                   plotName="Summary plot"
+                  unavailableReason={mplot_unavailable_reason}
                 />
               </td>
               <td>
@@ -261,6 +264,7 @@ export default function JobDetail() {
                   div={hdiv}
                   id="job-hscript"
                   plotName="Heatmap"
+                  unavailableReason={hplot_unavailable_reason}
                 />
               </td>
             </tr>
