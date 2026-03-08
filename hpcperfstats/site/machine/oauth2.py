@@ -7,7 +7,6 @@ from urllib.parse import quote
 
 import requests
 from django.http import HttpResponseRedirect
-from django.shortcuts import render
 from django.urls import reverse
 from requests.auth import HTTPBasicAuth
 
@@ -114,7 +113,7 @@ def logout(request):
 
 
 def login_prompt(request):
-  """Render login prompt unless already authenticated; then redirect to next or /.
+  """Redirect to OAuth login unless already authenticated; then redirect to next or /.
 
     """
   next_url = request.GET.get('next', '')
@@ -122,12 +121,7 @@ def login_prompt(request):
     redirect_to = next_url if _safe_redirect_path(next_url) else '/'
     return HttpResponseRedirect(redirect_to)
   login_url = reverse('login') + ('?next=' + quote(next_url) if next_url else '')
-  return render(request, "registration/login_prompt.html", {
-      "logged_in": False,
-      "next": next_url,
-      "login_url": login_url,
-      "machine_name": cfg.get_host_name_ext(),
-  })
+  return HttpResponseRedirect(login_url)
 
 
 def check_for_tokens(request):
