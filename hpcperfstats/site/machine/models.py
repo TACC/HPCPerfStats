@@ -67,11 +67,14 @@ class metrics_data(models.Model):
   """Derived metric value per job and (type, metric). Unique on (jid, type, metric). Table: metrics_data.
 
     """
-  jid = models.ForeignKey(job_data,
-                          on_delete=models.CASCADE,
-                          db_column='jid',
-                          blank=True,
-                          null=True)
+  jid = models.ForeignKey(
+      job_data,
+      on_delete=models.CASCADE,
+      db_column='jid',
+      related_name='metrics_data_set',
+      blank=True,
+      null=True,
+  )
   type = models.CharField(max_length=32, blank=True, null=True)
   metric = models.CharField(max_length=32, blank=True, null=True)
   units = models.CharField(max_length=16, blank=True, null=True)
