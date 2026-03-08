@@ -24,7 +24,8 @@ import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.date_utils import parse_start_end_dates
 from hpcperfstats.site.machine.models import job_data
 
-local_timezone = cfg.get_timezone()
+_tz_cfg = cfg.get_timezone()
+local_timezone = ZoneInfo(_tz_cfg) if isinstance(_tz_cfg, str) else _tz_cfg
 
 
 def sync_acct(acct_file, jobs_in_db):

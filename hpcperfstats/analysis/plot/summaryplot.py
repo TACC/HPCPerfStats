@@ -26,7 +26,8 @@ from bokeh.models.glyphs import Step
 from bokeh.palettes import d3
 from bokeh.plotting import figure
 
-local_timezone = cfg.get_timezone()
+_tz_cfg = cfg.get_timezone()
+local_timezone = ZoneInfo(_tz_cfg) if isinstance(_tz_cfg, str) else _tz_cfg
 
 
 class SummaryPlot():

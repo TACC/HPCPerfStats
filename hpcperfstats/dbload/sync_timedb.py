@@ -60,7 +60,8 @@ should_archive = True
 # DEBUG message toggle
 DEBUG = cfg.get_debug()
 
-local_timezone = cfg.get_timezone()
+_tz_cfg = cfg.get_timezone()
+local_timezone = ZoneInfo(_tz_cfg) if isinstance(_tz_cfg, str) else _tz_cfg
 
 # Thread count for database loading and archival
 thread_count = cfg.get_worker_thread_count(4)
@@ -437,8 +438,7 @@ if __name__ == '__main__':
 
         print("Archival running in the background")
 
-      if archive_job is not None:
-        archive_job.get()
+      archive_job.get()
 
     print("sync_timedb sleeping")
 
