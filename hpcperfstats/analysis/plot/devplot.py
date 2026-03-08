@@ -11,13 +11,10 @@ from bokeh.models.glyphs import Step
 from bokeh.palettes import d3
 from bokeh.plotting import figure
 
-from zoneinfo import ZoneInfo
-
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import clean_dataframe, tz_aware_bokeh_tick_formatter
 
-_tz_cfg = cfg.get_timezone()
-local_timezone = ZoneInfo(_tz_cfg) if isinstance(_tz_cfg, str) else _tz_cfg
+local_timezone = cfg.get_local_timezone()
 
 
 class DevPlot:

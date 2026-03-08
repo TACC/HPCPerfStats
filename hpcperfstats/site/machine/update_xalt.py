@@ -6,11 +6,8 @@ import os
 import sys
 from datetime import datetime
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE",
-                      "hpcperfstats.site.hpcperfstats_site.settings")
-
-import django
-django.setup()
+from hpcperfstats.django_bootstrap import ensure_django
+ensure_django()
 
 from hpcperfstats.dbload.date_utils import daterange, parse_start_end_dates
 from hpcperfstats.site.machine.models import job_data

@@ -25,6 +25,12 @@ server_name = cfg.get_server_name().split(',')[0]
 _http_session = requests.Session()
 
 
+def _get_redirect_uri():
+  """Build OAuth2 redirect_uri (no trailing slash) for this server."""
+  uri = 'https://{}{}'.format(server_name, reverse('oauth_callback'))
+  return uri[:-1] if uri.endswith('/') else uri
+
+
 def login_oauth(request):
   """Redirect to OAuth2 authorize URL with state; store state in session.
 
@@ -32,10 +38,7 @@ def login_oauth(request):
   session = request.session
   session['auth_state'] = os.urandom(24).hex()
 
-  redirect_uri = 'https://{}{}'.format(server_name, reverse('oauth_callback'))
-  if redirect_uri.endswith('/'):
-    redirect_uri = redirect_uri[:-1]
-
+  redirect_uri = _get_redirect_uri()
   authorization_url = (cfg.get_oauth_authorize_url() %
                        (redirect_uri, session['auth_state']))
   return HttpResponseRedirect(authorization_url)
@@ -52,10 +55,8 @@ def oauth_callback(request):
     return HttpResponseRedirect('/logout')
 
   if 'code' in request.GET:
-    redirect_uri = 'https://{}{}'.format(server_name, reverse('oauth_callback'))
+    redirect_uri = _get_redirect_uri()
     code = request.GET['code']
-    if redirect_uri.endswith('/'):
-      redirect_uri = redirect_uri[:-1]
     body = {
         'grant_type': 'authorization_code',
         'code': code,

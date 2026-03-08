@@ -30,8 +30,6 @@ def pytest_configure(config):
           "[OAUTH2]\nclient_id = id\nclient_key = key\n"
           "authorize_url = http://localhost\noauth_base_url = http://localhost\n")
     os.environ["HPCPERFSTATS_INI"] = path
-  os.environ.setdefault("DJANGO_SETTINGS_MODULE",
-                        "hpcperfstats.site.hpcperfstats_site.settings")
   os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
-  import django
-  django.setup()
+  from hpcperfstats.django_bootstrap import ensure_django
+  ensure_django()

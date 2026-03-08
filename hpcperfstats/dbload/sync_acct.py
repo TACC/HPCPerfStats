@@ -6,13 +6,8 @@ import os
 import sys
 import time
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-
-os.environ.setdefault("DJANGO_SETTINGS_MODULE",
-                      "hpcperfstats.site.hpcperfstats_site.settings")
-
-import django
-django.setup()
+from hpcperfstats.django_bootstrap import ensure_django
+ensure_django()
 
 import hostlist
 import pandas as pd
@@ -21,11 +16,10 @@ from django.db import IntegrityError
 from pandas import read_csv, to_datetime, to_timedelta
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload.date_utils import parse_start_end_dates
+from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
 from hpcperfstats.site.machine.models import job_data
 
-_tz_cfg = cfg.get_timezone()
-local_timezone = ZoneInfo(_tz_cfg) if isinstance(_tz_cfg, str) else _tz_cfg
+local_timezone = cfg.get_local_timezone()
 
 
 def sync_acct(acct_file, jobs_in_db):
@@ -174,8 +168,7 @@ if __name__ == "__main__":
   default_end = default_start + timedelta(days=1)
   startdate, enddate = parse_start_end_dates(sys.argv, default_start, default_end)
 
-  print("###Date Range of job files to ingest: {0} -> {1}####".format(
-      startdate, enddate))
+  log_date_range("job files to ingest", startdate, enddate)
   #################################################################
 
   # Parse and convert raw stats files to pandas dataframe

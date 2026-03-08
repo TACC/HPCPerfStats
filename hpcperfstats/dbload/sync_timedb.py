@@ -13,13 +13,8 @@ import time
 import warnings
 from datetime import datetime, timedelta, timezone
 from functools import partial
-from zoneinfo import ZoneInfo
-
-os.environ.setdefault("DJANGO_SETTINGS_MODULE",
-                      "hpcperfstats.site.hpcperfstats_site.settings")
-
-import django
-django.setup()
+from hpcperfstats.django_bootstrap import ensure_django
+ensure_django()
 
 # Django 5.0+ removed django.utils.timezone.utc; ensure it exists for ORM/code that references it (Django 6 still does not provide it).
 import django.utils.timezone as _django_tz
@@ -30,7 +25,7 @@ from django.db import IntegrityError, close_old_connections
 import pandas as pd
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload.date_utils import parse_start_end_dates
+from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
     collect_stats_files_in_range,
@@ -60,8 +55,7 @@ should_archive = True
 # DEBUG message toggle
 DEBUG = cfg.get_debug()
 
-_tz_cfg = cfg.get_timezone()
-local_timezone = ZoneInfo(_tz_cfg) if isinstance(_tz_cfg, str) else _tz_cfg
+local_timezone = cfg.get_local_timezone()
 
 # Thread count for database loading and archival
 thread_count = cfg.get_worker_thread_count(4)
@@ -374,8 +368,7 @@ if __name__ == '__main__':
           datetime.today(),
           datetime.min.time()) - timedelta(days=days_to_process + 1)
 
-  print("###Date Range of stats files to ingest: {0} -> {1}####".format(
-      startdate, enddate))
+  log_date_range("stats files to ingest", startdate, enddate)
   #################################################################
 
   start = time.time()

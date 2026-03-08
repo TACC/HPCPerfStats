@@ -24,6 +24,11 @@ def parse_start_end_dates(
   return start, end
 
 
+def log_date_range(kind, start, end):
+  """Print the standard date-range log line. kind e.g. 'stats files to ingest', 'job files to ingest', 'metrics to update'."""
+  print("###Date Range of {}: {} -> {}####".format(kind, start, end))
+
+
 def daterange(start_date, end_date, inclusive_end=False):
   """Yield each date from start_date through end_date, one day at a time.
 

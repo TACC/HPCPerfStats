@@ -8,11 +8,8 @@ import time
 from datetime import datetime, timedelta
 from itertools import islice
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE",
-                      "hpcperfstats.site.hpcperfstats_site.settings")
-
-import django
-django.setup()
+from hpcperfstats.django_bootstrap import ensure_django
+ensure_django()
 
 from django.db import close_old_connections
 from django.db.models import Count, Q
@@ -20,7 +17,7 @@ from django.db.utils import OperationalError
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
-from hpcperfstats.dbload.date_utils import parse_start_end_dates
+from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
 from hpcperfstats.site.machine.models import job_data
 
 DEBUG = cfg.get_debug()
@@ -115,8 +112,7 @@ if __name__ == "__main__":
   default_start = datetime.combine(datetime.today(), datetime.min.time())
   startdate, enddate = parse_start_end_dates(sys.argv, default_start, default_start)
 
-  print("###Date Range of metrics to update: {0} -> {1}####".format(
-      startdate, enddate))
+  log_date_range("metrics to update", startdate, enddate)
   #################################################################
 
   date = startdate
