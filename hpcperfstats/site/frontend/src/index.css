@@ -262,3 +262,55 @@ body {
 .pagination li.active a {
   font-weight: 600;
 }
+
+/* Search home: spacing and collapsible date list */
+.search-home {
+  padding-bottom: 1.5rem;
+}
+.search-home-section {
+  margin-bottom: 2rem;
+}
+.search-home-section:last-child {
+  margin-bottom: 0;
+}
+.search-date-list-section h4 {
+  margin-bottom: 0.5rem;
+}
+.search-date-list-details {
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  margin-top: 0.5rem;
+}
+.search-date-list-summary {
+  padding: 0.5rem 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  background: #f8f9fa;
+  border-radius: 4px;
+  user-select: none;
+}
+.search-date-list-summary::-webkit-details-marker {
+  display: none;
+}
+.search-date-list-summary::before {
+  content: "▾ ";
+  font-size: 0.75rem;
+  color: #6c757d;
+}
+.search-date-list-details[open] .search-date-list-summary {
+  border-radius: 4px 4px 0 0;
+}
+.search-date-list-details:not([open]) .search-date-list-summary::before {
+  content: "▸ ";
+}
+.search-date-list-nav {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid #dee2e6;
+}
+.search-date-list-month {
+  margin-bottom: 0.75rem;
+}
+.search-date-list-month:last-child {
+  margin-bottom: 0;
+}
