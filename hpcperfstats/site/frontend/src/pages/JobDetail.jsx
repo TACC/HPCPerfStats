@@ -274,7 +274,11 @@ export default function JobDetail() {
                 <td>
                   <Link to={`/job/${job.jid}/${type_name}/`}>{type_name}</Link>
                 </td>
-                <td style={{ textAlign: "left" }}>{event}</td>
+                <td style={{ textAlign: "left" }}>
+                  {Array.isArray(event)
+                    ? event.join(", ")
+                    : event}
+                </td>
               </tr>
             ))}
           </tbody>

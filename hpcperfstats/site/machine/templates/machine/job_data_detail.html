@@ -186,7 +186,7 @@
     <table class="table table-condensed table-bordered" style="margin-right:30px;width:100%;">
       <tr><th>Type Name</th><th>Recorded Performance Events</th></tr>
          {% for type_name, event in schema.items %}
-            <tr><td><a href="{{ type_name }}/">{{ type_name }}</a></td><td style="text-align:left">{{ event }}</td></tr>
+            <tr><td><a href="{{ type_name }}/">{{ type_name }}</a></td><td style="text-align:left">{{ event|join:", " }}</td></tr>
          {% endfor %}
     </table>
 </div>
