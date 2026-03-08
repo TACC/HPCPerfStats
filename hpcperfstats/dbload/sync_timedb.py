@@ -437,7 +437,8 @@ if __name__ == '__main__':
 
         print("Archival running in the background")
 
-      archive_job.get()
+      if archive_job is not None:
+        archive_job.get()
 
     print("sync_timedb sleeping")
 
