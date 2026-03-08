@@ -79,13 +79,15 @@
 
   <div class="col-md-1">
     <button type="button" class="btn btn-primary" data-toggle="collapse" data-target="#procs">
-      Processes
+      Processes {% if not proc_list %}<span class="badge badge-secondary">no data</span>{% endif %}
     </button>
     <div id="procs" class="collapse">
       <table class="table table-condensed table-bordered">
 	<tbody>
-	  {% for proc in proc_list %} 
+	  {% for proc in proc_list %}
 	  <tr><td><a href="{% url 'machine:proc_detail' job_data.id proc %}">{{proc}}</a></td></tr>
+	  {% empty %}
+	  <tr><td colspan="1" class="text-muted">No process data available.</td></tr>
 	  {% endfor %}
 	</tbody>
       </table>
@@ -94,22 +96,25 @@
 
   <div class="col-md-3">
   <button type="button" class="btn btn-primary" data-toggle="collapse" data-target="#tests">
-    Job-level Metrics
+    Job-level Metrics {% if not job_data.metrics_data_set.all %}<span class="badge badge-secondary">no data</span>{% endif %}
   </button>
     <div id="tests" class="collapse">
       <table class="table table-condensed table-bordered"><!--- style="max-width:100px;">--->
 	<tbody>
 	  {% for obj in job_data.metrics_data_set.all %}
 	  <tr align=center><th>{{ obj.metric|ljust:"10" }}[{{ obj.units}}]</th><td>{{ obj.value|floatformat:"2" }}</td></tr>
-	  {% endfor %}	
+	  {% empty %}
+	  <tr><td colspan="2" class="text-muted">No job-level metrics available.</td></tr>
+	  {% endfor %}
 	</tbody>
       </table>
     </div>
   </div>
   
   <div class="col-md-3">
+  {% with has_exec_path=xalt_data.exec_path|length has_cwd=xalt_data.cwd|length has_libset=xalt_data.libset|length %}
   <button type="button" class="btn btn-primary" data-toggle="collapse" data-target="#execparams">
-    Execution Parameters
+    Execution Parameters {% if not has_exec_path and not has_cwd and not has_libset %}<span class="badge badge-secondary">no data</span>{% endif %}
   </button>
     <div id="execparams" class="collapse">
       <table class="table table-condensed table-bordered" style="max-width:100%;">
@@ -144,18 +149,21 @@
 	</tbody>
       </table>
     </div>
+  {% endwith %}
   </div>
 
   <div class="col-md-1">
   <button type="button" class="btn btn-primary" data-toggle="collapse" data-target="#hosts">
-    Hosts
+    Hosts {% if not host_list %}<span class="badge badge-secondary">no data</span>{% endif %}
   </button>
     <div id="hosts" class="collapse">
       <table class="table table-condensed table-bordered"><!--- style="max-width:100px;">--->
 	<tbody>
 	  {% for host in host_list %}
 	  <tr align=center><td>{{ host }}</td></tr>
-	  {% endfor %}	
+	  {% empty %}
+	  <tr><td class="text-muted">No host data available.</td></tr>
+	  {% endfor %}
 	</tbody>
       </table>
     </div>
