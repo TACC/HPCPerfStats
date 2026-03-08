@@ -37,6 +37,7 @@ export default function App() {
       <Routes>
         <Route index element={<Search />} />
         <Route path="job/:pk" element={<JobDetail />} />
+        <Route path="year/:year" element={<JobList />} />
         <Route path="date/:date" element={<JobList />} />
         <Route path="username/:username" element={<JobList />} />
         <Route path="account/:account" element={<JobList />} />

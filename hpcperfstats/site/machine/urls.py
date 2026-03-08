@@ -33,6 +33,7 @@ urlpatterns = [
     path("", _redirect_spa_index, name="dates"),
     path("job/<str:pk>/", _redirect("job/{pk}", query=False), name="job_data"),
     path("host/<path:host>/", _redirect_host, name="host_view"),
+    path("year/<str:year>/", _redirect("year/{year}", query=False), name="year_view"),
     path("date/<str:end_time__date>", _redirect("date/{end_time__date}", query=False), name="date_view"),
     path("username/<str:username>/", _redirect("username/{username}", query=False), name="username_view"),
     path("account/<str:account>/", _redirect("account/{account}", query=False), name="account_view"),

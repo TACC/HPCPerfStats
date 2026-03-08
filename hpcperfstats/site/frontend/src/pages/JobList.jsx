@@ -16,6 +16,7 @@ export default function JobList() {
 
   useEffect(() => {
     const params = { ...Object.fromEntries(searchParams.entries()) };
+    if (paramsFromRoute.year) params.end_time__date = paramsFromRoute.year;
     if (paramsFromRoute.date) params.end_time__date = paramsFromRoute.date;
     if (paramsFromRoute.username) params.username = paramsFromRoute.username;
     if (paramsFromRoute.account) params.account = paramsFromRoute.account;
@@ -56,6 +57,7 @@ export default function JobList() {
     pagination;
 
   const paginationParams = Object.fromEntries(searchParams.entries());
+  if (paramsFromRoute.year) paginationParams.end_time__date = paramsFromRoute.year;
   if (paramsFromRoute.date) paginationParams.end_time__date = paramsFromRoute.date;
   if (paramsFromRoute.username) paginationParams.username = paramsFromRoute.username;
   if (paramsFromRoute.account) paginationParams.account = paramsFromRoute.account;

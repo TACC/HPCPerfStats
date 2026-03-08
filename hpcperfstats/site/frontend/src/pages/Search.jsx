@@ -19,12 +19,26 @@ export default function Search() {
   if (loading) return <LoadingMessage message="Loading…" />;
   if (error) return <div className="container text-danger">Error: {error}</div>;
 
-  const { date_list = [] } = options || {};
+  const { year_list = [], date_list = [] } = options || {};
 
   return (
     <div className="row">
       <hr />
       <div className="container-fluid">
+        <h4>List all jobs for a given year</h4>
+        {year_list.length > 0 ? (
+          <nav aria-label="Year list" className="mb-4">
+            <ul className="pagination pagination-sm flex-wrap">
+              {year_list.map((year) => (
+                <li className="page-item" key={year}>
+                  <Link className="page-link" to={`/year/${year}`}>{year}</Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        ) : (
+          <p className="text-muted mb-4">No job data available.</p>
+        )}
         <h4>List all jobs for a given date</h4>
         {date_list.length > 0 ? (
           <nav aria-label="Date list">

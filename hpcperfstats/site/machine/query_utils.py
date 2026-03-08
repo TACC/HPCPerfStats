@@ -37,6 +37,8 @@ def get_job_list_order_by(fields):
 _DATE_SHORTHAND = re.compile(r"^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?(?:T.*)?$")
 # Month-only format YYYY-MM (e.g. "2026-01") for whole-month filter.
 _MONTH_ONLY = re.compile(r"^(\d{4})-(\d{2})$")
+# Year-only format YYYY (e.g. "2024") for whole-year filter.
+_YEAR_ONLY = re.compile(r"^(\d{4})$")
 
 
 def normalize_date_param(value):
@@ -60,8 +62,8 @@ def normalize_job_list_query_params(fields):
     out = {}
     for k, v in fields.items():
         if "time" in k and ("__date" in k or "__gte" in k or "__lte" in k):
-            # Keep month-only end_time__date (YYYY-MM) so expand_month_date_to_range can expand it
-            if k == "end_time__date" and v and _MONTH_ONLY.match(str(v).strip()):
+            # Keep month-only (YYYY-MM) or year-only (YYYY) end_time__date so expand_month_date_to_range can expand it
+            if k == "end_time__date" and v and (_MONTH_ONLY.match(str(v).strip()) or _YEAR_ONLY.match(str(v).strip())):
                 pass  # leave v unchanged
             else:
                 v = normalize_date_param(v)
@@ -72,13 +74,22 @@ def normalize_job_list_query_params(fields):
 def expand_month_date_to_range(fields):
     """
     If fields contains end_time__date with a YYYY-MM value, replace it with
-    end_time__date__gte and end_time__date__lte for that month. Return dict suitable for filter.
+    end_time__date__gte and end_time__date__lte for that month. If YYYY only, expand to full year.
+    Return dict suitable for filter.
     """
     out = dict(fields)
     val = out.get("end_time__date")
     if not val or not isinstance(val, str):
         return out
-    m = _MONTH_ONLY.match(val.strip())
+    val = val.strip()
+    year_m = _YEAR_ONLY.match(val)
+    if year_m:
+        y = int(year_m.group(1))
+        del out["end_time__date"]
+        out["end_time__date__gte"] = f"{y}-01-01"
+        out["end_time__date__lte"] = f"{y}-12-31"
+        return out
+    m = _MONTH_ONLY.match(val)
     if not m:
         return out
     y, month = int(m.group(1)), int(m.group(2))

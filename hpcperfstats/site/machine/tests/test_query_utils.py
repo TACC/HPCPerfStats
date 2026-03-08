@@ -45,6 +45,14 @@ class TestNormalizeJobListQueryParams:
         assert expanded["end_time__date__gte"] == "2026-01-01"
         assert expanded["end_time__date__lte"] == "2026-01-31"
 
+    def test_preserves_year_only_end_time_date(self):
+        """Year-only YYYY is preserved so expand_month_date_to_range can expand to full year."""
+        out = normalize_job_list_query_params({"end_time__date": "2024"})
+        assert out["end_time__date"] == "2024"
+        expanded = expand_month_date_to_range(out)
+        assert expanded["end_time__date__gte"] == "2024-01-01"
+        assert expanded["end_time__date__lte"] == "2024-12-31"
+
     def test_leaves_other_params_unchanged(self):
         out = normalize_job_list_query_params({"queue": "normal", "page": "1"})
         assert out["queue"] == "normal"
@@ -68,6 +76,13 @@ class TestExpandMonthDateToRange:
         out = expand_month_date_to_range({"end_time__date": "2026-01-15"})
         assert out["end_time__date"] == "2026-01-15"
         assert "end_time__date__gte" not in out
+
+    def test_expands_year_only(self):
+        """Year-only YYYY is expanded to full year range."""
+        out = expand_month_date_to_range({"end_time__date": "2024"})
+        assert "end_time__date" not in out
+        assert out["end_time__date__gte"] == "2024-01-01"
+        assert out["end_time__date__lte"] == "2024-12-31"
 
     def test_no_end_time_date_unchanged(self):
         out = expand_month_date_to_range({"queue": "x"})

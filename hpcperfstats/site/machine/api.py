@@ -94,12 +94,15 @@ def home_options(request):
 
     date_list = cached_orm(KEY_DATES, TIMEOUT_MEDIUM, _dates_fn)
     month_dict = {}
+    year_set = set()
     if date_list:
         for d in date_list:
+            year_set.add(d.year)
             key = f"{d.year}-{d.month:02d}"  # YYYY-MM
             if key not in month_dict:
                 month_dict[key] = []
             month_dict[key].append((str(d), str(d.day)))
+    year_list = sorted(year_set, reverse=True)
 
     def _metrics_fn():
         return list(
@@ -126,6 +129,7 @@ def home_options(request):
 
     return Response({
         "machine_name": cfg.get_host_name_ext(),
+        "year_list": year_list,
         "date_list": sorted(month_dict.items(), reverse=True),
         "metrics": list(metrics) if metrics else [],
         "queues": [q for q in (queues or []) if q],
@@ -467,7 +471,12 @@ def job_list(request):
 
     current_path = request.get_full_path() if "?" in request.get_full_path() else None
     qname = "Jobs"
-    if fields.get("queue"):
+    date_param = request.GET.get("end_time__date", "").strip()
+    if date_param and len(date_param) == 4 and date_param.isdigit():
+        qname = f"Jobs for year {date_param}"
+    elif date_param:
+        qname = f"Jobs for date {date_param}"
+    elif fields.get("queue"):
         qname = f"Jobs in queue {fields['queue']}"
 
     return Response({
