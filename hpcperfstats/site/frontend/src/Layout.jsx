@@ -14,7 +14,7 @@ export default function Layout({ session, children }) {
             <img
               src="/media/logo.png"
               alt="TACC"
-              style={{ maxWidth: "50%" }}
+              style={{ maxWidth: "35%" }}
             />
           </a>
           <div style={{ marginTop: "4px" }}>
