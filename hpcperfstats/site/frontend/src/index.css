@@ -113,6 +113,45 @@ body {
   border-bottom: 1px solid #dee2e6;
 }
 
+/* Host last-seen freshness badge colors (ok = fresh → gt_week = very stale) */
+.badge-freshness-ok {
+  background-color: #198754;
+  color: #fff;
+}
+.badge-freshness-gt_10min {
+  background-color: #0dcaf0;
+  color: #000;
+}
+.badge-freshness-gt_hour {
+  background-color: #fd7e14;
+  color: #000;
+}
+.badge-freshness-gt_day {
+  background-color: #dc3545;
+  color: #fff;
+}
+.badge-freshness-gt_week {
+  background-color: #212529;
+  color: #fff;
+}
+
+/* Table row background by freshness (same semantic colors) */
+.tr-freshness-ok {
+  background-color: rgba(25, 135, 84, 0.12);
+}
+.tr-freshness-gt_10min {
+  background-color: rgba(13, 202, 240, 0.15);
+}
+.tr-freshness-gt_hour {
+  background-color: rgba(253, 126, 20, 0.15);
+}
+.tr-freshness-gt_day {
+  background-color: rgba(220, 53, 69, 0.15);
+}
+.tr-freshness-gt_week {
+  background-color: rgba(33, 37, 41, 0.1);
+}
+
 /* Histogram thumbnails: popover shows full plot on hover */
 .histogram-thumbnail-popover {
   position: fixed;

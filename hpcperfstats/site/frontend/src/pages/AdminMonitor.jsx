@@ -3,18 +3,19 @@ import { api } from "../api";
 import LoadingMessage from "../components/LoadingMessage";
 
 const BADGE_MAP = {
-  ok: { label: "OK (≤ 10 minutes)", class: "badge-secondary" },
-  gt_10min: { label: "> 10 minutes", class: "badge-info" },
-  gt_hour: { label: "> 1 hour", class: "badge-warning" },
-  gt_day: { label: "> 1 day", class: "badge-danger" },
-  gt_week: { label: "> 1 week", class: "badge-dark" },
+  ok: { label: "OK (≤ 10 minutes)", class: "badge badge-freshness-ok" },
+  gt_10min: { label: "> 10 minutes", class: "badge badge-freshness-gt_10min" },
+  gt_hour: { label: "> 1 hour", class: "badge badge-freshness-gt_hour" },
+  gt_day: { label: "> 1 day", class: "badge badge-freshness-gt_day" },
+  gt_week: { label: "> 1 week", class: "badge badge-freshness-gt_week" },
 };
 
 const ROW_CLASS = {
-  gt_10min: "table-info",
-  gt_hour: "table-warning",
-  gt_day: "table-danger",
-  gt_week: "table-dark",
+  ok: "tr-freshness-ok",
+  gt_10min: "tr-freshness-gt_10min",
+  gt_hour: "tr-freshness-gt_hour",
+  gt_day: "tr-freshness-gt_day",
+  gt_week: "tr-freshness-gt_week",
 };
 
 export default function AdminMonitor() {
@@ -83,11 +84,11 @@ export default function AdminMonitor() {
           </div>
           <p>
             Status buckets:{" "}
-            <span className="badge badge-secondary">OK (≤ 10 minutes)</span>{" "}
-            <span className="badge badge-info">{"> 10 minutes"}</span>{" "}
-            <span className="badge badge-warning">{"> 1 hour"}</span>{" "}
-            <span className="badge badge-danger">{"> 1 day"}</span>{" "}
-            <span className="badge badge-dark">{"> 1 week"}</span>
+            <span className="badge badge-freshness-ok">OK (≤ 10 minutes)</span>{" "}
+            <span className="badge badge-freshness-gt_10min">{"> 10 minutes"}</span>{" "}
+            <span className="badge badge-freshness-gt_hour">{"> 1 hour"}</span>{" "}
+            <span className="badge badge-freshness-gt_day">{"> 1 day"}</span>{" "}
+            <span className="badge badge-freshness-gt_week">{"> 1 week"}</span>
           </p>
           <table className="table table-condensed table-bordered">
             <thead>
