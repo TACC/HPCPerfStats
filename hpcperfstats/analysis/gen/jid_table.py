@@ -40,9 +40,13 @@ def _queryset_to_dataframe(qs, columns=None):
   if qs is None:
     return pd.DataFrame()
   if hasattr(qs, "values") and columns is None:
-    return pd.DataFrame(list(qs.values()))
+    vals = qs.values()
+    if vals is not None:
+      return pd.DataFrame(list(vals))
   if hasattr(qs, "values") and columns is not None:
-    return pd.DataFrame(list(qs.values(*columns)))
+    vals = qs.values(*columns)
+    if vals is not None:
+      return pd.DataFrame(list(vals))
   return pd.DataFrame(list(qs))
 
 

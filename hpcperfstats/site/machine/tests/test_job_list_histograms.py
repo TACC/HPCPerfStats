@@ -101,6 +101,8 @@ def test_job_list_histograms_helper_returns_tuple_of_strings():
     ) as mock_metrics_data, patch(
         "hpcperfstats.site.machine.api.job_hist", return_value=MagicMock()
     ), patch(
+        "hpcperfstats.site.machine.api.gridplot", return_value=MagicMock()
+    ), patch(
         "hpcperfstats.site.machine.api.components",
         return_value=("<script></script>", "<div></div>"),
     ):
