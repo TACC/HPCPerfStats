@@ -59,8 +59,8 @@ class TestJobListHistogramsView:
         assert "script" in data and "div" in data
 
 
-def test_job_list_histograms_helper_returns_empty_when_no_jobs():
-    """_job_list_histograms returns ('', '', None) when queryset count is 0."""
+def test_job_list_histograms_helper_returns_empty_figure_when_no_jobs():
+    """_job_list_histograms returns valid script/div/plot_item (empty-state figure) when queryset count is 0."""
     from hpcperfstats.site.machine.api import _job_list_histograms
 
     factory = RequestFactory()
@@ -73,9 +73,9 @@ def test_job_list_histograms_helper_returns_empty_when_no_jobs():
         mock_job_data.objects.filter.return_value.order_by.return_value = mock_qs
         script, div, plot_item = _job_list_histograms(request)
 
-    assert script == ""
-    assert div == ""
-    assert plot_item is None
+    assert script != ""
+    assert div != ""
+    assert plot_item is not None
 
 
 def test_job_list_histograms_helper_returns_tuple_when_mocked():

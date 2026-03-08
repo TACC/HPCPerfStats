@@ -5,6 +5,7 @@ from datetime import timezone as dt_timezone
 import hpcperfstats.conf_parser as cfg
 from bokeh.embed import components, json_item
 from bokeh.layouts import gridplot
+from bokeh.plotting import figure
 from django.utils import timezone
 from django.views.decorators.cache import cache_page
 from pandas import DataFrame, to_timedelta
@@ -166,6 +167,17 @@ def search_dispatch(request):
     return job_list(request)
 
 
+def _job_list_histograms_empty_figure():
+    """Return a single Bokeh figure for empty histogram state (no jobs or no plottable metrics)."""
+    empty = figure(
+        height=400,
+        width=600,
+        title="No histogram data available for this job list.",
+        toolbar_location=None,
+    )
+    return gridplot([[empty]], toolbar_location=None)
+
+
 def _job_list_histograms(request):
     """Build Bokeh script/div and json_item for job list histograms. Returns (script, div, plot_item)."""
     fields = request.GET.dict()
@@ -195,7 +207,9 @@ def _job_list_histograms(request):
     df_fields = list(set(name for name, _ in (key.split("__") for key in cur_metrics)))
 
     if nj == 0:
-        return "", "", None
+        gp = _job_list_histograms_empty_figure()
+        script, div = components(gp)
+        return script, div, json_item(gp)
 
     acc_cols = ["jid", "start_time", "submit_time", "runtime", "nhosts"]
     job_rows = list(job_list_qs.values(*acc_cols))
@@ -238,8 +252,17 @@ def _job_list_histograms(request):
             gp = gridplot(plot_list, ncols=2)
             script, div = components(gp)
             plot_item = json_item(gp)
-    except Exception:
-        pass
+        else:
+            gp = _job_list_histograms_empty_figure()
+            script, div = components(gp)
+            plot_item = json_item(gp)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "Failed to generate job list histograms: %s", e, exc_info=True
+        )
+        gp = _job_list_histograms_empty_figure()
+        script, div = components(gp)
+        plot_item = json_item(gp)
     return script, div, plot_item
 
 
