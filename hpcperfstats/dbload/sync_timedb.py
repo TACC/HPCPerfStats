@@ -5,6 +5,7 @@ DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers 
 
 AI generated.
 """
+import itertools
 import multiprocessing
 import os
 import subprocess
@@ -75,6 +76,9 @@ days_to_process = 5
 # How many files to proccess and archive at once
 chunk_size = 100
 
+# Rows per bulk_create batch to limit peak memory per worker
+bulk_create_batch_size = 10000
+
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
 
 
@@ -104,8 +108,9 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
   ts_low = timestamp_utc - timedelta(hours=48)
   ts_high = timestamp_utc + timedelta(hours=72)
-  # Single round-trip: fetch distinct epoch seconds via raw SQL (index-friendly)
+  # Server-side cursor: fetch distinct epoch seconds in batches to limit memory
   from django.db import connection
+  itimes_set = set()
   with connection.cursor() as cur:
     cur.execute(
         """
@@ -115,17 +120,25 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         """,
         [hostname, ts_low, ts_high],
     )
-    itimes_set = set(row[0] for row in cur.fetchall())
+    while True:
+      rows = cur.fetchmany(5000)
+      if not rows:
+        break
+      for row in rows:
+        itimes_set.add(row[0])
 
   start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   if start_idx == -1:
     print("No missing timestamps found for %s" % stats_file)
     return (stats_file, True)
 
+  # Keep only lines from start_idx to avoid holding the full file in memory
+  lines = lines[start_idx:]
+
   start = time.time()
   try:
     stats_list, proc_stats_list = parse_stats_lines(
-        lines, start_idx,
+        lines, 0,
         eventmaps_by_type=EVENTMAPS_BY_TYPE,
         exclude_types_list=exclude_types,
     )
@@ -135,6 +148,8 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
     return (stats_file, False)
 
   stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
+  del stats_list
+  del proc_stats_list
   if stats.empty and proc_stats.empty:
     if DEBUG:
       print("Unable to process stats file %s" % stats_file)
@@ -146,11 +161,15 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   lock.acquire()
   try:
     try:
-      proc_objs = [
-          proc_data(jid=row.jid, host=row.host, proc=row.proc)
-          for row in proc_stats.itertuples(index=False)
-      ]
-      proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
+      proc_it = proc_stats.itertuples(index=False)
+      while True:
+        batch = list(itertools.islice(proc_it, bulk_create_batch_size))
+        if not batch:
+          break
+        proc_objs = [
+            proc_data(jid=row.jid, host=row.host, proc=row.proc) for row in batch
+        ]
+        proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
     except Exception as e:
       if DEBUG:
         print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
@@ -168,22 +187,27 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
             message=".*[Dd]iscarding nonzero nanoseconds.*",
             category=UserWarning,
         )
-        host_objs = [
-            host_data(
-                time=row.time.to_pydatetime(),
-                host=row.host,
-                jid=row.jid,
-                type=row.type,
-                dev=None,
-                event=row.event,
-                unit=row.unit,
-                value=float(row.value) if pd.notna(row.value) else None,
-                delta=float(row.delta) if pd.notna(row.delta) else None,
-                arc=float(row.arc) if pd.notna(row.arc) else None,
-            )
-            for row in stats.itertuples(index=False)
-        ]
-      host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
+        stats_it = stats.itertuples(index=False)
+        while True:
+          batch = list(itertools.islice(stats_it, bulk_create_batch_size))
+          if not batch:
+            break
+          host_objs = [
+              host_data(
+                  time=row.time.to_pydatetime(),
+                  host=row.host,
+                  jid=row.jid,
+                  type=row.type,
+                  dev=None,
+                  event=row.event,
+                  unit=row.unit,
+                  value=float(row.value) if pd.notna(row.value) else None,
+                  delta=float(row.delta) if pd.notna(row.delta) else None,
+                  arc=float(row.arc) if pd.notna(row.arc) else None,
+              )
+              for row in batch
+          ]
+          host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
     except Exception as e:
       if DEBUG:
         print("error in host_data bulk_create:", str(e))

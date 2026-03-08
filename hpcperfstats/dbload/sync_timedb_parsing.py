@@ -213,8 +213,7 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
 
 def build_stats_dataframes(stats_list, proc_stats_list):
   """Build deduplicated DataFrames from parsed stats and proc_stats lists. Returns (stats_df, proc_stats_df)."""
-  unique_proc = set(tuple(d.items()) for d in proc_stats_list)
-  proc_stats_df = DataFrame.from_records([dict(e) for e in unique_proc])
+  proc_stats_df = DataFrame.from_records(proc_stats_list).drop_duplicates()
   stats_df = DataFrame.from_records(stats_list)
   return stats_df, proc_stats_df
 
