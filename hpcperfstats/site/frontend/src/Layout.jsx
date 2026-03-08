@@ -8,7 +8,7 @@ export default function Layout({ session, children }) {
         <div className="navbar-header">
           <a href="https://www.tacc.utexas.edu">
             <img
-              src="/media/TACC_logo.png"
+              src="/media/logo.png"
               alt="TACC"
               style={{ maxWidth: "50%" }}
             />
