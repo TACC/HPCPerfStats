@@ -19,13 +19,13 @@ export default function Layout({ session, children }) {
           </a>
         </div>
         <div className="navbar-brand">
-          {session?.machine_name && (
-            <div className="navbar-brand-cluster">{session.machine_name}</div>
-          )}
           <div style={{ fontSize: "1.1em", fontWeight: 600, color: "black" }}>
             HPCPerfStats
           </div>
           <div className="text-muted small">a job-level resource usage monitoring tool</div>
+          {session?.machine_name && (
+            <div className="navbar-brand-cluster">{session.machine_name}</div>
+          )}
         </div>
         <div className="navbar-form navbar-right" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "8px" }}>
           <a href="/logout/" className="btn btn-default btn-sm">Logout</a>
