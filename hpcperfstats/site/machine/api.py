@@ -175,6 +175,14 @@ def search_dispatch(request):
     return job_list(request)
 
 
+# Display titles for built-in job list histogram columns (column name -> UI title)
+JOB_HIST_DISPLAY_NAMES = {
+    "runtime": "Number of jobs by cpu hours",
+    "nhosts": "Number of jobs by number of nodes",
+    "queue_wait": "Number of jobs by queue wait time",
+}
+
+
 def _job_list_histograms_empty_figure():
     """Return a single Bokeh figure for empty histogram state (no jobs or no plottable metrics)."""
     empty = figure(
@@ -322,11 +330,12 @@ def _job_list_histograms(request):
     df = DataFrame(jid_dict).set_index("jid")
     hist_metrics = list(hist_metrics_set)
     df = df.join(job_df)
-    hist_metrics += [("Number of jobs by cpu hours", "hours"), ("Number of jobs by number of nodes", "# nodes"), ("Number of jobs by queue wait time", "hours")]
     df["queue_wait"] = (
         to_timedelta(df["start_time"] - df["submit_time"]).dt.total_seconds() / 3600
     )
     df["runtime"] = df["runtime"] / 3600
+    # Fixed histograms use actual df column names; display titles mapped for UI
+    hist_metrics += [("runtime", "hours"), ("nhosts", "# nodes"), ("queue_wait", "hours")]
     # Keep df numeric for histograms; do not run clean_dataframe here (it would
     # replace NaN with '' and break job_hist). job_hist filters to finite values.
     # Only plot metrics that exist as columns (df has filter metrics + runtime/nhosts/queue_wait)
@@ -337,7 +346,10 @@ def _job_list_histograms(request):
 
     def _build_grid_plot_list():
         """Build list of figures for the main grid (each figure must be used in only one document)."""
-        pl = [job_hist(df, metric, label) for metric, label in hist_metrics]
+        pl = [
+            job_hist(df, metric, label, title=JOB_HIST_DISPLAY_NAMES.get(metric, metric))
+            for metric, label in hist_metrics
+        ]
         pl = [p for p in pl if p is not None]
         q_full = _job_list_queue_histogram(job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT)
         if q_full is not None:
@@ -378,11 +390,20 @@ def _job_list_histograms(request):
         plot_list_1 = _build_grid_plot_list()
         if plot_list_1:
             for metric, label in hist_metrics:
-                p_thumb = job_hist(df, metric, label, width=THUMB_WIDTH, height=THUMB_HEIGHT)
-                p_full = job_hist(df, metric, label, width=FULL_WIDTH, height=FULL_HEIGHT)
+                display_title = JOB_HIST_DISPLAY_NAMES.get(metric, metric)
+                p_thumb = job_hist(
+                    df, metric, label,
+                    width=THUMB_WIDTH, height=THUMB_HEIGHT,
+                    title=display_title,
+                )
+                p_full = job_hist(
+                    df, metric, label,
+                    width=FULL_WIDTH, height=FULL_HEIGHT,
+                    title=display_title,
+                )
                 if p_thumb is not None and p_full is not None:
                     histograms.append({
-                        "title": metric,
+                        "title": display_title,
                         "plot_item_thumb": json_item(p_thumb),
                         "plot_item_full": json_item(p_full),
                     })

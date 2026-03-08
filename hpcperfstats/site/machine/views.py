@@ -35,10 +35,11 @@ class xalt_data_c:
         self.libset = []
 
 
-def job_hist(df, metric, label, width=600, height=400):
+def job_hist(df, metric, label, width=600, height=400, title=None):
     """Build a Bokeh quad histogram for the given metric column and axis label.
 
     Optional width/height allow thumbnail (e.g. 280x200) vs full (600x400) sizes.
+    Optional title overrides the figure title (defaults to metric column name).
     Uses only finite values; handles empty, constant, and all-zero data safely.
     """
     if metric not in df.columns:
@@ -74,7 +75,7 @@ def job_hist(df, metric, label, width=600, height=400):
         y_max = y_min
 
     plot = figure(
-        title=metric,
+        title=title if title is not None else metric,
         toolbar_location=None,
         height=height,
         width=width,
