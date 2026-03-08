@@ -22,6 +22,7 @@ from numpy import amax, diff, isnan, maximum, mean, zeros
 from pandas import to_datetime
 
 from django.db import transaction, close_old_connections
+from django.db.utils import OperationalError
 
 from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.analysis.gen.utils import utils
@@ -145,6 +146,44 @@ def _unwrap(args):
   return args[0].compute_metrics(args[1])
 
 
+def _persist_metrics_batch(job_results):
+  """Fetch existing metrics_data for jids in job_results, then bulk_create/bulk_update. Called in main process."""
+  with transaction.atomic():
+    jids = list({item["jid"].jid for item in job_results})
+    existing = list(
+        metrics_data.objects.filter(jid_id__in=jids).only(
+            "id", "jid_id", "type", "metric", "units", "value"
+        )
+    )
+    existing_by_key = {(r.jid_id, r.type, r.metric): r for r in existing}
+    to_update_list = []
+    to_create = []
+    for item in job_results:
+      key = (item["jid"].jid, item["type"], item["metric"])
+      if key in existing_by_key:
+        obj = existing_by_key[key]
+        obj.units = item["units"]
+        obj.value = item["value"]
+        to_update_list.append(obj)
+      else:
+        to_create.append(
+            metrics_data(
+                jid_id=item["jid"].jid,
+                type=item["type"],
+                metric=item["metric"],
+                units=item["units"],
+                value=item["value"],
+            )
+        )
+    if to_create:
+      metrics_data.objects.bulk_create(to_create)
+    if to_update_list:
+      metrics_data.objects.bulk_update(
+          list({id(o): o for o in to_update_list}.values()),
+          ["units", "value"],
+      )
+
+
 class Metrics():
   """Computes simple and complex metrics for a list of jobs in parallel and writes results to metrics_data.
 
@@ -232,41 +271,19 @@ class Metrics():
                                              ((self, job) for job in job_list)):
         if not job_results:
           continue
-        # Batch writes: one query to fetch existing, then bulk_create + bulk_update.
-        with transaction.atomic():
-          jids = list({item["jid"].jid for item in job_results})
-          existing = list(
-              metrics_data.objects.filter(jid_id__in=jids).only(
-                  "id", "jid_id", "type", "metric", "units", "value"
-              )
-          )
-          existing_by_key = {(r.jid_id, r.type, r.metric): r for r in existing}
-          to_update_list = []
-          to_create = []
-          for item in job_results:
-            key = (item["jid"].jid, item["type"], item["metric"])
-            if key in existing_by_key:
-              obj = existing_by_key[key]
-              obj.units = item["units"]
-              obj.value = item["value"]
-              to_update_list.append(obj)
-            else:
-              to_create.append(
-                  metrics_data(
-                      jid_id=item["jid"].jid,
-                      type=item["type"],
-                      metric=item["metric"],
-                      units=item["units"],
-                      value=item["value"],
-                  )
-              )
-          if to_create:
-            metrics_data.objects.bulk_create(to_create)
-          if to_update_list:
-            metrics_data.objects.bulk_update(
-                list({id(o): o for o in to_update_list}.values()),
-                ["units", "value"],
-            )
+        # Ensure main process uses a fresh DB connection (may have gone stale
+        # while waiting on pool). Retry once on connection errors.
+        for attempt in range(2):
+          try:
+            close_old_connections()
+            _persist_metrics_batch(job_results)
+            break
+          except OperationalError as e:
+            if "connection" in str(e).lower() or "closed" in str(e).lower():
+              close_old_connections()
+              if attempt == 0:
+                continue
+            raise
 
   def job_arc(self,
               jt,
