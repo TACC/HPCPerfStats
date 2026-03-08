@@ -1,15 +1,15 @@
 {% extends "hpcperfstats_site/base.html" %}
 {% block content %}
 
-<h4>{{ qname }}</h4>
-<center>
+<h4 class="mb-3">{{ qname }}</h4>
+<div class="text-center">
   {{ script|safe }}
   {{ div|safe }}
-</center>
+</div>
 
-<hr>
+<hr class="my-4">
 
-<h4>Flagged Jobs:</h4>
+<h4 class="mb-3">Flagged Jobs</h4>
 <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#flagged">Click for Flagged Jobs</button>
 <div id="flagged" class="collapse">
 <div class="table-responsive">
@@ -100,9 +100,9 @@
 
 
 {% if date %}
-<h3>List of Jobs run on {{ date }}</h3>
+<h3 class="mb-3">List of Jobs run on {{ date }}</h3>
 {% endif %}
-<h4> #Jobs = {{ nj }} </h4>
+<h4 class="mb-3">#Jobs = {{ nj }}</h4>
 
     {% if job_list.has_other_pages %}
     <nav aria-label="Job list pagination"><ul class="pagination">
@@ -158,33 +158,29 @@
       </thead>
       <tbody>
       {% for job in job_list %}
-        <tr bgcolor="{{job.color}}">
-          <td><a href="{% url 'machine:job_data' job.jid %}">{{ job.jid }}</a>
-
+        <tr style="background-color: {{ job.color }};">
+          <td><a href="{% url 'machine:job_data' job.jid %}">{{ job.jid }}</a></td>
 	  {% if job.metrics_data_set.all %}
-          <td>True</td> 
-	  {% else %} <td align=right> False </td> 
+          <td>True</td>
+	  {% else %}<td class="text-end">False</td>
 	  {% endif %}
-
 	  {% if job.username %}
-          <td><a href="{% url 'machine:username_view' job.username %}" >{{ job.username }}</td> 
-	  {% else %} <td align=right> unknown </td> 
+          <td><a href="{% url 'machine:username_view' job.username %}">{{ job.username }}</a></td>
+	  {% else %}<td class="text-end">unknown</td>
 	  {% endif %}
-	  
 	  {% if job.account %}
-          <td align=right><a href="{% url 'machine:account_view' job.account %}" >{{ job.account }}</td>
-	  {% else %} <td align=right> None </td>
+          <td class="text-end"><a href="{% url 'machine:account_view' job.account %}">{{ job.account }}</a></td>
+	  {% else %}<td class="text-end">None</td>
 	  {% endif %}
-
-          <td align=right>{{ job.start_time }}</td>
-          <td align=right>{{ job.end_time }}</td>
-          <td align=right>{{ job.runtime }}</td>
-          <td align=right>{% if job.queue %}<a href="{% url 'machine:queue_view' job.queue %}">{{ job.queue }}</a>{% else %}{{ job.queue }}{% endif %}</td>
-          <td align=right>{{ job.jobname }}</td>
-          <td align=right>{{ job.state }}</td>
-          <td align=right>{{ job.ncores }}</td>
-          <td align=right>{{ job.nhosts }}</td>
-	  <td align=right>{{ job.node_hrs|stringformat:".2f" }} </td>
+          <td class="text-end">{{ job.start_time }}</td>
+          <td class="text-end">{{ job.end_time }}</td>
+          <td class="text-end">{{ job.runtime }}</td>
+          <td class="text-end">{% if job.queue %}<a href="{% url 'machine:queue_view' job.queue %}">{{ job.queue }}</a>{% else %}{{ job.queue }}{% endif %}</td>
+          <td class="text-end">{{ job.jobname }}</td>
+          <td class="text-end">{{ job.state }}</td>
+          <td class="text-end">{{ job.ncores }}</td>
+          <td class="text-end">{{ job.nhosts }}</td>
+	  <td class="text-end">{{ job.node_hrs|stringformat:".2f" }}</td>
         </tr>
 	{% endfor %}
       </tbody> 

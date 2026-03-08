@@ -1,24 +1,26 @@
 {% extends "hpcperfstats_site/base.html" %}
 
 {% block content %}
-{{var1}}
-{% if form.errors %}
-<p style="color: black;">Your username and password didn't match. Please try again.</p>
-{% endif %}
+<div class="row justify-content-center mt-4">
+  <div class="col-md-4">
+    {% if form.errors %}
+    <div class="alert alert-warning" role="alert">Your username and password didn't match. Please try again.</div>
+    {% endif %}
 
-<form method="post" action="{% url 'login' %}">
-{% csrf_token %}
-<table>
-<tr>
-    <td><input type="username" class="form-control" id="username" placeholder="Enter Username" name="username"</td>
-</tr>
-<tr>
-    <td><input type="password" class="form-control" id="password" placeholder="Enter Password" name="password"</td>
-</tr>
-</table>
-
-<input type="submit" value="login" />
-<input type="hidden" name="next" value="{{ next }}" />
-</form>
-
+    <h4 class="mb-3">Log in</h4>
+    <form method="post" action="{% url 'login' %}">
+      {% csrf_token %}
+      <div class="mb-3">
+        <label class="form-label" for="username">Username</label>
+        <input type="text" class="form-control form-control-sm" id="username" placeholder="Enter username" name="username" autocomplete="username">
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="password">Password</label>
+        <input type="password" class="form-control form-control-sm" id="password" placeholder="Enter password" name="password" autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-outline-secondary btn-sm">Log in</button>
+      <input type="hidden" name="next" value="{{ next }}">
+    </form>
+  </div>
+</div>
 {% endblock %}

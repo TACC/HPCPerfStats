@@ -13,15 +13,15 @@
       {% endif %}
     </div>
 {% if stats_data %}
-<h4>Counts Aggregated over devices and hosts</h4>
+<h4 class="mb-3">Counts Aggregated over devices and hosts</h4>
 <div class="table-responsive">
-  <table class="table table-sm table-bordered" style="max-width:100%;">
+  <table class="table table-sm table-bordered">
     <thead>
-      <tr><th>record</th>{% for key in schema %} <th>{{key}}</th>{% endfor %}</tr>
+      <tr><th>record</th>{% for key in schema %}<th>{{ key }}</th>{% endfor %}</tr>
     </thead>
     <tbody>
       {% for time, values in stats_data %}
-      <tr><th>{{time}}</th>{% for value in values %}<th>{{ value|stringformat:"0.2e" }} </th> {% endfor %}</tr>
+      <tr><th>{{ time }}</th>{% for value in values %}<td class="text-end">{{ value|stringformat:"0.2e" }}</td>{% endfor %}</tr>
       {% endfor %}
     </tbody>
   </table>

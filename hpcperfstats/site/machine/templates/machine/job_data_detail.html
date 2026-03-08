@@ -10,30 +10,26 @@
       <th>run time (s)</th><th>requested time (s)</th><th>queue</th><th>name</th><th>status</th><th>ncores</th><th>nnodes</th>
     </thead>
     <tbody>
-      <tr bgcolor="{{job_data.color}}"><td><a href="{% url 'machine:job_data'  job_data.jid %}">{{ job_data.jid }}</a></td>
-	
+      <tr style="background-color: {{ job_data.color }};"><td><a href="{% url 'machine:job_data' job_data.jid %}">{{ job_data.jid }}</a></td>
 	{% if job_data.username %}
-	<td><a href="{% url 'machine:username_view' job_data.username %}" >{{ job_data.username }}</td>
+	<td><a href="{% url 'machine:username_view' job_data.username %}">{{ job_data.username }}</a></td>
 	{% else %}
 	<td>Unknown</td>
 	{% endif %}
-
 	{% if job_data.account %}
-	<td><a href="{% url 'machine:account_view' job_data.account %}">{{ job_data.account }}</td>
+	<td><a href="{% url 'machine:account_view' job_data.account %}">{{ job_data.account }}</a></td>
 	{% else %}
 	<td>None</td>
 	{% endif %}
-
-	<td align=right>{{ job_data.start_time }}</td>
-	<td align=right>{{ job_data.end_time }}</td>
-	<td align=right>{{ job_data.runtime }}</td>
-	<td align=right>{{ job_data.timelimit }}</td>
-	<td align=right>{% if job_data.queue %}<a href="{% url 'machine:queue_view' job_data.queue %}">{{ job_data.queue }}</a>{% else %}{{ job_data.queue }}{% endif %}</td>
-	<td align=right>{{ job_data.jobname }}</td>
-	<td align=right>{{ job_data.state }}</td>
-
-	<td align=right>{{ job_data.ncores }}</td>
-	<td align=right>{{ job_data.nhosts }}</td>
+	<td class="text-end">{{ job_data.start_time }}</td>
+	<td class="text-end">{{ job_data.end_time }}</td>
+	<td class="text-end">{{ job_data.runtime }}</td>
+	<td class="text-end">{{ job_data.timelimit }}</td>
+	<td class="text-end">{% if job_data.queue %}<a href="{% url 'machine:queue_view' job_data.queue %}">{{ job_data.queue }}</a>{% else %}{{ job_data.queue }}{% endif %}</td>
+	<td class="text-end">{{ job_data.jobname }}</td>
+	<td class="text-end">{{ job_data.state }}</td>
+	<td class="text-end">{{ job_data.ncores }}</td>
+	<td class="text-end">{{ job_data.nhosts }}</td>
     </tbody>
   </table>
 </div>
@@ -43,7 +39,7 @@
     <table class="table table-sm table-bordered" style="max-width:100%;">
       <thead><th>File System</th><th>MB Read</th><th>MB Written</th><thead>
 	{% for key,val in fsio.items %}
-	<tr align=left><td>{{ key }}</td><td>{{ val.0|stringformat:"0.1e" }}</td><td>{{ val.1|stringformat:"0.1e" }}</td></tr>
+	<tr><td>{{ key }}</td><td class="text-end">{{ val.0|stringformat:"0.1e" }}</td><td class="text-end">{{ val.1|stringformat:"0.1e" }}</td></tr>
 	{% empty %}
 	<tr><td colspan="3" class="text-muted">No file system data available.</td></tr>
 	{% endfor %}
@@ -102,7 +98,7 @@
       <table class="table table-sm table-bordered"><!--- style="max-width:100px;">--->
 	<tbody>
 	  {% for obj in job_data.metrics_data_set.all %}
-	  <tr align=center><th>{{ obj.metric|ljust:"10" }}[{{ obj.units}}]</th><td>{{ obj.value|floatformat:"2" }}</td></tr>
+	  <tr><th class="text-center">{{ obj.metric|ljust:"10" }}[{{ obj.units }}]</th><td class="text-end">{{ obj.value|floatformat:"2" }}</td></tr>
 	  {% empty %}
 	  <tr><td colspan="2" class="text-muted">No job-level metrics available.</td></tr>
 	  {% endfor %}
@@ -138,10 +134,10 @@
 	<tbody>
 	  {% for obj in xalt_data.libset %}
 	  {% if obj.module_name != "none" %}
-	  <tr><td align=left>{{ obj.module_name }}</td><td align=left>{{ obj.object_path }}</td></tr>
+	  <tr><td>{{ obj.module_name }}</td><td>{{ obj.object_path }}</td></tr>
 	  {% endif %}
 	  {% if obj.module_name == "none" %}
-	  <tr><td align=left>system</td><td align=left>{{ obj.object_path }}</td></tr>
+	  <tr><td>system</td><td>{{ obj.object_path }}</td></tr>
 	  {% endif %}
 	  {% empty %}
 	  <tr><td colspan="2" class="text-muted">No XALT data available.</td></tr>
@@ -160,7 +156,7 @@
       <table class="table table-sm table-bordered"><!--- style="max-width:100px;">--->
 	<tbody>
 	  {% for host in host_list %}
-	  <tr align=center><td>{{ host }}</td></tr>
+	  <tr><td class="text-center">{{ host }}</td></tr>
 	  {% empty %}
 	  <tr><td class="text-muted">No host data available.</td></tr>
 	  {% endfor %}
