@@ -182,3 +182,25 @@ body {
   display: flex;
   justify-content: center;
 }
+
+/* Job list pagination: whitespace between links */
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  list-style: none;
+  padding-left: 0;
+  margin: 0.75rem 0;
+}
+.pagination li a,
+.pagination li span {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+}
+.pagination li.disabled span {
+  color: #6c757d;
+  cursor: default;
+}
+.pagination li.active span {
+  font-weight: 600;
+}
