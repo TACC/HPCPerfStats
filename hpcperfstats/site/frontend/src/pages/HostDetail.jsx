@@ -41,7 +41,7 @@ export default function HostDetail() {
       </p>
       {plot_item ? (
         <div className="graphs">
-          <BokehEmbed item={plot_item} id="host-bokeh" />
+          <BokehEmbed item={plot_item} id="host-bokeh" plotName="Host plot" />
         </div>
       ) : (
         <p>No plot data for this host and time range.</p>

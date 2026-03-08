@@ -249,10 +249,11 @@ export default function JobDetail() {
                   script={mscript}
                   div={mdiv}
                   id="job-mscript"
+                  plotName="Summary plot"
                 />
               </td>
               <td>
-                <BokehEmbed script={hscript} div={hdiv} id="job-hscript" />
+                <BokehEmbed script={hscript} div={hdiv} id="job-hscript" plotName="Heatmap" />
               </td>
             </tr>
           </tbody>

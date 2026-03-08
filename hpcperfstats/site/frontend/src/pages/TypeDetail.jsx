@@ -34,6 +34,7 @@ export default function TypeDetail() {
           script={tscript}
           div={tdiv}
           id="type-bokeh"
+          plotName="Type detail"
         />
       </div>
       {stats_data.length > 0 && (

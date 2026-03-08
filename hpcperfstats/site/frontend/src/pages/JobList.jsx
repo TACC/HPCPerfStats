@@ -66,6 +66,7 @@ export default function JobList() {
           script={script}
           div={div}
           id="index-bokeh"
+          plotName="Job list histograms"
         />
       </center>
       <hr />
