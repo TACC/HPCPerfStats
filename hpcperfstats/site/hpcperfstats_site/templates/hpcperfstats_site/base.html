@@ -39,7 +39,7 @@
   <body>
     <div class ="container-fluid">
       <nav class="navbar navbar-default" role="navigation">
-	<div class="navbar-header"><a href="/"> <img src="{% url 'media' path='logo.png' %}" style="max-width:35%;"/></a></div>
+	<div class="navbar-header"><a href="/machine/"> <img src="{% url 'media' path='logo.png' %}" style="max-width:35%;"/></a></div>
 	<center>{{ machine_name }}</center>
 	<a>
 	  <form class="navbar-form navbar-right" action="{% url 'machine:search' %}" method="get" role="search">

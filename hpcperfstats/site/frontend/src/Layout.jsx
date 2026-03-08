@@ -10,13 +10,13 @@ export default function Layout({ session, children }) {
     <div className="container-fluid">
       <nav className="navbar navbar-default" role="navigation">
         <div className="navbar-header navbar-header-logo">
-          <a href="https://www.tacc.utexas.edu">
+          <Link to="/machine/">
             <img
               src="/media/logo.png"
               alt="TACC"
               className="navbar-logo-img"
             />
-          </a>
+          </Link>
         </div>
         <div className="navbar-brand">
           <div style={{ fontSize: "1.1em", fontWeight: 600, color: "black" }}>
