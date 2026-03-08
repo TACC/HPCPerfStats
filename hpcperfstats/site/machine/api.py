@@ -32,6 +32,10 @@ from .cache_utils import (
 )
 from .models import host_data, job_data, metrics_data
 from .oauth2 import check_for_tokens
+from .query_utils import (
+    expand_month_date_to_range,
+    normalize_job_list_query_params,
+)
 from .serializers import JobListSerializer
 from .views import (
     job_hist,
@@ -90,11 +94,10 @@ def home_options(request):
     month_dict = {}
     if date_list:
         for d in date_list:
-            y, m, day = str(d.year), str(d.month), str(d.day)
-            key = f"{y}-{m}"
+            key = f"{d.year}-{d.month:02d}"  # YYYY-MM
             if key not in month_dict:
                 month_dict[key] = []
-            month_dict[key].append((str(d), day))
+            month_dict[key].append((str(d), str(d.day)))
 
     def _metrics_fn():
         return list(
@@ -182,6 +185,8 @@ def _job_list_histograms(request):
     """Build Bokeh script/div and json_item for job list histograms. Returns (script, div, plot_item)."""
     fields = request.GET.dict()
     fields = {k: v for k, v in fields.items() if v}
+    fields = normalize_job_list_query_params(fields)
+    fields = expand_month_date_to_range(fields)
 
     acct_data = {
         k: v
@@ -288,6 +293,8 @@ def job_list(request):
 
     fields = request.GET.dict()
     fields = {k: v for k, v in fields.items() if v}
+    fields = normalize_job_list_query_params(fields)
+    fields = expand_month_date_to_range(fields)
 
     acct_data = {
         k: v

@@ -54,6 +54,10 @@ from hpcperfstats.site.machine.cache_utils import (
 )
 from hpcperfstats.site.machine.models import host_data, job_data, metrics_data
 from hpcperfstats.site.machine.oauth2 import check_for_tokens
+from hpcperfstats.site.machine.query_utils import (
+    expand_month_date_to_range,
+    normalize_job_list_query_params,
+)
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
 _tz_cfg = cfg.get_timezone()
@@ -110,9 +114,9 @@ def home(request, error=False):
   date_list = cached_orm(KEY_DATES, TIMEOUT_MEDIUM, _dates_fn)
   if date_list:
     for date in date_list:
-      y, m, d = str(date.year), str(date.month), str(date.day)
-      month_dict.setdefault(y + "-" + m, [])
-      month_dict[y + "-" + m].append((str(date), d))
+      key = f"{date.year}-{date.month:02d}"  # YYYY-MM
+      month_dict.setdefault(key, [])
+      month_dict[key].append((str(date), str(date.day)))
 
   field["machine_name"] = cfg.get_host_name_ext()
   field["date_list"] = sorted(month_dict.items())[::-1]
@@ -173,6 +177,9 @@ def index(request, **kwargs):
   fields = {k: v for k, v in fields.items() if v}
   fields.update(kwargs)
   print(fields)
+
+  fields = normalize_job_list_query_params(fields)
+  fields = expand_month_date_to_range(fields)
 
   ### Filter
   # Build query and filter on job accounting data
