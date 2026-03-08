@@ -26,46 +26,45 @@ export default function Layout({ session, children }) {
               <div className="navbar-brand-cluster">{session.machine_name}</div>
             )}
           </div>
-          <div className="d-flex flex-column align-items-end gap-2 ms-auto">
-          <div className="d-flex align-items-center gap-2">
-            {session?.is_staff && (
-              <Link to="/admin_monitor" className="btn btn-outline-secondary btn-sm">Admin Monitor</Link>
-            )}
-            <a href="/logout/" className="btn btn-outline-secondary btn-sm">Logout</a>
-          </div>
-          <div className="d-flex align-items-center gap-2">
-            <button
-              type="button"
-              className="btn btn-outline-secondary btn-sm"
-              onClick={() => setExtendedSearchOpen((o) => !o)}
-              aria-expanded={extendedSearchOpen}
-              aria-controls="extended-search-collapse"
-            >
-              {extendedSearchOpen ? "Hide extended search" : "Extended search"}
-            </button>
-            <form
-              role="search"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const jid = e.target.jid?.value?.trim();
-                if (jid) navigate(`/job/${jid}`);
-              }}
-              style={{ display: "flex", alignItems: "center", gap: "6px" }}
-            >
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <input
-                  type="text"
-                  className="form-control form-control-sm"
-                  name="jid"
-                  placeholder="Job ID"
-                />
-              </div>
-              <button type="submit" className="btn btn-outline-secondary btn-sm">
-                Find Job
+          <div className="navbar-actions ms-auto">
+            <div className="navbar-actions-row">
+              {session?.is_staff && (
+                <Link to="/admin_monitor" className="btn btn-outline-secondary btn-sm">Admin Monitor</Link>
+              )}
+              <a href="/logout/" className="btn btn-outline-secondary btn-sm">Logout</a>
+            </div>
+            <div className="navbar-actions-row">
+              <button
+                type="button"
+                className="btn btn-outline-secondary btn-sm"
+                onClick={() => setExtendedSearchOpen((o) => !o)}
+                aria-expanded={extendedSearchOpen}
+                aria-controls="extended-search-collapse"
+              >
+                {extendedSearchOpen ? "Hide extended search" : "Extended search"}
               </button>
-            </form>
+              <form
+                role="search"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const jid = e.target.jid?.value?.trim();
+                  if (jid) navigate(`/job/${jid}`);
+                }}
+              >
+                <div className="form-group">
+                  <input
+                    type="text"
+                    className="form-control form-control-sm"
+                    name="jid"
+                    placeholder="Job ID"
+                  />
+                </div>
+                <button type="submit" className="btn btn-outline-secondary btn-sm">
+                  Find Job
+                </button>
+              </form>
+            </div>
           </div>
-        </div>
         </div>
       </nav>
       {extendedSearchOpen && (
