@@ -36,6 +36,15 @@ class TestNormalizeJobListQueryParams:
         out = normalize_job_list_query_params({"end_time__date": "2026-1"})
         assert out["end_time__date"] == "2026-01-01"
 
+    def test_preserves_month_only_end_time_date(self):
+        """Month-only YYYY-MM is preserved so expand_month_date_to_range can expand to full month."""
+        out = normalize_job_list_query_params({"end_time__date": "2026-01"})
+        assert out["end_time__date"] == "2026-01"
+        # Full pipeline: normalize (preserve) then expand
+        expanded = expand_month_date_to_range(out)
+        assert expanded["end_time__date__gte"] == "2026-01-01"
+        assert expanded["end_time__date__lte"] == "2026-01-31"
+
     def test_leaves_other_params_unchanged(self):
         out = normalize_job_list_query_params({"queue": "normal", "page": "1"})
         assert out["queue"] == "normal"

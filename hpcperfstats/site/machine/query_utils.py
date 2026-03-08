@@ -54,11 +54,17 @@ def normalize_date_param(value):
 
 
 def normalize_job_list_query_params(fields):
-    """Return a copy of fields with date/datetime filter values normalized to YYYY-MM-DD where needed."""
+    """Return a copy of fields with date/datetime filter values normalized to YYYY-MM-DD where needed.
+    Preserves end_time__date as YYYY-MM when given (so expand_month_date_to_range can expand to full month).
+    """
     out = {}
     for k, v in fields.items():
         if "time" in k and ("__date" in k or "__gte" in k or "__lte" in k):
-            v = normalize_date_param(v)
+            # Keep month-only end_time__date (YYYY-MM) so expand_month_date_to_range can expand it
+            if k == "end_time__date" and v and _MONTH_ONLY.match(str(v).strip()):
+                pass  # leave v unchanged
+            else:
+                v = normalize_date_param(v)
         out[k] = v
     return out
 
