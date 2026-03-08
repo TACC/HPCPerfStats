@@ -494,7 +494,9 @@ class max_fabricbw():
       tx, rx = schema["PortXmitData"].index, schema["PortRcvData"].index
       conv2mb = 125000
     for hostname, stats in _stats.items():
-      max_bw = max(max_bw, amax(diff(stats[:, tx] + stats[:, rx]) / diff(u.t)))
+      ratio = diff(stats[:, tx] + stats[:, rx]) / diff(u.t)
+      if ratio.size > 0:
+        max_bw = max(max_bw, amax(ratio))
     if max_bw == 0:
       return None, typename, 'MB/s'
     value = max_bw / conv2mb
@@ -514,7 +516,9 @@ class max_lnetbw():
     max_bw = 0.0
     tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
     for hostname, stats in _stats.items():
-      max_bw = max(max_bw, amax(diff(stats[:, tx] + stats[:, rx]) / diff(u.t)))
+      ratio = diff(stats[:, tx] + stats[:, rx]) / diff(u.t)
+      if ratio.size > 0:
+        max_bw = max(max_bw, amax(ratio))
     if max_bw == 0:
       return None, typename, 'MB/s'
     value = max_bw / (1024 * 1024)
@@ -533,32 +537,31 @@ class max_mds():
     if schema is None:
       return None, typename, 'iops'
     for hostname, stats in _stats.items():
-      max_mds = max(
-          max_mds,
-          amax(
-              diff(stats[:, schema["open"].index] +
-                   stats[:, schema["close"].index] +
-                   stats[:, schema["mmap"].index] +
-                   stats[:, schema["fsync"].index] +
-                   stats[:, schema["setattr"].index] +
-                   stats[:, schema["truncate"].index] +
-                   stats[:, schema["flock"].index] +
-                   stats[:, schema["getattr"].index] +
-                   stats[:, schema["statfs"].index] +
-                   stats[:, schema["alloc_inode"].index] +
-                   stats[:, schema["setxattr"].index] +
-                   stats[:, schema["listxattr"].index] +
-                   stats[:, schema["removexattr"].index] +
-                   stats[:, schema["readdir"].index] +
-                   stats[:, schema["create"].index] +
-                   stats[:, schema["lookup"].index] +
-                   stats[:, schema["link"].index] +
-                   stats[:, schema["unlink"].index] +
-                   stats[:, schema["symlink"].index] +
-                   stats[:, schema["mkdir"].index] +
-                   stats[:, schema["rmdir"].index] +
-                   stats[:, schema["mknod"].index] +
-                   stats[:, schema["rename"].index]) / diff(u.t)))
+      mds_diff = diff(stats[:, schema["open"].index] +
+                      stats[:, schema["close"].index] +
+                      stats[:, schema["mmap"].index] +
+                      stats[:, schema["fsync"].index] +
+                      stats[:, schema["setattr"].index] +
+                      stats[:, schema["truncate"].index] +
+                      stats[:, schema["flock"].index] +
+                      stats[:, schema["getattr"].index] +
+                      stats[:, schema["statfs"].index] +
+                      stats[:, schema["alloc_inode"].index] +
+                      stats[:, schema["setxattr"].index] +
+                      stats[:, schema["listxattr"].index] +
+                      stats[:, schema["removexattr"].index] +
+                      stats[:, schema["readdir"].index] +
+                      stats[:, schema["create"].index] +
+                      stats[:, schema["lookup"].index] +
+                      stats[:, schema["link"].index] +
+                      stats[:, schema["unlink"].index] +
+                      stats[:, schema["symlink"].index] +
+                      stats[:, schema["mkdir"].index] +
+                      stats[:, schema["rmdir"].index] +
+                      stats[:, schema["mknod"].index] +
+                      stats[:, schema["rename"].index]) / diff(u.t)
+      if mds_diff.size > 0:
+        max_mds = max(max_mds, amax(mds_diff))
     if max_mds == 0:
       return None, typename, 'iops'
     value = max_mds
@@ -586,7 +589,9 @@ class max_packetrate():
       tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
 
     for hostname, stats in _stats.items():
-      max_pr = max(max_pr, amax(diff(stats[:, tx] + stats[:, rx]) / diff(u.t)))
+      ratio = diff(stats[:, tx] + stats[:, rx]) / diff(u.t)
+      if ratio.size > 0:
+        max_pr = max(max_pr, amax(ratio))
     if max_pr == 0:
       return None, typename, '#/s'
     value = max_pr
@@ -609,11 +614,11 @@ class mem_hwm():
     if schema is None:
       return None, typename, 'GiB'
     for hostname, stats in _stats.items():
-      max_memusage = max(
-          max_memusage,
-          amax(stats[:, schema["MemUsed"].index] -
-               stats[:, schema["Slab"].index] -
-               stats[:, schema["FilePages"].index]))
+      mem_arr = (stats[:, schema["MemUsed"].index] -
+                 stats[:, schema["Slab"].index] -
+                 stats[:, schema["FilePages"].index])
+      if mem_arr.size > 0:
+        max_memusage = max(max_memusage, amax(mem_arr))
     if max_memusage == 0:
       return None, typename, 'GiB'
     value = max_memusage / (2.**30)
