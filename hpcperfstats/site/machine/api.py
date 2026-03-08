@@ -321,7 +321,7 @@ def _job_list_histograms(request):
     df = DataFrame(jid_dict).set_index("jid")
     hist_metrics = list(hist_metrics_set)
     df = df.join(job_df)
-    hist_metrics += [("runtime", "hours"), ("nhosts", "#nodes"), ("queue_wait", "hours")]
+    hist_metrics += [("Number of jobs by cpu hours", "hours"), ("Number of jobs by number of nodes", "# nodes"), ("Number of jobs by queue wait time", "hours")]
     df["queue_wait"] = (
         to_timedelta(df["start_time"] - df["submit_time"]).dt.total_seconds() / 3600
     )
