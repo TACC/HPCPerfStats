@@ -93,8 +93,13 @@ class _JobForMetrics:
     times = df["time"].drop_duplicates().sort_values()
 
     # Use float seconds (NumPy) for simplicity; utils only uses differences
-    times_values = times.values.astype("datetime64[s]")
-    self.times = times_values.astype("float64")
+    self.times = times.values.astype("datetime64[s]").astype(np.float64)
+
+    # Reduce memory: categorical for repeated string columns
+    # large DataFrames with many repeated host/type/event values use less memory.
+    for col in ("host", "type", "event"):
+      if col in df.columns and df[col].dtype == object:
+        df[col] = df[col].astype("category")
 
     # Build schemas based on jt.schema (type -> [events])
     for typename, events in jt.schema.items():
@@ -105,7 +110,8 @@ class _JobForMetrics:
     for host in host_list:
       self.hosts[host] = _Host()
 
-    # Populate stats arrays per (host, type)
+    # Populate stats arrays per (host, type) via vectorized pivot/reindex
+    times_index = times.values
     for typename, schema in self.schemas.items():
       events = schema.events
       nevents = len(events)
@@ -116,30 +122,18 @@ class _JobForMetrics:
       if type_df.empty:
         continue
 
-      event_index = {name: idx for idx, name in enumerate(events)}
-
       for host, host_df in type_df.groupby("host"):
         host_obj = self.hosts[host]
-        # Single aggregated "dev" per host suitable for utils
-        stats = np.zeros((len(self.times), nevents), dtype=float)
-
-        # Align host samples to global time axis
-        host_df = host_df.sort_values("time")
-        time_to_row = {t: i for i, t in enumerate(times.values)}
-
-        for _, row in host_df.iterrows():
-          t = row["time"]
-          if t not in time_to_row:
-            continue
-          ti = time_to_row[t]
-          eve = row["event"]
-          if eve not in event_index:
-            continue
-          ei = event_index[eve]
-          stats[ti, ei] = row["value"]
-
+        pivot = host_df.pivot_table(
+            index="time", columns="event", values="value", aggfunc="first"
+        )
+        pivot = pivot.reindex(
+            index=times_index, fill_value=0
+        ).reindex(columns=events, fill_value=0)
+        stats = np.ascontiguousarray(pivot.values, dtype=np.float64)
         host_obj.stats.setdefault(typename, {})
         host_obj.stats[typename]["agg"] = stats
+      del type_df
 
 
 def _unwrap(args):
