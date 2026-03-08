@@ -15,6 +15,9 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE",
 import django
 django.setup()
 
+from django.db import close_old_connections
+from django.db.utils import OperationalError
+
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
 from hpcperfstats.dbload.date_utils import parse_start_end_dates
@@ -33,6 +36,7 @@ def update_metrics(date, rerun=False):
 
     AI generated.
     """
+  close_old_connections()
   min_time = 300
   date_key = date.date().isoformat()
 
@@ -42,47 +46,55 @@ def update_metrics(date, rerun=False):
         .exclude(runtime__lt=min_time)
         .prefetch_related("metrics_data_set"))
 
-  jobs_list = cached_orm(
-      f"{KEY_UPDATE_METRICS_JOBS}:{date_key}",
-      TIMEOUT_SHORT,
-      _jobs_fn,
-  ) or []
-  print("Total jobs {0}".format(len(jobs_list)) + " for date " +
-        date.strftime("%Y-%m-%d"))
+  def _run():
+    jobs_list = cached_orm(
+        f"{KEY_UPDATE_METRICS_JOBS}:{date_key}",
+        TIMEOUT_SHORT,
+        _jobs_fn,
+    ) or []
+    print("Total jobs {0}".format(len(jobs_list)) + " for date " +
+          date.strftime("%Y-%m-%d"))
 
-  if not rerun:
-    jobs_list = [
-        job for job in jobs_list if not job.metrics_data_set.all().exists() or
-        job.metrics_data_set.all().filter(value__isnull=True).count() > 0
-    ]
+    if not rerun:
+      jobs_list = [
+          job for job in jobs_list if not job.metrics_data_set.all().exists() or
+          job.metrics_data_set.all().filter(value__isnull=True).count() > 0
+      ]
 
-  if DEBUG:
-    print("jobs that don't have data before run:")
-    print(jobs_list)
-  # Set up metric computation manager
-  metrics_manager = metrics.Metrics()
+    if DEBUG:
+      print("jobs that don't have data before run:")
+      print(jobs_list)
+    # Set up metric computation manager
+    metrics_manager = metrics.Metrics()
 
-  print("Compute for following metrics for date {0} on {1} jobs".format(
-      date, len(jobs_list)))
-  for name in metrics_manager.simple_metrics_list:
-    print(name)
-  for name in metrics_manager.complex_metrics_list:
-    print(name)
+    print("Compute for following metrics for date {0} on {1} jobs".format(
+        date, len(jobs_list)))
+    for name in metrics_manager.simple_metrics_list:
+      print(name)
+    for name in metrics_manager.complex_metrics_list:
+      print(name)
 
-  metrics_manager.run(jobs_list)
+    metrics_manager.run(jobs_list)
 
-  if DEBUG:
-    jobs_list_fresh = list(
-        job_data.objects.filter(end_time__date=date.date())
-        .exclude(runtime__lt=min_time)
-        .prefetch_related("metrics_data_set"))
-    jobs_list_fresh = [
-        job for job in jobs_list_fresh
-        if not job.metrics_data_set.all().exists() or
-        job.metrics_data_set.all().filter(value__isnull=True).count() > 0
-    ]
-    print("jobs that don't have data after run:")
-    print(jobs_list_fresh)
+    if DEBUG:
+      close_old_connections()
+      jobs_list_fresh = list(
+          job_data.objects.filter(end_time__date=date.date())
+          .exclude(runtime__lt=min_time)
+          .prefetch_related("metrics_data_set"))
+      jobs_list_fresh = [
+          job for job in jobs_list_fresh
+          if not job.metrics_data_set.all().exists() or
+          job.metrics_data_set.all().filter(value__isnull=True).count() > 0
+      ]
+      print("jobs that don't have data after run:")
+      print(jobs_list_fresh)
+
+  try:
+    _run()
+  except OperationalError:
+    close_old_connections()
+    _run()
 
 
 if __name__ == "__main__":
