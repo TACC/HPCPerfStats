@@ -45,6 +45,13 @@ class job_data(models.Model):
   class Meta:
     db_table = 'job_data'
     managed = True
+    indexes = [
+        models.Index(fields=["username"], name="job_data_username_idx"),
+        models.Index(fields=["account"], name="job_data_account_idx"),
+        models.Index(fields=["queue"], name="job_data_queue_idx"),
+        models.Index(fields=["state"], name="job_data_state_idx"),
+        models.Index(fields=["start_time"], name="job_data_start_time_idx"),
+    ]
 
   def __str__(self):
     """Return string representation (jid)."""
@@ -148,6 +155,7 @@ class host_data(models.Model):
     indexes = [
         models.Index(fields=["host", "time"]),
         models.Index(fields=["jid", "time"]),
+        models.Index(fields=["jid", "type", "event", "time"], name="host_data_jid_type_ev_time_idx"),
     ]
 
 
