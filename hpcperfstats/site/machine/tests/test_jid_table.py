@@ -35,10 +35,10 @@ def test_queryset_to_dataframe_values_list():
 
 
 def test_queryset_to_dataframe_values_dict():
-  """_queryset_to_dataframe converts values() queryset to DataFrame with columns."""
+  """_queryset_to_dataframe converts values() queryset (iterable of dicts) to DataFrame."""
   class QsValues:
-    def values(self, *cols):
-      return [{"host": "h1", "time": 1}, {"host": "h2", "time": 2}]
+    def __iter__(self):
+      return iter([{"host": "h1", "time": 1}, {"host": "h2", "time": 2}])
 
   qs = QsValues()
   out = _queryset_to_dataframe(qs)

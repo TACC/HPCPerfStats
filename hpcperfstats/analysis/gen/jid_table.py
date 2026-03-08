@@ -34,20 +34,24 @@ def _ensure_tz(dt):
 
 def _queryset_to_dataframe(qs, columns=None):
   """Convert a Django QuerySet (values() or values_list()) to a pandas DataFrame.
-
-    """
+  When columns is None, iterates the queryset as-is so that grouped/annotated
+  querysets (e.g. .values('host','time').annotate(sum_val=Sum(...))) are not
+  overwritten by .values(), which would select all columns and break GROUP BY.
+  """
   import pandas as pd
   if qs is None:
     return pd.DataFrame()
-  if hasattr(qs, "values") and columns is None:
-    vals = qs.values()
-    if vals is not None:
-      return pd.DataFrame(list(vals))
-  if hasattr(qs, "values") and columns is not None:
-    vals = qs.values(*columns)
-    if vals is not None:
-      return pd.DataFrame(list(vals))
-  return pd.DataFrame(list(qs))
+  if columns is not None and hasattr(qs, "values"):
+    return pd.DataFrame(list(qs.values(*columns)))
+  data = list(qs)
+  if not data:
+    return pd.DataFrame()
+  if isinstance(data[0], dict):
+    return pd.DataFrame(data)
+  if isinstance(data[0], (list, tuple)):
+    return pd.DataFrame(data)
+  from django.forms.models import model_to_dict
+  return pd.DataFrame([model_to_dict(row) for row in data])
 
 
 class jid_table:
