@@ -13,8 +13,8 @@ MESSAGE_TAGS = {
     messages.ERROR: 'danger',
 }
 
-# For dockerization
-SECRET_KEY = os.environ.get("SECRET_KEY")
+# SECRET_KEY: env overrides ini; required in production (set in env or hpcperfstats.ini [DEFAULT] secret_key).
+SECRET_KEY = os.environ.get("SECRET_KEY") or cfg.get_secret_key()
 #DEBUG = bool(os.environ.get("DEBUG", default=0))
 DEBUG = cfg.get_debug()
 
@@ -102,8 +102,14 @@ STATICFILES_FINDERS = (
     'django.contrib.staticfiles.finders.AppDirectoriesFinder',
 )
 
-# Make this unique, and don't share it with anybody.
-SECRET_KEY = 'dcute6k4o*0%=76t6!2q=wqv4lt20v32(m!c_ueed^)x8q2u#8'
+# Make this unique, and don't share it with anybody. Never commit a real key.
+# In production set SECRET_KEY in the environment or in hpcperfstats.ini [DEFAULT] secret_key.
+if not SECRET_KEY and DEBUG:
+    import warnings
+    warnings.warn("SECRET_KEY not set; using a dev-only default. Set SECRET_KEY in env for production.")
+    SECRET_KEY = "dev-only-insecure-change-me"
+elif not SECRET_KEY:
+    raise ValueError("SECRET_KEY must be set in the environment for production.")
 
 TEMPLATES = [
     {

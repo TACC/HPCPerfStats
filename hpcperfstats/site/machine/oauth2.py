@@ -44,11 +44,10 @@ def oauth_callback(request):
 
     """
   state = request.GET.get('state')
+  saved_state = request.session.get('auth_state')
 
-  if request.session['auth_state'] and request.session['auth_state'] != state:
-    # If auth_state doesn't exist, redirect to logout.
-    response = HttpResponseRedirect('/logout')
-    return response
+  if not saved_state or saved_state != state:
+    return HttpResponseRedirect('/logout')
 
   if 'code' in request.GET:
     redirect_uri = 'https://{}{}'.format(request.get_host(),
@@ -67,9 +66,6 @@ def oauth_callback(request):
                              auth=HTTPBasicAuth(client_id, client_key))
     token_data = response.json()
 
-    logger.error(token_data["result"]["access_token"]["access_token"])
-    # logger.error(token_data.keys())
-
     headers = {
         'x-tapis-token': token_data["result"]["access_token"]["access_token"]
     }
@@ -82,7 +78,6 @@ def oauth_callback(request):
     request.session['refresh_token'] = token_data["result"]["refresh_token"][
         "refresh_token"]
     request.session['username'] = user_data['result']['username']
-    logger.error(request.session['access_token'])
 
     # For now we determine whether a user is staff by seeing if hey have a specific email domain set in ini
     request.session['email'] = user_data['result']['email']

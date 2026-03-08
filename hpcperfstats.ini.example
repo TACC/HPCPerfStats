@@ -28,6 +28,9 @@ timezone = US/Central
 # Total amount of cores that are available for this application
 total_cores = 40
 
+# Django SECRET_KEY (do not commit real keys; set in ini or env for production)
+secret_key = change-me-to-a-long-random-string
+
 [OAUTH2]
 # oauth client id
 client_id =

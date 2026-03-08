@@ -41,6 +41,17 @@ def get_debug():
   return debug.lower() in ("yes", "true", "1")
 
 
+def get_secret_key():
+  """Return Django SECRET_KEY from DEFAULT.secret_key, or None if not set.
+
+    Prefer environment variable SECRET_KEY over ini; settings.py should check
+    os.environ first, then this, then fail or use dev default.
+    """
+  if cfg.has_option('DEFAULT', 'secret_key'):
+    return cfg.get('DEFAULT', 'secret_key').strip() or None
+  return None
+
+
 def get_archive_dir_path():
   """Return the archive directory path from PORTAL config.
 

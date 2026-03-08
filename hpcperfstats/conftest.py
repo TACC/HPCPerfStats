@@ -70,6 +70,7 @@ def temp_ini(tmp_path):
   ini = tmp_path / "hpcperfstats.ini"
   ini.write_text("[DEFAULT]\n"
                  "debug = no\n"
+                 "secret_key = test-secret-key-do-not-use-in-production\n"
                  "host_name_ext = local\n"
                  "restricted_queue_keywords = restricted\n"
                  "machine = test\n"
