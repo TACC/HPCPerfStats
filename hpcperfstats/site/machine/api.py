@@ -1,5 +1,6 @@
 """Django REST Framework API views for machine app. All data via JSON for React SPA."""
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timezone as dt_timezone
 
 import hpcperfstats.conf_parser as cfg
@@ -93,7 +94,41 @@ def home_options(request):
     def _dates_fn():
         return sorted(job_data.objects.dates("end_time", "day"))
 
-    date_list = cached_orm(KEY_DATES, TIMEOUT_MEDIUM, _dates_fn)
+    def _metrics_fn():
+        return list(
+            metrics_data.objects.distinct("metric").values("metric", "units")
+        )
+
+    def _queues_fn():
+        return list(
+            job_data.objects.distinct("queue").values_list("queue", flat=True)
+        )
+
+    def _states_fn():
+        return list(
+            job_data.objects.exclude(state__contains="CANCELLED by")
+            .distinct("state")
+            .values_list("state", flat=True)
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        date_future = executor.submit(
+            cached_orm, KEY_DATES, TIMEOUT_MEDIUM, _dates_fn
+        )
+        metrics_future = executor.submit(
+            cached_orm, KEY_METRICS_DISTINCT, TIMEOUT_LONG, _metrics_fn
+        )
+        queues_future = executor.submit(
+            cached_orm, KEY_QUEUES, TIMEOUT_MEDIUM, _queues_fn
+        )
+        states_future = executor.submit(
+            cached_orm, KEY_STATES, TIMEOUT_MEDIUM, _states_fn
+        )
+        date_list = date_future.result()
+        metrics = metrics_future.result()
+        queues = queues_future.result()
+        states = states_future.result()
+
     month_dict = {}
     year_set = set()
     if date_list:
@@ -104,29 +139,6 @@ def home_options(request):
                 month_dict[key] = []
             month_dict[key].append((str(d), str(d.day)))
     year_list = sorted(year_set, reverse=True)
-
-    def _metrics_fn():
-        return list(
-            metrics_data.objects.distinct("metric").values("metric", "units")
-        )
-
-    metrics = cached_orm(KEY_METRICS_DISTINCT, TIMEOUT_LONG, _metrics_fn)
-    queues = cached_orm(
-        KEY_QUEUES,
-        TIMEOUT_MEDIUM,
-        lambda: list(
-            job_data.objects.distinct("queue").values_list("queue", flat=True)
-        ),
-    )
-    states = cached_orm(
-        KEY_STATES,
-        TIMEOUT_MEDIUM,
-        lambda: list(
-            job_data.objects.exclude(state__contains="CANCELLED by")
-            .distinct("state")
-            .values_list("state", flat=True)
-        ),
-    )
 
     return Response({
         "machine_name": cfg.get_host_name_ext(),
@@ -363,47 +375,83 @@ def _job_list_histograms(request):
             pl.append(q_cpu_full)
         return pl
 
+    def _one_metric_histograms(m, lbl):
+        """Build thumb and full job_hist figures for one metric. Returns (display_title, p_thumb, p_full)."""
+        display_title = JOB_HIST_DISPLAY_NAMES.get(m, m)
+        p_thumb = job_hist(
+            df, m, lbl,
+            width=THUMB_WIDTH, height=THUMB_HEIGHT,
+            title=display_title,
+        )
+        p_full = job_hist(
+            df, m, lbl,
+            width=FULL_WIDTH, height=FULL_HEIGHT,
+            title=display_title,
+        )
+        return (display_title, p_thumb, p_full)
+
     script = ""
     div = ""
     plot_item = None
     histograms = []
     try:
-        # Histograms array: use separate figures so each is only in one document
-        queue_thumb = _job_list_queue_histogram(job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT)
-        queue_full = _job_list_queue_histogram(job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT)
+        # Build queue histograms in parallel
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            queue_thumb_f = executor.submit(
+                _job_list_queue_histogram,
+                job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT,
+            )
+            queue_full_f = executor.submit(
+                _job_list_queue_histogram,
+                job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT,
+            )
+            queue_cpu_thumb_f = executor.submit(
+                _job_list_queue_cpu_hours_histogram,
+                job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT,
+            )
+            queue_cpu_full_f = executor.submit(
+                _job_list_queue_cpu_hours_histogram,
+                job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT,
+            )
+            queue_thumb = queue_thumb_f.result()
+            queue_full = queue_full_f.result()
+            queue_cpu_thumb = queue_cpu_thumb_f.result()
+            queue_cpu_full = queue_cpu_full_f.result()
+
         if queue_thumb is not None and queue_full is not None:
             histograms.append({
                 "title": "Jobs by queue",
                 "plot_item_thumb": json_item(queue_thumb),
                 "plot_item_full": json_item(queue_full),
             })
-        queue_cpu_thumb = _job_list_queue_cpu_hours_histogram(
-            job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT
-        )
-        queue_cpu_full = _job_list_queue_cpu_hours_histogram(
-            job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT
-        )
         if queue_cpu_thumb is not None and queue_cpu_full is not None:
             histograms.append({
                 "title": "Compute hours by queue",
                 "plot_item_thumb": json_item(queue_cpu_thumb),
                 "plot_item_full": json_item(queue_cpu_full),
             })
+
         plot_list_1 = _build_grid_plot_list()
         if plot_list_1:
+            # Build per-metric thumb/full figures in parallel
+            metric_hist_by_key = {}
+            with ThreadPoolExecutor(max_workers=min(8, len(hist_metrics) or 1)) as executor:
+                futures = {
+                    executor.submit(_one_metric_histograms, m, lbl): (m, lbl)
+                    for m, lbl in hist_metrics
+                }
+                for fut in as_completed(futures):
+                    m, lbl = futures[fut]
+                    try:
+                        display_title, p_thumb, p_full = fut.result()
+                        if p_thumb is not None and p_full is not None:
+                            metric_hist_by_key[(m, lbl)] = (display_title, p_thumb, p_full)
+                    except Exception:
+                        pass
             for metric, label in hist_metrics:
-                display_title = JOB_HIST_DISPLAY_NAMES.get(metric, metric)
-                p_thumb = job_hist(
-                    df, metric, label,
-                    width=THUMB_WIDTH, height=THUMB_HEIGHT,
-                    title=display_title,
-                )
-                p_full = job_hist(
-                    df, metric, label,
-                    width=FULL_WIDTH, height=FULL_HEIGHT,
-                    title=display_title,
-                )
-                if p_thumb is not None and p_full is not None:
+                entry = metric_hist_by_key.get((metric, label))
+                if entry is not None:
+                    display_title, p_thumb, p_full = entry
                     histograms.append({
                         "title": display_title,
                         "plot_item_thumb": json_item(p_thumb),
@@ -567,35 +615,34 @@ def job_detail(request, pk):
     j = jid_table.jid_table(job.jid)
     host_list = j.acct_host_list
 
-    gpu_active = None
-    gpu_utilization_max = None
-    gpu_utilization_mean = None
-    try:
-        gpu_list = cached_orm(
-            f"{KEY_GPU_QS}:{job.jid}",
-            TIMEOUT_SHORT,
-            lambda: list(
-                host_data.objects.filter(
-                    jid=job.jid,
-                    type="nvidia_gpu",
-                    event="utilization",
-                )
-                .values("type", "event", "value")
-                .order_by("time")
-            ),
-        )
-        gpu_data = DataFrame(gpu_list) if gpu_list else DataFrame()
-        if not gpu_data.empty and len(gpu_data) > 2:
-            gpu_data = gpu_data.iloc[1:-1]
-            gpu_utilization_max = float(gpu_data["value"].max())
-            gpu_utilization_mean = float(gpu_data["value"].mean())
-            if not isnan(gpu_utilization_max):
-                gpu_active = ceil(gpu_utilization_max / 100.0)
-    except Exception:
-        pass
+    def _fetch_gpu():
+        gpu_active, gpu_max, gpu_mean = None, None, None
+        try:
+            gpu_list = cached_orm(
+                f"{KEY_GPU_QS}:{job.jid}",
+                TIMEOUT_SHORT,
+                lambda: list(
+                    host_data.objects.filter(
+                        jid=job.jid,
+                        type="nvidia_gpu",
+                        event="utilization",
+                    )
+                    .values("type", "event", "value")
+                    .order_by("time")
+                ),
+            )
+            gpu_data = DataFrame(gpu_list) if gpu_list else DataFrame()
+            if not gpu_data.empty and len(gpu_data) > 2:
+                gpu_data = gpu_data.iloc[1:-1]
+                gpu_max = float(gpu_data["value"].max())
+                gpu_mean = float(gpu_data["value"].mean())
+                if not isnan(gpu_max):
+                    gpu_active = ceil(gpu_max / 100.0)
+        except Exception:
+            pass
+        return (gpu_active, gpu_max, gpu_mean)
 
-    xalt_payload = None
-    if cfg.get_xalt_user() != "":
+    def _fetch_xalt():
         def _xalt_fn():
             xalt_data = xalt_data_c()
             runs = list(
@@ -609,7 +656,7 @@ def job_detail(request, pk):
                 .filter(run_id__in=run_ids)
                 .only("run_id", "obj_id")
             ) if run_ids else []
-            obj_ids = list(set(j.obj_id for j in joins))
+            obj_ids = list(set(jo.obj_id for jo in joins))
             libs_by_id = {
                 l.obj_id: l
                 for l in lib.objects.using("xalt")
@@ -617,8 +664,8 @@ def job_detail(request, pk):
                 .only("object_path", "module_name")
             } if obj_ids else {}
             joins_by_run = {}
-            for j in joins:
-                joins_by_run.setdefault(j.run_id, []).append(j)
+            for jo in joins:
+                joins_by_run.setdefault(jo.run_id, []).append(jo)
             for r in runs:
                 if "usr" in (r.exec_path or "").split("/"):
                     continue
@@ -642,82 +689,145 @@ def job_detail(request, pk):
                 "cwd": xalt_data.cwd,
                 "libset": [(l.object_path, l.module_name) for l in xalt_data.libset],
             }
+        return cached_orm(f"{KEY_XALT}:{job.jid}", TIMEOUT_SHORT, _xalt_fn)
 
-        xalt_payload = cached_orm(f"{KEY_XALT}:{job.jid}", TIMEOUT_SHORT, _xalt_fn)
+    def _fetch_summary_plot():
+        mscript, mdiv, mplot_item, reason = "", "", None, None
+        try:
+            sp = plots.SummaryPlot(j)
+            plot_comp = sp.plot()
+            plot_json = sp.plot()
+            mscript, mdiv = components(plot_comp)
+            mplot_item = json_item(plot_json)
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "Failed to generate summary plot for jid %s: %s", job.jid, e, exc_info=True
+            )
+            reason = str(e)
+        return (mscript, mdiv, mplot_item, reason)
+
+    def _fetch_heatmap():
+        hscript, hdiv, hplot_item, reason = "", "", None, None
+        try:
+            hm_fig_comp = plots.plot_from_jid_table(j)
+            hm_fig_json = plots.plot_from_jid_table(j)
+            if hm_fig_comp is not None and hm_fig_json is not None:
+                hscript, hdiv = components(hm_fig_comp)
+                hplot_item = json_item(hm_fig_json)
+            else:
+                reason = plots.MSG_NO_HOST_MSR_DATA
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "Failed to generate heatmap for jid %s: %s", job.jid, e, exc_info=True
+            )
+            reason = str(e)
+        return (hscript, hdiv, hplot_item, reason)
+
+    def _fetch_roofline():
+        rscript, rdiv, rplot_item, reason = "", "", None, None
+        try:
+            roof_fig_comp = plots.plot_roofline_from_jid_table(j)
+            roof_fig_json = plots.plot_roofline_from_jid_table(j)
+            if roof_fig_comp is not None and roof_fig_json is not None:
+                rscript, rdiv = components(roof_fig_comp)
+                rplot_item = json_item(roof_fig_json)
+            else:
+                reason = plots.MSG_NO_ROOFLINE_DATA
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "Failed to generate roofline for jid %s: %s", job.jid, e, exc_info=True
+            )
+            reason = str(e)
+        return (rscript, rdiv, rplot_item, reason)
+
+    def _fetch_fsio():
+        fsio = {}
+        try:
+            llite_df = j.get_llite_delta_by_event()
+            if not llite_df.empty and "delta_sum" in llite_df.columns:
+                llite_df = llite_df.copy()
+                llite_df["delta_mb"] = llite_df["delta_sum"].fillna(0) / (1024 * 1024)
+                read_row = llite_df[llite_df["event"] == "read_bytes"]
+                write_row = llite_df[llite_df["event"] == "write_bytes"]
+                read_val = float(read_row["delta_mb"].iloc[0]) if len(read_row) else 0.0
+                write_val = float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0
+                fsio["llite"] = [read_val, write_val]
+        except Exception:
+            pass
+        return fsio
+
+    def _fetch_schema():
+        try:
+            return j.schema
+        except Exception:
+            return {}
+
+    def _fetch_proc_list():
+        from .models import proc_data
+        return cached_orm(
+            f"{KEY_PROC_LIST}:{job.jid}",
+            TIMEOUT_SHORT,
+            lambda: list(
+                proc_data.objects.filter(jid=job.jid)
+                .values_list("proc", flat=True)
+                .distinct()
+            ),
+        )
+
+    gpu_active = gpu_utilization_max = gpu_utilization_mean = None
+    xalt_payload = None
+    mscript = mdiv = ""
+    mplot_item = mplot_unavailable_reason = None
+    hscript = hdiv = ""
+    hplot_item = hplot_unavailable_reason = None
+    rscript = rdiv = ""
+    rplot_item = rplot_unavailable_reason = None
+    fsio = {}
+    schema = {}
+    proc_list = []
+
+    tasks = [
+        ("gpu", _fetch_gpu),
+        ("summary_plot", _fetch_summary_plot),
+        ("heatmap", _fetch_heatmap),
+        ("roofline", _fetch_roofline),
+        ("fsio", _fetch_fsio),
+        ("schema", _fetch_schema),
+        ("proc_list", _fetch_proc_list),
+    ]
+    if cfg.get_xalt_user() != "":
+        tasks.append(("xalt", _fetch_xalt))
+
+    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        future_to_key = {executor.submit(fn): key for key, fn in tasks}
+        for future in as_completed(future_to_key):
+            key = future_to_key[future]
+            try:
+                result = future.result()
+                if key == "gpu":
+                    gpu_active, gpu_utilization_max, gpu_utilization_mean = result
+                elif key == "xalt":
+                    xalt_payload = result
+                elif key == "summary_plot":
+                    mscript, mdiv, mplot_item, mplot_unavailable_reason = result
+                elif key == "heatmap":
+                    hscript, hdiv, hplot_item, hplot_unavailable_reason = result
+                elif key == "roofline":
+                    rscript, rdiv, rplot_item, rplot_unavailable_reason = result
+                elif key == "fsio":
+                    fsio = result
+                elif key == "schema":
+                    schema = result
+                elif key == "proc_list":
+                    proc_list = result or []
+            except Exception:
+                pass
 
     xalt_data = {
         "exec_path": xalt_payload["exec_path"] if xalt_payload else [],
         "cwd": xalt_payload["cwd"] if xalt_payload else [],
         "libset": xalt_payload["libset"] if xalt_payload else [],
     }
-
-    mscript, mdiv = "", ""
-    mplot_item = None
-    mplot_unavailable_reason = None
-    try:
-        sp = plots.SummaryPlot(j)
-        plot_comp = sp.plot()
-        plot_json = sp.plot()
-        mscript, mdiv = components(plot_comp)
-        mplot_item = json_item(plot_json)
-    except Exception as e:
-        logging.getLogger(__name__).warning(
-            "Failed to generate summary plot for jid %s: %s", job.jid, e, exc_info=True
-        )
-        mplot_unavailable_reason = str(e)
-
-    hscript, hdiv = "", ""
-    hplot_item = None
-    hplot_unavailable_reason = None
-    try:
-        hm_fig_comp = plots.plot_from_jid_table(j)
-        hm_fig_json = plots.plot_from_jid_table(j)
-        if hm_fig_comp is not None and hm_fig_json is not None:
-            hscript, hdiv = components(hm_fig_comp)
-            hplot_item = json_item(hm_fig_json)
-        else:
-            hplot_unavailable_reason = plots.MSG_NO_HOST_MSR_DATA
-    except Exception as e:
-        logging.getLogger(__name__).warning(
-            "Failed to generate heatmap for jid %s: %s", job.jid, e, exc_info=True
-        )
-        hplot_unavailable_reason = str(e)
-
-    rscript, rdiv = "", ""
-    rplot_item = None
-    rplot_unavailable_reason = None
-    try:
-        roof_fig_comp = plots.plot_roofline_from_jid_table(j)
-        roof_fig_json = plots.plot_roofline_from_jid_table(j)
-        if roof_fig_comp is not None and roof_fig_json is not None:
-            rscript, rdiv = components(roof_fig_comp)
-            rplot_item = json_item(roof_fig_json)
-        else:
-            rplot_unavailable_reason = plots.MSG_NO_ROOFLINE_DATA
-    except Exception as e:
-        logging.getLogger(__name__).warning(
-            "Failed to generate roofline for jid %s: %s", job.jid, e, exc_info=True
-        )
-        rplot_unavailable_reason = str(e)
-
-    fsio = {}
-    try:
-        llite_df = j.get_llite_delta_by_event()
-        if not llite_df.empty and "delta_sum" in llite_df.columns:
-            llite_df["delta_mb"] = llite_df["delta_sum"].fillna(0) / (1024 * 1024)
-            read_row = llite_df[llite_df["event"] == "read_bytes"]
-            write_row = llite_df[llite_df["event"] == "write_bytes"]
-            read_val = float(read_row["delta_mb"].iloc[0]) if len(read_row) else 0.0
-            write_val = float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0
-            fsio["llite"] = [read_val, write_val]
-    except Exception:
-        pass
-
-    schema = {}
-    try:
-        schema = j.schema
-    except Exception:
-        pass
 
     urlstring = "https://scribe.tacc.utexas.edu/en-US/app/search/search?q=search%20"
     hoststring = urlstring + "%20host%3D" + host_list[0] + cfg.get_host_name_ext()
@@ -731,17 +841,6 @@ def job_detail(request, pk):
         {"type": o.type, "metric": o.metric, "units": o.units, "value": o.value}
         for o in job.metrics_data_set.all()
     ]
-
-    from .models import proc_data
-    proc_list = cached_orm(
-        f"{KEY_PROC_LIST}:{job.jid}",
-        TIMEOUT_SHORT,
-        lambda: list(
-            proc_data.objects.filter(jid=job.jid)
-            .values_list("proc", flat=True)
-            .distinct()
-        ),
-    )
 
     return Response({
         "job_data": JobListSerializer(job).data,
@@ -942,23 +1041,35 @@ def admin_monitor(request):
     time_bounds = now - timedelta(days=8)
     _tb = time_bounds.isoformat()
 
-    host_stats = []
-    for host in all_hosts:
-        def _host_last_fn(h=host, tb=_tb):
+    def _host_last_for(host):
+        def _host_last_fn():
             return (
                 host_data.objects.filter(
-                    host__icontains=h, time__gte=time_bounds
+                    host__icontains=host, time__gte=time_bounds
                 )
                 .order_by("-time")
                 .values_list("time", flat=True)
                 .first()
             )
-
-        last_time = cached_orm(
+        return host, cached_orm(
             f"{KEY_HOST_LAST}:{host}:{_tb}",
             TIMEOUT_SHORT,
             _host_last_fn,
         )
+
+    last_time_by_host = {}
+    with ThreadPoolExecutor(max_workers=min(16, len(all_hosts) or 1)) as executor:
+        futures = [executor.submit(_host_last_for, host) for host in all_hosts]
+        for future in as_completed(futures):
+            try:
+                host, last_time = future.result()
+                last_time_by_host[host] = last_time
+            except Exception:
+                pass
+
+    host_stats = []
+    for host in all_hosts:
+        last_time = last_time_by_host.get(host)
         if last_time is None:
             host_stats.append({"host": host, "last_time": None, "age_bucket": "gt_week"})
             continue
