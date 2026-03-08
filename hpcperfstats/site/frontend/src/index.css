@@ -72,3 +72,8 @@ body {
 .admin-monitor-section-body[hidden] {
   display: none;
 }
+.admin-monitor-metrics {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #dee2e6;
+}

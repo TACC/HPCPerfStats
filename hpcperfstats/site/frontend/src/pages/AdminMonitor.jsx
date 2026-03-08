@@ -37,6 +37,16 @@ export default function AdminMonitor() {
 
   const { host_stats = [] } = data;
 
+  const totalHosts = host_stats.length;
+  const bucketCounts = host_stats.reduce(
+    (acc, row) => {
+      const b = row.age_bucket || "gt_week";
+      acc[b] = (acc[b] || 0) + 1;
+      return acc;
+    },
+    {}
+  );
+
   return (
     <>
       <h3>Admin Monitor</h3>
@@ -61,6 +71,16 @@ export default function AdminMonitor() {
           role="region"
           aria-label="Host last seen timestamps"
         >
+          <div className="admin-monitor-metrics">
+            <strong>Total hosts: {totalHosts}</strong>
+            {" · "}
+            {(Object.keys(BADGE_MAP)).map((key) => (
+              <span key={key}>
+                {BADGE_MAP[key].label}: {bucketCounts[key] ?? 0}
+                {key !== "gt_week" ? " · " : ""}
+              </span>
+            ))}
+          </div>
           <p>
             Status buckets:{" "}
             <span className="badge badge-secondary">OK (≤ 10 minutes)</span>{" "}
