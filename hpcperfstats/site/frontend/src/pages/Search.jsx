@@ -25,11 +25,7 @@ export default function Search() {
     <div className="row">
       <div className="col-md-offset-3 col-md-4">
         <center>
-          <font size="8" color="#bf0a30">
-            HPCPerfStats
-          </font>
-          <p>a job-level resource usage monitoring tool</p>
-          <p className="text-muted small">
+          <p className="text-muted">
             Use <strong>Extended search</strong> in the top bar for date, host, queue, metrics, and more.
           </p>
         </center>

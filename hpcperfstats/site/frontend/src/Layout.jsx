@@ -17,10 +17,16 @@ export default function Layout({ session, children }) {
               style={{ maxWidth: "50%" }}
             />
           </a>
+          <div style={{ marginTop: "4px" }}>
+            <div style={{ fontSize: "1.1em", fontWeight: 600, color: "black" }}>
+              HPCPerfStats
+            </div>
+            <div className="text-muted small">a job-level resource usage monitoring tool</div>
+          </div>
         </div>
-        <center>
-          {session?.machine_name || "HPCPerfStats"}
-        </center>
+        {session?.machine_name && (
+          <center>{session.machine_name}</center>
+        )}
         <div className="navbar-form navbar-right" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <button
             type="button"
