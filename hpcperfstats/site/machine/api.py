@@ -335,14 +335,26 @@ def _job_list_histograms(request):
     THUMB_WIDTH, THUMB_HEIGHT = 280, 200
     FULL_WIDTH, FULL_HEIGHT = 600, 400
 
+    def _build_grid_plot_list():
+        """Build list of figures for the main grid (each figure must be used in only one document)."""
+        pl = [job_hist(df, metric, label) for metric, label in hist_metrics]
+        pl = [p for p in pl if p is not None]
+        q_full = _job_list_queue_histogram(job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT)
+        if q_full is not None:
+            pl.append(q_full)
+        q_cpu_full = _job_list_queue_cpu_hours_histogram(
+            job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT
+        )
+        if q_cpu_full is not None:
+            pl.append(q_cpu_full)
+        return pl
+
     script = ""
     div = ""
     plot_item = None
     histograms = []
     try:
-        plot_list = [job_hist(df, metric, label) for metric, label in hist_metrics]
-        plot_list = [p for p in plot_list if p is not None]
-        # Queue histogram: job count per queue (full filtered list, non-paginated)
+        # Histograms array: use separate figures so each is only in one document
         queue_thumb = _job_list_queue_histogram(job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT)
         queue_full = _job_list_queue_histogram(job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT)
         if queue_thumb is not None and queue_full is not None:
@@ -351,8 +363,6 @@ def _job_list_histograms(request):
                 "plot_item_thumb": json_item(queue_thumb),
                 "plot_item_full": json_item(queue_full),
             })
-            plot_list.append(queue_full)
-        # Queue compute hours: sum(runtime/3600) per queue (full filtered list, non-paginated)
         queue_cpu_thumb = _job_list_queue_cpu_hours_histogram(
             job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT
         )
@@ -365,9 +375,8 @@ def _job_list_histograms(request):
                 "plot_item_thumb": json_item(queue_cpu_thumb),
                 "plot_item_full": json_item(queue_cpu_full),
             })
-            plot_list.append(queue_cpu_full)
-        if plot_list:
-            # Per-histogram thumb + full for thumbnail grid with hover-to-show-full
+        plot_list_1 = _build_grid_plot_list()
+        if plot_list_1:
             for metric, label in hist_metrics:
                 p_thumb = job_hist(df, metric, label, width=THUMB_WIDTH, height=THUMB_HEIGHT)
                 p_full = job_hist(df, metric, label, width=FULL_WIDTH, height=FULL_HEIGHT)
@@ -377,20 +386,25 @@ def _job_list_histograms(request):
                         "plot_item_thumb": json_item(p_thumb),
                         "plot_item_full": json_item(p_full),
                     })
-            gp = gridplot(plot_list, ncols=2)
-            script, div = components(gp)
-            plot_item = json_item(gp)
+            # Two separate gridplots: Bokeh models can belong to only one document
+            plot_list_2 = _build_grid_plot_list()
+            gp1 = gridplot(plot_list_1, ncols=2)
+            gp2 = gridplot(plot_list_2, ncols=2)
+            script, div = components(gp1)
+            plot_item = json_item(gp2)
         else:
-            gp = _job_list_histograms_empty_figure()
-            script, div = components(gp)
-            plot_item = json_item(gp)
+            gp1 = _job_list_histograms_empty_figure()
+            gp2 = _job_list_histograms_empty_figure()
+            script, div = components(gp1)
+            plot_item = json_item(gp2)
     except Exception as e:
         logging.getLogger(__name__).warning(
             "Failed to generate job list histograms: %s", e, exc_info=True
         )
-        gp = _job_list_histograms_empty_figure()
-        script, div = components(gp)
-        plot_item = json_item(gp)
+        gp1 = _job_list_histograms_empty_figure()
+        gp2 = _job_list_histograms_empty_figure()
+        script, div = components(gp1)
+        plot_item = json_item(gp2)
     return script, div, plot_item, histograms
 
 
@@ -619,9 +633,10 @@ def job_detail(request, pk):
     mplot_unavailable_reason = None
     try:
         sp = plots.SummaryPlot(j)
-        plot = sp.plot()
-        mscript, mdiv = components(plot)
-        mplot_item = json_item(plot)
+        plot_comp = sp.plot()
+        plot_json = sp.plot()
+        mscript, mdiv = components(plot_comp)
+        mplot_item = json_item(plot_json)
     except Exception as e:
         logging.getLogger(__name__).warning(
             "Failed to generate summary plot for jid %s: %s", job.jid, e, exc_info=True
@@ -632,10 +647,11 @@ def job_detail(request, pk):
     hplot_item = None
     hplot_unavailable_reason = None
     try:
-        hm_fig = plots.plot_from_jid_table(j)
-        if hm_fig is not None:
-            hscript, hdiv = components(hm_fig)
-            hplot_item = json_item(hm_fig)
+        hm_fig_comp = plots.plot_from_jid_table(j)
+        hm_fig_json = plots.plot_from_jid_table(j)
+        if hm_fig_comp is not None and hm_fig_json is not None:
+            hscript, hdiv = components(hm_fig_comp)
+            hplot_item = json_item(hm_fig_json)
         else:
             hplot_unavailable_reason = plots.MSG_NO_HOST_MSR_DATA
     except Exception as e:
@@ -648,10 +664,11 @@ def job_detail(request, pk):
     rplot_item = None
     rplot_unavailable_reason = None
     try:
-        roof_fig = plots.plot_roofline_from_jid_table(j)
-        if roof_fig is not None:
-            rscript, rdiv = components(roof_fig)
-            rplot_item = json_item(roof_fig)
+        roof_fig_comp = plots.plot_roofline_from_jid_table(j)
+        roof_fig_json = plots.plot_roofline_from_jid_table(j)
+        if roof_fig_comp is not None and roof_fig_json is not None:
+            rscript, rdiv = components(roof_fig_comp)
+            rplot_item = json_item(roof_fig_json)
         else:
             rplot_unavailable_reason = plots.MSG_NO_ROOFLINE_DATA
     except Exception as e:
@@ -787,9 +804,10 @@ def type_detail(request, jid, type_name):
         })
 
     sp = plots.DevPlot(provider, data_host_list)
-    df, plot = sp.plot()
-    tscript, tdiv = components(plot)
-    tplot_item = json_item(plot)
+    df, plot_comp = sp.plot()
+    _, plot_json = sp.plot()
+    tscript, tdiv = components(plot_comp)
+    tplot_item = json_item(plot_json)
     schema = [
         c for c in df.columns
         if c not in ("host", "time", "index")
