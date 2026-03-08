@@ -19,6 +19,32 @@ body {
   z-index: 1;
 }
 
+/* Logo container: match navbar height so logo can fill it */
+.navbar-header-logo {
+  display: flex;
+  align-items: center;
+  min-height: 50px;
+  padding: 4px 0;
+}
+.navbar-header-logo a {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  min-height: 42px;
+}
+.navbar-logo-img {
+  height: 100%;
+  width: auto;
+  max-height: 42px;
+  object-fit: contain;
+}
+
+.navbar-brand-cluster {
+  font-size: 0.95em;
+  color: #555;
+  margin-bottom: 2px;
+}
+
 .extended-search-collapse {
   background: #f8f9fa;
   border-bottom: 1px solid #dee2e6;

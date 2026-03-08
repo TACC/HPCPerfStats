@@ -9,25 +9,26 @@ export default function Layout({ session, children }) {
   return (
     <div className="container-fluid">
       <nav className="navbar navbar-default" role="navigation">
-        <div className="navbar-header">
+        <div className="navbar-header navbar-header-logo">
           <a href="https://www.tacc.utexas.edu">
             <img
               src="/media/logo.png"
               alt="TACC"
-              style={{ maxWidth: "35%" }}
+              className="navbar-logo-img"
             />
           </a>
         </div>
         <div className="navbar-brand">
+          {session?.machine_name && (
+            <div className="navbar-brand-cluster">{session.machine_name}</div>
+          )}
           <div style={{ fontSize: "1.1em", fontWeight: 600, color: "black" }}>
             HPCPerfStats
           </div>
           <div className="text-muted small">a job-level resource usage monitoring tool</div>
         </div>
-        {session?.machine_name && (
-          <center>{session.machine_name}</center>
-        )}
         <div className="navbar-form navbar-right" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <a href="/logout/" className="btn btn-default btn-sm">Logout</a>
           <button
             type="button"
             className="btn btn-default btn-sm"
