@@ -2,12 +2,21 @@ body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
+.navbar {
+  position: relative;
+}
 .navbar-brand {
   position: absolute;
   width: 100%;
   left: 0;
   text-align: center;
   margin: auto;
+  pointer-events: none;
+}
+.navbar-header a,
+.navbar-form {
+  position: relative;
+  z-index: 1;
 }
 
 .extended-search-collapse {
