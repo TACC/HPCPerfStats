@@ -4,7 +4,7 @@
 {% if job_data %}
 <div>
   <h2>Job Detail</h2>
-  <table class="table table-condensed table-bordered">
+  <table class="table table-sm table-bordered">
     <thead>
       <th>Job ID</th><th>user</th><th>project</th><th>start time</th><th>end time</th>
       <th>run time (s)</th><th>requested time (s)</th><th>queue</th><th>name</th><th>status</th><th>ncores</th><th>nnodes</th>
@@ -40,7 +40,7 @@
 
 <div class="row">
   <div class="col-md-3">
-    <table class="table table-condensed table-bordered" style="max-width:100%;">
+    <table class="table table-sm table-bordered" style="max-width:100%;">
       <thead><th>File System</th><th>MB Read</th><th>MB Written</th><thead>
 	{% for key,val in fsio.items %}
 	<tr align=left><td>{{ key }}</td><td>{{ val.0|stringformat:"0.1e" }}</td><td>{{ val.1|stringformat:"0.1e" }}</td></tr>
@@ -78,11 +78,11 @@
 <div class="row">
 
   <div class="col-md-1">
-    <button type="button" class="btn btn-primary" data-toggle="collapse" data-target="#procs">
-      Processes {% if not proc_list %}<span class="badge badge-secondary">no data</span>{% endif %}
+    <button type="button" class="btn btn-primary" data-bs-toggle="collapse" data-bs-target="#procs">
+      Processes {% if not proc_list %}<span class="badge bg-secondary">no data</span>{% endif %}
     </button>
     <div id="procs" class="collapse">
-      <table class="table table-condensed table-bordered">
+      <table class="table table-sm table-bordered">
 	<tbody>
 	  {% for proc in proc_list %}
 	  <tr><td><a href="{% url 'machine:proc_detail' job_data.id proc %}">{{proc}}</a></td></tr>
@@ -95,11 +95,11 @@
   </div>
 
   <div class="col-md-3">
-  <button type="button" class="btn btn-primary" data-toggle="collapse" data-target="#tests">
-    Job-level Metrics {% if not job_data.metrics_data_set.all %}<span class="badge badge-secondary">no data</span>{% endif %}
+  <button type="button" class="btn btn-primary" data-bs-toggle="collapse" data-bs-target="#tests">
+    Job-level Metrics {% if not job_data.metrics_data_set.all %}<span class="badge bg-secondary">no data</span>{% endif %}
   </button>
     <div id="tests" class="collapse">
-      <table class="table table-condensed table-bordered"><!--- style="max-width:100px;">--->
+      <table class="table table-sm table-bordered"><!--- style="max-width:100px;">--->
 	<tbody>
 	  {% for obj in job_data.metrics_data_set.all %}
 	  <tr align=center><th>{{ obj.metric|ljust:"10" }}[{{ obj.units}}]</th><td>{{ obj.value|floatformat:"2" }}</td></tr>
@@ -113,11 +113,11 @@
   
   <div class="col-md-3">
   {% with has_exec_path=xalt_data.exec_path|length has_cwd=xalt_data.cwd|length has_libset=xalt_data.libset|length %}
-  <button type="button" class="btn btn-primary" data-toggle="collapse" data-target="#execparams">
-    Execution Parameters {% if not has_exec_path and not has_cwd and not has_libset %}<span class="badge badge-secondary">no data</span>{% endif %}
+  <button type="button" class="btn btn-primary" data-bs-toggle="collapse" data-bs-target="#execparams">
+    Execution Parameters {% if not has_exec_path and not has_cwd and not has_libset %}<span class="badge bg-secondary">no data</span>{% endif %}
   </button>
     <div id="execparams" class="collapse">
-      <table class="table table-condensed table-bordered" style="max-width:100%;">
+      <table class="table table-sm table-bordered" style="max-width:100%;">
 	<tr><td>Executable Path</td><td>
 	  {% for item in xalt_data.exec_path %}
 	  {{ item }}<br>
@@ -133,7 +133,7 @@
 	  {% endfor %}
 	</td></tr>
       </table>
-      <table class="table table-condensed table-bordered" style="max-width:30%;">
+      <table class="table table-sm table-bordered" style="max-width:30%;">
 	<thead><th>Module</th><th>Library</th></thead>
 	<tbody>
 	  {% for obj in xalt_data.libset %}
@@ -153,11 +153,11 @@
   </div>
 
   <div class="col-md-1">
-  <button type="button" class="btn btn-primary" data-toggle="collapse" data-target="#hosts">
-    Hosts {% if not host_list %}<span class="badge badge-secondary">no data</span>{% endif %}
+  <button type="button" class="btn btn-primary" data-bs-toggle="collapse" data-bs-target="#hosts">
+    Hosts {% if not host_list %}<span class="badge bg-secondary">no data</span>{% endif %}
   </button>
     <div id="hosts" class="collapse">
-      <table class="table table-condensed table-bordered"><!--- style="max-width:100px;">--->
+      <table class="table table-sm table-bordered"><!--- style="max-width:100px;">--->
 	<tbody>
 	  {% for host in host_list %}
 	  <tr align=center><td>{{ host }}</td></tr>
@@ -196,11 +196,11 @@
 </center></p>
 
 <center>
-<button type="button" class="btn btn-primary btn-lg" data-toggle="collapse" data-target="#dev">
+<button type="button" class="btn btn-primary btn-lg" data-bs-toggle="collapse" data-bs-target="#dev">
   Device Data and Plots
 </button>
 <div id="dev" class="collapse">
-    <table class="table table-condensed table-bordered" style="margin-right:30px;width:100%;">
+    <table class="table table-sm table-bordered" style="margin-right:30px;width:100%;">
       <tr><th>Type Name</th><th>Recorded Performance Events</th></tr>
          {% for type_name, event in schema.items %}
             <tr><td><a href="{{ type_name }}/">{{ type_name }}</a></td><td style="text-align:left">{{ event|join:", " }}</td></tr>

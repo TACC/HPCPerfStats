@@ -42,7 +42,7 @@ export default function TypeDetail() {
         <>
           <h4>Counts Aggregated over devices and hosts</h4>
           <div className="table-responsive">
-            <table className="table table-condensed table-bordered">
+            <table className="table table-sm table-bordered">
               <thead>
                 <tr>
                   <th>record</th>

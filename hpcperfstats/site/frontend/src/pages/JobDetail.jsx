@@ -54,7 +54,7 @@ export default function JobDetail() {
     <>
       <div>
         <h2>Job Detail</h2>
-        <table className="table table-condensed table-bordered">
+        <table className="table table-sm table-bordered">
           <thead>
             <tr>
               <th>Job ID</th>
@@ -112,7 +112,7 @@ export default function JobDetail() {
 
       <div className="row">
         <div className="col-md-3">
-          <table className="table table-condensed table-bordered">
+          <table className="table table-sm table-bordered">
             <thead>
               <tr>
                 <th>File System</th>
@@ -181,7 +181,7 @@ export default function JobDetail() {
       <div className="row" style={{ marginTop: "1rem" }}>
         <div className="col-md-3">
           <h4>Processes</h4>
-          <table className="table table-condensed table-bordered">
+          <table className="table table-sm table-bordered">
             <tbody>
               {(proc_list || []).map((proc, i) => (
                 <tr key={i}>
@@ -193,7 +193,7 @@ export default function JobDetail() {
         </div>
         <div className="col-md-3">
           <h4>Job-level Metrics</h4>
-          <table className="table table-condensed table-bordered">
+          <table className="table table-sm table-bordered">
             <tbody>
               {metrics_list.map((obj, i) => (
                 <tr key={i}>
@@ -206,7 +206,7 @@ export default function JobDetail() {
         </div>
         <div className="col-md-3">
           <h4>Execution Parameters</h4>
-          <table className="table table-condensed table-bordered">
+          <table className="table table-sm table-bordered">
             <tbody>
               <tr>
                 <td>Executable Path</td>
@@ -234,7 +234,7 @@ export default function JobDetail() {
               </tr>
             </tbody>
           </table>
-          <table className="table table-condensed table-bordered">
+          <table className="table table-sm table-bordered">
             <thead>
               <tr>
                 <th>Module</th>
@@ -261,7 +261,7 @@ export default function JobDetail() {
         </div>
         <div className="col-md-3">
           <h4>Hosts</h4>
-          <table className="table table-condensed table-bordered">
+          <table className="table table-sm table-bordered">
             <tbody>
               {host_list.map((host, i) => (
                 <tr key={i}>
@@ -318,7 +318,7 @@ export default function JobDetail() {
 
       <center>
         <h4>Device Data and Plots</h4>
-        <table className="table table-condensed table-bordered">
+        <table className="table table-sm table-bordered">
           <thead>
             <tr>
               <th>Type Name</th>

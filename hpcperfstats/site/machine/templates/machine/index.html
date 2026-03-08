@@ -10,11 +10,11 @@
 <hr>
 
 <h4>Flagged Jobs:</h4>
-<button type="button" class="btn btn-primary" data-toggle="collapse" data-target="#flagged">Click for Flagged Jobs</button>
+<button type="button" class="btn btn-primary" data-bs-toggle="collapse" data-bs-target="#flagged">Click for Flagged Jobs</button>
 <div id="flagged" class="collapse">
 <div class="table-responsive">
 <!---
-  <table class="table table-condensed" style="max-width=100%;">
+  <table class="table table-sm" style="max-width=100%;">
     {% if md_job_list %}
 
     <tr>
@@ -105,46 +105,40 @@
 <h4> #Jobs = {{ nj }} </h4>
 
     {% if job_list.has_other_pages %}
-    <div class="pagination">
+    <nav aria-label="Job list pagination"><ul class="pagination">
       {% if job_list.has_previous %}
-
       {% if current_path %}
-      <li><a href="{{ current_path }}&page={{ job_list.previous_page_number }}">&laquo;</a></li>
+      <li class="page-item"><a class="page-link" href="{{ current_path }}&page={{ job_list.previous_page_number }}">&laquo;</a></li>
       {% else %}
-      <li><a href="?page={{ job_list.previous_page_number }}">&laquo;</a></li>
+      <li class="page-item"><a class="page-link" href="?page={{ job_list.previous_page_number }}">&laquo;</a></li>
       {% endif %}
-
       {% else %}
-      <li class="disabled"><span>&laquo;</span></li>
+      <li class="page-item disabled"><span class="page-link">&laquo;</span></li>
       {% endif %}
       {% for i in job_list.paginator.page_range %}
       {% if job_list.number == i %}
-      <li class="active"><span>{{ i }} <span class="sr-only">(current)</span></span></li>
+      <li class="page-item active" aria-current="page"><span class="page-link">{{ i }}</span></li>
       {% else %}
-
       {% if current_path %}
-      <li><a href="{{ current_path }}&page={{ i }}">{{ i }}</a></li>
+      <li class="page-item"><a class="page-link" href="{{ current_path }}&page={{ i }}">{{ i }}</a></li>
       {% else %}
-      <li><a href="?page={{ i }}">{{ i }}</a></li>
+      <li class="page-item"><a class="page-link" href="?page={{ i }}">{{ i }}</a></li>
       {% endif %}
-
       {% endif %}
       {% endfor %}
       {% if job_list.has_next %}
-
       {% if current_path %}
-      <li><a href="{{ current_path }}&page={{ job_list.next_page_number }}">&raquo;</a></li>
+      <li class="page-item"><a class="page-link" href="{{ current_path }}&page={{ job_list.next_page_number }}">&raquo;</a></li>
       {% else %}
-      <li><a href="?page={{ job_list.next_page_number }}">&raquo;</a></li>
+      <li class="page-item"><a class="page-link" href="?page={{ job_list.next_page_number }}">&raquo;</a></li>
       {% endif %}
-
       {% else %}
-      <li class="disabled"><span>&raquo;</span></li>
+      <li class="page-item disabled"><span class="page-link">&raquo;</span></li>
       {% endif %}
-    </div>
+    </ul></nav>
     {% endif %}
 
-    <table class="table table-condensed table-bordered">
+    <table class="table table-sm table-bordered">
       <thead>
         <tr>
 	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-jid' %}jid{% else %}-jid{% endif %}">Job ID {% if order_by == 'jid' %}&uarr;{% elif order_by == '-jid' %}&darr;{% endif %}</a></th>

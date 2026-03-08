@@ -74,7 +74,7 @@ export default function ExtendedSearch({ onClose }) {
           <span className="extended-search-title">Extended search</span>
           <button
             type="button"
-            className="btn btn-sm btn-default"
+            className="btn btn-sm btn-outline-secondary"
             onClick={onClose}
             aria-label="Close extended search"
           >
@@ -91,7 +91,7 @@ export default function ExtendedSearch({ onClose }) {
           <div className="col-md-2">
             <input
               type="date"
-              className="form-control input-sm"
+              className="form-control form-control-sm"
               name="end_time__gte"
             />
           </div>
@@ -101,7 +101,7 @@ export default function ExtendedSearch({ onClose }) {
           <div className="col-md-2">
             <input
               type="date"
-              className="form-control input-sm"
+              className="form-control form-control-sm"
               name="end_time__lte"
             />
           </div>
@@ -113,7 +113,7 @@ export default function ExtendedSearch({ onClose }) {
           <div className="col-md-2">
             <input
               type="text"
-              className="form-control input-sm"
+              className="form-control form-control-sm"
               name="host"
               id="ext-host"
             />
@@ -126,7 +126,7 @@ export default function ExtendedSearch({ onClose }) {
           <div className="col-md-2">
             <input
               type="text"
-              className="form-control input-sm"
+              className="form-control form-control-sm"
               name="username"
               id="ext-username"
             />
@@ -139,7 +139,7 @@ export default function ExtendedSearch({ onClose }) {
           <div className="col-md-2">
             <input
               type="text"
-              className="form-control input-sm"
+              className="form-control form-control-sm"
               name="account__icontains"
               id="ext-account"
             />
@@ -179,7 +179,7 @@ export default function ExtendedSearch({ onClose }) {
           <div className="col-md-1">
             <input
               type="text"
-              className="form-control input-sm"
+              className="form-control form-control-sm"
               name="runtime__gte"
               placeholder="min seconds"
             />
@@ -187,7 +187,7 @@ export default function ExtendedSearch({ onClose }) {
           <div className="col-md-1">
             <input
               type="text"
-              className="form-control input-sm"
+              className="form-control form-control-sm"
               name="runtime__lte"
               placeholder="max seconds"
             />
@@ -200,7 +200,7 @@ export default function ExtendedSearch({ onClose }) {
           <div className="col-md-1">
             <input
               type="text"
-              className="form-control input-sm"
+              className="form-control form-control-sm"
               name="nhosts__gte"
               placeholder="min nodes"
             />
@@ -208,7 +208,7 @@ export default function ExtendedSearch({ onClose }) {
           <div className="col-md-1">
             <input
               type="text"
-              className="form-control input-sm"
+              className="form-control form-control-sm"
               name="nhosts__lte"
               placeholder="max nodes"
             />
@@ -221,7 +221,7 @@ export default function ExtendedSearch({ onClose }) {
           <div className="col-md-1">
             <input
               type="text"
-              className="form-control input-sm"
+              className="form-control form-control-sm"
               name="node_hrs__gte"
               placeholder="min nodes-hrs"
             />
@@ -229,7 +229,7 @@ export default function ExtendedSearch({ onClose }) {
           <div className="col-md-1">
             <input
               type="text"
-              className="form-control input-sm"
+              className="form-control form-control-sm"
               name="node_hrs__lte"
               placeholder="max node-hrs"
             />
@@ -244,7 +244,7 @@ export default function ExtendedSearch({ onClose }) {
             <div className="col-md-1">
               <input
                 type="text"
-                className="form-control input-sm"
+                className="form-control form-control-sm"
                 name={`metrics_${m.metric}__gte`}
                 placeholder={`Min ${m.units}`}
               />
@@ -252,14 +252,14 @@ export default function ExtendedSearch({ onClose }) {
             <div className="col-md-1">
               <input
                 type="text"
-                className="form-control input-sm"
+                className="form-control form-control-sm"
                 name={`metrics_${m.metric}__lte`}
                 placeholder={`Max ${m.units}`}
               />
             </div>
           </div>
         ))}
-        <button type="submit" className="btn btn-default">
+        <button type="submit" className="btn btn-primary">
           Search
         </button>
       </form>

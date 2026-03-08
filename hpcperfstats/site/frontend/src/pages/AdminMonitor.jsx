@@ -90,7 +90,7 @@ export default function AdminMonitor() {
             <span className="badge badge-freshness-gt_day">{"> 1 day"}</span>{" "}
             <span className="badge badge-freshness-gt_week">{"> 1 week"}</span>
           </p>
-          <table className="table table-condensed table-bordered">
+          <table className="table table-sm table-bordered">
             <thead>
               <tr>
                 <th>Host</th>

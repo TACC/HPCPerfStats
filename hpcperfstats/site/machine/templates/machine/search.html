@@ -18,7 +18,7 @@ en: {
 </script>
 
 <div class="row">
-  <div class="col-md-offset-3 col-md-4">
+  <div class="offset-md-3 col-md-4">
     <center>   
       <font size="8" color="#bf0a30">HPCPerfStats
       </font> 
@@ -41,34 +41,34 @@ en: {
   <div class="row">
     <div class="col-md-1"><label>Start Date</label></div>
     <div class="col-md-1"></div>
-    <div class="col-md-2"><input type="date" class="form-control input-sm" name="end_time__gte"></div>
+    <div class="col-md-2"><input type="date" class="form-control form-control-sm" name="end_time__gte"></div>
     <div class="col-md-1"></div>
     <div class="col-md-1"><label>End Date</label></div>
-    <div class="col-md-2"><input type="date" class="form-control input-sm" name="end_time__lte"></div>
+    <div class="col-md-2"><input type="date" class="form-control form-control-sm" name="end_time__lte"></div>
   </div>
 
 </br>
 
   <div class="row">
     <div class="col-md-2"><label for="host">Host</label></div>
-    <div class="col-md-2"><input type="text" class="form-control input-sm" name="host"></div>
+    <div class="col-md-2"><input type="text" class="form-control form-control-sm" name="host"></div>
   </div>
 
 </br>
 
   <div class="row">
     <div class="col-md-2"><label for="username">Username</label></div>
-    <div class="col-md-2"><input type="text" class="form-control input-sm" name="username"></div>
+    <div class="col-md-2"><input type="text" class="form-control form-control-sm" name="username"></div>
   </div>
   <div class="row">
     <div class="col-md-2"><label for="account">Account</label></div>
-    <div class="col-md-2"><input type="text" class="form-control input-sm" name="account__icontains"></div>
+    <div class="col-md-2"><input type="text" class="form-control form-control-sm" name="account__icontains"></div>
   </div>
 
 
   <div class="row">    
     <div class="col-md-2"><label for="State">State</label></div>
-    <div class="col-md-2 btn-group" data-toggle="buttons" aria-label="State">
+    <div class="col-md-2 btn-group" aria-label="State">
       <select type="text" id="state" name="state">
 	{% for state in choice.state.field.choices %}
 	<option>{{ state.0 }}</option>
@@ -79,7 +79,7 @@ en: {
 
   <div class="row">    
     <div class="col-md-2"><label for="Queue">Queue</label></div>
-    <div class="col-md-2 btn-group" data-toggle="buttons" aria-label="Queue">
+    <div class="col-md-2 btn-group" aria-label="Queue">
       <select type="text" id="queue" name="queue">
 	{% for queue in choice.queue.field.choices %}
 	<option>{{ queue.0 }}</option>
@@ -94,18 +94,18 @@ en: {
 
 <div class="row">
     <div class="col-md-2"><label for="runtime">Runtime</label></div>
-    <div class="col-md-1"><input id="runtime" type="text" class="form-control input-sm" name="runtime__gte" placeholder="min seconds"></div>
-    <div class="col-md-1"><input id="runtime" type="text" class="form-control input-sm" name="runtime__lte" placeholder="max seconds"></div>
+    <div class="col-md-1"><input id="runtime" type="text" class="form-control form-control-sm" name="runtime__gte" placeholder="min seconds"></div>
+    <div class="col-md-1"><input id="runtime" type="text" class="form-control form-control-sm" name="runtime__lte" placeholder="max seconds"></div>
 </div>
 <div class="row">
     <div class="col-md-2"><label for="nodes">Nodes</label></div>
-    <div class="col-md-1"><input id="nodes" type="text" class="form-control input-sm" name="nhosts__gte" placeholder="min nodes"></div>
-    <div class="col-md-1"><input id="nodes" type="text" class="form-control input-sm" name="nhosts__lte" placeholder="max nodes"></div>
+    <div class="col-md-1"><input id="nodes" type="text" class="form-control form-control-sm" name="nhosts__gte" placeholder="min nodes"></div>
+    <div class="col-md-1"><input id="nodes" type="text" class="form-control form-control-sm" name="nhosts__lte" placeholder="max nodes"></div>
 </div>
 <div class="row">
     <div class="col-md-2"><label for="runtime">Node-hrs</label></div>
-    <div class="col-md-1"><input type="text" class="form-control input-sm" name="node_hrs__gte" placeholder="min nodes-hrs"></div>
-    <div class="col-md-1"><input type="text" class="form-control input-sm" name="node_hrs__lte" placeholder="max node-hrs"></div>
+    <div class="col-md-1"><input type="text" class="form-control form-control-sm" name="node_hrs__gte" placeholder="min nodes-hrs"></div>
+    <div class="col-md-1"><input type="text" class="form-control form-control-sm" name="node_hrs__lte" placeholder="max node-hrs"></div>
 </div>
 
 
@@ -118,16 +118,16 @@ en: {
     {% for metric in metrics %}
     <div class="col-md-2"><label for="{{ metric.metric }}">{{ metric.metric }}</label></div>
     <div class="col-md-1">
-        <input id="{{ metric.metric }}" type="text" class="form-control input-sm" name="metrics_{{ metric.metric }}__gte" placeholder="Min {{ metric.units }}">
+        <input id="{{ metric.metric }}" type="text" class="form-control form-control-sm" name="metrics_{{ metric.metric }}__gte" placeholder="Min {{ metric.units }}">
     </div>
     <div class="col-md-1">
-        <input id="{{ metric.metric }}" type="text" class="form-control input-sm" name="metrics_{{ metric.metric }}__lte" placeholder="Max {{ metric.units }}">
+        <input id="{{ metric.metric }}" type="text" class="form-control form-control-sm" name="metrics_{{ metric.metric }}__lte" placeholder="Max {{ metric.units }}">
     </div>
     {% endfor %}
 </div>
 <br/>
 
-<button id="submit" type="submit" class="btn btn-default">Search</button>
+<button id="submit" type="submit" class="btn btn-primary">Search</button>
 </form>
 
 </div>
@@ -138,17 +138,15 @@ en: {
 <h4>List all jobs for a given date </h4>
 {% if date_list %}
 
-<nav class="navbar navbar-default" role="navigation">
-
+<nav aria-label="Date list">
 {% for month, dates in date_list %}
 <ul class="pagination">
-   <li><a href="/machine/date/{{month}}">{{month}}</a></li>
+   <li class="page-item"><a class="page-link" href="/machine/date/{{month}}">{{month}}</a></li>
    {% for date in dates %}
-     <li><a href="/machine/date/{{date.0}}">{{date.1}}</a></li>
+     <li class="page-item"><a class="page-link" href="/machine/date/{{date.0}}">{{date.1}}</a></li>
    {% endfor %}
 </ul>
 {% endfor %}
-
 </nav>
 
 {% else %}

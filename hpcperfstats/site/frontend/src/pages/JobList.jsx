@@ -150,7 +150,7 @@ export default function JobList() {
         </ul>
       )}
 
-      <table className="table table-condensed table-bordered">
+      <table className="table table-sm table-bordered">
         <thead>
           <tr>
             {columns.map(({ label, field, sortable }) => (

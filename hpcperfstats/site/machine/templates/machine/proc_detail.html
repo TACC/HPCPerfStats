@@ -3,7 +3,7 @@
 
 <h2>{{ proc_name }}</h2>
 
-<table class="table table-condensed table-bordered">
+<table class="table table-sm table-bordered">
   <thead><th>host</th><th>proc/pid</th><th>VMem HWM ({{ hwm_unit }})</th><th>ResMem HWM ({{ hwm_unit }})</th><th>Affinity</th><th>Threads</th></thead>
   <tbody>
     {% for host, procs in host_map.items %}
