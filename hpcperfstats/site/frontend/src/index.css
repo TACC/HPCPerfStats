@@ -37,3 +37,38 @@ body {
   margin-bottom: 0.5rem;
   font-size: 1rem;
 }
+
+/* Admin Monitor collapsible sections */
+.admin-monitor-section {
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+.admin-monitor-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: left;
+  background: #f8f9fa;
+  border: none;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+}
+.admin-monitor-section-header:hover {
+  background: #e9ecef;
+}
+.admin-monitor-section-chevron {
+  font-size: 0.75rem;
+  color: #6c757d;
+}
+.admin-monitor-section-body {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid #dee2e6;
+}
+.admin-monitor-section-body[hidden] {
+  display: none;
+}

@@ -21,6 +21,7 @@ export default function AdminMonitor() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [hostTimeExpanded, setHostTimeExpanded] = useState(true);
 
   useEffect(() => {
     api
@@ -38,46 +39,69 @@ export default function AdminMonitor() {
 
   return (
     <>
-      <h3>Admin Monitor — Host Last Seen Timestamps</h3>
-      <p>
-        Status buckets:{" "}
-        <span className="badge badge-secondary">OK (≤ 10 minutes)</span>{" "}
-        <span className="badge badge-info">{"> 10 minutes"}</span>{" "}
-        <span className="badge badge-warning">{"> 1 hour"}</span>{" "}
-        <span className="badge badge-danger">{"> 1 day"}</span>{" "}
-        <span className="badge badge-dark">{"> 1 week"}</span>
-      </p>
-      <table className="table table-condensed table-bordered">
-        <thead>
-          <tr>
-            <th>Host</th>
-            <th>Last Timestamp</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {host_stats.map((row, i) => {
-            const badge = BADGE_MAP[row.age_bucket] || BADGE_MAP.gt_week;
-            const rowClass = ROW_CLASS[row.age_bucket] || "";
-            return (
-              <tr key={row.host + i} className={rowClass}>
-                <td>{row.host}</td>
-                <td>{row.last_time || "—"}</td>
-                <td>
-                  <span className={`badge ${badge.class}`}>{badge.label}</span>
-                </td>
+      <h3>Admin Monitor</h3>
+
+      <div className="admin-monitor-section">
+        <button
+          type="button"
+          className="admin-monitor-section-header"
+          onClick={() => setHostTimeExpanded((e) => !e)}
+          aria-expanded={hostTimeExpanded}
+          aria-controls="admin-monitor-host-time"
+        >
+          <span className="admin-monitor-section-chevron" aria-hidden>
+            {hostTimeExpanded ? "▼" : "▶"}
+          </span>
+          Host last seen timestamps
+        </button>
+        <div
+          id="admin-monitor-host-time"
+          className="admin-monitor-section-body"
+          hidden={!hostTimeExpanded}
+          role="region"
+          aria-label="Host last seen timestamps"
+        >
+          <p>
+            Status buckets:{" "}
+            <span className="badge badge-secondary">OK (≤ 10 minutes)</span>{" "}
+            <span className="badge badge-info">{"> 10 minutes"}</span>{" "}
+            <span className="badge badge-warning">{"> 1 hour"}</span>{" "}
+            <span className="badge badge-danger">{"> 1 day"}</span>{" "}
+            <span className="badge badge-dark">{"> 1 week"}</span>
+          </p>
+          <table className="table table-condensed table-bordered">
+            <thead>
+              <tr>
+                <th>Host</th>
+                <th>Last Timestamp</th>
+                <th>Status</th>
               </tr>
-            );
-          })}
-          {host_stats.length === 0 && (
-            <tr>
-              <td colSpan="3" className="text-center">
-                No host data available.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+            </thead>
+            <tbody>
+              {host_stats.map((row, i) => {
+                const badge = BADGE_MAP[row.age_bucket] || BADGE_MAP.gt_week;
+                const rowClass = ROW_CLASS[row.age_bucket] || "";
+                return (
+                  <tr key={row.host + i} className={rowClass}>
+                    <td>{row.host}</td>
+                    <td>{row.last_time || "—"}</td>
+                    <td>
+                      <span className={`badge ${badge.class}`}>{badge.label}</span>
+                    </td>
+                  </tr>
+                );
+              })}
+              {host_stats.length === 0 && (
+                <tr>
+                  <td colSpan="3" className="text-center">
+                    No host data available.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </>
   );
 }
