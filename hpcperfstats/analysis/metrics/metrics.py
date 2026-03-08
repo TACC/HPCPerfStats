@@ -317,11 +317,13 @@ class Metrics():
     if not rows:
       return None
     df = pd.DataFrame(rows, columns=["host", "time", "sum"])
-    # Drop first time sample from each host (use reset_index() so "host" stays a column for next groupby)
-    df = df.groupby(
-        "host",
-        group_keys=False).apply(lambda g: g.iloc[1:]).reset_index()
+    # Drop first time sample from each host (keep "host" as column to avoid KeyError in groupby)
+    df = df.sort_values(["host", "time"])
+    first_idx = df.groupby("host", group_keys=False).head(1).index
+    df = df.drop(index=first_idx)
     if df.empty:
+      return None
+    if "host" not in df.columns:
       return None
     df_n = df.groupby("host")["sum"].mean()
     return float(df_n.mean())
