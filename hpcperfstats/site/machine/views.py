@@ -23,7 +23,7 @@ from bokeh.plotting import figure
 from django import forms
 from django.contrib import messages
 from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
-from django.db.models import Max
+from django.db.models import Exists, Max, OuterRef
 from django.http import HttpResponseRedirect
 from django.shortcuts import render
 from django.utils import timezone
@@ -55,6 +55,7 @@ from hpcperfstats.site.machine.models import host_data, job_data, metrics_data
 from hpcperfstats.site.machine.oauth2 import check_for_tokens
 from hpcperfstats.site.machine.query_utils import (
     expand_month_date_to_range,
+    get_job_list_order_by,
     normalize_job_list_query_params,
 )
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
@@ -184,9 +185,15 @@ def index(request, **kwargs):
   acct_data = {
       k: v
       for k, v in fields.items()
-      if k.split('_', 1)[0] != "metrics" and k != "page"
+      if k.split('_', 1)[0] != "metrics" and k not in ("page", "order_by")
   }
-  job_list = job_data.objects.filter(**acct_data).order_by('-end_time')
+  order_by = get_job_list_order_by(fields) or "-end_time"
+  job_list = job_data.objects.filter(**acct_data)
+  if order_by.lstrip("-") == "has_metrics":
+    job_list = job_list.annotate(
+        has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
+    )
+  job_list = job_list.order_by(order_by)
 
   # Build query and filter iteratively on derived metrics data
   df_fields = []
@@ -268,6 +275,13 @@ def index(request, **kwargs):
   fields['logged_in'] = True
   if '?' in request.get_full_path():
     fields['current_path'] = request.get_full_path()
+
+  # Base URL for sort links (current query without page and order_by)
+  get_copy = request.GET.copy()
+  get_copy.pop("page", None)
+  get_copy.pop("order_by", None)
+  fields["sort_base"] = request.path + ("?" + get_copy.urlencode() if get_copy else "")
+  fields["order_by"] = order_by
 
   return render(request, "machine/index.html", fields)
 

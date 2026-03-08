@@ -2,6 +2,37 @@
 import calendar
 import re
 
+# Job list sort: all columns except name (jobname). Maps URL order_by value to allowed Django field.
+ORDER_BY_ALLOWED = frozenset({
+    "jid",
+    "username",
+    "account",
+    "start_time",
+    "end_time",
+    "runtime",
+    "queue",
+    "state",
+    "ncores",
+    "nhosts",
+    "node_hrs",
+    "has_metrics",
+})
+
+
+def get_job_list_order_by(fields):
+    """Return order_by string for job_data queryset from fields dict, or None for default (-end_time).
+    Accepts order_by value like 'end_time' (asc) or '-start_time' (desc). Only allowed fields are used.
+    """
+    raw = (fields or {}).get("order_by") or ""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    desc = raw.startswith("-")
+    field = raw.lstrip("-")
+    if field not in ORDER_BY_ALLOWED:
+        return None
+    return f"-{field}" if desc else field
+
 # Shorthand date patterns (e.g. "2026-1" or "2026-1-5") that Django DateField rejects; normalize to YYYY-MM-DD.
 _DATE_SHORTHAND = re.compile(r"^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?(?:T.*)?$")
 # Month-only format YYYY-MM (e.g. "2026-01") for whole-month filter.

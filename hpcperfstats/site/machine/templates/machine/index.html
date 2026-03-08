@@ -147,19 +147,19 @@
     <table class="table table-condensed table-bordered">
       <thead>
         <tr>
-	  <th> Job ID </th>
-	  <th> Data   </th>
-	  <th> user </th>
-	  <th> Account </th>
-	  <th> start time </th>
-	  <th> end time </th>
-	  <th> run time (s)</th>
-	  <th> queue </th>
+	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-jid' %}jid{% else %}-jid{% endif %}">Job ID {% if order_by == 'jid' %}&uarr;{% elif order_by == '-jid' %}&darr;{% endif %}</a></th>
+	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-has_metrics' %}has_metrics{% else %}-has_metrics{% endif %}">Data {% if order_by == 'has_metrics' %}&uarr;{% elif order_by == '-has_metrics' %}&darr;{% endif %}</a></th>
+	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-username' %}username{% else %}-username{% endif %}">user {% if order_by == 'username' %}&uarr;{% elif order_by == '-username' %}&darr;{% endif %}</a></th>
+	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-account' %}account{% else %}-account{% endif %}">Account {% if order_by == 'account' %}&uarr;{% elif order_by == '-account' %}&darr;{% endif %}</a></th>
+	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-start_time' %}start_time{% else %}-start_time{% endif %}">start time {% if order_by == 'start_time' %}&uarr;{% elif order_by == '-start_time' %}&darr;{% endif %}</a></th>
+	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-end_time' %}end_time{% else %}-end_time{% endif %}">end time {% if order_by == 'end_time' %}&uarr;{% elif order_by == '-end_time' %}&darr;{% endif %}</a></th>
+	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-runtime' %}runtime{% else %}-runtime{% endif %}">run time (s) {% if order_by == 'runtime' %}&uarr;{% elif order_by == '-runtime' %}&darr;{% endif %}</a></th>
+	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-queue' %}queue{% else %}-queue{% endif %}">queue {% if order_by == 'queue' %}&uarr;{% elif order_by == '-queue' %}&darr;{% endif %}</a></th>
 	  <th> name </th>
-	  <th> status </th>
-	  <th> cores </th>
-	  <th> nodes</th>
-	  <th> node hrs </th>
+	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-state' %}state{% else %}-state{% endif %}">status {% if order_by == 'state' %}&uarr;{% elif order_by == '-state' %}&darr;{% endif %}</a></th>
+	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-ncores' %}ncores{% else %}-ncores{% endif %}">cores {% if order_by == 'ncores' %}&uarr;{% elif order_by == '-ncores' %}&darr;{% endif %}</a></th>
+	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-nhosts' %}nhosts{% else %}-nhosts{% endif %}">nodes {% if order_by == 'nhosts' %}&uarr;{% elif order_by == '-nhosts' %}&darr;{% endif %}</a></th>
+	  <th><a href="{{ sort_base }}{% if '?' in sort_base %}&{% else %}?{% endif %}order_by={% if order_by == '-node_hrs' %}node_hrs{% else %}-node_hrs{% endif %}">node hrs {% if order_by == 'node_hrs' %}&uarr;{% elif order_by == '-node_hrs' %}&darr;{% endif %}</a></th>
 	</tr>
       </thead>
       <tbody>

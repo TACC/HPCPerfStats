@@ -34,6 +34,7 @@ from .models import host_data, job_data, metrics_data
 from .oauth2 import check_for_tokens
 from .query_utils import (
     expand_month_date_to_range,
+    get_job_list_order_by,
     normalize_job_list_query_params,
 )
 from .serializers import JobListSerializer
@@ -43,6 +44,7 @@ from .views import (
     libset_c,
     xalt_data_c,
 )
+from django.db.models import Exists, OuterRef
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from datetime import timedelta
 from numpy import isnan
@@ -191,9 +193,15 @@ def _job_list_histograms(request):
     acct_data = {
         k: v
         for k, v in fields.items()
-        if k.split("_", 1)[0] != "metrics" and k != "page"
+        if k.split("_", 1)[0] != "metrics" and k not in ("page", "order_by")
     }
-    job_list_qs = job_data.objects.filter(**acct_data).order_by("-end_time")
+    order_by = get_job_list_order_by(fields) or "-end_time"
+    job_list_qs = job_data.objects.filter(**acct_data)
+    if order_by.lstrip("-") == "has_metrics":
+        job_list_qs = job_list_qs.annotate(
+            has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
+        )
+    job_list_qs = job_list_qs.order_by(order_by)
 
     cur_metrics = {
         k.split("_", 1)[1]: v
@@ -299,9 +307,15 @@ def job_list(request):
     acct_data = {
         k: v
         for k, v in fields.items()
-        if k.split("_", 1)[0] != "metrics" and k != "page"
+        if k.split("_", 1)[0] != "metrics" and k not in ("page", "order_by")
     }
-    job_list_qs = job_data.objects.filter(**acct_data).order_by("-end_time")
+    order_by = get_job_list_order_by(fields) or "-end_time"
+    job_list_qs = job_data.objects.filter(**acct_data)
+    if order_by.lstrip("-") == "has_metrics":
+        job_list_qs = job_list_qs.annotate(
+            has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
+        )
+    job_list_qs = job_list_qs.order_by(order_by)
 
     cur_metrics = {
         k.split("_", 1)[1]: v
@@ -344,6 +358,7 @@ def job_list(request):
         "nj": nj,
         "current_path": current_path,
         "qname": qname,
+        "order_by": order_by,
         "pagination": {
             "page": page.number,
             "num_pages": paginator.num_pages,

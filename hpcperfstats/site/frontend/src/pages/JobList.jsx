@@ -42,6 +42,7 @@ export default function JobList() {
     nj = 0,
     current_path,
     qname,
+    order_by: responseOrderBy = "-end_time",
     pagination = {},
   } = data;
   const script = histograms?.script ?? "";
@@ -59,6 +60,38 @@ export default function JobList() {
 
   const paginationQuery = (pageNum) =>
     new URLSearchParams({ ...paginationParams, page: String(pageNum) }).toString();
+
+  // Sort: all columns except name. order_by from URL/response: e.g. "-end_time" (desc) or "username" (asc).
+  const orderBy = searchParams.get("order_by") || responseOrderBy;
+  const sortQuery = (orderByValue) =>
+    new URLSearchParams({ ...paginationParams, order_by: orderByValue, page: "1" }).toString();
+  const sortLink = (field) => {
+    const isAsc = orderBy === field;
+    const isDesc = orderBy === `-${field}`;
+    const next = isDesc ? field : `-${field}`;
+    return `${location.pathname}?${sortQuery(next)}`;
+  };
+  const sortIndicator = (field) => {
+    if (orderBy === field) return " \u2191";
+    if (orderBy === `-${field}`) return " \u2193";
+    return "";
+  };
+
+  const columns = [
+    { label: "Job ID", field: "jid", sortable: true },
+    { label: "Data", field: "has_metrics", sortable: true },
+    { label: "user", field: "username", sortable: true },
+    { label: "Account", field: "account", sortable: true },
+    { label: "start time", field: "start_time", sortable: true },
+    { label: "end time", field: "end_time", sortable: true },
+    { label: "run time (s)", field: "runtime", sortable: true },
+    { label: "queue", field: "queue", sortable: true },
+    { label: "name", field: "jobname", sortable: false },
+    { label: "status", field: "state", sortable: true },
+    { label: "cores", field: "ncores", sortable: true },
+    { label: "nodes", field: "nhosts", sortable: true },
+    { label: "node hrs", field: "node_hrs", sortable: true },
+  ];
 
   return (
     <>
@@ -114,19 +147,18 @@ export default function JobList() {
       <table className="table table-condensed table-bordered">
         <thead>
           <tr>
-            <th>Job ID</th>
-            <th>Data</th>
-            <th>user</th>
-            <th>Account</th>
-            <th>start time</th>
-            <th>end time</th>
-            <th>run time (s)</th>
-            <th>queue</th>
-            <th>name</th>
-            <th>status</th>
-            <th>cores</th>
-            <th>nodes</th>
-            <th>node hrs</th>
+            {columns.map(({ label, field, sortable }) => (
+              <th key={field}>
+                {sortable ? (
+                  <Link to={sortLink(field)}>
+                    {label}
+                    {sortIndicator(field)}
+                  </Link>
+                ) : (
+                  label
+                )}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
