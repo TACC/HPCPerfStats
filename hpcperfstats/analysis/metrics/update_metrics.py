@@ -37,9 +37,9 @@ def _jobs_queryset(date, min_time, rerun):
     return qs
   # Filter in DB: only jobs with no metrics or with any null value
   return qs.annotate(
-      md_count=Count("metrics_data_set"),
+      md_count=Count("metrics_data"),
       null_count=Count(
-          "metrics_data_set", filter=Q(metrics_data_set__value__isnull=True)
+          "metrics_data", filter=Q(metrics_data__value__isnull=True)
       ),
   ).filter(Q(md_count=0) | Q(null_count__gt=0))
 
@@ -88,7 +88,7 @@ def update_metrics(date, rerun=False):
     for pk_chunk, _ in _iter_chunked_pks(qs, CHUNK_SIZE):
       jobs_chunk = list(
           job_data.objects.filter(pk__in=pk_chunk).prefetch_related(
-              "metrics_data_set"
+              "metrics_data"
           )
       )
       metrics_manager.run(jobs_chunk)
