@@ -50,7 +50,7 @@ export default function Layout({ session, children }) {
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <input
                   type="text"
-                  className="form-control"
+                  className="form-control form-control-sm"
                   name="jid"
                   placeholder="Job ID"
                 />
