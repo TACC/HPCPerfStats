@@ -126,13 +126,20 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
     source = ColumnDataSource(dict(ai=ai, perf=perf, host=host, time=time_vals))
     roof_source = ColumnDataSource(dict(ai=ai_curve, perf=perf_curve))
 
-    hover = HoverTool(
+    # No legend; identify series by hovering (popup shows line name).
+    hover_roof = HoverTool(
+        tooltips=[("Line", "Roofline")],
+        renderers=[],  # set after line is added
+    )
+    hover_job = HoverTool(
         tooltips=[
+            ("Line", "Job"),
+            ("host", "@host"),
             ("AI (FLOP/byte)", "@ai{0.4f}"),
             ("Perf (GFLOP/s)", "@perf{0.2f}"),
-            ("host", "@host"),
             ("time", "@time"),
         ],
+        renderers=[],  # set after circle is added
     )
     p = figure(
         width=500,
@@ -144,9 +151,11 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
         x_axis_label="Arithmetic intensity (FLOP/byte)",
         y_axis_label="Performance (GFLOP/s)",
         title="Roofline (job)",
-        tools=["pan", "wheel_zoom", "box_zoom", "reset", "save", hover],
+        tools=["pan", "wheel_zoom", "box_zoom", "reset", "save"],
     )
-    p.line("ai", "perf", source=roof_source, line_width=2, color="navy", legend_label="Roofline")
-    p.circle("ai", "perf", source=source, size=4, alpha=0.5, color="coral", legend_label="Job")
-    p.legend.location = "bottom_right"
+    r_roof = p.line("ai", "perf", source=roof_source, line_width=2, color="navy")
+    r_job = p.circle("ai", "perf", source=source, size=4, alpha=0.5, color="coral")
+    hover_roof.renderers = [r_roof]
+    hover_job.renderers = [r_job]
+    p.add_tools(hover_roof, hover_job)
     return p

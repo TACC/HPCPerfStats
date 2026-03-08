@@ -9,7 +9,7 @@ import time
 log = logging.getLogger(__name__)
 
 from bokeh.layouts import gridplot
-from bokeh.models import ColumnDataSource, HoverTool, Legend, Range1d
+from bokeh.models import ColumnDataSource, HoverTool, Range1d
 from bokeh.models.glyphs import Step
 from bokeh.palettes import d3
 from bokeh.plotting import figure
@@ -55,25 +55,22 @@ class DevPlot:
     )
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
+    # Hover shows which line (host) and value; no legend (identify line by hovering).
     plot.add_tools(HoverTool(
         tooltips=[
-            ("time", "@time{%F %T}"),
             ("host", "@host"),
+            ("time", "@time{%F %T}"),
             (event, "@" + event),
         ],
         formatters={"@time": "datetime"},
     ))
 
-    legend_items = []
     for h in self.host_list:
       source = ColumnDataSource(df[df.host == h])
-      r = plot.add_glyph(
+      plot.add_glyph(
           source,
           Step(x="time", y=event, mode="before", line_color=self.hc[h]),
       )
-      legend_items.append((h, [r]))
-    if len(self.host_list) > 1:
-      plot.add_layout(Legend(items=legend_items), "right")
     log.debug("time to plot %s: %s", event, time.time() - s)
     return plot
 
