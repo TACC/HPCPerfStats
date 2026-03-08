@@ -20,7 +20,7 @@ from bokeh.models import (
     HoverTool,
     LinearColorMapper,
 )
-from bokeh.palettes import brewer
+from bokeh.palettes import Viridis
 from bokeh.plotting import figure
 
 from hpcperfstats.analysis.gen import utils
@@ -52,9 +52,10 @@ class HeatMap():
              times=list(times) * len(u.hostnames),
              cpi=host_cpi))
 
-    hover = HoverTool(tooltips=[("cpi", "@cpi")])
+    hover = HoverTool(tooltips=[("host", "@hostnames"), ("time", "@times"), ("cpi", "@cpi")])
 
-    mapper = LinearColorMapper(palette=brewer["Spectral"][10][::-1],
+    # Viridis is colorblind-friendly; scale CPI 0.25–2
+    mapper = LinearColorMapper(palette=Viridis[11],
                                low=0.25,
                                high=2)
     colors = {"field": "cpi", "transform": mapper}
@@ -62,12 +63,15 @@ class HeatMap():
                          location=(0, 0),
                          ticker=BasicTicker(desired_num_ticks=10))
 
-    hm = figure(title="<Cycles/Instruction> = " +
-                "{0:0.2}".format(host_cpi.mean()),
-                x_range=times,
-                logo=None,
-                y_range=u.hostnames,
-                tools=[hover])
+    hm = figure(
+        title="<Cycles/Instruction> = " + "{0:0.2}".format(host_cpi.mean()),
+        x_range=times,
+        x_axis_label="Time",
+        y_axis_label="Host",
+        logo=None,
+        y_range=u.hostnames,
+        tools=[hover],
+    )
 
     hm.rect("times",
             "hostnames",
@@ -126,14 +130,17 @@ def plot_from_jid_table(jt):
         times=[t for _ in hostnames for t in times],
         cpi=cpi_flat,
     ))
-    hover = HoverTool(tooltips=[("cpi", "@cpi")])
-    mapper = LinearColorMapper(palette=brewer["Spectral"][10][::-1], low=0.25, high=2)
+    hover = HoverTool(tooltips=[("host", "@hostnames"), ("time", "@times"), ("cpi", "@cpi")])
+    # Viridis is colorblind-friendly; scale CPI 0.25–2
+    mapper = LinearColorMapper(palette=Viridis[11], low=0.25, high=2)
     color_bar = ColorBar(color_mapper=mapper, location=(0, 0), ticker=BasicTicker(desired_num_ticks=10))
     mean_cpi = numpy.nanmean(cpi_flat) if cpi_flat else 0
     hm = figure(
         title="<Cycles/Instruction> = {0:0.2f}".format(mean_cpi),
         x_range=times,
         y_range=hostnames,
+        x_axis_label="Time",
+        y_axis_label="Host",
         tools=[hover],
     )
     hm.rect("times", "hostnames", source=source, width=1, height=1, line_color=None, fill_color={"field": "cpi", "transform": mapper})

@@ -6,7 +6,7 @@ import math
 import time
 
 from bokeh.layouts import gridplot
-from bokeh.models import ColumnDataSource, Range1d
+from bokeh.models import ColumnDataSource, HoverTool, Legend, Range1d
 from bokeh.models.glyphs import Step
 from bokeh.palettes import d3
 from bokeh.plotting import figure
@@ -52,12 +52,25 @@ class DevPlot:
     )
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
+    plot.add_tools(HoverTool(
+        tooltips=[
+            ("time", "@time{%F %T}"),
+            ("host", "@host"),
+            (event, "@" + event),
+        ],
+        formatters={"@time": "datetime"},
+    ))
+
+    legend_items = []
     for h in self.host_list:
       source = ColumnDataSource(df[df.host == h])
-      plot.add_glyph(
+      r = plot.add_glyph(
           source,
           Step(x="time", y=event, mode="before", line_color=self.hc[h]),
       )
+      legend_items.append((h, [r]))
+    if len(self.host_list) > 1:
+      plot.add_layout(Legend(items=legend_items), "right")
     print("time to plot {0}: {1}".format(event, time.time() - s))
     return plot
 

@@ -4,17 +4,19 @@ import BokehEmbed from "./BokehEmbed";
 const THUMB_SIZE = { width: 280, height: 200 };
 
 /**
- * One histogram as a medium thumbnail; shows full-size Bokeh plot in a popover on hover.
+ * One histogram as a medium thumbnail; shows full-size Bokeh plot in a popover on hover,
+ * or on click/focus (keyboard accessible: Enter/Space to open, Escape to close).
  */
 function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
   const [hovered, setHovered] = useState(false);
-  const [hasHovered, setHasHovered] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [hasOpened, setHasOpened] = useState(false);
   const wrapperRef = useRef(null);
-  const popoverRef = useRef(null);
   const leaveTimerRef = useRef(null);
 
   const thumbId = `hist-thumb-${index}`;
   const fullId = `hist-full-${index}`;
+  const showPopover = hovered || expanded;
 
   const handleMouseEnter = () => {
     if (leaveTimerRef.current) {
@@ -22,11 +24,27 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
       leaveTimerRef.current = null;
     }
     setHovered(true);
-    setHasHovered(true);
+    setHasOpened(true);
   };
 
   const handleMouseLeave = () => {
     leaveTimerRef.current = setTimeout(() => setHovered(false), 150);
+  };
+
+  const handleClick = () => {
+    setExpanded((prev) => !prev);
+    setHasOpened(true);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setExpanded((prev) => !prev);
+      setHasOpened(true);
+    }
+    if (e.key === "Escape" && expanded) {
+      setExpanded(false);
+    }
   };
 
   useEffect(() => {
@@ -34,6 +52,15 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
       if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [expanded]);
 
   return (
     <div
@@ -44,6 +71,10 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
       style={{ position: "relative" }}
     >
       <div
+        role="button"
+        tabIndex={0}
+        aria-label={`${title}, click or press Enter to view full size`}
+        aria-expanded={expanded}
         className="histogram-thumbnail"
         style={{
           width: THUMB_SIZE.width,
@@ -52,7 +83,10 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
           borderRadius: 4,
           overflow: "hidden",
           backgroundColor: "#f8f9fa",
+          cursor: "pointer",
         }}
+        onClick={handleClick}
+        onKeyDown={handleKeyDown}
       >
         <BokehEmbed
           item={plotItemThumb}
@@ -60,14 +94,32 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
           plotName={title}
         />
       </div>
-      {hovered && (
+      {showPopover && (
         <div
-          ref={popoverRef}
           className="histogram-thumbnail-popover"
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
+          role="dialog"
+          aria-label={`Full size: ${title}`}
         >
-          <div className="histogram-thumbnail-popover-title">{title}</div>
+          <div className="histogram-thumbnail-popover-title">
+            {title}
+            {expanded && (
+              <button
+                type="button"
+                className="histogram-thumbnail-close"
+                onClick={() => setExpanded(false)}
+                aria-label="Close full size view"
+                style={{
+                  marginLeft: 8,
+                  padding: "2px 8px",
+                  fontSize: "0.875rem",
+                }}
+              >
+                Close
+              </button>
+            )}
+          </div>
           <div
             className="histogram-thumbnail-popover-plot"
             style={{
@@ -78,7 +130,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
               borderRadius: 4,
             }}
           >
-            {hasHovered && (
+            {hasOpened && (
               <BokehEmbed
                 item={plotItemFull}
                 id={fullId}

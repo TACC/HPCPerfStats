@@ -29,8 +29,9 @@ from django.http import HttpResponseRedirect
 from django.shortcuts import render
 from django.utils import timezone
 from django.views.generic import DetailView
-from numpy import histogram, isnan, linspace, log
-from pandas import DataFrame, to_timedelta
+import numpy as np
+from numpy import histogram, isfinite, isnan, linspace, log
+from pandas import DataFrame, to_timedelta, to_numeric
 
 import hpcperfstats.analysis.plot as plots
 from hpcperfstats.analysis.gen import jid_table
@@ -292,6 +293,7 @@ def job_hist(df, metric, label, width=600, height=400):
   """Build a Bokeh quad histogram for the given metric column and axis label.
 
   Optional width/height allow thumbnail (e.g. 280x200) vs full (600x400) sizes.
+  Uses only finite values; handles empty, constant, and all-zero data safely.
   """
   if metric not in df.columns:
     return None
@@ -299,20 +301,41 @@ def job_hist(df, metric, label, width=600, height=400):
                     point_policy="snap_to_data")
   TOOLS = ["pan,wheel_zoom,box_zoom,reset,save,box_select", hover]
 
-  values = df[metric].values
+  # Coerce to numeric and keep only finite values (avoid NaN/inf breaking bins)
+  raw = to_numeric(df[metric], errors="coerce")
+  values = np.asarray(raw, dtype=np.float64)
+  values = values[isfinite(values)]
   if len(values) == 0:
     return None
 
-  hist, edges = histogram(values,
-                          bins=linspace(0, max(values),
-                                        max(3, int(5 * log(len(values))))))
+  min_val = float(np.min(values))
+  max_val = float(np.max(values))
+  num_bins = max(3, int(5 * log(len(values))))
 
-  plot = figure(title=metric,
-                toolbar_location=None,
-                height=height,
-                width=width,
-                y_range=(1, max(hist)),
-                tools=TOOLS)  #  y_axis_type = "log",
+  # Avoid degenerate bins when all values are the same or max is 0
+  if max_val <= min_val:
+    low = min_val - 0.5 if min_val != 0 else 0
+    high = min_val + 0.5 if min_val != 0 else 1.0
+    bins = np.linspace(low, high, num_bins + 1)
+  else:
+    bins = np.linspace(min_val, max_val, num_bins + 1)
+
+  hist, edges = histogram(values, bins=bins)
+
+  # Ensure valid y_range so upper bound >= lower bound (quad uses bottom=1)
+  y_min = 1
+  y_max = float(np.max(hist)) if len(hist) > 0 else 1
+  if y_max < y_min:
+    y_max = y_min
+
+  plot = figure(
+      title=metric,
+      toolbar_location=None,
+      height=height,
+      width=width,
+      y_range=(y_min, y_max),
+      tools=TOOLS,
+  )
   plot.xaxis.axis_label = label
   plot.yaxis.axis_label = "# jobs"
 
