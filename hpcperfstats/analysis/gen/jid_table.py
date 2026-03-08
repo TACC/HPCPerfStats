@@ -217,7 +217,9 @@ class jid_table:
     return False
 
   def __del__(self):
-    """Destructor; call close() if possible."""
+    """Destructor; call close() if possible. Prefer using 'with jid_table(...)'
+    for guaranteed cleanup; __del__ is not guaranteed to run (e.g. at interpreter
+    shutdown or with circular refs)."""
     try:
       self.close()
     except Exception:

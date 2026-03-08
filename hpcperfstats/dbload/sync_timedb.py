@@ -381,61 +381,62 @@ if __name__ == '__main__':
   stats_files = collect_stats_files_in_range(directory, startdate, enddate)
   print("Number of host stats files to process = ", len(stats_files))
 
-  with multiprocessing.get_context('spawn').Pool(
-      processes=archive_thread_count) as archive_pool:
-    archive_job = None
-    # Process and archive chunk_size files before continuing to process more
-    num_chunks = (len(stats_files) + chunk_size - 1) // chunk_size if stats_files else 1
-    for i in range(num_chunks):
-      if DEBUG:
-        print("Begining Chunk(%s) #%s Processing" % (chunk_size, i))
-
-      stats_files_chunk = get_stats_chunk(stats_files, i, chunk_size)
-      if not stats_files_chunk:
-        continue
-
-      ar_file_mapping = {}
-      files_to_be_archived = []
-      print("%s files per chunk" % chunk_size)
-
-      with multiprocessing.get_context('spawn').Pool(
-          processes=thread_count) as pool:
-        manager = multiprocessing.Manager()
-        manager_lock = manager.Lock()
-        add_stats_file = partial(add_stats_file_to_db, manager_lock)
-        k = 0
-        for stats_fname, need_archival in pool.imap_unordered(
-            add_stats_file, stats_files_chunk):
-          k += 1
-          if should_archive and need_archival:
-            files_to_be_archived.append(stats_fname)
-          print("chunk %s: completed file %s out of %s\n" % (i, k, chunk_size),
-                flush=True)
-
-      print("loading time", time.time() - start)
-
-      ar_file_mapping = build_archive_mapping(
-          files_to_be_archived, tgz_archive_dir)
-
-      # skip first iteration, on first there will be no archive_job
-      if i:
+  manager = multiprocessing.Manager()
+  try:
+    manager_lock = manager.Lock()
+    with multiprocessing.get_context('spawn').Pool(
+        processes=archive_thread_count) as archive_pool:
+      archive_job = None
+      # Process and archive chunk_size files before continuing to process more
+      num_chunks = (len(stats_files) + chunk_size - 1) // chunk_size if stats_files else 1
+      for i in range(num_chunks):
         if DEBUG:
-          print("Checking/waiting for background archival proccesses")
+          print("Begining Chunk(%s) #%s Processing" % (chunk_size, i))
 
-        # Wait until last archive_job is complete before starting another one
-        archive_job.get()
-        print("[{0:.1f}%] completed".format(
-            100 * (i + 1) / num_chunks), end="\r", flush=True)
+        stats_files_chunk = get_stats_chunk(stats_files, i, chunk_size)
+        if not stats_files_chunk:
+          continue
 
-      if DEBUG:
-        print("files to be archived: %s" % ar_file_mapping)
+        ar_file_mapping = {}
+        files_to_be_archived = []
+        print("%s files per chunk" % chunk_size)
 
-      archive_job = archive_pool.map_async(archive_stats_files,
-                                           list(ar_file_mapping.items()))
+        with multiprocessing.get_context('spawn').Pool(
+            processes=thread_count) as pool:
+          add_stats_file = partial(add_stats_file_to_db, manager_lock)
+          k = 0
+          for stats_fname, need_archival in pool.imap_unordered(
+              add_stats_file, stats_files_chunk):
+            k += 1
+            if should_archive and need_archival:
+              files_to_be_archived.append(stats_fname)
+            print("chunk %s: completed file %s out of %s\n" % (i, k, chunk_size),
+                  flush=True)
 
-      print("Archival running in the background")
+        print("loading time", time.time() - start)
 
-    archive_job.get()
+        ar_file_mapping = build_archive_mapping(
+            files_to_be_archived, tgz_archive_dir)
+
+        # skip first iteration, on first there will be no archive_job
+        if i:
+          if DEBUG:
+            print("Checking/waiting for background archival proccesses")
+
+          # Wait until last archive_job is complete before starting another one
+          archive_job.get()
+          print("[{0:.1f}%] completed".format(
+              100 * (i + 1) / num_chunks), end="\r", flush=True)
+
+        if DEBUG:
+          print("files to be archived: %s" % ar_file_mapping)
+
+        archive_job = archive_pool.map_async(archive_stats_files,
+                                             list(ar_file_mapping.items()))
+
+        print("Archival running in the background")
+
+      archive_job.get()
 
     print("sync_timedb sleeping")
 
@@ -443,3 +444,5 @@ if __name__ == '__main__':
 
     if DEBUG:
       print("sync_timedb finished")
+  finally:
+    manager.shutdown()

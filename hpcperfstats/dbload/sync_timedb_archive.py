@@ -47,10 +47,13 @@ if __name__ == '__main__':
     print(tar_file_name)
     tasks.extend(get_tar_file_tasks(tar_file_name))
 
-  with multiprocessing.get_context('spawn').Pool(
-      processes=thread_count) as pool:
-    manager = multiprocessing.Manager()
+  manager = multiprocessing.Manager()
+  try:
     manager_lock = manager.Lock()
-    worker = partial(_process_tar_member, manager_lock)
-    # Distribute work; each worker loads only one member at a time.
-    pool.starmap(worker, tasks)
+    with multiprocessing.get_context('spawn').Pool(
+        processes=thread_count) as pool:
+      worker = partial(_process_tar_member, manager_lock)
+      # Distribute work; each worker loads only one member at a time.
+      pool.starmap(worker, tasks)
+  finally:
+    manager.shutdown()

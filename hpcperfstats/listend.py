@@ -66,12 +66,14 @@ with open(
     print("Starting Connection")
   parameters = pika.ConnectionParameters(cfg.get_rmq_server())
   connection = pika.BlockingConnection(parameters)
-  channel = connection.channel()
-  channel.queue_declare(queue=cfg.get_rmq_queue(), durable=True)
-  channel.basic_consume(cfg.get_rmq_queue(), on_message)
-  print("Begining Consume from queue: " + cfg.get_rmq_queue())
   try:
-    channel.start_consuming()
-  except KeyboardInterrupt:
-    channel.stop_consuming()
-  connection.close()
+    channel = connection.channel()
+    channel.queue_declare(queue=cfg.get_rmq_queue(), durable=True)
+    channel.basic_consume(cfg.get_rmq_queue(), on_message)
+    print("Begining Consume from queue: " + cfg.get_rmq_queue())
+    try:
+      channel.start_consuming()
+    except KeyboardInterrupt:
+      channel.stop_consuming()
+  finally:
+    connection.close()
