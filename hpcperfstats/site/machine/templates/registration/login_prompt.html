@@ -1,20 +1,10 @@
 {% extends "hpcperfstats_site/base.html" %}
 
 {% block content %}
-
-<div class="row">
-    <div class="offset-md-3 col-md-4">
-      <center>
-        <font size="8" color="black">HPCPerfStats
-        </font>
-        <p>
-      a job-level resource usage monitoring tool
-        </p>
-      </center>
-    </div>
+<div class="row mt-4">
+  <div class="offset-md-3 col-md-6">
+    <p class="lead"><b>You are not logged in.</b></p>
+    <p>Please <a href="{{ login_url }}">log in</a> to continue to HPCPerfStats.</p>
   </div>
-  <hr/>
-<div><b>You are not logged in.</b></div>
-Please <a href="{{ login_url }}">log in</a> to continue to HPCPerfStats.
 </div>
 {% endblock %}

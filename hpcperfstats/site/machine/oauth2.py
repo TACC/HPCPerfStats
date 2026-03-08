@@ -126,6 +126,7 @@ def login_prompt(request):
       "logged_in": False,
       "next": next_url,
       "login_url": login_url,
+      "machine_name": cfg.get_host_name_ext(),
   })
 
 
