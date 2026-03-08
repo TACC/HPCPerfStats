@@ -44,7 +44,7 @@ from .views import (
     libset_c,
     xalt_data_c,
 )
-from django.db.models import Exists, OuterRef, Sum
+from django.db.models import Count, Exists, OuterRef, Sum
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from datetime import timedelta
 from numpy import isnan
@@ -183,6 +183,39 @@ def _job_list_histograms_empty_figure():
     return gridplot([[empty]], toolbar_location=None)
 
 
+def _job_list_queue_histogram(job_list_qs, width=600, height=400):
+    """Build a Bokeh bar chart of job count per queue from the full filtered job list (non-paginated)."""
+    from bokeh.models import HoverTool
+
+    queue_counts = list(
+        job_list_qs.values("queue")
+        .annotate(count=Count("jid"))
+        .order_by("-count")
+        .values_list("queue", "count")
+    )
+    if not queue_counts:
+        return None
+    queue_names = [q if q else "(no queue)" for q, _ in queue_counts]
+    counts = [c for _, c in queue_counts]
+    p = figure(
+        x_range=queue_names,
+        height=height,
+        width=width,
+        title="Jobs by queue",
+        toolbar_location=None,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+    )
+    p.add_tools(
+        HoverTool(tooltips=[("queue", "@x"), ("jobs", "@top")], point_policy="snap_to_data")
+    )
+    p.xaxis.axis_label = "queue"
+    p.yaxis.axis_label = "# jobs"
+    p.vbar(x=queue_names, top=counts, width=0.7)
+    p.xgrid.visible = False
+    p.xaxis.major_label_orientation = "vertical" if len(queue_names) > 5 else "horizontal"
+    return p
+
+
 def _job_list_histograms(request):
     """Build Bokeh script/div and json_item for job list histograms. Returns (script, div, plot_item)."""
     fields = request.GET.dict()
@@ -268,6 +301,16 @@ def _job_list_histograms(request):
     try:
         plot_list = [job_hist(df, metric, label) for metric, label in hist_metrics]
         plot_list = [p for p in plot_list if p is not None]
+        # Queue histogram: job count per queue (full filtered list, non-paginated)
+        queue_thumb = _job_list_queue_histogram(job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT)
+        queue_full = _job_list_queue_histogram(job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT)
+        if queue_thumb is not None and queue_full is not None:
+            histograms.append({
+                "title": "Jobs by queue",
+                "plot_item_thumb": json_item(queue_thumb),
+                "plot_item_full": json_item(queue_full),
+            })
+            plot_list.append(queue_full)
         if plot_list:
             # Per-histogram thumb + full for thumbnail grid with hover-to-show-full
             for metric, label in hist_metrics:
