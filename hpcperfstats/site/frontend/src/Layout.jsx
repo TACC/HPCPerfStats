@@ -20,12 +20,6 @@ export default function Layout({ session, children }) {
         </div>
         <center>
           {session?.machine_name || "HPCPerfStats"}
-          {session?.is_staff && (
-            <>
-              {" "}
-              <Link to="/admin_monitor">Admin Monitor</Link>
-            </>
-          )}
         </center>
         <div className="navbar-form navbar-right" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <button
@@ -60,6 +54,11 @@ export default function Layout({ session, children }) {
           </form>
         </div>
       </nav>
+      {session?.is_staff && (
+        <div style={{ textAlign: "right", marginBottom: "8px" }}>
+          <Link to="/admin_monitor">Admin Monitor</Link>
+        </div>
+      )}
       {extendedSearchOpen && (
         <div
           id="extended-search-collapse"
