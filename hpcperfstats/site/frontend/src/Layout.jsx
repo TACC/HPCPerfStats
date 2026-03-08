@@ -26,7 +26,7 @@ export default function Layout({ session, children }) {
               <div className="navbar-brand-cluster">{session.machine_name}</div>
             )}
           </div>
-          <div className="d-flex flex-column align-items-end gap-2">
+          <div className="d-flex flex-column align-items-end gap-2 ms-auto">
           <a href="/logout/" className="btn btn-outline-secondary btn-sm">Logout</a>
           <div className="d-flex align-items-center gap-2">
             <button
