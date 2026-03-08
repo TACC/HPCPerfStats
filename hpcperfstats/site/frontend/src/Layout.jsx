@@ -55,8 +55,8 @@ export default function Layout({ session, children }) {
                   placeholder="Job ID"
                 />
               </div>
-              <button type="submit" className="btn btn-outline-secondary">
-                find job
+              <button type="submit" className="btn btn-outline-secondary btn-sm">
+                Find Job
               </button>
             </form>
           </div>
