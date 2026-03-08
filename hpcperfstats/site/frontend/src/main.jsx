@@ -4,10 +4,20 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "./index.css";
 
-ReactDOM.createRoot(document.getElementById("root")).render(
-  <React.StrictMode>
-    <BrowserRouter basename="/machine">
-      <App />
-    </BrowserRouter>
-  </React.StrictMode>
-);
+function init() {
+  const rootEl = document.getElementById("root");
+  if (!rootEl) return;
+  ReactDOM.createRoot(rootEl).render(
+    <React.StrictMode>
+      <BrowserRouter basename="/machine">
+        <App />
+      </BrowserRouter>
+    </React.StrictMode>
+  );
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
+}
