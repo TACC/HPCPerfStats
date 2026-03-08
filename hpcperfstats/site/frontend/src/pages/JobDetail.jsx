@@ -32,6 +32,7 @@ export default function JobDetail() {
     mplot_item,
     hscript,
     hdiv,
+    hplot_item,
     schema = {},
     client_url,
     server_url,
@@ -253,7 +254,13 @@ export default function JobDetail() {
                 />
               </td>
               <td>
-                <BokehEmbed script={hscript} div={hdiv} id="job-hscript" plotName="Heatmap" />
+                <BokehEmbed
+                  item={hplot_item}
+                  script={hscript}
+                  div={hdiv}
+                  id="job-hscript"
+                  plotName="Heatmap"
+                />
               </td>
             </tr>
           </tbody>

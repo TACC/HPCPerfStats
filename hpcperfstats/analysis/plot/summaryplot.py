@@ -124,6 +124,11 @@ class SummaryPlot():
     ]
 
     df = self.jt.get_host_time_df()
+    if df.empty or not self.host_list:
+      empty = figure(width=400, height=150, x_axis_type="datetime",
+                    title="No metric data available for this job.")
+      empty.xaxis.formatter = tz_aware_bokeh_tick_formatter()
+      return gridplot([[empty]], toolbar_location=None)
 
     for typ, val, events, name, conv, label in metrics:
       s = time.time()
@@ -163,4 +168,10 @@ class SummaryPlot():
         continue
       plots += [self.plot_metric(df, name, label)]
 
+    if not plots:
+      # Return a single figure with "No data" so components/json_item get valid output
+      empty = figure(width=400, height=150, x_axis_type="datetime",
+                    title="No metric data available for this job.")
+      empty.xaxis.formatter = tz_aware_bokeh_tick_formatter()
+      return gridplot([[empty]], toolbar_location=None)
     return gridplot(plots, ncols=len(plots) // 4 + 1)

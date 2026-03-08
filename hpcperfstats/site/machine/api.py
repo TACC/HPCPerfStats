@@ -1,4 +1,5 @@
 """Django REST Framework API views for machine app. All data via JSON for React SPA."""
+import logging
 from datetime import timezone as dt_timezone
 
 import hpcperfstats.conf_parser as cfg
@@ -440,8 +441,22 @@ def job_detail(request, pk):
         plot = sp.plot()
         mscript, mdiv = components(plot)
         mplot_item = json_item(plot)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "Failed to generate summary plot for jid %s: %s", job.jid, e, exc_info=True
+        )
+
+    hscript, hdiv = "", ""
+    hplot_item = None
+    try:
+        hm_fig = plots.plot_from_jid_table(j)
+        if hm_fig is not None:
+            hscript, hdiv = components(hm_fig)
+            hplot_item = json_item(hm_fig)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "Failed to generate heatmap for jid %s: %s", job.jid, e, exc_info=True
+        )
 
     fsio = {}
     try:
@@ -488,8 +503,9 @@ def job_detail(request, pk):
         "mscript": mscript,
         "mdiv": mdiv,
         "mplot_item": mplot_item,
-        "hscript": "",
-        "hdiv": "",
+        "hscript": hscript,
+        "hdiv": hdiv,
+        "hplot_item": hplot_item,
         "schema": schema,
         "client_url": hoststring,
         "server_url": serverstring,
