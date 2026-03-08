@@ -3,11 +3,11 @@
 
 AI generated.
 """
-import multiprocessing
 import os
 import sys
 import time
 from datetime import datetime, timedelta
+from itertools import islice
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE",
                       "hpcperfstats.site.hpcperfstats_site.settings")
@@ -16,79 +16,92 @@ import django
 django.setup()
 
 from django.db import close_old_connections
+from django.db.models import Count, Q
 from django.db.utils import OperationalError
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
 from hpcperfstats.dbload.date_utils import parse_start_end_dates
-from hpcperfstats.site.machine.cache_utils import (
-    KEY_UPDATE_METRICS_JOBS,
-    cached_orm,
-    TIMEOUT_SHORT,
-)
 from hpcperfstats.site.machine.models import job_data
 
 DEBUG = cfg.get_debug()
+
+# Process jobs in chunks to bound memory; full job rows are not all held at once.
+CHUNK_SIZE = 500
+
+
+def _jobs_queryset(date, min_time, rerun):
+  """Base queryset: jobs ending on date with runtime >= min_time."""
+  qs = job_data.objects.filter(end_time__date=date.date()).exclude(
+      runtime__lt=min_time)
+  if rerun:
+    return qs
+  # Filter in DB: only jobs with no metrics or with any null value
+  return qs.annotate(
+      md_count=Count("metrics_data_set"),
+      null_count=Count(
+          "metrics_data_set", filter=Q(metrics_data_set__value__isnull=True)
+      ),
+  ).filter(Q(md_count=0) | Q(null_count__gt=0))
+
+
+def _iter_chunked_pks(queryset, chunk_size):
+  """Yield (pk_list, total_so_far) in chunks without loading full rows."""
+  pk_iter = queryset.values_list("pk", flat=True).iterator(chunk_size=chunk_size)
+  total = 0
+  while True:
+    chunk = list(islice(pk_iter, chunk_size))
+    if not chunk:
+      break
+    total += len(chunk)
+    yield chunk, total
 
 
 def update_metrics(date, rerun=False):
   """Compute and persist metrics for all jobs ending on date (runtime >= min_time). If not rerun, skip jobs that already have metrics. Uses metrics.Metrics().run(jobs_list).
 
-    AI generated.
-    """
+  Memory-optimized: filters in DB, processes in chunks, no full-list cache.
+  """
   close_old_connections()
   min_time = 300
-  date_key = date.date().isoformat()
-
-  def _jobs_fn():
-    return list(
-        job_data.objects.filter(end_time__date=date.date())
-        .exclude(runtime__lt=min_time)
-        .prefetch_related("metrics_data_set"))
 
   def _run():
-    jobs_list = cached_orm(
-        f"{KEY_UPDATE_METRICS_JOBS}:{date_key}",
-        TIMEOUT_SHORT,
-        _jobs_fn,
-    ) or []
-    print("Total jobs {0}".format(len(jobs_list)) + " for date " +
-          date.strftime("%Y-%m-%d"))
+    qs = _jobs_queryset(date, min_time, rerun)
+    total_jobs = qs.count()
+    print(
+        "Total jobs {0} for date {1}".format(
+            total_jobs, date.strftime("%Y-%m-%d")
+        )
+    )
 
-    if not rerun:
-      jobs_list = [
-          job for job in jobs_list if not job.metrics_data_set.all().exists() or
-          job.metrics_data_set.all().filter(value__isnull=True).count() > 0
-      ]
-
-    if DEBUG:
-      print("jobs that don't have data before run:")
-      print(jobs_list)
-    # Set up metric computation manager
     metrics_manager = metrics.Metrics()
-
-    print("Compute for following metrics for date {0} on {1} jobs".format(
-        date, len(jobs_list)))
+    print(
+        "Compute for following metrics for date {0} on {1} jobs".format(
+            date, total_jobs
+        )
+    )
     for name in metrics_manager.simple_metrics_list:
       print(name)
     for name in metrics_manager.complex_metrics_list:
       print(name)
 
-    metrics_manager.run(jobs_list)
+    processed = 0
+    for pk_chunk, _ in _iter_chunked_pks(qs, CHUNK_SIZE):
+      jobs_chunk = list(
+          job_data.objects.filter(pk__in=pk_chunk).prefetch_related(
+              "metrics_data_set"
+          )
+      )
+      metrics_manager.run(jobs_chunk)
+      processed += len(jobs_chunk)
+      del jobs_chunk  # release before next chunk
+      close_old_connections()
 
     if DEBUG:
       close_old_connections()
-      jobs_list_fresh = list(
-          job_data.objects.filter(end_time__date=date.date())
-          .exclude(runtime__lt=min_time)
-          .prefetch_related("metrics_data_set"))
-      jobs_list_fresh = [
-          job for job in jobs_list_fresh
-          if not job.metrics_data_set.all().exists() or
-          job.metrics_data_set.all().filter(value__isnull=True).count() > 0
-      ]
-      print("jobs that don't have data after run:")
-      print(jobs_list_fresh)
+      qs_after = _jobs_queryset(date, min_time, rerun=False)
+      remaining = qs_after.count()
+      print("jobs that don't have data after run (count): {0}".format(remaining))
 
   try:
     _run()
