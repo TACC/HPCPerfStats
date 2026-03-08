@@ -19,7 +19,7 @@ client_id = cfg.get_oauth_client_id()
 client_key = cfg.get_oauth_client_key()
 tenant_base_url = cfg.get_oauth_base_url()
 staff_email_domain = cfg.get_staff_email_domain()
-server_name = cfg.get_server_name()
+server_name = cfg.get_server_name().split(',')[0]
 
 
 def login_oauth(request):
@@ -35,7 +35,6 @@ def login_oauth(request):
 
   authorization_url = (cfg.get_oauth_authorize_url() %
                        (redirect_uri, session['auth_state']))
-  print(authorization_url)
   return HttpResponseRedirect(authorization_url)
 
 
@@ -50,8 +49,7 @@ def oauth_callback(request):
     return HttpResponseRedirect('/logout')
 
   if 'code' in request.GET:
-    redirect_uri = 'https://{}{}'.format(request.get_host(),
-                                         reverse('oauth_callback'))
+    redirect_uri = 'https://{}{}'.format(server_name, reverse('oauth_callback'))
     code = request.GET['code']
     if redirect_uri.endswith('/'):
       redirect_uri = redirect_uri[:-1]
@@ -90,11 +88,9 @@ def logout(request):
   """Revoke token, flush session, redirect to /.
 
     """
-  body = {'token': request.session['access_token']}
-
-  response = requests.post('%s/oauth2/tokens/revoke' % tenant_base_url,
-                           json=body)
-
+  access_token = request.session.get('access_token')
+  if access_token:
+    requests.post('%s/oauth2/tokens/revoke' % tenant_base_url, json={'token': access_token})
   request.session.flush()
   return HttpResponseRedirect("/")
 

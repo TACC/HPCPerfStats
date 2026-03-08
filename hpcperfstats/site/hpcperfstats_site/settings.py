@@ -22,8 +22,10 @@ DEBUG = cfg.get_debug()
 ADMINS = ["sharrell@tacc.utexas.edu"]
 MANAGERS = ["sharrell@tacc.utexas.edu"]
 
-# Set cookies properly
+# Set cookies properly: HttpOnly and Secure in production
 SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SAMESITE = "Lax"
 
 # Give a name that is unique for the computing platform
 DATABASES = {
@@ -46,9 +48,18 @@ DATABASES = {
     }
 }
 
-# Hosts/domain names that are valid for this site; required if DEBUG is False
-# See https://docs.djangoproject.com/en/1.5/ref/settings/#allowed-hosts
-ALLOWED_HOSTS = ['*']
+# Hosts/domain names that are valid for this site; required if DEBUG is False.
+# ALLOWED_HOSTS env (comma-separated) overrides; else use [DEFAULT] server from hpcperfstats.ini.
+# See https://docs.djangoproject.com/en/stable/ref/settings/#allowed-hosts
+_ALLOWED = os.environ.get("ALLOWED_HOSTS", "").strip()
+if _ALLOWED:
+    ALLOWED_HOSTS = [h.strip() for h in _ALLOWED.split(",") if h.strip()]
+else:
+    _server = (cfg.get_server_name() or "").strip()
+    if _server:
+        ALLOWED_HOSTS = [h.strip() for h in _server.split(",") if h.strip()]
+    else:
+        ALLOWED_HOSTS = ["*"] if DEBUG else []
 
 # Local time zone for this installation. Choices can be found here:
 # http://en.wikipedia.org/wiki/List_of_tz_zones_by_name
@@ -148,6 +159,7 @@ CACHES = {
 }
 # Full-page cache middleware removed in Django 4.0; ORM uses cache_utils.
 MIDDLEWARE = (
+    "django.middleware.security.SecurityMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",

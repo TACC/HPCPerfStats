@@ -10,8 +10,8 @@ host_name_ext      = %(machine)s.domain.edu
 # Path you would like all of HPCPerfStats' data to be stored. It will be the central location where all the file operations occur.
 data_dir 	          = /hpcperfstats/
 
-# FQDN for the web server host
-server 		          = servername.domain.edu
+# FQDN for the web server host, split with commas if multiple
+server 		          = servername.domain.edu, stats.cluster.domain.edu
 
 # Keywords from queues which should be ignored
 restricted_queue_keywords = ['secure', 'secret']
