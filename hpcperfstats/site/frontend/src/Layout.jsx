@@ -78,7 +78,9 @@ export default function Layout({ session, children }) {
           <ExtendedSearch onClose={() => setExtendedSearchOpen(false)} />
         </div>
       )}
-      {children}
+      <main className="mt-4">
+        {children}
+      </main>
     </div>
   );
 }
