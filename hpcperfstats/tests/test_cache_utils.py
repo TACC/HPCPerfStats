@@ -1,6 +1,6 @@
-"""Unit tests for cache_utils.cached_orm (memcached-backed query caching).
+"""Unit tests for cache_utils.cached_orm (Redis-backed query caching).
 
-Uses unittest.mock to patch Django cache so tests run without Django/memcached.
+Uses unittest.mock to patch Django cache so tests run without Django/Redis.
 """
 from unittest.mock import MagicMock, patch
 
@@ -64,7 +64,7 @@ def test_cached_orm_caches_none_as_tuple():
 def test_cached_orm_exception_falls_back_to_query_fn():
   """If cache.get raises, cached_orm falls back to query_fn result."""
   mock_cache = MagicMock()
-  mock_cache.get.side_effect = RuntimeError("memcached down")
+  mock_cache.get.side_effect = RuntimeError("redis down")
 
   with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
     from hpcperfstats.site.machine import cache_utils

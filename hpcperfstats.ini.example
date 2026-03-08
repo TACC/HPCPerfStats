@@ -85,8 +85,8 @@ port               = 5432
 
 
 [CACHE]
-# Memcached server for ORM/view caching (host:port)
-memcached_location = memcached:11211
+# Redis URL for ORM/view caching (e.g. redis://host:port/db)
+redis_location = redis://redis:6379/1
 
 [XALT]
 # Name of XALT engine

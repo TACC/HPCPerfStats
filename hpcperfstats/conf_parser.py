@@ -267,11 +267,11 @@ def get_worker_thread_count(divisor=4):
   return max(1, n)
 
 
-def get_memcached_location():
-  """Return the memcached server location (host:port) from CACHE config.
+def get_redis_location():
+  """Return the Redis URL for cache from CACHE config.
 
-    Defaults to 127.0.0.1:11211 if [CACHE] or memcached_location is missing.
+    Defaults to redis://127.0.0.1:6379/1 if [CACHE] or redis_location is missing.
     """
-  if cfg.has_section("CACHE") and cfg.has_option("CACHE", "memcached_location"):
-    return cfg.get("CACHE", "memcached_location").strip() or "127.0.0.1:11211"
-  return "127.0.0.1:11211"
+  if cfg.has_section("CACHE") and cfg.has_option("CACHE", "redis_location"):
+    return cfg.get("CACHE", "redis_location").strip() or "redis://127.0.0.1:6379/1"
+  return "redis://127.0.0.1:6379/1"

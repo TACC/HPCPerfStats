@@ -8,7 +8,7 @@ services:
       - seccomp:unconfined
     links:
       - db
-      - memcached
+      - redis
     command: /home/hpcperfstats/services-conf/django_startup.sh
 
   pipeline:
@@ -20,7 +20,7 @@ services:
     links:
       - db
       - rabbitmq
-      - memcached
+      - redis
     depends_on:
       - web
     command: /home/hpcperfstats/services-conf/supervisor_startup.sh
@@ -34,14 +34,10 @@ services:
       - /home/sharrell/.ssh:/hpcperfstats/.ssh/
       - hpcperfstatsnodelog:/hpcperfstatslog/
 
-  memcached:
-    image: memcached
+  redis:
+    image: redis:7-alpine
     security_opt:
       - seccomp:unconfined
-    command:
-      - --conn-limit=1024
-      - --memory-limit=1024
-      - --threads=4
 
   proxy:
     image: nginx:1-alpine

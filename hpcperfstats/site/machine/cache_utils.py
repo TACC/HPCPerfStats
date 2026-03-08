@@ -1,4 +1,4 @@
-"""Memcached-backed caching for Django ORM query results.
+"""Redis-backed caching for Django ORM query results.
 
 Use cached_orm() to wrap any callable that performs a read and returns
 a cacheable value (e.g. list of dicts, model instance, DataFrame-serializable).
@@ -16,7 +16,7 @@ def cached_orm(cache_key, timeout, query_fn):
     query_fn is a callable that takes no arguments and returns the value to cache.
     The value must be picklable (e.g. list of dicts from .values(), or None).
     None is stored as a wrapped tuple so we can distinguish "missing key" from "cached None".
-    If the cache backend is unavailable (e.g. memcached down), query_fn() is used and the result is not cached.
+    If the cache backend is unavailable (e.g. Redis down), query_fn() is used and the result is not cached.
     """
   try:
     wrapped = cache.get(cache_key, _CACHE_MISS)

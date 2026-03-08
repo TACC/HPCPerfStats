@@ -64,24 +64,24 @@ def test_get_worker_thread_count(temp_ini, monkeypatch):
   assert cfg.get_worker_thread_count(8) == 1  # 4//8 = 0 -> clamped to 1
 
 
-def test_get_memcached_location_default(temp_ini, monkeypatch):
-  """get_memcached_location returns default when CACHE section missing."""
+def test_get_redis_location_default(temp_ini, monkeypatch):
+  """get_redis_location returns default when CACHE section missing."""
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_memcached_location() == "127.0.0.1:11211"
+  assert cfg.get_redis_location() == "redis://127.0.0.1:6379/1"
 
 
-def test_get_memcached_location_from_config(temp_ini, monkeypatch):
-  """get_memcached_location returns value from [CACHE] when set."""
+def test_get_redis_location_from_config(temp_ini, monkeypatch):
+  """get_redis_location returns value from [CACHE] when set."""
   with open(temp_ini) as f:
     content = f.read()
-  content += "\n[CACHE]\nmemcached_location = 192.168.1.1:11211\n"
+  content += "\n[CACHE]\nredis_location = redis://192.168.1.1:6379/2\n"
   with open(temp_ini, "w") as f:
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_memcached_location() == "192.168.1.1:11211"
+  assert cfg.get_redis_location() == "redis://192.168.1.1:6379/2"

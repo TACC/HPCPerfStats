@@ -147,11 +147,11 @@ TEMPLATES = [
     },
 ]
 
-# Memcached for ORM and view caching
+# Redis for ORM and view caching
 CACHES = {
     "default": {
-        "BACKEND": "django.core.cache.backends.memcached.PyMemcacheCache",
-        "LOCATION": cfg.get_memcached_location(),
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": cfg.get_redis_location(),
         "OPTIONS": {},
         "KEY_PREFIX": "hpcperfstats",
         "TIMEOUT": 300,
