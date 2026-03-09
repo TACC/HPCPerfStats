@@ -66,6 +66,7 @@ services:
     environment:
       - POSTGRES_USER=hpcperfstats
       - POSTGRES_PASSWORD=hpcperfstats
+      - TS_TUNE_MAX_CONNS=500
 
   rabbitmq:
     image: rabbitmq:4-alpine
