@@ -181,3 +181,28 @@ class proc_data(models.Model):
   def __str__(self):
     """Return string representation (jid, host, proc)."""
     return f"{self.jid}:{self.host}:{self.proc}"
+
+
+class ApiKey(models.Model):
+  """API key for programmatic access, bound to an authenticated username.
+
+  Keys are created via an OAuth-protected web page and then used by external
+  tools (e.g. jobstats_cli.py) via the Authorization: Api-Key header.
+  """
+
+  key = models.CharField(max_length=64, primary_key=True)
+  username = models.CharField(max_length=128, db_index=True)
+  created_at = models.DateTimeField(auto_now_add=True)
+  last_used_at = models.DateTimeField(null=True, blank=True)
+  is_active = models.BooleanField(default=True)
+
+  class Meta:
+    db_table = "api_keys"
+    managed = True
+    indexes = [
+        models.Index(fields=["username"], name="api_keys_username_idx"),
+    ]
+
+  def __str__(self):
+    """Return short representation key@username."""
+    return f"{self.key[:8]}... for {self.username}"

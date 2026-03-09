@@ -33,7 +33,7 @@ from .cache_utils import (
     TIMEOUT_SHORT,
     TIMEOUT_LONG,
 )
-from .models import host_data, job_data, metrics_data
+from .models import ApiKey, host_data, job_data, metrics_data
 from .oauth2 import check_for_tokens
 from .query_utils import (
     expand_month_date_to_range,
@@ -49,6 +49,7 @@ from .views import (
 )
 from django.db.models import Count, Exists, OuterRef, Sum
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+from django.utils import timezone as dj_timezone_utils
 from datetime import timedelta
 from numpy import isnan
 from math import ceil
@@ -59,14 +60,72 @@ import hpcperfstats.analysis.plot as plots
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
 
-def _require_auth(request):
-    """Return 401 JSON if not authenticated."""
-    if not check_for_tokens(request):
-        return Response(
-            {"detail": "Authentication required", "login_url": "/login_prompt"},
-            status=status.HTTP_401_UNAUTHORIZED,
-        )
+def _get_api_key_from_request(request):
+    """Extract API key from Authorization header or query params.
+
+    Supported formats:
+    - Authorization: Api-Key <key>
+    - X-API-Key header
+    - api_key query parameter
+    """
+    auth = request.META.get("HTTP_AUTHORIZATION", "")
+    if auth:
+        parts = auth.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "api-key":
+            return parts[1].strip() or None
+    header_key = request.META.get("HTTP_X_API_KEY") or request.headers.get(
+        "X-API-Key"
+    )
+    if header_key:
+        return header_key.strip() or None
+    qp = request.GET.get("api_key")
+    if qp:
+        return qp.strip() or None
     return None
+
+
+def _api_key_valid(key: str):
+    """Return ApiKey instance if key is valid and active, else None."""
+    if not key:
+        return None
+    try:
+        api_key_obj = ApiKey.objects.get(key=key, is_active=True)
+    except ApiKey.DoesNotExist:
+        return None
+    # Best-effort last-used update; ignore errors.
+    try:
+        api_key_obj.last_used_at = dj_timezone_utils.now()
+        api_key_obj.save(update_fields=["last_used_at"])
+    except Exception:
+        pass
+    return api_key_obj
+
+
+def _require_auth(request):
+    """Return 401 JSON if not authenticated via OAuth2 session or API key."""
+    if check_for_tokens(request):
+        return None
+
+    api_key = _get_api_key_from_request(request)
+    api_key_obj = _api_key_valid(api_key)
+    if api_key_obj is not None:
+        # Associate valid API-key clients with the username that created the key.
+        session = request.session
+        session.setdefault("username", api_key_obj.username)
+        # Determine staff status using same email-domain rule as OAuth login,
+        # if we have an email or an email-like username.
+        staff_email_domain = cfg.get_staff_email_domain()
+        email_like = session.get("email") or api_key_obj.username
+        if email_like and "@" in email_like:
+            domain = email_like.split("@")[-1]
+            session["is_staff"] = (domain == staff_email_domain)
+        session.setdefault("access_token", f"api-key:{api_key_obj.key}")
+        return None
+
+    return Response(
+        {"detail": "Authentication required", "login_url": "/login_prompt"},
+        status=status.HTTP_401_UNAUTHORIZED,
+    )
 
 
 @api_view(["GET"])

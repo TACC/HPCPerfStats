@@ -71,6 +71,7 @@ script-files = [
   "hpcperfstats/dbload/sync_timedb.py",
   "hpcperfstats/dbload/sync_timedb_archive.py",
   "hpcperfstats/listend.py",
+  "hpcperfstats/jobstats_cli.py",
 ]
 
 [tool.setuptools.packages.find]

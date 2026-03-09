@@ -13,7 +13,7 @@ from hpcperfstats.site.machine.oauth2 import (
     logout,
     oauth_callback,
 )
-from hpcperfstats.site.hpcperfstats_site.views import ReactSPAView
+from hpcperfstats.site.hpcperfstats_site.views import ReactSPAView, api_key_page
 
 admin.autodiscover()
 
@@ -25,6 +25,7 @@ urlpatterns = [
     path("", lambda r: HttpResponseRedirect("/machine/")),
     path("machine/", ReactSPAView.as_view()),
     path("machine/<path:path>", ReactSPAView.as_view()),
+    path("api-key/", api_key_page, name="api_key_page"),
     path("admin_monitor/", lambda r: HttpResponseRedirect("/machine/admin_monitor/")),
     path("login/", login_oauth, name="login"),
     path("login_prompt", login_prompt, name="login_prompt"),
