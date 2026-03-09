@@ -74,11 +74,13 @@ def sync_acct(acct_file, jobs_in_db):
   for i in range(df_len):
     for q in restricted_queue_keywords:
       if q in df.iloc[i, queue_col_index]:
-        if (settings.DEBUG):
+        if settings.DEBUG:
           restricted_job_ids.append(df.iloc[i, job_id_col_index])
           restricted_df_indices.append(i)
 
-  df = df.drop(restricted_df_indices)
+  if restricted_df_indices:
+    # restricted_df_indices are positional; convert to index labels before dropping
+    df = df.drop(index=df.index[restricted_df_indices])
 
   if len(restricted_job_ids) > 0:
     print("The following jobs are restricted and will be skipped: " +
