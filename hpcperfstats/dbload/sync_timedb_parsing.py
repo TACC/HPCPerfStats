@@ -225,6 +225,20 @@ def build_stats_dataframes(stats_list, proc_stats_list):
 def compute_deltas_and_arc(stats_df):
   """Compute delta and arc columns from value and time. Drops first timestamp per group, returns tz-aware time."""
   stats_df = stats_df.copy()
+
+  # If stats_df is empty or missing expected columns (e.g. when no usable
+  # stats lines were parsed), return an empty DataFrame with the expected
+  # output schema instead of raising KeyError during groupby.
+  required_cols = {
+      "host", "jid", "type", "dev", "event", "unit", "time", "value", "wid",
+      "mult"
+  }
+  if stats_df.empty or not required_cols.issubset(stats_df.columns):
+    return DataFrame(columns=[
+        "time", "host", "jid", "type", "dev", "event", "unit", "value",
+        "delta", "arc"
+    ])
+
   stats_df["delta"] = (
       stats_df.groupby(["host", "type", "dev", "event"])["value"].diff())
   stats_df["delta"] = stats_df["delta"].mask(
