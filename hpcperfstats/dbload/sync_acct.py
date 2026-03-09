@@ -22,6 +22,13 @@ from hpcperfstats.site.machine.models import job_data
 local_timezone = cfg.get_local_timezone()
 
 
+def _to_pydatetime_or_none(ts):
+  """Convert pandas Timestamp/NaT to Python datetime or None."""
+  if pd.isna(ts):
+    return None
+  return ts.to_pydatetime()
+
+
 def sync_acct(acct_file, jobs_in_db):
   """Load accounting CSV from acct_file into job_data, skipping jobs already in jobs_in_db and those matching restricted_queue_keywords.
 
@@ -93,11 +100,11 @@ def sync_acct(acct_file, jobs_in_db):
   df['start_time'] = df['start_time'].fillna(df['end_time'])
 
   df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize(
-      local_timezone, ambiguous="NaT", nonexistent="NaT")
+      local_timezone, ambiguous=False, nonexistent="shift_forward")
   df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize(
-      local_timezone, ambiguous="NaT", nonexistent="NaT")
+      local_timezone, ambiguous=False, nonexistent="shift_forward")
   df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize(
-      local_timezone, ambiguous="NaT", nonexistent="NaT")
+      local_timezone, ambiguous=False, nonexistent="shift_forward")
 
   df["runtime"] = to_timedelta(df["end_time"] -
                                df["start_time"]).dt.total_seconds()
@@ -114,9 +121,9 @@ def sync_acct(acct_file, jobs_in_db):
           jid=str(row.jid),
           username=row.username,
           account=row.account if pd.notna(row.account) else None,
-          start_time=row.start_time.to_pydatetime(),
-          end_time=row.end_time.to_pydatetime(),
-          submit_time=row.submit_time.to_pydatetime(),
+          start_time=_to_pydatetime_or_none(row.start_time),
+          end_time=_to_pydatetime_or_none(row.end_time),
+          submit_time=_to_pydatetime_or_none(row.submit_time),
           queue=row.queue if pd.notna(row.queue) else None,
           timelimit=float(row.timelimit) if pd.notna(row.timelimit) else None,
           jobname=str(row.jobname) if pd.notna(row.jobname) else None,
@@ -145,9 +152,9 @@ def _insert_job_data_individually(df):
           jid=str(row.jid),
           username=row.username,
           account=row.account if pd.notna(row.account) else None,
-          start_time=row.start_time.to_pydatetime(),
-          end_time=row.end_time.to_pydatetime(),
-          submit_time=row.submit_time.to_pydatetime(),
+          start_time=_to_pydatetime_or_none(row.start_time),
+          end_time=_to_pydatetime_or_none(row.end_time),
+          submit_time=_to_pydatetime_or_none(row.submit_time),
           queue=row.queue if pd.notna(row.queue) else None,
           timelimit=float(row.timelimit) if pd.notna(row.timelimit) else None,
           jobname=str(row.jobname) if pd.notna(row.jobname) else None,
