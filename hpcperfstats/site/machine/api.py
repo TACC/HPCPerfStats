@@ -8,12 +8,13 @@ from bokeh.embed import components, json_item
 from bokeh.layouts import gridplot
 from bokeh.plotting import figure
 from django.utils import timezone
-from django.views.decorators.cache import cache_page
 from pandas import DataFrame, to_timedelta
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from django.views.decorators.cache import cache_page
 
 from .cache_utils import (
     KEY_DATES,
@@ -142,6 +143,7 @@ def session_info(request):
     })
 
 
+@cache_page(TIMEOUT_MEDIUM)
 @cache_page(TIMEOUT_MEDIUM)
 @api_view(["GET"])
 def home_options(request):
@@ -538,6 +540,7 @@ def _job_list_histograms(request):
     return script, div, plot_item, histograms
 
 
+@cache_page(TIMEOUT_MEDIUM)
 @api_view(["GET"])
 def job_list_histograms(request):
     """Return Bokeh script/div, plot_item, and histograms (thumb + full per metric) for job list histograms."""
@@ -553,6 +556,7 @@ def job_list_histograms(request):
     })
 
 
+@cache_page(TIMEOUT_MEDIUM)
 @api_view(["GET"])
 def job_list(request):
     """Paginated job list only (histograms via separate job_list_histograms endpoint)."""
@@ -571,11 +575,9 @@ def job_list(request):
         if k.split("_", 1)[0] != "metrics" and k not in ("page", "order_by")
     }
     order_by = get_job_list_order_by(fields) or "-end_time"
-    job_list_qs = job_data.objects.filter(**acct_data)
-    if order_by.lstrip("-") == "has_metrics":
-        job_list_qs = job_list_qs.annotate(
-            has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
-        )
+    job_list_qs = job_data.objects.filter(**acct_data).annotate(
+        has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
+    )
     job_list_qs = job_list_qs.order_by(order_by)
 
     cur_metrics = {
@@ -590,8 +592,6 @@ def job_list(request):
             "metrics_data__value__" + op: val,
         }
         job_list_qs = job_list_qs.filter(**mquery)
-
-    job_list_qs = job_list_qs.prefetch_related("metrics_data_set")
     nj = job_list_qs.count()
 
     if nj == 0:

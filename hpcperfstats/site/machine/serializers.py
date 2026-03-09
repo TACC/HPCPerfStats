@@ -34,7 +34,15 @@ class JobListSerializer(serializers.ModelSerializer):
         ]
 
     def get_has_metrics(self, obj):
-        """Return True if the job has any metrics_data."""
+        """Return True if the job has any metrics_data.
+
+        Prefer annotated has_metrics (Exists subquery) when present to avoid N+1
+        queries; fall back to metrics_data_set.exists() for callers that do not
+        annotate.
+        """
+        annotated = getattr(obj, "has_metrics", None)
+        if annotated is not None:
+            return bool(annotated)
         return obj.metrics_data_set.exists()
 
     def get_color(self, obj):
