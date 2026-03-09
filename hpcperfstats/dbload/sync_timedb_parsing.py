@@ -155,6 +155,10 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
         continue
 
       if typ in eventmaps_by_type:
+        # If we see a hardware-counter type without a preceding schema line
+        # (e.g. corrupted or truncated file), skip it instead of raising KeyError.
+        if typ not in schema:
+          continue
         eventmap = eventmaps_by_type[typ]
         vals = map_hardware_counter_vals(typ, schema[typ], vals, eventmap)
       elif typ == "proc":
