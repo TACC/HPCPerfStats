@@ -134,6 +134,7 @@ def main(argv=None, sleep_after=True):
     all_dates.append(date)
     date += timedelta(days=1)
 
+  sorted(all_dates, reverse=True) 
   print(all_dates)
   for result in map(update_metrics, all_dates):
     print(result)
