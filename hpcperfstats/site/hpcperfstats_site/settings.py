@@ -257,6 +257,10 @@ LOGGING = {
             'class': 'logging.StreamHandler',
             'stream': sys.stdout,
         },
+        # Swallow noisy DisallowedHost errors (e.g., bad 0.0.0.0 probes)
+        'null': {
+            'class': 'logging.NullHandler',
+        },
     },
     'loggers': {
         'hpcperfstats_site': {
@@ -280,6 +284,12 @@ LOGGING = {
         'metrics': {
             'handlers': ['metrics'],
             'level': 'INFO',
+        },
+        # Do not log DisallowedHost exceptions; Django will still return 400.
+        'django.security.DisallowedHost': {
+            'handlers': ['null'],
+            'level': 'ERROR',
+            'propagate': False,
         },
     },
 }
