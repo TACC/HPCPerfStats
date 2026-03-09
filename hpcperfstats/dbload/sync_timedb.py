@@ -21,7 +21,7 @@ import django.utils.timezone as _django_tz
 if not hasattr(_django_tz, "utc"):
   _django_tz.utc = timezone.utc
 
-from django.db import IntegrityError, close_old_connections
+from django.db import IntegrityError, close_old_connections, connections
 import pandas as pd
 
 import hpcperfstats.conf_parser as cfg
@@ -436,6 +436,9 @@ if __name__ == '__main__':
 
     print("sync_timedb sleeping")
 
+    # Close DB connections before long sleep to avoid idle connections.
+    close_old_connections()
+    connections.close_all()
     time.sleep(900)
 
     if DEBUG:

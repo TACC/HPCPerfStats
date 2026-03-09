@@ -12,7 +12,7 @@ ensure_django()
 import hostlist
 import pandas as pd
 from django.conf import settings
-from django.db import IntegrityError
+from django.db import IntegrityError, close_old_connections, connections
 from pandas import read_csv, to_datetime, to_timedelta
 
 import hpcperfstats.conf_parser as cfg
@@ -196,4 +196,7 @@ if __name__ == "__main__":
     startdate += timedelta(days=1)
   print("loading time", time.time() - start)
 
+  # Close DB connections before long sleep to avoid idle connections.
+  close_old_connections()
+  connections.close_all()
   time.sleep(900)

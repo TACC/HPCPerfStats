@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
-from django.db import close_old_connections
+from django.db import close_old_connections, connections
 from django.db.models import Count, Q
 from django.db.utils import OperationalError
 
@@ -111,11 +111,19 @@ def update_metrics(date, rerun=False):
     _run()
 
 
-if __name__ == "__main__":
+def main(argv=None, sleep_after=True):
+  """Entry point for updating metrics_data for a date or date range.
+
+  When invoked as a script, argv defaults to sys.argv. Management commands
+  can pass a custom argv list (e.g. parsed from options). If sleep_after is
+  True, the function sleeps 3600s at the end (to match legacy usage).
+  """
+  if argv is None:
+    argv = sys.argv
 
   #################################################################
   default_start = datetime.combine(datetime.today(), datetime.min.time())
-  startdate, enddate = parse_start_end_dates(sys.argv, default_start, default_start)
+  startdate, enddate = parse_start_end_dates(argv, default_start, default_start)
 
   log_date_range("metrics to update", startdate, enddate)
   #################################################################
@@ -130,6 +138,12 @@ if __name__ == "__main__":
   for result in map(update_metrics, all_dates):
     print(result)
 
-#update_metrics(date, rerun = False)
+  if sleep_after:
+    # Close DB connections before long sleep to avoid idle connections.
+    close_old_connections()
+    connections.close_all()
+    time.sleep(3600)
 
-  time.sleep(3600)
+
+if __name__ == "__main__":
+  main()
