@@ -33,7 +33,8 @@ def sync_acct(acct_file, jobs_in_db):
       'JobID', 'User', 'Account', 'Start', 'End', 'Submit', 'Partition',
       'Timelimit', 'JobName', 'State', 'NNodes', 'ReqCPUS', 'NodeList'
   ]
-  df = read_csv(acct_file, sep='|')
+  # Be tolerant of malformed lines (extra separators etc.); skip them.
+  df = read_csv(acct_file, sep='|', engine='python', on_bad_lines='skip')
 
   # cycle through collumns so we can remove those we don't want to import.
   for c in df:
@@ -193,7 +194,9 @@ if __name__ == "__main__":
         print(entry.path)
         try:
           sync_acct(entry.path, jobs_in_db)
-        except Exception:
+        except Exception as e:
+          if settings.DEBUG:
+            raise e
           print("Unable to load file: %s" % entry.path)
     startdate += timedelta(days=1)
   print("loading time", time.time() - start)
