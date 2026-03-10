@@ -137,14 +137,9 @@ def _get_cache_stats():
     stats = {}
     try:
         default_cache_cfg = (getattr(settings, "CACHES", {}) or {}).get("default", {})
-        stats["configured"] = bool(default_cache_cfg)
         if default_cache_cfg:
             stats["location"] = default_cache_cfg.get("LOCATION")
             stats["default_timeout"] = default_cache_cfg.get("TIMEOUT")
-            stats["key_prefix"] = default_cache_cfg.get("KEY_PREFIX")
-
-        backend_class = cache.__class__
-        stats["backend"] = f"{backend_class.__module__}.{backend_class.__name__}"
 
         client = getattr(cache, "_cache", None)
         if client is None:
@@ -160,7 +155,22 @@ def _get_cache_stats():
             stats["redis_version"] = info.get("redis_version")
             stats["connected_clients"] = info.get("connected_clients")
             stats["uptime_in_seconds"] = info.get("uptime_in_seconds")
-            stats["used_memory_human"] = info.get("used_memory_human")
+
+            # Total data cached (memory used by Redis).
+            total_bytes = info.get("used_memory")
+            if total_bytes is not None:
+                stats["total_data_cached_bytes"] = total_bytes
+            used_memory_human = info.get("used_memory_human")
+            if used_memory_human is not None:
+                stats["total_data_cached_human"] = used_memory_human
+
+            # Cache hit/miss counters.
+            hits = info.get("keyspace_hits")
+            misses = info.get("keyspace_misses")
+            if hits is not None:
+                stats["cache_hits"] = hits
+            if misses is not None:
+                stats["cache_misses"] = misses
 
             db0 = info.get("db0") or {}
             keys = None
@@ -177,6 +187,40 @@ def _get_cache_stats():
                     keys = None
             if keys is not None:
                 stats["db0_keys"] = keys
+
+            # Attempt to identify the most memory-heavy cached keys.
+            # This uses SCAN and MEMORY USAGE to avoid blocking Redis too long.
+            try:
+                top_keys = []
+                total_sampled_bytes = 0
+                # Limit to a reasonable number of sampled keys to keep this light.
+                max_sample = 500
+                scanned = 0
+                for key in client.scan_iter(count=max_sample):
+                    if scanned >= max_sample:
+                        break
+                    scanned += 1
+                    try:
+                        size = client.memory_usage(key) or 0
+                    except Exception:
+                        size = 0
+                    total_sampled_bytes += size
+                    if isinstance(key, bytes):
+                        key_str = key.decode("utf-8", "replace")
+                    else:
+                        key_str = str(key)
+                    top_keys.append((key_str, size))
+
+                if top_keys:
+                    top_keys.sort(key=lambda kv: kv[1], reverse=True)
+                    stats["most_used_cached_keys"] = [
+                        {"key": k, "approx_size_bytes": v} for k, v in top_keys[:10]
+                    ]
+                    stats["total_data_cached_bytes_sampled"] = total_sampled_bytes
+            except Exception:
+                # If anything goes wrong while probing individual keys, just skip this
+                # detailed per-key section and fall back to the top-level memory stats.
+                pass
     except Exception:
         # If anything goes wrong (e.g., Redis down), return whatever we have.
         pass
