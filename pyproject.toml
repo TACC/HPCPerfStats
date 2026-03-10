@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hpcperfstats"
-version = "2.4"
+version = "3.0"
 description = "A performance monitoring and analysis package for High Performance Computing Platforms"
 readme = "README.md"
 requires-python = ">=3.12"
