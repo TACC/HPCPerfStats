@@ -51,6 +51,29 @@ from .views import (
     libset_c,
     xalt_data_c,
 )
+
+# Shared thread pools (capped total threads per process).
+_host_last_executor = None
+_small_executor = None   # dashboard, queue histograms, job_detail, job_plots (≤8 tasks)
+_metric_hist_executor = None  # per-metric histograms in job list (up to 8)
+
+def _get_host_last_executor():
+    global _host_last_executor
+    if _host_last_executor is None:
+        _host_last_executor = ThreadPoolExecutor(max_workers=16)
+    return _host_last_executor
+
+def _get_small_executor():
+    global _small_executor
+    if _small_executor is None:
+        _small_executor = ThreadPoolExecutor(max_workers=8)
+    return _small_executor
+
+def _get_metric_hist_executor():
+    global _metric_hist_executor
+    if _metric_hist_executor is None:
+        _metric_hist_executor = ThreadPoolExecutor(max_workers=8)
+    return _metric_hist_executor
 from django.db.models import Count, Exists, OuterRef, Sum
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.utils import timezone as dj_timezone_utils
@@ -300,23 +323,23 @@ def home_options(request):
             .values_list("state", flat=True)
         )
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        date_future = executor.submit(
-            cached_orm, KEY_DATES, TIMEOUT_MEDIUM, _dates_fn
-        )
-        metrics_future = executor.submit(
-            cached_orm, KEY_METRICS_DISTINCT, TIMEOUT_LONG, _metrics_fn
-        )
-        queues_future = executor.submit(
-            cached_orm, KEY_QUEUES, TIMEOUT_MEDIUM, _queues_fn
-        )
-        states_future = executor.submit(
-            cached_orm, KEY_STATES, TIMEOUT_MEDIUM, _states_fn
-        )
-        date_list = date_future.result()
-        metrics = metrics_future.result()
-        queues = queues_future.result()
-        states = states_future.result()
+    executor = _get_small_executor()
+    date_future = executor.submit(
+        cached_orm, KEY_DATES, TIMEOUT_MEDIUM, _dates_fn
+    )
+    metrics_future = executor.submit(
+        cached_orm, KEY_METRICS_DISTINCT, TIMEOUT_LONG, _metrics_fn
+    )
+    queues_future = executor.submit(
+        cached_orm, KEY_QUEUES, TIMEOUT_MEDIUM, _queues_fn
+    )
+    states_future = executor.submit(
+        cached_orm, KEY_STATES, TIMEOUT_MEDIUM, _states_fn
+    )
+    date_list = date_future.result()
+    metrics = metrics_future.result()
+    queues = queues_future.result()
+    states = states_future.result()
 
     month_dict = {}
     year_set = set()
@@ -698,27 +721,27 @@ def _job_list_histograms(request):
     histograms = []
     try:
         # Build queue histograms in parallel
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            queue_thumb_f = executor.submit(
-                _job_list_queue_histogram,
-                job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT,
-            )
-            queue_full_f = executor.submit(
-                _job_list_queue_histogram,
-                job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT,
-            )
-            queue_cpu_thumb_f = executor.submit(
-                _job_list_queue_cpu_hours_histogram,
-                job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT,
-            )
-            queue_cpu_full_f = executor.submit(
-                _job_list_queue_cpu_hours_histogram,
-                job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT,
-            )
-            queue_thumb = queue_thumb_f.result()
-            queue_full = queue_full_f.result()
-            queue_cpu_thumb = queue_cpu_thumb_f.result()
-            queue_cpu_full = queue_cpu_full_f.result()
+        executor = _get_small_executor()
+        queue_thumb_f = executor.submit(
+            _job_list_queue_histogram,
+            job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT,
+        )
+        queue_full_f = executor.submit(
+            _job_list_queue_histogram,
+            job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT,
+        )
+        queue_cpu_thumb_f = executor.submit(
+            _job_list_queue_cpu_hours_histogram,
+            job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT,
+        )
+        queue_cpu_full_f = executor.submit(
+            _job_list_queue_cpu_hours_histogram,
+            job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT,
+        )
+        queue_thumb = queue_thumb_f.result()
+        queue_full = queue_full_f.result()
+        queue_cpu_thumb = queue_cpu_thumb_f.result()
+        queue_cpu_full = queue_cpu_full_f.result()
 
         if queue_thumb is not None and queue_full is not None:
             histograms.append({
@@ -737,19 +760,19 @@ def _job_list_histograms(request):
         if plot_list_1:
             # Build per-metric thumb/full figures in parallel
             metric_hist_by_key = {}
-            with ThreadPoolExecutor(max_workers=min(8, len(hist_metrics) or 1)) as executor:
-                futures = {
-                    executor.submit(_one_metric_histograms, m, lbl): (m, lbl)
-                    for m, lbl in hist_metrics
-                }
-                for fut in as_completed(futures):
-                    m, lbl = futures[fut]
-                    try:
-                        display_title, p_thumb, p_full = fut.result()
-                        if p_thumb is not None and p_full is not None:
-                            metric_hist_by_key[(m, lbl)] = (display_title, p_thumb, p_full)
-                    except Exception:
-                        pass
+            executor = _get_metric_hist_executor()
+            futures = {
+                executor.submit(_one_metric_histograms, m, lbl): (m, lbl)
+                for m, lbl in hist_metrics
+            }
+            for fut in as_completed(futures):
+                m, lbl = futures[fut]
+                try:
+                    display_title, p_thumb, p_full = fut.result()
+                    if p_thumb is not None and p_full is not None:
+                        metric_hist_by_key[(m, lbl)] = (display_title, p_thumb, p_full)
+                except Exception:
+                    pass
             for metric, label in hist_metrics:
                 entry = metric_hist_by_key.get((metric, label))
                 if entry is not None:
@@ -847,35 +870,35 @@ def job_list_histograms(request):
 
     if group == "queue":
         # Build queue histograms in parallel, but only for this group.
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            queue_thumb_f = executor.submit(
-                _job_list_queue_histogram,
-                job_list_qs,
-                THUMB_WIDTH,
-                THUMB_HEIGHT,
-            )
-            queue_full_f = executor.submit(
-                _job_list_queue_histogram,
-                job_list_qs,
-                FULL_WIDTH,
-                FULL_HEIGHT,
-            )
-            queue_cpu_thumb_f = executor.submit(
-                _job_list_queue_cpu_hours_histogram,
-                job_list_qs,
-                THUMB_WIDTH,
-                THUMB_HEIGHT,
-            )
-            queue_cpu_full_f = executor.submit(
-                _job_list_queue_cpu_hours_histogram,
-                job_list_qs,
-                FULL_WIDTH,
-                FULL_HEIGHT,
-            )
-            queue_thumb = queue_thumb_f.result()
-            queue_full = queue_full_f.result()
-            queue_cpu_thumb = queue_cpu_thumb_f.result()
-            queue_cpu_full = queue_cpu_full_f.result()
+        executor = _get_small_executor()
+        queue_thumb_f = executor.submit(
+            _job_list_queue_histogram,
+            job_list_qs,
+            THUMB_WIDTH,
+            THUMB_HEIGHT,
+        )
+        queue_full_f = executor.submit(
+            _job_list_queue_histogram,
+            job_list_qs,
+            FULL_WIDTH,
+            FULL_HEIGHT,
+        )
+        queue_cpu_thumb_f = executor.submit(
+            _job_list_queue_cpu_hours_histogram,
+            job_list_qs,
+            THUMB_WIDTH,
+            THUMB_HEIGHT,
+        )
+        queue_cpu_full_f = executor.submit(
+            _job_list_queue_cpu_hours_histogram,
+            job_list_qs,
+            FULL_WIDTH,
+            FULL_HEIGHT,
+        )
+        queue_thumb = queue_thumb_f.result()
+        queue_full = queue_full_f.result()
+        queue_cpu_thumb = queue_cpu_thumb_f.result()
+        queue_cpu_full = queue_cpu_full_f.result()
 
         plots = []
         if queue_thumb is not None and queue_full is not None:
@@ -1220,24 +1243,24 @@ def job_detail(request, pk):
     if cfg.get_xalt_user() != "":
         tasks.append(("xalt", _fetch_xalt))
 
-    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
-        future_to_key = {executor.submit(fn): key for key, fn in tasks}
-        for future in as_completed(future_to_key):
-            key = future_to_key[future]
-            try:
-                result = future.result()
-                if key == "gpu":
-                    gpu_active, gpu_utilization_max, gpu_utilization_mean = result
-                elif key == "xalt":
-                    xalt_payload = result
-                elif key == "fsio":
-                    fsio = result
-                elif key == "schema":
-                    schema = result
-                elif key == "proc_list":
-                    proc_list = result or []
-            except Exception:
-                pass
+    executor = _get_small_executor()
+    future_to_key = {executor.submit(fn): key for key, fn in tasks}
+    for future in as_completed(future_to_key):
+        key = future_to_key[future]
+        try:
+            result = future.result()
+            if key == "gpu":
+                gpu_active, gpu_utilization_max, gpu_utilization_mean = result
+            elif key == "xalt":
+                xalt_payload = result
+            elif key == "fsio":
+                fsio = result
+            elif key == "schema":
+                schema = result
+            elif key == "proc_list":
+                proc_list = result or []
+        except Exception:
+            pass
 
     xalt_data = {
         "exec_path": xalt_payload["exec_path"] if xalt_payload else [],
@@ -1354,20 +1377,20 @@ def job_plots(request, pk):
         ("heatmap", _fetch_heatmap),
         ("roofline", _fetch_roofline),
     ]
-    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
-        future_to_key = {executor.submit(fn): key for key, fn in tasks}
-        for future in as_completed(future_to_key):
-            key = future_to_key[future]
-            try:
-                result = future.result()
-                if key == "summary_plot":
-                    mplot_item, mplot_unavailable_reason = result
-                elif key == "heatmap":
-                    hplot_item, hplot_unavailable_reason = result
-                elif key == "roofline":
-                    rplot_item, rplot_unavailable_reason = result
-            except Exception:
-                pass
+    executor = _get_small_executor()
+    future_to_key = {executor.submit(fn): key for key, fn in tasks}
+    for future in as_completed(future_to_key):
+        key = future_to_key[future]
+        try:
+            result = future.result()
+            if key == "summary_plot":
+                mplot_item, mplot_unavailable_reason = result
+            elif key == "heatmap":
+                hplot_item, hplot_unavailable_reason = result
+            elif key == "roofline":
+                rplot_item, rplot_unavailable_reason = result
+        except Exception:
+            pass
 
     return Response(
         {
@@ -1584,14 +1607,14 @@ def admin_monitor(request):
         )
 
     last_time_by_host = {}
-    with ThreadPoolExecutor(max_workers=min(16, len(all_hosts) or 1)) as executor:
-        futures = [executor.submit(_host_last_for, host) for host in all_hosts]
-        for future in as_completed(futures):
-            try:
-                host, last_time = future.result()
-                last_time_by_host[host] = last_time
-            except Exception:
-                pass
+    executor = _get_host_last_executor()
+    futures = [executor.submit(_host_last_for, host) for host in all_hosts]
+    for future in as_completed(futures):
+        try:
+            host, last_time = future.result()
+            last_time_by_host[host] = last_time
+        except Exception:
+            pass
 
     host_stats = []
     for host in all_hosts:
