@@ -893,9 +893,9 @@ def job_list(request):
         )
 
     # Aggregate over full filtered list (non-paginated) for listing-page metrics
-    agg = job_list_qs.aggregate(total_runtime=Sum("runtime"))
-    total_runtime_seconds = agg.get("total_runtime") or 0
-    total_cpu_hours = total_runtime_seconds / 3600.0
+    # Use node_hrs directly from the database to compute total node hours.
+    agg = job_list_qs.aggregate(total_node_hours=Sum("node_hrs"))
+    total_node_hours = agg.get("total_node_hours") or 0.0
 
     page_num = request.GET.get("page", 1)
     paginator = Paginator(job_list_qs, min(100, nj))
@@ -920,7 +920,7 @@ def job_list(request):
         "job_list": JobListSerializer(page.object_list, many=True).data,
         "nj": nj,
         "aggregates": {
-            "total_cpu_hours": round(total_cpu_hours, 4),
+            "total_node_hours": round(total_node_hours, 4),
         },
         "current_path": current_path,
         "qname": qname,

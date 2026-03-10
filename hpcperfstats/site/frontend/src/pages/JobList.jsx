@@ -75,7 +75,7 @@ export default function JobList() {
     order_by: responseOrderBy = "-end_time",
     pagination = {},
   } = data;
-  const totalCpuHours = aggregates.total_cpu_hours;
+  const totalNodeHours = aggregates.total_node_hours;
   const histogramsList = histograms || [];
   const { page, num_pages } = pagination;
 
@@ -138,8 +138,8 @@ export default function JobList() {
       </center>
       <hr />
       <h4>#Jobs = {nj}</h4>
-      {totalCpuHours != null && (
-        <p className="mb-0">Total CPU hours (all matching jobs): {Number(totalCpuHours).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+      {totalNodeHours != null && (
+        <p className="mb-0">Total Node Hours (all matching jobs): {Number(totalNodeHours).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
       )}
 
       {num_pages > 1 && (
