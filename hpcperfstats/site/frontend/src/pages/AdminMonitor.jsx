@@ -70,6 +70,13 @@ export default function AdminMonitor() {
     {}
   );
 
+  const hostHeaderSummary =
+    !hostLoading && !hostError && hostStats.length > 0
+      ? ` - Total hosts: ${totalHosts} · ${Object.keys(BADGE_MAP)
+          .map((key) => `${BADGE_MAP[key].label}: ${bucketCounts[key] ?? 0}`)
+          .join(" · ")}`
+      : "";
+
   return (
     <>
       <h3>Admin Monitor</h3>
@@ -85,7 +92,7 @@ export default function AdminMonitor() {
           <span className="admin-monitor-section-chevron" aria-hidden>
             {hostTimeExpanded ? "▼" : "▶"}
           </span>
-          Host last seen timestamps
+          {`Host last seen timestamps${hostHeaderSummary}`}
         </button>
         <div
           id="admin-monitor-host-time"
@@ -100,16 +107,6 @@ export default function AdminMonitor() {
           )}
           {!hostLoading && !hostError && (
             <>
-              <div className="admin-monitor-metrics">
-                <strong>Total hosts: {totalHosts}</strong>
-                {" · "}
-                {Object.keys(BADGE_MAP).map((key) => (
-                  <span key={key}>
-                    {BADGE_MAP[key].label}: {bucketCounts[key] ?? 0}
-                    {key !== "gt_week" ? " · " : ""}
-                  </span>
-                ))}
-              </div>
           <p>
             Status buckets:{" "}
             <span className="badge badge-freshness-ok">OK (≤ 10 minutes)</span>{" "}
