@@ -13,8 +13,22 @@ export default function JobList() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [histograms, setHistograms] = useState(null);
-  const [histLoading, setHistLoading] = useState(false);
-  const [histError, setHistError] = useState(null);
+  const [queueHistStatus, setQueueHistStatus] = useState({
+    loading: false,
+    error: null,
+  });
+  const metricNames = ["runtime", "nhosts", "queue_wait"];
+  const createInitialMetricStatus = () =>
+    metricNames.reduce(
+      (acc, metric) => ({
+        ...acc,
+        [metric]: { loading: false, error: null },
+      }),
+      {}
+    );
+  const [metricHistStatus, setMetricHistStatus] = useState(
+    createInitialMetricStatus
+  );
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -40,60 +54,77 @@ export default function JobList() {
 
     // Then load histograms separately so they don't block the list
     setHistograms(null);
-    setHistLoading(true);
-    setHistError(null);
+    setQueueHistStatus({ loading: true, error: null });
+    setMetricHistStatus(createInitialMetricStatus());
 
     const loadHistograms = async () => {
+      let baseHistograms = [];
       try {
         const queueData = await api.getJobQueueHistograms(params);
         const queuePlots = queueData?.plots || [];
-        const baseHistograms = queuePlots.map((p) => ({
+        baseHistograms = queuePlots.map((p) => ({
           title: p.title,
           plot_item_thumb: p.plot_item_thumb,
           plot_item_full: p.plot_item_full,
         }));
-
-        const metricNames = ["runtime", "nhosts", "queue_wait"];
-        const metricPromises = metricNames.map((metric) =>
-          api
-            .getJobMetricHistogram(params, metric)
-            .then((metricData) => {
-              if (
-                !metricData ||
-                !metricData.plot_item_thumb ||
-                !metricData.plot_item_full
-              ) {
-                return null;
-              }
-              return {
-                title: metricData.title || metricData.metric || metric,
-                plot_item_thumb: metricData.plot_item_thumb,
-                plot_item_full: metricData.plot_item_full,
-              };
-            })
-            .catch((err) => {
-              // Metric-specific failures should not break other histograms.
-              // eslint-disable-next-line no-console
-              console.warn(
-                `Failed to load job list histogram for metric '${metric}':`,
-                err
-              );
-              return null;
-            })
-        );
-
-        const metricResults = await Promise.all(metricPromises);
-        const metricHistograms = metricResults.filter(Boolean);
-
-        setHistograms([...baseHistograms, ...metricHistograms]);
+        setQueueHistStatus({ loading: false, error: null });
       } catch (e) {
-        // Histogram errors should not break the main page; log to console for debugging.
+        // Queue histogram errors should not break the main page; log to console for debugging.
         // eslint-disable-next-line no-console
-        console.warn("Failed to load job list histograms", e);
-        setHistError(e?.message || "Failed to load job list histograms.");
-      } finally {
-        setHistLoading(false);
+        console.warn("Failed to load queue job list histograms", e);
+        setQueueHistStatus({
+          loading: false,
+          error:
+            e?.message ||
+            "Failed to load queue histograms for this job list.",
+        });
       }
+
+      const metricPromises = metricNames.map((metric) => {
+        return api
+          .getJobMetricHistogram(params, metric)
+          .then((metricData) => {
+            if (
+              !metricData ||
+              !metricData.plot_item_thumb ||
+              !metricData.plot_item_full
+            ) {
+              return null;
+            }
+            setMetricHistStatus((prev) => ({
+              ...prev,
+              [metric]: { loading: false, error: null },
+            }));
+            return {
+              title: metricData.title || metricData.metric || metric,
+              plot_item_thumb: metricData.plot_item_thumb,
+              plot_item_full: metricData.plot_item_full,
+            };
+          })
+          .catch((err) => {
+            // Metric-specific failures should not break other histograms.
+            // eslint-disable-next-line no-console
+            console.warn(
+              `Failed to load job list histogram for metric '${metric}':`,
+              err
+            );
+            setMetricHistStatus((prev) => ({
+              ...prev,
+              [metric]: {
+                loading: false,
+                error:
+                  err?.message ||
+                  `Failed to load ${metric} histogram for this job list.`,
+              },
+            }));
+            return null;
+          });
+      });
+
+      const metricResults = await Promise.all(metricPromises);
+      const metricHistograms = metricResults.filter(Boolean);
+
+      setHistograms([...baseHistograms, ...metricHistograms]);
     };
 
     loadHistograms();
@@ -163,15 +194,42 @@ export default function JobList() {
     <>
       <h4>{qname}</h4>
       <center>
-        {histLoading && <LoadingMessage message="Loading histograms…" />}
-        {!histLoading && !histError && (
-          <HistogramThumbnails histograms={histogramsList} />
+        {queueHistStatus.loading && (
+          <LoadingMessage message="Loading queue histograms…" />
         )}
-        {!histLoading && histError && (
+        {!queueHistStatus.loading && queueHistStatus.error && (
           <p className="text-danger small mt-2" role="status">
-            Histogram plots failed to load. Job list data is still available.
+            Queue histograms failed to load. Job list data is still available.
           </p>
         )}
+        {metricNames.map((metric) => {
+          const status = metricHistStatus[metric] || {
+            loading: false,
+            error: null,
+          };
+          const labelMap = {
+            runtime: "Runtime",
+            nhosts: "Node count",
+            queue_wait: "Queue wait",
+          };
+          const friendlyName = labelMap[metric] || metric;
+          return (
+            <div key={metric}>
+              {status.loading && (
+                <LoadingMessage
+                  message={`Loading ${friendlyName.toLowerCase()} histogram…`}
+                />
+              )}
+              {!status.loading && status.error && (
+                <p className="text-danger small mt-2" role="status">
+                  {friendlyName} histogram failed to load. Job list data is
+                  still available.
+                </p>
+              )}
+            </div>
+          );
+        })}
+        <HistogramThumbnails histograms={histogramsList} />
       </center>
       <hr />
       <h4>#Jobs = {nj}</h4>
