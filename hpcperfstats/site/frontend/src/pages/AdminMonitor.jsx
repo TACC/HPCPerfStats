@@ -19,27 +19,49 @@ const ROW_CLASS = {
 };
 
 export default function AdminMonitor() {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [hostTimeExpanded, setHostTimeExpanded] = useState(true);
+  const [cacheExpanded, setCacheExpanded] = useState(false);
+  const [hostStats, setHostStats] = useState([]);
+  const [hostLoading, setHostLoading] = useState(false);
+  const [hostError, setHostError] = useState(null);
+  const [hostRequested, setHostRequested] = useState(false);
+  const [cacheStats, setCacheStats] = useState(null);
+  const [cacheLoading, setCacheLoading] = useState(false);
+  const [cacheError, setCacheError] = useState(null);
+  const [cacheRequested, setCacheRequested] = useState(false);
 
+  // Lazily load host stats when the section is first expanded.
   useEffect(() => {
+    if (!hostTimeExpanded || hostRequested) return;
+    setHostRequested(true);
+    setHostLoading(true);
+    setHostError(null);
     api
-      .getAdminMonitor()
-      .then(setData)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+      .getAdminMonitorSection("hosts")
+      .then((res) => {
+        setHostStats(res.host_stats || []);
+      })
+      .catch((e) => setHostError(e.message))
+      .finally(() => setHostLoading(false));
+  }, [hostTimeExpanded, hostRequested]);
 
-  if (loading) return <LoadingMessage message="Loading admin monitor…" />;
-  if (error) return <div className="container text-danger">Error: {error}</div>;
-  if (!data) return null;
+  // Lazily load cache stats when the section is first expanded.
+  useEffect(() => {
+    if (!cacheExpanded || cacheRequested) return;
+    setCacheRequested(true);
+    setCacheLoading(true);
+    setCacheError(null);
+    api
+      .getAdminMonitorSection("cache")
+      .then((res) => {
+        setCacheStats(res.cache_stats || null);
+      })
+      .catch((e) => setCacheError(e.message))
+      .finally(() => setCacheLoading(false));
+  }, [cacheExpanded, cacheRequested]);
 
-  const { host_stats = [] } = data;
-
-  const totalHosts = host_stats.length;
-  const bucketCounts = host_stats.reduce(
+  const totalHosts = hostStats.length;
+  const bucketCounts = hostStats.reduce(
     (acc, row) => {
       const b = row.age_bucket || "gt_week";
       acc[b] = (acc[b] || 0) + 1;
@@ -72,16 +94,22 @@ export default function AdminMonitor() {
           role="region"
           aria-label="Host last seen timestamps"
         >
-          <div className="admin-monitor-metrics">
-            <strong>Total hosts: {totalHosts}</strong>
-            {" · "}
-            {(Object.keys(BADGE_MAP)).map((key) => (
-              <span key={key}>
-                {BADGE_MAP[key].label}: {bucketCounts[key] ?? 0}
-                {key !== "gt_week" ? " · " : ""}
-              </span>
-            ))}
-          </div>
+          {hostLoading && <LoadingMessage message="Loading host timestamps…" />}
+          {hostError && !hostLoading && (
+            <div className="text-danger">Error loading host data: {hostError}</div>
+          )}
+          {!hostLoading && !hostError && (
+            <>
+              <div className="admin-monitor-metrics">
+                <strong>Total hosts: {totalHosts}</strong>
+                {" · "}
+                {Object.keys(BADGE_MAP).map((key) => (
+                  <span key={key}>
+                    {BADGE_MAP[key].label}: {bucketCounts[key] ?? 0}
+                    {key !== "gt_week" ? " · " : ""}
+                  </span>
+                ))}
+              </div>
           <p>
             Status buckets:{" "}
             <span className="badge badge-freshness-ok">OK (≤ 10 minutes)</span>{" "}
@@ -90,37 +118,81 @@ export default function AdminMonitor() {
             <span className="badge badge-freshness-gt_day">{"> 1 day"}</span>{" "}
             <span className="badge badge-freshness-gt_week">{"> 1 week"}</span>
           </p>
-          <table className="table table-sm table-bordered">
-            <thead>
-              <tr>
-                <th>Host</th>
-                <th>Last Timestamp</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {host_stats.map((row, i) => {
-                const badge = BADGE_MAP[row.age_bucket] || BADGE_MAP.gt_week;
-                const rowClass = ROW_CLASS[row.age_bucket] || "";
-                return (
-                  <tr key={row.host + i} className={rowClass}>
-                    <td>{row.host}</td>
-                    <td>{row.last_time || "—"}</td>
-                    <td>
-                      <span className={`badge ${badge.class}`}>{badge.label}</span>
-                    </td>
+              <table className="table table-sm table-bordered">
+                <thead>
+                  <tr>
+                    <th>Host</th>
+                    <th>Last Timestamp</th>
+                    <th>Status</th>
                   </tr>
-                );
-              })}
-              {host_stats.length === 0 && (
-                <tr>
-                  <td colSpan="3" className="text-center">
-                    No host data available.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {hostStats.map((row, i) => {
+                    const badge = BADGE_MAP[row.age_bucket] || BADGE_MAP.gt_week;
+                    const rowClass = ROW_CLASS[row.age_bucket] || "";
+                    return (
+                      <tr key={row.host + i} className={rowClass}>
+                        <td>{row.host}</td>
+                        <td>{row.last_time || "—"}</td>
+                        <td>
+                          <span className={`badge ${badge.class}`}>{badge.label}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {hostStats.length === 0 && (
+                    <tr>
+                      <td colSpan="3" className="text-center">
+                        No host data available.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="admin-monitor-section">
+        <button
+          type="button"
+          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          onClick={() => setCacheExpanded((e) => !e)}
+          aria-expanded={cacheExpanded}
+          aria-controls="admin-monitor-cache-stats"
+        >
+          <span className="admin-monitor-section-chevron" aria-hidden>
+            {cacheExpanded ? "▼" : "▶"}
+          </span>
+          Cache / Redis statistics
+        </button>
+        <div
+          id="admin-monitor-cache-stats"
+          className="admin-monitor-section-body"
+          hidden={!cacheExpanded}
+          role="region"
+          aria-label="Cache and Redis statistics"
+        >
+          {cacheLoading && <LoadingMessage message="Loading cache statistics…" />}
+          {cacheError && !cacheLoading && (
+            <div className="text-danger">Error loading cache stats: {cacheError}</div>
+          )}
+          {!cacheLoading && !cacheError && cacheStats && Object.keys(cacheStats).length > 0 && (
+            <table className="table table-sm table-bordered">
+              <tbody>
+                {Object.entries(cacheStats).map(([key, value]) => (
+                  <tr key={key}>
+                    <th scope="row">{key}</th>
+                    <td>{value === null || value === undefined ? "—" : String(value)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {!cacheLoading && !cacheError && (!cacheStats || Object.keys(cacheStats).length === 0) && (
+            <div className="text-muted">No cache statistics available.</div>
+          )}
         </div>
       </div>
     </>

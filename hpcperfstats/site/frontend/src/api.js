@@ -79,7 +79,8 @@ export const api = {
     request(`/jobs/${encodeURIComponent(jid)}/${encodeURIComponent(typeName)}/`),
   getHostPlot: (params) =>
     request("/host_plot/?" + new URLSearchParams(params).toString()),
-  getAdminMonitor: () => request("/admin_monitor/"),
+  getAdminMonitorSection: (section) =>
+    request(`/admin_monitor/?section=${encodeURIComponent(section)}`),
 };
 
 export default api;

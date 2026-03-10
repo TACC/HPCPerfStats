@@ -14,6 +14,9 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from django.conf import settings
+from django.core.cache import cache
+
 from django.views.decorators.cache import cache_page
 
 from .cache_utils import (
@@ -127,6 +130,57 @@ def _require_auth(request):
         {"detail": "Authentication required", "login_url": "/login_prompt"},
         status=status.HTTP_401_UNAUTHORIZED,
     )
+
+
+def _get_cache_stats():
+    """Return basic Redis/cache statistics for the admin monitor."""
+    stats = {}
+    try:
+        default_cache_cfg = (getattr(settings, "CACHES", {}) or {}).get("default", {})
+        stats["configured"] = bool(default_cache_cfg)
+        if default_cache_cfg:
+            stats["location"] = default_cache_cfg.get("LOCATION")
+            stats["default_timeout"] = default_cache_cfg.get("TIMEOUT")
+            stats["key_prefix"] = default_cache_cfg.get("KEY_PREFIX")
+
+        backend_class = cache.__class__
+        stats["backend"] = f"{backend_class.__module__}.{backend_class.__name__}"
+
+        client = getattr(cache, "_cache", None)
+        if client is None:
+            client = getattr(cache, "client", None)
+            if hasattr(client, "get_client"):
+                try:
+                    client = client.get_client()
+                except Exception:
+                    client = None
+
+        if client is not None and hasattr(client, "info"):
+            info = client.info()
+            stats["redis_version"] = info.get("redis_version")
+            stats["connected_clients"] = info.get("connected_clients")
+            stats["uptime_in_seconds"] = info.get("uptime_in_seconds")
+            stats["used_memory_human"] = info.get("used_memory_human")
+
+            db0 = info.get("db0") or {}
+            keys = None
+            if isinstance(db0, dict):
+                keys = db0.get("keys")
+            elif isinstance(db0, str):
+                try:
+                    parts = dict(
+                        part.split("=", 1) for part in db0.split(",") if "=" in part
+                    )
+                    if "keys" in parts:
+                        keys = int(parts["keys"])
+                except Exception:
+                    keys = None
+            if keys is not None:
+                stats["db0_keys"] = keys
+    except Exception:
+        # If anything goes wrong (e.g., Redis down), return whatever we have.
+        pass
+    return stats
 
 
 @api_view(["GET"])
@@ -1411,7 +1465,13 @@ def host_plot(request):
 
 @api_view(["GET"])
 def admin_monitor(request):
-    """Staff-only: host last-seen timestamps and age buckets."""
+    """Staff-only: admin monitor data (host timestamps, cache/Redis stats).
+
+    Supports a lightweight, per-section API via the optional 'section' query param:
+    - ?section=hosts -> {"host_stats": [...]}
+    - ?section=cache -> {"cache_stats": {...}}
+    - omitted/other  -> {"host_stats": [...], "cache_stats": {...}}
+    """
     err = _require_auth(request)
     if err is not None:
         return err
@@ -1482,4 +1542,11 @@ def admin_monitor(request):
             "age_bucket": bucket,
         })
 
-    return Response({"host_stats": host_stats})
+    cache_stats = _get_cache_stats()
+
+    section = (request.GET.get("section") or "").strip().lower()
+    if section == "hosts":
+        return Response({"host_stats": host_stats})
+    if section == "cache":
+        return Response({"cache_stats": cache_stats})
+    return Response({"host_stats": host_stats, "cache_stats": cache_stats})
