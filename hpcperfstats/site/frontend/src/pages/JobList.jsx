@@ -42,24 +42,61 @@ export default function JobList() {
     setHistograms(null);
     setHistLoading(true);
     setHistError(null);
-    api
-      .getJobQueueHistograms(params)
-      .then((queueData) => {
-        const plots = queueData?.plots || [];
-        const mapped = plots.map((p) => ({
+
+    const loadHistograms = async () => {
+      try {
+        const queueData = await api.getJobQueueHistograms(params);
+        const queuePlots = queueData?.plots || [];
+        const baseHistograms = queuePlots.map((p) => ({
           title: p.title,
           plot_item_thumb: p.plot_item_thumb,
           plot_item_full: p.plot_item_full,
         }));
-        setHistograms(mapped);
-      })
-      .catch((e) => {
+
+        const metricNames = ["runtime", "nhosts", "queue_wait"];
+        const metricPromises = metricNames.map((metric) =>
+          api
+            .getJobMetricHistogram(params, metric)
+            .then((metricData) => {
+              if (
+                !metricData ||
+                !metricData.plot_item_thumb ||
+                !metricData.plot_item_full
+              ) {
+                return null;
+              }
+              return {
+                title: metricData.title || metricData.metric || metric,
+                plot_item_thumb: metricData.plot_item_thumb,
+                plot_item_full: metricData.plot_item_full,
+              };
+            })
+            .catch((err) => {
+              // Metric-specific failures should not break other histograms.
+              // eslint-disable-next-line no-console
+              console.warn(
+                `Failed to load job list histogram for metric '${metric}':`,
+                err
+              );
+              return null;
+            })
+        );
+
+        const metricResults = await Promise.all(metricPromises);
+        const metricHistograms = metricResults.filter(Boolean);
+
+        setHistograms([...baseHistograms, ...metricHistograms]);
+      } catch (e) {
         // Histogram errors should not break the main page; log to console for debugging.
         // eslint-disable-next-line no-console
-        console.warn("Failed to load job list histograms");
+        console.warn("Failed to load job list histograms", e);
         setHistError(e?.message || "Failed to load job list histograms.");
-      })
-      .finally(() => setHistLoading(false));
+      } finally {
+        setHistLoading(false);
+      }
+    };
+
+    loadHistograms();
   }, [searchParams, paramsFromRoute]);
 
   if (loading) return <LoadingMessage message="Loading job list…" />;
