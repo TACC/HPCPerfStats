@@ -20,7 +20,7 @@ thread_count = cfg.get_worker_thread_count(4)
 def _process_tar_member(lock, tar_path, member_name):
   """Open tar, extract one member, pass contents to add_stats_file_to_db.
   Keeps file contents only in the worker process."""
-  print("extracting %s" % member_name)
+  print("extracting %s from %s" % (member_name, tar_path))
   with tarfile.open(tar_path, 'r') as tar:
     member = tar.getmember(member_name)
     f = tar.extractfile(member)
