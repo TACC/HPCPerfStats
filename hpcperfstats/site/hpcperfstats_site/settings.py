@@ -31,6 +31,9 @@ SESSION_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SAMESITE = "Lax"
 
 # Give a name that is unique for the computing platform
+# CONN_MAX_AGE: persistent connections (connection pool per thread/worker).
+# Reuse connections across API requests; 600s (10 min) balances reuse with stale cleanup.
+# CONN_HEALTH_CHECKS: verify connection before reuse (Django 4.1+).
 DATABASES = {
     'default': {
         'ENGINE': cfg.get_engine_name(),
@@ -39,6 +42,8 @@ DATABASES = {
         'PASSWORD': cfg.get_password(),
         'HOST': cfg.get_host(),
         'PORT': cfg.get_port(),
+        'CONN_MAX_AGE': 600,
+        'CONN_HEALTH_CHECKS': True,
     },
     # Uncomment this portion if an xalt database exists
     'xalt': {
@@ -47,7 +52,9 @@ DATABASES = {
         'NAME': cfg.get_xalt_name(),
         'USER': cfg.get_xalt_user(),
         'PASSWORD': cfg.get_xalt_password(),
-        'HOST': cfg.get_xalt_host()
+        'HOST': cfg.get_xalt_host(),
+        'CONN_MAX_AGE': 600,
+        'CONN_HEALTH_CHECKS': True,
     }
 }
 
