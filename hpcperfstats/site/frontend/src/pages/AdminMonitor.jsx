@@ -178,12 +178,24 @@ export default function AdminMonitor() {
           {!cacheLoading && !cacheError && cacheStats && Object.keys(cacheStats).length > 0 && (
             <table className="table table-sm table-bordered">
               <tbody>
-                {Object.entries(cacheStats).map(([key, value]) => (
-                  <tr key={key}>
-                    <th scope="row">{key}</th>
-                    <td>{value === null || value === undefined ? "—" : String(value)}</td>
-                  </tr>
-                ))}
+                {Object.entries(cacheStats).map(([key, value]) => {
+                  let displayValue;
+                  if (key === "most_used_cached_keys" && Array.isArray(value)) {
+                    displayValue = value
+                      .map((entry) => entry && entry.key)
+                      .filter(Boolean)
+                      .join(", ");
+                  } else {
+                    displayValue =
+                      value === null || value === undefined ? "—" : String(value);
+                  }
+                  return (
+                    <tr key={key}>
+                      <th scope="row">{key}</th>
+                      <td>{displayValue}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
