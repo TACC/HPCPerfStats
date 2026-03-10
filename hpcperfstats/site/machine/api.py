@@ -409,36 +409,36 @@ def _job_list_queue_histogram(job_list_qs, width=600, height=400):
 
 
 def _job_list_queue_cpu_hours_histogram(job_list_qs, width=600, height=400):
-    """Build a Bokeh bar chart of compute hours (sum of runtime/3600) per queue from the full filtered job list (non-paginated)."""
+    """Build a Bokeh bar chart of node hours (sum of node_hrs) per queue from the full filtered job list (non-paginated)."""
     from bokeh.models import ColumnDataSource, HoverTool
 
     queue_runtime = list(
         job_list_qs.values("queue")
-        .annotate(total_runtime=Sum("runtime"))
-        .order_by("-total_runtime")
-        .values_list("queue", "total_runtime")
+        .annotate(total_node_hours=Sum("node_hrs"))
+        .order_by("-total_node_hours")
+        .values_list("queue", "total_node_hours")
     )
     if not queue_runtime:
         return None
     queue_names = [q if q else "(no queue)" for q, _ in queue_runtime]
-    cpu_hours = [(rt or 0) / 3600.0 for _, rt in queue_runtime]
-    source = ColumnDataSource(dict(x=queue_names, top=cpu_hours))
+    node_hours = [(nh or 0.0) for _, nh in queue_runtime]
+    source = ColumnDataSource(dict(x=queue_names, top=node_hours))
     p = figure(
         x_range=queue_names,
         height=height,
         width=width,
-        title="Compute hours by queue",
+        title="Node hours by queue",
         toolbar_location=None,
         tools="pan,wheel_zoom,box_zoom,reset,save",
     )
     p.add_tools(
         HoverTool(
-            tooltips=[("queue", "@x"), ("compute hours", "@top{0,0.00}")],
+            tooltips=[("queue", "@x"), ("node hours", "@top{0,0.00}")],
             point_policy="snap_to_data",
         )
     )
     p.xaxis.axis_label = "queue"
-    p.yaxis.axis_label = "compute hours"
+    p.yaxis.axis_label = "node hours"
     p.vbar(x="x", top="top", source=source, width=0.7)
     p.xgrid.visible = False
     p.xaxis.major_label_orientation = "vertical" if len(queue_names) > 5 else "horizontal"
@@ -600,7 +600,7 @@ def _job_list_histograms(request):
             })
         if queue_cpu_thumb is not None and queue_cpu_full is not None:
             histograms.append({
-                "title": "Compute hours by queue",
+                "title": "Node hours by queue",
                 "plot_item_thumb": json_item(queue_cpu_thumb),
                 "plot_item_full": json_item(queue_cpu_full),
             })
@@ -663,7 +663,7 @@ def job_list_histograms(request):
     all plots at once. The caller must provide a 'group' query parameter:
 
     - group=queue: return queue-based histograms ("Jobs by queue" and
-      "Compute hours by queue") as JSON items.
+      "Node hours by queue") as JSON items.
     - group=metric&metric=<name>: return a single metric histogram (thumb and
       full) for the given metric name.
 
@@ -763,7 +763,7 @@ def job_list_histograms(request):
             plots.append(
                 {
                     "key": "cpu_hours_by_queue",
-                    "title": "Compute hours by queue",
+                    "title": "Node hours by queue",
                     "plot_item_thumb": json_item(queue_cpu_thumb),
                     "plot_item_full": json_item(queue_cpu_full),
                 }
