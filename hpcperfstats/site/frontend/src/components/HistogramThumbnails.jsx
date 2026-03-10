@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import BokehEmbed from "./BokehEmbed";
+import LoadingMessage from "./LoadingMessage";
 
 const THUMB_SIZE = { width: 280, height: 200 };
 
@@ -144,11 +145,8 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
   );
 }
 
-/**
- * Grid of medium-sized histogram thumbnails; each shows the full plot in a popover on mouse over.
- */
 export default function HistogramThumbnails({ histograms }) {
-  if (!histograms || histograms.length === 0) {
+  if (!histograms) {
     return (
       <div
         style={{
@@ -163,9 +161,13 @@ export default function HistogramThumbnails({ histograms }) {
           padding: 12,
         }}
       >
-        No histogram data available for this job list.
+        <LoadingMessage message="Loading histograms…" />
       </div>
     );
+  }
+
+  if (Array.isArray(histograms) && histograms.length === 0) {
+    return null;
   }
 
   return (

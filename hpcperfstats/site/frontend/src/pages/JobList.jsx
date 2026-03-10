@@ -144,7 +144,6 @@ export default function JobList() {
     pagination = {},
   } = data;
   const totalNodeHours = aggregates.total_node_hours;
-  const histogramsList = histograms || [];
   const { page, num_pages } = pagination;
 
   const paginationParams = Object.fromEntries(searchParams.entries());
@@ -229,7 +228,7 @@ export default function JobList() {
             </div>
           );
         })}
-        <HistogramThumbnails histograms={histogramsList} />
+        <HistogramThumbnails histograms={histograms} />
       </center>
       <hr />
       <h4>#Jobs = {nj}</h4>
