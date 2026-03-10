@@ -19,7 +19,7 @@ const ROW_CLASS = {
 };
 
 export default function AdminMonitor() {
-  const [hostTimeExpanded, setHostTimeExpanded] = useState(true);
+  const [hostTimeExpanded, setHostTimeExpanded] = useState(false);
   const [cacheExpanded, setCacheExpanded] = useState(false);
   const [hostStats, setHostStats] = useState([]);
   const [hostLoading, setHostLoading] = useState(false);
