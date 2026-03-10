@@ -28,16 +28,31 @@ function CollapsibleSection({ title, children, defaultOpen = false, empty = fals
 export default function JobDetail() {
   const { pk } = useParams();
   const [data, setData] = useState(null);
+  const [plots, setPlots] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [plotsLoading, setPlotsLoading] = useState(true);
 
   useEffect(() => {
     if (!pk) return;
+    setError(null);
+    setData(null);
     api
       .getJobDetail(pk)
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
+    setPlots(null);
+    setPlotsLoading(true);
+    api
+      .getJobPlots(pk)
+      .then(setPlots)
+      .catch(() => {
+        // Plot failures should not break job detail page; log to console for debugging.
+        // eslint-disable-next-line no-console
+        console.warn("Failed to load job plots");
+      })
+      .finally(() => setPlotsLoading(false));
   }, [pk]);
 
   if (loading) return <LoadingMessage message="Loading job detail…" />;
@@ -49,18 +64,6 @@ export default function JobDetail() {
     host_list = [],
     fsio = {},
     xalt_data = {},
-    mscript,
-    mdiv,
-    mplot_item,
-    mplot_unavailable_reason,
-    hscript,
-    hdiv,
-    hplot_item,
-    hplot_unavailable_reason,
-    rscript,
-    rdiv,
-    rplot_item,
-    rplot_unavailable_reason,
     schema = {},
     client_url,
     server_url,
@@ -70,6 +73,15 @@ export default function JobDetail() {
     metrics_list = [],
     proc_list = [],
   } = data;
+
+  const {
+    mplot_item,
+    mplot_unavailable_reason,
+    hplot_item,
+    hplot_unavailable_reason,
+    rplot_item,
+    rplot_unavailable_reason,
+  } = plots || {};
 
   const hasDeviceData = Object.keys(schema).length > 0;
 
@@ -320,14 +332,15 @@ export default function JobDetail() {
       <hr />
       <center>
         <h3>Host-level Plots</h3>
+        {plotsLoading && (
+          <LoadingMessage message="Loading job plots…" />
+        )}
         <table>
           <tbody>
             <tr>
               <td>
                 <BokehEmbed
                   item={mplot_item}
-                  script={mscript}
-                  div={mdiv}
                   id="job-mscript"
                   plotName="Summary plot"
                   unavailableReason={mplot_unavailable_reason}
@@ -336,8 +349,6 @@ export default function JobDetail() {
               <td>
                 <BokehEmbed
                   item={hplot_item}
-                  script={hscript}
-                  div={hdiv}
                   id="job-hscript"
                   plotName="Heatmap"
                   unavailableReason={hplot_unavailable_reason}
@@ -348,8 +359,6 @@ export default function JobDetail() {
               <td colSpan={2}>
                 <BokehEmbed
                   item={rplot_item}
-                  script={rscript}
-                  div={rdiv}
                   id="job-roofline"
                   plotName="Roofline"
                   unavailableReason={rplot_unavailable_reason}

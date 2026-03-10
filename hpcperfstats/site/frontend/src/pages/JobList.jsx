@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useParams, useLocation, Link, useNavigate } from "react-router-dom";
 import ReactPaginate from "react-paginate";
 import { api } from "../api";
-import BokehEmbed from "../components/BokehEmbed";
 import HistogramThumbnails from "../components/HistogramThumbnails";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
@@ -14,6 +13,7 @@ export default function JobList() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [histograms, setHistograms] = useState(null);
+  const [histLoading, setHistLoading] = useState(false);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -26,16 +26,37 @@ export default function JobList() {
     if (paramsFromRoute.queue) params.queue = paramsFromRoute.queue;
     if (paramsFromRoute.host) params.host = paramsFromRoute.host;
     setLoading(true);
-    Promise.all([
-      api.getJobList(params),
-      api.getJobListHistograms(params),
-    ])
-      .then(([listData, histData]) => {
+    setError(null);
+    setData(null);
+    // Load job list first so the table renders quickly
+    api
+      .getJobList(params)
+      .then((listData) => {
         setData(listData);
-        setHistograms(histData);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
+
+    // Then load histograms separately so they don't block the list
+    setHistograms(null);
+    setHistLoading(true);
+    api
+      .getJobQueueHistograms(params)
+      .then((queueData) => {
+        const plots = queueData?.plots || [];
+        const mapped = plots.map((p) => ({
+          title: p.title,
+          plot_item_thumb: p.plot_item_thumb,
+          plot_item_full: p.plot_item_full,
+        }));
+        setHistograms(mapped);
+      })
+      .catch(() => {
+        // Histogram errors should not break the main page; log to console for debugging.
+        // eslint-disable-next-line no-console
+        console.warn("Failed to load job list histograms");
+      })
+      .finally(() => setHistLoading(false));
   }, [searchParams, paramsFromRoute]);
 
   if (loading) return <LoadingMessage message="Loading job list…" />;
@@ -52,10 +73,7 @@ export default function JobList() {
     pagination = {},
   } = data;
   const totalCpuHours = aggregates.total_cpu_hours;
-  const script = histograms?.script ?? "";
-  const div = histograms?.div ?? "";
-  const plot_item = histograms?.plot_item ?? null;
-  const histogramsList = histograms?.histograms ?? [];
+  const histogramsList = histograms || [];
   const { page, num_pages } = pagination;
 
   const paginationParams = Object.fromEntries(searchParams.entries());
@@ -105,17 +123,8 @@ export default function JobList() {
     <>
       <h4>{qname}</h4>
       <center>
-        {histogramsList.length > 0 ? (
-          <HistogramThumbnails histograms={histogramsList} />
-        ) : (
-          <BokehEmbed
-            item={plot_item}
-            script={script}
-            div={div}
-            id="index-bokeh"
-            plotName="Job list histograms"
-          />
-        )}
+        {histLoading && <LoadingMessage message="Loading histograms…" />}
+        {!histLoading && <HistogramThumbnails histograms={histogramsList} />}
       </center>
       <hr />
       <h4>#Jobs = {nj}</h4>

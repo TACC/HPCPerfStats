@@ -211,6 +211,7 @@ def home_options(request):
     })
 
 
+@cache_page(TIMEOUT_SHORT)
 @api_view(["GET"])
 def search_dispatch(request):
     """
@@ -267,6 +268,100 @@ def _job_list_histograms_empty_figure():
         toolbar_location=None,
     )
     return gridplot([[empty]], toolbar_location=None)
+
+
+def _build_histogram_queryset(request):
+    """
+    Build the base queryset and metric filters for histogram endpoints.
+
+    Returns (job_list_qs, nj, fields, cur_metrics) where:
+    - job_list_qs: filtered and ordered queryset
+    - nj: count of jobs in queryset
+    - fields: normalized/expanded query params dict
+    - cur_metrics: dict of metric_name__op -> value (from query params)
+    """
+    fields = request.GET.dict()
+    fields = {k: v for k, v in fields.items() if v}
+    fields = normalize_job_list_query_params(fields)
+    fields = expand_month_date_to_range(fields)
+
+    acct_data = {
+        k: v
+        for k, v in fields.items()
+        if k.split("_", 1)[0] != "metrics" and k not in ("page", "order_by")
+    }
+    order_by = get_job_list_order_by(fields) or "-end_time"
+    job_list_qs = job_data.objects.filter(**acct_data)
+    if order_by.lstrip("-") == "has_metrics":
+        job_list_qs = job_list_qs.annotate(
+            has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
+        )
+    job_list_qs = job_list_qs.order_by(order_by)
+
+    cur_metrics = {
+        k.split("_", 1)[1]: v
+        for k, v in fields.items()
+        if k.split("_", 1)[0] == "metrics"
+    }
+    for key, val in cur_metrics.items():
+        name, op = key.split("__")
+        mquery = {
+            "metrics_data__metric": name,
+            "metrics_data__value__" + op: val,
+        }
+        job_list_qs = job_list_qs.filter(**mquery)
+
+    nj = job_list_qs.count()
+    return job_list_qs, nj, fields, cur_metrics
+
+
+def _build_histogram_dataframe(job_list_qs, cur_metrics):
+    """
+    Build the DataFrame and histogram metric list used for metric-based histograms.
+
+    Returns (df, hist_metrics, jids_ordered) where:
+    - df: pandas DataFrame indexed by jid with metric columns + runtime/nhosts/queue_wait
+    - hist_metrics: list of (metric_name, units_label)
+    - jids_ordered: list of jids in deterministic order
+    """
+    acc_cols = ["jid", "start_time", "submit_time", "runtime", "nhosts"]
+    job_rows = list(job_list_qs.values(*acc_cols))
+    jids_ordered = [r["jid"] for r in job_rows]
+    job_df = DataFrame(job_rows).set_index("jid")
+
+    metrics_rows = list(
+        metrics_data.objects.filter(jid_id__in=jids_ordered).values(
+            "jid_id", "metric", "units", "value"
+        )
+    )
+    metric_dict = {}
+    hist_metrics_set = set()
+    for row in metrics_rows:
+        jid_id = row["jid_id"]
+        metric_dict.setdefault(row["metric"], []).append((jid_id, row["value"]))
+        hist_metrics_set.add((row["metric"], row["units"]))
+
+    df_fields = list(
+        set(name for name, _ in (key.split("__") for key in cur_metrics))
+    )
+    jid_dict = {"jid": jids_ordered}
+    for name in df_fields:
+        jid_to_val = {jid: val for jid, val in metric_dict.get(name, [])}
+        jid_dict[name] = [jid_to_val.get(jid, None) for jid in jids_ordered]
+    df = DataFrame(jid_dict).set_index("jid")
+    hist_metrics = list(hist_metrics_set)
+    df = df.join(job_df)
+    df["queue_wait"] = (
+        to_timedelta(df["start_time"] - df["submit_time"]).dt.total_seconds() / 3600
+    )
+    df["runtime"] = df["runtime"] / 3600
+    # Fixed histograms use actual df column names; display titles mapped for UI
+    hist_metrics += [("runtime", "hours"), ("nhosts", "# nodes"), ("queue_wait", "hours")]
+    # Keep df numeric for histograms; do not run clean_dataframe here (it would
+    # replace NaN with '' and break job_hist). job_hist filters to finite values.
+    # Only plot metrics that exist as columns (df has filter metrics + runtime/nhosts/queue_wait)
+    hist_metrics = [(m, label) for m, label in hist_metrics if m in df.columns]
+    return df, hist_metrics, jids_ordered
 
 
 def _job_list_queue_histogram(job_list_qs, width=600, height=400):
@@ -543,17 +638,188 @@ def _job_list_histograms(request):
 @cache_page(TIMEOUT_MEDIUM)
 @api_view(["GET"])
 def job_list_histograms(request):
-    """Return Bokeh script/div, plot_item, and histograms (thumb + full per metric) for job list histograms."""
+    """
+    Return Bokeh histograms for the job list, loaded incrementally.
+
+    This endpoint now supports grouped, per-plot loading instead of building
+    all plots at once. The caller must provide a 'group' query parameter:
+
+    - group=queue: return queue-based histograms ("Jobs by queue" and
+      "Compute hours by queue") as JSON items.
+    - group=metric&metric=<name>: return a single metric histogram (thumb and
+      full) for the given metric name.
+
+    Example:
+      /api/jobs/histograms/?end_time__date=2024-01-01&group=queue
+      /api/jobs/histograms/?end_time__date=2024-01-01&group=metric&metric=runtime
+    """
     err = _require_auth(request)
     if err is not None:
         return err
-    script, div, plot_item, histograms = _job_list_histograms(request)
-    return Response({
-        "script": script,
-        "div": div,
-        "plot_item": plot_item,
-        "histograms": histograms,
-    })
+    group = (request.GET.get("group") or "").strip()
+    if not group:
+        return Response(
+            {
+                "error": "Missing 'group' parameter.",
+                "allowed_groups": ["queue", "metric"],
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    job_list_qs, nj, fields, cur_metrics = _build_histogram_queryset(request)
+    if nj == 0:
+        # Preserve a consistent shape even when no jobs match the filter.
+        if group == "queue":
+            return Response(
+                {
+                    "group": "queue",
+                    "nj": 0,
+                    "plots": [],
+                }
+            )
+        if group == "metric":
+            metric_name = (request.GET.get("metric") or "").strip()
+            return Response(
+                {
+                    "group": "metric",
+                    "metric": metric_name or None,
+                    "nj": 0,
+                    "plot_item_thumb": None,
+                    "plot_item_full": None,
+                }
+            )
+        return Response(
+            {
+                "error": f"Unknown group '{group}'.",
+                "allowed_groups": ["queue", "metric"],
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    THUMB_WIDTH, THUMB_HEIGHT = 280, 200
+    FULL_WIDTH, FULL_HEIGHT = 600, 400
+
+    if group == "queue":
+        # Build queue histograms in parallel, but only for this group.
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            queue_thumb_f = executor.submit(
+                _job_list_queue_histogram,
+                job_list_qs,
+                THUMB_WIDTH,
+                THUMB_HEIGHT,
+            )
+            queue_full_f = executor.submit(
+                _job_list_queue_histogram,
+                job_list_qs,
+                FULL_WIDTH,
+                FULL_HEIGHT,
+            )
+            queue_cpu_thumb_f = executor.submit(
+                _job_list_queue_cpu_hours_histogram,
+                job_list_qs,
+                THUMB_WIDTH,
+                THUMB_HEIGHT,
+            )
+            queue_cpu_full_f = executor.submit(
+                _job_list_queue_cpu_hours_histogram,
+                job_list_qs,
+                FULL_WIDTH,
+                FULL_HEIGHT,
+            )
+            queue_thumb = queue_thumb_f.result()
+            queue_full = queue_full_f.result()
+            queue_cpu_thumb = queue_cpu_thumb_f.result()
+            queue_cpu_full = queue_cpu_full_f.result()
+
+        plots = []
+        if queue_thumb is not None and queue_full is not None:
+            plots.append(
+                {
+                    "key": "jobs_by_queue",
+                    "title": "Jobs by queue",
+                    "plot_item_thumb": json_item(queue_thumb),
+                    "plot_item_full": json_item(queue_full),
+                }
+            )
+        if queue_cpu_thumb is not None and queue_cpu_full is not None:
+            plots.append(
+                {
+                    "key": "cpu_hours_by_queue",
+                    "title": "Compute hours by queue",
+                    "plot_item_thumb": json_item(queue_cpu_thumb),
+                    "plot_item_full": json_item(queue_cpu_full),
+                }
+            )
+        return Response(
+            {
+                "group": "queue",
+                "nj": nj,
+                "plots": plots,
+            }
+        )
+
+    if group == "metric":
+        metric_name = (request.GET.get("metric") or "").strip()
+        if not metric_name:
+            return Response(
+                {
+                    "error": "Missing 'metric' parameter for group 'metric'.",
+                    "detail": "Provide ?metric=<metric_name> to load one metric histogram at a time.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        df, hist_metrics, _ = _build_histogram_dataframe(job_list_qs, cur_metrics)
+        label = None
+        for m, lbl in hist_metrics:
+            if m == metric_name:
+                label = lbl
+                break
+        if label is None:
+            return Response(
+                {
+                    "error": f"Metric '{metric_name}' is not available for this query.",
+                    "available_metrics": [m for m, _ in hist_metrics],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        display_title = JOB_HIST_DISPLAY_NAMES.get(metric_name, metric_name)
+        p_thumb = job_hist(
+            df,
+            metric_name,
+            label,
+            width=THUMB_WIDTH,
+            height=THUMB_HEIGHT,
+            title=display_title,
+        )
+        p_full = job_hist(
+            df,
+            metric_name,
+            label,
+            width=FULL_WIDTH,
+            height=FULL_HEIGHT,
+            title=display_title,
+        )
+
+        return Response(
+            {
+                "group": "metric",
+                "metric": metric_name,
+                "nj": nj,
+                "title": display_title,
+                "plot_item_thumb": json_item(p_thumb) if p_thumb is not None else None,
+                "plot_item_full": json_item(p_full) if p_full is not None else None,
+            }
+        )
+
+    return Response(
+        {
+            "error": f"Unknown group '{group}'.",
+            "allowed_groups": ["queue", "metric"],
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
 @cache_page(TIMEOUT_MEDIUM)
@@ -644,9 +910,10 @@ def job_list(request):
     })
 
 
+@cache_page(TIMEOUT_SHORT)
 @api_view(["GET"])
 def job_detail(request, pk):
-    """Single job detail: metadata, host_list, fsio, xalt, Bokeh mscript/mdiv, schema, URLs."""
+    """Single job detail: metadata, host_list, fsio, xalt, schema, URLs (plots via separate job_plots endpoint)."""
     err = _require_auth(request)
     if err is not None:
         return err
@@ -750,55 +1017,6 @@ def job_detail(request, pk):
             }
         return cached_orm(f"{KEY_XALT}:{job.jid}", TIMEOUT_SHORT, _xalt_fn)
 
-    def _fetch_summary_plot():
-        mscript, mdiv, mplot_item, reason = "", "", None, None
-        try:
-            sp = plots.SummaryPlot(j)
-            plot_comp = sp.plot()
-            plot_json = sp.plot()
-            mscript, mdiv = components(plot_comp)
-            mplot_item = json_item(plot_json)
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                "Failed to generate summary plot for jid %s: %s", job.jid, e, exc_info=True
-            )
-            reason = str(e)
-        return (mscript, mdiv, mplot_item, reason)
-
-    def _fetch_heatmap():
-        hscript, hdiv, hplot_item, reason = "", "", None, None
-        try:
-            hm_fig_comp = plots.plot_from_jid_table(j)
-            hm_fig_json = plots.plot_from_jid_table(j)
-            if hm_fig_comp is not None and hm_fig_json is not None:
-                hscript, hdiv = components(hm_fig_comp)
-                hplot_item = json_item(hm_fig_json)
-            else:
-                reason = plots.MSG_NO_HOST_MSR_DATA
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                "Failed to generate heatmap for jid %s: %s", job.jid, e, exc_info=True
-            )
-            reason = str(e)
-        return (hscript, hdiv, hplot_item, reason)
-
-    def _fetch_roofline():
-        rscript, rdiv, rplot_item, reason = "", "", None, None
-        try:
-            roof_fig_comp = plots.plot_roofline_from_jid_table(j)
-            roof_fig_json = plots.plot_roofline_from_jid_table(j)
-            if roof_fig_comp is not None and roof_fig_json is not None:
-                rscript, rdiv = components(roof_fig_comp)
-                rplot_item = json_item(roof_fig_json)
-            else:
-                reason = plots.MSG_NO_ROOFLINE_DATA
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                "Failed to generate roofline for jid %s: %s", job.jid, e, exc_info=True
-            )
-            reason = str(e)
-        return (rscript, rdiv, rplot_item, reason)
-
     def _fetch_fsio():
         fsio = {}
         try:
@@ -835,21 +1053,12 @@ def job_detail(request, pk):
 
     gpu_active = gpu_utilization_max = gpu_utilization_mean = None
     xalt_payload = None
-    mscript = mdiv = ""
-    mplot_item = mplot_unavailable_reason = None
-    hscript = hdiv = ""
-    hplot_item = hplot_unavailable_reason = None
-    rscript = rdiv = ""
-    rplot_item = rplot_unavailable_reason = None
     fsio = {}
     schema = {}
     proc_list = []
 
     tasks = [
         ("gpu", _fetch_gpu),
-        ("summary_plot", _fetch_summary_plot),
-        ("heatmap", _fetch_heatmap),
-        ("roofline", _fetch_roofline),
         ("fsio", _fetch_fsio),
         ("schema", _fetch_schema),
         ("proc_list", _fetch_proc_list),
@@ -867,12 +1076,6 @@ def job_detail(request, pk):
                     gpu_active, gpu_utilization_max, gpu_utilization_mean = result
                 elif key == "xalt":
                     xalt_payload = result
-                elif key == "summary_plot":
-                    mscript, mdiv, mplot_item, mplot_unavailable_reason = result
-                elif key == "heatmap":
-                    hscript, hdiv, hplot_item, hplot_unavailable_reason = result
-                elif key == "roofline":
-                    rscript, rdiv, rplot_item, rplot_unavailable_reason = result
                 elif key == "fsio":
                     fsio = result
                 elif key == "schema":
@@ -906,18 +1109,6 @@ def job_detail(request, pk):
         "host_list": host_list,
         "fsio": fsio,
         "xalt_data": xalt_data,
-        "mscript": mscript,
-        "mdiv": mdiv,
-        "mplot_item": mplot_item,
-        "mplot_unavailable_reason": mplot_unavailable_reason,
-        "hscript": hscript,
-        "hdiv": hdiv,
-        "hplot_item": hplot_item,
-        "hplot_unavailable_reason": hplot_unavailable_reason,
-        "rscript": rscript,
-        "rdiv": rdiv,
-        "rplot_item": rplot_item,
-        "rplot_unavailable_reason": rplot_unavailable_reason,
         "schema": schema,
         "client_url": hoststring,
         "server_url": serverstring,
@@ -929,6 +1120,120 @@ def job_detail(request, pk):
     })
 
 
+@cache_page(TIMEOUT_SHORT)
+@api_view(["GET"])
+def job_plots(request, pk):
+    """
+    Job-level plots grouped by shared jid_table input.
+
+    Returns Bokeh json_items and availability reasons for:
+    - Summary plot
+    - Heatmap
+    - Roofline
+    """
+    err = _require_auth(request)
+    if err is not None:
+        return err
+
+    job = cached_orm(
+        f"{KEY_JOB}:{pk}",
+        TIMEOUT_SHORT,
+        lambda: job_data.objects.filter(jid=pk)
+        .prefetch_related("metrics_data_set")
+        .first(),
+    )
+    if not job:
+        return Response(
+            {"error": "Job not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    j = jid_table.jid_table(job.jid)
+
+    def _fetch_summary_plot():
+        mplot_item, reason = None, None
+        try:
+            plot_json = plots.SummaryPlot(j).plot()
+            mplot_item = json_item(plot_json)
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "Failed to generate summary plot for jid %s: %s", job.jid, e, exc_info=True
+            )
+            reason = str(e)
+        return (mplot_item, reason)
+
+    def _fetch_heatmap():
+        hplot_item, reason = None, None
+        try:
+            hm_fig_json = plots.plot_from_jid_table(j)
+            if hm_fig_json is not None:
+                hplot_item = json_item(hm_fig_json)
+            else:
+                reason = plots.MSG_NO_HOST_MSR_DATA
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "Failed to generate heatmap for jid %s: %s", job.jid, e, exc_info=True
+            )
+            reason = str(e)
+        return (hplot_item, reason)
+
+    def _fetch_roofline():
+        rplot_item, reason = None, None
+        try:
+            roof_fig_json = plots.plot_roofline_from_jid_table(j)
+            if roof_fig_json is not None:
+                rplot_item = json_item(roof_fig_json)
+            else:
+                reason = plots.MSG_NO_ROOFLINE_DATA
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "Failed to generate roofline for jid %s: %s", job.jid, e, exc_info=True
+            )
+            reason = str(e)
+        return (rplot_item, reason)
+
+    mplot_item = hplot_item = rplot_item = None
+    mplot_unavailable_reason = hplot_unavailable_reason = rplot_unavailable_reason = None
+
+    tasks = [
+        ("summary_plot", _fetch_summary_plot),
+        ("heatmap", _fetch_heatmap),
+        ("roofline", _fetch_roofline),
+    ]
+    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        future_to_key = {executor.submit(fn): key for key, fn in tasks}
+        for future in as_completed(future_to_key):
+            key = future_to_key[future]
+            try:
+                result = future.result()
+                if key == "summary_plot":
+                    mplot_item, mplot_unavailable_reason = result
+                elif key == "heatmap":
+                    hplot_item, hplot_unavailable_reason = result
+                elif key == "roofline":
+                    rplot_item, rplot_unavailable_reason = result
+            except Exception:
+                pass
+
+    return Response(
+        {
+            "mscript": "",
+            "mdiv": "",
+            "mplot_item": mplot_item,
+            "mplot_unavailable_reason": mplot_unavailable_reason,
+            "hscript": "",
+            "hdiv": "",
+            "hplot_item": hplot_item,
+            "hplot_unavailable_reason": hplot_unavailable_reason,
+            "rscript": "",
+            "rdiv": "",
+            "rplot_item": rplot_item,
+            "rplot_unavailable_reason": rplot_unavailable_reason,
+        }
+    )
+
+
+@cache_page(TIMEOUT_SHORT)
 @api_view(["GET"])
 def type_detail(request, jid, type_name):
     """Type detail: Bokeh tscript/tdiv, stats_data, schema."""
@@ -1021,6 +1326,7 @@ def type_detail(request, jid, type_name):
     })
 
 
+@cache_page(TIMEOUT_SHORT)
 @api_view(["GET"])
 def host_plot(request):
     """Return Bokeh plot_item for a single host and time range (GET host, end_time__gte, end_time__lte)."""

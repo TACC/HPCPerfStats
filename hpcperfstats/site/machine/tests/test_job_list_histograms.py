@@ -19,46 +19,43 @@ class TestJobListHistogramsView:
         from hpcperfstats.site.machine.api import job_list_histograms
 
         factory = RequestFactory()
-        request = factory.get("/api/jobs/histograms/")
+        request = factory.get("/api/jobs/histograms/", {"group": "queue"})
 
         with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=False):
             response = job_list_histograms(request)
 
         assert response.status_code == 401
 
-    def test_returns_200_with_script_div_plot_item_and_histograms_when_authenticated(self):
-        """job_list_histograms returns 200 and JSON with script, div, plot_item, histograms when authenticated."""
+    def test_returns_200_with_queue_group_payload_when_authenticated(self):
+        """job_list_histograms returns 200 and JSON with queue plots when authenticated."""
         from hpcperfstats.site.machine.api import job_list_histograms
 
         factory = RequestFactory()
-        request = factory.get("/api/jobs/histograms/")
+        request = factory.get("/api/jobs/histograms/", {"group": "queue"})
 
         with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True):
             response = job_list_histograms(request)
 
         assert response.status_code == 200
         data = response.json()
-        assert "script" in data
-        assert "div" in data
-        assert "plot_item" in data
-        assert "histograms" in data
-        assert isinstance(data["script"], str)
-        assert isinstance(data["div"], str)
-        assert isinstance(data["histograms"], list)
+        assert data["group"] == "queue"
+        assert "nj" in data
+        assert "plots" in data
+        assert isinstance(data["plots"], list)
 
     def test_histograms_endpoint_uses_same_query_params_as_job_list(self):
         """job_list_histograms accepts the same GET params as job list (e.g. page ignored for histograms)."""
         from hpcperfstats.site.machine.api import job_list_histograms
 
         factory = RequestFactory()
-        request = factory.get("/api/jobs/histograms/", {"page": "2"})
+        request = factory.get("/api/jobs/histograms/", {"page": "2", "group": "queue"})
 
         with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True):
             response = job_list_histograms(request)
 
         assert response.status_code == 200
         data = response.json()
-        assert "script" in data and "div" in data
+        assert data["group"] == "queue"
 
 
 def test_job_list_histograms_helper_returns_empty_figure_when_no_jobs():

@@ -51,9 +51,30 @@ export const api = {
   getHomeOptions: () => request("/home/"),
   search: (params) => request("/search/?" + new URLSearchParams(params).toString()),
   getJobList: (params) => request("/jobs/?" + new URLSearchParams(params).toString()),
-  getJobListHistograms: (params) =>
-    request("/jobs/histograms/?" + new URLSearchParams(params).toString()),
+  /**
+   * Queue-based histograms for a job list (jobs by queue, CPU hours by queue).
+   * Uses the same filter params as getJobList, plus group=queue.
+   */
+  getJobQueueHistograms: (params) =>
+    request(
+      "/jobs/histograms/?" +
+        new URLSearchParams({ ...(params || {}), group: "queue" }).toString()
+    ),
+  /**
+   * Single metric histogram (thumb + full) for a job list.
+   * Uses the same filter params as getJobList, plus group=metric&metric=<name>.
+   */
+  getJobMetricHistogram: (params, metric) =>
+    request(
+      "/jobs/histograms/?" +
+        new URLSearchParams({
+          ...(params || {}),
+          group: "metric",
+          metric,
+        }).toString()
+    ),
   getJobDetail: (pk) => request(`/jobs/${encodeURIComponent(pk)}/`),
+  getJobPlots: (pk) => request(`/jobs/${encodeURIComponent(pk)}/plots/`),
   getTypeDetail: (jid, typeName) =>
     request(`/jobs/${encodeURIComponent(jid)}/${encodeURIComponent(typeName)}/`),
   getHostPlot: (params) =>
