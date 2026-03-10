@@ -136,9 +136,18 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
     };
   }, [script, item]);
 
-  const base = plotName ? `${plotName}: Plot not available` : "Plot not available";
-  const reason = loadFailed ? failureReason : unavailableReason;
-  const message = reason ? `${base} — ${reason}` : base;
+  let message;
+  if (!hasData) {
+    const base = plotName ? `${plotName}: Plot not available` : "Plot not available";
+    message = unavailableReason ? `${base} — ${unavailableReason}` : base;
+  } else if (!plotReady && !loadFailed) {
+    // Plot is present but still being rendered; show a per-plot loading message.
+    message = plotName ? `Loading ${plotName}…` : "Loading plot…";
+  } else {
+    const base = plotName ? `${plotName}: Plot not available` : "Plot not available";
+    const reason = loadFailed ? failureReason : unavailableReason;
+    message = reason ? `${base} — ${reason}` : base;
+  }
   const placeholder = (
     <div className="bokeh-plot-unavailable" style={PLACEHOLDER_STYLE} aria-live="polite">
       {message}
