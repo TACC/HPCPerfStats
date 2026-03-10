@@ -57,6 +57,7 @@ services:
   db:
     image: timescale/timescaledb:latest-pg15
     container_name: hpcperfstats_db_1
+    command: -c 'max_connections=500'
     restart: always
     stop_grace_period: 60s
     security_opt:
@@ -66,7 +67,6 @@ services:
     environment:
       - POSTGRES_USER=hpcperfstats
       - POSTGRES_PASSWORD=hpcperfstats
-      - TS_TUNE_MAX_CONNS=500
 
   rabbitmq:
     image: rabbitmq:4-alpine
