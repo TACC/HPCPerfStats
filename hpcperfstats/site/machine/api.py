@@ -154,7 +154,16 @@ def _get_cache_stats():
             stats["location"] = default_cache_cfg.get("LOCATION")
             stats["default_timeout"] = default_cache_cfg.get("TIMEOUT")
 
+        # Try to unwrap the real Redis client from Django's cache backend.
+        # Django's built-in Redis cache exposes a RedisCacheClient instance on
+        # _cache, which must be further unwrapped via get_client() to get the
+        # actual redis-py client that implements .info(), .scan_iter(), etc.
         client = getattr(cache, "_cache", None)
+        if hasattr(client, "get_client"):
+            try:
+                client = client.get_client()
+            except Exception:
+                client = None
         if client is None:
             client = getattr(cache, "client", None)
             if hasattr(client, "get_client"):
