@@ -288,7 +288,17 @@ def _build_histogram_queryset(request):
     acct_data = {
         k: v
         for k, v in fields.items()
-        if k.split("_", 1)[0] != "metrics" and k not in ("page", "order_by")
+        if k.split("_", 1)[0] != "metrics"
+        and k
+        not in (
+            "page",
+            "order_by",
+            # Histogram grouping/query-only parameters, not model fields:
+            # - group: which histogram group to load ("queue" or "metric")
+            # - metric: metric name when group == "metric"
+            "group",
+            "metric",
+        )
     }
     order_by = get_job_list_order_by(fields) or "-end_time"
     job_list_qs = job_data.objects.filter(**acct_data)
@@ -445,7 +455,15 @@ def _job_list_histograms(request):
     acct_data = {
         k: v
         for k, v in fields.items()
-        if k.split("_", 1)[0] != "metrics" and k not in ("page", "order_by")
+        if k.split("_", 1)[0] != "metrics"
+        and k
+        not in (
+            "page",
+            "order_by",
+            # Histogram grouping/query-only parameters, not model fields:
+            "group",
+            "metric",
+        )
     }
     order_by = get_job_list_order_by(fields) or "-end_time"
     job_list_qs = job_data.objects.filter(**acct_data)
@@ -838,7 +856,15 @@ def job_list(request):
     acct_data = {
         k: v
         for k, v in fields.items()
-        if k.split("_", 1)[0] != "metrics" and k not in ("page", "order_by")
+        if k.split("_", 1)[0] != "metrics"
+        and k
+        not in (
+            "page",
+            "order_by",
+            # Histogram grouping/query-only parameters, not model fields:
+            "group",
+            "metric",
+        )
     }
     order_by = get_job_list_order_by(fields) or "-end_time"
     job_list_qs = job_data.objects.filter(**acct_data).annotate(
