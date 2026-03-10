@@ -14,6 +14,7 @@ export default function JobList() {
   const [data, setData] = useState(null);
   const [histograms, setHistograms] = useState(null);
   const [histLoading, setHistLoading] = useState(false);
+  const [histError, setHistError] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -40,6 +41,7 @@ export default function JobList() {
     // Then load histograms separately so they don't block the list
     setHistograms(null);
     setHistLoading(true);
+    setHistError(null);
     api
       .getJobQueueHistograms(params)
       .then((queueData) => {
@@ -51,10 +53,11 @@ export default function JobList() {
         }));
         setHistograms(mapped);
       })
-      .catch(() => {
+      .catch((e) => {
         // Histogram errors should not break the main page; log to console for debugging.
         // eslint-disable-next-line no-console
         console.warn("Failed to load job list histograms");
+        setHistError(e?.message || "Failed to load job list histograms.");
       })
       .finally(() => setHistLoading(false));
   }, [searchParams, paramsFromRoute]);
@@ -124,7 +127,14 @@ export default function JobList() {
       <h4>{qname}</h4>
       <center>
         {histLoading && <LoadingMessage message="Loading histograms…" />}
-        {!histLoading && <HistogramThumbnails histograms={histogramsList} />}
+        {!histLoading && !histError && (
+          <HistogramThumbnails histograms={histogramsList} />
+        )}
+        {!histLoading && histError && (
+          <p className="text-danger small mt-2" role="status">
+            Histogram plots failed to load. Job list data is still available.
+          </p>
+        )}
       </center>
       <hr />
       <h4>#Jobs = {nj}</h4>
