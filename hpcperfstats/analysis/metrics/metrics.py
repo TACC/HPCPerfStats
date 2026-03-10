@@ -3,11 +3,10 @@
 DB access is process-safe: _unwrap runs in multiprocessing workers and calls close_old_connections() at entry so each worker uses a fresh connection for reads (e.g. job_arc); writes are done in the main process only.
 
 """
+from django.conf import settings
 import hpcperfstats.conf_parser as cfg
 
-openblas_threads = int(cfg.get_total_cores()) / 4
-if openblas_threads < 1:
-  openblas_threads = 1
+openblas_threads = getattr(settings, "OPENBLAS_NUM_THREADS", 4)
 
 import multiprocessing
 import os

@@ -13,6 +13,10 @@ MESSAGE_TAGS = {
     messages.ERROR: 'danger',
 }
 
+# Number of threads for OpenBLAS-backed numeric libraries.
+# Used by analysis and plotting modules to set OPENBLAS_NUM_THREADS.
+OPENBLAS_NUM_THREADS = 4
+
 # SECRET_KEY: env overrides ini; required in production (set in env or hpcperfstats.ini [DEFAULT] secret_key).
 SECRET_KEY = os.environ.get("SECRET_KEY") or cfg.get_secret_key()
 #DEBUG = bool(os.environ.get("DEBUG", default=0))
