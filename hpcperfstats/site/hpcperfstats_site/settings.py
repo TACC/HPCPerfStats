@@ -13,8 +13,7 @@ MESSAGE_TAGS = {
     messages.ERROR: 'danger',
 }
 
-# Number of threads for OpenBLAS-backed numeric libraries.
-# Used by analysis and plotting modules to set OPENBLAS_NUM_THREADS.
+# Number of threads for OpenBLAS (CLI/scripts only). Web entry (wsgi.py) unsets OPENBLAS_NUM_THREADS for worker processes.
 OPENBLAS_NUM_THREADS = 4
 
 # SECRET_KEY: env overrides ini; required in production (set in env or hpcperfstats.ini [DEFAULT] secret_key).

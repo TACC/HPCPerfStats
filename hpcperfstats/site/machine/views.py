@@ -1,12 +1,6 @@
 """Shared helpers for machine app: job_hist (Bokeh histograms), local_timezone, XALT containers (libset_c, xalt_data_c). Used by the REST API only; React SPA is the only UI."""
 
-import os
-
-from django.conf import settings
 import hpcperfstats.conf_parser as cfg
-
-openblas_threads = getattr(settings, "OPENBLAS_NUM_THREADS", 4)
-os.environ["OPENBLAS_NUM_THREADS"] = str(openblas_threads)
 
 import numpy as np
 from bokeh.models import HoverTool

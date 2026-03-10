@@ -11,6 +11,8 @@ sys.path.append(
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/")
 os.environ.setdefault("DJANGO_SETTINGS_MODULE",
                       "hpcperfstats.site.hpcperfstats_site.settings")
+# Unset so OpenBLAS does not limit threads in web workers (gunicorn/runserver).
+os.environ.pop("OPENBLAS_NUM_THREADS", None)
 
 from django.core.wsgi import get_wsgi_application
 

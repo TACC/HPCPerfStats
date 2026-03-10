@@ -1,14 +1,7 @@
 """Shared utilities for analysis: job-like utils class (freq/imc/cha, get_type), queryset_to_dataframe, clean_dataframe, and timezone-aware Bokeh tick formatter.
 
 """
-from django.conf import settings
 import hpcperfstats.conf_parser as cfg
-
-openblas_threads = getattr(settings, "OPENBLAS_NUM_THREADS", 4)
-
-import os
-
-os.environ['OPENBLAS_NUM_THREADS'] = str(openblas_threads)
 
 import warnings
 

@@ -2,14 +2,7 @@
 
 Supports both legacy utils job format and jid_table (ORM) via plot_from_jid_table().
 """
-from django.conf import settings
 import hpcperfstats.conf_parser as cfg
-
-openblas_threads = getattr(settings, "OPENBLAS_NUM_THREADS", 4)
-
-import os
-
-os.environ['OPENBLAS_NUM_THREADS'] = str(openblas_threads)
 
 import numpy
 from bokeh.models import (

@@ -1,17 +1,10 @@
 """Summary plot: multi-metric step plots for a job (FLOPS, BW, CPU, etc.) using jid_table aggregate data and Bokeh.
 
 """
-from django.conf import settings
 import hpcperfstats.conf_parser as cfg
-
-openblas_threads = getattr(settings, "OPENBLAS_NUM_THREADS", 4)
 
 import logging
 import math
-import os
-
-os.environ['OPENBLAS_NUM_THREADS'] = str(openblas_threads)
-
 import time
 
 log = logging.getLogger(__name__)
