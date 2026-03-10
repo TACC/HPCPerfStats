@@ -132,8 +132,21 @@ def _require_auth(request):
     )
 
 
+_CACHE_STATS_KEY = "admin_monitor_cache_stats"
+_CACHE_STATS_TTL = 10  # seconds – keep Redis stats reasonably fresh without hammering Redis.
+
+
 def _get_cache_stats():
     """Return basic Redis/cache statistics for the admin monitor."""
+    # First try to return a recently cached snapshot of the Redis stats so that
+    # repeated admin monitor polls do not issue heavy INFO/SCAN calls.
+    try:
+        cached_stats = cache.get(_CACHE_STATS_KEY)
+        if isinstance(cached_stats, dict):
+            return cached_stats
+    except Exception:
+        cached_stats = None
+
     stats = {}
     try:
         default_cache_cfg = (getattr(settings, "CACHES", {}) or {}).get("default", {})
@@ -224,6 +237,14 @@ def _get_cache_stats():
     except Exception:
         # If anything goes wrong (e.g., Redis down), return whatever we have.
         pass
+
+    # Best-effort cache of the freshly gathered stats; if this fails we still
+    # return the live snapshot.
+    try:
+        cache.set(_CACHE_STATS_KEY, stats, timeout=_CACHE_STATS_TTL)
+    except Exception:
+        pass
+
     return stats
 
 
