@@ -230,6 +230,10 @@ export default function AdminMonitor() {
                     hypertable_count: "Number of hypertables",
                     chunk_count: "Total chunks",
                     compressed_chunk_count: "Compressed chunks",
+                    compressed_chunks_size_pretty: "Compressed chunk data size",
+                    uncompressed_chunks_size_pretty: "Uncompressed chunk data size",
+                    pending_compression_size_pretty:
+                      "Approx. data pending compression",
                     host_data_row_estimate: "host_data row estimate",
                     host_data_size_bytes: "host_data total size (bytes)",
                     host_data_size_pretty: "host_data total size",

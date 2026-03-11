@@ -346,6 +346,67 @@ def _get_timescaledb_stats():
             except Exception:
                 pass
 
+            # Aggregate approximate on-disk sizes for compressed vs uncompressed chunks.
+            try:
+                cur.execute(
+                    """
+                    WITH chunk_sizes AS (
+                        SELECT
+                            sum(
+                                pg_total_relation_size(
+                                    format('%I.%I', chunk_schema, chunk_name)
+                                )
+                            ) FILTER (
+                                WHERE compression_status = 'Compressed'
+                            ) AS compressed_bytes,
+                            sum(
+                                pg_total_relation_size(
+                                    format('%I.%I', chunk_schema, chunk_name)
+                                )
+                            ) FILTER (
+                                WHERE compression_status IS DISTINCT FROM 'Compressed'
+                                    OR compression_status IS NULL
+                            ) AS uncompressed_bytes
+                        FROM timescaledb_information.chunks
+                    )
+                    SELECT
+                        compressed_bytes,
+                        uncompressed_bytes,
+                        pg_size_pretty(compressed_bytes),
+                        pg_size_pretty(uncompressed_bytes)
+                    FROM chunk_sizes
+                    """
+                )
+                row = cur.fetchone()
+                if row:
+                    (
+                        compressed_bytes,
+                        uncompressed_bytes,
+                        compressed_pretty,
+                        uncompressed_pretty,
+                    ) = row
+                    if compressed_bytes is not None:
+                        stats["compressed_chunks_size_bytes"] = int(compressed_bytes)
+                        if compressed_pretty is not None:
+                            stats["compressed_chunks_size_pretty"] = compressed_pretty
+                    if uncompressed_bytes is not None:
+                        stats["uncompressed_chunks_size_bytes"] = int(uncompressed_bytes)
+                        if uncompressed_pretty is not None:
+                            stats["uncompressed_chunks_size_pretty"] = (
+                                uncompressed_pretty
+                            )
+                        # Treat all currently uncompressed chunk data as "pending"
+                        # compression for monitoring purposes.
+                        stats["pending_compression_size_bytes"] = int(
+                            uncompressed_bytes
+                        )
+                        if uncompressed_pretty is not None:
+                            stats["pending_compression_size_pretty"] = (
+                                uncompressed_pretty
+                            )
+            except Exception:
+                pass
+
             # Approximate size and row count for the primary hypertable host_data.
             try:
                 cur.execute(
