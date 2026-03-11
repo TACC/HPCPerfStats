@@ -20,6 +20,7 @@ from django.core.cache import cache
 from django.views.decorators.cache import cache_page
 
 from .cache_utils import (
+    KEY_ADMIN_CACHE_STATS,
     KEY_DATES,
     KEY_METRICS_DISTINCT,
     KEY_QUEUES,
@@ -33,6 +34,8 @@ from .cache_utils import (
     KEY_PROC_LIST,
     KEY_HOST_PLOT,
     cached_orm,
+    make_cache_key,
+    TIMEOUT_ADMIN_STATS,
     TIMEOUT_MEDIUM,
     TIMEOUT_SHORT,
     TIMEOUT_LONG,
@@ -155,16 +158,12 @@ def _require_auth(request):
     )
 
 
-_CACHE_STATS_KEY = "admin_monitor_cache_stats"
-_CACHE_STATS_TTL = 10  # seconds – keep Redis stats reasonably fresh without hammering Redis.
-
-
 def _get_cache_stats():
     """Return basic Redis/cache statistics for the admin monitor."""
     # First try to return a recently cached snapshot of the Redis stats so that
     # repeated admin monitor polls do not issue heavy INFO/SCAN calls.
     try:
-        cached_stats = cache.get(_CACHE_STATS_KEY)
+        cached_stats = cache.get(KEY_ADMIN_CACHE_STATS)
         if isinstance(cached_stats, dict):
             return cached_stats
     except Exception:
@@ -273,7 +272,7 @@ def _get_cache_stats():
     # Best-effort cache of the freshly gathered stats; if this fails we still
     # return the live snapshot.
     try:
-        cache.set(_CACHE_STATS_KEY, stats, timeout=_CACHE_STATS_TTL)
+        cache.set(KEY_ADMIN_CACHE_STATS, stats, timeout=TIMEOUT_ADMIN_STATS)
     except Exception:
         pass
 
@@ -1549,7 +1548,9 @@ def host_plot(request):
         except Exception:
             return None
 
-    cache_key = f"{KEY_HOST_PLOT}:{host_fqdn}:{start_dt.isoformat()}:{end_dt.isoformat()}"
+    cache_key = make_cache_key(
+        KEY_HOST_PLOT, host_fqdn, start_dt.isoformat(), end_dt.isoformat()
+    )
     plot_item = cached_orm(cache_key, TIMEOUT_SHORT, _host_plot_fn)
 
     return Response({

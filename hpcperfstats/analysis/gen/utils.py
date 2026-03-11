@@ -100,6 +100,7 @@ def get_job_host_data_and_job_dict(jid):
   from hpcperfstats.site.machine.cache_utils import (
     KEY_JOB_DICT,
     cached_orm,
+    make_cache_key,
     TIMEOUT_SHORT,
   )
   from hpcperfstats.site.machine.models import job_data
@@ -109,7 +110,9 @@ def get_job_host_data_and_job_dict(jid):
     job_row = job_data.objects.filter(jid=jid).values().first()
     return dict(job_row) if job_row is not None else None
 
-  job_dict = cached_orm(f"{KEY_JOB_DICT}:{jid}", TIMEOUT_SHORT, _job_dict_fn)
+  job_dict = cached_orm(
+      make_cache_key(KEY_JOB_DICT, jid), TIMEOUT_SHORT, _job_dict_fn
+  )
   if job_dict is None:
     return pd.DataFrame(), None
 

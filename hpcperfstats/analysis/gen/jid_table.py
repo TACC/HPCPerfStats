@@ -16,6 +16,7 @@ from hpcperfstats.site.machine.cache_utils import (
     KEY_TYPE_DETAIL_AGG,
     KEY_TYPE_DETAIL_HOST_TIME,
     cached_orm,
+    make_cache_key,
     TIMEOUT_SHORT,
 )
 from hpcperfstats.site.machine.models import host_data, job_data
@@ -73,7 +74,7 @@ class jid_table:
 
     try:
       job = cached_orm(
-          f"{KEY_JOB}:{jid}",
+          make_cache_key(KEY_JOB, jid),
           TIMEOUT_SHORT,
           lambda: job_data.objects.filter(jid=jid).only("host_list", "start_time", "end_time").first(),
       )
@@ -112,7 +113,7 @@ class jid_table:
     _st = self.start_time.isoformat() if self.start_time else ""
     _et = self.end_time.isoformat() if self.end_time else ""
     self.host_list = cached_orm(
-        f"{KEY_JOB_HOST_LIST}:{jid}:{_st}:{_et}",
+        make_cache_key(KEY_JOB_HOST_LIST, jid, _st, _et),
         TIMEOUT_SHORT,
         _host_list_fn,
     ) or []
@@ -132,7 +133,7 @@ class jid_table:
       return _queryset_to_dataframe(schema_qs)
 
     schema_df = cached_orm(
-        f"{KEY_JOB_SCHEMA}:{jid}:{self.host_list[0]}",
+        make_cache_key(KEY_JOB_SCHEMA, jid, self.host_list[0]),
         TIMEOUT_SHORT,
         _schema_fn,
     )
@@ -161,7 +162,7 @@ class jid_table:
           "host", "time"))
       return _queryset_to_dataframe(qs)
 
-    key = f"{KEY_HOST_TIME_DF}:{self.jid}"
+    key = make_cache_key(KEY_HOST_TIME_DF, self.jid)
     result = cached_orm(key, TIMEOUT_SHORT, _fn)
     return result if result is not None else _queryset_to_dataframe(None)
 
@@ -206,7 +207,7 @@ class jid_table:
         df["sum_val"] = df["sum_val"] * conv
       return df
 
-    key = f"{KEY_AGG_DF}:{self.jid}:{typ}:{val_col}:{events_key}"
+    key = make_cache_key(KEY_AGG_DF, self.jid, typ, val_col, events_key)
     result = cached_orm(key, TIMEOUT_SHORT, _fn)
     if result is not None:
       return result
@@ -234,7 +235,7 @@ class jid_table:
       )
       return _queryset_to_dataframe(qs)
 
-    key = f"{KEY_HOST_DATA_DF}:{self.jid}"
+    key = make_cache_key(KEY_HOST_DATA_DF, self.jid)
     result = cached_orm(key, TIMEOUT_SHORT, _fn)
     return result if result is not None else _queryset_to_dataframe(None)
 
@@ -251,7 +252,7 @@ class jid_table:
       ).values("event").annotate(delta_sum=Sum("delta")).order_by("event"))
       return _queryset_to_dataframe(qs)
 
-    key = f"{KEY_LLITE_DELTA}:{self.jid}"
+    key = make_cache_key(KEY_LLITE_DELTA, self.jid)
     result = cached_orm(key, TIMEOUT_SHORT, _llite_fn)
     return result if result is not None else _queryset_to_dataframe(None)
 
@@ -315,7 +316,9 @@ class TypeDetailDataProvider:
         """
     _st = self.start_time.isoformat() if self.start_time else ""
     _et = self.end_time.isoformat() if self.end_time else ""
-    key = f"{KEY_TYPE_DETAIL_HOST_TIME}:{self.jid}:{self.type_name}:{_st}:{_et}"
+    key = make_cache_key(
+        KEY_TYPE_DETAIL_HOST_TIME, self.jid, self.type_name, _st, _et
+    )
 
     def _fn():
       qs = (self._qs().values("host", "time").distinct().order_by("host", "time"))
@@ -358,7 +361,9 @@ class TypeDetailDataProvider:
       metric = "arc"
     _st = self.start_time.isoformat() if self.start_time else ""
     _et = self.end_time.isoformat() if self.end_time else ""
-    key = f"{KEY_TYPE_DETAIL_AGG}:{self.jid}:{self.type_name}:{event}:{metric}:{_st}:{_et}"
+    key = make_cache_key(
+        KEY_TYPE_DETAIL_AGG, self.jid, self.type_name, event, metric, _st, _et
+    )
 
     def _fn():
       sql = (
@@ -412,7 +417,7 @@ class HostDataProvider:
     # Schema: distinct (type, event) for this host (cached)
     _st = start_time.isoformat() if start_time else ""
     _et = end_time.isoformat() if end_time else ""
-    cache_key = f"{KEY_HOST_SCHEMA}:{host_fqdn}:{_st}:{_et}"
+    cache_key = make_cache_key(KEY_HOST_SCHEMA, host_fqdn, _st, _et)
 
     def _schema_fn():
       schema_qs = (host_data.objects.filter(**self._base_filter).values(

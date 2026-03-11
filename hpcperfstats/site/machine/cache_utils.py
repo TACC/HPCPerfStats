@@ -59,3 +59,14 @@ KEY_JOB_DICT = "job_dict"
 KEY_TYPE_DETAIL_HOST_TIME = "type_detail_host_time"
 KEY_TYPE_DETAIL_AGG = "type_detail_agg"
 KEY_HOST_SCHEMA = "host_schema"
+KEY_ADMIN_CACHE_STATS = "admin_monitor_cache_stats"
+
+# Admin monitor Redis stats: short TTL to avoid hammering Redis
+TIMEOUT_ADMIN_STATS = 10
+
+
+def make_cache_key(prefix: str, *parts) -> str:
+  """Build a cache key from a prefix and optional parts joined by ':'."""
+  if not parts:
+    return prefix
+  return ":".join([prefix] + [str(p) for p in parts])
