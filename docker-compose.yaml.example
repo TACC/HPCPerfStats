@@ -75,9 +75,14 @@ services:
     restart: always
     security_opt:
       - seccomp:unconfined
+    environment:
+      - RABBITMQ_DEFAULT_USER=hpcperfstats
+      - RABBITMQ_DEFAULT_PASS=admin
+      - RABBITMQ_DEFAULT_VHOST=/
     ports:
         - 5672:5672
-        # Management HTTP API / admin console
+        # Management HTTP API / admin console (don't expose this outside
+        # of the docker network)
         #- 15672:15672
     volumes:
         - rabbitmq_messages:/var/lib/rabbitmq/
