@@ -219,11 +219,14 @@ class jid_table:
         """
     cols = columns or ["host", "time", "type", "event", "value", "arc", "delta"]
     if columns is not None:
+      # Use a regular queryset without server-side cursors. Iterator() can
+      # trigger psycopg server cursor bugs (IndexError in _declare_gen) under
+      # heavy parallel load, and we convert the full queryset to a DataFrame
+      # anyway, so streaming provides little benefit here.
       qs = (
           self._host_data_qs()
           .values(*cols)
           .order_by("host", "time")
-          .iterator(chunk_size=10000)
       )
       return _queryset_to_dataframe(qs)
 
