@@ -27,8 +27,7 @@ def on_message(channel, method_frame, header_frame, body):
   """Callback for each message: decode body, determine host, write/append to host's current file and optionally rotate. Acknowledges the message.
 
     """
-  if DEBUG:
-    print("found message: %s" % header_frame)
+  print("found message: %s" % header_frame)
   try:
     message = body.decode(errors='replace')
   except:
@@ -83,8 +82,7 @@ def on_message(channel, method_frame, header_frame, body):
         queue=cfg.get_rmq_queue(), durable=True, passive=True)
     queue_depth = q.method.message_count
   except Exception as e:
-    if DEBUG:
-      print("Failed to get queue depth: %s" % e)
+    print("Failed to get queue depth: %s" % e)
 
   if queue_depth is not None:
     print(
@@ -150,8 +148,7 @@ with open(
           "Messages waiting to be consumed at startup: %d" %
           q.method.message_count)
     except Exception as e:
-      if DEBUG:
-        print("Failed to get startup queue depth: %s" % e)
+      print("Failed to get startup queue depth: %s" % e)
 
     channel.basic_consume(cfg.get_rmq_queue(), on_message)
     print("Begining Consume from queue: " + cfg.get_rmq_queue())
