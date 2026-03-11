@@ -331,7 +331,7 @@ def _get_timescaledb_stats():
                     SELECT
                         count(*) AS total_chunks,
                         count(*) FILTER (
-                            WHERE compression_status = 'Compressed'
+                            WHERE is_compressed
                         ) AS compressed_chunks
                     FROM timescaledb_information.chunks
                     """
@@ -357,15 +357,15 @@ def _get_timescaledb_stats():
                                     format('%I.%I', chunk_schema, chunk_name)
                                 )
                             ) FILTER (
-                                WHERE compression_status = 'Compressed'
+                                WHERE is_compressed
                             ) AS compressed_bytes,
                             sum(
                                 pg_total_relation_size(
                                     format('%I.%I', chunk_schema, chunk_name)
                                 )
                             ) FILTER (
-                                WHERE compression_status IS DISTINCT FROM 'Compressed'
-                                    OR compression_status IS NULL
+                                WHERE NOT is_compressed
+                                    OR is_compressed IS NULL
                             ) AS uncompressed_bytes
                         FROM timescaledb_information.chunks
                     )
