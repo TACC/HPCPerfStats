@@ -40,6 +40,7 @@ from .cache_utils import (
     TIMEOUT_SHORT,
     TIMEOUT_LONG,
 )
+from hpcperfstats.dbload.sync_acct import sync_acct_from_content
 from .models import ApiKey, host_data, job_data, metrics_data
 from .oauth2 import check_for_tokens
 from .query_utils import (
@@ -80,7 +81,7 @@ def _get_metric_hist_executor():
 from django.db.models import Count, Exists, OuterRef, Sum
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.utils import timezone as dj_timezone_utils
-from datetime import timedelta
+from datetime import datetime, timedelta
 from numpy import isnan
 from math import ceil
 
@@ -1648,3 +1649,66 @@ def admin_monitor(request):
     if section == "cache":
         return Response({"cache_stats": cache_stats})
     return Response({"host_stats": host_stats, "cache_stats": cache_stats})
+
+
+@api_view(["POST"])
+def sacct_ingest(request):
+    """Ingest pipe-delimited sacct output into job_data using sync_acct logic.
+
+    Requires authentication (API key or session) and staff. Request body must be
+    raw pipe-delimited sacct output (same format as sacct -P -o ...). Query
+    param date=YYYY-MM-DD is required (the date of the data being ingested) to
+    compute which jobs are already in the DB.
+    """
+    err = _require_auth(request)
+    if err is not None:
+        return err
+    if not request.session.get("is_staff", False):
+        return Response(
+            {"error": "Staff access required"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        body = request.body.decode("utf-8", errors="replace")
+    except Exception as e:
+        return Response(
+            {"error": "Invalid request body", "detail": str(e)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not body.strip():
+        return Response({"inserted": 0, "date": request.GET.get("date", "")})
+
+    date_str = (request.GET.get("date") or "").strip()
+    if not date_str:
+        return Response(
+            {"error": "Missing required query param: date=YYYY-MM-DD"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        ingest_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return Response(
+            {"error": "Invalid date; use date=YYYY-MM-DD"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    searchdate = ingest_date - timedelta(days=2)
+    jobs_in_db = set(
+        job_data.objects.filter(end_time__date__gte=searchdate)
+        .values_list("jid", flat=True)
+        .iterator(chunk_size=10000)
+    )
+
+    try:
+        inserted = sync_acct_from_content(body, jobs_in_db)
+    except Exception as e:
+        if settings.DEBUG:
+            raise
+        return Response(
+            {"error": "Ingest failed", "detail": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    return Response({"inserted": inserted, "date": date_str})

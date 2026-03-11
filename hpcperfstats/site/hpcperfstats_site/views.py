@@ -74,9 +74,9 @@ def api_key_page(request):
     <p>Signed in as: <strong>{username}</strong></p>
     <p>Your API key for programmatic access is:</p>
     <p><code>{key_obj.key}</code></p>
-    <p>Store this key securely. You can use it with the <code>jobstats_cli.py</code>
-    tool by setting the <code>HPCPERF_API_KEY</code> environment variable or passing
-    <code>--api-key</code> on the command line.</p>
+    <p>Store this key securely. You can use it with the <code>hpcperfstats-jobstats</code>
+    and <code>hpcperfstats-sacct-gen</code> tools (from the hpcperfstats-tools package)
+    by passing <code>--api-key</code> or using the cached key in <code>~/.hpcperfstats-api</code>.</p>
   </div>
 </body>
 </html>

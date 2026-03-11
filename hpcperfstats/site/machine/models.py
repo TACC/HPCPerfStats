@@ -187,7 +187,7 @@ class ApiKey(models.Model):
   """API key for programmatic access, bound to an authenticated username.
 
   Keys are created via an OAuth-protected web page and then used by external
-  tools (e.g. jobstats_cli.py) via the Authorization: Api-Key header.
+  tools (e.g. hpcperfstats-jobstats, hpcperfstats-sacct-gen) via the Authorization: Api-Key header.
   """
 
   key = models.CharField(max_length=64, primary_key=True)

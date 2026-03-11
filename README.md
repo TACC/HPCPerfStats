@@ -59,8 +59,7 @@ Additionally, in order to contextualize node-level data from the monitor package
 `JobID|User|Account|Start|End|Submit|Partition|Timelimit|JobName|State|NNodes|ReqCPUS|NodeList`
 `1837137|sharrell|project140208|2018-08-01T18:18:51|2018-08-02T11:44:51|2018-07-29T08:05:43|normal|1-00:00:00|jobname|COMPLETED|8|104|c420-[024,073],c421-[051-052,063-064,092-093]`
 
-If you are using SLURM the `sacct_gen.py` script that will be installed with the `hpcperfstats` subpackage may be used. 
-This script generates a file for each date with the name format `year-month-day.txt`, e.g. `2018-11-01.txt`.
+If you are using SLURM, use the `hpcperfstats-sacct-gen` command from the `hpcperfstats-tools` package. It runs sacct per day and POSTs the output to the API ingest endpoint.
 
 If you need to transfer this file accounting from another machine, please see the steps below for rsyncing data into the container data pipeline.
 

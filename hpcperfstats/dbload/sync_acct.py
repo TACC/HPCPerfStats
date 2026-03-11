@@ -2,6 +2,7 @@
 """Sync Slurm accounting (sacct) data into job_data. Reads pipe-delimited files, filters restricted queues and existing jobs, and bulk-inserts or falls back to per-row insert.
 
 """
+import io
 import os
 import sys
 import time
@@ -29,20 +30,37 @@ def _to_pydatetime_or_none(ts):
   return ts.to_pydatetime()
 
 
+COLUMNS_TO_READ = [
+    'JobID', 'User', 'Account', 'Start', 'End', 'Submit', 'Partition',
+    'Timelimit', 'JobName', 'State', 'NNodes', 'ReqCPUS', 'NodeList'
+]
+
+
+def sync_acct_from_content(content, jobs_in_db):
+  """Load accounting data from pipe-delimited string into job_data.
+
+  Same logic as sync_acct but accepts raw sacct output (e.g. from API or
+  subprocess). Returns the number of new job_data rows inserted.
+  """
+  if isinstance(content, bytes):
+    content = content.decode("utf-8", errors="replace")
+  if not content.strip():
+    return 0
+  df = read_csv(io.StringIO(content), sep='|', engine='python', on_bad_lines='skip')
+  return _sync_acct_dataframe(df, jobs_in_db)
+
+
 def sync_acct(acct_file, jobs_in_db):
   """Load accounting CSV from acct_file into job_data, skipping jobs already in jobs_in_db and those matching restricted_queue_keywords.
 
     """
-  # Junjie: ensure job name is treated as str.
-  data_types = {8: str}
+  with open(acct_file, "r", encoding="utf-8", errors="replace") as f:
+    return sync_acct_from_content(f.read(), jobs_in_db)
 
-  columns_to_read = [
-      'JobID', 'User', 'Account', 'Start', 'End', 'Submit', 'Partition',
-      'Timelimit', 'JobName', 'State', 'NNodes', 'ReqCPUS', 'NodeList'
-  ]
-  # Be tolerant of malformed lines (extra separators etc.); skip them.
-  df = read_csv(acct_file, sep='|', engine='python', on_bad_lines='skip')
 
+def _sync_acct_dataframe(df, jobs_in_db):
+  """Apply column filter, renames, filters, and insert into job_data. Returns count of new entries."""
+  columns_to_read = COLUMNS_TO_READ
   # cycle through collumns so we can remove those we don't want to import.
   for c in df:
     if c in columns_to_read:
@@ -114,7 +132,8 @@ def sync_acct(acct_file, jobs_in_db):
   df["host_list"] = df["host_list"].apply(hostlist.expand_hostlist)
   df["node_hrs"] = df["nhosts"] * df["runtime"] / 3600.
 
-  print("Total number of new entries:", df.shape[0])
+  n_new = df.shape[0]
+  print("Total number of new entries:", n_new)
 
   objs = [
       job_data(
@@ -137,9 +156,11 @@ def sync_acct(acct_file, jobs_in_db):
   ]
   try:
     job_data.objects.bulk_create(objs)
+    return n_new
   except Exception as e:
     print("error in bulk_create:", str(e))
     _insert_job_data_individually(df)
+    return n_new
 
 
 def _insert_job_data_individually(df):

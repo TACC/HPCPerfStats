@@ -13,4 +13,5 @@ urlpatterns = [
     path("jobs/<str:jid>/<str:type_name>/", api.type_detail),
     path("host_plot/", api.host_plot),
     path("admin_monitor/", api.admin_monitor),
+    path("sacct/ingest/", api.sacct_ingest),
 ]
