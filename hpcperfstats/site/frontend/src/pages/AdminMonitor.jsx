@@ -22,6 +22,7 @@ export default function AdminMonitor() {
   const [hostTimeExpanded, setHostTimeExpanded] = useState(false);
   const [cacheExpanded, setCacheExpanded] = useState(false);
   const [rabbitExpanded, setRabbitExpanded] = useState(false);
+  const [timescaledbExpanded, setTimescaledbExpanded] = useState(false);
   const [hostStats, setHostStats] = useState([]);
   const [hostLoading, setHostLoading] = useState(false);
   const [hostError, setHostError] = useState(null);
@@ -34,6 +35,10 @@ export default function AdminMonitor() {
   const [rabbitLoading, setRabbitLoading] = useState(false);
   const [rabbitError, setRabbitError] = useState(null);
   const [rabbitRequested, setRabbitRequested] = useState(false);
+  const [timescaledbStats, setTimescaledbStats] = useState(null);
+  const [timescaledbLoading, setTimescaledbLoading] = useState(false);
+  const [timescaledbError, setTimescaledbError] = useState(null);
+  const [timescaledbRequested, setTimescaledbRequested] = useState(false);
 
   // Lazily load host stats when the section is first expanded.
   useEffect(() => {
@@ -79,6 +84,21 @@ export default function AdminMonitor() {
       .catch((e) => setRabbitError(e.message))
       .finally(() => setRabbitLoading(false));
   }, [rabbitExpanded, rabbitRequested]);
+
+  // Lazily load TimescaleDB stats when the section is first expanded.
+  useEffect(() => {
+    if (!timescaledbExpanded || timescaledbRequested) return;
+    setTimescaledbRequested(true);
+    setTimescaledbLoading(true);
+    setTimescaledbError(null);
+    api
+      .getAdminMonitorSection("timescaledb")
+      .then((res) => {
+        setTimescaledbStats(res.timescaledb_stats || null);
+      })
+      .catch((e) => setTimescaledbError(e.message))
+      .finally(() => setTimescaledbLoading(false));
+  }, [timescaledbExpanded, timescaledbRequested]);
 
   const totalHosts = hostStats.length;
   const bucketCounts = hostStats.reduce(
@@ -167,6 +187,81 @@ export default function AdminMonitor() {
                 </tbody>
               </table>
             </>
+          )}
+        </div>
+      </div>
+
+      <div className="admin-monitor-section">
+        <button
+          type="button"
+          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          onClick={() => setTimescaledbExpanded((e) => !e)}
+          aria-expanded={timescaledbExpanded}
+          aria-controls="admin-monitor-timescaledb-stats"
+        >
+          <span className="admin-monitor-section-chevron" aria-hidden>
+            {timescaledbExpanded ? "▼" : "▶"}
+          </span>
+          TimescaleDB statistics
+        </button>
+        <div
+          id="admin-monitor-timescaledb-stats"
+          className="admin-monitor-section-body"
+          hidden={!timescaledbExpanded}
+          role="region"
+          aria-label="TimescaleDB statistics"
+        >
+          {timescaledbLoading && (
+            <LoadingMessage message="Loading TimescaleDB statistics…" />
+          )}
+          {timescaledbError && !timescaledbLoading && (
+            <div className="text-danger">
+              Error loading TimescaleDB stats: {timescaledbError}
+            </div>
+          )}
+          {!timescaledbLoading && !timescaledbError && timescaledbStats && (
+            <table className="table table-sm table-bordered">
+              <tbody>
+                {(() => {
+                  const LABELS = {
+                    database_name: "Database name",
+                    server_version: "PostgreSQL server version",
+                    timescaledb_version: "TimescaleDB extension version",
+                    hypertable_count: "Number of hypertables",
+                    chunk_count: "Total chunks",
+                    compressed_chunk_count: "Compressed chunks",
+                    host_data_row_estimate: "host_data row estimate",
+                    host_data_size_bytes: "host_data total size (bytes)",
+                    host_data_size_pretty: "host_data total size",
+                  };
+                  return Object.entries(LABELS)
+                    .filter(
+                      ([key]) =>
+                        timescaledbStats[key] !== null &&
+                        timescaledbStats[key] !== undefined
+                    )
+                    .map(([key, label]) => (
+                      <tr key={key}>
+                        <th scope="row">{label}</th>
+                        <td>{String(timescaledbStats[key])}</td>
+                      </tr>
+                    ));
+                })()}
+                {(!timescaledbStats ||
+                  Object.entries(timescaledbStats).filter(
+                    ([, value]) => value !== null && value !== undefined
+                  ).length === 0) && (
+                  <tr>
+                    <td colSpan="2" className="text-muted">
+                      No TimescaleDB statistics available.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
+          {!timescaledbLoading && !timescaledbError && !timescaledbStats && (
+            <div className="text-muted">No TimescaleDB statistics available.</div>
           )}
         </div>
       </div>

@@ -16,6 +16,7 @@ from rest_framework.response import Response
 
 from django.conf import settings
 from django.core.cache import cache
+from django.db import connection
 
 from django.views.decorators.cache import cache_page
 
@@ -25,6 +26,7 @@ from .cache_utils import (
     KEY_ADMIN_CACHE_STATS,
     KEY_ADMIN_RMQ_STATS,
     KEY_ADMIN_RMQ_SNAPSHOT,
+    KEY_ADMIN_TIMESCALE_STATS,
     KEY_DATES,
     KEY_METRICS_DISTINCT,
     KEY_QUEUES,
@@ -279,6 +281,107 @@ def _get_cache_stats():
 
     return stats
 
+
+def _get_timescaledb_stats():
+    """Return basic TimescaleDB/PostgreSQL statistics for the admin monitor."""
+    try:
+        cached_stats = cache.get(KEY_ADMIN_TIMESCALE_STATS)
+        if isinstance(cached_stats, dict):
+            return cached_stats
+    except Exception:
+        cached_stats = None
+
+    stats = {}
+
+    try:
+        with connection.cursor() as cur:
+            # Basic database/server info.
+            try:
+                cur.execute("SELECT current_database(), version()")
+                row = cur.fetchone()
+                if row:
+                    stats["database_name"] = row[0]
+                    stats["server_version"] = row[1]
+            except Exception:
+                pass
+
+            # TimescaleDB extension version, if installed.
+            try:
+                cur.execute(
+                    "SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'"
+                )
+                row = cur.fetchone()
+                if row:
+                    stats["timescaledb_version"] = row[0]
+            except Exception:
+                pass
+
+            # Hypertable and chunk counts (if TimescaleDB catalog is available).
+            try:
+                cur.execute("SELECT count(*) FROM timescaledb_information.hypertables")
+                row = cur.fetchone()
+                if row and row[0] is not None:
+                    stats["hypertable_count"] = int(row[0])
+            except Exception:
+                pass
+
+            try:
+                cur.execute(
+                    """
+                    SELECT
+                        count(*) AS total_chunks,
+                        count(*) FILTER (
+                            WHERE compression_status = 'Compressed'
+                        ) AS compressed_chunks
+                    FROM timescaledb_information.chunks
+                    """
+                )
+                row = cur.fetchone()
+                if row:
+                    total_chunks, compressed_chunks = row
+                    if total_chunks is not None:
+                        stats["chunk_count"] = int(total_chunks)
+                    if compressed_chunks is not None:
+                        stats["compressed_chunk_count"] = int(compressed_chunks)
+            except Exception:
+                pass
+
+            # Approximate size and row count for the primary hypertable host_data.
+            try:
+                cur.execute(
+                    """
+                    SELECT
+                        reltuples::bigint AS row_estimate,
+                        pg_total_relation_size(c.oid) AS total_bytes,
+                        pg_size_pretty(pg_total_relation_size(c.oid)) AS total_pretty
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'public'
+                      AND c.relname = 'host_data'
+                    LIMIT 1
+                    """
+                )
+                row = cur.fetchone()
+                if row:
+                    row_estimate, total_bytes, total_pretty = row
+                    if row_estimate is not None:
+                        stats["host_data_row_estimate"] = int(row_estimate)
+                    if total_bytes is not None:
+                        stats["host_data_size_bytes"] = int(total_bytes)
+                    if total_pretty is not None:
+                        stats["host_data_size_pretty"] = total_pretty
+            except Exception:
+                pass
+    except Exception:
+        # If anything goes wrong at the connection level, just return what we have.
+        pass
+
+    try:
+        cache.set(KEY_ADMIN_TIMESCALE_STATS, stats, timeout=TIMEOUT_ADMIN_STATS)
+    except Exception:
+        pass
+
+    return stats
 
 def _get_rabbitmq_stats():
     """Return basic RabbitMQ queue statistics for the admin monitor.
@@ -1694,13 +1797,14 @@ def host_plot(request):
 
 @api_view(["GET"])
 def admin_monitor(request):
-    """Staff-only: admin monitor data (host timestamps, cache/Redis, RabbitMQ stats).
+    """Staff-only: admin monitor data (host timestamps, cache/Redis, RabbitMQ, TimescaleDB stats).
 
     Supports a lightweight, per-section API via the optional 'section' query param:
-    - ?section=hosts    -> {"host_stats": [...]}
-    - ?section=cache    -> {"cache_stats": {...}}
-    - ?section=rabbitmq -> {"rabbitmq_stats": {...}}
-    - omitted/other     -> {"host_stats": [...], "cache_stats": {...}, "rabbitmq_stats": {...}}
+    - ?section=hosts      -> {"host_stats": [...]}
+    - ?section=cache      -> {"cache_stats": {...}}
+    - ?section=rabbitmq   -> {"rabbitmq_stats": {...}}
+    - ?section=timescaledb -> {"timescaledb_stats": {...}}
+    - omitted/other       -> {"host_stats": [...], "cache_stats": {...}, "rabbitmq_stats": {...}, "timescaledb_stats": {...}}
     """
     err = _require_auth(request)
     if err is not None:
@@ -1774,6 +1878,7 @@ def admin_monitor(request):
 
     cache_stats = _get_cache_stats()
     rabbitmq_stats = _get_rabbitmq_stats()
+    timescaledb_stats = _get_timescaledb_stats()
 
     section = (request.GET.get("section") or "").strip().lower()
     if section == "hosts":
@@ -1782,11 +1887,14 @@ def admin_monitor(request):
         return Response({"cache_stats": cache_stats})
     if section == "rabbitmq":
         return Response({"rabbitmq_stats": rabbitmq_stats})
+    if section == "timescaledb":
+        return Response({"timescaledb_stats": timescaledb_stats})
     return Response(
         {
             "host_stats": host_stats,
             "cache_stats": cache_stats,
             "rabbitmq_stats": rabbitmq_stats,
+            "timescaledb_stats": timescaledb_stats,
         }
     )
 
