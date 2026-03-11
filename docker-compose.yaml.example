@@ -75,10 +75,6 @@ services:
     restart: always
     security_opt:
       - seccomp:unconfined
-    environment:
-      - RABBITMQ_DEFAULT_USER=hpcperfstats
-      - RABBITMQ_DEFAULT_PASS=admin
-      - RABBITMQ_DEFAULT_VHOST=/
     ports:
         - 5672:5672
         # Management HTTP API / admin console (don't expose this outside
