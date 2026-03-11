@@ -76,8 +76,25 @@ def on_message(channel, method_frame, header_frame, body):
       if ts >= cutoff_10:
         count_last_10 += 1
 
-  print(
-        "Messages consumed in the last 10 minutes: %d" %
+  # Also report how many messages are currently waiting in the queue.
+  queue_depth = None
+  try:
+    q = channel.queue_declare(
+        queue=cfg.get_rmq_queue(), durable=True, passive=True)
+    queue_depth = q.method.message_count
+  except Exception as e:
+    if DEBUG:
+      print("Failed to get queue depth: %s" % e)
+
+  if queue_depth is not None:
+    print(
+        "Messages consumed in the last 10 minutes: %d; "
+        "messages waiting to be consumed: %d" %
+        (count_last_10, queue_depth))
+  else:
+    print(
+        "Messages consumed in the last 10 minutes: %d; "
+        "messages waiting to be consumed: unknown" %
         count_last_10)
 
   channel.basic_ack(delivery_tag=method_frame.delivery_tag)
@@ -125,6 +142,17 @@ with open(
 
     channel = connection.channel()
     channel.queue_declare(queue=cfg.get_rmq_queue(), durable=True)
+    # Report how many messages are waiting to be consumed at startup.
+    try:
+      q = channel.queue_declare(
+          queue=cfg.get_rmq_queue(), durable=True, passive=True)
+      print(
+          "Messages waiting to be consumed at startup: %d" %
+          q.method.message_count)
+    except Exception as e:
+      if DEBUG:
+        print("Failed to get startup queue depth: %s" % e)
+
     channel.basic_consume(cfg.get_rmq_queue(), on_message)
     print("Begining Consume from queue: " + cfg.get_rmq_queue())
     try:
