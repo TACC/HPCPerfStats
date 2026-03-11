@@ -143,15 +143,9 @@ def _require_auth(request):
         # Associate valid API-key clients with the username that created the key.
         session = request.session
         session["username"] = api_key_obj.username
-        # Determine staff status using same email-domain rule as OAuth login,
-        # if we have an email or an email-like username.
-        staff_email_domain = cfg.get_staff_email_domain()
-        email_like = session.get("email") or api_key_obj.username
-        is_staff = False
-        if email_like and "@" in email_like and staff_email_domain:
-            domain = email_like.split("@")[-1]
-            is_staff = (domain == staff_email_domain)
-        session["is_staff"] = is_staff
+        # For API keys, trust the is_staff flag stored on the key itself so that
+        # staff vs non-staff behavior is stable even outside of an OAuth session.
+        session["is_staff"] = bool(getattr(api_key_obj, "is_staff", False))
         session.setdefault("access_token", f"api-key:{api_key_obj.key}")
         return None
 

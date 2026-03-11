@@ -195,6 +195,7 @@ class ApiKey(models.Model):
   created_at = models.DateTimeField(auto_now_add=True)
   last_used_at = models.DateTimeField(null=True, blank=True)
   is_active = models.BooleanField(default=True)
+  is_staff = models.BooleanField(default=False)
 
   class Meta:
     db_table = "api_keys"

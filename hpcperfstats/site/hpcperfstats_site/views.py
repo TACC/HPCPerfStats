@@ -46,16 +46,24 @@ def api_key_page(request):
         return HttpResponseRedirect("/login_prompt?next=/api-key/")
 
     username = request.session.get("username") or "unknown"
-    # Reuse the most recent active key if one exists; otherwise create a new one
+    # Reuse the most recent active key if one exists; otherwise create a new one.
+    # Persist the user's staff status at key-creation time so API-key auth can
+    # reliably reproduce staff vs non-staff behavior without re-running the
+    # domain-based heuristic.
+    is_staff = bool(request.session.get("is_staff", False))
     key_obj = (
-        ApiKey.objects.filter(username=username, is_active=True)
+        ApiKey.objects.filter(username=username, is_active=True, is_staff=is_staff)
         .order_by("-created_at")
         .first()
     )
     if key_obj is None:
         # 32 bytes -> 43-44 URL-safe chars; store as hex for readability
         new_key = secrets.token_hex(32)
-        key_obj = ApiKey.objects.create(username=username, key=new_key)
+        key_obj = ApiKey.objects.create(
+            username=username,
+            key=new_key,
+            is_staff=is_staff,
+        )
 
     body = f"""<!DOCTYPE html>
 <html lang="en">
