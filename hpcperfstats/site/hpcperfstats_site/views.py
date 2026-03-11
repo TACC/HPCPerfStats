@@ -5,6 +5,7 @@ import secrets
 from django.conf import settings
 from django.http import HttpResponse, HttpResponseRedirect
 from django.views.generic import View
+from django.views.decorators.csrf import csrf_exempt
 
 from hpcperfstats.site.machine.models import ApiKey
 from hpcperfstats.site.machine.oauth2 import check_for_tokens
@@ -35,6 +36,7 @@ class ReactSPAView(View):
             return response
 
 
+@csrf_exempt
 def api_key_page(request):
     """Simple HTML page to create or view an API key for the logged-in user.
 
@@ -46,24 +48,38 @@ def api_key_page(request):
         return HttpResponseRedirect("/login_prompt?next=/api-key/")
 
     username = request.session.get("username") or "unknown"
-    # Reuse the most recent active key if one exists; otherwise create a new one.
     # Persist the user's staff status at key-creation time so API-key auth can
     # reliably reproduce staff vs non-staff behavior without re-running the
     # domain-based heuristic.
     is_staff = bool(request.session.get("is_staff", False))
-    key_obj = (
-        ApiKey.objects.filter(username=username, is_active=True, is_staff=is_staff)
-        .order_by("-created_at")
-        .first()
-    )
-    if key_obj is None:
-        # 32 bytes -> 43-44 URL-safe chars; store as hex for readability
+
+    if request.method == "POST":
+        # Invalidate all existing active keys for this (username, is_staff) pair
+        # and create a fresh one.
+        ApiKey.objects.filter(username=username, is_active=True, is_staff=is_staff).update(
+            is_active=False
+        )
         new_key = secrets.token_hex(32)
         key_obj = ApiKey.objects.create(
             username=username,
             key=new_key,
             is_staff=is_staff,
         )
+    else:
+        # Reuse the most recent active key if one exists; otherwise create a new one.
+        key_obj = (
+            ApiKey.objects.filter(username=username, is_active=True, is_staff=is_staff)
+            .order_by("-created_at")
+            .first()
+        )
+        if key_obj is None:
+            # 32 bytes -> 43-44 URL-safe chars; store as hex for readability
+            new_key = secrets.token_hex(32)
+            key_obj = ApiKey.objects.create(
+                username=username,
+                key=new_key,
+                is_staff=is_staff,
+            )
 
     body = f"""<!DOCTYPE html>
 <html lang="en">
@@ -85,6 +101,9 @@ def api_key_page(request):
     <p>Store this key securely. You can use it with the <code>hpcperfstats-jobstats</code>
     and <code>hpcperfstats-sacct-gen</code> tools (from the hpcperfstats-tools package)
     by passing <code>--api-key</code> or using the cached key in <code>~/.hpcperfstats-api</code>.</p>
+    <form method="post" style="margin-top: 1.5rem;">
+      n<button type="submit">Invalidate and Create New Key</button>
+    </form>
   </div>
 </body>
 </html>
