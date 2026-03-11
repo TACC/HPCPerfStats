@@ -4,6 +4,8 @@
 import os
 import sys
 import time
+from collections import deque
+from threading import Lock, Thread
 from fcntl import LOCK_EX, LOCK_NB, flock
 
 import pika
@@ -11,6 +13,14 @@ import pika
 import hpcperfstats.conf_parser as cfg
 
 DEBUG = cfg.get_debug()
+
+MESSAGE_WINDOW_SECONDS = 600  # 10 minutes
+IDLE_CHECK_INTERVAL = 60      # seconds
+
+_message_timestamps = deque()
+_timestamps_lock = Lock()
+_last_message_time = None
+_last_idle_report_time = None
 
 
 def on_message(channel, method_frame, header_frame, body):
@@ -50,7 +60,50 @@ def on_message(channel, method_frame, header_frame, body):
   with open(current_path, 'a') as fd:
     fd.write(message)
 
+  now = time.time()
+  with _timestamps_lock:
+    global _last_message_time
+    _last_message_time = now
+    _message_timestamps.append(now)
+    cutoff_window = now - MESSAGE_WINDOW_SECONDS
+    while _message_timestamps and _message_timestamps[0] < cutoff_window:
+      _message_timestamps.popleft()
+
+    # Count messages in the last 10 minutes using the 10-minute window.
+    cutoff_10 = now - MESSAGE_WINDOW_SECONDS
+    count_last_10 = 0
+    for ts in _message_timestamps:
+      if ts >= cutoff_10:
+        count_last_10 += 1
+
+  print(
+        "Messages consumed in the last 10 minutes: %d" %
+        count_last_10)
+
   channel.basic_ack(delivery_tag=method_frame.delivery_tag)
+
+
+
+def _idle_monitor():
+  """Periodically log if no messages have been consumed in the last 10 minutes."""
+  global _last_idle_report_time
+  while True:
+    time.sleep(IDLE_CHECK_INTERVAL)
+    now = time.time()
+    with _timestamps_lock:
+      last_msg = _last_message_time
+
+    if last_msg is None:
+      # No messages yet; treat startup as activity.
+      continue
+
+    idle_duration = now - last_msg
+    if idle_duration >= MESSAGE_WINDOW_SECONDS:
+      # Only report once per 10-minute idle window.
+      if (_last_idle_report_time is None or
+          (now - _last_idle_report_time) >= MESSAGE_WINDOW_SECONDS):
+        _last_idle_report_time = now
+        print("No messages consumed in the last 10 minutes")
 
 
 with open(
@@ -62,11 +115,14 @@ with open(
     print("listend is already running")
     sys.exit()
 
-  if DEBUG:
-    print("Starting Connection")
+  print("Starting Connection")
   parameters = pika.ConnectionParameters(cfg.get_rmq_server())
   connection = pika.BlockingConnection(parameters)
   try:
+    # Start idle monitor thread before consuming.
+    idle_thread = Thread(target=_idle_monitor, daemon=True)
+    idle_thread.start()
+
     channel = connection.channel()
     channel.queue_declare(queue=cfg.get_rmq_queue(), durable=True)
     channel.basic_consume(cfg.get_rmq_queue(), on_message)
