@@ -27,7 +27,7 @@ RUN apt-get update -y  && \
 # install nodejs react dependencies and build the frontend
 RUN cd hpcperfstats/site/frontend && npm install && \
     npm run build && cd .. && rm -rf hpcperfstats/site/frontend  && \
-    apt-get remove -y npm nodejs && apt-get clean
+    apt-get remove -y npm nodejs && apt autoremove -y && apt-get clean
 
 # Set python install variables
 ENV PYTHONDONTWRITEBYTECODE 1
