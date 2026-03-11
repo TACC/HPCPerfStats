@@ -223,6 +223,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 |------|---------|
 | PostgreSQL shell | `docker exec -it hpcperfstats_db_1 psql -h localhost -U hpcperfstats` |
 | Pipeline shell (data/processing) | `docker exec -it hpcperfstats_pipeline_1 su hpcperfstats` |
+| Get queues and message counts from rabbitmq | `docker exec -it hpcperfstats_rabbitmq_1 rabbitmqctl list_queues` |
 
 ---
 
