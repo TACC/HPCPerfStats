@@ -19,8 +19,12 @@ from django.core.cache import cache
 
 from django.views.decorators.cache import cache_page
 
+import os
+
 from .cache_utils import (
     KEY_ADMIN_CACHE_STATS,
+    KEY_ADMIN_RMQ_STATS,
+    KEY_ADMIN_RMQ_SNAPSHOT,
     KEY_DATES,
     KEY_METRICS_DISTINCT,
     KEY_QUEUES,
@@ -270,6 +274,136 @@ def _get_cache_stats():
     # return the live snapshot.
     try:
         cache.set(KEY_ADMIN_CACHE_STATS, stats, timeout=TIMEOUT_ADMIN_STATS)
+    except Exception:
+        pass
+
+    return stats
+
+
+def _get_rabbitmq_stats():
+    """Return basic RabbitMQ queue statistics for the admin monitor.
+
+    Uses the RabbitMQ Management HTTP API if available. The management base URL and
+    credentials can be overridden via environment variables:
+      - RABBITMQ_MANAGEMENT_URL (default: http://<rmq_server>:15672)
+      - RABBITMQ_MANAGEMENT_USER (default: guest)
+      - RABBITMQ_MANAGEMENT_PASSWORD (default: guest)
+
+    The "messages in the last day" counter is approximated from deltas of cumulative
+    publish counters between snapshots stored in the cache.
+    """
+    try:
+        cached_stats = cache.get(KEY_ADMIN_RMQ_STATS)
+        if isinstance(cached_stats, dict):
+            return cached_stats
+    except Exception:
+        cached_stats = None
+
+    stats = {}
+
+    # Import requests lazily so that a missing dependency does not break startup.
+    try:
+        import requests  # type: ignore
+    except Exception:
+        return stats
+
+    try:
+        rmq_host = cfg.get_rmq_server()
+        rmq_queue = cfg.get_rmq_queue()
+    except Exception:
+        return stats
+
+    base_url = os.environ.get("RABBITMQ_MANAGEMENT_URL", f"http://{rmq_host}:15672")
+    user = os.environ.get("RABBITMQ_MANAGEMENT_USER", "guest")
+    password = os.environ.get("RABBITMQ_MANAGEMENT_PASSWORD", "guest")
+
+    url = f"{base_url.rstrip('/')}/api/queues/%2F/{rmq_queue}"
+
+    try:
+        resp = requests.get(url, auth=(user, password), timeout=5)
+    except Exception as e:
+        stats["error"] = f"Failed to connect to RabbitMQ management API: {e}"
+    else:
+        if resp.status_code != 200:
+            stats["error"] = f"RabbitMQ management API returned HTTP {resp.status_code}"
+        else:
+            try:
+                data = resp.json()
+            except Exception as e:
+                stats["error"] = f"Failed to decode RabbitMQ management API response: {e}"
+                data = {}
+
+            stats["queue"] = rmq_queue
+            stats["messages"] = data.get("messages")
+            stats["messages_ready"] = data.get("messages_ready")
+            stats["messages_unacknowledged"] = data.get("messages_unacknowledged")
+            stats["consumers"] = data.get("consumers")
+
+            # Approximate sizes in bytes (if the management plugin exposes them).
+            stats["message_bytes"] = data.get("message_bytes")
+            stats["message_bytes_ready"] = data.get("message_bytes_ready")
+            stats["message_bytes_unacknowledged"] = data.get(
+                "message_bytes_unacknowledged"
+            )
+
+            msg_stats = data.get("message_stats") or {}
+            publish_total = msg_stats.get("publish")
+            deliver_total = msg_stats.get("deliver_get")
+            if publish_total is not None:
+                stats["messages_published_total"] = publish_total
+            if deliver_total is not None:
+                stats["messages_delivered_total"] = deliver_total
+
+            # Use cached snapshot of cumulative publish counter to approximate
+            # messages published over the last interval and scale to ~24h.
+            now = dj_timezone_utils.now()
+            snapshot = None
+            try:
+                snapshot = cache.get(KEY_ADMIN_RMQ_SNAPSHOT)
+            except Exception:
+                snapshot = None
+
+            if isinstance(snapshot, dict):
+                ts = snapshot.get("timestamp")
+                prev_publish = snapshot.get("publish")
+                try:
+                    if ts is not None and prev_publish is not None:
+                        prev_time = datetime.fromisoformat(ts)
+                        if prev_time.tzinfo is None:
+                            prev_time = timezone.make_aware(prev_time, dt_timezone.utc)
+                        delta = now - prev_time
+                        hours = delta.total_seconds() / 3600.0
+                        if hours > 0 and publish_total is not None:
+                            since_snapshot = max(
+                                0, int(publish_total - int(prev_publish))
+                            )
+                            stats["messages_published_since_snapshot"] = since_snapshot
+                            stats["snapshot_hours"] = round(hours, 2)
+                            # Scale to a 24h estimate based on the observed window.
+                            rate_per_hour = since_snapshot / hours
+                            stats["messages_published_last_24h_estimate"] = int(
+                                rate_per_hour * 24.0
+                            )
+                except Exception:
+                    # If anything goes wrong with the snapshot math, just skip the
+                    # derived counters and fall back to cumulative totals.
+                    pass
+
+            # Store a fresh snapshot of the cumulative publish counter.
+            try:
+                cache.set(
+                    KEY_ADMIN_RMQ_SNAPSHOT,
+                    {
+                        "timestamp": now.isoformat(),
+                        "publish": publish_total,
+                    },
+                    timeout=2 * 24 * 3600,
+                )
+            except Exception:
+                pass
+
+    try:
+        cache.set(KEY_ADMIN_RMQ_STATS, stats, timeout=TIMEOUT_ADMIN_STATS)
     except Exception:
         pass
 
@@ -1560,12 +1694,13 @@ def host_plot(request):
 
 @api_view(["GET"])
 def admin_monitor(request):
-    """Staff-only: admin monitor data (host timestamps, cache/Redis stats).
+    """Staff-only: admin monitor data (host timestamps, cache/Redis, RabbitMQ stats).
 
     Supports a lightweight, per-section API via the optional 'section' query param:
-    - ?section=hosts -> {"host_stats": [...]}
-    - ?section=cache -> {"cache_stats": {...}}
-    - omitted/other  -> {"host_stats": [...], "cache_stats": {...}}
+    - ?section=hosts    -> {"host_stats": [...]}
+    - ?section=cache    -> {"cache_stats": {...}}
+    - ?section=rabbitmq -> {"rabbitmq_stats": {...}}
+    - omitted/other     -> {"host_stats": [...], "cache_stats": {...}, "rabbitmq_stats": {...}}
     """
     err = _require_auth(request)
     if err is not None:
@@ -1638,13 +1773,22 @@ def admin_monitor(request):
         })
 
     cache_stats = _get_cache_stats()
+    rabbitmq_stats = _get_rabbitmq_stats()
 
     section = (request.GET.get("section") or "").strip().lower()
     if section == "hosts":
         return Response({"host_stats": host_stats})
     if section == "cache":
         return Response({"cache_stats": cache_stats})
-    return Response({"host_stats": host_stats, "cache_stats": cache_stats})
+    if section == "rabbitmq":
+        return Response({"rabbitmq_stats": rabbitmq_stats})
+    return Response(
+        {
+            "host_stats": host_stats,
+            "cache_stats": cache_stats,
+            "rabbitmq_stats": rabbitmq_stats,
+        }
+    )
 
 
 @api_view(["POST"])

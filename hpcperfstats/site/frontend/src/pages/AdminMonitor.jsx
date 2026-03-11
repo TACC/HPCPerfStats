@@ -21,6 +21,7 @@ const ROW_CLASS = {
 export default function AdminMonitor() {
   const [hostTimeExpanded, setHostTimeExpanded] = useState(false);
   const [cacheExpanded, setCacheExpanded] = useState(false);
+  const [rabbitExpanded, setRabbitExpanded] = useState(false);
   const [hostStats, setHostStats] = useState([]);
   const [hostLoading, setHostLoading] = useState(false);
   const [hostError, setHostError] = useState(null);
@@ -29,6 +30,10 @@ export default function AdminMonitor() {
   const [cacheLoading, setCacheLoading] = useState(false);
   const [cacheError, setCacheError] = useState(null);
   const [cacheRequested, setCacheRequested] = useState(false);
+  const [rabbitStats, setRabbitStats] = useState(null);
+  const [rabbitLoading, setRabbitLoading] = useState(false);
+  const [rabbitError, setRabbitError] = useState(null);
+  const [rabbitRequested, setRabbitRequested] = useState(false);
 
   // Lazily load host stats when the section is first expanded.
   useEffect(() => {
@@ -59,6 +64,21 @@ export default function AdminMonitor() {
       .catch((e) => setCacheError(e.message))
       .finally(() => setCacheLoading(false));
   }, [cacheExpanded, cacheRequested]);
+
+  // Lazily load RabbitMQ stats when the section is first expanded.
+  useEffect(() => {
+    if (!rabbitExpanded || rabbitRequested) return;
+    setRabbitRequested(true);
+    setRabbitLoading(true);
+    setRabbitError(null);
+    api
+      .getAdminMonitorSection("rabbitmq")
+      .then((res) => {
+        setRabbitStats(res.rabbitmq_stats || null);
+      })
+      .catch((e) => setRabbitError(e.message))
+      .finally(() => setRabbitLoading(false));
+  }, [rabbitExpanded, rabbitRequested]);
 
   const totalHosts = hostStats.length;
   const bucketCounts = hostStats.reduce(
@@ -202,6 +222,95 @@ export default function AdminMonitor() {
           {!cacheLoading && !cacheError && (!cacheStats || Object.keys(cacheStats).length === 0) && (
             <div className="text-muted">No cache statistics available.</div>
           )}
+        </div>
+      </div>
+
+      <div className="admin-monitor-section">
+        <button
+          type="button"
+          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          onClick={() => setRabbitExpanded((e) => !e)}
+          aria-expanded={rabbitExpanded}
+          aria-controls="admin-monitor-rabbitmq-stats"
+        >
+          <span className="admin-monitor-section-chevron" aria-hidden>
+            {rabbitExpanded ? "▼" : "▶"}
+          </span>
+          RabbitMQ statistics
+        </button>
+        <div
+          id="admin-monitor-rabbitmq-stats"
+          className="admin-monitor-section-body"
+          hidden={!rabbitExpanded}
+          role="region"
+          aria-label="RabbitMQ statistics"
+        >
+          {rabbitLoading && (
+            <LoadingMessage message="Loading RabbitMQ statistics…" />
+          )}
+          {rabbitError && !rabbitLoading && (
+            <div className="text-danger">
+              Error loading RabbitMQ stats: {rabbitError}
+            </div>
+          )}
+          {!rabbitLoading && !rabbitError && rabbitStats && (
+            <>
+              {rabbitStats.error && (
+                <div className="text-danger mb-2">
+                  RabbitMQ reported an error: {rabbitStats.error}
+                </div>
+              )}
+              <table className="table table-sm table-bordered">
+                <tbody>
+                  {(() => {
+                    const LABELS = {
+                      queue: "Queue",
+                      messages: "Total messages (ready + unacked)",
+                      messages_ready: "Messages ready",
+                      messages_unacknowledged: "Messages unacknowledged",
+                      consumers: "Consumers",
+                      message_bytes: "Total bytes (all messages)",
+                      message_bytes_ready: "Bytes for ready messages",
+                      message_bytes_unacknowledged:
+                        "Bytes for unacknowledged messages",
+                      messages_published_total:
+                        "Messages published (total since broker start)",
+                      messages_delivered_total:
+                        "Messages delivered/consumed (total since broker start)",
+                      messages_published_since_snapshot:
+                        "Messages published since previous snapshot",
+                      snapshot_hours: "Hours covered by previous snapshot window",
+                      messages_published_last_24h_estimate:
+                        "Approx. messages published in last 24 hours",
+                    };
+                    return Object.entries(rabbitStats)
+                      .filter(([key, value]) => key in LABELS && value !== null && value !== undefined)
+                      .map(([key, value]) => (
+                        <tr key={key}>
+                          <th scope="row">{LABELS[key]}</th>
+                          <td>{String(value)}</td>
+                        </tr>
+                      ));
+                  })()}
+                  {(!rabbitStats ||
+                    Object.entries(rabbitStats).filter(
+                      ([key, value]) => value !== null && value !== undefined
+                    ).length === 0) && (
+                    <tr>
+                      <td colSpan="2" className="text-muted">
+                        No RabbitMQ statistics available.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </>
+          )}
+          {!rabbitLoading &&
+            !rabbitError &&
+            !rabbitStats && (
+              <div className="text-muted">No RabbitMQ statistics available.</div>
+            )}
         </div>
       </div>
     </>

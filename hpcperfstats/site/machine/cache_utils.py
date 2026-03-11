@@ -60,8 +60,10 @@ KEY_TYPE_DETAIL_HOST_TIME = "type_detail_host_time"
 KEY_TYPE_DETAIL_AGG = "type_detail_agg"
 KEY_HOST_SCHEMA = "host_schema"
 KEY_ADMIN_CACHE_STATS = "admin_monitor_cache_stats"
+KEY_ADMIN_RMQ_STATS = "admin_monitor_rmq_stats"
+KEY_ADMIN_RMQ_SNAPSHOT = "admin_monitor_rmq_snapshot"
 
-# Admin monitor Redis stats: short TTL to avoid hammering Redis
+# Admin monitor Redis/RabbitMQ stats: short TTL to avoid hammering backends
 TIMEOUT_ADMIN_STATS = 10
 
 

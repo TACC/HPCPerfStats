@@ -69,15 +69,16 @@ services:
       - POSTGRES_PASSWORD=hpcperfstats
 
   rabbitmq:
-    image: rabbitmq:4-alpine
+    # Use the management-enabled image so the HTTP API is available.
+    image: rabbitmq:4-management-alpine
     container_name: hpcperfstats_rabbitmq_1
     restart: always
     security_opt:
       - seccomp:unconfined
     ports:
         - 5672:5672
-    # Admin Console
-    #    - 15672:15672
+        # Management HTTP API / admin console
+        #- 15672:15672
     volumes:
         - rabbitmq_messages:/var/lib/rabbitmq/
         - /var/log/rabbitmq:/var/log/rabbitmq
