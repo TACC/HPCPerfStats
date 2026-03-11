@@ -295,11 +295,13 @@ LOGGING = {
             'handlers': ['metrics'],
             'level': 'INFO',
         },
-        # Do not log DisallowedHost exceptions; Django will still return 400.
-        'django.security.DisallowedHost': {
-            'handlers': ['null'],
-            'level': 'ERROR',
-            'propagate': False,
-        },
     },
 }
+
+# Only suppress DisallowedHost logging in non-DEBUG environments
+if not DEBUG:
+    LOGGING['loggers']['django.security.DisallowedHost'] = {
+        'handlers': ['null'],
+        'level': 'ERROR',
+        'propagate': False,
+    }
