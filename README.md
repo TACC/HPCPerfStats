@@ -116,7 +116,8 @@ Example:
 1837137|sharrell|project140208|2018-08-01T18:18:51|2018-08-02T11:44:51|2018-07-29T08:05:43|normal|1-00:00:00|jobname|COMPLETED|8|104|c420-[024,073],c421-[051-052,063-064,092-093]
 ```
 
-- **SLURM users:** Use `hpcperfstats-sacct-gen` from the **hpcperfstats-tools** package; it runs `sacct` per day and POSTs to the API ingest.
+- **SLURM users:** Use `hpcperfstats-sacct-gen` from the **hpcperfstats-tools** package; it runs `sacct` per day and POSTS to the API ingest.
+- The generated accounting files are named by date as `YYYY-MM-DD.txt` (for example, `2018-11-01.txt`).
 - To transfer accounting from another machine, see the rsync steps in the container pipeline section below.
 
 ---
@@ -161,8 +162,12 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    ```bash
    sudo mkdir -p /opt/hpcperfstats_data
+   sudo mkdir -p /opt/hpcperfstats_data/accounting
+   sudo mkdir -p /opt/hpcperfstats_data/archive
    sudo mkdir -p /opt/hpcperfstats_log
    ```
+
+   The host paths you configure must match the container paths used in `docker-compose.yaml` (for example `/hpcperfstats_data/accounting`, `/hpcperfstats_data/archive`, and `/hpcperfstats_log` inside the container).
 
 5. **Application config:**
 
@@ -183,7 +188,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    cp services-conf/rsync_data.sh.example services-conf/rsync_data.sh
    ```
 
-   Edit `rsync_data.sh` for your site. Use it to rsync/scp the daily accounting file (e.g. `2018-03-03.txt`) into the container at `/hpcperfstats/accounting/`.
+   Edit `rsync_data.sh` for your site.
 
 7. **Web server (nginx):**
 
@@ -213,7 +218,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo docker compose logs
    ```
 
-   The site will be up but may error until the accounting ingest is configured.
+   If you change the codebase, bring the containers down, make your changes, and then rebuild and start the stack again.
 
 ---
 
@@ -221,6 +226,9 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
 | Task | Command |
 |------|---------|
+| Build and start container stack | `sudo docker compose up --build -d` |
+| Stop and remove containers | `sudo docker compose down` |
+| View logs  | `sudo docker compose logs` |
 | PostgreSQL shell | `docker exec -it hpcperfstats_db_1 psql -h localhost -U hpcperfstats` |
 | Pipeline shell (data/processing) | `docker exec -it hpcperfstats_pipeline_1 su hpcperfstats` |
 | Get queues and message counts from rabbitmq | `docker exec -it hpcperfstats_rabbitmq_1 rabbitmqctl list_queues` |
