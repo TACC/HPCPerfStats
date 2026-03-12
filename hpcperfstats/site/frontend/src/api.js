@@ -81,6 +81,7 @@ export const api = {
     request("/host_plot/?" + new URLSearchParams(params).toString()),
   getAdminMonitorSection: (section) =>
     request(`/admin_monitor/?section=${encodeURIComponent(section)}`),
+  getJobMonitor: () => request("/job_monitor/"),
 };
 
 export default api;

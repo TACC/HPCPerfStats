@@ -84,7 +84,7 @@ def _get_metric_hist_executor():
     if _metric_hist_executor is None:
         _metric_hist_executor = ThreadPoolExecutor(max_workers=8)
     return _metric_hist_executor
-from django.db.models import Count, Exists, OuterRef, Sum
+from django.db.models import Count, Exists, OuterRef, Sum, Q, F, FloatField, ExpressionWrapper
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.utils import timezone as dj_timezone_utils
 from datetime import datetime, timedelta
@@ -1956,6 +1956,73 @@ def admin_monitor(request):
             "cache_stats": cache_stats,
             "rabbitmq_stats": rabbitmq_stats,
             "timescaledb_stats": timescaledb_stats,
+        }
+    )
+
+
+@cache_page(TIMEOUT_SHORT)
+@api_view(["GET"])
+def job_monitor(request):
+    """Staff-only: aggregate job failure statistics per user for the last 30 days.
+
+    Returns rows of:
+    - username
+    - total_jobs: number of jobs run
+    - failed_jobs: number of jobs with state OUT_OF_MEMORY or FAILED
+    - failed_rate: percentage of failed jobs (0–100), sorted descending.
+    """
+    err = _require_auth(request)
+    if err is not None:
+        return err
+    if not request.session.get("is_staff", False):
+        return Response(
+            {"error": "Staff access required"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    window_days = 30
+    now = dj_timezone_utils.now()
+    start_time = now - timedelta(days=window_days)
+
+    base_qs = job_data.objects.filter(end_time__gte=start_time)
+    stats_qs = (
+        base_qs.values("username")
+        .annotate(
+            total_jobs=Count("jid"),
+            failed_jobs=Count(
+                "jid",
+                filter=Q(state__in=["FAILED", "OUT_OF_MEMORY"]),
+            ),
+        )
+        .annotate(
+            failed_rate=ExpressionWrapper(
+                100.0 * F("failed_jobs") / F("total_jobs"),
+                output_field=FloatField(),
+            )
+        )
+        .order_by("-failed_rate", "username")
+    )
+
+    rows = []
+    for row in stats_qs:
+        total = int(row.get("total_jobs") or 0)
+        failed = int(row.get("failed_jobs") or 0)
+        rate = float(row.get("failed_rate") or 0.0)
+        rows.append(
+            {
+                "username": row.get("username") or "",
+                "total_jobs": total,
+                "failed_jobs": failed,
+                "failed_rate": round(rate, 2),
+            }
+        )
+
+    return Response(
+        {
+            "window_days": window_days,
+            "start_time": start_time.isoformat(),
+            "end_time": now.isoformat(),
+            "results": rows,
         }
     )
 

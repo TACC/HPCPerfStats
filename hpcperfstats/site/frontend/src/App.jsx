@@ -9,6 +9,7 @@ import JobDetail from "./pages/JobDetail";
 import TypeDetail from "./pages/TypeDetail";
 import HostDetail from "./pages/HostDetail";
 import AdminMonitor from "./pages/AdminMonitor";
+import JobMonitor from "./pages/JobMonitor";
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -47,6 +48,7 @@ export default function App() {
         <Route path="job/:jid/:typeName" element={<TypeDetail />} />
         <Route path="host/:host/plot" element={<HostDetail />} />
         <Route path="admin_monitor" element={<AdminMonitor />} />
+        <Route path="job_monitor" element={<JobMonitor />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
