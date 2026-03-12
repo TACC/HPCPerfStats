@@ -8,6 +8,8 @@ export default function JobMonitor() {
   const [inputDays, setInputDays] = useState("30");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [sortKey, setSortKey] = useState("failed_rate");
+  const [sortDir, setSortDir] = useState("desc"); // "asc" | "desc"
 
   const loadData = (daysOverride) => {
     setLoading(true);
@@ -29,6 +31,36 @@ export default function JobMonitor() {
     loadData(undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleSort = (key) => {
+    setSortKey((currentKey) => {
+      if (currentKey === key) {
+        setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
+        return currentKey;
+      }
+      setSortDir("desc");
+      return key;
+    });
+  };
+
+  const sortedRows = [...rows].sort((a, b) => {
+    const getVal = (row, key) => {
+      if (key === "username") {
+        return (row.username || "").toLowerCase();
+      }
+      return Number(row[key] ?? 0);
+    };
+    const av = getVal(a, sortKey);
+    const bv = getVal(b, sortKey);
+    if (av < bv) return sortDir === "asc" ? -1 : 1;
+    if (av > bv) return sortDir === "asc" ? 1 : -1;
+    // Tiebreaker by username
+    const au = (a.username || "").toLowerCase();
+    const bu = (b.username || "").toLowerCase();
+    if (au < bu) return -1;
+    if (au > bu) return 1;
+    return 0;
+  });
 
   return (
     <>
@@ -85,14 +117,52 @@ export default function JobMonitor() {
           <table className="table table-sm table-bordered">
             <thead>
               <tr>
-                <th>User</th>
-                <th>Number of jobs</th>
-                <th>Number of failed jobs</th>
-                <th>% failed</th>
+                <th
+                  role="button"
+                  onClick={() => handleSort("username")}
+                >
+                  User
+                  {sortKey === "username" && (sortDir === "asc" ? " ▲" : " ▼")}
+                </th>
+                <th
+                  role="button"
+                  onClick={() => handleSort("total_jobs")}
+                >
+                  Number of jobs
+                  {sortKey === "total_jobs" && (sortDir === "asc" ? " ▲" : " ▼")}
+                </th>
+                <th
+                  role="button"
+                  onClick={() => handleSort("failed_jobs")}
+                >
+                  Number of failed jobs
+                  {sortKey === "failed_jobs" && (sortDir === "asc" ? " ▲" : " ▼")}
+                </th>
+                <th
+                  role="button"
+                  onClick={() => handleSort("failed_rate")}
+                >
+                  % failed
+                  {sortKey === "failed_rate" && (sortDir === "asc" ? " ▲" : " ▼")}
+                </th>
+                <th
+                  role="button"
+                  onClick={() => handleSort("timedout_jobs")}
+                >
+                  Number of timed out jobs
+                  {sortKey === "timedout_jobs" && (sortDir === "asc" ? " ▲" : " ▼")}
+                </th>
+                <th
+                  role="button"
+                  onClick={() => handleSort("timedout_rate")}
+                >
+                  % timed out
+                  {sortKey === "timedout_rate" && (sortDir === "asc" ? " ▲" : " ▼")}
+                </th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {sortedRows.map((row) => (
                 <tr key={row.username || "(unknown)"}>
                   <td>{row.username || "(unknown)"}</td>
                   <td>{row.total_jobs}</td>
@@ -112,7 +182,7 @@ export default function JobMonitor() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan="4" className="text-center text-muted">
+                  <td colSpan="6" className="text-center text-muted">
                     No jobs found in the selected time window.
                   </td>
                 </tr>
