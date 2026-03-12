@@ -8,9 +8,11 @@ The hpcperfstats package provides the tools to monitor resource usage of HPC sys
 
 [Collected Data Definitions](docs/attributes-definition.md)
 
-The package is split into an `autotools`-based `monitor` subpackage and a Python `setuptools`-based `hpcperfstats` subpackage. The `monitor` performs the online data collection and transmisson in a production environment while `hpcperfstats` performs the data curation and analysis apart from the HPC cluster.
+The package is split into two subpackages:
+1. `Monitor` subpackage - based on `autotools`, performs the online data collection and transmisson in a production environment.
+2. `Hpcperfstats` subpackage - based on Python `setuptools`, performs the data curation and analysis apart from the HPC cluster.
 
-Building and installing the `hpcperfstats-2.4-1.el9.x86_64.rpm` package with the `hpcperfstats.spec` file will build and install a systemd service `hpcperfstats`.  This service launches a daemon with an overhead of 3% on a single core when configured to sample at a frequency of 1Hz.  It is typically configured to sample at 5 minute intervals, with samples taken at the start and end of every job as well. The HPCPerfStats daemon, `hpcperfstatsd`, is controlled by the `hpcperfstats` service and sends the data directly to a RabbitMQ server over the administrative ethernet network.  RabbitMQ must be installed and running on the server in order for the data to be received.
+Building and installing the `hpcperfstats-2.4-1.el9.x86_64.rpm` package with the `hpcperfstats.spec` file will build and install a systemd service `hpcperfstats`. This service launches a daemon with an overhead of 3% on a single core when configured to sample at a frequency of 1Hz.  It is typically configured to sample at 5 minute intervals, with samples taken at the start and end of every job as well. The HPCPerfStats daemon, `hpcperfstatsd`, is controlled by the `hpcperfstats` service and sends the data directly to a RabbitMQ server over the administrative ethernet network.  RabbitMQ must be installed and running on the server in order for the data to be received.
 
 Installing the `hpcperfstats` container orchestration will setup a Django/PostgresGRE data ingest and archival tools, and a rabbitmq server to recieve data from the `monitor` on the nodes.
 
@@ -18,11 +20,12 @@ Installation
 ======
 ## `monitor` subpackage
 
-First ensure the RabbitMQ library and header file are installed on the build and compute nodes
+First ensure the RabbitMQ library and header file are installed on the compute nodes.
 
 `sudo dnf install librabbitmq-devel`
 
-`./configure; make; make install` will then successfully build the `hpcperfstatsd` executable for many systems.  If Xeon Phi coprocessors are present on your system they can be monitored with the `--enable-mic` flag.  Additionally the configuration options, `--disable-infiniband`, `--disable-lustre`, `--disable-hardware` will disable infiniband, Lustre Filesystem, and Hardware Counter monitoring which are all enabled by default. Disabling RabbitMQ will result in a legacy build of `hpcperfstatsd` that relies on the shared filesystem to transmit data.  This mode is not recommended and currently used for testing purposes only.  If libraries or header files are not found than add their paths to the include and library paths with the `CPPFLAGS` and/or `LDFLAGS` vars as is standard in autoconf based installations.  
+`./configure; make; make install` will then successfully build the `hpcperfstatsd` executable for many systems.  
+Note: If Xeon Phi coprocessors are present on your system they can be monitored with the `--enable-mic` flag.  Additionally the configuration options, `--disable-infiniband`, `--disable-lustre`, `--disable-hardware` will disable infiniband, Lustre Filesystem, and Hardware Counter monitoring which are all enabled by default. Disabling RabbitMQ will result in a legacy build of `hpcperfstatsd` that relies on the shared filesystem to transmit data.  This mode is not recommended and currently used for testing purposes only.  If libraries or header files are not found than add their paths to the include and library paths with the `CPPFLAGS` and/or `LDFLAGS` vars as is standard in autoconf based installations.  
 
 There will be a configuration file, `/etc/hpcperfstats/hpcperfstats.conf`, after installation.  This file contains the fields
 
@@ -35,7 +38,12 @@ There will be a configuration file, `/etc/hpcperfstats/hpcperfstats.conf`, after
 `freq 600`
 
 
-`server` should be set to the hostname or IP hosting the RabbitMQ server, `queue` to the system/cluster name that is being monitored, `port` to the RabbitMQ port (5672 is default), and `freq` to the desired sampling frequency in seconds. The file and settings can be reloaded into a running `hpcperfstatsd` daemon with a SIGHUP signal.
+`server` - should be set to the hostname or IP hosting the RabbitMQ server
+`queue`  - should be set to the system/cluster name that is being monitored
+`port`   - should be set to the RabbitMQ port (5672 is default)
+`freq`   - should be set to the desired sampling frequency in seconds
+
+The file and settings can be reloaded into a running `hpcperfstatsd` daemon with a SIGHUP signal.
 
 An RPM can be built for deployment using  the `hpcperfstats.spec` file.  The most straightforward approach to build this is to setup your rpmbuild directory then run
 
@@ -47,14 +55,17 @@ The `hpcperfstats.spec` file `sed`s the `hpcperfstats.conf` file to the correct 
 
 `sed -i 's/default/frontera/' src/hpcperfstats.conf`
 
-`hpcperfstatsd` can be started, stopped, and restarted using `systemctl start hpcperfstats`, `systemctl stop hpcperfstats`, and `systemctl restart hpcperfstats`.
+Commands to stop, start, and restart the daemon:
+To start   - `systemctl start hpcperfstats`
+To stop    - `systemctl stop hpcperfstats`
+To restart - `systemctl restart hpcperfstats`
 
 ## Job Scheduler Configuration
 In order to notify `hpcperfstats` of a job beginning, echo the job id into `/var/run/stats_jobid` on each node where the job is running.  It order to notify
 it of a job ending echo `-` into `/var/run/stats_jobid` on each node where the job is running.  This can be accomplished in the job scheduler prolog and
 epilog for example.
 
-Additionally, in order to contextualize node-level data from the monitor package it is necessary to generate a daily accounting file that contains the following information about all jobs from that day in the following format:\
+Additionally, in order to contextualize node-level data from the monitor package it is necessary to generate a daily accounting file that contains the following information about all jobs from that day in the following format:
 
 `JobID|User|Account|Start|End|Submit|Partition|Timelimit|JobName|State|NNodes|ReqCPUS|NodeList`
 `1837137|sharrell|project140208|2018-08-01T18:18:51|2018-08-02T11:44:51|2018-07-29T08:05:43|normal|1-00:00:00|jobname|COMPLETED|8|104|c420-[024,073],c421-[051-052,063-064,092-093]`
@@ -86,11 +97,12 @@ Please change all the paths in the docker-compose.yml file to your paths
 - Under volumes -> hpcperfstatsdata -> device - change the path to your path with the correct username and directory name for your data.
 - Under volumes -> hpcperfstatsnodelog -> device - change the path to your path with the correct username and directory name for your data.
 
-You will need to create the hpcperfstatsdata and hpcperfstatslog directories, they can go anywhere on the host.\
-`sudo mkdir -p /opt/hpcperfstats_data`
-`sudo mkdir -p /opt/hpcperfstats_log`
+You will need to create the hpcperfstatsdata and hpcperfstatslog directories, they can go anywhere on the host, and you can name the folders anything, however, the paths /hpcperfstats_data/accounting, /hpcperfstats_data/archive, and /hpcperfstats_log have to be as given, and the paths needs to match the paths under the volumes section in the docker compose yaml file.\
+`sudo mkdir -p /home/your-username/your-machine-name/hpcperfstats_data/accounting`
+`sudo mkdir -p /home/your-username/your-machine-name/hpcperfstats_data/archive`
+`sudo mkdir -p /home/your-username/your-machine-name/hpcperfstats_log`
 
- Copy the hpcperfstats.ini and make the changes below \
+Copy the hpcperfstats.ini and make the changes below \
 `cp hpcperfstats.ini.example hpcperfstats.ini`
 
 Please change the hpcperfstats.ini file contents to your configurations
@@ -122,13 +134,14 @@ For quick setup you can configure the stack without SSL (This is not recommened 
 
 ---
 
+### Building the container and seeing logs
 Build and start a daemomnized container network\
 `sudo docker compose up --build -d`
 
 To see the logs\
 `sudo docker compose logs`
 
-The website should be up at this point however it will error until the accounting ingest is setup.
+The website should be up at this point however it will error until the accounting ingest is setup. If you want to make any changes to the codebase, bring the container down, make the changes, and then build the container up again.
 
 Useful Commands
 ======
@@ -136,7 +149,16 @@ Useful Commands
  `docker exec -it hpcperfstats_db_1 psql -h localhost -U hpcperfstats`
 
  Access the Pipeline (where data is stored and processed)\
-  `docker exec -it hpcperfstats_pipeline_1 su hpcperfstats`
+ `docker exec -it hpcperfstats_pipeline_1 su hpcperfstats`
+
+ Building the container\
+ `sudo docker compose up --build -d`
+
+ Bringing the container down\
+ `sudo docker compose down`
+ 
+ View the container logs\
+ `sudo docker compose logs`
 
 Publications
 ======
