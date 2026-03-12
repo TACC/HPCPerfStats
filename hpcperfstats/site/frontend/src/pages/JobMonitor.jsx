@@ -97,7 +97,17 @@ export default function JobMonitor() {
                   <td>{row.username || "(unknown)"}</td>
                   <td>{row.total_jobs}</td>
                   <td>{row.failed_jobs}</td>
-                  <td>{row.failed_rate.toFixed ? row.failed_rate.toFixed(2) : row.failed_rate}</td>
+                  <td>
+                    {row.failed_rate?.toFixed
+                      ? row.failed_rate.toFixed(2)
+                      : row.failed_rate}
+                  </td>
+                  <td>{row.timedout_jobs}</td>
+                  <td>
+                    {row.timedout_rate?.toFixed
+                      ? row.timedout_rate.toFixed(2)
+                      : row.timedout_rate}
+                  </td>
                 </tr>
               ))}
               {rows.length === 0 && (

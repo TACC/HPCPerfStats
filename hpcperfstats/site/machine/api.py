@@ -2001,6 +2001,10 @@ def job_monitor(request):
                 "jid",
                 filter=Q(state__in=["FAILED", "OUT_OF_MEMORY"]),
             ),
+            timedout_jobs=Count(
+                "jid",
+                filter=Q(state="TIMEOUT"),
+            ),
         )
         # Remove users that have not run more than window_days / 2 jobs.
         .filter(total_jobs__gt=(window_days / 2.0))
@@ -2008,7 +2012,11 @@ def job_monitor(request):
             failed_rate=ExpressionWrapper(
                 100.0 * F("failed_jobs") / F("total_jobs"),
                 output_field=FloatField(),
-            )
+            ),
+            timedout_rate=ExpressionWrapper(
+                100.0 * F("timedout_jobs") / F("total_jobs"),
+                output_field=FloatField(),
+            ),
         )
         .order_by("-failed_rate", "username")
     )
@@ -2017,13 +2025,17 @@ def job_monitor(request):
     for row in stats_qs:
         total = int(row.get("total_jobs") or 0)
         failed = int(row.get("failed_jobs") or 0)
+        timedout = int(row.get("timedout_jobs") or 0)
         rate = float(row.get("failed_rate") or 0.0)
+        timeout_rate = float(row.get("timedout_rate") or 0.0)
         rows.append(
             {
                 "username": row.get("username") or "",
                 "total_jobs": total,
                 "failed_jobs": failed,
                 "failed_rate": round(rate, 2),
+                "timedout_jobs": timedout,
+                "timedout_rate": round(timeout_rate, 2),
             }
         )
 
