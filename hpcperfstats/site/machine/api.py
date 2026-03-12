@@ -162,9 +162,9 @@ def _require_auth(request):
 
 
 def _get_cache_stats():
-    """Return basic Redis/cache statistics for the admin monitor."""
+    """Return basic Redis/cache statistics for the HPCPerfStats Monitor."""
     # First try to return a recently cached snapshot of the Redis stats so that
-    # repeated admin monitor polls do not issue heavy INFO/SCAN calls.
+    # repeated HPCPerfStats Monitor polls do not issue heavy INFO/SCAN calls.
     try:
         cached_stats = cache.get(KEY_ADMIN_CACHE_STATS)
         if isinstance(cached_stats, dict):
@@ -283,7 +283,7 @@ def _get_cache_stats():
 
 
 def _get_timescaledb_stats():
-    """Return basic TimescaleDB/PostgreSQL statistics for the admin monitor."""
+    """Return basic TimescaleDB/PostgreSQL statistics for the HPCPerfStats Monitor."""
     try:
         cached_stats = cache.get(KEY_ADMIN_TIMESCALE_STATS)
         if isinstance(cached_stats, dict):
@@ -445,7 +445,7 @@ def _get_timescaledb_stats():
     return stats
 
 def _get_rabbitmq_stats():
-    """Return basic RabbitMQ queue statistics for the admin monitor.
+    """Return basic RabbitMQ queue statistics for the HPCPerfStats Monitor.
 
     Uses the RabbitMQ Management HTTP API if available. The management base URL and
     credentials can be overridden via environment variables:
@@ -1858,7 +1858,7 @@ def host_plot(request):
 
 @api_view(["GET"])
 def admin_monitor(request):
-    """Staff-only: admin monitor data (host timestamps, cache/Redis, RabbitMQ, TimescaleDB stats).
+    """Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis, RabbitMQ, TimescaleDB stats).
 
     Supports a lightweight, per-section API via the optional 'section' query param:
     - ?section=hosts      -> {"host_stats": [...]}

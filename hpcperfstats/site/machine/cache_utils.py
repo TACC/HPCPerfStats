@@ -64,7 +64,7 @@ KEY_ADMIN_RMQ_STATS = "admin_monitor_rmq_stats"
 KEY_ADMIN_RMQ_SNAPSHOT = "admin_monitor_rmq_snapshot"
 KEY_ADMIN_TIMESCALE_STATS = "admin_monitor_timescaledb_stats"
 
-# Admin monitor Redis/RabbitMQ stats: short TTL to avoid hammering backends
+# HPCPerfStats Monitor Redis/RabbitMQ stats: short TTL to avoid hammering backends
 TIMEOUT_ADMIN_STATS = 10
 
 

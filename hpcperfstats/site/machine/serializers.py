@@ -1,4 +1,4 @@
-"""DRF serializers for machine app API. Job list/detail, admin monitor, and form options."""
+"""DRF serializers for machine app API. Job list/detail, HPCPerfStats Monitor, and form options."""
 from rest_framework import serializers
 
 from .models import job_data, metrics_data

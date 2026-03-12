@@ -29,7 +29,7 @@ export default function Layout({ session, children }) {
           <div className="navbar-actions ms-auto">
             <div className="navbar-actions-row">
               {session?.is_staff && (
-                <Link to="/admin_monitor" className="btn btn-outline-secondary btn-sm">Admin Monitor</Link>
+                <Link to="/admin_monitor" className="btn btn-outline-secondary btn-sm">HPCPerfStats Monitor</Link>
               )}
               <a href="/logout/" className="btn btn-outline-secondary btn-sm">Logout</a>
             </div>
