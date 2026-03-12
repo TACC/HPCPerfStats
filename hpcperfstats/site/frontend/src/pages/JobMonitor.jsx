@@ -5,22 +5,29 @@ import LoadingMessage from "../components/LoadingMessage";
 export default function JobMonitor() {
   const [rows, setRows] = useState([]);
   const [windowDays, setWindowDays] = useState(30);
+  const [inputDays, setInputDays] = useState("30");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
+  const loadData = (daysOverride) => {
     setLoading(true);
     setError(null);
     api
-      .getJobMonitor()
+      .getJobMonitor(daysOverride)
       .then((res) => {
         setRows(res.results || []);
         if (typeof res.window_days === "number") {
           setWindowDays(res.window_days);
+          setInputDays(String(res.window_days));
         }
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadData(undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -29,6 +36,45 @@ export default function JobMonitor() {
       <p className="text-muted">
         Aggregated job outcomes by user for the last {windowDays} days.
       </p>
+      <form
+        className="row g-2 align-items-center mb-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const n = parseInt(inputDays, 10);
+          if (!Number.isFinite(n)) {
+            setError("Days must be a number between 1 and 365.");
+            return;
+          }
+          if (n < 1 || n > 365) {
+            setError("Days must be between 1 and 365.");
+            return;
+          }
+          setError(null);
+          loadData(n);
+        }}
+      >
+        <div className="col-auto">
+          <label htmlFor="job-monitor-days" className="col-form-label">
+            Window (days):
+          </label>
+        </div>
+        <div className="col-auto">
+          <input
+            id="job-monitor-days"
+            type="number"
+            min="1"
+            max="365"
+            className="form-control form-control-sm"
+            value={inputDays}
+            onChange={(e) => setInputDays(e.target.value)}
+          />
+        </div>
+        <div className="col-auto">
+          <button type="submit" className="btn btn-outline-secondary btn-sm">
+            Apply
+          </button>
+        </div>
+      </form>
       {loading && <LoadingMessage message="Loading job monitor data…" />}
       {error && !loading && (
         <div className="text-danger mb-3">Error loading job monitor data: {error}</div>

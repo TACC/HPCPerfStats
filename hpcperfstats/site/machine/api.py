@@ -1963,7 +1963,10 @@ def admin_monitor(request):
 @cache_page(TIMEOUT_SHORT)
 @api_view(["GET"])
 def job_monitor(request):
-    """Staff-only: aggregate job failure statistics per user for the last 30 days.
+    """Staff-only: aggregate job failure statistics per user over a recent window.
+
+    The window is controlled by the optional ?days=N query parameter (integer).
+    N is clamped to [1, 365]. If missing or invalid, defaults to 30 days.
 
     Returns rows of:
     - username
@@ -1980,7 +1983,12 @@ def job_monitor(request):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    window_days = 30
+    # Parse and clamp days window from query params.
+    try:
+        days_param = int(request.GET.get("days", "") or 30)
+    except (TypeError, ValueError):
+        days_param = 30
+    window_days = max(1, min(days_param, 365))
     now = dj_timezone_utils.now()
     start_time = now - timedelta(days=window_days)
 
