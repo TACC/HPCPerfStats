@@ -2002,6 +2002,8 @@ def job_monitor(request):
                 filter=Q(state__in=["FAILED", "OUT_OF_MEMORY"]),
             ),
         )
+        # Remove users that have not run more than window_days / 2 jobs.
+        .filter(total_jobs__gt=(window_days / 2.0))
         .annotate(
             failed_rate=ExpressionWrapper(
                 100.0 * F("failed_jobs") / F("total_jobs"),

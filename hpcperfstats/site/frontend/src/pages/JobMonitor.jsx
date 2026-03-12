@@ -34,7 +34,8 @@ export default function JobMonitor() {
     <>
       <h3>Job Monitor</h3>
       <p className="text-muted">
-        Aggregated job outcomes by user for the last {windowDays} days.
+        Aggregated job outcomes by user for the last {windowDays} days. Only users
+        who have run more than {windowDays / 2} jobs in this window are included.
       </p>
       <form
         className="row g-2 align-items-center mb-3"
