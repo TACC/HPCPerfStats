@@ -165,7 +165,15 @@ export default function JobMonitor() {
             <tbody>
               {sortedRows.map((row) => (
                 <tr key={row.username || "(unknown)"}>
-                  <td>{row.username || "(unknown)"}</td>
+                  <td>
+                    {row.username ? (
+                      <Link to={`/username/${encodeURIComponent(row.username)}/`}>
+                        {row.username}
+                      </Link>
+                    ) : (
+                      "(unknown)"
+                    )}
+                  </td>
                   <td>{row.total_jobs}</td>
                   <td>{row.failed_jobs}</td>
                   <td>
