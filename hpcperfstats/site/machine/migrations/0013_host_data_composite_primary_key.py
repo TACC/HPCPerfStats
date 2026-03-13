@@ -21,23 +21,117 @@ class Migration(migrations.Migration):
   operations = [
       migrations.RunSQL(
           sql="""
-          -- Drop the existing unique constraint on (time, host, type, event) if it exists
-          ALTER TABLE host_data
-          DROP CONSTRAINT IF EXISTS host_data_time_host_type_event_key;
+          DO $$
+          BEGIN
+            -- If the host_data table does not exist, nothing to do.
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.tables
+              WHERE table_schema = 'public'
+                AND table_name = 'host_data'
+            ) THEN
+              RETURN;
+            END IF;
 
-          -- Add composite primary key on (time, host, type, event)
-          ALTER TABLE host_data
-          ADD CONSTRAINT host_data_pkey
-          PRIMARY KEY (time, host, type, event);
+            -- If host_data is a TimescaleDB hypertable with compression enabled,
+            -- skip altering constraints because TimescaleDB does not support this
+            -- operation while compression is enabled.
+            IF EXISTS (
+              SELECT 1
+              FROM timescaledb_information.hypertables
+              WHERE hypertable_schema = 'public'
+                AND hypertable_name = 'host_data'
+                AND compression_enabled = true
+            ) THEN
+              RETURN;
+            END IF;
+
+            -- Drop the existing unique constraint on (time, host, type, event) if it exists
+            IF EXISTS (
+              SELECT 1
+              FROM pg_constraint c
+              JOIN pg_class t ON c.conrelid = t.oid
+              JOIN pg_namespace n ON t.relnamespace = n.oid
+              WHERE n.nspname = 'public'
+                AND t.relname = 'host_data'
+                AND c.conname = 'host_data_time_host_type_event_key'
+            ) THEN
+              ALTER TABLE host_data
+              DROP CONSTRAINT host_data_time_host_type_event_key;
+            END IF;
+
+            -- Add composite primary key on (time, host, type, event) if not already present
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_constraint c
+              JOIN pg_class t ON c.conrelid = t.oid
+              JOIN pg_namespace n ON t.relnamespace = n.oid
+              WHERE n.nspname = 'public'
+                AND t.relname = 'host_data'
+                AND c.conname = 'host_data_pkey'
+            ) THEN
+              ALTER TABLE host_data
+              ADD CONSTRAINT host_data_pkey
+              PRIMARY KEY (time, host, type, event);
+            END IF;
+          END;
+          $$;
           """,
           reverse_sql="""
-          -- Reverse: drop the composite primary key and restore unique constraint
-          ALTER TABLE host_data
-          DROP CONSTRAINT IF EXISTS host_data_pkey;
+          DO $$
+          BEGIN
+            -- If the host_data table does not exist, nothing to do.
+            IF NOT EXISTS (
+              SELECT 1
+              FROM information_schema.tables
+              WHERE table_schema = 'public'
+                AND table_name = 'host_data'
+            ) THEN
+              RETURN;
+            END IF;
 
-          ALTER TABLE host_data
-          ADD CONSTRAINT host_data_time_host_type_event_key
-          UNIQUE (time, host, type, event);
+            -- If host_data is a TimescaleDB hypertable with compression enabled,
+            -- skip altering constraints to avoid unsupported operations.
+            IF EXISTS (
+              SELECT 1
+              FROM timescaledb_information.hypertables
+              WHERE hypertable_schema = 'public'
+                AND hypertable_name = 'host_data'
+                AND compression_enabled = true
+            ) THEN
+              RETURN;
+            END IF;
+
+            -- Drop the composite primary key if it exists
+            IF EXISTS (
+              SELECT 1
+              FROM pg_constraint c
+              JOIN pg_class t ON c.conrelid = t.oid
+              JOIN pg_namespace n ON t.relnamespace = n.oid
+              WHERE n.nspname = 'public'
+                AND t.relname = 'host_data'
+                AND c.conname = 'host_data_pkey'
+            ) THEN
+              ALTER TABLE host_data
+              DROP CONSTRAINT host_data_pkey;
+            END IF;
+
+            -- Restore the unique constraint on (time, host, type, event) if missing
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_constraint c
+              JOIN pg_class t ON c.conrelid = t.oid
+              JOIN pg_namespace n ON t.relnamespace = n.oid
+              WHERE n.nspname = 'public'
+                AND t.relname = 'host_data'
+                AND c.conname = 'host_data_time_host_type_event_key'
+            ) THEN
+              ALTER TABLE host_data
+              ADD CONSTRAINT host_data_time_host_type_event_key
+              UNIQUE (time, host, type, event);
+            END IF;
+          END;
+          $$;
           """,
       ),
   ]
