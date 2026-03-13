@@ -390,25 +390,33 @@ body {
   .job-detail-plots table tr {
     margin-bottom: 1rem;
   }
-  /* Histogram thumbnails: single column on very small screens */
+  /* Histogram: on mobile we show full plot only (no popover), single column */
   .histogram-thumbnails-grid {
     grid-template-columns: 1fr;
     gap: 12px;
   }
-  .histogram-thumbnail-wrapper {
-    justify-content: center;
-  }
-  /* Popover fits viewport on mobile */
-  .histogram-thumbnail-popover {
-    max-width: calc(100vw - 24px);
-    max-height: calc(100vh - 80px);
-    overflow: auto;
-  }
-  .histogram-thumbnail-popover-plot {
+  .histogram-thumbnail-wrapper.histogram-mobile {
+    width: 100%;
     max-width: 100%;
+    justify-content: stretch;
   }
-  .histogram-thumbnail-popover-plot .bokeh-embed-wrapper {
+  .histogram-mobile-title {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    font-size: 1rem;
+  }
+  .histogram-mobile-plot {
+    width: 100%;
     min-height: 280px;
+    max-height: min(400px, 50vh);
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    overflow: auto;
+    background: #fff;
+  }
+  .histogram-mobile-plot .bokeh-embed-wrapper {
+    min-height: 280px;
+    width: 100%;
   }
   /* Extended search: form rows stack */
   .extended-search-panel .row {

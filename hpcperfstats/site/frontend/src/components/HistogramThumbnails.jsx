@@ -3,12 +3,27 @@ import BokehEmbed from "./BokehEmbed";
 import LoadingMessage from "./LoadingMessage";
 
 const THUMB_SIZE = { width: 280, height: 200 };
+const MOBILE_BREAKPOINT = 768;
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 0.02}px)`).matches
+  );
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 0.02}px)`);
+    const handler = () => setIsMobile(mql.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
+  return isMobile;
+}
 
 /**
- * One histogram as a medium thumbnail; shows full-size Bokeh plot in a popover on hover,
- * or on click/focus (keyboard accessible: Enter/Space to open, Escape to close).
+ * One histogram: on desktop, thumbnail with full-size popover on hover/click.
+ * On mobile, full histogram only, no popover, sized for viewport.
  */
 function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
+  const isMobile = useIsMobile();
   const [hovered, setHovered] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
@@ -17,7 +32,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
 
   const thumbId = `hist-thumb-${index}`;
   const fullId = `hist-full-${index}`;
-  const showPopover = hovered || expanded;
+  const showPopover = !isMobile && (hovered || expanded);
 
   const handleMouseEnter = () => {
     if (leaveTimerRef.current) {
@@ -62,6 +77,22 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [expanded]);
+
+  /* Mobile: full histogram only, no popover, container sized for viewport */
+  if (isMobile) {
+    return (
+      <div className="histogram-thumbnail-wrapper histogram-mobile">
+        <div className="histogram-mobile-title">{title}</div>
+        <div className="histogram-mobile-plot">
+          <BokehEmbed
+            item={plotItemFull}
+            id={fullId}
+            plotName={title}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
