@@ -7,7 +7,7 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
@@ -31,7 +31,7 @@ from hpcperfstats.shutdown_utils import (
 )
 from hpcperfstats.site.machine.models import job_data
 
-local_timezone = cfg.get_local_timezone()
+local_timezone = dt_timezone.utc
 
 COLUMNS_TO_READ = [
     'JobID', 'User', 'Account', 'Start', 'End', 'Submit', 'Partition',
