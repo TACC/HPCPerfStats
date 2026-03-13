@@ -4,10 +4,22 @@ Use cached_orm() to wrap any callable that performs a read and returns
 a cacheable value (e.g. list of dicts, model instance, DataFrame-serializable).
 Cache keys should be unique per query; timeouts are in seconds.
 """
+import logging
+import os
+import time
+
+from django.conf import settings
 from django.core.cache import cache
 
 # Sentinel so we can cache None (e.g. "job not found")
 _CACHE_MISS = object()
+
+
+def _cache_debug_enabled() -> bool:
+  """Return True if extra cache debug logging should be enabled."""
+  if getattr(settings, "DEBUG", False):
+    return True
+  return os.environ.get("HPCPERF_CACHE_DEBUG", "").lower() in ("1", "true", "yes")
 
 
 def cached_orm(cache_key, timeout, query_fn):
@@ -17,16 +29,39 @@ def cached_orm(cache_key, timeout, query_fn):
     The value must be picklable (e.g. list of dicts from .values(), or None).
     None is stored as a wrapped tuple so we can distinguish "missing key" from "cached None".
     If the cache backend is unavailable (e.g. Redis down), query_fn() is used and the result is not cached.
+    When DEBUG or HPCPERF_CACHE_DEBUG is enabled, log basic hit/miss and timing
+    information for visibility into heavy ORM/cache usage.
     """
+  log_debug = _cache_debug_enabled()
+  logger = logging.getLogger(__name__)
+  start = time.time() if log_debug else None
   try:
     wrapped = cache.get(cache_key, _CACHE_MISS)
     if wrapped is not _CACHE_MISS:
+      if log_debug and start is not None:
+        logger.info(
+            "cached_orm hit key=%s elapsed_ms=%.1f",
+            cache_key,
+            (time.time() - start) * 1000.0,
+        )
       return (wrapped[0]
               if isinstance(wrapped, tuple) and len(wrapped) == 1 else wrapped)
     value = query_fn()
     cache.set(cache_key, (value,) if value is None else value, timeout=timeout)
+    if log_debug and start is not None:
+      logger.info(
+          "cached_orm miss key=%s elapsed_ms=%.1f",
+          cache_key,
+          (time.time() - start) * 1000.0,
+      )
     return value
   except Exception:
+    if log_debug and start is not None:
+      logger.exception(
+          "cached_orm error key=%s elapsed_ms=%.1f (falling back to query_fn)",
+          cache_key,
+          (time.time() - start) * 1000.0,
+      )
     return query_fn()
 
 

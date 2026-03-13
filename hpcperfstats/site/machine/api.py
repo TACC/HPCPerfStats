@@ -589,7 +589,6 @@ def session_info(request):
 
 
 @cache_page(TIMEOUT_MEDIUM)
-@cache_page(TIMEOUT_MEDIUM)
 @api_view(["GET"])
 def home_options(request):
     """Return options for search form: date_list, metrics, queues, states, machine_name."""

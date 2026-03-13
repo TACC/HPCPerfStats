@@ -51,6 +51,9 @@ class job_data(models.Model):
         models.Index(fields=["queue"], name="job_data_queue_idx"),
         models.Index(fields=["state"], name="job_data_state_idx"),
         models.Index(fields=["start_time"], name="job_data_start_time_idx"),
+        models.Index(fields=["end_time", "username"], name="job_data_end_time_username_idx"),
+        models.Index(fields=["queue", "end_time"], name="job_data_queue_end_time_idx"),
+        models.Index(fields=["end_time", "state"], name="job_data_end_time_state_idx"),
     ]
 
   def __str__(self):
@@ -93,6 +96,7 @@ class metrics_data(models.Model):
     unique_together = (('jid', 'type', 'metric'),)
     indexes = [
         models.Index(fields=["metric"], name="metrics_data_metric_idx"),
+        models.Index(fields=["jid", "metric"], name="metrics_data_jid_metric_idx"),
     ]
 
   def __str__(self):
