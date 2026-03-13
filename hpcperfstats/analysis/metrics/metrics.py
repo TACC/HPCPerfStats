@@ -4,6 +4,7 @@ DB access is process-safe: _unwrap runs in multiprocessing workers and calls clo
 
 """
 import hpcperfstats.conf_parser as cfg
+from hpcperfstats.print_utils import log_print
 
 import multiprocessing
 import sys
@@ -251,7 +252,7 @@ class Metrics():
 
         """
     if not job_list:
-      print("Please specify a job list.")
+      log_print("Please specify a job list.")
       return
 
     threads = int(int(cfg.get_total_cores()) / 2)
@@ -373,7 +374,7 @@ class Metrics():
             "value": value,
         })
 
-    print("compute metrics time: {0:.1f}".format(time.time() -
+    log_print("compute metrics time: {0:.1f}".format(time.time() -
                                                  metric_compute_start))
     return results
 

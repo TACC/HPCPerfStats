@@ -4,6 +4,7 @@ import tarfile
 from datetime import datetime, timedelta
 
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
+from hpcperfstats.print_utils import log_print
 
 
 def get_tar_member_name(file_path):
@@ -49,7 +50,7 @@ def filter_files_to_add_to_archive(stats_files, existing_members, debug=False):
     if file_size != existing_members[member_name]:
       to_add.append(path)
     elif debug:
-      print("file %s found in archive, skipping" % path)
+      log_print("file %s found in archive, skipping" % path)
   return to_add
 
 
@@ -93,7 +94,7 @@ def collect_stats_files_in_range(directory, startdate, enddate):
         )
         fdate = mtime_fdate
       except Exception as e:
-        print("error in obtaining timestamp of raw data files: ", str(e))
+        log_print("error in obtaining timestamp of raw data files: ", str(e))
         continue
       if startdate == "all":
         if fdate > enddate:
@@ -126,7 +127,7 @@ def build_archive_mapping(
       continue
     t, _jid, _host = parse_first_ts_fn(head)
     if t is None:
-      print(
+      log_print(
           "Unable to find first timestamp in %s, skipping archiving"
           % stats_fname
       )

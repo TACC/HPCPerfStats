@@ -13,6 +13,8 @@ from pandas import DataFrame
 
 from django.db import connection
 
+from hpcperfstats.print_utils import log_print
+
 
 def run_sql(sql, params=None):
   """Execute SQL and return a DataFrame (columns from cursor.description).
@@ -27,11 +29,11 @@ def run_sql(sql, params=None):
 
 if __name__ == "__main__":
   if len(sys.argv) < 2:
-    print("Usage: query_timescaledb.py <jid>")
+    log_print("Usage: query_timescaledb.py <jid>")
     sys.exit(1)
 
   jid = sys.argv[1]
-  print(connection.connection.server_version if hasattr(connection, "connection"
+  log_print(connection.connection.server_version if hasattr(connection, "connection"
                                                         ) else "N/A")
 
   qtime = time.time()
@@ -42,8 +44,8 @@ if __name__ == "__main__":
         [jid],
     )
   df = run_sql("SELECT count(distinct(host)) AS nodes FROM job_detail;")
-  print(df)
-  print("query time: {0:.1f}".format(time.time() - qtime))
+  log_print(df)
+  log_print("query time: {0:.1f}".format(time.time() - qtime))
 
   df = run_sql("""SELECT jid, host, time, 1e-9*sum(arc) AS flops FROM job_detail
            WHERE event IN ('FP_ARITH_INST_RETIRED_SCALAR_DOUBLE', 'FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE',
@@ -77,4 +79,4 @@ if __name__ == "__main__":
   df["cpi"] = (df["acycles"] / df["instr"]).fillna(0)
   del df["instr"], df["mcycles"], df["acycles"]
 
-  print(df)
+  log_print(df)

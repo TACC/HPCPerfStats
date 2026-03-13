@@ -11,6 +11,7 @@ from fcntl import LOCK_EX, LOCK_NB, flock
 import pika
 
 import hpcperfstats.conf_parser as cfg
+from hpcperfstats.print_utils import log_print
 
 DEBUG = cfg.get_debug()
 
@@ -27,11 +28,11 @@ def on_message(channel, method_frame, header_frame, body):
   """Callback for each message: decode body, determine host, write/append to host's current file and optionally rotate. Acknowledges the message.
 
     """
-  print("found message: %s" % header_frame)
+  log_print("found message: %s" % header_frame)
   try:
     message = body.decode(errors='replace')
   except:
-    print("Unexpected error at decode:", sys.exc_info()[0])
+    log_print("Unexpected error at decode:", sys.exc_info()[0])
     #print(body)
     return
 
@@ -82,15 +83,15 @@ def on_message(channel, method_frame, header_frame, body):
         queue=cfg.get_rmq_queue(), durable=True, passive=True)
     queue_depth = q.method.message_count
   except Exception as e:
-    print("Failed to get queue depth: %s" % e)
+    log_print("Failed to get queue depth: %s" % e)
 
   if queue_depth is not None:
-    print(
+    log_print(
         "Messages consumed in the last 10 minutes: %d; "
         "messages waiting to be consumed: %d" %
         (count_last_10, queue_depth))
   else:
-    print(
+    log_print(
         "Messages consumed in the last 10 minutes: %d; "
         "messages waiting to be consumed: unknown" %
         count_last_10)
@@ -118,7 +119,7 @@ def _idle_monitor():
       if (_last_idle_report_time is None or
           (now - _last_idle_report_time) >= MESSAGE_WINDOW_SECONDS):
         _last_idle_report_time = now
-        print("No messages consumed in the last 10 minutes")
+        log_print("No messages consumed in the last 10 minutes")
 
 
 with open(
@@ -127,10 +128,10 @@ with open(
   try:
     flock(fd, LOCK_EX | LOCK_NB)
   except IOError:
-    print("listend is already running")
+    log_print("listend is already running")
     sys.exit()
 
-  print("Starting Connection")
+  log_print("Starting Connection")
   parameters = pika.ConnectionParameters(cfg.get_rmq_server())
   connection = pika.BlockingConnection(parameters)
   try:
@@ -144,14 +145,14 @@ with open(
     try:
       q = channel.queue_declare(
           queue=cfg.get_rmq_queue(), durable=True, passive=True)
-      print(
+      log_print(
           "Messages waiting to be consumed at startup: %d" %
           q.method.message_count)
     except Exception as e:
-      print("Failed to get startup queue depth: %s" % e)
+      log_print("Failed to get startup queue depth: %s" % e)
 
     channel.basic_consume(cfg.get_rmq_queue(), on_message)
-    print("Begining Consume from queue: " + cfg.get_rmq_queue())
+    log_print("Begining Consume from queue: " + cfg.get_rmq_queue())
     try:
       channel.start_consuming()
     except KeyboardInterrupt:

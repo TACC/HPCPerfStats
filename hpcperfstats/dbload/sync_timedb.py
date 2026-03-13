@@ -26,6 +26,7 @@ import pandas as pd
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
+from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
     collect_stats_files_in_range,
@@ -86,17 +87,17 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
 
   hostname, _ = parse_stats_file_path(stats_file)
   if hostname is None:
-    print("Invalid stats file path: %s" % stats_file)
+    log_print("Invalid stats file path: %s" % stats_file)
     return (stats_file, False)
 
   lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)
   if load_err is not None:
-    print(load_err)
+    log_print(load_err)
     return (stats_file, False)
 
   t, jid, host = parse_first_timestamp_line(lines)
   if t is None:
-    print("initial timestamp not found")
+    log_print("initial timestamp not found")
     return (stats_file, False)
 
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
@@ -123,7 +124,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
 
   start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   if start_idx == -1:
-    print("No missing timestamps found for %s" % stats_file)
+    log_print("No missing timestamps found for %s" % stats_file)
     return (stats_file, True)
 
   # Keep only lines from start_idx to avoid holding the full file in memory
@@ -137,8 +138,8 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         exclude_types_list=exclude_types,
     )
   except Exception as e:
-    print("error: process data failed: ", str(e))
-    print("Possibly corrupt file: %s" % stats_file)
+    log_print("error: process data failed: ", str(e))
+    log_print("Possibly corrupt file: %s" % stats_file)
     return (stats_file, False)
 
   stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
@@ -146,11 +147,11 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   del proc_stats_list
   if stats.empty and proc_stats.empty:
     if DEBUG:
-      print("Unable to process stats file %s" % stats_file)
+      log_print("Unable to process stats file %s" % stats_file)
     return (stats_file, False)
 
   stats = compute_deltas_and_arc(stats)
-  print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - start))
+  log_print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - start))
 
   lock.acquire()
   try:
@@ -166,7 +167,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
     except Exception as e:
       if DEBUG:
-        print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
+        log_print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
       _insert_proc_data_individually(proc_stats)
   finally:
     lock.release()
@@ -204,13 +205,13 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
           host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
     except Exception as e:
       if DEBUG:
-        print("error in host_data bulk_create:", str(e))
+        log_print("error in host_data bulk_create:", str(e))
       need_archival = _insert_host_data_individually(stats)
   finally:
     lock.release()
 
   if DEBUG:
-    print("File successfully added to DB")
+    log_print("File successfully added to DB")
   return (stats_file, need_archival)
 
 
@@ -225,9 +226,9 @@ def _insert_proc_data_individually(proc_stats_df):
     except IntegrityError:
       unique_violations += 1
     except Exception as e:
-      print("error in single proc_data insert:", str(e), "row:", row)
+      log_print("error in single proc_data insert:", str(e), "row:", row)
   if DEBUG:
-    print("Existing Rows Found in DB: %s" % unique_violations)
+    log_print("Existing Rows Found in DB: %s" % unique_violations)
 
 
 def _insert_host_data_individually(stats_df):
@@ -259,10 +260,10 @@ def _insert_host_data_individually(stats_df):
       except IntegrityError:
         unique_violations += 1
       except Exception as e:
-        print("error in single host_data insert:", str(e), "row:", row)
+        log_print("error in single host_data insert:", str(e), "row:", row)
         need_archival = False
   if DEBUG:
-    print("Existing Rows Found in DB: %s" % unique_violations)
+    log_print("Existing Rows Found in DB: %s" % unique_violations)
   return need_archival
 
 
@@ -284,8 +285,8 @@ def _append_to_tar(tar_path, file_paths):
     return
   out = subprocess.check_output(['/bin/tar', 'uvf', tar_path] + file_paths)
   if DEBUG:
-    print(out, flush=True)
-  print("Archived: " + str(file_paths))
+    log_print(out, flush=True)
+  log_print("Archived: " + str(file_paths))
 
 
 def _compress_tar_gz(tar_path, num_threads=None):
@@ -294,7 +295,7 @@ def _compress_tar_gz(tar_path, num_threads=None):
     num_threads = thread_count * 2
   if not os.path.exists(tar_path):
     return
-  print(
+  log_print(
       subprocess.check_output([
           '/usr/bin/pigz', '-f', '-8', '-v', '-p', str(num_threads), tar_path
       ]),
@@ -315,7 +316,7 @@ def archive_stats_files(archive_info):
 
   existing_members = get_existing_archive_members(archive_tar_fname)
   for path in get_verified_files_to_remove(stats_files, existing_members):
-    print("removing stats file:" + path)
+    log_print("removing stats file:" + path)
     os.remove(path)
 
   _compress_tar_gz(archive_tar_fname)
@@ -333,8 +334,8 @@ def database_startup():
     row = cur.fetchone()
     if row:
       if DEBUG:
-        print("Postgresql server version:", row[0])
-      print("Database Size:", row[1])
+        log_print("Postgresql server version:", row[0])
+      log_print("Database Size:", row[1])
     if DEBUG:
       try:
         cur.execute(
@@ -342,13 +343,13 @@ def database_startup():
         )
         for x in cur.fetchall():
           try:
-            print("{0} Size: {1:8.1f} {2:8.1f}".format(*x))
+            log_print("{0} Size: {1:8.1f} {2:8.1f}".format(*x))
           except Exception:
             pass
       except Exception:
         pass
     else:
-      print("Reading Chunk Data")
+      log_print("Reading Chunk Data")
 
 
 if __name__ == '__main__':
@@ -374,7 +375,7 @@ if __name__ == '__main__':
   start = time.time()
   directory = cfg.get_archive_dir_path()
   stats_files = collect_stats_files_in_range(directory, startdate, enddate)
-  print("Number of host stats files to process = ", len(stats_files))
+  log_print("Number of host stats files to process = ", len(stats_files))
 
   manager = multiprocessing.Manager()
   try:
@@ -386,7 +387,7 @@ if __name__ == '__main__':
       num_chunks = (len(stats_files) + chunk_size - 1) // chunk_size if stats_files else 1
       for i in range(num_chunks):
         if DEBUG:
-          print("Begining Chunk(%s) #%s Processing" % (chunk_size, i))
+          log_print("Begining Chunk(%s) #%s Processing" % (chunk_size, i))
 
         stats_files_chunk = get_stats_chunk(stats_files, i, chunk_size)
         if not stats_files_chunk:
@@ -394,7 +395,7 @@ if __name__ == '__main__':
 
         ar_file_mapping = {}
         files_to_be_archived = []
-        print("%s files per chunk" % chunk_size)
+        log_print("%s files per chunk" % chunk_size)
 
         with multiprocessing.get_context('spawn').Pool(
             processes=thread_count) as pool:
@@ -405,10 +406,10 @@ if __name__ == '__main__':
             k += 1
             if should_archive and need_archival:
               files_to_be_archived.append(stats_fname)
-            print("chunk %s: completed file %s out of %s\n" % (i, k, chunk_size),
+            log_print("chunk %s: completed file %s out of %s\n" % (i, k, chunk_size),
                   flush=True)
 
-        print("loading time", time.time() - start)
+        log_print("loading time", time.time() - start)
 
         ar_file_mapping = build_archive_mapping(
             files_to_be_archived, tgz_archive_dir)
@@ -416,25 +417,25 @@ if __name__ == '__main__':
         # skip first iteration, on first there will be no archive_job
         if i:
           if DEBUG:
-            print("Checking/waiting for background archival proccesses")
+            log_print("Checking/waiting for background archival proccesses")
 
           # Wait until last archive_job is complete before starting another one
           archive_job.get()
-          print("[{0:.1f}%] completed".format(
+          log_print("[{0:.1f}%] completed".format(
               100 * (i + 1) / num_chunks), end="\r", flush=True)
 
         if DEBUG:
-          print("files to be archived: %s" % ar_file_mapping)
+          log_print("files to be archived: %s" % ar_file_mapping)
 
         archive_job = archive_pool.map_async(archive_stats_files,
                                              list(ar_file_mapping.items()))
 
-        print("Archival running in the background")
+        log_print("Archival running in the background")
 
       if archive_job is not None:
         archive_job.get()
 
-    print("sync_timedb sleeping")
+    log_print("sync_timedb sleeping")
 
     # Close DB connections before long sleep to avoid idle connections.
     close_old_connections()
@@ -442,6 +443,6 @@ if __name__ == '__main__':
     time.sleep(120)
 
     if DEBUG:
-      print("sync_timedb finished")
+      log_print("sync_timedb finished")
   finally:
     manager.shutdown()

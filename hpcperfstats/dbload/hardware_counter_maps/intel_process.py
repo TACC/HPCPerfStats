@@ -13,6 +13,8 @@
 """
 import numpy
 
+from hpcperfstats.print_utils import log_print
+
 
 ## Processor events
 def CORE_PERF_EVENT(event_select, unit_mask):
@@ -463,7 +465,7 @@ def format_knl(job, typename):
           event_map = knl_mc_dclk_event_map
           name = "intel_knl_mc_dclk"
         else:
-          print(typename + " function " + func + " unknown")
+          log_print(typename + " function " + func + " unknown")
           continue
 
         host.stats.setdefault(name, {device: 0})

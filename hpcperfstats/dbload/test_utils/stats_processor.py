@@ -9,6 +9,8 @@ from multiprocessing import Pool
 
 from pandas import DataFrame, concat, to_datetime
 
+from hpcperfstats.print_utils import log_print
+
 #import pandas
 #pandas.set_option('display.max_rows', 100)
 
@@ -182,7 +184,7 @@ def process(stats_file):
   stats["arc"] = (stats["dif"] / deltat).fillna(0)
 
   stats["time"] = to_datetime(stats["time"], unit='s')
-  print("processing time for {0} {1:.1f}s".format(stats_file,
+  log_print("processing time for {0} {1:.1f}s".format(stats_file,
                                                   time.time() - start))
   return stats
 
@@ -203,8 +205,8 @@ try:
   enddate = datetime.strptime(sys.argv[2], "%Y-%m-%d")
 except:
   enddate = startdate + timedelta(days=1)
-print("Start Date: ", startdate)
-print("Start End:  ", enddate)
+log_print("Start Date: ", startdate)
+log_print("Start End:  ", enddate)
 #################################################################
 
 # Parse and convert raw stats files to pandas dataframe
@@ -229,13 +231,13 @@ for entry in os.scandir(directory):
       continue
     stats_files += [stats_file.path]
 
-print("Number of host stats files to process = ", len(stats_files))
+log_print("Number of host stats files to process = ", len(stats_files))
 
 with Pool(processes=48) as pool:
   stats_df = concat(pool.imap(process, stats_files), ignore_index=True)
 
-print("loading time", time.time() - start)
-print(stats_df)
+log_print("loading time", time.time() - start)
+log_print(stats_df)
 stats_df.to_pickle("all.pkl")
 
 ### Basic stats data ingested
@@ -359,7 +361,7 @@ datam = agg(stats_df, "net", event_list, tags)
 data["ethbw,MB/s"] = datam["arc"] / (1024 * 1024)
 
 del data["dif"], data["arc"]
-print(data)
+log_print(data)
 data = data.reset_index()
 #print(data[data.jid == "3477979"])
 sys.exit()

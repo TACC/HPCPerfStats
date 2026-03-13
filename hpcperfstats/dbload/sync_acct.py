@@ -18,6 +18,7 @@ from pandas import read_csv, to_datetime, to_timedelta
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
+from hpcperfstats.print_utils import log_print
 from hpcperfstats.site.machine.models import job_data
 
 local_timezone = cfg.get_local_timezone()
@@ -109,7 +110,7 @@ def _sync_acct_dataframe(df, jobs_in_db):
     df = df.drop(index=df.index[restricted_df_indices])
 
   if len(restricted_job_ids) > 0:
-    print("The following jobs are restricted and will be skipped: " +
+    log_print("The following jobs are restricted and will be skipped: " +
           str(restricted_job_ids))
 
   # In case newer slurm gives "None" time for unstarted jobs.  Older slurm prints start_time=end_time=cancelled_time.
@@ -133,7 +134,7 @@ def _sync_acct_dataframe(df, jobs_in_db):
   df["node_hrs"] = df["nhosts"] * df["runtime"] / 3600.
 
   n_new = df.shape[0]
-  print("Total number of new entries:", n_new)
+  log_print("Total number of new entries:", n_new)
 
   objs = [
       job_data(
@@ -158,7 +159,7 @@ def _sync_acct_dataframe(df, jobs_in_db):
     job_data.objects.bulk_create(objs)
     return n_new
   except Exception as e:
-    print("error in bulk_create:", str(e))
+    log_print("error in bulk_create:", str(e))
     _insert_job_data_individually(df)
     return n_new
 
@@ -189,7 +190,7 @@ def _insert_job_data_individually(df):
     except IntegrityError:
       pass  # skip duplicate jid
     except Exception as e:
-      print("error in single insert:", str(e), "for jid", row.jid)
+      log_print("error in single insert:", str(e), "for jid", row.jid)
 
 
 if __name__ == "__main__":
@@ -213,22 +214,22 @@ if __name__ == "__main__":
       .values_list("jid", flat=True)
       .iterator(chunk_size=10000)
   )
-  print("Jobs found in DB in this date range: %s" % len(jobs_in_db))
+  log_print("Jobs found in DB in this date range: %s" % len(jobs_in_db))
 
   while startdate <= enddate:
     for entry in os.scandir(directory):
       if not entry.is_file():
         continue
       if entry.name.startswith(str(startdate.date())):
-        print(entry.path)
+        log_print(entry.path)
         try:
           sync_acct(entry.path, jobs_in_db)
         except Exception as e:
           if settings.DEBUG:
             raise e
-          print("Unable to load file: %s" % entry.path)
+          log_print("Unable to load file: %s" % entry.path)
     startdate += timedelta(days=1)
-  print("loading time", time.time() - start)
+  log_print("loading time", time.time() - start)
 
   # Close DB connections before long sleep to avoid idle connections.
   close_old_connections()

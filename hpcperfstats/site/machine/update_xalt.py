@@ -10,6 +10,7 @@ from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
 from hpcperfstats.dbload.date_utils import daterange, parse_start_end_dates
+from hpcperfstats.print_utils import log_print
 from hpcperfstats.site.machine.models import job_data
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
@@ -22,7 +23,7 @@ start, end = parse_start_end_dates(sys.argv, default_start, default_end)
 # Optionally, iterate by date and log xalt runs for jobs in job_data for that date:
 for date in daterange(start, end, inclusive_end=True):
   directory = date.strftime("%Y-%m-%d")
-  print(directory)
+  log_print(directory)
   # Jobs ending on this date (by day)
   jobs_on_date = job_data.objects.filter(end_time__date=date).values_list(
       "jid", flat=True)
@@ -33,4 +34,4 @@ for date in daterange(start, end, inclusive_end=True):
     for r in runs:
       if "usr" in r.exec_path.split("/"):
         continue
-      print("  jid=%s exec_path=%s" % (jid, r.exec_path))
+      log_print("  jid=%s exec_path=%s" % (jid, r.exec_path))

@@ -1,6 +1,8 @@
 """Shared date parsing and range utilities for dbload and CLI scripts."""
 from datetime import datetime, timedelta
 
+from hpcperfstats.print_utils import log_print
+
 
 def parse_start_end_dates(
     argv,
@@ -26,7 +28,7 @@ def parse_start_end_dates(
 
 def log_date_range(kind, start, end):
   """Print the standard date-range log line. kind e.g. 'stats files to ingest', 'job files to ingest', 'metrics to update'."""
-  print("###Date Range of {}: {} -> {}####".format(kind, start, end))
+  log_print("###Date Range of {}: {} -> {}####".format(kind, start, end))
 
 
 def daterange(start_date, end_date, inclusive_end=False):

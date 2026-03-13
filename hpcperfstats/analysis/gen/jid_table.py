@@ -4,6 +4,7 @@
 import time
 from datetime import timezone as dt_utc
 import hpcperfstats.conf_parser as cfg
+from hpcperfstats.print_utils import log_print
 from hpcperfstats.site.machine.cache_utils import (
     KEY_AGG_DF,
     KEY_JOB,
@@ -67,7 +68,7 @@ class jid_table:
     """Build job-scoped filter from job_data and populate host_list and schema from host_data.
 
         """
-    print("Initializing table for job {0}".format(jid))
+    log_print("Initializing table for job {0}".format(jid))
 
     self.jid = jid
     self.conj = None  # Deprecated: no raw connection; kept for API compatibility.
@@ -117,7 +118,7 @@ class jid_table:
         TIMEOUT_SHORT,
         _host_list_fn,
     ) or []
-    print("query time: {0:.1f}".format(time.time() - qtime))
+    log_print("query time: {0:.1f}".format(time.time() - qtime))
 
     if len(self.host_list) == 0:
       self.schema = {}
@@ -145,7 +146,7 @@ class jid_table:
       for t in types:
         self.schema[t] = sorted(
             schema_df[schema_df["type"] == t]["event"].unique().tolist())
-    print("schema time: {0:.1f}".format(time.time() - etime))
+    log_print("schema time: {0:.1f}".format(time.time() - etime))
 
   def _host_data_qs(self, **extra_filters):
     """Base host_data queryset for this job (time range + hosts).

@@ -12,6 +12,7 @@ from functools import partial
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload import sync_timedb
+from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.sync_timedb_archive_helpers import get_tar_file_tasks
 
 thread_count = cfg.get_worker_thread_count(4)
@@ -20,7 +21,7 @@ thread_count = cfg.get_worker_thread_count(4)
 def _process_tar_member(lock, tar_path, member_name):
   """Open tar, extract one member, pass contents to add_stats_file_to_db.
   Keeps file contents only in the worker process."""
-  print("extracting %s from %s" % (member_name, tar_path))
+  log_print("extracting %s from %s" % (member_name, tar_path))
   with tarfile.open(tar_path, 'r') as tar:
     member = tar.getmember(member_name)
     f = tar.extractfile(member)
@@ -44,7 +45,7 @@ if __name__ == '__main__':
   # Build only (tar_path, member_name) pairs; no file contents in main process.
   tasks = []
   for tar_file_name in tar_files:
-    print(tar_file_name)
+    log_print(tar_file_name)
     tasks.extend(get_tar_file_tasks(tar_file_name))
 
   manager = multiprocessing.Manager()

@@ -15,6 +15,7 @@ from django.db.utils import OperationalError
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
+from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
 from hpcperfstats.site.machine.models import job_data
 
@@ -69,22 +70,22 @@ def update_metrics(date, rerun=False):
   def _run():
     qs = _jobs_queryset(date, min_time, rerun)
     total_jobs = qs.count()
-    print(
+    log_print(
         "Total jobs {0} for date {1}".format(
             total_jobs, date.strftime("%Y-%m-%d")
         )
     )
 
     metrics_manager = metrics.Metrics()
-    print(
+    log_print(
         "Compute for following metrics for date {0} on {1} jobs".format(
             date, total_jobs
         )
     )
     for name in metrics_manager.simple_metrics_list:
-      print(name)
+      log_print(name)
     for name in metrics_manager.complex_metrics_list:
-      print(name)
+      log_print(name)
 
     processed = 0
     for pk_chunk, _ in _iter_chunked_pks(qs, CHUNK_SIZE):
@@ -102,7 +103,7 @@ def update_metrics(date, rerun=False):
       close_old_connections()
       qs_after = _jobs_queryset(date, min_time, rerun=False)
       remaining = qs_after.count()
-      print("jobs that don't have data after run (count): {0}".format(remaining))
+      log_print("jobs that don't have data after run (count): {0}".format(remaining))
 
   try:
     _run()
@@ -135,9 +136,9 @@ def main(argv=None, sleep_after=True):
     date += timedelta(days=1)
 
   sorted(all_dates, reverse=True) 
-  print(all_dates)
+  log_print(all_dates)
   for result in map(update_metrics, all_dates):
-    print(result)
+    log_print(result)
 
   if sleep_after:
     # Close DB connections before long sleep to avoid idle connections.
