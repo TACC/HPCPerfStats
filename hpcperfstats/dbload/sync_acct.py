@@ -158,7 +158,7 @@ def _sync_acct_dataframe(df, jobs_in_db):
       ) for row in df.itertuples(index=False)
   ]
   try:
-    job_data.objects.bulk_create(objs)
+    job_data.objects.bulk_create(objs, ignore_conflicts=True)
     return n_new
   except Exception as e:
     log_print("error in bulk_create:", str(e))
