@@ -220,16 +220,32 @@ class jid_table:
         """
     cols = columns or ["host", "time", "type", "event", "value", "arc", "delta"]
     if columns is not None:
-      # Use a regular queryset without server-side cursors. Iterator() can
-      # trigger psycopg server cursor bugs (IndexError in _declare_gen) under
-      # heavy parallel load, and we convert the full queryset to a DataFrame
-      # anyway, so streaming provides little benefit here.
-      qs = (
-          self._host_data_qs()
-          .values(*cols)
-          .order_by("host", "time")
+      # Use raw SQL to avoid Django ORM IndexError when DB row column count
+      # does not match .values() names (e.g. schema mismatch or missing columns).
+      import pandas as pd
+      from django.db import connection
+      hosts = self._base_filter.get("host__in") or []
+      if not hosts:
+        return pd.DataFrame(columns=cols)
+      host_placeholders = ",".join(["%s"] * len(hosts))
+      sql = (
+          "SELECT * FROM host_data WHERE host IN (" + host_placeholders + ") "
+          "AND time >= %s AND time <= %s ORDER BY host, time"
       )
-      return _queryset_to_dataframe(qs)
+      params = list(hosts) + [
+          self._base_filter["time__gte"],
+          self._base_filter["time__lte"],
+      ]
+      with connection.cursor() as cur:
+        cur.execute(sql, params)
+        db_columns = [col[0] for col in cur.description] if cur.description else []
+        rows = cur.fetchall()
+      if not rows:
+        return pd.DataFrame(columns=[c for c in cols if c in db_columns])
+      df = pd.DataFrame(rows, columns=db_columns)
+      # Return only requested columns that exist in the DB
+      want = [c for c in cols if c in df.columns]
+      return df[want] if want else pd.DataFrame()
 
     def _fn():
       qs = (
