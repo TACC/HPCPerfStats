@@ -70,9 +70,9 @@ class jid_table:
       self._base_filter = {}
       return
 
-    # job_data host_list: use fqdn for host_data lookups
+    # job_data host_list: use fqdn for host_data lookups (cast to str for varchar comparison)
     self.acct_host_list = [
-        h + "." + cfg.get_host_name_ext() for h in (job.host_list or [])
+        str(h) + "." + cfg.get_host_name_ext() for h in (job.host_list or [])
     ]
     self.start_time = _ensure_tz(job.start_time)
     self.end_time = _ensure_tz(job.end_time)
@@ -121,7 +121,7 @@ class jid_table:
           "WHERE host = %s AND time >= %s AND time <= %s"
       )
       params = [
-          self.host_list[0],
+          str(self.host_list[0]),
           self._base_filter["time__gte"],
           self._base_filter["time__lte"],
       ]
@@ -182,14 +182,15 @@ class jid_table:
 
     def _fn():
       hosts = self._base_filter["host__in"]
-      host_placeholders = ",".join(["%s"] * len(hosts))
+      host_strs = [str(h) for h in hosts]
+      host_placeholders = ",".join(["%s"] * len(host_strs))
       event_placeholders = ",".join(["%s"] * len(events))
       sql = (
           'SELECT host, time, SUM("%s") AS sum_val FROM host_data '
           "WHERE host IN (%s) AND time >= %%s AND time <= %%s AND type = %%s AND event IN (%s)"
       ) % (val_col, host_placeholders, event_placeholders)
       params = (
-          list(hosts)
+          list(host_strs)
           + [
               self._base_filter["time__gte"],
               self._base_filter["time__lte"],
@@ -228,12 +229,14 @@ class jid_table:
       hosts = self._base_filter.get("host__in") or []
       if not hosts:
         return pd.DataFrame(columns=cols)
-      host_placeholders = ",".join(["%s"] * len(hosts))
+      # host_data.host is varchar; ensure all values are strings for the IN clause
+      host_strs = [str(h) for h in hosts]
+      host_placeholders = ",".join(["%s"] * len(host_strs))
       sql = (
           "SELECT * FROM host_data WHERE host IN (" + host_placeholders + ") "
           "AND time >= %s AND time <= %s ORDER BY host, time"
       )
-      params = list(hosts) + [
+      params = list(host_strs) + [
           self._base_filter["time__gte"],
           self._base_filter["time__lte"],
       ]
@@ -400,9 +403,10 @@ class TypeDetailDataProvider:
       ]
       if "host__in" in self._base_filter:
         hosts = self._base_filter["host__in"]
-        placeholders = ",".join(["%s"] * len(hosts))
+        host_strs = [str(h) for h in hosts]
+        placeholders = ",".join(["%s"] * len(host_strs))
         sql += " AND host IN (%s)" % placeholders
-        params.extend(hosts)
+        params.extend(host_strs)
       sql += " GROUP BY host, time ORDER BY host, time"
       with connection.cursor() as cur:
         cur.execute(sql, params)
@@ -451,7 +455,7 @@ class HostDataProvider:
           "WHERE host = %s AND time >= %s AND time <= %s"
       )
       params = [
-          self._base_filter["host"],
+          str(self._base_filter["host"]),
           self._base_filter["time__gte"],
           self._base_filter["time__lte"],
       ]
@@ -504,7 +508,7 @@ class HostDataProvider:
         "WHERE host = %%s AND time >= %%s AND time <= %%s AND type = %%s AND event IN (%s)"
     ) % (val_col, placeholders)
     params = [
-        self._base_filter["host"],
+        str(self._base_filter["host"]),
         self._base_filter["time__gte"],
         self._base_filter["time__lte"],
         typ,
