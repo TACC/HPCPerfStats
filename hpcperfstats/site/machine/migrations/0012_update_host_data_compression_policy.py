@@ -16,9 +16,13 @@ class Migration(migrations.Migration):
   operations = [
       migrations.RunSQL(
           # New policy: compress chunks older than 30 days
-          "SELECT alter_compression_policy('host_data', compress_after => INTERVAL '30d');",
+          # TimescaleDB does not provide alter_compression_policy() on all versions,
+          # so we remove the existing policy (created in 0001_initial) and add a new one.
+          "SELECT remove_compression_policy('host_data');"
+          "SELECT add_compression_policy('host_data', compress_after => INTERVAL '30d');",
           # Reverse: restore original 60-day compression window
-          "SELECT alter_compression_policy('host_data', compress_after => INTERVAL '60d');",
+          "SELECT remove_compression_policy('host_data');"
+          "SELECT add_compression_policy('host_data', compress_after => INTERVAL '60d');",
       ),
   ]
 
