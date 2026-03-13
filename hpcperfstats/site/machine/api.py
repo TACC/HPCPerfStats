@@ -1907,7 +1907,20 @@ def admin_monitor(request):
             .values("host")
             .annotate(last_time=Max("time"))
         )
-        latest_by_host = {row["host"]: row["last_time"] for row in latest_qs}
+
+        # Index latest timestamps by both FQDN and short hostname so that we
+        # can match whatever format is stored in job_data.host_list.
+        latest_by_host = {}
+        for row in latest_qs:
+            host = row.get("host") or ""
+            last_time = row.get("last_time")
+            if not host or last_time is None:
+                continue
+            latest_by_host[host] = last_time
+            short = host.split(".", 1)[0]
+            prev = latest_by_host.get(short)
+            if prev is None or last_time > prev:
+                latest_by_host[short] = last_time
 
         host_stats_local = []
         for host in all_hosts:
