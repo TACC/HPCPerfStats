@@ -71,6 +71,10 @@ else:
     else:
         ALLOWED_HOSTS = ["*"] if DEBUG else []
 
+# Allow Docker service hostname for internal health checks (e.g. supervisor_startup.sh curling http://web:8000)
+if "*" not in ALLOWED_HOSTS and "web" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS = list(ALLOWED_HOSTS) + ["web"]
+
 # Local time zone for this installation. Choices can be found here:
 # http://en.wikipedia.org/wiki/List_of_tz_zones_by_name
 # although not all choices may be available on all operating systems.

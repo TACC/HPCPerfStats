@@ -7,13 +7,10 @@ while true; do
   # -s: silent, -o /dev/null: discard body
   # -w "%{http_code}": only print status code
   STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo "000")
-  if [[ "$STATUS_CODE" =~ ^2|3 ]]; then
-    echo "Connected to $URL (HTTP $STATUS_CODE). Continuing..."
-    break
-  else
-    echo "Still waiting for $URL (status $STATUS_CODE). Retrying in $SLEEP_SECONDS seconds..."
-    sleep "$SLEEP_SECONDS"
-  fi
+  case "$STATUS_CODE" in
+    2*|3*) echo "Connected to $URL (HTTP $STATUS_CODE). Continuing..."; break ;;
+    *) echo "Still waiting for $URL (status $STATUS_CODE). Retrying in $SLEEP_SECONDS seconds..."; sleep "$SLEEP_SECONDS" ;;
+  esac
 done
 
 chmod -c 755 /hpcperfstats/
