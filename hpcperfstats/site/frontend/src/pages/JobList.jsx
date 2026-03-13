@@ -285,10 +285,11 @@ export default function JobList() {
         </div>
       )}
 
-      <table className="table table-sm table-bordered">
-        <thead>
-          <tr>
-            {columns.map(({ label, field, sortable }) => (
+      <div className="table-responsive">
+        <table className="table table-sm table-bordered">
+          <thead>
+            <tr>
+              {columns.map(({ label, field, sortable }) => (
               <th key={field}>
                 {sortable ? (
                   <Link to={sortLink(field)}>
@@ -341,7 +342,8 @@ export default function JobList() {
             </tr>
           ))}
         </tbody>
-      </table>
+        </table>
+      </div>
     </>
   );
 }

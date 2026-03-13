@@ -89,7 +89,8 @@ export default function JobDetail() {
     <>
       <div>
         <h2>Job Detail</h2>
-        <table className="table table-sm table-bordered">
+        <div className="table-responsive">
+          <table className="table table-sm table-bordered">
           <thead>
             <tr>
               <th>Job ID</th>
@@ -142,12 +143,14 @@ export default function JobDetail() {
               <td>{job.nhosts}</td>
             </tr>
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       <div className="row">
         <div className="col-md-3">
-          <table className="table table-sm table-bordered">
+          <div className="table-responsive">
+            <table className="table table-sm table-bordered">
             <thead>
               <tr>
                 <th>File System</th>
@@ -172,7 +175,8 @@ export default function JobDetail() {
                 ))
               )}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -330,7 +334,7 @@ export default function JobDetail() {
       </div>
 
       <hr />
-      <center>
+      <center className="job-detail-plots">
         <h3>Host-level Plots</h3>
         {plotsLoading && (
           <LoadingMessage message="Loading job plots…" />

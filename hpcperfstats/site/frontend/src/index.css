@@ -5,13 +5,22 @@ body {
 .navbar {
   position: relative;
 }
-.navbar-brand {
-  position: absolute;
-  width: 100%;
-  left: 0;
-  text-align: center;
-  margin: auto;
+/* Centered title: absolute only on desktop so logo and actions stay on sides */
+.navbar-brand.navbar-brand-center {
   pointer-events: none;
+}
+@media (min-width: 992px) {
+  .navbar-brand.navbar-brand-center {
+    position: absolute;
+    width: 100%;
+    left: 0;
+    text-align: center;
+    margin: auto;
+  }
+  /* Desktop: always show navbar collapse (no toggler) */
+  .navbar-expand-lg .navbar-collapse {
+    display: flex !important;
+  }
 }
 .navbar-header a,
 .navbar-form {
@@ -313,4 +322,125 @@ body {
 }
 .search-date-list-month:last-child {
   margin-bottom: 0;
+}
+
+/* ========== Mobile view (all browsable pages) ========== */
+@media (max-width: 991.98px) {
+  .navbar-collapse {
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+  }
+  .navbar-brand-center {
+    margin-bottom: 0.5rem;
+  }
+  .navbar-actions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+  .navbar-actions-row {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .navbar-actions-row .form-group {
+    flex: 1;
+    min-width: 120px;
+  }
+  .navbar-actions-row form {
+    flex-wrap: wrap;
+  }
+  main.mt-4 {
+    padding-left: env(safe-area-inset-left, 0);
+    padding-right: env(safe-area-inset-right, 0);
+  }
+}
+
+@media (max-width: 767.98px) {
+  .container-fluid {
+    padding-left: max(0.5rem, env(safe-area-inset-left));
+    padding-right: max(0.5rem, env(safe-area-inset-right));
+  }
+  .table-responsive {
+    -webkit-overflow-scrolling: touch;
+    margin-left: -0.5rem;
+    margin-right: -0.5rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+  .table-responsive .table {
+    font-size: 0.875rem;
+  }
+  .table-responsive .table th,
+  .table-responsive .table td {
+    padding: 0.35rem 0.25rem;
+    white-space: nowrap;
+  }
+  /* Job detail: host-level plots stack vertically on mobile */
+  .job-detail-plots table,
+  .job-detail-plots table tbody,
+  .job-detail-plots table tr {
+    display: block;
+  }
+  .job-detail-plots table td {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  .job-detail-plots table tr {
+    margin-bottom: 1rem;
+  }
+  /* Histogram thumbnails: single column on very small screens */
+  .histogram-thumbnails-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .histogram-thumbnail-wrapper {
+    justify-content: center;
+  }
+  /* Popover fits viewport on mobile */
+  .histogram-thumbnail-popover {
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 80px);
+    overflow: auto;
+  }
+  .histogram-thumbnail-popover-plot {
+    max-width: 100%;
+  }
+  .histogram-thumbnail-popover-plot .bokeh-embed-wrapper {
+    min-height: 280px;
+  }
+  /* Extended search: form rows stack */
+  .extended-search-panel .row {
+    margin-bottom: 0.5rem;
+  }
+  .extended-search-panel .row > [class*="col-"] {
+    margin-bottom: 0.25rem;
+  }
+  .extended-search-collapse {
+    padding: 0.75rem 0.5rem;
+  }
+  /* Admin monitor section header text wraps */
+  .admin-monitor-section-header {
+    flex-wrap: wrap;
+    font-size: 0.95rem;
+  }
+  /* Pagination: compact on mobile */
+  .pagination-wrapper {
+    flex-wrap: wrap;
+    margin: 0.5rem 0;
+  }
+  .search-home-section h4 {
+    font-size: 1.1rem;
+  }
+  .search-date-list-nav {
+    padding: 0.5rem 0.75rem;
+  }
+}
+
+/* Safe area for notched devices */
+@supports (padding: env(safe-area-inset-bottom)) {
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }

@@ -85,20 +85,20 @@ export default function ExtendedSearch({ onClose }) {
       <form id="extended-search-form" onSubmit={handleSubmit}>
         <p className="text-muted small">Search fields are combined.</p>
         <div className="row">
-          <div className="col-md-1">
+          <div className="col-12 col-md-1">
             <label>Start Date</label>
           </div>
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <input
               type="date"
               className="form-control form-control-sm"
               name="end_time__gte"
             />
           </div>
-          <div className="col-md-1">
+          <div className="col-12 col-md-1">
             <label>End Date</label>
           </div>
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <input
               type="date"
               className="form-control form-control-sm"
@@ -107,10 +107,10 @@ export default function ExtendedSearch({ onClose }) {
           </div>
         </div>
         <div className="row">
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <label htmlFor="ext-host">Host</label>
           </div>
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <input
               type="text"
               className="form-control form-control-sm"
@@ -120,10 +120,10 @@ export default function ExtendedSearch({ onClose }) {
           </div>
         </div>
         <div className="row">
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <label htmlFor="ext-username">Username</label>
           </div>
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <input
               type="text"
               className="form-control form-control-sm"
@@ -133,10 +133,10 @@ export default function ExtendedSearch({ onClose }) {
           </div>
         </div>
         <div className="row">
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <label htmlFor="ext-account">Account</label>
           </div>
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <input
               type="text"
               className="form-control form-control-sm"
@@ -146,10 +146,10 @@ export default function ExtendedSearch({ onClose }) {
           </div>
         </div>
         <div className="row">
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <label htmlFor="ext-state">State</label>
           </div>
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <select className="form-control" id="ext-state" name="state">
               <option value="">--</option>
               {states.map((s) => (
@@ -159,10 +159,10 @@ export default function ExtendedSearch({ onClose }) {
           </div>
         </div>
         <div className="row">
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <label htmlFor="ext-queue">Queue</label>
           </div>
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <select className="form-control" id="ext-queue" name="queue">
               <option value="">--</option>
               {queues.map((q) => (
@@ -173,10 +173,10 @@ export default function ExtendedSearch({ onClose }) {
         </div>
         <h5>Search on Resources</h5>
         <div className="row">
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <label>Runtime</label>
           </div>
-          <div className="col-md-1">
+          <div className="col-12 col-md-1">
             <input
               type="text"
               className="form-control form-control-sm"
@@ -184,7 +184,7 @@ export default function ExtendedSearch({ onClose }) {
               placeholder="min seconds"
             />
           </div>
-          <div className="col-md-1">
+          <div className="col-12 col-md-1">
             <input
               type="text"
               className="form-control form-control-sm"
@@ -194,10 +194,10 @@ export default function ExtendedSearch({ onClose }) {
           </div>
         </div>
         <div className="row">
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <label>Nodes</label>
           </div>
-          <div className="col-md-1">
+          <div className="col-12 col-md-1">
             <input
               type="text"
               className="form-control form-control-sm"
@@ -205,7 +205,7 @@ export default function ExtendedSearch({ onClose }) {
               placeholder="min nodes"
             />
           </div>
-          <div className="col-md-1">
+          <div className="col-12 col-md-1">
             <input
               type="text"
               className="form-control form-control-sm"
@@ -215,10 +215,10 @@ export default function ExtendedSearch({ onClose }) {
           </div>
         </div>
         <div className="row">
-          <div className="col-md-2">
+          <div className="col-12 col-md-2">
             <label>Node-hrs</label>
           </div>
-          <div className="col-md-1">
+          <div className="col-12 col-md-1">
             <input
               type="text"
               className="form-control form-control-sm"
@@ -226,7 +226,7 @@ export default function ExtendedSearch({ onClose }) {
               placeholder="min nodes-hrs"
             />
           </div>
-          <div className="col-md-1">
+          <div className="col-12 col-md-1">
             <input
               type="text"
               className="form-control form-control-sm"
@@ -238,10 +238,10 @@ export default function ExtendedSearch({ onClose }) {
         <h5>Search on Derived Metrics</h5>
         {metrics.map((m) => (
           <div className="row" key={m.metric}>
-            <div className="col-md-2">
+            <div className="col-12 col-md-2">
               <label>{m.metric}</label>
             </div>
-            <div className="col-md-1">
+            <div className="col-12 col-md-1">
               <input
                 type="text"
                 className="form-control form-control-sm"
@@ -249,7 +249,7 @@ export default function ExtendedSearch({ onClose }) {
                 placeholder={`Min ${m.units}`}
               />
             </div>
-            <div className="col-md-1">
+            <div className="col-12 col-md-1">
               <input
                 type="text"
                 className="form-control form-control-sm"

@@ -155,7 +155,8 @@ export default function AdminMonitor() {
             <span className="badge badge-freshness-gt_day">{"> 1 day"}</span>{" "}
             <span className="badge badge-freshness-gt_week">{"> 1 week"}</span>
           </p>
-              <table className="table table-sm table-bordered">
+              <div className="table-responsive">
+                <table className="table table-sm table-bordered">
                 <thead>
                   <tr>
                     <th>Host</th>
@@ -185,7 +186,8 @@ export default function AdminMonitor() {
                     </tr>
                   )}
                 </tbody>
-              </table>
+                </table>
+              </div>
             </>
           )}
         </div>
@@ -220,7 +222,8 @@ export default function AdminMonitor() {
             </div>
           )}
           {!timescaledbLoading && !timescaledbError && timescaledbStats && (
-            <table className="table table-sm table-bordered">
+            <div className="table-responsive">
+              <table className="table table-sm table-bordered">
               <tbody>
                 {(() => {
                   const LABELS = {
@@ -262,7 +265,8 @@ export default function AdminMonitor() {
                   </tr>
                 )}
               </tbody>
-            </table>
+              </table>
+            </div>
           )}
           {!timescaledbLoading && !timescaledbError && !timescaledbStats && (
             <div className="text-muted">No TimescaleDB statistics available.</div>
@@ -295,7 +299,8 @@ export default function AdminMonitor() {
             <div className="text-danger">Error loading cache stats: {cacheError}</div>
           )}
           {!cacheLoading && !cacheError && cacheStats && Object.keys(cacheStats).length > 0 && (
-            <table className="table table-sm table-bordered">
+            <div className="table-responsive">
+              <table className="table table-sm table-bordered">
               <tbody>
                 {Object.entries(cacheStats).map(([key, value]) => {
                   let displayValue;
@@ -316,7 +321,8 @@ export default function AdminMonitor() {
                   );
                 })}
               </tbody>
-            </table>
+              </table>
+            </div>
           )}
           {!cacheLoading && !cacheError && (!cacheStats || Object.keys(cacheStats).length === 0) && (
             <div className="text-muted">No cache statistics available.</div>
@@ -359,7 +365,8 @@ export default function AdminMonitor() {
                   RabbitMQ reported an error: {rabbitStats.error}
                 </div>
               )}
-              <table className="table table-sm table-bordered">
+              <div className="table-responsive">
+                <table className="table table-sm table-bordered">
                 <tbody>
                   {(() => {
                     const LABELS = {
@@ -402,7 +409,8 @@ export default function AdminMonitor() {
                     </tr>
                   )}
                 </tbody>
-              </table>
+                </table>
+              </div>
             </>
           )}
           {!rabbitLoading &&
