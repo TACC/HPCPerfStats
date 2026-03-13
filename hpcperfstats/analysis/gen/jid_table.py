@@ -129,8 +129,9 @@ class jid_table:
         cur.execute(sql, params)
         columns = [col[0] for col in cur.description] if cur.description else []
         rows = cur.fetchall()
+      columns = columns or ["type", "event"]
       if not rows:
-        return pd.DataFrame(columns=columns or ["type", "event"])
+        return pd.DataFrame(columns=columns)
       return pd.DataFrame(rows, columns=columns)
 
     schema_df = cached_orm(
@@ -138,7 +139,7 @@ class jid_table:
         TIMEOUT_SHORT,
         _schema_fn,
     )
-    if schema_df is None or schema_df.empty:
+    if schema_df is None or schema_df.empty or "type" not in schema_df.columns:
       self.schema = {}
     else:
       types = sorted(schema_df["type"].unique().tolist())
@@ -458,6 +459,7 @@ class HostDataProvider:
         cur.execute(sql, params)
         columns = [col[0] for col in cur.description] if cur.description else []
         rows = cur.fetchall()
+      columns = columns or ["type", "event"]
       if not rows:
         return {}
       schema_df = pd.DataFrame(rows, columns=columns)
