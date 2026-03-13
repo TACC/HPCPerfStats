@@ -5,7 +5,6 @@ tar by (path, member_name) so the main process never holds file contents.
 """
 import io
 import multiprocessing
-import signal
 import sys
 import tarfile
 import time
@@ -16,7 +15,6 @@ from hpcperfstats.dbload import sync_timedb
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.sync_timedb_archive_helpers import get_tar_file_tasks
 from hpcperfstats.shutdown_utils import (
-    register_sigterm_handler,
     shutdown_requested,
 )
 
@@ -40,7 +38,6 @@ def _process_tar_member(lock, tar_path, member_name):
 
 
 if __name__ == '__main__':
-  register_sigterm_handler("Received SIGTERM, will exit after current chunk")
   sync_timedb.database_startup()
 
   tar_files = sys.argv[1:]

@@ -4,7 +4,6 @@
 """
 import io
 import os
-import signal
 import sys
 import time
 from datetime import datetime, timedelta, timezone as dt_timezone
@@ -25,7 +24,6 @@ from hpcperfstats.dbload.date_utils import (
 )
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.shutdown_utils import (
-    register_sigterm_handler,
     shutdown_requested,
     sleep_until_shutdown,
 )
@@ -211,7 +209,6 @@ def _insert_job_data_individually(df):
 
 
 if __name__ == "__main__":
-  register_sigterm_handler("Received SIGTERM, will exit after current work")
   #    while True:
 
   #################################################################

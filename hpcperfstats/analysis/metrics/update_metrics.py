@@ -18,7 +18,6 @@ from hpcperfstats.analysis.metrics import metrics
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
 from hpcperfstats.shutdown_utils import (
-    register_sigterm_handler,
     shutdown_requested,
     sleep_until_shutdown,
 )
@@ -156,7 +155,6 @@ def main(argv=None, sleep_after=True):
 
 
 if __name__ == "__main__":
-  register_sigterm_handler("Received SIGTERM, will exit after current work")
   main()
   if shutdown_requested[0]:
     sys.exit(143)
