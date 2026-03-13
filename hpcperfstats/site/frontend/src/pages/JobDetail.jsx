@@ -380,28 +380,30 @@ export default function JobDetail() {
             No device data or plots available for this job.
           </p>
         ) : (
-          <table className="table table-sm table-bordered">
-            <thead>
-              <tr>
-                <th>Type Name</th>
-                <th>Recorded Performance Events</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(schema).map(([type_name, event]) => (
-                <tr key={type_name}>
-                  <td>
-                    <Link to={`/job/${job.jid}/${type_name}/`}>{type_name}</Link>
-                  </td>
-                  <td style={{ textAlign: "left" }}>
-                    {Array.isArray(event)
-                      ? event.join(", ")
-                      : event}
-                  </td>
+          <div className="table-responsive">
+            <table className="table table-sm table-bordered">
+              <thead>
+                <tr>
+                  <th>Type Name</th>
+                  <th>Recorded Performance Events</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {Object.entries(schema).map(([type_name, event]) => (
+                  <tr key={type_name}>
+                    <td>
+                      <Link to={`/job/${job.jid}/${type_name}/`}>{type_name}</Link>
+                    </td>
+                    <td style={{ textAlign: "left" }}>
+                      {Array.isArray(event)
+                        ? event.join(", ")
+                        : event}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </center>
     </>
