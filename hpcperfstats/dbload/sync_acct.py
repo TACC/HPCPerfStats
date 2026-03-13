@@ -135,9 +135,6 @@ def _sync_acct_dataframe(df, jobs_in_db):
   df["host_list"] = df["host_list"].apply(hostlist.expand_hostlist)
   df["node_hrs"] = df["nhosts"] * df["runtime"] / 3600.
 
-  n_new = df.shape[0]
-  log_print("Total number of new entries:", n_new)
-
   objs = [
       job_data(
           jid=str(row.jid),
@@ -157,19 +154,35 @@ def _sync_acct_dataframe(df, jobs_in_db):
           node_hrs=float(row.node_hrs) if pd.notna(row.node_hrs) else None,
       ) for row in df.itertuples(index=False)
   ]
+
+  if not objs:
+    log_print("Total number of new entries: 0")
+    return 0
+
+  # Compute an accurate count of rows actually inserted, even when using
+  # ignore_conflicts (which silently skips duplicates at the DB level).
+  jids = [obj.jid for obj in objs]
+  existing_before = job_data.objects.filter(jid__in=jids).count()
+
   try:
     job_data.objects.bulk_create(objs, ignore_conflicts=True)
-    return n_new
   except Exception as e:
     log_print("error in bulk_create:", str(e))
-    _insert_job_data_individually(df)
-    return n_new
+    inserted = _insert_job_data_individually(df)
+    log_print("Total number of new entries (fallback single inserts):", inserted)
+    return inserted
+
+  existing_after = job_data.objects.filter(jid__in=jids).count()
+  inserted = max(0, existing_after - existing_before)
+  log_print("Total number of new entries:", inserted)
+  return inserted
 
 
 def _insert_job_data_individually(df):
   """Fallback: insert job_data rows one by one, skipping duplicates.
 
     """
+  inserted = 0
   for row in df.itertuples(index=False):
     try:
       job_data(
@@ -189,10 +202,12 @@ def _insert_job_data_individually(df):
           runtime=float(row.runtime) if pd.notna(row.runtime) else None,
           node_hrs=float(row.node_hrs) if pd.notna(row.node_hrs) else None,
       ).save()
+      inserted += 1
     except IntegrityError:
       pass  # skip duplicate jid
     except Exception as e:
       log_print("error in single insert:", str(e), "for jid", row.jid)
+  return inserted
 
 
 if __name__ == "__main__":
