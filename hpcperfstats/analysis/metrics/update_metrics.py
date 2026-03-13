@@ -3,7 +3,6 @@
 
 """
 import os
-import signal
 import sys
 import time
 from datetime import datetime, timedelta
@@ -18,29 +17,17 @@ import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
+from hpcperfstats.shutdown_utils import (
+    register_sigterm_handler,
+    shutdown_requested,
+    sleep_until_shutdown,
+)
 from hpcperfstats.site.machine.models import job_data
 
 DEBUG = cfg.get_debug()
 
 # Process jobs in chunks to bound memory; full job rows are not all held at once.
 CHUNK_SIZE = 500
-
-_shutdown_requested = False
-
-
-def _handle_sigterm(signum, frame):
-  global _shutdown_requested
-  _shutdown_requested = True
-  log_print("Received SIGTERM, will exit after current work")
-
-
-def _sleep_until_shutdown(seconds):
-  """Sleep for up to seconds, returning early if SIGTERM was received."""
-  interval = 5
-  elapsed = 0
-  while elapsed < seconds and not _shutdown_requested:
-    time.sleep(min(interval, seconds - elapsed))
-    elapsed += interval
 
 
 def _jobs_queryset(date, min_time, rerun):
@@ -156,20 +143,20 @@ def main(argv=None, sleep_after=True):
   sorted(all_dates, reverse=True)
   log_print(all_dates)
   for d in all_dates:
-    if _shutdown_requested:
+    if shutdown_requested[0]:
       break
     result = update_metrics(d)
     log_print(result)
 
-  if sleep_after and not _shutdown_requested:
+  if sleep_after and not shutdown_requested[0]:
     # Close DB connections before long sleep to avoid idle connections.
     close_old_connections()
     connections.close_all()
-    _sleep_until_shutdown(3600)
+    sleep_until_shutdown(3600)
 
 
 if __name__ == "__main__":
-  signal.signal(signal.SIGTERM, _handle_sigterm)
+  register_sigterm_handler("Received SIGTERM, will exit after current work")
   main()
-  if _shutdown_requested:
+  if shutdown_requested[0]:
     sys.exit(143)

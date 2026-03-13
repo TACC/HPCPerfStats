@@ -7,7 +7,6 @@ DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers 
 import itertools
 import multiprocessing
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -28,6 +27,11 @@ import pandas as pd
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
 from hpcperfstats.print_utils import log_print
+from hpcperfstats.shutdown_utils import (
+    register_sigterm_handler,
+    shutdown_requested,
+    sleep_until_shutdown,
+)
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
     collect_stats_files_in_range,
@@ -77,24 +81,6 @@ chunk_size = 100
 bulk_create_batch_size = 10000
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
-
-_shutdown_requested = False
-
-
-def _handle_sigterm(signum, frame):
-  global _shutdown_requested
-  _shutdown_requested = True
-  log_print("Received SIGTERM, will exit after current chunk")
-
-
-def _sleep_until_shutdown(seconds):
-  """Sleep for up to seconds, returning early if SIGTERM was received."""
-  interval = 5
-  elapsed = 0
-  while elapsed < seconds and not _shutdown_requested:
-    time.sleep(min(interval, seconds - elapsed))
-    elapsed += interval
-
 
 # This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
 def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
@@ -371,7 +357,7 @@ def database_startup():
 
 
 if __name__ == '__main__':
-  signal.signal(signal.SIGTERM, _handle_sigterm)
+  register_sigterm_handler("Received SIGTERM, will exit after current chunk")
   database_startup()
   #################################################################
 
@@ -404,7 +390,7 @@ if __name__ == '__main__':
       # Process and archive chunk_size files before continuing to process more
       num_chunks = (len(stats_files) + chunk_size - 1) // chunk_size if stats_files else 1
       for i in range(num_chunks):
-        if _shutdown_requested:
+        if shutdown_requested[0]:
           log_print("Exiting due to SIGTERM")
           break
         if DEBUG:
@@ -461,11 +447,11 @@ if __name__ == '__main__':
     # Close DB connections before long sleep to avoid idle connections.
     close_old_connections()
     connections.close_all()
-    _sleep_until_shutdown(120)
+    sleep_until_shutdown(120)
 
     if DEBUG:
       log_print("sync_timedb finished")
   finally:
     manager.shutdown()
-  if _shutdown_requested:
+  if shutdown_requested[0]:
     sys.exit(143)

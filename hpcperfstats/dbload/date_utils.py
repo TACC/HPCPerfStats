@@ -1,7 +1,15 @@
 """Shared date parsing and range utilities for dbload and CLI scripts."""
 from datetime import datetime, timedelta
 
+import pandas as pd
 from hpcperfstats.print_utils import log_print
+
+
+def to_pydatetime_or_none(ts):
+  """Convert pandas Timestamp/NaT to Python datetime or None."""
+  if pd.isna(ts):
+    return None
+  return ts.to_pydatetime()
 
 
 def parse_start_end_dates(

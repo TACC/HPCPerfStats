@@ -10,49 +10,14 @@ from multiprocessing import Pool
 from pandas import DataFrame, concat, to_datetime
 
 from hpcperfstats.print_utils import log_print
+from hpcperfstats.dbload.sync_timedb_parsing import (
+    amd64_df_eventmap,
+    amd64_pmc_eventmap,
+    intel_8pmc3_eventmap,
+    intel_skx_imc_eventmap,
+)
 
-#import pandas
-#pandas.set_option('display.max_rows', 100)
-
-amd64_pmc_eventmap = {
-    0x43ff03: "FLOPS,W=48",
-    0x4300c2: "BRANCH_INST_RETIRED,W=48",
-    0x4300c3: "BRANCH_INST_RETIRED_MISS,W=48",
-    0x4308af: "DISPATCH_STALL_CYCLES1,W=48",
-    0x43ffae: "DISPATCH_STALL_CYCLES0,W=48"
-}
-
-amd64_df_eventmap = {
-    0x403807: "MBW_CHANNEL_0,W=48,U=64B",
-    0x403847: "MBW_CHANNEL_1,W=48,U=64B",
-    0x403887: "MBW_CHANNEL_2,W=48,U=64B",
-    0x4038c7: "MBW_CHANNEL_3,W=48,U=64B",
-    0x433907: "MBW_CHANNEL_4,W=48,U=64B",
-    0x433947: "MBW_CHANNEL_5,W=48,U=64B",
-    0x433987: "MBW_CHANNEL_6,W=48,U=64B",
-    0x4339c7: "MBW_CHANNEL_7,W=48,U=64B"
-}
-
-intel_8pmc3_eventmap = {
-    0x4301c7: 'FP_ARITH_INST_RETIRED_SCALAR_DOUBLE,W=48,U=1',
-    0x4302c7: 'FP_ARITH_INST_RETIRED_SCALAR_SINGLE,W=48,U=1',
-    0x4304c7: 'FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE,W=48,U=2',
-    0x4308c7: 'FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE,W=48,U=4',
-    0x4310c7: 'FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE,W=48,U=4',
-    0x4320c7: 'FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE,W=48,U=8',
-    0x4340c7: 'FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE,W=48,U=8',
-    0x4380c7: 'FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE,W=48,U=16',
-    "FIXED_CTR0": 'INST_RETIRED,W=48',
-    "FIXED_CTR1": 'APERF,W=48',
-    "FIXED_CTR2": 'MPERF,W=48'
-}
-
-intel_skx_imc_eventmap = {
-    0x400304: "CAS_READS,W=48",
-    0x400c04: "CAS_WRITES,W=48",
-    0x400b01: "ACT_COUNT,W=48",
-    0x400102: "PRE_COUNT_MISS,W=48"
-}
+# Test script uses a broader exclude list than production sync.
 """
 { time : 1628783584.433181, host : amd-1, jobid : 101, type : amd64_rapl, device : 0, event : MSR_CORE_ENERGY_STAT, unit : mJ, width : 32, value : 1668055930 } 
 

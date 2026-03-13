@@ -3,6 +3,7 @@
 Use log_print() instead of print() so every message is prefixed with [script_name]
 of the original calling tool (the script that was run). Library code that is only
 imported uses the same label as the script that invoked it (e.g. [sync_timedb]).
+Canonical implementation; hpcperfstats-tools may keep a copy for standalone use.
 """
 import inspect
 import sys

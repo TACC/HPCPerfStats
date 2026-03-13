@@ -35,7 +35,7 @@ def on_message(channel, method_frame, header_frame, body):
   log_print("found message: %s" % header_frame)
   try:
     message = body.decode(errors='replace')
-  except:
+  except Exception:
     log_print("Unexpected error at decode:", sys.exc_info()[0])
     #print(body)
     return

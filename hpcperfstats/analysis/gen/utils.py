@@ -124,14 +124,28 @@ def get_job_host_data_and_job_dict(jid):
   return host_df, job_dict
 
 
-def queryset_to_dataframe(qs):
+def queryset_to_dataframe(qs, columns=None):
   """Convert a Django QuerySet to a pandas DataFrame.
 
-    """
+  When columns is set, uses qs.values(*columns). When columns is None,
+  iterates the queryset as-is so annotated/grouped querysets are preserved.
+  Handles iterable of dicts, list of lists/tuples, or model instances
+  (via model_to_dict).
+  """
   import pandas as pd
-  if qs is None or not hasattr(qs, "values"):
+  if qs is None:
     return pd.DataFrame()
-  return pd.DataFrame(list(qs.values()))
+  if columns is not None and hasattr(qs, "values"):
+    return pd.DataFrame(list(qs.values(*columns)))
+  data = list(qs)
+  if not data:
+    return pd.DataFrame()
+  if isinstance(data[0], dict):
+    return pd.DataFrame(data)
+  if isinstance(data[0], (list, tuple)):
+    return pd.DataFrame(data)
+  from django.forms.models import model_to_dict
+  return pd.DataFrame([model_to_dict(row) for row in data])
 
 
 def clean_dataframe(df):

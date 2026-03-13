@@ -4,6 +4,7 @@
 import time
 from datetime import timezone as dt_utc
 import hpcperfstats.conf_parser as cfg
+from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.site.machine.cache_utils import (
     KEY_AGG_DF,
@@ -35,28 +36,6 @@ def _ensure_tz(dt):
     from django.utils import timezone as django_tz
     dt = django_tz.make_aware(dt, dt_utc.utc)
   return dt.astimezone(local_timezone)
-
-
-def _queryset_to_dataframe(qs, columns=None):
-  """Convert a Django QuerySet (values() or values_list()) to a pandas DataFrame.
-  When columns is None, iterates the queryset as-is so that grouped/annotated
-  querysets (e.g. .values('host','time').annotate(sum_val=Sum(...))) are not
-  overwritten by .values(), which would select all columns and break GROUP BY.
-  """
-  import pandas as pd
-  if qs is None:
-    return pd.DataFrame()
-  if columns is not None and hasattr(qs, "values"):
-    return pd.DataFrame(list(qs.values(*columns)))
-  data = list(qs)
-  if not data:
-    return pd.DataFrame()
-  if isinstance(data[0], dict):
-    return pd.DataFrame(data)
-  if isinstance(data[0], (list, tuple)):
-    return pd.DataFrame(data)
-  from django.forms.models import model_to_dict
-  return pd.DataFrame([model_to_dict(row) for row in data])
 
 
 class jid_table:
@@ -131,7 +110,7 @@ class jid_table:
       schema_qs = (host_data.objects.filter(**self._base_filter,
                                             host=self.host_list[0]).values(
                                                 "type", "event").distinct())
-      return _queryset_to_dataframe(schema_qs)
+      return queryset_to_dataframe(schema_qs)
 
     schema_df = cached_orm(
         make_cache_key(KEY_JOB_SCHEMA, jid, self.host_list[0]),
@@ -161,11 +140,11 @@ class jid_table:
     def _fn():
       qs = (self._host_data_qs().values("host", "time").distinct().order_by(
           "host", "time"))
-      return _queryset_to_dataframe(qs)
+      return queryset_to_dataframe(qs)
 
     key = make_cache_key(KEY_HOST_TIME_DF, self.jid)
     result = cached_orm(key, TIMEOUT_SHORT, _fn)
-    return result if result is not None else _queryset_to_dataframe(None)
+    return result if result is not None else queryset_to_dataframe(None)
 
   def get_aggregate_df(self, typ, val_col, events, conv=1.0):
     """Aggregate val_col (e.g. 'arc' or 'value') for given type and events. Returns DataFrame with columns host, time, sum_val (sum * conv).
@@ -253,11 +232,11 @@ class jid_table:
           .values(*cols)
           .order_by("host", "time")
       )
-      return _queryset_to_dataframe(qs)
+      return queryset_to_dataframe(qs)
 
     key = make_cache_key(KEY_HOST_DATA_DF, self.jid)
     result = cached_orm(key, TIMEOUT_SHORT, _fn)
-    return result if result is not None else _queryset_to_dataframe(None)
+    return result if result is not None else queryset_to_dataframe(None)
 
   def get_llite_delta_by_event(self):
     """Lustre read_bytes/write_bytes sum(delta) by event for this job (cached).
@@ -270,11 +249,11 @@ class jid_table:
           type="llite",
           event__in=["read_bytes", "write_bytes"],
       ).values("event").annotate(delta_sum=Sum("delta")).order_by("event"))
-      return _queryset_to_dataframe(qs)
+      return queryset_to_dataframe(qs)
 
     key = make_cache_key(KEY_LLITE_DELTA, self.jid)
     result = cached_orm(key, TIMEOUT_SHORT, _llite_fn)
-    return result if result is not None else _queryset_to_dataframe(None)
+    return result if result is not None else queryset_to_dataframe(None)
 
   def close(self):
     """No-op; no connection to close. Kept for context manager compatibility.
@@ -342,10 +321,10 @@ class TypeDetailDataProvider:
 
     def _fn():
       qs = (self._qs().values("host", "time").distinct().order_by("host", "time"))
-      return _queryset_to_dataframe(qs)
+      return queryset_to_dataframe(qs)
 
     result = cached_orm(key, TIMEOUT_SHORT, _fn)
-    return result if result is not None else _queryset_to_dataframe(None)
+    return result if result is not None else queryset_to_dataframe(None)
 
   def get_events_units(self):
     """List of (event, unit) for one host.
@@ -354,7 +333,7 @@ class TypeDetailDataProvider:
     if not self.host_list:
       return []
     qs = (self._qs(host=self.host_list[0]).values("event", "unit").distinct())
-    df = _queryset_to_dataframe(qs)
+    df = queryset_to_dataframe(qs)
     if df.empty:
       return []
     return list(df[["event", "unit"]].itertuples(index=False, name=None))
@@ -442,7 +421,7 @@ class HostDataProvider:
     def _schema_fn():
       schema_qs = (host_data.objects.filter(**self._base_filter).values(
           "type", "event").distinct())
-      schema_df = _queryset_to_dataframe(schema_qs)
+      schema_df = queryset_to_dataframe(schema_qs)
       if schema_df.empty:
         return {}
       types = sorted(schema_df["type"].unique().tolist())
@@ -466,7 +445,7 @@ class HostDataProvider:
         """
     qs = (self._host_data_qs().values("host", "time").distinct().order_by(
         "host", "time"))
-    return _queryset_to_dataframe(qs)
+    return queryset_to_dataframe(qs)
 
   def get_aggregate_df(self, typ, val_col, events, conv=1.0):
     """Aggregate val_col for type and events; returns DataFrame with host, time, sum_val (sum * conv).

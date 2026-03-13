@@ -15,16 +15,12 @@ import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload import sync_timedb
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.sync_timedb_archive_helpers import get_tar_file_tasks
+from hpcperfstats.shutdown_utils import (
+    register_sigterm_handler,
+    shutdown_requested,
+)
 
 thread_count = cfg.get_worker_thread_count(4)
-
-_shutdown_requested = False
-
-
-def _handle_sigterm(signum, frame):
-  global _shutdown_requested
-  _shutdown_requested = True
-  log_print("Received SIGTERM, will exit after current chunk")
 
 
 def _process_tar_member(lock, tar_path, member_name):
@@ -44,7 +40,7 @@ def _process_tar_member(lock, tar_path, member_name):
 
 
 if __name__ == '__main__':
-  signal.signal(signal.SIGTERM, _handle_sigterm)
+  register_sigterm_handler("Received SIGTERM, will exit after current chunk")
   sync_timedb.database_startup()
 
   tar_files = sys.argv[1:]
@@ -66,12 +62,12 @@ if __name__ == '__main__':
       # Process in chunks so SIGTERM can exit between chunks.
       chunk_size = max(1, min(50, len(tasks) or 1))
       for i in range(0, len(tasks), chunk_size):
-        if _shutdown_requested:
+        if shutdown_requested[0]:
           log_print("Exiting due to SIGTERM")
           break
         chunk = tasks[i:i + chunk_size]
         pool.starmap(worker, chunk)
   finally:
     manager.shutdown()
-  if _shutdown_requested:
+  if shutdown_requested[0]:
     sys.exit(143)

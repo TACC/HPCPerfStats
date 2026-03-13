@@ -18,27 +18,20 @@ from django.db import IntegrityError, close_old_connections, connections
 from pandas import read_csv, to_datetime, to_timedelta
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
+from hpcperfstats.dbload.date_utils import (
+    log_date_range,
+    parse_start_end_dates,
+    to_pydatetime_or_none,
+)
 from hpcperfstats.print_utils import log_print
+from hpcperfstats.shutdown_utils import (
+    register_sigterm_handler,
+    shutdown_requested,
+    sleep_until_shutdown,
+)
 from hpcperfstats.site.machine.models import job_data
 
 local_timezone = cfg.get_local_timezone()
-
-_shutdown_requested = False
-
-
-def _handle_sigterm(signum, frame):
-  global _shutdown_requested
-  _shutdown_requested = True
-  log_print("Received SIGTERM, will exit after current work")
-
-
-def _to_pydatetime_or_none(ts):
-  """Convert pandas Timestamp/NaT to Python datetime or None."""
-  if pd.isna(ts):
-    return None
-  return ts.to_pydatetime()
-
 
 COLUMNS_TO_READ = [
     'JobID', 'User', 'Account', 'Start', 'End', 'Submit', 'Partition',
@@ -150,9 +143,9 @@ def _sync_acct_dataframe(df, jobs_in_db):
           jid=str(row.jid),
           username=row.username,
           account=row.account if pd.notna(row.account) else None,
-          start_time=_to_pydatetime_or_none(row.start_time),
-          end_time=_to_pydatetime_or_none(row.end_time),
-          submit_time=_to_pydatetime_or_none(row.submit_time),
+          start_time=to_pydatetime_or_none(row.start_time),
+          end_time=to_pydatetime_or_none(row.end_time),
+          submit_time=to_pydatetime_or_none(row.submit_time),
           queue=row.queue if pd.notna(row.queue) else None,
           timelimit=float(row.timelimit) if pd.notna(row.timelimit) else None,
           jobname=str(row.jobname) if pd.notna(row.jobname) else None,
@@ -183,9 +176,9 @@ def _insert_job_data_individually(df):
           jid=str(row.jid),
           username=row.username,
           account=row.account if pd.notna(row.account) else None,
-          start_time=_to_pydatetime_or_none(row.start_time),
-          end_time=_to_pydatetime_or_none(row.end_time),
-          submit_time=_to_pydatetime_or_none(row.submit_time),
+          start_time=to_pydatetime_or_none(row.start_time),
+          end_time=to_pydatetime_or_none(row.end_time),
+          submit_time=to_pydatetime_or_none(row.submit_time),
           queue=row.queue if pd.notna(row.queue) else None,
           timelimit=float(row.timelimit) if pd.notna(row.timelimit) else None,
           jobname=str(row.jobname) if pd.notna(row.jobname) else None,
@@ -202,18 +195,8 @@ def _insert_job_data_individually(df):
       log_print("error in single insert:", str(e), "for jid", row.jid)
 
 
-def _sleep_until_shutdown(seconds):
-  """Sleep for up to seconds, returning early if SIGTERM was received."""
-  global _shutdown_requested
-  interval = 5
-  elapsed = 0
-  while elapsed < seconds and not _shutdown_requested:
-    time.sleep(min(interval, seconds - elapsed))
-    elapsed += interval
-
-
 if __name__ == "__main__":
-  signal.signal(signal.SIGTERM, _handle_sigterm)
+  register_sigterm_handler("Received SIGTERM, will exit after current work")
   #    while True:
 
   #################################################################

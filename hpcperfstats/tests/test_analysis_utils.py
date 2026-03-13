@@ -39,15 +39,12 @@ def test_queryset_to_dataframe_empty():
 
 
 def test_queryset_to_dataframe_mock_queryset():
-  """queryset_to_dataframe converts list of dicts-like queryset to DataFrame.
-
-    """
+  """queryset_to_dataframe converts iterable of dicts (e.g. queryset) to DataFrame."""
   from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
 
   class MockQs:
-
-    def values(self):
-      return [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
+    def __iter__(self):
+      return iter([{"a": 1, "b": 2}, {"a": 3, "b": 4}])
 
   out = queryset_to_dataframe(MockQs())
   assert isinstance(out, pd.DataFrame)
