@@ -161,6 +161,13 @@ export default function AdminMonitor() {
     return hostSort.direction === "asc" ? "▲" : "▼";
   };
 
+  const formatHostTime = (value) => {
+    if (!value) return "—";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value);
+    return d.toLocaleString();
+  };
+
   return (
     <>
       <h3>HPCPerfStats Monitor</h3>
@@ -239,7 +246,7 @@ export default function AdminMonitor() {
                     return (
                       <tr key={row.host + i} className={rowClass}>
                         <td>{row.host}</td>
-                        <td>{row.last_time || "—"}</td>
+                        <td>{formatHostTime(row.last_time)}</td>
                         <td>
                           <span className={`badge ${badge.class}`}>{badge.label}</span>
                         </td>
