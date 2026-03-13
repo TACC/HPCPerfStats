@@ -27,6 +27,7 @@ from .cache_utils import (
     KEY_ADMIN_RMQ_STATS,
     KEY_ADMIN_RMQ_SNAPSHOT,
     KEY_ADMIN_TIMESCALE_STATS,
+    KEY_ADMIN_HOST_STATS,
     KEY_DATES,
     KEY_METRICS_DISTINCT,
     KEY_QUEUES,
@@ -84,7 +85,17 @@ def _get_metric_hist_executor():
     if _metric_hist_executor is None:
         _metric_hist_executor = ThreadPoolExecutor(max_workers=8)
     return _metric_hist_executor
-from django.db.models import Count, Exists, OuterRef, Sum, Q, F, FloatField, ExpressionWrapper
+from django.db.models import (
+    Count,
+    Exists,
+    OuterRef,
+    Sum,
+    Q,
+    F,
+    FloatField,
+    ExpressionWrapper,
+    Max,
+)
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.utils import timezone as dj_timezone_utils
 from datetime import datetime, timedelta
@@ -1883,58 +1894,47 @@ def admin_monitor(request):
     all_hosts = cached_orm(KEY_ALL_HOSTS, TIMEOUT_MEDIUM, _all_hosts_fn)
     all_hosts = [h for h in all_hosts if not (str(h) or "").startswith("None")]
     all_hosts = sorted(all_hosts)
-    now = timezone.now()
-    time_bounds = now - timedelta(days=8)
-    _tb = time_bounds.isoformat()
 
-    def _host_last_for(host):
-        def _host_last_fn():
-            return (
-                host_data.objects.filter(
-                    host__icontains=host, time__gte=time_bounds
-                )
-                .order_by("-time")
-                .values_list("time", flat=True)
-                .first()
-            )
-        return host, cached_orm(
-            f"{KEY_HOST_LAST}:{host}:{_tb}",
-            TIMEOUT_SHORT,
-            _host_last_fn,
+    def _host_stats_fn():
+        now = timezone.now()
+        time_bounds = now - timedelta(days=8)
+
+        latest_qs = (
+            host_data.objects.filter(time__gte=time_bounds)
+            .values("host")
+            .annotate(last_time=Max("time"))
         )
+        latest_by_host = {row["host"]: row["last_time"] for row in latest_qs}
 
-    last_time_by_host = {}
-    executor = _get_host_last_executor()
-    futures = [executor.submit(_host_last_for, host) for host in all_hosts]
-    for future in as_completed(futures):
-        try:
-            host, last_time = future.result()
-            last_time_by_host[host] = last_time
-        except Exception:
-            pass
+        host_stats_local = []
+        for host in all_hosts:
+            last_time = latest_by_host.get(host)
+            if last_time is None:
+                host_stats_local.append(
+                    {"host": host, "last_time": None, "age_bucket": "gt_week"}
+                )
+                continue
+            age = now - last_time
+            if age > timedelta(weeks=1):
+                bucket = "gt_week"
+            elif age > timedelta(days=1):
+                bucket = "gt_day"
+            elif age > timedelta(hours=1):
+                bucket = "gt_hour"
+            elif age > timedelta(minutes=10):
+                bucket = "gt_10min"
+            else:
+                bucket = "ok"
+            host_stats_local.append(
+                {
+                    "host": host,
+                    "last_time": last_time.isoformat() if last_time else None,
+                    "age_bucket": bucket,
+                }
+            )
+        return host_stats_local
 
-    host_stats = []
-    for host in all_hosts:
-        last_time = last_time_by_host.get(host)
-        if last_time is None:
-            host_stats.append({"host": host, "last_time": None, "age_bucket": "gt_week"})
-            continue
-        age = now - last_time
-        if age > timedelta(weeks=1):
-            bucket = "gt_week"
-        elif age > timedelta(days=1):
-            bucket = "gt_day"
-        elif age > timedelta(hours=1):
-            bucket = "gt_hour"
-        elif age > timedelta(minutes=10):
-            bucket = "gt_10min"
-        else:
-            bucket = "ok"
-        host_stats.append({
-            "host": host,
-            "last_time": last_time.isoformat() if last_time else None,
-            "age_bucket": bucket,
-        })
+    host_stats = cached_orm(KEY_ADMIN_HOST_STATS, TIMEOUT_ADMIN_STATS, _host_stats_fn)
 
     cache_stats = _get_cache_stats()
     rabbitmq_stats = _get_rabbitmq_stats()
