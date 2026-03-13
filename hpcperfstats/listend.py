@@ -22,6 +22,7 @@ _message_timestamps = deque()
 _timestamps_lock = Lock()
 _last_message_time = None
 _last_idle_report_time = None
+_channel_ref = []
 
 
 def on_message(channel, method_frame, header_frame, body):
