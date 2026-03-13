@@ -219,9 +219,9 @@ if __name__ == "__main__":
   )
   log_print("Jobs found in DB in this date range: %s" % len(jobs_in_db))
 
-  while startdate <= enddate and not _shutdown_requested:
+  while startdate <= enddate and not shutdown_requested[0]:
     for entry in os.scandir(directory):
-      if _shutdown_requested:
+      if shutdown_requested[0]:
         break
       if not entry.is_file():
         continue
@@ -236,13 +236,13 @@ if __name__ == "__main__":
     startdate += timedelta(days=1)
   log_print("loading time", time.time() - start)
 
-  if _shutdown_requested:
+  if shutdown_requested[0]:
     log_print("Exiting due to SIGTERM")
     sys.exit(143)
 
   # Close DB connections before long sleep to avoid idle connections.
   close_old_connections()
   connections.close_all()
-  _sleep_until_shutdown(900)
-  if _shutdown_requested:
+  sleep_until_shutdown(900)
+  if shutdown_requested[0]:
     sys.exit(143)
