@@ -6,6 +6,7 @@ from django.conf import settings
 from django.http import HttpResponse, HttpResponseRedirect
 from django.views.generic import View
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET
 
 from hpcperfstats.site.machine.models import ApiKey
 from hpcperfstats.site.machine.oauth2 import check_for_tokens
@@ -109,3 +110,14 @@ def api_key_page(request):
 </html>
 """
     return HttpResponse(body, content_type="text/html")
+
+
+@require_GET
+def robots_txt(request):
+    """Disallow all automated crawlers; this app is not meant to be indexed."""
+    lines = [
+        "User-agent: *",
+        "Disallow: /",
+    ]
+    return HttpResponse("\n".join(lines), content_type="text/plain")
+

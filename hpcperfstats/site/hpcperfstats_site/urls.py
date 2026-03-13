@@ -13,7 +13,7 @@ from hpcperfstats.site.machine.oauth2 import (
     logout,
     oauth_callback,
 )
-from hpcperfstats.site.hpcperfstats_site.views import ReactSPAView, api_key_page
+from hpcperfstats.site.hpcperfstats_site.views import ReactSPAView, api_key_page, robots_txt
 
 admin.autodiscover()
 
@@ -22,6 +22,7 @@ static_root = settings.STATICFILES_DIRS[0] if getattr(settings, "STATICFILES_DIR
 
 urlpatterns = [
     path("api/", include("hpcperfstats.site.machine.api_urls")),
+    path("robots.txt", robots_txt, name="robots_txt"),
     path("", lambda r: HttpResponseRedirect("/machine/")),
     path("machine/", ReactSPAView.as_view()),
     path("machine/<path:path>", ReactSPAView.as_view()),
