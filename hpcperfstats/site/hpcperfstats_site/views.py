@@ -103,7 +103,7 @@ def api_key_page(request):
     and <code>hpcperfstats-sacct-gen</code> tools (from the hpcperfstats-tools package)
     by passing <code>--api-key</code> or using the cached key in <code>~/.hpcperfstats-api</code>.</p>
     <form method="post" style="margin-top: 1.5rem;">
-      n<button type="submit">Invalidate and Create New Key</button>
+      <button type="submit">Invalidate and Create New Key</button>
     </form>
   </div>
 </body>
