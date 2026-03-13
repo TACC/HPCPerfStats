@@ -1897,7 +1897,10 @@ def admin_monitor(request):
 
     def _host_stats_fn():
         now = timezone.now()
-        time_bounds = now - timedelta(days=8)
+        # Look back over the last two weeks so that hosts with data in the
+        # 8–14 day window still report their last seen timestamp instead of
+        # appearing as if they have no recent data.
+        time_bounds = now - timedelta(days=14)
 
         latest_qs = (
             host_data.objects.filter(time__gte=time_bounds)
