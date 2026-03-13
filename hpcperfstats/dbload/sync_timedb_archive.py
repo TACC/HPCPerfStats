@@ -5,6 +5,7 @@ tar by (path, member_name) so the main process never holds file contents.
 """
 import io
 import multiprocessing
+import signal
 import sys
 import tarfile
 import time
@@ -16,6 +17,14 @@ from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.sync_timedb_archive_helpers import get_tar_file_tasks
 
 thread_count = cfg.get_worker_thread_count(4)
+
+_shutdown_requested = False
+
+
+def _handle_sigterm(signum, frame):
+  global _shutdown_requested
+  _shutdown_requested = True
+  log_print("Received SIGTERM, will exit after current chunk")
 
 
 def _process_tar_member(lock, tar_path, member_name):
@@ -35,7 +44,7 @@ def _process_tar_member(lock, tar_path, member_name):
 
 
 if __name__ == '__main__':
-
+  signal.signal(signal.SIGTERM, _handle_sigterm)
   sync_timedb.database_startup()
 
   tar_files = sys.argv[1:]
@@ -54,7 +63,15 @@ if __name__ == '__main__':
     with multiprocessing.get_context('spawn').Pool(
         processes=thread_count) as pool:
       worker = partial(_process_tar_member, manager_lock)
-      # Distribute work; each worker loads only one member at a time.
-      pool.starmap(worker, tasks)
+      # Process in chunks so SIGTERM can exit between chunks.
+      chunk_size = max(1, min(50, len(tasks) or 1))
+      for i in range(0, len(tasks), chunk_size):
+        if _shutdown_requested:
+          log_print("Exiting due to SIGTERM")
+          break
+        chunk = tasks[i:i + chunk_size]
+        pool.starmap(worker, chunk)
   finally:
     manager.shutdown()
+  if _shutdown_requested:
+    sys.exit(143)

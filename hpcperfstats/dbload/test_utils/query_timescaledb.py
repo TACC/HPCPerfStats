@@ -3,6 +3,7 @@
 
 """
 import os
+import signal
 import sys
 import time
 
@@ -27,7 +28,13 @@ def run_sql(sql, params=None):
   return DataFrame(rows, columns=cols) if cols else DataFrame()
 
 
+def _handle_sigterm(signum, frame):
+  log_print("Received SIGTERM")
+  sys.exit(143)
+
+
 if __name__ == "__main__":
+  signal.signal(signal.SIGTERM, _handle_sigterm)
   if len(sys.argv) < 2:
     log_print("Usage: query_timescaledb.py <jid>")
     sys.exit(1)

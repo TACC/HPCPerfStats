@@ -4,6 +4,7 @@
 """
 import io
 import os
+import signal
 import sys
 import time
 from datetime import datetime, timedelta
@@ -22,6 +23,14 @@ from hpcperfstats.print_utils import log_print
 from hpcperfstats.site.machine.models import job_data
 
 local_timezone = cfg.get_local_timezone()
+
+_shutdown_requested = False
+
+
+def _handle_sigterm(signum, frame):
+  global _shutdown_requested
+  _shutdown_requested = True
+  log_print("Received SIGTERM, will exit after current work")
 
 
 def _to_pydatetime_or_none(ts):
@@ -193,7 +202,18 @@ def _insert_job_data_individually(df):
       log_print("error in single insert:", str(e), "for jid", row.jid)
 
 
+def _sleep_until_shutdown(seconds):
+  """Sleep for up to seconds, returning early if SIGTERM was received."""
+  global _shutdown_requested
+  interval = 5
+  elapsed = 0
+  while elapsed < seconds and not _shutdown_requested:
+    time.sleep(min(interval, seconds - elapsed))
+    elapsed += interval
+
+
 if __name__ == "__main__":
+  signal.signal(signal.SIGTERM, _handle_sigterm)
   #    while True:
 
   #################################################################
@@ -216,8 +236,10 @@ if __name__ == "__main__":
   )
   log_print("Jobs found in DB in this date range: %s" % len(jobs_in_db))
 
-  while startdate <= enddate:
+  while startdate <= enddate and not _shutdown_requested:
     for entry in os.scandir(directory):
+      if _shutdown_requested:
+        break
       if not entry.is_file():
         continue
       if entry.name.startswith(str(startdate.date())):
@@ -231,7 +253,13 @@ if __name__ == "__main__":
     startdate += timedelta(days=1)
   log_print("loading time", time.time() - start)
 
+  if _shutdown_requested:
+    log_print("Exiting due to SIGTERM")
+    sys.exit(143)
+
   # Close DB connections before long sleep to avoid idle connections.
   close_old_connections()
   connections.close_all()
-  time.sleep(900)
+  _sleep_until_shutdown(900)
+  if _shutdown_requested:
+    sys.exit(143)

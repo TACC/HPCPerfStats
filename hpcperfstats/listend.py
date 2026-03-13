@@ -2,6 +2,7 @@
 
 """
 import os
+import signal
 import sys
 import time
 from collections import deque
@@ -22,6 +23,9 @@ _message_timestamps = deque()
 _timestamps_lock = Lock()
 _last_message_time = None
 _last_idle_report_time = None
+
+# Set by main loop so SIGTERM handler can request shutdown.
+_channel_ref = []
 
 
 def on_message(channel, method_frame, header_frame, body):
@@ -100,6 +104,16 @@ def on_message(channel, method_frame, header_frame, body):
 
 
 
+def _handle_sigterm(signum, frame):
+  """On SIGTERM, stop consuming so we exit cleanly and release the lock."""
+  log_print("Received SIGTERM, stopping consumer")
+  if _channel_ref:
+    try:
+      _channel_ref[0].stop_consuming()
+    except Exception:
+      pass
+
+
 def _idle_monitor():
   """Periodically log if no messages have been consumed in the last 10 minutes."""
   global _last_idle_report_time
@@ -131,6 +145,7 @@ with open(
     log_print("listend is already running")
     sys.exit()
 
+  signal.signal(signal.SIGTERM, _handle_sigterm)
   log_print("Starting Connection")
   parameters = pika.ConnectionParameters(cfg.get_rmq_server())
   connection = pika.BlockingConnection(parameters)
@@ -140,6 +155,7 @@ with open(
     idle_thread.start()
 
     channel = connection.channel()
+    _channel_ref.append(channel)
     channel.queue_declare(queue=cfg.get_rmq_queue(), durable=True)
     # Report how many messages are waiting to be consumed at startup.
     try:
@@ -155,7 +171,7 @@ with open(
     log_print("Begining Consume from queue: " + cfg.get_rmq_queue())
     try:
       channel.start_consuming()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
       channel.stop_consuming()
   finally:
     connection.close()
