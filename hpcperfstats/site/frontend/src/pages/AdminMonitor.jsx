@@ -24,6 +24,7 @@ export default function AdminMonitor() {
   const [rabbitExpanded, setRabbitExpanded] = useState(false);
   const [timescaledbExpanded, setTimescaledbExpanded] = useState(false);
   const [hostStats, setHostStats] = useState([]);
+  const [hostSort, setHostSort] = useState({ column: "host", direction: "asc" });
   const [hostLoading, setHostLoading] = useState(false);
   const [hostError, setHostError] = useState(null);
   const [hostRequested, setHostRequested] = useState(false);
@@ -117,6 +118,49 @@ export default function AdminMonitor() {
           .join(" · ")}`
       : "";
 
+  const HOST_STATUS_ORDER = {
+    ok: 0,
+    gt_10min: 1,
+    gt_hour: 2,
+    gt_day: 3,
+    gt_week: 4,
+  };
+
+  const sortedHostStats = [...hostStats].sort((a, b) => {
+    const dir = hostSort.direction === "asc" ? 1 : -1;
+    if (hostSort.column === "host") {
+      return a.host.localeCompare(b.host) * dir;
+    }
+    if (hostSort.column === "last_time") {
+      const aTime = a.last_time ? new Date(a.last_time).getTime() : 0;
+      const bTime = b.last_time ? new Date(b.last_time).getTime() : 0;
+      return (aTime - bTime) * dir;
+    }
+    if (hostSort.column === "status") {
+      const aBucket = HOST_STATUS_ORDER[a.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
+      const bBucket = HOST_STATUS_ORDER[b.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
+      return (aBucket - bBucket) * dir;
+    }
+    return 0;
+  });
+
+  const handleHostSort = (column) => {
+    setHostSort((prev) => {
+      if (prev.column === column) {
+        return {
+          column,
+          direction: prev.direction === "asc" ? "desc" : "asc",
+        };
+      }
+      return { column, direction: "asc" };
+    });
+  };
+
+  const sortIndicator = (column) => {
+    if (hostSort.column !== column) return "";
+    return hostSort.direction === "asc" ? "▲" : "▼";
+  };
+
   return (
     <>
       <h3>HPCPerfStats Monitor</h3>
@@ -159,13 +203,37 @@ export default function AdminMonitor() {
                 <table className="table table-sm table-bordered">
                 <thead>
                   <tr>
-                    <th>Host</th>
-                    <th>Last Timestamp</th>
-                    <th>Status</th>
+                    <th scope="col">
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0"
+                        onClick={() => handleHostSort("host")}
+                      >
+                        Host {sortIndicator("host")}
+                      </button>
+                    </th>
+                    <th scope="col">
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0"
+                        onClick={() => handleHostSort("last_time")}
+                      >
+                        Last Timestamp {sortIndicator("last_time")}
+                      </button>
+                    </th>
+                    <th scope="col">
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0"
+                        onClick={() => handleHostSort("status")}
+                      >
+                        Status {sortIndicator("status")}
+                      </button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {hostStats.map((row, i) => {
+                  {sortedHostStats.map((row, i) => {
                     const badge = BADGE_MAP[row.age_bucket] || BADGE_MAP.gt_week;
                     const rowClass = ROW_CLASS[row.age_bucket] || "";
                     return (
