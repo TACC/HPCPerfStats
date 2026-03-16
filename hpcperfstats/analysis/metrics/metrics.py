@@ -77,7 +77,9 @@ class _JobForMetrics:
 
     df = jt.get_full_host_data_df(
         columns=["host", "time", "type", "event", "value"])
-    if df.empty:
+    # If there is no time information, we cannot build a valid time axis; treat
+    # as no data for this job (avoids KeyError when sorting by missing column).
+    if df.empty or "time" not in df.columns:
       self.times = np.array([])
       return
 
