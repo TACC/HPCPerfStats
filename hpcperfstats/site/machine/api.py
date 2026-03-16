@@ -1572,13 +1572,27 @@ def job_detail(request, pk):
         "libset": xalt_payload["libset"] if xalt_payload else [],
     }
 
+    # Build client/server log URLs with explicit timestamp format expected by Scribe.
+    # Format: %Y-%m-%dT%H:%M:%S %Z%:z
+    start_time = job.start_time
+    end_time = job.end_time
+    if start_time.tzinfo is None:
+        start_time = timezone.make_aware(start_time, dt_timezone.utc)
+    if end_time.tzinfo is None:
+        end_time = timezone.make_aware(end_time, dt_timezone.utc)
+    start_time = start_time.astimezone(local_timezone)
+    end_time = end_time.astimezone(local_timezone)
+    time_format = "%Y-%m-%dT%H:%M:%S%Z%:z"
+    earliest = start_time.strftime(time_format)
+    latest = end_time.strftime(time_format)
+
     urlstring = "https://scribe.tacc.utexas.edu/en-US/app/search/search?q=search%20"
     hoststring = urlstring + "%20host%3D" + host_list[0] + cfg.get_host_name_ext()
     serverstring = urlstring + "%20mds*%20OR%20%20oss*"
     for host in host_list[1:]:
         hoststring += "%20OR%20%20host%3D" + host + "*"
-    hoststring += "&earliest=" + str(j.start_time) + "&latest=" + str(j.end_time) + "&display.prefs.events.count=50"
-    serverstring += "&earliest=" + str(j.start_time) + "&latest=" + str(j.end_time) + "&display.prefs.events.count=50"
+    hoststring += "&earliest=" + earliest + "&latest=" + latest + "&display.prefs.events.count=50"
+    serverstring += "&earliest=" + earliest + "&latest=" + latest + "&display.prefs.events.count=50"
 
     metrics_list = [
         {"type": o.type, "metric": o.metric, "units": o.units, "value": o.value}
