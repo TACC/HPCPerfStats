@@ -1582,7 +1582,7 @@ def job_detail(request, pk):
         end_time = timezone.make_aware(end_time, dt_timezone.utc)
     start_time = start_time.astimezone(local_timezone)
     end_time = end_time.astimezone(local_timezone)
-    time_format = "%Y-%m-%dT%H:%M:%S%Z%:z"
+    time_format = "%Y-%m-%dT%H:%M:%S%:z"
     earliest = start_time.strftime(time_format)
     latest = end_time.strftime(time_format)
 
