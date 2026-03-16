@@ -11,7 +11,7 @@ ensure_django()
 
 from django.db import close_old_connections, connections
 from django.db.models import Count, Q
-from django.db.utils import OperationalError
+from django.db.utils import OperationalError, DatabaseError
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
@@ -72,6 +72,13 @@ def update_metrics(date, rerun=False):
   min_time = 300
 
   def _run():
+    """
+    Inner function so we can cleanly retry the whole operation if the database
+    connection is dropped or becomes unsynchronised. We deliberately avoid
+    closing connections inside the per‑chunk loop to prevent leaving Django's
+    ORM holding onto a cursor/connection that has just been closed, which can
+    manifest as psycopg 'lost synchronization with server' errors.
+    """
     qs = _jobs_queryset(date, min_time, rerun)
     total_jobs = qs.count()
     log_print(
@@ -93,15 +100,32 @@ def update_metrics(date, rerun=False):
 
     processed = 0
     for pk_chunk, _ in _iter_chunked_pks(qs, CHUNK_SIZE):
-      jobs_chunk = list(
-          job_data.objects.filter(pk__in=pk_chunk).prefetch_related(
-              "metrics_data_set"
-          )
-      )
-      metrics_manager.run(jobs_chunk)
-      processed += len(jobs_chunk)
-      del jobs_chunk  # release before next chunk
-      close_old_connections()
+      try:
+        jobs_chunk = list(
+            job_data.objects.filter(pk__in=pk_chunk).prefetch_related(
+                "metrics_data_set"
+            )
+        )
+        metrics_manager.run(jobs_chunk)
+        processed += len(jobs_chunk)
+      except (OperationalError, DatabaseError) as exc:
+        # Drop any broken/unsynchronised connection and retry this chunk once
+        # with a fresh connection. If it still fails, let the exception bubble.
+        log_print(
+            "Database error while processing metrics chunk (size {0}) "
+            "for date {1}: {2}".format(len(pk_chunk), date, exc)
+        )
+        close_old_connections()
+        jobs_chunk = list(
+            job_data.objects.filter(pk__in=pk_chunk).prefetch_related(
+                "metrics_data_set"
+            )
+        )
+        metrics_manager.run(jobs_chunk)
+        processed += len(jobs_chunk)
+      finally:
+        # Release references promptly; GC can then free memory before next chunk.
+        del jobs_chunk
 
     if DEBUG:
       close_old_connections()
@@ -111,7 +135,14 @@ def update_metrics(date, rerun=False):
 
   try:
     _run()
-  except OperationalError:
+  except (OperationalError, DatabaseError) as exc:
+    # Lost‑sync and similar errors require tearing down the connection and
+    # retrying the whole run once with a clean connection.
+    log_print(
+        "Database error while updating metrics for date {0}, retrying once: {1}".format(
+            date, exc
+        )
+    )
     close_old_connections()
     _run()
 
@@ -139,7 +170,7 @@ def main(argv=None, sleep_after=True):
     all_dates.append(date)
     date += timedelta(days=1)
 
-  sorted(all_dates, reverse=True)
+  all_dates = sorted(all_dates, reverse=True)
   log_print(all_dates)
   for d in all_dates:
     if shutdown_requested[0]:
