@@ -49,28 +49,44 @@ class SummaryPlot():
     if math.isnan(y_range_end):
       y_range_end = 0
 
-    plot = figure(width=400,
-                  height=150,
-                  x_axis_type="datetime",
-                  y_range=Range1d(-0.1, y_range_end),
-                  y_axis_label=label)
+    plot = figure(
+        width=400,
+        height=150,
+        x_axis_type="datetime",
+        y_range=Range1d(-0.1, y_range_end),
+        y_axis_label=label,
+    )
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
-    # Hover shows which line (host) and value; no legend (identify line by hovering).
-    plot.add_tools(HoverTool(
-        tooltips=[
-            ("host", "@host"),
-            ("time", "@time{%F %T}"),
-            (label, "@" + metric),
-        ],
-        formatters={"@time": "datetime"},
-    ))
-
+    circle_renderers = []
     for h in self.host_list:
       source = ColumnDataSource(df[df.host == h])
       plot.add_glyph(
-          source, Step(x="time", y=metric, mode="before",
-                       line_color=self.hc[h]))
+          source,
+          Step(x="time", y=metric, mode="before", line_color=self.hc[h]),
+      )
+      circle = plot.circle(
+          x="time",
+          y=metric,
+          source=source,
+          size=4,
+          color=self.hc[h],
+          alpha=0.9,
+      )
+      circle_renderers.append(circle)
+
+    # Hover shows which sample point (host) and value; no legend (identify line by hovering).
+    plot.add_tools(
+        HoverTool(
+            tooltips=[
+                ("host", "@host"),
+                ("time", "@time{%F %T}"),
+                (label, "@" + metric),
+            ],
+            formatters={"@time": "datetime"},
+            renderers=circle_renderers,
+        )
+    )
     log.debug("time to plot %s: %s", metric, time.time() - s)
     return plot
 
