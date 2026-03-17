@@ -108,21 +108,28 @@ class jid_table:
     etime = time.time()
 
     def _schema_fn():
+      """Return distinct (type, event) pairs for one host as a DataFrame, using Django ORM only.
+
+      Uses values_list(...).distinct() to avoid the Django bug that can raise
+      IndexError in values().distinct() when schema and model definitions diverge.
+      """
+      import pandas as pd
+
       if not self.host_list:
-        # Empty DataFrame with expected columns.
-        import pandas as pd
         return pd.DataFrame(columns=["type", "event"])
 
-      qs = (
+      rows = list(
           host_data.objects.filter(
               host=str(self.host_list[0]),
               time__gte=self._base_filter["time__gte"],
               time__lte=self._base_filter["time__lte"],
           )
-          .values("type", "event")
+          .values_list("type", "event")
           .distinct()
       )
-      return queryset_to_dataframe(qs)
+      if not rows:
+        return pd.DataFrame(columns=["type", "event"])
+      return pd.DataFrame(rows, columns=["type", "event"])
 
     schema_df = cached_orm(
         make_cache_key(KEY_JOB_SCHEMA, jid, self.host_list[0]),
@@ -421,28 +428,21 @@ class HostDataProvider:
     cache_key = make_cache_key(KEY_HOST_SCHEMA, host_fqdn, _st, _et)
 
     def _schema_fn():
-      # Use raw SQL instead of Django .values().distinct() to avoid IndexError
-      # when the DB schema and Django model fields get out of sync.
+      """Return schema dict {type: [events...]} for this host/time range using ORM only."""
       import pandas as pd
-      from django.db import connection
 
-      sql = (
-          "SELECT DISTINCT type, event FROM host_data "
-          "WHERE host = %s AND time >= %s AND time <= %s"
+      rows = list(
+          host_data.objects.filter(
+              host=str(self._base_filter["host"]),
+              time__gte=self._base_filter["time__gte"],
+              time__lte=self._base_filter["time__lte"],
+          )
+          .values_list("type", "event")
+          .distinct()
       )
-      params = [
-          str(self._base_filter["host"]),
-          self._base_filter["time__gte"],
-          self._base_filter["time__lte"],
-      ]
-      with connection.cursor() as cur:
-        cur.execute(sql, params)
-        columns = [col[0] for col in cur.description] if cur.description else []
-        rows = cur.fetchall()
-      columns = columns or ["type", "event"]
       if not rows:
         return {}
-      schema_df = pd.DataFrame(rows, columns=columns)
+      schema_df = pd.DataFrame(rows, columns=["type", "event"])
       if schema_df.empty:
         return {}
       types = sorted(schema_df["type"].unique().tolist())
