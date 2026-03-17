@@ -15,7 +15,7 @@ from numpy import amax, diff, isnan, maximum, mean, zeros
 from pandas import to_datetime
 
 from django.db import transaction, close_old_connections
-from django.db.utils import OperationalError
+from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.analysis.gen.utils import utils
@@ -138,7 +138,24 @@ def _unwrap(args):
     """
   # Ensure this worker process uses a fresh DB connection (thread-safe for multiprocessing).
   close_old_connections()
-  return args[0].compute_metrics(args[1])
+  metrics_obj, job = args
+
+  # Lost DB connections in worker processes can manifest as "lost
+  # synchronization with server" DatabaseErrors. Retry once with a clean
+  # connection; on repeated failure, log and skip this job rather than
+  # crashing the entire pool.
+  for attempt in range(2):
+    try:
+      return metrics_obj.compute_metrics(job)
+    except (OperationalError, DatabaseError) as exc:
+      close_old_connections()
+      if attempt == 0:
+        continue
+      log_print(
+          "Skipping metrics for jid %s after DB error in worker: %s" %
+          (getattr(job, "jid", "?"), exc)
+      )
+      return []
 
 
 def _persist_metrics_batch(job_results):
