@@ -154,7 +154,16 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
         tools=["pan", "wheel_zoom", "box_zoom", "reset", "save"],
     )
     r_roof = p.line("ai", "perf", source=roof_source, line_width=2, color="navy")
-    r_job = p.circle("ai", "perf", source=source, size=4, alpha=0.5, color="coral")
+    # Bokeh 3.4+: use scatter(size=...) instead of circle(size=...).
+    r_job = p.scatter(
+        "ai",
+        "perf",
+        source=source,
+        size=4,
+        marker="circle",
+        alpha=0.5,
+        color="coral",
+    )
     hover_roof.renderers = [r_roof]
     hover_job.renderers = [r_job]
     p.add_tools(hover_roof, hover_job)

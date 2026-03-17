@@ -65,11 +65,13 @@ class SummaryPlot():
           source,
           Step(x="time", y=metric, mode="before", line_color=self.hc[h]),
       )
-      circle = plot.circle(
+      # Bokeh 3.4+: use scatter(size=...) instead of circle(size=...).
+      circle = plot.scatter(
           x="time",
           y=metric,
           source=source,
           size=4,
+          marker="circle",
           color=self.hc[h],
           alpha=0.9,
       )

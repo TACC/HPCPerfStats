@@ -62,11 +62,13 @@ class DevPlot:
           source,
           Step(x="time", y=event, mode="before", line_color=self.hc[h]),
       )
-      circle = plot.circle(
+      # Bokeh 3.4+: use scatter(size=...) instead of circle(size=...).
+      circle = plot.scatter(
           x="time",
           y=event,
           source=source,
           size=4,
+          marker="circle",
           color=self.hc[h],
           alpha=0.9,
       )
