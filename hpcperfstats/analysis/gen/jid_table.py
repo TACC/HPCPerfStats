@@ -219,7 +219,7 @@ class jid_table:
 
     # When specific columns are requested, return a fresh DataFrame without
     # caching to mirror previous behaviour (no cache on the raw-SQL path).
-    # Use values_list defensively and trim tuples to avoid Django's
+    # Use values_list defensively and filter/trim tuples to avoid Django's
     # "tuple index out of range" bug when model fields and DB schema diverge.
     if columns is not None:
       import pandas as pd
@@ -229,7 +229,16 @@ class jid_table:
           .values_list(*cols)
           .order_by("host", "time")
       )
-      rows = [tuple(r[:len(cols)]) for r in qs if r]
+      rows = []
+      for r in qs:
+        # Some backends or mismatched schemas can return scalar values or
+        # shorter tuples. Keep only rows that are sequences with at least
+        # len(cols) elements.
+        if not isinstance(r, (list, tuple)):
+          continue
+        if len(r) < len(cols):
+          continue
+        rows.append(tuple(r[:len(cols)]))
       return pd.DataFrame(rows, columns=cols)
 
     def _fn():
@@ -240,7 +249,13 @@ class jid_table:
           .values_list(*cols)
           .order_by("host", "time")
       )
-      rows = [tuple(r[:len(cols)]) for r in qs if r]
+      rows = []
+      for r in qs:
+        if not isinstance(r, (list, tuple)):
+          continue
+        if len(r) < len(cols):
+          continue
+        rows.append(tuple(r[:len(cols)]))
       return pd.DataFrame(rows, columns=cols)
 
     key = make_cache_key(KEY_HOST_DATA_DF, self.jid)
