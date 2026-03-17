@@ -1976,26 +1976,47 @@ def admin_monitor(request):
         )
 
     def _all_hosts_fn():
-        qs = job_data.objects.distinct("host_list").values_list("host_list", flat=True)
-        flat = [host for sublist in qs for host in sublist]
-        return list(set(flat))
+        """Return sorted list of hostnames that have recent host_data samples.
+
+        This implementation uses host_data directly (limited to the last 14 days)
+        instead of distinct() on job_data.host_list, which can be very heavy on
+        large installations and lead to HTTP 504s in the admin monitor.
+        """
+        now = timezone.now()
+        time_bounds = now - timedelta(days=14)
+        qs = (
+            host_data.objects.filter(time__gte=time_bounds)
+            .values_list("host", flat=True)
+            .distinct()
+        )
+        return sorted({str(h) for h in qs if h})
 
     all_hosts = cached_orm(KEY_ALL_HOSTS, TIMEOUT_MEDIUM, _all_hosts_fn)
     all_hosts = [h for h in all_hosts if not (str(h) or "").startswith("None")]
     all_hosts = sorted(all_hosts)
 
     def _host_stats_fn():
+        """Return per-host last_seen timestamps and age buckets for admin monitor.
+
+        Uses host_data over the last 14 days, with efficient aggregation to
+        avoid timeouts (HTTP 504) on large datasets.
+        """
         now = timezone.now()
-        # Look back over the last two weeks so that hosts with data in the
-        # 8–14 day window still report their last seen timestamp instead of
-        # appearing as if they have no recent data.
         time_bounds = now - timedelta(days=14)
 
-        latest_qs = (
-            host_data.objects.filter(time__gte=time_bounds)
-            .values("host")
-            .annotate(last_time=Max("time"))
-        )
+        try:
+            latest_qs = (
+                host_data.objects.filter(time__gte=time_bounds)
+                .values("host")
+                .annotate(last_time=Max("time"))
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Failed to load latest host timestamps for admin_monitor: %s",
+                exc,
+                exc_info=True,
+            )
+            return []
 
         # Index latest timestamps by both FQDN and short hostname so that we
         # can match whatever format is stored in job_data.host_list.
