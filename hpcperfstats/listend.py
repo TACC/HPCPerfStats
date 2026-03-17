@@ -155,5 +155,17 @@ with open(
       channel.start_consuming()
     except (KeyboardInterrupt, SystemExit):
       channel.stop_consuming()
+    except Exception as e:
+      # Handle connection-level errors from pika (e.g. StreamLostError) without
+      # raising during shutdown/cleanup. The outer finally block will close the
+      # connection if it is still open.
+      log_print("Error while consuming from RabbitMQ: %s" % e)
   finally:
-    connection.close()
+    try:
+      # Guard against closing an already-closed connection, which would raise
+      # ConnectionWrongStateError in recent pika versions.
+      if connection and not connection.is_closed:
+        connection.close()
+    except Exception as e:
+      if DEBUG:
+        log_print("Error while closing RabbitMQ connection: %s" % e)
