@@ -108,6 +108,26 @@ import hpcperfstats.analysis.plot as plots
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
 
+def _format_log_timestamp(ts):
+    """
+    Format a datetime for client/server log URLs.
+
+    Desired format: %Y-%m-%dT%H:%M:%S%:z
+    Python's strftime does not support %:z directly, so we build the offset
+    manually while preserving any existing tzinfo.
+    """
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            # Assume UTC for naive datetimes so that logs remain unambiguous.
+            ts = ts.replace(tzinfo=dt_timezone.utc)
+        base = ts.strftime("%Y-%m-%dT%H:%M:%S")
+        offset = ts.strftime("%z") or "+0000"
+        if len(offset) == 5:
+            offset = f"{offset[:3]}:{offset[3:]}"
+        return f"{base}{offset}"
+    return str(ts)
+
+
 def _get_api_key_from_request(request):
     """Extract API key from Authorization header or query params.
 
@@ -1577,8 +1597,20 @@ def job_detail(request, pk):
     serverstring = urlstring + "%20mds*%20OR%20%20oss*"
     for host in host_list[1:]:
         hoststring += "%20OR%20%20host%3D" + host + "*"
-    hoststring += "&earliest=" + str(j.start_time) + "&latest=" + str(j.end_time) + "&display.prefs.events.count=50"
-    serverstring += "&earliest=" + str(j.start_time) + "&latest=" + str(j.end_time) + "&display.prefs.events.count=50"
+
+    earliest_ts = _format_log_timestamp(j.start_time)
+    latest_ts = _format_log_timestamp(j.end_time)
+
+    hoststring += (
+        "&earliest=" + earliest_ts
+        + "&latest=" + latest_ts
+        + "&display.prefs.events.count=50"
+    )
+    serverstring += (
+        "&earliest=" + earliest_ts
+        + "&latest=" + latest_ts
+        + "&display.prefs.events.count=50"
+    )
 
     metrics_list = [
         {"type": o.type, "metric": o.metric, "units": o.units, "value": o.value}
