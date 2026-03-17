@@ -118,7 +118,7 @@ class jid_table:
       if not self.host_list:
         return pd.DataFrame(columns=["type", "event"])
 
-      rows = list(
+      raw_rows = list(
           host_data.objects.filter(
               host=str(self.host_list[0]),
               time__gte=self._base_filter["time__gte"],
@@ -127,6 +127,8 @@ class jid_table:
           .values_list("type", "event")
           .distinct()
       )
+      # Defensive: some backends/composite PKs can return extra columns; keep only first two.
+      rows = [(r[0], r[1]) for r in raw_rows]
       if not rows:
         return pd.DataFrame(columns=["type", "event"])
       return pd.DataFrame(rows, columns=["type", "event"])
@@ -431,7 +433,7 @@ class HostDataProvider:
       """Return schema dict {type: [events...]} for this host/time range using ORM only."""
       import pandas as pd
 
-      rows = list(
+      raw_rows = list(
           host_data.objects.filter(
               host=str(self._base_filter["host"]),
               time__gte=self._base_filter["time__gte"],
@@ -440,6 +442,8 @@ class HostDataProvider:
           .values_list("type", "event")
           .distinct()
       )
+      # Defensive: keep only first two columns in case backend adds extras.
+      rows = [(r[0], r[1]) for r in raw_rows]
       if not rows:
         return {}
       schema_df = pd.DataFrame(rows, columns=["type", "event"])
