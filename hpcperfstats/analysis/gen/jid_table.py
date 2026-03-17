@@ -180,27 +180,30 @@ class jid_table:
         import pandas as pd
         return pd.DataFrame(columns=["host", "time", "sum_val"])
 
-      # Annotate first, then project fields. This guarantees that both "host"
-      # and "time" are part of the GROUP BY clause on all supported backends,
-      # avoiding "column ... must appear in the GROUP BY" errors that can
-      # occur with certain query/planner combinations.
-      base_qs = host_data.objects.filter(
+      # Fetch raw samples (no SQL GROUP BY) and aggregate in pandas. This avoids
+      # backend-specific grouping quirks that have been causing
+      # "column host_data.host must appear in the GROUP BY" errors.
+      qs = host_data.objects.filter(
           host__in=hosts,
           time__gte=self._base_filter["time__gte"],
           time__lte=self._base_filter["time__lte"],
           type=typ,
           event__in=list(events),
-      ).annotate(sum_val=Sum(val_col))
+      ).values("host", "time", val_col)
 
-      qs = (
-          base_qs
-          .values("host", "time", "sum_val")
-          .order_by("host", "time")
+      import pandas as pd
+
+      df_raw = queryset_to_dataframe(qs)
+      if df_raw.empty or "host" not in df_raw.columns or "time" not in df_raw.columns:
+        return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+      df_grouped = (
+          df_raw.groupby(["host", "time"], as_index=False)[val_col].sum()
+          .rename(columns={val_col: "sum_val"})
+          .sort_values(["host", "time"])
       )
-      df = queryset_to_dataframe(qs)
-      if not df.empty and "sum_val" in df.columns:
-        df["sum_val"] = df["sum_val"] * conv
-      return df
+      df_grouped["sum_val"] = df_grouped["sum_val"] * conv
+      return df_grouped
 
     key = make_cache_key(KEY_AGG_DF, self.jid, typ, val_col, events_key)
     result = cached_orm(key, TIMEOUT_SHORT, _fn)
