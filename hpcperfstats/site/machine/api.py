@@ -1975,31 +1975,12 @@ def admin_monitor(request):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    def _all_hosts_fn():
-        """Return sorted list of hostnames that have recent host_data samples.
-
-        This implementation uses host_data directly (limited to the last 8 days)
-        instead of distinct() on job_data.host_list, which can be very heavy on
-        large installations and lead to HTTP 504s in the admin monitor.
-        """
-        now = timezone.now()
-        time_bounds = now - timedelta(days=8)
-        qs = (
-            host_data.objects.filter(time__gte=time_bounds)
-            .values_list("host", flat=True)
-            .distinct()
-        )
-        return sorted({str(h) for h in qs if h})
-
-    all_hosts = cached_orm(KEY_ALL_HOSTS, TIMEOUT_MEDIUM, _all_hosts_fn)
-    all_hosts = [h for h in all_hosts if not (str(h) or "").startswith("None")]
-    all_hosts = sorted(all_hosts)
-
     def _host_stats_fn():
         """Return per-host last_seen timestamps and age buckets for admin monitor.
 
-        Uses host_data over the last 8 days, with efficient aggregation to
-        avoid timeouts (HTTP 504) on large datasets.
+        Uses host_data over the last 8 days, aggregating directly from the
+        hypertable without a separate host list, to keep queries fast even on
+        large installations.
         """
         now = timezone.now()
         time_bounds = now - timedelta(days=8)
@@ -2018,27 +1999,13 @@ def admin_monitor(request):
             )
             return []
 
-        # Index latest timestamps by both FQDN and short hostname so that we
-        # can match whatever format is stored in job_data.host_list.
-        latest_by_host = {}
+        # Build stats directly from latest_qs; include both FQDN and short host
+        # names so the frontend can match either style without another join.
+        host_stats_local = []
         for row in latest_qs:
             host = row.get("host") or ""
             last_time = row.get("last_time")
             if not host or last_time is None:
-                continue
-            latest_by_host[host] = last_time
-            short = host.split(".", 1)[0]
-            prev = latest_by_host.get(short)
-            if prev is None or last_time > prev:
-                latest_by_host[short] = last_time
-
-        host_stats_local = []
-        for host in all_hosts:
-            last_time = latest_by_host.get(host)
-            if last_time is None:
-                host_stats_local.append(
-                    {"host": host, "last_time": None, "age_bucket": "gt_week"}
-                )
                 continue
             age = now - last_time
             if age > timedelta(weeks=1):
@@ -2058,6 +2025,18 @@ def admin_monitor(request):
                     "age_bucket": bucket,
                 }
             )
+            # Also add short hostname entry if different, sharing the same
+            # last_time/age_bucket, so UI code that only knows short names can
+            # still find a matching record without another DB lookup.
+            short = host.split(".", 1)[0]
+            if short and short != host:
+                host_stats_local.append(
+                    {
+                        "host": short,
+                        "last_time": last_time.isoformat() if last_time else None,
+                        "age_bucket": bucket,
+                    }
+                )
         return host_stats_local
 
     host_stats = cached_orm(KEY_ADMIN_HOST_STATS, TIMEOUT_ADMIN_STATS, _host_stats_fn)
