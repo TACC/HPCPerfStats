@@ -28,8 +28,9 @@ _channel_ref = []
 def on_message(channel, method_frame, header_frame, body):
   """Callback for each message: decode body, determine host, write/append to host's current file and optionally rotate. Acknowledges the message.
 
-    """
-  log_print("found message: %s" % header_frame)
+  Per-message logging of consumption/queue depth is avoided; instead, a
+  background monitor thread reports aggregate rates every 10 minutes.
+  """
   try:
     message = body.decode(errors='replace')
   except Exception:
@@ -70,56 +71,52 @@ def on_message(channel, method_frame, header_frame, body):
     while _message_timestamps and _message_timestamps[0] < cutoff_window:
       _message_timestamps.popleft()
 
-    # Count messages in the last 10 minutes using the 10-minute window.
-    cutoff_10 = now - MESSAGE_WINDOW_SECONDS
-    count_last_10 = 0
-    for ts in _message_timestamps:
-      if ts >= cutoff_10:
-        count_last_10 += 1
-
-  # Also report how many messages are currently waiting in the queue.
-  queue_depth = None
-  try:
-    q = channel.queue_declare(
-        queue=cfg.get_rmq_queue(), durable=True, passive=True)
-    queue_depth = q.method.message_count
-  except Exception as e:
-    log_print("Failed to get queue depth: %s" % e)
-
-  if queue_depth is not None:
-    log_print(
-        "Messages consumed in the last 10 minutes: %d; "
-        "messages waiting to be consumed: %d" %
-        (count_last_10, queue_depth))
-  else:
-    log_print(
-        "Messages consumed in the last 10 minutes: %d; "
-        "messages waiting to be consumed: unknown" %
-        count_last_10)
-
   channel.basic_ack(delivery_tag=method_frame.delivery_tag)
 
 
 def _idle_monitor():
-  """Periodically log if no messages have been consumed in the last 10 minutes."""
+  """Periodically report messages consumed in the last 10 minutes and queue depth.
+
+  Runs every IDLE_CHECK_INTERVAL seconds, but only logs once per
+  MESSAGE_WINDOW_SECONDS window.
+  """
   global _last_idle_report_time
   while True:
     time.sleep(IDLE_CHECK_INTERVAL)
     now = time.time()
-    with _timestamps_lock:
-      last_msg = _last_message_time
-
-    if last_msg is None:
-      # No messages yet; treat startup as activity.
+    if (_last_idle_report_time is not None and
+        (now - _last_idle_report_time) < MESSAGE_WINDOW_SECONDS):
       continue
 
-    idle_duration = now - last_msg
-    if idle_duration >= MESSAGE_WINDOW_SECONDS:
-      # Only report once per 10-minute idle window.
-      if (_last_idle_report_time is None or
-          (now - _last_idle_report_time) >= MESSAGE_WINDOW_SECONDS):
-        _last_idle_report_time = now
-        log_print("No messages consumed in the last 10 minutes")
+    with _timestamps_lock:
+      cutoff_10 = now - MESSAGE_WINDOW_SECONDS
+      count_last_10 = sum(1 for ts in _message_timestamps if ts >= cutoff_10)
+
+    # Also report how many messages are currently waiting in the queue.
+    queue_depth = None
+    try:
+      # Use the shared channel reference if available; otherwise skip depth.
+      channel = _channel_ref[0] if _channel_ref else None
+      if channel is not None:
+        q = channel.queue_declare(
+            queue=cfg.get_rmq_queue(), durable=True, passive=True)
+        queue_depth = q.method.message_count
+    except Exception as e:
+      if DEBUG:
+        log_print("Failed to get queue depth in monitor: %s" % e)
+
+    if queue_depth is not None:
+      log_print(
+          "Messages consumed in the last 10 minutes: %d; "
+          "messages waiting to be consumed: %d" %
+          (count_last_10, queue_depth))
+    else:
+      log_print(
+          "Messages consumed in the last 10 minutes: %d; "
+          "messages waiting to be consumed: unknown" %
+          count_last_10)
+
+    _last_idle_report_time = now
 
 
 with open(
