@@ -40,6 +40,7 @@ export default function AdminMonitor() {
   const [timescaledbLoading, setTimescaledbLoading] = useState(false);
   const [timescaledbError, setTimescaledbError] = useState(null);
   const [timescaledbRequested, setTimescaledbRequested] = useState(false);
+  const [nonRespondingHosts36, setNonRespondingHosts36] = useState("");
 
   // Lazily load host stats when the section is first expanded.
   useEffect(() => {
@@ -55,6 +56,24 @@ export default function AdminMonitor() {
       .catch((e) => setHostError(e.message))
       .finally(() => setHostLoading(false));
   }, [hostTimeExpanded, hostRequested]);
+
+  // Build comma-separated list of FQDNs not seen in the past 36 hours when the
+  // host section is open and hostStats are available.
+  useEffect(() => {
+    if (!hostTimeExpanded || hostLoading || hostError) return;
+    const cutoffMs = Date.now() - 36 * 60 * 60 * 1000;
+    const fqdnSet = new Set();
+    for (const row of hostStats) {
+      const host = row.host || "";
+      const ts = row.last_time;
+      if (!host || !host.includes(".") || !ts) continue;
+      const t = new Date(ts).getTime();
+      if (!Number.isFinite(t) || t >= cutoffMs) continue;
+      fqdnSet.add(host);
+    }
+    const list = Array.from(fqdnSet).sort().join(",");
+    setNonRespondingHosts36(list);
+  }, [hostTimeExpanded, hostLoading, hostError, hostStats]);
 
   // Lazily load cache stats when the section is first expanded.
   useEffect(() => {
@@ -168,6 +187,26 @@ export default function AdminMonitor() {
     return d.toLocaleString();
   };
 
+  const handleCopyNonResponding36 = async () => {
+    if (!nonRespondingHosts36) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(nonRespondingHosts36);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = nonRespondingHosts36;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+    } catch (e) {
+      console.error("Failed to copy non-responding hosts list", e);
+    }
+  };
+
   return (
     <>
       <h3>HPCPerfStats Monitor</h3>
@@ -198,14 +237,24 @@ export default function AdminMonitor() {
           )}
           {!hostLoading && !hostError && (
             <>
-          <p>
-            Status buckets:{" "}
-            <span className="badge badge-freshness-ok">OK (≤ 10 minutes)</span>{" "}
-            <span className="badge badge-freshness-gt_10min">{"> 10 minutes"}</span>{" "}
-            <span className="badge badge-freshness-gt_hour">{"> 1 hour"}</span>{" "}
-            <span className="badge badge-freshness-gt_day">{"> 1 day"}</span>{" "}
-            <span className="badge badge-freshness-gt_week">{"> 1 week"}</span>
-          </p>
+              <div className="d-flex flex-wrap align-items-center mb-2">
+                <p className="mb-1 me-3">
+                  Status buckets:{" "}
+                  <span className="badge badge-freshness-ok">OK (≤ 10 minutes)</span>{" "}
+                  <span className="badge badge-freshness-gt_10min">{"> 10 minutes"}</span>{" "}
+                  <span className="badge badge-freshness-gt_hour">{"> 1 hour"}</span>{" "}
+                  <span className="badge badge-freshness-gt_day">{"> 1 day"}</span>{" "}
+                  <span className="badge badge-freshness-gt_week">{"> 1 week"}</span>
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm ms-auto"
+                  disabled={!nonRespondingHosts36}
+                  onClick={handleCopyNonResponding36}
+                >
+                  Non Responding Hosts - 36 Hours
+                </button>
+              </div>
               <div className="table-responsive">
                 <table className="table table-sm table-bordered">
                 <thead>
