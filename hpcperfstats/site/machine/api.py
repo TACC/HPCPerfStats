@@ -16,7 +16,7 @@ from rest_framework.response import Response
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db import connection
+from django.db import connection, close_old_connections
 
 from django.views.decorators.cache import cache_page
 
@@ -833,71 +833,79 @@ def _job_list_queue_histogram(job_list_qs, width=600, height=400):
     """Build a Bokeh bar chart of job count per queue from the full filtered job list (non-paginated)."""
     from bokeh.models import ColumnDataSource, HoverTool
 
-    queue_counts = list(
-        job_list_qs.values("queue")
-        .annotate(count=Count("jid"))
-        .order_by("-count")
-        .values_list("queue", "count")
-    )
-    if not queue_counts:
-        return None
-    queue_names = [q if q else "(no queue)" for q, _ in queue_counts]
-    counts = [c for _, c in queue_counts]
-    source = ColumnDataSource(dict(x=queue_names, top=counts))
-    p = figure(
-        x_range=queue_names,
-        height=height,
-        width=width,
-        title="Jobs by queue",
-        toolbar_location=None,
-        tools="pan,wheel_zoom,box_zoom,reset,save",
-    )
-    p.add_tools(
-        HoverTool(tooltips=[("queue", "@x"), ("jobs", "@top")], point_policy="snap_to_data")
-    )
-    p.xaxis.axis_label = "queue"
-    p.yaxis.axis_label = "# jobs"
-    p.vbar(x="x", top="top", source=source, width=0.7)
-    p.xgrid.visible = False
-    p.xaxis.major_label_orientation = "vertical" if len(queue_names) > 5 else "horizontal"
-    return p
+    close_old_connections()
+    try:
+        queue_counts = list(
+            job_list_qs.values("queue")
+            .annotate(count=Count("jid"))
+            .order_by("-count")
+            .values_list("queue", "count")
+        )
+        if not queue_counts:
+            return None
+        queue_names = [q if q else "(no queue)" for q, _ in queue_counts]
+        counts = [c for _, c in queue_counts]
+        source = ColumnDataSource(dict(x=queue_names, top=counts))
+        p = figure(
+            x_range=queue_names,
+            height=height,
+            width=width,
+            title="Jobs by queue",
+            toolbar_location=None,
+            tools="pan,wheel_zoom,box_zoom,reset,save",
+        )
+        p.add_tools(
+            HoverTool(tooltips=[("queue", "@x"), ("jobs", "@top")], point_policy="snap_to_data")
+        )
+        p.xaxis.axis_label = "queue"
+        p.yaxis.axis_label = "# jobs"
+        p.vbar(x="x", top="top", source=source, width=0.7)
+        p.xgrid.visible = False
+        p.xaxis.major_label_orientation = "vertical" if len(queue_names) > 5 else "horizontal"
+        return p
+    finally:
+        close_old_connections()
 
 
 def _job_list_queue_cpu_hours_histogram(job_list_qs, width=600, height=400):
     """Build a Bokeh bar chart of node hours (sum of node_hrs) per queue from the full filtered job list (non-paginated)."""
     from bokeh.models import ColumnDataSource, HoverTool
 
-    queue_runtime = list(
-        job_list_qs.values("queue")
-        .annotate(total_node_hours=Sum("node_hrs"))
-        .order_by("-total_node_hours")
-        .values_list("queue", "total_node_hours")
-    )
-    if not queue_runtime:
-        return None
-    queue_names = [q if q else "(no queue)" for q, _ in queue_runtime]
-    node_hours = [(nh or 0.0) for _, nh in queue_runtime]
-    source = ColumnDataSource(dict(x=queue_names, top=node_hours))
-    p = figure(
-        x_range=queue_names,
-        height=height,
-        width=width,
-        title="Node hours by queue",
-        toolbar_location=None,
-        tools="pan,wheel_zoom,box_zoom,reset,save",
-    )
-    p.add_tools(
-        HoverTool(
-            tooltips=[("queue", "@x"), ("node hours", "@top{0,0.00}")],
-            point_policy="snap_to_data",
+    close_old_connections()
+    try:
+        queue_runtime = list(
+            job_list_qs.values("queue")
+            .annotate(total_node_hours=Sum("node_hrs"))
+            .order_by("-total_node_hours")
+            .values_list("queue", "total_node_hours")
         )
-    )
-    p.xaxis.axis_label = "queue"
-    p.yaxis.axis_label = "node hours"
-    p.vbar(x="x", top="top", source=source, width=0.7)
-    p.xgrid.visible = False
-    p.xaxis.major_label_orientation = "vertical" if len(queue_names) > 5 else "horizontal"
-    return p
+        if not queue_runtime:
+            return None
+        queue_names = [q if q else "(no queue)" for q, _ in queue_runtime]
+        node_hours = [(nh or 0.0) for _, nh in queue_runtime]
+        source = ColumnDataSource(dict(x=queue_names, top=node_hours))
+        p = figure(
+            x_range=queue_names,
+            height=height,
+            width=width,
+            title="Node hours by queue",
+            toolbar_location=None,
+            tools="pan,wheel_zoom,box_zoom,reset,save",
+        )
+        p.add_tools(
+            HoverTool(
+                tooltips=[("queue", "@x"), ("node hours", "@top{0,0.00}")],
+                point_policy="snap_to_data",
+            )
+        )
+        p.xaxis.axis_label = "queue"
+        p.yaxis.axis_label = "node hours"
+        p.vbar(x="x", top="top", source=source, width=0.7)
+        p.xgrid.visible = False
+        p.xaxis.major_label_orientation = "vertical" if len(queue_names) > 5 else "horizontal"
+        return p
+    finally:
+        close_old_connections()
 
 
 def _job_list_histograms(request):
@@ -1424,32 +1432,38 @@ def job_detail(request, pk):
 
     def _fetch_gpu():
         gpu_active, gpu_max, gpu_mean = None, None, None
+        close_old_connections()
         try:
-            gpu_list = cached_orm(
-                f"{KEY_GPU_QS}:{job.jid}",
-                TIMEOUT_SHORT,
-                lambda: list(
-                    host_data.objects.filter(
-                        jid=job.jid,
-                        type="nvidia_gpu",
-                        event="utilization",
-                    )
-                    .values("type", "event", "value")
-                    .order_by("time")
-                ),
-            )
-            gpu_data = DataFrame(gpu_list) if gpu_list else DataFrame()
-            if not gpu_data.empty and len(gpu_data) > 2:
-                gpu_data = gpu_data.iloc[1:-1]
-                gpu_max = float(gpu_data["value"].max())
-                gpu_mean = float(gpu_data["value"].mean())
-                if not isnan(gpu_max):
-                    gpu_active = ceil(gpu_max / 100.0)
-        except Exception:
-            pass
-        return (gpu_active, gpu_max, gpu_mean)
+            try:
+                gpu_list = cached_orm(
+                    f"{KEY_GPU_QS}:{job.jid}",
+                    TIMEOUT_SHORT,
+                    lambda: list(
+                        host_data.objects.filter(
+                            jid=job.jid,
+                            type="nvidia_gpu",
+                            event="utilization",
+                        )
+                        .values("type", "event", "value")
+                        .order_by("time")
+                    ),
+                )
+                gpu_data = DataFrame(gpu_list) if gpu_list else DataFrame()
+                if not gpu_data.empty and len(gpu_data) > 2:
+                    gpu_data = gpu_data.iloc[1:-1]
+                    gpu_max = float(gpu_data["value"].max())
+                    gpu_mean = float(gpu_data["value"].mean())
+                    if not isnan(gpu_max):
+                        gpu_active = ceil(gpu_max / 100.0)
+            except Exception:
+                pass
+            return (gpu_active, gpu_max, gpu_mean)
+        finally:
+            close_old_connections()
 
     def _fetch_xalt():
+        close_old_connections()
+
         def _xalt_fn():
             xalt_data = xalt_data_c()
             runs = list(
@@ -1496,41 +1510,58 @@ def job_detail(request, pk):
                 "cwd": xalt_data.cwd,
                 "libset": [(l.object_path, l.module_name) for l in xalt_data.libset],
             }
-        return cached_orm(f"{KEY_XALT}:{job.jid}", TIMEOUT_SHORT, _xalt_fn)
+
+        try:
+            return cached_orm(f"{KEY_XALT}:{job.jid}", TIMEOUT_SHORT, _xalt_fn)
+        finally:
+            close_old_connections()
 
     def _fetch_fsio():
         fsio = {}
+        close_old_connections()
         try:
-            llite_df = j.get_llite_delta_by_event()
-            if not llite_df.empty and "delta_sum" in llite_df.columns:
-                llite_df = llite_df.copy()
-                llite_df["delta_mb"] = llite_df["delta_sum"].fillna(0) / (1024 * 1024)
-                read_row = llite_df[llite_df["event"] == "read_bytes"]
-                write_row = llite_df[llite_df["event"] == "write_bytes"]
-                read_val = float(read_row["delta_mb"].iloc[0]) if len(read_row) else 0.0
-                write_val = float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0
-                fsio["llite"] = [read_val, write_val]
-        except Exception:
-            pass
-        return fsio
+            try:
+                llite_df = j.get_llite_delta_by_event()
+                if not llite_df.empty and "delta_sum" in llite_df.columns:
+                    llite_df = llite_df.copy()
+                    llite_df["delta_mb"] = llite_df["delta_sum"].fillna(0) / (1024 * 1024)
+                    read_row = llite_df[llite_df["event"] == "read_bytes"]
+                    write_row = llite_df[llite_df["event"] == "write_bytes"]
+                    read_val = float(read_row["delta_mb"].iloc[0]) if len(read_row) else 0.0
+                    write_val = float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0
+                    fsio["llite"] = [read_val, write_val]
+            except Exception:
+                pass
+            return fsio
+        finally:
+            close_old_connections()
 
     def _fetch_schema():
+        close_old_connections()
         try:
-            return j.schema
-        except Exception:
-            return {}
+            try:
+                return j.schema
+            except Exception:
+                return {}
+        finally:
+            close_old_connections()
 
     def _fetch_proc_list():
         from .models import proc_data
-        return cached_orm(
-            f"{KEY_PROC_LIST}:{job.jid}",
-            TIMEOUT_SHORT,
-            lambda: list(
-                proc_data.objects.filter(jid=job.jid)
-                .values_list("proc", flat=True)
-                .distinct()
-            ),
-        )
+
+        close_old_connections()
+        try:
+            return cached_orm(
+                f"{KEY_PROC_LIST}:{job.jid}",
+                TIMEOUT_SHORT,
+                lambda: list(
+                    proc_data.objects.filter(jid=job.jid)
+                    .values_list("proc", flat=True)
+                    .distinct()
+                ),
+            )
+        finally:
+            close_old_connections()
 
     gpu_active = gpu_utilization_max = gpu_utilization_mean = None
     xalt_payload = None
@@ -1647,45 +1678,57 @@ def job_plots(request, pk):
 
     def _fetch_summary_plot():
         mplot_item, reason = None, None
+        close_old_connections()
         try:
-            plot_json = plots.SummaryPlot(j).plot()
-            mplot_item = json_item(plot_json)
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                "Failed to generate summary plot for jid %s: %s", job.jid, e, exc_info=True
-            )
-            reason = str(e)
-        return (mplot_item, reason)
+            try:
+                plot_json = plots.SummaryPlot(j).plot()
+                mplot_item = json_item(plot_json)
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    "Failed to generate summary plot for jid %s: %s", job.jid, e, exc_info=True
+                )
+                reason = str(e)
+            return (mplot_item, reason)
+        finally:
+            close_old_connections()
 
     def _fetch_heatmap():
         hplot_item, reason = None, None
+        close_old_connections()
         try:
-            hm_fig_json = plots.plot_from_jid_table(j)
-            if hm_fig_json is not None:
-                hplot_item = json_item(hm_fig_json)
-            else:
-                reason = plots.MSG_NO_HOST_MSR_DATA
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                "Failed to generate heatmap for jid %s: %s", job.jid, e, exc_info=True
-            )
-            reason = str(e)
-        return (hplot_item, reason)
+            try:
+                hm_fig_json = plots.plot_from_jid_table(j)
+                if hm_fig_json is not None:
+                    hplot_item = json_item(hm_fig_json)
+                else:
+                    reason = plots.MSG_NO_HOST_MSR_DATA
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    "Failed to generate heatmap for jid %s: %s", job.jid, e, exc_info=True
+                )
+                reason = str(e)
+            return (hplot_item, reason)
+        finally:
+            close_old_connections()
 
     def _fetch_roofline():
         rplot_item, reason = None, None
+        close_old_connections()
         try:
-            roof_fig_json = plots.plot_roofline_from_jid_table(j)
-            if roof_fig_json is not None:
-                rplot_item = json_item(roof_fig_json)
-            else:
-                reason = plots.MSG_NO_ROOFLINE_DATA
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                "Failed to generate roofline for jid %s: %s", job.jid, e, exc_info=True
-            )
-            reason = str(e)
-        return (rplot_item, reason)
+            try:
+                roof_fig_json = plots.plot_roofline_from_jid_table(j)
+                if roof_fig_json is not None:
+                    rplot_item = json_item(roof_fig_json)
+                else:
+                    reason = plots.MSG_NO_ROOFLINE_DATA
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    "Failed to generate roofline for jid %s: %s", job.jid, e, exc_info=True
+                )
+                reason = str(e)
+            return (rplot_item, reason)
+        finally:
+            close_old_connections()
 
     mplot_item = hplot_item = rplot_item = None
     mplot_unavailable_reason = hplot_unavailable_reason = rplot_unavailable_reason = None
