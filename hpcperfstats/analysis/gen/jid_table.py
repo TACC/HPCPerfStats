@@ -208,35 +208,16 @@ class jid_table:
 
         """
     cols = columns or ["host", "time", "type", "event", "value", "arc", "delta"]
+
+    # When specific columns are requested, return a fresh DataFrame without caching
+    # to mirror previous behaviour (no cache on the raw-SQL path).
     if columns is not None:
-      # Use raw SQL to avoid Django ORM IndexError when DB row column count
-      # does not match .values() names (e.g. schema mismatch or missing columns).
-      import pandas as pd
-      from django.db import connection
-      hosts = self._base_filter.get("host__in") or []
-      if not hosts:
-        return pd.DataFrame(columns=cols)
-      # host_data.host is varchar; ensure all values are strings for the IN clause
-      host_strs = [str(h) for h in hosts]
-      host_placeholders = ",".join(["%s"] * len(host_strs))
-      sql = (
-          "SELECT * FROM host_data WHERE host IN (" + host_placeholders + ") "
-          "AND time >= %s AND time <= %s ORDER BY host, time"
+      qs = (
+          self._host_data_qs()
+          .values(*cols)
+          .order_by("host", "time")
       )
-      params = list(host_strs) + [
-          self._base_filter["time__gte"],
-          self._base_filter["time__lte"],
-      ]
-      with connection.cursor() as cur:
-        cur.execute(sql, params)
-        db_columns = [col[0] for col in cur.description] if cur.description else []
-        rows = cur.fetchall()
-      if not rows:
-        return pd.DataFrame(columns=[c for c in cols if c in db_columns])
-      df = pd.DataFrame(rows, columns=db_columns)
-      # Return only requested columns that exist in the DB
-      want = [c for c in cols if c in df.columns]
-      return df[want] if want else pd.DataFrame()
+      return queryset_to_dataframe(qs)
 
     def _fn():
       qs = (
@@ -361,12 +342,7 @@ class TypeDetailDataProvider:
     return sorted(set(qs))
 
   def get_aggregate_df(self, event, metric="arc"):
-    """Aggregate metric (e.g. arc) by host and time for the given event; returns DataFrame with sum_val (cached).
-    Uses raw SQL so GROUP BY host, time is explicit (Django groups by PK only when time is in values()).
-    """
-    import pandas as pd
-    from django.db import connection
-
+    """Aggregate metric (e.g. arc) by host and time for the given event; returns DataFrame with sum_val (cached)."""
     _ALLOWED_METRICS = ("arc", "value", "delta")
     if metric not in _ALLOWED_METRICS:
       metric = "arc"
@@ -377,31 +353,12 @@ class TypeDetailDataProvider:
     )
 
     def _fn():
-      sql = (
-          'SELECT host, time, SUM("%s") AS sum_val FROM host_data '
-          "WHERE jid = %%s AND type = %%s AND event = %%s AND time >= %%s AND time <= %%s"
-      ) % (metric,)
-      params = [
-          self._base_filter["jid"],
-          self._base_filter["type"],
-          event,
-          self._base_filter["time__gte"],
-          self._base_filter["time__lte"],
-      ]
-      if "host__in" in self._base_filter:
-        hosts = self._base_filter["host__in"]
-        host_strs = [str(h) for h in hosts]
-        placeholders = ",".join(["%s"] * len(host_strs))
-        sql += " AND host IN (%s)" % placeholders
-        params.extend(host_strs)
-      sql += " GROUP BY host, time ORDER BY host, time"
-      with connection.cursor() as cur:
-        cur.execute(sql, params)
-        columns = [col[0] for col in cur.description] if cur.description else []
-        rows = cur.fetchall()
-      if not rows:
-        return pd.DataFrame(columns=columns)
-      return pd.DataFrame(rows, columns=columns)
+      from django.db.models import Sum
+      # Base queryset for this job/type/time range (and optional host_list)
+      qs = self._qs(event=event).values("host", "time").annotate(
+          sum_val=Sum(metric)
+      ).order_by("host", "time")
+      return queryset_to_dataframe(qs)
 
     result = cached_orm(key, TIMEOUT_SHORT, _fn)
     if result is not None:
@@ -476,35 +433,22 @@ class HostDataProvider:
     return queryset_to_dataframe(qs)
 
   def get_aggregate_df(self, typ, val_col, events, conv=1.0):
-    """Aggregate val_col for type and events; returns DataFrame with host, time, sum_val (sum * conv).
-    Uses raw SQL so GROUP BY host, time is explicit (Django groups by PK only when time is in values()).
-    """
-    import pandas as pd
-    from django.db import connection
-
+    """Aggregate val_col for type and events; returns DataFrame with host, time, sum_val (sum * conv)."""
     _ALLOWED_METRICS = ("arc", "value", "delta")
     if val_col not in _ALLOWED_METRICS:
       val_col = "arc"
-    placeholders = ",".join(["%s"] * len(events))
-    sql = (
-        'SELECT host, time, SUM("%s") AS sum_val FROM host_data '
-        "WHERE host = %%s AND time >= %%s AND time <= %%s AND type = %%s AND event IN (%s)"
-    ) % (val_col, placeholders)
-    params = [
-        str(self._base_filter["host"]),
-        self._base_filter["time__gte"],
-        self._base_filter["time__lte"],
-        typ,
-    ]
-    params.extend(events)
-    sql += " GROUP BY host, time ORDER BY host, time"
-    with connection.cursor() as cur:
-      cur.execute(sql, params)
-      columns = [col[0] for col in cur.description] if cur.description else []
-      rows = cur.fetchall()
-    if not rows:
-      return pd.DataFrame(columns=columns)
-    df = pd.DataFrame(rows, columns=columns)
+    from django.db.models import Sum
+    # Aggregate by host and time using ORM; host filter is already in _base_filter.
+    qs = (
+        self._host_data_qs(
+            type=typ,
+            event__in=list(events),
+        )
+        .values("host", "time")
+        .annotate(sum_val=Sum(val_col))
+        .order_by("host", "time")
+    )
+    df = queryset_to_dataframe(qs)
     if not df.empty and "sum_val" in df.columns:
       df["sum_val"] = df["sum_val"] * conv
     return df
