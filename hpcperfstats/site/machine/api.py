@@ -1978,12 +1978,12 @@ def admin_monitor(request):
     def _all_hosts_fn():
         """Return sorted list of hostnames that have recent host_data samples.
 
-        This implementation uses host_data directly (limited to the last 14 days)
+        This implementation uses host_data directly (limited to the last 8 days)
         instead of distinct() on job_data.host_list, which can be very heavy on
         large installations and lead to HTTP 504s in the admin monitor.
         """
         now = timezone.now()
-        time_bounds = now - timedelta(days=14)
+        time_bounds = now - timedelta(days=8)
         qs = (
             host_data.objects.filter(time__gte=time_bounds)
             .values_list("host", flat=True)
@@ -1998,11 +1998,11 @@ def admin_monitor(request):
     def _host_stats_fn():
         """Return per-host last_seen timestamps and age buckets for admin monitor.
 
-        Uses host_data over the last 14 days, with efficient aggregation to
+        Uses host_data over the last 8 days, with efficient aggregation to
         avoid timeouts (HTTP 504) on large datasets.
         """
         now = timezone.now()
-        time_bounds = now - timedelta(days=14)
+        time_bounds = now - timedelta(days=8)
 
         try:
             latest_qs = (
