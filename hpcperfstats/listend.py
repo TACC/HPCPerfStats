@@ -9,6 +9,7 @@ from threading import Lock, Thread
 from fcntl import LOCK_EX, LOCK_NB, flock
 
 import pika
+from pika.exceptions import StreamLostError
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.print_utils import log_print
@@ -155,10 +156,16 @@ with open(
       channel.start_consuming()
     except (KeyboardInterrupt, SystemExit):
       channel.stop_consuming()
+    except StreamLostError as e:
+      # Connection dropped (e.g. broker restart or idle timeout). Treat as a
+      # normal shutdown condition and only log in DEBUG mode to avoid noisy
+      # "Error while consuming" messages like "pop from an empty deque".
+      if DEBUG:
+        log_print("RabbitMQ stream lost while consuming: %s" % e)
     except Exception as e:
-      # Handle connection-level errors from pika (e.g. StreamLostError) without
-      # raising during shutdown/cleanup. The outer finally block will close the
-      # connection if it is still open.
+      # Handle other connection-level errors from pika without raising during
+      # shutdown/cleanup. The outer finally block will close the connection if
+      # it is still open.
       log_print("Error while consuming from RabbitMQ: %s" % e)
   finally:
     try:
