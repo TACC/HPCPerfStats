@@ -217,23 +217,31 @@ class jid_table:
         """
     cols = columns or ["host", "time", "type", "event", "value", "arc", "delta"]
 
-    # When specific columns are requested, return a fresh DataFrame without caching
-    # to mirror previous behaviour (no cache on the raw-SQL path).
+    # When specific columns are requested, return a fresh DataFrame without
+    # caching to mirror previous behaviour (no cache on the raw-SQL path).
+    # Use values_list defensively and trim tuples to avoid Django's
+    # "tuple index out of range" bug when model fields and DB schema diverge.
     if columns is not None:
+      import pandas as pd
+
       qs = (
           self._host_data_qs()
-          .values(*cols)
+          .values_list(*cols)
           .order_by("host", "time")
       )
-      return queryset_to_dataframe(qs)
+      rows = [tuple(r[:len(cols)]) for r in qs if r]
+      return pd.DataFrame(rows, columns=cols)
 
     def _fn():
+      import pandas as pd
+
       qs = (
           self._host_data_qs()
-          .values(*cols)
+          .values_list(*cols)
           .order_by("host", "time")
       )
-      return queryset_to_dataframe(qs)
+      rows = [tuple(r[:len(cols)]) for r in qs if r]
+      return pd.DataFrame(rows, columns=cols)
 
     key = make_cache_key(KEY_HOST_DATA_DF, self.jid)
     result = cached_orm(key, TIMEOUT_SHORT, _fn)
