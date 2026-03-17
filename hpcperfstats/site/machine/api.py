@@ -1706,7 +1706,14 @@ def job_plots(request, pk):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    j = jid_table.jid_table(job.jid)
+  # Cache the final json_items for this jid so repeated requests within a
+  # 24-hour window do not have to rebuild the Bokeh figures.
+  plot_cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid)
+  cached_plots = cache.get(plot_cache_key)
+  if isinstance(cached_plots, dict):
+    return Response(cached_plots)
+
+  j = jid_table.jid_table(job.jid)
 
     def _fetch_summary_plot():
         mplot_item, reason = None, None
@@ -1786,6 +1793,25 @@ def job_plots(request, pk):
             pass
 
     return Response(
+      {
+          "mscript": "",
+          "mdiv": "",
+          "mplot_item": mplot_item,
+          "mplot_unavailable_reason": mplot_unavailable_reason,
+          "hscript": "",
+          "hdiv": "",
+          "hplot_item": hplot_item,
+          "hplot_unavailable_reason": hplot_unavailable_reason,
+          "rscript": "",
+          "rdiv": "",
+          "rplot_item": rplot_item,
+          "rplot_unavailable_reason": rplot_unavailable_reason,
+      }
+    )
+  # Cache the assembled payload for 24 hours (86400 seconds).
+  try:
+    cache.set(
+        plot_cache_key,
         {
             "mscript": "",
             "mdiv": "",
@@ -1799,8 +1825,11 @@ def job_plots(request, pk):
             "rdiv": "",
             "rplot_item": rplot_item,
             "rplot_unavailable_reason": rplot_unavailable_reason,
-        }
+        },
+        timeout=24 * 3600,
     )
+  except Exception:
+    pass
 
 
 @cache_page(TIMEOUT_SHORT)
