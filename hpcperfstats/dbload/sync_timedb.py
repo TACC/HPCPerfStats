@@ -106,24 +106,25 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
   ts_low = timestamp_utc - timedelta(hours=48)
   ts_high = timestamp_utc + timedelta(hours=72)
-  # Server-side cursor: fetch distinct epoch seconds in batches to limit memory
-  from django.db import connection
+  # Use Django ORM to fetch distinct existing timestamps for this host in range.
   itimes_set = set()
-  with connection.cursor() as cur:
-    cur.execute(
-        """
-        SELECT DISTINCT EXTRACT(EPOCH FROM time)::bigint
-        FROM host_data
-        WHERE host = %s AND time >= %s AND time < %s
-        """,
-        [hostname, ts_low, ts_high],
-    )
-    while True:
-      rows = cur.fetchmany(5000)
-      if not rows:
-        break
-      for row in rows:
-        itimes_set.add(row[0])
+  qs_times = (
+      host_data.objects.filter(
+          host=hostname,
+          time__gte=ts_low,
+          time__lt=ts_high,
+      )
+      .values_list("time", flat=True)
+      .distinct()
+  )
+  for dt in qs_times.iterator():
+    if dt is None:
+      continue
+    # Normalise to UTC then convert to integer epoch seconds.
+    if dt.tzinfo is None:
+      dt = dt.replace(tzinfo=timezone.utc)
+    epoch = int(dt.timestamp())
+    itimes_set.add(epoch)
 
   start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   if start_idx == -1:

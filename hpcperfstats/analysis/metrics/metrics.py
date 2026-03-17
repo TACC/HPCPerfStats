@@ -287,46 +287,54 @@ class Metrics():
               events=None,
               conv=0,
               units=None):
-    """Aggregate arc by host and 5m time bucket via Django DB connection (TimescaleDB time_bucket). Returns mean of per-host mean sum_val, or None.
+    """Aggregate arc by host and 5m time bucket via Django ORM. Returns mean of per-host mean sum_val, or None.
 
         """
-    from django.db import connection
     import pandas as pd
+    from hpcperfstats.site.machine.models import host_data
 
     if not getattr(jt, "_base_filter", None):
       return None
-    # Use raw SQL for time_bucket (TimescaleDB); params to avoid injection
-    with connection.cursor() as cur:
-      cur.execute(
-          """
-                SELECT host, time_bucket('5m', time) AS time, sum(arc) * %s AS sum
-                FROM host_data
-                WHERE time >= %s AND time <= %s AND host = ANY(%s) AND type = %s AND event = ANY(%s)
-                GROUP BY host, time
-                ORDER BY host, time
-                """,
-          [
-              conv,
-              jt._base_filter["time__gte"],
-              jt._base_filter["time__lte"],
-              jt._base_filter["host__in"],
-              typename,
-              list(events),
-          ],
-      )
-      rows = cur.fetchall()
+    base = jt._base_filter
+    hosts = base.get("host__in") or []
+    if not hosts:
+      return None
+    # Fetch raw samples via ORM.
+    qs = (
+        host_data.objects.filter(
+            time__gte=base["time__gte"],
+            time__lte=base["time__lte"],
+            host__in=list(hosts),
+            type=typename,
+            event__in=list(events or []),
+        )
+        .values("host", "time", "arc")
+        .order_by("host", "time")
+    )
+    rows = list(qs)
     if not rows:
       return None
-    df = pd.DataFrame(rows, columns=["host", "time", "sum"])
-    # Drop first time sample from each host (keep "host" as column to avoid KeyError in groupby)
-    df = df.sort_values(["host", "time"])
-    first_idx = df.groupby("host", group_keys=False).head(1).index
-    df = df.drop(index=first_idx)
+    df = pd.DataFrame(rows)
     if df.empty:
       return None
-    if "host" not in df.columns:
+    # Floor timestamps to 5‑minute buckets.
+    df["time"] = pd.to_datetime(df["time"])
+    df["bucket"] = df["time"].dt.floor("5min")
+    grouped = (
+        df.groupby(["host", "bucket"], as_index=False)["arc"].sum().rename(
+            columns={"bucket": "time", "arc": "sum"}
+        )
+    )
+    grouped["sum"] = grouped["sum"] * conv
+    if grouped.empty or "host" not in grouped.columns:
       return None
-    df_n = df.groupby("host")["sum"].mean()
+    # Drop first time sample per host to match original behaviour.
+    grouped = grouped.sort_values(["host", "time"])
+    first_idx = grouped.groupby("host", group_keys=False).head(1).index
+    grouped = grouped.drop(index=first_idx)
+    if grouped.empty:
+      return None
+    df_n = grouped.groupby("host")["sum"].mean()
     return float(df_n.mean())
 
   # Compute metric

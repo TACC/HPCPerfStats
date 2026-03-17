@@ -22,6 +22,7 @@ from hpcperfstats.site.machine.cache_utils import (
     TIMEOUT_SHORT,
 )
 from hpcperfstats.site.machine.models import host_data, job_data
+from django.db.models import Sum
 
 local_timezone = cfg.get_local_timezone()
 
@@ -107,32 +108,21 @@ class jid_table:
     etime = time.time()
 
     def _schema_fn():
-      # Use raw SQL instead of Django .values().distinct() to avoid IndexError
-      # when the DB schema and Django model fields get out of sync (Django
-      # expects one value per named column in .values()).
-      import pandas as pd
-      from django.db import connection
-
       if not self.host_list:
+        # Empty DataFrame with expected columns.
+        import pandas as pd
         return pd.DataFrame(columns=["type", "event"])
 
-      sql = (
-          "SELECT DISTINCT type, event FROM host_data "
-          "WHERE host = %s AND time >= %s AND time <= %s"
+      qs = (
+          host_data.objects.filter(
+              host=str(self.host_list[0]),
+              time__gte=self._base_filter["time__gte"],
+              time__lte=self._base_filter["time__lte"],
+          )
+          .values("type", "event")
+          .distinct()
       )
-      params = [
-          str(self.host_list[0]),
-          self._base_filter["time__gte"],
-          self._base_filter["time__lte"],
-      ]
-      with connection.cursor() as cur:
-        cur.execute(sql, params)
-        columns = [col[0] for col in cur.description] if cur.description else []
-        rows = cur.fetchall()
-      columns = columns or ["type", "event"]
-      if not rows:
-        return pd.DataFrame(columns=columns)
-      return pd.DataFrame(rows, columns=columns)
+      return queryset_to_dataframe(qs)
 
     schema_df = cached_orm(
         make_cache_key(KEY_JOB_SCHEMA, jid, self.host_list[0]),
@@ -169,43 +159,29 @@ class jid_table:
     return result if result is not None else queryset_to_dataframe(None)
 
   def get_aggregate_df(self, typ, val_col, events, conv=1.0):
-    """Aggregate val_col (e.g. 'arc' or 'value') for given type and events. Returns DataFrame with columns host, time, sum_val (sum * conv).
-    Uses raw SQL so GROUP BY host, time is explicit (Django groups by PK only when time is in values()). Result is cached per (jid, typ, val_col, events).
+    """Aggregate val_col (e.g. 'arc' or 'value') for given type and events. Returns DataFrame with columns host, time, sum_val (sum * conv). Result is cached per (jid, typ, val_col, events).
         """
-    import pandas as pd
-    from django.db import connection
-
-    _ALLOWED_METRICS = ("arc", "value", "delta")
-    if val_col not in _ALLOWED_METRICS:
-      val_col = "arc"
     events_key = ":".join(sorted(events))
 
     def _fn():
-      hosts = self._base_filter["host__in"]
-      host_strs = [str(h) for h in hosts]
-      host_placeholders = ",".join(["%s"] * len(host_strs))
-      event_placeholders = ",".join(["%s"] * len(events))
-      sql = (
-          'SELECT host, time, SUM("%s") AS sum_val FROM host_data '
-          "WHERE host IN (%s) AND time >= %%s AND time <= %%s AND type = %%s AND event IN (%s)"
-      ) % (val_col, host_placeholders, event_placeholders)
-      params = (
-          list(host_strs)
-          + [
-              self._base_filter["time__gte"],
-              self._base_filter["time__lte"],
-              typ,
-          ]
-          + list(events)
+      hosts = [str(h) for h in self._base_filter.get("host__in") or []]
+      if not hosts:
+        import pandas as pd
+        return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+      qs = (
+          host_data.objects.filter(
+              host__in=hosts,
+              time__gte=self._base_filter["time__gte"],
+              time__lte=self._base_filter["time__lte"],
+              type=typ,
+              event__in=list(events),
+          )
+          .values("host", "time")
+          .annotate(sum_val=Sum(val_col))
+          .order_by("host", "time")
       )
-      sql += " GROUP BY host, time ORDER BY host, time"
-      with connection.cursor() as cur:
-        cur.execute(sql, params)
-        columns = [col[0] for col in cur.description] if cur.description else []
-        rows = cur.fetchall()
-      if not rows:
-        return pd.DataFrame(columns=columns or ["host", "time", "sum_val"])
-      df = pd.DataFrame(rows, columns=columns)
+      df = queryset_to_dataframe(qs)
       if not df.empty and "sum_val" in df.columns:
         df["sum_val"] = df["sum_val"] * conv
       return df
