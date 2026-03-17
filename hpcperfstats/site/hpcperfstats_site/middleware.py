@@ -1,52 +1,52 @@
-"""ProfileMiddleware: add ?prof to a URL to profile the view (DEBUG only). Optional ?sort and ?count.
+"""Profiling middleware: add ?prof to a URL to profile the view (DEBUG only).
 
+Optional query params:
+- sort: pstats sort key (default "time")
+- count: number of rows to show (default 100)
 """
-try:
-  import cProfile as profile
-except ImportError:
-  import profile
+import cProfile
+import io
 import pstats
 
-from cStringIO import StringIO
 from django.conf import settings
+from django.http import HttpRequest, HttpResponse
 
 
-class ProfileMiddleware(object):
-  """Simple profile middleware to profile django views. Add ?prof to URL; optional ?sort and ?count.
+class ProfileMiddleware:
+  """Simple profiling middleware for Django views (Django 3+/6+ style).
 
-    """
+  Activated only when:
+  - settings.DEBUG is True, and
+  - the incoming request has a ?prof query parameter.
+  """
 
-  def can(self, request):
-    """Return True if DEBUG and request has ?prof.
+  def __init__(self, get_response):
+    self.get_response = get_response
 
-        """
-    return settings.DEBUG and 'prof' in request.GET
+  def _enabled(self, request: HttpRequest) -> bool:
+    """Return True if profiling is enabled for this request."""
+    return bool(settings.DEBUG and "prof" in request.GET)
 
-  #and request.user is not None and request.user.is_staff
+  def __call__(self, request: HttpRequest) -> HttpResponse:
+    if not self._enabled(request):
+      return self.get_response(request)
 
-  def process_view(self, request, callback, callback_args, callback_kwargs):
-    """Run callback under profiler when can(request); store profiler for process_response.
+    profiler = cProfile.Profile()
+    try:
+      response = profiler.runcall(self.get_response, request)
+    except Exception:
+      # Let Django's normal exception handling and middleware chain run.
+      raise
 
-        """
-    if self.can(request):
-      self.profiler = profile.Profile()
-      args = (request,) + callback_args
-      try:
-        return self.profiler.runcall(callback, *args, **callback_kwargs)
-      except:
-        # we want the process_exception middleware to fire
-        # https://code.djangoproject.com/ticket/12250
-        return
+    s = io.StringIO()
+    stats = pstats.Stats(profiler, stream=s)
+    sort_key = request.GET.get("sort", "time")
+    try:
+      count = int(request.GET.get("count", "100"))
+    except (TypeError, ValueError):
+      count = 100
+    stats.strip_dirs().sort_stats(sort_key).print_stats(count)
 
-  def process_response(self, request, response):
-    """If prof was active, replace response content with profiler stats (pre).
-
-        """
-    if self.can(request):
-      self.profiler.create_stats()
-      io = StringIO()
-      stats = pstats.Stats(self.profiler, stream=io)
-      stats.strip_dirs().sort_stats(request.GET.get('sort', 'time'))
-      stats.print_stats(int(request.GET.get('count', 100)))
-      response.content = '<pre>%s</pre>' % io.getvalue()
+    response.content = f"<pre>{s.getvalue()}</pre>"
+    response["Content-Type"] = "text/plain; charset=utf-8"
     return response
