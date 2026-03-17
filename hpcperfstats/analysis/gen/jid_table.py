@@ -180,16 +180,21 @@ class jid_table:
         import pandas as pd
         return pd.DataFrame(columns=["host", "time", "sum_val"])
 
+      # Annotate first, then project fields. This guarantees that both "host"
+      # and "time" are part of the GROUP BY clause on all supported backends,
+      # avoiding "column ... must appear in the GROUP BY" errors that can
+      # occur with certain query/planner combinations.
+      base_qs = host_data.objects.filter(
+          host__in=hosts,
+          time__gte=self._base_filter["time__gte"],
+          time__lte=self._base_filter["time__lte"],
+          type=typ,
+          event__in=list(events),
+      ).annotate(sum_val=Sum(val_col))
+
       qs = (
-          host_data.objects.filter(
-              host__in=hosts,
-              time__gte=self._base_filter["time__gte"],
-              time__lte=self._base_filter["time__lte"],
-              type=typ,
-              event__in=list(events),
-          )
-          .values("host", "time")
-          .annotate(sum_val=Sum(val_col))
+          base_qs
+          .values("host", "time", "sum_val")
           .order_by("host", "time")
       )
       df = queryset_to_dataframe(qs)
