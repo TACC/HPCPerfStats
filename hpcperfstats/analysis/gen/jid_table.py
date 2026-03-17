@@ -127,8 +127,10 @@ class jid_table:
           .values_list("type", "event")
           .distinct()
       )
-      # Defensive: some backends/composite PKs can return extra columns; keep only first two.
-      rows = [(r[0], r[1]) for r in raw_rows]
+      # Defensive: some backends/composite PKs can return extra columns or even
+      # shorter tuples if the DB schema and model fields diverge. Keep only rows
+      # with at least two elements and trim to the first two.
+      rows = [tuple(r[:2]) for r in raw_rows if len(r) >= 2]
       if not rows:
         return pd.DataFrame(columns=["type", "event"])
       return pd.DataFrame(rows, columns=["type", "event"])
@@ -442,8 +444,9 @@ class HostDataProvider:
           .values_list("type", "event")
           .distinct()
       )
-      # Defensive: keep only first two columns in case backend adds extras.
-      rows = [(r[0], r[1]) for r in raw_rows]
+      # Defensive: keep only rows with at least two elements and trim to first
+      # two columns in case backend adds extras or returns shorter tuples.
+      rows = [tuple(r[:2]) for r in raw_rows if len(r) >= 2]
       if not rows:
         return {}
       schema_df = pd.DataFrame(rows, columns=["type", "event"])
