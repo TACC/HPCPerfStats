@@ -446,7 +446,7 @@ if __name__ == '__main__':
     # Close DB connections before long sleep to avoid idle connections.
     close_old_connections()
     connections.close_all()
-    sleep_until_shutdown(120)
+    sleep_until_shutdown(600)
 
     if DEBUG:
       log_print("sync_timedb finished")
