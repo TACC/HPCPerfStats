@@ -1,0 +1,72 @@
+include:
+  - docker-compose.app.yaml
+services:
+  redis:
+    image: redis:7-alpine
+    security_opt:
+      - seccomp:unconfined
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - redis
+
+  proxy:
+    image: nginx:1-alpine
+    container_name: hpcperfstats_proxy_1
+    restart: always
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./services-conf/nginx.conf:/etc/nginx/conf.d/default.conf
+      - /etc/letsencrypt/:/etc/letsencrypt/
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - proxy
+
+  db:
+    image: timescale/timescaledb:latest-pg15
+    container_name: hpcperfstats_db_1
+    command: -c 'max_connections=500'
+    restart: always
+    stop_grace_period: 60s
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_USER=hpcperfstats
+      - POSTGRES_PASSWORD=hpcperfstats
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - db
+
+  rabbitmq:
+    image: rabbitmq:4-alpine
+    container_name: hpcperfstats_rabbitmq_1
+    restart: always
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - 5672:5672
+    volumes:
+      - rabbitmq_messages:/var/lib/rabbitmq/
+      - /var/log/rabbitmq:/var/log/rabbitmq
+      - ./services-conf/rabbitmq_logging.conf:/etc/rabbitmq/conf.d/30-logging_settings.conf
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - rabbitmq
+
+volumes:
+  postgres_data:
+  rabbitmq_messages:
+
+networks:
+  hpcperfstats_net:
+    name: hpcperfstats_net
+

@@ -1,0 +1,55 @@
+services:
+  web:
+    build: ./
+    image: hpcperfstats
+    container_name: hpcperfstats_web_1
+    restart: always
+    security_opt:
+      - seccomp:unconfined
+    command: /home/hpcperfstats/services-conf/django_startup.sh
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - web
+
+  pipeline:
+    image: hpcperfstats
+    container_name: hpcperfstats_pipeline_1
+    restart: always
+    security_opt:
+      - seccomp:unconfined
+    depends_on:
+      - web
+    command: /home/hpcperfstats/services-conf/supervisor_startup.sh
+    ports:
+      - 514:514/udp
+      - 514:514/tcp
+    volumes:
+      - hpcperfstatsdata:/hpcperfstats/
+      # The ssh keys don't have to be a user's, they just have to be a .ssh directory
+      - /home/sharrell/.ssh:/hpcperfstats/.ssh/
+      - hpcperfstatsnodelog:/hpcperfstatslog/
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - pipeline
+
+volumes:
+  hpcperfstatsdata:
+    driver: local
+    driver_opts:
+      type: none
+      device: /opt/hpcperfstats_data/
+      o: bind
+
+  hpcperfstatsnodelog:
+    driver: local
+    driver_opts:
+      type: none
+      device: /opt/hpcperfstats_log
+      o: bind
+
+networks:
+  hpcperfstats_net:
+    name: hpcperfstats_net
+
