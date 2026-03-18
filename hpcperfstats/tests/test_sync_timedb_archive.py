@@ -200,21 +200,38 @@ def test_get_stats_chunk_out_of_range():
 
 
 # --- collect_stats_files_in_range ---
+# Subdirs must end with this suffix (mirrors DEFAULT.host_name_ext).
+_ARCH_HOST_SUFFIX = "cluster.integration.test"
 
 
 def test_collect_stats_files_in_range_no_subdirs(tmp_path):
-  """Directory with no c* or v* subdirs returns empty list."""
+  """No subdirs ending with host_name_ext returns empty list."""
   (tmp_path / "other").mkdir()
   (tmp_path / "other" / "file").write_text("x")
   assert collect_stats_files_in_range(
       str(tmp_path),
       datetime(2020, 1, 1),
-      datetime(2020, 1, 10)) == []
+      datetime(2020, 1, 10),
+      _ARCH_HOST_SUFFIX,
+  ) == []
+
+
+def test_collect_stats_files_in_range_empty_suffix_returns_nothing(tmp_path):
+  """Blank host_name_ext yields no files."""
+  host = tmp_path / ("n1." + _ARCH_HOST_SUFFIX)
+  host.mkdir()
+  (host / "1").write_text("x")
+  t = datetime(2020, 6, 15).timestamp()
+  os.utime(host / "1", (t, t))
+  assert collect_stats_files_in_range(
+      str(tmp_path), datetime(2020, 6, 1), datetime(2020, 7, 1), "") == []
+  assert collect_stats_files_in_range(
+      str(tmp_path), datetime(2020, 6, 1), datetime(2020, 7, 1), "   ") == []
 
 
 def test_collect_stats_files_in_range_skips_current(tmp_path):
   """Files named 'current*' are skipped."""
-  cn = tmp_path / "cn001"
+  cn = tmp_path / ("cn001." + _ARCH_HOST_SUFFIX)
   cn.mkdir()
   (cn / "current").write_text("x")
   (cn / "12345").write_text("y")
@@ -224,14 +241,28 @@ def test_collect_stats_files_in_range_skips_current(tmp_path):
   os.utime(cn / "current", (t, t))
   start = datetime(2020, 6, 1)
   end = datetime(2020, 7, 1)
-  result = collect_stats_files_in_range(str(tmp_path), start, end)
+  result = collect_stats_files_in_range(
+      str(tmp_path), start, end, _ARCH_HOST_SUFFIX)
   assert len(result) == 1
   assert result[0].endswith("12345")
 
 
+def test_collect_stats_files_in_range_non_matching_suffix_skipped(tmp_path):
+  """Subdirs that do not end with host_name_ext are ignored."""
+  wrong = tmp_path / "cn001.other.domain"
+  wrong.mkdir()
+  (wrong / "99").write_text("x")
+  t = datetime(2020, 6, 15).timestamp()
+  os.utime(wrong / "99", (t, t))
+  result = collect_stats_files_in_range(
+      str(tmp_path), datetime(2020, 6, 1), datetime(2020, 7, 1),
+      _ARCH_HOST_SUFFIX)
+  assert result == []
+
+
 def test_collect_stats_files_in_range_date_filter(tmp_path):
   """Files outside date range are excluded."""
-  cn = tmp_path / "cn001"
+  cn = tmp_path / ("cn001." + _ARCH_HOST_SUFFIX)
   cn.mkdir()
   old_f = cn / "1"
   new_f = cn / "2"
@@ -244,14 +275,15 @@ def test_collect_stats_files_in_range_date_filter(tmp_path):
   os.utime(new_f, (new_ts, new_ts))
   start = datetime(2020, 6, 1)
   end = datetime(2020, 7, 1)
-  result = collect_stats_files_in_range(str(tmp_path), start, end)
+  result = collect_stats_files_in_range(
+      str(tmp_path), start, end, _ARCH_HOST_SUFFIX)
   assert len(result) == 1
   assert result[0].endswith("2")
 
 
 def test_collect_stats_files_in_range_sorted_newest_first(tmp_path):
   """Results are sorted by effective timestamp, newest first."""
-  cn = tmp_path / "cn001"
+  cn = tmp_path / ("cn001." + _ARCH_HOST_SUFFIX)
   cn.mkdir()
   # Three files: base names are epoch seconds one minute apart.
   base_ts = datetime(2020, 6, 15, 12, 0, 0)
@@ -265,7 +297,8 @@ def test_collect_stats_files_in_range_sorted_newest_first(tmp_path):
     os.utime(p, (ts, ts))
   start = datetime(2020, 6, 1)
   end = datetime(2020, 7, 1)
-  result = collect_stats_files_in_range(str(tmp_path), start, end)
+  result = collect_stats_files_in_range(
+      str(tmp_path), start, end, _ARCH_HOST_SUFFIX)
   basenames = [os.path.basename(p) for p in result]
   # Expect newest (largest epoch) first.
   assert basenames == [str(epochs[2]), str(epochs[1]), str(epochs[0])]
@@ -273,7 +306,7 @@ def test_collect_stats_files_in_range_sorted_newest_first(tmp_path):
 
 def test_collect_stats_files_in_range_uses_filename_epoch_when_mtime_outside(tmp_path):
   """Filename epoch within range causes inclusion even if mtime is outside."""
-  cn = tmp_path / "cn001"
+  cn = tmp_path / ("cn001." + _ARCH_HOST_SUFFIX)
   cn.mkdir()
 
   # Filename encodes an epoch in June 2020, but mtime is in January 2020.
@@ -286,9 +319,42 @@ def test_collect_stats_files_in_range_uses_filename_epoch_when_mtime_outside(tmp
 
   start = datetime(2020, 6, 1)
   end = datetime(2020, 7, 1)
-  result = collect_stats_files_in_range(str(tmp_path), start, end)
+  result = collect_stats_files_in_range(
+      str(tmp_path), start, end, _ARCH_HOST_SUFFIX)
   assert len(result) == 1
   assert result[0].endswith(str(int(fname_ts)))
+
+
+def test_collect_stats_files_in_range_all_no_date_filter(tmp_path):
+  """startdate 'all' includes every stats file regardless of mtime/filename age."""
+  cn = tmp_path / ("c572-001." + _ARCH_HOST_SUFFIX)
+  cn.mkdir()
+  old_epoch = int(datetime(2018, 1, 1, 12, 0, 0).timestamp())
+  new_epoch = int(datetime(2030, 6, 15, 12, 0, 0).timestamp())
+  (cn / str(old_epoch)).write_text("a")
+  (cn / str(new_epoch)).write_text("b")
+  t_old = datetime(2010, 1, 1).timestamp()
+  t_new = datetime(2035, 1, 1).timestamp()
+  os.utime(cn / str(old_epoch), (t_old, t_old))
+  os.utime(cn / str(new_epoch), (t_new, t_new))
+
+  result = collect_stats_files_in_range(
+      str(tmp_path), "all", None, _ARCH_HOST_SUFFIX)
+  basenames = sorted(os.path.basename(p) for p in result)
+  assert basenames == [str(old_epoch), str(new_epoch)]
+
+
+def test_collect_stats_files_in_range_includes_non_compute_prefix(tmp_path):
+  """Any host dirname ending with host_name_ext is scanned (not only c*/v*)."""
+  gpu = tmp_path / ("gpu7." + _ARCH_HOST_SUFFIX)
+  gpu.mkdir()
+  ts = int(datetime(2020, 6, 15, 12, 0, 0).timestamp())
+  (gpu / str(ts)).write_text("x")
+  os.utime(gpu / str(ts), (ts, ts))
+  result = collect_stats_files_in_range(
+      str(tmp_path), datetime(2020, 6, 1), datetime(2020, 7, 1),
+      _ARCH_HOST_SUFFIX)
+  assert len(result) == 1
 
 
 # --- build_archive_mapping ---

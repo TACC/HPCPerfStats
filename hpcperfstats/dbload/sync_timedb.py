@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files. Runs in parallel with configurable chunk size.
 
+CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini).
+
 DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers and calls close_old_connections() at entry so each worker uses a fresh connection. Writes are serialized with a shared lock.
 
 """
@@ -367,17 +369,28 @@ if __name__ == '__main__':
       sys.argv, default_start, default_end)
 
   if len(sys.argv) > 1 and sys.argv[1] == 'all':
-      startdate = 'all'
-      enddate = datetime.combine(
-          datetime.today(),
-          datetime.min.time()) - timedelta(days=days_to_process + 1)
+    startdate = 'all'
+    enddate = None
 
-  log_date_range("stats files to ingest", startdate, enddate)
+  if startdate == 'all':
+    log_print(
+        "###Date Range of stats files to ingest: entire archive directory "
+        "(no date filter)####")
+  else:
+    log_date_range("stats files to ingest", startdate, enddate)
   #################################################################
+
+  host_name_ext = cfg.get_host_name_ext().strip()
+  if not host_name_ext:
+    log_print(
+        "ERROR: DEFAULT.host_name_ext must be set; sync_timedb uses archive "
+        "subdirectories whose names end with this suffix.")
+    sys.exit(1)
 
   start = time.time()
   directory = cfg.get_archive_dir_path()
-  stats_files = collect_stats_files_in_range(directory, startdate, enddate)
+  stats_files = collect_stats_files_in_range(
+      directory, startdate, enddate, host_name_ext)
   log_print("Number of host stats files to process = ", len(stats_files))
 
   manager = multiprocessing.Manager()

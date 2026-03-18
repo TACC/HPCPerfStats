@@ -76,15 +76,24 @@ def get_stats_chunk(stats_files, chunk_index, chunk_size):
   return stats_files[start:end]
 
 
-def collect_stats_files_in_range(directory, startdate, enddate):
-  """Scan directory for stats files (under c* or v* subdirs) whose time is in
-  [startdate, enddate). Time is derived from both mtime and filename (epoch
-  seconds) when possible. Returns list of file paths sorted with newest files
-  first. startdate may be 'all' (then enddate is exclusive upper bound)."""
+def collect_stats_files_in_range(directory, startdate, enddate, host_name_ext):
+  """Scan ``archive_dir`` for stats files in immediate subdirs whose names end
+  with ``host_name_ext`` (same value as ``DEFAULT.host_name_ext`` in ini).
+
+  When startdate is ``'all'``, every eligible file is returned (no date
+  filtering). Otherwise files are included if mtime or filename epoch falls in
+  (startdate - 1 day, enddate]. Returns paths sorted newest-first (by filename
+  epoch when numeric, else mtime). If ``host_name_ext`` is empty after strip,
+  returns an empty list.
+  """
   stats_files = []
+  suffix = (host_name_ext or "").strip()
+  if not suffix:
+    return []
   for entry in os.scandir(directory):
-    if entry.is_file() or not (
-        entry.name.startswith("c") or entry.name.startswith("v")):
+    if entry.is_file() or not entry.is_dir():
+      continue
+    if not entry.name.endswith(suffix):
       continue
     for stats_file in os.scandir(entry.path):
       if not stats_file.is_file() or stats_file.name.startswith("."):
@@ -92,17 +101,13 @@ def collect_stats_files_in_range(directory, startdate, enddate):
       if stats_file.name.startswith("current"):
         continue
       try:
-        mtime_fdate = datetime.fromtimestamp(
+        fdate_mtime = datetime.fromtimestamp(
             int(os.path.getmtime(stats_file.path))
         )
-        fdate_mtime = mtime_fdate
       except Exception as e:
         log_print("error in obtaining timestamp of raw data files: ", str(e))
         continue
 
-      # Also derive a timestamp from the filename (basename is epoch seconds).
-      # If parsing fails, fall back to using only mtime. All comparisons are
-      # done in the local timezone.
       fdate_name = None
       try:
         fname_epoch = int(os.path.basename(stats_file.path))
@@ -110,18 +115,6 @@ def collect_stats_files_in_range(directory, startdate, enddate):
       except Exception:
         pass
 
-      def _in_range(ts):
-        if ts is None:
-          return False
-        if startdate == "all":
-          return ts <= enddate
-        return not (ts <= startdate - timedelta(days=1) or ts > enddate)
-
-      in_range_mtime = _in_range(fdate_mtime)
-      in_range_name = _in_range(fdate_name)
-
-      # Choose an effective timestamp for sorting: prefer filename epoch when
-      # available, otherwise fall back to mtime.
       sort_epoch = None
       if fdate_name is not None:
         sort_epoch = int(os.path.basename(stats_file.path))
@@ -132,11 +125,16 @@ def collect_stats_files_in_range(directory, startdate, enddate):
           sort_epoch = None
 
       if startdate == "all":
-        if not (in_range_mtime or in_range_name):
-          continue
         stats_files.append((stats_file.path, sort_epoch))
         continue
 
+      def _in_range(ts):
+        if ts is None:
+          return False
+        return not (ts <= startdate - timedelta(days=1) or ts > enddate)
+
+      in_range_mtime = _in_range(fdate_mtime)
+      in_range_name = _in_range(fdate_name)
       if not (in_range_mtime or in_range_name):
         continue
       stats_files.append((stats_file.path, sort_epoch))

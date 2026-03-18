@@ -4,7 +4,9 @@
 # Short name of your cluster i.e. frontera
 machine		          = cluster_name
 
-# FQDN for your cluster. i.e. frontera.tacc.utexas.edu
+# FQDN suffix for cluster nodes (short-host.FQDN). sync_timedb and archive layout
+# use this: under archive_dir, only immediate subdirs whose names *end with* this
+# string (e.g. c123.frontera.tacc.utexas.edu when host_name_ext is frontera.tacc.utexas.edu) are scanned for stats files.
 host_name_ext      = %(machine)s.domain.edu
 
 # Path you would like all of HPCPerfStats' data to be stored. It will be the central location where all the file operations occur.
@@ -59,7 +61,7 @@ rmq_queue 	       = %(machine)s
 # Path where all of the slurm logs for job accounting data will be stored (pre-configured for container installation)
 acct_path          = %(data_dir)s/accounting
 
-# Path for the Rabbit MQ working directory for all intermediate data (pre-configured for container installation)
+# Raw node stats: one subdirectory per host; dirname must end with DEFAULT.host_name_ext
 archive_dir	       = %(data_dir)s/archive
 
 
