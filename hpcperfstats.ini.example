@@ -23,7 +23,9 @@ debug                 = True
 staff_email_domain   = lab.hpcisgreat.edu
 
 # The cluster and docker host need to share this timezone.
-timezone = US/Central
+# The timezone must come from this list:
+# http://en.wikipedia.org/wiki/List_of_tz_zones_by_name
+timezone = America/Chicago
 
 # Total amount of cores that are available for this application
 total_cores = 40
