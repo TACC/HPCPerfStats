@@ -105,9 +105,9 @@ def update_metrics(date, rerun=False):
     for pk_chunk, _ in _iter_chunked_pks(qs, CHUNK_SIZE):
       try:
         jobs_chunk = list(
-            job_data.objects.filter(pk__in=pk_chunk).prefetch_related(
-                "metrics_data_set"
-            )
+            # Metrics computation only needs jid; avoid loading all job_data
+            # columns or prefetching related metrics_data rows.
+            job_data.objects.filter(pk__in=pk_chunk).only("jid")
         )
         metrics_manager.run(jobs_chunk)
         processed += len(jobs_chunk)
@@ -120,9 +120,7 @@ def update_metrics(date, rerun=False):
         )
         close_old_connections()
         jobs_chunk = list(
-            job_data.objects.filter(pk__in=pk_chunk).prefetch_related(
-                "metrics_data_set"
-            )
+            job_data.objects.filter(pk__in=pk_chunk).only("jid")
         )
         metrics_manager.run(jobs_chunk)
         processed += len(jobs_chunk)
