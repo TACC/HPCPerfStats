@@ -263,6 +263,26 @@ def test_collect_stats_files_in_range_sorted_by_basename(tmp_path):
   assert basenames == ["10", "20", "30"]
 
 
+def test_collect_stats_files_in_range_uses_filename_epoch_when_mtime_outside(tmp_path):
+  """Filename epoch within range causes inclusion even if mtime is outside."""
+  cn = tmp_path / "cn001"
+  cn.mkdir()
+
+  # Filename encodes an epoch in June 2020, but mtime is in January 2020.
+  fname_ts = datetime(2020, 6, 15, 12, 0, 0).timestamp()
+  stats_file = cn / str(int(fname_ts))
+  stats_file.write_text("x")
+
+  mtime_ts = datetime(2020, 1, 1, 0, 0, 0).timestamp()
+  os.utime(stats_file, (mtime_ts, mtime_ts))
+
+  start = datetime(2020, 6, 1)
+  end = datetime(2020, 7, 1)
+  result = collect_stats_files_in_range(str(tmp_path), start, end)
+  assert len(result) == 1
+  assert result[0].endswith(str(int(fname_ts)))
+
+
 # --- build_archive_mapping ---
 
 

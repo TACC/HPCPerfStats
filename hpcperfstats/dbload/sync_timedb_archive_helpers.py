@@ -92,16 +92,38 @@ def collect_stats_files_in_range(directory, startdate, enddate):
         mtime_fdate = datetime.fromtimestamp(
             int(os.path.getmtime(stats_file.path))
         )
-        fdate = mtime_fdate
+        fdate_mtime = mtime_fdate
       except Exception as e:
         log_print("error in obtaining timestamp of raw data files: ", str(e))
         continue
+
+      # Also derive a timestamp from the filename (basename is epoch seconds).
+      # If parsing fails, fall back to using only mtime. All comparisons are
+      # done in the local timezone.
+      fdate_name = None
+      try:
+        fname_epoch = int(os.path.basename(stats_file.path))
+        fdate_name = datetime.fromtimestamp(fname_epoch)
+      except Exception:
+        pass
+
+      def _in_range(ts):
+        if ts is None:
+          return False
+        if startdate == "all":
+          return ts <= enddate
+        return not (ts <= startdate - timedelta(days=1) or ts > enddate)
+
+      in_range_mtime = _in_range(fdate_mtime)
+      in_range_name = _in_range(fdate_name)
+
       if startdate == "all":
-        if fdate > enddate:
+        if not (in_range_mtime or in_range_name):
           continue
         stats_files.append(stats_file.path)
         continue
-      if fdate <= startdate - timedelta(days=1) or fdate > enddate:
+
+      if not (in_range_mtime or in_range_name):
         continue
       stats_files.append(stats_file.path)
   stats_files.sort(key=os.path.basename)
