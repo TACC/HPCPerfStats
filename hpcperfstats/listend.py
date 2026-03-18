@@ -116,7 +116,7 @@ def _idle_monitor():
     queue_depth = None
     try:
       # Use the shared channel reference if available; otherwise skip depth.
-      channel = _channel_ref[0] if _channel_ref else None
+      channel = _channel_ref
       if channel is not None:
         q = channel.queue_declare(
             queue=cfg.get_rmq_queue(), durable=True, passive=True)
