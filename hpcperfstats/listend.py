@@ -23,7 +23,8 @@ _message_timestamps = deque()
 _timestamps_lock = Lock()
 _last_message_time = None
 _last_idle_report_time = None
-_channel_ref = []
+_channel_ref = None
+_idle_thread_started = False
 
 
 def on_message(channel, method_frame, header_frame, body):
@@ -139,6 +140,8 @@ def _idle_monitor():
 
 
 def main():
+  global _channel_ref
+  global _idle_thread_started
   lock_path = os.path.join(
       os.path.dirname(os.path.realpath(__file__)), "listend_lock")
   with open(lock_path, "w") as fd:
@@ -148,53 +151,81 @@ def main():
       log_print("listend is already running")
       sys.exit()
 
-    log_print("Starting Connection")
-    parameters = pika.ConnectionParameters(cfg.get_rmq_server())
-    connection = pika.BlockingConnection(parameters)
-    try:
-      # Start idle monitor thread before consuming.
+    # Ensure the idle monitor thread is started exactly once for the lifetime
+    # of the process so that it can continue reporting even across reconnects.
+    if not _idle_thread_started:
       idle_thread = Thread(target=_idle_monitor, daemon=True)
       idle_thread.start()
+      _idle_thread_started = True
 
-      channel = connection.channel()
-      _channel_ref.append(channel)
-      channel.queue_declare(queue=cfg.get_rmq_queue(), durable=True)
-      # Report how many messages are waiting to be consumed at startup.
+    # Outer loop: keep the daemon running indefinitely by reconnecting to
+    # RabbitMQ on failure instead of exiting. The process will typically only
+    # terminate when it receives a signal (e.g. SIGTERM) from the service
+    # manager.
+    while True:
+      log_print("Starting Connection")
+      parameters = pika.ConnectionParameters(cfg.get_rmq_server())
+      connection = None
       try:
-        q = channel.queue_declare(
-            queue=cfg.get_rmq_queue(), durable=True, passive=True)
-        log_print(
-            "Messages waiting to be consumed at startup: %d" %
-            q.method.message_count)
-      except Exception as e:
-        log_print("Failed to get startup queue depth: %s" % e)
+        connection = pika.BlockingConnection(parameters)
 
-      channel.basic_consume(cfg.get_rmq_queue(), on_message)
-      log_print("Begining Consume from queue: " + cfg.get_rmq_queue())
-      try:
-        channel.start_consuming()
+        channel = connection.channel()
+        _channel_ref = channel
+        channel.queue_declare(queue=cfg.get_rmq_queue(), durable=True)
+        # Report how many messages are waiting to be consumed at startup.
+        try:
+          q = channel.queue_declare(
+              queue=cfg.get_rmq_queue(), durable=True, passive=True)
+          log_print(
+              "Messages waiting to be consumed at startup: %d" %
+              q.method.message_count)
+        except Exception as e:
+          log_print("Failed to get startup queue depth: %s" % e)
+
+        channel.basic_consume(cfg.get_rmq_queue(), on_message)
+        log_print("Begining Consume from queue: " + cfg.get_rmq_queue())
+        try:
+          channel.start_consuming()
+        except (KeyboardInterrupt, SystemExit):
+          channel.stop_consuming()
+          raise
+        except StreamLostError as e:
+          # Connection dropped (e.g. broker restart or idle timeout). Treat as a
+          # normal shutdown condition and only log in DEBUG mode to avoid noisy
+          # "Error while consuming" messages like "pop from an empty deque".
+          if DEBUG:
+            log_print("RabbitMQ stream lost while consuming: %s" % e)
+        except Exception as e:
+          # Handle other connection-level errors from pika without raising during
+          # shutdown/cleanup. We will attempt to reconnect after a short delay.
+          log_print("Error while consuming from RabbitMQ: %s" % e)
       except (KeyboardInterrupt, SystemExit):
-        channel.stop_consuming()
-      except StreamLostError as e:
-        # Connection dropped (e.g. broker restart or idle timeout). Treat as a
-        # normal shutdown condition and only log in DEBUG mode to avoid noisy
-        # "Error while consuming" messages like "pop from an empty deque".
-        if DEBUG:
-          log_print("RabbitMQ stream lost while consuming: %s" % e)
+        # Allow clean shutdown on explicit termination signals.
+        log_print("Shutting down listend daemon on user request")
+        break
       except Exception as e:
-        # Handle other connection-level errors from pika without raising during
-        # shutdown/cleanup. The outer finally block will close the connection if
-        # it is still open.
-        log_print("Error while consuming from RabbitMQ: %s" % e)
-    finally:
-      try:
-        # Guard against closing an already-closed connection, which would raise
-        # ConnectionWrongStateError in recent pika versions.
-        if connection and not connection.is_closed:
-          connection.close()
-      except Exception as e:
-        if DEBUG:
-          log_print("Error while closing RabbitMQ connection: %s" % e)
+        log_print("Error establishing RabbitMQ connection: %s" % e)
+      finally:
+        try:
+          # Guard against closing an already-closed connection, which would raise
+          # ConnectionWrongStateError in recent pika versions.
+          if connection and not connection.is_closed:
+            connection.close()
+        except Exception as e:
+          if DEBUG:
+            log_print("Error while closing RabbitMQ connection: %s" % e)
+
+      # If we reach this point without breaking, sleep briefly before attempting
+      # to reconnect. This avoids tight reconnect loops that could cause
+      # excessive CPU usage or log spam.
+      time.sleep(5)
+
+
+def _is_shutting_down():
+  # Helper to make the intent of the main loop clearer; currently always
+  # returns False because shutdown is only triggered via KeyboardInterrupt or
+  # SystemExit in the loop above.
+  return False
 
 
 if __name__ == "__main__":
