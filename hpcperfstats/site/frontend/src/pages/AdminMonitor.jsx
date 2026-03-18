@@ -42,6 +42,11 @@ export default function AdminMonitor() {
   const [timescaledbRequested, setTimescaledbRequested] = useState(false);
   const [nonRespondingHosts36, setNonRespondingHosts36] = useState("");
 
+  // Only show fully qualified hostnames (contain a dot) in the UI.
+  const fqdnHostStats = hostStats.filter(
+    (row) => row.host && row.host.includes(".")
+  );
+
   // Lazily load host stats when the section is first expanded.
   useEffect(() => {
     if (!hostTimeExpanded || hostRequested) return;
@@ -119,11 +124,6 @@ export default function AdminMonitor() {
       .catch((e) => setTimescaledbError(e.message))
       .finally(() => setTimescaledbLoading(false));
   }, [timescaledbExpanded, timescaledbRequested]);
-
-  // Only show fully qualified hostnames (contain a dot) in the UI.
-  const fqdnHostStats = hostStats.filter(
-    (row) => row.host && row.host.includes(".")
-  );
 
   const totalHosts = fqdnHostStats.length;
   const bucketCounts = fqdnHostStats.reduce(
