@@ -3,6 +3,7 @@
 """
 import numpy as np
 import pytest
+from pandas import Timestamp
 
 from hpcperfstats.analysis.metrics.metrics import (
     _EventIndex,
@@ -24,6 +25,16 @@ def test_schema_events_and_desc():
   schema = _Schema(events)
   assert schema.events == ["a", "b", "c"]
   assert schema.desc == "a b c\n"
+
+
+def test_schema_accepts_non_string_events():
+  """_Schema normalises non‑string event labels (e.g. pandas.Timestamp) to str."""
+  ts1 = Timestamp("2020-01-01T00:00:00Z")
+  ts2 = Timestamp("2020-01-01T01:00:00Z")
+  events = [ts1, ts2]
+  schema = _Schema(events)
+  assert schema.events == [str(ts1), str(ts2)]
+  assert schema.desc == f"{ts1} {ts2}\n"
 
 
 def test_schema_getitem_returns_event_index():

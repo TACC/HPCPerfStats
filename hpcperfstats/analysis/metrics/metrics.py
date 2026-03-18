@@ -44,7 +44,9 @@ class _Schema:
 
   def __init__(self, events):
     """Build event list and name->index mapping from event names."""
-    self.events = list(events)
+    # Normalise event names to strings so that schema construction is robust
+    # when upstream code passes non‑string labels (e.g. pandas.Timestamp).
+    self.events = [str(e) for e in events]
     self._index = {name: idx for idx, name in enumerate(self.events)}
     self.desc = " ".join(self.events) + "\n"
 
