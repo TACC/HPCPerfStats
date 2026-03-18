@@ -1,5 +1,9 @@
+# this file runs all of the services that support the django app and data proccessing
+# all app components are in the docker-compose.app.yaml file
+
 include:
   - docker-compose.app.yaml
+
 services:
   redis:
     image: redis:7-alpine

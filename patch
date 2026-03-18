@@ -1,0 +1,42 @@
+diff --git a/hpcperfstats/analysis/metrics/update_metrics.py b/hpcperfstats/analysis/metrics/update_metrics.py
+index f93e328..4ff2b71 100755
+--- a/hpcperfstats/analysis/metrics/update_metrics.py
++++ b/hpcperfstats/analysis/metrics/update_metrics.py
+@@ -14,21 +14,21 @@ from hpcperfstats.analysis.metrics import metrics
+ import hpcperfstats.conf_parser as cfg
+ from hpcperfstats.progress import progress
+
+-DEBUG =  cfg.get_debug()
++DEBUG =  True
+
+ thread_count = 20
+
+ def update_metrics(date, rerun = False):
+-
++
+     min_time = 300
+     jobs_list = list(job_data.objects.filter(end_time__date = date.date()).exclude(runtime__lt = min_time))
+     print("Total jobs {0}".format(len(jobs_list)) + " for date " + date.strftime("%Y-%m-%d"))
+
+-    if not rerun:
+-        jobs_list = [job for job in jobs_list if not job.metrics_data_set.all().exists() or job.metrics_data_set.all().filter(value__isnull = True).count() > 0]
++    jobs_list = [job for job in jobs_list if not job.metrics_data_set.all().exists()]
++    jobs_list = [job for job in jobs_list if job.metrics_data_set.all().filter(value__isnull = True).count() > 0]
+
+     if DEBUG:
+-        print("jobs that don't have data before run:")
++        print("%s jobs don't have data before run:" % len(jobs_list))
+         print(jobs_list)
+     # Set up metric computation manager
+     metrics_manager = metrics.Metrics()
+@@ -42,8 +42,9 @@ def update_metrics(date, rerun = False):
+
+     if DEBUG:
+         jobs_list = list(job_data.objects.filter(end_time__date = date.date()).exclude(runtime__lt = min_time))
+-        jobs_list = [job for job in jobs_list if not job.metrics_data_set.all().exists() or job.metrics_data_set.all().filter(value__isnull = True).count() > 0]
+-        print("jobs that don't have data after run:")
++        jobs_list = [job for job in jobs_list if not job.metrics_data_set.all().exists()]
++        jobs_list = [job for job in jobs_list if job.metrics_data_set.all().filter(value__isnull = True).count() > 0]
++        print("%s jobs don't have data after run:" % len(jobs_list))
+         print(jobs_list)
+

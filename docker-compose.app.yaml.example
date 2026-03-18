@@ -1,3 +1,5 @@
+# These are the two containers that contain the web and data processing code
+
 services:
   web:
     build: ./
