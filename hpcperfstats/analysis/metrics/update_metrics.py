@@ -45,22 +45,25 @@ def _jobs_queryset(date, min_time, rerun):
 
 
 def _iter_chunked_pks(queryset, chunk_size):
-  """Yield (pk_list, total_so_far) in chunks. Uses a new query per chunk to avoid
-  long-lived cursors and connection timeouts (psycopg 'connection is closed').
+  """Yield (pk_list, total_so_far) in chunks, streaming PKs from the database.
+
+  This implementation relies on Django's ``iterator`` with a server-side cursor
+  so that we never materialise the full PK list in memory. We accumulate PKs
+  into Python lists of at most ``chunk_size`` elements and yield each list
+  together with the cumulative total seen so far.
   """
   total = 0
-  last_pk = 0
-  while True:
-    chunk = list(
-        queryset.filter(pk__gt=last_pk)
-        .order_by("pk")
-        .values_list("pk", flat=True)[:chunk_size]
-    )
-    if not chunk:
-      break
-    last_pk = chunk[-1]
-    total += len(chunk)
-    yield chunk, total
+  current_chunk = []
+  for pk in queryset.values_list("pk", flat=True).iterator(chunk_size=chunk_size):
+    current_chunk.append(pk)
+    if len(current_chunk) >= chunk_size:
+      total += len(current_chunk)
+      yield current_chunk, total
+      current_chunk = []
+
+  if current_chunk:
+    total += len(current_chunk)
+    yield current_chunk, total
 
 
 def update_metrics(date, rerun=False):
