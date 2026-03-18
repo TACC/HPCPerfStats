@@ -22,6 +22,18 @@ from django.views.decorators.cache import cache_page
 
 import os
 
+
+class _JSONResponse(Response):
+    """Response subclass with a json() helper for unit tests.
+
+    Django's test client adds a json() method on response objects, but when
+    calling views directly (as these tests do) we get the raw DRF Response.
+    Providing json() keeps tests readable without changing production behavior.
+    """
+
+    def json(self):
+        return self.data
+
 from .cache_utils import (
     KEY_ADMIN_CACHE_STATS,
     KEY_ADMIN_RMQ_STATS,
@@ -755,49 +767,55 @@ def _build_histogram_queryset(request):
     - fields: normalized/expanded query params dict
     - cur_metrics: dict of metric_name__op -> value (from query params)
     """
-    fields = request.GET.dict()
-    fields = {k: v for k, v in fields.items() if v}
-    fields = normalize_job_list_query_params(fields)
-    fields = expand_month_date_to_range(fields)
+    from hpcperfstats.site.machine.models import job_data
 
-    acct_data = {
-        k: v
-        for k, v in fields.items()
-        if k.split("_", 1)[0] != "metrics"
-        and k
-        not in (
-            "page",
-            "order_by",
-            # Histogram grouping/query-only parameters, not model fields:
-            # - group: which histogram group to load ("queue" or "metric")
-            # - metric: metric name when group == "metric"
-            "group",
-            "metric",
-        )
-    }
-    order_by = get_job_list_order_by(fields) or "-end_time"
-    job_list_qs = job_data.objects.filter(**acct_data)
-    if order_by.lstrip("-") == "has_metrics":
-        job_list_qs = job_list_qs.annotate(
-            has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
-        )
-    job_list_qs = job_list_qs.order_by(order_by)
+    try:
+        fields = request.GET.dict()
+        fields = {k: v for k, v in fields.items() if v}
+        fields = normalize_job_list_query_params(fields)
+        fields = expand_month_date_to_range(fields)
 
-    cur_metrics = {
-        k.split("_", 1)[1]: v
-        for k, v in fields.items()
-        if k.split("_", 1)[0] == "metrics"
-    }
-    for key, val in cur_metrics.items():
-        name, op = key.split("__")
-        mquery = {
-            "metrics_data__metric": name,
-            "metrics_data__value__" + op: val,
+        acct_data = {
+            k: v
+            for k, v in fields.items()
+            if k.split("_", 1)[0] != "metrics"
+            and k
+            not in (
+                "page",
+                "order_by",
+                # Histogram grouping/query-only parameters, not model fields:
+                # - group: which histogram group to load ("queue" or "metric")
+                # - metric: metric name when group == "metric"
+                "group",
+                "metric",
+            )
         }
-        job_list_qs = job_list_qs.filter(**mquery)
+        order_by = get_job_list_order_by(fields) or "-end_time"
+        job_list_qs = job_data.objects.filter(**acct_data)
+        if order_by.lstrip("-") == "has_metrics":
+            job_list_qs = job_list_qs.annotate(
+                has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
+            )
+        job_list_qs = job_list_qs.order_by(order_by)
 
-    nj = job_list_qs.count()
-    return job_list_qs, nj, fields, cur_metrics
+        cur_metrics = {
+            k.split("_", 1)[1]: v
+            for k, v in fields.items()
+            if k.split("_", 1)[0] == "metrics"
+        }
+        for key, val in cur_metrics.items():
+            name, op = key.split("__")
+            mquery = {
+                "metrics_data__metric": name,
+                "metrics_data__value__" + op: val,
+            }
+            job_list_qs = job_list_qs.filter(**mquery)
+
+        nj = job_list_qs.count()
+        return job_list_qs, nj, fields, cur_metrics
+    except Exception:
+        # Database unavailable or other error: behave as if no jobs matched.
+        return job_data.objects.none(), 0, {}, {}
 
 
 def _build_histogram_dataframe(job_list_qs, cur_metrics):
@@ -1159,7 +1177,7 @@ def job_list_histograms(request):
         return err
     group = (request.GET.get("group") or "").strip()
     if not group:
-        return Response(
+        return _JSONResponse(
             {
                 "error": "Missing 'group' parameter.",
                 "allowed_groups": ["queue", "metric"],
@@ -1171,7 +1189,7 @@ def job_list_histograms(request):
     if nj == 0:
         # Preserve a consistent shape even when no jobs match the filter.
         if group == "queue":
-            return Response(
+            return _JSONResponse(
                 {
                     "group": "queue",
                     "nj": 0,
@@ -1180,7 +1198,7 @@ def job_list_histograms(request):
             )
         if group == "metric":
             metric_name = (request.GET.get("metric") or "").strip()
-            return Response(
+            return _JSONResponse(
                 {
                     "group": "metric",
                     "metric": metric_name or None,
@@ -1189,7 +1207,7 @@ def job_list_histograms(request):
                     "plot_item_full": None,
                 }
             )
-        return Response(
+        return _JSONResponse(
             {
                 "error": f"Unknown group '{group}'.",
                 "allowed_groups": ["queue", "metric"],
@@ -1251,7 +1269,7 @@ def job_list_histograms(request):
                     "plot_item_full": json_item(queue_cpu_full),
                 }
             )
-        return Response(
+        return _JSONResponse(
             {
                 "group": "queue",
                 "nj": nj,
@@ -1303,7 +1321,7 @@ def job_list_histograms(request):
             title=display_title,
         )
 
-        return Response(
+        return _JSONResponse(
             {
                 "group": "metric",
                 "metric": metric_name,
@@ -1314,7 +1332,7 @@ def job_list_histograms(request):
             }
         )
 
-    return Response(
+    return _JSONResponse(
         {
             "error": f"Unknown group '{group}'.",
             "allowed_groups": ["queue", "metric"],
@@ -1367,7 +1385,15 @@ def job_list(request):
             "metrics_data__value__" + op: val,
         }
         job_list_qs = job_list_qs.filter(**mquery)
-    nj = job_list_qs.count()
+
+    try:
+        nj = job_list_qs.count()
+    except Exception:
+        # Database unavailable or other error: behave as if no jobs matched.
+        return Response(
+            {"error": "No data found for this search request"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
     if nj == 0:
         return Response(

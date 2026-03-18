@@ -4,6 +4,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from hpcperfstats.analysis.gen import utils as gen_utils
 from hpcperfstats.analysis.gen.utils import get_job_host_data_and_job_dict
 
 
@@ -39,3 +40,33 @@ def test_get_job_host_data_and_job_dict_with_job_and_host_data():
   assert len(host_df) == 1
   assert job_dict is not None
   assert job_dict["jid"] == 999
+
+
+def test_get_job_host_data_and_job_dict_handles_cached_orm_exception():
+  """get_job_host_data_and_job_dict returns (empty DataFrame, None) when cache/DB layer raises."""
+  with patch("hpcperfstats.analysis.gen.utils.job_data") as mock_job_data, patch(
+      "hpcperfstats.analysis.gen.utils.jid_table"
+  ):
+    mock_job_data.objects.filter.side_effect = Exception("boom")
+    host_df, job_dict = get_job_host_data_and_job_dict(111)
+  assert host_df.empty
+  assert job_dict is None
+
+
+def test_job_data_and_jid_table_lazy_singletons_respected():
+  """Module-level job_data and jid_table singletons are used when already set (no reimport)."""
+  fake_job_data = object()
+  fake_jid_table = object()
+  gen_utils.job_data = fake_job_data
+  gen_utils.jid_table = fake_jid_table
+
+  with patch("hpcperfstats.analysis.gen.utils.job_data") as mock_job_data, patch(
+      "hpcperfstats.analysis.gen.utils.jid_table"
+  ):
+    mock_job_data.objects.filter.return_value.values.return_value.first.return_value = None
+    host_df, job_dict = get_job_host_data_and_job_dict(222)
+
+  assert host_df.empty
+  assert job_dict is None
+  assert gen_utils.job_data is fake_job_data
+  assert gen_utils.jid_table is fake_jid_table

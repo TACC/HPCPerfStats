@@ -43,6 +43,25 @@ class TestJobListHistogramsView:
         assert "plots" in data
         assert isinstance(data["plots"], list)
 
+    def test_returns_200_with_queue_group_when_db_unavailable(self):
+        """job_list_histograms returns 200 and queue payload even when DB layer raises."""
+        from hpcperfstats.site.machine.api import job_list_histograms, _build_histogram_queryset
+
+        factory = RequestFactory()
+        request = factory.get("/api/jobs/histograms/", {"group": "queue"})
+
+        with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True), patch(
+            "hpcperfstats.site.machine.api._build_histogram_queryset",
+            return_value=(MagicMock(), 0, {}, {}),
+        ):
+            response = job_list_histograms(request)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["group"] == "queue"
+        assert data["nj"] == 0
+        assert isinstance(data["plots"], list)
+
     def test_histograms_endpoint_uses_same_query_params_as_job_list(self):
         """job_list_histograms accepts the same GET params as job list (e.g. page ignored for histograms)."""
         from hpcperfstats.site.machine.api import job_list_histograms
@@ -125,22 +144,22 @@ def test_job_list_histograms_helper_returns_tuple_when_mocked():
 
 @pytest.mark.django_db
 class TestJobListNoHistogramsInResponse:
-    """Ensure job_list response no longer includes script/div."""
+  """Ensure job_list response no longer includes script/div."""
 
-    def test_job_list_response_omits_script_and_div(self):
-        """job_list returns JSON without 'script' or 'div' keys."""
-        from hpcperfstats.site.machine.api import job_list
+  def test_job_list_response_omits_script_and_div(self):
+    """job_list returns JSON without 'script' or 'div' keys."""
+    from hpcperfstats.site.machine.api import job_list
 
-        factory = RequestFactory()
-        request = factory.get("/api/jobs/")
+    factory = RequestFactory()
+    request = factory.get("/api/jobs/")
 
-        with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True):
-            response = job_list(request)
+    with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True):
+      response = job_list(request)
 
-        # With empty DB we may get 404 (no data) or 200 (empty list)
-        if response.status_code == 200:
-            data = response.json()
-            assert "script" not in data, "job_list must not return script (use histograms endpoint)"
-            assert "div" not in data, "job_list must not return div (use histograms endpoint)"
-            assert "job_list" in data
-            assert "pagination" in data
+    # With empty DB we may get 404 (no data) or 200 (empty list)
+    if response.status_code == 200:
+      data = response.json()
+      assert "script" not in data, "job_list must not return script (use histograms endpoint)"
+      assert "div" not in data, "job_list must not return div (use histograms endpoint)"
+      assert "job_list" in data
+      assert "pagination" in data

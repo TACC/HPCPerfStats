@@ -71,6 +71,11 @@ else:
     else:
         ALLOWED_HOSTS = ["*"] if DEBUG else []
 
+# Always allow the Django test host so RequestFactory and Django's test client
+# work without DisallowedHost errors during tests.
+if "testserver" not in ALLOWED_HOSTS and "*" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS = list(ALLOWED_HOSTS) + ["testserver"]
+
 # Allow Docker service hostname for internal health checks (e.g. supervisor_startup.sh curling http://web:8000)
 if "*" not in ALLOWED_HOSTS and "web" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS = list(ALLOWED_HOSTS) + ["web"]
@@ -172,6 +177,14 @@ CACHES = {
         "TIMEOUT": 300,
     }
 }
+
+# During test runs, avoid requiring a real Redis instance by switching to the
+# in-memory cache backend. This keeps production configuration unchanged.
+if any(arg.endswith("pytest") or arg == "pytest" or arg == "test" for arg in sys.argv):
+    CACHES["default"] = {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "hpcperfstats-tests",
+    }
 # Full-page cache middleware removed in Django 4.0; ORM uses cache_utils.
 MIDDLEWARE = (
     "django.middleware.security.SecurityMiddleware",

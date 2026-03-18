@@ -1,0 +1,200 @@
+"""Additional API unit tests for small helpers in hpcperfstats.site.machine.api.
+
+Covers:
+- session_info: authenticated vs unauthenticated behavior and session fields.
+- home_options: aggregation of dates/metrics/queues/states without hitting a real DB.
+- search_dispatch: jid and host branches, including 404 when jid not found.
+"""
+
+from datetime import date
+from unittest.mock import MagicMock, patch
+
+import pytest
+from django.test import RequestFactory
+
+
+@pytest.mark.django_db
+class TestSessionInfo:
+  """Tests for the session_info endpoint."""
+
+  def test_session_info_requires_auth(self):
+    """session_info returns auth error when _require_auth fails."""
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/session-info/")
+
+    with patch("hpcperfstats.site.machine.api._require_auth") as mock_auth:
+      mock_auth.return_value = api.Response(
+          {"detail": "unauthorized"}, status=401
+      )
+      response = api.session_info(request)
+
+    assert response.status_code == 401
+
+  def test_session_info_returns_session_fields(self):
+    """session_info returns logged_in=True and session username/is_staff flags."""
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/session-info/")
+    request.session = {"username": "alice", "is_staff": True}
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+        "hpcperfstats.site.machine.api.cfg.get_host_name_ext",
+        return_value="test-machine",
+    ):
+      response = api.session_info(request)
+
+    assert response.status_code == 200
+    data = response.data
+    assert data["logged_in"] is True
+    assert data["username"] == "alice"
+    assert data["is_staff"] is True
+    assert data["machine_name"] == "test-machine"
+
+
+@pytest.mark.django_db
+class TestHomeOptions:
+  """Tests for the home_options endpoint."""
+
+  def test_home_options_aggregates_date_lists_and_filters_empty_values(self):
+    """home_options builds year_list, date_list, metrics, queues, and states from cached data."""
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/home-options/")
+
+    sample_dates = [date(2024, 1, 1), date(2024, 1, 2), date(2023, 12, 31)]
+    sample_metrics = [{"metric": "runtime", "units": "hours"}]
+    sample_queues = ["normal", "", None]
+    sample_states = ["RUNNING", "", None]
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+        "hpcperfstats.site.machine.api._get_small_executor"
+    ) as mock_exec, patch(
+        "hpcperfstats.site.machine.api.cfg.get_host_name_ext",
+        return_value="test-machine",
+    ):
+      # Fake executor that just runs the function synchronously
+      class _FakeFuture:
+        def __init__(self, value):
+          self._value = value
+
+        def result(self):
+          return self._value
+
+      def _submit(fn, *args, **kwargs):
+        # fn is cached_orm; args: key, timeout, query_fn
+        query_fn = args[-1]
+        return _FakeFuture(query_fn())
+
+      mock_exec.return_value = MagicMock(submit=_submit)
+
+      with patch("hpcperfstats.site.machine.api.job_data") as mock_job_data, patch(
+          "hpcperfstats.site.machine.api.metrics_data"
+      ) as mock_metrics_data, patch(
+          "hpcperfstats.site.machine.api.cached_orm"
+      ) as mock_cached_orm:
+        # cached_orm simply delegates to the query function
+        mock_cached_orm.side_effect = (
+            lambda *_args, **_kwargs: _args[-1]() if callable(_args[-1]) else None
+        )
+
+        # Configure job_data.querysets used in _dates_fn, _queues_fn, _states_fn
+        mock_job_data.objects.dates.return_value = sample_dates
+        mock_metrics_data.objects.distinct.return_value.values.return_value = sample_metrics
+        mock_job_data.objects.distinct.return_value.values_list.return_value = sample_queues
+        (
+            mock_job_data.objects.exclude.return_value.distinct.return_value.values_list.return_value
+        ) = sample_states
+
+        response = api.home_options(request)
+
+    assert response.status_code == 200
+    data = response.data
+    assert data["machine_name"] == "test-machine"
+    assert data["year_list"] == [2024, 2023]
+    # Ensure dates are grouped and sorted by month key
+    assert data["date_list"]
+    keys = [item[0] for item in data["date_list"]]
+    assert "2024-01" in keys
+    assert "2023-12" in keys
+    assert data["metrics"] == sample_metrics
+    assert data["queues"] == ["normal"]
+    assert data["states"] == ["RUNNING"]
+
+
+@pytest.mark.django_db
+class TestSearchDispatch:
+  """Tests for the search_dispatch helper endpoint."""
+
+  def test_search_dispatch_redirects_to_job_when_jid_found(self):
+    """search_dispatch returns redirect JSON when jid exists."""
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/search/", {"jid": "123"})
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+        "hpcperfstats.site.machine.api.cached_orm", return_value="123"
+    ):
+      response = api.search_dispatch(request)
+
+    assert response.status_code == 200
+    assert response.data["redirect"] == "/machine/job/123/"
+
+  def test_search_dispatch_returns_404_when_jid_not_found(self):
+    """search_dispatch returns 404 JSON error when jid does not exist."""
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/search/", {"jid": "999"})
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+        "hpcperfstats.site.machine.api.cached_orm", return_value=None
+    ):
+      response = api.search_dispatch(request)
+
+    assert response.status_code == 404
+    assert "error" in response.data
+
+  def test_search_dispatch_redirects_to_host_plot_when_host_given(self):
+    """search_dispatch returns redirect JSON to host plot URL with remaining query params."""
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/search/",
+        {"host": "node1", "start": "2024-01-01T00:00:00", "end": "2024-01-01T01:00:00"},
+    )
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None):
+      # job_list is not used when host is non-empty, but keep it patched to avoid DB.
+      with patch("hpcperfstats.site.machine.api.job_list") as mock_job_list:
+        response = api.search_dispatch(request)
+
+    mock_job_list.assert_not_called()
+    assert response.status_code == 200
+    redirect_path = response.data["redirect"]
+    assert redirect_path.startswith("/machine/host/node1/plot/")
+    assert "start=2024-01-01T00%3A00%3A00" in redirect_path
+    assert "end=2024-01-01T01%3A00%3A00" in redirect_path
+
+  def test_search_dispatch_falls_back_to_job_list_when_no_jid_or_host(self):
+    """search_dispatch delegates to job_list when no jid or host is provided."""
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/search/")
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+        "hpcperfstats.site.machine.api.job_list"
+    ) as mock_job_list:
+      mock_job_list.return_value = api.Response({"ok": True})
+      response = api.search_dispatch(request)
+
+    mock_job_list.assert_called_once()
+    assert response.status_code == 200
+    assert response.data["ok"] is True
+

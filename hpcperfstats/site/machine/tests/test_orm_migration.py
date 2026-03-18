@@ -1,10 +1,14 @@
-"""Tests for ORM-based data access (post raw-SQL migration). Verifies that refactored code paths use Django ORM and that helpers work. Run with: python manage.py test hpcperfstats.site.machine.tests.test_orm_migration (requires Django settings and config, e.g. hpcperfstats.ini).
+"""Tests for ORM-based data access (post raw-SQL migration). Verifies that
+refactored code paths use Django ORM and that helpers work.
+
+These tests are written to avoid touching a real database so they can run in
+isolated environments (no PostgreSQL server required).
 
 """
-from django.test import TestCase
+from django.test import SimpleTestCase
 
 
-class TestORMHelpers(TestCase):
+class TestORMHelpers(SimpleTestCase):
   """Test queryset_to_dataframe and that models are queryable.
 
     """

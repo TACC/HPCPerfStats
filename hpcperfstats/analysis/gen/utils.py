@@ -5,12 +5,18 @@ import hpcperfstats.conf_parser as cfg
 
 import warnings
 
-warnings.simplefilter(action='ignore', category=UserWarning)
-warnings.simplefilter(action='ignore', category=FutureWarning)
-
 from bokeh.models import CustomJSTickFormatter
 import numpy as np
 import pandas as pd
+
+warnings.simplefilter(action='ignore', category=UserWarning)
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
+# Lazy-imported ORM dependencies so that this module can be imported in
+# environments without a configured database and without creating circular
+# imports with jid_table. Tests patch these names directly.
+job_data = None
+jid_table = None
 
 local_timezone = cfg.get_timezone()
 
@@ -103,16 +109,25 @@ def get_job_host_data_and_job_dict(jid):
     make_cache_key,
     TIMEOUT_SHORT,
   )
-  from hpcperfstats.site.machine.models import job_data
-  from hpcperfstats.analysis.gen.jid_table import jid_table
 
   def _job_dict_fn():
-    job_row = job_data.objects.filter(jid=jid).values().first()
-    return dict(job_row) if job_row is not None else None
+    row = job_data.objects.filter(jid=jid).values().first()
+    return dict(row) if row is not None else None
 
-  job_dict = cached_orm(
-      make_cache_key(KEY_JOB_DICT, jid), TIMEOUT_SHORT, _job_dict_fn
-  )
+  global job_data, jid_table
+  if job_data is None:
+    from hpcperfstats.site.machine.models import job_data as _job_data
+    job_data = _job_data
+  if jid_table is None:
+    from hpcperfstats.analysis.gen.jid_table import jid_table as _jid_table
+    jid_table = _jid_table
+
+  try:
+    job_dict = cached_orm(
+        make_cache_key(KEY_JOB_DICT, jid), TIMEOUT_SHORT, _job_dict_fn
+    )
+  except Exception:
+    job_dict = None
   if job_dict is None:
     return pd.DataFrame(), None
 
