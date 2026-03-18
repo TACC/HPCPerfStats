@@ -15,6 +15,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     get_tar_member_name,
     get_verified_files_to_remove,
 )
+from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
 
 
 # --- get_tar_member_name ---
@@ -344,3 +345,53 @@ def test_build_archive_mapping_skips_today(tmp_path):
   f1.write_text("%d job1 cn001\n" % today_ts)
   mapping = build_archive_mapping([str(f1)], str(tgz_dir))
   assert mapping == {}
+
+
+def test_build_archive_mapping_uses_real_sample_timestamp(monkeypatch, tmp_path):
+  """build_archive_mapping should derive archive date from sample content."""
+  import datetime as _real_datetime
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  # Make sure the sample's timestamp date is treated as "not today" so we
+  # actually get an archive mapping regardless of the current system date.
+  class _FakeDateTime(_real_datetime.datetime):
+    @classmethod
+    def today(cls):
+      return _real_datetime.datetime(1999, 1, 1, 12, 0, 0)
+
+  monkeypatch.setattr(helpers, "datetime", _FakeDateTime)
+
+  sample_path = os.path.abspath(
+      os.path.join(
+          os.path.dirname(os.path.realpath(__file__)),
+          "..",
+          "dbload",
+          "tests",
+          "HPCPerfStatsdDataSample",
+      )
+  )
+  with open(sample_path, "r") as fd:
+    sample_contents = fd.read()
+
+  sample_lines = sample_contents.splitlines(True)
+  sample_t, _sample_jid, _sample_host = parse_first_timestamp_line(sample_lines)
+  assert sample_t is not None
+
+  sample_file_date = _real_datetime.datetime.fromtimestamp(float(sample_t))
+  expected_key = os.path.join(
+      str(tmp_path / "tgz"),
+      sample_file_date.strftime("%Y-%m-%d.tar.gz"),
+  )
+
+  tgz_dir = tmp_path / "tgz"
+  tgz_dir.mkdir()
+
+  # Filename is irrelevant for build_archive_mapping; only file contents' first
+  # timestamp line is used.
+  stats_file = tmp_path / "stats_file_sample"
+  stats_file.write_text(sample_contents)
+
+  mapping = build_archive_mapping([str(stats_file)], str(tgz_dir))
+  assert len(mapping) == 1
+  assert expected_key in mapping
+  assert mapping[expected_key] == [str(stats_file)]

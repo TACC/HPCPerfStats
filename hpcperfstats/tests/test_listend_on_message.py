@@ -89,3 +89,55 @@ def test_on_message_nacks_and_requeues_on_malformed_message(tmp_path, monkeypatc
   assert channel.acked == []
   assert channel.nacked == [(9, True)]
 
+
+def test_on_message_archives_previous_current_on_dollar_switch(
+    tmp_path, monkeypatch
+):
+  import hpcperfstats.listend as listend
+
+  # Make timestamps deterministic so we can assert on epoch filenames.
+  # on_message() calls time.time() twice for '$' messages:
+  # 1) when creating the epoch link
+  # 2) when updating the in-memory timestamp deque
+  times = iter([1000.1, 1000.2, 1001.1, 1001.2])
+
+  def _fake_time():
+    return next(times)
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(listend.time, "time", _fake_time)
+
+  # Reset globals that could be affected by previous tests.
+  with listend._timestamps_lock:
+    listend._message_timestamps.clear()
+    listend._last_message_time = None
+
+  channel = _FakeChannel()
+
+  host = "myhost"
+  # '$' messages must contain a newline and a host line whose 2nd token is the host.
+  msg1 = b"$\n1 " + host.encode("ascii") + b"\nfirst-segment\n"
+  msg2 = b"$\n1 " + host.encode("ascii") + b"\nsecond-segment\n"
+
+  method_frame1 = _FakeMethodFrame(delivery_tag=1)
+  listend.on_message(channel, method_frame1, None, msg1)
+
+  method_frame2 = _FakeMethodFrame(delivery_tag=2)
+  listend.on_message(channel, method_frame2, None, msg2)
+
+  assert channel.acked == [1, 2]
+  assert channel.nacked == []
+
+  host_dir = tmp_path / host
+  assert host_dir.exists()
+
+  current_contents = (host_dir / "current").read_bytes()
+  epoch_1000_contents = (host_dir / "1000").read_bytes()
+  epoch_1001_contents = (host_dir / "1001").read_bytes()
+
+  # After the second '$', 'current' should contain only the second segment,
+  # while the first segment should remain archived under its epoch filename.
+  assert current_contents == msg2
+  assert epoch_1000_contents == msg1
+  assert epoch_1001_contents == msg2
+

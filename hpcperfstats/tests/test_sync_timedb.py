@@ -1,10 +1,13 @@
 """Unit tests for sync_timedb parsing and helper functions (no DB; uses sync_timedb_parsing to avoid Django)."""
+import os
 import pandas as pd
 import pytest
 
 from hpcperfstats.dbload.sync_timedb_parsing import (
+    EVENTMAPS_BY_TYPE,
     build_stats_dataframes,
     compute_deltas_and_arc,
+    exclude_types,
     find_processing_start_index,
     load_stats_file_lines,
     map_hardware_counter_vals,
@@ -351,3 +354,52 @@ def test_compute_deltas_and_arc_drops_first_timestamp():
   assert "arc" in result.columns
   assert "delta" in result.columns
   assert "time" in result.columns
+
+
+def test_sync_timedb_parsing_with_real_sample_produces_deltas_and_arc():
+  """Use HPCPerfStatsdDataSample to validate real parsing + delta/arc computation."""
+  sample_path = os.path.abspath(
+      os.path.join(
+          os.path.dirname(os.path.realpath(__file__)),
+          "..",
+          "dbload",
+          "tests",
+          "HPCPerfStatsdDataSample",
+      )
+  )
+
+  lines, load_err = load_stats_file_lines(sample_path)
+  assert load_err is None
+  assert lines
+
+  # Sanity check that the sample includes multiple timestamp snapshots so
+  # compute_deltas_and_arc should have usable diffs for at least some groups.
+  digit_start_count = sum(1 for l in lines if l and l[0].isdigit())
+  assert digit_start_count >= 2
+
+  first_t, first_jid, first_host = parse_first_timestamp_line(lines)
+  assert first_t is not None
+  assert first_jid is not None
+  assert first_host is not None
+  assert first_host == "c571-001.stampede3.tacc.utexas.edu"
+
+  start_idx, need_archival = find_processing_start_index(lines, set())
+  assert start_idx >= 0
+  assert need_archival is False
+
+  sliced_lines = lines[start_idx:]
+  stats_list, proc_stats_list = parse_stats_lines(
+      sliced_lines,
+      0,
+      eventmaps_by_type=EVENTMAPS_BY_TYPE,
+      exclude_types_list=exclude_types,
+  )
+  assert stats_list
+
+  stats_df, proc_df = build_stats_dataframes(stats_list, proc_stats_list)
+  assert not stats_df.empty
+  assert "delta" not in stats_df.columns
+
+  deltas_df = compute_deltas_and_arc(stats_df)
+  assert not deltas_df.empty
+  assert {"delta", "arc", "time", "host", "jid"}.issubset(deltas_df.columns)
