@@ -69,8 +69,7 @@ services:
       - POSTGRES_PASSWORD=hpcperfstats
 
   rabbitmq:
-    # Use the management-enabled image so the HTTP API is available.
-    image: rabbitmq:4-management-alpine
+    image: rabbitmq:4-alpine
     container_name: hpcperfstats_rabbitmq_1
     restart: always
     security_opt:
