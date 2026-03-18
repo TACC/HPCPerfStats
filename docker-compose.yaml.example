@@ -83,6 +83,7 @@ services:
     volumes:
         - rabbitmq_messages:/var/lib/rabbitmq/
         - /var/log/rabbitmq:/var/log/rabbitmq
+        - ./services-conf/rabbitmq_logging.conf:/etc/rabbitmq/conf.d/30-logging_settings.conf
 
 volumes:
       postgres_data:
