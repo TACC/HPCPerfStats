@@ -195,6 +195,18 @@ def main():
           # "Error while consuming" messages like "pop from an empty deque".
           if DEBUG:
             log_print("RabbitMQ stream lost while consuming: %s" % e)
+        except AttributeError as e:
+          # Some pika versions raise an AttributeError like "'NoneType' object
+          # has no attribute 'poll'" during shutdown when the underlying poller
+          # has already been torn down. This is effectively equivalent to a
+          # lost stream and should not be treated as a hard error.
+          msg = str(e)
+          if "NoneType" in msg and "poll" in msg:
+            if DEBUG:
+              log_print(
+                  "RabbitMQ connection poller torn down during consume: %s" % e)
+          else:
+            log_print("Error while consuming from RabbitMQ: %s" % e)
         except Exception as e:
           # Handle other connection-level errors from pika without raising during
           # shutdown/cleanup. We will attempt to reconnect after a short delay.
