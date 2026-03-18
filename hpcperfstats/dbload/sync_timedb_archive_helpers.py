@@ -77,7 +77,10 @@ def get_stats_chunk(stats_files, chunk_index, chunk_size):
 
 
 def collect_stats_files_in_range(directory, startdate, enddate):
-  """Scan directory for stats files (under c* or v* subdirs) whose mtime is in [startdate, enddate). Returns sorted list of file paths. startdate may be 'all' (then enddate is exclusive upper bound)."""
+  """Scan directory for stats files (under c* or v* subdirs) whose time is in
+  [startdate, enddate). Time is derived from both mtime and filename (epoch
+  seconds) when possible. Returns list of file paths sorted with newest files
+  first. startdate may be 'all' (then enddate is exclusive upper bound)."""
   stats_files = []
   for entry in os.scandir(directory):
     if entry.is_file() or not (
@@ -117,17 +120,31 @@ def collect_stats_files_in_range(directory, startdate, enddate):
       in_range_mtime = _in_range(fdate_mtime)
       in_range_name = _in_range(fdate_name)
 
+      # Choose an effective timestamp for sorting: prefer filename epoch when
+      # available, otherwise fall back to mtime.
+      sort_epoch = None
+      if fdate_name is not None:
+        sort_epoch = int(os.path.basename(stats_file.path))
+      else:
+        try:
+          sort_epoch = int(os.path.getmtime(stats_file.path))
+        except Exception:
+          sort_epoch = None
+
       if startdate == "all":
         if not (in_range_mtime or in_range_name):
           continue
-        stats_files.append(stats_file.path)
+        stats_files.append((stats_file.path, sort_epoch))
         continue
 
       if not (in_range_mtime or in_range_name):
         continue
-      stats_files.append(stats_file.path)
-  stats_files.sort(key=os.path.basename)
-  return stats_files
+      stats_files.append((stats_file.path, sort_epoch))
+
+  # Sort by effective timestamp descending (newest files first); None values
+  # sort last. Then return just the paths.
+  stats_files.sort(key=lambda item: (item[1] is None, item[1]), reverse=True)
+  return [path for path, _ in stats_files]
 
 
 def build_archive_mapping(

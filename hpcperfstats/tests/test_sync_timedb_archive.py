@@ -248,19 +248,26 @@ def test_collect_stats_files_in_range_date_filter(tmp_path):
   assert result[0].endswith("2")
 
 
-def test_collect_stats_files_in_range_sorted_by_basename(tmp_path):
-  """Results are sorted by basename."""
+def test_collect_stats_files_in_range_sorted_newest_first(tmp_path):
+  """Results are sorted by effective timestamp, newest first."""
   cn = tmp_path / "cn001"
   cn.mkdir()
-  for name in ["30", "10", "20"]:
-    p = cn / name
+  # Three files: base names are epoch seconds one minute apart.
+  base_ts = datetime(2020, 6, 15, 12, 0, 0)
+  epochs = [
+      int((base_ts + timedelta(minutes=offset)).timestamp())
+      for offset in [0, 1, 2]
+  ]
+  for ts in epochs:
+    p = cn / str(ts)
     p.write_text("x")
-    os.utime(p, (datetime(2020, 6, 15).timestamp(),) * 2)
+    os.utime(p, (ts, ts))
   start = datetime(2020, 6, 1)
   end = datetime(2020, 7, 1)
   result = collect_stats_files_in_range(str(tmp_path), start, end)
   basenames = [os.path.basename(p) for p in result]
-  assert basenames == ["10", "20", "30"]
+  # Expect newest (largest epoch) first.
+  assert basenames == [str(epochs[2]), str(epochs[1]), str(epochs[0])]
 
 
 def test_collect_stats_files_in_range_uses_filename_epoch_when_mtime_outside(tmp_path):
