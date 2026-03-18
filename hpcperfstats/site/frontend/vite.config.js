@@ -9,6 +9,7 @@ export default defineConfig({
     outDir: "../hpcperfstats_site/static/frontend",
     emptyOutDir: true,
     manifest: true,
+    sourcemap: true,
     rollupOptions: {
       input: "index.html",
     },
