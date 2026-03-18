@@ -63,17 +63,17 @@ export default function AdminMonitor() {
     if (!hostTimeExpanded || hostLoading || hostError) return;
     const cutoffMs = Date.now() - 36 * 60 * 60 * 1000;
     const fqdnSet = new Set();
-    for (const row of hostStats) {
+    for (const row of fqdnHostStats) {
       const host = row.host || "";
       const ts = row.last_time;
-      if (!host || !host.includes(".") || !ts) continue;
+      if (!host || !ts) continue;
       const t = new Date(ts).getTime();
       if (!Number.isFinite(t) || t >= cutoffMs) continue;
       fqdnSet.add(host);
     }
     const list = Array.from(fqdnSet).sort().join(",");
     setNonRespondingHosts36(list);
-  }, [hostTimeExpanded, hostLoading, hostError, hostStats]);
+  }, [hostTimeExpanded, hostLoading, hostError, fqdnHostStats]);
 
   // Lazily load cache stats when the section is first expanded.
   useEffect(() => {
@@ -120,8 +120,13 @@ export default function AdminMonitor() {
       .finally(() => setTimescaledbLoading(false));
   }, [timescaledbExpanded, timescaledbRequested]);
 
-  const totalHosts = hostStats.length;
-  const bucketCounts = hostStats.reduce(
+  // Only show fully qualified hostnames (contain a dot) in the UI.
+  const fqdnHostStats = hostStats.filter(
+    (row) => row.host && row.host.includes(".")
+  );
+
+  const totalHosts = fqdnHostStats.length;
+  const bucketCounts = fqdnHostStats.reduce(
     (acc, row) => {
       const b = row.age_bucket || "gt_week";
       acc[b] = (acc[b] || 0) + 1;
@@ -131,7 +136,7 @@ export default function AdminMonitor() {
   );
 
   const hostHeaderSummary =
-    !hostLoading && !hostError && hostStats.length > 0
+    !hostLoading && !hostError && fqdnHostStats.length > 0
       ? ` - Total hosts: ${totalHosts} · ${Object.keys(BADGE_MAP)
           .map((key) => `${BADGE_MAP[key].label}: ${bucketCounts[key] ?? 0}`)
           .join(" · ")}`
@@ -145,7 +150,7 @@ export default function AdminMonitor() {
     gt_week: 4,
   };
 
-  const sortedHostStats = [...hostStats].sort((a, b) => {
+  const sortedHostStats = [...fqdnHostStats].sort((a, b) => {
     const dir = hostSort.direction === "asc" ? 1 : -1;
     if (hostSort.column === "host") {
       return a.host.localeCompare(b.host) * dir;
@@ -302,7 +307,7 @@ export default function AdminMonitor() {
                       </tr>
                     );
                   })}
-                  {hostStats.length === 0 && (
+                  {fqdnHostStats.length === 0 && (
                     <tr>
                       <td colSpan="3" className="text-center">
                         No host data available.

@@ -2028,13 +2028,16 @@ def admin_monitor(request):
             )
             return []
 
-        # Build stats directly from latest_qs; include both FQDN and short host
-        # names so the frontend can match either style without another join.
+        # Build stats directly from latest_qs; only include fully-qualified
+        # hostnames (contain a dot) to avoid duplicate short-name entries.
         host_stats_local = []
         for row in latest_qs:
             host = row.get("host") or ""
             last_time = row.get("last_time")
             if not host or last_time is None:
+                continue
+            # Skip short hostnames; only return FQDNs.
+            if "." not in host:
                 continue
             age = now - last_time
             if age > timedelta(weeks=1):
@@ -2054,18 +2057,6 @@ def admin_monitor(request):
                     "age_bucket": bucket,
                 }
             )
-            # Also add short hostname entry if different, sharing the same
-            # last_time/age_bucket, so UI code that only knows short names can
-            # still find a matching record without another DB lookup.
-            short = host.split(".", 1)[0]
-            if short and short != host:
-                host_stats_local.append(
-                    {
-                        "host": short,
-                        "last_time": last_time.isoformat() if last_time else None,
-                        "age_bucket": bucket,
-                    }
-                )
         return host_stats_local
 
     host_stats = cached_orm(KEY_ADMIN_HOST_STATS, TIMEOUT_ADMIN_STATS, _host_stats_fn)
