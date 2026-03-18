@@ -110,6 +110,7 @@ def test_on_message_archives_previous_current_on_dollar_switch(
   # Reset globals that could be affected by previous tests.
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
+    listend._unlink_timestamps.clear()
     listend._last_message_time = None
 
   channel = _FakeChannel()
@@ -140,4 +141,42 @@ def test_on_message_archives_previous_current_on_dollar_switch(
   assert current_contents == msg2
   assert epoch_1000_contents == msg1
   assert epoch_1001_contents == msg2
+
+
+def test_on_message_counts_current_unlink_on_dollar_switch(tmp_path, monkeypatch):
+  import hpcperfstats.listend as listend
+
+  # Make timestamps deterministic so we can assert on epoch filenames.
+  # on_message() calls time.time() twice for '$' messages:
+  # 1) when creating the epoch link
+  # 2) when updating the in-memory timestamp deque
+  times = iter([1000.1, 1000.2, 1001.1, 1001.2])
+
+  def _fake_time():
+    return next(times)
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(listend.time, "time", _fake_time)
+
+  with listend._timestamps_lock:
+    listend._message_timestamps.clear()
+    listend._unlink_timestamps.clear()
+    listend._last_message_time = None
+
+  channel = _FakeChannel()
+  host = "myhost"
+
+  # '$' messages must contain a newline and a host line whose 2nd token is the host.
+  msg1 = b"$\n1 " + host.encode("ascii") + b"\nfirst-segment\n"
+  msg2 = b"$\n1 " + host.encode("ascii") + b"\nsecond-segment\n"
+
+  method_frame1 = _FakeMethodFrame(delivery_tag=1)
+  listend.on_message(channel, method_frame1, None, msg1)
+
+  method_frame2 = _FakeMethodFrame(delivery_tag=2)
+  listend.on_message(channel, method_frame2, None, msg2)
+
+  # The second '$' should unlink the existing `current` file before rotating.
+  assert len(listend._unlink_timestamps) == 1
+  assert listend._unlink_timestamps[0] == 1001.2
 

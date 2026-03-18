@@ -20,6 +20,7 @@ MESSAGE_WINDOW_SECONDS = 600  # 10 minutes
 IDLE_CHECK_INTERVAL = 60      # seconds
 
 _message_timestamps = deque()
+_unlink_timestamps = deque()
 _timestamps_lock = Lock()
 _last_message_time = None
 _last_idle_report_time = None
@@ -58,9 +59,11 @@ def on_message(channel, method_frame, header_frame, body):
       os.makedirs(host_dir)
 
     current_path = os.path.join(host_dir, "current")
+    unlinked_current = False
     if message[0] == "$":
       if os.path.exists(current_path):
         os.unlink(current_path)
+        unlinked_current = True
 
       with open(current_path, "w") as fd:
         link_path = os.path.join(host_dir, str(int(time.time())))
@@ -76,9 +79,13 @@ def on_message(channel, method_frame, header_frame, body):
       global _last_message_time
       _last_message_time = now
       _message_timestamps.append(now)
+      if unlinked_current:
+        _unlink_timestamps.append(now)
       cutoff_window = now - MESSAGE_WINDOW_SECONDS
       while _message_timestamps and _message_timestamps[0] < cutoff_window:
         _message_timestamps.popleft()
+      while _unlink_timestamps and _unlink_timestamps[0] < cutoff_window:
+        _unlink_timestamps.popleft()
 
     channel.basic_ack(delivery_tag=delivery_tag)
   except Exception as e:
@@ -111,30 +118,38 @@ def _idle_monitor():
     with _timestamps_lock:
       cutoff_10 = now - MESSAGE_WINDOW_SECONDS
       count_last_10 = sum(1 for ts in _message_timestamps if ts >= cutoff_10)
+      unlink_count_last_10 = sum(
+          1 for ts in _unlink_timestamps if ts >= cutoff_10
+      )
 
     # Also report how many messages are currently waiting in the queue.
-    queue_depth = None
+    queue_depth = 0
     try:
       # Use the shared channel reference if available; otherwise skip depth.
       channel = _channel_ref
       if channel is not None:
-        q = channel.queue_declare(
-            queue=cfg.get_rmq_queue(), durable=True, passive=True)
-        queue_depth = q.method.message_count
+        try:
+          # passive=True avoids modifying the queue, but can fail if the queue
+          # doesn't exist yet during reconnect windows.
+          q = channel.queue_declare(
+              queue=cfg.get_rmq_queue(), durable=True, passive=True)
+          queue_depth = q.method.message_count
+        except Exception:
+          # Fall back to a non-passive declare so we can still read the
+          # queue depth without logging "unknown".
+          q = channel.queue_declare(
+              queue=cfg.get_rmq_queue(), durable=True, passive=False)
+          queue_depth = q.method.message_count
     except Exception as e:
       if DEBUG:
         log_print("Failed to get queue depth in monitor: %s" % e)
+      # Keep default 0 so logs always include a number.
 
-    if queue_depth is not None:
-      log_print(
-          "Messages consumed in the last 10 minutes: %d; "
-          "messages waiting to be consumed: %d" %
-          (count_last_10, queue_depth))
-    else:
-      log_print(
-          "Messages consumed in the last 10 minutes: %d; "
-          "messages waiting to be consumed: unknown" %
-          count_last_10)
+    log_print(
+        "Messages consumed in the last 10 minutes: %d; "
+        "messages waiting to be consumed: %d; "
+        "current file unlinks (last 10 minutes): %d" %
+        (count_last_10, queue_depth, unlink_count_last_10))
 
     _last_idle_report_time = now
 
