@@ -149,10 +149,10 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 4. **Compose file:**
 
    ```bash
-   cp docker-compose.yaml.example docker-compose.yaml
+   cp docker-compose.app.yaml.example docker-compose.app.yaml
    ```
 
-   Edit `docker-compose.yaml` and set:
+   Edit `docker-compose.app.yaml` and set:
 
    - **pipeline → volumes:** path to a `.ssh` directory with valid keys and permissions  
    - **volumes → hpcperfstatsdata → device:** path for data (your user and directory)  
@@ -164,10 +164,11 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo mkdir -p /opt/hpcperfstats_data
    sudo mkdir -p /opt/hpcperfstats_data/accounting
    sudo mkdir -p /opt/hpcperfstats_data/archive
+   sudo mkdir -p /opt/hpcperfstats_data/daily_archive
    sudo mkdir -p /opt/hpcperfstats_log
    ```
 
-   The host paths you configure must match the container paths used in `docker-compose.yaml` (for example `/hpcperfstats_data/accounting`, `/hpcperfstats_data/archive`, and `/hpcperfstats_log` inside the container).
+   The host paths you configure must match the container paths used in `docker-compose.app.yaml` (for example `/hpcperfstats/accounting`, `/hpcperfstats/archive`, and `/hpcperfstatslog/` inside the container).
 
 5. **Application config:**
 
@@ -217,6 +218,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    ```bash
    sudo docker compose logs
    ```
+
+   On first startup (or after updating the code), the `web` container runs Django migrations (`manage.py makemigrations` and `manage.py migrate`) before serving the site.
 
    If you change the codebase, bring the containers down, make your changes, and then rebuild and start the stack again.
 
