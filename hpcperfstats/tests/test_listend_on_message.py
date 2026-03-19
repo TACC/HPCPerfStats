@@ -180,3 +180,61 @@ def test_on_message_counts_current_unlink_on_dollar_switch(tmp_path, monkeypatch
   assert len(listend._unlink_timestamps) == 1
   assert listend._unlink_timestamps[0] == 1001.2
 
+
+def test_on_message_hardlinks_missing_epoch_before_unlink(tmp_path, monkeypatch):
+  """If `current` exists without an older hardlinked epoch file, listend should create one first."""
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+
+  host = "myhost"
+  host_dir = tmp_path / host
+  host_dir.mkdir()
+
+  # Create a `current` file that contains a parseable first timestamp line,
+  # but do NOT hardlink it to any epoch-named file yet.
+  first_ts_sec = 1773864970
+  old_current = (
+      "header-before-first-ts\n"
+      "1773864970.470903 2946877 c571-001.stampede3.tacc.utexas.edu\n"
+      "rest-of-segment\n"
+  )
+  (host_dir / "current").write_text(old_current)
+  assert not (host_dir / str(first_ts_sec)).exists()
+
+  # Force listend rotation at a later epoch, so `first_ts_sec` is older.
+  cutoff_epoch_ts = first_ts_sec + 1
+  now_ts = cutoff_epoch_ts + 0.2
+  times = iter([cutoff_epoch_ts + 0.1, now_ts])
+
+  def _fake_time():
+    return next(times)
+
+  monkeypatch.setattr(listend.time, "time", _fake_time)
+
+  with listend._timestamps_lock:
+    listend._message_timestamps.clear()
+    listend._unlink_timestamps.clear()
+    listend._last_message_time = None
+
+  channel = _FakeChannel()
+  msg = b"$\n1 " + host.encode("ascii") + b"\nrotated-segment\n"
+  method_frame = _FakeMethodFrame(delivery_tag=3)
+  listend.on_message(channel, method_frame, None, msg)
+
+  assert channel.acked == [3]
+  assert channel.nacked == []
+
+  # The old `current` inode must now be reachable under `first_ts_sec`.
+  assert (host_dir / str(first_ts_sec)).read_bytes() == old_current.encode()
+
+  # After unlink+rotate, `current` must contain only the new segment.
+  assert (host_dir / "current").read_bytes() == msg
+
+  # And the new `current` should be hardlinked under the cutoff epoch filename.
+  assert (host_dir / str(cutoff_epoch_ts)).read_bytes() == msg
+
+  # Confirm listend counted exactly one unlink during rotation.
+  assert len(listend._unlink_timestamps) == 1
+  assert listend._unlink_timestamps[0] == now_ts
+

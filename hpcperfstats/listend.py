@@ -28,6 +28,79 @@ _channel_ref = None
 _idle_thread_started = False
 
 
+def _get_first_timestamp_seconds(file_path):
+  """Return first unix timestamp seconds found in stats file content.
+
+  Expects a line beginning with digits in the format: "<t> <jid> <host> ...".
+  """
+  try:
+    with open(file_path, "r") as fd:
+      for line in fd:
+        if not line:
+          continue
+        if line[0].isdigit():
+          t = line.split(maxsplit=1)[0]
+          # The file may store floats (epoch with fractional seconds).
+          return int(float(t))
+  except Exception:
+    pass
+  return None
+
+
+def _current_is_hardlinked_to_older_epoch(host_dir, current_path, cutoff_epoch_ts):
+  """Return True if `current_path` shares an inode with an older epoch file.
+
+  Older epoch files are numeric filenames whose epoch seconds are strictly
+  less than `cutoff_epoch_ts`.
+  """
+  try:
+    with os.scandir(host_dir) as it:
+      for entry in it:
+        if not entry.is_file():
+          continue
+        name = entry.name
+        if not name.isdigit():
+          continue
+        try:
+          epoch_ts = int(name)
+        except ValueError:
+          continue
+        if epoch_ts >= cutoff_epoch_ts:
+          continue
+        try:
+          if os.path.samefile(current_path, entry.path):
+            return True
+        except OSError:
+          continue
+  except Exception:
+    return False
+  return False
+
+
+def _ensure_current_hardlinked_to_timestamp(host_dir, current_path):
+  """Hardlink current_path to the epoch seconds of the first timestamp line.
+
+  This is a safety fallback for cases where `current` exists but is not yet
+  linked to an epoch-named file (i.e. sync_timedb can't reliably detect the
+  live segment).
+  """
+  first_ts_sec = _get_first_timestamp_seconds(current_path)
+  if first_ts_sec is None:
+    raise RuntimeError("Unable to find timestamp in current file")
+
+  link_path = os.path.join(host_dir, str(first_ts_sec))
+  if os.path.exists(link_path):
+    # If it's already the same inode, we're done.
+    if os.path.samefile(current_path, link_path):
+      return
+    raise RuntimeError(
+        "Timestamp link path exists but is not hardlinked to current: %s" %
+        link_path
+    )
+
+  os.link(current_path, link_path)
+
+
 def on_message(channel, method_frame, header_frame, body):
   """Callback for each message: decode body, determine host, write/append to host's current file and optionally rotate. Acknowledges the message.
 
@@ -61,12 +134,23 @@ def on_message(channel, method_frame, header_frame, body):
     current_path = os.path.join(host_dir, "current")
     unlinked_current = False
     if message[0] == "$":
+      # Use a single epoch timestamp for both the pre-unlink check and the
+      # post-unlink epoch hardlink to keep time.time() call counts stable.
+      epoch_ts = int(time.time())
       if os.path.exists(current_path):
+        if not _current_is_hardlinked_to_older_epoch(
+            host_dir, current_path, epoch_ts):
+          _ensure_current_hardlinked_to_timestamp(host_dir, current_path)
+          if not _current_is_hardlinked_to_older_epoch(
+              host_dir, current_path, epoch_ts):
+            raise RuntimeError(
+                "current is not linked to an older epoch before unlink")
+
         os.unlink(current_path)
         unlinked_current = True
 
       with open(current_path, "w") as fd:
-        link_path = os.path.join(host_dir, str(int(time.time())))
+        link_path = os.path.join(host_dir, str(epoch_ts))
         if os.path.exists(link_path):
           os.remove(link_path)
         os.link(current_path, link_path)
