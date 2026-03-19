@@ -84,14 +84,20 @@ class utils():
     schema = self.job.schemas[typename]
     stats = {}
     for hostname, host in self.job.hosts.items():
+      # Some hosts may not expose this stats type (e.g. GPU-less nodes when
+      # aggregating "nvidia_gpu"). Skip those hosts instead of raising KeyError.
+      host_type_stats = host.stats.get(typename)
+      if host_type_stats is None:
+        continue
       if aggregate:
-        stats[hostname] = 0
-        for devname in host.stats[typename]:
-          stats[hostname] += host.stats[typename][devname].astype(float)
+        host_sum = 0
+        for devname in host_type_stats:
+          host_sum += host_type_stats[devname].astype(float)
+        stats[hostname] = host_sum
       else:
         stats[hostname] = {}
-        for devname in host.stats[typename]:
-          stats[hostname][devname] = host.stats[typename][devname].astype(float)
+        for devname in host_type_stats:
+          stats[hostname][devname] = host_type_stats[devname].astype(float)
     return schema, stats
 
 
