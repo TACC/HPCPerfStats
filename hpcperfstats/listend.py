@@ -113,6 +113,11 @@ def on_message(channel, method_frame, header_frame, body):
     if not message:
       raise ValueError("Empty message body")
 
+    # `$`-prefixed messages are *schema/header* dumps from `hpcperfstatsd`:
+    # they are emitted when `rotate_timer_cb()` runs (immediately at daemon
+    # start, then every 86400s). Regular sampling messages do not include
+    # these `$` lines; if sending fails during a rotate, the same `$` payload
+    # is later resent from the in-memory ring buffer or dumpfile.
     if message[0] == "$":
       parts = message.split("\n")
       if len(parts) < 2:
