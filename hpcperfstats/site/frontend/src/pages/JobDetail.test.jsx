@@ -57,7 +57,7 @@ describe("JobDetail", () => {
   });
 
   it("shows loading indicator while job detail is fetching", () => {
-    vi.spyOn(apiModule.api, "getJobDetail").mockReturnValue(
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockReturnValue(
       new Promise(() => {})
     );
     vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(minimalPlotsResponse);
@@ -69,6 +69,9 @@ describe("JobDetail", () => {
   });
 
   it("loads job detail page before plots and requests plots after detail resolves", async () => {
+    const getJobDetailLightSpy = vi
+      .spyOn(apiModule.api, "getJobDetailLight")
+      .mockResolvedValue(minimalJobDetailResponse);
     const getJobDetailSpy = vi
       .spyOn(apiModule.api, "getJobDetail")
       .mockResolvedValue(minimalJobDetailResponse);
@@ -89,7 +92,7 @@ describe("JobDetail", () => {
     expect(screen.getByText("12345", { selector: "a" })).toBeInTheDocument();
     expect(screen.getByText("testjob")).toBeInTheDocument();
 
-    expect(getJobDetailSpy).toHaveBeenCalledWith("12345");
+    expect(getJobDetailLightSpy).toHaveBeenCalledWith("12345");
     expect(getJobPlotsSpy).toHaveBeenCalledWith("12345");
 
     expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
@@ -103,7 +106,7 @@ describe("JobDetail", () => {
   });
 
   it("does not call getJobPlots when getJobDetail fails", async () => {
-    vi.spyOn(apiModule.api, "getJobDetail").mockRejectedValue(
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockRejectedValue(
       new Error("Job not found")
     );
     const getJobPlotsSpy = vi

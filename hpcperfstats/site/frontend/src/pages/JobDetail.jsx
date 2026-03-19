@@ -35,30 +35,60 @@ export default function JobDetail() {
 
   useEffect(() => {
     if (!pk) return;
+
+    let cancelled = false;
+
     setError(null);
     setData(null);
     setPlots(null);
+    setLoading(true);
     setPlotsLoading(true);
+
+    // 1) Render quickly with a lightweight job_detail response.
     api
-      .getJobDetail(pk)
-      .then((jobData) => {
-        setData(jobData);
+      .getJobDetailLight(pk)
+      .then((jobLightData) => {
+        if (cancelled) return;
+        setData(jobLightData);
         setLoading(false);
-        // Load plots after job detail is shown so the page renders before plots finish.
+
+        // 2) Load plots after we've rendered the job page.
         api
           .getJobPlots(pk)
-          .then(setPlots)
+          .then((jobPlots) => {
+            if (cancelled) return;
+            setPlots(jobPlots);
+          })
           .catch(() => {
             // eslint-disable-next-line no-console
             console.warn("Failed to load job plots");
           })
-          .finally(() => setPlotsLoading(false));
+          .finally(() => {
+            if (cancelled) return;
+            setPlotsLoading(false);
+          });
+
+        // 3) Fetch full job detail in the background to fill in extra fields.
+        api
+          .getJobDetail(pk)
+          .then((jobFullData) => {
+            if (cancelled) return;
+            setData(jobFullData);
+          })
+          .catch(() => {
+            // If the full detail fetch fails, keep the lightweight data.
+          });
       })
       .catch((e) => {
+        if (cancelled) return;
         setError(e.message);
         setPlotsLoading(false);
-      })
-      .finally(() => setLoading(false));
+        setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [pk]);
 
   if (loading) return <LoadingMessage message="Loading job detail…" />;

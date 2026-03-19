@@ -74,6 +74,7 @@ export const api = {
         }).toString()
     ),
   getJobDetail: (pk) => request(`/jobs/${encodeURIComponent(pk)}/`),
+  getJobDetailLight: (pk) => request(`/jobs/${encodeURIComponent(pk)}/?light=1`),
   getJobPlots: (pk) => request(`/jobs/${encodeURIComponent(pk)}/plots/`),
   getTypeDetail: (jid, typeName) =>
     request(`/jobs/${encodeURIComponent(jid)}/${encodeURIComponent(typeName)}/`),

@@ -1,6 +1,6 @@
 """Django REST Framework API views for machine app. All data via JSON for React SPA."""
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import timezone as dt_timezone
 
 import hpcperfstats.conf_parser as cfg
@@ -79,6 +79,40 @@ from .views import (
 _host_last_executor = None
 _small_executor = None   # dashboard, queue histograms, job_detail, job_plots (≤8 tasks)
 _metric_hist_executor = None  # per-metric histograms in job list (up to 8)
+
+
+def _collect_future_results_with_deadline(future_to_key, max_wait_seconds):
+    """
+    Collect completed future results until `max_wait_seconds` elapses.
+
+    Returns:
+      (results_by_key, remaining_keys)
+
+    `results_by_key` contains only keys whose futures completed within the
+    deadline and did not raise.
+    """
+    results_by_key = {}
+    remaining_keys = set(future_to_key.values())
+
+    try:
+        for future in as_completed(future_to_key, timeout=max_wait_seconds):
+            key = future_to_key[future]
+            remaining_keys.discard(key)
+            try:
+                results_by_key[key] = future.result()
+            except Exception:
+                # Best-effort: if a task fails, job_detail should still render.
+                pass
+    except FuturesTimeoutError:
+        # Deadline exceeded; we'll return partial results for completed tasks.
+        pass
+
+    # Best-effort cancellation for futures that haven't finished yet.
+    for future, key in future_to_key.items():
+        if key in remaining_keys and not future.done():
+            future.cancel()
+
+    return results_by_key, remaining_keys
 
 def _get_host_last_executor():
     global _host_last_executor
@@ -1475,6 +1509,8 @@ def job_detail(request, pk):
 
     j = jid_table.jid_table(job.jid)
     host_list = j.acct_host_list
+    JOB_DETAIL_MAX_WAIT_SECONDS = 25  # Keep job_detail responsive vs proxy timeouts.
+    light_mode = str(request.GET.get("light", "")).lower() in ("1", "true", "yes")
 
     def _fetch_gpu():
         gpu_active, gpu_max, gpu_mean = None, None, None
@@ -1512,17 +1548,28 @@ def job_detail(request, pk):
 
         def _xalt_fn():
             xalt_data = xalt_data_c()
+            # XALT can be very large for some jobs. Truncate to keep this
+            # endpoint from timing out under proxy/gunicorn limits.
+            max_xalt_runs = 200
+            max_xalt_joins = 5000
+
             runs = list(
                 run.objects.using("xalt")
                 .filter(job_id=job.jid)
-                .only("exec_path", "cwd", "run_id")
+                .order_by("run_id")
+                .only("exec_path", "cwd", "run_id")[:max_xalt_runs]
             )
             run_ids = [r.run_id for r in runs]
-            joins = list(
-                join_run_object.objects.using("xalt")
-                .filter(run_id__in=run_ids)
-                .only("run_id", "obj_id")
-            ) if run_ids else []
+            joins = (
+                list(
+                    join_run_object.objects.using("xalt")
+                    .filter(run_id__in=run_ids)
+                    .order_by("run_id")
+                    .only("run_id", "obj_id")[:max_xalt_joins]
+                )
+                if run_ids
+                else []
+            )
             obj_ids = list(set(jo.obj_id for jo in joins))
             libs_by_id = {
                 l.obj_id: l
@@ -1621,27 +1668,46 @@ def job_detail(request, pk):
         ("schema", _fetch_schema),
         ("proc_list", _fetch_proc_list),
     ]
-    if cfg.get_xalt_user() != "":
+    if (not light_mode) and cfg.get_xalt_user() != "":
         tasks.append(("xalt", _fetch_xalt))
 
-    executor = _get_small_executor()
-    future_to_key = {executor.submit(fn): key for key, fn in tasks}
-    for future in as_completed(future_to_key):
-        key = future_to_key[future]
-        try:
-            result = future.result()
-            if key == "gpu":
-                gpu_active, gpu_utilization_max, gpu_utilization_mean = result
-            elif key == "xalt":
-                xalt_payload = result
-            elif key == "fsio":
-                fsio = result
-            elif key == "schema":
-                schema = result
-            elif key == "proc_list":
-                proc_list = result or []
-        except Exception:
-            pass
+    if not light_mode:
+        executor = _get_small_executor()
+        future_to_key = {executor.submit(fn): key for key, fn in tasks}
+        results_by_key, remaining_keys = _collect_future_results_with_deadline(
+            future_to_key,
+            JOB_DETAIL_MAX_WAIT_SECONDS,
+        )
+
+        if remaining_keys:
+            logging.getLogger(__name__).warning(
+                "job_detail max wait exceeded for jid=%s (pending=%s)",
+                job.jid,
+                sorted(remaining_keys),
+            )
+
+        for key, result in results_by_key.items():
+            try:
+                if key == "gpu":
+                    gpu_active, gpu_utilization_max, gpu_utilization_mean = result
+                elif key == "xalt":
+                    xalt_payload = result
+                elif key == "fsio":
+                    fsio = result
+                elif key == "schema":
+                    schema = result
+                elif key == "proc_list":
+                    proc_list = result or []
+            except Exception:
+                pass
+    else:
+        # Light mode: skip heavy parallel tasks (XALT, schema, fsio, etc.) so
+        # the response returns quickly and the React UI can render first.
+        gpu_active = gpu_utilization_max = gpu_utilization_mean = None
+        xalt_payload = None
+        fsio = {}
+        schema = {}
+        proc_list = []
 
     xalt_data = {
         "exec_path": xalt_payload["exec_path"] if xalt_payload else [],
