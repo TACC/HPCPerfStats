@@ -104,21 +104,36 @@ The **hpcperfstats** container orchestration sets up a Django/PostgreSQL ingest 
 
 Do this from your scheduler’s **prolog** and **epilog**.
 
-**Accounting file:** Generate a daily accounting file with one line per job in this format:
+**Accounting ingest (SLURM `sacct`):** Instead of generating and transferring daily accounting files, use `hpcperfstats-sacct-gen` from the **hpcperfstats-tools** package. This command runs `sacct` for a date range and POSTs the results directly to the HPCPerfStats API ingest endpoint.
 
-```
-JobID|User|Account|Start|End|Submit|Partition|Timelimit|JobName|State|NNodes|ReqCPUS|NodeList
-```
+1. **Install the tools (Python):**
 
-Example:
+   ```bash
+   # These tools are not published to PyPI, so install from GitHub.
+   git clone https://github.com/TACC/HPCPerfStats-tools.git
+   cd HPCPerfStats-tools
+   python3 -m pip install .
+   ```
 
-```
-1837137|sharrell|project140208|2018-08-01T18:18:51|2018-08-02T11:44:51|2018-07-29T08:05:43|normal|1-00:00:00|jobname|COMPLETED|8|104|c420-[024,073],c421-[051-052,063-064,092-093]
-```
+2. **Configure the API base URL:**
 
-- **SLURM users:** Use `hpcperfstats-sacct-gen` from the **hpcperfstats-tools** package; it runs `sacct` per day and POSTS to the API ingest.
-- The generated accounting files are named by date as `YYYY-MM-DD.txt` (for example, `2018-11-01.txt`).
-- To transfer accounting from another machine, see the rsync steps in the container pipeline section below.
+   Set `HPCPERFSTATS_TOOLS_INI` to an INI file that contains `[API] base_url` (see `hpcperfstats-tools/hpcperfstats-tools.ini.example` in the repo for a template).
+
+3. **Run the ingest (requires a staff-capable API key):**
+
+   ```bash
+   # Ingest today only (default date range is today .. today+1 day)
+   hpcperfstats-sacct-gen --api-key YOUR_KEY
+
+   # Ingest an explicit date range (end_date is exclusive)
+   hpcperfstats-sacct-gen 2024-01-01 2024-01-08 --api-key YOUR_KEY
+   ```
+
+**Run-location and permissions requirements:**
+
+- Run `hpcperfstats-sacct-gen` on a host where Slurm’s `sacct` binary exists and works (typically a Slurm login node).
+- Run it as a user that has the correct Slurm permissions to query the relevant jobs/accounts via `sacct`.
+- The API key you pass with `--api-key` must be staff-capable for the ingest endpoint.
 
 ---
 
