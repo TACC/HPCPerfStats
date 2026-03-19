@@ -435,9 +435,19 @@ if __name__ == '__main__':
                   flush=True)
 
         log_print("loading time", time.time() - start)
+        log_print(
+            "Files marked for archival: %d" % len(files_to_be_archived))
 
         ar_file_mapping = build_archive_mapping(
             files_to_be_archived, tgz_archive_dir)
+        total_in_mapping = sum(len(v) for v in ar_file_mapping.values())
+        if ar_file_mapping:
+          log_print(
+              "Archive mapping: %d tar(s), %d file(s) to archive"
+              % (len(ar_file_mapping), total_in_mapping))
+        elif files_to_be_archived:
+          log_print(
+              "Archive mapping empty (all files skipped: no timestamp in head)")
 
         # skip first iteration, on first there will be no archive_job
         if i:

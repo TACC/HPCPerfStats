@@ -171,10 +171,16 @@ def collect_stats_files_in_range(directory, startdate, enddate, host_name_ext):
 def build_archive_mapping(
     files_to_be_archived, tgz_archive_dir, parse_first_ts_fn=None
 ):
-  """Group stats file paths by daily archive path (YYYY-MM-DD.tar.gz). Uses parse_first_ts_fn to get timestamp from each file; skips today and files with no timestamp. Returns dict archive_fname -> list of stats file paths."""
+  """Group stats file paths by daily archive path (YYYY-MM-DD.tar.gz).
+
+  Uses parse_first_ts_fn to get timestamp from each file. Files with no
+  parseable timestamp are skipped. Today's files are included (closed
+  segments only reach this list; active segments are filtered earlier).
+  """
   if parse_first_ts_fn is None:
     parse_first_ts_fn = parse_first_timestamp_line
   ar_file_mapping = {}
+  skipped_no_ts = 0
   for stats_fname in files_to_be_archived:
     try:
       with open(stats_fname, "r") as f:
@@ -191,14 +197,18 @@ def build_archive_mapping(
           "Unable to find first timestamp in %s, skipping archiving"
           % stats_fname
       )
+      skipped_no_ts += 1
       continue
     file_date = datetime.fromtimestamp(float(t))
-    if file_date.date() == datetime.today().date():
-      continue
     archive_fname = os.path.join(
         tgz_archive_dir, file_date.strftime("%Y-%m-%d.tar.gz")
     )
     if archive_fname not in ar_file_mapping:
       ar_file_mapping[archive_fname] = []
     ar_file_mapping[archive_fname].append(stats_fname)
+  if skipped_no_ts and not ar_file_mapping:
+    log_print(
+        "No files added to archive mapping (%d skipped: no timestamp)"
+        % skipped_no_ts
+    )
   return ar_file_mapping

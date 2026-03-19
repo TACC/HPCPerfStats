@@ -458,15 +458,18 @@ def test_build_archive_mapping_mock_parser(tmp_path):
   assert str(f1) in list(mapping.values())[0]
 
 
-def test_build_archive_mapping_skips_today(tmp_path):
-  """Files with timestamp today are skipped (not archived)."""
+def test_build_archive_mapping_includes_today(tmp_path):
+  """Files with timestamp today are included (closed segments only reach here)."""
   tgz_dir = tmp_path / "tgz"
   tgz_dir.mkdir()
   f1 = tmp_path / "f1"
   today_ts = datetime.today().replace(hour=12, minute=0, second=0).timestamp()
   f1.write_text("%d job1 cn001\n" % today_ts)
   mapping = build_archive_mapping([str(f1)], str(tgz_dir))
-  assert mapping == {}
+  assert len(mapping) == 1
+  key = list(mapping.keys())[0]
+  assert key.endswith(datetime.today().strftime("%Y-%m-%d.tar.gz"))
+  assert str(f1) in mapping[key]
 
 
 def test_build_archive_mapping_uses_real_sample_timestamp(monkeypatch, tmp_path):
