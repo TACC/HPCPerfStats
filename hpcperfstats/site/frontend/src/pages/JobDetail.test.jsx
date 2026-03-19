@@ -121,4 +121,25 @@ describe("JobDetail", () => {
 
     expect(getJobPlotsSpy).not.toHaveBeenCalled();
   });
+
+  it("uses a valid bootstrap column class for log link container", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+      minimalJobDetailResponse
+    );
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
+      minimalJobDetailResponse
+    );
+    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(
+      minimalPlotsResponse
+    );
+
+    const { container } = renderJobDetail("12345");
+
+    await waitFor(() => {
+      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+    });
+
+    expect(container.querySelector(".col-sm-20")).toBeNull();
+    expect(container.querySelector(".col-sm-12")).toBeTruthy();
+  });
 });

@@ -375,6 +375,20 @@ body {
     padding: 0.35rem 0.25rem;
     white-space: nowrap;
   }
+  /* Generic plot embeds (Bokeh): prevent horizontal overflow */
+  .bokeh-embed-wrapper {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .bokeh-embed {
+    max-width: 100%;
+  }
+  .bokeh-embed .bk-root,
+  .bokeh-embed svg,
+  .bokeh-embed canvas {
+    max-width: 100% !important;
+  }
   /* Job detail: host-level plots stack vertically on mobile */
   .job-detail-plots table,
   .job-detail-plots table tbody,

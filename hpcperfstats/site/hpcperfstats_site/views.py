@@ -86,11 +86,20 @@ def api_key_page(request):
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>HPCPerfStats API key</title>
   <style>
+    * {{ box-sizing: border-box; }}
     body {{ font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; }}
-    code {{ padding: 0.2rem 0.4rem; background: #f5f5f5; border-radius: 4px; }}
-    .box {{ border: 1px solid #ddd; border-radius: 6px; padding: 1rem 1.5rem; max-width: 640px; }}
+    code {{
+      padding: 0.2rem 0.4rem;
+      background: #f5f5f5;
+      border-radius: 4px;
+      word-break: break-all;
+      overflow-wrap: anywhere;
+    }}
+    .box {{ border: 1px solid #ddd; border-radius: 6px; padding: 1rem 1.5rem; max-width: 640px; width: 100%; }}
+    @media (max-width: 480px) {{ body {{ margin: 0.75rem; }} .box {{ padding: 1rem; }} }}
   </style>
 </head>
 <body>

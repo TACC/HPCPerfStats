@@ -230,7 +230,10 @@ export default function JobDetail() {
         </div>
       </div>
 
-      <div className="col-sm-20" style={{ display: "flex", gap: "0.5rem" }}>
+      <div
+        className="col-sm-12 col-md-auto"
+        style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}
+      >
         {client_url && (
           <a
             href={client_url}
