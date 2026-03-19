@@ -6,11 +6,12 @@ Covers:
 - search_dispatch: jid and host branches, including 404 when jid not found.
 """
 
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 from django.test import RequestFactory
+from hpcperfstats.site.machine.models import ApiKey
 
 
 @pytest.mark.django_db
@@ -197,4 +198,89 @@ class TestSearchDispatch:
     mock_job_list.assert_called_once()
     assert response.status_code == 200
     assert response.data["ok"] is True
+
+
+class TestFormatLogTimestamp:
+  def test_format_log_timestamp_naive_assumes_utc(self):
+    from hpcperfstats.site.machine import api
+
+    ts = datetime(2024, 1, 2, 3, 4, 5)  # naive
+    out = api._format_log_timestamp(ts)
+    assert out.startswith("2024-01-02T03:04:05")
+    # Should normalise to UTC offset with colon, e.g. +00:00
+    assert out.endswith("+00:00")
+
+  def test_format_log_timestamp_preserves_timezone(self):
+    from hpcperfstats.site.machine import api
+
+    ts = datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    out = api._format_log_timestamp(ts)
+    assert out == "2024-01-02T03:04:05+00:00"
+
+  def test_format_log_timestamp_non_datetime_falls_back_to_str(self):
+    from hpcperfstats.site.machine import api
+
+    out = api._format_log_timestamp("not-a-datetime")
+    assert out == "not-a-datetime"
+
+
+class TestGetApiKeyFromRequest:
+  def test_get_api_key_from_authorization_header(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/")
+    request.META["HTTP_AUTHORIZATION"] = "Api-Key secret123"
+
+    key = api._get_api_key_from_request(request)
+    assert key == "secret123"
+
+  def test_get_api_key_from_x_api_key_header(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/")
+    request.META["HTTP_X_API_KEY"] = "header-key"
+
+    key = api._get_api_key_from_request(request)
+    assert key == "header-key"
+
+  def test_get_api_key_from_query_param(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/?api_key=query-key")
+
+    key = api._get_api_key_from_request(request)
+    assert key == "query-key"
+
+  def test_get_api_key_returns_none_when_missing(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/")
+
+    key = api._get_api_key_from_request(request)
+    assert key is None
+
+
+@pytest.mark.django_db
+class TestApiKeyValid:
+  def test_api_key_valid_returns_none_for_unknown_key(self):
+    from hpcperfstats.site.machine import api
+
+    assert api._api_key_valid("does-not-exist") is None
+
+  def test_api_key_valid_returns_active_key_and_updates_last_used(self):
+    from hpcperfstats.site.machine import api
+
+    key_obj = ApiKey.objects.create(key="k1", username="alice", is_active=True)
+
+    result = api._api_key_valid("k1")
+
+    assert result is not None
+    assert result.pk == key_obj.pk
+    # Best-effort: last_used_at should be set to a non-null value
+    result.refresh_from_db()
+    assert result.last_used_at is not None
 

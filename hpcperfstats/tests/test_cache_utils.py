@@ -7,6 +7,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _dummy_django_settings(monkeypatch):
+  """Provide a minimal settings object so cache_utils._cache_debug_enabled works in unit tests."""
+  class DummySettings:
+    DEBUG = False
+
+  monkeypatch.setattr("hpcperfstats.site.machine.cache_utils.settings", DummySettings())
+
+
 def test_cached_orm_miss_returns_query_result():
   """On cache miss, cached_orm calls query_fn and returns its result."""
   stored = {}
