@@ -367,11 +367,12 @@ def database_startup():
 
 
 if __name__ == '__main__':
-  sigterm_received = False
+  # Use a mutable container so the SIGTERM handler can update state without
+  # relying on `nonlocal` (which is only valid for enclosing function scopes).
+  sigterm_received = {"value": False}
 
   def _sigterm_handler(signum, frame):
-    nonlocal sigterm_received
-    sigterm_received = True
+    sigterm_received["value"] = True
     shutdown_requested[0] = True
     raise SystemExit(143)
 
@@ -504,7 +505,7 @@ if __name__ == '__main__':
       sys.exit(143)
   finally:
     # Best-effort cleanup + parent notification when SIGTERM is received.
-    if sigterm_received:
+    if sigterm_received["value"]:
       try:
         close_old_connections()
         connections.close_all()
