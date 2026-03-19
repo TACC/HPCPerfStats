@@ -37,22 +37,28 @@ export default function JobDetail() {
     if (!pk) return;
     setError(null);
     setData(null);
-    api
-      .getJobDetail(pk)
-      .then(setData)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
     setPlots(null);
     setPlotsLoading(true);
     api
-      .getJobPlots(pk)
-      .then(setPlots)
-      .catch(() => {
-        // Plot failures should not break job detail page; log to console for debugging.
-        // eslint-disable-next-line no-console
-        console.warn("Failed to load job plots");
+      .getJobDetail(pk)
+      .then((jobData) => {
+        setData(jobData);
+        setLoading(false);
+        // Load plots after job detail is shown so the page renders before plots finish.
+        api
+          .getJobPlots(pk)
+          .then(setPlots)
+          .catch(() => {
+            // eslint-disable-next-line no-console
+            console.warn("Failed to load job plots");
+          })
+          .finally(() => setPlotsLoading(false));
       })
-      .finally(() => setPlotsLoading(false));
+      .catch((e) => {
+        setError(e.message);
+        setPlotsLoading(false);
+      })
+      .finally(() => setLoading(false));
   }, [pk]);
 
   if (loading) return <LoadingMessage message="Loading job detail…" />;

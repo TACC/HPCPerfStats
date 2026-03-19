@@ -1,0 +1,121 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { vi } from "vitest";
+import JobDetail from "./JobDetail";
+import * as apiModule from "../api";
+
+const minimalJobDetailResponse = {
+  job_data: {
+    jid: 12345,
+    username: "testuser",
+    account: "testacct",
+    start_time: "2024-01-01T00:00:00Z",
+    end_time: "2024-01-01T01:00:00Z",
+    runtime: 3600,
+    timelimit: 7200,
+    queue: "normal",
+    jobname: "testjob",
+    state: "COMPLETED",
+    ncores: 32,
+    nhosts: 2,
+  },
+  host_list: [],
+  fsio: {},
+  xalt_data: {},
+  schema: {},
+  client_url: null,
+  server_url: null,
+  gpu_active: null,
+  gpu_utilization_max: null,
+  gpu_utilization_mean: null,
+  metrics_list: [],
+  proc_list: [],
+};
+
+const minimalPlotsResponse = {
+  mplot_item: null,
+  mplot_unavailable_reason: null,
+  hplot_item: null,
+  hplot_unavailable_reason: null,
+  rplot_item: null,
+  rplot_unavailable_reason: null,
+};
+
+function renderJobDetail(pk = "12345") {
+  return render(
+    <MemoryRouter initialEntries={[`/job/${pk}`]}>
+      <Routes>
+        <Route path="job/:pk" element={<JobDetail />} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+describe("JobDetail", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows loading indicator while job detail is fetching", () => {
+    vi.spyOn(apiModule.api, "getJobDetail").mockReturnValue(
+      new Promise(() => {})
+    );
+    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(minimalPlotsResponse);
+
+    renderJobDetail();
+    expect(
+      screen.getByText("Loading job detail…")
+    ).toBeInTheDocument();
+  });
+
+  it("loads job detail page before plots and requests plots after detail resolves", async () => {
+    const getJobDetailSpy = vi
+      .spyOn(apiModule.api, "getJobDetail")
+      .mockResolvedValue(minimalJobDetailResponse);
+    const getJobPlotsSpy = vi
+      .spyOn(apiModule.api, "getJobPlots")
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve(minimalPlotsResponse), 100);
+          })
+      );
+
+    renderJobDetail("12345");
+
+    await waitFor(() => {
+      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+    });
+    expect(screen.getByText("12345", { selector: "a" })).toBeInTheDocument();
+    expect(screen.getByText("testjob")).toBeInTheDocument();
+
+    expect(getJobDetailSpy).toHaveBeenCalledWith("12345");
+    expect(getJobPlotsSpy).toHaveBeenCalledWith("12345");
+
+    expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
+
+    await waitFor(
+      () => {
+        expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
+      },
+      { timeout: 200 }
+    );
+  });
+
+  it("does not call getJobPlots when getJobDetail fails", async () => {
+    vi.spyOn(apiModule.api, "getJobDetail").mockRejectedValue(
+      new Error("Job not found")
+    );
+    const getJobPlotsSpy = vi
+      .spyOn(apiModule.api, "getJobPlots")
+      .mockResolvedValue(minimalPlotsResponse);
+
+    renderJobDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Error: Job not found/)).toBeInTheDocument();
+    });
+
+    expect(getJobPlotsSpy).not.toHaveBeenCalled();
+  });
+});
