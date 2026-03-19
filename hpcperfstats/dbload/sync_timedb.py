@@ -9,6 +9,7 @@ DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers 
 import itertools
 import multiprocessing
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -31,6 +32,7 @@ from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.shutdown_utils import (
     shutdown_requested,
+    send_sigchld_to_parent,
     sleep_until_shutdown,
 )
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
@@ -365,121 +367,151 @@ def database_startup():
 
 
 if __name__ == '__main__':
-  database_startup()
-  #################################################################
+  sigterm_received = False
 
-  default_start = datetime.combine(
-      datetime.today(), datetime.min.time()) - timedelta(days=days_to_process)
-  default_end = default_start + timedelta(days=days_to_process)
-  startdate, enddate = parse_start_end_dates(
-      sys.argv, default_start, default_end)
+  def _sigterm_handler(signum, frame):
+    nonlocal sigterm_received
+    sigterm_received = True
+    shutdown_requested[0] = True
+    raise SystemExit(143)
 
-  if len(sys.argv) > 1 and sys.argv[1] == 'all':
-    startdate = 'all'
-    enddate = None
-
-  if startdate == 'all':
-    log_print(
-        "###Date Range of stats files to ingest: entire archive directory "
-        "(no date filter)####")
-  else:
-    log_date_range("stats files to ingest", startdate, enddate)
-  #################################################################
-
-  host_name_ext = cfg.get_host_name_ext().strip()
-  if not host_name_ext:
-    log_print(
-        "ERROR: DEFAULT.host_name_ext must be set; sync_timedb uses archive "
-        "subdirectories whose names end with this suffix.")
-    sys.exit(1)
-
-  start = time.time()
-  directory = cfg.get_archive_dir_path()
-  stats_files = collect_stats_files_in_range(
-      directory, startdate, enddate, host_name_ext)
-  log_print("Number of host stats files to process = ", len(stats_files))
-
-  manager = multiprocessing.Manager()
+  previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
+  signal.signal(signal.SIGTERM, _sigterm_handler)
   try:
-    manager_lock = manager.Lock()
-    with multiprocessing.get_context('spawn').Pool(
-        processes=archive_thread_count) as archive_pool:
-      archive_job = None
-      # Process and archive chunk_size files before continuing to process more
-      num_chunks = (len(stats_files) + chunk_size - 1) // chunk_size if stats_files else 1
-      for i in range(num_chunks):
-        if shutdown_requested[0]:
-          log_print("Exiting due to SIGTERM")
-          break
-        if DEBUG:
-          log_print("Begining Chunk(%s) #%s Processing" % (chunk_size, i))
+    database_startup()
+    #################################################################
 
-        stats_files_chunk = get_stats_chunk(stats_files, i, chunk_size)
-        if not stats_files_chunk:
-          continue
+    default_start = datetime.combine(
+        datetime.today(), datetime.min.time()) - timedelta(days=days_to_process)
+    default_end = default_start + timedelta(days=days_to_process)
+    startdate, enddate = parse_start_end_dates(
+        sys.argv, default_start, default_end)
 
-        ar_file_mapping = {}
-        files_to_be_archived = []
-        log_print("%s files per chunk" % chunk_size)
+    if len(sys.argv) > 1 and sys.argv[1] == 'all':
+      startdate = 'all'
+      enddate = None
 
-        with multiprocessing.get_context('spawn').Pool(
-            processes=thread_count) as pool:
-          add_stats_file = partial(add_stats_file_to_db, manager_lock)
-          k = 0
-          for stats_fname, need_archival in pool.imap_unordered(
-              add_stats_file, stats_files_chunk):
-            k += 1
-            if should_archive and need_archival:
-              files_to_be_archived.append(stats_fname)
-            log_print("chunk %s: completed file %s out of %s\n" % (i, k, chunk_size),
+    if startdate == 'all':
+      log_print(
+          "###Date Range of stats files to ingest: entire archive directory "
+          "(no date filter)####")
+    else:
+      log_date_range("stats files to ingest", startdate, enddate)
+    #################################################################
+
+    host_name_ext = cfg.get_host_name_ext().strip()
+    if not host_name_ext:
+      log_print(
+          "ERROR: DEFAULT.host_name_ext must be set; sync_timedb uses archive "
+          "subdirectories whose names end with this suffix.")
+      sys.exit(1)
+
+    start = time.time()
+    directory = cfg.get_archive_dir_path()
+    stats_files = collect_stats_files_in_range(
+        directory, startdate, enddate, host_name_ext)
+    log_print("Number of host stats files to process = ", len(stats_files))
+
+    manager = multiprocessing.Manager()
+    try:
+      manager_lock = manager.Lock()
+      with multiprocessing.get_context('spawn').Pool(
+          processes=archive_thread_count) as archive_pool:
+        archive_job = None
+        # Process and archive chunk_size files before continuing to process more
+        num_chunks = (
+            (len(stats_files) + chunk_size - 1) // chunk_size
+            if stats_files else 1
+        )
+        for i in range(num_chunks):
+          if shutdown_requested[0]:
+            log_print("Exiting due to SIGTERM")
+            break
+          if DEBUG:
+            log_print("Begining Chunk(%s) #%s Processing" % (chunk_size, i))
+
+          stats_files_chunk = get_stats_chunk(stats_files, i, chunk_size)
+          if not stats_files_chunk:
+            continue
+
+          ar_file_mapping = {}
+          files_to_be_archived = []
+          log_print("%s files per chunk" % chunk_size)
+
+          with multiprocessing.get_context('spawn').Pool(
+              processes=thread_count) as pool:
+            add_stats_file = partial(add_stats_file_to_db, manager_lock)
+            k = 0
+            for stats_fname, need_archival in pool.imap_unordered(
+                add_stats_file, stats_files_chunk):
+              k += 1
+              if should_archive and need_archival:
+                files_to_be_archived.append(stats_fname)
+              log_print(
+                  "chunk %s: completed file %s out of %s\n" % (i, k, chunk_size),
                   flush=True)
 
-        log_print("loading time", time.time() - start)
-        log_print(
-            "Files marked for archival: %d" % len(files_to_be_archived))
-
-        ar_file_mapping = build_archive_mapping(
-            files_to_be_archived, tgz_archive_dir)
-        total_in_mapping = sum(len(v) for v in ar_file_mapping.values())
-        if ar_file_mapping:
+          log_print("loading time", time.time() - start)
           log_print(
-              "Archive mapping: %d tar(s), %d file(s) to archive"
-              % (len(ar_file_mapping), total_in_mapping))
-        elif files_to_be_archived:
-          log_print(
-              "Archive mapping empty (all files skipped: no timestamp in head)")
+              "Files marked for archival: %d" % len(files_to_be_archived))
 
-        # skip first iteration, on first there will be no archive_job
-        if i:
+          ar_file_mapping = build_archive_mapping(
+              files_to_be_archived, tgz_archive_dir)
+          total_in_mapping = sum(len(v) for v in ar_file_mapping.values())
+          if ar_file_mapping:
+            log_print(
+                "Archive mapping: %d tar(s), %d file(s) to archive"
+                % (len(ar_file_mapping), total_in_mapping))
+          elif files_to_be_archived:
+            log_print(
+                "Archive mapping empty (all files skipped: no timestamp in head)")
+
+          # skip first iteration, on first there will be no archive_job
+          if i:
+            if DEBUG:
+              log_print("Checking/waiting for background archival proccesses")
+
+            # Wait until last archive_job is complete before starting another one
+            archive_job.get()
+            log_print(
+                "[{0:.1f}%] completed".format(100 * (i + 1) / num_chunks),
+                end="\r",
+                flush=True)
+
           if DEBUG:
-            log_print("Checking/waiting for background archival proccesses")
+            log_print("files to be archived: %s" % ar_file_mapping)
 
-          # Wait until last archive_job is complete before starting another one
+          archive_job = archive_pool.map_async(
+              archive_stats_files, list(ar_file_mapping.items()))
+
+          log_print("Archival running in the background")
+
+        if archive_job is not None:
           archive_job.get()
-          log_print("[{0:.1f}%] completed".format(
-              100 * (i + 1) / num_chunks), end="\r", flush=True)
 
-        if DEBUG:
-          log_print("files to be archived: %s" % ar_file_mapping)
+      log_print("sync_timedb sleeping")
 
-        archive_job = archive_pool.map_async(archive_stats_files,
-                                             list(ar_file_mapping.items()))
+      # Close DB connections before long sleep to avoid idle connections.
+      close_old_connections()
+      connections.close_all()
+      sleep_until_shutdown(600)
 
-        log_print("Archival running in the background")
-
-      if archive_job is not None:
-        archive_job.get()
-
-    log_print("sync_timedb sleeping")
-
-    # Close DB connections before long sleep to avoid idle connections.
-    close_old_connections()
-    connections.close_all()
-    sleep_until_shutdown(600)
-
-    if DEBUG:
-      log_print("sync_timedb finished")
+      if DEBUG:
+        log_print("sync_timedb finished")
+    finally:
+      manager.shutdown()
+    if shutdown_requested[0]:
+      sys.exit(143)
   finally:
-    manager.shutdown()
-  if shutdown_requested[0]:
-    sys.exit(143)
+    # Best-effort cleanup + parent notification when SIGTERM is received.
+    if sigterm_received:
+      try:
+        close_old_connections()
+        connections.close_all()
+      except Exception:
+        pass
+      try:
+        send_sigchld_to_parent()
+      except Exception:
+        pass
+    signal.signal(signal.SIGTERM, previous_sigterm_handler)

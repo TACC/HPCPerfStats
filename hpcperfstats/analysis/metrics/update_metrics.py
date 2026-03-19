@@ -3,6 +3,7 @@
 
 """
 import os
+import signal
 import sys
 import time
 from datetime import datetime, timedelta
@@ -19,6 +20,7 @@ from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
 from hpcperfstats.shutdown_utils import (
     shutdown_requested,
+    send_sigchld_to_parent,
     sleep_until_shutdown,
 )
 from hpcperfstats.site.machine.models import job_data
@@ -27,6 +29,36 @@ DEBUG = cfg.get_debug()
 
 # Process jobs in chunks to bound memory; full job rows are not all held at once.
 CHUNK_SIZE = 500
+
+
+def _shutdown_db_best_effort():
+  """Close DB connections without failing shutdown."""
+  try:
+    close_old_connections()
+    connections.close_all()
+  except Exception:
+    pass
+
+
+def _install_sigterm_handler(exit_code=143):
+  """Install SIGTERM handler that requests shutdown and exits."""
+  sigterm_received = [False]
+
+  previous_handler = signal.getsignal(signal.SIGTERM)
+
+  def _sigterm_handler(signum, frame):
+    sigterm_received[0] = True
+    shutdown_requested[0] = True
+    raise SystemExit(exit_code)
+
+  signal.signal(signal.SIGTERM, _sigterm_handler)
+  return previous_handler, sigterm_received, _sigterm_handler
+
+
+def _notify_parent_if_sigterm(sigterm_received):
+  """Send SIGCHLD back to parent when SIGTERM triggered."""
+  if sigterm_received and sigterm_received[0]:
+    send_sigchld_to_parent()
 
 
 def _jobs_queryset(date, min_time, rerun):
@@ -187,6 +219,20 @@ def main(argv=None, sleep_after=True):
 
 
 if __name__ == "__main__":
-  main()
-  if shutdown_requested[0]:
-    sys.exit(143)
+  previous_sigterm_handler = None
+  sigterm_received = None
+  try:
+    previous_sigterm_handler, sigterm_received, _ = _install_sigterm_handler(
+        exit_code=143
+    )
+    main()
+    if shutdown_requested[0]:
+      sys.exit(143)
+  finally:
+    _shutdown_db_best_effort()
+    _notify_parent_if_sigterm(sigterm_received)
+    if previous_sigterm_handler is not None:
+      try:
+        signal.signal(signal.SIGTERM, previous_sigterm_handler)
+      except Exception:
+        pass

@@ -1,7 +1,10 @@
 """Unit tests for analysis.metrics.update_metrics (_iter_chunked_pks).
 
 """
+import pytest
+
 from hpcperfstats.analysis.metrics.update_metrics import _iter_chunked_pks
+from hpcperfstats.analysis.metrics import update_metrics
 
 
 def test_iter_chunked_pks_empty_queryset():
@@ -49,3 +52,31 @@ def test_iter_chunked_pks_multiple_chunks():
   assert chunks[0] == ([10, 20], 2)
   assert chunks[1] == ([30, 40], 4)
   assert chunks[2] == ([50], 5)
+
+
+def test_notify_parent_if_sigterm_sends_sigchld(monkeypatch):
+  calls = []
+  monkeypatch.setattr(
+      update_metrics, "send_sigchld_to_parent", lambda: calls.append("sigchld"))
+
+  update_metrics._notify_parent_if_sigterm([True])
+  assert calls == ["sigchld"]
+
+
+def test_install_sigterm_handler_sets_flag_and_raises(monkeypatch):
+  monkeypatch.setattr(update_metrics.signal, "getsignal", lambda sig: "prev")
+  monkeypatch.setattr(update_metrics.signal, "signal", lambda sig, h: None)
+
+  update_metrics.shutdown_requested[0] = False
+
+  previous_handler, sigterm_received, handler = update_metrics._install_sigterm_handler(
+      exit_code=143
+  )
+  assert previous_handler == "prev"
+  assert sigterm_received[0] is False
+
+  with pytest.raises(SystemExit) as excinfo:
+    handler(update_metrics.signal.SIGTERM, None)
+  assert sigterm_received[0] is True
+  assert excinfo.value.code == 143
+  assert update_metrics.shutdown_requested[0] is True

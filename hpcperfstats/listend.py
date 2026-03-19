@@ -2,10 +2,11 @@
 
 """
 import os
+import signal
 import sys
 import time
 from collections import deque
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 from fcntl import LOCK_EX, LOCK_NB, flock
 
 import pika
@@ -13,6 +14,7 @@ from pika.exceptions import StreamLostError
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.print_utils import log_print
+from hpcperfstats.shutdown_utils import send_sigchld_to_parent
 
 DEBUG = cfg.get_debug()
 
@@ -26,6 +28,7 @@ _last_message_time = None
 _last_idle_report_time = None
 _channel_ref = None
 _idle_thread_started = False
+_idle_monitor_stop_event = Event()
 
 
 def _get_first_timestamp_seconds(file_path):
@@ -199,8 +202,10 @@ def _idle_monitor():
   MESSAGE_WINDOW_SECONDS window.
   """
   global _last_idle_report_time
-  while True:
+  while not _idle_monitor_stop_event.is_set():
     time.sleep(IDLE_CHECK_INTERVAL)
+    if _idle_monitor_stop_event.is_set():
+      break
     now = time.time()
     if (_last_idle_report_time is not None and
         (now - _last_idle_report_time) < MESSAGE_WINDOW_SECONDS):
@@ -248,102 +253,122 @@ def _idle_monitor():
 def main():
   global _channel_ref
   global _idle_thread_started
-  lock_path = os.path.join(
-      os.path.dirname(os.path.realpath(__file__)), "listend_lock")
-  with open(lock_path, "w") as fd:
-    try:
-      flock(fd, LOCK_EX | LOCK_NB)
-    except IOError:
-      log_print("listend is already running")
-      sys.exit()
+  sigterm_received = False
+  connection = None
 
-    # Ensure the idle monitor thread is started exactly once for the lifetime
-    # of the process so that it can continue reporting even across reconnects.
-    if not _idle_thread_started:
-      idle_thread = Thread(target=_idle_monitor, daemon=True)
-      idle_thread.start()
-      _idle_thread_started = True
+  def _sigterm_handler(signum, frame):
+    nonlocal sigterm_received
+    sigterm_received = True
+    _idle_monitor_stop_event.set()
+    raise SystemExit(143)
 
-    # Outer loop: keep the daemon running indefinitely by reconnecting to
-    # RabbitMQ on failure instead of exiting. The process will typically only
-    # terminate when it receives a signal (e.g. SIGTERM) from the service
-    # manager.
-    while True:
-      log_print("Starting Connection")
-      parameters = pika.ConnectionParameters(cfg.get_rmq_server())
-      connection = None
+  previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
+  signal.signal(signal.SIGTERM, _sigterm_handler)
+  try:
+    lock_path = os.path.join(
+        os.path.dirname(os.path.realpath(__file__)), "listend_lock")
+    with open(lock_path, "w") as fd:
       try:
-        connection = pika.BlockingConnection(parameters)
+        flock(fd, LOCK_EX | LOCK_NB)
+      except IOError:
+        log_print("listend is already running")
+        sys.exit()
 
-        channel = connection.channel()
-        _channel_ref = channel
-        channel.queue_declare(queue=cfg.get_rmq_queue(), durable=True)
-        # Report how many messages are waiting to be consumed at startup.
-        try:
-          q = channel.queue_declare(
-              queue=cfg.get_rmq_queue(), durable=True, passive=True)
-          log_print(
-              "Messages waiting to be consumed at startup: %d" %
-              q.method.message_count)
-        except Exception as e:
-          log_print("Failed to get startup queue depth: %s" % e)
+      # Ensure the idle monitor thread is started exactly once for the lifetime
+      # of the process so that it can continue reporting even across reconnects.
+      if not _idle_thread_started:
+        idle_thread = Thread(target=_idle_monitor, daemon=True)
+        idle_thread.start()
+        _idle_thread_started = True
 
-        channel.basic_consume(cfg.get_rmq_queue(), on_message)
-        log_print("Begining Consume from queue: " + cfg.get_rmq_queue())
+      # Outer loop: keep the daemon running indefinitely by reconnecting to
+      # RabbitMQ on failure instead of exiting. The process will typically only
+      # terminate when it receives a signal (e.g. SIGTERM) from the service
+      # manager.
+      while True:
+        log_print("Starting Connection")
+        parameters = pika.ConnectionParameters(cfg.get_rmq_server())
         try:
-          channel.start_consuming()
-        except (KeyboardInterrupt, SystemExit):
-          channel.stop_consuming()
-          raise
-        except StreamLostError as e:
-          # Connection dropped (e.g. broker restart or idle timeout). Treat as a
-          # normal shutdown condition and only log in DEBUG mode to avoid noisy
-          # "Error while consuming" messages like "pop from an empty deque".
-          if DEBUG:
-            log_print("RabbitMQ stream lost while consuming: %s" % e)
-        except AttributeError as e:
-          # Some pika versions raise an AttributeError like "'NoneType' object
-          # has no attribute 'poll'" during shutdown when the underlying poller
-          # has already been torn down. This is effectively equivalent to a
-          # lost stream and should not be treated as a hard error.
-          msg = str(e)
-          if "NoneType" in msg and "poll" in msg:
+          connection = pika.BlockingConnection(parameters)
+
+          channel = connection.channel()
+          _channel_ref = channel
+          channel.queue_declare(queue=cfg.get_rmq_queue(), durable=True)
+          # Report how many messages are waiting to be consumed at startup.
+          try:
+            q = channel.queue_declare(
+                queue=cfg.get_rmq_queue(), durable=True, passive=True)
+            log_print(
+                "Messages waiting to be consumed at startup: %d" %
+                q.method.message_count)
+          except Exception as e:
+            log_print("Failed to get startup queue depth: %s" % e)
+
+          channel.basic_consume(cfg.get_rmq_queue(), on_message)
+          log_print("Begining Consume from queue: " + cfg.get_rmq_queue())
+          try:
+            channel.start_consuming()
+          except (KeyboardInterrupt, SystemExit):
+            channel.stop_consuming()
+            raise
+          except StreamLostError as e:
+            # Connection dropped (e.g. broker restart or idle timeout). Treat as a
+            # normal shutdown condition and only log in DEBUG mode to avoid noisy
+            # "Error while consuming" messages like "pop from an empty deque".
             if DEBUG:
-              log_print(
-                  "RabbitMQ connection poller torn down during consume: %s" % e)
-          else:
+              log_print("RabbitMQ stream lost while consuming: %s" % e)
+          except AttributeError as e:
+            # Some pika versions raise an AttributeError like "'NoneType' object
+            # has no attribute 'poll'" during shutdown when the underlying poller
+            # has already been torn down. This is effectively equivalent to a
+            # lost stream and should not be treated as a hard error.
+            msg = str(e)
+            if "NoneType" in msg and "poll" in msg:
+              if DEBUG:
+                log_print(
+                    "RabbitMQ connection poller torn down during consume: %s" % e)
+            else:
+              log_print("Error while consuming from RabbitMQ: %s" % e)
+          except Exception as e:
+            # Handle other connection-level errors from pika without raising during
+            # shutdown/cleanup. We will attempt to reconnect after a short delay.
             log_print("Error while consuming from RabbitMQ: %s" % e)
+        except (KeyboardInterrupt, SystemExit):
+          # Allow clean shutdown on explicit termination signals.
+          log_print("Shutting down listend daemon on user request")
+          break
         except Exception as e:
-          # Handle other connection-level errors from pika without raising during
-          # shutdown/cleanup. We will attempt to reconnect after a short delay.
-          log_print("Error while consuming from RabbitMQ: %s" % e)
-      except (KeyboardInterrupt, SystemExit):
-        # Allow clean shutdown on explicit termination signals.
-        log_print("Shutting down listend daemon on user request")
-        break
-      except Exception as e:
-        log_print("Error establishing RabbitMQ connection: %s" % e)
-      finally:
-        try:
-          # Guard against closing an already-closed connection, which would raise
-          # ConnectionWrongStateError in recent pika versions.
-          if connection and not connection.is_closed:
-            connection.close()
-        except Exception as e:
-          if DEBUG:
-            log_print("Error while closing RabbitMQ connection: %s" % e)
+          log_print("Error establishing RabbitMQ connection: %s" % e)
+        finally:
+          try:
+            # Guard against closing an already-closed connection, which would raise
+            # ConnectionWrongStateError in recent pika versions.
+            if connection and not connection.is_closed:
+              connection.close()
+          except Exception as e:
+            if DEBUG:
+              log_print("Error while closing RabbitMQ connection: %s" % e)
 
-      # If we reach this point without breaking, sleep briefly before attempting
-      # to reconnect. This avoids tight reconnect loops that could cause
-      # excessive CPU usage or log spam.
-      time.sleep(5)
+        # If we reach this point without breaking, sleep briefly before attempting
+        # to reconnect. This avoids tight reconnect loops that could cause
+        # excessive CPU usage or log spam.
+        time.sleep(5)
+  finally:
+    _idle_monitor_stop_event.set()
+    try:
+      if connection and not connection.is_closed:
+        connection.close()
+    except Exception:
+      pass
+    if sigterm_received:
+      send_sigchld_to_parent()
+    signal.signal(signal.SIGTERM, previous_sigterm_handler)
 
 
 def _is_shutting_down():
   # Helper to make the intent of the main loop clearer; currently always
-  # returns False because shutdown is only triggered via KeyboardInterrupt or
-  # SystemExit in the loop above.
-  return False
+  # returns True once SIGTERM handler asks the process to stop.
+  return _idle_monitor_stop_event.is_set()
 
 
 if __name__ == "__main__":
