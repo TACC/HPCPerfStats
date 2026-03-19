@@ -32,6 +32,7 @@ export default function JobDetail() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [plotsLoading, setPlotsLoading] = useState(true);
+  const [detailsLoading, setDetailsLoading] = useState(false);
 
   useEffect(() => {
     if (!pk) return;
@@ -43,6 +44,7 @@ export default function JobDetail() {
     setPlots(null);
     setLoading(true);
     setPlotsLoading(true);
+    setDetailsLoading(false);
 
     // 1) Render quickly with a lightweight job_detail response.
     api
@@ -51,6 +53,9 @@ export default function JobDetail() {
         if (cancelled) return;
         setData(jobLightData);
         setLoading(false);
+
+        // 2) Fetch full job detail in the background to fill heavy fields.
+        setDetailsLoading(true);
 
         // 2) Load plots after we've rendered the job page.
         api
@@ -68,7 +73,6 @@ export default function JobDetail() {
             setPlotsLoading(false);
           });
 
-        // 3) Fetch full job detail in the background to fill in extra fields.
         api
           .getJobDetail(pk)
           .then((jobFullData) => {
@@ -77,6 +81,10 @@ export default function JobDetail() {
           })
           .catch(() => {
             // If the full detail fetch fails, keep the lightweight data.
+          })
+          .finally(() => {
+            if (cancelled) return;
+            setDetailsLoading(false);
           });
       })
       .catch((e) => {
@@ -195,7 +203,13 @@ export default function JobDetail() {
               </tr>
             </thead>
             <tbody>
-              {Object.keys(fsio).length === 0 ? (
+              {detailsLoading ? (
+                <tr>
+                  <td colSpan={3} className="text-muted">
+                    Loading file system data…
+                  </td>
+                </tr>
+              ) : Object.keys(fsio).length === 0 ? (
                 <tr>
                   <td colSpan={3} className="text-muted">
                     No file system data available.
@@ -239,122 +253,153 @@ export default function JobDetail() {
         )}
       </div>
 
-      {gpu_active != null && (
-        <table border="1" style={{ marginTop: "1rem" }}>
-          <caption>GPU Statistics</caption>
-          <tbody>
-            <tr>
-              <td style={{ border: "1px solid lightgrey" }}>
-                <b>Number of GPUs active:</b>
-              </td>
-              <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
-                {gpu_active}
-              </td>
-            </tr>
-            <tr>
-              <td style={{ border: "1px solid lightgrey" }}>
-                <b>Max GPU Utilization:</b>
-              </td>
-              <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
-                {gpu_utilization_max}%
-              </td>
-            </tr>
-            <tr>
-              <td style={{ border: "1px solid lightgrey" }}>
-                <b>Mean GPU Utilization:</b>
-              </td>
-              <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
-                {gpu_utilization_mean != null ? gpu_utilization_mean.toFixed(1) : ""}%
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      {(detailsLoading || gpu_active != null) && (
+        <>
+          {detailsLoading && gpu_active == null ? (
+            <p className="text-muted" role="status" style={{ marginTop: "1rem" }}>
+              Loading GPU statistics…
+            </p>
+          ) : (
+            <table border="1" style={{ marginTop: "1rem" }}>
+              <caption>GPU Statistics</caption>
+              <tbody>
+                <tr>
+                  <td style={{ border: "1px solid lightgrey" }}>
+                    <b>Number of GPUs active:</b>
+                  </td>
+                  <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
+                    {gpu_active}
+                  </td>
+                </tr>
+                <tr>
+                  <td style={{ border: "1px solid lightgrey" }}>
+                    <b>Max GPU Utilization:</b>
+                  </td>
+                  <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
+                    {gpu_utilization_max}%
+                  </td>
+                </tr>
+                <tr>
+                  <td style={{ border: "1px solid lightgrey" }}>
+                    <b>Mean GPU Utilization:</b>
+                  </td>
+                  <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
+                    {gpu_utilization_mean != null ? gpu_utilization_mean.toFixed(1) : ""}%
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          )}
+        </>
       )}
 
       <div className="row" style={{ marginTop: "1rem" }}>
-        <CollapsibleSection title="Processes" empty={!(proc_list || []).length}>
-          <table className="table table-sm table-bordered">
-            <tbody>
-              {(proc_list || []).map((proc, i) => (
-                <tr key={i}>
-                  <td>{proc}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <CollapsibleSection
+          title="Processes"
+          empty={!detailsLoading && !(proc_list || []).length}
+        >
+          {detailsLoading ? (
+            <div className="text-muted">Loading processes…</div>
+          ) : (
+            <table className="table table-sm table-bordered">
+              <tbody>
+                {(proc_list || []).map((proc, i) => (
+                  <tr key={i}>
+                    <td>{proc}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </CollapsibleSection>
-        <CollapsibleSection title="Job-level Metrics" empty={!metrics_list.length}>
-          <table className="table table-sm table-bordered">
-            <tbody>
-              {metrics_list.map((obj, i) => (
-                <tr key={i}>
-                  <th>{obj.metric} [{obj.units}]</th>
-                  <td>{obj.value != null ? Number(obj.value).toFixed(2) : ""}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <CollapsibleSection
+          title="Job-level Metrics"
+          empty={!detailsLoading && !metrics_list.length}
+        >
+          {detailsLoading ? (
+            <div className="text-muted">Loading job-level metrics…</div>
+          ) : (
+            <table className="table table-sm table-bordered">
+              <tbody>
+                {metrics_list.map((obj, i) => (
+                  <tr key={i}>
+                    <th>
+                      {obj.metric} [{obj.units}]
+                    </th>
+                    <td>{obj.value != null ? Number(obj.value).toFixed(2) : ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </CollapsibleSection>
         <CollapsibleSection
           title="Execution Parameters"
           empty={
+            !detailsLoading &&
             !(xalt_data.exec_path || []).length &&
             !(xalt_data.cwd || []).length &&
             !(xalt_data.libset || []).length
           }
         >
-          <table className="table table-sm table-bordered">
-            <tbody>
-              <tr>
-                <td>Executable Path</td>
-                <td>
-                  {(xalt_data.exec_path || []).length === 0 ? (
-                    <span className="text-muted">No XALT data available.</span>
-                  ) : (
-                    (xalt_data.exec_path || []).map((item, i) => (
-                      <span key={`exec-${i}`}>{item}<br /></span>
-                    ))
-                  )}
-                </td>
-              </tr>
-              <tr>
-                <td>Working Directory</td>
-                <td>
-                  {(xalt_data.cwd || []).length === 0 ? (
-                    <span className="text-muted">No XALT data available.</span>
-                  ) : (
-                    (xalt_data.cwd || []).map((item, i) => (
-                      <span key={`cwd-${i}`}>{item}<br /></span>
-                    ))
-                  )}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <table className="table table-sm table-bordered">
-            <thead>
-              <tr>
-                <th>Module</th>
-                <th>Library</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(xalt_data.libset || []).length === 0 ? (
-                <tr>
-                  <td colSpan={2} className="text-muted">
-                    No XALT data available.
-                  </td>
-                </tr>
-              ) : (
-                (xalt_data.libset || []).map((item, i) => (
-                  <tr key={i}>
-                    <td>{item[1] === "none" ? "system" : item[1]}</td>
-                    <td>{item[0]}</td>
+          {detailsLoading ? (
+            <div className="text-muted">Loading execution parameters…</div>
+          ) : (
+            <>
+              <table className="table table-sm table-bordered">
+                <tbody>
+                  <tr>
+                    <td>Executable Path</td>
+                    <td>
+                      {(xalt_data.exec_path || []).length === 0 ? (
+                        <span className="text-muted">No XALT data available.</span>
+                      ) : (
+                        (xalt_data.exec_path || []).map((item, i) => (
+                          <span key={`exec-${i}`}>{item}<br /></span>
+                        ))
+                      )}
+                    </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                  <tr>
+                    <td>Working Directory</td>
+                    <td>
+                      {(xalt_data.cwd || []).length === 0 ? (
+                        <span className="text-muted">No XALT data available.</span>
+                      ) : (
+                        (xalt_data.cwd || []).map((item, i) => (
+                          <span key={`cwd-${i}`}>{item}<br /></span>
+                        ))
+                      )}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <table className="table table-sm table-bordered">
+                <thead>
+                  <tr>
+                    <th>Module</th>
+                    <th>Library</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(xalt_data.libset || []).length === 0 ? (
+                    <tr>
+                      <td colSpan={2} className="text-muted">
+                        No XALT data available.
+                      </td>
+                    </tr>
+                  ) : (
+                    (xalt_data.libset || []).map((item, i) => (
+                      <tr key={i}>
+                        <td>{item[1] === "none" ? "system" : item[1]}</td>
+                        <td>{item[0]}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </>
+          )}
         </CollapsibleSection>
         <CollapsibleSection title="Hosts" empty={!host_list.length}>
           <table className="table table-sm table-bordered">
@@ -411,7 +456,11 @@ export default function JobDetail() {
 
       <center>
         <h4>Device Data and Plots</h4>
-        {!hasDeviceData ? (
+        {detailsLoading ? (
+          <p className="text-muted" role="status">
+            Loading device data and plots…
+          </p>
+        ) : !hasDeviceData ? (
           <p className="text-muted" role="status">
             No device data or plots available for this job.
           </p>
@@ -431,9 +480,7 @@ export default function JobDetail() {
                       <Link to={`/job/${job.jid}/${type_name}/`}>{type_name}</Link>
                     </td>
                     <td style={{ textAlign: "left" }}>
-                      {Array.isArray(event)
-                        ? event.join(", ")
-                        : event}
+                      {Array.isArray(event) ? event.join(", ") : event}
                     </td>
                   </tr>
                 ))}
