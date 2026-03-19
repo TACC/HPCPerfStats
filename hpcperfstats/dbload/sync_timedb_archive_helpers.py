@@ -76,9 +76,30 @@ def get_stats_chunk(stats_files, chunk_index, chunk_size):
   return stats_files[start:end]
 
 
+def stats_file_is_active_segment(stats_path):
+  """Return True if ``stats_path`` is still being appended by listend.
+
+  On ``$`` rotation, listend creates a new ``current`` and hard-links it to an
+  epoch-named file; both names refer to the same inode until the next ``$``,
+  when ``current`` is unlinked from that inode. Only then is the epoch file a
+  complete, stable segment. Same-inode-as-``current`` means still active.
+  """
+  host_dir = os.path.dirname(stats_path)
+  current_path = os.path.join(host_dir, "current")
+  try:
+    if not os.path.isfile(current_path):
+      return False
+    return os.path.samefile(stats_path, current_path)
+  except OSError:
+    return False
+
+
 def collect_stats_files_in_range(directory, startdate, enddate, host_name_ext):
   """Scan ``archive_dir`` for stats files in immediate subdirs whose names end
   with ``host_name_ext`` (same value as ``DEFAULT.host_name_ext`` in ini).
+
+  Skips the live segment: epoch files still hard-linked to ``current`` (same
+  inode) are omitted so sync does not race with listend appends.
 
   When startdate is ``'all'``, every eligible file is returned (no date
   filtering). Otherwise files are included if mtime or filename epoch falls in
@@ -99,6 +120,8 @@ def collect_stats_files_in_range(directory, startdate, enddate, host_name_ext):
       if not stats_file.is_file() or stats_file.name.startswith("."):
         continue
       if stats_file.name.startswith("current"):
+        continue
+      if stats_file_is_active_segment(stats_file.path):
         continue
       try:
         fdate_mtime = datetime.fromtimestamp(

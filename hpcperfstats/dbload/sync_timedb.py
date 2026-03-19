@@ -41,6 +41,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     get_stats_chunk,
     get_tar_member_name,
     get_verified_files_to_remove,
+    stats_file_is_active_segment,
 )
 from hpcperfstats.dbload.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
@@ -93,6 +94,11 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   hostname, _ = parse_stats_file_path(stats_file)
   if hostname is None:
     log_print("Invalid stats file path: %s" % stats_file)
+    return (stats_file, False)
+
+  if stats_file_is_active_segment(stats_file):
+    if DEBUG:
+      log_print("Skipping active segment (still linked to current): %s" % stats_file)
     return (stats_file, False)
 
   lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)

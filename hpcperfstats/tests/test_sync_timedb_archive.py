@@ -14,6 +14,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     get_tar_file_tasks,
     get_tar_member_name,
     get_verified_files_to_remove,
+    stats_file_is_active_segment,
 )
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
 
@@ -202,6 +203,61 @@ def test_get_stats_chunk_out_of_range():
 # --- collect_stats_files_in_range ---
 # Subdirs must end with this suffix (mirrors DEFAULT.host_name_ext).
 _ARCH_HOST_SUFFIX = "cluster.integration.test"
+
+
+def test_stats_file_is_active_segment_hardlinked_to_current(tmp_path):
+  """Epoch file same inode as current is the live segment listend writes."""
+  host = tmp_path / ("h." + _ARCH_HOST_SUFFIX)
+  host.mkdir()
+  cur = host / "current"
+  epoch = host / "1000"
+  cur.write_text("x")
+  try:
+    os.link(str(cur), str(epoch))
+  except OSError:
+    pytest.skip("hard links not supported on this filesystem")
+  assert stats_file_is_active_segment(str(epoch)) is True
+
+
+def test_stats_file_is_active_segment_false_when_not_linked(tmp_path):
+  """Closed epoch file has its own inode vs current."""
+  host = tmp_path / ("h." + _ARCH_HOST_SUFFIX)
+  host.mkdir()
+  (host / "current").write_text("live")
+  closed = host / "2000"
+  closed.write_text("segment")
+  assert stats_file_is_active_segment(str(closed)) is False
+
+
+def test_stats_file_is_active_segment_false_no_current(tmp_path):
+  """No current file means treat as not active (e.g. copied archive)."""
+  host = tmp_path / ("h." + _ARCH_HOST_SUFFIX)
+  host.mkdir()
+  (host / "3000").write_text("orphan")
+  assert stats_file_is_active_segment(str(host / "3000")) is False
+
+
+def test_collect_stats_files_in_range_skips_active_hardlinked_epoch(tmp_path):
+  """Do not queue epoch files still linked to current (race with listend)."""
+  host = tmp_path / ("n." + _ARCH_HOST_SUFFIX)
+  host.mkdir()
+  cur = host / "current"
+  active_epoch = host / "11111"
+  cur.write_text("growing")
+  try:
+    os.link(str(cur), str(active_epoch))
+  except OSError:
+    pytest.skip("hard links not supported on this filesystem")
+  closed = host / "22222"
+  closed.write_text("done")
+  t = datetime(2020, 6, 15).timestamp()
+  os.utime(active_epoch, (t, t))
+  os.utime(closed, (t, t))
+  result = collect_stats_files_in_range(
+      str(tmp_path), datetime(2020, 6, 1), datetime(2020, 7, 1),
+      _ARCH_HOST_SUFFIX)
+  assert not any(p.endswith("11111") for p in result)
+  assert any(p.endswith("22222") for p in result)
 
 
 def test_collect_stats_files_in_range_no_subdirs(tmp_path):

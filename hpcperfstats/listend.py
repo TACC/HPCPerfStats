@@ -70,6 +70,8 @@ def on_message(channel, method_frame, header_frame, body):
         if os.path.exists(link_path):
           os.remove(link_path)
         os.link(current_path, link_path)
+        # Epoch name and current share an inode until the next ``$`` rotation.
+        # sync_timedb skips epoch files same-inode-as-current to avoid read races.
 
     with open(current_path, "a") as fd:
       fd.write(message)
