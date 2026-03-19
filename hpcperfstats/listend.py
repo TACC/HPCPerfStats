@@ -253,12 +253,13 @@ def _idle_monitor():
 def main():
   global _channel_ref
   global _idle_thread_started
-  sigterm_received = False
+  # Use a mutable container so the SIGTERM handler can update state without
+  # relying on `nonlocal` (which is only valid for enclosing function scopes).
+  sigterm_received = {"value": False}
   connection = None
 
   def _sigterm_handler(signum, frame):
-    nonlocal sigterm_received
-    sigterm_received = True
+    sigterm_received["value"] = True
     _idle_monitor_stop_event.set()
     raise SystemExit(143)
 
@@ -360,7 +361,7 @@ def main():
         connection.close()
     except Exception:
       pass
-    if sigterm_received:
+    if sigterm_received["value"]:
       send_sigchld_to_parent()
     signal.signal(signal.SIGTERM, previous_sigterm_handler)
 
