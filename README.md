@@ -246,6 +246,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 |------|---------|
 | Build and start container stack | `sudo docker compose up --build -d` |
 | Stop and remove containers | `sudo docker compose down` |
+| Rebuild just the app and keep persisten services running | `docker compose -f docker-compose.app.yaml down &&  docker stop -t 120 hpcperfstats_db_1 && docker stop hpcperfstats_proxy_1 && docker start hpcperfstats_db_1 && docker compose -f docker-compose.app.yaml up --build -d && docker start hpcperfstats_proxy_1`
 | View logs  | `sudo docker compose logs` |
 | PostgreSQL shell | `docker exec -it hpcperfstats_db_1 psql -h localhost -U hpcperfstats` |
 | Pipeline shell (data/processing) | `docker exec -it hpcperfstats_pipeline_1 su hpcperfstats` |
