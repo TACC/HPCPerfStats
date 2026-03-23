@@ -1,5 +1,6 @@
 """Django REST Framework API views for machine app. All data via JSON for React SPA."""
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import timezone as dt_timezone
 
@@ -80,6 +81,8 @@ from .views import (
 _host_last_executor = None
 _small_executor = None   # dashboard, queue histograms, job_detail, job_plots (≤8 tasks)
 _metric_hist_executor = None  # per-metric histograms in job list (up to 8)
+_job_plots_lock = threading.Lock()
+_job_plot_inflight = {}
 
 
 def _collect_future_results_with_deadline(future_to_key, max_wait_seconds):
@@ -1881,12 +1884,14 @@ def job_plots(request, pk):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    # Cache the final json_items for this jid so repeated requests within a
-    # 24-hour window do not have to rebuild the Bokeh figures.
-    plot_cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid)
-    cached_plots = cache.get(plot_cache_key)
-    if isinstance(cached_plots, dict):
-        return Response(cached_plots)
+    plot_kind = (request.GET.get("plot") or "").strip().lower()
+    if plot_kind and plot_kind not in ("summary_plot", "heatmap", "roofline"):
+        return Response(
+            {"error": "Invalid plot parameter. Use summary_plot, heatmap, or roofline."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not plot_kind:
+        plot_kind = "all"
 
     j = jid_table.jid_table(job.jid)
 
@@ -1944,48 +1949,96 @@ def job_plots(request, pk):
         finally:
             close_old_connections()
 
-    mplot_item = hplot_item = rplot_item = None
-    mplot_unavailable_reason = hplot_unavailable_reason = rplot_unavailable_reason = None
+    fetchers = {
+        "summary_plot": _fetch_summary_plot,
+        "heatmap": _fetch_heatmap,
+        "roofline": _fetch_roofline,
+    }
+    field_map = {
+        "summary_plot": ("mplot_item", "mplot_unavailable_reason"),
+        "heatmap": ("hplot_item", "hplot_unavailable_reason"),
+        "roofline": ("rplot_item", "rplot_unavailable_reason"),
+    }
+    requested_keys = [plot_kind] if plot_kind != "all" else ["summary_plot", "heatmap", "roofline"]
 
-    tasks = [
-        ("summary_plot", _fetch_summary_plot),
-        ("heatmap", _fetch_heatmap),
-        ("roofline", _fetch_roofline),
-    ]
-    executor = _get_small_executor()
-    future_to_key = {executor.submit(fn): key for key, fn in tasks}
-    for future in as_completed(future_to_key):
-        key = future_to_key[future]
-        try:
-            result = future.result()
-            if key == "summary_plot":
-                mplot_item, mplot_unavailable_reason = result
-            elif key == "heatmap":
-                hplot_item, hplot_unavailable_reason = result
-            elif key == "roofline":
-                rplot_item, rplot_unavailable_reason = result
-        except Exception:
-            pass
+    # Cache each plot separately so clients can poll each plot independently.
+    cached_results = {}
+    missing_keys = []
+    for key in requested_keys:
+        cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key)
+        cached_entry = cache.get(cache_key)
+        if isinstance(cached_entry, dict):
+            cached_results[key] = cached_entry
+        else:
+            missing_keys.append(key)
+
+    for key in missing_keys:
+        inflight_key = (job.jid, key)
+        with _job_plots_lock:
+            future = _job_plot_inflight.get(inflight_key)
+            if future is None:
+                executor = _get_small_executor()
+                future = executor.submit(fetchers[key])
+                _job_plot_inflight[inflight_key] = future
+        if future.done():
+            try:
+                plot_item, unavailable_reason = future.result()
+                cached_results[key] = {"plot_item": plot_item, "unavailable_reason": unavailable_reason}
+                cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key)
+                try:
+                    cache.set(cache_key, cached_results[key], timeout=24 * 3600)
+                except Exception:
+                    pass
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    "job_plots task failed for jid=%s key=%s: %s",
+                    job.jid,
+                    key,
+                    e,
+                    exc_info=True,
+                )
+                cached_results[key] = {"plot_item": None, "unavailable_reason": str(e)}
+            finally:
+                with _job_plots_lock:
+                    _job_plot_inflight.pop(inflight_key, None)
+
+    still_loading = [key for key in requested_keys if key not in cached_results]
+    if still_loading:
+        return Response(
+            {
+                "status": "loading",
+                "detail": "Requested plots are still being generated. Retry this request shortly.",
+                "retry_after_seconds": 2,
+                "loading_plots": still_loading,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    if plot_kind != "all":
+        entry = cached_results[plot_kind]
+        return Response(
+            {
+                "status": "ready",
+                "plot": plot_kind,
+                "plot_item": entry["plot_item"],
+                "unavailable_reason": entry["unavailable_reason"],
+            }
+        )
 
     payload = {
         "mscript": "",
         "mdiv": "",
-        "mplot_item": mplot_item,
-        "mplot_unavailable_reason": mplot_unavailable_reason,
+        "mplot_item": cached_results["summary_plot"]["plot_item"],
+        "mplot_unavailable_reason": cached_results["summary_plot"]["unavailable_reason"],
         "hscript": "",
         "hdiv": "",
-        "hplot_item": hplot_item,
-        "hplot_unavailable_reason": hplot_unavailable_reason,
+        "hplot_item": cached_results["heatmap"]["plot_item"],
+        "hplot_unavailable_reason": cached_results["heatmap"]["unavailable_reason"],
         "rscript": "",
         "rdiv": "",
-        "rplot_item": rplot_item,
-        "rplot_unavailable_reason": rplot_unavailable_reason,
+        "rplot_item": cached_results["roofline"]["plot_item"],
+        "rplot_unavailable_reason": cached_results["roofline"]["unavailable_reason"],
     }
-    # Cache the assembled payload for 24 hours (86400 seconds).
-    try:
-        cache.set(plot_cache_key, payload, timeout=24 * 3600)
-    except Exception:
-        pass
     return Response(payload)
 
 
