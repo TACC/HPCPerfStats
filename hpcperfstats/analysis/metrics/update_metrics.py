@@ -1,5 +1,9 @@
 #!/usr/bin/env python
-"""Update metrics_data for jobs ending on a given date. Filters by runtime, optionally skips jobs that already have metrics, runs Metrics().run(jobs_list).
+"""Update metrics_data for jobs ending on each day in a date range.
+
+Filters by runtime, optionally skips jobs that already have metrics, runs
+Metrics().run(jobs_list). With no CLI date arguments, processes the last seven
+calendar days through today.
 
 """
 import os
@@ -29,6 +33,21 @@ DEBUG = cfg.get_debug()
 
 # Process jobs in chunks to bound memory; full job rows are not all held at once.
 CHUNK_SIZE = 500
+
+# When argv has no start/end dates, process this many calendar days ending today.
+DEFAULT_METRICS_RANGE_DAYS = 7
+
+
+def _today_datetime():
+  """Local now for default date-range bounds (monkeypatch in tests)."""
+  return datetime.today()
+
+
+def _default_metrics_date_range():
+  """Return (start, end) datetimes at local midnight: inclusive last N days through today."""
+  end = datetime.combine(_today_datetime().date(), datetime.min.time())
+  start = end - timedelta(days=DEFAULT_METRICS_RANGE_DAYS - 1)
+  return start, end
 
 
 def _shutdown_db_best_effort():
@@ -191,8 +210,8 @@ def main(argv=None, sleep_after=True):
     argv = sys.argv
 
   #################################################################
-  default_start = datetime.combine(datetime.today(), datetime.min.time())
-  startdate, enddate = parse_start_end_dates(argv, default_start, default_start)
+  default_start, default_end = _default_metrics_date_range()
+  startdate, enddate = parse_start_end_dates(argv, default_start, default_end)
 
   log_date_range("metrics to update", startdate, enddate)
   #################################################################
