@@ -2,6 +2,7 @@
 
 """
 import os
+import queue
 import signal
 import sys
 import time
@@ -10,6 +11,7 @@ from threading import Event, Lock, Thread
 from fcntl import LOCK_EX, LOCK_NB, flock
 
 import pika
+import redis
 from pika.exceptions import StreamLostError
 
 import hpcperfstats.conf_parser as cfg
@@ -29,6 +31,10 @@ _last_idle_report_time = None
 _channel_ref = None
 _idle_thread_started = False
 _idle_monitor_stop_event = Event()
+_recent_host_worker_thread_started = False
+_recent_host_worker_stop_event = Event()
+_recent_host_queue = queue.Queue(maxsize=100000)
+_recent_host_redis_client = None
 
 
 def _get_first_timestamp_seconds(file_path):
@@ -104,6 +110,56 @@ def _ensure_current_hardlinked_to_timestamp(host_dir, current_path):
   os.link(current_path, link_path)
 
 
+def _get_recent_host_redis_client():
+  """Get or create the Redis client used for recent-host timestamps."""
+  global _recent_host_redis_client
+  if _recent_host_redis_client is not None:
+    return _recent_host_redis_client
+  try:
+    _recent_host_redis_client = redis.from_url(
+        cfg.get_redis_location(), decode_responses=True)
+  except Exception:
+    _recent_host_redis_client = None
+  return _recent_host_redis_client
+
+
+def _set_recent_host_timestamp(redis_client, host):
+  """Set `recent_host:<fqdn>` to current epoch seconds."""
+  if not host or "." not in host:
+    return
+  redis_client.set("recent_host:%s" % host, str(int(time.time())))
+
+
+def _enqueue_recent_host_update(host):
+  """Queue a best-effort Redis host timestamp update."""
+  if not host or "." not in host:
+    return
+  try:
+    _recent_host_queue.put_nowait(host)
+  except queue.Full:
+    if DEBUG:
+      log_print("Recent-host Redis queue is full; dropping update for %s" % host)
+
+
+def _recent_host_worker():
+  """Background worker that writes recent-host timestamps to Redis."""
+  while not _recent_host_worker_stop_event.is_set():
+    try:
+      host = _recent_host_queue.get(timeout=1.0)
+    except queue.Empty:
+      continue
+
+    try:
+      redis_client = _get_recent_host_redis_client()
+      if redis_client is not None:
+        _set_recent_host_timestamp(redis_client, host)
+    except Exception as e:
+      if DEBUG:
+        log_print("Failed to update recent-host Redis key for %s: %s" % (host, e))
+    finally:
+      _recent_host_queue.task_done()
+
+
 def on_message(channel, method_frame, header_frame, body):
   """Callback for each message: decode body, determine host, write/append to host's current file and optionally rotate. Acknowledges the message.
 
@@ -167,6 +223,7 @@ def on_message(channel, method_frame, header_frame, body):
 
     with open(current_path, "a") as fd:
       fd.write(message)
+    _enqueue_recent_host_update(host)
 
     now = time.time()
     with _timestamps_lock:
@@ -253,6 +310,7 @@ def _idle_monitor():
 def main():
   global _channel_ref
   global _idle_thread_started
+  global _recent_host_worker_thread_started
   # Use a mutable container so the SIGTERM handler can update state without
   # relying on `nonlocal` (which is only valid for enclosing function scopes).
   sigterm_received = {"value": False}
@@ -281,6 +339,10 @@ def main():
         idle_thread = Thread(target=_idle_monitor, daemon=True)
         idle_thread.start()
         _idle_thread_started = True
+      if not _recent_host_worker_thread_started:
+        recent_host_thread = Thread(target=_recent_host_worker, daemon=True)
+        recent_host_thread.start()
+        _recent_host_worker_thread_started = True
 
       # Outer loop: keep the daemon running indefinitely by reconnecting to
       # RabbitMQ on failure instead of exiting. The process will typically only
@@ -356,6 +418,7 @@ def main():
         time.sleep(5)
   finally:
     _idle_monitor_stop_event.set()
+    _recent_host_worker_stop_event.set()
     try:
       if connection and not connection.is_closed:
         connection.close()

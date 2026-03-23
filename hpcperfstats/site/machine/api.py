@@ -38,6 +38,7 @@ from .cache_utils import (
     KEY_ADMIN_CACHE_STATS,
     KEY_ADMIN_RMQ_STATS,
     KEY_ADMIN_RMQ_SNAPSHOT,
+    KEY_ADMIN_RMQ_HOST_STATS,
     KEY_ADMIN_TIMESCALE_STATS,
     KEY_ADMIN_HOST_STATS,
     KEY_DATES,
@@ -649,6 +650,88 @@ def _get_rabbitmq_stats():
         pass
 
     return stats
+
+
+def _get_recent_rabbitmq_host_stats():
+    """Return per-host last-seen timestamps sourced directly from Redis keys."""
+    try:
+        cached_stats = cache.get(KEY_ADMIN_RMQ_HOST_STATS)
+        if isinstance(cached_stats, list):
+            return cached_stats
+    except Exception:
+        cached_stats = None
+
+    now = timezone.now()
+    host_stats = []
+
+    def _decode_key(raw_key):
+        if isinstance(raw_key, bytes):
+            return raw_key.decode("utf-8", "replace")
+        return str(raw_key)
+
+    try:
+        client = getattr(cache, "_cache", None)
+        if hasattr(client, "get_client"):
+            try:
+                client = client.get_client()
+            except Exception:
+                client = None
+        if client is None:
+            client = getattr(cache, "client", None)
+            if hasattr(client, "get_client"):
+                try:
+                    client = client.get_client()
+                except Exception:
+                    client = None
+
+        if client is not None and hasattr(client, "scan_iter"):
+            for key in client.scan_iter(match="recent_host:*", count=1000):
+                key_str = _decode_key(key)
+                if not key_str.startswith("recent_host:"):
+                    continue
+                host = key_str.split("recent_host:", 1)[1]
+                if not host or "." not in host:
+                    continue
+                try:
+                    raw_val = client.get(key)
+                except Exception:
+                    continue
+                if raw_val is None:
+                    continue
+                if isinstance(raw_val, bytes):
+                    raw_val = raw_val.decode("utf-8", "replace")
+                try:
+                    ts_epoch = int(float(raw_val))
+                    last_time = datetime.fromtimestamp(ts_epoch, tz=dt_timezone.utc)
+                except (TypeError, ValueError, OSError):
+                    continue
+
+                age = now - last_time
+                if age > timedelta(weeks=1):
+                    bucket = "gt_week"
+                elif age > timedelta(days=1):
+                    bucket = "gt_day"
+                elif age > timedelta(hours=1):
+                    bucket = "gt_hour"
+                elif age > timedelta(minutes=10):
+                    bucket = "gt_10min"
+                else:
+                    bucket = "ok"
+                host_stats.append(
+                    {
+                        "host": host,
+                        "last_time": last_time.isoformat(),
+                        "age_bucket": bucket,
+                    }
+                )
+    except Exception:
+        host_stats = []
+
+    try:
+        cache.set(KEY_ADMIN_RMQ_HOST_STATS, host_stats, timeout=TIMEOUT_ADMIN_STATS)
+    except Exception:
+        pass
+    return host_stats
 
 
 @api_view(["GET"])
@@ -2062,12 +2145,16 @@ def host_plot(request):
 def admin_monitor(request):
     """Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis, RabbitMQ, TimescaleDB stats).
 
-    Supports a lightweight, per-section API via the optional 'section' query param:
+    Supports a lightweight, per-section API via the optional 'section' query
+    param:
     - ?section=hosts      -> {"host_stats": [...]}
+    - ?section=rabbitmq_hosts -> {"rabbitmq_host_stats": [...]}
     - ?section=cache      -> {"cache_stats": {...}}
     - ?section=rabbitmq   -> {"rabbitmq_stats": {...}}
     - ?section=timescaledb -> {"timescaledb_stats": {...}}
-    - omitted/other       -> {"host_stats": [...], "cache_stats": {...}, "rabbitmq_stats": {...}, "timescaledb_stats": {...}}
+    - omitted/other       -> {"host_stats": [...], "rabbitmq_host_stats": [...],
+                              "cache_stats": {...}, "rabbitmq_stats": {...},
+                              "timescaledb_stats": {...}}
     """
     err = _require_auth(request)
     if err is not None:
@@ -2133,24 +2220,29 @@ def admin_monitor(request):
             )
         return host_stats_local
 
-    host_stats = cached_orm(KEY_ADMIN_HOST_STATS, TIMEOUT_ADMIN_STATS, _host_stats_fn)
+    section = (request.GET.get("section") or "").strip().lower()
+    if section == "hosts":
+        host_stats = cached_orm(KEY_ADMIN_HOST_STATS, TIMEOUT_ADMIN_STATS, _host_stats_fn)
+        return Response({"host_stats": host_stats})
+    if section == "rabbitmq_hosts":
+        return Response({"rabbitmq_host_stats": _get_recent_rabbitmq_host_stats()})
+    if section == "cache":
+        return Response({"cache_stats": _get_cache_stats()})
+    if section == "rabbitmq":
+        return Response({"rabbitmq_stats": _get_rabbitmq_stats()})
+    if section == "timescaledb":
+        return Response({"timescaledb_stats": _get_timescaledb_stats()})
 
+    host_stats = cached_orm(KEY_ADMIN_HOST_STATS, TIMEOUT_ADMIN_STATS, _host_stats_fn)
+    rabbitmq_host_stats = _get_recent_rabbitmq_host_stats()
     cache_stats = _get_cache_stats()
     rabbitmq_stats = _get_rabbitmq_stats()
     timescaledb_stats = _get_timescaledb_stats()
 
-    section = (request.GET.get("section") or "").strip().lower()
-    if section == "hosts":
-        return Response({"host_stats": host_stats})
-    if section == "cache":
-        return Response({"cache_stats": cache_stats})
-    if section == "rabbitmq":
-        return Response({"rabbitmq_stats": rabbitmq_stats})
-    if section == "timescaledb":
-        return Response({"timescaledb_stats": timescaledb_stats})
     return Response(
         {
             "host_stats": host_stats,
+            "rabbitmq_host_stats": rabbitmq_host_stats,
             "cache_stats": cache_stats,
             "rabbitmq_stats": rabbitmq_stats,
             "timescaledb_stats": timescaledb_stats,

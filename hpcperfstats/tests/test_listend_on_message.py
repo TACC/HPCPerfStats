@@ -52,6 +52,26 @@ def test_on_message_acks_on_success(tmp_path, monkeypatch):
   assert (tmp_path / "myhost" / "current").exists()
 
 
+def test_on_message_enqueues_recent_host_redis_update(tmp_path, monkeypatch):
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  captured = []
+  monkeypatch.setattr(
+      listend,
+      "_enqueue_recent_host_update",
+      lambda host: captured.append(host),
+  )
+  channel = _FakeChannel()
+  method_frame = _FakeMethodFrame(delivery_tag=222)
+
+  body = b"foo bar node1.example.com baz\n"
+  listend.on_message(channel, method_frame, None, body)
+
+  assert channel.acked == [222]
+  assert captured == ["node1.example.com"]
+
+
 def test_on_message_nacks_and_requeues_on_write_failure(tmp_path, monkeypatch):
   import hpcperfstats.listend as listend
 
@@ -88,6 +108,24 @@ def test_on_message_nacks_and_requeues_on_malformed_message(tmp_path, monkeypatc
 
   assert channel.acked == []
   assert channel.nacked == [(9, True)]
+
+
+def test_set_recent_host_timestamp_writes_expected_redis_key(monkeypatch):
+  import hpcperfstats.listend as listend
+
+  class _FakeRedis:
+    def __init__(self):
+      self.writes = []
+
+    def set(self, key, value):
+      self.writes.append((key, value))
+
+  monkeypatch.setattr(listend.time, "time", lambda: 1710000000.9)
+  fake_redis = _FakeRedis()
+
+  listend._set_recent_host_timestamp(fake_redis, "node1.example.com")
+
+  assert fake_redis.writes == [("recent_host:node1.example.com", "1710000000")]
 
 
 def test_on_message_archives_previous_current_on_dollar_switch(

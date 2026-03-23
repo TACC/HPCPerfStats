@@ -99,6 +99,7 @@ KEY_ADMIN_RMQ_STATS = "admin_monitor_rmq_stats"
 KEY_ADMIN_RMQ_SNAPSHOT = "admin_monitor_rmq_snapshot"
 KEY_ADMIN_TIMESCALE_STATS = "admin_monitor_timescaledb_stats"
 KEY_ADMIN_HOST_STATS = "admin_monitor_host_stats"
+KEY_ADMIN_RMQ_HOST_STATS = "admin_monitor_rabbitmq_host_stats"
 
 # HPCPerfStats Monitor Redis/RabbitMQ stats: short TTL to avoid hammering backends
 TIMEOUT_ADMIN_STATS = 10

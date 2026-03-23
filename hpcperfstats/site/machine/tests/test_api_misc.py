@@ -265,6 +265,69 @@ class TestGetApiKeyFromRequest:
 
 
 @pytest.mark.django_db
+class TestAdminMonitor:
+  def test_admin_monitor_rabbitmq_hosts_section(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/admin_monitor/", {"section": "rabbitmq_hosts"})
+    request.session = {"is_staff": True}
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+        "hpcperfstats.site.machine.api._get_recent_rabbitmq_host_stats",
+        return_value=[{
+            "host": "node1.example.com",
+            "last_time": "2026-03-23T10:00:00+00:00",
+            "age_bucket": "ok",
+        }],
+    ):
+      response = api.admin_monitor(request)
+
+    assert response.status_code == 200
+    assert response.data == {
+        "rabbitmq_host_stats": [{
+            "host": "node1.example.com",
+            "last_time": "2026-03-23T10:00:00+00:00",
+            "age_bucket": "ok",
+        }]
+    }
+
+  def test_get_recent_rabbitmq_host_stats_reads_redis_keys(self):
+    from hpcperfstats.site.machine import api
+
+    class _FakeRedisClient:
+      def scan_iter(self, match=None, count=None):
+        return [b"recent_host:node1.example.com", b"recent_host:node2.example.com"]
+
+      def get(self, key):
+        if key == b"recent_host:node1.example.com":
+          return b"1710000000"
+        if key == b"recent_host:node2.example.com":
+          return b"1710000300"
+        return None
+
+    class _FakeCacheBackend:
+      def get_client(self):
+        return _FakeRedisClient()
+
+    class _FakeCache:
+      def __init__(self):
+        self._cache = _FakeCacheBackend()
+
+      def get(self, key):
+        return None
+
+      def set(self, key, value, timeout=None):
+        return None
+
+    with patch("hpcperfstats.site.machine.api.cache", _FakeCache()):
+      host_stats = api._get_recent_rabbitmq_host_stats()
+
+    hosts = sorted([row["host"] for row in host_stats])
+    assert hosts == ["node1.example.com", "node2.example.com"]
+
+
+@pytest.mark.django_db
 class TestApiKeyValid:
   def test_api_key_valid_returns_none_for_unknown_key(self):
     from hpcperfstats.site.machine import api

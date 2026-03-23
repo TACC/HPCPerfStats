@@ -20,6 +20,7 @@ const ROW_CLASS = {
 
 export default function AdminMonitor() {
   const [hostTimeExpanded, setHostTimeExpanded] = useState(false);
+  const [rabbitHostTimeExpanded, setRabbitHostTimeExpanded] = useState(false);
   const [cacheExpanded, setCacheExpanded] = useState(false);
   const [rabbitExpanded, setRabbitExpanded] = useState(false);
   const [timescaledbExpanded, setTimescaledbExpanded] = useState(false);
@@ -28,6 +29,14 @@ export default function AdminMonitor() {
   const [hostLoading, setHostLoading] = useState(false);
   const [hostError, setHostError] = useState(null);
   const [hostRequested, setHostRequested] = useState(false);
+  const [rabbitHostStats, setRabbitHostStats] = useState([]);
+  const [rabbitHostSort, setRabbitHostSort] = useState({
+    column: "host",
+    direction: "asc",
+  });
+  const [rabbitHostLoading, setRabbitHostLoading] = useState(false);
+  const [rabbitHostError, setRabbitHostError] = useState(null);
+  const [rabbitHostRequested, setRabbitHostRequested] = useState(false);
   const [cacheStats, setCacheStats] = useState(null);
   const [cacheLoading, setCacheLoading] = useState(false);
   const [cacheError, setCacheError] = useState(null);
@@ -46,6 +55,9 @@ export default function AdminMonitor() {
   const fqdnHostStats = hostStats.filter(
     (row) => row.host && row.host.includes(".")
   );
+  const fqdnRabbitHostStats = rabbitHostStats.filter(
+    (row) => row.host && row.host.includes(".")
+  );
 
   // Lazily load host stats when the section is first expanded.
   useEffect(() => {
@@ -61,6 +73,21 @@ export default function AdminMonitor() {
       .catch((e) => setHostError(e.message))
       .finally(() => setHostLoading(false));
   }, [hostTimeExpanded, hostRequested]);
+
+  // Lazily load RabbitMQ/Redis host stats when the section is first expanded.
+  useEffect(() => {
+    if (!rabbitHostTimeExpanded || rabbitHostRequested) return;
+    setRabbitHostRequested(true);
+    setRabbitHostLoading(true);
+    setRabbitHostError(null);
+    api
+      .getAdminMonitorSection("rabbitmq_hosts")
+      .then((res) => {
+        setRabbitHostStats(res.rabbitmq_host_stats || []);
+      })
+      .catch((e) => setRabbitHostError(e.message))
+      .finally(() => setRabbitHostLoading(false));
+  }, [rabbitHostTimeExpanded, rabbitHostRequested]);
 
   // Build comma-separated list of FQDNs not seen in the past 36 hours when the
   // host section is open and hostStats are available.
@@ -141,6 +168,21 @@ export default function AdminMonitor() {
           .map((key) => `${BADGE_MAP[key].label}: ${bucketCounts[key] ?? 0}`)
           .join(" · ")}`
       : "";
+  const rabbitHostTotal = fqdnRabbitHostStats.length;
+  const rabbitHostBucketCounts = fqdnRabbitHostStats.reduce(
+    (acc, row) => {
+      const b = row.age_bucket || "gt_week";
+      acc[b] = (acc[b] || 0) + 1;
+      return acc;
+    },
+    {}
+  );
+  const rabbitHostHeaderSummary =
+    !rabbitHostLoading && !rabbitHostError && fqdnRabbitHostStats.length > 0
+      ? ` - Total hosts: ${rabbitHostTotal} · ${Object.keys(BADGE_MAP)
+          .map((key) => `${BADGE_MAP[key].label}: ${rabbitHostBucketCounts[key] ?? 0}`)
+          .join(" · ")}`
+      : "";
 
   const HOST_STATUS_ORDER = {
     ok: 0,
@@ -183,6 +225,36 @@ export default function AdminMonitor() {
   const sortIndicator = (column) => {
     if (hostSort.column !== column) return "";
     return hostSort.direction === "asc" ? "▲" : "▼";
+  };
+  const sortedRabbitHostStats = [...fqdnRabbitHostStats].sort((a, b) => {
+    const dir = rabbitHostSort.direction === "asc" ? 1 : -1;
+    if (rabbitHostSort.column === "host") return a.host.localeCompare(b.host) * dir;
+    if (rabbitHostSort.column === "last_time") {
+      const aTime = a.last_time ? new Date(a.last_time).getTime() : 0;
+      const bTime = b.last_time ? new Date(b.last_time).getTime() : 0;
+      return (aTime - bTime) * dir;
+    }
+    if (rabbitHostSort.column === "status") {
+      const aBucket = HOST_STATUS_ORDER[a.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
+      const bBucket = HOST_STATUS_ORDER[b.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
+      return (aBucket - bBucket) * dir;
+    }
+    return 0;
+  });
+  const handleRabbitHostSort = (column) => {
+    setRabbitHostSort((prev) => {
+      if (prev.column === column) {
+        return {
+          column,
+          direction: prev.direction === "asc" ? "desc" : "asc",
+        };
+      }
+      return { column, direction: "asc" };
+    });
+  };
+  const rabbitSortIndicator = (column) => {
+    if (rabbitHostSort.column !== column) return "";
+    return rabbitHostSort.direction === "asc" ? "▲" : "▼";
   };
 
   const formatHostTime = (value) => {
@@ -318,6 +390,96 @@ export default function AdminMonitor() {
                 </table>
               </div>
             </>
+          )}
+        </div>
+      </div>
+
+      <div className="admin-monitor-section">
+        <button
+          type="button"
+          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          onClick={() => setRabbitHostTimeExpanded((e) => !e)}
+          aria-expanded={rabbitHostTimeExpanded}
+          aria-controls="admin-monitor-rabbit-host-time"
+        >
+          <span className="admin-monitor-section-chevron" aria-hidden>
+            {rabbitHostTimeExpanded ? "▼" : "▶"}
+          </span>
+          {`Most recent host data timestamps in RabbitMQ${rabbitHostHeaderSummary}`}
+        </button>
+        <div
+          id="admin-monitor-rabbit-host-time"
+          className="admin-monitor-section-body"
+          hidden={!rabbitHostTimeExpanded}
+          role="region"
+          aria-label="Most recent host data timestamps in RabbitMQ"
+        >
+          {rabbitHostLoading && (
+            <LoadingMessage message="Loading RabbitMQ host timestamps…" />
+          )}
+          {rabbitHostError && !rabbitHostLoading && (
+            <div className="text-danger">
+              Error loading RabbitMQ host data: {rabbitHostError}
+            </div>
+          )}
+          {!rabbitHostLoading && !rabbitHostError && (
+            <div className="table-responsive">
+              <table className="table table-sm table-bordered">
+                <thead>
+                  <tr>
+                    <th scope="col">
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0"
+                        onClick={() => handleRabbitHostSort("host")}
+                      >
+                        Host {rabbitSortIndicator("host")}
+                      </button>
+                    </th>
+                    <th scope="col">
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0"
+                        onClick={() => handleRabbitHostSort("last_time")}
+                      >
+                        Last Timestamp {rabbitSortIndicator("last_time")}
+                      </button>
+                    </th>
+                    <th scope="col">
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0"
+                        onClick={() => handleRabbitHostSort("status")}
+                      >
+                        Status {rabbitSortIndicator("status")}
+                      </button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedRabbitHostStats.map((row, i) => {
+                    const badge = BADGE_MAP[row.age_bucket] || BADGE_MAP.gt_week;
+                    const rowClass = ROW_CLASS[row.age_bucket] || "";
+                    return (
+                      <tr key={row.host + i} className={rowClass}>
+                        <td>{row.host}</td>
+                        <td>{formatHostTime(row.last_time)}</td>
+                        <td>
+                          <span className={`badge ${badge.class}`}>{badge.label}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {fqdnRabbitHostStats.length === 0 && (
+                    <tr>
+                      <td colSpan="3" className="text-center">
+                        No RabbitMQ host data available.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       </div>
