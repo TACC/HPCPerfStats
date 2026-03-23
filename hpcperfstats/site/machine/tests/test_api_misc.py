@@ -284,6 +284,43 @@ class TestGetApiKeyFromRequest:
     assert key is None
 
 
+class TestCacheStats:
+  def test_get_cache_stats_includes_total_cache_usable(self):
+    from hpcperfstats.site.machine import api
+
+    class _FakeRedisClient:
+      def info(self):
+        return {
+            "used_memory": 1024,
+            "used_memory_human": "1K",
+            "maxmemory": 4096,
+            "maxmemory_human": "4K",
+        }
+
+      def scan_iter(self, count=None):
+        return []
+
+    class _FakeCacheBackend:
+      def get_client(self):
+        return _FakeRedisClient()
+
+    class _FakeCache:
+      def __init__(self):
+        self._cache = _FakeCacheBackend()
+
+      def get(self, key):
+        return None
+
+      def set(self, key, value, timeout=None):
+        return None
+
+    with patch("hpcperfstats.site.machine.api.cache", _FakeCache()):
+      stats = api._get_cache_stats()
+
+    assert stats["total_cache_usable_bytes"] == 4096
+    assert stats["total_cache_usable_human"] == "4K"
+
+
 @pytest.mark.django_db
 class TestAdminMonitor:
   def test_admin_monitor_rabbitmq_hosts_section(self):

@@ -320,6 +320,14 @@ def _get_cache_stats():
             if used_memory_human is not None:
                 stats["total_data_cached_human"] = used_memory_human
 
+            # Total cache usable (configured Redis memory limit).
+            maxmemory_bytes = info.get("maxmemory")
+            if maxmemory_bytes is not None:
+                stats["total_cache_usable_bytes"] = maxmemory_bytes
+            maxmemory_human = info.get("maxmemory_human")
+            if maxmemory_human is not None:
+                stats["total_cache_usable_human"] = maxmemory_human
+
             # Cache hit/miss counters.
             hits = info.get("keyspace_hits")
             misses = info.get("keyspace_misses")
