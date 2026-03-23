@@ -227,14 +227,14 @@ export default function AdminMonitor() {
           <span className="admin-monitor-section-chevron" aria-hidden>
             {hostTimeExpanded ? "▼" : "▶"}
           </span>
-          {`Host last seen timestamps${hostHeaderSummary}`}
+          {`Most recent host data timestamps in database${hostHeaderSummary}`}
         </button>
         <div
           id="admin-monitor-host-time"
           className="admin-monitor-section-body"
           hidden={!hostTimeExpanded}
           role="region"
-          aria-label="Host last seen timestamps"
+          aria-label="Most recent host data timestamps in database"
         >
           {hostLoading && <LoadingMessage message="Loading host timestamps…" />}
           {hostError && !hostLoading && (

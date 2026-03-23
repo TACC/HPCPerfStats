@@ -36,7 +36,7 @@ describe("AdminMonitor", () => {
     render(<AdminMonitor />);
 
     const button = screen.getByRole("button", {
-      name: /Host last seen timestamps/i,
+      name: /Most recent host data timestamps in database/i,
     });
     fireEvent.click(button);
 
