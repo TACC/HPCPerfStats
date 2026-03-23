@@ -82,6 +82,9 @@ _host_last_executor = None
 _small_executor = None   # dashboard, queue histograms, job_detail, job_plots (≤8 tasks)
 _metric_hist_executor = None  # per-metric histograms in job list (up to 8)
 _job_plots_lock = threading.Lock()
+
+JOB_DETAIL_CACHE_TTL_RECENT = 4 * 3600
+JOB_DETAIL_CACHE_TTL_OLD = 30 * 24 * 3600
 _job_plot_inflight = {}
 
 
@@ -135,6 +138,31 @@ def _get_metric_hist_executor():
     if _metric_hist_executor is None:
         _metric_hist_executor = ThreadPoolExecutor(max_workers=8)
     return _metric_hist_executor
+
+
+def _job_detail_cache_ttl_for_end_time(end_time):
+    """Return cache TTL for job-detail related caches based on job age."""
+    if end_time is None:
+        return JOB_DETAIL_CACHE_TTL_RECENT
+    if end_time.tzinfo is None:
+        end_time = timezone.make_aware(end_time, dt_timezone.utc)
+    age = dj_timezone_utils.now() - end_time
+    if age > timedelta(days=7):
+        return JOB_DETAIL_CACHE_TTL_OLD
+    return JOB_DETAIL_CACHE_TTL_RECENT
+
+
+def _job_detail_cache_ttl_for_jid(jid):
+    """Best-effort TTL lookup from job end_time before cached job fetch."""
+    try:
+        end_time = (
+            job_data.objects.filter(jid=jid)
+            .values_list("end_time", flat=True)
+            .first()
+        )
+    except Exception:
+        return JOB_DETAIL_CACHE_TTL_RECENT
+    return _job_detail_cache_ttl_for_end_time(end_time)
 from django.db.models import (
     Count,
     Exists,
@@ -1565,7 +1593,6 @@ def job_list(request):
     })
 
 
-@cache_page(TIMEOUT_SHORT)
 @api_view(["GET"])
 def job_detail(request, pk):
     """Single job detail: metadata, host_list, fsio, xalt, schema, URLs (plots via separate job_plots endpoint)."""
@@ -1573,9 +1600,10 @@ def job_detail(request, pk):
     if err is not None:
         return err
 
+    job_cache_timeout = _job_detail_cache_ttl_for_jid(pk)
     job = cached_orm(
         f"{KEY_JOB}:{pk}",
-        TIMEOUT_SHORT,
+        job_cache_timeout,
         lambda: job_data.objects.filter(jid=pk)
         .prefetch_related("metrics_data_set")
         .first(),
@@ -1585,6 +1613,8 @@ def job_detail(request, pk):
             {"error": "Job not found"},
             status=status.HTTP_404_NOT_FOUND,
         )
+
+    job_cache_timeout = _job_detail_cache_ttl_for_end_time(getattr(job, "end_time", None))
 
     if not request.session.get("is_staff", False):
         if job.username != request.session.get("username"):
@@ -1605,7 +1635,7 @@ def job_detail(request, pk):
             try:
                 gpu_list = cached_orm(
                     f"{KEY_GPU_QS}:{job.jid}",
-                    TIMEOUT_SHORT,
+                    job_cache_timeout,
                     lambda: list(
                         host_data.objects.filter(
                             jid=job.jid,
@@ -1691,7 +1721,7 @@ def job_detail(request, pk):
             }
 
         try:
-            return cached_orm(f"{KEY_XALT}:{job.jid}", TIMEOUT_SHORT, _xalt_fn)
+            return cached_orm(f"{KEY_XALT}:{job.jid}", job_cache_timeout, _xalt_fn)
         finally:
             close_old_connections()
 
@@ -1732,7 +1762,7 @@ def job_detail(request, pk):
         try:
             return cached_orm(
                 f"{KEY_PROC_LIST}:{job.jid}",
-                TIMEOUT_SHORT,
+                job_cache_timeout,
                 lambda: list(
                     proc_data.objects.filter(jid=job.jid)
                     .values_list("proc", flat=True)
@@ -1856,7 +1886,6 @@ def job_detail(request, pk):
     })
 
 
-@cache_page(TIMEOUT_SHORT)
 @api_view(["GET"])
 def job_plots(request, pk):
     """
@@ -1871,9 +1900,10 @@ def job_plots(request, pk):
     if err is not None:
         return err
 
+    job_cache_timeout = _job_detail_cache_ttl_for_jid(pk)
     job = cached_orm(
         f"{KEY_JOB}:{pk}",
-        TIMEOUT_SHORT,
+        job_cache_timeout,
         lambda: job_data.objects.filter(jid=pk)
         .prefetch_related("metrics_data_set")
         .first(),
@@ -1883,6 +1913,7 @@ def job_plots(request, pk):
             {"error": "Job not found"},
             status=status.HTTP_404_NOT_FOUND,
         )
+    job_cache_timeout = _job_detail_cache_ttl_for_end_time(getattr(job, "end_time", None))
 
     plot_kind = (request.GET.get("plot") or "").strip().lower()
     if plot_kind and plot_kind not in ("summary_plot", "heatmap", "roofline"):
@@ -1986,7 +2017,7 @@ def job_plots(request, pk):
                 cached_results[key] = {"plot_item": plot_item, "unavailable_reason": unavailable_reason}
                 cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key)
                 try:
-                    cache.set(cache_key, cached_results[key], timeout=24 * 3600)
+                    cache.set(cache_key, cached_results[key], timeout=job_cache_timeout)
                 except Exception:
                     pass
             except Exception as e:

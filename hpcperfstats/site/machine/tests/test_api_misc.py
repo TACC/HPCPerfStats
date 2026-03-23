@@ -224,6 +224,26 @@ class TestFormatLogTimestamp:
     assert out == "not-a-datetime"
 
 
+class TestJobDetailCacheTtl:
+  def test_recent_job_uses_four_hour_ttl(self):
+    from hpcperfstats.site.machine import api
+
+    now = datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc)
+    end_time = datetime(2026, 3, 22, 12, 0, 1, tzinfo=timezone.utc)
+    with patch("hpcperfstats.site.machine.api.dj_timezone_utils.now", return_value=now):
+      ttl = api._job_detail_cache_ttl_for_end_time(end_time)
+    assert ttl == 4 * 3600
+
+  def test_old_job_uses_one_month_ttl(self):
+    from hpcperfstats.site.machine import api
+
+    now = datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc)
+    end_time = datetime(2026, 3, 15, 11, 59, 59, tzinfo=timezone.utc)
+    with patch("hpcperfstats.site.machine.api.dj_timezone_utils.now", return_value=now):
+      ttl = api._job_detail_cache_ttl_for_end_time(end_time)
+    assert ttl == 30 * 24 * 3600
+
+
 class TestGetApiKeyFromRequest:
   def test_get_api_key_from_authorization_header(self):
     from hpcperfstats.site.machine import api
