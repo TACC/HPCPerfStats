@@ -41,6 +41,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     filter_files_to_add_to_archive,
     get_existing_archive_members,
     get_stats_chunk,
+    rescan_pending_stats_files,
     get_tar_member_name,
     get_verified_files_to_remove,
     stats_file_is_active_segment,
@@ -80,6 +81,8 @@ days_to_process = 5
 
 # How many files to proccess and archive at once
 chunk_size = 100
+# Rescan stats directory after this many processed chunks
+rescan_every_chunks = 10
 
 # Rows per bulk_create batch to limit peak memory per worker
 bulk_create_batch_size = 10000
@@ -419,19 +422,20 @@ if __name__ == '__main__':
       with multiprocessing.get_context('spawn').Pool(
           processes=archive_thread_count) as archive_pool:
         archive_job = None
-        # Process and archive chunk_size files before continuing to process more
-        num_chunks = (
-            (len(stats_files) + chunk_size - 1) // chunk_size
-            if stats_files else 1
-        )
-        for i in range(num_chunks):
+        processed_files = set()
+        pending_stats_files = list(stats_files)
+        chunk_counter = 0
+
+        # Process chunk_size files at a time; every rescan_every_chunks chunks,
+        # rescan and reprioritize by newest-first (including newly arrived files).
+        while pending_stats_files:
           if shutdown_requested[0]:
             log_print("Exiting due to SIGTERM")
             break
           if DEBUG:
-            log_print("Begining Chunk(%s) #%s Processing" % (chunk_size, i))
+            log_print("Begining Chunk(%s) #%s Processing" % (chunk_size, chunk_counter))
 
-          stats_files_chunk = get_stats_chunk(stats_files, i, chunk_size)
+          stats_files_chunk = pending_stats_files[:chunk_size]
           if not stats_files_chunk:
             continue
 
@@ -449,7 +453,8 @@ if __name__ == '__main__':
               if should_archive and need_archival:
                 files_to_be_archived.append(stats_fname)
               log_print(
-                  "chunk %s: completed file %s out of %s\n" % (i, k, chunk_size),
+                  "chunk %s: completed file %s out of %s\n" % (
+                      chunk_counter, k, chunk_size),
                   flush=True)
 
           log_print("loading time", time.time() - start)
@@ -468,16 +473,12 @@ if __name__ == '__main__':
                 "Archive mapping empty (all files skipped: no timestamp in head)")
 
           # skip first iteration, on first there will be no archive_job
-          if i:
+          if archive_job is not None:
             if DEBUG:
               log_print("Checking/waiting for background archival proccesses")
 
             # Wait until last archive_job is complete before starting another one
             archive_job.get()
-            log_print(
-                "[{0:.1f}%] completed".format(100 * (i + 1) / num_chunks),
-                end="\r",
-                flush=True)
 
           if DEBUG:
             log_print("files to be archived: %s" % ar_file_mapping)
@@ -486,6 +487,22 @@ if __name__ == '__main__':
               archive_stats_files, list(ar_file_mapping.items()))
 
           log_print("Archival running in the background")
+          processed_files.update(stats_files_chunk)
+          pending_stats_files = pending_stats_files[chunk_size:]
+          chunk_counter += 1
+
+          if chunk_counter % rescan_every_chunks == 0:
+            if archive_job is not None:
+              if DEBUG:
+                log_print(
+                    "Waiting for background archival proccesses before rescan")
+              archive_job.get()
+              archive_job = None
+            pending_stats_files = rescan_pending_stats_files(
+                directory, startdate, enddate, host_name_ext, processed_files)
+            log_print(
+                "Rescanned after %d chunks; pending files (newest first): %d"
+                % (rescan_every_chunks, len(pending_stats_files)))
 
         if archive_job is not None:
           archive_job.get()

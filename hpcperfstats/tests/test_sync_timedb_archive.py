@@ -14,6 +14,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     get_tar_file_tasks,
     get_tar_member_name,
     get_verified_files_to_remove,
+    rescan_pending_stats_files,
     stats_file_is_active_segment,
 )
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
@@ -358,6 +359,28 @@ def test_collect_stats_files_in_range_sorted_newest_first(tmp_path):
   basenames = [os.path.basename(p) for p in result]
   # Expect newest (largest epoch) first.
   assert basenames == [str(epochs[2]), str(epochs[1]), str(epochs[0])]
+
+
+def test_rescan_pending_stats_files_excludes_processed_and_keeps_newest_first(tmp_path):
+  """Rescan excludes already processed files and keeps newest-first ordering."""
+  cn = tmp_path / ("cn001." + _ARCH_HOST_SUFFIX)
+  cn.mkdir()
+  base_ts = datetime(2020, 6, 15, 12, 0, 0)
+  old_epoch = int(base_ts.timestamp())
+  mid_epoch = int((base_ts + timedelta(minutes=1)).timestamp())
+  new_epoch = int((base_ts + timedelta(minutes=2)).timestamp())
+  for ts in [old_epoch, mid_epoch, new_epoch]:
+    p = cn / str(ts)
+    p.write_text("x")
+    os.utime(p, (ts, ts))
+
+  start = datetime(2020, 6, 1)
+  end = datetime(2020, 7, 1)
+  processed = {str(cn / str(new_epoch))}
+  pending = rescan_pending_stats_files(
+      str(tmp_path), start, end, _ARCH_HOST_SUFFIX, processed)
+
+  assert [os.path.basename(p) for p in pending] == [str(mid_epoch), str(old_epoch)]
 
 
 def test_collect_stats_files_in_range_uses_filename_epoch_when_mtime_outside(tmp_path):

@@ -168,6 +168,16 @@ def collect_stats_files_in_range(directory, startdate, enddate, host_name_ext):
   return [path for path, _ in stats_files]
 
 
+def rescan_pending_stats_files(
+    directory, startdate, enddate, host_name_ext, processed_files
+):
+  """Return newest-first files still pending after excluding processed files."""
+  discovered_files = collect_stats_files_in_range(
+      directory, startdate, enddate, host_name_ext)
+  processed_set = set(processed_files or [])
+  return [path for path in discovered_files if path not in processed_set]
+
+
 def build_archive_mapping(
     files_to_be_archived, tgz_archive_dir, parse_first_ts_fn=None
 ):
