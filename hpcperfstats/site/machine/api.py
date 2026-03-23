@@ -2300,6 +2300,31 @@ def admin_monitor(request):
         return host_stats_local
 
     section = (request.GET.get("section") or "").strip().lower()
+    refresh = str(request.GET.get("refresh", "")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+    if refresh:
+        keys_by_section = {
+            "hosts": [KEY_ADMIN_HOST_STATS],
+            "cache": [KEY_ADMIN_CACHE_STATS],
+            "rabbitmq": [KEY_ADMIN_RMQ_STATS, KEY_ADMIN_RMQ_SNAPSHOT],
+            "timescaledb": [KEY_ADMIN_TIMESCALE_STATS],
+        }
+        keys_to_clear = []
+        if section in keys_by_section:
+            keys_to_clear = keys_by_section[section]
+        elif not section:
+            for keys in keys_by_section.values():
+                keys_to_clear.extend(keys)
+        for cache_key in keys_to_clear:
+            try:
+                cache.delete(cache_key)
+            except Exception:
+                pass
+
     if section == "hosts":
         host_stats = cached_orm(KEY_ADMIN_HOST_STATS, TIMEOUT_ADMIN_STATS, _host_stats_fn)
         return Response({"host_stats": host_stats})

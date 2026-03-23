@@ -59,34 +59,78 @@ export default function AdminMonitor() {
     (row) => row.host && row.host.includes(".")
   );
 
-  // Lazily load host stats when the section is first expanded.
-  useEffect(() => {
-    if (!hostTimeExpanded || hostRequested) return;
-    setHostRequested(true);
+  function loadHostStats(forceRefresh = false) {
     setHostLoading(true);
     setHostError(null);
     api
-      .getAdminMonitorSection("hosts")
+      .getAdminMonitorSection("hosts", { refresh: forceRefresh })
       .then((res) => {
         setHostStats(res.host_stats || []);
       })
       .catch((e) => setHostError(e.message))
       .finally(() => setHostLoading(false));
+  }
+
+  function loadRabbitHostStats(forceRefresh = false) {
+    setRabbitHostLoading(true);
+    setRabbitHostError(null);
+    api
+      .getAdminMonitorSection("rabbitmq_hosts", { refresh: forceRefresh })
+      .then((res) => {
+        setRabbitHostStats(res.rabbitmq_host_stats || []);
+      })
+      .catch((e) => setRabbitHostError(e.message))
+      .finally(() => setRabbitHostLoading(false));
+  }
+
+  function loadCacheStats(forceRefresh = false) {
+    setCacheLoading(true);
+    setCacheError(null);
+    api
+      .getAdminMonitorSection("cache", { refresh: forceRefresh })
+      .then((res) => {
+        setCacheStats(res.cache_stats || null);
+      })
+      .catch((e) => setCacheError(e.message))
+      .finally(() => setCacheLoading(false));
+  }
+
+  function loadRabbitStats(forceRefresh = false) {
+    setRabbitLoading(true);
+    setRabbitError(null);
+    api
+      .getAdminMonitorSection("rabbitmq", { refresh: forceRefresh })
+      .then((res) => {
+        setRabbitStats(res.rabbitmq_stats || null);
+      })
+      .catch((e) => setRabbitError(e.message))
+      .finally(() => setRabbitLoading(false));
+  }
+
+  function loadTimescaledbStats(forceRefresh = false) {
+    setTimescaledbLoading(true);
+    setTimescaledbError(null);
+    api
+      .getAdminMonitorSection("timescaledb", { refresh: forceRefresh })
+      .then((res) => {
+        setTimescaledbStats(res.timescaledb_stats || null);
+      })
+      .catch((e) => setTimescaledbError(e.message))
+      .finally(() => setTimescaledbLoading(false));
+  }
+
+  // Lazily load host stats when the section is first expanded.
+  useEffect(() => {
+    if (!hostTimeExpanded || hostRequested) return;
+    setHostRequested(true);
+    loadHostStats();
   }, [hostTimeExpanded, hostRequested]);
 
   // Lazily load RabbitMQ/Redis host stats when the section is first expanded.
   useEffect(() => {
     if (!rabbitHostTimeExpanded || rabbitHostRequested) return;
     setRabbitHostRequested(true);
-    setRabbitHostLoading(true);
-    setRabbitHostError(null);
-    api
-      .getAdminMonitorSection("rabbitmq_hosts")
-      .then((res) => {
-        setRabbitHostStats(res.rabbitmq_host_stats || []);
-      })
-      .catch((e) => setRabbitHostError(e.message))
-      .finally(() => setRabbitHostLoading(false));
+    loadRabbitHostStats();
   }, [rabbitHostTimeExpanded, rabbitHostRequested]);
 
   // Build comma-separated list of FQDNs not seen in the past 36 hours when the
@@ -111,45 +155,21 @@ export default function AdminMonitor() {
   useEffect(() => {
     if (!cacheExpanded || cacheRequested) return;
     setCacheRequested(true);
-    setCacheLoading(true);
-    setCacheError(null);
-    api
-      .getAdminMonitorSection("cache")
-      .then((res) => {
-        setCacheStats(res.cache_stats || null);
-      })
-      .catch((e) => setCacheError(e.message))
-      .finally(() => setCacheLoading(false));
+    loadCacheStats();
   }, [cacheExpanded, cacheRequested]);
 
   // Lazily load RabbitMQ stats when the section is first expanded.
   useEffect(() => {
     if (!rabbitExpanded || rabbitRequested) return;
     setRabbitRequested(true);
-    setRabbitLoading(true);
-    setRabbitError(null);
-    api
-      .getAdminMonitorSection("rabbitmq")
-      .then((res) => {
-        setRabbitStats(res.rabbitmq_stats || null);
-      })
-      .catch((e) => setRabbitError(e.message))
-      .finally(() => setRabbitLoading(false));
+    loadRabbitStats();
   }, [rabbitExpanded, rabbitRequested]);
 
   // Lazily load TimescaleDB stats when the section is first expanded.
   useEffect(() => {
     if (!timescaledbExpanded || timescaledbRequested) return;
     setTimescaledbRequested(true);
-    setTimescaledbLoading(true);
-    setTimescaledbError(null);
-    api
-      .getAdminMonitorSection("timescaledb")
-      .then((res) => {
-        setTimescaledbStats(res.timescaledb_stats || null);
-      })
-      .catch((e) => setTimescaledbError(e.message))
-      .finally(() => setTimescaledbLoading(false));
+    loadTimescaledbStats();
   }, [timescaledbExpanded, timescaledbRequested]);
 
   const totalHosts = fqdnHostStats.length;
@@ -308,6 +328,16 @@ export default function AdminMonitor() {
           role="region"
           aria-label="Most recent host data timestamps in database"
         >
+          <div className="admin-monitor-action-row">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              onClick={() => loadHostStats(true)}
+              disabled={hostLoading}
+            >
+              Refresh Data
+            </button>
+          </div>
           {hostLoading && <LoadingMessage message="Loading host timestamps…" />}
           {hostError && !hostLoading && (
             <div className="text-danger">Error loading host data: {hostError}</div>
@@ -414,6 +444,16 @@ export default function AdminMonitor() {
           role="region"
           aria-label="Most recent host data timestamps in RabbitMQ"
         >
+          <div className="admin-monitor-action-row">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              onClick={() => loadRabbitHostStats(true)}
+              disabled={rabbitHostLoading}
+            >
+              Refresh Data
+            </button>
+          </div>
           {rabbitHostLoading && (
             <LoadingMessage message="Loading RabbitMQ host timestamps…" />
           )}
@@ -504,6 +544,16 @@ export default function AdminMonitor() {
           role="region"
           aria-label="TimescaleDB statistics"
         >
+          <div className="admin-monitor-action-row">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              onClick={() => loadTimescaledbStats(true)}
+              disabled={timescaledbLoading}
+            >
+              Refresh Data
+            </button>
+          </div>
           {timescaledbLoading && (
             <LoadingMessage message="Loading TimescaleDB statistics…" />
           )}
@@ -585,6 +635,16 @@ export default function AdminMonitor() {
           role="region"
           aria-label="Cache and Redis statistics"
         >
+          <div className="admin-monitor-action-row">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              onClick={() => loadCacheStats(true)}
+              disabled={cacheLoading}
+            >
+              Refresh Data
+            </button>
+          </div>
           {cacheLoading && <LoadingMessage message="Loading cache statistics…" />}
           {cacheError && !cacheLoading && (
             <div className="text-danger">Error loading cache stats: {cacheError}</div>
@@ -641,6 +701,16 @@ export default function AdminMonitor() {
           role="region"
           aria-label="RabbitMQ statistics"
         >
+          <div className="admin-monitor-action-row">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              onClick={() => loadRabbitStats(true)}
+              disabled={rabbitLoading}
+            >
+              Refresh Data
+            </button>
+          </div>
           {rabbitLoading && (
             <LoadingMessage message="Loading RabbitMQ statistics…" />
           )}

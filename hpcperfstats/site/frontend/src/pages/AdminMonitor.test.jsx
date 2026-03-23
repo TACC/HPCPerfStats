@@ -76,5 +76,37 @@ describe("AdminMonitor", () => {
       expect(screen.getByText("node2.example.com")).toBeInTheDocument();
     });
   });
+
+  it("refresh button refetches section data with refresh option", async () => {
+    const getSectionSpy = vi
+      .spyOn(apiModule.api, "getAdminMonitorSection")
+      .mockResolvedValue({
+        host_stats: [
+          {
+            host: "node3.example.com",
+            last_time: "2024-01-01T00:00:00Z",
+            age_bucket: "ok",
+          },
+        ],
+      });
+
+    render(<AdminMonitor />);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Most recent host data timestamps in database/i,
+      })
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("node3.example.com")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Refresh Data" })[0]);
+
+    await waitFor(() => {
+      expect(getSectionSpy).toHaveBeenCalledWith("hosts", { refresh: true });
+    });
+  });
 });
 

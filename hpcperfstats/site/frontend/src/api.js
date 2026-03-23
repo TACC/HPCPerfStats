@@ -80,8 +80,11 @@ export const api = {
     request(`/jobs/${encodeURIComponent(jid)}/${encodeURIComponent(typeName)}/`),
   getHostPlot: (params) =>
     request("/host_plot/?" + new URLSearchParams(params).toString()),
-  getAdminMonitorSection: (section) =>
-    request(`/admin_monitor/?section=${encodeURIComponent(section)}`),
+  getAdminMonitorSection: (section, options = {}) => {
+    const params = { section };
+    if (options.refresh) params.refresh = "1";
+    return request(`/admin_monitor/?${new URLSearchParams(params).toString()}`);
+  },
   getJobMonitor: (days) => {
     const search = days
       ? `?${new URLSearchParams({ days: String(days) }).toString()}`

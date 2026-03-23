@@ -14,6 +14,25 @@ from django.test import RequestFactory
 from hpcperfstats.site.machine.models import ApiKey
 
 
+class TestAdminMonitorRefresh:
+  def test_admin_monitor_refresh_clears_cache_for_selected_section(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/admin_monitor/", {"section": "cache", "refresh": "1"})
+    request.session = {"is_staff": True}
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+        "hpcperfstats.site.machine.api._get_cache_stats",
+        return_value={"ok": True},
+    ), patch("hpcperfstats.site.machine.api.cache") as mock_cache:
+      response = api.admin_monitor(request)
+
+    assert response.status_code == 200
+    assert response.data == {"cache_stats": {"ok": True}}
+    mock_cache.delete.assert_called_with(api.KEY_ADMIN_CACHE_STATS)
+
+
 @pytest.mark.django_db
 class TestSessionInfo:
   """Tests for the session_info endpoint."""
