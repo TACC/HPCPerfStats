@@ -117,15 +117,21 @@ def test_set_recent_host_timestamp_writes_expected_redis_key(monkeypatch):
     def __init__(self):
       self.writes = []
 
-    def set(self, key, value):
-      self.writes.append((key, value))
+    def setex(self, key, ttl, value):
+      self.writes.append((key, ttl, value))
 
   monkeypatch.setattr(listend.time, "time", lambda: 1710000000.9)
   fake_redis = _FakeRedis()
 
   listend._set_recent_host_timestamp(fake_redis, "node1.example.com")
 
-  assert fake_redis.writes == [("recent_host:node1.example.com", "1710000000")]
+  assert fake_redis.writes == [
+      (
+          "recent_host:node1.example.com",
+          listend.RECENT_HOST_TTL_SECONDS,
+          "1710000000",
+      )
+  ]
 
 
 def test_on_message_archives_previous_current_on_dollar_switch(

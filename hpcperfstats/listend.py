@@ -22,6 +22,7 @@ DEBUG = cfg.get_debug()
 
 MESSAGE_WINDOW_SECONDS = 600  # 10 minutes
 IDLE_CHECK_INTERVAL = 60      # seconds
+RECENT_HOST_TTL_SECONDS = 7 * 24 * 60 * 60  # 1 week
 
 _message_timestamps = deque()
 _unlink_timestamps = deque()
@@ -127,7 +128,11 @@ def _set_recent_host_timestamp(redis_client, host):
   """Set `recent_host:<fqdn>` to current epoch seconds."""
   if not host or "." not in host:
     return
-  redis_client.set("recent_host:%s" % host, str(int(time.time())))
+  redis_client.setex(
+      "recent_host:%s" % host,
+      RECENT_HOST_TTL_SECONDS,
+      str(int(time.time())),
+  )
 
 
 def _enqueue_recent_host_update(host):
