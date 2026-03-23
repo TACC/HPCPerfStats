@@ -2,8 +2,10 @@
 #
 import os
 import sys
+import warnings
 
 import hpcperfstats.conf_parser as cfg
+from django.core.cache.backends.base import CacheKeyWarning
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -136,7 +138,6 @@ STATICFILES_FINDERS = (
 # Make this unique, and don't share it with anybody. Never commit a real key.
 # In production set SECRET_KEY in the environment or in hpcperfstats.ini [DEFAULT] secret_key.
 if not SECRET_KEY and DEBUG:
-    import warnings
     warnings.warn("SECRET_KEY not set; using a dev-only default. Set SECRET_KEY in env for production.")
     SECRET_KEY = "dev-only-insecure-change-me"
 elif not SECRET_KEY:
@@ -177,6 +178,13 @@ CACHES = {
         "TIMEOUT": 300,
     }
 }
+
+# Suppress memcached key warnings emitted by Django key validation.
+warnings.filterwarnings(
+    "ignore",
+    category=CacheKeyWarning,
+    module=r"django\.core\.cache\.backends\.base",
+)
 
 # During test runs, avoid requiring a real Redis instance by switching to the
 # in-memory cache backend. This keeps production configuration unchanged.
