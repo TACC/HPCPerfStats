@@ -27,6 +27,19 @@ except ImportError:
   from numpy import trapz
 
 
+def _per_interval_rate(values, t):
+  """Compute diff(values) / diff(t) without divide-by-zero.
+
+  Sample pairs with non-positive delta-t (duplicate timestamps) yield NaN so
+  callers can use nan-aware reductions or substitute zeros for integration.
+  """
+  dy = np.asarray(diff(values), dtype=np.float64)
+  dt = np.asarray(diff(np.asarray(t, dtype=np.float64)), dtype=np.float64)
+  out = np.full(dy.shape, np.nan, dtype=np.float64)
+  np.divide(dy, dt, out=out, where=dt > 0)
+  return out
+
+
 class _EventIndex:
   """Holds the integer index of an event in a schema. Used by _Schema.__getitem__.
 
@@ -533,9 +546,10 @@ class max_fabricbw():
       tx, rx = schema["PortXmitData"].index, schema["PortRcvData"].index
       conv2mb = 125000
     for hostname, stats in _stats.items():
-      ratio = diff(stats[:, tx] + stats[:, rx]) / diff(u.t)
-      if ratio.size > 0:
-        max_bw = max(max_bw, amax(ratio))
+      ratio = _per_interval_rate(stats[:, tx] + stats[:, rx], u.t)
+      fin = ratio[np.isfinite(ratio)]
+      if fin.size > 0:
+        max_bw = max(max_bw, fin.max())
     if max_bw == 0:
       return None, typename, 'MB/s'
     value = max_bw / conv2mb
@@ -555,9 +569,10 @@ class max_lnetbw():
     max_bw = 0.0
     tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
     for hostname, stats in _stats.items():
-      ratio = diff(stats[:, tx] + stats[:, rx]) / diff(u.t)
-      if ratio.size > 0:
-        max_bw = max(max_bw, amax(ratio))
+      ratio = _per_interval_rate(stats[:, tx] + stats[:, rx], u.t)
+      fin = ratio[np.isfinite(ratio)]
+      if fin.size > 0:
+        max_bw = max(max_bw, fin.max())
     if max_bw == 0:
       return None, typename, 'MB/s'
     value = max_bw / (1024 * 1024)
@@ -576,31 +591,34 @@ class max_mds():
     if schema is None:
       return None, typename, 'iops'
     for hostname, stats in _stats.items():
-      mds_diff = diff(stats[:, schema["open"].index] +
-                      stats[:, schema["close"].index] +
-                      stats[:, schema["mmap"].index] +
-                      stats[:, schema["fsync"].index] +
-                      stats[:, schema["setattr"].index] +
-                      stats[:, schema["truncate"].index] +
-                      stats[:, schema["flock"].index] +
-                      stats[:, schema["getattr"].index] +
-                      stats[:, schema["statfs"].index] +
-                      stats[:, schema["alloc_inode"].index] +
-                      stats[:, schema["setxattr"].index] +
-                      stats[:, schema["listxattr"].index] +
-                      stats[:, schema["removexattr"].index] +
-                      stats[:, schema["readdir"].index] +
-                      stats[:, schema["create"].index] +
-                      stats[:, schema["lookup"].index] +
-                      stats[:, schema["link"].index] +
-                      stats[:, schema["unlink"].index] +
-                      stats[:, schema["symlink"].index] +
-                      stats[:, schema["mkdir"].index] +
-                      stats[:, schema["rmdir"].index] +
-                      stats[:, schema["mknod"].index] +
-                      stats[:, schema["rename"].index]) / diff(u.t)
-      if mds_diff.size > 0:
-        max_mds = max(max_mds, amax(mds_diff))
+      mds_sum = (
+          stats[:, schema["open"].index] +
+          stats[:, schema["close"].index] +
+          stats[:, schema["mmap"].index] +
+          stats[:, schema["fsync"].index] +
+          stats[:, schema["setattr"].index] +
+          stats[:, schema["truncate"].index] +
+          stats[:, schema["flock"].index] +
+          stats[:, schema["getattr"].index] +
+          stats[:, schema["statfs"].index] +
+          stats[:, schema["alloc_inode"].index] +
+          stats[:, schema["setxattr"].index] +
+          stats[:, schema["listxattr"].index] +
+          stats[:, schema["removexattr"].index] +
+          stats[:, schema["readdir"].index] +
+          stats[:, schema["create"].index] +
+          stats[:, schema["lookup"].index] +
+          stats[:, schema["link"].index] +
+          stats[:, schema["unlink"].index] +
+          stats[:, schema["symlink"].index] +
+          stats[:, schema["mkdir"].index] +
+          stats[:, schema["rmdir"].index] +
+          stats[:, schema["mknod"].index] +
+          stats[:, schema["rename"].index])
+      mds_diff = _per_interval_rate(mds_sum, u.t)
+      fin = mds_diff[np.isfinite(mds_diff)]
+      if fin.size > 0:
+        max_mds = max(max_mds, fin.max())
     if max_mds == 0:
       return None, typename, 'iops'
     value = max_mds
@@ -628,9 +646,10 @@ class max_packetrate():
       tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
 
     for hostname, stats in _stats.items():
-      ratio = diff(stats[:, tx] + stats[:, rx]) / diff(u.t)
-      if ratio.size > 0:
-        max_pr = max(max_pr, amax(ratio))
+      ratio = _per_interval_rate(stats[:, tx] + stats[:, rx], u.t)
+      fin = ratio[np.isfinite(ratio)]
+      if fin.size > 0:
+        max_pr = max(max_pr, fin.max())
     if max_pr == 0:
       return None, typename, '#/s'
     value = max_pr
@@ -674,17 +693,21 @@ class node_imbalance():
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, '%'
+    user_i = schema["user"].index
     max_usage = zeros(u.nt - 1)
     for hostname, stats in _stats.items():
-      max_usage = maximum(max_usage,
-                          diff(stats[:, schema["user"].index]) / diff(u.t))
+      rate = _per_interval_rate(stats[:, user_i], u.t)
+      max_usage = maximum(max_usage, np.nan_to_num(rate, nan=-np.inf))
 
     max_imbalance = []
     for hostname, stats in _stats.items():
-      max_imbalance += [
-          mean((max_usage - diff(stats[:, schema["user"].index]) / diff(u.t)) /
-               max_usage)
-      ]
+      rate = _per_interval_rate(stats[:, user_i], u.t)
+      valid = (max_usage > 0) & np.isfinite(rate)
+      if np.any(valid):
+        rel = (max_usage[valid] - rate[valid]) / max_usage[valid]
+        max_imbalance += [mean(rel)]
+      else:
+        max_imbalance += [float("nan")]
     if max_imbalance == []:
       return None, typename, '%'
     value = 100 * amax([0. if isnan(x) else x for x in max_imbalance])
@@ -703,13 +726,15 @@ class time_imbalance():
       return None, typename, '%'
     tmid = (u.t[:-1] + u.t[1:]) / 2.0
     dt = diff(u.t)
+    user_i = schema["user"].index
     vals = []
     for hostname, stats in _stats.items():
+      rate = _per_interval_rate(stats[:, user_i], u.t)
+      rate = np.nan_to_num(rate, nan=0.0)
       # skip first and last two time slices
       for i in [x + 2 for x in range(len(u.t) - 4)]:
         r1 = range(i)
         r2 = [x + i for x in range(len(dt) - i)]
-        rate = diff(stats[:, schema["user"].index]) / diff(u.t)
         # integral before time slice
         a = trapz(rate[r1], tmid[r1]) / (tmid[i] - tmid[0])
         if a == 0:
