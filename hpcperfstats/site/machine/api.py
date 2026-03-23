@@ -39,7 +39,6 @@ from .cache_utils import (
     KEY_ADMIN_CACHE_STATS,
     KEY_ADMIN_RMQ_STATS,
     KEY_ADMIN_RMQ_SNAPSHOT,
-    KEY_ADMIN_RMQ_HOST_STATS,
     KEY_ADMIN_TIMESCALE_STATS,
     KEY_ADMIN_HOST_STATS,
     KEY_DATES,
@@ -693,13 +692,6 @@ def _get_rabbitmq_stats():
 
 def _get_recent_rabbitmq_host_stats():
     """Return per-host last-seen timestamps sourced directly from Redis keys."""
-    try:
-        cached_stats = cache.get(KEY_ADMIN_RMQ_HOST_STATS)
-        if isinstance(cached_stats, list):
-            return cached_stats
-    except Exception:
-        cached_stats = None
-
     now = timezone.now()
     host_stats = []
 
@@ -765,11 +757,6 @@ def _get_recent_rabbitmq_host_stats():
                 )
     except Exception:
         host_stats = []
-
-    try:
-        cache.set(KEY_ADMIN_RMQ_HOST_STATS, host_stats, timeout=TIMEOUT_ADMIN_STATS)
-    except Exception:
-        pass
     return host_stats
 
 
