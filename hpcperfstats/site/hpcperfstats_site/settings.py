@@ -125,8 +125,12 @@ STATIC_ROOT = ''
 # Example: "http://example.com/static/", "http://static.example.com/"
 STATIC_URL = '/static/'
 
-# Additional locations of static files
-STATICFILES_DIRS = (os.path.join(DIR, 'static/'),)
+# Additional locations of static files.
+# In some packaged/containerized installs this app-level static directory may
+# not exist as a real filesystem path, so only include existing directories to
+# avoid Django staticfiles.W004 warnings at startup.
+_static_dir = os.path.join(DIR, "static")
+STATICFILES_DIRS = (_static_dir,) if os.path.isdir(_static_dir) else ()
 
 # List of finder classes that know how to find static files in
 # various locations.

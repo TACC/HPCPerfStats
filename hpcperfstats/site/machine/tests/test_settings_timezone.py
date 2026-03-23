@@ -1,5 +1,6 @@
 """Tests that Django TIME_ZONE comes from hpcperfstats.ini DEFAULT.timezone."""
 
+import os
 import warnings
 
 from django.conf import settings
@@ -22,4 +23,10 @@ def test_cache_key_warning_is_suppressed_globally():
         module="django.core.cache.backends.base",
     )
   assert not caught
+
+
+def test_staticfiles_dirs_only_contains_existing_directories():
+  """STATICFILES_DIRS includes only paths that exist on disk."""
+  for static_dir in settings.STATICFILES_DIRS:
+    assert os.path.isdir(static_dir)
 
