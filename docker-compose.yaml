@@ -7,6 +7,7 @@ include:
 services:
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no", "--maxmemory", "8gb", "--maxmemory-policy", "allkeys-lru"]
     security_opt:
       - seccomp:unconfined
     networks:
