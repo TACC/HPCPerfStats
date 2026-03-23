@@ -58,20 +58,36 @@ export default function JobDetail() {
         setDetailsLoading(true);
 
         // 2) Load plots after we've rendered the job page.
-        api
-          .getJobPlots(pk)
-          .then((jobPlots) => {
+        const fetchPlotsWithPolling = async () => {
+          let keepLoading = false;
+          try {
+            const jobPlots = await api.getJobPlots(pk);
             if (cancelled) return;
+
+            if (jobPlots?.status === "loading") {
+              keepLoading = true;
+              const retryAfterMs = Math.max(
+                250,
+                Number(jobPlots.retry_after_seconds ?? 2) * 1000
+              );
+              setTimeout(() => {
+                if (!cancelled) fetchPlotsWithPolling();
+              }, retryAfterMs);
+              return;
+            }
+
             setPlots(jobPlots);
-          })
-          .catch(() => {
+          } catch {
             // eslint-disable-next-line no-console
             console.warn("Failed to load job plots");
-          })
-          .finally(() => {
+          } finally {
             if (cancelled) return;
-            setPlotsLoading(false);
-          });
+            if (!keepLoading) {
+              setPlotsLoading(false);
+            }
+          }
+        };
+        fetchPlotsWithPolling();
 
         api
           .getJobDetail(pk)

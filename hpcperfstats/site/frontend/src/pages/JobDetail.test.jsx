@@ -142,4 +142,34 @@ describe("JobDetail", () => {
     expect(container.querySelector(".col-sm-20")).toBeNull();
     expect(container.querySelector(".col-sm-12")).toBeTruthy();
   });
+
+  it("keeps host-level loading message visible while plots API reports loading", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+      minimalJobDetailResponse
+    );
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
+      minimalJobDetailResponse
+    );
+    const getJobPlotsSpy = vi
+      .spyOn(apiModule.api, "getJobPlots")
+      .mockResolvedValueOnce({
+        status: "loading",
+        retry_after_seconds: 0,
+      })
+      .mockResolvedValueOnce(minimalPlotsResponse);
+
+    renderJobDetail("12345");
+
+    await waitFor(() => {
+      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(getJobPlotsSpy).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
+    });
+  });
 });
