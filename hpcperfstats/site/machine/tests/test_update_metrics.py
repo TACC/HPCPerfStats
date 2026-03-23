@@ -1,6 +1,8 @@
 """Unit tests for analysis.metrics.update_metrics (_iter_chunked_pks).
 
 """
+from datetime import datetime
+
 import pytest
 
 from hpcperfstats.analysis.metrics.update_metrics import _iter_chunked_pks
@@ -61,6 +63,18 @@ def test_notify_parent_if_sigterm_sends_sigchld(monkeypatch):
 
   update_metrics._notify_parent_if_sigterm([True])
   assert calls == ["sigchld"]
+
+
+def test_default_metrics_date_range_seven_days(monkeypatch):
+  """No-arg CLI default spans seven calendar days through today (local midnight bounds)."""
+  monkeypatch.setattr(
+      update_metrics,
+      "_today_datetime",
+      lambda: datetime(2025, 3, 23, 15, 30, 0),
+  )
+  start, end = update_metrics._default_metrics_date_range()
+  assert end == datetime(2025, 3, 23, 0, 0, 0)
+  assert start == datetime(2025, 3, 17, 0, 0, 0)
 
 
 def test_install_sigterm_handler_sets_flag_and_raises(monkeypatch):
