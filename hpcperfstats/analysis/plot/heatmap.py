@@ -18,24 +18,53 @@ from bokeh.plotting import figure
 from hpcperfstats.analysis.gen import utils
 
 
+def _host_cpi_series(schema, stats):
+  """Per-interval CPI (length nt-1); caller extends to length nt. Returns None if unsupported."""
+  events = frozenset(schema.events)
+  if "CLOCKS_UNHALTED_CORE" in events:
+    instr_names = ("INSTRUCTIONS_RETIRED", "INST_RETIRED")
+    for inm in instr_names:
+      if inm in events:
+        ci = schema["CLOCKS_UNHALTED_CORE"].index
+        ii = schema[inm].index
+        return numpy.diff(stats[:, ci]) / numpy.diff(stats[:, ii])
+  instr_idx = None
+  for inm in ("INSTRUCTIONS_RETIRED", "INST_RETIRED"):
+    if inm in events:
+      instr_idx = schema[inm].index
+      break
+  if instr_idx is None:
+    return None
+  for cyc in ("APERF", "MPERF"):
+    if cyc in events:
+      ci = schema[cyc].index
+      return numpy.diff(stats[:, ci]) / numpy.diff(stats[:, instr_idx])
+  return None
+
+
 class HeatMap():
   """Builds a Bokeh heatmap of CPI (cycles/instruction) by host and time from a utils-compatible job.
 
     """
 
   def plot(self, job):
-    """Compute per-host CPI from PMC CLOCKS_UNHALTED_CORE and INSTRUCTIONS_RETIRED, return a Bokeh figure with rect glyphs and color bar.
+    """Compute per-host CPI from PMC (legacy Intel fixed, or APERF/MPERF + retired), return a Bokeh figure.
 
         """
     u = utils.utils(job)
     schema, _stats = u.get_type("pmc")
 
     host_cpi = []
-    for hostname, stats in _stats.items():
-      cpi = numpy.diff(
-          stats[:, schema["CLOCKS_UNHALTED_CORE"].index]) / numpy.diff(
-              stats[:, schema["INSTRUCTIONS_RETIRED"].index])
-      host_cpi += [numpy.append(cpi, cpi[-1])]
+    for hostname in u.hostnames:
+      stats = _stats.get(hostname)
+      if stats is None:
+        return None
+      cpi = _host_cpi_series(schema, stats)
+      if cpi is None:
+        return None
+      host_cpi.append(numpy.append(cpi, cpi[-1]))
+    if not host_cpi:
+      return None
     host_cpi = numpy.array(host_cpi).flatten()
     host_cpi = numpy.nan_to_num(host_cpi)
     times = (job.times - job.times[0]).astype(str)

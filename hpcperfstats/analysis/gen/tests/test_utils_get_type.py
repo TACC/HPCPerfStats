@@ -39,3 +39,22 @@ def test_get_type_skips_hosts_without_typename():
   # Only host1 has nvidia_gpu stats; host2 is skipped.
   assert set(stats.keys()) == {"host1"}
   assert "gpu0" in stats["host1"]
+
+
+def test_amd64_pmc_sets_pmc_and_freq_for_get_type():
+  """AMD jobs expose amd64_pmc as logical 'pmc' like Intel typenames."""
+  job = _MockJob()
+  job.schemas = {"amd64_pmc": ["FLOPS", "APERF"]}
+  job.hosts = {
+      "h1": _MockHost({
+          "amd64_pmc": {
+              "0": np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float64),
+          }
+      }),
+  }
+  u = utils(job)
+  assert u.pmc == "amd64_pmc"
+  assert u.freq == 2.7
+  schema, stats = u.get_type("pmc", aggregate=True)
+  assert schema is not None
+  assert "h1" in stats

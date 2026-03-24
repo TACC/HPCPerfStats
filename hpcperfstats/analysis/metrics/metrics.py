@@ -70,6 +70,18 @@ NO_SIMPLE_SAMPLES_MSG = (
 )
 METRIC_NOT_COMPUTED_YET = "Metric not computed"
 
+# Intel FP_ARITH events summed for GFLOP/s when amd64_pmc FLOPS is unavailable.
+_INTEL_FP_ARITH_EVENTS = [
+    "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",
+    "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE",
+    "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE",
+    "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE",
+    "FP_ARITH_INST_RETIRED_SCALAR_SINGLE",
+    "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE",
+    "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE",
+    "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
+]
+
 
 def _per_interval_rate(values, t):
   """Compute diff(values) / diff(t) without divide-by-zero.
@@ -486,6 +498,32 @@ class Metrics():
     per_host_vals = grouped.groupby("host")["sum"].mean()
     return float(per_host_vals.mean())
 
+  def _job_arc_avg_flops(self, jt):
+    """GFLOP/s from amd64_pmc FLOPS, else summed Intel FP_ARITH_INST_RETIRED_*.
+
+    Returns (mean_gf, typename_used) or (None, None).
+    """
+    v = self.job_arc(
+        jt,
+        typename="amd64_pmc",
+        events=["FLOPS"],
+        conv=1e-9,
+        units="GF",
+    )
+    if v is not None:
+      return v, "amd64_pmc"
+    for intel_typ in ("intel_8pmc3", "intel_4pmc3"):
+      v = self.job_arc(
+          jt,
+          typename=intel_typ,
+          events=_INTEL_FP_ARITH_EVENTS,
+          conv=1e-9,
+          units="GF",
+      )
+      if v is not None:
+        return v, intel_typ
+    return None, None
+
   # Compute metric
   def compute_metrics(self, job):
     """Compute metrics for one job; return dict with rows (metrics_data-shaped dicts) and distinct_time_count.
@@ -521,12 +559,17 @@ class Metrics():
         }
 
       for metric_name, metric_obj in self.simple_metrics_list.items():
-        value = self.job_arc(jt, **metric_obj)
+        if metric_name == "avg_flops":
+          value, flops_typename = self._job_arc_avg_flops(jt)
+          row_type = flops_typename or metric_obj["typename"]
+        else:
+          value = self.job_arc(jt, **metric_obj)
+          row_type = metric_obj["typename"]
 
         if value is None:
           results.append({
               "jid": job,
-              "type": metric_obj["typename"],
+              "type": row_type,
               "metric": metric_name,
               "units": metric_obj["units"],
               "value": None,
@@ -535,7 +578,7 @@ class Metrics():
         else:
           results.append({
               "jid": job,
-              "type": metric_obj["typename"],
+              "type": row_type,
               "metric": metric_name,
               "units": metric_obj["units"],
               "value": value,
@@ -636,8 +679,10 @@ def build_job_metrics_display_list(job):
 
 
 class avg_freq():
-  """Average CPU frequency (GHz) from PMC CLOCKS_UNHALTED_CORE/CLOCKS_UNHALTED_REF.
+  """Average CPU frequency (GHz) from PMC.
 
+  Uses CLOCKS_UNHALTED_CORE/CLOCKS_UNHALTED_REF when present; otherwise APERF/MPERF
+  with the same nominal reference scaling as Intel (u.freq * APERF/MPERF).
     """
 
   def compute_metric(self, u):
@@ -645,15 +690,32 @@ class avg_freq():
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, 'GHz'
-    ci = schema["CLOCKS_UNHALTED_CORE"].index
-    ri = schema["CLOCKS_UNHALTED_REF"].index
+    events = frozenset(schema.events)
     per_host = []
-    for hostname, stats in _stats.items():
-      dc = stats[-1, ci] - stats[0, ci]
-      dr = stats[-1, ri] - stats[0, ri]
-      if dr == 0:
-        continue
-      per_host.append(u.freq * dc / dr)
+
+    if "CLOCKS_UNHALTED_CORE" in events and "CLOCKS_UNHALTED_REF" in events:
+      ci = schema["CLOCKS_UNHALTED_CORE"].index
+      ri = schema["CLOCKS_UNHALTED_REF"].index
+      for hostname, stats in _stats.items():
+        dc = stats[-1, ci] - stats[0, ci]
+        dr = stats[-1, ri] - stats[0, ri]
+        if dr == 0:
+          continue
+        per_host.append(u.freq * dc / dr)
+    elif "APERF" in events and "MPERF" in events:
+      if u.freq is None:
+        return None, typename, 'GHz'
+      ai = schema["APERF"].index
+      mi = schema["MPERF"].index
+      for hostname, stats in _stats.items():
+        da = stats[-1, ai] - stats[0, ai]
+        dm = stats[-1, mi] - stats[0, mi]
+        if dm == 0:
+          continue
+        per_host.append(u.freq * da / dm)
+    else:
+      return None, typename, 'GHz'
+
     if not per_host:
       return None, typename, 'GHz'
     value = float(mean(per_host))

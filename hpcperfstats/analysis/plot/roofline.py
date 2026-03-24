@@ -44,12 +44,21 @@ def _get_flops_bw_df(jt):
             "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE",
             "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
         ]
-        agg_flops = jt.get_aggregate_df("intel_8pmc3", "arc", fp_events, 1e-9)
+        agg_flops = None
+        for intel_typ in ("intel_8pmc3", "intel_4pmc3"):
+            cand = jt.get_aggregate_df(intel_typ, "arc", fp_events, 1e-9)
+            if not cand.empty and "sum_val" in cand.columns:
+                agg_flops = cand
+                break
         agg_bw = jt.get_aggregate_df(
             "intel_skx_imc", "arc", ["CAS_READS", "CAS_WRITES"],
             64 / (1024 ** 3),
         )
-        if not agg_flops.empty and "sum_val" in agg_flops.columns and not agg_bw.empty and "sum_val" in agg_bw.columns:
+        if (
+            agg_flops is not None
+            and not agg_bw.empty
+            and "sum_val" in agg_bw.columns
+        ):
             flops_gf = agg_flops.rename(columns={"sum_val": "flops_gf"})[["host", "time", "flops_gf"]]
             bw_gb = agg_bw.rename(columns={"sum_val": "bw_gb"})[["host", "time", "bw_gb"]]
 

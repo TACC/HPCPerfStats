@@ -5,10 +5,11 @@ import numpy as np
 import pytest
 from pandas import Timestamp
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from hpcperfstats.analysis.metrics.metrics import (
     METRIC_NOT_COMPUTED_YET,
+    Metrics,
     _EventIndex,
     _Host,
     _Schema,
@@ -133,6 +134,91 @@ def test_avg_freq_mean_across_hosts():
   assert abs(value - 1.0) < 1e-9
   assert typename == "pmc"
   assert units == "GHz"
+
+
+def test_avg_freq_aperf_mperf_path():
+  """avg_freq uses APERF/MPERF when fixed counter names are absent (Intel/AMD PMC)."""
+  schema = _Schema(["APERF", "MPERF", "INST_RETIRED"])
+  stats = np.array([[0.0, 0.0, 0.0], [200.0, 100.0, 50.0]], dtype=np.float64)
+
+  class MockU:
+    freq = 2.5
+
+    def get_type(self, typename):
+      return schema, {"host1": stats}
+
+  u = MockU()
+  value, typename, units = avg_freq().compute_metric(u)
+  assert abs(value - 5.0) < 1e-9
+  assert typename == "pmc"
+  assert units == "GHz"
+
+
+def test_avg_freq_aperf_mperf_returns_none_without_freq():
+  """APERF/MPERF branch requires u.freq (nominal reference GHz)."""
+  schema = _Schema(["APERF", "MPERF"])
+  stats = np.array([[0.0, 0.0], [100.0, 50.0]], dtype=np.float64)
+
+  class MockU:
+    freq = None
+
+    def get_type(self, typename):
+      return schema, {"host1": stats}
+
+  u = MockU()
+  value, typename, units = avg_freq().compute_metric(u)
+  assert value is None
+  assert typename == "pmc"
+  assert units == "GHz"
+
+
+def test_job_arc_avg_flops_falls_back_to_intel_when_amd_missing():
+  """avg_flops aggregation tries amd64_pmc FLOPS then intel_8pmc3 FP_ARITH sum."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") == "amd64_pmc":
+      return None
+    if kw.get("typename") == "intel_8pmc3":
+      return 2.5
+    if kw.get("typename") == "intel_4pmc3":
+      return 99.0
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_flops(object())
+  assert abs(value - 2.5) < 1e-9
+  assert typename == "intel_8pmc3"
+
+
+def test_job_arc_avg_flops_uses_intel_4pmc3_when_8_empty():
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") == "amd64_pmc":
+      return None
+    if kw.get("typename") == "intel_8pmc3":
+      return None
+    if kw.get("typename") == "intel_4pmc3":
+      return 1.25
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_flops(object())
+  assert abs(value - 1.25) < 1e-9
+  assert typename == "intel_4pmc3"
+
+
+def test_job_arc_avg_flops_uses_amd_when_present():
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") == "amd64_pmc":
+      return 9.0
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_flops(object())
+  assert abs(value - 9.0) < 1e-9
+  assert typename == "amd64_pmc"
 
 
 def test_avg_ethbw_mean_across_hosts():

@@ -38,7 +38,9 @@ class utils():
         "intel_knl": 1.4,
         "intel_skx": 2.1,
         "intel_8pmc3": 2.7,
-        "intel_4pmc3": 2.7
+        "intel_4pmc3": 2.7,
+        # Nominal reference GHz for APERF/MPERF ratio (same role as Intel list above).
+        "amd64_pmc": 2.7,
     }
     imc_list = [
         "intel_snb_imc", "intel_ivb_imc", "intel_hsw_imc", "intel_bdw_imc",
