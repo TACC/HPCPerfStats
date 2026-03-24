@@ -1,5 +1,6 @@
 """Pure helpers for sync_timedb archiving, tar utilities, and file discovery (no Django). Used by sync_timedb and by unit tests."""
 import os
+import subprocess
 import tarfile
 from datetime import datetime, timedelta
 
@@ -26,15 +27,48 @@ def get_existing_archive_members(tar_path):
 
 
 def get_tar_file_tasks(tar_path):
-  """Return list of (tar_path, member_name) for file members only (no dirs)."""
-  tasks = []
-  with file_read_lock_wait(tar_path):
-    with tarfile.open(tar_path, 'r') as archive_tar:
-      for member_info in archive_tar.getmembers():
-        if not member_info.isfile():
-          continue
-        tasks.append((tar_path, member_info.name))
-  return tasks
+  """Return list of (tar_path, member_name) for file members only (no dirs).
+
+  If the tar is unreadable and a sibling ``.tar.gz`` exists, delete the
+  unreadable tar, restore it with pigz, and retry once.
+  """
+  def _read_members():
+    members = []
+    with file_read_lock_wait(tar_path):
+      with tarfile.open(tar_path, 'r') as archive_tar:
+        for member_info in archive_tar.getmembers():
+          if not member_info.isfile():
+            continue
+          members.append((tar_path, member_info.name))
+    return members
+
+  def _restore_from_gzip():
+    gz_path = "%s.gz" % tar_path
+    if not os.path.exists(gz_path):
+      return False
+    try:
+      if os.path.exists(tar_path):
+        os.remove(tar_path)
+      subprocess.check_output(['/usr/bin/pigz', '-v', '-d', gz_path])
+      return True
+    except (OSError, subprocess.CalledProcessError):
+      return False
+
+  try:
+    return _read_members()
+  except (tarfile.TarError, OSError, EOFError):
+    log_print(
+        "Unable to read tar %s (possible corruption); attempting restore from %s.gz"
+        % (tar_path, tar_path)
+    )
+    if not _restore_from_gzip():
+      log_print(
+          "Tar recovery failed for %s; no usable gzip backup or pigz failed"
+          % tar_path
+      )
+      raise
+    log_print("Tar recovery succeeded for %s; retrying tar read" % tar_path)
+  return _read_members()
 
 
 def filter_files_to_add_to_archive(stats_files, existing_members, debug=False):

@@ -1,5 +1,6 @@
 """Unit tests for sync_timedb archive helpers and main-block helpers (no Django)."""
 import os
+import subprocess
 import tarfile
 from datetime import datetime, timedelta
 
@@ -66,6 +67,129 @@ def test_get_tar_file_tasks_empty_tar(tmp_path):
   with tarfile.open(tar_path, "w"):
     pass
   assert get_tar_file_tasks(str(tar_path)) == []
+
+
+def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
+  """Corrupt tar with sibling .gz is restored via pigz and retried once."""
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_path = str(tmp_path / "broken.tar")
+  gz_path = "%s.gz" % tar_path
+
+  class _NoOpLock:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc, tb):
+      return False
+
+  class _Member:
+    def __init__(self, name, is_file):
+      self.name = name
+      self._is_file = is_file
+
+    def isfile(self):
+      return self._is_file
+
+  class _FakeTar:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc, tb):
+      return False
+
+    def getmembers(self):
+      return [_Member("a.txt", True), _Member("dir", False)]
+
+  open_calls = {"count": 0}
+  remove_calls = []
+  pigz_calls = []
+
+  def _open_mock(path, mode):
+    assert path == tar_path
+    assert mode == "r"
+    open_calls["count"] += 1
+    if open_calls["count"] == 1:
+      raise tarfile.ReadError("corrupt tar")
+    return _FakeTar()
+
+  monkeypatch.setattr(helpers, "file_read_lock_wait", lambda _p: _NoOpLock())
+  monkeypatch.setattr(helpers.tarfile, "open", _open_mock)
+  monkeypatch.setattr(helpers.os.path, "exists", lambda p: p in (tar_path, gz_path))
+  monkeypatch.setattr(
+      helpers.os,
+      "remove",
+      lambda p: remove_calls.append(p),
+  )
+  monkeypatch.setattr(
+      helpers.subprocess,
+      "check_output",
+      lambda cmd: pigz_calls.append(cmd) or b"",
+  )
+
+  assert get_tar_file_tasks(tar_path) == [(tar_path, "a.txt")]
+  assert open_calls["count"] == 2
+  assert remove_calls == [tar_path]
+  assert pigz_calls == [[
+      "/usr/bin/pigz", "-v", "-d", "-p", str(helpers.pigz_thread_count), gz_path
+  ]]
+
+
+def test_get_tar_file_tasks_raises_when_corrupt_and_no_gz(monkeypatch, tmp_path):
+  """Corrupt tar without sibling .gz surfaces the read error."""
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_path = str(tmp_path / "broken.tar")
+
+  class _NoOpLock:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc, tb):
+      return False
+
+  monkeypatch.setattr(helpers, "file_read_lock_wait", lambda _p: _NoOpLock())
+  monkeypatch.setattr(
+      helpers.tarfile,
+      "open",
+      lambda _path, _mode: (_ for _ in ()).throw(tarfile.ReadError("corrupt tar")),
+  )
+  monkeypatch.setattr(helpers.os.path, "exists", lambda _p: False)
+
+  with pytest.raises(tarfile.ReadError):
+    get_tar_file_tasks(tar_path)
+
+
+def test_get_tar_file_tasks_raises_when_pigz_restore_fails(monkeypatch, tmp_path):
+  """Corrupt tar with .gz still raises when pigz restore fails."""
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_path = str(tmp_path / "broken.tar")
+  gz_path = "%s.gz" % tar_path
+
+  class _NoOpLock:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc, tb):
+      return False
+
+  monkeypatch.setattr(helpers, "file_read_lock_wait", lambda _p: _NoOpLock())
+  monkeypatch.setattr(
+      helpers.tarfile,
+      "open",
+      lambda _path, _mode: (_ for _ in ()).throw(tarfile.ReadError("corrupt tar")),
+  )
+  monkeypatch.setattr(helpers.os.path, "exists", lambda p: p == gz_path or p == tar_path)
+  monkeypatch.setattr(helpers.os, "remove", lambda _p: None)
+  monkeypatch.setattr(
+      helpers.subprocess,
+      "check_output",
+      lambda _cmd: (_ for _ in ()).throw(subprocess.CalledProcessError(2, "pigz")),
+  )
+
+  with pytest.raises(tarfile.ReadError):
+    get_tar_file_tasks(tar_path)
 
 
 # --- get_existing_archive_members ---

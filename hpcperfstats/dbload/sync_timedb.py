@@ -71,6 +71,8 @@ local_timezone = cfg.get_local_timezone()
 
 # Thread count for database loading and archival
 thread_count = cfg.get_worker_thread_count(4)
+# pigz thread cap: one quarter of total cores, clamped to at least one.
+pigz_thread_count = max(1, cfg.get_worker_thread_count(4))
 
 # amount of concurrent pigz using thread_count*2 cores
 archive_thread_count = int(thread_count / 2)
@@ -293,7 +295,9 @@ def _decompress_gz(gz_path):
     return
   try:
     with file_write_lock(gz_path):
-      subprocess.check_output(['/usr/bin/pigz', '-v', '-d', gz_path])
+      subprocess.check_output(
+          ['/usr/bin/pigz', '-v', '-d', '-p', str(pigz_thread_count), gz_path]
+      )
   except subprocess.CalledProcessError:
     pass
 
@@ -310,9 +314,9 @@ def _append_to_tar(tar_path, file_paths):
 
 
 def _compress_tar_gz(tar_path, num_threads=None):
-  """Compress .tar with pigz. num_threads defaults to thread_count * 2."""
+  """Compress .tar with pigz. num_threads defaults to one quarter total cores."""
   if num_threads is None:
-    num_threads = thread_count * 2
+    num_threads = pigz_thread_count
   if not os.path.exists(tar_path):
     return
   gz_path = "%s.gz" % tar_path
