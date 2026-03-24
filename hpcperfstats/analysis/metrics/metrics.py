@@ -84,6 +84,31 @@ def _per_interval_rate(values, t):
   return out
 
 
+def _peak_interval_rate_from_cluster_mean(u, typename, column_indices, divisor):
+  """Peak dy/dt from sum of host-averaged columns at each global timestamp.
+
+  Uses ``job.cluster_mean_by_type[typename]`` (see ``_JobForMetrics``). Falls
+  back is left to callers when this returns None.
+  """
+  cmap = getattr(u.job, "cluster_mean_by_type", None) or {}
+  cm = cmap.get(typename)
+  if cm is None or cm.size == 0 or cm.shape[0] < 2:
+    return None
+  s = np.zeros(cm.shape[0], dtype=np.float64)
+  for j in column_indices:
+    if j < 0 or j >= cm.shape[1]:
+      return None
+    s = s + cm[:, j]
+  ratio = _per_interval_rate(s, u.t)
+  fin = ratio[np.isfinite(ratio)]
+  if fin.size == 0:
+    return None
+  peak = float(fin.max())
+  if divisor:
+    peak = peak / float(divisor)
+  return peak if peak > 0 else None
+
+
 class _EventIndex:
   """Holds the integer index of an event in a schema. Used by _Schema.__getitem__.
 
@@ -132,6 +157,10 @@ class _JobForMetrics:
     self.jid = jt.jid
     self.hosts = {}
     self.schemas = {}
+    # Per-typename (n_times, n_events): mean of `value` across hosts at each
+    # global timestamp (for peak interval-rate metrics; avoids bogus diffs when
+    # nodes share a time axis but sparse samples per host).
+    self.cluster_mean_by_type = {}
     self.acct = {"cores": 1, "nodes": 1}
 
     df = jt.get_full_host_data_df(
@@ -141,6 +170,7 @@ class _JobForMetrics:
     if df.empty or "time" not in df.columns:
       self.times = np.array([])
       self.per_host_distinct_time_sum = 0
+      self.cluster_mean_by_type = {}
       return
 
     # Global sorted time axis
@@ -183,10 +213,28 @@ class _JobForMetrics:
       if type_df.empty:
         continue
 
+      # Mean across hosts at each (time, event) for interval-rate peak metrics.
+      pavg = type_df[["time", "event", "value"]].copy()
+      pavg["time"] = to_datetime(pavg["time"]).dt.tz_localize(None)
+      try:
+        cluster_pivot = (
+            pavg.groupby(["time", "event"])["value"].mean().unstack(fill_value=np.nan)
+        )
+        cluster_pivot = cluster_pivot.reindex(
+            index=times, fill_value=np.nan
+        ).reindex(columns=events, fill_value=np.nan)
+        self.cluster_mean_by_type[typename] = np.ascontiguousarray(
+            cluster_pivot.values, dtype=np.float64
+        )
+      except (ValueError, KeyError):
+        self.cluster_mean_by_type[typename] = np.full(
+            (len(times_index), len(events)), np.nan, dtype=np.float64
+        )
+
       for host, host_df in type_df.groupby("host"):
         host_obj = self.hosts[host]
         pivot = host_df.pivot_table(
-            index="time", columns="event", values="value", aggfunc="first"
+            index="time", columns="event", values="value", aggfunc="mean"
         )
         pivot = pivot.reindex(
             index=times_index, fill_value=0
@@ -384,7 +432,11 @@ class Metrics():
               events=None,
               conv=0,
               units=None):
-    """Aggregate arc by host and 5m time bucket via Django ORM. Returns mean of per-host mean sum_val, or None.
+    """Aggregate arc by host and 5m time bucket via Django ORM.
+
+    For each host: mean of per-bucket summed arc (after dropping the first bucket
+    per host). Returns the **arithmetic mean of those per-host values** across
+    hosts (all ``avg_*`` simple metrics use this path).
 
         """
     import pandas as pd
@@ -431,8 +483,8 @@ class Metrics():
     grouped = grouped.drop(index=first_idx)
     if grouped.empty:
       return None
-    df_n = grouped.groupby("host")["sum"].mean()
-    return float(df_n.mean())
+    per_host_vals = grouped.groupby("host")["sum"].mean()
+    return float(per_host_vals.mean())
 
   # Compute metric
   def compute_metrics(self, job):
@@ -593,16 +645,18 @@ class avg_freq():
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, 'GHz'
-    cycles = 0
-    cycles_ref = 0
+    ci = schema["CLOCKS_UNHALTED_CORE"].index
+    ri = schema["CLOCKS_UNHALTED_REF"].index
+    per_host = []
     for hostname, stats in _stats.items():
-      cycles += stats[-1, schema["CLOCKS_UNHALTED_CORE"].index] - \
-          stats[0, schema["CLOCKS_UNHALTED_CORE"].index]
-      cycles_ref += stats[-1, schema["CLOCKS_UNHALTED_REF"].index] - \
-          stats[0, schema["CLOCKS_UNHALTED_REF"].index]
-    if cycles_ref == 0:
+      dc = stats[-1, ci] - stats[0, ci]
+      dr = stats[-1, ri] - stats[0, ri]
+      if dr == 0:
+        continue
+      per_host.append(u.freq * dc / dr)
+    if not per_host:
       return None, typename, 'GHz'
-    value = u.freq * cycles / cycles_ref
+    value = float(mean(per_host))
     return value, typename, 'GHz'
 
 
@@ -616,11 +670,20 @@ class avg_ethbw():
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, 'MB/s'
-    bw = 0
+    rxi = schema["rx_bytes"].index
+    txi = schema["tx_bytes"].index
+    denom = u.dt * 1024 * 1024
+    if denom == 0:
+      return None, typename, 'MB/s'
+    per_host = []
     for hostname, stats in _stats.items():
-      bw += stats[-1, schema["rx_bytes"].index] - stats[0, schema["rx_bytes"].index] + \
-            stats[-1, schema["tx_bytes"].index] - stats[0, schema["tx_bytes"].index]
-    value = bw / (u.dt * u.nhosts * 1024 * 1024)
+      b = (
+          stats[-1, rxi] - stats[0, rxi] + stats[-1, txi] - stats[0, txi]
+      )
+      per_host.append(b / denom)
+    if not per_host:
+      return None, typename, 'MB/s'
+    value = float(mean(per_host))
     if value == 0:
       return None, typename, 'MB/s'
     return value, typename, 'MB/s'
@@ -636,10 +699,13 @@ class avg_gpuutil():
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, '%'
-    util = 0
+    ui = schema["utilization"].index
+    per_host = []
     for hostname, stats in _stats.items():
-      util += mean(stats[1:-1, schema["utilization"].index])
-    value = util / u.nhosts
+      per_host.append(float(mean(stats[1:-1, ui])))
+    if not per_host:
+      return None, typename, '%'
+    value = float(mean(per_host))
     if value == 0:
       return None, typename, '%'
     return value, typename, '%'
@@ -668,16 +734,20 @@ class avg_packetsize():
       tb, rb = schema["PortXmitData"].index, schema["PortRcvData"].index
       conv2mb = 125000
 
-    npacks = 0
-    nbytes = 0
+    per_host = []
     for hostname, stats in _stats.items():
-      npacks += stats[-1, tx] + stats[-1, rx] - \
-          stats[0, tx] - stats[0, rx]
-      nbytes += stats[-1, tb] + stats[-1, rb] - \
-          stats[0, tb] - stats[0, rb]
-    if npacks == 0:
+      npk = (
+          stats[-1, tx] + stats[-1, rx] - stats[0, tx] - stats[0, rx]
+      )
+      if npk == 0:
+        continue
+      nb = (
+          stats[-1, tb] + stats[-1, rb] - stats[0, tb] - stats[0, rb]
+      )
+      per_host.append(nb / (npk * conv2mb))
+    if not per_host:
       return None, typename, 'MB'
-    value = nbytes / (npacks * conv2mb)
+    value = float(mean(per_host))
     return value, typename, 'MB'
 
 
@@ -695,13 +765,17 @@ class max_fabricbw():
         return None, typename, 'MB'
       tx, rx = schema["port_xmit_data"].index, schema["port_rcv_data"].index
       conv2mb = 1024 * 1024
-    except:
+    except Exception:
       typename = "opa"
       schema, _stats = u.get_type(typename)
       if schema is None:
         return None, typename, 'MB'
       tx, rx = schema["PortXmitData"].index, schema["PortRcvData"].index
       conv2mb = 125000
+    cluster_peak = _peak_interval_rate_from_cluster_mean(
+        u, typename, [tx, rx], conv2mb)
+    if cluster_peak is not None:
+      return cluster_peak, typename, 'MB/s'
     for hostname, stats in _stats.items():
       ratio = _per_interval_rate(stats[:, tx] + stats[:, rx], u.t)
       fin = ratio[np.isfinite(ratio)]
@@ -725,6 +799,11 @@ class max_lnetbw():
       return None, typename, 'MB/s'
     max_bw = 0.0
     tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
+    div = 1024 * 1024
+    cluster_peak = _peak_interval_rate_from_cluster_mean(
+        u, typename, [tx, rx], div)
+    if cluster_peak is not None:
+      return cluster_peak, typename, 'MB/s'
     for hostname, stats in _stats.items():
       ratio = _per_interval_rate(stats[:, tx] + stats[:, rx], u.t)
       fin = ratio[np.isfinite(ratio)]
@@ -732,7 +811,7 @@ class max_lnetbw():
         max_bw = max(max_bw, fin.max())
     if max_bw == 0:
       return None, typename, 'MB/s'
-    value = max_bw / (1024 * 1024)
+    value = max_bw / div
     return value, typename, 'MB/s'
 
 
@@ -747,6 +826,17 @@ class max_mds():
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, 'iops'
+    mds_cols = [
+        "open", "close", "mmap", "fsync", "setattr", "truncate", "flock",
+        "getattr", "statfs", "alloc_inode", "setxattr", "listxattr",
+        "removexattr", "readdir", "create", "lookup", "link", "unlink",
+        "symlink", "mkdir", "rmdir", "mknod", "rename",
+    ]
+    col_idx = [schema[c].index for c in mds_cols]
+    cluster_peak = _peak_interval_rate_from_cluster_mean(
+        u, typename, col_idx, 1)
+    if cluster_peak is not None:
+      return cluster_peak, typename, 'iops'
     for hostname, stats in _stats.items():
       mds_sum = (
           stats[:, schema["open"].index] +
@@ -795,12 +885,17 @@ class max_packetrate():
       if schema is None:
         return None, typename, '#/s'
       tx, rx = schema["port_xmit_pkts"].index, schema["port_rcv_pkts"].index
-    except:
+    except Exception:
       typename = "opa"
       schema, _stats = u.get_type(typename)
       if schema is None:
         return None, typename, '#/s'
       tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
+
+    cluster_peak = _peak_interval_rate_from_cluster_mean(
+        u, typename, [tx, rx], 1)
+    if cluster_peak is not None:
+      return cluster_peak, typename, '#/s'
 
     for hostname, stats in _stats.items():
       ratio = _per_interval_rate(stats[:, tx] + stats[:, rx], u.t)
@@ -968,18 +1063,22 @@ class avg_vector_width_64b():
         "SSE_DOUBLE_PACKED": 2,
         "SIMD_DOUBLE_256": 4
     }
-    flops = 0.0
-    instr = 0.0
+    per_host = []
     for hostname, stats in _stats.items():
+      flops = 0.0
+      instr = 0.0
       for eventname in schema:
         if eventname in vector_widths.keys():
           index = schema[eventname].index
           instr += (stats[-1, index] - stats[0, index])
           flops += (stats[-1, index] -
                     stats[0, index]) * vector_widths[eventname]
-    if instr == 0:
+      if instr == 0:
+        continue
+      per_host.append(flops / instr)
+    if not per_host:
       return None, typename, '#'
-    value = flops / instr
+    value = float(mean(per_host))
     return value, typename, '#'
 
 
@@ -1034,16 +1133,20 @@ class avg_vector_width_32b():
         "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE": 8,
         "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE": 16
     }
-    flops = 0.0
-    instr = 0.0
+    per_host = []
     for hostname, stats in _stats.items():
+      flops = 0.0
+      instr = 0.0
       for eventname in schema:
         if eventname in vector_widths.keys():
           index = schema[eventname].index
           instr += (stats[-1, index] - stats[0, index])
           flops += (stats[-1, index] -
                     stats[0, index]) * vector_widths[eventname]
-    if instr == 0:
+      if instr == 0:
+        continue
+      per_host.append(flops / instr)
+    if not per_host:
       return None, typename, '#'
-    value = flops / instr
+    value = float(mean(per_host))
     return value, typename, '#'

@@ -46,3 +46,11 @@ def test_job_for_metrics_builds_time_axis_and_host_stats():
   # Shape: (n_times, n_events) -> 2 timestamps x 2 events
   assert host1_cpu.shape == (2, 2)
 
+  cm_cpu = job.cluster_mean_by_type["cpu"]
+  assert cm_cpu.shape == (2, 2)
+  # Host-averaged user/system at each global timestamp (user col 0, system 1)
+  assert abs(cm_cpu[0, 0] - 15.0) < 1e-9
+  assert abs(cm_cpu[0, 1] - 7.5) < 1e-9
+  assert abs(cm_cpu[1, 0] - 16.0) < 1e-9
+  assert abs(cm_cpu[1, 1] - 8.5) < 1e-9
+

@@ -12,6 +12,7 @@ from hpcperfstats.analysis.metrics.metrics import (
     _EventIndex,
     _Host,
     _Schema,
+    avg_ethbw,
     avg_freq,
     build_job_metrics_display_list,
     expected_job_metric_row_count,
@@ -112,6 +113,49 @@ def test_avg_freq_returns_none_when_cycles_ref_zero():
   assert value is None
   assert typename == "pmc"
   assert units == "GHz"
+
+
+def test_avg_freq_mean_across_hosts():
+  """avg_freq averages each host's implied frequency, then mean across hosts."""
+  schema = _Schema(["CLOCKS_UNHALTED_CORE", "CLOCKS_UNHALTED_REF"])
+  h1 = np.array([[0.0, 0.0], [100.0, 200.0]], dtype=np.float64)
+  h2 = np.array([[0.0, 0.0], [50.0, 100.0]], dtype=np.float64)
+
+  class MockU:
+    freq = 2.0
+
+    def get_type(self, typename):
+      return schema, {"a": h1, "b": h2}
+
+  u = MockU()
+  value, typename, units = avg_freq().compute_metric(u)
+  # host1: 2*100/200=1.0, host2: 2*50/100=1.0 -> mean 1.0
+  assert abs(value - 1.0) < 1e-9
+  assert typename == "pmc"
+  assert units == "GHz"
+
+
+def test_avg_ethbw_mean_across_hosts():
+  """avg_ethbw is mean of per-host (rx+tx delta)/(dt * 1MiB), not pooled sum/nhosts."""
+  schema = _Schema(["rx_bytes", "tx_bytes"])
+  s_lo = np.array([[0.0, 0.0], [100.0, 0.0]], dtype=np.float64)
+  s_hi = np.array([[0.0, 0.0], [300.0, 0.0]], dtype=np.float64)
+  delta_t = 10.0
+  denom = delta_t * 1024 * 1024
+
+  class MockU:
+    dt = delta_t
+    nhosts = 2
+
+    def get_type(self, typename):
+      return schema, {"h1": s_lo, "h2": s_hi}
+
+  u = MockU()
+  value, typename, units = avg_ethbw().compute_metric(u)
+  expected = float((100.0 / denom + 300.0 / denom) / 2.0)
+  assert abs(value - expected) < 1e-9
+  assert typename == "net"
+  assert units == "MB/s"
 
 
 def test_job_metrics_catalog_entries_matches_simple_plus_complex():
