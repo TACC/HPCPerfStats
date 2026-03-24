@@ -87,14 +87,17 @@ class HeatMap():
 def plot_from_jid_table(jt):
   """Build CPI heatmap from jid_table (ORM). Returns a Bokeh figure or None if no PMC data.
 
-  Uses intel_8pmc3 (APERF, INST_RETIRED) or amd64_pmc (APERF, INST_RETIRED) when available.
+  Uses intel_8pmc3 / amd64_pmc with (APERF or MPERF) and INST_RETIRED when available.
+  MPERF gives reference cycles per instruction if actual cycles (APERF) are absent.
   """
   if not jt.host_list:
     return None
   # Try intel then amd PMC for cycles and instructions
   for typ, events_cycles, events_instr in [
       ("intel_8pmc3", ["APERF"], ["INST_RETIRED"]),
+      ("intel_8pmc3", ["MPERF"], ["INST_RETIRED"]),
       ("amd64_pmc", ["APERF"], ["INST_RETIRED"]),
+      ("amd64_pmc", ["MPERF"], ["INST_RETIRED"]),
   ]:
     agg_cyc = jt.get_aggregate_df(typ, "arc", events_cycles, 1.0)
     agg_instr = jt.get_aggregate_df(typ, "arc", events_instr, 1.0)
@@ -105,6 +108,7 @@ def plot_from_jid_table(jt):
     merged = cyc.merge(instr, on=["host", "time"], how="inner")
     if merged.empty:
       continue
+    merged = merged.sort_values("time")
     merged["cpi"] = merged["cycles"] / merged["instr"].replace(0, numpy.nan)
     merged["cpi"] = merged["cpi"].fillna(0)
     merged["time_str"] = merged["time"].astype(str)

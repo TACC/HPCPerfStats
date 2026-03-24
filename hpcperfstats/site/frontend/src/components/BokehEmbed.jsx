@@ -44,6 +44,23 @@ const PLACEHOLDER_STYLE = {
   textAlign: "center",
 };
 
+/** Min height for the Bokeh root while embedding; avoids zero-size layout. */
+const BOKEH_EMBED_MIN_HEIGHT_PX = 280;
+
+/**
+ * Bokeh measures the target element during embed_item. If the plot div uses
+ * display:none, layout width/height are zero and the canvas often stays blank.
+ * Keep the target in normal flow and cover it with a placeholder overlay until ready.
+ */
+const PLACEHOLDER_OVERLAY_STYLE = {
+  ...PLACEHOLDER_STYLE,
+  position: "absolute",
+  inset: 0,
+  zIndex: 1,
+  minHeight: "100%",
+  boxSizing: "border-box",
+};
+
 /**
  * Injects Bokeh plot from API.
  * - If `item` (Bokeh json_item) is provided: renders a div with `id` and calls
@@ -154,11 +171,33 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
     </div>
   );
 
+  const placeholderOverlay = (
+    <div className="bokeh-plot-unavailable bokeh-embed-overlay" style={PLACEHOLDER_OVERLAY_STYLE} aria-live="polite">
+      {message}
+    </div>
+  );
+
+  const plotTargetLayoutStyle = hasData
+    ? {
+        display: "block",
+        width: "100%",
+        minHeight: showPlaceholder ? BOKEH_EMBED_MIN_HEIGHT_PX : undefined,
+      }
+    : {};
+
   if (item) {
+    const overlayActive = hasData && showPlaceholder;
     return (
-      <div ref={containerRef} className="bokeh-embed-wrapper">
-        {showPlaceholder ? placeholder : null}
-        <div id={id} className="bokeh-embed" style={{ display: showPlaceholder ? "none" : "block" }} />
+      <div
+        ref={containerRef}
+        className="bokeh-embed-wrapper"
+        style={{
+          position: "relative",
+          minHeight: overlayActive ? BOKEH_EMBED_MIN_HEIGHT_PX : undefined,
+        }}
+      >
+        {overlayActive ? placeholderOverlay : null}
+        <div id={id} className="bokeh-embed" style={plotTargetLayoutStyle} />
       </div>
     );
   }
@@ -171,15 +210,23 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
     );
   }
 
+  const overlayActive = hasData && showPlaceholder;
   return (
-    <div ref={containerRef} className="bokeh-embed-wrapper">
-      {showPlaceholder ? placeholder : null}
+    <div
+      ref={containerRef}
+      className="bokeh-embed-wrapper"
+      style={{
+        position: "relative",
+        minHeight: overlayActive ? BOKEH_EMBED_MIN_HEIGHT_PX : undefined,
+      }}
+    >
+      {overlayActive ? placeholderOverlay : null}
       <div className="bokeh-script-wrap" style={{ display: "none" }} />
       {div && (
         <div
           id={id}
           className="bokeh-embed"
-          style={{ display: showPlaceholder ? "none" : "block" }}
+          style={plotTargetLayoutStyle}
           dangerouslySetInnerHTML={{ __html: div }}
         />
       )}

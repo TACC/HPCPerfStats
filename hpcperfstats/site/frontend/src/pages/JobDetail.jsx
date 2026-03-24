@@ -454,7 +454,7 @@ export default function JobDetail() {
               <td>
                 <BokehEmbed
                   item={mplot_item}
-                  id="job-mscript"
+                  id={`job-mscript-${pk}`}
                   plotName="Summary plot"
                   unavailableReason={mplot_unavailable_reason}
                 />
@@ -462,7 +462,7 @@ export default function JobDetail() {
               <td>
                 <BokehEmbed
                   item={hplot_item}
-                  id="job-hscript"
+                  id={`job-hscript-${pk}`}
                   plotName="Heatmap"
                   unavailableReason={hplot_unavailable_reason}
                 />
@@ -472,7 +472,7 @@ export default function JobDetail() {
               <td colSpan={2}>
                 <BokehEmbed
                   item={rplot_item}
-                  id="job-roofline"
+                  id={`job-roofline-${pk}`}
                   plotName="Roofline"
                   unavailableReason={rplot_unavailable_reason}
                 />
