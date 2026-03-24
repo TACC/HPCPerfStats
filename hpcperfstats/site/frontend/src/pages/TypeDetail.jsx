@@ -23,7 +23,16 @@ export default function TypeDetail() {
   if (error) return <div className="container text-danger">Error: {error}</div>;
   if (!data) return null;
 
-  const { type_name, jobid, tscript, tdiv, tplot_item, stats_data = [], schema = [] } = data;
+  const {
+    type_name,
+    jobid,
+    tscript,
+    tdiv,
+    tplot_item,
+    tplot_unavailable_reason,
+    stats_data = [],
+    schema = [],
+  } = data;
 
   return (
     <div className="container-fluid">
@@ -36,6 +45,7 @@ export default function TypeDetail() {
           div={tdiv}
           id="type-bokeh"
           plotName="Type detail"
+          unavailableReason={tplot_unavailable_reason}
         />
       </div>
       {stats_data.length > 0 && (

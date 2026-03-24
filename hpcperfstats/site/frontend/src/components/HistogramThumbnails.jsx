@@ -22,7 +22,7 @@ function useIsMobile() {
  * One histogram: on desktop, thumbnail with full-size popover on hover/click.
  * On mobile, full histogram only, no popover, sized for viewport.
  */
-function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
+function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavailableReason }) {
   const isMobile = useIsMobile();
   const [hovered, setHovered] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -88,6 +88,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
             item={plotItemFull}
             id={fullId}
             plotName={title}
+            unavailableReason={unavailableReason}
           />
         </div>
       </div>
@@ -124,6 +125,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
           item={plotItemThumb}
           id={thumbId}
           plotName={title}
+          unavailableReason={unavailableReason}
         />
       </div>
       {showPopover && (
@@ -167,6 +169,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull }) {
                 item={plotItemFull}
                 id={fullId}
                 plotName={`${title} (full)`}
+                unavailableReason={unavailableReason}
               />
             )}
           </div>
@@ -218,6 +221,7 @@ export default function HistogramThumbnails({ histograms }) {
           title={h.title}
           plotItemThumb={h.plot_item_thumb}
           plotItemFull={h.plot_item_full}
+          unavailableReason={h.plot_unavailable_reason}
         />
       ))}
     </div>

@@ -1348,8 +1348,10 @@ def job_list_histograms(request):
                     "group": "metric",
                     "metric": metric_name or None,
                     "nj": 0,
+                    "title": JOB_HIST_DISPLAY_NAMES.get(metric_name, metric_name),
                     "plot_item_thumb": None,
                     "plot_item_full": None,
+                    "plot_unavailable_reason": "No jobs matched this query.",
                 }
             )
         return _JSONResponse(
@@ -1396,24 +1398,28 @@ def job_list_histograms(request):
         queue_cpu_full = queue_cpu_full_f.result()
 
         plots = []
-        if queue_thumb is not None and queue_full is not None:
-            plots.append(
-                {
-                    "key": "jobs_by_queue",
-                    "title": "Jobs by queue",
-                    "plot_item_thumb": json_item(queue_thumb),
-                    "plot_item_full": json_item(queue_full),
-                }
-            )
-        if queue_cpu_thumb is not None and queue_cpu_full is not None:
-            plots.append(
-                {
-                    "key": "cpu_hours_by_queue",
-                    "title": "Node hours by queue",
-                    "plot_item_thumb": json_item(queue_cpu_thumb),
-                    "plot_item_full": json_item(queue_cpu_full),
-                }
-            )
+        plots.append(
+            {
+                "key": "jobs_by_queue",
+                "title": "Jobs by queue",
+                "plot_item_thumb": json_item(queue_thumb) if queue_thumb is not None else None,
+                "plot_item_full": json_item(queue_full) if queue_full is not None else None,
+                "plot_unavailable_reason": None
+                if (queue_thumb is not None and queue_full is not None)
+                else "No queue histogram data available for this query.",
+            }
+        )
+        plots.append(
+            {
+                "key": "cpu_hours_by_queue",
+                "title": "Node hours by queue",
+                "plot_item_thumb": json_item(queue_cpu_thumb) if queue_cpu_thumb is not None else None,
+                "plot_item_full": json_item(queue_cpu_full) if queue_cpu_full is not None else None,
+                "plot_unavailable_reason": None
+                if (queue_cpu_thumb is not None and queue_cpu_full is not None)
+                else "No queue node-hour histogram data available for this query.",
+            }
+        )
         return _JSONResponse(
             {
                 "group": "queue",
@@ -1474,6 +1480,9 @@ def job_list_histograms(request):
                 "title": display_title,
                 "plot_item_thumb": json_item(p_thumb) if p_thumb is not None else None,
                 "plot_item_full": json_item(p_full) if p_full is not None else None,
+                "plot_unavailable_reason": None
+                if (p_thumb is not None and p_full is not None)
+                else f"No histogram data available for metric '{metric_name}' in this query.",
             }
         )
 
@@ -2154,6 +2163,7 @@ def type_detail(request, jid, type_name):
             "tscript": "",
             "tdiv": "",
             "tplot_item": None,
+            "tplot_unavailable_reason": "No device-level samples found for this job/type in host_data.",
             "stats_data": [],
             "schema": [],
         })
@@ -2184,6 +2194,7 @@ def type_detail(request, jid, type_name):
         "tscript": tscript,
         "tdiv": tdiv,
         "tplot_item": tplot_item,
+        "tplot_unavailable_reason": None if tplot_item is not None else "Type detail plot generation returned no data.",
         "stats_data": stats_data,
         "schema": schema,
     })
@@ -2243,6 +2254,7 @@ def host_plot(request):
     return Response({
         "host": host_fqdn,
         "plot_item": plot_item,
+        "plot_unavailable_reason": None if plot_item is not None else "No host plot data available for this host/time range.",
         "end_time__gte": start_dt.isoformat(),
         "end_time__lte": end_dt.isoformat(),
     })

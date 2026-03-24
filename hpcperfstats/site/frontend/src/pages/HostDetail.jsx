@@ -33,7 +33,7 @@ export default function HostDetail() {
   if (error) return <div className="container text-danger">Error: {error}</div>;
   if (!data) return null;
 
-  const { host: hostName, plot_item } = data;
+  const { host: hostName, plot_item, plot_unavailable_reason } = data;
 
   return (
     <div className="container-fluid">
@@ -41,13 +41,14 @@ export default function HostDetail() {
       <p className="text-muted">
         Time range: {formatDateTime(data.end_time__gte)} — {data.end_time__lte === "now()" ? "Now" : formatDateTime(data.end_time__lte)}
       </p>
-      {plot_item ? (
-        <div className="graphs">
-          <BokehEmbed item={plot_item} id="host-bokeh" plotName="Host plot" />
-        </div>
-      ) : (
-        <p>No plot data for this host and time range.</p>
-      )}
+      <div className="graphs">
+        <BokehEmbed
+          item={plot_item}
+          id="host-bokeh"
+          plotName="Host plot"
+          unavailableReason={plot_unavailable_reason}
+        />
+      </div>
     </div>
   );
 }

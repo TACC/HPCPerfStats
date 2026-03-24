@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import JobList from "./JobList";
@@ -17,6 +17,22 @@ function renderJobList(initialEntries = ["/jobs"]) {
 describe("JobList", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  beforeEach(() => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn().mockImplementation(() => ({
+        matches: false,
+        media: "",
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
   });
 
   it("shows loading indicator while fetching", () => {
@@ -72,6 +88,64 @@ describe("JobList", () => {
     });
     expect(screen.getByText("job1")).toBeInTheDocument();
     expect(screen.getByText("COMPLETED")).toBeInTheDocument();
+  });
+
+  it("shows histogram unavailable details and supports copy", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+      job_list: [],
+      nj: 0,
+      aggregates: {},
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    });
+    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({
+      plots: [
+        {
+          key: "jobs_by_queue",
+          title: "Jobs by queue",
+          plot_item_thumb: null,
+          plot_item_full: null,
+          plot_unavailable_reason:
+            "No queue histogram data available for this query.",
+        },
+      ],
+    });
+    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue({
+      metric: "runtime",
+      title: "Runtime",
+      plot_item_thumb: null,
+      plot_item_full: null,
+      plot_unavailable_reason:
+        "No histogram data available for metric 'runtime' in this query.",
+    });
+
+    renderJobList();
+
+    await waitFor(() => {
+      expect(screen.getByText("#Jobs = 0")).toBeInTheDocument();
+    });
+    expect(screen.getAllByText("Plot not available").length).toBeGreaterThan(0);
+
+    const detailsTriggers = screen.getAllByLabelText("Show plot error details");
+    fireEvent.mouseEnter(detailsTriggers[0]);
+
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "No queue histogram data available for this query."
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(
+        "No queue histogram data available for this query."
+      );
+    });
   });
 });
 

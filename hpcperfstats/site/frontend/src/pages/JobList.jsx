@@ -66,6 +66,7 @@ export default function JobList() {
           title: p.title,
           plot_item_thumb: p.plot_item_thumb,
           plot_item_full: p.plot_item_full,
+          plot_unavailable_reason: p.plot_unavailable_reason || null,
         }));
         setQueueHistStatus({ loading: false, error: null });
       } catch (e) {
@@ -84,11 +85,7 @@ export default function JobList() {
         return api
           .getJobMetricHistogram(params, metric)
           .then((metricData) => {
-            if (
-              !metricData ||
-              !metricData.plot_item_thumb ||
-              !metricData.plot_item_full
-            ) {
+            if (!metricData) {
               return null;
             }
             setMetricHistStatus((prev) => ({
@@ -99,6 +96,7 @@ export default function JobList() {
               title: metricData.title || metricData.metric || metric,
               plot_item_thumb: metricData.plot_item_thumb,
               plot_item_full: metricData.plot_item_full,
+              plot_unavailable_reason: metricData.plot_unavailable_reason || null,
             };
           })
           .catch((err) => {
