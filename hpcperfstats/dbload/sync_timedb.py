@@ -295,9 +295,19 @@ def _decompress_gz(gz_path):
     return
   try:
     with file_write_lock(gz_path):
-      subprocess.check_output(
-          ['/usr/bin/pigz', '-v', '-d', '-p', str(pigz_thread_count), gz_path]
+      result = subprocess.run(
+          ['/usr/bin/pigz', '-v', '-d', '-p', str(pigz_thread_count), gz_path],
+          capture_output=True,
+          text=True,
+          check=False,
       )
+    if result.stdout:
+      log_print(result.stdout)
+    if result.stderr:
+      log_print(result.stderr)
+    if result.returncode != 0:
+      raise subprocess.CalledProcessError(
+          result.returncode, result.args, output=result.stdout, stderr=result.stderr)
   except subprocess.CalledProcessError:
     pass
 
@@ -307,9 +317,19 @@ def _append_to_tar(tar_path, file_paths):
   if not file_paths:
     return
   with file_write_lock(tar_path):
-    out = subprocess.check_output(['/bin/tar', 'uvf', tar_path] + file_paths)
-  if DEBUG:
-    log_print(out, flush=True)
+    result = subprocess.run(
+        ['/bin/tar', 'uvf', tar_path] + file_paths,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+  if result.stdout:
+    log_print(result.stdout, flush=True)
+  if result.stderr:
+    log_print(result.stderr, flush=True)
+  if result.returncode != 0:
+    raise subprocess.CalledProcessError(
+        result.returncode, result.args, output=result.stdout, stderr=result.stderr)
   log_print("Archived: " + str(file_paths))
 
 
@@ -321,11 +341,19 @@ def _compress_tar_gz(tar_path, num_threads=None):
     return
   gz_path = "%s.gz" % tar_path
   with file_write_lock(tar_path):
-    log_print(
-        subprocess.check_output([
-            '/usr/bin/pigz', '-f', '-8', '-v', '-p', str(num_threads), tar_path
-        ]),
-        flush=True)
+    result = subprocess.run(
+        ['/usr/bin/pigz', '-f', '-8', '-v', '-p', str(num_threads), tar_path],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.stdout:
+      log_print(result.stdout, flush=True)
+    if result.stderr:
+      log_print(result.stderr, flush=True)
+    if result.returncode != 0:
+      raise subprocess.CalledProcessError(
+          result.returncode, result.args, output=result.stdout, stderr=result.stderr)
   # pigz rewrites tar_path to tar_path.gz, so synchronize on the resulting file too.
   if os.path.exists(gz_path):
     with file_write_lock(gz_path):

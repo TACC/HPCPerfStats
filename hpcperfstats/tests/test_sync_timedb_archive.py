@@ -123,8 +123,10 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
   )
   monkeypatch.setattr(
       helpers.subprocess,
-      "check_output",
-      lambda cmd: pigz_calls.append(cmd) or b"",
+      "run",
+      lambda cmd, capture_output, text, check: pigz_calls.append(cmd) or subprocess.CompletedProcess(
+          cmd, 0, stdout="", stderr=""
+      ),
   )
 
   assert get_tar_file_tasks(tar_path) == [(tar_path, "a.txt")]
@@ -184,8 +186,10 @@ def test_get_tar_file_tasks_raises_when_pigz_restore_fails(monkeypatch, tmp_path
   monkeypatch.setattr(helpers.os, "remove", lambda _p: None)
   monkeypatch.setattr(
       helpers.subprocess,
-      "check_output",
-      lambda _cmd: (_ for _ in ()).throw(subprocess.CalledProcessError(2, "pigz")),
+      "run",
+      lambda cmd, capture_output, text, check: subprocess.CompletedProcess(
+          cmd, 2, stdout="", stderr=""
+      ),
   )
 
   with pytest.raises(tarfile.ReadError):

@@ -52,9 +52,23 @@ def get_tar_file_tasks(tar_path):
     try:
       if os.path.exists(tar_path):
         os.remove(tar_path)
-      subprocess.check_output(
-          ['/usr/bin/pigz', '-v', '-d', '-p', str(pigz_thread_count), gz_path]
+      result = subprocess.run(
+          ['/usr/bin/pigz', '-v', '-d', '-p', str(pigz_thread_count), gz_path],
+          capture_output=True,
+          text=True,
+          check=False,
       )
+      if result.stdout:
+        log_print(result.stdout)
+      if result.stderr:
+        log_print(result.stderr)
+      if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode,
+            result.args,
+            output=result.stdout,
+            stderr=result.stderr,
+        )
       return True
     except (OSError, subprocess.CalledProcessError):
       return False
