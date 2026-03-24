@@ -2,11 +2,21 @@
 
 """
 from datetime import datetime
+from unittest.mock import MagicMock
 
 import pytest
 
 from hpcperfstats.analysis.metrics.update_metrics import _iter_chunked_pks
 from hpcperfstats.analysis.metrics import update_metrics
+
+
+def _patch_connections_vendor(monkeypatch, vendor):
+  """Make update_metrics see connections['default'].vendor == vendor."""
+  fake_conn = MagicMock()
+  fake_conn.vendor = vendor
+  handler = MagicMock()
+  handler.__getitem__ = lambda self, name: fake_conn
+  monkeypatch.setattr(update_metrics, "connections", handler)
 
 
 def test_iter_chunked_pks_empty_queryset():
@@ -86,6 +96,29 @@ def test_jobs_queryset_orders_newest_job_first():
     assert "order by" in sql
     assert "end_time" in sql and "desc" in sql
     assert "jid" in sql and "desc" in sql
+
+
+def test_jobs_queryset_postgresql_sql_contains_unnest_for_live_samples(monkeypatch):
+  """Non-rerun + PostgreSQL: SQL sums per-host COUNT(DISTINCT time) via GROUP BY."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  d = datetime(2025, 4, 10, 15, 30, 0)
+  qs = update_metrics._jobs_queryset(d, 300, rerun=False)
+  sql = str(qs.query).lower()
+  assert "unnest" in sql
+  assert "group by" in sql
+  assert "sum(" in sql
+  assert "metrics_distinct_time_count" in sql
+
+
+def test_jobs_queryset_non_postgresql_omits_unnest_live_samples(monkeypatch):
+  """Non-PostgreSQL: skip live sample annotation (no unnest)."""
+  _patch_connections_vendor(monkeypatch, "sqlite")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  d = datetime(2025, 4, 10, 15, 30, 0)
+  qs = update_metrics._jobs_queryset(d, 300, rerun=False)
+  sql = str(qs.query).lower()
+  assert "unnest" not in sql
 
 
 def test_expected_job_metrics_row_count_cached(monkeypatch):

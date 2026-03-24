@@ -19,7 +19,7 @@ from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.analysis.gen.utils import utils
-from hpcperfstats.site.machine.models import metrics_data
+from hpcperfstats.site.machine.models import job_data, metrics_data
 
 try:
   from numpy import trapezoid as trapz
@@ -140,11 +140,17 @@ class _JobForMetrics:
     # as no data for this job (avoids KeyError when sorting by missing column).
     if df.empty or "time" not in df.columns:
       self.times = np.array([])
+      self.per_host_distinct_time_sum = 0
       return
 
     # Global sorted time axis
     df = df.sort_values("time")
     df["time"] = to_datetime(df["time"]).dt.tz_localize(None)
+    # Sample count for invalidation: per-host COUNT(DISTINCT time), summed
+    # (same semantics as live host_data subquery in update_metrics).
+    self.per_host_distinct_time_sum = int(
+        df.groupby("host")["time"].nunique().sum()
+    )
     times = df["time"].drop_duplicates().sort_values()
 
     # Use float seconds (NumPy) for simplicity; utils only uses differences
@@ -214,11 +220,15 @@ def _unwrap(args):
           "Skipping metrics for jid %s after DB error in worker: %s" %
           (getattr(job, "jid", "?"), exc)
       )
-      return []
+      return None
 
 
-def _persist_metrics_batch(job_results):
-  """Fetch existing metrics_data for jids in job_results, then bulk_create/bulk_update. Called in main process."""
+def _persist_metrics_batch(job_results, distinct_time_count):
+  """Fetch existing metrics_data for jids in job_results, then bulk_create/bulk_update.
+
+  Also sets job_data.metrics_distinct_time_count for the job(s) in this batch.
+  Called in main process only.
+  """
   with transaction.atomic():
     jids = list({item["jid"].jid for item in job_results})
     existing = list(
@@ -255,6 +265,11 @@ def _persist_metrics_batch(job_results):
           list({id(o): o for o in to_update_list}.values()),
           ["units", "value", "no_data_reason"],
       )
+    if distinct_time_count is not None and jids:
+      jobs_up = list(job_data.objects.filter(pk__in=jids))
+      for jo in jobs_up:
+        jo.metrics_distinct_time_count = distinct_time_count
+      job_data.objects.bulk_update(jobs_up, ["metrics_distinct_time_count"])
 
 
 class Metrics():
@@ -340,16 +355,20 @@ class Metrics():
       threads = 1
 
     with multiprocessing.Pool(processes=threads) as pool:
-      for job_results in pool.imap_unordered(_unwrap,
-                                             ((self, job) for job in job_list)):
-        if not job_results:
+      for payload in pool.imap_unordered(_unwrap,
+                                         ((self, job) for job in job_list)):
+        if not payload:
+          continue
+        job_rows = payload["rows"]
+        distinct_n = payload.get("distinct_time_count")
+        if not job_rows:
           continue
         # Ensure main process uses a fresh DB connection (may have gone stale
         # while waiting on pool). Retry once on connection errors.
         for attempt in range(2):
           try:
             close_old_connections()
-            _persist_metrics_batch(job_results)
+            _persist_metrics_batch(job_rows, distinct_n)
             break
           except OperationalError as e:
             if "connection" in str(e).lower() or "closed" in str(e).lower():
@@ -417,8 +436,10 @@ class Metrics():
 
   # Compute metric
   def compute_metrics(self, job):
-    """Compute all simple and complex metrics for one job using jid_table and utils; return list of result dicts for metrics_data.
+    """Compute metrics for one job; return dict with rows (metrics_data-shaped dicts) and distinct_time_count.
 
+        distinct_time_count is the sum over hosts of COUNT(DISTINCT time) in
+        jid_table._host_data_qs() for this job (not the global distinct time count).
         """
     metric_compute_start = time.time()
 
@@ -428,6 +449,7 @@ class Metrics():
     with jid_table.jid_table(job.jid) as jt:
 
       job_view = _JobForMetrics(jt)
+      distinct_time_count = job_view.per_host_distinct_time_sum
 
       if job_view.times.size == 0:
         for entry in job_metrics_catalog_entries():
@@ -441,7 +463,10 @@ class Metrics():
           })
         log_print("compute metrics time: {0:.1f}".format(time.time() -
                                                      metric_compute_start))
-        return results
+        return {
+            "rows": results,
+            "distinct_time_count": distinct_time_count,
+        }
 
       for metric_name, metric_obj in self.simple_metrics_list.items():
         value = self.job_arc(jt, **metric_obj)
@@ -494,7 +519,10 @@ class Metrics():
 
     log_print("compute metrics time: {0:.1f}".format(time.time() -
                                                  metric_compute_start))
-    return results
+    return {
+        "rows": results,
+        "distinct_time_count": distinct_time_count,
+    }
 
 
 def job_metrics_catalog_entries():

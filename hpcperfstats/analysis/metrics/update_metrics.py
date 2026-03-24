@@ -20,7 +20,8 @@ from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
 from django.db import close_old_connections, connections
-from django.db.models import Count, IntegerField, OuterRef, Q, Subquery, Value
+from django.db.models import Count, F, IntegerField, OuterRef, Q, Subquery, Value
+from django.db.models.expressions import RawSQL
 from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, DatabaseError
 
@@ -123,12 +124,41 @@ def _jobs_queryset(date, min_time, rerun):
       .values("c")[:1],
       output_field=IntegerField(),
   )
-  return qs.annotate(
+  annotated = qs.annotate(
       md_count=Coalesce(md_total_sq, int0),
       stale_null=Coalesce(stale_count_sq, int0),
-  ).filter(Q(md_count__lt=expected) | Q(stale_null__gt=0)).order_by(
-      "-end_time", "-jid"
   )
+  need_metrics = Q(md_count__lt=expected) | Q(stale_null__gt=0)
+  # PostgreSQL only: re-run when host_data has more per-host sample times (sum
+  # of COUNT(DISTINCT time) per host) than at last metrics persist (same window
+  # + FQDN host list as jid_table).
+  if connections["default"].vendor == "postgresql":
+    host_suffix = "." + cfg.get_host_name_ext()
+    live_sql = (
+        "(SELECT COALESCE(SUM(ph.cnt), 0)::integer FROM ("
+        "SELECT h.host, COUNT(DISTINCT h.time)::integer AS cnt "
+        "FROM host_data h "
+        "WHERE h.time >= %s AND h.time <= %s AND h.host IN ("
+        "SELECT (COALESCE(elem::text, '') || %s)::text "
+        "FROM unnest(%s) AS t(elem)) "
+        "GROUP BY h.host) ph)"
+    )
+    live_subq = RawSQL(
+        live_sql,
+        (
+            OuterRef("start_time"),
+            OuterRef("end_time"),
+            host_suffix,
+            OuterRef("host_list"),
+        ),
+        output_field=IntegerField(),
+    )
+    annotated = annotated.annotate(live_distinct_time_count=live_subq)
+    need_metrics |= (
+        Q(metrics_distinct_time_count__isnull=False)
+        & Q(live_distinct_time_count__gt=F("metrics_distinct_time_count"))
+    )
+  return annotated.filter(need_metrics).order_by("-end_time", "-jid")
 
 
 def _iter_chunked_pks(queryset, chunk_size):

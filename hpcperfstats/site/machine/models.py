@@ -41,6 +41,9 @@ class job_data(models.Model):
   QOS = models.CharField(max_length=64, blank=True, null=True)
   jobname = models.TextField(blank=True, null=True)
   host_list = ArrayField(models.TextField())
+  # Sum over job hosts of COUNT(DISTINCT time) in host_data for the last metrics
+  # run (jid_table window + accounting host FQDNs); NULL until first persist.
+  metrics_distinct_time_count = models.IntegerField(blank=True, null=True)
 
   class Meta:
     db_table = 'job_data'

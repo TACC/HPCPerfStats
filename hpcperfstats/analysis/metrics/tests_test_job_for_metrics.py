@@ -11,12 +11,17 @@ class _FakeJidTable:
     self.schema = {"cpu": ["user", "system"], "mem": ["used"]}
 
   def get_full_host_data_df(self, columns):
-    # Minimal dataset with two hosts, two times, cpu+mem stats
+    # Two hosts share two wall-clock times: global distinct times = 2,
+    # per-host distinct sum = 2 + 2 = 4 (invalidation / metrics_distinct_time_count).
     data = [
         {"host": "host1", "time": "2024-01-01T00:00:00Z", "type": "cpu", "event": "user", "value": 10},
         {"host": "host1", "time": "2024-01-01T00:00:00Z", "type": "cpu", "event": "system", "value": 5},
-        {"host": "host2", "time": "2024-01-01T00:05:00Z", "type": "cpu", "event": "user", "value": 20},
-        {"host": "host2", "time": "2024-01-01T00:05:00Z", "type": "cpu", "event": "system", "value": 10},
+        {"host": "host1", "time": "2024-01-01T00:05:00Z", "type": "cpu", "event": "user", "value": 11},
+        {"host": "host1", "time": "2024-01-01T00:05:00Z", "type": "cpu", "event": "system", "value": 6},
+        {"host": "host2", "time": "2024-01-01T00:00:00Z", "type": "cpu", "event": "user", "value": 20},
+        {"host": "host2", "time": "2024-01-01T00:00:00Z", "type": "cpu", "event": "system", "value": 10},
+        {"host": "host2", "time": "2024-01-01T00:05:00Z", "type": "cpu", "event": "user", "value": 21},
+        {"host": "host2", "time": "2024-01-01T00:05:00Z", "type": "cpu", "event": "system", "value": 11},
         {"host": "host1", "time": "2024-01-01T00:00:00Z", "type": "mem", "event": "used", "value": 100},
     ]
     df = pd.DataFrame(data)
@@ -29,9 +34,10 @@ def test_job_for_metrics_builds_time_axis_and_host_stats():
 
   job = metrics._JobForMetrics(jt)
 
-  # Times should be a sorted NumPy array with two unique timestamps.
+  # Times should be a sorted NumPy array with two unique timestamps (global axis).
   assert isinstance(job.times, np.ndarray)
   assert job.times.size == 2
+  assert job.per_host_distinct_time_sum == 4
   assert job.hosts.keys() == {"host1", "host2"}
   assert "cpu" in job.schemas
   assert "mem" in job.schemas
