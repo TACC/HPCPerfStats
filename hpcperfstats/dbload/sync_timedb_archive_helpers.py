@@ -4,9 +4,12 @@ import subprocess
 import tarfile
 from datetime import datetime, timedelta
 
+import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
 from hpcperfstats.file_locking import file_read_lock_wait
 from hpcperfstats.print_utils import log_print
+
+pigz_thread_count = max(1, cfg.get_worker_thread_count(4))
 
 
 def get_tar_member_name(file_path):
@@ -49,7 +52,9 @@ def get_tar_file_tasks(tar_path):
     try:
       if os.path.exists(tar_path):
         os.remove(tar_path)
-      subprocess.check_output(['/usr/bin/pigz', '-v', '-d', gz_path])
+      subprocess.check_output(
+          ['/usr/bin/pigz', '-v', '-d', '-p', str(pigz_thread_count), gz_path]
+      )
       return True
     except (OSError, subprocess.CalledProcessError):
       return False
