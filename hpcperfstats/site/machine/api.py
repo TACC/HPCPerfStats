@@ -1995,6 +1995,17 @@ def job_plots(request, pk):
     for key in requested_keys:
         cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key)
         cached_entry = cache.get(cache_key)
+        # Back-compat refresh: older cached heatmap results used a generic
+        # unavailable reason. Recompute once to return precise diagnostics.
+        stale_generic_heatmap_reason = (
+            key == "heatmap"
+            and isinstance(cached_entry, dict)
+            and cached_entry.get("plot_item") is None
+            and cached_entry.get("unavailable_reason") == plots.MSG_NO_HOST_MSR_DATA
+        )
+        if stale_generic_heatmap_reason:
+            missing_keys.append(key)
+            continue
         if isinstance(cached_entry, dict):
             cached_results[key] = cached_entry
         else:
