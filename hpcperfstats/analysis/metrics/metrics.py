@@ -545,6 +545,8 @@ def build_job_metrics_display_list(job):
           "value": row.value,
           "no_data_reason": row.no_data_reason,
       })
+  # Job detail UI: show catalog metrics with values or other reasons first; missing rows last.
+  out.sort(key=lambda r: r.get("no_data_reason") == METRIC_NOT_COMPUTED_YET)
   return out
 
 

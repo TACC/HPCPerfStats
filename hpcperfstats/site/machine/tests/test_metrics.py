@@ -163,3 +163,25 @@ def test_build_job_metrics_display_list_shows_no_data_reason():
   mem = next(x for x in out if x["metric"] == "mem_hwm")
   assert mem["value"] is None
   assert "memory" in mem["no_data_reason"].lower()
+
+
+def test_build_job_metrics_display_list_puts_not_computed_yet_last():
+  """Rows with METRIC_NOT_COMPUTED_YET follow all rows with DB data or other reasons."""
+  entries = job_metrics_catalog_entries()
+  first = entries[0]
+  row = MagicMock()
+  row.metric = first["metric"]
+  row.type = first["type"]
+  row.units = first["units"]
+  row.value = 1.0
+  row.no_data_reason = None
+  job = MagicMock()
+  job.metrics_data_set.all.return_value = [row]
+  out = build_job_metrics_display_list(job)
+  flags = [item["no_data_reason"] == METRIC_NOT_COMPUTED_YET for item in out]
+  first_pending = next((i for i, pending in enumerate(flags) if pending), len(out))
+  assert first_pending == 1
+  assert not any(flags[:first_pending])
+  assert all(flags[first_pending:])
+  assert out[0]["metric"] == first["metric"]
+  assert out[0]["value"] == 1.0
