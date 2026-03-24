@@ -190,7 +190,7 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
           onMouseLeave={() => setShowDetails(false)}
         >
           <span style={{ textDecoration: "underline", cursor: "help" }} aria-label="Show plot error details">
-            Details
+            Error Detail
           </span>
           {showDetails ? (
             <span
@@ -211,17 +211,21 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
               }}
               role="tooltip"
             >
-              <div style={{ whiteSpace: "normal", wordBreak: "break-word", marginBottom: 8 }}>
+              <div style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
                 {detailsMessage}
               </div>
-              <button type="button" className="btn btn-outline-secondary btn-sm" onClick={handleCopyDetails}>
-                Copy
-              </button>
-              {copyStatus ? (
-                <span style={{ marginLeft: 8, fontSize: "0.85em" }} aria-live="polite">
-                  {copyStatus}
-                </span>
-              ) : null}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+      {isUnavailable && detailsMessage ? (
+        <span style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <button type="button" className="btn btn-outline-secondary btn-sm" onClick={handleCopyDetails}>
+            Copy Error Detail
+          </button>
+          {copyStatus ? (
+            <span style={{ fontSize: "0.85em" }} aria-live="polite">
+              {copyStatus}
             </span>
           ) : null}
         </span>

@@ -53,7 +53,7 @@ describe("TypeDetail", () => {
       );
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy Error Detail" }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith(
         "No device-level samples found for this job/type in host_data."

@@ -49,7 +49,7 @@ describe("HostDetail", () => {
       "No host plot data available for this host/time range."
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy Error Detail" }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith(
         "No host plot data available for this host/time range."

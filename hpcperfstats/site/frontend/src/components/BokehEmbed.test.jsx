@@ -49,7 +49,8 @@ describe("BokehEmbed", () => {
       "Missing CPI counters in host_data"
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    expect(screen.getByText("Error Detail")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Copy Error Detail" }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith("Missing CPI counters in host_data");
     });

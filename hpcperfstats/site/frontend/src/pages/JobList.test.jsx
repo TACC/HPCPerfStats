@@ -140,7 +140,7 @@ describe("JobList", () => {
       "No queue histogram data available for this query."
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Copy Error Detail" })[0]);
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith(
         "No queue histogram data available for this query."
