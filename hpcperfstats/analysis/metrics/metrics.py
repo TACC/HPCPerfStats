@@ -68,7 +68,7 @@ NO_TIME_SERIES_MSG = "No time-series telemetry for this job"
 NO_SIMPLE_SAMPLES_MSG = (
     "No host_data samples for this metric in the job window"
 )
-METRIC_NOT_COMPUTED_YET = "Metric not computed yet"
+METRIC_NOT_COMPUTED_YET = "Metric not computed"
 
 
 def _per_interval_rate(values, t):
