@@ -6,6 +6,7 @@ from datetime import datetime
 import pandas as pd
 
 from hpcperfstats.analysis.gen.jid_table import _ensure_tz
+from hpcperfstats.analysis.gen.jid_table import TypeDetailDataProvider
 from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
 
 
@@ -75,3 +76,58 @@ def test_ensure_tz_aware_returns_astimezone():
   assert result is not None
   assert result.tzinfo is not None
   assert result.year == 2024 and result.month == 6 and result.day == 15
+
+
+def test_type_detail_provider_aggregate_df_groups_in_pandas():
+  """TypeDetailDataProvider.get_aggregate_df aggregates host/time safely."""
+
+  class FakeQuerySet:
+    def __init__(self, rows):
+      self._rows = rows
+
+    def values(self, *cols):
+      return [{col: row[col] for col in cols} for row in self._rows]
+
+  provider = TypeDetailDataProvider(
+      jid="j1",
+      type_name="pmc",
+      start_time=None,
+      end_time=None,
+      host_list=["n1"],
+  )
+
+  rows = [
+      {"host": "n1", "time": 1, "arc": 2.0},
+      {"host": "n1", "time": 1, "arc": 3.0},
+      {"host": "n2", "time": 2, "arc": 4.0},
+  ]
+  provider._qs = lambda **extra: FakeQuerySet(rows)
+  out = provider.get_aggregate_df("FLOPS", metric="arc")
+  assert isinstance(out, pd.DataFrame)
+  assert out.columns.tolist() == ["host", "time", "sum_val"]
+  assert out["sum_val"].tolist() == [5.0, 4.0]
+
+
+def test_type_detail_provider_invalid_metric_defaults_to_arc():
+  """Invalid metric falls back to arc in TypeDetailDataProvider aggregate."""
+
+  class FakeQuerySet:
+    def __init__(self, rows):
+      self._rows = rows
+
+    def values(self, *cols):
+      return [{col: row[col] for col in cols} for row in self._rows]
+
+  provider = TypeDetailDataProvider(
+      jid="j2",
+      type_name="pmc",
+      start_time=None,
+      end_time=None,
+      host_list=["n1"],
+  )
+  provider._qs = lambda **extra: FakeQuerySet(
+      [{"host": "n1", "time": 1, "arc": 7.0, "value": 99.0}]
+  )
+
+  out = provider.get_aggregate_df("FLOPS", metric="not_a_metric")
+  assert out["sum_val"].tolist() == [7.0]

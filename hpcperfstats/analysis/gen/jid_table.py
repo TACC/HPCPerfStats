@@ -384,12 +384,25 @@ class TypeDetailDataProvider:
     )
 
     def _fn():
-      from django.db.models import Sum
-      # Base queryset for this job/type/time range (and optional host_list)
-      qs = self._qs(event=event).values("host", "time").annotate(
-          sum_val=Sum(metric)
-      ).order_by("host", "time")
-      return queryset_to_dataframe(qs)
+      # Avoid DB-level GROUP BY here because some deployments have reported
+      # backend-specific grouping SQL errors for this query shape.
+      qs = self._qs(event=event).values("host", "time", metric)
+      import pandas as pd
+
+      df_raw = queryset_to_dataframe(qs)
+      if (
+          df_raw.empty
+          or "host" not in df_raw.columns
+          or "time" not in df_raw.columns
+          or metric not in df_raw.columns
+      ):
+        return pd.DataFrame(columns=["host", "time", "sum_val"])
+      return (
+          df_raw.groupby(["host", "time"], as_index=False)[metric]
+          .sum()
+          .rename(columns={metric: "sum_val"})
+          .sort_values(["host", "time"])
+      )
 
     result = cached_orm(key, TIMEOUT_SHORT, _fn)
     if result is not None:
