@@ -28,13 +28,13 @@ def _patch_connections_vendor(monkeypatch, vendor):
 
 
 def test_iter_chunked_pks_empty_queryset():
-  """_iter_chunked_pks yields nothing for empty pk iterator."""
+  """_iter_chunked_pks yields nothing for empty queryset slicing."""
   class EmptyQs:
     def values_list(self, *args, **kwargs):
       return self
 
-    def iterator(self, chunk_size=1):
-      return iter([])
+    def __getitem__(self, item):
+      return []
 
   qs = EmptyQs()
   chunks = list(_iter_chunked_pks(qs, 2))
@@ -47,8 +47,9 @@ def test_iter_chunked_pks_single_chunk():
     def values_list(self, *args, **kwargs):
       return self
 
-    def iterator(self, chunk_size=10):
-      return iter([1, 2, 3])
+    def __getitem__(self, item):
+      data = [1, 2, 3]
+      return data[item]
 
   qs = Qs()
   chunks = list(_iter_chunked_pks(qs, 10))
@@ -58,13 +59,14 @@ def test_iter_chunked_pks_single_chunk():
 
 
 def test_iter_chunked_pks_multiple_chunks():
-  """_iter_chunked_pks yields (pk_list, total_so_far) for each chunk."""
+  """_iter_chunked_pks yields (pk_list, total_so_far) for each sliced chunk."""
   class Qs:
     def values_list(self, *args, **kwargs):
       return self
 
-    def iterator(self, chunk_size=2):
-      return iter([10, 20, 30, 40, 50])
+    def __getitem__(self, item):
+      data = [10, 20, 30, 40, 50]
+      return data[item]
 
   qs = Qs()
   chunks = list(_iter_chunked_pks(qs, 2))
@@ -72,6 +74,26 @@ def test_iter_chunked_pks_multiple_chunks():
   assert chunks[0] == ([10, 20], 2)
   assert chunks[1] == ([30, 40], 4)
   assert chunks[2] == ([50], 5)
+
+
+def test_iter_chunked_pks_uses_slice_windows_not_iterator():
+  """Chunking should use bounded slices (avoids long-lived streaming cursors)."""
+  class Qs:
+    def __init__(self):
+      self.slice_calls = []
+
+    def values_list(self, *args, **kwargs):
+      return self
+
+    def __getitem__(self, item):
+      self.slice_calls.append(item)
+      data = [1, 2, 3, 4, 5]
+      return data[item]
+
+  qs = Qs()
+  chunks = list(_iter_chunked_pks(qs, 2))
+  assert chunks == [([1, 2], 2), ([3, 4], 4), ([5], 5)]
+  assert qs.slice_calls == [slice(0, 2, None), slice(2, 4, None), slice(4, 6, None), slice(6, 8, None)]
 
 
 def test_notify_parent_if_sigterm_sends_sigchld(monkeypatch):

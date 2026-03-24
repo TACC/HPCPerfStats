@@ -147,26 +147,24 @@ def _jobs_queryset(date, min_time, rerun):
 
 
 def _iter_chunked_pks(queryset, chunk_size):
-  """Yield (pk_list, total_so_far) in chunks, streaming PKs from the database.
+  """Yield (pk_list, total_so_far) in bounded chunks via queryset slicing.
 
-  This implementation relies on Django's ``iterator`` with a server-side cursor
-  so that we never materialise the full PK list in memory. We accumulate PKs
-  into Python lists of at most ``chunk_size`` elements and yield each list
-  together with the cumulative total seen so far.
+  We intentionally avoid a long-lived streaming cursor here because the caller
+  performs additional ORM queries while iterating chunks. On PostgreSQL, mixing
+  a still-open server-side cursor with nested queries on the same connection can
+  trigger protocol desynchronisation errors.
   """
   total = 0
-  current_chunk = []
+  offset = 0
   # jid is the primary key; values_list avoids loading full job_data rows.
-  for pk in queryset.values_list("jid", flat=True).iterator(chunk_size=chunk_size):
-    current_chunk.append(pk)
-    if len(current_chunk) >= chunk_size:
-      total += len(current_chunk)
-      yield current_chunk, total
-      current_chunk = []
-
-  if current_chunk:
-    total += len(current_chunk)
-    yield current_chunk, total
+  pk_values = queryset.values_list("jid", flat=True)
+  while True:
+    chunk = list(pk_values[offset:offset + chunk_size])
+    if not chunk:
+      break
+    total += len(chunk)
+    yield chunk, total
+    offset += chunk_size
 
 
 def update_metrics(date, rerun=False):
