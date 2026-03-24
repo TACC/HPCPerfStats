@@ -28,7 +28,7 @@ dependencies = [
   "numpy",
   "psycopg",
   "pandas",
-  "bokeh==3.9.0",
+  "bokeh",
   "Django~=6.0",
   "python-hostlist",
   "pika",
