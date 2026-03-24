@@ -220,7 +220,12 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
       ) : null}
       {isUnavailable && detailsMessage ? (
         <span style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <button type="button" className="btn btn-outline-secondary btn-sm" onClick={handleCopyDetails}>
+          <button
+            type="button"
+            className="btn btn-outline-secondary btn-sm"
+            onClick={handleCopyDetails}
+            style={{ fontSize: "0.4375rem", padding: "0.125rem 0.25rem", lineHeight: 1.1 }}
+          >
             Copy Error Detail
           </button>
           {copyStatus ? (
