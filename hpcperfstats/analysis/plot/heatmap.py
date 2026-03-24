@@ -28,6 +28,31 @@ def _candidate_series():
   ]
 
 
+def _build_dynamic_candidates(jt):
+  """Discover candidate (type, cycles_event, instructions_event) from jt.schema."""
+  schema = getattr(jt, "schema", {}) or {}
+  discovered = []
+  for typ, events in schema.items():
+    evset = set(events or [])
+    if "INST_RETIRED" not in evset:
+      continue
+    if "APERF" in evset:
+      discovered.append((typ, "APERF", "INST_RETIRED"))
+    if "MPERF" in evset:
+      discovered.append((typ, "MPERF", "INST_RETIRED"))
+  return discovered
+
+
+def _aggregate_counter_df(jt, typ, event):
+  """Get aggregate counter data; prefer arc, fall back to value if needed."""
+  agg = jt.get_aggregate_df(typ, "arc", [event], 1.0)
+  src_col = "arc"
+  if agg.empty or "sum_val" not in agg.columns:
+    agg = jt.get_aggregate_df(typ, "value", [event], 1.0)
+    src_col = "value"
+  return agg, src_col
+
+
 def _host_cpi_series(schema, stats):
   """Per-interval CPI (length nt-1); caller extends to length nt. Returns None if unsupported."""
   events = frozenset(schema.events)
@@ -132,13 +157,22 @@ def plot_and_reason_from_jid_table(jt):
     return (None, "No hosts found in host_data for this job/time range")
 
   attempts = []
+  candidates = _candidate_series()
+  seen = set(candidates)
+  for cand in _build_dynamic_candidates(jt):
+    if cand not in seen:
+      candidates.append(cand)
+      seen.add(cand)
+
   # Try intel then amd PMC for cycles and instructions.
-  for typ, cyc_event, instr_event in _candidate_series():
-    agg_cyc = jt.get_aggregate_df(typ, "arc", [cyc_event], 1.0)
-    agg_instr = jt.get_aggregate_df(typ, "arc", [instr_event], 1.0)
+  for typ, cyc_event, instr_event in candidates:
+    agg_cyc, cyc_src = _aggregate_counter_df(jt, typ, cyc_event)
+    agg_instr, instr_src = _aggregate_counter_df(jt, typ, instr_event)
     cyc_rows = 0 if agg_cyc is None else len(agg_cyc.index)
     instr_rows = 0 if agg_instr is None else len(agg_instr.index)
-    attempts.append(f"{typ}:{cyc_event}/{instr_event} rows(cyc={cyc_rows}, instr={instr_rows})")
+    attempts.append(
+        f"{typ}:{cyc_event}/{instr_event} rows(cyc={cyc_rows}, instr={instr_rows}) src(cyc={cyc_src}, instr={instr_src})"
+    )
     if agg_cyc.empty or agg_instr.empty or "sum_val" not in agg_cyc.columns or "sum_val" not in agg_instr.columns:
       continue
     cyc = agg_cyc.rename(columns={"sum_val": "cycles"})[["host", "time", "cycles"]]
