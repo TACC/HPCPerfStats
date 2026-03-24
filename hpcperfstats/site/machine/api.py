@@ -1963,11 +1963,11 @@ def job_plots(request, pk):
         close_old_connections()
         try:
             try:
-                roof_fig_json = plots.plot_roofline_from_jid_table(j)
+                roof_fig_json, roof_reason = plots.plot_and_reason_roofline_from_jid_table(j)
                 if roof_fig_json is not None:
                     rplot_item = json_item(roof_fig_json)
                 else:
-                    reason = plots.MSG_NO_ROOFLINE_DATA
+                    reason = roof_reason or plots.MSG_NO_ROOFLINE_DATA
             except Exception as e:
                 logging.getLogger(__name__).warning(
                     "Failed to generate roofline for jid %s: %s", job.jid, e, exc_info=True
@@ -2003,7 +2003,13 @@ def job_plots(request, pk):
             and cached_entry.get("plot_item") is None
             and cached_entry.get("unavailable_reason") == plots.MSG_NO_HOST_MSR_DATA
         )
-        if stale_generic_heatmap_reason:
+        stale_generic_roofline_reason = (
+            key == "roofline"
+            and isinstance(cached_entry, dict)
+            and cached_entry.get("plot_item") is None
+            and cached_entry.get("unavailable_reason") == plots.MSG_NO_ROOFLINE_DATA
+        )
+        if stale_generic_heatmap_reason or stale_generic_roofline_reason:
             missing_keys.append(key)
             continue
         if isinstance(cached_entry, dict):

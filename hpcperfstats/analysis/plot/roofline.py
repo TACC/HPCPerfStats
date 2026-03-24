@@ -12,21 +12,35 @@ DEFAULT_PEAK_FLOPS_GF = 1000.0
 DEFAULT_PEAK_BW_GB = 100.0
 
 
-def _get_flops_bw_df(jt):
-    """Get DataFrame with columns host, time, flops_gf, bw_gb from jid_table. Returns None if no data."""
+def _aggregate_prefer_arc_then_value(jt, typ, events, conv):
+    """Get aggregate df for typ/events; prefer arc and fall back to value."""
+    agg = jt.get_aggregate_df(typ, "arc", events, conv)
+    source = "arc"
+    if agg.empty or "sum_val" not in agg.columns:
+        agg = jt.get_aggregate_df(typ, "value", events, conv)
+        source = "value"
+    return agg, source
+
+
+def _get_flops_bw_df_and_reason(jt):
+    """Get (df, reason) where df has host,time,flops_gf,bw_gb or None with detailed reason."""
     base = jt.get_host_time_df()
     if base.empty or not jt.host_list:
-        return None
+        return (None, "No hosts/timestamps found in host_data for this job/time range")
 
     flops_gf = None
     bw_gb = None
+    attempts = []
 
     # AMD: FLOPS and MBW channels
-    agg_flops = jt.get_aggregate_df("amd64_pmc", "arc", ["FLOPS"], 1e-9)
-    agg_bw = jt.get_aggregate_df(
-        "amd64_df", "arc",
+    agg_flops, flops_src = _aggregate_prefer_arc_then_value(jt, "amd64_pmc", ["FLOPS"], 1e-9)
+    agg_bw, bw_src = _aggregate_prefer_arc_then_value(
+        jt, "amd64_df",
         ["MBW_CHANNEL_0", "MBW_CHANNEL_1", "MBW_CHANNEL_2", "MBW_CHANNEL_3"],
         2 / (1024 ** 3),
+    )
+    attempts.append(
+        f"amd rows(flops={len(agg_flops.index)}, bw={len(agg_bw.index)}) src(flops={flops_src}, bw={bw_src})"
     )
     if not agg_flops.empty and "sum_val" in agg_flops.columns and not agg_bw.empty and "sum_val" in agg_bw.columns:
         flops_gf = agg_flops.rename(columns={"sum_val": "flops_gf"})[["host", "time", "flops_gf"]]
@@ -45,14 +59,22 @@ def _get_flops_bw_df(jt):
             "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
         ]
         agg_flops = None
+        flops_src = None
         for intel_typ in ("intel_8pmc3", "intel_4pmc3"):
-            cand = jt.get_aggregate_df(intel_typ, "arc", fp_events, 1e-9)
+            cand, cand_src = _aggregate_prefer_arc_then_value(jt, intel_typ, fp_events, 1e-9)
+            attempts.append(
+                f"{intel_typ} rows(flops={len(cand.index)}) src(flops={cand_src})"
+            )
             if not cand.empty and "sum_val" in cand.columns:
                 agg_flops = cand
+                flops_src = cand_src
                 break
-        agg_bw = jt.get_aggregate_df(
-            "intel_skx_imc", "arc", ["CAS_READS", "CAS_WRITES"],
+        agg_bw, bw_src = _aggregate_prefer_arc_then_value(
+            jt, "intel_skx_imc", ["CAS_READS", "CAS_WRITES"],
             64 / (1024 ** 3),
+        )
+        attempts.append(
+            f"intel_skx_imc rows(bw={len(agg_bw.index)}) src(bw={bw_src})"
         )
         if (
             agg_flops is not None
@@ -63,13 +85,21 @@ def _get_flops_bw_df(jt):
             bw_gb = agg_bw.rename(columns={"sum_val": "bw_gb"})[["host", "time", "bw_gb"]]
 
     if flops_gf is None or bw_gb is None:
-        return None
+        return (
+            None,
+            "Missing roofline counters in host_data (need FLOPS + memory-bandwidth counters). "
+            + "Attempted: "
+            + "; ".join(attempts),
+        )
 
     df = base.merge(flops_gf, on=["host", "time"], how="inner")
     df = df.merge(bw_gb, on=["host", "time"], how="inner")
     if df.empty:
-        return None
-    return df
+        return (
+            None,
+            "Roofline counters found but no overlapping host/time samples after merge",
+        )
+    return (df, None)
 
 
 def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
@@ -84,7 +114,7 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
     if not jt.host_list:
         return None
 
-    df = _get_flops_bw_df(jt)
+    df, _reason = _get_flops_bw_df_and_reason(jt)
     if df is None or df.empty:
         return None
 
@@ -177,3 +207,20 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
     hover_job.renderers = [r_job]
     p.add_tools(hover_roof, hover_job)
     return p
+
+
+def plot_and_reason_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
+    """Build roofline plot and return (figure_or_none, unavailable_reason_or_none)."""
+    if not jt.host_list:
+        return (None, "No hosts found in host_data for this job/time range")
+
+    df, reason = _get_flops_bw_df_and_reason(jt)
+    if df is None or df.empty:
+        return (None, reason)
+
+    fig = plot_roofline_from_jid_table(
+        jt, peak_flops_gf=peak_flops_gf, peak_bw_gb=peak_bw_gb
+    )
+    if fig is None:
+        return (None, reason or "No valid roofline points after AI/perf filtering")
+    return (fig, None)
