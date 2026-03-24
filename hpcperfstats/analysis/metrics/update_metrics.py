@@ -11,10 +11,12 @@ first** (``end_time`` descending, then ``jid`` descending as a stable tiebreaker
 
 """
 import functools
+import gc
 import os
 import signal
 import sys
 import time
+from types import SimpleNamespace
 from datetime import datetime, timedelta
 from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
@@ -167,6 +169,16 @@ def _iter_chunked_pks(queryset, chunk_size):
     offset += chunk_size
 
 
+def _job_refs_from_jids(jids):
+  """Return lightweight job references that only carry jid.
+
+  metrics.Metrics().run() only requires ``job.jid``. Using tiny objects instead
+  of ORM model instances avoids per-chunk model allocation and a redundant DB
+  round-trip, which lowers memory usage and query pressure for large backfills.
+  """
+  return [SimpleNamespace(jid=jid) for jid in jids]
+
+
 def update_metrics(date, rerun=False):
   """Compute and persist metrics for all jobs ending on date (runtime >= min_time).
 
@@ -204,12 +216,7 @@ def update_metrics(date, rerun=False):
     processed = 0
     for pk_chunk, _ in _iter_chunked_pks(qs, CHUNK_SIZE):
       try:
-        # Preserve iterator order (newest job first) — SQL IN does not preserve order.
-        job_by_jid = {
-            j.jid: j
-            for j in job_data.objects.filter(pk__in=pk_chunk).only("jid")
-        }
-        jobs_chunk = [job_by_jid[jid] for jid in pk_chunk if jid in job_by_jid]
+        jobs_chunk = _job_refs_from_jids(pk_chunk)
         metrics_manager.run(jobs_chunk)
         processed += len(jobs_chunk)
       except (OperationalError, DatabaseError) as exc:
@@ -220,16 +227,13 @@ def update_metrics(date, rerun=False):
             "for date {1}: {2}".format(len(pk_chunk), date, exc)
         )
         close_old_connections()
-        job_by_jid = {
-            j.jid: j
-            for j in job_data.objects.filter(pk__in=pk_chunk).only("jid")
-        }
-        jobs_chunk = [job_by_jid[jid] for jid in pk_chunk if jid in job_by_jid]
+        jobs_chunk = _job_refs_from_jids(pk_chunk)
         metrics_manager.run(jobs_chunk)
         processed += len(jobs_chunk)
       finally:
         # Release references promptly; GC can then free memory before next chunk.
         del jobs_chunk
+        gc.collect()
 
     log_print(
         "Finished metrics for date {0}: processed {1} jobs".format(

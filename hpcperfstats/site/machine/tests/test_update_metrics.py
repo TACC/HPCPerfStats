@@ -196,3 +196,44 @@ def test_install_sigterm_handler_sets_flag_and_raises(monkeypatch):
   assert sigterm_received[0] is True
   assert excinfo.value.code == 143
   assert update_metrics.shutdown_requested[0] is True
+
+
+def test_job_refs_from_jids_are_lightweight():
+  """Chunk payload should only include jid-bearing lightweight objects."""
+  refs = update_metrics._job_refs_from_jids([11, 22, 33])
+  assert [r.jid for r in refs] == [11, 22, 33]
+  assert all(not hasattr(r, "_state") for r in refs)
+
+
+def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
+  """update_metrics should not re-query job_data rows per chunk."""
+  monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
+  monkeypatch.setattr(
+      update_metrics,
+      "_iter_chunked_pks",
+      lambda qs, chunk: iter([([101, 102], 2), ([103], 3)]),
+  )
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+
+  # If a regression re-introduces ORM fetches, fail loudly.
+  class _NoQueryManager:
+    def filter(self, *args, **kwargs):
+      raise AssertionError("update_metrics should not query job_data per chunk")
+
+  monkeypatch.setattr(update_metrics.job_data, "objects", _NoQueryManager())
+
+  seen = []
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def run(self, jobs):
+      seen.append([j.jid for j in jobs])
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "DEBUG", False)
+
+  update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
+  assert seen == [[101, 102], [103]]
