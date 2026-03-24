@@ -1928,8 +1928,11 @@ def job_plots(request, pk):
         close_old_connections()
         try:
             try:
-                plot_json = plots.SummaryPlot(j).plot()
-                mplot_item = json_item(plot_json)
+                plot_json, plot_reason = plots.plot_and_reason_summary_from_jid_table(j)
+                if plot_json is not None:
+                    mplot_item = json_item(plot_json)
+                else:
+                    reason = plot_reason or plots.MSG_NO_METRIC_DATA
             except Exception as e:
                 logging.getLogger(__name__).warning(
                     "Failed to generate summary plot for jid %s: %s", job.jid, e, exc_info=True
@@ -2003,13 +2006,19 @@ def job_plots(request, pk):
             and cached_entry.get("plot_item") is None
             and cached_entry.get("unavailable_reason") == plots.MSG_NO_HOST_MSR_DATA
         )
+        stale_generic_summary_reason = (
+            key == "summary_plot"
+            and isinstance(cached_entry, dict)
+            and cached_entry.get("plot_item") is None
+            and cached_entry.get("unavailable_reason") == plots.MSG_NO_METRIC_DATA
+        )
         stale_generic_roofline_reason = (
             key == "roofline"
             and isinstance(cached_entry, dict)
             and cached_entry.get("plot_item") is None
             and cached_entry.get("unavailable_reason") == plots.MSG_NO_ROOFLINE_DATA
         )
-        if stale_generic_heatmap_reason or stale_generic_roofline_reason:
+        if stale_generic_summary_reason or stale_generic_heatmap_reason or stale_generic_roofline_reason:
             missing_keys.append(key)
             continue
         if isinstance(cached_entry, dict):

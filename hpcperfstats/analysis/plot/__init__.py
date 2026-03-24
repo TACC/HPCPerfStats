@@ -19,9 +19,11 @@ from hpcperfstats.analysis.plot.roofline import (
     plot_roofline_from_jid_table,
 )
 from hpcperfstats.analysis.plot.summaryplot import SummaryPlot
+from hpcperfstats.analysis.plot.summaryplot import plot_and_reason_summary_from_jid_table
 
 __all__ = [
     "SummaryPlot",
+    "plot_and_reason_summary_from_jid_table",
     "HeatMap",
     "DevPlot",
     "plot_from_jid_table",

@@ -24,6 +24,51 @@ from hpcperfstats.analysis.plot import MSG_NO_METRIC_DATA
 local_timezone = cfg.get_local_timezone()
 
 
+def _summary_metric_specs():
+  """Metric specs used by summary plot and diagnostics."""
+  return [
+      ("amd64_pmc", "arc", ['FLOPS'], "amd_flops", 1e-9, "FLOPS32b+64b[GF]"),
+      ("amd64_df", "arc",
+       ['MBW_CHANNEL_0', 'MBW_CHANNEL_1', 'MBW_CHANNEL_2', 'MBW_CHANNEL_3'
+        ], "amd_mbw", 2 / (1024 * 1024 * 1024), "DRAMBW[GB/s]"),
+      ("amd64_pmc", "value", ['INST_RETIRED'], "amd_instr", 1, '[#/s]'),
+      ("amd64_pmc", "arc", ['MPERF'], "amd_mcycles", 1, '[#/s]'),
+      ("amd64_pmc", "arc", ['APERF'], "amd_acycles", 1, '[#/s]'),
+      ("intel_8pmc3", "arc", [
+          'FP_ARITH_INST_RETIRED_SCALAR_DOUBLE',
+          'FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE',
+          'FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE',
+          'FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE'
+      ], "flops64b", 1e-9, "FLOPS64b[GF]"),
+      ("intel_8pmc3", "arc", [
+          'FP_ARITH_INST_RETIRED_SCALAR_SINGLE',
+          'FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE',
+          'FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE',
+          'FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE'
+      ], "flops32b", 1e-9, "FLOPS32b[GF]"),
+      ("intel_8pmc3", "arc", ['INST_RETIRED'], "instr", 1, '[#/s]'),
+      ("intel_8pmc3", "arc", ['MPERF'], "mcycles", 1, '[#/s]'),
+      ("intel_8pmc3", "arc", ['APERF'], "acycles", 1, '[#/s]'),
+      ("intel_rapl", "arc", ['MSR_PKG_ENERGY_STATUS'], "watts", 0.00001526,
+       '[watts]'),
+      ("intel_skx_imc", "arc", ['CAS_READS', 'CAS_WRITES'], "mbw",
+       64 / (1024 * 1024 * 1024), "DRAMBW[GB/s]"),
+      ("ib_ext", "arc", ['port_rcv_data', 'port_xmit_data'], "ibbw",
+       1 / (1024 * 1024), "FabricBW[MB/s]"),
+      ("llite", "arc", [
+          'open', 'close', 'mmap', 'fsync', 'setattr', 'truncate', 'flock',
+          'getattr', 'statfs', 'alloc_inode', 'setxattr', 'listxattr',
+          'removexattr', 'readdir', 'create', 'lookup', 'link', 'unlink',
+          'symlink', 'mkdir', 'rmdir', 'mknod', 'rename'
+      ], "liops", 1, "LustreIOPS[#/s]"),
+      ("llite", "arc", ['read_bytes', 'write_bytes'], "lbw",
+       1 / (1024 * 1024), "LustreBW[MB/s]"),
+      ("cpu", "arc", ['user', 'system',
+                      'nice'], "cpu", 0.01, "CPU Usage [#cores]"),
+      ("mem", "value", ['MemUsed'], "mem", 1 / (1024 * 1024), "MemUsed[GB]")
+  ]
+
+
 class SummaryPlot():
   """Builds a grid of Bokeh step plots (one per metric) from jid_table aggregate DataFrames.
 
@@ -103,47 +148,7 @@ class SummaryPlot():
 
     log.debug("Host Count: %s", len(self.host_list))
 
-    metrics = [
-        ("amd64_pmc", "arc", ['FLOPS'], "amd_flops", 1e-9, "FLOPS32b+64b[GF]"),
-        ("amd64_df", "arc",
-         ['MBW_CHANNEL_0', 'MBW_CHANNEL_1', 'MBW_CHANNEL_2', 'MBW_CHANNEL_3'
-          ], "amd_mbw", 2 / (1024 * 1024 * 1024), "DRAMBW[GB/s]"),
-        ("amd64_pmc", "value", ['INST_RETIRED'], "amd_instr", 1, '[#/s]'),
-        ("amd64_pmc", "arc", ['MPERF'], "amd_mcycles", 1, '[#/s]'),
-        ("amd64_pmc", "arc", ['APERF'], "amd_acycles", 1, '[#/s]'),
-        ("intel_8pmc3", "arc", [
-            'FP_ARITH_INST_RETIRED_SCALAR_DOUBLE',
-            'FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE',
-            'FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE',
-            'FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE'
-        ], "flops64b", 1e-9, "FLOPS64b[GF]"),
-        ("intel_8pmc3", "arc", [
-            'FP_ARITH_INST_RETIRED_SCALAR_SINGLE',
-            'FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE',
-            'FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE',
-            'FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE'
-        ], "flops32b", 1e-9, "FLOPS32b[GF]"),
-        ("intel_8pmc3", "arc", ['INST_RETIRED'], "instr", 1, '[#/s]'),
-        ("intel_8pmc3", "arc", ['MPERF'], "mcycles", 1, '[#/s]'),
-        ("intel_8pmc3", "arc", ['APERF'], "acycles", 1, '[#/s]'),
-        ("intel_rapl", "arc", ['MSR_PKG_ENERGY_STATUS'], "watts", 0.00001526,
-         '[watts]'),
-        ("intel_skx_imc", "arc", ['CAS_READS', 'CAS_WRITES'], "mbw",
-         64 / (1024 * 1024 * 1024), "DRAMBW[GB/s]"),
-        ("ib_ext", "arc", ['port_rcv_data', 'port_xmit_data'], "ibbw",
-         1 / (1024 * 1024), "FabricBW[MB/s]"),
-        ("llite", "arc", [
-            'open', 'close', 'mmap', 'fsync', 'setattr', 'truncate', 'flock',
-            'getattr', 'statfs', 'alloc_inode', 'setxattr', 'listxattr',
-            'removexattr', 'readdir', 'create', 'lookup', 'link', 'unlink',
-            'symlink', 'mkdir', 'rmdir', 'mknod', 'rename'
-        ], "liops", 1, "LustreIOPS[#/s]"),
-        ("llite", "arc", ['read_bytes', 'write_bytes'], "lbw",
-         1 / (1024 * 1024), "LustreBW[MB/s]"),
-        ("cpu", "arc", ['user', 'system',
-                        'nice'], "cpu", 0.01, "CPU Usage [#cores]"),
-        ("mem", "value", ['MemUsed'], "mem", 1 / (1024 * 1024), "MemUsed[GB]")
-    ]
+    metrics = _summary_metric_specs()
 
     df = self.jt.get_host_time_df()
     if df.empty or not self.host_list:
@@ -190,3 +195,42 @@ class SummaryPlot():
     if not plots:
       raise ValueError(MSG_NO_METRIC_DATA)
     return gridplot(plots, ncols=len(plots) // 4 + 1)
+
+
+def plot_and_reason_summary_from_jid_table(jt):
+  """Build summary plot and return (figure_or_none, unavailable_reason_or_none)."""
+  try:
+    fig = SummaryPlot(jt).plot()
+    return (fig, None)
+  except Exception:
+    # Build diagnostics from available aggregates.
+    host_time_df = jt.get_host_time_df()
+    if host_time_df.empty or not jt.host_list:
+      return (None, "No hosts/timestamps found in host_data for this job/time range")
+
+    attempts = []
+    available = []
+    for typ, val_col, events, name, conv, _label in _summary_metric_specs():
+      try:
+        agg = jt.get_aggregate_df(typ, val_col, events, conv)
+      except Exception:
+        attempts.append(f"{name}:{typ}:{val_col} rows(error)")
+        continue
+      rows = 0 if agg is None else len(agg.index)
+      attempts.append(f"{name}:{typ}:{val_col} rows({rows})")
+      if rows > 0 and "sum_val" in agg.columns:
+        available.append(name)
+
+    if not available:
+      return (
+          None,
+          "Missing summary counters in host_data (no configured summary metrics had usable rows). "
+          + "Attempted: "
+          + "; ".join(attempts),
+      )
+    return (
+        None,
+        "Summary aggregates exist but no renderable series were produced. "
+        + "Available metric aggregates: "
+        + ", ".join(sorted(set(available))),
+    )
