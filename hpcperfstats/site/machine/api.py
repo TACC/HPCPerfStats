@@ -47,7 +47,7 @@ from .cache_utils import (
     KEY_STATES,
     KEY_ALL_HOSTS,
     KEY_HOST_LAST,
-    KEY_GPU_QS,
+    KEY_GPU_AGG,
     KEY_XALT,
     KEY_TYPE_DETAIL_HOSTS,
     KEY_JOB,
@@ -164,6 +164,7 @@ def _job_detail_cache_ttl_for_jid(jid):
         return JOB_DETAIL_CACHE_TTL_RECENT
     return _job_detail_cache_ttl_for_end_time(end_time)
 from django.db.models import (
+    Avg,
     Count,
     Exists,
     OuterRef,
@@ -1625,30 +1626,33 @@ def job_detail(request, pk):
     light_mode = str(request.GET.get("light", "")).lower() in ("1", "true", "yes")
 
     def _fetch_gpu():
+        # SQL Count/Max/Avg avoids loading every utilization row (was timing out).
         gpu_active, gpu_max, gpu_mean = None, None, None
         close_old_connections()
         try:
             try:
-                gpu_list = cached_orm(
-                    f"{KEY_GPU_QS}:{job.jid}",
+                agg = cached_orm(
+                    f"{KEY_GPU_AGG}:{job.jid}",
                     job_cache_timeout,
-                    lambda: list(
-                        host_data.objects.filter(
-                            jid=job.jid,
-                            type="nvidia_gpu",
-                            event="utilization",
-                        )
-                        .values("type", "event", "value")
-                        .order_by("time")
+                    lambda: host_data.objects.filter(
+                        jid=job.jid,
+                        type="nvidia_gpu",
+                        event="utilization",
+                    ).aggregate(
+                        cnt=Count("time"),
+                        vmax=Max("value"),
+                        vmean=Avg("value"),
                     ),
                 )
-                gpu_data = DataFrame(gpu_list) if gpu_list else DataFrame()
-                if not gpu_data.empty and len(gpu_data) > 2:
-                    gpu_data = gpu_data.iloc[1:-1]
-                    gpu_max = float(gpu_data["value"].max())
-                    gpu_mean = float(gpu_data["value"].mean())
-                    if not isnan(gpu_max):
-                        gpu_active = ceil(gpu_max / 100.0)
+                cnt = int(agg.get("cnt") or 0)
+                if cnt > 2:
+                    vmax = agg.get("vmax")
+                    if vmax is not None:
+                        gpu_max = float(vmax)
+                        vmean = agg.get("vmean")
+                        gpu_mean = float(vmean) if vmean is not None else None
+                        if not isnan(gpu_max):
+                            gpu_active = ceil(gpu_max / 100.0)
             except Exception:
                 pass
             return (gpu_active, gpu_max, gpu_mean)

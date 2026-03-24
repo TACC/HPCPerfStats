@@ -1,0 +1,102 @@
+"""Tests for job_detail GPU utilization (DB aggregate path; no DB required)."""
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
+from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
+
+from django.test import RequestFactory
+
+from hpcperfstats.site.machine import cache_utils as cu
+
+
+def _patch_job_detail_context(api_module, jid, gpu_agg):
+  """Return context manager that stubs job_detail dependencies (no ORM)."""
+  mock_j = MagicMock()
+  mock_j.acct_host_list = ["n1.example.com"]
+  mock_j.schema = {}
+  mock_j.get_llite_delta_by_event.return_value = MagicMock(empty=True)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  mock_j.start_time = t0
+  mock_j.end_time = t0
+
+  job_mock = MagicMock()
+  job_mock.jid = jid
+  job_mock.username = "u1"
+  job_mock.start_time = t0
+  job_mock.end_time = t0
+
+  def cached_se(key, timeout, fn):
+    if key.startswith(f"{cu.KEY_JOB}:"):
+      return job_mock
+    if key.startswith(f"{cu.KEY_GPU_AGG}:"):
+      return gpu_agg
+    if key.startswith(f"{cu.KEY_PROC_LIST}:"):
+      return []
+    return fn()
+
+  return (
+      patch.object(api_module, "_require_auth", return_value=None),
+      patch.object(api_module, "_job_detail_cache_ttl_for_jid", return_value=3600),
+      patch.object(api_module.jid_table, "jid_table", return_value=mock_j),
+      patch.object(api_module, "build_job_metrics_display_list", return_value=[]),
+      patch.object(api_module.cfg, "get_xalt_user", return_value=""),
+      patch.object(api_module.cfg, "get_host_name_ext", return_value=""),
+      patch.object(api_module, "cached_orm", side_effect=cached_se),
+      patch.object(
+          api_module,
+          "JobListSerializer",
+          return_value=MagicMock(data={"jid": jid, "username": "u1"}),
+      ),
+      patch.object(api_module, "local_timezone", timezone.utc),
+  )
+
+
+def test_job_detail_gpu_stats_from_aggregate_dict():
+  """GPU fields reflect cached ORM aggregate (fast path)."""
+  from hpcperfstats.site.machine import api
+
+  jid = "test-gpu-jid-1"
+  factory = RequestFactory()
+  request = factory.get(f"/api/jobs/{jid}/")
+  request.session = {"username": "u1", "is_staff": False}
+
+  gpu_agg = {"cnt": 4, "vmax": 250.0, "vmean": 80.0}
+  ctx = _patch_job_detail_context(api, jid, gpu_agg)
+
+  with ThreadPoolExecutor(max_workers=4) as executor:
+    with ExitStack() as stack:
+      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
+      for cm in ctx:
+        stack.enter_context(cm)
+      response = api.job_detail(request, jid)
+
+  assert response.status_code == 200
+  data = response.data
+  assert data["gpu_utilization_max"] == 250.0
+  assert data["gpu_active"] == 3
+  assert data["gpu_utilization_mean"] == 80.0
+
+
+def test_job_detail_gpu_stats_none_when_two_or_fewer_samples():
+  """Same threshold as before: need more than two samples."""
+  from hpcperfstats.site.machine import api
+
+  jid = "test-gpu-jid-2"
+  factory = RequestFactory()
+  request = factory.get(f"/api/jobs/{jid}/")
+  request.session = {"username": "u1", "is_staff": False}
+
+  gpu_agg = {"cnt": 2, "vmax": 60.0, "vmean": 55.0}
+  ctx = _patch_job_detail_context(api, jid, gpu_agg)
+
+  with ThreadPoolExecutor(max_workers=4) as executor:
+    with ExitStack() as stack:
+      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
+      for cm in ctx:
+        stack.enter_context(cm)
+      response = api.job_detail(request, jid)
+
+  assert response.status_code == 200
+  assert response.data["gpu_active"] is None
+  assert response.data["gpu_utilization_max"] is None
+  assert response.data["gpu_utilization_mean"] is None

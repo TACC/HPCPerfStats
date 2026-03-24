@@ -82,6 +82,8 @@ KEY_ALL_HOSTS = "all_hosts"
 KEY_HOST_LAST = "host_last"
 KEY_LLITE_DELTA = "llite_delta"
 KEY_GPU_QS = "gpu_qs"
+# Aggregate stats (Count/Max/Avg) — distinct cache namespace from legacy row-list KEY_GPU_QS.
+KEY_GPU_AGG = "gpu_agg"
 KEY_XALT = "xalt"
 KEY_TYPE_DETAIL_HOSTS = "type_detail_hosts"
 KEY_HOST_DATA_DF = "host_data_df"
