@@ -1,12 +1,11 @@
 """Views for the main site: React SPA shell and API-key management page."""
 import os
-import secrets
 
 import bokeh
 from django.conf import settings
 from django.http import HttpResponse, HttpResponseRedirect
+from django.middleware.csrf import get_token
 from django.views.generic import View
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from hpcperfstats.site.machine.models import ApiKey
@@ -43,7 +42,6 @@ class ReactSPAView(View):
             return response
 
 
-@csrf_exempt
 def api_key_page(request):
     """Simple HTML page to create or view an API key for the logged-in user.
 
@@ -60,16 +58,15 @@ def api_key_page(request):
     # domain-based heuristic.
     is_staff = bool(request.session.get("is_staff", False))
 
+    generated_api_key = None
     if request.method == "POST":
         # Invalidate all existing active keys for this (username, is_staff) pair
         # and create a fresh one.
         ApiKey.objects.filter(username=username, is_active=True, is_staff=is_staff).update(
             is_active=False
         )
-        new_key = secrets.token_hex(32)
-        key_obj = ApiKey.objects.create(
+        key_obj, generated_api_key = ApiKey.create_from_raw_key(
             username=username,
-            key=new_key,
             is_staff=is_staff,
         )
     else:
@@ -80,13 +77,24 @@ def api_key_page(request):
             .first()
         )
         if key_obj is None:
-            # 32 bytes -> 43-44 URL-safe chars; store as hex for readability
-            new_key = secrets.token_hex(32)
-            key_obj = ApiKey.objects.create(
+            key_obj, generated_api_key = ApiKey.create_from_raw_key(
                 username=username,
-                key=new_key,
                 is_staff=is_staff,
             )
+
+    csrf_token = get_token(request)
+    if generated_api_key:
+        key_message = (
+            "<p>Your API key for programmatic access is:</p>"
+            f"<p><code>{generated_api_key}</code></p>"
+            "<p><strong>This key is shown only once.</strong> Store it securely now.</p>"
+        )
+    else:
+        key_message = (
+            "<p>You already have an active API key, and for security it cannot be shown again.</p>"
+            f"<p>Active key prefix: <code>{key_obj.key_prefix}</code></p>"
+            "<p>Use your saved copy, or rotate to generate a new key.</p>"
+        )
 
     body = f"""<!DOCTYPE html>
 <html lang="en">
@@ -112,12 +120,12 @@ def api_key_page(request):
   <div class="box">
     <h1>HPCPerfStats API key</h1>
     <p>Signed in as: <strong>{username}</strong></p>
-    <p>Your API key for programmatic access is:</p>
-    <p><code>{key_obj.key}</code></p>
+    {key_message}
     <p>Store this key securely. You can use it with the <code>hpcperfstats-jobstats</code>
     and <code>hpcperfstats-sacct-gen</code> tools (from the hpcperfstats-tools package)
     by passing <code>--api-key</code> or using the cached key in <code>~/.hpcperfstats-api</code>.</p>
     <form method="post" style="margin-top: 1.5rem;">
+      <input type="hidden" name="csrfmiddlewaretoken" value="{csrf_token}" />
       <button type="submit">Invalidate and Create New Key</button>
     </form>
   </div>

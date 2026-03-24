@@ -56,4 +56,20 @@ describe("BokehEmbed", () => {
     });
     expect(screen.getByText("Copied")).toBeInTheDocument();
   });
+
+  it("does not execute legacy script/div payloads", () => {
+    const embedItem = vi.fn();
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    render(
+      <BokehEmbed
+        script={'<script type="text/javascript">window.__injected = true;</script>'}
+        div={'<div id="unsafe"></div>'}
+      />
+    );
+
+    expect(screen.getByText("Plot not available")).toBeInTheDocument();
+    expect(embedItem).not.toHaveBeenCalled();
+    expect(window.__injected).toBeUndefined();
+  });
 });

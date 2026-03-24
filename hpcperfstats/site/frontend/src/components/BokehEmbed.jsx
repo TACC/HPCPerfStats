@@ -19,17 +19,6 @@ function whenBokehReady(timeoutMs = 10000) {
   });
 }
 
-/**
- * Bokeh API returns script wrapped in <script type="text/javascript">...</script>.
- * We must run only the inner JS; putting the full string in a script element's
- * textContent would not execute it.
- */
-function extractInlineScript(html) {
-  if (typeof html !== "string" || !html.trim()) return html;
-  const match = html.trim().match(/^\s*<script[^>]*>([\s\S]*?)<\/script>\s*$/i);
-  return match ? match[1].trim() : html;
-}
-
 const PLACEHOLDER_STYLE = {
   minHeight: 120,
   display: "flex",
@@ -63,12 +52,10 @@ const PLACEHOLDER_OVERLAY_STYLE = {
 
 /**
  * Injects Bokeh plot from API.
- * - If `item` (Bokeh json_item) is provided: renders a div with `id` and calls
- *   Bokeh.embed.embed_item(item, id). Most reliable for SPAs (e.g. job page).
- * - Otherwise uses `script` + `div` (strip script tag and run inline).
+ * Accepts only Bokeh `json_item` payloads to avoid executing untrusted HTML/JS.
  * Shows "Plot not available" in the plot area when there is no data or when the plot fails to load.
  */
-export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plotName, unavailableReason }) {
+export default function BokehEmbed({ item, id = "bokeh-embed", plotName, unavailableReason }) {
   const containerRef = useRef(null);
   const [plotReady, setPlotReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -76,7 +63,7 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
   const [showDetails, setShowDetails] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
 
-  const hasData = !!(item || (script && div));
+  const hasData = !!item;
   const showPlaceholder = !hasData || !plotReady || loadFailed;
 
   useEffect(() => {
@@ -85,7 +72,7 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
     setFailureReason(null);
     setShowDetails(false);
     setCopyStatus("");
-  }, [item, id, script, div]);
+  }, [item, id]);
 
   useEffect(() => {
     if (!item) return;
@@ -124,38 +111,6 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
       cancelled = true;
     };
   }, [item, id]);
-
-  useEffect(() => {
-    if (item || !script || !containerRef.current) return;
-    const wrap = containerRef.current.querySelector(".bokeh-script-wrap");
-    if (!wrap) return;
-
-    const scriptToRun = extractInlineScript(script);
-    if (!scriptToRun) return;
-
-    let cancelled = false;
-    whenBokehReady()
-      .then(() => {
-        if (cancelled || !containerRef.current) return;
-        const prev = wrap.querySelector("script");
-        if (prev) prev.remove();
-        const el = document.createElement("script");
-        el.type = "text/javascript";
-        el.textContent = scriptToRun;
-        wrap.appendChild(el);
-        if (!cancelled) setPlotReady(true);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setFailureReason(err?.message || "Bokeh JS did not load in time");
-          setLoadFailed(true);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [script, item]);
 
   const detailsMessage = loadFailed ? failureReason : unavailableReason;
   const isLoading = hasData && !plotReady && !loadFailed;
@@ -266,34 +221,9 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
     );
   }
 
-  if (!div && !script) {
-    return (
-      <div ref={containerRef} className="bokeh-embed-wrapper">
-        {placeholder}
-      </div>
-    );
-  }
-
-  const overlayActive = hasData && showPlaceholder;
   return (
-    <div
-      ref={containerRef}
-      className="bokeh-embed-wrapper"
-      style={{
-        position: "relative",
-        minHeight: overlayActive ? BOKEH_EMBED_MIN_HEIGHT_PX : undefined,
-      }}
-    >
-      {overlayActive ? placeholderOverlay : null}
-      <div className="bokeh-script-wrap" style={{ display: "none" }} />
-      {div && (
-        <div
-          id={id}
-          className="bokeh-embed"
-          style={plotTargetLayoutStyle}
-          dangerouslySetInnerHTML={{ __html: div }}
-        />
-      )}
+    <div ref={containerRef} className="bokeh-embed-wrapper">
+      {placeholder}
     </div>
   );
 }

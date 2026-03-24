@@ -284,14 +284,14 @@ class TestGetApiKeyFromRequest:
     key = api._get_api_key_from_request(request)
     assert key == "header-key"
 
-  def test_get_api_key_from_query_param(self):
+  def test_get_api_key_ignores_query_param(self):
     from hpcperfstats.site.machine import api
 
     factory = RequestFactory()
     request = factory.get("/api/?api_key=query-key")
 
     key = api._get_api_key_from_request(request)
-    assert key == "query-key"
+    assert key is None
 
   def test_get_api_key_returns_none_when_missing(self):
     from hpcperfstats.site.machine import api
@@ -403,23 +403,23 @@ class TestAdminMonitor:
     assert hosts == ["node1.example.com", "node2.example.com"]
 
 
-@pytest.mark.django_db
 class TestApiKeyValid:
   def test_api_key_valid_returns_none_for_unknown_key(self):
     from hpcperfstats.site.machine import api
 
-    assert api._api_key_valid("does-not-exist") is None
+    with patch("hpcperfstats.site.machine.api.ApiKey.objects.get", side_effect=ApiKey.DoesNotExist):
+      assert api._api_key_valid("does-not-exist") is None
 
   def test_api_key_valid_returns_active_key_and_updates_last_used(self):
     from hpcperfstats.site.machine import api
 
-    key_obj = ApiKey.objects.create(key="k1", username="alice", is_active=True)
-
-    result = api._api_key_valid("k1")
+    raw_key = "k1"
+    key_obj = MagicMock()
+    key_obj.key = ApiKey.hash_raw_key(raw_key)
+    with patch("hpcperfstats.site.machine.api.ApiKey.objects.get", return_value=key_obj):
+      result = api._api_key_valid(raw_key)
 
     assert result is not None
-    assert result.pk == key_obj.pk
-    # Best-effort: last_used_at should be set to a non-null value
-    result.refresh_from_db()
-    assert result.last_used_at is not None
+    assert result == key_obj
+    key_obj.save.assert_called_once()
 

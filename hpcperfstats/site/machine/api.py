@@ -208,12 +208,11 @@ def _format_log_timestamp(ts):
 
 
 def _get_api_key_from_request(request):
-    """Extract API key from Authorization header or query params.
+    """Extract API key from Authorization or X-API-Key headers.
 
     Supported formats:
     - Authorization: Api-Key <key>
     - X-API-Key header
-    - api_key query parameter
     """
     auth = request.META.get("HTTP_AUTHORIZATION", "")
     if auth:
@@ -225,9 +224,6 @@ def _get_api_key_from_request(request):
     )
     if header_key:
         return header_key.strip() or None
-    qp = request.GET.get("api_key")
-    if qp:
-        return qp.strip() or None
     return None
 
 
@@ -235,8 +231,9 @@ def _api_key_valid(key: str):
     """Return ApiKey instance if key is valid and active, else None."""
     if not key:
         return None
+    key_hash = ApiKey.hash_raw_key(key)
     try:
-        api_key_obj = ApiKey.objects.get(key=key, is_active=True)
+        api_key_obj = ApiKey.objects.get(key=key_hash, is_active=True)
     except ApiKey.DoesNotExist:
         return None
     # Best-effort last-used update; ignore errors.
@@ -262,7 +259,7 @@ def _require_auth(request):
         # For API keys, trust the is_staff flag stored on the key itself so that
         # staff vs non-staff behavior is stable even outside of an OAuth session.
         session["is_staff"] = bool(getattr(api_key_obj, "is_staff", False))
-        session.setdefault("access_token", f"api-key:{api_key_obj.key}")
+        session.setdefault("access_token", f"api-key:{api_key_obj.username}")
         return None
 
     return Response(

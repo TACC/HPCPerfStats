@@ -2,6 +2,10 @@
 
 """
 from django.contrib.postgres.fields import ArrayField
+import hashlib
+import hmac
+import secrets
+
 from django.db import models
 
 
@@ -201,6 +205,7 @@ class ApiKey(models.Model):
   """
 
   key = models.CharField(max_length=64, primary_key=True)
+  key_prefix = models.CharField(max_length=12, db_index=True, default="")
   username = models.CharField(max_length=128, db_index=True)
   created_at = models.DateTimeField(auto_now_add=True)
   last_used_at = models.DateTimeField(null=True, blank=True)
@@ -215,5 +220,33 @@ class ApiKey(models.Model):
     ]
 
   def __str__(self):
-    """Return short representation key@username."""
-    return f"{self.key[:8]}... for {self.username}"
+    """Return short representation prefix@username."""
+    shown = self.key_prefix or self.key[:8]
+    return f"{shown}... for {self.username}"
+
+  @staticmethod
+  def hash_raw_key(raw_key: str) -> str:
+    """Return stable SHA-256 hash for persisted API key lookup."""
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+  @staticmethod
+  def make_raw_key() -> str:
+    """Generate a new API key value shown once to the user."""
+    return secrets.token_hex(32)
+
+  @classmethod
+  def create_from_raw_key(cls, username: str, is_staff: bool):
+    """Create a key row from a generated raw key, returning (obj, raw_key)."""
+    raw_key = cls.make_raw_key()
+    key_hash = cls.hash_raw_key(raw_key)
+    obj = cls.objects.create(
+        key=key_hash,
+        key_prefix=raw_key[:12],
+        username=username,
+        is_staff=is_staff,
+    )
+    return obj, raw_key
+
+  def matches_raw_key(self, raw_key: str) -> bool:
+    """Constant-time comparison helper for explicit validation paths."""
+    return hmac.compare_digest(self.key, self.hash_raw_key(raw_key))
