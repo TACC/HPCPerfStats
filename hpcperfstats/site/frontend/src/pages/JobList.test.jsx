@@ -147,5 +147,69 @@ describe("JobList", () => {
       );
     });
   });
+
+  it("keeps error detail and copy controls visible in mobile histogram view", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn().mockImplementation(() => ({
+        matches: true,
+        media: "",
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+      job_list: [],
+      nj: 0,
+      aggregates: {},
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    });
+    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({
+      plots: [
+        {
+          key: "jobs_by_queue",
+          title: "Jobs by queue",
+          plot_item_thumb: null,
+          plot_item_full: null,
+          plot_unavailable_reason:
+            "No queue histogram data available for this query.",
+        },
+      ],
+    });
+    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+
+    renderJobList();
+
+    await waitFor(() => {
+      expect(screen.getByText("#Jobs = 0")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Error Detail")).toBeInTheDocument();
+
+    const detailsTrigger = screen.getByLabelText("Show plot error details");
+    fireEvent.mouseEnter(detailsTrigger);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "No queue histogram data available for this query."
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy Error Detail" }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(
+        "No queue histogram data available for this query."
+      );
+    });
+  });
 });
 
