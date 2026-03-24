@@ -9,7 +9,11 @@ MSG_NO_ROOFLINE_DATA = "No FLOPS/memory bandwidth data available for roofline."
 
 # Import plots to run on data
 from hpcperfstats.analysis.plot.devplot import DevPlot
-from hpcperfstats.analysis.plot.heatmap import HeatMap, plot_from_jid_table
+from hpcperfstats.analysis.plot.heatmap import (
+    HeatMap,
+    plot_and_reason_from_jid_table,
+    plot_from_jid_table,
+)
 from hpcperfstats.analysis.plot.roofline import plot_roofline_from_jid_table
 from hpcperfstats.analysis.plot.summaryplot import SummaryPlot
 
@@ -18,6 +22,7 @@ __all__ = [
     "HeatMap",
     "DevPlot",
     "plot_from_jid_table",
+    "plot_and_reason_from_jid_table",
     "plot_roofline_from_jid_table",
     "MSG_NO_METRIC_DATA",
     "MSG_NO_HOST_MSR_DATA",

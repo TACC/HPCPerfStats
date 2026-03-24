@@ -18,6 +18,16 @@ from bokeh.plotting import figure
 from hpcperfstats.analysis.gen import utils
 
 
+def _candidate_series():
+  """Ordered candidate inputs for CPI as (type, cycles_event, instructions_event)."""
+  return [
+      ("intel_8pmc3", "APERF", "INST_RETIRED"),
+      ("intel_8pmc3", "MPERF", "INST_RETIRED"),
+      ("amd64_pmc", "APERF", "INST_RETIRED"),
+      ("amd64_pmc", "MPERF", "INST_RETIRED"),
+  ]
+
+
 def _host_cpi_series(schema, stats):
   """Per-interval CPI (length nt-1); caller extends to length nt. Returns None if unsupported."""
   events = frozenset(schema.events)
@@ -113,23 +123,22 @@ class HeatMap():
     return hm
 
 
-def plot_from_jid_table(jt):
-  """Build CPI heatmap from jid_table (ORM). Returns a Bokeh figure or None if no PMC data.
+def plot_and_reason_from_jid_table(jt):
+  """Build CPI heatmap from jid_table (ORM).
 
-  Uses intel_8pmc3 / amd64_pmc with (APERF or MPERF) and INST_RETIRED when available.
-  MPERF gives reference cycles per instruction if actual cycles (APERF) are absent.
+  Returns (figure_or_none, unavailable_reason_or_none).
   """
   if not jt.host_list:
-    return None
-  # Try intel then amd PMC for cycles and instructions
-  for typ, events_cycles, events_instr in [
-      ("intel_8pmc3", ["APERF"], ["INST_RETIRED"]),
-      ("intel_8pmc3", ["MPERF"], ["INST_RETIRED"]),
-      ("amd64_pmc", ["APERF"], ["INST_RETIRED"]),
-      ("amd64_pmc", ["MPERF"], ["INST_RETIRED"]),
-  ]:
-    agg_cyc = jt.get_aggregate_df(typ, "arc", events_cycles, 1.0)
-    agg_instr = jt.get_aggregate_df(typ, "arc", events_instr, 1.0)
+    return (None, "No hosts found in host_data for this job/time range")
+
+  attempts = []
+  # Try intel then amd PMC for cycles and instructions.
+  for typ, cyc_event, instr_event in _candidate_series():
+    agg_cyc = jt.get_aggregate_df(typ, "arc", [cyc_event], 1.0)
+    agg_instr = jt.get_aggregate_df(typ, "arc", [instr_event], 1.0)
+    cyc_rows = 0 if agg_cyc is None else len(agg_cyc.index)
+    instr_rows = 0 if agg_instr is None else len(agg_instr.index)
+    attempts.append(f"{typ}:{cyc_event}/{instr_event} rows(cyc={cyc_rows}, instr={instr_rows})")
     if agg_cyc.empty or agg_instr.empty or "sum_val" not in agg_cyc.columns or "sum_val" not in agg_instr.columns:
       continue
     cyc = agg_cyc.rename(columns={"sum_val": "cycles"})[["host", "time", "cycles"]]
@@ -175,5 +184,17 @@ def plot_from_jid_table(jt):
     hm.axis.major_label_text_font_size = "5pt"
     hm.axis.major_label_standoff = 0
     hm.xaxis.major_label_orientation = 1.0
-    return hm
-  return None
+    return (hm, None)
+
+  attempts_msg = "; ".join(attempts)
+  return (
+      None,
+      "Missing CPI counters in host_data (need APERF or MPERF plus INST_RETIRED in "
+      "intel_8pmc3/amd64_pmc arc data). Attempted: " + attempts_msg,
+  )
+
+
+def plot_from_jid_table(jt):
+  """Compatibility wrapper returning only the figure (or None)."""
+  fig, _reason = plot_and_reason_from_jid_table(jt)
+  return fig

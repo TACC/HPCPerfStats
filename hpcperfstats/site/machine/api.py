@@ -1944,11 +1944,11 @@ def job_plots(request, pk):
         close_old_connections()
         try:
             try:
-                hm_fig_json = plots.plot_from_jid_table(j)
+                hm_fig_json, hm_reason = plots.plot_and_reason_from_jid_table(j)
                 if hm_fig_json is not None:
                     hplot_item = json_item(hm_fig_json)
                 else:
-                    reason = plots.MSG_NO_HOST_MSR_DATA
+                    reason = hm_reason or plots.MSG_NO_HOST_MSR_DATA
             except Exception as e:
                 logging.getLogger(__name__).warning(
                     "Failed to generate heatmap for jid %s: %s", job.jid, e, exc_info=True
