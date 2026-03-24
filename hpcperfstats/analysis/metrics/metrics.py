@@ -1049,12 +1049,18 @@ class time_imbalance():
       for i in [x + 2 for x in range(len(u.t) - 4)]:
         r1 = range(i)
         r2 = [x + i for x in range(len(dt) - i)]
+        before_window = tmid[i] - tmid[0]
+        after_window = tmid[-1] - tmid[i]
+        if before_window <= 0 or after_window <= 0:
+          continue
         # integral before time slice
-        a = trapz(rate[r1], tmid[r1]) / (tmid[i] - tmid[0])
-        if a == 0:
+        a = trapz(rate[r1], tmid[r1]) / before_window
+        if a == 0 or not np.isfinite(a):
           continue
         # integral after time slice
-        b = trapz(rate[r2], tmid[r2]) / (tmid[-1] - tmid[i])
+        b = trapz(rate[r2], tmid[r2]) / after_window
+        if not np.isfinite(b):
+          continue
         # ratio of integral after time over before time
         vals += [b / a]
     if vals:

@@ -58,3 +58,39 @@ def test_node_imbalance_and_time_imbalance_no_runtime_warning():
     warnings.simplefilter("error", category=RuntimeWarning)
     metrics.node_imbalance().compute_metric(u)
     metrics.time_imbalance().compute_metric(u)
+
+
+def test_time_imbalance_duplicate_tail_timestamps_no_runtime_warning():
+  """Duplicate timestamps at tail must not trigger invalid divide warnings."""
+  schema = metrics._Schema(["user", "system"])
+  cpu = np.array(
+      [
+          [0.0, 0.0],
+          [1.0, 0.0],
+          [3.0, 0.0],
+          [6.0, 0.0],
+          [10.0, 0.0],
+          [15.0, 0.0],
+      ],
+      dtype=np.float64,
+  )
+
+  class _Host:
+    def __init__(self):
+      self.stats = {"cpu": {"agg": cpu}}
+
+  class _Job:
+    def __init__(self):
+      self.hosts = {"n1": _Host()}
+      self.schemas = {"cpu": schema}
+      # Duplicate final timestamp forces zero "after" window for i=3.
+      self.times = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 4.0], dtype=np.float64)
+      self.acct = {"cores": 1, "nodes": 1}
+
+  u = job_utils(_Job())
+  with warnings.catch_warnings():
+    warnings.simplefilter("error", category=RuntimeWarning)
+    value, typename, units = metrics.time_imbalance().compute_metric(u)
+  assert typename == "cpu"
+  assert units == "%"
+  assert value is None or np.isfinite(value)
