@@ -77,6 +77,17 @@ def test_default_metrics_date_range_seven_days(monkeypatch):
   assert start == datetime(2025, 3, 17, 0, 0, 0)
 
 
+def test_jobs_queryset_orders_newest_job_first():
+  """_jobs_queryset uses -end_time, -jid so streaming processes newest jobs first."""
+  d = datetime(2025, 4, 10, 15, 30, 0)
+  for rerun in (True, False):
+    qs = update_metrics._jobs_queryset(d, 300, rerun=rerun)
+    sql = str(qs.query).lower()
+    assert "order by" in sql
+    assert "end_time" in sql and "desc" in sql
+    assert "jid" in sql and "desc" in sql
+
+
 def test_expected_job_metrics_row_count_cached(monkeypatch):
   """_expected_job_metrics_row_count calls catalog size at most once per process."""
   calls = []

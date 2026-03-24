@@ -6,6 +6,9 @@ catalog (one row per metric with either a numeric value or no_data_reason),
 runs Metrics().run(jobs_list). With no CLI date arguments, processes the last
 seven calendar days through today.
 
+Processing order: **newest calendar day first**, and within each day **newest job
+first** (``end_time`` descending, then ``jid`` descending as a stable tiebreaker).
+
 """
 import functools
 import os
@@ -91,11 +94,11 @@ def _expected_job_metrics_row_count():
 
 
 def _jobs_queryset(date, min_time, rerun):
-  """Base queryset: jobs ending on date with runtime >= min_time."""
+  """Jobs ending on ``date`` with runtime >= min_time, newest first (end_time, jid)."""
   qs = job_data.objects.filter(end_time__date=date.date()).exclude(
       runtime__lt=min_time)
   if rerun:
-    return qs
+    return qs.order_by("-end_time", "-jid")
   # Jobs need a metrics pass if row count is below the full catalog, or any
   # row still has null value without an explicit no_data_reason (legacy / stuck).
   # Use scalar subqueries on metrics_data (jid_id index) instead of joining
@@ -123,7 +126,9 @@ def _jobs_queryset(date, min_time, rerun):
   return qs.annotate(
       md_count=Coalesce(md_total_sq, int0),
       stale_null=Coalesce(stale_count_sq, int0),
-  ).filter(Q(md_count__lt=expected) | Q(stale_null__gt=0))
+  ).filter(Q(md_count__lt=expected) | Q(stale_null__gt=0)).order_by(
+      "-end_time", "-jid"
+  )
 
 
 def _iter_chunked_pks(queryset, chunk_size):
@@ -186,11 +191,12 @@ def update_metrics(date, rerun=False):
     processed = 0
     for pk_chunk, _ in _iter_chunked_pks(qs, CHUNK_SIZE):
       try:
-        jobs_chunk = list(
-            # Metrics computation only needs jid; avoid loading all job_data
-            # columns or prefetching related metrics_data rows.
-            job_data.objects.filter(pk__in=pk_chunk).only("jid")
-        )
+        # Preserve iterator order (newest job first) — SQL IN does not preserve order.
+        job_by_jid = {
+            j.jid: j
+            for j in job_data.objects.filter(pk__in=pk_chunk).only("jid")
+        }
+        jobs_chunk = [job_by_jid[jid] for jid in pk_chunk if jid in job_by_jid]
         metrics_manager.run(jobs_chunk)
         processed += len(jobs_chunk)
       except (OperationalError, DatabaseError) as exc:
@@ -201,9 +207,11 @@ def update_metrics(date, rerun=False):
             "for date {1}: {2}".format(len(pk_chunk), date, exc)
         )
         close_old_connections()
-        jobs_chunk = list(
-            job_data.objects.filter(pk__in=pk_chunk).only("jid")
-        )
+        job_by_jid = {
+            j.jid: j
+            for j in job_data.objects.filter(pk__in=pk_chunk).only("jid")
+        }
+        jobs_chunk = [job_by_jid[jid] for jid in pk_chunk if jid in job_by_jid]
         metrics_manager.run(jobs_chunk)
         processed += len(jobs_chunk)
       finally:
@@ -242,6 +250,9 @@ def main(argv=None, sleep_after=True):
   When invoked as a script, argv defaults to sys.argv. Management commands
   can pass a custom argv list (e.g. parsed from options). If sleep_after is
   True, the function sleeps 3600s at the end (to match legacy usage).
+
+  Dates in the parsed range are processed **newest day first**; see module
+  docstring for per-day job order.
   """
   if argv is None:
     argv = sys.argv
@@ -259,6 +270,7 @@ def main(argv=None, sleep_after=True):
     all_dates.append(date)
     date += timedelta(days=1)
 
+  # Newest calendar day first (end of range / today before older days).
   all_dates = sorted(all_dates, reverse=True)
   log_print(all_dates)
   for d in all_dates:
