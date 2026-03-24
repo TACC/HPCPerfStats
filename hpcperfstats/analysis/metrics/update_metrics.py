@@ -21,12 +21,14 @@ ensure_django()
 
 from django.db import close_old_connections, connections
 from django.db.models import Count, F, IntegerField, OuterRef, Q, Subquery, Value
-from django.db.models.expressions import RawSQL
 from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, DatabaseError
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
+from hpcperfstats.analysis.metrics.live_host_sample_count import (
+    LiveDistinctHostTimeCount,
+)
 from hpcperfstats.analysis.metrics.metrics import expected_job_metric_row_count
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
@@ -134,26 +136,9 @@ def _jobs_queryset(date, min_time, rerun):
   # + FQDN host list as jid_table).
   if connections["default"].vendor == "postgresql":
     host_suffix = "." + cfg.get_host_name_ext()
-    live_sql = (
-        "(SELECT COALESCE(SUM(ph.cnt), 0)::integer FROM ("
-        "SELECT h.host, COUNT(DISTINCT h.time)::integer AS cnt "
-        "FROM host_data h "
-        "WHERE h.time >= %s AND h.time <= %s AND h.host IN ("
-        "SELECT (COALESCE(elem::text, '') || %s)::text "
-        "FROM unnest(%s) AS t(elem)) "
-        "GROUP BY h.host) ph)"
+    annotated = annotated.annotate(
+        live_distinct_time_count=LiveDistinctHostTimeCount(host_suffix),
     )
-    live_subq = RawSQL(
-        live_sql,
-        (
-            OuterRef("start_time"),
-            OuterRef("end_time"),
-            host_suffix,
-            OuterRef("host_list"),
-        ),
-        output_field=IntegerField(),
-    )
-    annotated = annotated.annotate(live_distinct_time_count=live_subq)
     need_metrics |= (
         Q(metrics_distinct_time_count__isnull=False)
         & Q(live_distinct_time_count__gt=F("metrics_distinct_time_count"))

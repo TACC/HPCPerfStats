@@ -14,6 +14,14 @@ def _patch_connections_vendor(monkeypatch, vendor):
   """Make update_metrics see connections['default'].vendor == vendor."""
   fake_conn = MagicMock()
   fake_conn.vendor = vendor
+
+  def quote_name(name):
+    return '"%s"' % str(name).replace('"', '""')
+
+  fake_ops = MagicMock()
+  fake_ops.quote_name = quote_name
+  fake_conn.ops = fake_ops
+
   handler = MagicMock()
   handler.__getitem__ = lambda self, name: fake_conn
   monkeypatch.setattr(update_metrics, "connections", handler)
@@ -109,6 +117,18 @@ def test_jobs_queryset_postgresql_sql_contains_unnest_for_live_samples(monkeypat
   assert "group by" in sql
   assert "sum(" in sql
   assert "metrics_distinct_time_count" in sql
+
+
+def test_jobs_queryset_postgresql_live_subquery_correlates_outer_job_row(monkeypatch):
+  """RawSQL must reference outer job_data columns in SQL; OuterRef is not a bind param."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  d = datetime(2025, 4, 10, 15, 30, 0)
+  qs = update_metrics._jobs_queryset(d, 300, rerun=False)
+  sql = str(qs.query)
+  assert 'unnest("job_data"."host_list")' in sql
+  assert 'h.time >= "job_data"."start_time"' in sql
+  assert 'h.time <= "job_data"."end_time"' in sql
 
 
 def test_jobs_queryset_non_postgresql_omits_unnest_live_samples(monkeypatch):
