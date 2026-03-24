@@ -97,6 +97,7 @@ def test_get_existing_archive_members_with_files(tmp_path):
   members = get_existing_archive_members(str(tar_path))
   assert members["a.txt"] == 5
   assert members["sub/b.txt"] == 5
+  assert (tmp_path / "test.tar.fnctl.lock").exists()
 
 
 # --- filter_files_to_add_to_archive ---
@@ -455,6 +456,8 @@ def test_build_archive_mapping_groups_by_date(tmp_path):
   assert key.endswith(".tar.gz")
   assert os.path.basename(key).startswith("2024-02-")  # 1709123456 -> Feb 2024 (tz-dependent)
   assert len(mapping[key]) == 2
+  assert (tmp_path / "f1.fnctl.lock").exists()
+  assert (tmp_path / "f2.fnctl.lock").exists()
 
 
 def test_build_archive_mapping_skips_no_timestamp(tmp_path):

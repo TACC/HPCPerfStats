@@ -46,6 +46,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     get_verified_files_to_remove,
     stats_file_is_active_segment,
 )
+from hpcperfstats.file_locking import file_write_lock
 from hpcperfstats.dbload.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
     build_stats_dataframes,
@@ -291,7 +292,8 @@ def _decompress_gz(gz_path):
   if not os.path.exists(gz_path):
     return
   try:
-    subprocess.check_output(['/usr/bin/pigz', '-v', '-d', gz_path])
+    with file_write_lock(gz_path):
+      subprocess.check_output(['/usr/bin/pigz', '-v', '-d', gz_path])
   except subprocess.CalledProcessError:
     pass
 
@@ -300,7 +302,8 @@ def _append_to_tar(tar_path, file_paths):
   """Append file_paths to tar at tar_path. Does nothing if file_paths is empty."""
   if not file_paths:
     return
-  out = subprocess.check_output(['/bin/tar', 'uvf', tar_path] + file_paths)
+  with file_write_lock(tar_path):
+    out = subprocess.check_output(['/bin/tar', 'uvf', tar_path] + file_paths)
   if DEBUG:
     log_print(out, flush=True)
   log_print("Archived: " + str(file_paths))
@@ -312,11 +315,17 @@ def _compress_tar_gz(tar_path, num_threads=None):
     num_threads = thread_count * 2
   if not os.path.exists(tar_path):
     return
-  log_print(
-      subprocess.check_output([
-          '/usr/bin/pigz', '-f', '-8', '-v', '-p', str(num_threads), tar_path
-      ]),
-      flush=True)
+  gz_path = "%s.gz" % tar_path
+  with file_write_lock(tar_path):
+    log_print(
+        subprocess.check_output([
+            '/usr/bin/pigz', '-f', '-8', '-v', '-p', str(num_threads), tar_path
+        ]),
+        flush=True)
+  # pigz rewrites tar_path to tar_path.gz, so synchronize on the resulting file too.
+  if os.path.exists(gz_path):
+    with file_write_lock(gz_path):
+      pass
 
 
 def archive_stats_files(archive_info):
@@ -334,7 +343,8 @@ def archive_stats_files(archive_info):
   existing_members = get_existing_archive_members(archive_tar_fname)
   for path in get_verified_files_to_remove(stats_files, existing_members):
     log_print("removing stats file:" + path)
-    os.remove(path)
+    with file_write_lock(path):
+      os.remove(path)
 
   _compress_tar_gz(archive_tar_fname)
 

@@ -12,6 +12,7 @@ from functools import partial
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload import sync_timedb
+from hpcperfstats.file_locking import file_read_lock_wait
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.sync_timedb_archive_helpers import get_tar_file_tasks
 from hpcperfstats.shutdown_utils import (
@@ -25,15 +26,16 @@ def _process_tar_member(lock, tar_path, member_name):
   """Open tar, extract one member, pass contents to add_stats_file_to_db.
   Keeps file contents only in the worker process."""
   log_print("extracting %s from %s" % (member_name, tar_path))
-  with tarfile.open(tar_path, 'r') as tar:
-    member = tar.getmember(member_name)
-    f = tar.extractfile(member)
-    if f is None:
-      return  # directories / unsupported entries
-    # Build list of lines by iterating to avoid holding full decoded string in memory
-    wrapper = io.TextIOWrapper(f, encoding="utf-8")
-    content = list(wrapper)
-    wrapper.detach()
+  with file_read_lock_wait(tar_path):
+    with tarfile.open(tar_path, 'r') as tar:
+      member = tar.getmember(member_name)
+      f = tar.extractfile(member)
+      if f is None:
+        return  # directories / unsupported entries
+      # Build list of lines by iterating to avoid holding full decoded string in memory
+      wrapper = io.TextIOWrapper(f, encoding="utf-8")
+      content = list(wrapper)
+      wrapper.detach()
   sync_timedb.add_stats_file_to_db(lock, member_name, content)
 
 

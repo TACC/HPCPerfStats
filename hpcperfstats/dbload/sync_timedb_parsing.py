@@ -1,6 +1,8 @@
 """Pure parsing helpers for stats files (no Django). Used by sync_timedb and by unit tests."""
 from pandas import DataFrame, to_datetime
 
+from hpcperfstats.file_locking import file_read_lock_wait
+
 amd64_pmc_eventmap = {
     0x43ff03: "FLOPS,W=48",
     0x4300c2: "BRANCH_INST_RETIRED,W=48",
@@ -66,8 +68,9 @@ def load_stats_file_lines(stats_file, stats_file_contents=None):
   if stats_file_contents is not None:
     return stats_file_contents, None
   try:
-    with open(stats_file, 'r') as fd:
-      return fd.readlines(), None
+    with file_read_lock_wait(stats_file):
+      with open(stats_file, 'r') as fd:
+        return fd.readlines(), None
   except FileNotFoundError:
     return None, "Stats file disappeared: %s" % stats_file
 

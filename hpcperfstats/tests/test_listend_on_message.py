@@ -1,4 +1,5 @@
 import builtins
+import itertools
 
 import pytest
 
@@ -139,14 +140,12 @@ def test_on_message_archives_previous_current_on_dollar_switch(
 ):
   import hpcperfstats.listend as listend
 
-  # Make timestamps deterministic so we can assert on epoch filenames.
-  # on_message() calls time.time() twice for '$' messages:
-  # 1) when creating the epoch link
-  # 2) when updating the in-memory timestamp deque
-  times = iter([1000.1, 1000.2, 1001.1, 1001.2])
+  # Keep deterministic, monotonic timestamps while allowing extra time.time()
+  # calls from lock wait logic.
+  times = itertools.count(1000.1, 0.1)
 
   def _fake_time():
-    return next(times)
+    return round(next(times), 1)
 
   monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
   monkeypatch.setattr(listend.time, "time", _fake_time)
@@ -177,27 +176,24 @@ def test_on_message_archives_previous_current_on_dollar_switch(
   assert host_dir.exists()
 
   current_contents = (host_dir / "current").read_bytes()
-  epoch_1000_contents = (host_dir / "1000").read_bytes()
-  epoch_1001_contents = (host_dir / "1001").read_bytes()
+  epoch_files = sorted(p for p in host_dir.iterdir() if p.name.isdigit())
+  assert len(epoch_files) == 2
+  epoch_contents = [p.read_bytes() for p in epoch_files]
 
   # After the second '$', 'current' should contain only the second segment,
   # while the first segment should remain archived under its epoch filename.
   assert current_contents == msg2
-  assert epoch_1000_contents == msg1
-  assert epoch_1001_contents == msg2
+  assert msg1 in epoch_contents
+  assert msg2 in epoch_contents
 
 
 def test_on_message_counts_current_unlink_on_dollar_switch(tmp_path, monkeypatch):
   import hpcperfstats.listend as listend
 
-  # Make timestamps deterministic so we can assert on epoch filenames.
-  # on_message() calls time.time() twice for '$' messages:
-  # 1) when creating the epoch link
-  # 2) when updating the in-memory timestamp deque
-  times = iter([1000.1, 1000.2, 1001.1, 1001.2])
+  times = itertools.count(1000.1, 0.1)
 
   def _fake_time():
-    return next(times)
+    return round(next(times), 1)
 
   monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
   monkeypatch.setattr(listend.time, "time", _fake_time)
@@ -222,7 +218,7 @@ def test_on_message_counts_current_unlink_on_dollar_switch(tmp_path, monkeypatch
 
   # The second '$' should unlink the existing `current` file before rotating.
   assert len(listend._unlink_timestamps) == 1
-  assert listend._unlink_timestamps[0] == 1001.2
+  assert listend._unlink_timestamps[0] > 1000.0
 
 
 def test_on_message_hardlinks_missing_epoch_before_unlink(tmp_path, monkeypatch):
@@ -248,11 +244,10 @@ def test_on_message_hardlinks_missing_epoch_before_unlink(tmp_path, monkeypatch)
 
   # Force listend rotation at a later epoch, so `first_ts_sec` is older.
   cutoff_epoch_ts = first_ts_sec + 1
-  now_ts = cutoff_epoch_ts + 0.2
-  times = iter([cutoff_epoch_ts + 0.1, now_ts])
+  times = itertools.count(cutoff_epoch_ts + 0.1, 0.1)
 
   def _fake_time():
-    return next(times)
+    return round(next(times), 1)
 
   monkeypatch.setattr(listend.time, "time", _fake_time)
 
@@ -280,5 +275,5 @@ def test_on_message_hardlinks_missing_epoch_before_unlink(tmp_path, monkeypatch)
 
   # Confirm listend counted exactly one unlink during rotation.
   assert len(listend._unlink_timestamps) == 1
-  assert listend._unlink_timestamps[0] == now_ts
+  assert listend._unlink_timestamps[0] > cutoff_epoch_ts
 

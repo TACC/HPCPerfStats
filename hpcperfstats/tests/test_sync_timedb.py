@@ -84,6 +84,7 @@ def test_load_stats_file_lines_reads_file(tmp_path):
   assert err is None
   assert len(lines) >= 1
   assert "1709123456" in lines[0]
+  assert (tmp_path / "host" / "123.fnctl.lock").exists()
 
 
 # --- parse_first_timestamp_line ---

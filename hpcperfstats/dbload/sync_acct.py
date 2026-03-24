@@ -22,6 +22,7 @@ from hpcperfstats.dbload.date_utils import (
     parse_start_end_dates,
     to_pydatetime_or_none,
 )
+from hpcperfstats.file_locking import file_read_lock_wait
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.shutdown_utils import (
     shutdown_requested,
@@ -55,8 +56,9 @@ def sync_acct(acct_file, jobs_in_db):
   """Load accounting CSV from acct_file into job_data, skipping jobs already in jobs_in_db and those matching restricted_queue_keywords.
 
     """
-  with open(acct_file, "r", encoding="utf-8", errors="replace") as f:
-    return sync_acct_from_content(f.read(), jobs_in_db)
+  with file_read_lock_wait(acct_file):
+    with open(acct_file, "r", encoding="utf-8", errors="replace") as f:
+      return sync_acct_from_content(f.read(), jobs_in_db)
 
 
 def _sync_acct_dataframe(df, jobs_in_db):

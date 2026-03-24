@@ -15,6 +15,7 @@ import redis
 from pika.exceptions import StreamLostError
 
 import hpcperfstats.conf_parser as cfg
+from hpcperfstats.file_locking import file_read_lock_wait, file_write_lock
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.shutdown_utils import send_sigchld_to_parent
 
@@ -38,20 +39,30 @@ _recent_host_queue = queue.Queue(maxsize=100000)
 _recent_host_redis_client = None
 
 
-def _get_first_timestamp_seconds(file_path):
+def _get_first_timestamp_seconds(file_path, use_lock=True):
   """Return first unix timestamp seconds found in stats file content.
 
   Expects a line beginning with digits in the format: "<t> <jid> <host> ...".
   """
   try:
-    with open(file_path, "r") as fd:
-      for line in fd:
-        if not line:
-          continue
-        if line[0].isdigit():
-          t = line.split(maxsplit=1)[0]
-          # The file may store floats (epoch with fractional seconds).
-          return int(float(t))
+    if use_lock:
+      with file_read_lock_wait(file_path):
+        with open(file_path, "r") as fd:
+          for line in fd:
+            if not line:
+              continue
+            if line[0].isdigit():
+              t = line.split(maxsplit=1)[0]
+              # The file may store floats (epoch with fractional seconds).
+              return int(float(t))
+    else:
+      with open(file_path, "r") as fd:
+        for line in fd:
+          if not line:
+            continue
+          if line[0].isdigit():
+            t = line.split(maxsplit=1)[0]
+            return int(float(t))
   except Exception:
     pass
   return None
@@ -94,7 +105,8 @@ def _ensure_current_hardlinked_to_timestamp(host_dir, current_path):
   linked to an epoch-named file (i.e. sync_timedb can't reliably detect the
   live segment).
   """
-  first_ts_sec = _get_first_timestamp_seconds(current_path)
+  # Called from on_message() while holding write lock for current_path.
+  first_ts_sec = _get_first_timestamp_seconds(current_path, use_lock=False)
   if first_ts_sec is None:
     raise RuntimeError("Unable to find timestamp in current file")
 
@@ -107,7 +119,6 @@ def _ensure_current_hardlinked_to_timestamp(host_dir, current_path):
         "Timestamp link path exists but is not hardlinked to current: %s" %
         link_path
     )
-
   os.link(current_path, link_path)
 
 
@@ -206,28 +217,33 @@ def on_message(channel, method_frame, header_frame, body):
       # Use a single epoch timestamp for both the pre-unlink check and the
       # post-unlink epoch hardlink to keep time.time() call counts stable.
       epoch_ts = int(time.time())
-      if os.path.exists(current_path):
-        if not _current_is_hardlinked_to_older_epoch(
-            host_dir, current_path, epoch_ts):
-          _ensure_current_hardlinked_to_timestamp(host_dir, current_path)
+      with file_write_lock(current_path):
+        if os.path.exists(current_path):
           if not _current_is_hardlinked_to_older_epoch(
               host_dir, current_path, epoch_ts):
-            raise RuntimeError(
-                "current is not linked to an older epoch before unlink")
+            _ensure_current_hardlinked_to_timestamp(host_dir, current_path)
+            if not _current_is_hardlinked_to_older_epoch(
+                host_dir, current_path, epoch_ts):
+              raise RuntimeError(
+                  "current is not linked to an older epoch before unlink")
 
-        os.unlink(current_path)
-        unlinked_current = True
+          os.unlink(current_path)
+          unlinked_current = True
 
-      with open(current_path, "w") as fd:
-        link_path = os.path.join(host_dir, str(epoch_ts))
-        if os.path.exists(link_path):
-          os.remove(link_path)
-        os.link(current_path, link_path)
-        # Epoch name and current share an inode until the next ``$`` rotation.
-        # sync_timedb skips epoch files same-inode-as-current to avoid read races.
+        with open(current_path, "w") as fd:
+          link_path = os.path.join(host_dir, str(epoch_ts))
+          if os.path.exists(link_path):
+            os.remove(link_path)
+          os.link(current_path, link_path)
+          # Epoch name and current share an inode until the next ``$`` rotation.
+          # sync_timedb skips epoch files same-inode-as-current to avoid read races.
 
-    with open(current_path, "a") as fd:
-      fd.write(message)
+        with open(current_path, "a") as fd:
+          fd.write(message)
+    else:
+      with file_write_lock(current_path):
+        with open(current_path, "a") as fd:
+          fd.write(message)
     _enqueue_recent_host_update(host)
 
     now = time.time()

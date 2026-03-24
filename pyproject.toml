@@ -57,6 +57,9 @@ testpaths = ["hpcperfstats"]
 python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+pythonpath = ["."]
+DJANGO_SETTINGS_MODULE = "hpcperfstats.site.hpcperfstats_site.settings"
+django_find_project = false
 filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
 markers = [
   "django: marks tests requiring Django (dbs, settings).",

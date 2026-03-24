@@ -12,10 +12,25 @@ _CONFIG_PATH = os.environ.get("HPCPERFSTATS_INI",
                               "/home/hpcperfstats/hpcperfstats.ini")
 cfg.read(_CONFIG_PATH)
 
+# pytest-django can import Django settings before pytest conftest hooks run.
+# If the env points to an incomplete/missing ini, load the bundled example as a
+# fallback so settings import remains stable.
+if not cfg.has_option("DEFAULT", "debug"):
+  _bundled_example = os.path.join(
+      os.path.dirname(os.path.realpath(__file__)),
+      "..",
+      "hpcperfstats.ini.example",
+  )
+  cfg.read(os.path.abspath(_bundled_example))
+
+_DEFAULT_FALLBACKS = {
+    ("DEFAULT", "debug"): "no",
+}
+
 
 def _get(section, option):
   """Return config value for section/option. Single place for simple getters."""
-  return cfg.get(section, option)
+  return cfg.get(section, option, fallback=_DEFAULT_FALLBACKS.get((section, option)))
 
 
 def get_db_connection_string():

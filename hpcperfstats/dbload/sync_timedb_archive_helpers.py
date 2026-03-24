@@ -4,6 +4,7 @@ import tarfile
 from datetime import datetime, timedelta
 
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
+from hpcperfstats.file_locking import file_read_lock_wait
 from hpcperfstats.print_utils import log_print
 
 
@@ -17,8 +18,9 @@ def get_existing_archive_members(tar_path):
   if not os.path.exists(tar_path):
     return {}
   try:
-    with tarfile.open(tar_path, "r") as tf:
-      return {m.name: m.size for m in tf.getmembers()}
+    with file_read_lock_wait(tar_path):
+      with tarfile.open(tar_path, "r") as tf:
+        return {m.name: m.size for m in tf.getmembers()}
   except Exception:
     return {}
 
@@ -26,11 +28,12 @@ def get_existing_archive_members(tar_path):
 def get_tar_file_tasks(tar_path):
   """Return list of (tar_path, member_name) for file members only (no dirs)."""
   tasks = []
-  with tarfile.open(tar_path, 'r') as archive_tar:
-    for member_info in archive_tar.getmembers():
-      if not member_info.isfile():
-        continue
-      tasks.append((tar_path, member_info.name))
+  with file_read_lock_wait(tar_path):
+    with tarfile.open(tar_path, 'r') as archive_tar:
+      for member_info in archive_tar.getmembers():
+        if not member_info.isfile():
+          continue
+        tasks.append((tar_path, member_info.name))
   return tasks
 
 
@@ -193,12 +196,13 @@ def build_archive_mapping(
   skipped_no_ts = 0
   for stats_fname in files_to_be_archived:
     try:
-      with open(stats_fname, "r") as f:
-        head = []
-        for line in f:
-          head.append(line)
-          if head and head[-1] and head[-1][0].isdigit():
-            break
+      with file_read_lock_wait(stats_fname):
+        with open(stats_fname, "r") as f:
+          head = []
+          for line in f:
+            head.append(line)
+            if head and head[-1] and head[-1][0].isdigit():
+              break
     except OSError:
       continue
     t, _jid, _host = parse_first_ts_fn(head)
