@@ -25,6 +25,13 @@ function CollapsibleSection({ title, children, defaultOpen = false, empty = fals
   );
 }
 
+function formatJobMetricCell(obj) {
+  if (obj.value != null && obj.value !== "") {
+    return Number(obj.value).toFixed(2);
+  }
+  return obj.no_data_reason || "No data";
+}
+
 export default function JobDetail() {
   const { pk } = useParams();
   const [data, setData] = useState(null);
@@ -340,12 +347,14 @@ export default function JobDetail() {
           ) : (
             <table className="table table-sm table-bordered">
               <tbody>
-                {metrics_list.map((obj, i) => (
-                  <tr key={i}>
+                {(metrics_list || []).map((obj) => (
+                  <tr key={obj.metric}>
                     <th>
                       {obj.metric} [{obj.units}]
                     </th>
-                    <td>{obj.value != null ? Number(obj.value).toFixed(2) : ""}</td>
+                    <td className={obj.value != null && obj.value !== "" ? "" : "text-muted"}>
+                      {formatJobMetricCell(obj)}
+                    </td>
                   </tr>
                 ))}
               </tbody>

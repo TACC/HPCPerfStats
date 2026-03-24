@@ -26,6 +26,50 @@ try:
 except ImportError:
   from numpy import trapz
 
+# Default (type, units) for complex metrics when building the catalog / no-time-series rows.
+# Types match the primary telemetry source for each metric (see compute_metric classes).
+_COMPLEX_PLACEHOLDER_TYPE_UNITS = {
+    "avg_freq": ("pmc", "GHz"),
+    "avg_ethbw": ("net", "MB/s"),
+    "avg_gpuutil": ("nvidia_gpu", "%"),
+    "avg_packetsize": ("ib_ext", "MB"),
+    "max_fabricbw": ("ib_ext", "MB/s"),
+    "max_lnetbw": ("lnet", "MB/s"),
+    "max_mds": ("llite", "iops"),
+    "max_packetrate": ("ib_ext", "#/s"),
+    "mem_hwm": ("mem", "GiB"),
+    "node_imbalance": ("cpu", "%"),
+    "time_imbalance": ("cpu", "%"),
+    "vecpercent_64b": ("pmc", "%"),
+    "avg_vector_width_64b": ("pmc", "#"),
+    "vecpercent_32b": ("pmc", "%"),
+    "avg_vector_width_32b": ("pmc", "#"),
+}
+
+_COMPLEX_NO_DATA_REASONS = {
+    "avg_freq": "No usable PMC telemetry for average CPU frequency",
+    "avg_ethbw": "No usable network telemetry for average Ethernet bandwidth",
+    "avg_gpuutil": "No usable GPU utilization telemetry",
+    "avg_packetsize": "No usable InfiniBand/OPA telemetry for packet size",
+    "max_fabricbw": "No usable fabric telemetry for peak bandwidth",
+    "max_lnetbw": "No usable LNET telemetry for peak bandwidth",
+    "max_mds": "No usable Lustre llite telemetry for MDS operation rate",
+    "max_packetrate": "No usable fabric telemetry for peak packet rate",
+    "mem_hwm": "No usable memory telemetry for high-water mark",
+    "node_imbalance": "No usable CPU telemetry for node imbalance",
+    "time_imbalance": "No usable CPU telemetry for time imbalance",
+    "vecpercent_64b": "No usable PMC telemetry for 64b vector FLOP mix",
+    "avg_vector_width_64b": "No usable PMC telemetry for 64b vector width",
+    "vecpercent_32b": "No usable PMC telemetry for 32b vector FLOP mix",
+    "avg_vector_width_32b": "No usable PMC telemetry for 32b vector width",
+}
+
+NO_TIME_SERIES_MSG = "No time-series telemetry for this job"
+NO_SIMPLE_SAMPLES_MSG = (
+    "No host_data samples for this metric in the job window"
+)
+METRIC_NOT_COMPUTED_YET = "Metric not computed yet"
+
 
 def _per_interval_rate(values, t):
   """Compute diff(values) / diff(t) without divide-by-zero.
@@ -179,7 +223,7 @@ def _persist_metrics_batch(job_results):
     jids = list({item["jid"].jid for item in job_results})
     existing = list(
         metrics_data.objects.filter(jid_id__in=jids).only(
-            "id", "jid_id", "type", "metric", "units", "value"
+            "id", "jid_id", "type", "metric", "units", "value", "no_data_reason"
         )
     )
     existing_by_key = {(r.jid_id, r.type, r.metric): r for r in existing}
@@ -191,6 +235,7 @@ def _persist_metrics_batch(job_results):
         obj = existing_by_key[key]
         obj.units = item["units"]
         obj.value = item["value"]
+        obj.no_data_reason = item.get("no_data_reason")
         to_update_list.append(obj)
       else:
         to_create.append(
@@ -200,6 +245,7 @@ def _persist_metrics_batch(job_results):
                 metric=item["metric"],
                 units=item["units"],
                 value=item["value"],
+                no_data_reason=item.get("no_data_reason"),
             )
         )
     if to_create:
@@ -207,7 +253,7 @@ def _persist_metrics_batch(job_results):
     if to_update_list:
       metrics_data.objects.bulk_update(
           list({id(o): o for o in to_update_list}.values()),
-          ["units", "value"],
+          ["units", "value", "no_data_reason"],
       )
 
 
@@ -384,21 +430,40 @@ class Metrics():
       job_view = _JobForMetrics(jt)
 
       if job_view.times.size == 0:
-        return []
+        for entry in job_metrics_catalog_entries():
+          results.append({
+              "jid": job,
+              "type": entry["type"],
+              "metric": entry["metric"],
+              "units": entry["units"],
+              "value": None,
+              "no_data_reason": NO_TIME_SERIES_MSG,
+          })
+        log_print("compute metrics time: {0:.1f}".format(time.time() -
+                                                     metric_compute_start))
+        return results
 
       for metric_name, metric_obj in self.simple_metrics_list.items():
         value = self.job_arc(jt, **metric_obj)
 
         if value is None:
-          continue
-
-        results.append({
-            "jid": job,
-            "type": metric_obj["typename"],
-            "metric": metric_name,
-            "units": metric_obj["units"],
-            "value": value,
-        })
+          results.append({
+              "jid": job,
+              "type": metric_obj["typename"],
+              "metric": metric_name,
+              "units": metric_obj["units"],
+              "value": None,
+              "no_data_reason": NO_SIMPLE_SAMPLES_MSG,
+          })
+        else:
+          results.append({
+              "jid": job,
+              "type": metric_obj["typename"],
+              "metric": metric_name,
+              "units": metric_obj["units"],
+              "value": value,
+              "no_data_reason": None,
+          })
 
       u = utils(job_view)
 
@@ -407,18 +472,80 @@ class Metrics():
                                          metric_name)().compute_metric(u)
 
         if value is None:
-          continue
-        results.append({
-            "jid": job,
-            "type": typename,
-            "metric": metric_name,
-            "units": units,
-            "value": value,
-        })
+          reason = _COMPLEX_NO_DATA_REASONS.get(
+              metric_name, "Insufficient data to compute this metric")
+          results.append({
+              "jid": job,
+              "type": typename,
+              "metric": metric_name,
+              "units": units,
+              "value": None,
+              "no_data_reason": reason,
+          })
+        else:
+          results.append({
+              "jid": job,
+              "type": typename,
+              "metric": metric_name,
+              "units": units,
+              "value": value,
+              "no_data_reason": None,
+          })
 
     log_print("compute metrics time: {0:.1f}".format(time.time() -
                                                  metric_compute_start))
     return results
+
+
+def job_metrics_catalog_entries():
+  """Ordered catalog of every job-level metric for UI and completeness checks."""
+  m = Metrics()
+  missing = set(m.complex_metrics_list) - set(_COMPLEX_PLACEHOLDER_TYPE_UNITS)
+  if missing:
+    raise RuntimeError(
+        "complex_metrics_list keys missing from _COMPLEX_PLACEHOLDER_TYPE_UNITS: "
+        + ", ".join(sorted(missing))
+    )
+  out = []
+  for metric, spec in m.simple_metrics_list.items():
+    out.append({
+        "type": spec["typename"],
+        "metric": metric,
+        "units": spec["units"],
+    })
+  for name in m.complex_metrics_list:
+    t, u = _COMPLEX_PLACEHOLDER_TYPE_UNITS[name]
+    out.append({"type": t, "metric": name, "units": u})
+  return out
+
+
+def expected_job_metric_row_count():
+  return len(job_metrics_catalog_entries())
+
+
+def build_job_metrics_display_list(job):
+  """API: full metrics_list with a row per catalog metric (value or no_data_reason)."""
+  by_metric = {o.metric: o for o in job.metrics_data_set.all()}
+  out = []
+  for spec in job_metrics_catalog_entries():
+    row = by_metric.get(spec["metric"])
+    if row is None:
+      out.append({
+          "type": spec["type"],
+          "metric": spec["metric"],
+          "units": spec["units"],
+          "value": None,
+          "no_data_reason": METRIC_NOT_COMPUTED_YET,
+      })
+    else:
+      out.append({
+          "type": row.type,
+          "metric": row.metric,
+          "units": row.units,
+          "value": row.value,
+          "no_data_reason": row.no_data_reason,
+      })
+  return out
 
 
 ###########

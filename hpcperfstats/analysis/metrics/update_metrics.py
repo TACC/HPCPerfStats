@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """Update metrics_data for jobs ending on each day in a date range.
 
-Filters by runtime, optionally skips jobs that already have metrics, runs
-Metrics().run(jobs_list). With no CLI date arguments, processes the last seven
-calendar days through today.
+Filters by runtime, optionally skips jobs that already have a full metrics
+catalog (one row per metric with either a numeric value or no_data_reason),
+runs Metrics().run(jobs_list). With no CLI date arguments, processes the last
+seven calendar days through today.
 
 """
 import os
@@ -20,6 +21,7 @@ from django.db.utils import OperationalError, DatabaseError
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
+from hpcperfstats.analysis.metrics.metrics import expected_job_metric_row_count
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
 from hpcperfstats.shutdown_utils import (
@@ -86,13 +88,17 @@ def _jobs_queryset(date, min_time, rerun):
       runtime__lt=min_time)
   if rerun:
     return qs
-  # Filter in DB: only jobs with no metrics or with any null value
+  # Jobs need a metrics pass if row count is below the full catalog, or any
+  # row still has null value without an explicit no_data_reason (legacy / stuck).
+  expected = expected_job_metric_row_count()
+  stale_unexplained = Q(metrics_data_set__value__isnull=True) & (
+      Q(metrics_data_set__no_data_reason__isnull=True)
+      | Q(metrics_data_set__no_data_reason="")
+  )
   return qs.annotate(
       md_count=Count("metrics_data_set"),
-      null_count=Count(
-          "metrics_data_set", filter=Q(metrics_data_set__value__isnull=True)
-      ),
-  ).filter(Q(md_count=0) | Q(null_count__gt=0))
+      stale_null=Count("metrics_data_set", filter=stale_unexplained),
+  ).filter(Q(md_count__lt=expected) | Q(stale_null__gt=0))
 
 
 def _iter_chunked_pks(queryset, chunk_size):
@@ -118,7 +124,10 @@ def _iter_chunked_pks(queryset, chunk_size):
 
 
 def update_metrics(date, rerun=False):
-  """Compute and persist metrics for all jobs ending on date (runtime >= min_time). If not rerun, skip jobs that already have metrics. Uses metrics.Metrics().run(jobs_list).
+  """Compute and persist metrics for all jobs ending on date (runtime >= min_time).
+
+  If not rerun, skip jobs that already have the full metrics catalog (each metric
+  has a value or no_data_reason). Uses metrics.Metrics().run(jobs_list).
 
   Memory-optimized: filters in DB, processes in chunks, no full-list cache.
   """

@@ -60,6 +60,7 @@ from .cache_utils import (
     TIMEOUT_SHORT,
     TIMEOUT_LONG,
 )
+from hpcperfstats.analysis.metrics.metrics import build_job_metrics_display_list
 from hpcperfstats.dbload.sync_acct import sync_acct_from_content
 from .models import ApiKey, host_data, job_data, metrics_data
 from .oauth2 import check_for_tokens
@@ -1860,10 +1861,7 @@ def job_detail(request, pk):
         + "&display.prefs.events.count=50"
     )
 
-    metrics_list = [
-        {"type": o.type, "metric": o.metric, "units": o.units, "value": o.value}
-        for o in job.metrics_data_set.all()
-    ]
+    metrics_list = build_job_metrics_display_list(job)
 
     return Response({
         "job_data": JobListSerializer(job).data,

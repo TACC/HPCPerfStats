@@ -89,6 +89,9 @@ class metrics_data(models.Model):
   metric = models.CharField(max_length=32, blank=True, null=True)
   units = models.CharField(max_length=16, blank=True, null=True)
   value = models.FloatField(blank=True, null=True)
+  # When value is null after a metrics run, explains why (distinguishes
+  # "computed, no data" from legacy incomplete rows that still need update_metrics).
+  no_data_reason = models.CharField(max_length=512, blank=True, null=True)
 
   class Meta:
     managed = True

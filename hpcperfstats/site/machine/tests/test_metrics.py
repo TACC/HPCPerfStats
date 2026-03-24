@@ -5,11 +5,17 @@ import numpy as np
 import pytest
 from pandas import Timestamp
 
+from unittest.mock import MagicMock
+
 from hpcperfstats.analysis.metrics.metrics import (
+    METRIC_NOT_COMPUTED_YET,
     _EventIndex,
     _Host,
     _Schema,
     avg_freq,
+    build_job_metrics_display_list,
+    expected_job_metric_row_count,
+    job_metrics_catalog_entries,
 )
 
 
@@ -106,3 +112,54 @@ def test_avg_freq_returns_none_when_cycles_ref_zero():
   assert value is None
   assert typename == "pmc"
   assert units == "GHz"
+
+
+def test_job_metrics_catalog_entries_matches_simple_plus_complex():
+  """Catalog length is all simple + complex metric names (API / update_metrics)."""
+  entries = job_metrics_catalog_entries()
+  assert len(entries) == expected_job_metric_row_count()
+  assert len(entries) == 22
+  names = [e["metric"] for e in entries]
+  assert names.count("avg_cpuusage") == 1
+  assert "mem_hwm" in names
+
+
+def test_build_job_metrics_display_list_fills_catalog_when_no_rows():
+  """With no DB rows, every catalog metric gets METRIC_NOT_COMPUTED_YET."""
+  job = MagicMock()
+  job.metrics_data_set.all.return_value = []
+  out = build_job_metrics_display_list(job)
+  assert len(out) == len(job_metrics_catalog_entries())
+  assert all(item["no_data_reason"] == METRIC_NOT_COMPUTED_YET for item in out)
+
+
+def test_build_job_metrics_display_list_merges_existing_row():
+  """DB row for a metric name overrides catalog placeholder."""
+  row = MagicMock()
+  row.metric = "avg_cpuusage"
+  row.type = "cpu"
+  row.units = "#cores"
+  row.value = 2.25
+  row.no_data_reason = None
+  job = MagicMock()
+  job.metrics_data_set.all.return_value = [row]
+  out = build_job_metrics_display_list(job)
+  cpu = next(x for x in out if x["metric"] == "avg_cpuusage")
+  assert cpu["value"] == 2.25
+  assert cpu["type"] == "cpu"
+  assert cpu["no_data_reason"] is None
+
+
+def test_build_job_metrics_display_list_shows_no_data_reason():
+  row = MagicMock()
+  row.metric = "mem_hwm"
+  row.type = "mem"
+  row.units = "GiB"
+  row.value = None
+  row.no_data_reason = "No usable memory telemetry for high-water mark"
+  job = MagicMock()
+  job.metrics_data_set.all.return_value = [row]
+  out = build_job_metrics_display_list(job)
+  mem = next(x for x in out if x["metric"] == "mem_hwm")
+  assert mem["value"] is None
+  assert "memory" in mem["no_data_reason"].lower()
