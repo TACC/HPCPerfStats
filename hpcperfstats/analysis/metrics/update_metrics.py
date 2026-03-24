@@ -7,6 +7,7 @@ runs Metrics().run(jobs_list). With no CLI date arguments, processes the last
 seven calendar days through today.
 
 """
+import functools
 import os
 import signal
 import sys
@@ -16,7 +17,8 @@ from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
 from django.db import close_old_connections, connections
-from django.db.models import Count, Q
+from django.db.models import Count, IntegerField, OuterRef, Q, Subquery, Value
+from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, DatabaseError
 
 import hpcperfstats.conf_parser as cfg
@@ -29,7 +31,7 @@ from hpcperfstats.shutdown_utils import (
     send_sigchld_to_parent,
     sleep_until_shutdown,
 )
-from hpcperfstats.site.machine.models import job_data
+from hpcperfstats.site.machine.models import job_data, metrics_data
 
 DEBUG = cfg.get_debug()
 
@@ -82,6 +84,12 @@ def _notify_parent_if_sigterm(sigterm_received):
     send_sigchld_to_parent()
 
 
+@functools.lru_cache(maxsize=1)
+def _expected_job_metrics_row_count():
+  """Catalog row count; metrics definitions are fixed for the process lifetime."""
+  return expected_job_metric_row_count()
+
+
 def _jobs_queryset(date, min_time, rerun):
   """Base queryset: jobs ending on date with runtime >= min_time."""
   qs = job_data.objects.filter(end_time__date=date.date()).exclude(
@@ -90,14 +98,31 @@ def _jobs_queryset(date, min_time, rerun):
     return qs
   # Jobs need a metrics pass if row count is below the full catalog, or any
   # row still has null value without an explicit no_data_reason (legacy / stuck).
-  expected = expected_job_metric_row_count()
-  stale_unexplained = Q(metrics_data_set__value__isnull=True) & (
-      Q(metrics_data_set__no_data_reason__isnull=True)
-      | Q(metrics_data_set__no_data_reason="")
+  # Use scalar subqueries on metrics_data (jid_id index) instead of joining
+  # metrics_data twice via reverse Count(), which avoids row multiplication.
+  expected = _expected_job_metrics_row_count()
+  stale_q = Q(value__isnull=True) & (
+      Q(no_data_reason__isnull=True) | Q(no_data_reason="")
+  )
+  int0 = Value(0, output_field=IntegerField())
+  md_total_sq = Subquery(
+      metrics_data.objects.filter(jid_id=OuterRef("jid"))
+      .values("jid_id")
+      .annotate(c=Count("id"))
+      .values("c")[:1],
+      output_field=IntegerField(),
+  )
+  stale_count_sq = Subquery(
+      metrics_data.objects.filter(jid_id=OuterRef("jid"))
+      .filter(stale_q)
+      .values("jid_id")
+      .annotate(c=Count("id"))
+      .values("c")[:1],
+      output_field=IntegerField(),
   )
   return qs.annotate(
-      md_count=Count("metrics_data_set"),
-      stale_null=Count("metrics_data_set", filter=stale_unexplained),
+      md_count=Coalesce(md_total_sq, int0),
+      stale_null=Coalesce(stale_count_sq, int0),
   ).filter(Q(md_count__lt=expected) | Q(stale_null__gt=0))
 
 
@@ -111,7 +136,8 @@ def _iter_chunked_pks(queryset, chunk_size):
   """
   total = 0
   current_chunk = []
-  for pk in queryset.values_list("pk", flat=True).iterator(chunk_size=chunk_size):
+  # jid is the primary key; values_list avoids loading full job_data rows.
+  for pk in queryset.values_list("jid", flat=True).iterator(chunk_size=chunk_size):
     current_chunk.append(pk)
     if len(current_chunk) >= chunk_size:
       total += len(current_chunk)
@@ -143,18 +169,14 @@ def update_metrics(date, rerun=False):
     manifest as psycopg 'lost synchronization with server' errors.
     """
     qs = _jobs_queryset(date, min_time, rerun)
-    total_jobs = qs.count()
+    # Avoid a separate COUNT(*) that repeats the same filter work as the iterator below.
     log_print(
-        "Total jobs {0} for date {1}".format(
-            total_jobs, date.strftime("%Y-%m-%d")
-        )
+        "Streaming jobs needing metrics for date {0}".format(date.strftime("%Y-%m-%d"))
     )
 
     metrics_manager = metrics.Metrics()
     log_print(
-        "Compute for following metrics for date {0} on {1} jobs".format(
-            date, total_jobs
-        )
+        "Compute for following metrics for date {0}".format(date)
     )
     for name in metrics_manager.simple_metrics_list:
       log_print(name)
@@ -187,6 +209,12 @@ def update_metrics(date, rerun=False):
       finally:
         # Release references promptly; GC can then free memory before next chunk.
         del jobs_chunk
+
+    log_print(
+        "Finished metrics for date {0}: processed {1} jobs".format(
+            date.strftime("%Y-%m-%d"), processed
+        )
+    )
 
     if DEBUG:
       close_old_connections()

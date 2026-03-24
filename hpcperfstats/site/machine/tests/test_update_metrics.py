@@ -77,6 +77,22 @@ def test_default_metrics_date_range_seven_days(monkeypatch):
   assert start == datetime(2025, 3, 17, 0, 0, 0)
 
 
+def test_expected_job_metrics_row_count_cached(monkeypatch):
+  """_expected_job_metrics_row_count calls catalog size at most once per process."""
+  calls = []
+  orig = update_metrics.expected_job_metric_row_count
+
+  def spy():
+    calls.append(1)
+    return orig()
+
+  monkeypatch.setattr(update_metrics, "expected_job_metric_row_count", spy)
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  assert update_metrics._expected_job_metrics_row_count() == orig()
+  assert update_metrics._expected_job_metrics_row_count() == orig()
+  assert len(calls) == 1
+
+
 def test_install_sigterm_handler_sets_flag_and_raises(monkeypatch):
   monkeypatch.setattr(update_metrics.signal, "getsignal", lambda sig: "prev")
   monkeypatch.setattr(update_metrics.signal, "signal", lambda sig, h: None)
