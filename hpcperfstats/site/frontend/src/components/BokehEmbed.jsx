@@ -73,6 +73,8 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
   const [plotReady, setPlotReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [failureReason, setFailureReason] = useState(null);
+  const [showDetails, setShowDetails] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
 
   const hasData = !!(item || (script && div));
   const showPlaceholder = !hasData || !plotReady || loadFailed;
@@ -81,6 +83,8 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
     setPlotReady(false);
     setLoadFailed(false);
     setFailureReason(null);
+    setShowDetails(false);
+    setCopyStatus("");
   }, [item, id, script, div]);
 
   useEffect(() => {
@@ -153,29 +157,80 @@ export default function BokehEmbed({ script, div, item, id = "bokeh-embed", plot
     };
   }, [script, item]);
 
+  const detailsMessage = loadFailed ? failureReason : unavailableReason;
+  const isLoading = hasData && !plotReady && !loadFailed;
+  const isUnavailable = !isLoading && showPlaceholder;
   let message;
-  if (!hasData) {
-    const base = plotName ? `${plotName}: Plot not available` : "Plot not available";
-    message = unavailableReason ? `${base} — ${unavailableReason}` : base;
-  } else if (!plotReady && !loadFailed) {
+  if (isLoading) {
     // Plot is present but still being rendered; show a per-plot loading message.
     message = plotName ? `Loading ${plotName}…` : "Loading plot…";
   } else {
-    const base = plotName ? `${plotName}: Plot not available` : "Plot not available";
-    const reason = loadFailed ? failureReason : unavailableReason;
-    message = reason ? `${base} — ${reason}` : base;
+    message = "Plot not available";
   }
-  const placeholder = (
-    <div className="bokeh-plot-unavailable" style={PLACEHOLDER_STYLE} aria-live="polite">
-      {message}
+  const handleCopyDetails = async () => {
+    if (!detailsMessage) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(detailsMessage);
+        setCopyStatus("Copied");
+      } else {
+        setCopyStatus("Clipboard unavailable");
+      }
+    } catch {
+      setCopyStatus("Copy failed");
+    }
+  };
+  const renderPlaceholder = (style) => (
+    <div className="bokeh-plot-unavailable" style={style} aria-live="polite">
+      <span>{message}</span>
+      {isUnavailable && detailsMessage ? (
+        <span
+          style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 8, position: "relative" }}
+          onMouseEnter={() => setShowDetails(true)}
+          onMouseLeave={() => setShowDetails(false)}
+        >
+          <span style={{ textDecoration: "underline", cursor: "help" }} aria-label="Show plot error details">
+            Details
+          </span>
+          {showDetails ? (
+            <span
+              style={{
+                position: "absolute",
+                top: "120%",
+                left: 0,
+                minWidth: 280,
+                maxWidth: 520,
+                textAlign: "left",
+                backgroundColor: "#fff",
+                color: "#111",
+                border: "1px solid #ced4da",
+                borderRadius: 4,
+                padding: 10,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                zIndex: 10,
+              }}
+              role="tooltip"
+            >
+              <div style={{ whiteSpace: "normal", wordBreak: "break-word", marginBottom: 8 }}>
+                {detailsMessage}
+              </div>
+              <button type="button" className="btn btn-outline-secondary btn-sm" onClick={handleCopyDetails}>
+                Copy
+              </button>
+              {copyStatus ? (
+                <span style={{ marginLeft: 8, fontSize: "0.85em" }} aria-live="polite">
+                  {copyStatus}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
     </div>
   );
 
-  const placeholderOverlay = (
-    <div className="bokeh-plot-unavailable bokeh-embed-overlay" style={PLACEHOLDER_OVERLAY_STYLE} aria-live="polite">
-      {message}
-    </div>
-  );
+  const placeholder = renderPlaceholder(PLACEHOLDER_STYLE);
+  const placeholderOverlay = renderPlaceholder(PLACEHOLDER_OVERLAY_STYLE);
 
   const plotTargetLayoutStyle = hasData
     ? {
