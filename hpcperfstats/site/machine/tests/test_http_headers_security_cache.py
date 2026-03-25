@@ -8,6 +8,8 @@ def test_robots_txt_has_default_cache_and_security_headers_for_https():
   assert response.status_code == 200
   assert response["Cache-Control"] == "no-store, no-cache"
   assert response["X-Frame-Options"] == "SAMEORIGIN"
+  assert response["Permissions-Policy"] == "geolocation=(), microphone=(), camera=()"
+  assert response["Cross-Origin-Opener-Policy"] == "same-origin"
 
   hsts = response["Strict-Transport-Security"]
   assert "max-age=31536000" in hsts
@@ -21,6 +23,8 @@ def test_robots_txt_security_headers_for_http_do_not_include_hsts():
   assert response.status_code == 200
   assert response["Cache-Control"] == "no-store, no-cache"
   assert response["X-Frame-Options"] == "SAMEORIGIN"
+  assert response["Permissions-Policy"] == "geolocation=(), microphone=(), camera=()"
+  assert response["Cross-Origin-Opener-Policy"] == "same-origin"
   assert "Strict-Transport-Security" not in response
 
 

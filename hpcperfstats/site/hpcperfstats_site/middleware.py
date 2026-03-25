@@ -71,3 +71,25 @@ class DefaultCacheControlMiddleware:
     if "Cache-Control" not in response:
       response["Cache-Control"] = "no-store, no-cache"
     return response
+
+
+class DefaultSecurityHeadersMiddleware:
+  """Apply security headers that Django doesn't emit by default.
+
+  Keep response header creation centralized in Django so behavior is consistent
+  whether responses are served directly by gunicorn or behind a proxy.
+  """
+
+  def __init__(self, get_response):
+    self.get_response = get_response
+
+  def __call__(self, request: HttpRequest) -> HttpResponse:
+    response = self.get_response(request)
+
+    # Only set if not already explicitly set by a view.
+    if "Permissions-Policy" not in response:
+      response["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    if "Cross-Origin-Opener-Policy" not in response:
+      response["Cross-Origin-Opener-Policy"] = "same-origin"
+
+    return response

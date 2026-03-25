@@ -234,6 +234,7 @@ MIDDLEWARE = (
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    "hpcperfstats.site.hpcperfstats_site.middleware.DefaultSecurityHeadersMiddleware",
     "hpcperfstats.site.hpcperfstats_site.middleware.DefaultCacheControlMiddleware",
 )
 
