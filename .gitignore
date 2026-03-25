@@ -65,3 +65,9 @@ Makefile.in
 /ltmain.sh
 /texinfo.tex
 tacc_stats/pickler/*lock
+
+# React/Vite compilation outputs (generated static frontend build)
+hpcperfstats/site/hpcperfstats_site/static/frontend/.vite/
+hpcperfstats/site/hpcperfstats_site/static/frontend/assets/
+hpcperfstats/site/hpcperfstats_site/static/frontend/index.html
+hpcperfstats/site/hpcperfstats_site/static/frontend/manifest.json

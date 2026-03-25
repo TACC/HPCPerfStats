@@ -41,6 +41,7 @@ from .cache_utils import (
     KEY_ADMIN_RMQ_SNAPSHOT,
     KEY_ADMIN_TIMESCALE_STATS,
     KEY_ADMIN_HOST_STATS,
+    KEY_ADMIN_XALT_STATS,
     KEY_DATES,
     KEY_METRICS_DISTINCT,
     KEY_QUEUES,
@@ -164,14 +165,17 @@ def _job_detail_cache_ttl_for_jid(jid):
         return JOB_DETAIL_CACHE_TTL_RECENT
     return _job_detail_cache_ttl_for_end_time(end_time)
 from django.db.models import (
+    Case,
     Avg,
     Count,
     Exists,
+    IntegerField,
     OuterRef,
     Sum,
     Q,
     F,
     FloatField,
+    When,
     ExpressionWrapper,
     Max,
 )
@@ -2257,6 +2261,159 @@ def host_plot(request):
     })
 
 
+def _get_xalt_jid_coverage(days=3, missing_limit=200, chunk_size=1000):
+    """
+    Staff-only: compute XALT coverage for JIDs in the last `days` in the main DB.
+
+    Coverage means: does `xalt_run` contain at least one row where
+    `job_id == job_data.jid`.
+    """
+    # If XALT DB isn't configured, return a stable shape for the UI.
+    if cfg.get_xalt_user() == "":
+        return {
+            "error": "XALT database is not configured (missing xalt_user).",
+            "window_days": days,
+            "found_jids": [],
+            "found_jids_limit": missing_limit,
+            "found_jids_truncated": False,
+            "missing_jids": [],
+            "missing_jids_limit": missing_limit,
+            "missing_jids_truncated": False,
+        }
+
+    now = timezone.now()
+    since_dt = now - timedelta(days=days)
+
+    def _xalt_fn():
+        # Pull JIDs from the main DB for the time window.
+        jids_qs = (
+            job_data.objects.filter(end_time__gte=since_dt)
+            .values_list("jid", flat=True)
+            .distinct()
+        )
+        jids = list(jids_qs)
+        total_jids = len(jids)
+
+        if total_jids == 0:
+            return {
+                "window_days": days,
+                "since": since_dt.isoformat(),
+                "total_jids": 0,
+                "jids_with_xalt_data": 0,
+                "jids_with_xalt_runs_recent": 0,
+                "jids_missing_xalt_data": 0,
+                "found_jids": [],
+                "found_jids_limit": missing_limit,
+                "found_jids_truncated": False,
+                "missing_jids": [],
+                "missing_jids_limit": missing_limit,
+                "missing_jids_truncated": False,
+            }
+
+        # Query XALT DB in chunks to avoid huge IN lists.
+        present_counts = {}  # jid -> {runs_total, runs_recent}
+        present_set = set()
+
+        def _chunks(seq, size):
+            for i in range(0, len(seq), size):
+                yield seq[i : i + size]
+
+        for chunk in _chunks(jids, chunk_size):
+            if not chunk:
+                continue
+            qs = (
+                run.objects.using("xalt")
+                .filter(job_id__in=chunk)
+                .values("job_id")
+                .annotate(
+                    runs_total=Count("run_id"),
+                    runs_recent=Sum(
+                        Case(
+                            When(date__gte=since_dt, then=1),
+                            default=0,
+                            output_field=IntegerField(),
+                        )
+                    ),
+                )
+            )
+            for row in qs:
+                jid = row.get("job_id") or ""
+                if not jid:
+                    continue
+                present_set.add(jid)
+                present_counts[jid] = {
+                    "runs_total": int(row.get("runs_total") or 0),
+                    "runs_recent": int(row.get("runs_recent") or 0),
+                }
+
+        jids_with_xalt_data = len(present_set)
+        jids_missing_xalt_data = total_jids - jids_with_xalt_data
+        jids_with_xalt_runs_recent = sum(
+            1
+            for jid in present_set
+            if (present_counts.get(jid) or {}).get("runs_recent", 0) > 0
+        )
+
+        # Include missing JIDs for triage, but truncate the list to keep the
+        # response light.
+        missing_jids = []
+        for jid in sorted(jids):
+            if jid in present_set:
+                continue
+            missing_jids.append(jid)
+            if len(missing_jids) >= missing_limit:
+                break
+
+        missing_jids_truncated = jids_missing_xalt_data > len(missing_jids)
+
+        # Also return a truncated list of JIDs that do have XALT data so
+        # admins can quickly sanity-check the join.
+        found_jids = []
+        for jid in sorted(present_set):
+            found_jids.append(jid)
+            if len(found_jids) >= missing_limit:
+                break
+
+        found_jids_truncated = jids_with_xalt_data > len(found_jids)
+
+        return {
+            "window_days": days,
+            "since": since_dt.isoformat(),
+            "total_jids": total_jids,
+            "jids_with_xalt_data": jids_with_xalt_data,
+            "jids_with_xalt_runs_recent": jids_with_xalt_runs_recent,
+            "jids_missing_xalt_data": jids_missing_xalt_data,
+            "found_jids": found_jids,
+            "found_jids_limit": missing_limit,
+            "found_jids_truncated": found_jids_truncated,
+            "missing_jids": missing_jids,
+            "missing_jids_limit": missing_limit,
+            "missing_jids_truncated": missing_jids_truncated,
+        }
+
+    try:
+        close_old_connections()
+        return cached_orm(KEY_ADMIN_XALT_STATS, TIMEOUT_ADMIN_STATS, _xalt_fn)
+    except Exception as exc:
+        return {
+            "error": f"XALT coverage query failed: {exc}",
+            "window_days": days,
+            "since": since_dt.isoformat(),
+            "total_jids": 0,
+            "jids_with_xalt_data": 0,
+            "jids_with_xalt_runs_recent": 0,
+            "jids_missing_xalt_data": 0,
+            "found_jids": [],
+            "found_jids_limit": missing_limit,
+            "found_jids_truncated": False,
+            "missing_jids": [],
+            "missing_jids_limit": missing_limit,
+            "missing_jids_truncated": False,
+        }
+    finally:
+        close_old_connections()
+
+
 @api_view(["GET"])
 def admin_monitor(request):
     """Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis, RabbitMQ, TimescaleDB stats).
@@ -2268,9 +2425,10 @@ def admin_monitor(request):
     - ?section=cache      -> {"cache_stats": {...}}
     - ?section=rabbitmq   -> {"rabbitmq_stats": {...}}
     - ?section=timescaledb -> {"timescaledb_stats": {...}}
+    - ?section=xalt      -> {"xalt_stats": {...}}
     - omitted/other       -> {"host_stats": [...], "rabbitmq_host_stats": [...],
                               "cache_stats": {...}, "rabbitmq_stats": {...},
-                              "timescaledb_stats": {...}}
+                              "timescaledb_stats": {...}, "xalt_stats": {...}}
     """
     err = _require_auth(request)
     if err is not None:
@@ -2349,6 +2507,7 @@ def admin_monitor(request):
             "cache": [KEY_ADMIN_CACHE_STATS],
             "rabbitmq": [KEY_ADMIN_RMQ_STATS, KEY_ADMIN_RMQ_SNAPSHOT],
             "timescaledb": [KEY_ADMIN_TIMESCALE_STATS],
+            "xalt": [KEY_ADMIN_XALT_STATS],
         }
         keys_to_clear = []
         if section in keys_by_section:
@@ -2373,6 +2532,8 @@ def admin_monitor(request):
         return Response({"rabbitmq_stats": _get_rabbitmq_stats()})
     if section == "timescaledb":
         return Response({"timescaledb_stats": _get_timescaledb_stats()})
+    if section == "xalt":
+        return Response({"xalt_stats": _get_xalt_jid_coverage()})
 
     host_stats = cached_orm(KEY_ADMIN_HOST_STATS, TIMEOUT_ADMIN_STATS, _host_stats_fn)
     rabbitmq_host_stats = _get_recent_rabbitmq_host_stats()
@@ -2387,6 +2548,7 @@ def admin_monitor(request):
             "cache_stats": cache_stats,
             "rabbitmq_stats": rabbitmq_stats,
             "timescaledb_stats": timescaledb_stats,
+            "xalt_stats": _get_xalt_jid_coverage(),
         }
     )
 

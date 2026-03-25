@@ -32,6 +32,23 @@ class TestAdminMonitorRefresh:
     assert response.data == {"cache_stats": {"ok": True}}
     mock_cache.delete.assert_called_with(api.KEY_ADMIN_CACHE_STATS)
 
+  def test_admin_monitor_refresh_clears_cache_for_xalt_section(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/admin_monitor/", {"section": "xalt", "refresh": "1"})
+    request.session = {"is_staff": True}
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+      "hpcperfstats.site.machine.api._get_xalt_jid_coverage",
+      return_value={"ok": True},
+    ), patch("hpcperfstats.site.machine.api.cache") as mock_cache:
+      response = api.admin_monitor(request)
+
+    assert response.status_code == 200
+    assert response.data == {"xalt_stats": {"ok": True}}
+    mock_cache.delete.assert_called_with(api.KEY_ADMIN_XALT_STATS)
+
 
 @pytest.mark.django_db
 class TestSessionInfo:
@@ -340,7 +357,6 @@ class TestCacheStats:
     assert stats["total_cache_usable_human"] == "4K"
 
 
-@pytest.mark.django_db
 class TestAdminMonitor:
   def test_admin_monitor_rabbitmq_hosts_section(self):
     from hpcperfstats.site.machine import api
@@ -366,6 +382,44 @@ class TestAdminMonitor:
             "last_time": "2026-03-23T10:00:00+00:00",
             "age_bucket": "ok",
         }]
+    }
+
+  def test_admin_monitor_xalt_section(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/admin_monitor/", {"section": "xalt"})
+    request.session = {"is_staff": True}
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+      "hpcperfstats.site.machine.api._get_xalt_jid_coverage",
+      return_value={
+        "total_jids": 2,
+        "jids_with_xalt_data": 1,
+        "jids_missing_xalt_data": 1,
+        "found_jids": ["jid-1"],
+        "found_jids_limit": 200,
+        "found_jids_truncated": False,
+        "missing_jids": ["jid-2"],
+        "missing_jids_limit": 200,
+        "missing_jids_truncated": False,
+      },
+    ):
+      response = api.admin_monitor(request)
+
+    assert response.status_code == 200
+    assert response.data == {
+      "xalt_stats": {
+        "total_jids": 2,
+        "jids_with_xalt_data": 1,
+        "jids_missing_xalt_data": 1,
+        "found_jids": ["jid-1"],
+        "found_jids_limit": 200,
+        "found_jids_truncated": False,
+        "missing_jids": ["jid-2"],
+        "missing_jids_limit": 200,
+        "missing_jids_truncated": False,
+      }
     }
 
   def test_get_recent_rabbitmq_host_stats_reads_redis_keys(self):

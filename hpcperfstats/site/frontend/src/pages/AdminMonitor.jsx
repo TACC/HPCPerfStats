@@ -49,6 +49,12 @@ export default function AdminMonitor() {
   const [timescaledbLoading, setTimescaledbLoading] = useState(false);
   const [timescaledbError, setTimescaledbError] = useState(null);
   const [timescaledbRequested, setTimescaledbRequested] = useState(false);
+  const [xaltExpanded, setXaltExpanded] = useState(false);
+  const [xaltStats, setXaltStats] = useState(null);
+  const [xaltLoading, setXaltLoading] = useState(false);
+  const [xaltError, setXaltError] = useState(null);
+  const [xaltRequested, setXaltRequested] = useState(false);
+  const [xaltListMode, setXaltListMode] = useState("missing");
   const [nonRespondingHosts36, setNonRespondingHosts36] = useState("");
 
   // Only show fully qualified hostnames (contain a dot) in the UI.
@@ -119,6 +125,18 @@ export default function AdminMonitor() {
       .finally(() => setTimescaledbLoading(false));
   }
 
+  function loadXaltStats(forceRefresh = false) {
+    setXaltLoading(true);
+    setXaltError(null);
+    api
+      .getAdminMonitorSection("xalt", { refresh: forceRefresh })
+      .then((res) => {
+        setXaltStats(res.xalt_stats || null);
+      })
+      .catch((e) => setXaltError(e.message))
+      .finally(() => setXaltLoading(false));
+  }
+
   // Lazily load host stats when the section is first expanded.
   useEffect(() => {
     if (!hostTimeExpanded || hostRequested) return;
@@ -172,6 +190,13 @@ export default function AdminMonitor() {
     loadTimescaledbStats();
   }, [timescaledbExpanded, timescaledbRequested]);
 
+  // Lazily load XALT coverage stats when the section is first expanded.
+  useEffect(() => {
+    if (!xaltExpanded || xaltRequested) return;
+    setXaltRequested(true);
+    loadXaltStats();
+  }, [xaltExpanded, xaltRequested]);
+
   const totalHosts = fqdnHostStats.length;
   const bucketCounts = fqdnHostStats.reduce(
     (acc, row) => {
@@ -202,6 +227,16 @@ export default function AdminMonitor() {
       ? ` - Total hosts: ${rabbitHostTotal} · ${Object.keys(BADGE_MAP)
           .map((key) => `${BADGE_MAP[key].label}: ${rabbitHostBucketCounts[key] ?? 0}`)
           .join(" · ")}`
+      : "";
+
+  const xaltHeaderSummary =
+    !xaltLoading &&
+    !xaltError &&
+    xaltStats &&
+    xaltStats.total_jids !== undefined
+      ? ` - Total JIDs: ${xaltStats.total_jids} · Found: ${
+          xaltStats.jids_with_xalt_data ?? 0
+        } · Missing: ${xaltStats.jids_missing_xalt_data ?? 0}`
       : "";
 
   const HOST_STATUS_ORDER = {
@@ -420,6 +455,174 @@ export default function AdminMonitor() {
                 </table>
               </div>
             </>
+          )}
+        </div>
+      </div>
+
+      <div className="admin-monitor-section">
+        <button
+          type="button"
+          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          onClick={() => setXaltExpanded((e) => !e)}
+          aria-expanded={xaltExpanded}
+          aria-controls="admin-monitor-xalt-coverage"
+        >
+          <span className="admin-monitor-section-chevron" aria-hidden>
+            {xaltExpanded ? "▼" : "▶"}
+          </span>
+          {`XALT job coverage (last 3 days)${xaltHeaderSummary}`}
+        </button>
+        <div
+          id="admin-monitor-xalt-coverage"
+          className="admin-monitor-section-body"
+          hidden={!xaltExpanded}
+          role="region"
+          aria-label="XALT job coverage (last 3 days)"
+        >
+          <div className="admin-monitor-action-row">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              onClick={() => loadXaltStats(true)}
+              disabled={xaltLoading}
+            >
+              Refresh Data
+            </button>
+          </div>
+          {xaltLoading && <LoadingMessage message="Loading XALT coverage…" />}
+          {xaltError && !xaltLoading && (
+            <div className="text-danger">
+              Error loading XALT coverage: {xaltError}
+            </div>
+          )}
+          {!xaltLoading && !xaltError && xaltStats && (
+            <>
+              {xaltStats.error && (
+                <div className="text-danger mb-2">{xaltStats.error}</div>
+              )}
+              {!xaltStats.error && (
+                <>
+                  <div className="mb-2 text-muted">
+                    Total JIDs: {String(xaltStats.total_jids ?? "—")} · Found with
+                    XALT: {String(xaltStats.jids_with_xalt_data ?? "—")} · Missing:{" "}
+                    {String(xaltStats.jids_missing_xalt_data ?? "—")}
+                  </div>
+
+                  <div className="d-flex flex-wrap align-items-center mb-2 gap-2">
+                    <label className="form-label mb-0 me-2" htmlFor="xaltListMode">
+                      Show list:
+                    </label>
+                    <select
+                      id="xaltListMode"
+                      className="form-select form-select-sm"
+                      value={xaltListMode}
+                      onChange={(e) => setXaltListMode(e.target.value)}
+                    >
+                      <option value="missing">
+                        Missing JIDs ({String(xaltStats.jids_missing_xalt_data ?? 0)})
+                      </option>
+                      <option value="found">
+                        Found JIDs ({String(xaltStats.jids_with_xalt_data ?? 0)})
+                      </option>
+                    </select>
+                  </div>
+
+                  {xaltListMode === "missing" && xaltStats.jids_missing_xalt_data > 0 && (
+                    <div className="table-responsive">
+                      <table className="table table-sm table-bordered">
+                        <thead>
+                          <tr>
+                            <th scope="col">Missing JIDs (truncated)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Array.isArray(xaltStats.missing_jids) &&
+                            xaltStats.missing_jids.length > 0 &&
+                            xaltStats.missing_jids.map((jid, i) => (
+                              <tr key={`${jid}-${i}`}>
+                                <td>{jid}</td>
+                              </tr>
+                            ))}
+                          {(!Array.isArray(xaltStats.missing_jids) ||
+                            xaltStats.missing_jids.length === 0) && (
+                            <tr>
+                              <td className="text-muted text-center">
+                                No missing JIDs listed.
+                              </td>
+                            </tr>
+                          )}
+                          {xaltStats.missing_jids_truncated && (
+                            <tr>
+                              <td className="text-muted">
+                                Showing first{" "}
+                                {String(
+                                  xaltStats.missing_jids_limit ?? "—"
+                                )}{" "}
+                                missing JIDs.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {xaltListMode === "found" && xaltStats.jids_with_xalt_data > 0 && (
+                    <div className="table-responsive">
+                      <table className="table table-sm table-bordered">
+                        <thead>
+                          <tr>
+                            <th scope="col">Found JIDs (truncated)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Array.isArray(xaltStats.found_jids) &&
+                            xaltStats.found_jids.length > 0 &&
+                            xaltStats.found_jids.map((jid, i) => (
+                              <tr key={`${jid}-${i}`}>
+                                <td>{jid}</td>
+                              </tr>
+                            ))}
+                          {(!Array.isArray(xaltStats.found_jids) ||
+                            xaltStats.found_jids.length === 0) && (
+                            <tr>
+                              <td className="text-muted text-center">
+                                No found JIDs listed.
+                              </td>
+                            </tr>
+                          )}
+                          {xaltStats.found_jids_truncated && (
+                            <tr>
+                              <td className="text-muted">
+                                Showing first{" "}
+                                {String(xaltStats.found_jids_limit ?? "—")} found JIDs.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {xaltListMode === "missing" &&
+                    xaltStats.jids_missing_xalt_data === 0 && (
+                      <div className="text-success">
+                        All JIDs in the last 3 days have corresponding XALT data.
+                      </div>
+                    )}
+
+                  {xaltListMode === "found" &&
+                    xaltStats.jids_with_xalt_data === 0 && (
+                      <div className="text-danger">
+                        No JIDs in the last 3 days have corresponding XALT data.
+                      </div>
+                    )}
+                </>
+              )}
+            </>
+          )}
+          {!xaltLoading && !xaltError && !xaltStats && (
+            <div className="text-muted">No XALT coverage statistics available.</div>
           )}
         </div>
       </div>
