@@ -1,4 +1,5 @@
 """Views for the main site: React SPA shell and API-key management page."""
+import json
 import os
 
 import bokeh
@@ -7,6 +8,7 @@ from django.http import HttpResponse, HttpResponseRedirect
 from django.middleware.csrf import get_token
 from django.views.generic import View
 from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_POST
 
 from hpcperfstats.site.machine.models import ApiKey
 from hpcperfstats.site.machine.oauth2 import check_for_tokens
@@ -200,4 +202,19 @@ def robots_txt(request):
         "Disallow: /",
     ]
     return HttpResponse("\n".join(lines), content_type="text/plain")
+
+
+@require_POST
+def csp_report(request):
+    """Receive CSP violation reports (Report-Only) for iterative hardening."""
+    # Browsers may send either `application/csp-report` or `application/reports+json`.
+    # We intentionally keep this lightweight: accept input and return 204.
+    try:
+        raw = request.body.decode("utf-8") if request.body else ""
+        if raw:
+            json.loads(raw)
+    except Exception:
+        # Ignore malformed reports; do not leak details.
+        pass
+    return HttpResponse(status=204)
 

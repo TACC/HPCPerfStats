@@ -12,6 +12,36 @@ from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 
 
+DEFAULT_PERMISSIONS_POLICY = (
+  "accelerometer=(), autoplay=(), bluetooth=(), camera=(), clipboard-read=(), "
+  "clipboard-write=(), display-capture=(), encrypted-media=(), fullscreen=(), "
+  "gamepad=(), geolocation=(), gyroscope=(), interest-cohort=(), magnetometer=(), "
+  "microphone=(), midi=(), payment=(), picture-in-picture=(), "
+  "publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), "
+  "xr-spatial-tracking=()"
+)
+
+DEFAULT_COOP = "same-origin"
+
+# Start with CSP Report-Only to avoid breaking existing pages. This policy is
+# intentionally conservative (permits inline script/style) because some pages
+# render inline assets (e.g. the API key page). Tighten over time using reports.
+DEFAULT_CSP_REPORT_ONLY = (
+  "default-src 'self'; "
+  "base-uri 'self'; "
+  "object-src 'none'; "
+  "frame-ancestors 'self'; "
+  "form-action 'self'; "
+  "img-src 'self' data:; "
+  "font-src 'self' data:; "
+  "style-src 'self' 'unsafe-inline'; "
+  "script-src 'self' 'unsafe-inline'; "
+  "connect-src 'self'; "
+  "upgrade-insecure-requests; "
+  "report-uri /csp-report/;"
+)
+
+
 class ProfileMiddleware:
   """Simple profiling middleware for Django views (Django 3+/6+ style).
 
@@ -88,8 +118,10 @@ class DefaultSecurityHeadersMiddleware:
 
     # Only set if not already explicitly set by a view.
     if "Permissions-Policy" not in response:
-      response["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+      response["Permissions-Policy"] = DEFAULT_PERMISSIONS_POLICY
     if "Cross-Origin-Opener-Policy" not in response:
-      response["Cross-Origin-Opener-Policy"] = "same-origin"
+      response["Cross-Origin-Opener-Policy"] = DEFAULT_COOP
+    if "Content-Security-Policy-Report-Only" not in response:
+      response["Content-Security-Policy-Report-Only"] = DEFAULT_CSP_REPORT_ONLY
 
     return response
