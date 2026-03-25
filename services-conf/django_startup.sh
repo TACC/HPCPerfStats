@@ -1,5 +1,29 @@
 #!/bin/sh
 
+echo "Waiting for Redis..."
+
+REDIS_WAIT_URL=$(
+  /usr/local/bin/python3 -c "from hpcperfstats import conf_parser as cfg; print(cfg.get_redis_location())" 2>/dev/null \
+    || echo "redis://redis:6379/1"
+)
+
+REDIS_WAIT_TIMEOUT_SECONDS="${REDIS_WAIT_TIMEOUT_SECONDS:-60}"
+REDIS_PING_TIMEOUT_SECONDS="${REDIS_PING_TIMEOUT_SECONDS:-2}"
+
+/usr/local/bin/python3 -c '
+import sys
+from hpcperfstats.rediswait import wait_for_redis_available
+
+wait_for_redis_available(
+  sys.argv[1],
+  timeout_seconds=int(sys.argv[2]),
+  interval_seconds=0.25,
+  ping_timeout_seconds=float(sys.argv[3]),
+)
+' "${REDIS_WAIT_URL}" "${REDIS_WAIT_TIMEOUT_SECONDS}" "${REDIS_PING_TIMEOUT_SECONDS}"
+
+echo "Redis started"
+
 echo "Waiting for postgres..."
 
 DB_WAIT_HOST=$(
