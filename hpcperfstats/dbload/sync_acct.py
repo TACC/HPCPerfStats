@@ -239,6 +239,8 @@ if __name__ == "__main__":
         break
       if not entry.is_file():
         continue
+      if entry.name.endswith(".lock"):
+        continue
       if entry.name.startswith(str(startdate.date())):
         log_print(entry.path)
         try:

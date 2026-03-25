@@ -19,6 +19,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     stats_file_is_active_segment,
 )
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
+from hpcperfstats.file_locking import LOCK_SUFFIX
 
 
 # --- get_tar_member_name ---
@@ -431,6 +432,32 @@ def test_collect_stats_files_in_range_skips_current(tmp_path):
       str(tmp_path), start, end, _ARCH_HOST_SUFFIX)
   assert len(result) == 1
   assert result[0].endswith("12345")
+
+
+def test_collect_stats_files_in_range_skips_lock_files(tmp_path):
+  """Sidecar lock files must not be treated as stats segments."""
+  cn = tmp_path / ("cn001." + _ARCH_HOST_SUFFIX)
+  cn.mkdir()
+
+  epoch_ts = int(datetime(2020, 6, 15, 12, 0, 0).timestamp())
+  stats_path = cn / str(epoch_ts)
+  lock_path = cn / f"{epoch_ts}{LOCK_SUFFIX}"
+
+  stats_path.write_text("segment-data")
+  lock_path.write_text("lock-data")
+
+  # Ensure both would be in-range if discovery did not filter lock files.
+  start = datetime(2020, 6, 1)
+  end = datetime(2020, 7, 1)
+  t = datetime(2020, 6, 16, 12, 0, 0).timestamp()
+  os.utime(stats_path, (t, t))
+  os.utime(lock_path, (t, t))
+
+  result = collect_stats_files_in_range(
+      str(tmp_path), start, end, _ARCH_HOST_SUFFIX)
+  basenames = [os.path.basename(p) for p in result]
+  assert str(epoch_ts) in basenames
+  assert f"{epoch_ts}{LOCK_SUFFIX}" not in basenames
 
 
 def test_collect_stats_files_in_range_non_matching_suffix_skipped(tmp_path):

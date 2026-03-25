@@ -80,6 +80,8 @@ def _current_is_hardlinked_to_older_epoch(host_dir, current_path, cutoff_epoch_t
         if not entry.is_file():
           continue
         name = entry.name
+        if name.endswith(".lock"):
+          continue
         if not name.isdigit():
           continue
         try:

@@ -186,6 +186,8 @@ for entry in os.scandir(directory):
   for stats_file in os.scandir(entry.path):
     if not stats_file.is_file() or stats_file.name.startswith('.'):
       continue
+    if stats_file.name.endswith(".lock"):
+      continue
     if stats_file.name.startswith("current"):
       continue
     try:

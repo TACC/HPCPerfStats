@@ -6,10 +6,18 @@ from datetime import datetime, timedelta
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
-from hpcperfstats.file_locking import file_read_lock_wait
+from hpcperfstats.file_locking import LOCK_SUFFIX, file_read_lock_wait
 from hpcperfstats.print_utils import log_print
 
 pigz_thread_count = max(1, cfg.get_worker_thread_count(4))
+
+
+def _is_lock_file_name(name):
+  """Return True for sidecar/advisory lock files (e.g. *.fnctl.lock)."""
+  # We intentionally skip generic *.lock too, because different lock
+  # implementations may exist on the filesystem (and we don't want them
+  # mistaken for stats data files during archive discovery).
+  return name.endswith(LOCK_SUFFIX) or name.endswith(".lock")
 
 
 def get_tar_member_name(file_path):
@@ -174,6 +182,8 @@ def collect_stats_files_in_range(directory, startdate, enddate, host_name_ext):
       continue
     for stats_file in os.scandir(entry.path):
       if not stats_file.is_file() or stats_file.name.startswith("."):
+        continue
+      if _is_lock_file_name(stats_file.name):
         continue
       if stats_file.name.startswith("current"):
         continue
