@@ -13,8 +13,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    security_opt:
-      - seccomp:unconfined
     networks:
       hpcperfstats_net:
         aliases:
@@ -31,8 +29,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    security_opt:
-      - seccomp:unconfined
     ports:
       - 80:80
       - 443:443
@@ -59,8 +55,6 @@ services:
       timeout: 3s
       retries: 10
     stop_grace_period: 60s
-    security_opt:
-      - seccomp:unconfined
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:
@@ -81,8 +75,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    security_opt:
-      - seccomp:unconfined
     ports:
       - 5672:5672
     volumes:

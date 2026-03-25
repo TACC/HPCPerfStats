@@ -6,8 +6,6 @@ services:
     image: hpcperfstats
     container_name: hpcperfstats_web_1
     restart: always
-    security_opt:
-      - seccomp:unconfined
     command: /home/hpcperfstats/services-conf/django_startup.sh
     networks:
       hpcperfstats_net:
@@ -18,8 +16,6 @@ services:
     image: hpcperfstats
     container_name: hpcperfstats_pipeline_1
     restart: always
-    security_opt:
-      - seccomp:unconfined
     depends_on:
       - web
     command: /home/hpcperfstats/services-conf/supervisor_startup.sh
