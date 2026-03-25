@@ -2,6 +2,7 @@ from django.test import Client
 
 from hpcperfstats.site.hpcperfstats_site.middleware import (
   DEFAULT_COOP,
+  DEFAULT_CSP,
   DEFAULT_CSP_REPORT_ONLY,
   DEFAULT_PERMISSIONS_POLICY,
 )
@@ -16,6 +17,7 @@ def test_robots_txt_has_default_cache_and_security_headers_for_https():
   assert response["X-Frame-Options"] == "SAMEORIGIN"
   assert response["Permissions-Policy"] == DEFAULT_PERMISSIONS_POLICY
   assert response["Cross-Origin-Opener-Policy"] == DEFAULT_COOP
+  assert response["Content-Security-Policy"] == DEFAULT_CSP
   assert response["Content-Security-Policy-Report-Only"] == DEFAULT_CSP_REPORT_ONLY
 
   hsts = response["Strict-Transport-Security"]
@@ -32,6 +34,7 @@ def test_robots_txt_security_headers_for_http_do_not_include_hsts():
   assert response["X-Frame-Options"] == "SAMEORIGIN"
   assert response["Permissions-Policy"] == DEFAULT_PERMISSIONS_POLICY
   assert response["Cross-Origin-Opener-Policy"] == DEFAULT_COOP
+  assert response["Content-Security-Policy"] == DEFAULT_CSP
   assert response["Content-Security-Policy-Report-Only"] == DEFAULT_CSP_REPORT_ONLY
   assert "Strict-Transport-Security" not in response
 
@@ -46,6 +49,7 @@ def test_spa_index_keeps_explicit_cache_control_from_view():
   assert "Strict-Transport-Security" in response
   assert response["Permissions-Policy"] == DEFAULT_PERMISSIONS_POLICY
   assert response["Cross-Origin-Opener-Policy"] == DEFAULT_COOP
+  assert response["Content-Security-Policy"] == DEFAULT_CSP
   assert response["Content-Security-Policy-Report-Only"] == DEFAULT_CSP_REPORT_ONLY
 
 
@@ -62,5 +66,6 @@ def test_security_headers_are_not_overwritten_if_already_set_by_view():
   assert response.status_code == 204
   assert response["Permissions-Policy"] == DEFAULT_PERMISSIONS_POLICY
   assert response["Cross-Origin-Opener-Policy"] == DEFAULT_COOP
+  assert response["Content-Security-Policy"] == DEFAULT_CSP
   assert response["Content-Security-Policy-Report-Only"] == DEFAULT_CSP_REPORT_ONLY
 

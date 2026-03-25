@@ -23,10 +23,10 @@ DEFAULT_PERMISSIONS_POLICY = (
 
 DEFAULT_COOP = "same-origin"
 
-# Start with CSP Report-Only to avoid breaking existing pages. This policy is
-# intentionally conservative (permits inline script/style) because some pages
-# render inline assets (e.g. the API key page). Tighten over time using reports.
-DEFAULT_CSP_REPORT_ONLY = (
+# Enforced CSP. This policy is intentionally conservative (permits inline
+# script/style and unsafe-eval) because some pages render inline assets and
+# some dependencies use eval. Tighten over time using CSP reports.
+DEFAULT_CSP = (
   "default-src 'self'; "
   "base-uri 'self'; "
   "object-src 'none'; "
@@ -40,6 +40,10 @@ DEFAULT_CSP_REPORT_ONLY = (
   "upgrade-insecure-requests; "
   "report-uri /csp-report/;"
 )
+
+# Keep a report-only header in addition to enforcement, so violations still
+# generate reports during rollout/tightening.
+DEFAULT_CSP_REPORT_ONLY = DEFAULT_CSP
 
 
 class ProfileMiddleware:
@@ -121,6 +125,8 @@ class DefaultSecurityHeadersMiddleware:
       response["Permissions-Policy"] = DEFAULT_PERMISSIONS_POLICY
     if "Cross-Origin-Opener-Policy" not in response:
       response["Cross-Origin-Opener-Policy"] = DEFAULT_COOP
+    if "Content-Security-Policy" not in response:
+      response["Content-Security-Policy"] = DEFAULT_CSP
     if "Content-Security-Policy-Report-Only" not in response:
       response["Content-Security-Policy-Report-Only"] = DEFAULT_CSP_REPORT_ONLY
 
