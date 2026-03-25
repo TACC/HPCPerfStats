@@ -86,6 +86,7 @@ describe("JobList", () => {
     await waitFor(() => {
       expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
     });
+    expect(screen.getByRole("link", { name: "Performance Data" })).toBeInTheDocument();
     expect(screen.getByText("job1")).toBeInTheDocument();
     expect(screen.getByText("COMPLETED")).toBeInTheDocument();
   });

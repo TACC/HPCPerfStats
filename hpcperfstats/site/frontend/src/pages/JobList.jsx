@@ -173,7 +173,7 @@ export default function JobList() {
 
   const columns = [
     { label: "Job ID", field: "jid", sortable: true },
-    { label: "Data", field: "has_metrics", sortable: true },
+    { label: "Performance Data", field: "has_metrics", sortable: true },
     { label: "user", field: "username", sortable: true },
     { label: "Account", field: "account", sortable: true },
     { label: "start time", field: "start_time", sortable: true },
