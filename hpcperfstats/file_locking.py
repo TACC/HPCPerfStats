@@ -13,10 +13,22 @@ from fcntl import LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN, flock
 LOCK_EXPIRY_SECONDS = 4 * 60 * 60
 READ_WAIT_TIMEOUT_SECONDS = 60
 POLL_INTERVAL_SECONDS = 0.1
+LOCK_SUFFIX = ".fnctl.lock"
 
 
 def _lock_path(target_path):
-  return "%s.fnctl.lock" % target_path
+  """Return the sidecar lock path for a target.
+
+  This function is intentionally idempotent: callers may (incorrectly) pass
+  an already-lock-path, and we must not keep appending lock suffixes
+  repeatedly (which can lead to Errno 36: file name too long).
+  """
+  # Collapse repeated trailing occurrences, e.g.:
+  #   /tmp/x.fnctl.lock.fnctl.lock  -> /tmp/x.fnctl.lock
+  base = target_path
+  while base.endswith(LOCK_SUFFIX):
+    base = base[: -len(LOCK_SUFFIX)]
+  return base + LOCK_SUFFIX
 
 
 def _print_read_lock_timeout(lock_path, timeout_seconds):

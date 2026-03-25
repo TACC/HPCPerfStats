@@ -17,6 +17,31 @@ def test_file_write_lock_creates_corresponding_lock_file(tmp_path):
     assert lock_path.exists()
 
 
+def test_file_write_lock_does_not_double_append_lock_suffix(tmp_path):
+  """Passing an already lock-path should not create nested lock files."""
+  lock_path = tmp_path / "data.txt.fnctl.lock"
+  lock_path.write_text("ok")
+  nested_lock_path = tmp_path / "data.txt.fnctl.lock.fnctl.lock"
+
+  assert not nested_lock_path.exists()
+  with file_write_lock(str(lock_path), timeout_seconds=1):
+    assert lock_path.exists()
+    assert not nested_lock_path.exists()
+
+
+def test_file_write_lock_collapses_repeated_lock_suffixes(tmp_path):
+  """Repeated '.fnctl.lock' suffixes should be collapsed to one."""
+  repeated_lock_path = tmp_path / "data.txt.fnctl.lock.fnctl.lock.fnctl.lock"
+  collapsed_lock_path = tmp_path / "data.txt.fnctl.lock"
+
+  assert not collapsed_lock_path.exists()
+  assert not repeated_lock_path.exists()
+
+  with file_write_lock(str(repeated_lock_path), timeout_seconds=1):
+    assert collapsed_lock_path.exists()
+    assert not repeated_lock_path.exists()
+
+
 def test_file_read_waits_for_writer_and_succeeds(tmp_path):
   target = tmp_path / "data.txt"
   target.write_text("ok")
