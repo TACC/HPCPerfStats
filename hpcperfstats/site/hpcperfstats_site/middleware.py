@@ -50,3 +50,24 @@ class ProfileMiddleware:
     response.content = f"<pre>{s.getvalue()}</pre>"
     response["Content-Type"] = "text/plain; charset=utf-8"
     return response
+
+
+class DefaultCacheControlMiddleware:
+  """Apply a consistent default cache policy.
+
+  nginx currently overrides `Cache-Control` for all proxied requests. By moving
+  the default behavior into Django, responses from gunicorn (direct or behind
+  nginx) stay consistent, while views can still opt-in by explicitly setting
+  `Cache-Control`.
+  """
+
+  def __init__(self, get_response):
+    self.get_response = get_response
+
+  def __call__(self, request: HttpRequest) -> HttpResponse:
+    response = self.get_response(request)
+    # If a view (or Django itself, e.g. some static handlers) has already set
+    # Cache-Control, respect that decision.
+    if "Cache-Control" not in response:
+      response["Cache-Control"] = "no-store, no-cache"
+    return response
