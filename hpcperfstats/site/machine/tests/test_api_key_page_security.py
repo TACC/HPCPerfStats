@@ -43,9 +43,10 @@ class TestApiKeyPageSecurity:
     assert response.status_code == 200
     html = response.content.decode("utf-8")
     assert "This key is shown only once." in html
-    match = re.search(r"<p><code>([a-f0-9]{64})</code></p>", html)
+    match = re.search(r"<code[^>]*>([a-f0-9]{64})</code>", html)
     assert match is not None
     raw_key = match.group(1)
+    assert 'id="copy-api-key"' in html
 
     assert ApiKey.hash_raw_key(raw_key) != raw_key
 
@@ -61,3 +62,4 @@ class TestApiKeyPageSecurity:
     assert second.status_code == 200
     assert "cannot be shown again" in second_html
     assert raw_key not in second_html
+    assert 'id="copy-api-key"' not in second_html

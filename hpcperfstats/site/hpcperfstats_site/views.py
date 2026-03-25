@@ -86,7 +86,13 @@ def api_key_page(request):
     if generated_api_key:
         key_message = (
             "<p>Your API key for programmatic access is:</p>"
-            f"<p><code>{generated_api_key}</code></p>"
+            '<div class="api-key-row">'
+            f'<code id="api-key-value">{generated_api_key}</code>'
+            '<button type="button" id="copy-api-key" class="copy-api-key-button" aria-label="Copy API key">'
+            "Copy"
+            "</button>"
+            "</div>"
+            '<div id="api-key-copy-status" class="api-key-copy-status" aria-live="polite"></div>'
             "<p><strong>This key is shown only once.</strong> Store it securely now.</p>"
         )
     else:
@@ -113,6 +119,17 @@ def api_key_page(request):
       overflow-wrap: anywhere;
     }}
     .box {{ border: 1px solid #ddd; border-radius: 6px; padding: 1rem 1.5rem; max-width: 640px; width: 100%; }}
+    .api-key-row {{ display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem; }}
+    .copy-api-key-button {{
+      padding: 0.35rem 0.7rem;
+      border: 1px solid #ced4da;
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
+      font-weight: 600;
+    }}
+    .copy-api-key-button[disabled] {{ opacity: 0.6; cursor: not-allowed; }}
+    .api-key-copy-status {{ margin-top: 0.35rem; color: #444; font-size: 0.95rem; min-height: 1.25em; }}
     @media (max-width: 480px) {{ body {{ margin: 0.75rem; }} .box {{ padding: 1rem; }} }}
   </style>
 </head>
@@ -129,6 +146,46 @@ def api_key_page(request):
       <button type="submit">Invalidate and Create New Key</button>
     </form>
   </div>
+  <script>
+    (function () {{
+      const copyBtn = document.getElementById("copy-api-key");
+      const apiKeyEl = document.getElementById("api-key-value");
+      const statusEl = document.getElementById("api-key-copy-status");
+      if (!copyBtn || !apiKeyEl || !statusEl) return;
+
+      async function writeToClipboard(text) {{
+        if (navigator && navigator.clipboard && navigator.clipboard.writeText) {{
+          await navigator.clipboard.writeText(text);
+          return;
+        }}
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }}
+
+      copyBtn.addEventListener("click", async function () {{
+        const key = (apiKeyEl.textContent || apiKeyEl.innerText || "").trim();
+        if (!key) return;
+
+        copyBtn.disabled = true;
+        statusEl.textContent = "";
+        try {{
+          await writeToClipboard(key);
+          statusEl.textContent = "Copied";
+        }} catch (e) {{
+          console.error("Failed to copy API key", e);
+          statusEl.textContent = "Copy failed";
+        }} finally {{
+          copyBtn.disabled = false;
+        }}
+      }});
+    }})();
+  </script>
 </body>
 </html>
 """
