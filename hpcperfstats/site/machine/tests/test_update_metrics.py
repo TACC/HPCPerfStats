@@ -179,7 +179,7 @@ def test_expected_job_metrics_row_count_cached(monkeypatch):
   assert len(calls) == 1
 
 
-def test_install_sigterm_handler_sets_flag_and_raises(monkeypatch):
+def test_install_sigterm_handler_sets_flag_and_returns(monkeypatch):
   monkeypatch.setattr(update_metrics.signal, "getsignal", lambda sig: "prev")
   monkeypatch.setattr(update_metrics.signal, "signal", lambda sig, h: None)
 
@@ -191,11 +191,42 @@ def test_install_sigterm_handler_sets_flag_and_raises(monkeypatch):
   assert previous_handler == "prev"
   assert sigterm_received[0] is False
 
-  with pytest.raises(SystemExit) as excinfo:
-    handler(update_metrics.signal.SIGTERM, None)
+  handler(update_metrics.signal.SIGTERM, None)
   assert sigterm_received[0] is True
-  assert excinfo.value.code == 143
   assert update_metrics.shutdown_requested[0] is True
+  update_metrics.shutdown_requested[0] = False
+
+
+def test_update_metrics_stops_between_chunks_on_shutdown(monkeypatch):
+  """When SIGTERM sets shutdown_requested, metrics processing should stop."""
+  monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
+  monkeypatch.setattr(
+      update_metrics,
+      "_iter_chunked_pks",
+      lambda qs, chunk: iter([([101, 102], 2), ([103], 3)]),
+  )
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+
+  update_metrics.shutdown_requested[0] = False
+  seen = []
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def run(self, jobs):
+      seen.append([j.jid for j in jobs])
+      # Simulate shutdown arriving mid-processing; updater should stop on
+      # the next chunk boundary.
+      update_metrics.shutdown_requested[0] = True
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "DEBUG", False)
+
+  update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
+  assert seen == [[101, 102]]
+  update_metrics.shutdown_requested[0] = False
 
 
 def test_job_refs_from_jids_are_lightweight():

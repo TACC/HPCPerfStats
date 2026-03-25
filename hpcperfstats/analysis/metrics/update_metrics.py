@@ -72,7 +72,12 @@ def _shutdown_db_best_effort():
 
 
 def _install_sigterm_handler(exit_code=143):
-  """Install SIGTERM handler that requests shutdown and exits."""
+  """Install SIGTERM handler that requests shutdown.
+
+  Important: do not raise `SystemExit` from inside the signal handler. Raising
+  exceptions from signal delivery can interrupt GC/finalizers and lead to noisy
+  "Exception ignored in: ..." tracebacks during interpreter teardown.
+  """
   sigterm_received = [False]
 
   previous_handler = signal.getsignal(signal.SIGTERM)
@@ -80,7 +85,8 @@ def _install_sigterm_handler(exit_code=143):
   def _sigterm_handler(signum, frame):
     sigterm_received[0] = True
     shutdown_requested[0] = True
-    raise SystemExit(exit_code)
+    # Request a graceful stop; the main loops check `shutdown_requested`.
+    _ = exit_code  # Keep closure stable if we later surface the exit code.
 
   signal.signal(signal.SIGTERM, _sigterm_handler)
   return previous_handler, sigterm_received, _sigterm_handler
@@ -215,6 +221,8 @@ def update_metrics(date, rerun=False):
 
     processed = 0
     for pk_chunk, _ in _iter_chunked_pks(qs, CHUNK_SIZE):
+      if shutdown_requested[0]:
+        break
       try:
         jobs_chunk = _job_refs_from_jids(pk_chunk)
         metrics_manager.run(jobs_chunk)
@@ -234,6 +242,9 @@ def update_metrics(date, rerun=False):
         # Release references promptly; GC can then free memory before next chunk.
         del jobs_chunk
         gc.collect()
+
+      if shutdown_requested[0]:
+        break
 
     log_print(
         "Finished metrics for date {0}: processed {1} jobs".format(
