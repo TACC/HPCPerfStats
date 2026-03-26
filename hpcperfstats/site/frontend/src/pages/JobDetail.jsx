@@ -4,6 +4,7 @@ import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
+import { useSession } from "../session-context";
 
 function CollapsibleSection({ title, children, defaultOpen = false, empty = false }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -25,14 +26,19 @@ function CollapsibleSection({ title, children, defaultOpen = false, empty = fals
   );
 }
 
-function formatJobMetricCell(obj) {
+function formatJobMetricCell(obj, isStaff) {
   if (obj.value != null && obj.value !== "") {
     return Number(obj.value).toFixed(2);
   }
-  return obj.no_data_reason || "No data";
+  if (isStaff) {
+    return obj.no_data_reason || "No Available Data";
+  }
+  return "No Available Data";
 }
 
 export default function JobDetail() {
+  const session = useSession();
+  const isStaff = !!session?.is_staff;
   const { pk } = useParams();
   const [data, setData] = useState(null);
   const [plots, setPlots] = useState(null);
@@ -353,7 +359,7 @@ export default function JobDetail() {
                       {obj.metric} [{obj.units}]
                     </th>
                     <td className={obj.value != null && obj.value !== "" ? "" : "text-muted"}>
-                      {formatJobMetricCell(obj)}
+                      {formatJobMetricCell(obj, isStaff)}
                     </td>
                   </tr>
                 ))}

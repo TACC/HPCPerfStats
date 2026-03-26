@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import JobDetail from "./JobDetail";
 import * as apiModule from "../api";
+import { SessionContext } from "../session-context";
 
 const minimalJobDetailResponse = {
   job_data: {
@@ -42,13 +43,15 @@ const minimalPlotsResponse = {
   rplot_unavailable_reason: null,
 };
 
-function renderJobDetail(pk = "12345") {
+function renderJobDetail(pk = "12345", session = { is_staff: false }) {
   return render(
-    <MemoryRouter initialEntries={[`/job/${pk}`]}>
-      <Routes>
-        <Route path="job/:pk" element={<JobDetail />} />
-      </Routes>
-    </MemoryRouter>
+    <SessionContext.Provider value={session}>
+      <MemoryRouter initialEntries={[`/job/${pk}`]}>
+        <Routes>
+          <Route path="job/:pk" element={<JobDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </SessionContext.Provider>
   );
 }
 
@@ -144,7 +147,7 @@ describe("JobDetail", () => {
     expect(container.querySelector(".col-sm-12")).toBeTruthy();
   });
 
-  it("shows no_data_reason text when a metric has no numeric value", async () => {
+  it("shows no_data_reason text for staff when a metric has no numeric value", async () => {
     const detailWithMetricMessage = {
       ...minimalJobDetailResponse,
       metrics_list: [
@@ -167,7 +170,7 @@ describe("JobDetail", () => {
       minimalPlotsResponse
     );
 
-    renderJobDetail("12345");
+    renderJobDetail("12345", { is_staff: true });
 
     await waitFor(() => {
       expect(screen.getByText("Job Detail")).toBeInTheDocument();
@@ -178,6 +181,43 @@ describe("JobDetail", () => {
     expect(
       screen.getByText("No usable PMC telemetry for average CPU frequency")
     ).toBeInTheDocument();
+  });
+
+  it("shows generic no-data text for non-staff when metric value is missing", async () => {
+    const detailWithMetricMessage = {
+      ...minimalJobDetailResponse,
+      metrics_list: [
+        {
+          metric: "avg_freq",
+          type: "pmc",
+          units: "GHz",
+          value: null,
+          no_data_reason: "No usable PMC telemetry for average CPU frequency",
+        },
+      ],
+    };
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+      detailWithMetricMessage
+    );
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
+      detailWithMetricMessage
+    );
+    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(
+      minimalPlotsResponse
+    );
+
+    renderJobDetail("12345", { is_staff: false });
+
+    await waitFor(() => {
+      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: /Job-level Metrics/i })
+    );
+    expect(screen.getByText("No Available Data")).toBeInTheDocument();
+    expect(
+      screen.queryByText("No usable PMC telemetry for average CPU frequency")
+    ).not.toBeInTheDocument();
   });
 
   it("keeps host-level loading message visible while plots API reports loading", async () => {
