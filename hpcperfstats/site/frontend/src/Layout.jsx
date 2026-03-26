@@ -87,14 +87,14 @@ export default function Layout({ session, onSessionChange, children }) {
                       onClick={handleDropStaffForSession}
                       disabled={isDroppingStaff}
                     >
-                      {isDroppingStaff ? "Removing staff access..." : "Disable staff for session"}
+                      {isDroppingStaff ? "Removing staff access..." : "Disable Staff Permissions"}
                     </button>
                   </>
                 )}
                 <a href="/logout/" className="btn btn-outline-secondary btn-sm">Logout</a>
               </div>
               {staffMessage && (
-                <div className="alert alert-info py-1 px-2 mb-0" role="alert">
+                <div className="alert alert-info py-1 px-2 mb-0 navbar-staff-message" role="alert">
                   {staffMessage}
                 </div>
               )}

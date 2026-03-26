@@ -40,13 +40,13 @@ describe("Layout", () => {
   it("shows staff demotion button only for staff sessions", () => {
     const firstRender = renderLayout({ logged_in: true, username: "alice", is_staff: true });
     expect(
-      screen.getByRole("button", { name: "Disable staff for session" })
+      screen.getByRole("button", { name: "Disable Staff Permissions" })
     ).toBeInTheDocument();
     firstRender.unmount();
 
     renderLayout({ logged_in: true, username: "bob", is_staff: false });
     expect(
-      screen.queryByRole("button", { name: "Disable staff for session" })
+      screen.queryByRole("button", { name: "Disable Staff Permissions" })
     ).not.toBeInTheDocument();
   });
 
@@ -67,7 +67,7 @@ describe("Layout", () => {
     render(<SessionHarness />);
 
     await user.click(
-      screen.getByRole("button", { name: "Disable staff for session" })
+      screen.getByRole("button", { name: "Disable Staff Permissions" })
     );
 
     expect(api.dropStaffForSession).toHaveBeenCalledTimes(1);
@@ -78,7 +78,7 @@ describe("Layout", () => {
       )
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Disable staff for session" })
+      screen.queryByRole("button", { name: "Disable Staff Permissions" })
     ).not.toBeInTheDocument();
   });
 });
