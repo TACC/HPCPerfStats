@@ -330,5 +330,4 @@ data["ethbw,MB/s"] = datam["arc"] / (1024 * 1024)
 del data["dif"], data["arc"]
 log_print(data)
 data = data.reset_index()
-#print(data[data.jid == "3477979"])
 sys.exit()

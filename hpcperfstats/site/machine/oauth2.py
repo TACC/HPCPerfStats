@@ -128,7 +128,6 @@ def check_for_tokens(request):
   """Return True if session has access_token, else False.
 
     """
-  # return True if request.session.get("access_token") else False
   try:
     access_token = request.session.get("access_token")
     if access_token:

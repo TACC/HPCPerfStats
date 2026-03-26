@@ -21,7 +21,6 @@ OPENBLAS_NUM_THREADS = 4
 
 # SECRET_KEY: env overrides ini; required in production (set in env or hpcperfstats.ini [DEFAULT] secret_key).
 SECRET_KEY = os.environ.get("SECRET_KEY") or cfg.get_secret_key()
-#DEBUG = bool(os.environ.get("DEBUG", default=0))
 DEBUG = cfg.get_debug()
 
 # Django 6+: ADMINS/MANAGERS are list of email strings (name in tuple deprecated).
@@ -129,7 +128,6 @@ USE_I18N = True
 
 # If you set this to False, Django will not format dates, numbers and
 # calendars according to the current locale.
-#USE_L10N = True
 
 # If you set this to False, Django will not use timezone-aware datetimes.
 USE_TZ = True

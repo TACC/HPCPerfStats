@@ -211,8 +211,6 @@ def _insert_job_data_individually(df):
 
 
 if __name__ == "__main__":
-  #    while True:
-
   #################################################################
   default_start = datetime.combine(datetime.today(), datetime.min.time())
   default_end = default_start + timedelta(days=1)
