@@ -19,7 +19,7 @@ function CollapsibleSection({ title, children, defaultOpen = false, empty = fals
         <span className="flex-shrink-0" style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform 0.2s", display: "inline-block" }}>
           ▶
         </span>
-        <strong>{title}{empty ? " (data unavailable)" : ""}</strong>
+        <strong>{title}{empty ? " (Data not available.)" : ""}</strong>
       </button>
       {open && <div className="border border-top-0 rounded-bottom p-2">{children}</div>}
     </div>
@@ -31,9 +31,9 @@ function formatJobMetricCell(obj, isStaff) {
     return Number(obj.value).toFixed(2);
   }
   if (isStaff) {
-    return obj.no_data_reason || "No Available Data";
+    return obj.no_data_reason || "Data not available.";
   }
-  return "No Available Data";
+  return "Data not available.";
 }
 
 export default function JobDetail() {
@@ -241,7 +241,7 @@ export default function JobDetail() {
               ) : Object.keys(fsio).length === 0 ? (
                 <tr>
                   <td colSpan={3} className="text-muted">
-                    No file system data available.
+                    Data not available.
                   </td>
                 </tr>
               ) : (
@@ -386,7 +386,7 @@ export default function JobDetail() {
                     <td>Executable Path</td>
                     <td>
                       {(xalt_data.exec_path || []).length === 0 ? (
-                        <span className="text-muted">No XALT data available.</span>
+                        <span className="text-muted">Data not available.</span>
                       ) : (
                         (xalt_data.exec_path || []).map((item, i) => (
                           <span key={`exec-${i}`}>{item}<br /></span>
@@ -398,7 +398,7 @@ export default function JobDetail() {
                     <td>Working Directory</td>
                     <td>
                       {(xalt_data.cwd || []).length === 0 ? (
-                        <span className="text-muted">No XALT data available.</span>
+                        <span className="text-muted">Data not available.</span>
                       ) : (
                         (xalt_data.cwd || []).map((item, i) => (
                           <span key={`cwd-${i}`}>{item}<br /></span>
@@ -419,7 +419,7 @@ export default function JobDetail() {
                   {(xalt_data.libset || []).length === 0 ? (
                     <tr>
                       <td colSpan={2} className="text-muted">
-                        No XALT data available.
+                        Data not available.
                       </td>
                     </tr>
                   ) : (
@@ -496,7 +496,7 @@ export default function JobDetail() {
           </p>
         ) : !hasDeviceData ? (
           <p className="text-muted" role="status">
-            No device data or plots available for this job.
+            Data not available.
           </p>
         ) : (
           <div className="table-responsive">

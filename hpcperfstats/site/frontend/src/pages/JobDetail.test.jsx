@@ -214,7 +214,7 @@ describe("JobDetail", () => {
     await userEvent.click(
       screen.getByRole("button", { name: /Job-level Metrics/i })
     );
-    expect(screen.getByText("No Available Data")).toBeInTheDocument();
+    expect(screen.getAllByText("Data not available.").length).toBeGreaterThan(0);
     expect(
       screen.queryByText("No usable PMC telemetry for average CPU frequency")
     ).not.toBeInTheDocument();

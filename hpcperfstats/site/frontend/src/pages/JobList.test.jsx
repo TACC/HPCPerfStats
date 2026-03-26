@@ -129,7 +129,7 @@ describe("JobList", () => {
     await waitFor(() => {
       expect(screen.getByText("#Jobs = 0")).toBeInTheDocument();
     });
-    expect(screen.getAllByText("Plot not available").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Data not available.").length).toBeGreaterThan(0);
     expect(screen.queryByLabelText("Show plot error details")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy Error Detail" })).not.toBeInTheDocument();
   });

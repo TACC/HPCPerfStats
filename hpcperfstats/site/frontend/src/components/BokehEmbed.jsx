@@ -54,7 +54,7 @@ const PLACEHOLDER_OVERLAY_STYLE = {
 /**
  * Injects Bokeh plot from API.
  * Accepts only Bokeh `json_item` payloads to avoid executing untrusted HTML/JS.
- * Shows "Plot not available" in the plot area when there is no data or when the plot fails to load.
+ * Shows "Data not available." in the plot area when there is no data or when the plot fails to load.
  */
 export default function BokehEmbed({ item, id = "bokeh-embed", plotName, unavailableReason }) {
   const session = useSession();
@@ -123,7 +123,7 @@ export default function BokehEmbed({ item, id = "bokeh-embed", plotName, unavail
     // Plot is present but still being rendered; show a per-plot loading message.
     message = plotName ? `Loading ${plotName}…` : "Loading plot…";
   } else {
-    message = "Plot not available";
+    message = "Data not available.";
   }
   const handleCopyDetails = async () => {
     if (!detailsMessage) return;

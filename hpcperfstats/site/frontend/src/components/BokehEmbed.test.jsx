@@ -47,7 +47,7 @@ describe("BokehEmbed", () => {
       { is_staff: true }
     );
 
-    expect(screen.getByText("Plot not available")).toBeInTheDocument();
+    expect(screen.getByText("Data not available.")).toBeInTheDocument();
     const detailsTrigger = screen.getByLabelText("Show plot error details");
     fireEvent.mouseEnter(detailsTrigger);
 
@@ -72,7 +72,7 @@ describe("BokehEmbed", () => {
       { is_staff: false }
     );
 
-    expect(screen.getByText("Plot not available")).toBeInTheDocument();
+    expect(screen.getByText("Data not available.")).toBeInTheDocument();
     expect(screen.queryByText("Error Detail")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy Error Detail" })).not.toBeInTheDocument();
   });
@@ -88,7 +88,7 @@ describe("BokehEmbed", () => {
       />
     );
 
-    expect(screen.getByText("Plot not available")).toBeInTheDocument();
+    expect(screen.getByText("Data not available.")).toBeInTheDocument();
     expect(embedItem).not.toHaveBeenCalled();
     expect(window.__injected).toBeUndefined();
   });
