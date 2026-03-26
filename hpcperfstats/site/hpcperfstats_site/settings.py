@@ -15,7 +15,8 @@ MESSAGE_TAGS = {
     messages.ERROR: 'danger',
 }
 
-# Number of threads for OpenBLAS (CLI/scripts only). Web entry (wsgi.py) unsets OPENBLAS_NUM_THREADS for worker processes.
+# Number of threads for OpenBLAS. Used by wsgi.py as the default value for
+# OPENBLAS_NUM_THREADS when the environment variable is not already set.
 OPENBLAS_NUM_THREADS = 4
 
 # SECRET_KEY: env overrides ini; required in production (set in env or hpcperfstats.ini [DEFAULT] secret_key).
@@ -259,10 +260,6 @@ INSTALLED_APPS = (
     "django.contrib.staticfiles",
     "django.contrib.postgres",  # Required for ArrayField and postgres ops (Django 6 system checks).
     "django.contrib.admin",
-    #'debug_toolbar',
-    #'django_pdf',
-    # Uncomment the next line to enable admin documentation:
-    # 'django.contrib.admindocs',
 )
 INTERNAL_IPS = ["127.0.0.1"]
 

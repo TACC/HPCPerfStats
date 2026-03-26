@@ -11,8 +11,14 @@ sys.path.append(
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/")
 os.environ.setdefault("DJANGO_SETTINGS_MODULE",
                       "hpcperfstats.site.hpcperfstats_site.settings")
+from django.conf import settings
+
 # Limit OpenBLAS threads per web worker to avoid resource exhaustion.
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "4")
+# Value comes from Django settings while still allowing env override.
+os.environ.setdefault(
+    "OPENBLAS_NUM_THREADS",
+    str(getattr(settings, "OPENBLAS_NUM_THREADS", 4)),
+)
 
 from django.core.wsgi import get_wsgi_application
 
