@@ -109,6 +109,13 @@ if "testserver" not in ALLOWED_HOSTS and "*" not in ALLOWED_HOSTS:
 if "*" not in ALLOWED_HOSTS and "web" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS = list(ALLOWED_HOSTS) + ["web"]
 
+# Always allow loopback hosts for local development access through docker-compose
+# port publishing (e.g. http://localhost:8000).
+if "*" not in ALLOWED_HOSTS:
+    for _loopback_host in ("localhost", "127.0.0.1"):
+        if _loopback_host not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS = list(ALLOWED_HOSTS) + [_loopback_host]
+
 # Local time zone for this installation. Choices can be found here:
 # http://en.wikipedia.org/wiki/List_of_tz_zones_by_name
 # although not all choices may be available on all operating systems.
