@@ -1,160 +1,262 @@
 #!/usr/bin/env python3
+"""Sync Slurm accounting (sacct) data into job_data. Reads pipe-delimited files, filters restricted queues and existing jobs, and bulk-inserts or falls back to per-row insert.
+
+"""
+import io
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
+from hpcperfstats.django_bootstrap import ensure_django
+ensure_django()
 
 import hostlist
 import pandas as pd
-import psycopg2
 from django.conf import settings
+from django.db import IntegrityError, close_old_connections, connections
 from pandas import read_csv, to_datetime, to_timedelta
-from pgcopy import CopyManager
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.analysis.gen.utils import read_sql
+from hpcperfstats.dbload.date_utils import (
+    log_date_range,
+    parse_start_end_dates,
+    to_pydatetime_or_none,
+)
+from hpcperfstats.file_locking import file_read_lock_wait
+from hpcperfstats.print_utils import log_print
+from hpcperfstats.shutdown_utils import (
+    shutdown_requested,
+    sleep_until_shutdown,
+)
+from hpcperfstats.site.machine.models import job_data
 
-settings.configure()
+local_timezone = dt_timezone.utc
 
-CONNECTION = cfg.get_db_connection_string()
+COLUMNS_TO_READ = [
+    'JobID', 'User', 'Account', 'Start', 'End', 'Submit', 'Partition',
+    'Timelimit', 'JobName', 'State', 'NNodes', 'ReqCPUS', 'NodeList'
+]
 
-local_timezone = cfg.get_timezone()
+
+def sync_acct_from_content(content, jobs_in_db):
+  """Load accounting data from pipe-delimited string into job_data.
+
+  Same logic as sync_acct but accepts raw sacct output (e.g. from API or
+  subprocess). Returns the number of new job_data rows inserted.
+  """
+  if isinstance(content, bytes):
+    content = content.decode("utf-8", errors="replace")
+  if not content.strip():
+    return 0
+  df = read_csv(io.StringIO(content), sep='|', engine='python', on_bad_lines='skip')
+  return _sync_acct_dataframe(df, jobs_in_db)
+
 
 def sync_acct(acct_file, jobs_in_db):
+  """Load accounting CSV from acct_file into job_data, skipping jobs already in jobs_in_db and those matching restricted_queue_keywords.
 
-    # Junjie: ensure job name is treated as str.
-    data_types = {8: str}
-
-    columns_to_read = ['JobID', 'User', 'Account','Start', 'End', 'Submit', 'Partition',
-                       'Timelimit', 'JobName', 'State', 'NNodes', 'ReqCPUS', 'NodeList']
-    df = read_csv(acct_file, sep='|')
-
-    # cycle through collumns so we can remove those we don't want to import.
-    for c in df:
-        if c in columns_to_read:
-            continue
-        df = df.drop(columns=c)
-
-    df = df.rename(columns = {'JobID': 'jid', 'User': 'username', 'Account' : 'account', 'Start' : 'start_time',
-                         'End' : 'end_time', 'Submit' : 'submit_time', 'Partition' : 'queue',
-                         'Timelimit' : 'timelimit', 'JobName' : 'jobname', 'State' : 'state',
-                         'NNodes' : 'nhosts', 'ReqCPUS' : 'ncores', 'NodeList' : 'host_list'})
-
-    df = df[~df["jid"].isin(jobs_in_db["jid"])]
-    df["jid"] = df["jid"].apply(str)
-
-    restricted_queue_keywords = cfg.get_restricted_queue_keywords()
-
-    df_len = len(df)
-    queue_col_index = df.columns.get_loc("queue")
-    job_id_col_index = df.columns.get_loc("jid")
-
-    restricted_job_ids = []
-
-    restricted_df_indices = []
-
-    for i in range(df_len):
-        for q in restricted_queue_keywords:
-            if q in df.iloc[i,queue_col_index]:
-                if(settings.DEBUG):
-                    restricted_job_ids.append(df.iloc[i,job_id_col_index])
-                    restricted_df_indices.append(i)
-
-    df = df.drop(restricted_df_indices)
-
-    if len(restricted_job_ids) > 0:
-        print("The following jobs are restricted and will be skipped: "+ str(restricted_job_ids))
-
-    # In case newer slurm gives "None" time for unstarted jobs.  Older slurm prints start_time=end_time=cancelled_time.
-    df['start_time'] = df['start_time'].replace('^None$', pd.NA, regex=True)
-    df['start_time'] = df['start_time'].replace('^Unknown$', pd.NA, regex=True)
-    df['start_time'] = df['start_time'].fillna(df['end_time'])
-
-    df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize(local_timezone)
-    df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize(local_timezone)
-    df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize(local_timezone)
-
-    df["runtime"] = to_timedelta(df["end_time"] - df["start_time"]).dt.total_seconds()
-    df["timelimit"] = df["timelimit"].str.replace('-', ' days ')
-    df["timelimit"] = to_timedelta(df["timelimit"]).dt.total_seconds()
-
-    df["host_list"] = df["host_list"].apply(hostlist.expand_hostlist)
-    df["node_hrs"] = df["nhosts"]*df["runtime"]/3600.
+    """
+  with file_read_lock_wait(acct_file):
+    with open(acct_file, "r", encoding="utf-8", errors="replace") as f:
+      return sync_acct_from_content(f.read(), jobs_in_db)
 
 
+def _sync_acct_dataframe(df, jobs_in_db):
+  """Apply column filter, renames, filters, and insert into job_data. Returns count of new entries."""
+  columns_to_read = COLUMNS_TO_READ
+  # cycle through collumns so we can remove those we don't want to import.
+  for c in df:
+    if c in columns_to_read:
+      continue
+    df = df.drop(columns=c)
 
-    print("Total number of new entries:", df.shape[0])
+  df = df.rename(
+      columns={
+          'JobID': 'jid',
+          'User': 'username',
+          'Account': 'account',
+          'Start': 'start_time',
+          'End': 'end_time',
+          'Submit': 'submit_time',
+          'Partition': 'queue',
+          'Timelimit': 'timelimit',
+          'JobName': 'jobname',
+          'State': 'state',
+          'NNodes': 'nhosts',
+          'ReqCPUS': 'ncores',
+          'NodeList': 'host_list'
+      })
+
+  df = df[~df["jid"].isin(jobs_in_db)]
+  df["jid"] = df["jid"].apply(str)
+
+  restricted_queue_keywords = cfg.get_restricted_queue_keywords()
+
+  df_len = len(df)
+  queue_col_index = df.columns.get_loc("queue")
+  job_id_col_index = df.columns.get_loc("jid")
+
+  restricted_job_ids = []
+
+  restricted_df_indices = []
+
+  for i in range(df_len):
+    for q in restricted_queue_keywords:
+      if q in df.iloc[i, queue_col_index]:
+        if settings.DEBUG:
+          restricted_job_ids.append(df.iloc[i, job_id_col_index])
+          restricted_df_indices.append(i)
+
+  if restricted_df_indices:
+    # restricted_df_indices are positional; convert to index labels before dropping
+    df = df.drop(index=df.index[restricted_df_indices])
+
+  if len(restricted_job_ids) > 0:
+    log_print("The following jobs are restricted and will be skipped: " +
+          str(restricted_job_ids))
+
+  # In case newer slurm gives "None" time for unstarted jobs.  Older slurm prints start_time=end_time=cancelled_time.
+  df['start_time'] = df['start_time'].replace('^None$', pd.NA, regex=True)
+  df['start_time'] = df['start_time'].replace('^Unknown$', pd.NA, regex=True)
+  df['start_time'] = df['start_time'].fillna(df['end_time'])
+
+  df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize(
+      local_timezone, ambiguous=False, nonexistent="shift_forward")
+  df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize(
+      local_timezone, ambiguous=False, nonexistent="shift_forward")
+  df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize(
+      local_timezone, ambiguous=False, nonexistent="shift_forward")
+
+  df["runtime"] = to_timedelta(df["end_time"] -
+                               df["start_time"]).dt.total_seconds()
+  df["timelimit"] = df["timelimit"].str.replace('-', ' days ')
+  df["timelimit"] = to_timedelta(df["timelimit"]).dt.total_seconds()
+
+  df["host_list"] = df["host_list"].apply(hostlist.expand_hostlist)
+  df["node_hrs"] = df["nhosts"] * df["runtime"] / 3600.
+
+  objs = [
+      job_data(
+          jid=str(row.jid),
+          username=row.username,
+          account=row.account if pd.notna(row.account) else None,
+          start_time=to_pydatetime_or_none(row.start_time),
+          end_time=to_pydatetime_or_none(row.end_time),
+          submit_time=to_pydatetime_or_none(row.submit_time),
+          queue=row.queue if pd.notna(row.queue) else None,
+          timelimit=float(row.timelimit) if pd.notna(row.timelimit) else None,
+          jobname=str(row.jobname) if pd.notna(row.jobname) else None,
+          state=row.state if pd.notna(row.state) else None,
+          nhosts=int(row.nhosts) if pd.notna(row.nhosts) else None,
+          ncores=int(row.ncores) if pd.notna(row.ncores) else None,
+          host_list=list(row.host_list) if row.host_list else [],
+          runtime=float(row.runtime) if pd.notna(row.runtime) else None,
+          node_hrs=float(row.node_hrs) if pd.notna(row.node_hrs) else None,
+      ) for row in df.itertuples(index=False)
+  ]
+
+  if not objs:
+    log_print("Total number of new entries: 0")
+    return 0
+
+  # Compute an accurate count of rows actually inserted, even when using
+  # ignore_conflicts (which silently skips duplicates at the DB level).
+  jids = [obj.jid for obj in objs]
+  existing_before = job_data.objects.filter(jid__in=jids).count()
+
+  try:
+    job_data.objects.bulk_create(objs, ignore_conflicts=True)
+  except Exception as e:
+    log_print("error in bulk_create:", str(e))
+    inserted = _insert_job_data_individually(df)
+    log_print("Total number of new entries (fallback single inserts):", inserted)
+    return inserted
+
+  existing_after = job_data.objects.filter(jid__in=jids).count()
+  inserted = max(0, existing_after - existing_before)
+  log_print("Total number of new entries:", inserted)
+  return inserted
 
 
-    with psycopg2.connect(CONNECTION) as conn:
-        mgr = CopyManager(conn, 'job_data', df.columns)
-        try:
-            mgr.copy(df.values.tolist())
-        except Exception as e:
-            print("error in mrg.copy: " , str(e))
-            conn.rollback()
-            copy_data_to_pgsql_individually(conn, df, 'job_data')
-        else:
-            conn.commit()
+def _insert_job_data_individually(df):
+  """Fallback: insert job_data rows one by one, skipping duplicates.
 
+    """
+  inserted = 0
+  for row in df.itertuples(index=False):
+    try:
+      job_data(
+          jid=str(row.jid),
+          username=row.username,
+          account=row.account if pd.notna(row.account) else None,
+          start_time=to_pydatetime_or_none(row.start_time),
+          end_time=to_pydatetime_or_none(row.end_time),
+          submit_time=to_pydatetime_or_none(row.submit_time),
+          queue=row.queue if pd.notna(row.queue) else None,
+          timelimit=float(row.timelimit) if pd.notna(row.timelimit) else None,
+          jobname=str(row.jobname) if pd.notna(row.jobname) else None,
+          state=row.state if pd.notna(row.state) else None,
+          nhosts=int(row.nhosts) if pd.notna(row.nhosts) else None,
+          ncores=int(row.ncores) if pd.notna(row.ncores) else None,
+          host_list=list(row.host_list) if row.host_list else [],
+          runtime=float(row.runtime) if pd.notna(row.runtime) else None,
+          node_hrs=float(row.node_hrs) if pd.notna(row.node_hrs) else None,
+      ).save()
+      inserted += 1
+    except IntegrityError:
+      pass  # skip duplicate jid
+    except Exception as e:
+      log_print("error in single insert:", str(e), "for jid", row.jid)
+  return inserted
 
-def copy_data_to_pgsql_individually(conn, data, table):
-    with conn.cursor() as curs:
-        for row in data.values.tolist():
-
-            sql_columns = ','.join(['"%s"' % value for value in data.columns.values])
-
-            sql_insert = 'INSERT INTO "%s" (%s) VALUES ' % (table, sql_columns)
-            sql_insert = sql_insert + "(" + ','.join(["%s" for i in row]) + ");"
-
-
-            try:
-                curs.execute(sql_insert, row)
-            except psycopg2.errors.UniqueViolation:
-                conn.rollback()
-            except Exception as e:
-                print("error in single insert: ", e.pgcode, " ", str(e), "while executing", str(sql_insert))
-                conn.rollback()
-            else:
-                conn.commit()
 
 if __name__ == "__main__":
-#    while True:
+  #################################################################
+  default_start = datetime.combine(datetime.today(), datetime.min.time())
+  default_end = default_start + timedelta(days=1)
+  startdate, enddate = parse_start_end_dates(sys.argv, default_start, default_end)
 
-        #################################################################
+  log_date_range("job files to ingest", startdate, enddate)
+  #################################################################
+
+  # Parse and convert raw stats files to pandas dataframe
+  start = time.time()
+  directory = cfg.get_accounting_path()
+
+  searchdate = startdate - timedelta(days=2)
+  jobs_in_db = set(
+      job_data.objects.filter(end_time__date__gte=searchdate)
+      .values_list("jid", flat=True)
+      .iterator(chunk_size=10000)
+  )
+  log_print("Jobs found in DB in this date range: %s" % len(jobs_in_db))
+
+  while startdate <= enddate and not shutdown_requested[0]:
+    for entry in os.scandir(directory):
+      if shutdown_requested[0]:
+        break
+      if not entry.is_file():
+        continue
+      if entry.name.endswith(".lock"):
+        continue
+      if entry.name.startswith(str(startdate.date())):
+        log_print(entry.path)
         try:
-            startdate = datetime.strptime(sys.argv[1], "%Y-%m-%d")
-        except:
-            startdate = datetime.combine(datetime.today(), datetime.min.time())
-        try:
-            enddate   = datetime.strptime(sys.argv[2], "%Y-%m-%d")
-        except:
-            enddate = startdate + timedelta(days = 1)
+          sync_acct(entry.path, jobs_in_db)
+        except Exception as e:
+          if settings.DEBUG:
+            raise e
+          log_print("Unable to load file: %s" % entry.path)
+    startdate += timedelta(days=1)
+  log_print("loading time", time.time() - start)
 
-        print("###Date Range of job files to ingest: {0} -> {1}####".format(startdate, enddate))
-        #################################################################
+  if shutdown_requested[0]:
+    log_print("Exiting due to SIGTERM")
+    sys.exit(143)
 
-        # Parse and convert raw stats files to pandas dataframe
-        start = time.time()
-        directory = cfg.get_accounting_path()
-
-
-        searchdate = startdate - timedelta(days = 2)
-        with psycopg2.connect(CONNECTION) as conn:
-            jobs_in_db = read_sql("select jid from job_data where date(end_time) >=  '{0}' ".format(searchdate.date()), conn)
-
-        print("Jobs found in DB in this date range: %s" % jobs_in_db.shape[0])
-
-        while startdate <= enddate:
-            for entry in os.scandir(directory):
-                if not entry.is_file(): continue
-                if entry.name.startswith(str(startdate.date())):
-                    print(entry.path)
-                    try:
-                        sync_acct(entry.path, jobs_in_db)
-                    except Exception:
-                        print("Unable to load file: %s" % entry.path)
-            startdate += timedelta(days=1)
-        print("loading time", time.time() - start)
-
-        time.sleep(900)
+  # Close DB connections before long sleep to avoid idle connections.
+  close_old_connections()
+  connections.close_all()
+  sleep_until_shutdown(900)
+  if shutdown_requested[0]:
+    sys.exit(143)

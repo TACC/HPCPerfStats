@@ -1,0 +1,34 @@
+---
+description: Workspace guardrails (scope safety)
+alwaysApply: true
+--- 
+
+# Workspace Guardrails
+- Do not modify any code under `HPCPerfStats/monitor/` (including the path form `@HPCPerfStats/monitor`). Inspection and analysis are allowed.
+- If the user explicitly requests changes inside that directory, ask for confirmation and pause until they explicitly allow proceeding.
+
+## Monitor Executable -> RabbitMQ -> listend.py Link
+- You may inspect and analyze how the executable built from `@HPCPerfStats/monitor/` publishes output to RabbitMQ and how those messages are consumed/handled by `@HPCPerfStats/hpcperfstats/listend.py`.
+- Do not treat this message-flow inspection as justification to modify `@HPCPerfStats/monitor/` sources.
+
+## External API Client Convention
+- Treat `@hpcperfstats-tools` as the client for the API exposed by the Django site.
+- Keep API contract concerns (endpoints, auth headers, request/response shapes, retries/timeouts) inside `@hpcperfstats-tools`.
+- Do not duplicate business rules in `@hpcperfstats-tools`; instead, rely on server-side Django/DRF logic and validate responses against expected serializers/schemas.
+- When changing an API endpoint in Django, update `@hpcperfstats-tools` accordingly and add/adjust tests that cover the client-server contract.
+
+## Service configurations
+- web (gunicorn) has an ssl-enabled proxy using nginx. This proxy is defined in HPCPerfStats/services-conf/nginx-withssl.conf
+- db (postgres) and redis (redis) are configured using the "command" directive in docker-compose.yaml
+- all name resolution comes from the docker-compose files.
+
+## System Configurations
+- All services defined in the HPCPerfStats git folder are started in docker-compose.yaml
+- All configurations for services are in `HPCPerfStats/services-conf/`
+- Use Linux/System Administration best practices for security and configuration whenever modifying any system configurations.
+
+## Example files
+ - `*.example` files are templates meant to be copied/renamed by the user for a real deployment.
+ - When reviewing config, use the `.example` as the intended shape/defaults, but **do not assume** the non-`.example` file exists in the workspace.
+ - Avoid editing `*.example` unless you are intentionally changing the recommended defaults/documentation.
+ - See `README.md` for instructions on how to copy/rename and edit these files for a production setup.

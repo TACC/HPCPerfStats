@@ -1,0 +1,39 @@
+---
+description: Run full tests with Docker db and redis
+alwaysApply: true
+---
+
+# Full Test Workflow (DB + Redis)
+
+When asked to run "full tests" for this workspace, use the Docker Compose networked workflow so the `db` and `redis` hostnames resolve correctly.
+
+## Required process
+
+1. Ensure Docker runtime is available.
+2. From `HPCPerfStats/`, reset all Docker volumes/state before tests:
+   - `docker-compose down -v --remove-orphans`
+   - `docker volume prune -f`
+3. Rebuild runtime image and start dependencies:
+   - `docker-compose build web`
+   - `docker-compose up -d db redis`
+4. Wait for health checks to pass before tests:
+   - `docker-compose ps` and confirm both services are `healthy`.
+5. Recreate/seed any data required by tests before executing pytest.
+6. Run the full suite inside the compose network (not host Python):
+ - `docker-compose run --rm --entrypoint "sh -lc 'pip install \".[test]\" && python -m playwright install --with-deps chromium && python -m pytest -q'" web`
+ - for web/browser E2E workflow specifically, prefer: `tests/run_web_e2e_workflow.sh`
+7. Always clean up containers and volumes after the test run (pass or fail):
+   - `docker-compose down -v`
+
+## Why this is required
+
+- Host-side pytest may fail with `failed to resolve host 'db'` because `db` is a compose-network alias, not a host DNS name.
+- Running tests in the `web` service ensures Django DB and Redis settings match deployment topology.
+
+## Reporting expectations
+
+- Report service startup/health status.
+- Report test totals and pass/fail status.
+- If tests fail, fix root cause and re-run.
+- Confirm teardown was executed: containers stopped and compose volumes removed.
+- Keep `monitor/` unchanged unless explicitly approved by the user.

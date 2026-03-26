@@ -1,8 +1,13 @@
+*.lock
+patch
+.coverage
 .env.dev
+.venv/
 .ruff*/
 .tools/
+node_modules/
 hpcperfstats.ini
-docker-compose.yaml
+docker-compose.app.yaml
 services-conf/supervisord.conf
 services-conf/nginx.conf
 services-conf/rsync_data.sh
@@ -60,3 +65,9 @@ Makefile.in
 /ltmain.sh
 /texinfo.tex
 tacc_stats/pickler/*lock
+
+# React/Vite compilation outputs (generated static frontend build)
+hpcperfstats/site/hpcperfstats_site/static/frontend/.vite/
+hpcperfstats/site/hpcperfstats_site/static/frontend/assets/
+hpcperfstats/site/hpcperfstats_site/static/frontend/index.html
+hpcperfstats/site/hpcperfstats_site/static/frontend/manifest.json

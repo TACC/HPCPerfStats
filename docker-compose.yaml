@@ -1,0 +1,96 @@
+# this file runs all of the services that support the django app and data proccessing
+# all app components are in the docker-compose.app.yaml file
+
+include:
+  - docker-compose.app.yaml
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no", "--maxmemory", "8gb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - redis
+
+  proxy:
+    image: nginx:1-alpine
+    container_name: hpcperfstats_proxy_1
+    restart: always
+    healthcheck:
+      # Only validate that nginx is accepting TCP connections.
+      # TLS may not be ready yet (certs), and some routes may return 4xx.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 80 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./services-conf/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt/:/etc/letsencrypt/:ro
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - proxy
+
+  db:
+    image: timescale/timescaledb:latest-pg15
+    container_name: hpcperfstats_db_1
+    command: -c 'max_connections=500'
+    restart: always
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U hpcperfstats -h 127.0.0.1 -p 5432",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    stop_grace_period: 60s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_USER=hpcperfstats
+      - POSTGRES_PASSWORD=hpcperfstats
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - db
+
+  rabbitmq:
+    image: rabbitmq:4-alpine
+    container_name: hpcperfstats_rabbitmq_1
+    restart: always
+    healthcheck:
+      # `rabbitmq-diagnostics ping` returns non-zero if the node is not ready.
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - 5672:5672
+    volumes:
+      - rabbitmq_messages:/var/lib/rabbitmq/
+      - /var/log/rabbitmq:/var/log/rabbitmq
+      - ./services-conf/rabbitmq_logging.conf:/etc/rabbitmq/conf.d/30-logging_settings.conf:ro
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - rabbitmq
+
+volumes:
+  postgres_data:
+  rabbitmq_messages:
+
+networks:
+  hpcperfstats_net:
+    name: hpcperfstats_net
+

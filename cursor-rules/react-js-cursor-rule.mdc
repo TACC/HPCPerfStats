@@ -1,0 +1,41 @@
+---
+description: React and JavaScript frontend standards
+globs: **/*.{js,jsx,html,css}
+alwaysApply: true
+---
+You are an expert in Web Development using the JavaScript, Node.js, React, React Router, React SPA, Bootstrap CSS, 
+
+Code Style and Structure
+- Write concise, technical JavaScript code with accurate examples.
+- Use functional and declarative programming patterns; avoid classes.
+- Prefer iteration and modularization over code duplication.
+- Use descriptive variable names with auxiliary verbs (e.g., isLoading, hasError).
+- Create unittests for all new code and any existing code that is missing unittests.
+
+Naming Conventions
+- Use kebab-case for directories.
+- Use camelCase for variables and functions.
+- Use PascalCase for components.
+- File names for components should be in PascalCase. Rest of the files in kebab-case.
+- Prefix component names with their type (e.g. ButtonAccount.jsx and ButtonSignin.jsx, CardAnalyticsMain.jsx and CardAnalyticsData.jsx, etc.)
+
+Syntax and Formatting
+- Use the "function" keyword for pure functions.
+- Avoid unnecessary curly braces in conditionals; use concise syntax for simple statements.
+- Use declarative JSX.
+
+UI and Styling
+- Use bootstrap CSS components and styling.
+- Implement responsive design with React
+- All pages should have a mobile view.
+
+Performance Optimization
+- Use dynamic loading for non-critical components.
+- Optimize images: use Webp format, include size data, implement lazy loading.
+
+Key Conventions
+- Whenever a React/JavaScript file is touched or edited, proactively refactor that file to fully match these rules (style, component structure, naming, and performance patterns, unittests), without changing behavior unnecessarily.
+- Whenever a React/JavaScript/HTML page is touched, review CSP impacts and update CSP **minimally**:
+  - Add only the specific origins required, scoped to the correct directive (`script-src`, `style-src`, `font-src`, `img-src`, `connect-src`, etc.).
+  - Do **not** add broad allowlists like `*`, `https:`, or entire CDNs unless unavoidable; prefer self-hosting or nonces/hashes when feasible.
+  - Prefer CSP **Report-Only** first, then enforce once reports are clean.

@@ -1,0 +1,47 @@
+---
+description: Weekly process for deriving new rules from recent chats
+alwaysApply: true
+---
+
+# Weekly Chat Rule Review
+
+## Goal
+- Once per week, review the last 7 days of parent agent chats and identify recurring patterns that should become Cursor rules.
+
+## Schedule
+- Run this review every Monday before any other substantial coding task.
+- If Monday is skipped, run at the next available session and mark it as a delayed weekly review.
+
+## Weekly Process
+1. Gather parent chat transcripts from the last 7 full calendar days.
+2. Identify repeated mistakes, rework loops, or repeated user preferences.
+3. Propose only narrow, single-purpose rules that reduce future rework.
+4. Check overlap with existing rules and prefer refining an existing rule over creating duplicates.
+5. Present each candidate rule with:
+   - the repeated pattern it addresses
+   - evidence references to at least 3 parent chats from that week
+   - the expected behavior change
+   - whether to create a new rule or update an existing one
+6. Ask for explicit user approval before creating or modifying any `.cursor/rules/*.mdc` file.
+
+## Candidate Rule Quality Bar
+- Require clear evidence from at least 3 parent chats in the same week.
+- For high-impact rules (safety, data loss, destructive commands), require either:
+  - 2+ incidents with material risk, or
+  - 1 incident with severe impact and a clear preventive rule.
+- Avoid broad catch-all rules; keep each rule focused and testable in practice.
+- Keep rule text concise, concrete, and action-oriented.
+- Prefer safety and correctness rules before style-only guidance.
+
+## Output Format For Weekly Review
+1. Weekly findings summary:
+   - pattern name
+   - frequency count
+   - linked parent chat references
+2. Proposed rule changes:
+   - new rule or update existing rule
+   - target filename
+   - one-sentence rationale
+3. Draft `.mdc` text for each approved candidate.
+4. Explicit approval request before any file edits.
+5. Post-change note listing which rule files changed and why.

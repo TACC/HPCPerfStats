@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hpcperfstats"
-version = "2.4"
+version = "3.0"
 description = "A performance monitoring and analysis package for High Performance Computing Platforms"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -26,29 +26,50 @@ classifiers = [
 ]
 dependencies = [
   "numpy",
-  "psycopg2~=2.9",
-  "pgcopy",
+  "psycopg",
   "pandas",
-  "bokeh==3.8.2",
-  "Django~=5.2",
+  "bokeh",
+  "Django~=6.0",
   "python-hostlist",
   "pika",
-  "configparser",
   "mysqlclient",
   "gunicorn",
-  "cryptography",
   "requests",
-  "requests-toolbelt",
-  "legacy-cgi",
   "pytz",
   "tzdata",
+  "redis",
+  "djangorestframework",
+  "django-cors-headers",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=7.0",
+  "pytest-django>=4.5",
+  "pytest-cov>=4.0",
+  "playwright>=1.54.0",
+]
+dev = [
+  "yapf",  # Google style formatter
+]
+
+[tool.pytest.ini_options]
+testpaths = ["hpcperfstats"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+pythonpath = ["."]
+DJANGO_SETTINGS_MODULE = "hpcperfstats.site.hpcperfstats_site.settings"
+django_find_project = false
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
+markers = [
+  "django: marks tests requiring Django (dbs, settings).",
 ]
 
 [tool.setuptools]
 script-files = [
   "hpcperfstats/analysis/metrics/update_metrics.py",
   "hpcperfstats/site/manage.py",
-  "hpcperfstats/dbload/sacct_gen.py",
   "hpcperfstats/dbload/sync_acct.py",
   "hpcperfstats/dbload/sync_timedb.py",
   "hpcperfstats/dbload/sync_timedb_archive.py",
@@ -63,7 +84,7 @@ hpcperfstats = ["cfg.py"]
 
 [tool.ruff]
 target-version = "py312"
-line-length = 88
+line-length = 80  # Google style guide
 extend-exclude = [
   "migrations",
   ".venv",
@@ -94,3 +115,6 @@ quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
 docstring-code-format = true
+
+[tool.hpcperfstats.testing]
+web_e2e_runner = "tests/run_web_e2e_workflow.sh"

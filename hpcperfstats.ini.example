@@ -4,14 +4,16 @@
 # Short name of your cluster i.e. frontera
 machine		          = cluster_name
 
-# FQDN for your cluster. i.e. frontera.tacc.utexas.edu
+# FQDN suffix for cluster nodes (short-host.FQDN). sync_timedb and archive layout
+# use this: under archive_dir, only immediate subdirs whose names *end with* this
+# string (e.g. c123.frontera.tacc.utexas.edu when host_name_ext is frontera.tacc.utexas.edu) are scanned for stats files.
 host_name_ext      = %(machine)s.domain.edu
 
 # Path you would like all of HPCPerfStats' data to be stored. It will be the central location where all the file operations occur.
 data_dir 	          = /hpcperfstats/
 
-# FQDN for the web server host
-server 		          = servername.domain.edu
+# FQDN for the web server host, split with commas if multiple
+server 		          = servername.domain.edu, stats.cluster.domain.edu
 
 # Keywords from queues which should be ignored
 restricted_queue_keywords = ['secure', 'secret']
@@ -23,10 +25,15 @@ debug                 = True
 staff_email_domain   = lab.hpcisgreat.edu
 
 # The cluster and docker host need to share this timezone.
-timezone = US/Central
+# The timezone must come from this list:
+# http://en.wikipedia.org/wiki/List_of_tz_zones_by_name
+timezone = America/Chicago
 
 # Total amount of cores that are available for this application
 total_cores = 40
+
+# Django SECRET_KEY (do not commit real keys; set in ini or env for production)
+secret_key = change-me-to-a-long-random-string
 
 [OAUTH2]
 # oauth client id
@@ -54,7 +61,7 @@ rmq_queue 	       = %(machine)s
 # Path where all of the slurm logs for job accounting data will be stored (pre-configured for container installation)
 acct_path          = %(data_dir)s/accounting
 
-# Path for the Rabbit MQ working directory for all intermediate data (pre-configured for container installation)
+# Raw node stats: one subdirectory per host; dirname must end with DEFAULT.host_name_ext
 archive_dir	       = %(data_dir)s/archive
 
 
@@ -66,7 +73,7 @@ dbname             = hpcperfstats
 daily_archive_dir  = %(data_dir)s/daily_archive
 
 # Django engine backend (pre-configured for container installation)
-engine_name        = django.db.backends.postgresql_psycopg2 
+engine_name        = django.db.backends.postgresql 
 
 # Postgres username (pre-configured for container installation)
 username           = hpcperfstats
@@ -80,6 +87,10 @@ host               = db
 # Database port (pre-configured for container installation)
 port               = 5432
 
+
+[CACHE]
+# Redis URL for ORM/view caching (e.g. redis://host:port/db)
+redis_location = redis://redis:6379/1
 
 [XALT]
 # Name of XALT engine

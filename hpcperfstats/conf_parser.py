@@ -1,121 +1,261 @@
+"""Configuration parser for HPCPerfStats. Reads hpcperfstats.ini and exposes getters for portal, RMQ, XALT, and OAuth2 settings.
+
+"""
 import configparser
+import os
+from zoneinfo import ZoneInfo
 
-cfg = configparser.ConfigParser()
+cfg = None
+_ACTIVE_CONFIG_PATH = None
 
-# Append your local repository path here:
-cfg.read('/home/hpcperfstats/hpcperfstats.ini')
+
+def _candidate_config_paths():
+  """Return candidate config paths in lookup order.
+
+  Search order is explicit env override first, then common runtime locations,
+  then the bundled example as a development fallback.
+  """
+  module_dir = os.path.dirname(os.path.realpath(__file__))
+  env_path = os.environ.get("HPCPERFSTATS_INI", "").strip()
+  if env_path:
+    # Explicit operator override should be authoritative.
+    return [env_path]
+
+  return [
+      # Local development from repo root.
+      os.path.abspath(os.path.join(os.getcwd(), "hpcperfstats.ini")),
+      # Common container/runtime location.
+      "/home/hpcperfstats/hpcperfstats.ini",
+      # Source tree locations.
+      os.path.abspath(os.path.join(module_dir, "..", "hpcperfstats.ini")),
+      os.path.abspath(os.path.join(module_dir, "..", "hpcperfstats.ini.example")),
+  ]
+
+
+def _load_cfg():
+  """Load config from first existing candidate path."""
+  global cfg
+  global _ACTIVE_CONFIG_PATH
+  parser = configparser.ConfigParser()
+  attempted_paths = _candidate_config_paths()
+  for path in attempted_paths:
+    if not os.path.isfile(path):
+      continue
+    if parser.read(path):
+      cfg = parser
+      _ACTIVE_CONFIG_PATH = path
+      return
+  raise FileNotFoundError(
+      "Unable to locate HPCPerfStats config file. Set HPCPERFSTATS_INI or place "
+      "hpcperfstats.ini at /home/hpcperfstats/hpcperfstats.ini. Attempted paths: "
+      "%s" % ", ".join(attempted_paths)
+  )
+
+
+def _ensure_cfg_loaded():
+  """Initialize config parser lazily."""
+  if cfg is None:
+    _load_cfg()
+
+
+def _get(section, option):
+  """Return config value for section/option. Single place for simple getters."""
+  _ensure_cfg_loaded()
+  if not cfg.has_section(section) and section != "DEFAULT":
+    raise configparser.NoSectionError(
+        "Missing section '%s' in %s" % (
+            section,
+            _ACTIVE_CONFIG_PATH,
+        )
+    )
+  return cfg.get(section, option)
+
 
 def get_db_connection_string():
-    temp_string = "dbname={0} user="+cfg.get('PORTAL', 'username')+" password="+cfg.get('PORTAL', 'password')+" port="+cfg.get('PORTAL', 'port') + " host="+cfg.get('PORTAL', 'host')
-    connection_string = temp_string.format(cfg.get('PORTAL', 'dbname'))
-    return connection_string
+  """Return a PostgreSQL connection string from PORTAL config (dbname, user, password, port, host)."""
+  return "dbname={0} user={1} password={2} port={3} host={4}".format(
+      _get('PORTAL', 'dbname'), _get('PORTAL', 'username'),
+      _get('PORTAL', 'password'), _get('PORTAL', 'port'), _get('PORTAL', 'host'))
+
 
 def get_db_name():
-    db_name = cfg.get('PORTAL', 'dbname')
-    return db_name
+  """Return the database name from PORTAL config."""
+  return _get('PORTAL', 'dbname')
+
 
 def get_debug():
-    debug = cfg.get('DEFAULT', 'debug')
-    # cast this as a bool instead of a string
-    return debug.lower() in ("yes", "true", "1")
+  """Return True if DEFAULT.debug is yes/true/1, else False.
+
+    Missing DEFAULT.debug is treated as False to keep startup resilient when
+    older/minimal configs omit this optional setting.
+    """
+  _ensure_cfg_loaded()
+  return cfg.get('DEFAULT', 'debug', fallback='no').lower() in ("yes", "true", "1")
+
+
+def get_secret_key():
+  """Return Django SECRET_KEY from DEFAULT.secret_key, or None if not set.
+
+    Prefer environment variable SECRET_KEY over ini; settings.py should check
+    os.environ first, then this, then fail or use dev default.
+    """
+  _ensure_cfg_loaded()
+  if cfg.has_option('DEFAULT', 'secret_key'):
+    return cfg.get('DEFAULT', 'secret_key').strip() or None
+  return None
+
 
 def get_archive_dir_path():
-    archive_dir_path = cfg.get('PORTAL', 'archive_dir')
-    return archive_dir_path
+  """Return the archive directory path from PORTAL config."""
+  return _get('PORTAL', 'archive_dir')
+
 
 def get_host_name_ext():
-    host_name_ext = cfg.get('DEFAULT', 'host_name_ext')
-    return host_name_ext
+  """Return the host name extension (domain) from DEFAULT config."""
+  return _get('DEFAULT', 'host_name_ext')
+
 
 def get_restricted_queue_keywords():
-    restricted_queue_keywords = cfg.get('DEFAULT', 'restricted_queue_keywords')
-    return restricted_queue_keywords
+  """Return restricted queue keywords string from DEFAULT config."""
+  return _get('DEFAULT', 'restricted_queue_keywords')
+
 
 def get_accounting_path():
-    accounting_path = cfg.get('PORTAL', 'acct_path')
-    return accounting_path
+  """Return the accounting (sacct) file path from PORTAL config."""
+  return _get('PORTAL', 'acct_path')
+
 
 def get_daily_archive_dir_path():
-    daily_archive_dir_path = cfg.get('PORTAL', 'daily_archive_dir')
-    return daily_archive_dir_path
+  """Return the daily archive directory path from PORTAL config."""
+  return _get('PORTAL', 'daily_archive_dir')
+
 
 def get_rmq_server():
-    rmq_server = cfg.get('RMQ', 'rmq_server')
-    return rmq_server
+  """Return the RabbitMQ server host from RMQ config."""
+  return _get('RMQ', 'rmq_server')
+
 
 def get_rmq_queue():
-    rmq_queue = cfg.get('RMQ', 'rmq_queue')
-    return rmq_queue
+  """Return the RabbitMQ queue name from RMQ config."""
+  return _get('RMQ', 'rmq_queue')
+
 
 def get_machine_name():
-    machine_name = cfg.get('DEFAULT', 'machine')
-    return machine_name
+  """Return the machine name from DEFAULT config."""
+  return _get('DEFAULT', 'machine')
+
 
 def get_server_name():
-    server_name = cfg.get('DEFAULT', 'server')
-    return server_name
+  """Return the server name from DEFAULT config."""
+  return _get('DEFAULT', 'server')
+
 
 def get_data_dir_path():
-    data_dir_path = cfg.get('DEFAULT', 'data_dir')
-    return data_dir_path
+  """Return the data directory path from DEFAULT config."""
+  return _get('DEFAULT', 'data_dir')
+
 
 def get_engine_name():
-    engine_name = cfg.get('PORTAL', 'engine_name')
-    return engine_name
+  """Return the Django database engine name from PORTAL config."""
+  return _get('PORTAL', 'engine_name')
+
 
 def get_username():
-    username = cfg.get('PORTAL', 'username')
-    return username
+  """Return the portal DB username from PORTAL config."""
+  return _get('PORTAL', 'username')
+
 
 def get_password():
-    password = cfg.get('PORTAL', 'password')
-    return password
+  """Return the portal DB password from PORTAL config."""
+  return _get('PORTAL', 'password')
+
 
 def get_host():
-    host = cfg.get('PORTAL', 'host')
-    return host
+  """Return the portal DB host from PORTAL config."""
+  return _get('PORTAL', 'host')
+
 
 def get_port():
-    port = cfg.get('PORTAL', 'port')
-    return port
+  """Return the portal DB port from PORTAL config."""
+  return _get('PORTAL', 'port')
+
 
 def get_xalt_engine():
-    xalt_engine = cfg.get('XALT', 'xalt_engine')
-    return xalt_engine
+  """Return the XALT database engine from XALT config."""
+  return _get('XALT', 'xalt_engine')
+
 
 def get_xalt_name():
-    xalt_name = cfg.get('XALT', 'xalt_name')
-    return xalt_name
+  """Return the XALT database name from XALT config."""
+  return _get('XALT', 'xalt_name')
+
 
 def get_xalt_user():
-    xalt_user = cfg.get('XALT', 'xalt_user')
-    return xalt_user
+  """Return the XALT DB user from XALT config."""
+  return _get('XALT', 'xalt_user')
+
 
 def get_xalt_password():
-    xalt_password = cfg.get('XALT', 'xalt_password')
-    return xalt_password
+  """Return the XALT DB password from XALT config."""
+  return _get('XALT', 'xalt_password')
+
 
 def get_xalt_host():
-    xalt_host = cfg.get('XALT', 'xalt_host')
-    return xalt_host
+  """Return the XALT DB host from XALT config."""
+  return _get('XALT', 'xalt_host')
+
 
 def get_oauth_client_id():
-    return cfg.get('OAUTH2', 'client_id')
+  """Return the OAuth2 client ID from OAUTH2 config."""
+  return _get('OAUTH2', 'client_id')
+
 
 def get_oauth_client_key():
-    return cfg.get('OAUTH2', 'client_key')
+  """Return the OAuth2 client key/secret from OAUTH2 config."""
+  return _get('OAUTH2', 'client_key')
+
 
 def get_oauth_authorize_url():
-    return cfg.get('OAUTH2', 'authorize_url')
+  """Return the OAuth2 authorization URL template from OAUTH2 config."""
+  return _get('OAUTH2', 'authorize_url')
+
 
 def get_oauth_base_url():
-    return cfg.get('OAUTH2', 'oauth_base_url')
+  """Return the OAuth2 tenant base URL from OAUTH2 config."""
+  return _get('OAUTH2', 'oauth_base_url')
+
 
 def get_staff_email_domain():
-    return cfg.get('DEFAULT', 'staff_email_domain')
+  """Return the staff email domain from DEFAULT config."""
+  return _get('DEFAULT', 'staff_email_domain')
+
 
 def get_timezone():
-    return cfg.get('DEFAULT', 'timezone')
+  """Return the timezone string from DEFAULT config."""
+  return _get('DEFAULT', 'timezone')
+
+
+def get_local_timezone():
+  """Return the local timezone as a ZoneInfo for datetime conversion."""
+  return ZoneInfo(get_timezone())
+
 
 def get_total_cores():
-    return cfg.get('DEFAULT', 'total_cores')
+  """Return the total cores count from DEFAULT config."""
+  return _get('DEFAULT', 'total_cores')
+
+
+def get_worker_thread_count(divisor=4):
+  """Return worker thread count as total_cores / divisor, clamped to at least 1."""
+  return max(1, int(_get('DEFAULT', 'total_cores')) // divisor)
+
+
+def get_redis_location():
+  """Return the Redis URL for cache from CACHE config.
+
+    Defaults to redis://127.0.0.1:6379/1 if [CACHE] or redis_location is missing.
+    """
+  _ensure_cfg_loaded()
+  if cfg.has_section("CACHE") and cfg.has_option("CACHE", "redis_location"):
+    return cfg.get("CACHE", "redis_location").strip() or "redis://127.0.0.1:6379/1"
+  return "redis://127.0.0.1:6379/1"

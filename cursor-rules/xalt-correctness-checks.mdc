@@ -1,0 +1,10 @@
+---
+description: Verify XALT facts against upstream sources
+alwaysApply: true
+---
+
+# XALT Correctness Checks
+- Whenever the assistant deals with `XALT` (setup, configuration, environment variables, linker wrapping, tracking behavior, CLI/config keys, or troubleshooting), verify correctness against:
+  - https://github.com/xalt/
+  - https://xalt.readthedocs.org/
+- If the upstream sources conflict with existing local assumptions, defer to the upstream sources and call out the discrepancy.

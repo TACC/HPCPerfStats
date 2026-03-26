@@ -1,0 +1,53 @@
+# These are the two containers that contain the web and data processing code
+
+services:
+  web:
+    build: ./
+    image: hpcperfstats
+    container_name: hpcperfstats_web_1
+    restart: always
+    command: /home/hpcperfstats/services-conf/django_startup.sh
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - web
+
+  pipeline:
+    image: hpcperfstats
+    container_name: hpcperfstats_pipeline_1
+    restart: always
+    depends_on:
+      - web
+    command: /home/hpcperfstats/services-conf/supervisor_startup.sh
+    ports:
+      - 514:514/udp
+      - 514:514/tcp
+    volumes:
+      - hpcperfstatsdata:/hpcperfstats/
+      # The ssh keys don't have to be a user's, they just have to be a .ssh directory
+      - /home/sharrell/.ssh:/hpcperfstats/.ssh/:ro
+      - hpcperfstatsnodelog:/hpcperfstatslog/
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - pipeline
+
+volumes:
+  hpcperfstatsdata:
+    driver: local
+    driver_opts:
+      type: none
+      device: /opt/hpcperfstats_data/
+      o: bind
+
+  hpcperfstatsnodelog:
+    driver: local
+    driver_opts:
+      type: none
+      device: /opt/hpcperfstats_log
+      o: bind
+
+networks:
+  hpcperfstats_net:
+    name: hpcperfstats_net
+

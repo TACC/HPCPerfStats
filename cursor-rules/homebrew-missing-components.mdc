@@ -1,0 +1,21 @@
+---
+description: Install missing components with Homebrew
+alwaysApply: true
+---
+
+# Homebrew Installation Guidance
+
+- If required system packages/tools are missing, install them using Homebrew.
+- Always invoke Homebrew commands as: `arch -arm64 brew <args>`
+- Prefer `arch -arm64 brew update` before installing when installing toolchains/dev deps.
+- Use `arch -arm64 brew install <pkg>` for formulae.
+- Use `arch -arm64 brew install --cask <app>` for GUI apps (if needed).
+- If something may already be installed, avoid reinstalling; verify first with `command -v <bin>` and/or `arch -arm64 brew list --formula` / `arch -arm64 brew list --cask`.
+
+# Examples
+
+```shell
+arch -arm64 brew update
+arch -arm64 brew install cmake
+arch -arm64 brew install --cask iterm2
+```

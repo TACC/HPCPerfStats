@@ -1,557 +1,577 @@
 #!/usr/bin/env python3
+"""Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files. Runs in parallel with configurable chunk size.
+
+CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini).
+
+DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers and calls close_old_connections() at entry so each worker uses a fresh connection. Writes are serialized with a shared lock.
+
+"""
+import itertools
 import multiprocessing
 import os
+import signal
 import subprocess
 import sys
-import tarfile
 import time
-import uuid
-from datetime import datetime, timedelta
+import warnings
+from datetime import datetime, timedelta, timezone
 from functools import partial
+from hpcperfstats.django_bootstrap import ensure_django
+ensure_django()
 
-import psycopg2
+# Django 5.0+ removed django.utils.timezone.utc; ensure it exists for ORM/code that references it (Django 6 still does not provide it).
+import django.utils.timezone as _django_tz
+if not hasattr(_django_tz, "utc"):
+  _django_tz.utc = timezone.utc
 
-#pandas.set_option('display.max_rows', 100)
-from pandas import DataFrame, to_datetime
-from pgcopy import CopyManager
+from django.db import IntegrityError, close_old_connections, connections
+import pandas as pd
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.analysis.gen.utils import read_sql
+from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
+from hpcperfstats.print_utils import log_print
+from hpcperfstats.shutdown_utils import (
+    shutdown_requested,
+    send_sigchld_to_parent,
+    sleep_until_shutdown,
+)
+from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+    build_archive_mapping,
+    collect_stats_files_in_range,
+    filter_files_to_add_to_archive,
+    get_existing_archive_members,
+    get_stats_chunk,
+    rescan_pending_stats_files,
+    get_tar_member_name,
+    get_verified_files_to_remove,
+    stats_file_is_active_segment,
+)
+from hpcperfstats.file_locking import file_write_lock
+from hpcperfstats.dbload.sync_timedb_parsing import (
+    EVENTMAPS_BY_TYPE,
+    build_stats_dataframes,
+    compute_deltas_and_arc,
+    exclude_types,
+    find_processing_start_index,
+    load_stats_file_lines,
+    parse_first_timestamp_line,
+    parse_stats_file_path,
+    parse_stats_lines,
+)
+from hpcperfstats.site.machine.models import host_data, proc_data
+
 
 # archive toggle
 should_archive = True
 
 # DEBUG message toggle
-DEBUG =  cfg.get_debug()
+DEBUG = cfg.get_debug()
 
-local_timezone = cfg.get_timezone()
+local_timezone = cfg.get_local_timezone()
 
 # Thread count for database loading and archival
-thread_count =  int(int(cfg.get_total_cores())/4)
-if thread_count < 1:
-    thread_count = 1
+thread_count = cfg.get_worker_thread_count(4)
+# pigz thread cap: one quarter of total cores, clamped to at least one.
+pigz_thread_count = max(1, cfg.get_worker_thread_count(4))
 
 # amount of concurrent pigz using thread_count*2 cores
-archive_thread_count = int(thread_count/2)
+archive_thread_count = int(thread_count / 2)
 if archive_thread_count < 1:
-    archive_thread_count = 1
+  archive_thread_count = 1
 
 # How many days to process if run without any arguments
 days_to_process = 5
 
 # How many files to proccess and archive at once
 chunk_size = 100
+# Rescan stats directory after this many processed chunks
+rescan_every_chunks = 10
+
+# Rows per bulk_create batch to limit peak memory per worker
+bulk_create_batch_size = 10000
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
 
-
-CONNECTION = cfg.get_db_connection_string()
-
-amd64_pmc_eventmap = { 0x43ff03 : "FLOPS,W=48", 0x4300c2 : "BRANCH_INST_RETIRED,W=48", 0x4300c3: "BRANCH_INST_RETIRED_MISS,W=48",
-                       0x4308af : "DISPATCH_STALL_CYCLES1,W=48", 0x43ffae :"DISPATCH_STALL_CYCLES0,W=48" }
-
-amd64_df_eventmap = { 0x403807 : "MBW_CHANNEL_0,W=48,U=64B", 0x403847 : "MBW_CHANNEL_1,W=48,U=64B", 0x403887 : "MBW_CHANNEL_2,W=48,U=64B" ,
-                      0x4038c7 : "MBW_CHANNEL_3,W=48,U=64B", 0x433907 : "MBW_CHANNEL_4,W=48,U=64B", 0x433947 : "MBW_CHANNEL_5,W=48,U=64B",
-                      0x433987 : "MBW_CHANNEL_6,W=48,U=64B", 0x4339c7 : "MBW_CHANNEL_7,W=48,U=64B" }
-
-intel_8pmc3_eventmap = { 0x4301c7 : 'FP_ARITH_INST_RETIRED_SCALAR_DOUBLE,W=48,U=1',      0x4302c7 : 'FP_ARITH_INST_RETIRED_SCALAR_SINGLE,W=48,U=1',
-                         0x4304c7 : 'FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE,W=48,U=2', 0x4308c7 : 'FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE,W=48,U=4',
-                         0x4310c7 : 'FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE,W=48,U=4', 0x4320c7 : 'FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE,W=48,U=8',
-                         0x4340c7 : 'FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE,W=48,U=8', 0x4380c7 : 'FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE,W=48,U=16',
-                         "FIXED_CTR0" : 'INST_RETIRED,W=48', "FIXED_CTR1" : 'APERF,W=48', "FIXED_CTR2" : 'MPERF,W=48' }
-
-intel_skx_imc_eventmap = {0x400304 : "CAS_READS,W=48", 0x400c04 : "CAS_WRITES,W=48", 0x400b01 : "ACT_COUNT,W=48", 0x400102 : "PRE_COUNT_MISS,W=48"}
-
-
-exclude_types = ["ib", "ib_sw", "intel_skx_cha", "ps", "sysv_shm", "tmpfs", "vfs"]
-#exclude_types = ["ib", "ib_sw", "intel_skx_cha", "proc", "ps", "sysv_shm", "tmpfs", "vfs"]
-
-
-
-
 # This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
 def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
+  """Parse a stats file, map hardware counters, compute deltas/arc, and bulk-insert into host_data and proc_data. Returns (stats_file, need_archival). Uses lock for DB writes.
 
-    hostname, create_time = stats_file.split('/')[-2:]
+    """
+  close_old_connections()
 
-    if stats_file_contents is not None:
-        lines = stats_file_contents
-    else:
-        try:
-            with open(stats_file, 'r') as fd:
-                lines = fd.readlines()
-        except FileNotFoundError:
-            print("Stats file disappeared: %s" % stats_file)
-            return((stats_file, False))
+  hostname, _ = parse_stats_file_path(stats_file)
+  if hostname is None:
+    log_print("Invalid stats file path: %s" % stats_file)
+    return (stats_file, False)
 
-    for l in lines:
-        if not l:
-            continue
-        try:
-            if l[0].isdigit():
-                t, jid, host = l.split()
-                break
-        except:
-            print("Error on this line: %s" % l)
-    else:
-        print("initial timestamp not found")
-
-    timestamp = datetime.fromtimestamp(int(float(t)))
-
-    with psycopg2.connect(CONNECTION) as conn:
-        sql = "select distinct(time) from host_data where host = '{0}' and time >= '{1}'::timestamp - interval '48h' and time < '{1}'::timestamp + interval '72h' order by time;".format(hostname, timestamp)
-        times = [float(t.timestamp()) for t in read_sql(sql, conn)["time"].tolist()]
-        itimes = [int(t) for t in times]
-
-
-        # start reading stats data from file at first - 1 missing time
-        start_idx = -1
-        last_idx  = 0
-        need_archival=True
-        for i, line in enumerate(lines):
-            if not line or not line[0]: continue
-            if line[0].isdigit():
-                t, jid, host = line.split()
-                if jid == '-': continue
-
-                if (float(t) not in times) and (int(float(t)) not in itimes):
-                    start_idx = last_idx
-                    need_archival=False
-                    break
-                last_idx = i
-
-        if start_idx == -1:
-            print("No missing timestamps found for %s" % stats_file)
-            return((stats_file, True))
-
-        # instrument the code to see what is actually proccessing in each file
-        timestamps_found = 0
-        counters_found = 0
-        labels_found = 0
-        unprocessable_lines = 0
-        jobs_missing_found = 0
-
-        schema = {}
-        stats  = []
-        proc_stats = [] #process stats
-        insert = False
-        timestamp_job_missing = False
-        start = time.time()
-        try:
-            for i, line in enumerate(lines):
-                if not line or not line[0]: continue
-
-                if line[0].isalpha() and insert:
-                    # Skip any data from a time stamp that doesn't have a jid associated
-                    if timestamp_job_missing:
-                        continue
-                    typ, dev, vals = line.split(maxsplit = 2)
-                    counters_found += 1
-                    vals = vals.split()
-                    if typ in exclude_types: continue
-
-                    # Mapping hardware counters to events
-                    if typ == "amd64_pmc" or typ == "amd64_df" or typ == "intel_8pmc3" or typ == "intel_skx_imc":
-                        if typ == "amd64_pmc": eventmap = amd64_pmc_eventmap
-                        if typ == "amd64_df": eventmap = amd64_df_eventmap
-                        if typ == "intel_8pmc3": eventmap = intel_8pmc3_eventmap
-                        if typ == "intel_skx_imc": eventmap = intel_skx_imc_eventmap
-                        n = {}
-                        rm_idx = []
-                        schema_mod = []*len(schema[typ])
-
-                        for idx, eve in enumerate(schema[typ]):
-
-                            eve = eve.split(',')[0]
-                            if "CTL" in eve:
-                                try:
-                                    n[eve.lstrip("CTL")] = eventmap[int(vals[idx])]
-                                except:
-                                    n[eve.lstrip("CTL")] = "OTHER"
-                                rm_idx += [idx]
-
-                            elif "FIXED_CTR" in eve:
-                                schema_mod += [eventmap[eve]]
-
-                            elif "CTR" in eve:
-                                schema_mod += [n[eve.lstrip("CTR")]]
-                            else:
-                                schema_mod += [eve]
-
-                        for idx in sorted(rm_idx, reverse = True): del vals[idx]
-                        vals = dict(zip(schema_mod, vals))
-                    elif typ == "proc":
-                         proc_name=(line.split()[1]).split('/')[0]
-                         proc_stats += [ { **tags2, "proc": proc_name } ]
-                         continue
-                    else:
-                        # Software counters are not programmable and do not require mapping
-                        vals = dict(zip(schema[typ], vals))
-
-                    rec  =  { **tags, "type" : typ, "dev" : dev }
-
-                    for eve, val in vals.items():
-                        eve = eve.split(',')
-                        width = 64
-                        mult = 1
-                        unit = "#"
-
-                        for ele in eve[1:]:
-                            if "W=" in ele: width = int(ele.lstrip("W="))
-                            if "U=" in ele:
-                                ele = ele.lstrip("U=")
-                                try:    mult = float(''.join(filter(str.isdigit, ele)))
-                                except: pass
-                                try:    unit = ''.join(filter(str.isalpha, ele))
-                                except: pass
-
-                        stats += [ { **rec, "event" : eve[0], "value" : float(val), "wid" : width, "mult" : mult, "unit" : unit } ]
-
-                elif i >= start_idx and line[0].isdigit():
-                    t, jid, host = line.split()
-                    if jid == '-':
-                        timestamp_job_missing = True
-                        jobs_missing_found += 1
-                        continue
-                    timestamp_job_missing = False
-                    timestamps_found += 1
-                    insert = True
-                    tags = { "time" : float(t), "host" : host, "jid" : jid }
-                    tags2 = {"jid": jid, "host" : host}
-                elif line[0] == '!':
-                    label, events = line.split(maxsplit = 1)
-                    labels_found += 1
-                    typ, events = label[1:], events.split()
-                    schema[typ] = events
-                else:
-                    unprocessable_lines += 1
-
-        except Exception as e:
-            print("error: process data failed: ", str(e))
-            print("Possibly corrupt file: %s" % stats_file)
-            return((stats_file, False))
-
-        unique_entries = set(tuple(d.items()) for d in proc_stats)
-
-        # Convert set of tuples back to a list of dictionaries
-        proc_stats = [dict(entry) for entry in unique_entries]
-        proc_stats = DataFrame.from_records(proc_stats)
-
-        stats = DataFrame.from_records(stats)
-
-        if DEBUG:
-            print("File Stats for %s:\n %s labels found, %s timestamps found,  %s counters found, %s unprocessable lines, %s timestamps missing jids" % (stats_file, labels_found, timestamps_found, counters_found, unprocessable_lines, jobs_missing_found))
-
-        if stats.empty and proc_stats.empty:
-            if DEBUG:
-                print("Unable to process stats file %s" % stats_file)
-            return((stats_file, False))
-
-        # Always drop the first timestamp. For new file this is just first timestamp (at random rotate time).
-        # For update from existing file this is timestamp already in database.
-
-        # compute difference between time adjacent stats. if new file first na time diff is backfilled by second time diff
-        stats["delta"] = (stats.groupby(["host", "type", "dev", "event"])["value"].diff())
-
-        # correct stats for rollover and units (must be done before aggregation over devices)
-        stats["delta"] = stats["delta"].mask(stats["delta"] < 0, 2**stats["wid"] + stats["delta"])
-        stats["delta"] = stats["delta"] * stats["mult"]
-        del stats["wid"], stats["mult"]
-
-        # aggregate over devices
-        stats = stats.groupby(["host", "jid", "type", "event", "unit", "time"]).sum().reset_index()
-        stats = stats.sort_values(by=["host", "type", "event", "time"])
-
-        # compute average rate of change.
-        deltat = stats.groupby(["host", "type", "event"])["time"].diff()
-        stats["arc"] = stats["delta"]/deltat
-        stats["time"] = to_datetime(stats["time"], unit = 's').dt.tz_localize('UTC')
-
-        # drop rows from first timestamp
-        stats=stats.dropna()  #junjie DEBUG
-        print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - start))
-
-        # bulk insertion using pgcopy
-        sqltime = time.time()
-
-
-        lock.acquire()
-        mgr2 = CopyManager(conn, 'proc_data', proc_stats.columns)
-        try:
-            mgr2.copy(proc_stats.values.tolist())
-        except Exception as e:
-            if DEBUG:
-                print("error in mrg2.copy: %s\nFile %s" %  (e, stats_file))
-            conn.rollback()
-            lock.release()
-            copy_data_to_pgsql_individually(conn, proc_stats, 'proc_data')
-        else:
-            conn.commit()
-            lock.release()
-
-
-
-        lock.acquire()
-        mgr = CopyManager(conn, 'host_data', stats.columns)
-        try:
-            mgr.copy(stats.values.tolist())
-        except Exception as e:
-            if DEBUG:
-                print("error in mrg.copy: " , str(e))
-            conn.rollback()
-            lock.release()
-            need_archival = copy_data_to_pgsql_individually(conn, stats, 'host_data')
-        else:
-            conn.commit()
-            lock.release()
-
-    #print("sql insert time for {0} {1:.1f}s".format(stats_file, time.time() - sqltime))
-
-    need_archival = True
+  if stats_file_is_active_segment(stats_file):
     if DEBUG:
-        print("File successfully added to DB")
-    return((stats_file, need_archival))
+      log_print("Skipping active segment (still linked to current): %s" % stats_file)
+    return (stats_file, False)
 
+  lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)
+  if load_err is not None:
+    log_print(load_err)
+    return (stats_file, False)
 
-def copy_data_to_pgsql_individually(conn, data, table):
+  t, jid, host = parse_first_timestamp_line(lines)
+  if t is None:
+    log_print("initial timestamp not found")
+    return (stats_file, False)
 
-    need_archival = True
-    unique_violations = 0
-    with conn.cursor() as curs:
-        for row in data.values.tolist():
+  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
+  ts_low = timestamp_utc - timedelta(hours=48)
+  ts_high = timestamp_utc + timedelta(hours=72)
+  # Use Django ORM to fetch distinct existing timestamps for this host in range.
+  itimes_set = set()
+  qs_times = (
+      host_data.objects.filter(
+          host=hostname,
+          time__gte=ts_low,
+          time__lt=ts_high,
+      )
+      .values_list("time", flat=True)
+      .distinct()
+  )
+  for dt in qs_times.iterator():
+    if dt is None:
+      continue
+    # Normalise to UTC then convert to integer epoch seconds.
+    if dt.tzinfo is None:
+      dt = dt.replace(tzinfo=timezone.utc)
+    epoch = int(dt.timestamp())
+    itimes_set.add(epoch)
 
-            sql_columns = ','.join(['"%s"' % value for value in data.columns.values])
+  start_idx, need_archival = find_processing_start_index(lines, itimes_set)
+  if start_idx == -1:
+    log_print("No missing timestamps found for %s" % stats_file)
+    return (stats_file, True)
 
-            sql_insert = 'INSERT INTO "%s" (%s) VALUES ' % (table, sql_columns)
-            sql_insert = sql_insert + "(" + ','.join(["%s" for i in row]) + ");"
+  # Keep only lines from start_idx to avoid holding the full file in memory
+  lines = lines[start_idx:]
 
+  start = time.time()
+  try:
+    stats_list, proc_stats_list = parse_stats_lines(
+        lines, 0,
+        eventmaps_by_type=EVENTMAPS_BY_TYPE,
+        exclude_types_list=exclude_types,
+    )
+  except Exception as e:
+    log_print("error: process data failed: ", str(e))
+    log_print("Possibly corrupt file: %s" % stats_file)
+    return (stats_file, False)
 
-            try:
-                curs.execute(sql_insert, row)
-            except psycopg2.errors.UniqueViolation:
-                # count for rows that already exist.
-                unique_violations += 1
-                conn.rollback()
-            except Exception as e:
-                print("error in single insert: ", e.pgcode, " ", str(e), "while executing", str(sql_insert) + ", " + str(row))
-                need_archival = False
-                conn.rollback()
-            else:
-                conn.commit()
+  stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
+  del stats_list
+  del proc_stats_list
+  if stats.empty and proc_stats.empty:
     if DEBUG:
-        print("Existing Rows Found in DB: %s" % unique_violations)
+      log_print("Unable to process stats file %s" % stats_file)
+    return (stats_file, False)
 
-    return need_archival
+  stats = compute_deltas_and_arc(stats)
+  log_print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - start))
+
+  lock.acquire()
+  try:
+    try:
+      proc_it = proc_stats.itertuples(index=False)
+      while True:
+        batch = list(itertools.islice(proc_it, bulk_create_batch_size))
+        if not batch:
+          break
+        proc_objs = [
+            proc_data(jid=row.jid, host=row.host, proc=row.proc) for row in batch
+        ]
+        proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
+    except Exception as e:
+      if DEBUG:
+        log_print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
+      _insert_proc_data_individually(proc_stats)
+  finally:
+    lock.release()
+
+  lock.acquire()
+  need_archival = True
+  try:
+    try:
+      with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*[Dd]iscarding nonzero nanoseconds.*",
+            category=UserWarning,
+        )
+        stats_it = stats.itertuples(index=False)
+        while True:
+          batch = list(itertools.islice(stats_it, bulk_create_batch_size))
+          if not batch:
+            break
+          host_objs = [
+              host_data(
+                  time=row.time.to_pydatetime(),
+                  host=row.host,
+                  jid=row.jid,
+                  type=row.type,
+                  dev=None,
+                  event=row.event,
+                  unit=row.unit,
+                  value=float(row.value) if pd.notna(row.value) else None,
+                  delta=float(row.delta) if pd.notna(row.delta) else None,
+                  arc=float(row.arc) if pd.notna(row.arc) else None,
+              )
+              for row in batch
+          ]
+          host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
+    except Exception as e:
+      if DEBUG:
+        log_print("error in host_data bulk_create:", str(e))
+      need_archival = _insert_host_data_individually(stats)
+  finally:
+    lock.release()
+
+  if DEBUG:
+    log_print("File successfully added to DB")
+  return (stats_file, need_archival)
+
+
+def _insert_proc_data_individually(proc_stats_df):
+  """Fallback: insert proc_data rows one by one, skipping duplicates.
+
+    """
+  unique_violations = 0
+  for row in proc_stats_df.itertuples(index=False):
+    try:
+      proc_data(jid=row.jid, host=row.host, proc=row.proc).save()
+    except IntegrityError:
+      unique_violations += 1
+    except Exception as e:
+      log_print("error in single proc_data insert:", str(e), "row:", row)
+  if DEBUG:
+    log_print("Existing Rows Found in DB: %s" % unique_violations)
+
+
+def _insert_host_data_individually(stats_df):
+  """Fallback: insert host_data rows one by one, skipping duplicates. Returns need_archival.
+
+    """
+  need_archival = True
+  unique_violations = 0
+  with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message=".*[Dd]iscarding nonzero nanoseconds.*",
+        category=UserWarning,
+    )
+    for row in stats_df.itertuples(index=False):
+      try:
+        host_data(
+            time=row.time.to_pydatetime(),
+            host=row.host,
+            jid=row.jid,
+            type=row.type,
+            dev=None,
+            event=row.event,
+            unit=row.unit,
+            value=float(row.value) if pd.notna(row.value) else None,
+            delta=float(row.delta) if pd.notna(row.delta) else None,
+            arc=float(row.arc) if pd.notna(row.arc) else None,
+        ).save()
+      except IntegrityError:
+        unique_violations += 1
+      except Exception as e:
+        log_print("error in single host_data insert:", str(e), "row:", row)
+        need_archival = False
+  if DEBUG:
+    log_print("Existing Rows Found in DB: %s" % unique_violations)
+  return need_archival
+
+
+
+
+def _decompress_gz(gz_path):
+  """Decompress .tar.gz with pigz. No-op if path missing or on error."""
+  if not os.path.exists(gz_path):
+    return
+  try:
+    with file_write_lock(gz_path):
+      result = subprocess.run(
+          ['/usr/bin/pigz', '-v', '-d', '-p', str(pigz_thread_count), gz_path],
+          capture_output=True,
+          text=True,
+          check=False,
+      )
+    if result.stdout:
+      log_print(result.stdout)
+    if result.stderr:
+      log_print(result.stderr)
+    if result.returncode != 0:
+      raise subprocess.CalledProcessError(
+          result.returncode, result.args, output=result.stdout, stderr=result.stderr)
+  except subprocess.CalledProcessError:
+    pass
+
+
+def _append_to_tar(tar_path, file_paths):
+  """Append file_paths to tar at tar_path. Does nothing if file_paths is empty."""
+  if not file_paths:
+    return
+  with file_write_lock(tar_path):
+    result = subprocess.run(
+        ['/bin/tar', 'uvf', tar_path] + file_paths,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+  if result.stdout:
+    log_print(result.stdout, flush=True)
+  if result.stderr:
+    log_print(result.stderr, flush=True)
+  if result.returncode != 0:
+    raise subprocess.CalledProcessError(
+        result.returncode, result.args, output=result.stdout, stderr=result.stderr)
+  log_print("Archived: " + str(file_paths))
+
+
+def _compress_tar_gz(tar_path, num_threads=None):
+  """Compress .tar with pigz. num_threads defaults to one quarter total cores."""
+  if num_threads is None:
+    num_threads = pigz_thread_count
+  if not os.path.exists(tar_path):
+    return
+  gz_path = "%s.gz" % tar_path
+  with file_write_lock(tar_path):
+    result = subprocess.run(
+        ['/usr/bin/pigz', '-f', '-8', '-v', '-p', str(num_threads), tar_path],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.stdout:
+      log_print(result.stdout, flush=True)
+    if result.stderr:
+      log_print(result.stderr, flush=True)
+    if result.returncode != 0:
+      raise subprocess.CalledProcessError(
+          result.returncode, result.args, output=result.stdout, stderr=result.stderr)
+  # pigz rewrites tar_path to tar_path.gz, so synchronize on the resulting file too.
+  if os.path.exists(gz_path):
+    with file_write_lock(gz_path):
+      pass
+
 
 def archive_stats_files(archive_info):
-    archive_fname, stats_files = archive_info
-    archive_tar_fname = archive_fname[:-3]
-    if not os.path.exists(archive_tar_fname):
-        try:
-            # If the file is missing, it will error, catch that error and continue
-            print(subprocess.check_output(['/usr/bin/pigz', '-v', '-d', archive_fname]))
-        except subprocess.CalledProcessError:
-            pass
+  """Append stats files to a daily .tar, compress with pigz, and remove originals after verification."""
+  archive_fname, stats_files = archive_info
+  archive_tar_fname = archive_fname[:-3]
 
-    existing_archive_file = {}
-    if os.path.exists(archive_tar_fname):
+  _decompress_gz(archive_fname)
+  existing_members = get_existing_archive_members(archive_tar_fname)
 
-        try:
-            with tarfile.open(archive_tar_fname, 'r') as archive_tarfile:
-                existing_archive_tarinfo = archive_tarfile.getmembers()
+  stats_files_to_tar = filter_files_to_add_to_archive(
+      stats_files, existing_members, debug=DEBUG)
+  _append_to_tar(archive_tar_fname, stats_files_to_tar)
 
-            for tar_member_data in existing_archive_tarinfo:
-                existing_archive_file[tar_member_data.name] = tar_member_data.size
+  existing_members = get_existing_archive_members(archive_tar_fname)
+  for path in get_verified_files_to_remove(stats_files, existing_members):
+    log_print("removing stats file:" + path)
+    with file_write_lock(path):
+      os.remove(path)
 
-        except Exception:
-             pass
+  _compress_tar_gz(archive_tar_fname)
 
-    stats_files_to_tar = []
-    for stats_fname_path in stats_files:
-        fname_parts = stats_fname_path.split('/')
-
-        if ((stats_fname_path[1:] in existing_archive_file.keys()) and
-           (tarfile.open('/tmp/test.tar', 'w').gettarinfo(stats_fname_path).size == existing_archive_file[stats_fname_path[1:]])):
-
-            print("file %s found in archive, skipping" % stats_fname_path)
-            continue
-        stats_files_to_tar.append(stats_fname_path)
-
-    tar_output = subprocess.check_output(['/bin/tar', 'uvf', archive_tar_fname] + stats_files_to_tar)
-    if DEBUG:
-        print(tar_output, flush=True)
-    print("Archived: " + str(stats_files_to_tar))
-
-    ### VERIFY TAR AND DELETE DATA IF IT IS ARCHIVED AND HAS THE SAME FILE SIZE
-    with tarfile.open(archive_tar_fname, 'r') as archive_tarfile:
-        existing_archive_tarinfo = archive_tarfile.getmembers()
-        for tar_member_data in existing_archive_tarinfo:
-            existing_archive_file[tar_member_data.name] = tar_member_data.size
-
-        for stats_fname_path in stats_files:
-
-            if ((stats_fname_path[1:] in existing_archive_file.keys()) and
-               (tarfile.open('/tmp/%s.tar' % uuid.uuid4(), 'w').gettarinfo(stats_fname_path).size ==
-                   existing_archive_file[stats_fname_path[1:]])):
-               print("removing stats file:" + stats_fname_path)
-               os.remove(stats_fname_path)
-
-
-    print(subprocess.check_output(['/usr/bin/pigz', '-f', '-8', '-v', '-p', str(thread_count*2), archive_tar_fname]), flush=True)
 
 def database_startup():
-    with psycopg2.connect(CONNECTION) as conn:
-        if DEBUG:
-            print("Postgresql server version: " + str(conn.server_version))
-
-        with conn.cursor() as cur:
-
-            cur.execute("SELECT pg_size_pretty(pg_database_size('{0}'));".format(cfg.get_db_name()))
-            for x in cur.fetchall():
-                print("Database Size:", x[0])
-            if DEBUG:
-                cur.execute("SELECT chunk_name,before_compression_total_bytes/(1024*1024*1024),after_compression_total_bytes/(1024*1024*1024) FROM chunk_compression_stats('host_data');")
-                for x in cur.fetchall():
-                    try: print("{0} Size: {1:8.1f} {2:8.1f}".format(*x))
-                    except: pass
-            else:
-                print("Reading Chunk Data")
-
+  """Print DB version, database size, and optionally chunk compression stats for host_data."""
+  from django.db import connection
+  with connection.cursor() as cur:
+    # Single round-trip for version + size
+    cur.execute(
+        "SELECT version(), pg_size_pretty(pg_database_size(%s));",
+        [cfg.get_db_name()],
+    )
+    row = cur.fetchone()
+    if row:
+      if DEBUG:
+        log_print("Postgresql server version:", row[0])
+      log_print("Database Size:", row[1])
+    if DEBUG:
+      try:
+        cur.execute(
+            "SELECT chunk_name,before_compression_total_bytes/(1024*1024*1024),after_compression_total_bytes/(1024*1024*1024) FROM chunk_compression_stats('host_data');"
+        )
+        for x in cur.fetchall():
+          try:
+            log_print("{0} Size: {1:8.1f} {2:8.1f}".format(*x))
+          except Exception:
+            pass
+      except Exception:
+        pass
+    else:
+      log_print("Reading Chunk Data")
 
 
 if __name__ == '__main__':
+  # Use a mutable container so the SIGTERM handler can update state without
+  # relying on `nonlocal` (which is only valid for enclosing function scopes).
+  sigterm_received = {"value": False}
 
-        database_startup()
-        #################################################################
+  def _sigterm_handler(signum, frame):
+    sigterm_received["value"] = True
+    shutdown_requested[0] = True
+    raise SystemExit(143)
 
-        try:
-            startdate = datetime.strptime(sys.argv[1], "%Y-%m-%d")
-        except:
-            startdate = datetime.combine(datetime.today(), datetime.min.time()) - timedelta(days = days_to_process)
-        try:
-            enddate   = datetime.strptime(sys.argv[2], "%Y-%m-%d")
-        except:
-            enddate = startdate + timedelta(days = days_to_process)
+  previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
+  signal.signal(signal.SIGTERM, _sigterm_handler)
+  try:
+    database_startup()
+    #################################################################
 
-        if (len(sys.argv) > 1):
-            if sys.argv[1] == 'all':
-                startdate = 'all'
-                enddate = datetime.combine(datetime.today(), datetime.min.time()) - timedelta(days = days_to_process + 1)
+    default_start = datetime.combine(
+        datetime.today(), datetime.min.time()) - timedelta(days=days_to_process)
+    default_end = default_start + timedelta(days=days_to_process)
+    startdate, enddate = parse_start_end_dates(
+        sys.argv, default_start, default_end)
 
+    if len(sys.argv) > 1 and sys.argv[1] == 'all':
+      startdate = 'all'
+      enddate = None
 
-        print("###Date Range of stats files to ingest: {0} -> {1}####".format(startdate, enddate))
-        #################################################################
+    if startdate == 'all':
+      log_print(
+          "###Date Range of stats files to ingest: entire archive directory "
+          "(no date filter)####")
+    else:
+      log_date_range("stats files to ingest", startdate, enddate)
+    #################################################################
 
-        # Parse and convert raw stats files to pandas dataframe
-        start = time.time()
-        directory = cfg.get_archive_dir_path()
+    host_name_ext = cfg.get_host_name_ext().strip()
+    if not host_name_ext:
+      log_print(
+          "ERROR: DEFAULT.host_name_ext must be set; sync_timedb uses archive "
+          "subdirectories whose names end with this suffix.")
+      sys.exit(1)
 
-        stats_files = []
-        for entry in os.scandir(directory):
-            if entry.is_file() or not (entry.name.startswith("c") or entry.name.startswith("v")): continue
-            for stats_file in os.scandir(entry.path):
-                if not stats_file.is_file() or stats_file.name.startswith('.'): continue
-                if stats_file.name.startswith("current"): continue
-                fdate=None
-                try:
-                    ### different ways to define the date of the file: use timestamp or use the time of the last piece of data
-                    # based on filename
-                    name_fdate = datetime.fromtimestamp(int(stats_file.name))
+    start = time.time()
+    directory = cfg.get_archive_dir_path()
+    stats_files = collect_stats_files_in_range(
+        directory, startdate, enddate, host_name_ext)
+    log_print("Number of host stats files to process = ", len(stats_files))
 
-                    # timestamp of rabbitmq modify
-                    mtime_fdate = datetime.fromtimestamp(int(os.path.getmtime(stats_file.path)))
+    manager = multiprocessing.Manager()
+    try:
+      manager_lock = manager.Lock()
+      with multiprocessing.get_context('spawn').Pool(
+          processes=archive_thread_count) as archive_pool:
+        archive_job = None
+        processed_files = set()
+        pending_stats_files = list(stats_files)
+        chunk_counter = 0
 
-                    fdate=mtime_fdate
-                except Exception as e:
-                       print("error in obtaining timestamp of raw data files: ", str(e))
-                       continue
-                if startdate == 'all':
-                    if fdate > enddate: continue
-                    stats_files += [stats_file.path]
-                    continue
+        # Process chunk_size files at a time; every rescan_every_chunks chunks,
+        # rescan and reprioritize by newest-first (including newly arrived files).
+        while pending_stats_files:
+          if shutdown_requested[0]:
+            log_print("Exiting due to SIGTERM")
+            break
+          if DEBUG:
+            log_print("Begining Chunk(%s) #%s Processing" % (chunk_size, chunk_counter))
 
-                if  fdate <= startdate - timedelta(days = 1) or fdate > enddate: continue
-                stats_files += [stats_file.path]
+          stats_files_chunk = pending_stats_files[:chunk_size]
+          if not stats_files_chunk:
+            continue
 
+          ar_file_mapping = {}
+          files_to_be_archived = []
+          log_print("%s files per chunk" % chunk_size)
 
-        # sort files by oldest first, not based on the node (default os.scandir)
-        stats_files.sort(key = lambda x:x.split('/')[-1])
-        print("Number of host stats files to process = ", len(stats_files))
+          with multiprocessing.get_context('spawn').Pool(
+              processes=thread_count) as pool:
+            add_stats_file = partial(add_stats_file_to_db, manager_lock)
+            k = 0
+            for stats_fname, need_archival in pool.imap_unordered(
+                add_stats_file, stats_files_chunk):
+              k += 1
+              if should_archive and need_archival:
+                files_to_be_archived.append(stats_fname)
+              log_print(
+                  "chunk %s: completed file %s out of %s\n" % (
+                      chunk_counter, k, chunk_size),
+                  flush=True)
 
-        with multiprocessing.get_context('spawn').Pool(processes = archive_thread_count) as archive_pool:
-            archive_job = None
-            # Process and archive chunk_size files before continuing to process more
-            for i in range(int(len(stats_files)/chunk_size) + 1):
-                function_time = time.time()
-                j = i + 1
-                if DEBUG:
-                    print("Begining Chunk(%s) #%s Processing" % (chunk_size, i))
+          log_print("loading time", time.time() - start)
+          log_print(
+              "Files marked for archival: %d" % len(files_to_be_archived))
 
-                ar_file_mapping = {}
-                files_to_be_archived = []
+          ar_file_mapping = build_archive_mapping(
+              files_to_be_archived, tgz_archive_dir)
+          total_in_mapping = sum(len(v) for v in ar_file_mapping.values())
+          if ar_file_mapping:
+            log_print(
+                "Archive mapping: %d tar(s), %d file(s) to archive"
+                % (len(ar_file_mapping), total_in_mapping))
+          elif files_to_be_archived:
+            log_print(
+                "Archive mapping empty (all files skipped: no timestamp in head)")
 
-                try:
-                   stats_files[j*chunk_size]
-                   stats_files_chunk = stats_files[i*chunk_size:j*chunk_size:]
-                except IndexError:
-                    stats_files_chunk = stats_files[i*chunk_size:]
+          # skip first iteration, on first there will be no archive_job
+          if archive_job is not None:
+            if DEBUG:
+              log_print("Checking/waiting for background archival proccesses")
 
-                print("%s files per chunk" % chunk_size)
-
-                with multiprocessing.get_context('spawn').Pool(processes = thread_count) as pool:
-                    manager = multiprocessing.Manager()
-                    manager_lock = manager.Lock()
-                    add_stats_file = partial(add_stats_file_to_db, manager_lock)
-                    k = 0
-                    for stats_fname, need_archival in pool.imap_unordered(add_stats_file, stats_files_chunk):
-                        k += 1
-                        if should_archive and need_archival: files_to_be_archived.append(stats_fname)
-                        print("chunk %s: completed file %s out of %s\n" % (i, k, chunk_size), flush=True)
-
-                print("loading time", time.time() - start)
-
-                for stats_fname in files_to_be_archived:
-                   stats_start = open(stats_fname, 'r').readlines(8192) # grab first 8k bytes
-                   archive_fname = ''
-                   for line in stats_start:
-                       if line[0].isdigit():
-                           t, jid, host = line.split()
-                           file_date = datetime.fromtimestamp(float(t))
-                           archive_fname =  os.path.join(tgz_archive_dir, file_date.strftime("%Y-%m-%d.tar.gz"))
-                           break
-
-                   if file_date.date == datetime.today().date:
-                       continue
-
-                   if not archive_fname:
-                       print("Unable to find first timestamp in %s, skipping archiving" % stats_fname)
-                       continue
-                   if archive_fname not in ar_file_mapping: ar_file_mapping[archive_fname] = []
-                   ar_file_mapping[archive_fname].append(stats_fname)
-
-                # skip first iteration, on first there will be no archive_job
-                if i:
-                    if DEBUG:
-                        print("Checking/waiting for background archival proccesses")
-
-                    # Wait until last archive_job is complete before starting another one
-                    for stats_files_archived in archive_job.get():
-                        print("[{0:.1f}%] completed".format(100*stats_files.index(stats_fname)/len(stats_files)), end = "\r", flush=True)
-
-                if DEBUG:
-                    print("files to be archived: %s" % ar_file_mapping)
-
-                archive_job = archive_pool.map_async(archive_stats_files, list(ar_file_mapping.items()))
-
-                print("Archival running in the background")
-
+            # Wait until last archive_job is complete before starting another one
             archive_job.get()
 
-            print("sync_timedb sleeping")
+          if DEBUG:
+            log_print("files to be archived: %s" % ar_file_mapping)
 
-            time.sleep(900)
+          archive_job = archive_pool.map_async(
+              archive_stats_files, list(ar_file_mapping.items()))
 
-            if DEBUG:
-                print("sync_timedb finished")
+          log_print("Archival running in the background")
+          processed_files.update(stats_files_chunk)
+          pending_stats_files = pending_stats_files[chunk_size:]
+          chunk_counter += 1
 
+          if chunk_counter % rescan_every_chunks == 0:
+            if archive_job is not None:
+              if DEBUG:
+                log_print(
+                    "Waiting for background archival proccesses before rescan")
+              archive_job.get()
+              archive_job = None
+            pending_stats_files = rescan_pending_stats_files(
+                directory, startdate, enddate, host_name_ext, processed_files)
+            log_print(
+                "Rescanned after %d chunks; pending files (newest first): %d"
+                % (rescan_every_chunks, len(pending_stats_files)))
 
+        if archive_job is not None:
+          archive_job.get()
+
+      log_print("sync_timedb sleeping")
+
+      # Close DB connections before long sleep to avoid idle connections.
+      close_old_connections()
+      connections.close_all()
+      sleep_until_shutdown(600)
+
+      if DEBUG:
+        log_print("sync_timedb finished")
+    finally:
+      manager.shutdown()
+    if shutdown_requested[0]:
+      sys.exit(143)
+  finally:
+    # Best-effort cleanup + parent notification when SIGTERM is received.
+    if sigterm_received["value"]:
+      try:
+        close_old_connections()
+        connections.close_all()
+      except Exception:
+        pass
+      try:
+        send_sigchld_to_parent()
+      except Exception:
+        pass
+    signal.signal(signal.SIGTERM, previous_sigterm_handler)

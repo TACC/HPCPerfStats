@@ -1,0 +1,16 @@
+---
+description: Always test changes and resolve issues before proceeding
+alwaysApply: true
+---
+
+# Testing Discipline
+
+Don't assume something is working; always conduct tests after implementing a feature, fixing issues, or making adjustments. Verify that the code performs as expected, and if it doesn't, please stop and resolve the issue.
+
+Create new unittests and update existing unittests whenever code changes could affect behavior, security, or correctness. Use these unittests to verify that the new code is working. (For purely non-functional changes like formatting/docs, prefer running the existing relevant tests.)
+
+Important: try to fix things at the cause, not the symptom.
+
+Summaries should include the important changes, risks, and verification steps; avoid omitting critical details.
+
+

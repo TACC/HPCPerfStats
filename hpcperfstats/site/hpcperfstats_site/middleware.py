@@ -1,52 +1,133 @@
-try:
-    import cProfile as profile
-except ImportError:
-    import profile
+"""Profiling middleware: add ?prof to a URL to profile the view (DEBUG only).
+
+Optional query params:
+- sort: pstats sort key (default "time")
+- count: number of rows to show (default 100)
+"""
+import cProfile
+import io
 import pstats
 
-from cStringIO import StringIO
 from django.conf import settings
+from django.http import HttpRequest, HttpResponse
 
 
-class ProfileMiddleware(object):
-    """
-    Simple profile middleware to profile django views. To run it, add ?prof to
-    the URL like this:
-    
-    http://localhost:8000/view/?prof
-    
-    Optionally pass the following to modify the output:
-    
-    ?sort => Sort the output by a given metric. Default is time.
-    See http://docs.python.org/2/library/profile.html#pstats.Stats.sort_stats
-    for all sort options.
-    
-    ?count => The number of rows to display. Default is 100.
+DEFAULT_PERMISSIONS_POLICY = (
+  "accelerometer=(), autoplay=(), bluetooth=(), camera=(), clipboard-read=(), "
+  "clipboard-write=(), display-capture=(), encrypted-media=(), fullscreen=(), "
+  "gamepad=(), geolocation=(), gyroscope=(), interest-cohort=(), magnetometer=(), "
+  "microphone=(), midi=(), payment=(), picture-in-picture=(), "
+  "publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), "
+  "xr-spatial-tracking=()"
+)
 
-    This is adapted from an example found here:
-    http://www.slideshare.net/zeeg/django-con-high-performance-django-presentation.
-    """
-    def can(self, request):
-        return settings.DEBUG and 'prof' in request.GET
-    #and request.user is not None and request.user.is_staff
+DEFAULT_COOP = "same-origin"
 
-    def process_view(self, request, callback, callback_args, callback_kwargs):
-        if self.can(request):
-            self.profiler = profile.Profile()
-            args = (request,) + callback_args
-            try:
-                return self.profiler.runcall(callback, *args, **callback_kwargs)
-            except:
-                # we want the process_exception middleware to fire
-                # https://code.djangoproject.com/ticket/12250
-                return
+# Enforced CSP. This policy is intentionally conservative (permits inline
+# script/style and unsafe-eval) because some pages render inline assets and
+# some dependencies use eval. Tighten over time using CSP reports.
+DEFAULT_CSP = (
+  "default-src 'self'; "
+  "base-uri 'self'; "
+  "object-src 'none'; "
+  "frame-ancestors 'self'; "
+  "form-action 'self'; "
+  "img-src 'self' data:; "
+  "font-src 'self' data: https://fonts.gstatic.com; "
+  "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.pydata.org; "
+  "connect-src 'self'; "
+  "upgrade-insecure-requests; "
+  "report-uri /csp-report/;"
+)
 
-    def process_response(self, request, response):
-        if self.can(request):
-            self.profiler.create_stats()
-            io = StringIO()
-            stats = pstats.Stats(self.profiler, stream=io)
-            stats.strip_dirs().sort_stats(request.GET.get('sort', 'time'))
-            stats.print_stats(int(request.GET.get('count', 100)))
-            response.content = '<pre>%s</pre>' % io.getvalue()
-        return response
+# Keep a report-only header in addition to enforcement, so violations still
+# generate reports during rollout/tightening.
+DEFAULT_CSP_REPORT_ONLY = DEFAULT_CSP
+
+
+class ProfileMiddleware:
+  """Simple profiling middleware for Django views (Django 3+/6+ style).
+
+  Activated only when:
+  - settings.DEBUG is True, and
+  - the incoming request has a ?prof query parameter.
+  """
+
+  def __init__(self, get_response):
+    self.get_response = get_response
+
+  def _enabled(self, request: HttpRequest) -> bool:
+    """Return True if profiling is enabled for this request."""
+    return bool(settings.DEBUG and "prof" in request.GET)
+
+  def __call__(self, request: HttpRequest) -> HttpResponse:
+    if not self._enabled(request):
+      return self.get_response(request)
+
+    profiler = cProfile.Profile()
+    try:
+      response = profiler.runcall(self.get_response, request)
+    except Exception:
+      # Let Django's normal exception handling and middleware chain run.
+      raise
+
+    s = io.StringIO()
+    stats = pstats.Stats(profiler, stream=s)
+    sort_key = request.GET.get("sort", "time")
+    try:
+      count = int(request.GET.get("count", "100"))
+    except (TypeError, ValueError):
+      count = 100
+    stats.strip_dirs().sort_stats(sort_key).print_stats(count)
+
+    response.content = f"<pre>{s.getvalue()}</pre>"
+    response["Content-Type"] = "text/plain; charset=utf-8"
+    return response
+
+
+class DefaultCacheControlMiddleware:
+  """Apply a consistent default cache policy.
+
+  nginx currently overrides `Cache-Control` for all proxied requests. By moving
+  the default behavior into Django, responses from gunicorn (direct or behind
+  nginx) stay consistent, while views can still opt-in by explicitly setting
+  `Cache-Control`.
+  """
+
+  def __init__(self, get_response):
+    self.get_response = get_response
+
+  def __call__(self, request: HttpRequest) -> HttpResponse:
+    response = self.get_response(request)
+    # If a view (or Django itself, e.g. some static handlers) has already set
+    # Cache-Control, respect that decision.
+    if "Cache-Control" not in response:
+      response["Cache-Control"] = "no-store, no-cache"
+    return response
+
+
+class DefaultSecurityHeadersMiddleware:
+  """Apply security headers that Django doesn't emit by default.
+
+  Keep response header creation centralized in Django so behavior is consistent
+  whether responses are served directly by gunicorn or behind a proxy.
+  """
+
+  def __init__(self, get_response):
+    self.get_response = get_response
+
+  def __call__(self, request: HttpRequest) -> HttpResponse:
+    response = self.get_response(request)
+
+    # Only set if not already explicitly set by a view.
+    if "Permissions-Policy" not in response:
+      response["Permissions-Policy"] = DEFAULT_PERMISSIONS_POLICY
+    if "Cross-Origin-Opener-Policy" not in response:
+      response["Cross-Origin-Opener-Policy"] = DEFAULT_COOP
+    if "Content-Security-Policy" not in response:
+      response["Content-Security-Policy"] = DEFAULT_CSP
+    if "Content-Security-Policy-Report-Only" not in response:
+      response["Content-Security-Policy-Report-Only"] = DEFAULT_CSP_REPORT_ONLY
+
+    return response

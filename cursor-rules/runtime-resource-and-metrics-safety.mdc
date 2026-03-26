@@ -1,0 +1,14 @@
+---
+description: Concurrency, metrics, and service-config safety checks
+globs: **/*.{py,yaml,yml,conf}
+alwaysApply: true
+---
+
+# Runtime Resource And Metrics Safety
+
+- For concurrency/resource failures (threads, worker pools, BLAS/OpenMP), centralize tunables in configuration and apply them consistently across runtime entry points.
+- For metrics and plotting logic, prefer deterministic, database-backed aggregation and invalidation checks over ad-hoc in-memory recomputation.
+- When changing service/runtime configs (docker compose, nginx, gunicorn, redis, postgres), preserve secure defaults and keep compose hostname/service-name resolution correct.
+- After service config changes, verify startup and basic health behavior end-to-end.
+- At minimum, verify config syntax/parsing and confirm services reach a healthy/running state before considering the change complete.
+- When runtime tuning changes behavior, add or update tests that validate correctness and guard against regressions.

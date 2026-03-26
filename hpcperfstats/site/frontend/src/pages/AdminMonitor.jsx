@@ -1,0 +1,989 @@
+import { useEffect, useState } from "react";
+import { api } from "../api";
+import LoadingMessage from "../components/LoadingMessage";
+
+const BADGE_MAP = {
+  ok: { label: "OK (≤ 10 minutes)", class: "badge badge-freshness-ok" },
+  gt_10min: { label: "> 10 minutes", class: "badge badge-freshness-gt_10min" },
+  gt_hour: { label: "> 1 hour", class: "badge badge-freshness-gt_hour" },
+  gt_day: { label: "> 1 day", class: "badge badge-freshness-gt_day" },
+  gt_week: { label: "> 1 week", class: "badge badge-freshness-gt_week" },
+};
+
+const ROW_CLASS = {
+  ok: "tr-freshness-ok",
+  gt_10min: "tr-freshness-gt_10min",
+  gt_hour: "tr-freshness-gt_hour",
+  gt_day: "tr-freshness-gt_day",
+  gt_week: "tr-freshness-gt_week",
+};
+
+export default function AdminMonitor() {
+  const [hostTimeExpanded, setHostTimeExpanded] = useState(false);
+  const [rabbitHostTimeExpanded, setRabbitHostTimeExpanded] = useState(false);
+  const [cacheExpanded, setCacheExpanded] = useState(false);
+  const [rabbitExpanded, setRabbitExpanded] = useState(false);
+  const [timescaledbExpanded, setTimescaledbExpanded] = useState(false);
+  const [hostStats, setHostStats] = useState([]);
+  const [hostSort, setHostSort] = useState({ column: "host", direction: "asc" });
+  const [hostLoading, setHostLoading] = useState(false);
+  const [hostError, setHostError] = useState(null);
+  const [hostRequested, setHostRequested] = useState(false);
+  const [rabbitHostStats, setRabbitHostStats] = useState([]);
+  const [rabbitHostSort, setRabbitHostSort] = useState({
+    column: "host",
+    direction: "asc",
+  });
+  const [rabbitHostLoading, setRabbitHostLoading] = useState(false);
+  const [rabbitHostError, setRabbitHostError] = useState(null);
+  const [rabbitHostRequested, setRabbitHostRequested] = useState(false);
+  const [cacheStats, setCacheStats] = useState(null);
+  const [cacheLoading, setCacheLoading] = useState(false);
+  const [cacheError, setCacheError] = useState(null);
+  const [cacheRequested, setCacheRequested] = useState(false);
+  const [rabbitStats, setRabbitStats] = useState(null);
+  const [rabbitLoading, setRabbitLoading] = useState(false);
+  const [rabbitError, setRabbitError] = useState(null);
+  const [rabbitRequested, setRabbitRequested] = useState(false);
+  const [timescaledbStats, setTimescaledbStats] = useState(null);
+  const [timescaledbLoading, setTimescaledbLoading] = useState(false);
+  const [timescaledbError, setTimescaledbError] = useState(null);
+  const [timescaledbRequested, setTimescaledbRequested] = useState(false);
+  const [xaltExpanded, setXaltExpanded] = useState(false);
+  const [xaltStats, setXaltStats] = useState(null);
+  const [xaltLoading, setXaltLoading] = useState(false);
+  const [xaltError, setXaltError] = useState(null);
+  const [xaltRequested, setXaltRequested] = useState(false);
+  const [xaltListMode, setXaltListMode] = useState("missing");
+  const [nonRespondingHosts36, setNonRespondingHosts36] = useState("");
+
+  // Only show fully qualified hostnames (contain a dot) in the UI.
+  const fqdnHostStats = hostStats.filter(
+    (row) => row.host && row.host.includes(".")
+  );
+  const fqdnRabbitHostStats = rabbitHostStats.filter(
+    (row) => row.host && row.host.includes(".")
+  );
+
+  function loadHostStats(forceRefresh = false) {
+    setHostLoading(true);
+    setHostError(null);
+    api
+      .getAdminMonitorSection("hosts", { refresh: forceRefresh })
+      .then((res) => {
+        setHostStats(res.host_stats || []);
+      })
+      .catch((e) => setHostError(e.message))
+      .finally(() => setHostLoading(false));
+  }
+
+  function loadRabbitHostStats(forceRefresh = false) {
+    setRabbitHostLoading(true);
+    setRabbitHostError(null);
+    api
+      .getAdminMonitorSection("rabbitmq_hosts", { refresh: forceRefresh })
+      .then((res) => {
+        setRabbitHostStats(res.rabbitmq_host_stats || []);
+      })
+      .catch((e) => setRabbitHostError(e.message))
+      .finally(() => setRabbitHostLoading(false));
+  }
+
+  function loadCacheStats(forceRefresh = false) {
+    setCacheLoading(true);
+    setCacheError(null);
+    api
+      .getAdminMonitorSection("cache", { refresh: forceRefresh })
+      .then((res) => {
+        setCacheStats(res.cache_stats || null);
+      })
+      .catch((e) => setCacheError(e.message))
+      .finally(() => setCacheLoading(false));
+  }
+
+  function loadRabbitStats(forceRefresh = false) {
+    setRabbitLoading(true);
+    setRabbitError(null);
+    api
+      .getAdminMonitorSection("rabbitmq", { refresh: forceRefresh })
+      .then((res) => {
+        setRabbitStats(res.rabbitmq_stats || null);
+      })
+      .catch((e) => setRabbitError(e.message))
+      .finally(() => setRabbitLoading(false));
+  }
+
+  function loadTimescaledbStats(forceRefresh = false) {
+    setTimescaledbLoading(true);
+    setTimescaledbError(null);
+    api
+      .getAdminMonitorSection("timescaledb", { refresh: forceRefresh })
+      .then((res) => {
+        setTimescaledbStats(res.timescaledb_stats || null);
+      })
+      .catch((e) => setTimescaledbError(e.message))
+      .finally(() => setTimescaledbLoading(false));
+  }
+
+  function loadXaltStats(forceRefresh = false) {
+    setXaltLoading(true);
+    setXaltError(null);
+    api
+      .getAdminMonitorSection("xalt", { refresh: forceRefresh })
+      .then((res) => {
+        setXaltStats(res.xalt_stats || null);
+      })
+      .catch((e) => setXaltError(e.message))
+      .finally(() => setXaltLoading(false));
+  }
+
+  // Lazily load host stats when the section is first expanded.
+  useEffect(() => {
+    if (!hostTimeExpanded || hostRequested) return;
+    setHostRequested(true);
+    loadHostStats();
+  }, [hostTimeExpanded, hostRequested]);
+
+  // Lazily load RabbitMQ/Redis host stats when the section is first expanded.
+  useEffect(() => {
+    if (!rabbitHostTimeExpanded || rabbitHostRequested) return;
+    setRabbitHostRequested(true);
+    loadRabbitHostStats();
+  }, [rabbitHostTimeExpanded, rabbitHostRequested]);
+
+  // Build comma-separated list of FQDNs not seen in the past 36 hours when the
+  // host section is open and hostStats are available.
+  useEffect(() => {
+    if (!hostTimeExpanded || hostLoading || hostError) return;
+    const cutoffMs = Date.now() - 36 * 60 * 60 * 1000;
+    const fqdnSet = new Set();
+    for (const row of fqdnHostStats) {
+      const host = row.host || "";
+      const ts = row.last_time;
+      if (!host || !ts) continue;
+      const t = new Date(ts).getTime();
+      if (!Number.isFinite(t) || t >= cutoffMs) continue;
+      fqdnSet.add(host);
+    }
+    const list = Array.from(fqdnSet).sort().join(",");
+    setNonRespondingHosts36(list);
+  }, [hostTimeExpanded, hostLoading, hostError, fqdnHostStats]);
+
+  // Lazily load cache stats when the section is first expanded.
+  useEffect(() => {
+    if (!cacheExpanded || cacheRequested) return;
+    setCacheRequested(true);
+    loadCacheStats();
+  }, [cacheExpanded, cacheRequested]);
+
+  // Lazily load RabbitMQ stats when the section is first expanded.
+  useEffect(() => {
+    if (!rabbitExpanded || rabbitRequested) return;
+    setRabbitRequested(true);
+    loadRabbitStats();
+  }, [rabbitExpanded, rabbitRequested]);
+
+  // Lazily load TimescaleDB stats when the section is first expanded.
+  useEffect(() => {
+    if (!timescaledbExpanded || timescaledbRequested) return;
+    setTimescaledbRequested(true);
+    loadTimescaledbStats();
+  }, [timescaledbExpanded, timescaledbRequested]);
+
+  // Lazily load XALT coverage stats when the section is first expanded.
+  useEffect(() => {
+    if (!xaltExpanded || xaltRequested) return;
+    setXaltRequested(true);
+    loadXaltStats();
+  }, [xaltExpanded, xaltRequested]);
+
+  const totalHosts = fqdnHostStats.length;
+  const bucketCounts = fqdnHostStats.reduce(
+    (acc, row) => {
+      const b = row.age_bucket || "gt_week";
+      acc[b] = (acc[b] || 0) + 1;
+      return acc;
+    },
+    {}
+  );
+
+  const hostHeaderSummary =
+    !hostLoading && !hostError && fqdnHostStats.length > 0
+      ? ` - Total hosts: ${totalHosts} · ${Object.keys(BADGE_MAP)
+          .map((key) => `${BADGE_MAP[key].label}: ${bucketCounts[key] ?? 0}`)
+          .join(" · ")}`
+      : "";
+  const rabbitHostTotal = fqdnRabbitHostStats.length;
+  const rabbitHostBucketCounts = fqdnRabbitHostStats.reduce(
+    (acc, row) => {
+      const b = row.age_bucket || "gt_week";
+      acc[b] = (acc[b] || 0) + 1;
+      return acc;
+    },
+    {}
+  );
+  const rabbitHostHeaderSummary =
+    !rabbitHostLoading && !rabbitHostError && fqdnRabbitHostStats.length > 0
+      ? ` - Total hosts: ${rabbitHostTotal} · ${Object.keys(BADGE_MAP)
+          .map((key) => `${BADGE_MAP[key].label}: ${rabbitHostBucketCounts[key] ?? 0}`)
+          .join(" · ")}`
+      : "";
+
+  const xaltHeaderSummary =
+    !xaltLoading &&
+    !xaltError &&
+    xaltStats &&
+    xaltStats.total_jids !== undefined
+      ? ` - Total JIDs: ${xaltStats.total_jids} · Found: ${
+          xaltStats.jids_with_xalt_data ?? 0
+        } · Missing: ${xaltStats.jids_missing_xalt_data ?? 0}`
+      : "";
+
+  const HOST_STATUS_ORDER = {
+    ok: 0,
+    gt_10min: 1,
+    gt_hour: 2,
+    gt_day: 3,
+    gt_week: 4,
+  };
+
+  const sortedHostStats = [...fqdnHostStats].sort((a, b) => {
+    const dir = hostSort.direction === "asc" ? 1 : -1;
+    if (hostSort.column === "host") {
+      return a.host.localeCompare(b.host) * dir;
+    }
+    if (hostSort.column === "last_time") {
+      const aTime = a.last_time ? new Date(a.last_time).getTime() : 0;
+      const bTime = b.last_time ? new Date(b.last_time).getTime() : 0;
+      return (aTime - bTime) * dir;
+    }
+    if (hostSort.column === "status") {
+      const aBucket = HOST_STATUS_ORDER[a.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
+      const bBucket = HOST_STATUS_ORDER[b.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
+      return (aBucket - bBucket) * dir;
+    }
+    return 0;
+  });
+
+  const handleHostSort = (column) => {
+    setHostSort((prev) => {
+      if (prev.column === column) {
+        return {
+          column,
+          direction: prev.direction === "asc" ? "desc" : "asc",
+        };
+      }
+      return { column, direction: "asc" };
+    });
+  };
+
+  const sortIndicator = (column) => {
+    if (hostSort.column !== column) return "";
+    return hostSort.direction === "asc" ? "▲" : "▼";
+  };
+  const sortedRabbitHostStats = [...fqdnRabbitHostStats].sort((a, b) => {
+    const dir = rabbitHostSort.direction === "asc" ? 1 : -1;
+    if (rabbitHostSort.column === "host") return a.host.localeCompare(b.host) * dir;
+    if (rabbitHostSort.column === "last_time") {
+      const aTime = a.last_time ? new Date(a.last_time).getTime() : 0;
+      const bTime = b.last_time ? new Date(b.last_time).getTime() : 0;
+      return (aTime - bTime) * dir;
+    }
+    if (rabbitHostSort.column === "status") {
+      const aBucket = HOST_STATUS_ORDER[a.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
+      const bBucket = HOST_STATUS_ORDER[b.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
+      return (aBucket - bBucket) * dir;
+    }
+    return 0;
+  });
+  const handleRabbitHostSort = (column) => {
+    setRabbitHostSort((prev) => {
+      if (prev.column === column) {
+        return {
+          column,
+          direction: prev.direction === "asc" ? "desc" : "asc",
+        };
+      }
+      return { column, direction: "asc" };
+    });
+  };
+  const rabbitSortIndicator = (column) => {
+    if (rabbitHostSort.column !== column) return "";
+    return rabbitHostSort.direction === "asc" ? "▲" : "▼";
+  };
+
+  const formatHostTime = (value) => {
+    if (!value) return "—";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value);
+    return d.toLocaleString();
+  };
+
+  const handleCopyNonResponding36 = async () => {
+    if (!nonRespondingHosts36) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(nonRespondingHosts36);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = nonRespondingHosts36;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+    } catch (e) {
+      console.error("Failed to copy non-responding hosts list", e);
+    }
+  };
+
+  return (
+    <>
+      <h3>HPCPerfStats Monitor</h3>
+
+      <div className="admin-monitor-section">
+        <button
+          type="button"
+          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          onClick={() => setHostTimeExpanded((e) => !e)}
+          aria-expanded={hostTimeExpanded}
+          aria-controls="admin-monitor-host-time"
+        >
+          <span className="admin-monitor-section-chevron" aria-hidden>
+            {hostTimeExpanded ? "▼" : "▶"}
+          </span>
+          {`Most recent host data timestamps in database${hostHeaderSummary}`}
+        </button>
+        <div
+          id="admin-monitor-host-time"
+          className="admin-monitor-section-body"
+          hidden={!hostTimeExpanded}
+          role="region"
+          aria-label="Most recent host data timestamps in database"
+        >
+          <div className="admin-monitor-action-row">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              onClick={() => loadHostStats(true)}
+              disabled={hostLoading}
+            >
+              Refresh Data
+            </button>
+          </div>
+          {hostLoading && <LoadingMessage message="Loading host timestamps…" />}
+          {hostError && !hostLoading && (
+            <div className="text-danger">Error loading host data: {hostError}</div>
+          )}
+          {!hostLoading && !hostError && (
+            <>
+              <div className="d-flex flex-wrap align-items-center mb-2">
+                <p className="mb-1 me-3">
+                  Status buckets:{" "}
+                  <span className="badge badge-freshness-ok">OK (≤ 10 minutes)</span>{" "}
+                  <span className="badge badge-freshness-gt_10min">{"> 10 minutes"}</span>{" "}
+                  <span className="badge badge-freshness-gt_hour">{"> 1 hour"}</span>{" "}
+                  <span className="badge badge-freshness-gt_day">{"> 1 day"}</span>{" "}
+                  <span className="badge badge-freshness-gt_week">{"> 1 week"}</span>
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm ms-auto"
+                  disabled={!nonRespondingHosts36}
+                  onClick={handleCopyNonResponding36}
+                >
+                  Non Responding Hosts - 36 Hours
+                </button>
+              </div>
+              <div className="table-responsive">
+                <table className="table table-sm table-bordered">
+                <thead>
+                  <tr>
+                    <th scope="col">
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0"
+                        onClick={() => handleHostSort("host")}
+                      >
+                        Host {sortIndicator("host")}
+                      </button>
+                    </th>
+                    <th scope="col">
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0"
+                        onClick={() => handleHostSort("last_time")}
+                      >
+                        Last Timestamp {sortIndicator("last_time")}
+                      </button>
+                    </th>
+                    <th scope="col">
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0"
+                        onClick={() => handleHostSort("status")}
+                      >
+                        Status {sortIndicator("status")}
+                      </button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedHostStats.map((row, i) => {
+                    const badge = BADGE_MAP[row.age_bucket] || BADGE_MAP.gt_week;
+                    const rowClass = ROW_CLASS[row.age_bucket] || "";
+                    return (
+                      <tr key={row.host + i} className={rowClass}>
+                        <td>{row.host}</td>
+                        <td>{formatHostTime(row.last_time)}</td>
+                        <td>
+                          <span className={`badge ${badge.class}`}>{badge.label}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {fqdnHostStats.length === 0 && (
+                    <tr>
+                      <td colSpan="3" className="text-center">
+                        No host data available.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="admin-monitor-section">
+        <button
+          type="button"
+          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          onClick={() => setXaltExpanded((e) => !e)}
+          aria-expanded={xaltExpanded}
+          aria-controls="admin-monitor-xalt-coverage"
+        >
+          <span className="admin-monitor-section-chevron" aria-hidden>
+            {xaltExpanded ? "▼" : "▶"}
+          </span>
+          {`XALT job coverage (last 3 days)${xaltHeaderSummary}`}
+        </button>
+        <div
+          id="admin-monitor-xalt-coverage"
+          className="admin-monitor-section-body"
+          hidden={!xaltExpanded}
+          role="region"
+          aria-label="XALT job coverage (last 3 days)"
+        >
+          <div className="admin-monitor-action-row">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              onClick={() => loadXaltStats(true)}
+              disabled={xaltLoading}
+            >
+              Refresh Data
+            </button>
+          </div>
+          {xaltLoading && <LoadingMessage message="Loading XALT coverage…" />}
+          {xaltError && !xaltLoading && (
+            <div className="text-danger">
+              Error loading XALT coverage: {xaltError}
+            </div>
+          )}
+          {!xaltLoading && !xaltError && xaltStats && (
+            <>
+              {xaltStats.error && (
+                <div className="text-danger mb-2">{xaltStats.error}</div>
+              )}
+              {!xaltStats.error && (
+                <>
+                  <div className="mb-2 text-muted">
+                    Total JIDs: {String(xaltStats.total_jids ?? "—")} · Found with
+                    XALT: {String(xaltStats.jids_with_xalt_data ?? "—")} · Missing:{" "}
+                    {String(xaltStats.jids_missing_xalt_data ?? "—")}
+                  </div>
+
+                  <div className="d-flex flex-wrap align-items-center mb-2 gap-2">
+                    <label className="form-label mb-0 me-2" htmlFor="xaltListMode">
+                      Show list:
+                    </label>
+                    <select
+                      id="xaltListMode"
+                      className="form-select form-select-sm"
+                      value={xaltListMode}
+                      onChange={(e) => setXaltListMode(e.target.value)}
+                    >
+                      <option value="missing">
+                        Missing JIDs ({String(xaltStats.jids_missing_xalt_data ?? 0)})
+                      </option>
+                      <option value="found">
+                        Found JIDs ({String(xaltStats.jids_with_xalt_data ?? 0)})
+                      </option>
+                    </select>
+                  </div>
+
+                  {xaltListMode === "missing" && xaltStats.jids_missing_xalt_data > 0 && (
+                    <div className="table-responsive">
+                      <table className="table table-sm table-bordered">
+                        <thead>
+                          <tr>
+                            <th scope="col">Missing JIDs (truncated)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Array.isArray(xaltStats.missing_jids) &&
+                            xaltStats.missing_jids.length > 0 &&
+                            xaltStats.missing_jids.map((jid, i) => (
+                              <tr key={`${jid}-${i}`}>
+                                <td>{jid}</td>
+                              </tr>
+                            ))}
+                          {(!Array.isArray(xaltStats.missing_jids) ||
+                            xaltStats.missing_jids.length === 0) && (
+                            <tr>
+                              <td className="text-muted text-center">
+                                No missing JIDs listed.
+                              </td>
+                            </tr>
+                          )}
+                          {xaltStats.missing_jids_truncated && (
+                            <tr>
+                              <td className="text-muted">
+                                Showing first{" "}
+                                {String(
+                                  xaltStats.missing_jids_limit ?? "—"
+                                )}{" "}
+                                missing JIDs.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {xaltListMode === "found" && xaltStats.jids_with_xalt_data > 0 && (
+                    <div className="table-responsive">
+                      <table className="table table-sm table-bordered">
+                        <thead>
+                          <tr>
+                            <th scope="col">Found JIDs (truncated)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Array.isArray(xaltStats.found_jids) &&
+                            xaltStats.found_jids.length > 0 &&
+                            xaltStats.found_jids.map((jid, i) => (
+                              <tr key={`${jid}-${i}`}>
+                                <td>{jid}</td>
+                              </tr>
+                            ))}
+                          {(!Array.isArray(xaltStats.found_jids) ||
+                            xaltStats.found_jids.length === 0) && (
+                            <tr>
+                              <td className="text-muted text-center">
+                                No found JIDs listed.
+                              </td>
+                            </tr>
+                          )}
+                          {xaltStats.found_jids_truncated && (
+                            <tr>
+                              <td className="text-muted">
+                                Showing first{" "}
+                                {String(xaltStats.found_jids_limit ?? "—")} found JIDs.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {xaltListMode === "missing" &&
+                    xaltStats.jids_missing_xalt_data === 0 && (
+                      <div className="text-success">
+                        All JIDs in the last 3 days have corresponding XALT data.
+                      </div>
+                    )}
+
+                  {xaltListMode === "found" &&
+                    xaltStats.jids_with_xalt_data === 0 && (
+                      <div className="text-danger">
+                        No JIDs in the last 3 days have corresponding XALT data.
+                      </div>
+                    )}
+                </>
+              )}
+            </>
+          )}
+          {!xaltLoading && !xaltError && !xaltStats && (
+            <div className="text-muted">No XALT coverage statistics available.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="admin-monitor-section">
+        <button
+          type="button"
+          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          onClick={() => setRabbitHostTimeExpanded((e) => !e)}
+          aria-expanded={rabbitHostTimeExpanded}
+          aria-controls="admin-monitor-rabbit-host-time"
+        >
+          <span className="admin-monitor-section-chevron" aria-hidden>
+            {rabbitHostTimeExpanded ? "▼" : "▶"}
+          </span>
+          {`Most recent host data timestamps in RabbitMQ${rabbitHostHeaderSummary}`}
+        </button>
+        <div
+          id="admin-monitor-rabbit-host-time"
+          className="admin-monitor-section-body"
+          hidden={!rabbitHostTimeExpanded}
+          role="region"
+          aria-label="Most recent host data timestamps in RabbitMQ"
+        >
+          <div className="admin-monitor-action-row">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              onClick={() => loadRabbitHostStats(true)}
+              disabled={rabbitHostLoading}
+            >
+              Refresh Data
+            </button>
+          </div>
+          {rabbitHostLoading && (
+            <LoadingMessage message="Loading RabbitMQ host timestamps…" />
+          )}
+          {rabbitHostError && !rabbitHostLoading && (
+            <div className="text-danger">
+              Error loading RabbitMQ host data: {rabbitHostError}
+            </div>
+          )}
+          {!rabbitHostLoading && !rabbitHostError && (
+            <div className="table-responsive">
+              <table className="table table-sm table-bordered">
+                <thead>
+                  <tr>
+                    <th scope="col">
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0"
+                        onClick={() => handleRabbitHostSort("host")}
+                      >
+                        Host {rabbitSortIndicator("host")}
+                      </button>
+                    </th>
+                    <th scope="col">
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0"
+                        onClick={() => handleRabbitHostSort("last_time")}
+                      >
+                        Last Timestamp {rabbitSortIndicator("last_time")}
+                      </button>
+                    </th>
+                    <th scope="col">
+                      <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0"
+                        onClick={() => handleRabbitHostSort("status")}
+                      >
+                        Status {rabbitSortIndicator("status")}
+                      </button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedRabbitHostStats.map((row, i) => {
+                    const badge = BADGE_MAP[row.age_bucket] || BADGE_MAP.gt_week;
+                    const rowClass = ROW_CLASS[row.age_bucket] || "";
+                    return (
+                      <tr key={row.host + i} className={rowClass}>
+                        <td>{row.host}</td>
+                        <td>{formatHostTime(row.last_time)}</td>
+                        <td>
+                          <span className={`badge ${badge.class}`}>{badge.label}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {fqdnRabbitHostStats.length === 0 && (
+                    <tr>
+                      <td colSpan="3" className="text-center">
+                        No RabbitMQ host data available.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="admin-monitor-section">
+        <button
+          type="button"
+          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          onClick={() => setTimescaledbExpanded((e) => !e)}
+          aria-expanded={timescaledbExpanded}
+          aria-controls="admin-monitor-timescaledb-stats"
+        >
+          <span className="admin-monitor-section-chevron" aria-hidden>
+            {timescaledbExpanded ? "▼" : "▶"}
+          </span>
+          TimescaleDB statistics
+        </button>
+        <div
+          id="admin-monitor-timescaledb-stats"
+          className="admin-monitor-section-body"
+          hidden={!timescaledbExpanded}
+          role="region"
+          aria-label="TimescaleDB statistics"
+        >
+          <div className="admin-monitor-action-row">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              onClick={() => loadTimescaledbStats(true)}
+              disabled={timescaledbLoading}
+            >
+              Refresh Data
+            </button>
+          </div>
+          {timescaledbLoading && (
+            <LoadingMessage message="Loading TimescaleDB statistics…" />
+          )}
+          {timescaledbError && !timescaledbLoading && (
+            <div className="text-danger">
+              Error loading TimescaleDB stats: {timescaledbError}
+            </div>
+          )}
+          {!timescaledbLoading && !timescaledbError && timescaledbStats && (
+            <div className="table-responsive">
+              <table className="table table-sm table-bordered">
+              <tbody>
+                {(() => {
+                  const LABELS = {
+                    database_name: "Database name",
+                    server_version: "PostgreSQL server version",
+                    timescaledb_version: "TimescaleDB extension version",
+                    hypertable_count: "Number of hypertables",
+                    chunk_count: "Total chunks",
+                    compressed_chunk_count: "Compressed chunks",
+                    compressed_chunks_size_pretty: "Compressed chunk data size",
+                    uncompressed_chunks_size_pretty: "Uncompressed chunk data size",
+                    pending_compression_size_pretty:
+                      "Approx. data pending compression",
+                    host_data_row_estimate: "host_data row estimate",
+                    host_data_size_bytes: "host_data total size (bytes)",
+                    host_data_size_pretty: "host_data total size",
+                  };
+                  return Object.entries(LABELS)
+                    .filter(
+                      ([key]) =>
+                        timescaledbStats[key] !== null &&
+                        timescaledbStats[key] !== undefined
+                    )
+                    .map(([key, label]) => (
+                      <tr key={key}>
+                        <th scope="row">{label}</th>
+                        <td>{String(timescaledbStats[key])}</td>
+                      </tr>
+                    ));
+                })()}
+                {(!timescaledbStats ||
+                  Object.entries(timescaledbStats).filter(
+                    ([, value]) => value !== null && value !== undefined
+                  ).length === 0) && (
+                  <tr>
+                    <td colSpan="2" className="text-muted">
+                      No TimescaleDB statistics available.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+              </table>
+            </div>
+          )}
+          {!timescaledbLoading && !timescaledbError && !timescaledbStats && (
+            <div className="text-muted">No TimescaleDB statistics available.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="admin-monitor-section">
+        <button
+          type="button"
+          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          onClick={() => setCacheExpanded((e) => !e)}
+          aria-expanded={cacheExpanded}
+          aria-controls="admin-monitor-cache-stats"
+        >
+          <span className="admin-monitor-section-chevron" aria-hidden>
+            {cacheExpanded ? "▼" : "▶"}
+          </span>
+          Cache / Redis statistics
+        </button>
+        <div
+          id="admin-monitor-cache-stats"
+          className="admin-monitor-section-body"
+          hidden={!cacheExpanded}
+          role="region"
+          aria-label="Cache and Redis statistics"
+        >
+          <div className="admin-monitor-action-row">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              onClick={() => loadCacheStats(true)}
+              disabled={cacheLoading}
+            >
+              Refresh Data
+            </button>
+          </div>
+          {cacheLoading && <LoadingMessage message="Loading cache statistics…" />}
+          {cacheError && !cacheLoading && (
+            <div className="text-danger">Error loading cache stats: {cacheError}</div>
+          )}
+          {!cacheLoading && !cacheError && cacheStats && Object.keys(cacheStats).length > 0 && (
+            <div className="table-responsive">
+              <table className="table table-sm table-bordered">
+              <tbody>
+                {Object.entries(cacheStats).map(([key, value]) => {
+                  let displayValue;
+                  if (key === "most_used_cached_keys" && Array.isArray(value)) {
+                    displayValue = value
+                      .map((entry) => entry && entry.key)
+                      .filter(Boolean)
+                      .join(", ");
+                  } else {
+                    displayValue =
+                      value === null || value === undefined ? "—" : String(value);
+                  }
+                  return (
+                    <tr key={key}>
+                      <th scope="row">{key}</th>
+                      <td>{displayValue}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              </table>
+            </div>
+          )}
+          {!cacheLoading && !cacheError && (!cacheStats || Object.keys(cacheStats).length === 0) && (
+            <div className="text-muted">No cache statistics available.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="admin-monitor-section">
+        <button
+          type="button"
+          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          onClick={() => setRabbitExpanded((e) => !e)}
+          aria-expanded={rabbitExpanded}
+          aria-controls="admin-monitor-rabbitmq-stats"
+        >
+          <span className="admin-monitor-section-chevron" aria-hidden>
+            {rabbitExpanded ? "▼" : "▶"}
+          </span>
+          RabbitMQ statistics
+        </button>
+        <div
+          id="admin-monitor-rabbitmq-stats"
+          className="admin-monitor-section-body"
+          hidden={!rabbitExpanded}
+          role="region"
+          aria-label="RabbitMQ statistics"
+        >
+          <div className="admin-monitor-action-row">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              onClick={() => loadRabbitStats(true)}
+              disabled={rabbitLoading}
+            >
+              Refresh Data
+            </button>
+          </div>
+          {rabbitLoading && (
+            <LoadingMessage message="Loading RabbitMQ statistics…" />
+          )}
+          {rabbitError && !rabbitLoading && (
+            <div className="text-danger">
+              Error loading RabbitMQ stats: {rabbitError}
+            </div>
+          )}
+          {!rabbitLoading && !rabbitError && rabbitStats && (
+            <>
+              {rabbitStats.error && (
+                <div className="text-danger mb-2">
+                  RabbitMQ reported an error: {rabbitStats.error}
+                </div>
+              )}
+              <div className="table-responsive">
+                <table className="table table-sm table-bordered">
+                <tbody>
+                  {(() => {
+                    const LABELS = {
+                      queue: "Queue",
+                      messages: "Total messages (ready + unacked)",
+                      messages_ready: "Messages ready",
+                      messages_unacknowledged: "Messages unacknowledged",
+                      consumers: "Consumers",
+                      message_bytes: "Total bytes (all messages)",
+                      message_bytes_ready: "Bytes for ready messages",
+                      message_bytes_unacknowledged:
+                        "Bytes for unacknowledged messages",
+                      messages_published_total:
+                        "Messages published (total since broker start)",
+                      messages_delivered_total:
+                        "Messages delivered/consumed (total since broker start)",
+                      messages_published_since_snapshot:
+                        "Messages published since previous snapshot",
+                      snapshot_hours: "Hours covered by previous snapshot window",
+                      messages_published_last_24h_estimate:
+                        "Approx. messages published in last 24 hours",
+                    };
+                    return Object.entries(rabbitStats)
+                      .filter(([key, value]) => key in LABELS && value !== null && value !== undefined)
+                      .map(([key, value]) => (
+                        <tr key={key}>
+                          <th scope="row">{LABELS[key]}</th>
+                          <td>{String(value)}</td>
+                        </tr>
+                      ));
+                  })()}
+                  {(!rabbitStats ||
+                    Object.entries(rabbitStats).filter(
+                      ([key, value]) => value !== null && value !== undefined
+                    ).length === 0) && (
+                    <tr>
+                      <td colSpan="2" className="text-muted">
+                        No RabbitMQ statistics available.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+                </table>
+              </div>
+            </>
+          )}
+          {!rabbitLoading &&
+            !rabbitError &&
+            !rabbitStats && (
+              <div className="text-muted">No RabbitMQ statistics available.</div>
+            )}
+        </div>
+      </div>
+    </>
+  );
+}

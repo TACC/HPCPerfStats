@@ -33,20 +33,8 @@ stderr_logfile_maxbytes=0
 #stderr_logfile=/dev/fd/1
 #stderr_logfile_maxbytes=0
 
-[program:sync_acct]
-command=/usr/local/bin/python3 /home/hpcperfstats/hpcperfstats/dbload/sync_acct.py
-user=hpcperfstats
-autorestart=true
-startretries=20
-stdout_redirect=true
-stdout_logfile=/dev/fd/1
-stdout_logfile_maxbytes=0
-stderr_redirect=true
-stderr_logfile=/dev/fd/1
-stderr_logfile_maxbytes=0
-
 [program:sync_timedb]
-command=/usr/local/bin/python3 /home/hpcperfstats/hpcperfstats/dbload/sync_timedb.py
+command=/usr/local/bin/python3 /home/hpcperfstats/hpcperfstats/dbload/sync_timedb.py all
 user=hpcperfstats
 autorestart=true
 startretries=20
@@ -70,7 +58,7 @@ stderr_logfile=/dev/fd/1
 stderr_logfile_maxbytes=0
 
 [program:syslog-ng]
-command=/usr/sbin/syslog-ng -F -e --no-caps -d -v -f /home/hpcperfstats/services-conf/syslog-ng.conf
+command=/usr/sbin/syslog-ng -F --no-caps -f /home/hpcperfstats/services-conf/syslog-ng.conf
 user=root
 autorestart=true
 startretries=20

@@ -1,83 +1,145 @@
 #!/usr/bin/env python3
+"""Type-detail plot: Bokeh step plots per event for a given type (e.g. llite, cpu) using TypeDetailDataProvider.
+
+"""
+import logging
 import math
 import time
 
+log = logging.getLogger(__name__)
+
 from bokeh.layouts import gridplot
-from bokeh.models import ColumnDataSource, Range1d
+from bokeh.models import ColumnDataSource, HoverTool, Range1d
 from bokeh.models.glyphs import Step
 from bokeh.palettes import d3
 from bokeh.plotting import figure
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.analysis.gen.utils import clean_dataframe, read_sql, tz_aware_bokeh_tick_formatter
+from hpcperfstats.analysis.gen.utils import clean_dataframe, tz_aware_bokeh_tick_formatter
 
-local_timezone = cfg.get_timezone()
+local_timezone = cfg.get_local_timezone()
 
-class DevPlot():
 
-  def __init__(self, conn, host_list):
-    self.conn = conn
+def _hover_tooltip_html(value_label, value_field):
+  """Build an HTML hover template with spacing between multi-point hits."""
+  return f"""
+    <div style="padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #d0d7de;">
+      <div><strong>host:</strong> @host</div>
+      <div><strong>time:</strong> @time{{%F %T}}</div>
+      <div><strong>{value_label}:</strong> @{value_field}</div>
+    </div>
+  """
+
+
+class DevPlot:
+  """Type-detail plot using an ORM data provider (TypeDetailDataProvider). Replaces raw connection + temp table type_detail.
+
+    """
+
+  def __init__(self, data_provider, host_list):
+    """Store data provider and host list for plotting.
+
+        """
+    self.data_provider = data_provider
     self.host_list = host_list
 
-  def plot_metric(self, df, event, unit = None):
+  def plot_metric(self, df, event, unit=None):
+    """Create one Bokeh figure with step glyphs per host for the given event (and optional unit label).
+
+        """
     s = time.time()
 
     df = df[["time", "host", event]]
 
-
-    y_range_end = 1.1*df[event].max()
+    y_range_end = 1.1 * df[event].max()
     if math.isnan(y_range_end):
-        y_range_end = 0
+      y_range_end = 0
 
-    ylabel = event + ' (' + unit+')'
+    ylabel = event + " (" + (unit or "") + ")"
 
-    plot = figure(width=400, height=150, x_axis_type = "datetime",
-                  y_range = Range1d(-0.1, y_range_end), y_axis_label = ylabel)
+    plot = figure(
+        width=400,
+        height=150,
+        x_axis_type="datetime",
+        y_range=Range1d(-0.1, y_range_end),
+        y_axis_label=ylabel,
+    )
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
+    circle_renderers = []
     for h in self.host_list:
       source = ColumnDataSource(df[df.host == h])
-      plot.add_glyph(source, Step(x = "time", y = event, mode = "before", line_color = self.hc[h]))
-    print("time to plot {0}: {1}".format(event, time.time() -s))
+      plot.add_glyph(
+          source,
+          Step(x="time", y=event, mode="before", line_color=self.hc[h]),
+      )
+      # Bokeh 3.4+: use scatter(size=...) instead of circle(size=...).
+      circle = plot.scatter(
+          x="time",
+          y=event,
+          source=source,
+          size=4,
+          marker="circle",
+          color=self.hc[h],
+          alpha=0.9,
+      )
+      circle_renderers.append(circle)
+
+    # Hover shows which sample point (host) and value; no legend (identify line by hovering).
+    plot.add_tools(
+        HoverTool(
+            tooltips=_hover_tooltip_html(event, event),
+            formatters={"@time": "datetime"},
+            renderers=circle_renderers,
+        )
+    )
+    log.debug("time to plot %s: %s", event, time.time() - s)
     return plot
 
   def plot(self):
+    """Build host_time_df, merge aggregate per event, and return (df, gridplot of step plots).
 
+        """
     self.hc = {}
     colors = d3["Category20"][20]
     for i, hostname in enumerate(self.host_list):
-      self.hc[hostname] = colors[i%20]
+      self.hc[hostname] = colors[i % 20]
 
-    print("Host Count:", len(self.host_list))
+    log.debug("Host Count: %s", len(self.host_list))
 
-    df = read_sql("select host, time from type_detail group by host, time order by host, time", self.conn)
-    event_df = read_sql("""select distinct on (event) event,unit from type_detail where host = '{}'""".format(next(iter(self.host_list))), self.conn)
-    event_list = event_df[["event", "unit"]].values
-    #event_list = list(sorted(event_df[["event", "unit"]].values))
-    #unit_list = list(sorted(event_df["unit"].values))
-    #print(event_list,unit_list)
-    type_df = read_sql("""select distinct on (type) type from type_detail where host = '{}'""".format(next(iter(self.host_list))), self.conn)
-    type_list = list(sorted(type_df["type"].values))
+    df = self.data_provider.get_host_time_df()
+    event_list = self.data_provider.get_events_units()
+    type_list = self.data_provider.get_type_list()
 
     metric = "arc"
-    if "mem" in type_list or "nvidia_gpu" in type_list: metric = "value"
+    if type_list and ("mem" in type_list or "nvidia_gpu" in type_list):
+      metric = "value"
 
     for event, unit in event_list:
       s = time.time()
-      df[event] = read_sql("select sum({0}) from type_detail where event = '{1}' \
-      group by host, time order by host, time".format(metric, event), self.conn)
-      if df[event].isnull().values.any():
+      agg = self.data_provider.get_aggregate_df(event, metric=metric)
+      if agg.empty or "sum_val" not in agg.columns:
+        df[event] = float("nan")
+      else:
+        df = df.merge(agg[["host", "time", "sum_val"]],
+                      on=["host", "time"],
+                      how="left")
+        df[event] = df["sum_val"]
+        df.drop(columns=["sum_val"], inplace=True)
+      if event in df.columns and df[event].isnull().values.any():
         del df[event]
-      print("time to compute events {0}: {1}".format(event, time.time() -s))
+      log.debug("time to compute events %s: %s", event, time.time() - s)
 
     df = df.reset_index()
-    df["time"] = df["time"].dt.tz_convert(local_timezone)
+    if not df.empty and "time" in df.columns:
+      df["time"] = df["time"].dt.tz_convert(local_timezone)
 
     df = clean_dataframe(df)
 
     plots = []
-    for event,unit in event_list:
-      if event not in df.columns: continue
+    for event, unit in event_list:
+      if event not in df.columns:
+        continue
       plots += [self.plot_metric(df, event, unit)]
 
-    return df, gridplot(plots, ncols = len(plots)//4 + 1)
+    return df, gridplot(plots, ncols=len(plots) // 4 + 1 if plots else 1)
