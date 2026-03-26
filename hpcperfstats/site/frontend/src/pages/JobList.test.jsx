@@ -3,14 +3,17 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import JobList from "./JobList";
 import * as apiModule from "../api";
+import { SessionContext } from "../session-context";
 
-function renderJobList(initialEntries = ["/jobs"]) {
+function renderJobList(initialEntries = ["/jobs"], session = { is_staff: false }) {
   return render(
-    <MemoryRouter initialEntries={initialEntries}>
-      <Routes>
-        <Route path="/jobs" element={<JobList />} />
-      </Routes>
-    </MemoryRouter>
+    <SessionContext.Provider value={session}>
+      <MemoryRouter initialEntries={initialEntries}>
+        <Routes>
+          <Route path="/jobs" element={<JobList />} />
+        </Routes>
+      </MemoryRouter>
+    </SessionContext.Provider>
   );
 }
 
@@ -91,13 +94,7 @@ describe("JobList", () => {
     expect(screen.getByText("COMPLETED")).toBeInTheDocument();
   });
 
-  it("shows histogram unavailable details and supports copy", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(window.navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-
+  it("hides histogram unavailable details and copy for non-staff users", async () => {
     vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
       job_list: [],
       nj: 0,
@@ -133,23 +130,11 @@ describe("JobList", () => {
       expect(screen.getByText("#Jobs = 0")).toBeInTheDocument();
     });
     expect(screen.getAllByText("Plot not available").length).toBeGreaterThan(0);
-
-    const detailsTriggers = screen.getAllByLabelText("Show plot error details");
-    fireEvent.mouseEnter(detailsTriggers[0]);
-
-    expect(screen.getByRole("tooltip")).toHaveTextContent(
-      "No queue histogram data available for this query."
-    );
-
-    fireEvent.click(screen.getAllByRole("button", { name: "Copy Error Detail" })[0]);
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith(
-        "No queue histogram data available for this query."
-      );
-    });
+    expect(screen.queryByLabelText("Show plot error details")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy Error Detail" })).not.toBeInTheDocument();
   });
 
-  it("keeps error detail and copy controls visible in mobile histogram view", async () => {
+  it("hides error detail and copy controls in mobile histogram view for non-staff", async () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       value: vi.fn().mockImplementation(() => ({
@@ -162,12 +147,6 @@ describe("JobList", () => {
         removeListener: vi.fn(),
         dispatchEvent: vi.fn(),
       })),
-    });
-
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(window.navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
     });
 
     vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
@@ -197,20 +176,9 @@ describe("JobList", () => {
     await waitFor(() => {
       expect(screen.getByText("#Jobs = 0")).toBeInTheDocument();
     });
-    expect(screen.getByText("Error Detail")).toBeInTheDocument();
-
-    const detailsTrigger = screen.getByLabelText("Show plot error details");
-    fireEvent.mouseEnter(detailsTrigger);
-    expect(screen.getByRole("tooltip")).toHaveTextContent(
-      "No queue histogram data available for this query."
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Copy Error Detail" }));
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith(
-        "No queue histogram data available for this query."
-      );
-    });
+    expect(screen.queryByText("Error Detail")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Show plot error details")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy Error Detail" })).not.toBeInTheDocument();
   });
 });
 

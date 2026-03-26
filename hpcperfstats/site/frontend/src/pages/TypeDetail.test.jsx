@@ -1,16 +1,19 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import TypeDetail from "./TypeDetail";
 import * as apiModule from "../api";
+import { SessionContext } from "../session-context";
 
-function renderTypeDetail(path = "/job/12345/cpu") {
+function renderTypeDetail(path = "/job/12345/cpu", session = { is_staff: false }) {
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <Routes>
-        <Route path="/job/:jid/:typeName" element={<TypeDetail />} />
-      </Routes>
-    </MemoryRouter>
+    <SessionContext.Provider value={session}>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/job/:jid/:typeName" element={<TypeDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </SessionContext.Provider>
   );
 }
 
@@ -19,13 +22,7 @@ describe("TypeDetail", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows unavailable details for missing type plot and supports copy", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(window.navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-
+  it("shows plot unavailable message without details for non-staff", async () => {
     vi.spyOn(apiModule.api, "getTypeDetail").mockResolvedValue({
       type_name: "cpu",
       jobid: "12345",
@@ -45,20 +42,8 @@ describe("TypeDetail", () => {
     });
     expect(screen.getByText("Plot not available")).toBeInTheDocument();
 
-    const detailsTrigger = screen.getByLabelText("Show plot error details");
-    fireEvent.mouseEnter(detailsTrigger.parentElement);
-    await waitFor(() => {
-      expect(screen.getByRole("tooltip")).toHaveTextContent(
-        "No device-level samples found for this job/type in host_data."
-      );
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Copy Error Detail" }));
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith(
-        "No device-level samples found for this job/type in host_data."
-      );
-    });
+    expect(screen.queryByLabelText("Show plot error details")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy Error Detail" })).not.toBeInTheDocument();
   });
 });
 

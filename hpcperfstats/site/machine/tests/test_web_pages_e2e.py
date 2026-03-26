@@ -164,3 +164,24 @@ class TestWebPagesEndToEnd:
           content_type="text/plain",
       )
       assert non_staff_ingest.status_code == 403
+
+  def test_session_staff_flag_drives_frontend_plot_error_visibility(self):
+    """Session API should expose staff state used by frontend error-detail gating."""
+    client = Client()
+    session = client.session
+    session["access_token"] = "token"
+    session["username"] = "plot-user"
+    session["is_staff"] = True
+    session.save()
+
+    staff_response = client.get("/api/session/")
+    assert staff_response.status_code == 200
+    assert staff_response.json()["is_staff"] is True
+
+    session = client.session
+    session["is_staff"] = False
+    session.save()
+
+    non_staff_response = client.get("/api/session/")
+    assert non_staff_response.status_code == 200
+    assert non_staff_response.json()["is_staff"] is False

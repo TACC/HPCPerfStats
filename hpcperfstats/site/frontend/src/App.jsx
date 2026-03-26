@@ -10,6 +10,7 @@ import TypeDetail from "./pages/TypeDetail";
 import HostDetail from "./pages/HostDetail";
 import AdminMonitor from "./pages/AdminMonitor";
 import JobMonitor from "./pages/JobMonitor";
+import { SessionContext } from "./session-context";
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -34,23 +35,25 @@ export default function App() {
   }
 
   return (
-    <Layout session={session} onSessionChange={setSession}>
-      <Routes>
-        <Route index element={<Search />} />
-        <Route path="job/:pk" element={<JobDetail />} />
-        <Route path="year/:year" element={<JobList />} />
-        <Route path="date/:date" element={<JobList />} />
-        <Route path="username/:username" element={<JobList />} />
-        <Route path="account/:account" element={<JobList />} />
-        <Route path="queue/:queue" element={<JobList />} />
-        <Route path="host/:host" element={<JobList />} />
-        <Route path="jobs" element={<JobList />} />
-        <Route path="job/:jid/:typeName" element={<TypeDetail />} />
-        <Route path="host/:host/plot" element={<HostDetail />} />
-        <Route path="admin_monitor" element={<AdminMonitor />} />
-        <Route path="job_monitor" element={<JobMonitor />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </Layout>
+    <SessionContext.Provider value={session}>
+      <Layout session={session} onSessionChange={setSession}>
+        <Routes>
+          <Route index element={<Search />} />
+          <Route path="job/:pk" element={<JobDetail />} />
+          <Route path="year/:year" element={<JobList />} />
+          <Route path="date/:date" element={<JobList />} />
+          <Route path="username/:username" element={<JobList />} />
+          <Route path="account/:account" element={<JobList />} />
+          <Route path="queue/:queue" element={<JobList />} />
+          <Route path="host/:host" element={<JobList />} />
+          <Route path="jobs" element={<JobList />} />
+          <Route path="job/:jid/:typeName" element={<TypeDetail />} />
+          <Route path="host/:host/plot" element={<HostDetail />} />
+          <Route path="admin_monitor" element={<AdminMonitor />} />
+          <Route path="job_monitor" element={<JobMonitor />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Layout>
+    </SessionContext.Provider>
   );
 }

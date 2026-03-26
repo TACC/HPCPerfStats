@@ -1,16 +1,19 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import HostDetail from "./HostDetail";
 import * as apiModule from "../api";
+import { SessionContext } from "../session-context";
 
-function renderHostDetail(path = "/host/node1.cluster/plot") {
+function renderHostDetail(path = "/host/node1.cluster/plot", session = { is_staff: false }) {
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <Routes>
-        <Route path="/host/:host/plot" element={<HostDetail />} />
-      </Routes>
-    </MemoryRouter>
+    <SessionContext.Provider value={session}>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/host/:host/plot" element={<HostDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </SessionContext.Provider>
   );
 }
 
@@ -19,13 +22,7 @@ describe("HostDetail", () => {
     vi.restoreAllMocks();
   });
 
-  it("passes unavailable reason to BokehEmbed details popup and copy button", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(window.navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-
+  it("shows plot unavailable message without details for non-staff", async () => {
     vi.spyOn(apiModule.api, "getHostPlot").mockResolvedValue({
       host: "node1.cluster",
       plot_item: null,
@@ -42,19 +39,8 @@ describe("HostDetail", () => {
     });
     expect(screen.getByText("Plot not available")).toBeInTheDocument();
 
-    const detailsTrigger = screen.getByLabelText("Show plot error details");
-    fireEvent.mouseEnter(detailsTrigger);
-
-    expect(screen.getByRole("tooltip")).toHaveTextContent(
-      "No host plot data available for this host/time range."
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Copy Error Detail" }));
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith(
-        "No host plot data available for this host/time range."
-      );
-    });
+    expect(screen.queryByLabelText("Show plot error details")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy Error Detail" })).not.toBeInTheDocument();
   });
 });
 

@@ -43,6 +43,9 @@ def test_browser_flow_for_web_pages():
   <a id="admin-monitor-link" href="/machine/admin_monitor/" hidden>HPCPerfStats Monitor</a>
   <button id="disable-staff-btn" type="button" hidden>Disable staff for session</button>
   <div id="staff-message"></div>
+  <div id="plot-unavailable">Plot not available</div>
+  <span id="plot-error-detail" hidden>Error Detail</span>
+  <button id="copy-error-detail-btn" type="button" hidden>Copy Error Detail</button>
   <script>
     (function () {
       const params = new URLSearchParams(window.location.search);
@@ -51,12 +54,16 @@ def test_browser_flow_for_web_pages():
       const adminMonitorLink = document.getElementById("admin-monitor-link");
       const disableStaffBtn = document.getElementById("disable-staff-btn");
       const staffMessage = document.getElementById("staff-message");
+      const plotErrorDetail = document.getElementById("plot-error-detail");
+      const copyErrorDetailBtn = document.getElementById("copy-error-detail-btn");
 
       function setStaffUi(flag) {
         const shouldShow = !!flag;
         jobMonitorLink.hidden = !shouldShow;
         adminMonitorLink.hidden = !shouldShow;
         disableStaffBtn.hidden = !shouldShow;
+        plotErrorDetail.hidden = !shouldShow;
+        copyErrorDetailBtn.hidden = !shouldShow;
       }
 
       setStaffUi(isStaff);
@@ -109,12 +116,18 @@ def test_browser_flow_for_web_pages():
           assert page.get_by_role("link", name="Job Monitor").is_visible()
           assert page.get_by_role("link", name="HPCPerfStats Monitor").is_visible()
           assert page.get_by_role("button", name="Disable staff for session").is_visible()
+          assert page.get_by_text("Plot not available").is_visible()
+          assert page.locator("#plot-error-detail").is_visible()
+          assert page.get_by_role("button", name="Copy Error Detail").is_visible()
 
           # Staff-only controls are absent for non-staff sessions.
           page.goto(f"{base_url}/machine/?staff=0")
           assert page.locator("#job-monitor-link").is_hidden()
           assert page.locator("#admin-monitor-link").is_hidden()
           assert page.locator("#disable-staff-btn").is_hidden()
+          assert page.get_by_text("Plot not available").is_visible()
+          assert page.locator("#plot-error-detail").is_hidden()
+          assert page.locator("#copy-error-detail-btn").is_hidden()
 
           # Demoting staff hides controls and shows the informational message.
           page.goto(f"{base_url}/machine/?staff=1")

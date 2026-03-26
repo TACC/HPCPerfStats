@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSession } from "../session-context";
 
 /** Poll until window.Bokeh is defined (Bokeh JS loaded), then resolve. */
 function whenBokehReady(timeoutMs = 10000) {
@@ -56,6 +57,8 @@ const PLACEHOLDER_OVERLAY_STYLE = {
  * Shows "Plot not available" in the plot area when there is no data or when the plot fails to load.
  */
 export default function BokehEmbed({ item, id = "bokeh-embed", plotName, unavailableReason }) {
+  const session = useSession();
+  const canViewErrorDetails = !!session?.is_staff;
   const containerRef = useRef(null);
   const [plotReady, setPlotReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -138,7 +141,7 @@ export default function BokehEmbed({ item, id = "bokeh-embed", plotName, unavail
   const renderPlaceholder = (style) => (
     <div className="bokeh-plot-unavailable" style={style} aria-live="polite">
       <span>{message}</span>
-      {isUnavailable && detailsMessage ? (
+      {isUnavailable && detailsMessage && canViewErrorDetails ? (
         <span
           style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 8, position: "relative" }}
           onMouseEnter={() => setShowDetails(true)}
@@ -173,7 +176,7 @@ export default function BokehEmbed({ item, id = "bokeh-embed", plotName, unavail
           ) : null}
         </span>
       ) : null}
-      {isUnavailable && detailsMessage ? (
+      {isUnavailable && detailsMessage && canViewErrorDetails ? (
         <span style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 8 }}>
           <button
             type="button"

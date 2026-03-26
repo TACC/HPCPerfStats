@@ -1,6 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi, afterEach, describe, expect, it } from "vitest";
 import BokehEmbed from "./BokehEmbed";
+import { SessionContext } from "../session-context";
+
+function renderBokehEmbed(ui, session = null) {
+  return render(<SessionContext.Provider value={session}>{ui}</SessionContext.Provider>);
+}
 
 describe("BokehEmbed", () => {
   afterEach(() => {
@@ -14,7 +19,7 @@ describe("BokehEmbed", () => {
 
     const item = { doc: {}, root_ids: ["r1"] };
 
-    const { container } = render(
+    const { container } = renderBokehEmbed(
       <BokehEmbed item={item} id="bokeh-test-slot" plotName="Test plot" />
     );
 
@@ -27,18 +32,19 @@ describe("BokehEmbed", () => {
     });
   });
 
-  it("shows default unavailable text and reveals/copies API error in hover details", async () => {
+  it("shows default unavailable text and reveals/copies API error for staff", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(window.navigator, "clipboard", {
       configurable: true,
       value: { writeText },
     });
 
-    render(
+    renderBokehEmbed(
       <BokehEmbed
         plotName="Heatmap"
         unavailableReason="Missing CPI counters in host_data"
-      />
+      />,
+      { is_staff: true }
     );
 
     expect(screen.getByText("Plot not available")).toBeInTheDocument();
@@ -57,11 +63,25 @@ describe("BokehEmbed", () => {
     expect(screen.getByText("Copied")).toBeInTheDocument();
   });
 
+  it("hides error detail UI for non-staff users", () => {
+    renderBokehEmbed(
+      <BokehEmbed
+        plotName="Heatmap"
+        unavailableReason="Missing CPI counters in host_data"
+      />,
+      { is_staff: false }
+    );
+
+    expect(screen.getByText("Plot not available")).toBeInTheDocument();
+    expect(screen.queryByText("Error Detail")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy Error Detail" })).not.toBeInTheDocument();
+  });
+
   it("does not execute legacy script/div payloads", () => {
     const embedItem = vi.fn();
     window.Bokeh = { embed: { embed_item: embedItem } };
 
-    render(
+    renderBokehEmbed(
       <BokehEmbed
         script={'<script type="text/javascript">window.__injected = true;</script>'}
         div={'<div id="unsafe"></div>'}
