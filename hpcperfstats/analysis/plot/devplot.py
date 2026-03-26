@@ -20,6 +20,17 @@ from hpcperfstats.analysis.gen.utils import clean_dataframe, tz_aware_bokeh_tick
 local_timezone = cfg.get_local_timezone()
 
 
+def _hover_tooltip_html(value_label, value_field):
+  """Build an HTML hover template with spacing between multi-point hits."""
+  return f"""
+    <div style="padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #d0d7de;">
+      <div><strong>host:</strong> @host</div>
+      <div><strong>time:</strong> @time{{%F %T}}</div>
+      <div><strong>{value_label}:</strong> @{value_field}</div>
+    </div>
+  """
+
+
 class DevPlot:
   """Type-detail plot using an ORM data provider (TypeDetailDataProvider). Replaces raw connection + temp table type_detail.
 
@@ -77,11 +88,7 @@ class DevPlot:
     # Hover shows which sample point (host) and value; no legend (identify line by hovering).
     plot.add_tools(
         HoverTool(
-            tooltips=[
-                ("host", "@host"),
-                ("time", "@time{%F %T}"),
-                (event, "@" + event),
-            ],
+            tooltips=_hover_tooltip_html(event, event),
             formatters={"@time": "datetime"},
             renderers=circle_renderers,
         )
