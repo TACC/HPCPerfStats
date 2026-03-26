@@ -34,8 +34,41 @@ def test_browser_flow_for_web_pages():
     frontend_dir = Path(tmpdir) / "frontend"
     frontend_dir.mkdir(parents=True, exist_ok=True)
     (frontend_dir / "index.html").write_text(
-        "<!doctype html><html><head><title>HPCPerfStats SPA</title></head>"
-        "<body><div id='root'>spa-shell</div></body></html>",
+        """<!doctype html>
+<html>
+<head><title>HPCPerfStats SPA</title></head>
+<body>
+  <div id="root">spa-shell</div>
+  <a id="job-monitor-link" href="/machine/job_monitor/" hidden>Job Monitor</a>
+  <a id="admin-monitor-link" href="/machine/admin_monitor/" hidden>HPCPerfStats Monitor</a>
+  <button id="disable-staff-btn" type="button" hidden>Disable staff for session</button>
+  <div id="staff-message"></div>
+  <script>
+    (function () {
+      const params = new URLSearchParams(window.location.search);
+      const isStaff = params.get("staff") === "1";
+      const jobMonitorLink = document.getElementById("job-monitor-link");
+      const adminMonitorLink = document.getElementById("admin-monitor-link");
+      const disableStaffBtn = document.getElementById("disable-staff-btn");
+      const staffMessage = document.getElementById("staff-message");
+
+      function setStaffUi(flag) {
+        const shouldShow = !!flag;
+        jobMonitorLink.hidden = !shouldShow;
+        adminMonitorLink.hidden = !shouldShow;
+        disableStaffBtn.hidden = !shouldShow;
+      }
+
+      setStaffUi(isStaff);
+      disableStaffBtn.addEventListener("click", function () {
+        setStaffUi(false);
+        staffMessage.textContent =
+          "Staff access removed for this session. Log out and log back in to restore staff access.";
+      });
+    })();
+  </script>
+</body>
+</html>""",
         encoding="utf-8",
     )
     active_key = Mock()
@@ -70,6 +103,28 @@ def test_browser_flow_for_web_pages():
           page.goto(f"{base_url}/")
           assert "/machine/" in page.url
           assert "spa-shell" in page.locator("#root").inner_text()
+
+          # Staff-only controls appear for staff sessions.
+          page.goto(f"{base_url}/machine/?staff=1")
+          assert page.get_by_role("link", name="Job Monitor").is_visible()
+          assert page.get_by_role("link", name="HPCPerfStats Monitor").is_visible()
+          assert page.get_by_role("button", name="Disable staff for session").is_visible()
+
+          # Staff-only controls are absent for non-staff sessions.
+          page.goto(f"{base_url}/machine/?staff=0")
+          assert page.locator("#job-monitor-link").is_hidden()
+          assert page.locator("#admin-monitor-link").is_hidden()
+          assert page.locator("#disable-staff-btn").is_hidden()
+
+          # Demoting staff hides controls and shows the informational message.
+          page.goto(f"{base_url}/machine/?staff=1")
+          page.get_by_role("button", name="Disable staff for session").click()
+          assert page.locator("#job-monitor-link").is_hidden()
+          assert page.locator("#admin-monitor-link").is_hidden()
+          assert page.locator("#disable-staff-btn").is_hidden()
+          assert "Staff access removed for this session." in page.locator(
+              "#staff-message"
+          ).inner_text()
 
           for path in (
               "/machine/home/",

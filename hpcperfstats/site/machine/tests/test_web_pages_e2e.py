@@ -119,3 +119,48 @@ class TestWebPagesEndToEnd:
     # After demotion, staff-only endpoints should be denied for this session.
     staff_only_response = client.get("/api/admin_monitor/")
     assert staff_only_response.status_code == 403
+
+  def test_staff_only_endpoints_appear_for_staff_and_disappear_for_non_staff(self):
+    """Staff-only API routes should allow staff and deny non-staff sessions."""
+    client = Client()
+
+    session = client.session
+    session["access_token"] = "token"
+    session["username"] = "staff-user"
+    session["is_staff"] = True
+    session.save()
+
+    # Keep this test isolated from external DB/Redis dependencies by stubbing
+    # expensive data paths. We only validate staff gating behavior here.
+    with override_settings(
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                "LOCATION": "staff-visibility-e2e",
+            }
+        }
+    ), patch(
+        "hpcperfstats.site.machine.api._get_cache_stats",
+        return_value={"ok": True},
+    ):
+      staff_admin = client.get("/api/admin_monitor/?section=cache")
+      assert staff_admin.status_code == 200
+      staff_ingest = client.post(
+          "/api/sacct/ingest/?date=2026-01-01",
+          data="",
+          content_type="text/plain",
+      )
+      assert staff_ingest.status_code == 200
+
+      non_staff_session = client.session
+      non_staff_session["is_staff"] = False
+      non_staff_session.save()
+
+      non_staff_admin = client.get("/api/admin_monitor/?section=cache")
+      assert non_staff_admin.status_code == 403
+      non_staff_ingest = client.post(
+          "/api/sacct/ingest/?date=2026-01-01",
+          data="",
+          content_type="text/plain",
+      )
+      assert non_staff_ingest.status_code == 403
