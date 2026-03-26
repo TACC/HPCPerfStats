@@ -5,21 +5,69 @@ import configparser
 import os
 from zoneinfo import ZoneInfo
 
-cfg = configparser.ConfigParser()
+cfg = None
+_ACTIVE_CONFIG_PATH = None
 
-# Config path: HPCPERFSTATS_INI env, or bundled example for local/test defaults.
-_DEFAULT_CONFIG_PATH = os.path.abspath(
-    os.path.join(
-        os.path.dirname(os.path.realpath(__file__)),
-        "..",
-        "hpcperfstats.ini.example",
-    ))
-_CONFIG_PATH = os.environ.get("HPCPERFSTATS_INI", _DEFAULT_CONFIG_PATH)
-cfg.read(_CONFIG_PATH)
+
+def _candidate_config_paths():
+  """Return candidate config paths in lookup order.
+
+  Search order is explicit env override first, then common runtime locations,
+  then the bundled example as a development fallback.
+  """
+  module_dir = os.path.dirname(os.path.realpath(__file__))
+  env_path = os.environ.get("HPCPERFSTATS_INI", "").strip()
+  if env_path:
+    # Explicit operator override should be authoritative.
+    return [env_path]
+
+  return [
+      # Common container/runtime location.
+      "/home/hpcperfstats/hpcperfstats.ini",
+      # Local development from repo root.
+      os.path.abspath(os.path.join(os.getcwd(), "hpcperfstats.ini")),
+      # Source tree locations.
+      os.path.abspath(os.path.join(module_dir, "..", "hpcperfstats.ini")),
+      os.path.abspath(os.path.join(module_dir, "..", "hpcperfstats.ini.example")),
+  ]
+
+
+def _load_cfg():
+  """Load config from first existing candidate path."""
+  global cfg
+  global _ACTIVE_CONFIG_PATH
+  parser = configparser.ConfigParser()
+  attempted_paths = _candidate_config_paths()
+  for path in attempted_paths:
+    if not os.path.isfile(path):
+      continue
+    if parser.read(path):
+      cfg = parser
+      _ACTIVE_CONFIG_PATH = path
+      return
+  raise FileNotFoundError(
+      "Unable to locate HPCPerfStats config file. Set HPCPERFSTATS_INI or place "
+      "hpcperfstats.ini at /home/hpcperfstats/hpcperfstats.ini. Attempted paths: "
+      "%s" % ", ".join(attempted_paths)
+  )
+
+
+def _ensure_cfg_loaded():
+  """Initialize config parser lazily."""
+  if cfg is None:
+    _load_cfg()
 
 
 def _get(section, option):
   """Return config value for section/option. Single place for simple getters."""
+  _ensure_cfg_loaded()
+  if not cfg.has_section(section) and section != "DEFAULT":
+    raise configparser.NoSectionError(
+        "Missing section '%s' in %s" % (
+            section,
+            _ACTIVE_CONFIG_PATH,
+        )
+    )
   return cfg.get(section, option)
 
 
@@ -41,6 +89,7 @@ def get_debug():
     Missing DEFAULT.debug is treated as False to keep startup resilient when
     older/minimal configs omit this optional setting.
     """
+  _ensure_cfg_loaded()
   return cfg.get('DEFAULT', 'debug', fallback='no').lower() in ("yes", "true", "1")
 
 
@@ -50,6 +99,7 @@ def get_secret_key():
     Prefer environment variable SECRET_KEY over ini; settings.py should check
     os.environ first, then this, then fail or use dev default.
     """
+  _ensure_cfg_loaded()
   if cfg.has_option('DEFAULT', 'secret_key'):
     return cfg.get('DEFAULT', 'secret_key').strip() or None
   return None
@@ -205,6 +255,7 @@ def get_redis_location():
 
     Defaults to redis://127.0.0.1:6379/1 if [CACHE] or redis_location is missing.
     """
+  _ensure_cfg_loaded()
   if cfg.has_section("CACHE") and cfg.has_option("CACHE", "redis_location"):
     return cfg.get("CACHE", "redis_location").strip() or "redis://127.0.0.1:6379/1"
   return "redis://127.0.0.1:6379/1"

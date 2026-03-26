@@ -1,7 +1,6 @@
 """Unit tests for conf_parser with a temporary INI file.
 
 """
-import configparser
 import os
 
 import pytest
@@ -171,3 +170,61 @@ def test_missing_debug_defaults_to_false(monkeypatch, tmp_path):
   importlib.reload(cfg)
 
   assert cfg.get_debug() is False
+
+
+def test_fallback_to_cwd_hpcperfstats_ini(monkeypatch, tmp_path):
+  """When env is unset, conf_parser loads ./hpcperfstats.ini."""
+  ini = tmp_path / "hpcperfstats.ini"
+  ini.write_text(
+      "[DEFAULT]\n"
+      "machine = test\n"
+      "server = test\n"
+      "host_name_ext = local\n"
+      "data_dir = /tmp\n"
+      "staff_email_domain = local\n"
+      "timezone = UTC\n"
+      "total_cores = 4\n"
+      "[PORTAL]\n"
+      "dbname = test\n"
+      "username = u\n"
+      "password = p\n"
+      "port = 5432\n"
+      "host = localhost\n"
+      "archive_dir = /tmp\n"
+      "acct_path = /tmp\n"
+      "daily_archive_dir = /tmp\n"
+      "engine_name = django.db.backends.postgresql\n"
+      "[RMQ]\n"
+      "rmq_server = localhost\n"
+      "rmq_queue = test\n"
+      "[XALT]\n"
+      "xalt_engine = django.db.backends.sqlite3\n"
+      "xalt_name = xalt\n"
+      "xalt_user = u\n"
+      "xalt_password = p\n"
+      "xalt_host = localhost\n"
+      "[OAUTH2]\n"
+      "client_id = id\n"
+      "client_key = key\n"
+      "authorize_url = http://localhost\n"
+      "oauth_base_url = http://localhost\n")
+  monkeypatch.delenv("HPCPERFSTATS_INI", raising=False)
+  monkeypatch.chdir(tmp_path)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+
+  assert cfg.get_rmq_server() == "localhost"
+  assert cfg.get_db_name() == "test"
+
+
+def test_missing_config_file_raises_helpful_error(monkeypatch, tmp_path):
+  """Raise FileNotFoundError when explicit env path does not exist."""
+  missing_ini = tmp_path / "does-not-exist.ini"
+  monkeypatch.setenv("HPCPERFSTATS_INI", str(missing_ini))
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+
+  with pytest.raises(FileNotFoundError, match="Unable to locate HPCPerfStats"):
+    cfg.get_machine_name()
