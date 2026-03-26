@@ -1,6 +1,7 @@
 """Unit tests for conf_parser with a temporary INI file.
 
 """
+import configparser
 import os
 
 import pytest
@@ -128,3 +129,46 @@ def test_get_local_timezone(temp_ini, monkeypatch):
   from zoneinfo import ZoneInfo
   tz = cfg.get_local_timezone()
   assert tz == ZoneInfo("UTC")
+
+
+def test_missing_required_config_key_raises(monkeypatch, tmp_path):
+  ini = tmp_path / "missing-debug.ini"
+  ini.write_text(
+      "[DEFAULT]\n"
+      "machine = test\n"
+      "server = test\n"
+      "data_dir = /tmp\n"
+      "staff_email_domain = local\n"
+      "timezone = UTC\n"
+      "total_cores = 4\n"
+      "[PORTAL]\n"
+      "dbname = test\n"
+      "username = u\n"
+      "password = p\n"
+      "port = 5432\n"
+      "host = localhost\n"
+      "archive_dir = /tmp\n"
+      "acct_path = /tmp\n"
+      "daily_archive_dir = /tmp\n"
+      "engine_name = django.db.backends.postgresql\n"
+      "[RMQ]\n"
+      "rmq_server = localhost\n"
+      "rmq_queue = test\n"
+      "[XALT]\n"
+      "xalt_engine = django.db.backends.sqlite3\n"
+      "xalt_name = xalt\n"
+      "xalt_user = u\n"
+      "xalt_password = p\n"
+      "xalt_host = localhost\n"
+      "[OAUTH2]\n"
+      "client_id = id\n"
+      "client_key = key\n"
+      "authorize_url = http://localhost\n"
+      "oauth_base_url = http://localhost\n")
+  monkeypatch.setenv("HPCPERFSTATS_INI", str(ini))
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+
+  with pytest.raises(configparser.NoOptionError):
+    cfg.get_debug()

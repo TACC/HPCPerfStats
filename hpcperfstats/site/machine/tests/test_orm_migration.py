@@ -32,7 +32,7 @@ class TestORMHelpers(SimpleTestCase):
 
     jt = jid_table.jid_table("_nonexistent_jid_12345_")
     self.assertEqual(jt.jid, "_nonexistent_jid_12345_")
-    self.assertIsNone(jt.conj)
+    self.assertFalse(hasattr(jt, "conj"))
     self.assertEqual(jt.acct_host_list, [])
     self.assertEqual(jt.host_list, [])
     self.assertEqual(jt.schema, {})

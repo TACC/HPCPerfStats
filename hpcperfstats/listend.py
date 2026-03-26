@@ -452,11 +452,5 @@ def main():
     signal.signal(signal.SIGTERM, previous_sigterm_handler)
 
 
-def _is_shutting_down():
-  # Helper to make the intent of the main loop clearer; currently always
-  # returns True once SIGTERM handler asks the process to stop.
-  return _idle_monitor_stop_event.is_set()
-
-
 if __name__ == "__main__":
   main()

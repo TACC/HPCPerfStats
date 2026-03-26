@@ -23,7 +23,6 @@ def resolve_postgres_wait_target(env: Mapping[str, str] | None = None) -> Tuple[
   1. `POSTGRES_HOST` / `POSTGRES_PORT` if set
   2. `DB_HOST` / `DB_PORT` if set
   3. values from `hpcperfstats.ini` via `hpcperfstats.conf_parser`
-  4. hardcoded defaults (`db:5432`) as a final fallback
   """
   env_map = os.environ if env is None else env
 
@@ -34,18 +33,19 @@ def resolve_postgres_wait_target(env: Mapping[str, str] | None = None) -> Tuple[
     return str(host), str(port)
 
   # Import lazily so tests can override HPCPERFSTATS_INI and reload freely.
-  try:
-    from hpcperfstats import conf_parser as cfg
+  from hpcperfstats import conf_parser as cfg
 
-    if not host:
-      host = cfg.get_host()
-    if not port:
-      port = cfg.get_port()
-  except Exception:
-    # Startup scripts should be resilient; we'll fall back below.
-    pass
+  if not host:
+    host = cfg.get_host()
+  if not port:
+    port = cfg.get_port()
 
-  return str(host or "db"), str(port or "5432")
+  if not host or not port:
+    raise ValueError(
+      "Unable to resolve PostgreSQL host/port from env or configuration"
+    )
+
+  return str(host), str(port)
 
 
 def can_resolve_host_port(host: str, port: str) -> bool:

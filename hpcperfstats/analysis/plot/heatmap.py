@@ -1,7 +1,4 @@
-"""Heatmap plot: CPI (cycles/instruction) per host per time for a job using utils and Bokeh rects.
-
-Supports both legacy utils job format and jid_table (ORM) via plot_from_jid_table().
-"""
+"""Heatmap plot: CPI (cycles/instruction) per host per time for a job using utils and Bokeh rects."""
 import hpcperfstats.conf_parser as cfg
 
 import numpy
@@ -44,13 +41,9 @@ def _build_dynamic_candidates(jt):
 
 
 def _aggregate_counter_df(jt, typ, event):
-  """Get aggregate counter data; prefer arc, fall back to value if needed."""
+  """Get aggregate counter data from arc deltas."""
   agg = jt.get_aggregate_df(typ, "arc", [event], 1.0)
-  src_col = "arc"
-  if agg.empty or "sum_val" not in agg.columns:
-    agg = jt.get_aggregate_df(typ, "value", [event], 1.0)
-    src_col = "value"
-  return agg, src_col
+  return agg, "arc"
 
 
 def _host_cpi_series(schema, stats):
@@ -229,6 +222,6 @@ def plot_and_reason_from_jid_table(jt):
 
 
 def plot_from_jid_table(jt):
-  """Compatibility wrapper returning only the figure (or None)."""
+  """Return only the figure (or None)."""
   fig, _reason = plot_and_reason_from_jid_table(jt)
   return fig

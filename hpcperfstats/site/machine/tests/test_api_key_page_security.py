@@ -63,3 +63,28 @@ class TestApiKeyPageSecurity:
     assert "cannot be shown again" in second_html
     assert raw_key not in second_html
     assert 'id="copy-api-key"' not in second_html
+
+  def test_api_key_page_does_not_include_legacy_copy_fallback(self):
+    client = Client()
+    session = client.session
+    session["username"] = "alice"
+    session["is_staff"] = False
+    session.save()
+
+    fake_key = "a" * 64
+    fake_obj = SimpleNamespace(key_prefix=fake_key[:12])
+    fake_qs = MagicMock()
+    fake_qs.order_by.return_value.first.return_value = None
+
+    with patch("hpcperfstats.site.hpcperfstats_site.views.check_for_tokens", return_value=True), patch(
+      "hpcperfstats.site.hpcperfstats_site.views.ApiKey.objects.filter", return_value=fake_qs
+    ), patch(
+      "hpcperfstats.site.hpcperfstats_site.views.ApiKey.create_from_raw_key",
+      return_value=(fake_obj, fake_key),
+    ):
+      response = client.get("/api-key/")
+
+    html = response.content.decode("utf-8")
+    assert response.status_code == 200
+    assert "navigator.clipboard.writeText" in html
+    assert "document.execCommand" not in html

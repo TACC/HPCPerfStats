@@ -12,14 +12,10 @@ DEFAULT_PEAK_FLOPS_GF = 1000.0
 DEFAULT_PEAK_BW_GB = 100.0
 
 
-def _aggregate_prefer_arc_then_value(jt, typ, events, conv):
-    """Get aggregate df for typ/events; prefer arc and fall back to value."""
+def _aggregate_arc(jt, typ, events, conv):
+    """Get aggregate df for typ/events from arc deltas."""
     agg = jt.get_aggregate_df(typ, "arc", events, conv)
-    source = "arc"
-    if agg.empty or "sum_val" not in agg.columns:
-        agg = jt.get_aggregate_df(typ, "value", events, conv)
-        source = "value"
-    return agg, source
+    return agg, "arc"
 
 
 def _get_flops_bw_df_and_reason(jt):
@@ -33,8 +29,8 @@ def _get_flops_bw_df_and_reason(jt):
     attempts = []
 
     # AMD: FLOPS and MBW channels
-    agg_flops, flops_src = _aggregate_prefer_arc_then_value(jt, "amd64_pmc", ["FLOPS"], 1e-9)
-    agg_bw, bw_src = _aggregate_prefer_arc_then_value(
+    agg_flops, flops_src = _aggregate_arc(jt, "amd64_pmc", ["FLOPS"], 1e-9)
+    agg_bw, bw_src = _aggregate_arc(
         jt, "amd64_df",
         ["MBW_CHANNEL_0", "MBW_CHANNEL_1", "MBW_CHANNEL_2", "MBW_CHANNEL_3"],
         2 / (1024 ** 3),
@@ -61,7 +57,7 @@ def _get_flops_bw_df_and_reason(jt):
         agg_flops = None
         flops_src = None
         for intel_typ in ("intel_8pmc3", "intel_4pmc3"):
-            cand, cand_src = _aggregate_prefer_arc_then_value(jt, intel_typ, fp_events, 1e-9)
+            cand, cand_src = _aggregate_arc(jt, intel_typ, fp_events, 1e-9)
             attempts.append(
                 f"{intel_typ} rows(flops={len(cand.index)}) src(flops={cand_src})"
             )
@@ -69,7 +65,7 @@ def _get_flops_bw_df_and_reason(jt):
                 agg_flops = cand
                 flops_src = cand_src
                 break
-        agg_bw, bw_src = _aggregate_prefer_arc_then_value(
+        agg_bw, bw_src = _aggregate_arc(
             jt, "intel_skx_imc", ["CAS_READS", "CAS_WRITES"],
             64 / (1024 ** 3),
         )

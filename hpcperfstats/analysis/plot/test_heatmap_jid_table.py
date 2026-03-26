@@ -51,14 +51,14 @@ def test_plot_from_jid_table_falls_back_to_mperf_when_aperf_missing():
   assert fig is not None
 
 
-def test_plot_from_jid_table_supports_value_fallback_when_arc_missing():
+def test_plot_from_jid_table_returns_none_when_arc_missing():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = _make_jt_with_agg({
       ("value", "APERF"): [("n1.cluster", t0, 210.0)],
       ("value", "INST_RETIRED"): [("n1.cluster", t0, 105.0)],
   })
   fig = plot_from_jid_table(jt)
-  assert fig is not None
+  assert fig is None
 
 
 def test_plot_from_jid_table_supports_dynamic_type_discovery():

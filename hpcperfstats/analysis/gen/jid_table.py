@@ -51,7 +51,6 @@ class jid_table:
     log_print("Initializing table for job {0}".format(jid))
 
     self.jid = jid
-    self.conj = None  # Deprecated: no raw connection; kept for API compatibility.
 
     try:
       job = cached_orm(
@@ -280,7 +279,7 @@ class jid_table:
     return result if result is not None else queryset_to_dataframe(None)
 
   def close(self):
-    """No-op; no connection to close. Kept for context manager compatibility.
+    """No-op; provided for context-manager symmetry.
 
         """
     pass
@@ -421,7 +420,6 @@ class HostDataProvider:
         """
     self.jid = host_fqdn.split(".")[0].replace("-", "_")
     self.host_list = [host_fqdn]
-    self.conj = None
     self._base_filter = {
         "host": host_fqdn,
         "time__gte": start_time,

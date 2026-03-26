@@ -155,21 +155,6 @@ def api_key_page(request):
       const statusEl = document.getElementById("api-key-copy-status");
       if (!copyBtn || !apiKeyEl || !statusEl) return;
 
-      async function writeToClipboard(text) {{
-        if (navigator && navigator.clipboard && navigator.clipboard.writeText) {{
-          await navigator.clipboard.writeText(text);
-          return;
-        }}
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }}
-
       copyBtn.addEventListener("click", async function () {{
         const key = (apiKeyEl.textContent || apiKeyEl.innerText || "").trim();
         if (!key) return;
@@ -177,7 +162,7 @@ def api_key_page(request):
         copyBtn.disabled = true;
         statusEl.textContent = "";
         try {{
-          await writeToClipboard(key);
+          await navigator.clipboard.writeText(key);
           statusEl.textContent = "Copied";
         }} catch (e) {{
           console.error("Failed to copy API key", e);

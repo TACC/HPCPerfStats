@@ -34,7 +34,7 @@ def test_roofline_reports_missing_counter_reason():
   assert "Attempted:" in reason
 
 
-def test_roofline_supports_value_fallback_for_amd_counters():
+def test_roofline_reports_missing_reason_when_only_value_counters_exist():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = _make_jt(
       [("n1.cluster", t0)],
@@ -44,6 +44,7 @@ def test_roofline_supports_value_fallback_for_amd_counters():
       },
   )
   fig, reason = plot_and_reason_roofline_from_jid_table(jt)
-  assert fig is not None
-  assert reason is None
+  assert fig is None
+  assert reason is not None
+  assert "Missing roofline counters in host_data" in reason
 
