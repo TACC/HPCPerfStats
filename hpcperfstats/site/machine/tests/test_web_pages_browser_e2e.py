@@ -10,7 +10,11 @@ from wsgiref.simple_server import make_server
 import pytest
 from django.conf import settings
 from django.core.wsgi import get_wsgi_application
-from playwright.sync_api import sync_playwright
+
+try:
+  from playwright.sync_api import sync_playwright
+except ModuleNotFoundError:
+  pytest.skip("playwright is required for browser E2E tests", allow_module_level=True)
 
 
 @contextmanager

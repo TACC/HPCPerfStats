@@ -47,6 +47,7 @@ test = [
   "pytest>=7.0",
   "pytest-django>=4.5",
   "pytest-cov>=4.0",
+  "playwright>=1.54.0",
 ]
 dev = [
   "yapf",  # Google style formatter
@@ -114,3 +115,6 @@ quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
 docstring-code-format = true
+
+[tool.hpcperfstats.testing]
+web_e2e_runner = "tests/run_web_e2e_workflow.sh"

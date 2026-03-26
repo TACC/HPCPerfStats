@@ -22,10 +22,10 @@ def _candidate_config_paths():
     return [env_path]
 
   return [
-      # Common container/runtime location.
-      "/home/hpcperfstats/hpcperfstats.ini",
       # Local development from repo root.
       os.path.abspath(os.path.join(os.getcwd(), "hpcperfstats.ini")),
+      # Common container/runtime location.
+      "/home/hpcperfstats/hpcperfstats.ini",
       # Source tree locations.
       os.path.abspath(os.path.join(module_dir, "..", "hpcperfstats.ini")),
       os.path.abspath(os.path.join(module_dir, "..", "hpcperfstats.ini.example")),
