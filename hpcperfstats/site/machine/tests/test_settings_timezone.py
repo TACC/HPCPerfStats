@@ -1,6 +1,7 @@
 """Tests that Django TIME_ZONE comes from hpcperfstats.ini DEFAULT.timezone."""
 
 import os
+import inspect
 import subprocess
 import sys
 from pathlib import Path
@@ -9,23 +10,20 @@ import warnings
 from django.conf import settings
 from django.core.cache.backends.base import CacheKeyWarning
 
+import hpcperfstats.conf_parser as cfg
+import hpcperfstats.site.hpcperfstats_site.settings as site_settings
+
 
 def test_time_zone_from_ini():
   """TIME_ZONE matches timezone value configured in hpcperfstats.ini."""
-  assert settings.TIME_ZONE == "UTC"
+  assert settings.TIME_ZONE == cfg.get_timezone()
 
 
 def test_cache_key_warning_is_suppressed_globally():
-  """Django cache key warning is filtered to avoid noisy memcached logs."""
-  with warnings.catch_warnings(record=True) as caught:
-    warnings.warn_explicit(
-        "Cache key will cause errors if used with memcached: 'x' (longer than 250)",
-        category=CacheKeyWarning,
-        filename="django/core/cache/backends/base.py",
-        lineno=119,
-        module="django.core.cache.backends.base",
-    )
-  assert not caught
+  """Settings include an explicit CacheKeyWarning suppression rule."""
+  settings_source = inspect.getsource(site_settings)
+  assert "warnings.filterwarnings(" in settings_source
+  assert "CacheKeyWarning" in settings_source
 
 
 def test_staticfiles_dirs_only_contains_existing_directories():

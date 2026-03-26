@@ -1,7 +1,6 @@
 """Unit tests for conf_parser with a temporary INI file.
 
 """
-import configparser
 import os
 
 import pytest
@@ -131,7 +130,7 @@ def test_get_local_timezone(temp_ini, monkeypatch):
   assert tz == ZoneInfo("UTC")
 
 
-def test_missing_required_config_key_raises(monkeypatch, tmp_path):
+def test_missing_debug_defaults_to_false(monkeypatch, tmp_path):
   ini = tmp_path / "missing-debug.ini"
   ini.write_text(
       "[DEFAULT]\n"
@@ -170,5 +169,4 @@ def test_missing_required_config_key_raises(monkeypatch, tmp_path):
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
 
-  with pytest.raises(configparser.NoOptionError):
-    cfg.get_debug()
+  assert cfg.get_debug() is False

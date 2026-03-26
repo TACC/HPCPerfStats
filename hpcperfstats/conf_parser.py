@@ -36,8 +36,12 @@ def get_db_name():
 
 
 def get_debug():
-  """Return True if DEFAULT.debug is yes/true/1, else False."""
-  return _get('DEFAULT', 'debug').lower() in ("yes", "true", "1")
+  """Return True if DEFAULT.debug is yes/true/1, else False.
+
+    Missing DEFAULT.debug is treated as False to keep startup resilient when
+    older/minimal configs omit this optional setting.
+    """
+  return cfg.get('DEFAULT', 'debug', fallback='no').lower() in ("yes", "true", "1")
 
 
 def get_secret_key():
