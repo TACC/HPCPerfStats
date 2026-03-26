@@ -93,3 +93,29 @@ class TestWebPagesEndToEnd:
       assert "HPCPerfStats API key" in rotate_html
       assert "This key is shown only once." in rotate_html
       assert "raw-new-api-key" in rotate_html
+
+  def test_staff_can_disable_staff_for_current_session(self):
+    """Validate staff-only session demotion endpoint and resulting session state."""
+    client = Client()
+    session = client.session
+    session["access_token"] = "token"
+    session["username"] = "webtest-user"
+    session["is_staff"] = True
+    session.save()
+
+    drop_response = client.post("/api/session/drop-staff/")
+    assert drop_response.status_code == 200
+    payload = drop_response.json()
+    assert payload["ok"] is True
+    assert payload["is_staff"] is False
+    assert "Log out and log back in" in payload["message"]
+
+    session_response = client.get("/api/session/")
+    assert session_response.status_code == 200
+    session_payload = session_response.json()
+    assert session_payload["logged_in"] is True
+    assert session_payload["is_staff"] is False
+
+    # After demotion, staff-only endpoints should be denied for this session.
+    staff_only_response = client.get("/api/admin_monitor/")
+    assert staff_only_response.status_code == 403

@@ -777,6 +777,33 @@ def session_info(request):
     })
 
 
+@api_view(["POST"])
+def drop_staff_for_session(request):
+    """Remove staff access for the current authenticated session only."""
+    err = _require_auth(request)
+    if err is not None:
+        return err
+    if not request.session.get("is_staff", False):
+        return Response(
+            {"error": "Staff access required"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    request.session["is_staff"] = False
+    if hasattr(request.session, "modified"):
+        request.session.modified = True
+    return Response(
+        {
+            "ok": True,
+            "message": (
+                "Staff access removed for this session. "
+                "Log out and log back in to restore staff access."
+            ),
+            "is_staff": False,
+        }
+    )
+
+
 @cache_page(TIMEOUT_MEDIUM)
 @api_view(["GET"])
 def home_options(request):

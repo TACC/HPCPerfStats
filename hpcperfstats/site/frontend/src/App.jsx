@@ -34,7 +34,7 @@ export default function App() {
   }
 
   return (
-    <Layout session={session}>
+    <Layout session={session} onSessionChange={setSession}>
       <Routes>
         <Route index element={<Search />} />
         <Route path="job/:pk" element={<JobDetail />} />

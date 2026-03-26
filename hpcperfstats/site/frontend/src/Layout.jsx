@@ -1,11 +1,35 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { api } from "./api";
 import ExtendedSearch from "./components/ExtendedSearch";
 
-export default function Layout({ session, children }) {
+export default function Layout({ session, onSessionChange, children }) {
   const navigate = useNavigate();
   const [extendedSearchOpen, setExtendedSearchOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [staffMessage, setStaffMessage] = useState("");
+  const [isDroppingStaff, setIsDroppingStaff] = useState(false);
+
+  async function handleDropStaffForSession() {
+    if (isDroppingStaff) return;
+    setIsDroppingStaff(true);
+    setStaffMessage("");
+    try {
+      const response = await api.dropStaffForSession();
+      const refreshedSession = await api.getSession();
+      if (typeof onSessionChange === "function") {
+        onSessionChange(refreshedSession);
+      }
+      setStaffMessage(
+        response?.message ||
+          "Staff access removed for this session. Log out and log back in to restore staff access."
+      );
+    } catch (error) {
+      setStaffMessage(error?.message || "Unable to remove staff access for this session.");
+    } finally {
+      setIsDroppingStaff(false);
+    }
+  }
 
   return (
     <div className="container-fluid">
@@ -57,10 +81,23 @@ export default function Layout({ session, children }) {
                     >
                       HPCPerfStats Monitor
                     </Link>
+                    <button
+                      type="button"
+                      className="btn btn-outline-warning btn-sm ms-2"
+                      onClick={handleDropStaffForSession}
+                      disabled={isDroppingStaff}
+                    >
+                      {isDroppingStaff ? "Removing staff access..." : "Disable staff for session"}
+                    </button>
                   </>
                 )}
                 <a href="/logout/" className="btn btn-outline-secondary btn-sm">Logout</a>
               </div>
+              {staffMessage && (
+                <div className="alert alert-info py-1 px-2 mb-0" role="alert">
+                  {staffMessage}
+                </div>
+              )}
               <div className="navbar-actions-row">
                 <button
                   type="button"

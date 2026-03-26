@@ -48,6 +48,7 @@ async function request(path, options = {}) {
 
 export const api = {
   getSession: () => request("/session/"),
+  dropStaffForSession: () => request("/session/drop-staff/", { method: "POST" }),
   getHomeOptions: () => request("/home/"),
   search: (params) => request("/search/?" + new URLSearchParams(params).toString()),
   getJobList: (params) => request("/jobs/?" + new URLSearchParams(params).toString()),

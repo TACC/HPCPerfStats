@@ -92,6 +92,51 @@ class TestSessionInfo:
 
 
 @pytest.mark.django_db
+class TestDropStaffForSession:
+  """Tests for the drop_staff_for_session endpoint."""
+
+  def test_drop_staff_for_session_requires_auth(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.post("/api/session/drop-staff/")
+
+    with patch("hpcperfstats.site.machine.api._require_auth") as mock_auth:
+      mock_auth.return_value = api.Response({"detail": "unauthorized"}, status=401)
+      response = api.drop_staff_for_session(request)
+
+    assert response.status_code == 401
+
+  def test_drop_staff_for_session_requires_current_staff(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.post("/api/session/drop-staff/")
+    request.session = {"username": "alice", "is_staff": False}
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None):
+      response = api.drop_staff_for_session(request)
+
+    assert response.status_code == 403
+    assert response.data["error"] == "Staff access required"
+
+  def test_drop_staff_for_session_removes_staff_flag_and_returns_notice(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.post("/api/session/drop-staff/")
+    request.session = {"username": "alice", "is_staff": True}
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None):
+      response = api.drop_staff_for_session(request)
+
+    assert response.status_code == 200
+    assert request.session["is_staff"] is False
+    assert response.data["is_staff"] is False
+    assert "Log out and log back in" in response.data["message"]
+
+
+@pytest.mark.django_db
 class TestHomeOptions:
   """Tests for the home_options endpoint."""
 
