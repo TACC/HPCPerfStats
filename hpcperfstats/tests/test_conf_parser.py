@@ -1,6 +1,7 @@
 """Unit tests for conf_parser with a temporary INI file.
 
 """
+import configparser
 import os
 
 import pytest
