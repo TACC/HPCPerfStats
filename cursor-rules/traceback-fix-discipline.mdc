@@ -1,0 +1,13 @@
+---
+description: Root-cause workflow for traceback-driven backend bug fixes
+globs: **/*.py
+alwaysApply: true
+---
+
+# Traceback Fix Discipline
+
+- When a traceback or runtime error log is provided, identify the first project-owned frame and fix the root cause there.
+- Do not implement symptom-only patches in downstream code paths when the upstream cause is actionable.
+- Add or update regression tests that fail before the fix and pass after the fix.
+- Use unit tests by default; use integration tests when the failure spans multiple components.
+- If traceback-driven changes alter API output, verify serializer/response shape compatibility with calling UI or client code.

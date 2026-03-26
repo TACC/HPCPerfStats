@@ -1,0 +1,34 @@
+---
+description: Keep local compose DB lifecycle ready for web tests
+alwaysApply: true
+---
+
+# Local Compose DB Lifecycle For Web Tests
+
+When changing compose, config, startup, or migration behavior that affects local
+web/DB availability, keep local runtime and data lifecycle consistent for UI tests.
+
+## Trigger conditions
+- Changes to `docker-compose.yaml` or `docker-compose.app.yaml`.
+- Changes to startup/config paths (for example `HPCPERFSTATS_INI`, host allowlists, env wiring).
+- Changes that affect migration order or DB readiness checks.
+
+## Required actions
+- Before running each web E2E test, fully reset Docker state:
+  - `docker-compose down -v --remove-orphans`
+  - `docker volume prune -f`
+  - `docker-compose build web`
+  - `docker-compose up -d db redis web`
+- Ensure local services are reachable:
+  - web at `http://localhost:8000`
+  - db at `db:5432` on the compose network
+- Ensure DB lifecycle is complete before UI tests:
+  - dependencies healthy
+  - migrations applied successfully
+- Seed minimal demo DB data when UI pages depend on data-backed rendering.
+- Prefer the single workflow runner:
+  - `tests/run_web_e2e_workflow.sh`
+  - or `tests/run_web_e2e_workflow.sh --seed-cmd "<seed command>"` when data recreation is required
+- After any test workflow that starts compose containers, always tear down and
+  remove volumes:
+  - `docker-compose down -v`

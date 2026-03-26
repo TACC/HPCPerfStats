@@ -1,0 +1,39 @@
+---
+description: Keep web pages end-to-end coverage current
+alwaysApply: true
+---
+
+# Web Pages E2E Test Maintenance
+
+When changing any web-facing page, route, or rendered HTML/SPA behavior, update
+both:
+- `HPCPerfStats/hpcperfstats/site/machine/tests/test_web_pages_e2e.py`
+- `HPCPerfStats/hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py`
+in the same task.
+
+## Trigger conditions
+- Django URL/view changes affecting page navigation or rendered page content.
+- React SPA route/page behavior changes under `/machine/`.
+- API-key page, robots, or CSP-report page behavior changes.
+
+## Required actions
+- Update/add assertions in both web-page E2E tests for changed page behavior.
+- Keep coverage for:
+  - Root redirect and SPA shell serving.
+  - Representative SPA deep links.
+  - API-key page auth gate and key lifecycle UI behavior.
+  - `robots.txt` and `csp-report` endpoints.
+- Before each E2E run, reset Docker runtime state:
+  - `docker-compose down -v --remove-orphans`
+  - `docker volume prune -f`
+  - `docker-compose build web`
+  - `docker-compose up -d db redis`
+  - `docker-compose ps` and confirm `db`/`redis` are healthy
+- Recreate/seed any data required by the E2E scenario before running the tests.
+- Prefer the single workflow runner:
+  - `tests/run_web_e2e_workflow.sh`
+  - optionally pass seed recreation logic: `tests/run_web_e2e_workflow.sh --seed-cmd "<seed command>"`
+
+## Browser E2E runtime notes
+- `test_web_pages_browser_e2e.py` uses Playwright and requires browser binaries.
+- If Playwright is unavailable, the browser E2E module may be skipped; this is acceptable only in environments where browser tooling cannot be installed.

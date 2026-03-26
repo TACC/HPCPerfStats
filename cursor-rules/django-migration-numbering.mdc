@@ -1,0 +1,17 @@
+---
+description: Enforce correct Django migration numbering and dependencies
+globs: **/migrations/*.py
+alwaysApply: true
+---
+
+# Django Migration Numbering
+
+- Before creating a new migration file, inspect existing migration filenames in that app and find the highest numeric prefix.
+- Name the new migration with the next integer prefix (zero-padded to 4 digits), never by guessing.
+- Ensure there are no duplicate numeric prefixes in the same migrations directory.
+- Set the migration `dependencies` to the current latest migration in that app unless intentionally creating a merge migration.
+- If duplicate numbers already exist, do not add another migration until numbering is corrected.
+
+Example:
+- Latest existing file: `0015_some_change.py`
+- Next new migration must be: `0016_<descriptive_name>.py`

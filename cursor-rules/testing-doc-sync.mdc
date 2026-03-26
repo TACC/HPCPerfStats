@@ -1,0 +1,26 @@
+---
+description: Keep TESTING.md synced with testing changes
+alwaysApply: true
+---
+
+# Testing Documentation Sync
+
+When test behavior, test scope, or test execution workflow changes, update
+`HPCPerfStats/TESTING.md` in the same task.
+
+## Trigger conditions
+- New/removed/renamed test files.
+- Changes to test commands, markers, fixtures, or test dependencies.
+- Changes to test runners/scripts (for example `run_tests.py`,
+  `tests/run_web_e2e_workflow.sh`, compose-based test workflows, or
+  `pyproject.toml` test runner metadata).
+- Changes to test prerequisites (DB/Redis/Playwright/setup steps).
+
+## Required actions
+- Update `HPCPerfStats/TESTING.md` to reflect the new commands, scope, and prerequisites.
+- Keep examples copy-paste ready and consistent with current scripts/config.
+- Include both quick-start commands and any specialized runners when applicable.
+
+## Verification
+- Confirm documented commands/paths match current repository files.
+- For non-doc-only testing changes, run the relevant tests after updates.
