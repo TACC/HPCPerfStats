@@ -1,6 +1,8 @@
 # HPCPerfStats monitor tests
 
-This directory holds **automated tests** for the `hpcperfstatsd` tree. Production sources stay in `../src/`; tests are small drivers that compile and link selected `.c` files from `src/` (see `Makefile.am`).
+This directory holds **automated tests** for the monitor package. For package layout, build flavors, and key `src/` modules, see **[../README.md](../README.md)**.
+
+Production sources stay in `../src/`; tests are small drivers that compile and link selected `.c` files from `src/` (see `Makefile.am`).
 
 ## Layout
 

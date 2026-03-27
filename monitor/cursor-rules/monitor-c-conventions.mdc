@@ -8,6 +8,7 @@ alwaysApply: false
 
 # Monitor C conventions
 
+- **Package docs**: Keep **`README.md`** (and **`tests/README.md`** when test workflow changes) aligned with the tree; see **monitor-readme-maintenance**.
 - **Language**: C (GNU C11 as used by the project). No C++ in `HPCPerfStats/monitor/src/`.
 - **Style**: Match surrounding files for indentation and braces; prefer `snake_case` for new functions and file-local `static` helpers.
 - **Structure**: Prefer small, single-purpose functions; keep RabbitMQ daemon logic in `monitor_daemon.c` with `monitor_daemon.h` for internal declarations shared with `monitor.c`.

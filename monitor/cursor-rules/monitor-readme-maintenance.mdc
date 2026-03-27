@@ -1,0 +1,19 @@
+---
+description: Keep monitor README.md (and tests README) aligned with real layout and workflows
+globs:
+  - HPCPerfStats/monitor/**
+alwaysApply: false
+---
+
+# Monitor README maintenance
+
+When a change under `HPCPerfStats/monitor/` affects **how developers build, test, or navigate the tree**, or **where major logic lives**, update documentation in the same change (or immediately after):
+
+1. **`HPCPerfStats/monitor/README.md`** — package overview, directory layout, build/verify flow, pointers to legacy `README` and `tests/README.md`, and the “Key source modules” table when modules are added, renamed, split, or removed.
+2. **`HPCPerfStats/monitor/tests/README.md`** — when only the test suite layout, `Makefile.am` rules, or `run_tests.sh` behavior changes.
+
+Do **not** duplicate the full on-disk stats archive specification in `README.md`; that remains in the plain-text **`README`** unless you intentionally consolidate (then update `EXTRA_DIST` and any references).
+
+Typical triggers: new top-level dirs, moved tests, new `src/*.c` units called out in conventions, configure/Automake behavior visible to contributors, or consumer contract / listend expectations noted in README today.
+
+This complements **global-testing-discipline** and **monitor-c-new-function-unittests** (tests) and **monitor-static-build-verification** (build path).
