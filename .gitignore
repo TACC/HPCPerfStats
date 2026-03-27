@@ -25,6 +25,7 @@ stats.x
 bin/
 lib/
 build/
+.build/
 doc/
 *.db
 *master.png
