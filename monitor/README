@@ -171,9 +171,9 @@ are documented in `VARIORUM_MIGRATION.md`.
 
 ### LIKWID Integration
 
-Monitor supports optional LIKWID integration for PMU migration experiments.
-Enable it only with explicit GPL acknowledgement:
-`--enable-likwid --enable-gpl-likwid`.
+Monitor now uses a unified LIKWID PMU integration path with compile-time
+architecture selection. Configure with:
+`--with-monitor-arch=auto` (or `intel`/`amd`).
 Detailed scope, fallback matrix, and operational notes are documented in
 `LIKWID_MIGRATION.md`.
 

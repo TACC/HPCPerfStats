@@ -39,7 +39,8 @@ endif
 
 if LIKWID
 hpcperfstatsd_CPPFLAGS += \
-	-DHAVE_LIKWID
+	-DHAVE_LIKWID \
+	@MONITOR_ARCH_CPPFLAG@
 endif
 
 hpcperfstatsd_SOURCES = \
@@ -94,6 +95,12 @@ TYPES 	= \
 	vm.c
 
 if HARDWARE
+if LIKWID
+TYPES 	+= \
+	amd64_rapl.c \
+	intel_rapl.c \
+	likwid_metrics.c
+else
 TYPES 	+= \
 	amd64_pmc.c \
 	amd64_df.c \
@@ -128,6 +135,7 @@ TYPES 	+= \
 	intel_snb_qpi.c \
 	intel_snb_r2pci.c
 endif
+endif
 
 if VARIORUM
 hpcperfstatsd_SOURCES += \
@@ -138,7 +146,16 @@ endif
 if LIKWID
 hpcperfstatsd_SOURCES += \
 	likwid_pmc_adapter.h \
-	likwid_pmc_adapter.c
+	likwid_pmc_adapter.c \
+	likwid_arch_map.h
+if MONITOR_ARCH_INTEL
+hpcperfstatsd_SOURCES += \
+	likwid_arch_map_intel.c
+endif
+if MONITOR_ARCH_AMD
+hpcperfstatsd_SOURCES += \
+	likwid_arch_map_amd.c
+endif
 endif
 
 if INFINIBAND

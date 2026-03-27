@@ -1,5 +1,6 @@
 AC_INIT([hpcperfstats], [2.4], [rtevans@tacc.utexas.edu])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror -Wno-portability])
+AC_CANONICAL_HOST
 AC_PROG_CC
 AC_PROG_CXX
 AM_PROG_CC_C_O
@@ -37,6 +38,33 @@ if test "x${have_likwid}" = xyes; then
     [AC_MSG_ERROR([Unable to find likwid.h!])])
 fi
 AM_CONDITIONAL([LIKWID], [test x$likwid = xtrue])
+
+AC_ARG_WITH([monitor-arch],
+[AS_HELP_STRING([--with-monitor-arch={intel|amd|auto}], [Compile-time LIKWID architecture selection (default: auto)])],
+[monitor_arch="$withval"],
+[monitor_arch="auto"])
+
+case "$monitor_arch" in
+  intel|amd|auto) ;;
+  *) AC_MSG_ERROR([bad value ${monitor_arch} for --with-monitor-arch]) ;;
+esac
+
+if test "x$monitor_arch" = "xauto"; then
+  case "$host_cpu" in
+    x86_64|i?86) monitor_arch="intel" ;;
+    aarch64|arm*|ppc64*|riscv64) monitor_arch="intel" ;;
+    *) monitor_arch="intel" ;;
+  esac
+fi
+
+if test "x$monitor_arch" = "xintel"; then
+  MONITOR_ARCH_CPPFLAG="-DMONITOR_ARCH_INTEL"
+else
+  MONITOR_ARCH_CPPFLAG="-DMONITOR_ARCH_AMD"
+fi
+AC_SUBST([MONITOR_ARCH_CPPFLAG])
+AM_CONDITIONAL([MONITOR_ARCH_INTEL], [test "x$monitor_arch" = "xintel"])
+AM_CONDITIONAL([MONITOR_ARCH_AMD], [test "x$monitor_arch" = "xamd"])
 
 AC_ARG_ENABLE([infiniband],
 [  --enable-infiniband	Enable Infiniband support (default is true)],
