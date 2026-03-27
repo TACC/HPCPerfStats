@@ -94,6 +94,44 @@ describe("JobList", () => {
     expect(screen.getByText("COMPLETED")).toBeInTheDocument();
   });
 
+  it("renders pagination controls when multiple pages exist", async () => {
+    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+      job_list: [
+        {
+          jid: 1,
+          has_metrics: true,
+          username: "alice",
+          account: "acct",
+          start_time: "2024-01-01T00:00:00Z",
+          end_time: "2024-01-01T01:00:00Z",
+          runtime: 3600,
+          queue: "normal",
+          jobname: "job1",
+          state: "COMPLETED",
+          ncores: 32,
+          nhosts: 2,
+          node_hrs: 64,
+        },
+      ],
+      nj: 100,
+      aggregates: { total_node_hours: 6400 },
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 5 },
+    });
+    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({
+      plots: [],
+    });
+    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+
+    renderJobList();
+
+    await waitFor(() => {
+      expect(screen.getByText("First")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Last")).toBeInTheDocument();
+  });
+
   it("hides histogram unavailable details and copy for non-staff users", async () => {
     vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
       job_list: [],

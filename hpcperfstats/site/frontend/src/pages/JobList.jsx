@@ -6,6 +6,8 @@ import HistogramThumbnails from "../components/HistogramThumbnails";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
 
+const ResolvedReactPaginate = ReactPaginate?.default || ReactPaginate;
+
 export default function JobList() {
   const [searchParams] = useSearchParams();
   const paramsFromRoute = useParams();
@@ -246,7 +248,7 @@ export default function JobList() {
           ) : (
             <span className="pagination-first disabled">First</span>
           )}
-          <ReactPaginate
+          <ResolvedReactPaginate
             forcePage={page - 1}
             pageCount={num_pages}
             onPageChange={({ selected }) =>
