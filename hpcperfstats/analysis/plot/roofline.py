@@ -1,11 +1,25 @@
 """Roofline plot: arithmetic intensity vs performance (GFLOP/s) from jid_table FLOPS and memory bandwidth.
 
 Uses the same PMC sources as SummaryPlot (AMD or Intel). Draws the roofline curve and scatter of (AI, perf) points.
+
+AMD path requires amd64_df MBW channels (monitor enables these on AMD family 17h/19h only). Intel memory
+side tries IMC types in INTEL_IMC_STATS_TYPES (SNB through SKX). Intel FLOPS use FP_ARITH when present,
+else SNB/IVB-style SSE/AVX double counter proxies.
 """
 import math
 import numpy
 from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.plotting import figure
+
+from hpcperfstats.analysis.gen.utils import INTEL_IMC_STATS_TYPES
+
+# Intel SSE/AVX double FLOP proxy events (SNB/IVB-style; pre-FP_ARITH uarch).
+_INTEL_LEGACY_SSE_FLOP_EVENTS = (
+    ("SSE_DOUBLE_SCALAR", 1),
+    ("SSE_DOUBLE_PACKED", 2),
+    ("SIMD_DOUBLE_256", 4),
+)
+
 
 # Default peak specs (GFLOP/s and GB/s) when not in config; ridge = peak_flops / peak_bw
 DEFAULT_PEAK_FLOPS_GF = 1000.0
@@ -16,6 +30,92 @@ def _aggregate_arc(jt, typ, events, conv):
     """Get aggregate df for typ/events from arc deltas."""
     agg = jt.get_aggregate_df(typ, "arc", events, conv)
     return agg, "arc"
+
+
+def _merge_weighted_event_arcs(jt, intel_typ, event_weights, attempts, label):
+    """Sum per-(host,time) arc-derived GF/s for events with different FLOP weights."""
+    merged = None
+    for ev, weight in event_weights:
+        agg, src = _aggregate_arc(jt, intel_typ, [ev], 1e-9 * weight)
+        attempts.append(
+            f"{label}:{intel_typ} event={ev} rows={len(agg.index)} src={src}"
+        )
+        if agg.empty or "sum_val" not in agg.columns:
+            continue
+        part = agg[["host", "time", "sum_val"]].rename(
+            columns={"sum_val": "flops_gf"}
+        )
+        if merged is None:
+            merged = part
+        else:
+            merged = merged.merge(
+                part, on=["host", "time"], how="outer", suffixes=("_x", "_y")
+            )
+            merged["flops_gf"] = merged["flops_gf_x"].fillna(0) + merged[
+                "flops_gf_y"
+            ].fillna(0)
+            merged = merged[["host", "time", "flops_gf"]]
+    if merged is None or merged.empty:
+        return None
+    if (merged["flops_gf"].fillna(0) == 0).all():
+        return None
+    return merged
+
+
+def _intel_fp_arith_flops_gf(jt, attempts):
+    """GFLOP/s from summed FP_ARITH_INST_RETIRED_* on intel_8pmc3 or intel_4pmc3."""
+    fp_events = [
+        "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",
+        "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE",
+        "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE",
+        "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE",
+        "FP_ARITH_INST_RETIRED_SCALAR_SINGLE",
+        "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE",
+        "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE",
+        "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
+    ]
+    for intel_typ in ("intel_8pmc3", "intel_4pmc3"):
+        cand, cand_src = _aggregate_arc(jt, intel_typ, fp_events, 1e-9)
+        attempts.append(
+            f"intel_fp_arith:{intel_typ} rows(flops={len(cand.index)}) src={cand_src}"
+        )
+        if not cand.empty and "sum_val" in cand.columns:
+            return cand.rename(columns={"sum_val": "flops_gf"})[
+                ["host", "time", "flops_gf"]
+            ]
+    return None
+
+
+def _intel_legacy_sse_flops_gf(jt, attempts):
+    """GFLOP/s from SNB/IVB-style SSE/AVX double events when FP_ARITH is absent."""
+    for intel_typ in ("intel_8pmc3", "intel_4pmc3"):
+        merged = _merge_weighted_event_arcs(
+            jt,
+            intel_typ,
+            _INTEL_LEGACY_SSE_FLOP_EVENTS,
+            attempts,
+            "intel_legacy_sse",
+        )
+        if merged is not None:
+            return merged
+    return None
+
+
+def _intel_imc_bw_gb(jt, attempts):
+    """Memory bandwidth (GB/s) from first IMC type with CAS_READS+CAS_WRITES."""
+    conv = 64 / (1024 ** 3)
+    for imc_typ in INTEL_IMC_STATS_TYPES:
+        agg_bw, bw_src = _aggregate_arc(
+            jt, imc_typ, ["CAS_READS", "CAS_WRITES"], conv
+        )
+        attempts.append(
+            f"{imc_typ} rows(bw={len(agg_bw.index)}) src(bw={bw_src})"
+        )
+        if not agg_bw.empty and "sum_val" in agg_bw.columns:
+            return agg_bw.rename(columns={"sum_val": "bw_gb"})[
+                ["host", "time", "bw_gb"]
+            ]
+    return None
 
 
 def _get_flops_bw_df_and_reason(jt):
@@ -42,43 +142,14 @@ def _get_flops_bw_df_and_reason(jt):
         flops_gf = agg_flops.rename(columns={"sum_val": "flops_gf"})[["host", "time", "flops_gf"]]
         bw_gb = agg_bw.rename(columns={"sum_val": "bw_gb"})[["host", "time", "bw_gb"]]
 
-    # Intel: FP_ARITH 32b+64b and IMC CAS_READS+CAS_WRITES
+    # Intel: FP (FP_ARITH or legacy SSE) and IMC CAS_READS+CAS_WRITES
     if flops_gf is None or bw_gb is None:
-        fp_events = [
-            "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",
-            "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE",
-            "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE",
-            "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE",
-            "FP_ARITH_INST_RETIRED_SCALAR_SINGLE",
-            "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE",
-            "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE",
-            "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
-        ]
-        agg_flops = None
-        flops_src = None
-        for intel_typ in ("intel_8pmc3", "intel_4pmc3"):
-            cand, cand_src = _aggregate_arc(jt, intel_typ, fp_events, 1e-9)
-            attempts.append(
-                f"{intel_typ} rows(flops={len(cand.index)}) src(flops={cand_src})"
-            )
-            if not cand.empty and "sum_val" in cand.columns:
-                agg_flops = cand
-                flops_src = cand_src
-                break
-        agg_bw, bw_src = _aggregate_arc(
-            jt, "intel_skx_imc", ["CAS_READS", "CAS_WRITES"],
-            64 / (1024 ** 3),
-        )
-        attempts.append(
-            f"intel_skx_imc rows(bw={len(agg_bw.index)}) src(bw={bw_src})"
-        )
-        if (
-            agg_flops is not None
-            and not agg_bw.empty
-            and "sum_val" in agg_bw.columns
-        ):
-            flops_gf = agg_flops.rename(columns={"sum_val": "flops_gf"})[["host", "time", "flops_gf"]]
-            bw_gb = agg_bw.rename(columns={"sum_val": "bw_gb"})[["host", "time", "bw_gb"]]
+        if flops_gf is None:
+            flops_gf = _intel_fp_arith_flops_gf(jt, attempts)
+        if flops_gf is None:
+            flops_gf = _intel_legacy_sse_flops_gf(jt, attempts)
+        if bw_gb is None:
+            bw_gb = _intel_imc_bw_gb(jt, attempts)
 
     if flops_gf is None or bw_gb is None:
         return (

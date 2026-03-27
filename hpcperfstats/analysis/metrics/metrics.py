@@ -82,6 +82,13 @@ _INTEL_FP_ARITH_EVENTS = [
     "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
 ]
 
+# SNB/IVB-style SSE/AVX double proxies (same weights as roofline / vecpercent_64b).
+_INTEL_LEGACY_SSE_FLOP_EVENTS = [
+    ("SSE_DOUBLE_SCALAR", 1),
+    ("SSE_DOUBLE_PACKED", 2),
+    ("SIMD_DOUBLE_256", 4),
+]
+
 
 def _per_interval_rate(values, t):
   """Compute diff(values) / diff(t) without divide-by-zero.
@@ -499,7 +506,7 @@ class Metrics():
     return float(per_host_vals.mean())
 
   def _job_arc_avg_flops(self, jt):
-    """GFLOP/s from amd64_pmc FLOPS, else summed Intel FP_ARITH_INST_RETIRED_*.
+    """GFLOP/s from amd64_pmc FLOPS, else Intel FP_ARITH sum, else legacy SSE/AVX double proxies.
 
     Returns (mean_gf, typename_used) or (None, None).
     """
@@ -522,6 +529,20 @@ class Metrics():
       )
       if v is not None:
         return v, intel_typ
+    for intel_typ in ("intel_8pmc3", "intel_4pmc3"):
+      total = None
+      for ev, weight in _INTEL_LEGACY_SSE_FLOP_EVENTS:
+        part = self.job_arc(
+            jt,
+            typename=intel_typ,
+            events=[ev],
+            conv=1e-9 * weight,
+            units="GF",
+        )
+        if part is not None:
+          total = part if total is None else total + part
+      if total is not None and total > 0:
+        return total, intel_typ
     return None, None
 
   # Compute metric

@@ -20,6 +20,16 @@ jid_table = None
 
 local_timezone = cfg.get_timezone()
 
+# Intel IMC types that expose CAS_READS/CAS_WRITES (used by roofline and utils.imc).
+INTEL_IMC_STATS_TYPES = (
+    "intel_snb_imc",
+    "intel_ivb_imc",
+    "intel_hsw_imc",
+    "intel_bdw_imc",
+    "intel_knl_mc_dclk",
+    "intel_skx_imc",
+)
+
 
 class utils():
   """Minimal job-like wrapper exposing host stats, schemas, times, and type resolution (pmc/imc/cha) for metrics and plots.
@@ -41,11 +51,10 @@ class utils():
         "intel_4pmc3": 2.7,
         # Nominal reference GHz for APERF/MPERF ratio (same role as Intel list above).
         "amd64_pmc": 2.7,
+        # LIKWID-backed core counters (same fixed-counter semantics as intel_*pmc3 when loaded).
+        "cpu_counter_metrics": 2.7,
     }
-    imc_list = [
-        "intel_snb_imc", "intel_ivb_imc", "intel_hsw_imc", "intel_bdw_imc",
-        "intel_knl_mc_dclk", "intel_skx_imc"
-    ]
+    imc_list = list(INTEL_IMC_STATS_TYPES)
     cha_list = ["intel_knl_cha", "intel_skx_cha"]
     self.job = job
     self.nhosts = len(job.hosts.keys())

@@ -20,8 +20,12 @@ def _candidate_series():
   return [
       ("intel_8pmc3", "APERF", "INST_RETIRED"),
       ("intel_8pmc3", "MPERF", "INST_RETIRED"),
+      ("intel_4pmc3", "APERF", "INST_RETIRED"),
+      ("intel_4pmc3", "MPERF", "INST_RETIRED"),
       ("amd64_pmc", "APERF", "INST_RETIRED"),
       ("amd64_pmc", "MPERF", "INST_RETIRED"),
+      ("cpu_counter_metrics", "APERF", "INST_RETIRED"),
+      ("cpu_counter_metrics", "MPERF", "INST_RETIRED"),
   ]
 
 
@@ -217,7 +221,8 @@ def plot_and_reason_from_jid_table(jt):
   return (
       None,
       "Missing CPI counters in host_data (need APERF or MPERF plus INST_RETIRED in "
-      "intel_8pmc3/amd64_pmc arc data). Attempted: " + attempts_msg,
+      "intel_*pmc3, amd64_pmc, or cpu_counter_metrics arc data). Attempted: "
+      + attempts_msg,
   )
 
 

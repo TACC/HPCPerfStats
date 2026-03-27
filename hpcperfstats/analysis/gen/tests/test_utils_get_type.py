@@ -58,3 +58,19 @@ def test_amd64_pmc_sets_pmc_and_freq_for_get_type():
   schema, stats = u.get_type("pmc", aggregate=True)
   assert schema is not None
   assert "h1" in stats
+
+
+def test_cpu_counter_metrics_sets_pmc_for_get_type():
+  """LIKWID cpu_counter_metrics is treated as the logical PMC typename for plots."""
+  job = _MockJob()
+  job.schemas = {"cpu_counter_metrics": ["INST_RETIRED", "APERF"]}
+  job.hosts = {
+      "h1": _MockHost({
+          "cpu_counter_metrics": {
+              "0": np.array([[0.0, 0.0], [1.0, 2.0]], dtype=np.float64),
+          }
+      }),
+  }
+  u = utils(job)
+  assert u.pmc == "cpu_counter_metrics"
+  assert u.freq == 2.7

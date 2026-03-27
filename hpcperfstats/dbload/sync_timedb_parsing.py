@@ -31,6 +31,11 @@ intel_8pmc3_eventmap = {
     0x4320c7: 'FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE,W=48,U=8',
     0x4340c7: 'FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE,W=48,U=8',
     0x4380c7: 'FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE,W=48,U=16',
+    # SNB/IVB-style SSE/AVX double FLOP proxies (see intel_process cpu_event_map).
+    0x438010: 'SSE_DOUBLE_SCALAR,W=48,U=1',
+    0x431010: 'SSE_DOUBLE_PACKED,W=48,U=2',
+    0x430211: 'SIMD_DOUBLE_256,W=48,U=4',
+    0x439010: 'SSE_DOUBLE_ALL,W=48,U=1',
     "FIXED_CTR0": 'INST_RETIRED,W=48',
     "FIXED_CTR1": 'APERF,W=48',
     "FIXED_CTR2": 'MPERF,W=48'
@@ -51,6 +56,8 @@ EVENTMAPS_BY_TYPE = {
     "amd64_pmc": amd64_pmc_eventmap,
     "amd64_df": amd64_df_eventmap,
     "intel_8pmc3": intel_8pmc3_eventmap,
+    # Same CTL/fixed layout and event programming family as intel_8pmc3.
+    "intel_4pmc3": intel_8pmc3_eventmap,
     "intel_skx_imc": intel_skx_imc_eventmap,
 }
 

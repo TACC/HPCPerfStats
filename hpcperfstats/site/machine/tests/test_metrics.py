@@ -221,6 +221,34 @@ def test_job_arc_avg_flops_uses_amd_when_present():
   assert typename == "amd64_pmc"
 
 
+
+
+def test_job_arc_avg_flops_legacy_sse_when_fp_arith_missing():
+  """avg_flops sums weighted SSE/AVX double proxies when FP_ARITH bundle has no data."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") == "amd64_pmc":
+      return None
+    typ = kw.get("typename")
+    ev = kw.get("events") or []
+    if typ == "intel_8pmc3":
+      if len(ev) > 1:
+        return None
+      if ev == ["SSE_DOUBLE_SCALAR"]:
+        return 1.0
+      if ev == ["SSE_DOUBLE_PACKED"]:
+        return 0.5
+      if ev == ["SIMD_DOUBLE_256"]:
+        return 0.25
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_flops(object())
+  assert abs(value - 1.75) < 1e-9
+  assert typename == "intel_8pmc3"
+
+
 def test_avg_ethbw_mean_across_hosts():
   """avg_ethbw is mean of per-host (rx+tx delta)/(dt * 1MiB), not pooled sum/nhosts."""
   schema = _Schema(["rx_bytes", "tx_bytes"])

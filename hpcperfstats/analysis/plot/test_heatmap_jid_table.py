@@ -82,3 +82,30 @@ def test_plot_from_jid_table_supports_dynamic_type_discovery():
   jt.get_aggregate_df.side_effect = get_aggregate_df
   fig = plot_from_jid_table(jt)
   assert fig is not None
+
+def test_plot_from_jid_table_cpu_counter_metrics_typ():
+  """CPI heatmap accepts cpu_counter_metrics when APERF/INST_RETIRED arc rows exist."""
+  import pandas as pd
+  from unittest.mock import MagicMock
+  from hpcperfstats.analysis.plot.heatmap import plot_from_jid_table
+
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if typ != "cpu_counter_metrics" or val_col != "arc":
+      return pd.DataFrame(columns=["host", "time", "sum_val"])
+    ev = events[0]
+    if ev == "APERF":
+      return pd.DataFrame([("n1.cluster", t0, 300.0)], columns=["host", "time", "sum_val"])
+    if ev == "INST_RETIRED":
+      return pd.DataFrame([("n1.cluster", t0, 100.0)], columns=["host", "time", "sum_val"])
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.schema = {}
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  # Skip intel_8pmc3/4/amd candidates (empty), then cpu_counter_metrics matches.
+  assert plot_from_jid_table(jt) is not None
