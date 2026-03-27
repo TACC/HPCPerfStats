@@ -1,0 +1,33 @@
+---
+description: Canonical verification for monitor C/build — static bundle script, not ad-hoc make
+globs:
+  - HPCPerfStats/monitor/**
+alwaysApply: true
+---
+
+# Monitor verification (canonical)
+
+For **HPCPerfStats/monitor** code, dependency wiring, or Autotools changes, **do not** treat simpler checks as sufficient verification:
+
+- Do **not** rely on ad-hoc `configure && make` or `make check` alone when the build tree is using **system** `librabbitmq` / `libev` / LIKWID without the **pinned static prefix** produced by the bundle scripts.
+- Do **not** skip the static path because it is slower; it is the **source-of-truth** link and configure path for this project.
+
+## Canonical verifier
+
+Run **`HPCPerfStats/monitor/scripts/build_static_bundle.sh`** (from `HPCPerfStats/monitor/` as cwd, or pass the script path explicitly). It:
+
+1. Builds and installs **pinned** static archives into `PREFIX` (default: repo `.build/prefix-static`) unless `SKIP_DEPS=1`.
+2. Configures the monitor with **`--enable-all-static`**, LIKWID CPU backend, and the same flags the project expects for a representative static build.
+3. Runs **`make`** in `HPCPerfStats/monitor/.build-static` and prints **`ldd`** hints for `hpcperfstatsd`.
+
+**Environment**: `PREFIX`, `SRCDIR`, `SKIP_DEPS`, `JOBS`; see script header. Use **`SKIP_DEPS=1`** when `PREFIX` already contains the static `.a` files and you only changed monitor sources.
+
+**Deps-only** (populate prefix without building the daemon): **`HPCPerfStats/monitor/scripts/ensure_dotbuild_prefix_static.sh`** or **`./scripts/build_static_bundle.sh --deps-only`**.
+
+## Tests after the script
+
+The bundle script runs **`make`** but does **not** run **`make check`**. After a successful script run, run **`make check`** in **`HPCPerfStats/monitor/.build-static`** so unit tests and `test_monitor_configure_help.sh` execute against the same configure output.
+
+## Summary for handoffs
+
+When reporting verification, state that **`build_static_bundle.sh` completed** (and **`make check`** in `.build-static` if tests were run). Mention `SKIP_DEPS=1` / `PREFIX` when relevant.

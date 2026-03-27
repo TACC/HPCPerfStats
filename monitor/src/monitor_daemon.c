@@ -52,6 +52,9 @@ int nr_cpus;
 int n_pmcs;
 processor_t processor = (processor_t) 0;
 
+static void send_dumpfile_stats(struct sf_ring_buffer *w);
+static int save_file_stats_buffer(struct stats_buffer *sf);
+
 static void monitor_conf_strip_trailing_newline(char *s)
 {
   size_t n;
@@ -60,6 +63,108 @@ static void monitor_conf_strip_trailing_newline(char *s)
   n = strlen(s);
   if (n > 0 && s[n - 1] == '\n')
     s[n - 1] = '\0';
+}
+
+/* Replace *slot with strdup(value), freeing the previous value unless it is the default literal pointer. */
+static void monitor_conf_replace_dup(char **slot, const char *default_literal, const char *value)
+{
+  if (*slot != NULL && *slot != (char *)default_literal)
+    free(*slot);
+  *slot = strdup(value);
+}
+
+static struct stats_buffer *monitor_daemon_alloc_stats_buffer(void)
+{
+  struct stats_buffer *sf = malloc(sizeof(*sf));
+  if (sf == NULL) {
+    ERROR("Failed allocating stats buffer\n");
+    return NULL;
+  }
+  if (stats_buffer_open(sf, server, port, queue, rmq_user, rmq_password) < 0) {
+    ERROR("Failed opening data buffer : %m\n");
+    free(sf);
+    return NULL;
+  }
+  return sf;
+}
+
+/* After a send attempt: if the ring buffer still has entries, try to drain it over RMQ. */
+static void monitor_daemon_resend_ring_buffer_if_nonempty(struct sf_ring_buffer *w)
+{
+  if (w->q_count <= 0)
+    return;
+  fprintf(log_stream, "Resending stats in the ring buffer\n");
+  ring_buffer_resend(w);
+  if (w->q_count > 0)
+    send_success_count = 0;
+}
+
+static void monitor_daemon_maybe_send_dumpfiles_after_sample_timer(struct sf_ring_buffer *w)
+{
+  if (file_mode_enabled != 1 || w->q_count != 0)
+    return;
+  if (send_success_count < send_success_count_max)
+    return;
+  fprintf(log_stream, "Resending stats in the dumpfile\n");
+  send_dumpfile_stats(w);
+}
+
+static void monitor_daemon_maybe_send_dumpfiles_after_jobid_cleared(struct sf_ring_buffer *w,
+								    const char *new_jobid)
+{
+  if (file_mode_enabled != 1 || w->q_count != 0)
+    return;
+  if (strcmp(new_jobid, "-") != 0)
+    return;
+  if (send_success_count <= 0)
+    return;
+  fprintf(log_stream, "Resending stats in the dumpfile\n");
+  send_dumpfile_stats(w);
+}
+
+static void monitor_daemon_dispose_successful_send(struct sf_ring_buffer *w, struct stats_buffer *sf)
+{
+  w->s_count++;
+  stats_buffer_close(sf);
+  free(sf);
+  if (file_mode_enabled == 1)
+    send_success_count++;
+}
+
+/* Rotate timer: clear send_success_count before attempting ring insert. */
+static void monitor_daemon_dispose_failed_send_rotate(struct sf_ring_buffer *w, struct stats_buffer *sf)
+{
+  ERROR("Failed sending stats. Adding stats to ring buffer\n");
+  send_success_count = 0;
+  int rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
+  if (rc < 0) {
+    ERROR("Failed adding stats to ring buffer. Saving stats to dumpfile\n");
+    rc = save_file_stats_buffer(sf);
+    stats_buffer_close(sf);
+    free(sf);
+    if (rc == 0) {
+      w->f_count++;
+      file_mode_enabled = 1;
+    }
+  }
+}
+
+/* Sample timer: clear send_success_count after ring insert (matches historical ordering). */
+static void monitor_daemon_dispose_failed_send_sample(struct sf_ring_buffer *w, struct stats_buffer *sf)
+{
+  ERROR("Failed sending stats. Adding stats to ring buffer\n");
+  int rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
+  send_success_count = 0;
+  if (rc < 0) {
+    ERROR("Failed adding stats to ring buffer. Saving stats to dumpfile\n");
+    rc = save_file_stats_buffer(sf);
+    stats_buffer_close(sf);
+    free(sf);
+    if (rc == 0) {
+      w->f_count++;
+      file_mode_enabled = 1;
+    }
+  }
 }
 
 static void monitor_reset_all_stats_types(void)
@@ -95,7 +200,7 @@ static int get_dumpfile_number(void);
 int read_conf_file(void)
 {
   FILE *conf_file_fd = NULL;
-  int ret = -1;
+  int ret = 0;
 
   if (conf_file_name == NULL)
     return 0;
@@ -124,30 +229,22 @@ int read_conf_file(void)
               app_name, server, conf_file_name);
     }
     if (strcmp(key, "queue") == 0) {
-      if (queue != NULL && queue != (char *)default_queue)
-        free(queue);
-      queue = strdup(line);
+      monitor_conf_replace_dup(&queue, default_queue, line);
       fprintf(log_stream, "%s: Setting queue to %s based on file %s\n",
               app_name, queue, conf_file_name);
     }
     if (strcmp(key, "port") == 0) {
-      if (port != NULL && port != (char *)default_port)
-        free(port);
-      port = strdup(line);
+      monitor_conf_replace_dup(&port, default_port, line);
       fprintf(log_stream, "%s: Setting server port to %s based on file %s\n",
               app_name, port, conf_file_name);
     }
     if (strcmp(key, "user") == 0) {
-      if (rmq_user != NULL && rmq_user != (char *)default_rmq_user)
-        free(rmq_user);
-      rmq_user = strdup(line);
+      monitor_conf_replace_dup(&rmq_user, default_rmq_user, line);
       fprintf(log_stream, "%s: Setting RMQ user to %s based on file %s\n",
               app_name, rmq_user, conf_file_name);
     }
     if (strcmp(key, "password") == 0) {
-      if (rmq_password != NULL && rmq_password != (char *)default_rmq_password)
-        free(rmq_password);
-      rmq_password = strdup(line);
+      monitor_conf_replace_dup(&rmq_password, default_rmq_password, line);
       fprintf(log_stream, "%s: Setting RMQ password from file %s\n",
               app_name, conf_file_name);
     }
@@ -359,9 +456,9 @@ void monitor_daemon_rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
   (void)revents;
   pscanf(JOBID_FILE_PATH, "%79s", jobid);
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
-  struct stats_buffer *sf = (struct stats_buffer *)malloc(sizeof(*sf));
-  if (stats_buffer_open(sf, server, port, queue, rmq_user, rmq_password) < 0)
-    ERROR("Failed opening data buffer : %m\n");
+  struct stats_buffer *sf = monitor_daemon_alloc_stats_buffer();
+  if (sf == NULL)
+    return;
 
   monitor_reset_all_stats_types();
   monitor_init_enabled_stats_types();
@@ -369,33 +466,11 @@ void monitor_daemon_rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
   w->b_count++;
   w->status = send_stats_buffer(sf);
 
-  if (w->status == 0) {
-    w->s_count++;
-    stats_buffer_close(sf);
-    free(sf);
-    if (file_mode_enabled == 1)
-      send_success_count++;
-  } else {
-    ERROR("Failed sending stats. Adding stats to ring buffer\n");
-    send_success_count = 0;
-    int rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
-    if (rc < 0) {
-      ERROR("Failed adding stats to ring buffer. Saving stats to dumpfile\n");
-      rc = save_file_stats_buffer(sf);
-      stats_buffer_close(sf);
-      free(sf);
-      if (rc == 0) {
-        w->f_count++;
-        file_mode_enabled = 1;
-      }
-    }
-  }
-  if (w->q_count > 0) {
-    fprintf(log_stream, "Resending stats in the ring buffer\n");
-    ring_buffer_resend(w);
-    if (w->q_count > 0)
-      send_success_count = 0;
-  }
+  if (w->status == 0)
+    monitor_daemon_dispose_successful_send(w, sf);
+  else
+    monitor_daemon_dispose_failed_send_rotate(w, sf);
+  monitor_daemon_resend_ring_buffer_if_nonempty(w);
   print_buffer_status(w);
 }
 
@@ -403,49 +478,22 @@ void monitor_daemon_sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
 {
   (void)loop;
   (void)revents;
-  int rc;
   pscanf(JOBID_FILE_PATH, "%79s", jobid);
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
-  struct stats_buffer *sf = (struct stats_buffer *)malloc(sizeof(*sf));
-  if (stats_buffer_open(sf, server, port, queue, rmq_user, rmq_password) < 0)
-    ERROR("Failed opening data buffer : %m\n");
+  struct stats_buffer *sf = monitor_daemon_alloc_stats_buffer();
+  if (sf == NULL)
+    return;
 
   w->b_count++;
   w->status = send_stats_buffer(sf);
 
-  if (w->status == 0) {
-    w->s_count++;
-    stats_buffer_close(sf);
-    free(sf);
-    if (file_mode_enabled == 1)
-      send_success_count++;
-  } else {
-    ERROR("Failed sending stats. Adding stats to ring buffer\n");
-    rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
-    send_success_count = 0;
-    if (rc < 0) {
-      ERROR("Failed adding stats to ring buffer. Saving stats to dumpfile\n");
-      rc = save_file_stats_buffer(sf);
-      stats_buffer_close(sf);
-      free(sf);
-      if (rc == 0) {
-        w->f_count++;
-        file_mode_enabled = 1;
-      }
-    }
-  }
+  if (w->status == 0)
+    monitor_daemon_dispose_successful_send(w, sf);
+  else
+    monitor_daemon_dispose_failed_send_sample(w, sf);
 
-  if (w->q_count > 0) {
-    fprintf(log_stream, "Resending stats in the ring buffer\n");
-    ring_buffer_resend(w);
-    if (w->q_count != 0)
-      send_success_count = 0;
-  }
-
-  if (file_mode_enabled == 1 && w->q_count == 0 && send_success_count >= send_success_count_max) {
-    fprintf(log_stream, "Resending stats in the dumpfile\n");
-    send_dumpfile_stats(w);
-  }
+  monitor_daemon_resend_ring_buffer_if_nonempty(w);
+  monitor_daemon_maybe_send_dumpfiles_after_sample_timer(w);
   print_buffer_status(w);
 }
 
@@ -454,12 +502,14 @@ void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
   (void)loop;
   (void)revents;
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
-  struct stats_buffer *sf = (struct stats_buffer *)malloc(sizeof(*sf));
-  if (stats_buffer_open(sf, server, port, queue, rmq_user, rmq_password) < 0)
-    ERROR("Failed opening data buffer : %m\n");
-
   char new_jobid[80] = "-";
   pscanf(JOBID_FILE_PATH, "%79s", new_jobid);
+
+  struct stats_buffer *sf = monitor_daemon_alloc_stats_buffer();
+  if (sf == NULL) {
+    strcpy(jobid, new_jobid);
+    return;
+  }
 
   if (strcmp(jobid, new_jobid) != 0) {
     if (strcmp(new_jobid, "-") != 0) {
@@ -482,21 +532,14 @@ void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
   w->status = send_stats_buffer(sf);
 
   if (w->status == 0) {
-    w->s_count++;
-    stats_buffer_close(sf);
-    free(sf);
-    if (file_mode_enabled == 1)
-      send_success_count++;
+    monitor_daemon_dispose_successful_send(w, sf);
     if (w->q_count > 0) {
       fprintf(log_stream, "Resending stats in the ring buffer\n");
       ring_buffer_resend(w);
       if (w->q_count != 0)
         send_success_count = 0;
     }
-    if (file_mode_enabled == 1 && w->q_count == 0 && strcmp(new_jobid, "-") == 0 && send_success_count > 0) {
-      fprintf(log_stream, "Resending stats in the dumpfile\n");
-      send_dumpfile_stats(w);
-    }
+    monitor_daemon_maybe_send_dumpfiles_after_jobid_cleared(w, new_jobid);
   } else {
     ERROR("Failed sending stats. Adding stats to ring buffer\n");
     int rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);

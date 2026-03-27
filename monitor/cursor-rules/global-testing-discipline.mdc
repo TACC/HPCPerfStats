@@ -8,7 +8,7 @@ alwaysApply: true
 Do not assume something is working; run **appropriate** verification after implementing a feature, fixing issues, or making adjustments. If verification fails, stop and fix the issue before treating the work as done.
 
 - **Python changes**: Prefer targeted unit tests; use the project `.venv` (see python-venv-enforcement).
-- **Monitor C changes**: Prefer `make check` (or the project's documented test target) from the monitor build tree after a successful build; add or extend tests under `HPCPerfStats/monitor/` when the tree supports them.
+- **Monitor C changes**: Use **`HPCPerfStats/monitor/scripts/build_static_bundle.sh`** as the **canonical** build/verify path (see **monitor-static-build-verification**). After it succeeds, run **`make check`** in `HPCPerfStats/monitor/.build-static`. Do not substitute a minimal `configure && make && make check` against system libs as the only verification for monitor work.
 - Create new unit tests and update existing ones when changes could affect behavior, security, or correctness. For purely non-functional changes (formatting, comments-only), prefer running the existing relevant tests.
 
 Important: fix problems at the cause, not the symptom.

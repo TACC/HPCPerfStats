@@ -46,7 +46,7 @@ CPU backend:
 
 ## Verification
 
-- After build: `make check` in the build tree.
+- **Canonical**: run **`scripts/build_static_bundle.sh`**, then **`make check`** in **`monitor/.build-static`**. Full policy: **monitor-static-build-verification** (always applied in this workspace).
 - For **static** links, `ldd` on `hpcperfstatsd` should **not** show `liblikwid.so`, `libev.so`, or `librabbitmq.so` from the prefix; third-party deps should be linked from `.a` inside the static group. System **libc** / **libm** / **libpthread** typically remain dynamic unless doing a full static link.
 
 ## Docs

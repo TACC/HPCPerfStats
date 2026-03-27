@@ -33,6 +33,29 @@
     free(tmp_string);						\
   } while(0)
 
+static void stats_buffer_append_schema_entry_suffix(struct stats_buffer *sf, struct schema_entry *se)
+{
+  if (se->se_type == SE_CONTROL)
+    sf_printf(sf, ",C");
+  if (se->se_type == SE_EVENT)
+    sf_printf(sf, ",E");
+  if (se->se_unit != NULL)
+    sf_printf(sf, ",U=%s", se->se_unit);
+  if (se->se_width != 0)
+    sf_printf(sf, ",W=%u", se->se_width);
+}
+
+static void stats_buffer_append_schema_line_for_type(struct stats_buffer *sf, struct stats_type *type)
+{
+  sf_printf(sf, "%c%s", SF_SCHEMA_CHAR, type->st_name);
+  for (size_t j = 0; j < type->st_schema.sc_len; j++) {
+    struct schema_entry *se = type->st_schema.sc_ent[j];
+    sf_printf(sf, " %s", se->se_key);
+    stats_buffer_append_schema_entry_suffix(sf, se);
+  }
+  sf_printf(sf, "\n");
+}
+
 static void close_rmq_connection(amqp_connection_state_t conn, int channel_opened)
 {
   if (conn == NULL)
@@ -44,96 +67,112 @@ static void close_rmq_connection(amqp_connection_state_t conn, int channel_opene
   amqp_destroy_connection(conn);
 }
 
-static int send(struct stats_buffer *sf)
+static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buffer *sf,
+				    amqp_socket_t **socket_out, int *channel_opened_out)
 {
-  int status = -1;
-  amqp_socket_t *socket = NULL;
-  amqp_connection_state_t conn;
-  int channel_opened = 0;
-  amqp_rpc_reply_t ret;
-  conn = amqp_new_connection();
-  socket = amqp_tcp_socket_new(conn);
-
+  amqp_socket_t *socket = amqp_tcp_socket_new(conn);
+  *socket_out = socket;
   if (!socket) {
     ERROR("socket failed to initialize");
-    close_rmq_connection(conn, channel_opened);
     return -1;
   }
-  status = amqp_socket_open(socket, sf->sf_host, atoi(sf->sf_port));
-  if (status) {
+  if (amqp_socket_open(socket, sf->sf_host, atoi(sf->sf_port))) {
     ERROR("socket failed to open");
-    close_rmq_connection(conn, channel_opened);
     return -1;
   }
 
-  ret = amqp_login(conn, RMQ_VHOST, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN,
-                   sf->sf_user, sf->sf_password);
+  amqp_rpc_reply_t ret = amqp_login(conn, RMQ_VHOST, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN,
+				      sf->sf_user, sf->sf_password);
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
     ERROR("amqp login failed");
-    close_rmq_connection(conn, channel_opened);
     return -1;
   }
   amqp_channel_open(conn, RMQ_CHANNEL);
   ret = amqp_get_rpc_reply(conn);
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
     ERROR("amqp channel open failed");
-    close_rmq_connection(conn, channel_opened);
     return -1;
   }
-  channel_opened = 1;
+  *channel_opened_out = 1;
+  return 0;
+}
 
+static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, struct stats_buffer *sf)
+{
   syslog(LOG_INFO, "Attempt declare queue on RMQ server\n");
   amqp_queue_declare_ok_t *r = amqp_queue_declare(conn, RMQ_CHANNEL, amqp_cstring_bytes(sf->sf_queue),
 						  0, 1, 0, 0, amqp_empty_table);
-  ret = amqp_get_rpc_reply(conn);
+  amqp_rpc_reply_t ret = amqp_get_rpc_reply(conn);
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
     syslog(LOG_ERR, "queue declare failed");
+    return -1;
+  }
+
+  amqp_bytes_t reply_to_queue = amqp_bytes_malloc_dup(r->queue);
+  if (reply_to_queue.bytes == NULL) {
+    syslog(LOG_ERR, "Out of memory while copying queue name");
+    return -1;
+  }
+
+  amqp_queue_bind(conn, RMQ_CHANNEL, reply_to_queue, amqp_cstring_bytes(RMQ_EXCHANGE),
+		  amqp_cstring_bytes(sf->sf_queue), amqp_empty_table);
+  ret = amqp_get_rpc_reply(conn);
+  amqp_bytes_free(reply_to_queue);
+  if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
+    syslog(LOG_ERR, "queue bind failed");
+    return -1;
+  }
+  return 0;
+}
+
+static int rmq_publish_text_payload(amqp_connection_state_t conn, struct stats_buffer *sf)
+{
+  amqp_basic_properties_t props;
+  props._flags = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG;
+  props.content_type = amqp_cstring_bytes("text/plain");
+  props.delivery_mode = 2; /* persistent delivery mode */
+  int status = amqp_basic_publish(conn,
+				  RMQ_CHANNEL,
+				  amqp_cstring_bytes(RMQ_EXCHANGE),
+				  amqp_cstring_bytes(sf->sf_queue),
+				  0,
+				  0,
+				  &props,
+				  amqp_cstring_bytes(sf->sf_data));
+  if (status != AMQP_STATUS_OK) {
+    ERROR("amqp basic publish failed");
+    return -1;
+  }
+  return 0;
+}
+
+static int send(struct stats_buffer *sf)
+{
+  amqp_socket_t *socket = NULL;
+  amqp_connection_state_t conn = amqp_new_connection();
+  int channel_opened = 0;
+
+  if (conn == NULL) {
+    ERROR("amqp_new_connection failed");
+    return -1;
+  }
+
+  if (rmq_open_tcp_and_login(conn, sf, &socket, &channel_opened) < 0) {
     close_rmq_connection(conn, channel_opened);
     return -1;
   }
-  {
-    amqp_bytes_t reply_to_queue;
-    reply_to_queue = amqp_bytes_malloc_dup(r->queue);
-    if (reply_to_queue.bytes == NULL) {
-      syslog(LOG_ERR, "Out of memory while copying queue name");
-      close_rmq_connection(conn, channel_opened);
-      return -1;
-    }
-    
-    amqp_queue_bind(conn, RMQ_CHANNEL, reply_to_queue, amqp_cstring_bytes(RMQ_EXCHANGE),
-		    amqp_cstring_bytes(sf->sf_queue), amqp_empty_table);
-    ret = amqp_get_rpc_reply(conn);
-    if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
-      amqp_bytes_free(reply_to_queue);
-      syslog(LOG_ERR, "queue bind failed");
-      close_rmq_connection(conn, channel_opened);
-      return -1;
-    }
-    amqp_bytes_free(reply_to_queue);
+
+  if (rmq_declare_queue_and_bind_to_exchange(conn, sf) < 0) {
+    close_rmq_connection(conn, channel_opened);
+    return -1;
   }
 
-  {
-    amqp_basic_properties_t props;
-    props._flags = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG;
-    props.content_type = amqp_cstring_bytes("text/plain");
-    props.delivery_mode = 2; /* persistent delivery mode */
-    status = amqp_basic_publish(conn,
-                                RMQ_CHANNEL,
-                                amqp_cstring_bytes(RMQ_EXCHANGE),
-                                amqp_cstring_bytes(sf->sf_queue),
-                                0,
-                                0,
-                                &props,
-                                amqp_cstring_bytes(sf->sf_data));
-    if (status != AMQP_STATUS_OK) {
-      ERROR("amqp basic publish failed");
-      close_rmq_connection(conn, channel_opened);
-      return -1;
-    }
+  if (rmq_publish_text_payload(conn, sf) < 0) {
+    close_rmq_connection(conn, channel_opened);
+    return -1;
   }
 
   close_rmq_connection(conn, channel_opened);
-
   return 0;
 }
 
@@ -158,25 +197,7 @@ int stats_wr_hdr(struct stats_buffer *sf)
       continue;
 
     TRACE("type %s, schema_len %zu\n", type->st_name, type->st_schema.sc_len);
-
-    /* Write schema. */
-    sf_printf(sf, "%c%s", SF_SCHEMA_CHAR, type->st_name);
-
-    /* MOVEME */
-    size_t j;
-    for (j = 0; j < type->st_schema.sc_len; j++) {
-      struct schema_entry *se = type->st_schema.sc_ent[j];
-      sf_printf(sf, " %s", se->se_key);
-      if (se->se_type == SE_CONTROL)
-        sf_printf(sf, ",C");
-      if (se->se_type == SE_EVENT)
-        sf_printf(sf, ",E");
-      if (se->se_unit != NULL)
-        sf_printf(sf, ",U=%s", se->se_unit);
-      if (se->se_width != 0)
-        sf_printf(sf, ",W=%u", se->se_width);
-    }
-    sf_printf(sf, "\n");
+    stats_buffer_append_schema_line_for_type(sf, type);
   }
 
   return 0;
@@ -226,37 +247,24 @@ int stats_buffer_mark(struct stats_buffer *sf, const char *fmt, ...)
   return 0;
 }
 
-int stats_buffer_write(struct stats_buffer *sf)
+static void stats_buffer_append_mark_lines(struct stats_buffer *sf)
 {
-  int rc = 0;
+  if (sf->sf_mark == NULL)
+    return;
+  const char *str = sf->sf_mark;
+  while (*str != 0) {
+    const char *eol = strchrnul(str, '\n');
+    sf_printf(sf, "%c%*s\n", SF_MARK_CHAR, (int) (eol - str), str);
+    str = eol;
+    if (*str == '\n')
+      str++;
+  }
+}
+
+static void stats_buffer_append_enabled_type_rows(struct stats_buffer *sf)
+{
   size_t i = 0;
   struct stats_type *type;
-
-  struct utsname uts_buf;
-  uname(&uts_buf);
-
-  struct timespec time;
-
-  // Get  time
-  if (clock_gettime(CLOCK_REALTIME, &time) != 0) {
-    fprintf(stderr, "cannot clock_gettime(): %m\n");
-    goto out;
-  }
-  sf_printf(sf, "\n%f %s %s\n", time.tv_sec + 1e-9*time.tv_nsec, jobid, uts_buf.nodename);
-
-  /* Write mark. */
-  if (sf->sf_mark != NULL) {
-    const char *str = sf->sf_mark;
-    while (*str != 0) {
-      const char *eol = strchrnul(str, '\n');
-      sf_printf(sf, "%c%*s\n", SF_MARK_CHAR, (int) (eol - str), str);
-      str = eol;
-      if (*str == '\n')
-        str++;
-    }
-  }
-
-  /* Write stats. */
   while ((type = stats_type_for_each(&i)) != NULL) {
     if (!(type->st_enabled))
       continue;
@@ -267,13 +275,29 @@ int stats_buffer_write(struct stats_buffer *sf)
       struct stats *stats = key_to_stats(dev);
 
       sf_printf(sf, "%s %s", type->st_name, stats->s_dev);
-      size_t k;
-      for (k = 0; k < type->st_schema.sc_len; k++) {
-	      sf_printf(sf, " %llu", stats->s_val[k]);
-	    }
+      for (size_t k = 0; k < type->st_schema.sc_len; k++)
+        sf_printf(sf, " %llu", stats->s_val[k]);
       sf_printf(sf, "\n");
     }
   }
+}
+
+int stats_buffer_write(struct stats_buffer *sf)
+{
+  int rc = 0;
+  struct utsname uts_buf;
+  uname(&uts_buf);
+
+  struct timespec time;
+
+  if (clock_gettime(CLOCK_REALTIME, &time) != 0) {
+    fprintf(stderr, "cannot clock_gettime(): %m\n");
+    goto out;
+  }
+  sf_printf(sf, "\n%f %s %s\n", time.tv_sec + 1e-9 * time.tv_nsec, jobid, uts_buf.nodename);
+
+  stats_buffer_append_mark_lines(sf);
+  stats_buffer_append_enabled_type_rows(sf);
   rc = send(sf);
 
   /* For debugging */
