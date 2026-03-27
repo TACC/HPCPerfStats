@@ -1,623 +1,27 @@
-#include <dirent.h>
 #include <errno.h>
 #include <getopt.h>
-#include <malloc.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
+#include <string.h>
 #include <unistd.h>
-#include <sys/fcntl.h>
-#include <sys/time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/syslog.h>
-#ifdef __cplusplus
-extern "C" {
-#endif
 #include <ev.h>
-#ifdef __cplusplus
-}
-#endif
 
 #include "daemonize.h"
+#include "monitor_daemon.h"
 #include "string1.h"
 #include "stats.h"
-#include "stats_buffer.h"
 #include "trace.h"
 #include "pscanf.h"
 #include "hwdetect.h"
 
-static char *app_name = NULL;
-static char *conf_file_name = NULL;
-static FILE *log_stream = NULL;
 static const char *default_queue = "default";
 static const char *default_port = "5672";
 static const char *default_rmq_user = "hpcperfstats";
 static const char *default_rmq_password = "hpcperfstats";
 static const char *default_dumpfile_dir = "/tmp/hpcperfstats";
-
-static char *server = NULL;
-static char *queue  = (char *) "default";
-static char *port   = (char *) "5672";
-static char *rmq_user = (char *) "hpcperfstats";
-static char *rmq_password = (char *) "hpcperfstats";
-
-static char *dumpfile_dir = (char *) "/tmp/hpcperfstats";
-static double freq = 300;
-static int max_buffer_size = 4096; // default in-memory ring capacity
-static int allow_ring_buffer_overwrite = 1;
-static int file_mode_enabled = 0;
-static int send_success_count = 0;
-static int send_success_count_max = 3;
-
-static ev_timer sample_timer;
-static ev_timer rotate_timer;
-
-char jobid[80] = "-";
-
-int nr_cpus;
-int n_pmcs;
-processor_t processor = (processor_t) 0;
-
-int read_conf_file()
-{
-  FILE *conf_file_fd = NULL;
-  int ret = -1;
-
-  if (conf_file_name == NULL) return 0;
-
-  conf_file_fd = fopen(conf_file_name, "r");
-
-  if (conf_file_fd == NULL) {
-    fprintf(log_stream, "Can not open config file: %s, error: %s",
-	    conf_file_name, strerror(errno));
-    return -1;
-  }
-
-  char *line_buf = NULL;
-  size_t line_buf_size = 0;
-  while(getline(&line_buf, &line_buf_size, conf_file_fd) >= 0) {
-    char *line = line_buf;
-    char *key = strsep(&line, " :\t=");
-    if (key == NULL || line == NULL)
-      continue;
-    
-    while (*line  == ' ') line++;
-    if (strcmp(key, "server") == 0) { 
-      line[strlen(line) - 1] = '\0';
-      free(server);
-      server = strdup(line);
-      fprintf(log_stream, "%s: Setting server to %s based on file %s\n",
-	      app_name, server, conf_file_name);
-    }   
-    if (strcmp(key, "queue") == 0) { 
-      line[strlen(line) - 1] = '\0';
-      if (queue != NULL && queue != default_queue)
-        free(queue);
-      queue = strdup(line);
-      fprintf(log_stream, "%s: Setting queue to %s based on file %s\n",
-	      app_name, queue, conf_file_name);
-    }
-    if (strcmp(key, "port") == 0) {
-      line[strlen(line) - 1] = '\0';
-      if (port != NULL && port != default_port)
-        free(port);
-      port = strdup(line);
-      fprintf(log_stream, "%s: Setting server port to %s based on file %s\n",
-	      app_name, port, conf_file_name);
-    }
-    if (strcmp(key, "user") == 0) {
-      line[strlen(line) - 1] = '\0';
-      if (rmq_user != NULL && rmq_user != default_rmq_user)
-        free(rmq_user);
-      rmq_user = strdup(line);
-      fprintf(log_stream, "%s: Setting RMQ user to %s based on file %s\n",
-              app_name, rmq_user, conf_file_name);
-    }
-    if (strcmp(key, "password") == 0) {
-      line[strlen(line) - 1] = '\0';
-      if (rmq_password != NULL && rmq_password != default_rmq_password)
-        free(rmq_password);
-      rmq_password = strdup(line);
-      fprintf(log_stream, "%s: Setting RMQ password from file %s\n",
-              app_name, conf_file_name);
-    }
-    if (strcmp(key, "buffer") == 0) {
-      line[strlen(line) - 1] = '\0';
-      max_buffer_size = atoi(line);
-      fprintf(log_stream, "%s: Setting buffer size to %d based on file %s\n",
-	      app_name, max_buffer_size, conf_file_name);
-    }
-    if (strcmp(key, "freq") == 0) {  
-      if (sscanf(line, "%lf", &freq) == 1)
-	fprintf(log_stream, "%s: Setting frequency to %f based on file %s\n",
-		app_name, freq, conf_file_name);
-    }
-  }
-  if (line_buf)
-    free (line_buf);
-  fclose(conf_file_fd);
-
-  return ret;
-}
-
-static int send_stats_buffer(struct stats_buffer *sf) {
-
-  size_t i;
-  struct stats_type *type;
-
-  /* collect every enabled type */
-  i = 0;
-  while ((type = stats_type_for_each(&i)) != NULL) {
-    if (type->st_enabled) {    
-      (*type->st_collect)(type);
-    }
-  }
-  int rc = 0;
-  /* Write data to buffer and ship off node */
-  if (stats_buffer_write(sf) < 0) 
-    rc = -1;
-
-  return rc;
-}
-
-static int get_dumpfile_number() {
-  DIR *d;
-  struct dirent *dir;
-  int n_files = 0;
-  d = opendir(dumpfile_dir);
-  if (d) {
-    while ((dir = readdir(d)) != NULL) {
-      if (dir->d_type == DT_REG)
-          n_files++;
-    }
-    closedir(d);
-  }
-  return n_files;
-}
-
-/* Get the list of all dumpfiles currently on the node */
-static char **get_dumpfile_list() {
-  DIR *d;
-  struct dirent *dir;
-  char **name_list = NULL;
-  int n_files = get_dumpfile_number();
-  int i = 0;
-
-  d = opendir(dumpfile_dir);
-  if (!d)
-    return NULL;
-
-  name_list = (char**)calloc((size_t)n_files, sizeof(char*));
-  if (name_list == NULL) {
-    closedir(d);
-    return NULL;
-  }
-
-  while ((dir = readdir(d)) != NULL) {
-    if (dir->d_type != DT_REG)
-      continue;
-    size_t path_len = strlen(dumpfile_dir) + 1 + strlen(dir->d_name) + 1;
-    name_list[i] = (char*)malloc(path_len);
-    if (name_list[i] == NULL) {
-      for (int j = 0; j < i; j++)
-        free(name_list[j]);
-      free(name_list);
-      closedir(d);
-      return NULL;
-    }
-    snprintf(name_list[i], path_len, "%s/%s", dumpfile_dir, dir->d_name);
-    i++;
-  }
-
-  closedir(d);
-  return name_list;
-}
-
-/* Get the full path to the current dumpfile */
-static char* get_current_dumpfile()
-{
-  struct timeval tp;
-  gettimeofday(&tp, NULL);
-  time_t t = tp.tv_sec;
-  struct tm * time_info = localtime(&t);
-  char *time_str = (char *) malloc(sizeof(char) * 16);
-  strftime(time_str, 16, "%Y-%m-%d.sf", time_info);
-
-  char *file_str = (char *) malloc(sizeof(char) * 64);
-  snprintf(file_str, sizeof(char) * 64, "%s/%s", dumpfile_dir, time_str);
-
-  free(time_str);
-  return file_str;
-}
-
-/* Save a single stats to dumpfile */
-static int save_file_stats_buffer(struct stats_buffer *sf) 
-{
-  int rc = 0;
-  char *file_path = get_current_dumpfile();
-  rc = stats_buffer_write_file(sf, file_path);
-  
-  if (rc != 0)
-    ERROR("Failed saving stats to dumpfile\n");
-  
-  free(file_path);
-  return rc;
-}
-
-/* Save all stats in the ring buffer to dumpfile */
-static int save_file_ring_buffer(struct sf_ring_buffer *w)
-{
-  int rc = 0;
-  char *file_path = NULL;
-  struct sf_queue * sf = NULL;
-  if (w->q_count == 0) {
-    rc = -1;
-    goto err;
-  }
-
-  file_path = get_current_dumpfile();
-
-  sf = w->q_first;
-
-  do {
-    rc = stats_buffer_write_file(sf->sf, file_path);
-    if (rc == -1)
-      goto err;
-    w->f_count++;
-    sf = sf->forward;
-  } while (sf != w->q_first);
-
-  err:
-    if (rc != 0)
-      ERROR("Error saving stats to dumpfile %s\n", file_path);
-    free(file_path);
-    return rc;
-}
-
-/* Load stats from dumpfiles and resend */
-static void send_dumpfile_stats(struct sf_ring_buffer *w)
-{
-    int rc;
-    int n_files = get_dumpfile_number();
-    if (n_files <= 0)
-      return;
-
-    char **file_list = get_dumpfile_list();
-    if (file_list == NULL) {
-      ERROR("Error listing dumpfiles in `%s'\n", dumpfile_dir);
-      return;
-    }
-    int n_files_deleted = 0;
-    for (int i = 0; i < n_files; i++)  {
-      FILE *f = fopen(file_list[i], "r");
-      if (f == NULL) {
-        fprintf(log_stream, "Error opening stats file %s\n", file_list[i]);
-        send_success_count = 0;
-        break;
-      }
-      rc = ring_buffer_load_file(f, w, server, port, queue, rmq_user, rmq_password, max_buffer_size, allow_ring_buffer_overwrite);
-      fclose(f);
-      if (rc == 0) {
-        remove(file_list[i]);
-        n_files_deleted++;
-        fprintf(log_stream, "Resending stats in the ring buffer\n");
-        ring_buffer_resend(w);
-        if (w->q_count != 0) {
-          fprintf(log_stream, "w_q_count = %d\n", w->q_count);
-          send_success_count = 0;
-          break;
-        }
-      }
-      else {
-	fprintf(log_stream, "Error loading stats file %s\n",file_list[i]);
-        send_success_count = 0;
-        break;
-      }
-    }
-    /* Disable file_mode after the old stats are cleared */
-    if (n_files_deleted == n_files)
-        file_mode_enabled = 0;
-
-    /* Cleanup */
-    for (int i = 0; i < n_files; i++)
-      free(file_list[i]);
-    free(file_list);
-}
-
-static void print_buffer_status(struct sf_ring_buffer *w)
-{
-  fprintf(log_stream, "status = %d, ", w->status);
-  fprintf(log_stream, "allow_overwrite = %d, ", allow_ring_buffer_overwrite);
-  fprintf(log_stream, "file_mode = %d, ", file_mode_enabled);
-  fprintf(log_stream, "#succ_send = %d/%d\n", send_success_count, send_success_count_max);
-  fprintf(log_stream, "#acc_processed = %d, ", w->b_count);
-  fprintf(log_stream, "#cur_buffered = %d/%d, ", w->q_count, max_buffer_size);
-  fprintf(log_stream, "#acc_succ_sent = %d, ", w->s_count);
-  fprintf(log_stream, "#acc_succ_resent = %d\n", w->r_count);
-  fprintf(log_stream, "#acc_deleted = %d, ", w->d_count);
-  fprintf(log_stream, "#acc_saved = %d, ", w->f_count);
-  fprintf(log_stream, "#acc_loaded = %d\n", w->l_count);
-}
-
-/* Send header with data based on rotate timer interval */
-static void rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents) 
-{
-  pscanf(JOBID_FILE_PATH, "%79s", jobid);  
-
-  struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
-
-  struct stats_buffer *sf;
-  sf = (struct stats_buffer *) malloc(sizeof(*sf));
-  if (stats_buffer_open(sf, server, port, queue, rmq_user, rmq_password) < 0)
-    ERROR("Failed opening data buffer : %m\n");
-
-  size_t i;
-  struct stats_type *type;  
-
-  /* Cleanup */
-  i = 0;
-  while ((type = stats_type_for_each(&i)) != NULL)
-    stats_type_destroy(type);    
-  
-  /* Enable all types, then disable optional types by detected hardware. */
-  i = 0;
-  while ((type = stats_type_for_each(&i)) != NULL)
-    type->st_enabled = 1;
-  auto_disable_optional_stats_by_lspci();
-
-  /* Initialize selected enabled types */
-  i = 0;
-  while ((type = stats_type_for_each(&i)) != NULL) {
-    if (!type->st_enabled)
-      continue;
-    if (stats_type_init(type) < 0) {
-      type->st_enabled = 0;
-      continue;
-    }    
-    if (type->st_begin != NULL)
-      (*type->st_begin)(type);
-  }
-  stats_wr_hdr(sf);
-  w->b_count++;
-  w->status = send_stats_buffer(sf);
-
-  if (w->status == 0) {
-    w->s_count++;
-    stats_buffer_close(sf);
-    free(sf);
-    if (file_mode_enabled == 1)
-      send_success_count++;
-  }
-  else {
-    ERROR("Failed sending stats. Adding stats to ring buffer\n");
-    send_success_count = 0;
-    int rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
-    if (rc < 0) {
-      ERROR("Failed adding stats to ring buffer. Saving stats to dumpfile\n");
-      rc = save_file_stats_buffer(sf);
-      stats_buffer_close(sf);
-      free(sf);
-      if (rc == 0) {
-        w->f_count++;
-        file_mode_enabled = 1;
-      }
-    }
-  }
-  if (w->q_count > 0) {
-     fprintf(log_stream, "Resending stats in the ring buffer\n");
-     ring_buffer_resend(w);
-     if (w->q_count > 0)
-      send_success_count = 0;
-  }
-  /* Print buffer status */
-  print_buffer_status(w);
-}
-
-/* Send data based on ev timer interval */
-static void sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents) 
-{
-  int rc;
-  int n_files;
-  char **file_list;
-  pscanf(JOBID_FILE_PATH, "%79s", jobid);  
-
-  struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
-
-  struct stats_buffer *sf;
-  sf = (struct stats_buffer *) malloc(sizeof(*sf));
-  if (stats_buffer_open(sf, server, port, queue, rmq_user, rmq_password) < 0)
-    ERROR("Failed opening data buffer : %m\n");
-
-  w->b_count++;
-  w->status = send_stats_buffer(sf);
-
-  if (w->status == 0)  {
-    w->s_count++;
-    stats_buffer_close(sf);
-    free(sf);
-    if (file_mode_enabled == 1)
-      send_success_count++;
-  }
-  else {
-    ERROR("Failed sending stats. Adding stats to ring buffer\n");
-    rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
-    send_success_count = 0;
-    if (rc < 0) {
-      ERROR("Failed adding stats to ring buffer. Saving stats to dumpfile\n");
-      rc = save_file_stats_buffer(sf);
-      stats_buffer_close(sf);
-      free(sf);
-      if (rc == 0) {
-        w->f_count++;
-        file_mode_enabled = 1;
-      }
-    }
-  }
-
-  /* Resend stats in ring buffer */
-  if (w->q_count > 0) {
-    fprintf(log_stream, "Resending stats in the ring buffer\n");
-    ring_buffer_resend(w);
-    if (w->q_count != 0)
-      send_success_count = 0;
-  }
-  
-  /* Resend stats in dumpfiles */
-  if (file_mode_enabled == 1 && w->q_count == 0 && send_success_count >= send_success_count_max) {
-    fprintf(log_stream, "Resending stats in the dumpfile\n");
-    send_dumpfile_stats(w);
-  }
-
-  /* Print buffer status */
-  print_buffer_status(w);
-}
-
-/* Collect and send data based on IO to JOBID file */
-static void fd_cb(EV_P_ ev_stat *w_, int revents)
-{
-  struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
-
-  struct stats_buffer *sf;
-  
-  sf = (struct stats_buffer *) malloc(sizeof(*sf));
-
-  if (stats_buffer_open(sf, server, port, queue, rmq_user, rmq_password) < 0)
-    ERROR("Failed opening data buffer : %m\n");
-
-  char new_jobid[80] = "-";
-  pscanf(JOBID_FILE_PATH, "%79s", new_jobid);  
-  
-  if (strcmp(jobid, new_jobid) != 0) { 
-    if (strcmp(new_jobid, "-") != 0) {    
-      strcpy(jobid, new_jobid);
-      fprintf(log_stream, "Loading jobid %s from %s\n", jobid, JOBID_FILE_PATH);	
-      stats_buffer_mark(sf, "begin %s", jobid);
-      sample_timer.repeat = freq; 
-    }
-    else {
-      fprintf(log_stream, "Unloading jobid %s from %s\n", jobid, JOBID_FILE_PATH);	
-      stats_buffer_mark(sf, "end %s", jobid);
-      sample_timer.repeat = 3600; 
-    }
-    ev_timer_again(EV_DEFAULT, &sample_timer);
-  }
-
-  size_t i;
-  struct stats_type *type;    
-
-  /* Cleanup */
-  i = 0;
-  while ((type = stats_type_for_each(&i)) != NULL)
-    stats_type_destroy(type);    
-  
-  /* Enable all types, then disable optional types by detected hardware. */
-  i = 0;
-  while ((type = stats_type_for_each(&i)) != NULL)
-    type->st_enabled = 1;
-  auto_disable_optional_stats_by_lspci();
-
-  /* Initialize selected enabled types */
-  i = 0;
-  while ((type = stats_type_for_each(&i)) != NULL) {
-    if (!type->st_enabled)
-      continue;
-    if (stats_type_init(type) < 0) {
-      type->st_enabled = 0;
-      continue;
-    }
-    if (type->st_begin != NULL)
-      (*type->st_begin)(type);
-  }
-  /* Send stats */
-  w->b_count++;
-  w->status = send_stats_buffer(sf);
-
-  if (w->status == 0)   {
-    w->s_count++;
-    stats_buffer_close(sf);
-    free(sf);
-
-    if (file_mode_enabled == 1)
-      send_success_count++;
-
-    /* Resend stats in ring buffer */
-    if (w->q_count > 0) {
-      fprintf(log_stream, "Resending stats in the ring buffer\n");
-      ring_buffer_resend(w);
-      if (w->q_count != 0)
-        send_success_count = 0;
-    }
-
-    /* Resend stats in dumpfiles */
-    if (file_mode_enabled == 1 && w->q_count == 0 && strcmp(new_jobid, "-") == 0 && send_success_count > 0) {
-      fprintf(log_stream, "Resending stats in the dumpfile\n");
-      send_dumpfile_stats(w);
-    }
-  }
-  else {
-    ERROR("Failed sending stats. Adding stats to ring buffer\n");
-    int rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
-    if (rc < 0) {
-      ERROR("Failed adding stats to ring buffer. Saving stats to file\n");
-      rc = save_file_stats_buffer(sf);
-      stats_buffer_close(sf);
-      free(sf);
-      if (rc == 0) {
-        w->f_count++;
-        file_mode_enabled = 1;
-        send_success_count = 0;
-      }
-    }
-  }
-  strcpy(jobid, new_jobid);
-
-  /* Print buffer status */
-  print_buffer_status(w);
-}
-
-/* Signal Callbacks for SIGINT (terminate) and SIGHUP (reload conf file) */
-static void signal_cb_int(EV_P_ ev_signal *sig, int revents)
-{
-  size_t i;
-  struct stats_type *type;    
-  struct sf_ring_buffer *w = (struct sf_ring_buffer *)sig->data;
-
-  /* Dump all buffered stats */
-  save_file_ring_buffer(w);
-
-  /* Print buffer status */
-  print_buffer_status(w);
-
-  /* Cleanup */
-  i = 0;
-  while ((type = stats_type_for_each(&i)) != NULL)
-    stats_type_destroy(type);    
-
-  fprintf(log_stream, "Stopping hpcperfstatsd\n");
-  if (pid_fd != -1) {
-    lockf(pid_fd, F_ULOCK, 0);
-    close(pid_fd);
-  }
-  if (pid_file_name != NULL) {
-    unlink(pid_file_name);
-  }
-  ev_break (EV_A_ EVBREAK_ALL);
-}
-
-static void signal_cb_hup(EV_P_ ev_signal *sig, int revents) 
-{
-  struct sf_ring_buffer *w = (struct sf_ring_buffer *)sig->data;
-  fprintf(log_stream, "Reloading hpcperfstatsd config file %s\n", conf_file_name);
-  read_conf_file();    
-  sample_timer.repeat = freq; 
-  ev_timer_again(EV_DEFAULT, &sample_timer);
-  send_success_count = 0;
-
-  /* Print buffer status */
-  print_buffer_status(w);
-}
 
 static void usage(void)
 {
@@ -633,14 +37,13 @@ static void usage(void)
           "  -p [PORT]       or --port       [PORT]       Port to use (5672 is the default).\n"
           "  -t [TMP_DIR]    or --tmp        [TMP_DIR]    Directory for dumpfiles (/tmp/hpcperfstats is the default).\n"
           "  -b [BUFFER]     or --buffer     [BUFFER]     Max size (in # of stats) for temporary in-memory storage (4096 is the default).\n"
-          "  -f [FREQUENCY]  or --frequency  [FREQUENCY]  Frequency to sample (300 seconds is the default).\n"
-          ,
+          "  -f [FREQUENCY]  or --frequency  [FREQUENCY]  Frequency to sample (300 seconds is the default).\n",
           program_invocation_short_name);
 }
 
 int main(int argc, char *argv[])
 {
-  srand (1);
+  srand(1);
   int daemonmode = 0;
   char *log_file_name = NULL;
 
@@ -664,7 +67,7 @@ int main(int argc, char *argv[])
     switch (c) {
     case 'd':
       daemonmode = 1;
-      break;     
+      break;
     case 's':
       free(server);
       server = strdup(optarg);
@@ -672,21 +75,21 @@ int main(int argc, char *argv[])
     case 'f':
       freq = atof(optarg);
       break;
-    case 'c':    
+    case 'c':
       conf_file_name = strdup(optarg);
       break;
     case 'q':
-      if (queue != NULL && queue != default_queue)
+      if (queue != NULL && queue != (char *)default_queue)
         free(queue);
       queue = strdup(optarg);
       break;
     case 'p':
-      if (port != NULL && port != default_port)
+      if (port != NULL && port != (char *)default_port)
         free(port);
       port = strdup(optarg);
       break;
     case 't':
-      if (dumpfile_dir != NULL && dumpfile_dir != default_dumpfile_dir)
+      if (dumpfile_dir != NULL && dumpfile_dir != (char *)default_dumpfile_dir)
         free(dumpfile_dir);
       dumpfile_dir = strdup(optarg);
       break;
@@ -702,9 +105,8 @@ int main(int argc, char *argv[])
     }
   }
 
-  log_stream = stderr;  
+  log_stream = stderr;
 
-  /* Read configuration from config file */
   read_conf_file();
 
   if (daemonmode) {
@@ -715,33 +117,27 @@ int main(int argc, char *argv[])
 
   fprintf(log_stream, "Started %s\n", app_name);
 
-  /* Create directory for dumpfiles */
   if (mkdir(dumpfile_dir, 0777) < 0) {
     if (errno != EEXIST)
       ERROR("Cannot create directory %s\n", dumpfile_dir);
   }
 
-  if (get_dumpfile_number() > 0) {
-    file_mode_enabled = 1;
-    send_success_count = 0;
-  }
+  monitor_daemon_prime_file_mode_from_dumpdir();
 
-  /* Create and reset ring buffer */
   struct sf_ring_buffer ring_buffer;
   memset(&ring_buffer, 0, sizeof(ring_buffer));
 
-  /* Setup signal callbacks to stop hpcperfstatsd or reload conf file */
   signal(SIGPIPE, SIG_IGN);
   static struct ev_signal sigint;
   sigint.data = (void *)&ring_buffer;
-  ev_signal_init(&sigint, signal_cb_int, SIGINT);
+  ev_signal_init(&sigint, monitor_daemon_signal_cb_int, SIGINT);
   ev_signal_start(EV_DEFAULT, &sigint);
 
   static struct ev_signal sighup;
   sighup.data = (void *)&ring_buffer;
-  ev_signal_init(&sighup, signal_cb_hup, SIGHUP);
+  ev_signal_init(&sighup, monitor_daemon_signal_cb_hup, SIGHUP);
   ev_signal_start(EV_DEFAULT, &sighup);
-  
+
   if (server == NULL) {
     fprintf(log_stream, "Must specify a server to send data to with -s [--server] argument or conf file.\n");
     exit(0);
@@ -751,21 +147,18 @@ int main(int argc, char *argv[])
 
   ev_stat fd_watcher;
 
-  /* Initialize timer routine to rotate file */
   rotate_timer.data = (void *)&ring_buffer;
-  ev_timer_init(&rotate_timer, rotate_timer_cb, 0.0, 86400);
+  ev_timer_init(&rotate_timer, monitor_daemon_rotate_timer_cb, 0.0, 86400);
   ev_timer_start(EV_DEFAULT, &rotate_timer);
   fprintf(log_stream, "Setting hpcperfstatsd rotate log files every %ds\n", 86400);
 
-  /* Initialize callback to respond to writes to job_fd */
   fd_watcher.data = (void *)&ring_buffer;
-  ev_stat_init(&fd_watcher, fd_cb, JOBID_FILE_PATH, EV_READ);
+  ev_stat_init(&fd_watcher, monitor_daemon_fd_cb, JOBID_FILE_PATH, EV_READ);
   ev_stat_start(EV_DEFAULT, &fd_watcher);
   fprintf(log_stream, "Starting hpcperfstatsd watching fd %s\n", JOBID_FILE_PATH);
-  
-  /* Initialize timer routine to collect and send data */
+
   sample_timer.data = (void *)&ring_buffer;
-  ev_timer_init(&sample_timer, sample_timer_cb, freq, freq);   
+  ev_timer_init(&sample_timer, monitor_daemon_sample_timer_cb, freq, freq);
   ev_timer_start(EV_DEFAULT, &sample_timer);
   fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs\n", freq);
 
@@ -774,19 +167,26 @@ int main(int argc, char *argv[])
 
   ev_run(EV_DEFAULT, 0);
 
-  /* Write system log and close it. */
   fprintf(log_stream, "Stopped %s\n", app_name);
 
-  /* Free up names of files */
-  if (conf_file_name != NULL) free(conf_file_name);
-  if (log_file_name != NULL) free(log_file_name);
-  if (pid_file_name != NULL) free(pid_file_name);
-  if (server != NULL) free(server);
-  if (queue != NULL && queue != default_queue) free(queue);
-  if (port != NULL && port != default_port) free(port);
-  if (rmq_user != NULL && rmq_user != default_rmq_user) free(rmq_user);
-  if (rmq_password != NULL && rmq_password != default_rmq_password) free(rmq_password);
-  if (dumpfile_dir != NULL && dumpfile_dir != default_dumpfile_dir) free(dumpfile_dir);
+  if (conf_file_name != NULL)
+    free(conf_file_name);
+  if (log_file_name != NULL)
+    free(log_file_name);
+  if (pid_file_name != NULL)
+    free(pid_file_name);
+  if (server != NULL)
+    free(server);
+  if (queue != NULL && queue != (char *)default_queue)
+    free(queue);
+  if (port != NULL && port != (char *)default_port)
+    free(port);
+  if (rmq_user != NULL && rmq_user != (char *)default_rmq_user)
+    free(rmq_user);
+  if (rmq_password != NULL && rmq_password != (char *)default_rmq_password)
+    free(rmq_password);
+  if (dumpfile_dir != NULL && dumpfile_dir != (char *)default_dumpfile_dir)
+    free(dumpfile_dir);
 
   return EXIT_SUCCESS;
 }

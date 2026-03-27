@@ -1,0 +1,55 @@
+---
+description: Build monitor with local deps in .build; static bundle and LIKWID (no Variorum)
+globs:
+  - HPCPerfStats/monitor/**
+alwaysApply: false
+---
+
+# Monitor local build and static linking
+
+## Prefix layout
+
+- Prefer dependency install prefix: `/home1/01623/sharrell/hpcperfstats_monitor_dev/.build/prefix`.
+- Keep downloaded sources under `/home1/01623/sharrell/hpcperfstats_monitor_dev/.build/src`.
+
+## Third-party stack (monitor)
+
+- **RAPL energy** (Intel/AMD `intel_rapl` / `amd64_rapl`): **LIKWID only** via `src/likwid_rapl.c` (`power_read` / `power_getEnergyUnit`). Do **not** reintroduce **libvariorum** or `variorum_get_energy_json` without an explicit product decision.
+- **PMU / CPU counters (x86)**: LIKWID through `cpu_counter_metrics.c` and `likwid_pmc_adapter.c`. The adapter uses **`ACCESSMODE_DIRECT`** so LIKWID can initialize RAPL; do not switch to `ACCESSMODE_PERF` without checking upstream LIKWID RAPL behavior.
+- **RabbitMQ / libev**: unchanged.
+- **DCGM / GPUPerfAPI**: unchanged for GPU and non-x86 CPU backends.
+
+Pinned versions for scripted builds: see `HPCPerfStats/monitor/scripts/build_static_bundle.sh` (`STATIC_PIN_*`). The bundle installs **libev**, **rabbitmq-c**, and **LIKWID** static archives into `PREFIX` (no separate hwloc/jansson build for Variorum).
+
+## Static compile (`--enable-all-static`)
+
+- Default in `configure.ac` is **`--enable-all-static`** (see `configure --help`).
+- With LIKWID + static linking, **`configure.ac`** appends **`-llikwid-hwloc -llikwid-lua`** to `LIBS` so `liblikwid.a` resolves `likwid_hwloc_*` and Lua symbols.
+- Workspace helper: `HPCPerfStats/monitor/scripts/ensure_dotbuild_prefix_static.sh` (runs `build_static_bundle.sh --deps-only` with `PREFIX=<repo>/.build/prefix`).
+- Full deps + monitor build: `HPCPerfStats/monitor/scripts/build_static_bundle.sh` (or `SKIP_DEPS=1` when `PREFIX` already has the `.a` files).
+
+## Environment for configure / make
+
+Export when using the local prefix:
+
+- `CPPFLAGS="-I.../.build/prefix/include"`
+- `LDFLAGS="-L.../.build/prefix/lib -L.../.build/prefix/lib64"` (add `-Wl,-rpath,...` if you need runtime resolution for non-static parts).
+- `PKG_CONFIG_PATH=".../.build/prefix/lib/pkgconfig:.../.build/prefix/lib64/pkgconfig"`
+
+Typical minimal configure for bring-up:
+
+- `../configure --disable-infiniband --disable-mic --disable-gpu --disable-amd-gpu --disable-opa --disable-lustre --with-systemduserunitdir=no`
+
+CPU backend:
+
+- x86: `--with-cpu-counter-backend=likwid` (default on x86_64).
+
+## Verification
+
+- After build: `make check` in the build tree.
+- For **static** links, `ldd` on `hpcperfstatsd` should **not** show `liblikwid.so`, `libev.so`, or `librabbitmq.so` from the prefix; third-party deps should be linked from `.a` inside the static group. System **libc** / **libm** / **libpthread** typically remain dynamic unless doing a full static link.
+
+## Docs
+
+- `HPCPerfStats/monitor/LIKWID_MIGRATION.md` — PMU + RAPL, `ACCESSMODE_DIRECT`, Makefile ordering (`cpu_counter_metrics` before RAPL).
+- `HPCPerfStats/monitor/VARIORUM_MIGRATION.md` — historical note only (Variorum removed).

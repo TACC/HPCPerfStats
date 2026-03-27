@@ -1,0 +1,12 @@
+---
+description: Require project .venv for all Python execution
+alwaysApply: true
+---
+
+# Python Virtual Environment Rule
+
+- For any Python command in this workspace, use the project virtual environment at `~sharrell/hpcperfstats_monitor_dev/.venv`.
+- Prefer direct invocation with `.venv/bin/python` and `.venv/bin/pip` instead of system `python`/`pip`.
+- If activation is needed, run `source ~sharrell/hpcperfstats_monitor_dev/.venv/bin/activate` before Python tooling commands.
+- Run tests, linters, formatters, scripts, and package installs only through this `.venv`.
+- Do not install Python packages globally for this project.

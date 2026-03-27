@@ -50,9 +50,6 @@
 
 /* Device Opaque object data structures */
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 struct mic_device;
 struct mic_devices_list;
 struct mic_device_mem;
@@ -73,9 +70,6 @@ struct mic_flash_status_info;
 struct mic_turbo_info;
 struct mic_throttle_state_info;
 struct mic_uos_pm_config;
-#ifdef __cplusplus
-}
-#endif
 
 /* Values returned in mic_get_device_type() */
 #define KNC_ID    (1)
@@ -120,9 +114,6 @@ typedef enum _flash_status {
 #define FLASH_OP(status)    ((status) & FLASH_OP_STATUS)
 #define SMC_OP(status)      ((status) & SMC_OP_STATUS)
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /* Error handling */
 const char *mic_get_error_string();
@@ -447,8 +438,5 @@ int mic_free_uos_pm_config(struct mic_uos_pm_config *pm_config);
 /*uuid*/
 int mic_get_uuid(struct mic_device *mdh, uint8_t *uuid, size_t *size);
 
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* MICLIB_INCLUDE_MICLIB_H_ */

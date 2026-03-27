@@ -2,11 +2,10 @@ AC_INIT([hpcperfstats], [2.4], [rtevans@tacc.utexas.edu])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror -Wno-portability])
 AC_CANONICAL_HOST
 AC_PROG_CC
-AC_PROG_CXX
 AM_PROG_CC_C_O
 
 AC_ARG_ENABLE([all-static],
-[AS_HELP_STRING([--enable-all-static], [Link most third-party libraries as static archives (linker groups) (default: yes). Use --disable-all-static for dynamic linking where available. Vendor stacks usually shipped as shared only (DCGM, RDMA/OPA, libibmad, MIC) are linked after -Wl,-Bdynamic. See monitor/scripts/build_static_bundle.sh.])],
+[AS_HELP_STRING([--enable-all-static], [Link most third-party libraries as static archives (linker groups) (default: yes). Use --disable-all-static for dynamic linking where available. Requires static .a for ev, likwid (+ likwid-lua), rabbitmq-c on the LDFLAGS search path; for workspace .build/prefix run monitor/scripts/ensure_dotbuild_prefix_static.sh. Vendor stacks usually shipped as shared only (DCGM, RDMA/OPA, libibmad, MIC) are linked after -Wl,-Bdynamic. See monitor/scripts/build_static_bundle.sh.])],
 [enable_all_static=$enableval],
 [enable_all_static=yes])
 
@@ -103,19 +102,6 @@ esac],
 [hardware=true])
 AM_CONDITIONAL([HARDWARE], [test x$hardware = xtrue])
 
-AC_SEARCH_LIBS([variorum_get_energy_json], [variorum], [have_variorum=yes],
-  [AC_MSG_ERROR([Unable to find libvariorum!])])
-if test "x${have_variorum}" = xyes; then
-  AC_CHECK_HEADERS([variorum.h], [variorum=true],
-    [AC_MSG_ERROR([Unable to find variorum.h!])])
-fi
-AM_CONDITIONAL([VARIORUM], [test x$variorum = xtrue])
-
-if test "x$enable_all_static" = xyes && test "x$variorum" = xtrue; then
-  dnl libvariorum.a does not record transitive deps; link jansson + hwloc explicitly.
-  LIBS="$LIBS -ljansson -lhwloc"
-fi
-
 AC_ARG_WITH([cpu-counter-backend],
 [AS_HELP_STRING([--with-cpu-counter-backend={auto|likwid|dcgm}], [CPU counter backend selection (default: auto)])],
 [cpu_counter_backend="$withval"],
@@ -149,6 +135,10 @@ if test "x$cpu_counter_backend" = "xlikwid"; then
   if test "x${have_likwid}" = xyes; then
     AC_CHECK_HEADERS([likwid.h], [likwid=true],
       [AC_MSG_ERROR([Unable to find likwid.h!])])
+  fi
+  dnl Static LIKWID: nested liblikwid-hwloc.a provides likwid_hwloc_*; liblikwid-lua.a for Lua.
+  if test "x$enable_all_static" = xyes; then
+    LIBS="$LIBS -llikwid-hwloc -llikwid-lua"
   fi
 fi
 AM_CONDITIONAL([LIKWID], [test x$likwid = xtrue])

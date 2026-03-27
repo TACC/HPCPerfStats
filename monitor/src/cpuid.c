@@ -119,7 +119,7 @@ processor_t signature(int *n_pmcs) {
 }
 
 // Determine pkg/core/hyperthread id a logical core belongs too
-int topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, int *nr_core)
+int cpuid_read_cpu_topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, int *nr_core)
 {
   int i;
   char cpuid_path[80];

@@ -136,7 +136,7 @@ static void amd64_df_collect(struct stats_type *type)
     snprintf(cpu, sizeof(cpu), "%d", i);
     int pkg, core, smt, nr_core;
 
-    if (topology(cpu, &pkg, &core, &smt, &nr_core) && (core == 0) && (smt == 0)) {
+    if (cpuid_read_cpu_topology(cpu, &pkg, &core, &smt, &nr_core) && (core == 0) && (smt == 0)) {
       amd64_df_collect_cpu(type, cpu);
     }
   }
@@ -152,7 +152,7 @@ static int amd64_df_begin(struct stats_type *type)
     snprintf(cpu, sizeof(cpu), "%d", i);
     int pkg, core, smt, nr_core;
 
-    if (topology(cpu, &pkg, &core, &smt, &nr_core) && (core == 0) && (smt == 0))
+    if (cpuid_read_cpu_topology(cpu, &pkg, &core, &smt, &nr_core) && (core == 0) && (smt == 0))
       if (amd64_df_begin_cpu(cpu) == 0)
 	nr++;
   }

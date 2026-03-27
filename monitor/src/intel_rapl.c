@@ -19,7 +19,7 @@
 #include "stats.h"
 #include "trace.h"
 #include "cpuid.h"
-#include "variorum_rapl.h"
+#include "likwid_rapl.h"
 
 #define MSR_RAPL_POWER_UNIT        0x606
 
@@ -59,8 +59,8 @@
 
 static int intel_rapl_begin(struct stats_type *type)
 {
-  if (!variorum_rapl_is_supported_processor()) {
-    TRACE("intel_rapl disabled because processor is not Variorum energy capable\n");
+  if (!likwid_rapl_is_supported_processor()) {
+    TRACE("intel_rapl disabled because processor is not LIKWID RAPL capable\n");
     type->st_enabled = 0;
     return -1;
   }
@@ -85,10 +85,11 @@ static void intel_rapl_collect_socket(struct stats_type *type, char *cpu, int pk
   stats = get_current_stats(type, pkg);
   if (stats == NULL)
     goto out;
-  if (variorum_rapl_collect_socket_mj((unsigned int) pkg_id, &pkg_mj, &core_mj,
-                                      &dram_mj, &has_pkg, &has_core,
-                                      &has_dram) < 0) {
-    TRACE("unable to collect Variorum energy for pkg %d (cpu %s)\n", pkg_id, cpu);
+  if (likwid_rapl_collect_socket_mj(atoi(cpu), (unsigned int) pkg_id, &pkg_mj,
+                                    &core_mj, &dram_mj, &has_pkg, &has_core,
+                                    &has_dram) < 0) {
+    TRACE("unable to collect LIKWID RAPL energy for pkg %d (cpu %s)\n", pkg_id,
+          cpu);
     goto out;
   }
   if (has_pkg)
@@ -113,7 +114,7 @@ static void intel_rapl_collect(struct stats_type *type)
     int smt_id = -1;
     int nr_cores = 0;
     snprintf(cpu, sizeof(cpu), "%d", i);
-    topology(cpu, &pkg_id, &core_id, &smt_id, &nr_cores);
+    cpuid_read_cpu_topology(cpu, &pkg_id, &core_id, &smt_id, &nr_cores);
   
     if (core_id == 0 && smt_id == 0)
       intel_rapl_collect_socket(type, cpu, pkg_id);

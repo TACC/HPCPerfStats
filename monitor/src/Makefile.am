@@ -31,11 +31,6 @@ hpcperfstatsd_CPPFLAGS += \
 	-DDEBUG
 endif
 
-if VARIORUM
-hpcperfstatsd_CPPFLAGS += \
-	-DHAVE_VARIORUM
-endif
-
 if LIKWID
 hpcperfstatsd_CPPFLAGS += \
 	-DHAVE_LIKWID \
@@ -71,6 +66,8 @@ hpcperfstatsd_SOURCES = \
 if RABBITMQ
 hpcperfstatsd_SOURCES += \
 	monitor.c \
+	monitor_daemon.c \
+	monitor_daemon.h \
 	stats_buffer.c \
 	stats_buffer.h
 hpcperfstatsd_CPPFLAGS += \
@@ -98,10 +95,9 @@ TYPES 	= \
 if HARDWARE
 if CPU_BACKEND_LIKWID
 TYPES 	+= \
+	cpu_counter_metrics.c \
 	amd64_rapl.c \
 	intel_rapl.c \
-	cpu_counter_metrics.c
-TYPES 	+= \
 	amd64_pmc.c \
 	amd64_df.c \
 	intel_4pmc3.c \
@@ -139,14 +135,10 @@ TYPES += \
 endif
 endif
 
-if VARIORUM
-hpcperfstatsd_SOURCES += \
-	variorum_rapl.h \
-	variorum_rapl.c
-endif
-
 if LIKWID
 hpcperfstatsd_SOURCES += \
+	likwid_rapl.h \
+	likwid_rapl.c \
 	likwid_pmc_adapter.h \
 	likwid_pmc_adapter.c \
 	likwid_arch_map.h
@@ -225,10 +217,10 @@ stats.x: Makefile
 
 EXTRA_DIST = hpcperfstats.conf hpcperfstats.service \
 	$(top_srcdir)/scripts/build_static_bundle.sh \
+	$(top_srcdir)/scripts/ensure_dotbuild_prefix_static.sh \
 	test_monitor_configure_help.sh
 
-check_PROGRAMS = test_variorum_rapl_parser
+check_PROGRAMS = test_likwid_rapl_scale
 TESTS = $(check_PROGRAMS) test_monitor_configure_help.sh
-test_variorum_rapl_parser_SOURCES = \
-	test_variorum_rapl_parser.c \
-	variorum_rapl.c
+test_likwid_rapl_scale_SOURCES = \
+	test_likwid_rapl_scale.c

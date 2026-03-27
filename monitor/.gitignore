@@ -40,4 +40,6 @@ Makefile.in
 /src/.deps
 
 *tar.gz
-/.build/
+/.agent-*
+*.log
+/.build*

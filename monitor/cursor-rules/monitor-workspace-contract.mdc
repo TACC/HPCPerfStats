@@ -1,0 +1,32 @@
+---
+description: Workspace guardrails for monitor-only code changes and RabbitMQ contract
+alwaysApply: true
+---
+
+# Monitor-Only Workspace Rule
+
+- Ignore all rules in `HPCPerfStats/cursor-rules/`. Do not apply or inherit guidance from those rule files.
+- Make code changes only under `HPCPerfStats/monitor/` (primarily `HPCPerfStats/monitor/src/` for C sources).
+- You may analyze files outside `HPCPerfStats/monitor/` when needed to understand interfaces, behavior, or integration points.
+- Do not modify non-monitor code unless the user explicitly overrides this rule in the current chat.
+
+## Integration Context
+
+- The monitor is C-only (no C++ sources or C++ compiler required for the daemon).
+- The monitor C program writes host statistics and publishes payloads to RabbitMQ.
+- RabbitMQ service topology is defined in `HPCPerfStats/docker-compose.yaml`.
+- Downstream ingestion is performed by `HPCPerfStats/hpcperfstats/listend.py` and then the pipeline/app stack.
+
+## Message Contract (Source of Truth: listend.py)
+
+- Treat `HPCPerfStats/hpcperfstats/listend.py` as the canonical consumer contract for monitor output.
+- Monitor payloads must be UTF-8 decodable text and follow one of these shapes:
+  - Schema/rotation message: starts with `$`; must include a line where split fields identify host (consumer expects host from the second line, second token).
+  - Stats sample message: whitespace-separated fields where host is the 3rd token (`<timestamp> <jobid> <host> ...`).
+- Host extraction must remain stable because consumer writes to `archive_dir/<host>/current`.
+- `$` messages trigger rotation semantics on the consumer side; non-`$` messages append to the active `current` file.
+
+## Change Validation Expectation
+
+- For monitor-side message format changes, validate compatibility against `listend.py` parsing logic before finalizing edits.
+- If a monitor change would require consumer changes, stop and call out the contract break clearly.

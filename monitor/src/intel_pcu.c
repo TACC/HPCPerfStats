@@ -306,7 +306,7 @@ static int intel_pcu_begin(struct stats_type *type)
       int smt_id = -1;
       int nr_cores = 0;
       snprintf(cpu, sizeof(cpu), "%d", i);      
-      topology(cpu, &pkg_id, &core_id, &smt_id, &nr_cores);
+      cpuid_read_cpu_topology(cpu, &pkg_id, &core_id, &smt_id, &nr_cores);
       if (core_id == 0 && smt_id == 0)
 	if (intel_pcu_begin_socket(cpu, pcu_events) == 0)
 	  nr++;
@@ -384,7 +384,7 @@ static void intel_pcu_collect(struct stats_type *type)
     int smt_id = -1;
     int nr_cores = 0;
     snprintf(cpu, sizeof(cpu), "%d", i);
-    topology(cpu, &pkg_id, &core_id, &smt_id, &nr_cores);
+    cpuid_read_cpu_topology(cpu, &pkg_id, &core_id, &smt_id, &nr_cores);
   
     if (core_id == 0 && smt_id == 0)
       intel_pcu_collect_socket(type, cpu, pkg_id);

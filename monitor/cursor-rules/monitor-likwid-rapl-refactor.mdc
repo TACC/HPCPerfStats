@@ -1,0 +1,34 @@
+---
+description: LIKWID RAPL refactor — files and invariants (post-Variorum removal)
+globs:
+  - HPCPerfStats/monitor/configure.ac
+  - HPCPerfStats/monitor/src/Makefile.am
+  - HPCPerfStats/monitor/src/likwid_rapl.c
+  - HPCPerfStats/monitor/src/likwid_rapl.h
+  - HPCPerfStats/monitor/src/likwid_pmc_adapter.c
+  - HPCPerfStats/monitor/src/intel_rapl.c
+  - HPCPerfStats/monitor/src/amd64_rapl.c
+  - HPCPerfStats/monitor/scripts/*.sh
+alwaysApply: false
+---
+
+# LIKWID RAPL refactor (monitor)
+
+## Intent
+
+- **Single energy backend**: RAPL millijoule stats for `intel_rapl` / `amd64_rapl` come from **LIKWID** in `likwid_rapl_collect_socket_mj()`, not from Variorum JSON.
+- **Init order**: `cpu_counter_metrics` / `likwid_pmc_adapter_init()` must run **before** RAPL collection on each cycle — enforced by **`TYPES` / stats registration order** in `src/Makefile.am` (`cpu_counter_metrics.c` listed before `*_rapl.c`).
+
+## API
+
+- `likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id, ...)` — pass a **logical CPU id** on the target package (callers use `atoi(cpu)` from the same path that used to rely on global JSON).
+- Preserve downstream **stat key names** (`MSR_*ENERGY*`, etc.); changing them is a **consumer contract** risk (`listend.py` / archive layout is host-oriented, but tooling may depend on field names).
+
+## Autotools
+
+- Do not add **`AC_SEARCH_LIBS` for variorum** or **`HAVE_VARIORUM`**.
+- Static LIKWID: keep **`-llikwid-hwloc -llikwid-lua`** with `--enable-all-static` + likwid backend in `configure.ac`.
+
+## Scripts
+
+- `build_static_bundle.sh` builds **libev**, **rabbitmq-c**, **LIKWID** into `PREFIX` — not Variorum/hwloc/jansson for the monitor link line.

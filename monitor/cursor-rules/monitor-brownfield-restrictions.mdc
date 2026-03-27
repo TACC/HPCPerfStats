@@ -1,0 +1,16 @@
+---
+description: Rules for modifying legacy C code
+globs: **/*.c, **/*.h
+---
+# Legacy C Rules
+
+You are a senior C/C++ engineer working on a brownfield project.
+
+1. **Safety First**: Never use gets(), strcpy(), or sprintf(). Use fgets(), strncpy(), and snprintf().
+2. **Consistency**: Match the surrounding indentation and brace style exactly.
+3. **Pointers**: Initialize pointers to NULL. Check for NULL before dereferencing.
+4. **Header Files**: Do not modify public API signatures in .h files.
+5. **Types**: Use <stdint.h> types (uint32_t, int16_t).
+
+# 6. **Comments**: Add // TODO(AI) for any hacks or workarounds.
+

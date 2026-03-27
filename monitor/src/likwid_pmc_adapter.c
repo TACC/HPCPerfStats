@@ -31,7 +31,8 @@ int likwid_pmc_adapter_init(int nr_threads)
     cpus[i] = i;
   topology_init();
   numa_init();
-  HPMmode(ACCESSMODE_PERF);
+  /* Direct MSR access enables LIKWID power_init / RAPL (likwid_rapl). */
+  HPMmode(ACCESSMODE_DIRECT);
   if (HPMinit() < 0) {
     ERROR("LIKWID HPMinit failed\n");
     goto out;

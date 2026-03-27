@@ -8,14 +8,8 @@
 #include <syslog.h>
 #include <search.h>
 #include <time.h>
-#ifdef __cplusplus
-extern "C" {
-#endif
 #include <amqp.h>
 #include <amqp_tcp_socket.h>
-#ifdef __cplusplus
-}
-#endif
 
 #include "stats.h"
 #include "stats_buffer.h"

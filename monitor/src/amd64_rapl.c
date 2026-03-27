@@ -13,7 +13,7 @@
 #include "stats.h"
 #include "trace.h"
 #include "cpuid.h"
-#include "variorum_rapl.h"
+#include "likwid_rapl.h"
 
 // RAPL Core::X86::Msr::RAPL_PWR_UNIT
 #define MSR_RAPL_PWR_UNIT    0xC0010299
@@ -30,8 +30,8 @@
 static int amd64_rapl_begin_cpu(char *cpu)
 {
   (void) cpu;
-  if (!variorum_rapl_is_supported_processor()) {
-    TRACE("Processor model/family %d not supported by Variorum RAPL\n", processor);
+  if (!likwid_rapl_is_supported_processor()) {
+    TRACE("Processor model/family %d not supported by LIKWID RAPL\n", processor);
     return -1;
   }
   return 0;
@@ -51,9 +51,11 @@ static void amd64_rapl_collect_cpu(struct stats_type *type, char *cpu, char *soc
   stats = get_current_stats(type, socket);
   if (stats == NULL)
     goto out;
-  if (variorum_rapl_collect_socket_mj(socket_id, &pkg_mj, &core_mj, &dram_mj,
-                                      &has_pkg, &has_core, &has_dram) < 0) {
-    TRACE("unable to collect Variorum energy for socket %s (cpu %s)\n", socket, cpu);
+  if (likwid_rapl_collect_socket_mj(atoi(cpu), socket_id, &pkg_mj, &core_mj,
+                                    &dram_mj, &has_pkg, &has_core, &has_dram) <
+      0) {
+    TRACE("unable to collect LIKWID RAPL energy for socket %s (cpu %s)\n", socket,
+          cpu);
     goto out;
   }
   if (core == 0) {
@@ -75,7 +77,7 @@ static void amd64_rapl_collect(struct stats_type *type)
     snprintf(cpu, sizeof(cpu), "%d", i);
     int pkg, core, smt, nr_core;
 
-    if (topology(cpu, &pkg, &core, &smt, &nr_core) && (smt == 0)) {
+    if (cpuid_read_cpu_topology(cpu, &pkg, &core, &smt, &nr_core) && (smt == 0)) {
       char pkg_str[80];
       snprintf(pkg_str, sizeof(pkg_str), "%d", pkg);
       amd64_rapl_collect_cpu(type, cpu, pkg_str, core);
@@ -93,7 +95,7 @@ static int amd64_rapl_begin(struct stats_type *type)
     snprintf(cpu, sizeof(cpu), "%d", i);
     int pkg, core, smt, nr_core;
     
-    if (topology(cpu, &pkg, &core, &smt, &nr_core) && (core == 0) && (smt == 0))
+    if (cpuid_read_cpu_topology(cpu, &pkg, &core, &smt, &nr_core) && (core == 0) && (smt == 0))
       if (amd64_rapl_begin_cpu(cpu) == 0)
 	nr++;
   }

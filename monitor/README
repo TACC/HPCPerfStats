@@ -162,18 +162,26 @@ begin from end.
 architecture, we do not assign the same set of events to each core,
 see `amd64_pmc.c` in the hpcperfstats source for details.
 
-### Variorum Integration
+### LIKWID Integration (PMU and RAPL)
 
-Monitor supports optional Variorum `dev` integration for hybrid MSR migration.
-Enable it with `--enable-variorum` after installing `libvariorum` and
-`variorum.h` into your local prefix. Detailed setup and fallback coverage
-are documented in `VARIORUM_MIGRATION.md`.
+The monitor uses **LIKWID** for both CPU performance counters and **RAPL energy**
+on the LIKWID x86 backend. PMU collection goes through `cpu_counter_metrics` and
+`likwid_pmc_adapter`; package / core / DRAM energy uses LIKWID’s `power_read` path
+(`likwid_rapl.c`) with **direct MSR access** (`ACCESSMODE_DIRECT`), which typically
+requires sufficient privilege to read MSRs (for example root or configured access to
+`/dev/cpu/*/msr`).
 
-### LIKWID Integration
+Compile-time architecture selection: `--with-monitor-arch=auto` (default),
+`intel`, or `amd`. Scope, RAPL behavior, PMU fallback matrix, and build notes are
+in `LIKWID_MIGRATION.md`.
 
-Monitor now uses a unified LIKWID PMU integration path with compile-time
-architecture selection. Configure with:
-`--with-monitor-arch=auto` (or `intel`/`amd`).
-Detailed scope, fallback matrix, and operational notes are documented in
-`LIKWID_MIGRATION.md`.
+**Static linking:** default configure uses `--enable-all-static` (see
+`configure --help`). Third-party static archives (for example `libev`, `librabbitmq`,
+`liblikwid`, plus LIKWID’s `liblikwid-hwloc` and `liblikwid-lua` as needed) must be
+on the linker path. A workspace-oriented flow is `monitor/scripts/ensure_dotbuild_prefix_static.sh`
+(followed by configuring with `CPPFLAGS`/`LDFLAGS` pointing at that prefix); see
+`monitor/scripts/build_static_bundle.sh` for pinned versions and options.
+
+Historical Variorum-only notes are kept for reference in `VARIORUM_MIGRATION.md`
+(superseded by LIKWID RAPL).
 

@@ -14,6 +14,6 @@ typedef enum {
 // Return 1 for true and 0 for false
 int percore_signature(processor_t p, char *cpu, int *nr_events);
 processor_t signature(int *n_pmcs);
-int topology(char *cpu, int *pkg, int *core, int *smt, int *nr_core);
+int cpuid_read_cpu_topology(char *cpu, int *pkg, int *core, int *smt, int *nr_core);
 
 #endif
