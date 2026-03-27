@@ -41,14 +41,15 @@ static void usage(void)
           program_invocation_short_name);
 }
 
-int main(int argc, char *argv[])
+static void monitor_replace_dup_string(char **slot, const char *default_literal, const char *value)
 {
-  srand(1);
-  int daemonmode = 0;
-  char *log_file_name = NULL;
+  if (*slot != NULL && *slot != (char *)default_literal)
+    free(*slot);
+  *slot = strdup(value);
+}
 
-  app_name = argv[0];
-
+static void monitor_parse_cli(int argc, char *argv[], int *daemonmode_out)
+{
   struct option opts[] = {
     { "help",      no_argument, 0, 'h' },
     { "daemon",    no_argument, 0, 'd' },
@@ -62,11 +63,13 @@ int main(int argc, char *argv[])
     { NULL, 0, 0, 0 },
   };
 
+  *daemonmode_out = 0;
+
   int c;
   while ((c = getopt_long(argc, argv, "hdc:s:q:f:p:b:t:", opts, 0)) != -1) {
     switch (c) {
     case 'd':
-      daemonmode = 1;
+      *daemonmode_out = 1;
       break;
     case 's':
       free(server);
@@ -76,22 +79,17 @@ int main(int argc, char *argv[])
       freq = atof(optarg);
       break;
     case 'c':
+      free(conf_file_name);
       conf_file_name = strdup(optarg);
       break;
     case 'q':
-      if (queue != NULL && queue != (char *)default_queue)
-        free(queue);
-      queue = strdup(optarg);
+      monitor_replace_dup_string(&queue, default_queue, optarg);
       break;
     case 'p':
-      if (port != NULL && port != (char *)default_port)
-        free(port);
-      port = strdup(optarg);
+      monitor_replace_dup_string(&port, default_port, optarg);
       break;
     case 't':
-      if (dumpfile_dir != NULL && dumpfile_dir != (char *)default_dumpfile_dir)
-        free(dumpfile_dir);
-      dumpfile_dir = strdup(optarg);
+      monitor_replace_dup_string(&dumpfile_dir, default_dumpfile_dir, optarg);
       break;
     case 'b':
       max_buffer_size = atoi(optarg);
@@ -104,75 +102,64 @@ int main(int argc, char *argv[])
       exit(1);
     }
   }
+}
 
-  log_stream = stderr;
-
-  read_conf_file();
-
-  if (daemonmode) {
-    if (pid_file_name == NULL)
-      pid_file_name = strdup("/var/run/hpcperfstatsd.pid");
-    daemonize();
-  }
-
-  fprintf(log_stream, "Started %s\n", app_name);
-
+static void monitor_try_mk_dumpdir(void)
+{
   if (mkdir(dumpfile_dir, 0777) < 0) {
     if (errno != EEXIST)
       ERROR("Cannot create directory %s\n", dumpfile_dir);
   }
+}
 
-  monitor_daemon_prime_file_mode_from_dumpdir();
-
-  struct sf_ring_buffer ring_buffer;
-  memset(&ring_buffer, 0, sizeof(ring_buffer));
-
+static void monitor_install_ev_handlers(struct sf_ring_buffer *rb)
+{
   signal(SIGPIPE, SIG_IGN);
+
   static struct ev_signal sigint;
-  sigint.data = (void *)&ring_buffer;
+  sigint.data = (void *)rb;
   ev_signal_init(&sigint, monitor_daemon_signal_cb_int, SIGINT);
   ev_signal_start(EV_DEFAULT, &sigint);
 
   static struct ev_signal sighup;
-  sighup.data = (void *)&ring_buffer;
+  sighup.data = (void *)rb;
   ev_signal_init(&sighup, monitor_daemon_signal_cb_hup, SIGHUP);
   ev_signal_start(EV_DEFAULT, &sighup);
+}
 
-  if (server == NULL) {
-    fprintf(log_stream, "Must specify a server to send data to with -s [--server] argument or conf file.\n");
-    exit(0);
-  } else {
-    fprintf(log_stream, "hpcperfstatsd data to server %s on port %s.\n", server, port);
-  }
-
+static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
+{
   ev_stat fd_watcher;
 
-  rotate_timer.data = (void *)&ring_buffer;
+  rotate_timer.data = (void *)rb;
   ev_timer_init(&rotate_timer, monitor_daemon_rotate_timer_cb, 0.0, 86400);
   ev_timer_start(EV_DEFAULT, &rotate_timer);
   fprintf(log_stream, "Setting hpcperfstatsd rotate log files every %ds\n", 86400);
 
-  fd_watcher.data = (void *)&ring_buffer;
+  fd_watcher.data = (void *)rb;
   ev_stat_init(&fd_watcher, monitor_daemon_fd_cb, JOBID_FILE_PATH, EV_READ);
   ev_stat_start(EV_DEFAULT, &fd_watcher);
   fprintf(log_stream, "Starting hpcperfstatsd watching fd %s\n", JOBID_FILE_PATH);
 
-  sample_timer.data = (void *)&ring_buffer;
+  sample_timer.data = (void *)rb;
   ev_timer_init(&sample_timer, monitor_daemon_sample_timer_cb, freq, freq);
   ev_timer_start(EV_DEFAULT, &sample_timer);
   fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs\n", freq);
+}
 
-  nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
-  processor = signature(&n_pmcs);
+static void monitor_require_server_or_exit(void)
+{
+  if (server == NULL) {
+    fprintf(log_stream, "Must specify a server to send data to with -s [--server] argument or conf file.\n");
+    exit(0);
+  }
+  fprintf(log_stream, "hpcperfstatsd data to server %s on port %s.\n", server, port);
+}
 
-  ev_run(EV_DEFAULT, 0);
-
-  fprintf(log_stream, "Stopped %s\n", app_name);
-
+static void monitor_free_heap_options(void)
+{
   if (conf_file_name != NULL)
     free(conf_file_name);
-  if (log_file_name != NULL)
-    free(log_file_name);
   if (pid_file_name != NULL)
     free(pid_file_name);
   if (server != NULL)
@@ -187,6 +174,45 @@ int main(int argc, char *argv[])
     free(rmq_password);
   if (dumpfile_dir != NULL && dumpfile_dir != (char *)default_dumpfile_dir)
     free(dumpfile_dir);
+}
+
+int main(int argc, char *argv[])
+{
+  srand(1);
+  int daemonmode = 0;
+
+  app_name = argv[0];
+  monitor_parse_cli(argc, argv, &daemonmode);
+
+  log_stream = stderr;
+  read_conf_file();
+
+  if (daemonmode) {
+    if (pid_file_name == NULL)
+      pid_file_name = strdup("/var/run/hpcperfstatsd.pid");
+    daemonize();
+  }
+
+  fprintf(log_stream, "Started %s\n", app_name);
+
+  monitor_try_mk_dumpdir();
+  monitor_daemon_prime_file_mode_from_dumpdir();
+
+  struct sf_ring_buffer ring_buffer;
+  memset(&ring_buffer, 0, sizeof(ring_buffer));
+
+  monitor_install_ev_handlers(&ring_buffer);
+  monitor_require_server_or_exit();
+  monitor_start_timers_and_jobid_watcher(&ring_buffer);
+
+  nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+  processor = signature(&n_pmcs);
+
+  ev_run(EV_DEFAULT, 0);
+
+  fprintf(log_stream, "Stopped %s\n", app_name);
+
+  monitor_free_heap_options();
 
   return EXIT_SUCCESS;
 }

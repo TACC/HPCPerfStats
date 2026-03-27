@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <ctype.h>
 #include <limits.h>
@@ -20,6 +21,96 @@
 
 #define sf_printf(sf, fmt, args...) fprintf(sf->sf_file, fmt, ##args)
 
+static void stats_file_fprint_schema_entry_suffix(struct stats_file *sf, struct schema_entry *se)
+{
+  if (se->se_type == SE_CONTROL)
+    sf_printf(sf, ",C");
+  if (se->se_type == SE_EVENT)
+    sf_printf(sf, ",E");
+  if (se->se_unit != NULL)
+    sf_printf(sf, ",U=%s", se->se_unit);
+  if (se->se_width != 0)
+    sf_printf(sf, ",W=%u", se->se_width);
+}
+
+static void stats_file_fprint_schema_line_for_type(struct stats_file *sf, struct stats_type *type)
+{
+  sf_printf(sf, "%c%s", SF_SCHEMA_CHAR, type->st_name);
+  for (size_t j = 0; j < type->st_schema.sc_len; j++) {
+    struct schema_entry *se = type->st_schema.sc_ent[j];
+    sf_printf(sf, " %s", se->se_key);
+    stats_file_fprint_schema_entry_suffix(sf, se);
+  }
+  sf_printf(sf, "\n");
+}
+
+static void stats_file_write_property_banner(struct stats_file *sf)
+{
+  struct utsname uts_buf;
+  unsigned long long uptime = 0;
+
+  uname(&uts_buf);
+  pscanf("/proc/uptime", "%llu", &uptime);
+
+  sf_printf(sf, "%c%s %s\n", SF_PROPERTY_CHAR, STATS_PROGRAM, STATS_VERSION);
+  sf_printf(sf, "%chostname %s\n", SF_PROPERTY_CHAR, uts_buf.nodename);
+  sf_printf(sf, "%cuname %s %s %s %s\n", SF_PROPERTY_CHAR, uts_buf.sysname,
+	    uts_buf.machine, uts_buf.release, uts_buf.version);
+  sf_printf(sf, "%cuptime %llu\n", SF_PROPERTY_CHAR, uptime);
+}
+
+static int sf_rd_validate_program_header_line(struct stats_file *sf, char *line_buf)
+{
+  char *line = line_buf;
+  if (*(line++) != SF_PROPERTY_CHAR) {
+    ERROR("file `%s' is not in %s format\n", sf->sf_path, STATS_PROGRAM);
+    return -1;
+  }
+
+  char *prog = wsep(&line);
+  if (prog == NULL || strcmp(prog, STATS_PROGRAM) != 0) {
+    ERROR("file `%s' is not in %s format\n", sf->sf_path, STATS_PROGRAM);
+    return -1;
+  }
+
+  char *vers = wsep(&line);
+  if (vers == NULL || strverscmp(vers, STATS_VERSION) > 0) {
+    ERROR("file `%s' is has unsupported version `%s'\n", sf->sf_path, vers != NULL ? vers : "NULL");
+    return -1;
+  }
+
+  TRACE("prog %s, vers %s\n", prog, vers);
+  return 0;
+}
+
+static int sf_rd_dispatch_header_line(struct stats_file *sf, char *first, char *line, int line_nr)
+{
+  struct stats_type *type;
+
+  TRACE("%s:%d: first `%s', rest `%s'\n", sf->sf_path, line_nr, first, line);
+  switch (*first) {
+  case SF_SCHEMA_CHAR:
+    type = stats_type_get(first + 1);
+    if (type == NULL) {
+      ERROR("%s:%d: unknown type `%s'\n", sf->sf_path, line_nr, first + 1);
+      return -1;
+    }
+    type->st_schema_def = strdup(line);
+    type->st_enabled = 1;
+    break;
+  case SF_DEVICES_CHAR:
+    break;
+  case SF_COMMENT_CHAR:
+  case SF_PROPERTY_CHAR:
+  case SF_MARK_CHAR:
+    break;
+  default:
+    ERROR("%s:%d: bad directive `%s %s'\n", sf->sf_path, line_nr, first, line);
+    return -1;
+  }
+  return 0;
+}
+
 static int sf_rd_hdr(struct stats_file *sf)
 {
   int rc = 0;
@@ -34,25 +125,8 @@ static int sf_rd_hdr(struct stats_file *sf)
     goto err;
   }
 
-  line = line_buf;
-  if (*(line++) != SF_PROPERTY_CHAR) {
-    ERROR("file `%s' is not in %s format\n", sf->sf_path, STATS_PROGRAM);
+  if (sf_rd_validate_program_header_line(sf, line_buf) < 0)
     goto err;
-  }
-
-  char *prog = wsep(&line);
-  if (prog == NULL || strcmp(prog, STATS_PROGRAM) != 0) {
-    ERROR("file `%s' is not in %s format\n", sf->sf_path, STATS_PROGRAM);
-    goto err;
-  }
-
-  char *vers = wsep(&line);
-  if (vers == NULL || strverscmp(vers, STATS_VERSION) > 0) {
-    ERROR("file `%s' is has unsupported version `%s'\n", sf->sf_path, vers != NULL ? vers : "NULL");
-    goto err;
-  }
-
-  TRACE("prog %s, vers %s\n", prog, vers);
 
   int nr = 1;
   while (getline(&line_buf, &line_buf_size, sf->sf_file) > 0) {
@@ -61,32 +135,10 @@ static int sf_rd_hdr(struct stats_file *sf)
 
     char *first = wsep(&line);
     if (first == NULL)
-      break; /* End of header. */
+      break;
 
-    struct stats_type *type;
-    TRACE("%s:%d: first `%s', rest `%s'\n", sf->sf_path, nr, first, line);
-    switch (*first) {
-    case SF_SCHEMA_CHAR:
-      type = stats_type_get(first + 1);
-      if (type == NULL) {
-        ERROR("%s:%d: unknown type `%s'\n", sf->sf_path, nr, first + 1);
-        goto err;
-      }
-      type->st_schema_def = strdup(line);
-      type->st_enabled = 1;
-      break;
-    case SF_DEVICES_CHAR: /* TODO. */
-      break;
-    case SF_COMMENT_CHAR:
-      break;
-    case SF_PROPERTY_CHAR:
-      break;
-    case SF_MARK_CHAR:
-      break;
-    default:
-      ERROR("%s:%d: bad directive `%s %s'\n", sf->sf_path, nr, first, line);
+    if (sf_rd_dispatch_header_line(sf, first, line, nr) < 0)
       goto err;
-    }
   }
 
  out:
@@ -106,18 +158,7 @@ static int sf_rd_hdr(struct stats_file *sf)
 
 static int sf_wr_hdr(struct stats_file *sf)
 {
-  struct utsname uts_buf;
-  unsigned long long uptime = 0;
-  
-  uname(&uts_buf);
-  pscanf("/proc/uptime", "%llu", &uptime);
-  
-  sf_printf(sf, "%c%s %s\n", SF_PROPERTY_CHAR, STATS_PROGRAM, STATS_VERSION);
-
-  sf_printf(sf, "%chostname %s\n", SF_PROPERTY_CHAR, uts_buf.nodename);
-  sf_printf(sf, "%cuname %s %s %s %s\n", SF_PROPERTY_CHAR, uts_buf.sysname,
-            uts_buf.machine, uts_buf.release, uts_buf.version);
-  sf_printf(sf, "%cuptime %llu\n", SF_PROPERTY_CHAR, uptime);
+  stats_file_write_property_banner(sf);
 
   size_t i = 0;
   struct stats_type *type;
@@ -126,29 +167,11 @@ static int sf_wr_hdr(struct stats_file *sf)
       continue;
 
     TRACE("type %s, schema_len %zu\n", type->st_name, type->st_schema.sc_len);
-
-    /* Write schema. */
-    sf_printf(sf, "%c%s", SF_SCHEMA_CHAR, type->st_name);
-
-    /* MOVEME */
-    size_t j;
-    for (j = 0; j < type->st_schema.sc_len; j++) {
-      struct schema_entry *se = type->st_schema.sc_ent[j];
-      sf_printf(sf, " %s", se->se_key);
-      if (se->se_type == SE_CONTROL)
-        sf_printf(sf, ",C");
-      if (se->se_type == SE_EVENT)
-        sf_printf(sf, ",E");
-      if (se->se_unit != NULL)
-        sf_printf(sf, ",U=%s", se->se_unit);
-      if (se->se_width != 0)
-        sf_printf(sf, ",W=%u", se->se_width);
-    }
-    sf_printf(sf, "\n");
+    stats_file_fprint_schema_line_for_type(sf, type);
   }
 
   fflush(sf->sf_file);
-  
+
   return 0;
 }
 
@@ -205,7 +228,6 @@ int stats_file_close(struct stats_file *sf)
 
   sf_printf(sf, "\n%f %s %s\n", current_time, jobid, uts_buf.nodename);
 
-  /* Write mark. */
   if (sf->sf_mark != NULL) {
     const char *str = sf->sf_mark;
     while (*str != 0) {
@@ -217,7 +239,6 @@ int stats_file_close(struct stats_file *sf)
     }
   }
 
-  /* Write stats. */
   size_t i = 0;
   struct stats_type *type;
   while ((type = stats_type_for_each(&i)) != NULL) {
@@ -230,11 +251,8 @@ int stats_file_close(struct stats_file *sf)
       struct stats *stats = key_to_stats(dev);
 
       sf_printf(sf, "%s %s", type->st_name, stats->s_dev);
-
-      size_t k;
-      for (k = 0; k < type->st_schema.sc_len; k++)
-	  sf_printf(sf, " %llu", stats->s_val[k]);
-
+      for (size_t k = 0; k < type->st_schema.sc_len; k++)
+	sf_printf(sf, " %llu", stats->s_val[k]);
       sf_printf(sf, "\n");
     }
   }
