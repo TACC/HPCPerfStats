@@ -162,3 +162,18 @@ begin from end.
 architecture, we do not assign the same set of events to each core,
 see `amd64_pmc.c` in the hpcperfstats source for details.
 
+### Variorum Integration
+
+Monitor supports optional Variorum `dev` integration for hybrid MSR migration.
+Enable it with `--enable-variorum` after installing `libvariorum` and
+`variorum.h` into your local prefix. Detailed setup and fallback coverage
+are documented in `VARIORUM_MIGRATION.md`.
+
+### LIKWID Integration
+
+Monitor supports optional LIKWID integration for PMU migration experiments.
+Enable it only with explicit GPL acknowledgement:
+`--enable-likwid --enable-gpl-likwid`.
+Detailed scope, fallback matrix, and operational notes are documented in
+`LIKWID_MIGRATION.md`.
+

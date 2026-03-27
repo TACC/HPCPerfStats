@@ -32,6 +32,16 @@ hpcperfstatsd_CPPFLAGS += \
 	-DDEBUG
 endif
 
+if VARIORUM
+hpcperfstatsd_CPPFLAGS += \
+	-DHAVE_VARIORUM
+endif
+
+if LIKWID
+hpcperfstatsd_CPPFLAGS += \
+	-DHAVE_LIKWID
+endif
+
 hpcperfstatsd_SOURCES = \
 	amd64_pmc.h \
 	amd64_df.h \
@@ -119,6 +129,18 @@ TYPES 	+= \
 	intel_snb_r2pci.c
 endif
 
+if VARIORUM
+hpcperfstatsd_SOURCES += \
+	variorum_rapl.h \
+	variorum_rapl.c
+endif
+
+if LIKWID
+hpcperfstatsd_SOURCES += \
+	likwid_pmc_adapter.h \
+	likwid_pmc_adapter.c
+endif
+
 if INFINIBAND
 TYPES	 += \
 	ib.c \
@@ -176,3 +198,9 @@ stats.x: Makefile
 	echo '$(patsubst %.c, X(%),$(sort $(TYPES)))' > $@
 
 EXTRA_DIST = hpcperfstats.conf hpcperfstats.service
+
+check_PROGRAMS = test_variorum_rapl_parser
+TESTS = $(check_PROGRAMS)
+test_variorum_rapl_parser_SOURCES = \
+	test_variorum_rapl_parser.c \
+	variorum_rapl.c

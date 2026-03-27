@@ -13,6 +13,7 @@
 #include "stats.h"
 #include "trace.h"
 #include "cpuid.h"
+#include "variorum_rapl.h"
 
 // RAPL Core::X86::Msr::RAPL_PWR_UNIT
 #define MSR_RAPL_PWR_UNIT    0xC0010299
@@ -28,95 +29,42 @@
 
 static int amd64_rapl_begin_cpu(char *cpu)
 {
-  int rc = -1;
-  char msr_path[80];
-  int msr_fd = -1;
-  
-  // 17H and 19H have RAPL Counters (Core and Pkg) we can access.
-  switch(processor) {
-  case AMD_17H:
-    break;
-  case AMD_19H:
-    break;
-  default:
-    TRACE("Processor model/family %d not supported by AMD RAPL\n", processor);
-    goto out;
+  (void) cpu;
+  if (!variorum_rapl_is_supported_processor()) {
+    TRACE("Processor model/family %d not supported by Variorum RAPL\n", processor);
+    return -1;
   }
-
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
-  msr_fd = open(msr_path, O_RDWR);
-  if (msr_fd < 0) {
-    ERROR("cannot open `%s': %m\n", msr_path);
-    goto out;
-  }
-    
-  rc = 0;
-  
- out:
-  if (msr_fd >= 0)
-    close(msr_fd);
-  
-  return rc;
+  return 0;
 }
 
 static void amd64_rapl_collect_cpu(struct stats_type *type, char *cpu, char *socket, int core)
 {
-  char msr_path[80];
-  int msr_fd = -1;
   struct stats *stats = NULL;
-
+  unsigned long long pkg_mj = 0;
+  unsigned long long core_mj = 0;
+  unsigned long long dram_mj = 0;
+  int has_pkg = 0;
+  int has_core = 0;
+  int has_dram = 0;
+  unsigned int socket_id = (unsigned int) strtoul(socket, NULL, 10);
   
   stats = get_current_stats(type, socket);
   if (stats == NULL)
     goto out;
-
-  /* Read MSRs. */
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
-  msr_fd = open(msr_path, O_RDONLY);
-  if (msr_fd < 0) {
-    ERROR("cannot open `%s': %m\n", msr_path);
+  if (variorum_rapl_collect_socket_mj(socket_id, &pkg_mj, &core_mj, &dram_mj,
+                                      &has_pkg, &has_core, &has_dram) < 0) {
+    TRACE("unable to collect Variorum energy for socket %s (cpu %s)\n", socket, cpu);
     goto out;
   }
-  /*
-  {  
-    uint64_t val = 0;						    
-    if (pread(msr_fd, &val, sizeof(val), MSR_RAPL_PWR_UNIT) < 0) {
-      TRACE("cannot read `RAPL' unit factor (%08X) through `%s': %m\n", MSR_RAPL_PWR_UNIT, msr_path);
-      goto out;
-    }
-    
-    TRACE("Power unit %lld Energy Unit %lld\n", val & 0xf, (val >> 8) & 0x1f);  
-    conv = 1000*pow(0.5,(double)((val >> 8) & 0x1f)); // milli-Joules
-  }
-  */
-#define X(k,r...)							\
-  ({									\
-    uint64_t val = 0;							\
-    if (pread(msr_fd, &val, sizeof(val), k) < 0)			\
-      TRACE("cannot read `%s' (%08X) through `%s': %m\n", #k, k, msr_path); \
-    else								\
-      stats_inc(stats, #k, val);					\
-  })
-  X(MSR_CORE_ENERGY_STAT, "E,W=32,U=mJ", "");
-#undef X
-  
   if (core == 0) {
-#define X(k,r...)							\
-    ({									\
-      uint64_t val = 0;							\
-      if (pread(msr_fd, &val, sizeof(val), k) < 0)			\
-	TRACE("cannot read `%s' (%08X) through `%s': %m\n", #k, k, msr_path); \
-      else								\
-	stats_inc(stats, #k, val);					\
-    })
-    X(MSR_PKG_ENERGY_STAT, "E,W=32,U=mJ", "");
-#undef X
+    if (has_core)
+      stats_inc(stats, "MSR_CORE_ENERGY_STAT", core_mj);
+    if (has_pkg)
+      stats_inc(stats, "MSR_PKG_ENERGY_STAT", pkg_mj);
   }
-  
 
  out:
-  if (msr_fd >= 0)
-    close(msr_fd);
+  return;
 }
 
 static void amd64_rapl_collect(struct stats_type *type)

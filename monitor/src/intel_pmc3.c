@@ -12,16 +12,15 @@
 #include "stats.h"
 #include "trace.h"
 #include "intel_pmc3.h"
+#ifdef HAVE_LIKWID
+#include "likwid_pmc_adapter.h"
+#endif
 
-//! Configure and start counters for a pmc3 cpu counters
-static int intel_pmc3_begin_cpu(char *cpu)
+static int use_likwid_pmc3 = 0;
+
+static uint64_t *intel_pmc3_select_events(void)
 {
-  int rc = -1;
-  char msr_path[80];
-  int msr_fd = -1;
-  uint64_t global_ctr_ctrl, fixed_ctr_ctrl;
-  uint64_t *events;
-  
+  uint64_t *events = NULL;
   switch(processor) {
   case NEHALEM:
     events = nhm_events; break;
@@ -40,6 +39,21 @@ static int intel_pmc3_begin_cpu(char *cpu)
   case SKYLAKE:
     events = skx_events; break;
   default:
+    events = NULL; break;
+  }
+  return events;
+}
+
+//! Configure and start counters for a pmc3 cpu counters
+static int intel_pmc3_begin_cpu(char *cpu)
+{
+  int rc = -1;
+  char msr_path[80];
+  int msr_fd = -1;
+  uint64_t global_ctr_ctrl, fixed_ctr_ctrl;
+  uint64_t *events = intel_pmc3_select_events();
+  
+  if (events == NULL) {
     ERROR("Processor model/family not supported: %m\n");
     goto out;
   }
@@ -100,6 +114,15 @@ static void intel_pmc3_collect_cpu(struct stats_type *type, char *cpu)
   stats = get_current_stats(type, cpu);
   if (stats == NULL)
     goto out;
+#ifdef HAVE_LIKWID
+  if (use_likwid_pmc3) {
+    uint64_t *events = intel_pmc3_select_events();
+    int nr_events = n_pmcs;
+    if (events != NULL &&
+        likwid_pmc_adapter_read_cpu(stats, atoi(cpu), events, nr_events, n_pmcs) == 0)
+      goto out;
+  }
+#endif
 
   TRACE("cpu %s\n", cpu);
 
@@ -160,6 +183,19 @@ static void intel_pmc3_collect_cpu(struct stats_type *type, char *cpu)
 static int intel_pmc3_begin(struct stats_type *type)
 {
   int nr = 0;
+#ifdef HAVE_LIKWID
+  if (likwid_pmc_adapter_init(nr_cpus) == 0) {
+    const char *eventset =
+      "INSTR_RETIRED_ANY:FIXC0,CPU_CLK_UNHALTED_CORE:FIXC1,CPU_CLK_UNHALTED_REF:FIXC2,"
+      "MEM_LOAD_UOPS_RETIRED_L1_HIT:PMC0,MEM_LOAD_UOPS_RETIRED_L2_HIT:PMC1,"
+      "MEM_LOAD_UOPS_RETIRED_LLC_HIT:PMC2,L1D_REPLACEMENT:PMC3";
+    if (likwid_pmc_adapter_setup_events(eventset) == 0) {
+      use_likwid_pmc3 = 1;
+      return 0;
+    }
+    likwid_pmc_adapter_finalize();
+  }
+#endif
   int i;
   for (i = 0; i < nr_cpus; i++) {
     char cpu[80];

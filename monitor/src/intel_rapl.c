@@ -19,6 +19,7 @@
 #include "stats.h"
 #include "trace.h"
 #include "cpuid.h"
+#include "variorum_rapl.h"
 
 #define MSR_RAPL_POWER_UNIT        0x606
 
@@ -58,47 +59,24 @@
 
 static int intel_rapl_begin(struct stats_type *type)
 {
-  int cpu = 0;
-  char cpuid_path[80];
-  int cpuid_fd = -1;
-  uint32_t buf[4];
-  int rc = -1;
-
-  char vendor[12];
-  /* Open /dev/cpuid/CPU/cpuid. */
-  snprintf(cpuid_path, sizeof(cpuid_path), "/dev/cpu/%d/cpuid", cpu);
-  cpuid_fd = open(cpuid_path, O_RDONLY);
-  if (cpuid_fd < 0) {
-    ERROR("cannot open `%s': %m\n", cpuid_path);
-    goto out;
+  if (!variorum_rapl_is_supported_processor()) {
+    TRACE("intel_rapl disabled because processor is not Variorum energy capable\n");
+    type->st_enabled = 0;
+    return -1;
   }
-
-  /* Do cpuid 0 to get cpu vendor. */
-  if (pread(cpuid_fd, buf, sizeof(buf), 0x0) < 0) {
-    ERROR("cannot read cpu vendor through `%s': %m\n", cpuid_path);
-    goto out;
-  }
-  buf[0] = buf[2], buf[2] = buf[3], buf[3] = buf[0];
-  snprintf(vendor, sizeof(vendor) + 1, (char*) buf + 4);
-  TRACE("cpu %s, vendor `%.12s'\n", cpu, vendor);
-  if (strncmp(vendor, "GenuineIntel", 12) != 0)
-    type->st_enabled = 0;  
-  rc = 0;
-  
- out:
-  if (cpuid_fd >= 0)
-    close(cpuid_fd);
-  return rc;
+  return 0;
 }
 
 static void intel_rapl_collect_socket(struct stats_type *type, char *cpu, int pkg_id)
 {
   struct stats *stats = NULL;
-  char msr_path[80];
-  int msr_fd = -1;
-  uint64_t unit_fact;
-  //double conv;
   char pkg[80];
+  unsigned long long pkg_mj = 0;
+  unsigned long long core_mj = 0;
+  unsigned long long dram_mj = 0;
+  int has_pkg = 0;
+  int has_core = 0;
+  int has_dram = 0;
   
   snprintf(pkg, sizeof(pkg), "%d", pkg_id);
 
@@ -107,36 +85,21 @@ static void intel_rapl_collect_socket(struct stats_type *type, char *cpu, int pk
   stats = get_current_stats(type, pkg);
   if (stats == NULL)
     goto out;
-
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
-  msr_fd = open(msr_path, O_RDONLY);
-  if (msr_fd < 0) {
-    ERROR("cannot open `%s': %m\n", msr_path);
+  if (variorum_rapl_collect_socket_mj((unsigned int) pkg_id, &pkg_mj, &core_mj,
+                                      &dram_mj, &has_pkg, &has_core,
+                                      &has_dram) < 0) {
+    TRACE("unable to collect Variorum energy for pkg %d (cpu %s)\n", pkg_id, cpu);
     goto out;
   }
-  /*
-  if (pread(msr_fd, &unit_fact, sizeof(unit_fact), MSR_RAPL_POWER_UNIT) < 0) {	
-    ERROR("cannot read RAPL unit factor: %m\n");
-    goto out;
-  }      
-  
-  TRACE("Power unit %lld Energy Unit %lld\n", unit_fact & 0xf, (unit_fact >> 8) & 0x1f);
-  conv = 1000*pow(0.5,(double)((unit_fact >> 8) & 0x1f));
-  */
-#define X(k,r...) \
-  ({ \
-    uint64_t val = 0; \
-    if (pread(msr_fd, &val, sizeof(val), k) < 0) \
-      ERROR("cannot read `%s' (%08X) through `%s': %m\n", #k, k, msr_path); \
-    else \
-      stats_set(stats, #k, val); \
-  })
-  KEYS;
-#undef X
+  if (has_pkg)
+    stats_set(stats, "MSR_PKG_ENERGY_STATUS", pkg_mj);
+  if (has_core)
+    stats_set(stats, "MSR_PP0_ENERGY_STATUS", core_mj);
+  if (has_dram)
+    stats_set(stats, "MSR_DRAM_ENERGY_STATUS", dram_mj);
 
  out:
-  if (msr_fd >= 0)
-    close(msr_fd);
+  return;
 }
 
 //! Collect values of counters

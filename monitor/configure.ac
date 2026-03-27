@@ -4,26 +4,12 @@ AC_PROG_CC
 AC_PROG_CXX
 AM_PROG_CC_C_O
 
-AC_ARG_ENABLE([rabbitmq],
-[  --enable-rabbitmq	Build the rabbitmq version (default is true)],
-[case "${enableval}" in
-  yes) AC_SEARCH_LIBS([amqp_new_connection], [rabbitmq], [have_rabbitmq=yes],
+AC_SEARCH_LIBS([amqp_new_connection], [rabbitmq], [have_rabbitmq=yes],
     [AC_MSG_ERROR([Unable to find librabbitmq.so!])])
-    if test "x${have_rabbitmq}" = xyes; then
-       AC_CHECK_HEADERS([amqp.h], [rabbitmq=true],
-       [AC_MSG_ERROR([Unable to find amqp.h!])])
-    fi
-    ;;
-  no)  rabbitmq=false ;;
-  *) AC_MSG_ERROR([bad value ${enableval} for --enable-rabbitmq]) ;;
-esac],
-[AC_SEARCH_LIBS([amqp_new_connection], [rabbitmq], [have_rabbitmq=yes],
-    [AC_MSG_ERROR([Unable to find librabbitmq.so!])])
-    if test "x${have_rabbitmq}" = xyes; then
-       AC_CHECK_HEADERS([amqp.h], [rabbitmq=true],
-       [AC_MSG_ERROR([Unable to find amqp.h!])])
-    fi
-])
+if test "x${have_rabbitmq}" = xyes; then
+   AC_CHECK_HEADERS([amqp.h], [rabbitmq=true],
+   [AC_MSG_ERROR([Unable to find amqp.h!])])
+fi
 AM_CONDITIONAL([RABBITMQ], [test x$rabbitmq = xtrue])
 
 AC_ARG_ENABLE([hardware],
@@ -35,6 +21,22 @@ AC_ARG_ENABLE([hardware],
 esac],
 [hardware=true])
 AM_CONDITIONAL([HARDWARE], [test x$hardware = xtrue])
+
+AC_SEARCH_LIBS([variorum_get_energy_json], [variorum], [have_variorum=yes],
+  [AC_MSG_ERROR([Unable to find libvariorum.so!])])
+if test "x${have_variorum}" = xyes; then
+  AC_CHECK_HEADERS([variorum.h], [variorum=true],
+    [AC_MSG_ERROR([Unable to find variorum.h!])])
+fi
+AM_CONDITIONAL([VARIORUM], [test x$variorum = xtrue])
+
+AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
+  [AC_MSG_ERROR([Unable to find liblikwid.so!])])
+if test "x${have_likwid}" = xyes; then
+  AC_CHECK_HEADERS([likwid.h], [likwid=true],
+    [AC_MSG_ERROR([Unable to find likwid.h!])])
+fi
+AM_CONDITIONAL([LIKWID], [test x$likwid = xtrue])
 
 AC_ARG_ENABLE([infiniband],
 [  --enable-infiniband	Enable Infiniband support (default is true)],
