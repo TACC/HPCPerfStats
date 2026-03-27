@@ -195,7 +195,15 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    - `machine` — cluster name  
    - `host_name_ext` — FQDN of the cluster  
-   - `server` — FQDN of the host running the containers  
+   - `server` — FQDN of the host running the containers
+   - `restricted_queue_keywords` - queues you want to filter out and prevent jobs in them from being displayed 
+   - `staff_email_domain` - the email domain of the institution/organization so authorized staff can see all jobs
+   - `timezone` - your machine's local timezone
+   - `total_cores` - the number of CPUs in your machine
+   - `secret_key` - a random string
+
+   You will only need to edit the `[DEFAULT]` section as detailed above. The `[RMQ]` and `[PORTAL]` sections have been configured to work for the docker installation, and we do not recommend changing any of the variables in these sections.
+   If you need to edit some of those variables, please note that a lot of them are tied to the docker yaml file.
 
 6. **Supervisord and rsync:**
 
