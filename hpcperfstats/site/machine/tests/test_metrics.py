@@ -1,6 +1,8 @@
 """Unit tests for analysis.metrics.metrics (_Schema, _EventIndex, _Host, avg_freq).
 
 """
+import warnings
+
 import numpy as np
 import pytest
 from pandas import Timestamp
@@ -15,6 +17,7 @@ from hpcperfstats.analysis.metrics.metrics import (
     _Schema,
     avg_ethbw,
     avg_freq,
+    avg_gpuutil,
     build_job_metrics_display_list,
     expected_job_metric_row_count,
     job_metrics_catalog_entries,
@@ -242,6 +245,25 @@ def test_avg_ethbw_mean_across_hosts():
   assert abs(value - expected) < 1e-9
   assert typename == "net"
   assert units == "MB/s"
+
+
+def test_avg_gpuutil_returns_none_for_short_series_without_warning():
+  """avg_gpuutil skips hosts with <3 samples (empty trimmed window) and returns None."""
+  schema = _Schema(["utilization"])
+  short_stats = np.array([[10.0], [20.0]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      return schema, {"h1": short_stats}
+
+  u = MockU()
+  with warnings.catch_warnings(record=True) as captured:
+    warnings.simplefilter("always")
+    value, typename, units = avg_gpuutil().compute_metric(u)
+  assert value is None
+  assert typename == "nvidia_gpu"
+  assert units == "%"
+  assert len(captured) == 0
 
 
 def test_job_metrics_catalog_entries_matches_simple_plus_complex():

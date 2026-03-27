@@ -764,7 +764,10 @@ class avg_gpuutil():
     ui = schema["utilization"].index
     per_host = []
     for hostname, stats in _stats.items():
-      per_host.append(float(mean(stats[1:-1, ui])))
+      window = stats[1:-1, ui]
+      if window.size == 0:
+        continue
+      per_host.append(float(mean(window)))
     if not per_host:
       return None, typename, '%'
     value = float(mean(per_host))
