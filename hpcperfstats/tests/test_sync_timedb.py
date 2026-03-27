@@ -321,15 +321,17 @@ def test_build_stats_dataframes_records():
 
 
 def test_compute_deltas_and_arc_two_timestamps():
-  """Two timestamps for same group yield one row with delta and arc."""
+  """Two timestamps: first row keeps value with NaN delta/arc; second has rates."""
   stats_df = pd.DataFrame([
       {"host": "h", "jid": "j", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 100.0, "value": 100.0, "wid": 48, "mult": 1},
       {"host": "h", "jid": "j", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 110.0, "value": 250.0, "wid": 48, "mult": 1},
   ])
   result = compute_deltas_and_arc(stats_df)
-  assert len(result) == 1
-  assert result.iloc[0]["delta"] == 150.0
-  assert result.iloc[0]["arc"] == 15.0
+  assert len(result) == 2
+  assert result.iloc[0]["value"] == 100.0
+  assert pd.isna(result.iloc[0]["delta"]) and pd.isna(result.iloc[0]["arc"])
+  assert result.iloc[1]["delta"] == 150.0
+  assert result.iloc[1]["arc"] == 15.0
 
 
 def test_compute_deltas_and_arc_rollover():
@@ -339,22 +341,25 @@ def test_compute_deltas_and_arc_rollover():
       {"host": "h", "jid": "j", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 110.0, "value": 10.0, "wid": 48, "mult": 1},
   ])
   result = compute_deltas_and_arc(stats_df)
-  assert len(result) == 1
+  assert len(result) == 2
   expected_delta = (2**48 - 1000 + 10) * 1
-  assert result.iloc[0]["delta"] == expected_delta
+  assert pd.isna(result.iloc[0]["delta"])
+  assert result.iloc[1]["delta"] == expected_delta
 
 
-def test_compute_deltas_and_arc_drops_first_timestamp():
-  """First timestamp per group has no diff, so that row is dropped."""
+def test_compute_deltas_and_arc_keeps_first_timestamp_value():
+  """First timestamp per group has NaN delta/arc but value is kept for complex metrics."""
   stats_df = pd.DataFrame([
       {"host": "h", "jid": "j", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 100.0, "value": 100.0, "wid": 48, "mult": 1},
       {"host": "h", "jid": "j", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 110.0, "value": 200.0, "wid": 48, "mult": 1},
   ])
   result = compute_deltas_and_arc(stats_df)
-  assert len(result) == 1
+  assert len(result) == 2
   assert "arc" in result.columns
   assert "delta" in result.columns
   assert "time" in result.columns
+  assert result.iloc[0]["value"] == 100.0
+  assert pd.isna(result.iloc[0]["arc"])
 
 
 def test_sync_timedb_parsing_with_real_sample_produces_deltas_and_arc():

@@ -252,6 +252,104 @@ def test_job_arc_avg_flops_legacy_sse_when_fp_arith_missing():
   assert typename == "intel_8pmc3"
 
 
+
+
+def test_job_arc_avg_mbw_uses_intel_imc_when_amd_df_empty():
+  """avg_mbw tries AMD DF then Intel IMC CAS_READS+CAS_WRITES."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") == "amd64_df":
+      return None
+    if kw.get("typename") == "intel_skx_imc":
+      ev = kw.get("events") or []
+      if list(ev) == ["CAS_READS", "CAS_WRITES"]:
+        return 2.5
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    with patch(
+        "hpcperfstats.analysis.metrics.metrics.INTEL_IMC_STATS_TYPES",
+        ("intel_skx_imc",),
+    ):
+      m = Metrics()
+      value, typename = m._job_arc_avg_mbw(object())
+  assert abs(value - 2.5) < 1e-9
+  assert typename == "intel_skx_imc"
+
+
+def test_job_arc_avg_mbw_prefers_amd64_df():
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") == "amd64_df":
+      return 0.75
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_mbw(object())
+  assert abs(value - 0.75) < 1e-9
+  assert typename == "amd64_df"
+
+
+def test_job_arc_avg_flops_cpu_counter_metrics():
+  """avg_flops uses cpu_counter_metrics when Intel PMC types lack FP data."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") == "amd64_pmc":
+      return None
+    if kw.get("typename") in ("intel_8pmc3", "intel_4pmc3"):
+      return None
+    if kw.get("typename") == "cpu_counter_metrics":
+      if len(kw.get("events") or []) > 1:
+        return 3.0
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_flops(object())
+  assert abs(value - 3.0) < 1e-9
+  assert typename == "cpu_counter_metrics"
+
+
+def test_avg_gpuutil_amd_gpu_uses_gpu_util_column():
+  """avg_gpuutil reads amd_gpu.gpu_util when nvidia is absent."""
+  schema = _Schema(["gpu_util"])
+  stats = np.array([[0.0], [60.0], [80.0]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return None, {}
+      if typename == "amd_gpu":
+        return schema, {"h1": stats}
+      return None, {}
+
+  u = MockU()
+  value, typename, units = avg_gpuutil().compute_metric(u)
+  assert typename == "amd_gpu"
+  assert units == "%"
+  assert value == pytest.approx(60.0)
+
+
+def test_avg_gpuutil_nvidia_takes_precedence_over_amd():
+  schema_n = _Schema(["utilization"])
+  schema_a = _Schema(["gpu_util"])
+  sn = np.array([[0.0], [20.0], [40.0]], dtype=np.float64)
+  sa = np.array([[0.0], [99.0], [99.0]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema_n, {"h1": sn}
+      if typename == "amd_gpu":
+        return schema_a, {"h1": sa}
+      return None, {}
+
+  u = MockU()
+  value, typename, units = avg_gpuutil().compute_metric(u)
+  assert typename == "nvidia_gpu"
+  assert value == pytest.approx(20.0)
+
+
 def test_avg_ethbw_mean_across_hosts():
   """avg_ethbw is mean of per-host (rx+tx delta)/(dt * 1MiB), not pooled sum/nhosts."""
   schema = _Schema(["rx_bytes", "tx_bytes"])

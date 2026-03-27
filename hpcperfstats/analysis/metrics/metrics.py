@@ -18,7 +18,7 @@ from django.db import transaction, close_old_connections
 from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.gen import jid_table
-from hpcperfstats.analysis.gen.utils import utils
+from hpcperfstats.analysis.gen.utils import INTEL_IMC_STATS_TYPES, utils
 from hpcperfstats.site.machine.models import job_data, metrics_data
 
 try:
@@ -506,7 +506,7 @@ class Metrics():
     return float(per_host_vals.mean())
 
   def _job_arc_avg_flops(self, jt):
-    """GFLOP/s from amd64_pmc FLOPS, else Intel FP_ARITH sum, else legacy SSE/AVX double proxies.
+    """GFLOP/s from amd64_pmc FLOPS, else FP_ARITH/SSE proxies on intel_*pmc3 or cpu_counter_metrics.
 
     Returns (mean_gf, typename_used) or (None, None).
     """
@@ -519,22 +519,22 @@ class Metrics():
     )
     if v is not None:
       return v, "amd64_pmc"
-    for intel_typ in ("intel_8pmc3", "intel_4pmc3"):
+    for core_typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics"):
       v = self.job_arc(
           jt,
-          typename=intel_typ,
+          typename=core_typ,
           events=_INTEL_FP_ARITH_EVENTS,
           conv=1e-9,
           units="GF",
       )
       if v is not None:
-        return v, intel_typ
-    for intel_typ in ("intel_8pmc3", "intel_4pmc3"):
+        return v, core_typ
+    for core_typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics"):
       total = None
       for ev, weight in _INTEL_LEGACY_SSE_FLOP_EVENTS:
         part = self.job_arc(
             jt,
-            typename=intel_typ,
+            typename=core_typ,
             events=[ev],
             conv=1e-9 * weight,
             units="GF",
@@ -542,7 +542,39 @@ class Metrics():
         if part is not None:
           total = part if total is None else total + part
       if total is not None and total > 0:
-        return total, intel_typ
+        return total, core_typ
+    return None, None
+
+  def _job_arc_avg_mbw(self, jt):
+    """Memory bandwidth (GB/s): AMD DF MBW channels, else Intel IMC CAS sum.
+
+    Returns (mean_gbw, typename_used) or (None, None).
+    """
+    v = self.job_arc(
+        jt,
+        typename="amd64_df",
+        events=[
+            "MBW_CHANNEL_0",
+            "MBW_CHANNEL_1",
+            "MBW_CHANNEL_2",
+            "MBW_CHANNEL_3",
+        ],
+        conv=2 / (1024 ** 3),
+        units="GB/s",
+    )
+    if v is not None:
+      return v, "amd64_df"
+    cas_conv = 64 / (1024 ** 3)
+    for imc_typ in INTEL_IMC_STATS_TYPES:
+      v = self.job_arc(
+          jt,
+          typename=imc_typ,
+          events=["CAS_READS", "CAS_WRITES"],
+          conv=cas_conv,
+          units="GB/s",
+      )
+      if v is not None:
+        return v, imc_typ
     return None, None
 
   # Compute metric
@@ -583,6 +615,9 @@ class Metrics():
         if metric_name == "avg_flops":
           value, flops_typename = self._job_arc_avg_flops(jt)
           row_type = flops_typename or metric_obj["typename"]
+        elif metric_name == "avg_mbw":
+          value, mbw_typename = self._job_arc_avg_mbw(jt)
+          row_type = mbw_typename or metric_obj["typename"]
         else:
           value = self.job_arc(jt, **metric_obj)
           row_type = metric_obj["typename"]
@@ -773,28 +808,29 @@ class avg_ethbw():
 
 
 class avg_gpuutil():
-  """Average GPU utilization (%) from nvidia_gpu utilization.
+  """Average GPU utilization (%) from nvidia_gpu or amd_gpu.
 
     """
 
   def compute_metric(self, u):
-    typename = "nvidia_gpu"
-    schema, _stats = u.get_type(typename)
-    if schema is None:
-      return None, typename, '%'
-    ui = schema["utilization"].index
-    per_host = []
-    for hostname, stats in _stats.items():
-      window = stats[1:-1, ui]
-      if window.size == 0:
+    for typename, col in (("nvidia_gpu", "utilization"), ("amd_gpu", "gpu_util")):
+      schema, _stats = u.get_type(typename)
+      if schema is None or col not in schema.events:
         continue
-      per_host.append(float(mean(window)))
-    if not per_host:
-      return None, typename, '%'
-    value = float(mean(per_host))
-    if value == 0:
-      return None, typename, '%'
-    return value, typename, '%'
+      ui = schema[col].index
+      per_host = []
+      for hostname, stats in _stats.items():
+        window = stats[1:-1, ui]
+        if window.size == 0:
+          continue
+        per_host.append(float(mean(window)))
+      if not per_host:
+        continue
+      value = float(mean(per_host))
+      if value == 0:
+        continue
+      return value, typename, '%'
+    return None, "nvidia_gpu", '%'
 
 
 class avg_packetsize():

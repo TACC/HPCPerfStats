@@ -233,7 +233,12 @@ def build_stats_dataframes(stats_list, proc_stats_list):
 
 
 def compute_deltas_and_arc(stats_df):
-  """Compute delta and arc columns from value and time. Drops first timestamp per group, returns tz-aware time."""
+  """Compute delta and arc columns from value and time; returns tz-aware time.
+
+  Rows with a valid ``value`` are kept even when ``delta``/``arc`` are NaN (first
+  sample per host/type/event), so cumulative counters remain in ``host_data``
+  for complex metrics that pivot on ``value``.
+  """
   stats_df = stats_df.copy()
 
   # If stats_df is empty or missing expected columns (e.g. when no usable
@@ -256,10 +261,13 @@ def compute_deltas_and_arc(stats_df):
   stats_df["delta"] = stats_df["delta"] * stats_df["mult"]
   stats_df.drop(columns=["wid", "mult"], inplace=True)
   stats_df = stats_df.groupby(
-      ["host", "jid", "type", "event", "unit", "time"]).sum().reset_index()
+      ["host", "jid", "type", "event", "unit", "time"],
+      observed=True,
+  ).sum(min_count=1).reset_index()
   stats_df = stats_df.sort_values(by=["host", "type", "event", "time"])
   deltat = stats_df.groupby(["host", "type", "event"])["time"].diff()
   stats_df["arc"] = stats_df["delta"] / deltat
   stats_df["time"] = to_datetime(stats_df["time"], unit='s').dt.tz_localize('UTC')
-  stats_df = stats_df.dropna()
+  stats_df = stats_df.dropna(
+      subset=["host", "jid", "type", "event", "time", "value"])
   return stats_df
