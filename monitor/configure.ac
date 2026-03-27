@@ -87,8 +87,8 @@ AC_DEFUN([MONITOR_CFG_OPA_LIBS], [
 AC_SEARCH_LIBS([amqp_new_connection], [rabbitmq], [have_rabbitmq=yes],
     [AC_MSG_ERROR([Unable to find librabbitmq!])])
 if test "x${have_rabbitmq}" = xyes; then
-   AC_CHECK_HEADERS([amqp.h], [rabbitmq=true],
-   [AC_MSG_ERROR([Unable to find amqp.h!])])
+   AC_CHECK_HEADERS([rabbitmq-c/amqp.h], [rabbitmq=true],
+   [AC_MSG_ERROR([Unable to find rabbitmq-c/amqp.h (rabbitmq-c development headers)!])])
 fi
 AM_CONDITIONAL([RABBITMQ], [test x$rabbitmq = xtrue])
 

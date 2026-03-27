@@ -82,8 +82,10 @@ endif
 TYPES 	= \
 	block.c \
 	cpu.c \
+	lnet.c \
 	mem.c \
 	net.c \
+	nfs.c \
 	numa.c \
 	proc.c \
 	ps.c \

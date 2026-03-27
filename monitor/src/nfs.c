@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -233,9 +234,15 @@ static void nfs_collect(struct stats_type *type)
   char *line = NULL;
   size_t line_size = 0;
 
+#if !defined(__linux__)
+  (void)type;
+  return;
+#endif
+
   file = fopen(path, "r");
   if (file == NULL) {
-    ERROR("cannot open `%s': %m\n", path);
+    if (errno != ENOENT)
+      TRACE("nfs: cannot open `%s': %m\n", path);
     goto out;
   }
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
@@ -267,7 +274,7 @@ static void nfs_collect(struct stats_type *type)
 
     ver = wsep(&rest);
     if (strcmp(ver, "1.0") != 0 && strcmp(ver, "1.1") != 0) {
-      ERROR("NFS mount `%s', device `%s' has unknown statvers `%s'\n",
+      TRACE("nfs: mount `%s', device `%s' has unknown statvers `%s' (skip)\n",
 	    mnt, dev, ver);
       continue;
     }

@@ -8,8 +8,8 @@
 #include <syslog.h>
 #include <search.h>
 #include <time.h>
-#include <amqp.h>
-#include <amqp_tcp_socket.h>
+#include <rabbitmq-c/amqp.h>
+#include <rabbitmq-c/tcp_socket.h>
 
 #include "stats.h"
 #include "stats_buffer.h"
