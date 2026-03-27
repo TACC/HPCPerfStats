@@ -39,31 +39,57 @@
   X(tx_packets, "E", ""), \
   X(tx_window_errors, "E", "")
 
-static void net_collect_dev(struct stats_type *type, const char *dev)
+/* Skip opendir/readdir + per-iface flags pscanf between rebuilds (hotplug: refreshed periodically). */
+#define NET_IFACE_CACHE_REFRESH_INTERVAL 32u
+
+static char **net_cached_devs;
+static size_t net_n_cached;
+static unsigned net_ticks_since_rebuild;
+
+void net_stats_invalidate_iface_cache(void)
 {
-  struct stats *stats = NULL;
-  char path[80];
+  size_t i;
 
-  stats = get_current_stats(type, dev);
-  if (stats == NULL)
-    return;
-
-  snprintf(path, sizeof(path), "/sys/class/net/%s/statistics", dev);
-  path_collect_key_value_dir(path, stats);
+  for (i = 0; i < net_n_cached; i++)
+    free(net_cached_devs[i]);
+  free(net_cached_devs);
+  net_cached_devs = NULL;
+  net_n_cached = 0;
+  net_ticks_since_rebuild = 0;
 }
 
-static void net_collect(struct stats_type *type)
+static int net_iface_cache_append(const char *name)
+{
+  char **nlist;
+  char *copy = strdup(name);
+
+  if (copy == NULL)
+    return -1;
+  nlist = (char **)realloc(net_cached_devs, (net_n_cached + 1) * sizeof(*nlist));
+  if (nlist == NULL) {
+    free(copy);
+    return -1;
+  }
+  net_cached_devs = nlist;
+  net_cached_devs[net_n_cached++] = copy;
+  return 0;
+}
+
+static void net_iface_cache_rebuild(struct stats_type *type)
 {
   const char *dir_path = "/sys/class/net";
   DIR *dir = NULL;
+  struct dirent *ent;
+
+  (void)type;
+  net_stats_invalidate_iface_cache();
 
   dir = opendir(dir_path);
   if (dir == NULL) {
     ERROR("cannot open `%s': %m\n", dir_path);
-    goto out;
+    return;
   }
 
-  struct dirent *ent;
   while ((ent = readdir(dir)) != NULL) {
     unsigned int flags;
     char flags_path[80];
@@ -71,12 +97,9 @@ static void net_collect(struct stats_type *type)
     if (ent->d_name[0] == '.')
       continue;
 
-    /* Only collect if dev is up. */
     snprintf(flags_path, sizeof(flags_path), "/sys/class/net/%s/flags", ent->d_name);
-    if (pscanf(flags_path, "%x", &flags) != 1) {
-      //ERROR("cannot read flags for device `%s'\n", ent->d_name);
+    if (pscanf(flags_path, "%x", &flags) != 1)
       continue;
-    }
 
 #define NET_FLAGS \
   X(IFF_UP), \
@@ -98,17 +121,43 @@ static void net_collect(struct stats_type *type)
   X(IFF_DYNAMIC)
 
 #define X(F) ((flags & F) ? " " #F : "")
-    TRACE("dev %s, flags %u%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
-          ent->d_name, flags, NET_FLAGS);
+    TRACE("dev %s, flags %u%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
+	  ent->d_name, flags, NET_FLAGS);
 #undef X
 
-    if (flags & IFF_UP)
-      net_collect_dev(type, ent->d_name);
+    if ((flags & IFF_UP) && net_iface_cache_append(ent->d_name) < 0)
+      ERROR("cannot cache net iface `%s': %m\n", ent->d_name);
   }
 
- out:
   if (dir != NULL)
     closedir(dir);
+}
+
+static void net_collect_dev(struct stats_type *type, const char *dev)
+{
+  struct stats *stats = NULL;
+  char path[80];
+
+  stats = get_current_stats(type, dev);
+  if (stats == NULL)
+    return;
+
+  snprintf(path, sizeof(path), "/sys/class/net/%s/statistics", dev);
+  path_collect_key_value_dir(path, stats);
+}
+
+static void net_collect(struct stats_type *type)
+{
+  size_t i;
+
+  net_ticks_since_rebuild++;
+  if (net_n_cached == 0 || net_ticks_since_rebuild >= NET_IFACE_CACHE_REFRESH_INTERVAL) {
+    net_ticks_since_rebuild = 0;
+    net_iface_cache_rebuild(type);
+  }
+
+  for (i = 0; i < net_n_cached; i++)
+    net_collect_dev(type, net_cached_devs[i]);
 }
 
 struct stats_type net_stats_type = {

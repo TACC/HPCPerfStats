@@ -13,6 +13,7 @@
 #include <rabbitmq-c/tcp_socket.h>
 
 #include "stats.h"
+#include "collect.h"
 #include "fileio.h"
 #include "stats_buffer.h"
 #include "stats_buffer_data_append.h"
@@ -161,6 +162,8 @@ void stats_buffer_runtime_caches_reset(void)
 {
   stats_buffer_rmq_shutdown();
   cached_uts_valid = 0;
+  cpu_stats_invalidate_file_caches();
+  net_stats_invalidate_iface_cache();
 }
 
 static int rmq_ensure_connected(struct stats_buffer *sf)

@@ -22,4 +22,8 @@ int str_collect_key_list(const char *str, struct stats *stats, ...)
 int str_collect_prefix_key_list(const char *str, struct stats *stats,
 				const char *prefix, ...)
  __ATTRIBUTE__SENTINEL;
+
+/* Invalidate per-process collect caches (SIGHUP, jobid/rotate reset, shutdown). */
+void cpu_stats_invalidate_file_caches(void);
+void net_stats_invalidate_iface_cache(void);
 #endif

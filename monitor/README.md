@@ -32,6 +32,15 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Archive header / schema suffix / directive class / marks (file mode) | `stats_file_format.c`, `stats_file_format.h` (`stats_file_classify_header_directive`, `stats_file_fprint_mark_multiline`, …); orchestration in `stats_file.c`. |
 | RMQ text payloads | `stats_buffer.c` + `stats_buffer_data_append.c` (persistent AMQP; cached `uname` for header + sample lines; batched rows; declare `syslog` INFO in `DEBUG` only). |
 
+## hpcperfstatsd: syscalls and blocking I/O
+
+- **RabbitMQ (blocking)**: Publishing uses **synchronous** rabbitmq-c calls (`amqp_socket_open`, login, `amqp_basic_publish`) from **libev timer callbacks**. If the broker or TCP path stalls, the **whole event loop** blocks until the library returns. Mitigations for heavy deployments: offload AMQP to a **worker thread** with a bounded queue, or adopt a **non-blocking** client integrated with `ev_io` (larger change). Tuning broker, network, and payload size helps without code changes.
+- **Collect path (reduced syscalls)**:
+  - `pscanf` uses a **stack read** for small files (e.g. JOBID, sysfs flags) and falls back to heap slurp only when the file does not fit.
+  - **`cpu`** keeps one `FILE *` on `/proc/stat` and **`rewind`**s each sample; the stream is closed when collect caches are invalidated.
+  - **`net`** caches **up** interface names and **re-scans** `/sys/class/net` every 32 samples (and on SIGHUP / jobid–rotate reset / shutdown) to avoid `opendir`/`readdir` and per-iface `flags` reads every tick.
+- **Invalidation**: `stats_buffer_runtime_caches_reset()` (SIGHUP), `monitor_reset_all_stats_types()` (log rotation / jobid-driven re-init), and SIGINT shutdown call `cpu_stats_invalidate_file_caches()` and `net_stats_invalidate_iface_cache()` so cached fds and iface lists are not stale across reconfigure or exit.
+
 ## Building and verifying
 
 1. **Canonical static build** (pinned deps + `hpcperfstatsd`): from this directory,

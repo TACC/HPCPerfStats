@@ -10,6 +10,18 @@
 #include "trace.h"
 #include "string1.h"
 
+/* One stdio stream for /proc/stat: rewind each sample instead of open/fclose. */
+static FILE *g_cpu_proc_stat;
+static char g_cpu_proc_stat_io_buf[4096];
+
+void cpu_stats_invalidate_file_caches(void)
+{
+  if (g_cpu_proc_stat != NULL) {
+    fclose(g_cpu_proc_stat);
+    g_cpu_proc_stat = NULL;
+  }
+}
+
 /* The /proc manpage says units are units of 1/sysconf(_SC_CLK_TCK)
    seconds.  sysconf(_SC_CLK_TCK) seems to always be 100. */
 
@@ -27,17 +39,23 @@
 static void cpu_collect(struct stats_type *type)
 {
   const char *path = "/proc/stat";
-  FILE *file = NULL;
-  char file_buf[4096];
+  FILE *file;
   char *line = NULL;
   size_t line_size = 0;
 
-  file = file_fopen_read(path);
-  if (file == NULL) {
-    ERROR("cannot open `%s': %m\n", path);
-    goto out;
+  if (g_cpu_proc_stat == NULL) {
+    g_cpu_proc_stat = file_fopen_read(path);
+    if (g_cpu_proc_stat == NULL) {
+      ERROR("cannot open `%s': %m\n", path);
+      goto out;
+    }
+    setvbuf(g_cpu_proc_stat, g_cpu_proc_stat_io_buf, _IOFBF, sizeof(g_cpu_proc_stat_io_buf));
+  } else {
+    rewind(g_cpu_proc_stat);
+    clearerr(g_cpu_proc_stat);
   }
-  setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
+
+  file = g_cpu_proc_stat;
 
   while (getline(&line, &line_size, file) >= 0) {
     char *rest = line;
@@ -64,8 +82,6 @@ static void cpu_collect(struct stats_type *type)
 
  out:
   free(line);
-  if (file != NULL)
-    fclose(file);
 }
 
 struct stats_type cpu_stats_type = {

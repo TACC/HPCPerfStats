@@ -20,6 +20,7 @@
 #include "fileio.h"
 #include "string1.h"
 #include "stats.h"
+#include "collect.h"
 #include "stats_buffer.h"
 #include "trace.h"
 #include "pscanf.h"
@@ -182,6 +183,9 @@ static void monitor_reset_all_stats_types(void)
 {
   size_t i = 0;
   struct stats_type *type;
+
+  cpu_stats_invalidate_file_caches();
+  net_stats_invalidate_iface_cache();
   while ((type = stats_type_for_each(&i)) != NULL)
     stats_type_destroy(type);
 }
@@ -587,6 +591,8 @@ void monitor_daemon_signal_cb_int(struct ev_loop *loop, ev_signal *sig, int reve
   save_file_ring_buffer(w);
   print_buffer_status(w);
   stats_buffer_rmq_shutdown();
+  cpu_stats_invalidate_file_caches();
+  net_stats_invalidate_iface_cache();
   while ((type = stats_type_for_each(&i)) != NULL)
     stats_type_destroy(type);
   fprintf(log_stream, "Stopping hpcperfstatsd\n");
