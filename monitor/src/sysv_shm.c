@@ -4,6 +4,7 @@
 #include <string.h>
 #include <errno.h>
 #include "stats.h"
+#include "fileio.h"
 #include "trace.h"
 
 // From ipc/shm.c
@@ -45,7 +46,7 @@ static void sysv_shm_collect(struct stats_type *type)
   if (stats == NULL)
     goto out;
 
-  file = fopen(path, "r");
+  file = file_fopen_read(path);
   if (file == NULL) {
     ERROR("cannot open `%s': %m\n", path);
     goto out;

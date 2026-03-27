@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include "stats.h"
 #include "collect.h"
+#include "fileio.h"
 #include "trace.h"
 
 // const char *perfquery = "/opt/ofed/sbin/perfquery";
@@ -38,7 +39,7 @@ static void ib_collect_dev(struct stats_type *type, const char *dev)
     struct stats *stats = NULL;
 
     snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%i/state", dev, port);
-    file = fopen(path, "r");
+    file = file_fopen_read(path);
     if (file == NULL)
       goto next; /* ERROR("cannot open `%s': %m\n", path); */
     setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
@@ -65,7 +66,7 @@ static void ib_collect_dev(struct stats_type *type, const char *dev)
 
     /* Get the LID for perfquery. */
     snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%i/lid", dev, port);
-    file = fopen(path, "r");
+    file = file_fopen_read(path);
     if (file == NULL)
       goto next;
     setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));

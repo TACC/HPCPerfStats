@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include "stats.h"
 #include "collect.h"
+#include "fileio.h"
 #include "trace.h"
 #include "string1.h"
 
@@ -31,7 +32,7 @@ static void cpu_collect(struct stats_type *type)
   char *line = NULL;
   size_t line_size = 0;
 
-  file = fopen(path, "r");
+  file = file_fopen_read(path);
   if (file == NULL) {
     ERROR("cannot open `%s': %m\n", path);
     goto out;

@@ -17,6 +17,7 @@
 #include "daemonize.h"
 #include "monitor_cli.h"
 #include "monitor_daemon.h"
+#include "fileio.h"
 #include "string1.h"
 #include "stats.h"
 #include "stats_buffer.h"
@@ -215,7 +216,7 @@ int read_conf_file(void)
   if (conf_file_name == NULL)
     return 0;
 
-  conf_file_fd = fopen(conf_file_name, "r");
+  conf_file_fd = file_fopen_read(conf_file_name);
   if (conf_file_fd == NULL) {
     fprintf(log_stream, "Can not open config file: %s, error: %s",
             conf_file_name, strerror(errno));
@@ -413,7 +414,7 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
   }
   int n_files_deleted = 0;
   for (int i = 0; i < n_files; i++) {
-    FILE *f = fopen(file_list[i], "r");
+    FILE *f = file_fopen_read(file_list[i]);
     if (f == NULL) {
       fprintf(log_stream, "Error opening stats file %s\n", file_list[i]);
       send_success_count = 0;

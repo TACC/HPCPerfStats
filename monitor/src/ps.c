@@ -5,6 +5,7 @@
 #include <malloc.h>
 #include <ctype.h>
 #include "stats.h"
+#include "fileio.h"
 #include "trace.h"
 #include "string1.h"
 #include "pscanf.h"
@@ -36,7 +37,7 @@ static void ps_collect_proc_stat(struct stats *stats)
   char *line = NULL;
   size_t line_size = 0;
 
-  file = fopen(path, "r");
+  file = file_fopen_read(path);
   if (file == NULL) {
     ERROR("cannot open `%s': %m\n", path);
     goto out;

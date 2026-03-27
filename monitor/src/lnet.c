@@ -1,7 +1,9 @@
 #include <errno.h>
 #include <stddef.h>
 #include <string.h>
+#include <stdio.h>
 #include <unistd.h>
+#include "fileio.h"
 #include "stats.h"
 #include "trace.h"
 
@@ -59,9 +61,9 @@ static void lnet_collect(struct stats_type *type)
     return;
   }
 
-  f = fopen(path, "r");
+  f = file_fopen_read(path);
   if (f == NULL) {
-    TRACE("lnet: fopen `%s': %m\n", path);
+    TRACE("lnet: cannot open `%s': %m\n", path);
     return;
   }
 

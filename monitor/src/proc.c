@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <pwd.h>
 #include "stats.h"
+#include "fileio.h"
 #include "trace.h"
 #include "string1.h"
 
@@ -46,7 +47,7 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
   TRACE("pid %s\n", pid);
 
   snprintf(path, sizeof(path), "/proc/%s/status", pid);
-  file = fopen(path, "r");
+  file = file_fopen_read(path);
   
   if (file == NULL) {
     ERROR("cannot open `%s': %m\n",path);

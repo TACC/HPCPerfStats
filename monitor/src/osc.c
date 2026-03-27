@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include "stats.h"
+#include "fileio.h"
 #include "trace.h"
 #include "string1.h"
 #include "lustre_obd_to_mnt.h"
@@ -33,7 +34,7 @@ static void osc_collect_fs(struct stats *stats, const char *d_name)
     goto out;
   }
 
-  file = fopen(path, "r");
+  file = file_fopen_read(path);
   if (file == NULL) {
     ERROR("cannot open `%s': %m\n", path);
     goto out;

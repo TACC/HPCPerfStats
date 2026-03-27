@@ -64,9 +64,28 @@ void daemonize()
     close(fd);
   }
   /* Reopen stdin (fd = 0), stdout (fd = 1), stderr (fd = 2) */
-  stdin = fopen("/dev/null", "r");
-  stdout = fopen("/dev/null", "w+");
-  stderr = fopen("/dev/null", "w+");
+  {
+    int n;
+
+    n = open("/dev/null", O_RDONLY);
+    if (n < 0)
+      exit(EXIT_FAILURE);
+    stdin = fdopen(n, "r");
+    if (stdin == NULL)
+      exit(EXIT_FAILURE);
+    n = open("/dev/null", O_RDWR);
+    if (n < 0)
+      exit(EXIT_FAILURE);
+    stdout = fdopen(n, "w+");
+    if (stdout == NULL)
+      exit(EXIT_FAILURE);
+    n = open("/dev/null", O_RDWR);
+    if (n < 0)
+      exit(EXIT_FAILURE);
+    stderr = fdopen(n, "w+");
+    if (stderr == NULL)
+      exit(EXIT_FAILURE);
+  }
   /* Try to write PID of daemon to lockfile */
   syslog(LOG_ERR,"%s\n",pid_file_name);
   if (pid_file_name != NULL)

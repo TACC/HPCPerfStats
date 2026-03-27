@@ -9,6 +9,7 @@
 
 struct stats;
 
+/* Read small /proc and /sys scalars via open/read (not stdio) to cut syscall + libc overhead. */
 int path_collect_single(const char *path, unsigned long long *dest);
 int path_collect_list(const char *path, ...) __ATTRIBUTE__SENTINEL;
 int path_collect_key_list(const char *path, struct stats *stats, ...)

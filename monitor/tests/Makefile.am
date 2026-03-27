@@ -31,7 +31,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_schema_parse test_stats_file_format
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_pscanf test_schema_parse test_stats_file_format
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli
 endif
@@ -47,6 +47,14 @@ test_string1_SOURCES = test_string1.c
 test_stats_buffer_data_append_SOURCES = \
 	test_stats_buffer_data_append.c \
 	$(top_srcdir)/src/stats_buffer_data_append.c
+
+test_path_collect_SOURCES = \
+	test_path_collect.c \
+	$(top_srcdir)/src/collect.c
+
+test_pscanf_SOURCES = \
+	test_pscanf.c \
+	$(top_srcdir)/src/pscanf.c
 
 test_schema_parse_SOURCES = \
 	test_schema_parse.c \
@@ -67,6 +75,8 @@ endif
 test_likwid_rapl_scale_LDADD = $(LDADD)
 test_string1_LDADD = $(LDADD)
 test_stats_buffer_data_append_LDADD = $(LDADD)
+test_path_collect_LDADD = $(LDADD)
+test_pscanf_LDADD = $(LDADD)
 test_schema_parse_LDADD = $(LDADD)
 test_stats_file_format_LDADD = $(LDADD)
 if RABBITMQ

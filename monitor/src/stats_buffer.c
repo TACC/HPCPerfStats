@@ -13,6 +13,7 @@
 #include <rabbitmq-c/tcp_socket.h>
 
 #include "stats.h"
+#include "fileio.h"
 #include "stats_buffer.h"
 #include "stats_buffer_data_append.h"
 #include "schema.h"
@@ -613,7 +614,7 @@ void ring_buffer_resend(struct sf_ring_buffer *w)
 int stats_buffer_write_file(struct stats_buffer *sf, char *path)
 {
   int rc = 0;
-  FILE *sf_file = fopen(path, "a+");
+  FILE *sf_file = file_fopen_append(path);
   if (sf_file == NULL) {
     ERROR("cannot open `%s': %m\n", path);
     rc = -1;

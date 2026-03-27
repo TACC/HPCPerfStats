@@ -8,6 +8,7 @@
 #include <ctype.h>
 #include "stats.h"
 #include "collect.h"
+#include "fileio.h"
 #include "trace.h"
 
 // i182-101# cat /sys/devices/system/node/node0/meminfo
@@ -67,7 +68,7 @@ static void mem_collect_node(struct stats *stats, const char *node)
   size_t line_size = 0;
 
   snprintf(path, sizeof(path), "/sys/devices/system/node/node%s/meminfo", node);
-  file = fopen(path, "r");
+  file = file_fopen_read(path);
   if (file == NULL) {
     ERROR("cannot open `%s': %m\n", path);
     goto out;

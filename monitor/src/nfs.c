@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <unistd.h>
 #include "collect.h"
+#include "fileio.h"
 #include "stats.h"
 #include "string1.h"
 #include "trace.h"
@@ -243,7 +244,7 @@ static void nfs_collect(struct stats_type *type)
   return;
 #endif
 
-  file = fopen(path, "r");
+  file = file_fopen_read(path);
   if (file == NULL) {
     if (errno != ENOENT)
       TRACE("nfs: cannot open `%s': %m\n", path);

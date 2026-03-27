@@ -11,6 +11,8 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_likwid_rapl_scale.c` | RAPL energy scaling helper sanity checks |
 | `test_string1.c` | `wsep` / `strsep_ne` (header-only `string1.h`) |
 | `test_stats_buffer_data_append.c` | `stats_buffer_data_append` (RMQ payload string growth) |
+| `test_path_collect.c` | `path_collect_single` / `path_collect_list` (`open`/`read` path I/O) |
+| `test_pscanf.c` | `pscanf` (`open`/`read` + `vsscanf`) and `file_fopen_read` |
 | `test_schema_parse.c` | `parse_schema_entry` / schema option strings |
 | `test_stats_file_format.c` | `stats_file_validate_program_header`, schema suffix formatting |
 | `test_monitor_cli.c` | RabbitMQ daemon CLI (`monitor_cli_*`), including `-h` via subprocess |

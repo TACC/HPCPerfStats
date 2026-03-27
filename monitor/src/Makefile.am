@@ -48,6 +48,7 @@ hpcperfstatsd_SOURCES = \
 	daemonize.c \
 	dict.h \
 	dict.c \
+	fileio.h \
 	hwdetect.h \
 	hwdetect.c \
 	intel_pmc3.h \
@@ -55,6 +56,7 @@ hpcperfstatsd_SOURCES = \
 	JOIN.h \
 	pci.h \
 	pci.c \
+	pscanf.c \
 	pscanf.h \
 	schema.h \
 	schema.c \
