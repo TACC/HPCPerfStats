@@ -38,8 +38,8 @@ static char *port   = "5672";
 
 static char *dumpfile_dir = "/tmp/hpcperfstats";
 static double freq = 300;
-static int max_buffer_size = 300; // 25 hours
-static int allow_ring_buffer_overwrite = 0;
+static int max_buffer_size = 4096; // default in-memory ring capacity
+static int allow_ring_buffer_overwrite = 1;
 static int file_mode_enabled = 0;
 static int send_success_count = 0;
 static int send_success_count_max = 3;
@@ -572,7 +572,7 @@ static void usage(void)
           "  -q [QUEUE]      or --queue      [QUEUE]      Queue to route data to on RMQ server. \n"
           "  -p [PORT]       or --port       [PORT]       Port to use (5672 is the default).\n"
           "  -t [TMP_DIR]    or --tmp        [TMP_DIR]    Directory for dumpfiles (/tmp/hpcperfstats is the default).\n"
-          "  -b [BUFFER]     or --buffer     [BUFFER]     Max size (in # of stats) for temporary in-memory storage (288 is the default).\n"
+          "  -b [BUFFER]     or --buffer     [BUFFER]     Max size (in # of stats) for temporary in-memory storage (4096 is the default).\n"
           "  -f [FREQUENCY]  or --frequency  [FREQUENCY]  Frequency to sample (300 seconds is the default).\n"
           ,
           program_invocation_short_name);

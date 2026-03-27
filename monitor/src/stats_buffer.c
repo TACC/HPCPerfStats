@@ -12,6 +12,7 @@
 extern "C" {
 #endif
 #include <amqp.h>
+#include <amqp_tcp_socket.h>
 #ifdef __cplusplus
 }
 #endif
@@ -28,6 +29,11 @@ extern "C" {
 #define SF_COMMENT_CHAR '#'
 #define SF_PROPERTY_CHAR '$'
 #define SF_MARK_CHAR '%'
+#define RMQ_EXCHANGE "amq.direct"
+#define RMQ_VHOST "/"
+#define RMQ_USER "hpcperfstats"
+#define RMQ_PASSWORD "hpcperfstats"
+#define RMQ_CHANNEL 1
 
 #define sf_printf(sf, fmt, args...) do {			\
     char *tmp_string = sf->sf_data;				\
@@ -38,13 +44,10 @@ extern "C" {
 static int send(struct stats_buffer *sf)
 {
   int status = -1;
-  char const *exchange;
   amqp_socket_t *socket = NULL;
   amqp_connection_state_t conn;
-
   static int queue_declared = 0;
-
-  exchange = "amq.direct";
+  amqp_rpc_reply_t ret;
   conn = amqp_new_connection();
   socket = amqp_tcp_socket_new(conn);
 
@@ -58,18 +61,29 @@ static int send(struct stats_buffer *sf)
     return -1;	  
   }
 
-  amqp_login(conn, "/", 0, 131072, 0, AMQP_SASL_METHOD_PLAIN, 
-	     "hpcperfstats", "hpcperfstats");
-  amqp_channel_open(conn, 1);
-  amqp_get_rpc_reply(conn);
+  ret = amqp_login(conn, RMQ_VHOST, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN,
+                   RMQ_USER, RMQ_PASSWORD);
+  if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
+    ERROR("amqp login failed");
+    amqp_destroy_connection(conn);
+    return -1;
+  }
+  amqp_channel_open(conn, RMQ_CHANNEL);
+  ret = amqp_get_rpc_reply(conn);
+  if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
+    ERROR("amqp channel open failed");
+    amqp_destroy_connection(conn);
+    return -1;
+  }
 
   if (!queue_declared) {
     syslog(LOG_INFO, "Attempt declare queue on RMQ server\n");
-    amqp_queue_declare_ok_t *r = amqp_queue_declare(conn, 1, amqp_cstring_bytes(sf->sf_queue), 
+    amqp_queue_declare_ok_t *r = amqp_queue_declare(conn, RMQ_CHANNEL, amqp_cstring_bytes(sf->sf_queue),
 						    0, 1, 0, 0, amqp_empty_table);
-    amqp_rpc_reply_t ret = amqp_get_rpc_reply(conn);
+    ret = amqp_get_rpc_reply(conn);
     if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
       syslog(LOG_ERR, "queue declare failed");
+      amqp_destroy_connection(conn);
       return -1;
     }
     else {
@@ -77,12 +91,19 @@ static int send(struct stats_buffer *sf)
       reply_to_queue = amqp_bytes_malloc_dup(r->queue);
       if (reply_to_queue.bytes == NULL) {
         syslog(LOG_ERR, "Out of memory while copying queue name");
+        amqp_destroy_connection(conn);
         return -1;
       }
       
-      amqp_queue_bind(conn, 1, reply_to_queue, amqp_cstring_bytes(exchange), 
+      amqp_queue_bind(conn, RMQ_CHANNEL, reply_to_queue, amqp_cstring_bytes(RMQ_EXCHANGE),
 		      amqp_cstring_bytes(sf->sf_queue), amqp_empty_table);
-      amqp_get_rpc_reply(conn);
+      ret = amqp_get_rpc_reply(conn);
+      if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
+        amqp_bytes_free(reply_to_queue);
+        syslog(LOG_ERR, "queue bind failed");
+        amqp_destroy_connection(conn);
+        return -1;
+      }
       queue_declared = 1;
       amqp_bytes_free(reply_to_queue);
     }
@@ -93,14 +114,19 @@ static int send(struct stats_buffer *sf)
     props._flags = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG;
     props.content_type = amqp_cstring_bytes("text/plain");
     props.delivery_mode = 2; /* persistent delivery mode */
-    amqp_basic_publish(conn,
-		       1,
-		       amqp_cstring_bytes(exchange),
-		       amqp_cstring_bytes(sf->sf_queue),
-		       0,
-		       0,
-		       &props,
-		       amqp_cstring_bytes(sf->sf_data));
+    status = amqp_basic_publish(conn,
+                                RMQ_CHANNEL,
+                                amqp_cstring_bytes(RMQ_EXCHANGE),
+                                amqp_cstring_bytes(sf->sf_queue),
+                                0,
+                                0,
+                                &props,
+                                amqp_cstring_bytes(sf->sf_data));
+    if (status != AMQP_STATUS_OK) {
+      ERROR("amqp basic publish failed");
+      amqp_destroy_connection(conn);
+      return -1;
+    }
   }
 
   amqp_destroy_connection(conn); 
