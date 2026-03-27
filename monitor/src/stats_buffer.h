@@ -61,4 +61,7 @@ int ring_buffer_load_file(
   int max_buffer_size, 
   int allow_ring_buffer_overwrite);
 
+void stats_buffer_rmq_shutdown(void);
+void stats_buffer_runtime_caches_reset(void);
+
 #endif

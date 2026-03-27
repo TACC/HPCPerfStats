@@ -424,6 +424,15 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
 
 static void print_buffer_status(struct sf_ring_buffer *w)
 {
+#ifdef DEBUG
+  const unsigned status_every = 1u;
+#else
+  const unsigned status_every = 64u;
+#endif
+  static unsigned long status_tick;
+  if (status_every > 1u && (status_tick++ % status_every) != 0u)
+    return;
+
   /* One fprintf: fewer lock/syscall round-trips than seven separate prints. */
   fprintf(log_stream,
 	  "status = %d, allow_overwrite = %d, file_mode = %d, #succ_send = %d/%d\n"
@@ -462,7 +471,7 @@ void monitor_daemon_sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
 {
   (void)loop;
   (void)revents;
-  pscanf(JOBID_FILE_PATH, "%79s", jobid);
+  /* jobid: refreshed on ev_stat (JOBID file) and at startup; avoids fopen/fclose each tick. */
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
   struct stats_buffer *sf = monitor_daemon_alloc_stats_buffer();
   if (sf == NULL)
@@ -551,6 +560,7 @@ void monitor_daemon_signal_cb_int(struct ev_loop *loop, ev_signal *sig, int reve
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)sig->data;
   save_file_ring_buffer(w);
   print_buffer_status(w);
+  stats_buffer_rmq_shutdown();
   while ((type = stats_type_for_each(&i)) != NULL)
     stats_type_destroy(type);
   fprintf(log_stream, "Stopping hpcperfstatsd\n");
@@ -569,6 +579,7 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
   (void)revents;
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)sig->data;
   fprintf(log_stream, "Reloading hpcperfstatsd config file %s\n", conf_file_name);
+  stats_buffer_runtime_caches_reset();
   read_conf_file();
   sample_timer.repeat = freq;
   ev_timer_again(EV_DEFAULT, &sample_timer);

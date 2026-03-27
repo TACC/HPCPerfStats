@@ -58,6 +58,9 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   ev_timer_init(&sample_timer, monitor_daemon_sample_timer_cb, freq, freq);
   ev_timer_start(EV_DEFAULT, &sample_timer);
   fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs\n", freq);
+
+  if (pscanf(JOBID_FILE_PATH, "%79s", jobid) < 1)
+    strcpy(jobid, "-");
 }
 
 static void monitor_require_server_or_exit(void)

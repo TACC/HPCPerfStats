@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <ctype.h>
 #include <limits.h>
@@ -27,6 +28,27 @@
 #define RMQ_EXCHANGE "amq.direct"
 #define RMQ_VHOST "/"
 #define RMQ_CHANNEL 1
+
+/* One AMQP connection per process (libev single-threaded). Reconnect on credential mismatch or I/O failure. */
+static amqp_connection_state_t rmq_conn;
+static int rmq_channel_open;
+static char *rmq_stored_host;
+static char *rmq_stored_port;
+static char *rmq_stored_user;
+static char *rmq_stored_pass;
+static char *rmq_declared_queue;
+static int rmq_declare_syslog_done;
+
+#define STATS_BUFFER_NODENAME_SZ 256
+static char cached_nodename[STATS_BUFFER_NODENAME_SZ];
+static int cached_nodename_valid;
+
+static char *row_line_buf;
+static size_t row_line_cap;
+
+static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buffer *sf,
+				  amqp_socket_t **socket_out, int *channel_opened_out);
+static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, struct stats_buffer *sf);
 
 /* Payload assembly uses stats_buffer_data_append.c (incremental realloc; unit-tested). */
 static void stats_buffer_append_fmt(struct stats_buffer *sf, const char *fmt, ...)
@@ -76,6 +98,115 @@ static void close_rmq_connection(amqp_connection_state_t conn, int channel_opene
   amqp_destroy_connection(conn);
 }
 
+static void rmq_stored_free(void)
+{
+  free(rmq_stored_host);
+  free(rmq_stored_port);
+  free(rmq_stored_user);
+  free(rmq_stored_pass);
+  rmq_stored_host = NULL;
+  rmq_stored_port = NULL;
+  rmq_stored_user = NULL;
+  rmq_stored_pass = NULL;
+}
+
+static int rmq_stored_matches(struct stats_buffer *sf)
+{
+  if (rmq_stored_host == NULL)
+    return 0;
+  return strcmp(rmq_stored_host, sf->sf_host) == 0 && strcmp(rmq_stored_port, sf->sf_port) == 0
+	 && strcmp(rmq_stored_user, sf->sf_user) == 0 && strcmp(rmq_stored_pass, sf->sf_password) == 0;
+}
+
+static int rmq_stored_save(struct stats_buffer *sf)
+{
+  rmq_stored_free();
+  rmq_stored_host = strdup(sf->sf_host);
+  rmq_stored_port = strdup(sf->sf_port);
+  rmq_stored_user = strdup(sf->sf_user);
+  rmq_stored_pass = strdup(sf->sf_password);
+  if (rmq_stored_host == NULL || rmq_stored_port == NULL || rmq_stored_user == NULL || rmq_stored_pass == NULL) {
+    rmq_stored_free();
+    return -1;
+  }
+  return 0;
+}
+
+static void rmq_soft_disconnect(void)
+{
+  if (rmq_conn != NULL) {
+    close_rmq_connection(rmq_conn, rmq_channel_open);
+    rmq_conn = NULL;
+  }
+  rmq_channel_open = 0;
+  free(rmq_declared_queue);
+  rmq_declared_queue = NULL;
+  rmq_declare_syslog_done = 0;
+}
+
+void stats_buffer_rmq_shutdown(void)
+{
+  rmq_soft_disconnect();
+  rmq_stored_free();
+}
+
+void stats_buffer_runtime_caches_reset(void)
+{
+  stats_buffer_rmq_shutdown();
+  cached_nodename_valid = 0;
+}
+
+static int rmq_ensure_connected(struct stats_buffer *sf)
+{
+  if (rmq_conn != NULL && rmq_stored_matches(sf) && rmq_channel_open)
+    return 0;
+
+  rmq_soft_disconnect();
+
+  if (!rmq_stored_matches(sf))
+    rmq_stored_free();
+
+  rmq_conn = amqp_new_connection();
+  if (rmq_conn == NULL) {
+    ERROR("amqp_new_connection failed");
+    return -1;
+  }
+
+  amqp_socket_t *sock = NULL;
+  if (rmq_open_tcp_and_login(rmq_conn, sf, &sock, &rmq_channel_open) < 0) {
+    close_rmq_connection(rmq_conn, rmq_channel_open);
+    rmq_conn = NULL;
+    rmq_channel_open = 0;
+    return -1;
+  }
+
+  if (!rmq_stored_matches(sf) && rmq_stored_save(sf) < 0) {
+    close_rmq_connection(rmq_conn, rmq_channel_open);
+    rmq_conn = NULL;
+    rmq_channel_open = 0;
+    return -1;
+  }
+
+  return 0;
+}
+
+static int rmq_ensure_queue(struct stats_buffer *sf)
+{
+  if (rmq_declared_queue != NULL && strcmp(rmq_declared_queue, sf->sf_queue) == 0)
+    return 0;
+
+  free(rmq_declared_queue);
+  rmq_declared_queue = NULL;
+
+  if (rmq_declare_queue_and_bind_to_exchange(rmq_conn, sf) < 0)
+    return -1;
+
+  rmq_declared_queue = strdup(sf->sf_queue);
+  if (rmq_declared_queue == NULL)
+    return -1;
+  return 0;
+}
+
 static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buffer *sf,
 				    amqp_socket_t **socket_out, int *channel_opened_out)
 {
@@ -108,7 +239,10 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
 
 static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, struct stats_buffer *sf)
 {
-  syslog(LOG_INFO, "Attempt declare queue on RMQ server\n");
+  if (!rmq_declare_syslog_done) {
+    syslog(LOG_INFO, "Attempt declare queue on RMQ server\n");
+    rmq_declare_syslog_done = 1;
+  }
   amqp_queue_declare_ok_t *r = amqp_queue_declare(conn, RMQ_CHANNEL, amqp_cstring_bytes(sf->sf_queue),
 						  0, 1, 0, 0, amqp_empty_table);
   amqp_rpc_reply_t ret = amqp_get_rpc_reply(conn);
@@ -157,31 +291,19 @@ static int rmq_publish_text_payload(amqp_connection_state_t conn, struct stats_b
 
 static int send(struct stats_buffer *sf)
 {
-  amqp_socket_t *socket = NULL;
-  amqp_connection_state_t conn = amqp_new_connection();
-  int channel_opened = 0;
+  if (rmq_ensure_connected(sf) < 0)
+    return -1;
 
-  if (conn == NULL) {
-    ERROR("amqp_new_connection failed");
+  if (rmq_ensure_queue(sf) < 0) {
+    rmq_soft_disconnect();
     return -1;
   }
 
-  if (rmq_open_tcp_and_login(conn, sf, &socket, &channel_opened) < 0) {
-    close_rmq_connection(conn, channel_opened);
+  if (rmq_publish_text_payload(rmq_conn, sf) < 0) {
+    rmq_soft_disconnect();
     return -1;
   }
 
-  if (rmq_declare_queue_and_bind_to_exchange(conn, sf) < 0) {
-    close_rmq_connection(conn, channel_opened);
-    return -1;
-  }
-
-  if (rmq_publish_text_payload(conn, sf) < 0) {
-    close_rmq_connection(conn, channel_opened);
-    return -1;
-  }
-
-  close_rmq_connection(conn, channel_opened);
   return 0;
 }
 
@@ -279,6 +401,54 @@ static void stats_buffer_append_mark_lines(struct stats_buffer *sf)
   }
 }
 
+static int stats_buffer_append_type_row(struct stats_buffer *sf, struct stats_type *type, struct stats *stats)
+{
+  size_t k;
+
+  for (int attempt = 0; attempt < 8; attempt++) {
+    size_t need = strlen(type->st_name) + 1 + strlen(stats->s_dev) + 4;
+    for (k = 0; k < type->st_schema.sc_len; k++)
+      need += 24;
+    if (need < 256)
+      need = 256;
+    if (need > row_line_cap) {
+      char *nr = realloc(row_line_buf, need);
+      if (nr == NULL)
+	return -1;
+      row_line_buf = nr;
+      row_line_cap = need;
+    }
+
+    char *p = row_line_buf;
+    char *end = row_line_buf + row_line_cap;
+    int n = snprintf(p, (size_t)(end - p), "%s %s", type->st_name, stats->s_dev);
+    if (n < 0)
+      return -1;
+    if ((size_t)n >= (size_t)(end - p))
+      continue;
+    p += n;
+    int ok = 1;
+    for (k = 0; k < type->st_schema.sc_len; k++) {
+      n = snprintf(p, (size_t)(end - p), " %llu", stats->s_val[k]);
+      if (n < 0)
+	return -1;
+      if ((size_t)n >= (size_t)(end - p)) {
+	ok = 0;
+	break;
+      }
+      p += n;
+    }
+    if (!ok)
+      continue;
+    if ((size_t)(end - p) < 2)
+      continue;
+    *p++ = '\n';
+    return stats_buffer_data_append_bytes(&sf->sf_data, &sf->sf_data_len, &sf->sf_data_cap, row_line_buf,
+					  (size_t)(p - row_line_buf));
+  }
+  return -1;
+}
+
 static void stats_buffer_append_enabled_type_rows(struct stats_buffer *sf)
 {
   size_t i = 0;
@@ -292,10 +462,12 @@ static void stats_buffer_append_enabled_type_rows(struct stats_buffer *sf)
     while ((dev = dict_for_each(&type->st_current_dict, &j)) != NULL) {
       struct stats *stats = key_to_stats(dev);
 
-      stats_buffer_append_fmt(sf, "%s %s", type->st_name, stats->s_dev);
-      for (size_t k = 0; k < type->st_schema.sc_len; k++)
-	stats_buffer_append_fmt(sf, " %llu", stats->s_val[k]);
-      stats_buffer_append_fmt(sf, "\n");
+      if (stats_buffer_append_type_row(sf, type, stats) < 0) {
+	stats_buffer_append_fmt(sf, "%s %s", type->st_name, stats->s_dev);
+	for (size_t k = 0; k < type->st_schema.sc_len; k++)
+	  stats_buffer_append_fmt(sf, " %llu", stats->s_val[k]);
+	stats_buffer_append_fmt(sf, "\n");
+      }
     }
   }
 }
@@ -303,8 +475,6 @@ static void stats_buffer_append_enabled_type_rows(struct stats_buffer *sf)
 int stats_buffer_write(struct stats_buffer *sf)
 {
   int rc = 0;
-  struct utsname uts_buf;
-  uname(&uts_buf);
 
   struct timespec time;
 
@@ -312,8 +482,15 @@ int stats_buffer_write(struct stats_buffer *sf)
     fprintf(stderr, "cannot clock_gettime(): %m\n");
     goto out;
   }
+  if (!cached_nodename_valid) {
+    struct utsname uts_buf;
+    uname(&uts_buf);
+    strncpy(cached_nodename, uts_buf.nodename, STATS_BUFFER_NODENAME_SZ - 1);
+    cached_nodename[STATS_BUFFER_NODENAME_SZ - 1] = '\0';
+    cached_nodename_valid = 1;
+  }
   stats_buffer_append_fmt(sf, "\n%f %s %s\n", time.tv_sec + 1e-9 * time.tv_nsec, jobid,
-			  uts_buf.nodename);
+			  cached_nodename);
 
   stats_buffer_append_mark_lines(sf);
   stats_buffer_append_enabled_type_rows(sf);
