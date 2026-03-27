@@ -1,13 +1,14 @@
 ---
-description: Root-cause workflow for traceback-driven backend bug fixes
-globs: **/*.py
+description: Root-cause workflow for traceback-driven bug fixes
 alwaysApply: true
 ---
 
 # Traceback Fix Discipline
 
-- When a traceback or runtime error log is provided, identify the first project-owned frame and fix the root cause there.
+- When a traceback or runtime error log is provided, identify the **first frame in project-owned code** (any language) and fix the root cause there.
 - Do not implement symptom-only patches in downstream code paths when the upstream cause is actionable.
 - Add or update regression tests that fail before the fix and pass after the fix.
 - Use unit tests by default; use integration tests when the failure spans multiple components.
 - If traceback-driven changes alter API output, verify serializer/response shape compatibility with calling UI or client code.
+
+**Monitor workspace note**: Fixes may land in C under `HPCPerfStats/monitor/` while the traceback is from Python (e.g. consumer). Still prefer the owning component for the defect; do not violate monitor-workspace-contract by editing non-monitor code without an explicit user override in the chat.

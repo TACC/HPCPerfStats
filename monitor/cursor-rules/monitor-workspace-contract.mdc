@@ -30,3 +30,8 @@ alwaysApply: true
 
 - For monitor-side message format changes, validate compatibility against `listend.py` parsing logic before finalizing edits.
 - If a monitor change would require consumer changes, stop and call out the contract break clearly.
+
+## Precedence and overrides
+
+- This rule **does not** grant permission to edit `HPCPerfStats/hpcperfstats/listend.py` or other non-monitor code; those edits still require an **explicit user override in the current chat** (see first bullet list above).
+- If the user explicitly authorizes a given path or repo area in the current message, follow that authorization for that turn.

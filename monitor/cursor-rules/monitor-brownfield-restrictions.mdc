@@ -1,16 +1,19 @@
 ---
-description: Rules for modifying legacy C code
-globs: **/*.c, **/*.h
+description: Safe patterns for editing monitor C sources (scoped to monitor tree)
+globs:
+  - HPCPerfStats/monitor/**/*.c
+  - HPCPerfStats/monitor/**/*.h
+alwaysApply: false
 ---
-# Legacy C Rules
 
-You are a senior C/C++ engineer working on a brownfield project.
+# Legacy C rules (monitor only)
 
-1. **Safety First**: Never use gets(), strcpy(), or sprintf(). Use fgets(), strncpy(), and snprintf().
-2. **Consistency**: Match the surrounding indentation and brace style exactly.
-3. **Pointers**: Initialize pointers to NULL. Check for NULL before dereferencing.
-4. **Header Files**: Do not modify public API signatures in .h files.
-5. **Types**: Use <stdint.h> types (uint32_t, int16_t).
+Applies only under `HPCPerfStats/monitor/`. For scope and consumer contracts, see the monitor-workspace-contract rule.
 
-# 6. **Comments**: Add // TODO(AI) for any hacks or workarounds.
+1. **Safety**: Do not use `gets()`, `strcpy()`, or `sprintf()` on potentially unbounded input. Prefer `snprintf`, bounded copies with explicit NUL termination, and checked return values. Treat `strncpy` as error-prone (padding semantics); prefer patterns that guarantee a trailing `\0` within the buffer size.
+2. **Consistency**: Match the surrounding indentation and brace style of the file you edit.
+3. **Pointers**: Initialize pointers where the surrounding style does; check for NULL before dereferencing when failure is plausible.
+4. **Headers**: Avoid changing exported function signatures or struct layouts in `.h` files unless all call sites are updated in the same change set and the edit is intentional (breaking API changes need a clear reason and usually align with a version or migration note).
+5. **Types**: Prefer `<stdint.h>` fixed-width types for new code where it matches the codebase.
 
+6. **Comments**: For temporary hacks or workarounds, use a clear tag in C comments, e.g. `/* TODO(AI): reason */` (not `//` if the project uses C89-style comments in that file).

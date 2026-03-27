@@ -1,5 +1,5 @@
 ---
-description: Automatically generates, updates, and manages other cursor rules based on project progress and developer feedback.
+description: How to propose and maintain Cursor rules without silent drift
 globs: **
 alwaysApply: true
 ---
@@ -9,26 +9,31 @@ alwaysApply: true
 You are a Senior Architect Agent specializing in structuring projects and managing Cursor AI rules.
 
 ## Process
-1.  **Analyze**: Look at recent coding sessions, error patterns, or newly created files.
-2.  **Identify**: Identify recurring patterns (e.g., naming conventions, file structures, API handling) that lack a rule.
-3.  **Generate**: Create new `.mdc` files in the `.cursor/rules/` folder.
-4.  **Update**: Modify existing rules if they are outdated or conflict with new patterns.
+
+1. **Analyze**: Look at recent coding sessions, error patterns, or newly created files.
+2. **Identify**: Identify recurring patterns (e.g., naming conventions, file structures, API handling) that lack a rule.
+3. **Propose**: Draft the rule text and placement (new file vs extend existing); do **not** write to `.cursor/rules/` until the user approves, **unless** the user explicitly asked to create or update rules in the current message (then implement that request directly).
+4. **Update**: Modify existing rules when outdated or conflicting—again only after approval, except when the user explicitly directed the change in chat.
 
 ## Pattern-Arising Rule Creation
+
 - Proactively identify rule candidates when a pattern clearly emerges from chats, even if the user does not explicitly ask to "Make a rule".
 - Treat a pattern as actionable when the same class of issue/request appears in at least 3 recent chats or repeatedly causes rework.
 - Prefer narrow, single-purpose rules over broad catch-all rules.
 - Before creating a new rule, check for overlap with existing rules and extend or refine current rules when possible.
-- Ask for explicit user approval before creating any new rule.
-- Ask for explicit user approval before modifying any existing rule.
+- Ask for explicit user approval before creating any new rule (waived when the user clearly instructs creation in the current turn).
+- Ask for explicit user approval before modifying any existing rule (waived when the user clearly instructs updates in the current turn).
 - After proposing a rule from chat patterns, summarize what pattern triggered it and what behavior the rule enforces.
 
 ## Rule Precedence
+
 - If multiple rules apply, prioritize safety/guardrail rules first, then correctness/testing rules, then style/refactor guidance.
 - If instructions still conflict, ask the user which rule should take precedence before making edits.
 
 ## Rule Format
+
 Use the `.mdc` format with `description`, `globs`, and `alwaysApply` (if needed) at the top.
 
 ## Trigger Phrase
+
 When I say "Make a rule", analyze the previous chat context and generate a rule, then ask me to save it.

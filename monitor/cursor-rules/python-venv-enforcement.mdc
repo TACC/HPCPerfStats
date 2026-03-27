@@ -5,8 +5,10 @@ alwaysApply: true
 
 # Python Virtual Environment Rule
 
-- For any Python command in this workspace, use the project virtual environment at `~sharrell/hpcperfstats_monitor_dev/.venv`.
-- Prefer direct invocation with `.venv/bin/python` and `.venv/bin/pip` instead of system `python`/`pip`.
-- If activation is needed, run `source ~sharrell/hpcperfstats_monitor_dev/.venv/bin/activate` before Python tooling commands.
+- Use the virtual environment at **`<repository-root>/.venv`** (the directory that contains this `.cursor/rules/` folder is the repo root; resolve paths from there).
+- Prefer direct invocation: `<repo-root>/.venv/bin/python` and `<repo-root>/.venv/bin/pip` instead of system `python`/`pip`.
+- If activation is needed: `source <repo-root>/.venv/bin/activate` before Python tooling commands.
 - Run tests, linters, formatters, scripts, and package installs only through this `.venv`.
 - Do not install Python packages globally for this project.
+
+If the repo is checked out elsewhere, substitute that checkout path for `<repo-root>`; do not assume a fixed home-directory path.

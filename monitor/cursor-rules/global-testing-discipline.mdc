@@ -5,12 +5,12 @@ alwaysApply: true
 
 # Testing Discipline
 
-Don't assume something is working; always conduct tests after implementing a feature, fixing issues, or making adjustments. Verify that the code performs as expected, and if it doesn't, please stop and resolve the issue.
+Do not assume something is working; run **appropriate** verification after implementing a feature, fixing issues, or making adjustments. If verification fails, stop and fix the issue before treating the work as done.
 
-Create new unittests and update existing unittests whenever code changes could affect behavior, security, or correctness. Use these unittests to verify that the new code is working. (For purely non-functional changes like formatting/docs, prefer running the existing relevant tests.)
+- **Python changes**: Prefer targeted unit tests; use the project `.venv` (see python-venv-enforcement).
+- **Monitor C changes**: Prefer `make check` (or the project's documented test target) from the monitor build tree after a successful build; add or extend tests under `HPCPerfStats/monitor/` when the tree supports them.
+- Create new unit tests and update existing ones when changes could affect behavior, security, or correctness. For purely non-functional changes (formatting, comments-only), prefer running the existing relevant tests.
 
-Important: try to fix things at the cause, not the symptom.
+Important: fix problems at the cause, not the symptom.
 
 Summaries should include the important changes, risks, and verification steps; avoid omitting critical details.
-
-
