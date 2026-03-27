@@ -6,9 +6,9 @@ AC_PROG_CXX
 AM_PROG_CC_C_O
 
 AC_ARG_ENABLE([all-static],
-[AS_HELP_STRING([--enable-all-static], [Link most third-party libraries as static archives (linker groups). Vendor stacks usually shipped as shared only (DCGM, RDMA/OPA, libibmad, MIC) are linked after -Wl,-Bdynamic. See monitor/scripts/build_static_bundle.sh.])],
+[AS_HELP_STRING([--enable-all-static], [Link most third-party libraries as static archives (linker groups) (default: yes). Use --disable-all-static for dynamic linking where available. Vendor stacks usually shipped as shared only (DCGM, RDMA/OPA, libibmad, MIC) are linked after -Wl,-Bdynamic. See monitor/scripts/build_static_bundle.sh.])],
 [enable_all_static=$enableval],
-[enable_all_static=no])
+[enable_all_static=yes])
 
 MONITOR_SHARED_LIBS=""
 
