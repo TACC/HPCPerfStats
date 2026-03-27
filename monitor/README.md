@@ -30,7 +30,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Daemon loop, RMQ send, ring buffer | `monitor_daemon.c`, `monitor_daemon.h`. |
 | Schema text parsing | `schema_entry_parse.c` (`parse_schema_entry`); `schema.c` builds full schemas for types. |
 | Archive header / schema suffix / directive class / marks (file mode) | `stats_file_format.c`, `stats_file_format.h` (`stats_file_classify_header_directive`, `stats_file_fprint_mark_multiline`, …); orchestration in `stats_file.c`. |
-| RMQ text payloads | `stats_buffer.c` (schema lines, marks, row assembly helpers). |
+| RMQ text payloads | `stats_buffer.c` + `stats_buffer_data_append.c` (incremental payload growth; schema lines, marks, rows). |
 
 ## Building and verifying
 

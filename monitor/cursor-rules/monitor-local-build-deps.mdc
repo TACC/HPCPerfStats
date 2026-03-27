@@ -19,12 +19,12 @@ alwaysApply: false
 - **RabbitMQ / libev**: unchanged.
 - **DCGM / GPUPerfAPI**: unchanged for GPU and non-x86 CPU backends.
 
-Pinned versions for scripted builds: see `HPCPerfStats/monitor/scripts/build_static_bundle.sh` (`STATIC_PIN_*`). The bundle installs **libev**, **rabbitmq-c**, and **LIKWID** static archives into `PREFIX` (no separate hwloc/jansson build for Variorum).
+Pinned versions for scripted builds: see `HPCPerfStats/monitor/scripts/build_static_bundle.sh` (`STATIC_PIN_*`). The bundle installs **libev**, **rabbitmq-c**, and **LIKWID** static archives into `PREFIX` (no separate hwloc/jansson build for Variorum). **rabbitmq-c** tarballs are fetched from **`alanxz/rabbitmq-c`** (default `STATIC_PIN_RABBITMQ_C_URL_FMT`); override with **`RABBITMQ_C_URL_FMT`** for mirrors.
 
 ## Static compile (`--enable-all-static`)
 
 - Default in `configure.ac` is **`--enable-all-static`** (see `configure --help`).
-- With LIKWID + static linking, **`configure.ac`** appends **`-llikwid-hwloc -llikwid-lua`** to `LIBS` so `liblikwid.a` resolves `likwid_hwloc_*` and Lua symbols.
+- With LIKWID + static linking, **`configure.ac`** uses **`AC_SEARCH_LIBS`** with extra **`[-llikwid-hwloc -llikwid-lua -lm]`** on the probe link only (static **`liblikwid.a`** is not self-contained), then appends **`-llikwid-hwloc -llikwid-lua`** to **`LIBS`**. Do not append **`-lm`** into the static link group; **`Makefile.am`** keeps **`-lm`** with the usual dynamic libc stack.
 - Workspace helper: `HPCPerfStats/monitor/scripts/ensure_dotbuild_prefix_static.sh` (runs `build_static_bundle.sh --deps-only` with `PREFIX=<repo>/.build/prefix`).
 - Full deps + monitor build: `HPCPerfStats/monitor/scripts/build_static_bundle.sh` (or `SKIP_DEPS=1` when `PREFIX` already has the `.a` files).
 

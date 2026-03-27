@@ -5,6 +5,8 @@
 struct stats_buffer {
   char *sf_mark;
   char *sf_data;
+  size_t sf_data_len;
+  size_t sf_data_cap;
   char *sf_host;
   char *sf_queue;
   char *sf_port;

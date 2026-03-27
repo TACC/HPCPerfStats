@@ -31,7 +31,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_schema_parse test_stats_file_format
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_schema_parse test_stats_file_format
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli
 endif
@@ -43,6 +43,10 @@ EXTRA_DIST = test_monitor_configure_help.sh run_tests.sh README.md
 test_likwid_rapl_scale_SOURCES = test_likwid_rapl_scale.c
 
 test_string1_SOURCES = test_string1.c
+
+test_stats_buffer_data_append_SOURCES = \
+	test_stats_buffer_data_append.c \
+	$(top_srcdir)/src/stats_buffer_data_append.c
 
 test_schema_parse_SOURCES = \
 	test_schema_parse.c \
@@ -62,6 +66,7 @@ endif
 # Link flags/libs match the configured tree (LDFLAGS/LIBS from configure).
 test_likwid_rapl_scale_LDADD = $(LDADD)
 test_string1_LDADD = $(LDADD)
+test_stats_buffer_data_append_LDADD = $(LDADD)
 test_schema_parse_LDADD = $(LDADD)
 test_stats_file_format_LDADD = $(LDADD)
 if RABBITMQ

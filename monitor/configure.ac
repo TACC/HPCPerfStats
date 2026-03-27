@@ -5,7 +5,7 @@ AC_PROG_CC
 AM_PROG_CC_C_O
 
 AC_ARG_ENABLE([all-static],
-[AS_HELP_STRING([--enable-all-static], [Link most third-party libraries as static archives (linker groups) (default: yes). Use --disable-all-static for dynamic linking where available. Requires static .a for ev, likwid (+ likwid-lua), rabbitmq-c on the LDFLAGS search path; for workspace .build/prefix run monitor/scripts/ensure_dotbuild_prefix_static.sh. Vendor stacks usually shipped as shared only (DCGM, RDMA/OPA, libibmad, MIC) are linked after -Wl,-Bdynamic. See monitor/scripts/build_static_bundle.sh.])],
+[AS_HELP_STRING([--enable-all-static], [Link most third-party libraries as static archives (linker groups) (default: yes). Use --disable-all-static for dynamic linking where available. Requires static .a for ev, rabbitmq-c, and likwid (+ likwid-hwloc, likwid-lua for the static liblikwid link); for workspace .build/prefix run monitor/scripts/ensure_dotbuild_prefix_static.sh. Vendor stacks usually shipped as shared only (DCGM, RDMA/OPA, libibmad, MIC) are linked after -Wl,-Bdynamic. See monitor/scripts/build_static_bundle.sh.])],
 [enable_all_static=$enableval],
 [enable_all_static=yes])
 
@@ -130,13 +130,22 @@ if test "x$cpu_counter_backend" = "xlikwid" && test "x$is_x86" != "xtrue"; then
 fi
 
 if test "x$cpu_counter_backend" = "xlikwid"; then
-  AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
-    [AC_MSG_ERROR([Unable to find liblikwid!])])
+  dnl Static liblikwid.a needs hwloc/lua archives and -lm on the same link line; AC_SEARCH_LIBS
+  dnl probes with -llikwid only unless we pass other libs for the try link.
+  if test "x$enable_all_static" = xyes; then
+    AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
+      [AC_MSG_ERROR([Unable to find liblikwid!])],
+      [-llikwid-hwloc -llikwid-lua -lm])
+  else
+    AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
+      [AC_MSG_ERROR([Unable to find liblikwid!])])
+  fi
   if test "x${have_likwid}" = xyes; then
     AC_CHECK_HEADERS([likwid.h], [likwid=true],
       [AC_MSG_ERROR([Unable to find likwid.h!])])
   fi
   dnl Static LIKWID: nested liblikwid-hwloc.a provides likwid_hwloc_*; liblikwid-lua.a for Lua.
+  dnl Do not append -lm here: final link uses shared libm outside -Wl,-Bstatic; probe above used -lm only for the try link.
   if test "x$enable_all_static" = xyes; then
     LIBS="$LIBS -llikwid-hwloc -llikwid-lua"
   fi

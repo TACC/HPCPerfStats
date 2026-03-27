@@ -424,17 +424,14 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
 
 static void print_buffer_status(struct sf_ring_buffer *w)
 {
-  fprintf(log_stream, "status = %d, ", w->status);
-  fprintf(log_stream, "allow_overwrite = %d, ", allow_ring_buffer_overwrite);
-  fprintf(log_stream, "file_mode = %d, ", file_mode_enabled);
-  fprintf(log_stream, "#succ_send = %d/%d\n", send_success_count, send_success_count_max);
-  fprintf(log_stream, "#acc_processed = %d, ", w->b_count);
-  fprintf(log_stream, "#cur_buffered = %d/%d, ", w->q_count, max_buffer_size);
-  fprintf(log_stream, "#acc_succ_sent = %d, ", w->s_count);
-  fprintf(log_stream, "#acc_succ_resent = %d\n", w->r_count);
-  fprintf(log_stream, "#acc_deleted = %d, ", w->d_count);
-  fprintf(log_stream, "#acc_saved = %d, ", w->f_count);
-  fprintf(log_stream, "#acc_loaded = %d\n", w->l_count);
+  /* One fprintf: fewer lock/syscall round-trips than seven separate prints. */
+  fprintf(log_stream,
+	  "status = %d, allow_overwrite = %d, file_mode = %d, #succ_send = %d/%d\n"
+	  "#acc_processed = %d, #cur_buffered = %d/%d, #acc_succ_sent = %d, #acc_succ_resent = %d\n"
+	  "#acc_deleted = %d, #acc_saved = %d, #acc_loaded = %d\n",
+	  w->status, allow_ring_buffer_overwrite, file_mode_enabled, send_success_count,
+	  send_success_count_max, w->b_count, w->q_count, max_buffer_size, w->s_count, w->r_count,
+	  w->d_count, w->f_count, w->l_count);
 }
 
 void monitor_daemon_rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)

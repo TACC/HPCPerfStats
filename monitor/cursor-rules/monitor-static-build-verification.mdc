@@ -24,6 +24,8 @@ Run **`HPCPerfStats/monitor/scripts/build_static_bundle.sh`** (from `HPCPerfStat
 
 **Deps-only** (populate prefix without building the daemon): **`HPCPerfStats/monitor/scripts/ensure_dotbuild_prefix_static.sh`** or **`./scripts/build_static_bundle.sh --deps-only`**.
 
+**Dependency tarballs**: Default **`rabbitmq-c`** URL uses **`alanxz/rabbitmq-c`** on GitHub (the **`rabbitmq/rabbitmq-c`** archive path 404s). After each download, **`fetch_url`** runs **`gzip -t`** on **`.tar.gz`** / **`.tgz`** targets so tiny HTML error bodies fail fast; override with **`RABBITMQ_C_URL_FMT`** if you mirror tarballs.
+
 ## Tests after the script
 
 The bundle script runs **`make`** but does **not** run **`make check`**. After a successful script run, run **`make check`** in **`HPCPerfStats/monitor/.build-static`** (build tree root, not `src/`) so the **`tests/`** suite runs, or run **`HPCPerfStats/monitor/tests/run_tests.sh`** with the same build directory.

@@ -13,6 +13,7 @@
 
 #include "stats.h"
 #include "stats_buffer.h"
+#include "stats_buffer_data_append.h"
 #include "schema.h"
 #include "trace.h"
 #include "pscanf.h"
@@ -27,33 +28,41 @@
 #define RMQ_VHOST "/"
 #define RMQ_CHANNEL 1
 
-#define sf_printf(sf, fmt, args...) do {			\
-    char *tmp_string = sf->sf_data;				\
-    asprintf(&(sf->sf_data), "%s" fmt, sf->sf_data, ##args);	\
-    free(tmp_string);						\
-  } while(0)
+/* Payload assembly uses stats_buffer_data_append.c (incremental realloc; unit-tested). */
+static void stats_buffer_append_fmt(struct stats_buffer *sf, const char *fmt, ...)
+  __attribute__((format(printf, 2, 3)));
+
+static void stats_buffer_append_fmt(struct stats_buffer *sf, const char *fmt, ...)
+{
+  va_list ap;
+  va_start(ap, fmt);
+  if (stats_buffer_data_append_vfmt(&sf->sf_data, &sf->sf_data_len, &sf->sf_data_cap, fmt, ap) < 0) {
+    /* Best-effort on OOM (buffer unchanged). */
+  }
+  va_end(ap);
+}
 
 static void stats_buffer_append_schema_entry_suffix(struct stats_buffer *sf, struct schema_entry *se)
 {
   if (se->se_type == SE_CONTROL)
-    sf_printf(sf, ",C");
+    stats_buffer_append_fmt(sf, ",C");
   if (se->se_type == SE_EVENT)
-    sf_printf(sf, ",E");
+    stats_buffer_append_fmt(sf, ",E");
   if (se->se_unit != NULL)
-    sf_printf(sf, ",U=%s", se->se_unit);
+    stats_buffer_append_fmt(sf, ",U=%s", se->se_unit);
   if (se->se_width != 0)
-    sf_printf(sf, ",W=%u", se->se_width);
+    stats_buffer_append_fmt(sf, ",W=%u", se->se_width);
 }
 
 static void stats_buffer_append_schema_line_for_type(struct stats_buffer *sf, struct stats_type *type)
 {
-  sf_printf(sf, "%c%s", SF_SCHEMA_CHAR, type->st_name);
+  stats_buffer_append_fmt(sf, "%c%s", SF_SCHEMA_CHAR, type->st_name);
   for (size_t j = 0; j < type->st_schema.sc_len; j++) {
     struct schema_entry *se = type->st_schema.sc_ent[j];
-    sf_printf(sf, " %s", se->se_key);
+    stats_buffer_append_fmt(sf, " %s", se->se_key);
     stats_buffer_append_schema_entry_suffix(sf, se);
   }
-  sf_printf(sf, "\n");
+  stats_buffer_append_fmt(sf, "\n");
 }
 
 static void close_rmq_connection(amqp_connection_state_t conn, int channel_opened)
@@ -184,11 +193,11 @@ int stats_wr_hdr(struct stats_buffer *sf)
   uname(&uts_buf);
   pscanf("/proc/uptime", "%llu", &uptime);
   
-  sf_printf(sf, "%c%s %s\n", SF_PROPERTY_CHAR, STATS_PROGRAM, STATS_VERSION);
-  sf_printf(sf, "%chostname %s\n", SF_PROPERTY_CHAR, uts_buf.nodename);
-  sf_printf(sf, "%cuname %s %s %s %s\n", SF_PROPERTY_CHAR, uts_buf.sysname,
-            uts_buf.machine, uts_buf.release, uts_buf.version);
-  sf_printf(sf, "%cuptime %llu\n", SF_PROPERTY_CHAR, uptime);
+  stats_buffer_append_fmt(sf, "%c%s %s\n", SF_PROPERTY_CHAR, STATS_PROGRAM, STATS_VERSION);
+  stats_buffer_append_fmt(sf, "%chostname %s\n", SF_PROPERTY_CHAR, uts_buf.nodename);
+  stats_buffer_append_fmt(sf, "%cuname %s %s %s %s\n", SF_PROPERTY_CHAR, uts_buf.sysname,
+			  uts_buf.machine, uts_buf.release, uts_buf.version);
+  stats_buffer_append_fmt(sf, "%cuptime %llu\n", SF_PROPERTY_CHAR, uptime);
   
   size_t i = 0;
   struct stats_type *type;
@@ -207,12 +216,21 @@ int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *por
 {
   int rc = 0;
   memset(sf, 0, sizeof(*sf));
-  sf->sf_data=strdup("");
-  sf->sf_host=strdup(host);
-  sf->sf_port=strdup(port);
-  sf->sf_queue=strdup(queue);
-  sf->sf_user=strdup(user);
-  sf->sf_password=strdup(password);
+  sf->sf_data = strdup("");
+  if (sf->sf_data == NULL)
+    return -1;
+  sf->sf_data_len = 0;
+  sf->sf_data_cap = 1;
+  sf->sf_host = strdup(host);
+  sf->sf_port = strdup(port);
+  sf->sf_queue = strdup(queue);
+  sf->sf_user = strdup(user);
+  sf->sf_password = strdup(password);
+  if (sf->sf_host == NULL || sf->sf_port == NULL || sf->sf_queue == NULL
+      || sf->sf_user == NULL || sf->sf_password == NULL) {
+    stats_buffer_close(sf);
+    return -1;
+  }
 
   return rc;
 }
@@ -254,7 +272,7 @@ static void stats_buffer_append_mark_lines(struct stats_buffer *sf)
   const char *str = sf->sf_mark;
   while (*str != 0) {
     const char *eol = strchrnul(str, '\n');
-    sf_printf(sf, "%c%*s\n", SF_MARK_CHAR, (int) (eol - str), str);
+    stats_buffer_append_fmt(sf, "%c%*s\n", SF_MARK_CHAR, (int)(eol - str), str);
     str = eol;
     if (*str == '\n')
       str++;
@@ -274,10 +292,10 @@ static void stats_buffer_append_enabled_type_rows(struct stats_buffer *sf)
     while ((dev = dict_for_each(&type->st_current_dict, &j)) != NULL) {
       struct stats *stats = key_to_stats(dev);
 
-      sf_printf(sf, "%s %s", type->st_name, stats->s_dev);
+      stats_buffer_append_fmt(sf, "%s %s", type->st_name, stats->s_dev);
       for (size_t k = 0; k < type->st_schema.sc_len; k++)
-        sf_printf(sf, " %llu", stats->s_val[k]);
-      sf_printf(sf, "\n");
+	stats_buffer_append_fmt(sf, " %llu", stats->s_val[k]);
+      stats_buffer_append_fmt(sf, "\n");
     }
   }
 }
@@ -294,7 +312,8 @@ int stats_buffer_write(struct stats_buffer *sf)
     fprintf(stderr, "cannot clock_gettime(): %m\n");
     goto out;
   }
-  sf_printf(sf, "\n%f %s %s\n", time.tv_sec + 1e-9 * time.tv_nsec, jobid, uts_buf.nodename);
+  stats_buffer_append_fmt(sf, "\n%f %s %s\n", time.tv_sec + 1e-9 * time.tv_nsec, jobid,
+			  uts_buf.nodename);
 
   stats_buffer_append_mark_lines(sf);
   stats_buffer_append_enabled_type_rows(sf);
@@ -477,7 +496,7 @@ int ring_buffer_load_file(
     if (line_buf[0] == '\n' && stats_start == 0)
         continue;
     if (line_buf[0] != '\n')  {
-      sf_printf(sf, "%s", line_buf);
+      stats_buffer_append_fmt(sf, "%s", line_buf);
       if (stats_start == 0)
           stats_start = 1;
     }
