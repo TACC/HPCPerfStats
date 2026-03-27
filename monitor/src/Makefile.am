@@ -223,10 +223,12 @@ stats.o: stats.x
 stats.x: Makefile
 	echo '$(patsubst %.c, X(%),$(sort $(TYPES)))' > $@
 
-EXTRA_DIST = hpcperfstats.conf hpcperfstats.service
+EXTRA_DIST = hpcperfstats.conf hpcperfstats.service \
+	$(top_srcdir)/scripts/build_static_bundle.sh \
+	test_monitor_configure_help.sh
 
 check_PROGRAMS = test_variorum_rapl_parser
-TESTS = $(check_PROGRAMS)
+TESTS = $(check_PROGRAMS) test_monitor_configure_help.sh
 test_variorum_rapl_parser_SOURCES = \
 	test_variorum_rapl_parser.c \
 	variorum_rapl.c

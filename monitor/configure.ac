@@ -5,8 +5,88 @@ AC_PROG_CC
 AC_PROG_CXX
 AM_PROG_CC_C_O
 
+AC_ARG_ENABLE([all-static],
+[AS_HELP_STRING([--enable-all-static], [Link most third-party libraries as static archives (linker groups). Vendor stacks usually shipped as shared only (DCGM, RDMA/OPA, libibmad, MIC) are linked after -Wl,-Bdynamic. See monitor/scripts/build_static_bundle.sh.])],
+[enable_all_static=$enableval],
+[enable_all_static=no])
+
+MONITOR_SHARED_LIBS=""
+
+dnl With --enable-all-static, route vendor / RDMA-style stacks to MONITOR_SHARED_LIBS
+dnl so they are linked after -Wl,-Bdynamic (shared .so) while core deps stay static.
+AC_DEFUN([MONITOR_CFG_INFINIBAND_LIBS], [
+  if test "x$enable_all_static" = xyes; then
+    save_LIBS=$LIBS
+    LIBS=
+    AC_SEARCH_LIBS([mad_rpc_open_port], [ibmad], [have_ib=yes],
+      [LIBS=$save_LIBS
+       AC_MSG_ERROR([Unable to find libibmad!])])
+    if test "x${have_ib}" = xyes; then
+      MONITOR_SHARED_LIBS="$MONITOR_SHARED_LIBS $LIBS"
+      LIBS=$save_LIBS
+      AC_CHECK_HEADERS([infiniband/umad.h infiniband/mad.h], [infiniband=true],
+        [AC_MSG_ERROR([Unable to find umad.h or mad.h on this system!])])
+    fi
+  else
+    AC_SEARCH_LIBS([mad_rpc_open_port], [ibmad], [have_ib=yes],
+      [AC_MSG_ERROR([Unable to find libibmad!])])
+    if test "x${have_ib}" = xyes; then
+      AC_CHECK_HEADERS([infiniband/umad.h infiniband/mad.h], [infiniband=true],
+        [AC_MSG_ERROR([Unable to find umad.h or mad.h on this system!])])
+    fi
+  fi
+])
+
+AC_DEFUN([MONITOR_CFG_MIC_LIBS], [
+  if test "x$enable_all_static" = xyes; then
+    save_LIBS=$LIBS
+    LIBS=
+    AC_SEARCH_LIBS([mic_open_device], [micmgmt], [have_mic=yes],
+      [LIBS=$save_LIBS
+       AC_MSG_ERROR([Unable to find libmicmgmt!])])
+    MONITOR_SHARED_LIBS="$MONITOR_SHARED_LIBS $LIBS"
+    LIBS=$save_LIBS
+  else
+    AC_SEARCH_LIBS([mic_open_device], [micmgmt], [have_mic=yes],
+      [AC_MSG_ERROR([Unable to find libmicmgmt!])])
+  fi
+])
+
+AC_DEFUN([MONITOR_CFG_OPA_LIBS], [
+  if test "x$enable_all_static" = xyes; then
+    save_LIBS=$LIBS
+    LIBS=
+    AC_SEARCH_LIBS([iba_fstatus_msg], [public])
+    AC_SEARCH_LIBS([oib_pa_client_init], [oib_utils], [have_opa=yes],
+      [LIBS=$save_LIBS
+       AC_MSG_ERROR([Unable to find liboib_utils!])],
+      [ -libmad -libumad -libverbs -lpublic -lpthread ])
+    if test "x${have_opa}" = xyes; then
+      AC_SEARCH_LIBS([ibv_create_cq], [ibverbs])
+      AC_SEARCH_LIBS([umad_set_addr], [ibumad])
+      AC_SEARCH_LIBS([mad_rpc_open_port], [ibmad])
+      MONITOR_SHARED_LIBS="$MONITOR_SHARED_LIBS $LIBS"
+      LIBS=$save_LIBS
+      AC_CHECK_HEADERS([oib_utils.h], [opa=true],
+        [AC_MSG_ERROR([Unable to find oib_utils.h on this system!])])
+    fi
+  else
+    AC_SEARCH_LIBS([iba_fstatus_msg], [public])
+    AC_SEARCH_LIBS([oib_pa_client_init], [oib_utils], [have_opa=yes],
+      [AC_MSG_ERROR([Unable to find liboib_utils!])],
+      [ -libmad -libumad -libverbs -lpublic -lpthread ])
+    if test "x${have_opa}" = xyes; then
+      AC_CHECK_HEADERS([oib_utils.h], [opa=true],
+        [AC_MSG_ERROR([Unable to find oib_utils.h on this system!])])
+    fi
+    AC_SEARCH_LIBS([ibv_create_cq], [ibverbs])
+    AC_SEARCH_LIBS([umad_set_addr], [ibumad])
+    AC_SEARCH_LIBS([mad_rpc_open_port], [ibmad])
+  fi
+])
+
 AC_SEARCH_LIBS([amqp_new_connection], [rabbitmq], [have_rabbitmq=yes],
-    [AC_MSG_ERROR([Unable to find librabbitmq.so!])])
+    [AC_MSG_ERROR([Unable to find librabbitmq!])])
 if test "x${have_rabbitmq}" = xyes; then
    AC_CHECK_HEADERS([amqp.h], [rabbitmq=true],
    [AC_MSG_ERROR([Unable to find amqp.h!])])
@@ -24,12 +104,17 @@ esac],
 AM_CONDITIONAL([HARDWARE], [test x$hardware = xtrue])
 
 AC_SEARCH_LIBS([variorum_get_energy_json], [variorum], [have_variorum=yes],
-  [AC_MSG_ERROR([Unable to find libvariorum.so!])])
+  [AC_MSG_ERROR([Unable to find libvariorum!])])
 if test "x${have_variorum}" = xyes; then
   AC_CHECK_HEADERS([variorum.h], [variorum=true],
     [AC_MSG_ERROR([Unable to find variorum.h!])])
 fi
 AM_CONDITIONAL([VARIORUM], [test x$variorum = xtrue])
+
+if test "x$enable_all_static" = xyes && test "x$variorum" = xtrue; then
+  dnl libvariorum.a does not record transitive deps; link jansson + hwloc explicitly.
+  LIBS="$LIBS -ljansson -lhwloc"
+fi
 
 AC_ARG_WITH([cpu-counter-backend],
 [AS_HELP_STRING([--with-cpu-counter-backend={auto|likwid|dcgm}], [CPU counter backend selection (default: auto)])],
@@ -60,7 +145,7 @@ fi
 
 if test "x$cpu_counter_backend" = "xlikwid"; then
   AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
-    [AC_MSG_ERROR([Unable to find liblikwid.so!])])
+    [AC_MSG_ERROR([Unable to find liblikwid!])])
   if test "x${have_likwid}" = xyes; then
     AC_CHECK_HEADERS([likwid.h], [likwid=true],
       [AC_MSG_ERROR([Unable to find likwid.h!])])
@@ -72,8 +157,19 @@ AM_CONDITIONAL([CPU_BACKEND_DCGM], [test x$cpu_counter_backend = xdcgm])
 
 dcgm_checked=false
 if test "x$cpu_counter_backend" = "xdcgm"; then
-  AC_SEARCH_LIBS([dcgmInit], [dcgm], [have_dcgm=yes],
-    [AC_MSG_ERROR([Unable to find libdcgm.so! (required for DCGM CPU backend)])])
+  if test "x$enable_all_static" = xyes; then
+    save_LIBS=$LIBS
+    LIBS=
+    AC_SEARCH_LIBS([dcgmInit], [dcgm],
+      [MONITOR_SHARED_LIBS="$MONITOR_SHARED_LIBS $LIBS"
+       have_dcgm=yes
+       LIBS=$save_LIBS],
+      [LIBS=$save_LIBS
+       AC_MSG_ERROR([Unable to find libdcgm (required for DCGM CPU backend)])])
+  else
+    AC_SEARCH_LIBS([dcgmInit], [dcgm], [have_dcgm=yes],
+      [AC_MSG_ERROR([Unable to find libdcgm (required for DCGM CPU backend)])])
+  fi
   if test "x${have_dcgm}" = xyes; then
     AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [dcgm_headers=true],
       [AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h for DCGM CPU backend])])
@@ -120,22 +216,11 @@ AC_MSG_NOTICE([CPU counter backend: ${cpu_counter_backend} (host_cpu=${host_cpu}
 AC_ARG_ENABLE([infiniband],
 [  --enable-infiniband	Enable Infiniband support (default is true)],
 [case "${enableval}" in
-  yes) AC_SEARCH_LIBS([mad_rpc_open_port], [ibmad], [have_ib=yes], 
-    [AC_MSG_ERROR([Unable to find libibmad.so!])])
-  if test "x${have_ib}" = xyes; then 
-     AC_CHECK_HEADERS([infiniband/umad.h infiniband/mad.h], [infiniband=true],
-     [AC_MSG_ERROR([Unable to find umad.h or mad.h on this system!])])  
-  fi
-  ;;
+  yes) MONITOR_CFG_INFINIBAND_LIBS ;;
   no)  infiniband=false ;;
   *) AC_MSG_ERROR([bad value ${enableval} for --enable-infiniband]) ;;
 esac],
-[AC_SEARCH_LIBS([mad_rpc_open_port], [ibmad], [have_ib=yes],
-  [AC_MSG_ERROR([Unable to find libibmad.so!])])
-  if test "x${have_ib}" = xyes; then 
-     AC_CHECK_HEADERS([infiniband/umad.h infiniband/mad.h], [infiniband=true], 
-     [AC_MSG_ERROR([Unable to find umad.h or mad.h on this system!])])  
-  fi
+[MONITOR_CFG_INFINIBAND_LIBS
 ])
 AM_CONDITIONAL([INFINIBAND], [test x$infiniband = xtrue])
 
@@ -153,8 +238,7 @@ AC_ARG_ENABLE([mic],
 [  --enable-mic		Enable Intel MIC (Xeon Phi) support (default is false)],
 [case "${enableval}" in
   yes) mic=true
-  AC_SEARCH_LIBS([mic_open_device], [micmgmt], [have_mic=yes], 
-  [AC_MSG_ERROR([Unable to find libmicmgmt.so!])])  
+  MONITOR_CFG_MIC_LIBS
   ;;
   no)  mic=false ;;
   *) AC_MSG_ERROR([bad value ${enableval} for --enable-mic]) ;;
@@ -191,8 +275,19 @@ fi
 
 if test "x$gpu" = "xtrue"; then
   if test "x$dcgm_checked" = "xfalse"; then
-    AC_SEARCH_LIBS([dcgmInit], [dcgm], [have_gpu=yes],
-      [AC_MSG_ERROR([Unable to find libdcgm.so!])])
+    if test "x$enable_all_static" = xyes; then
+      save_LIBS=$LIBS
+      LIBS=
+      AC_SEARCH_LIBS([dcgmInit], [dcgm],
+        [MONITOR_SHARED_LIBS="$MONITOR_SHARED_LIBS $LIBS"
+         have_gpu=yes
+         LIBS=$save_LIBS],
+        [LIBS=$save_LIBS
+         AC_MSG_ERROR([Unable to find libdcgm!])])
+    else
+      AC_SEARCH_LIBS([dcgmInit], [dcgm], [have_gpu=yes],
+        [AC_MSG_ERROR([Unable to find libdcgm!])])
+    fi
     if test "x${have_gpu}" = xyes; then
       AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [gpu=true],
         [AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h on this system!])])
@@ -253,16 +348,7 @@ AC_ARG_ENABLE([opa],
 [  --enable-opa		Enable Intel Omnipath Fabric support (default is false)],
 [case "${enableval}" in
   yes) opa=true
-  AC_SEARCH_LIBS([iba_fstatus_msg], [public])
-  AC_SEARCH_LIBS([oib_pa_client_init], [oib_utils], [have_opa=yes], 
-  [AC_MSG_ERROR([Unable to find liboib_utils.a!])], [ -libmad -libumad -libverbs -lpublic -lpthread ])
-  if test "x${have_opa}" = xyes; then 
-     AC_CHECK_HEADERS([oib_utils.h], [opa=true], 
-     [AC_MSG_ERROR([Unable to find oib_utils.h on this system!])])  
-  fi
-  AC_SEARCH_LIBS([ibv_create_cq], [ibverbs])
-  AC_SEARCH_LIBS([umad_set_addr], [ibumad])
-  AC_SEARCH_LIBS([mad_rpc_open_port], [ibmad])	
+  MONITOR_CFG_OPA_LIBS
   ;;
   no)  opa=false ;;
   *) AC_MSG_ERROR([bad value ${enableval} for --enable-opa]) ;;
@@ -280,8 +366,15 @@ esac],
 [debug=false])
 AM_CONDITIONAL([DEBUG], [test x$debug = xtrue])
 
-AC_SEARCH_LIBS([ev_run], [ev], [libev=yes], [AC_MSG_ERROR([Failed to find lib libev.so])])
+AC_SEARCH_LIBS([ev_run], [ev], [libev=yes], [AC_MSG_ERROR([Failed to find libev])])
 AC_CHECK_HEADERS([ev.h], [ev=true], [AC_MSG_ERROR([Failed to find header ev.h])])
+
+if test "x$enable_all_static" = xyes; then
+  if test -n "$MONITOR_SHARED_LIBS"; then
+    AC_MSG_NOTICE([--enable-all-static: linking shared-only libs after static group:${MONITOR_SHARED_LIBS}])
+  fi
+  LIBS="-Wl,-Bstatic -Wl,--start-group $LIBS -Wl,--end-group -Wl,-Bdynamic -lpthread -ldl${MONITOR_SHARED_LIBS}"
+fi
 
 PKG_PROG_PKG_CONFIG
 AC_ARG_WITH([systemduserunitdir],
