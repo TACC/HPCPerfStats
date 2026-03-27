@@ -41,19 +41,21 @@ case "$cpu_counter_backend" in
   *) AC_MSG_ERROR([bad value ${cpu_counter_backend} for --with-cpu-counter-backend]) ;;
 esac
 
+is_x86=false
+case "$host_cpu" in
+  x86_64|i?86) is_x86=true ;;
+esac
+
 if test "x$cpu_counter_backend" = "xauto"; then
-  case "$host_cpu" in
-    x86_64|i?86) cpu_counter_backend="likwid" ;;
-    aarch64|arm*)
-      if test -r /proc/device-tree/compatible && \
-         tr '[:upper:]' '[:lower:]' </proc/device-tree/compatible 2>/dev/null | awk 'index($0,"nvidia"){found=1} END{exit(found?0:1)}'; then
-        cpu_counter_backend="dcgm"
-      else
-        cpu_counter_backend="likwid"
-      fi
-      ;;
-    *) cpu_counter_backend="likwid" ;;
-  esac
+  if test "x$is_x86" = "xtrue"; then
+    cpu_counter_backend="likwid"
+  else
+    cpu_counter_backend="dcgm"
+  fi
+fi
+
+if test "x$cpu_counter_backend" = "xlikwid" && test "x$is_x86" != "xtrue"; then
+  AC_MSG_ERROR([LIKWID CPU backend is only supported on x86 (host_cpu=${host_cpu}); use --with-cpu-counter-backend=dcgm on non-x86])
 fi
 
 if test "x$cpu_counter_backend" = "xlikwid"; then
