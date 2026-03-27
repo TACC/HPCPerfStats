@@ -8,6 +8,7 @@
 #include <sys/utsname.h>
 #include "stats.h"
 #include "stats_file.h"
+#include "stats_file_format.h"
 #include "schema.h"
 #include "trace.h"
 #include "pscanf.h"
@@ -21,25 +22,13 @@
 
 #define sf_printf(sf, fmt, args...) fprintf(sf->sf_file, fmt, ##args)
 
-static void stats_file_fprint_schema_entry_suffix(struct stats_file *sf, struct schema_entry *se)
-{
-  if (se->se_type == SE_CONTROL)
-    sf_printf(sf, ",C");
-  if (se->se_type == SE_EVENT)
-    sf_printf(sf, ",E");
-  if (se->se_unit != NULL)
-    sf_printf(sf, ",U=%s", se->se_unit);
-  if (se->se_width != 0)
-    sf_printf(sf, ",W=%u", se->se_width);
-}
-
 static void stats_file_fprint_schema_line_for_type(struct stats_file *sf, struct stats_type *type)
 {
   sf_printf(sf, "%c%s", SF_SCHEMA_CHAR, type->st_name);
   for (size_t j = 0; j < type->st_schema.sc_len; j++) {
     struct schema_entry *se = type->st_schema.sc_ent[j];
     sf_printf(sf, " %s", se->se_key);
-    stats_file_fprint_schema_entry_suffix(sf, se);
+    stats_file_fprint_schema_entry_suffix(sf->sf_file, se);
   }
   sf_printf(sf, "\n");
 }
@@ -57,30 +46,6 @@ static void stats_file_write_property_banner(struct stats_file *sf)
   sf_printf(sf, "%cuname %s %s %s %s\n", SF_PROPERTY_CHAR, uts_buf.sysname,
 	    uts_buf.machine, uts_buf.release, uts_buf.version);
   sf_printf(sf, "%cuptime %llu\n", SF_PROPERTY_CHAR, uptime);
-}
-
-static int sf_rd_validate_program_header_line(struct stats_file *sf, char *line_buf)
-{
-  char *line = line_buf;
-  if (*(line++) != SF_PROPERTY_CHAR) {
-    ERROR("file `%s' is not in %s format\n", sf->sf_path, STATS_PROGRAM);
-    return -1;
-  }
-
-  char *prog = wsep(&line);
-  if (prog == NULL || strcmp(prog, STATS_PROGRAM) != 0) {
-    ERROR("file `%s' is not in %s format\n", sf->sf_path, STATS_PROGRAM);
-    return -1;
-  }
-
-  char *vers = wsep(&line);
-  if (vers == NULL || strverscmp(vers, STATS_VERSION) > 0) {
-    ERROR("file `%s' is has unsupported version `%s'\n", sf->sf_path, vers != NULL ? vers : "NULL");
-    return -1;
-  }
-
-  TRACE("prog %s, vers %s\n", prog, vers);
-  return 0;
 }
 
 static int sf_rd_dispatch_header_line(struct stats_file *sf, char *first, char *line, int line_nr)
@@ -125,7 +90,7 @@ static int sf_rd_hdr(struct stats_file *sf)
     goto err;
   }
 
-  if (sf_rd_validate_program_header_line(sf, line_buf) < 0)
+  if (stats_file_validate_program_header(sf->sf_path, line_buf) < 0)
     goto err;
 
   int nr = 1;

@@ -28,6 +28,8 @@ static inline struct schema_entry *key_to_schema_entry(const char *key)
   return (struct schema_entry *) (key - se_key_offset);
 }
 
+struct schema_entry *parse_schema_entry(char *str);
+
 int schema_init(struct schema *sc, const char *def);
 void schema_destroy(struct schema *sc);
 

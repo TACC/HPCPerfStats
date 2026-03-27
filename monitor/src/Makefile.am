@@ -58,6 +58,7 @@ hpcperfstatsd_SOURCES = \
 	pscanf.h \
 	schema.h \
 	schema.c \
+	schema_entry_parse.c \
 	stats.h \
 	stats.c \
 	string1.h \
@@ -66,6 +67,8 @@ hpcperfstatsd_SOURCES = \
 if RABBITMQ
 hpcperfstatsd_SOURCES += \
 	monitor.c \
+	monitor_cli.c \
+	monitor_cli.h \
 	monitor_daemon.c \
 	monitor_daemon.h \
 	stats_buffer.c \
@@ -75,6 +78,8 @@ hpcperfstatsd_CPPFLAGS += \
 else
 hpcperfstatsd_SOURCES += \
 	main.c \
+	stats_file_format.c \
+	stats_file_format.h \
 	stats_file.c \
 	stats_file.h
 endif
@@ -222,7 +227,28 @@ EXTRA_DIST = hpcperfstats.conf hpcperfstats.service \
 	$(top_srcdir)/scripts/ensure_dotbuild_prefix_static.sh \
 	test_monitor_configure_help.sh
 
-check_PROGRAMS = test_likwid_rapl_scale
+check_PROGRAMS = test_likwid_rapl_scale test_schema_parse test_stats_file_format
+if RABBITMQ
+check_PROGRAMS += test_monitor_cli
+endif
 TESTS = $(check_PROGRAMS) test_monitor_configure_help.sh
 test_likwid_rapl_scale_SOURCES = \
 	test_likwid_rapl_scale.c
+
+test_schema_parse_SOURCES = \
+	test_schema_parse.c \
+	schema_entry_parse.c
+test_schema_parse_CPPFLAGS = $(hpcperfstatsd_CPPFLAGS)
+
+test_stats_file_format_SOURCES = \
+	test_stats_file_format.c \
+	stats_file_format.c
+test_stats_file_format_CPPFLAGS = $(hpcperfstatsd_CPPFLAGS)
+
+if RABBITMQ
+test_monitor_cli_SOURCES = \
+	test_monitor_cli.c \
+	test_monitor_cli_globals.c \
+	monitor_cli.c
+test_monitor_cli_CPPFLAGS = $(hpcperfstatsd_CPPFLAGS)
+endif

@@ -15,6 +15,7 @@
 #include <ev.h>
 
 #include "daemonize.h"
+#include "monitor_cli.h"
 #include "monitor_daemon.h"
 #include "string1.h"
 #include "stats.h"
@@ -23,21 +24,15 @@
 #include "pscanf.h"
 #include "hwdetect.h"
 
-static const char *default_queue = "default";
-static const char *default_port = "5672";
-static const char *default_rmq_user = "hpcperfstats";
-static const char *default_rmq_password = "hpcperfstats";
-static const char *default_dumpfile_dir = "/tmp/hpcperfstats";
-
 char *app_name = NULL;
 char *conf_file_name = NULL;
 FILE *log_stream = NULL;
 char *server = NULL;
-char *queue  = (char *) "default";
-char *port   = (char *) "5672";
-char *rmq_user = (char *) "hpcperfstats";
-char *rmq_password = (char *) "hpcperfstats";
-char *dumpfile_dir = (char *) "/tmp/hpcperfstats";
+char *queue  = (char *)monitor_cli_lit_queue;
+char *port   = (char *)monitor_cli_lit_port;
+char *rmq_user = (char *)monitor_cli_lit_rmq_user;
+char *rmq_password = (char *)monitor_cli_lit_rmq_password;
+char *dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
 double freq = 300;
 int max_buffer_size = 4096;
 int allow_ring_buffer_overwrite = 1;
@@ -63,14 +58,6 @@ static void monitor_conf_strip_trailing_newline(char *s)
   n = strlen(s);
   if (n > 0 && s[n - 1] == '\n')
     s[n - 1] = '\0';
-}
-
-/* Replace *slot with strdup(value), freeing the previous value unless it is the default literal pointer. */
-static void monitor_conf_replace_dup(char **slot, const char *default_literal, const char *value)
-{
-  if (*slot != NULL && *slot != (char *)default_literal)
-    free(*slot);
-  *slot = strdup(value);
 }
 
 static struct stats_buffer *monitor_daemon_alloc_stats_buffer(void)
@@ -229,22 +216,22 @@ int read_conf_file(void)
               app_name, server, conf_file_name);
     }
     if (strcmp(key, "queue") == 0) {
-      monitor_conf_replace_dup(&queue, default_queue, line);
+      monitor_cli_heap_dup_setting(&queue, monitor_cli_lit_queue, line);
       fprintf(log_stream, "%s: Setting queue to %s based on file %s\n",
               app_name, queue, conf_file_name);
     }
     if (strcmp(key, "port") == 0) {
-      monitor_conf_replace_dup(&port, default_port, line);
+      monitor_cli_heap_dup_setting(&port, monitor_cli_lit_port, line);
       fprintf(log_stream, "%s: Setting server port to %s based on file %s\n",
               app_name, port, conf_file_name);
     }
     if (strcmp(key, "user") == 0) {
-      monitor_conf_replace_dup(&rmq_user, default_rmq_user, line);
+      monitor_cli_heap_dup_setting(&rmq_user, monitor_cli_lit_rmq_user, line);
       fprintf(log_stream, "%s: Setting RMQ user to %s based on file %s\n",
               app_name, rmq_user, conf_file_name);
     }
     if (strcmp(key, "password") == 0) {
-      monitor_conf_replace_dup(&rmq_password, default_rmq_password, line);
+      monitor_cli_heap_dup_setting(&rmq_password, monitor_cli_lit_rmq_password, line);
       fprintf(log_stream, "%s: Setting RMQ password from file %s\n",
               app_name, conf_file_name);
     }

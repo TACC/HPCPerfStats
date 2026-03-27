@@ -1,0 +1,19 @@
+---
+description: Require unit tests when adding new C functions in the monitor
+globs:
+  - HPCPerfStats/monitor/**/*.c
+  - HPCPerfStats/monitor/**/*.h
+  - HPCPerfStats/monitor/src/Makefile.am
+alwaysApply: false
+---
+
+# New monitor C functions: unit tests
+
+When you **add a new function** or **extract** logic into a new named function in `HPCPerfStats/monitor/src/`:
+
+1. **Add automated coverage** under `make check`: extend an existing `test_*.c` driver or add a new one, and register it in `src/Makefile.am` as a `check_PROGRAMS` target included in `TESTS` (same patterns as `test_schema_parse`, `test_stats_file_format`, `test_monitor_cli`, `test_likwid_rapl_scale`).
+2. **Cover behavior**, not just compilation: assert return values, state transitions, and string/output content relevant to the function’s contract.
+3. **`static` helpers**: Prefer making the logic **linkable** (dedicated `.c` / header used by both the daemon and tests) so the function can be called directly. If it must stay `static`, test it **only through** a public caller that is itself fully covered, and keep that caller’s tests strict enough that the helper’s branches are exercised.
+4. **Exceptions** (document in the PR/commit message if used): thin wrappers that only call `exit`, `abort`, or a single library entry with no testable logic may rely on a **subprocess test** (e.g. `fork` + exit status) or an existing shell integration test instead of a direct call from the parent test process.
+
+This is additive to the workspace **global-testing-discipline** rule: new monitor C functions are not done until `make check` covers them per the bullets above.
