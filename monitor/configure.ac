@@ -207,6 +207,46 @@ else
 fi
 AM_CONDITIONAL([GPU], [test x$gpu = xtrue])
 
+AC_ARG_ENABLE([amd-gpu],
+[  --enable-amd-gpu	Enable AMD GPU support via GPUPerfAPI (default is auto-detect)],
+[case "${enableval}" in
+  yes) amd_gpu=true ;;
+  no)  amd_gpu=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable-amd-gpu]) ;;
+esac],
+[amd_gpu=auto])
+
+amd_gpu_autodetect_result="not-run"
+if test "x$amd_gpu" = "xauto"; then
+  amd_gpu=false
+  amd_gpu_autodetect_result="no-amd"
+  AC_PATH_PROG([LSPCI], [lspci], [no])
+  if test "x$LSPCI" != "xno"; then
+    if $LSPCI -nn 2>/dev/null | awk '{
+      l=tolower($0);
+      if ((index(l, "vga compatible controller") || index(l, "3d controller")) &&
+          (index(l, "advanced micro devices") || index(l, " amd/ati "))) found=1
+    } END { exit(found ? 0 : 1) }'; then
+      amd_gpu=true
+      amd_gpu_autodetect_result="amd-found"
+    fi
+  else
+    amd_gpu_autodetect_result="lspci-missing"
+  fi
+fi
+
+if test "x$amd_gpu" = "xtrue"; then
+  AC_CHECK_HEADERS([gpu_performance_api/gpu_perf_api.h], [amd_gpu=true],
+    [AC_MSG_ERROR([Unable to find gpu_performance_api/gpu_perf_api.h (GPUPerfAPI) for AMD GPU support])])
+fi
+
+if test "x$amd_gpu" = "xtrue"; then
+  AC_MSG_NOTICE([AMD GPU summary: enabled (GPUPerfAPI path); detect=${amd_gpu_autodetect_result}])
+else
+  AC_MSG_NOTICE([AMD GPU summary: disabled; detect=${amd_gpu_autodetect_result}])
+fi
+AM_CONDITIONAL([AMD_GPU], [test x$amd_gpu = xtrue])
+
 AC_ARG_ENABLE([opa],
 [  --enable-opa		Enable Intel Omnipath Fabric support (default is false)],
 [case "${enableval}" in

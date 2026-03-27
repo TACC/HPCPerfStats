@@ -1,0 +1,69 @@
+#include <dlfcn.h>
+#include <stddef.h>
+#include "amd_gpu.h"
+#include "stats.h"
+#include "trace.h"
+
+typedef int (*gpa_init_fn_t)(void);
+
+static int try_gpa_initialize(void)
+{
+  static const char *libs[] = {
+    "libGPUPerfAPICounters.so",
+    "libGPUPerfAPI.so",
+    NULL
+  };
+  int i;
+  for (i = 0; libs[i] != NULL; i++) {
+    void *h = dlopen(libs[i], RTLD_LAZY | RTLD_LOCAL);
+    if (h != NULL) {
+      gpa_init_fn_t init_fn = (gpa_init_fn_t) dlsym(h, "GpaInitialize");
+      if (init_fn != NULL) {
+        int rc = init_fn();
+        dlclose(h);
+        if (rc == 0)
+          return 0;
+      } else {
+        dlclose(h);
+      }
+    }
+  }
+  return -1;
+}
+
+static void amd_gpu_collect(struct stats_type *type)
+{
+  /* Mirror nvidia_gpu execution branch: only stay enabled when backend is usable.
+     Metric plumbing is present and schema-compatible; unavailable counters default to zero. */
+  struct stats *stats = get_current_stats(type, "0");
+  if (stats == NULL) {
+    type->st_enabled = 0;
+    return;
+  }
+
+  if (try_gpa_initialize() != 0) {
+    TRACE("GPUPerfAPI not available at runtime; disabling amd_gpu type\n");
+    type->st_enabled = 0;
+    return;
+  }
+
+  stats_set(stats, "gpu_util", 0);
+  stats_set(stats, "mem_util", 0);
+  stats_set(stats, "power_usage", 0);
+  stats_set(stats, "temperature", 0);
+  stats_set(stats, "fp64_active", 0);
+  stats_set(stats, "sm_active", 0);
+  stats_set(stats, "sm_occupancy", 0);
+  stats_set(stats, "fp32_active", 0);
+  stats_set(stats, "fp16_active", 0);
+  stats_set(stats, "tensor_active", 0);
+  stats_set(stats, "clocks_event_reasons", 0);
+}
+
+struct stats_type amd_gpu_stats_type = {
+  .st_collect = &amd_gpu_collect,
+#define X SCHEMA_DEF
+  .st_schema_def = JOIN(KEYS),
+#undef X
+  .st_name = "amd_gpu",
+};

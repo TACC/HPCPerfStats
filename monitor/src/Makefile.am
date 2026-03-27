@@ -214,6 +214,13 @@ hpcperfstatsd_SOURCES += \
 	nvidia_gpu.h
 endif
 
+if AMD_GPU
+TYPES += \
+	amd_gpu.c
+hpcperfstatsd_SOURCES += \
+	amd_gpu.h
+endif
+
 BUILT_SOURCES = stats.x
 CLEANFILES = stats.x
 stats.o: stats.x

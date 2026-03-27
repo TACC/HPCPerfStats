@@ -22,6 +22,7 @@ static void to_lower_ascii(char *s)
 void auto_disable_optional_stats_by_lspci(void)
 {
   int has_nvidia_gpu = 0;
+  int has_amd_gpu = 0;
   int has_ib = 0;
   int has_opa = 0;
   FILE *fp = popen("lspci -nn 2>/dev/null", "r");
@@ -37,6 +38,9 @@ void auto_disable_optional_stats_by_lspci(void)
         strstr(line, "3d controller") != NULL) {
       if (strstr(line, "nvidia") != NULL)
         has_nvidia_gpu = 1;
+      if (strstr(line, "advanced micro devices") != NULL ||
+          strstr(line, " amd/ati ") != NULL)
+        has_amd_gpu = 1;
     }
     if (strstr(line, "infiniband") != NULL)
       has_ib = 1;
@@ -47,6 +51,8 @@ void auto_disable_optional_stats_by_lspci(void)
 
   if (!has_nvidia_gpu)
     disable_type_if_present("nvidia_gpu");
+  if (!has_amd_gpu)
+    disable_type_if_present("amd_gpu");
   if (!has_ib) {
     disable_type_if_present("ib");
     disable_type_if_present("ib_ext");
