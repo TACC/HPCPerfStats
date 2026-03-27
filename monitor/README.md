@@ -41,6 +41,65 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
   - **`net`** caches **up** interface names and **re-scans** `/sys/class/net` every 32 samples (and on SIGHUP / jobid–rotate reset / shutdown) to avoid `opendir`/`readdir` and per-iface `flags` reads every tick.
 - **Invalidation**: `stats_buffer_runtime_caches_reset()` (SIGHUP), `monitor_reset_all_stats_types()` (log rotation / jobid-driven re-init), and SIGINT shutdown call `cpu_stats_invalidate_file_caches()` and `net_stats_invalidate_iface_cache()` so cached fds and iface lists are not stale across reconfigure or exit.
 
+## Profiling `hpcperfstatsd`
+
+Use these steps on a **representative host** (same kernel, privilege level, and enabled collectors as production). Run as the same user as the daemon when attaching with `strace`/`perf`, unless you use `sudo` and account for `ptrace` scope (`/proc/sys/kernel/yama/ptrace_scope` on many Linux distros).
+
+### Syscall volume (`strace`)
+
+1. **Summarize syscalls over a window** (good for before/after comparisons on collect-path changes):
+
+   ```bash
+   # Attach to a running daemon (replace PID)
+   strace -c -p PID -o /tmp/hps_strace.txt
+   # Let it run across several sample intervals, then Ctrl+C.
+   ```
+
+   Inspect `/tmp/hps_strace.txt` for totals on `open`, `openat`, `read`, `close`, `stat`, `fstat`, `getdents`, `connect`, `write`, `recvfrom`, and similar. Compare two captures taken with the same sample frequency and workload.
+
+2. **Trace only relevant syscalls** (less noise, larger logs per syscall class):
+
+   ```bash
+   strace -p PID -e trace=openat,read,close,getdents64 -o /tmp/hps_trace.log
+   ```
+
+   Adjust the list for your kernel (`getdents` vs `getdents64`, `open` vs `openat`).
+
+3. **Launch under strace** (when you can start the daemon yourself):
+
+   ```bash
+   strace -f -o /tmp/hps_spawn.log /path/to/hpcperfstatsd -d ...
+   ```
+
+   `-f` follows children if the process forks (e.g. after `-d` daemonize: attach to the **child** PID or use `-f` and filter the log).
+
+### CPU and hot paths (`perf`)
+
+1. **Lightweight counters** for a few sample intervals while attached:
+
+   ```bash
+   perf stat -p PID -- sleep 30
+   ```
+
+   Use this to spot high CPU time, cycles, or cache behavior; it does not give C line numbers by itself.
+
+2. **Profile with stack traces** (requires debug symbols; build with `-g`, which the static bundle typically already uses):
+
+   ```bash
+   perf record -F 99 -g -p PID -- sleep 60
+   perf report
+   ```
+
+   Look for time in `st_collect` implementations, `path_collect_*`, `pscanf`, `amqp_*`, and libev. On stripped binaries, install debuginfo or rebuild without stripping for meaningful symbol names.
+
+3. **Permissions**: If `perf record` fails, check `perf_event_paranoid` (e.g. `sysctl kernel.perf_event_paranoid`) or run with appropriate capability; site policy varies.
+
+### Interpreting results
+
+- **High `open`/`read`/`close` counts** per sample interval usually point at **collectors** (`collect.c`, per-type `*_collect` in `src/`, sysfs walks such as `net` or `block`).
+- **Blocking** in the libev thread often shows as long gaps in syscall timing or stalls under load; correlate with **RabbitMQ** and network health, since publish/login paths are synchronous (see **hpcperfstatsd: syscalls and blocking I/O** above).
+- After code changes, re-run **`make check`** in the static build tree (see **Building and verifying**) and repeat the same `strace -c` / `perf record` procedure so comparisons are apples-to-apples.
+
 ## Building and verifying
 
 1. **Canonical static build** (pinned deps + `hpcperfstatsd`): from this directory,
