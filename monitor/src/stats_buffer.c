@@ -37,11 +37,18 @@ static char *rmq_stored_port;
 static char *rmq_stored_user;
 static char *rmq_stored_pass;
 static char *rmq_declared_queue;
-static int rmq_declare_syslog_done;
 
-#define STATS_BUFFER_NODENAME_SZ 256
-static char cached_nodename[STATS_BUFFER_NODENAME_SZ];
-static int cached_nodename_valid;
+/* Tier B: one uname(2) per cache epoch (invalidated on SIGHUP via runtime_caches_reset). */
+static struct utsname cached_uts;
+static int cached_uts_valid;
+
+static void stats_buffer_ensure_uts_cached(void)
+{
+  if (cached_uts_valid)
+    return;
+  uname(&cached_uts);
+  cached_uts_valid = 1;
+}
 
 static char *row_line_buf;
 static size_t row_line_cap;
@@ -141,7 +148,6 @@ static void rmq_soft_disconnect(void)
   rmq_channel_open = 0;
   free(rmq_declared_queue);
   rmq_declared_queue = NULL;
-  rmq_declare_syslog_done = 0;
 }
 
 void stats_buffer_rmq_shutdown(void)
@@ -153,7 +159,7 @@ void stats_buffer_rmq_shutdown(void)
 void stats_buffer_runtime_caches_reset(void)
 {
   stats_buffer_rmq_shutdown();
-  cached_nodename_valid = 0;
+  cached_uts_valid = 0;
 }
 
 static int rmq_ensure_connected(struct stats_buffer *sf)
@@ -239,10 +245,9 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
 
 static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, struct stats_buffer *sf)
 {
-  if (!rmq_declare_syslog_done) {
-    syslog(LOG_INFO, "Attempt declare queue on RMQ server\n");
-    rmq_declare_syslog_done = 1;
-  }
+#ifdef DEBUG
+  syslog(LOG_INFO, "Attempt declare queue on RMQ server\n");
+#endif
   amqp_queue_declare_ok_t *r = amqp_queue_declare(conn, RMQ_CHANNEL, amqp_cstring_bytes(sf->sf_queue),
 						  0, 1, 0, 0, amqp_empty_table);
   amqp_rpc_reply_t ret = amqp_get_rpc_reply(conn);
@@ -309,16 +314,15 @@ static int send(struct stats_buffer *sf)
 
 int stats_wr_hdr(struct stats_buffer *sf)
 {
-  struct utsname uts_buf;
   unsigned long long uptime = 0;
-  
-  uname(&uts_buf);
+
+  stats_buffer_ensure_uts_cached();
   pscanf("/proc/uptime", "%llu", &uptime);
-  
+
   stats_buffer_append_fmt(sf, "%c%s %s\n", SF_PROPERTY_CHAR, STATS_PROGRAM, STATS_VERSION);
-  stats_buffer_append_fmt(sf, "%chostname %s\n", SF_PROPERTY_CHAR, uts_buf.nodename);
-  stats_buffer_append_fmt(sf, "%cuname %s %s %s %s\n", SF_PROPERTY_CHAR, uts_buf.sysname,
-			  uts_buf.machine, uts_buf.release, uts_buf.version);
+  stats_buffer_append_fmt(sf, "%chostname %s\n", SF_PROPERTY_CHAR, cached_uts.nodename);
+  stats_buffer_append_fmt(sf, "%cuname %s %s %s %s\n", SF_PROPERTY_CHAR, cached_uts.sysname,
+			  cached_uts.machine, cached_uts.release, cached_uts.version);
   stats_buffer_append_fmt(sf, "%cuptime %llu\n", SF_PROPERTY_CHAR, uptime);
   
   size_t i = 0;
@@ -482,15 +486,9 @@ int stats_buffer_write(struct stats_buffer *sf)
     fprintf(stderr, "cannot clock_gettime(): %m\n");
     goto out;
   }
-  if (!cached_nodename_valid) {
-    struct utsname uts_buf;
-    uname(&uts_buf);
-    strncpy(cached_nodename, uts_buf.nodename, STATS_BUFFER_NODENAME_SZ - 1);
-    cached_nodename[STATS_BUFFER_NODENAME_SZ - 1] = '\0';
-    cached_nodename_valid = 1;
-  }
+  stats_buffer_ensure_uts_cached();
   stats_buffer_append_fmt(sf, "\n%f %s %s\n", time.tv_sec + 1e-9 * time.tv_nsec, jobid,
-			  cached_nodename);
+			  cached_uts.nodename);
 
   stats_buffer_append_mark_lines(sf);
   stats_buffer_append_enabled_type_rows(sf);

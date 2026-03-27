@@ -60,6 +60,29 @@ static void monitor_conf_strip_trailing_newline(char *s)
     s[n - 1] = '\0';
 }
 
+/* Tier B: rate-limit repetitive operational logs on hot paths (ring/dumpfile resend). */
+#ifdef DEBUG
+#define MONITOR_HOT_LOG_EVERY 1u
+#else
+#define MONITOR_HOT_LOG_EVERY 32u
+#endif
+
+static void monitor_daemon_log_ring_resend_line(void)
+{
+  static unsigned seq;
+  if (MONITOR_HOT_LOG_EVERY > 1u && (++seq % MONITOR_HOT_LOG_EVERY) != 1u)
+    return;
+  fprintf(log_stream, "Resending stats in the ring buffer\n");
+}
+
+static void monitor_daemon_log_dumpfile_resend_line(void)
+{
+  static unsigned seq;
+  if (MONITOR_HOT_LOG_EVERY > 1u && (++seq % MONITOR_HOT_LOG_EVERY) != 1u)
+    return;
+  fprintf(log_stream, "Resending stats in the dumpfile\n");
+}
+
 static struct stats_buffer *monitor_daemon_alloc_stats_buffer(void)
 {
   struct stats_buffer *sf = malloc(sizeof(*sf));
@@ -80,7 +103,7 @@ static void monitor_daemon_resend_ring_buffer_if_nonempty(struct sf_ring_buffer 
 {
   if (w->q_count <= 0)
     return;
-  fprintf(log_stream, "Resending stats in the ring buffer\n");
+  monitor_daemon_log_ring_resend_line();
   ring_buffer_resend(w);
   if (w->q_count > 0)
     send_success_count = 0;
@@ -92,7 +115,7 @@ static void monitor_daemon_maybe_send_dumpfiles_after_sample_timer(struct sf_rin
     return;
   if (send_success_count < send_success_count_max)
     return;
-  fprintf(log_stream, "Resending stats in the dumpfile\n");
+  monitor_daemon_log_dumpfile_resend_line();
   send_dumpfile_stats(w);
 }
 
@@ -105,7 +128,7 @@ static void monitor_daemon_maybe_send_dumpfiles_after_jobid_cleared(struct sf_ri
     return;
   if (send_success_count <= 0)
     return;
-  fprintf(log_stream, "Resending stats in the dumpfile\n");
+  monitor_daemon_log_dumpfile_resend_line();
   send_dumpfile_stats(w);
 }
 
@@ -402,10 +425,12 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
     if (rc == 0) {
       remove(file_list[i]);
       n_files_deleted++;
-      fprintf(log_stream, "Resending stats in the ring buffer\n");
+      monitor_daemon_log_ring_resend_line();
       ring_buffer_resend(w);
       if (w->q_count != 0) {
-        fprintf(log_stream, "w_q_count = %d\n", w->q_count);
+#ifdef DEBUG
+	fprintf(log_stream, "w_q_count = %d\n", w->q_count);
+#endif
         send_success_count = 0;
         break;
       }
@@ -527,7 +552,7 @@ void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
   if (w->status == 0) {
     monitor_daemon_dispose_successful_send(w, sf);
     if (w->q_count > 0) {
-      fprintf(log_stream, "Resending stats in the ring buffer\n");
+      monitor_daemon_log_ring_resend_line();
       ring_buffer_resend(w);
       if (w->q_count != 0)
         send_success_count = 0;
