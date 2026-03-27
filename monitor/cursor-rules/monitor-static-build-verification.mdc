@@ -26,7 +26,7 @@ Run **`HPCPerfStats/monitor/scripts/build_static_bundle.sh`** (from `HPCPerfStat
 
 ## Tests after the script
 
-The bundle script runs **`make`** but does **not** run **`make check`**. After a successful script run, run **`make check`** in **`HPCPerfStats/monitor/.build-static`** so unit tests and `test_monitor_configure_help.sh` execute against the same configure output.
+The bundle script runs **`make`** but does **not** run **`make check`**. After a successful script run, run **`make check`** in **`HPCPerfStats/monitor/.build-static`** (build tree root, not `src/`) so the **`tests/`** suite runs, or run **`HPCPerfStats/monitor/tests/run_tests.sh`** with the same build directory.
 
 ## Summary for handoffs
 

@@ -224,31 +224,4 @@ stats.x: Makefile
 
 EXTRA_DIST = hpcperfstats.conf hpcperfstats.service \
 	$(top_srcdir)/scripts/build_static_bundle.sh \
-	$(top_srcdir)/scripts/ensure_dotbuild_prefix_static.sh \
-	test_monitor_configure_help.sh
-
-check_PROGRAMS = test_likwid_rapl_scale test_schema_parse test_stats_file_format
-if RABBITMQ
-check_PROGRAMS += test_monitor_cli
-endif
-TESTS = $(check_PROGRAMS) test_monitor_configure_help.sh
-test_likwid_rapl_scale_SOURCES = \
-	test_likwid_rapl_scale.c
-
-test_schema_parse_SOURCES = \
-	test_schema_parse.c \
-	schema_entry_parse.c
-test_schema_parse_CPPFLAGS = $(hpcperfstatsd_CPPFLAGS)
-
-test_stats_file_format_SOURCES = \
-	test_stats_file_format.c \
-	stats_file_format.c
-test_stats_file_format_CPPFLAGS = $(hpcperfstatsd_CPPFLAGS)
-
-if RABBITMQ
-test_monitor_cli_SOURCES = \
-	test_monitor_cli.c \
-	test_monitor_cli_globals.c \
-	monitor_cli.c
-test_monitor_cli_CPPFLAGS = $(hpcperfstatsd_CPPFLAGS)
-endif
+	$(top_srcdir)/scripts/ensure_dotbuild_prefix_static.sh

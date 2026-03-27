@@ -381,6 +381,6 @@ AS_IF([test "x$with_systemduserunitdir" != "xno"],
       [AC_SUBST([systemduserunitdir], [$with_systemduserunitdir])])
 AM_CONDITIONAL([HAVE_SYSTEMD], [test "x$with_systemduserunitdir" != "xno"])
 
-AC_CONFIG_FILES([Makefile src/Makefile])
+AC_CONFIG_FILES([Makefile src/Makefile tests/Makefile])
 AC_OUTPUT
 
