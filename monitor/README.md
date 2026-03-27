@@ -29,7 +29,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | CLI defaults, argv parsing, heap teardown | `monitor_cli.c`, `monitor_cli.h` (shared literals `monitor_cli_lit_*` with `monitor_daemon.c`). |
 | Daemon loop, RMQ send, ring buffer | `monitor_daemon.c`, `monitor_daemon.h`. |
 | Schema text parsing | `schema_entry_parse.c` (`parse_schema_entry`); `schema.c` builds full schemas for types. |
-| Archive header / schema suffix (file mode) | `stats_file_format.c`, `stats_file_format.h`; orchestration in `stats_file.c`. |
+| Archive header / schema suffix / directive class / marks (file mode) | `stats_file_format.c`, `stats_file_format.h` (`stats_file_classify_header_directive`, `stats_file_fprint_mark_multiline`, …); orchestration in `stats_file.c`. |
 | RMQ text payloads | `stats_buffer.c` (schema lines, marks, row assembly helpers). |
 
 ## Building and verifying

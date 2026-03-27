@@ -6,6 +6,39 @@
 #include "string1.h"
 #include "trace.h"
 
+stats_file_header_directive_kind_t stats_file_classify_header_directive(int lead_char)
+{
+  switch (lead_char) {
+  case (int)STATS_FILE_HDR_SCHEMA:
+    return STATS_FILE_HDR_SCHEMA;
+  case (int)STATS_FILE_HDR_DEVICES:
+    return STATS_FILE_HDR_DEVICES;
+  case (int)STATS_FILE_HDR_COMMENT:
+    return STATS_FILE_HDR_COMMENT;
+  case (int)STATS_FILE_HDR_PROPERTY:
+    return STATS_FILE_HDR_PROPERTY;
+  case (int)STATS_FILE_HDR_MARK:
+    return STATS_FILE_HDR_MARK;
+  default:
+    return STATS_FILE_HDR_UNKNOWN;
+  }
+}
+
+void stats_file_fprint_mark_multiline(FILE *f, int mark_char, const char *payload)
+{
+  if (f == NULL || payload == NULL)
+    return;
+
+  const char *str = payload;
+  while (*str != '\0') {
+    const char *eol = strchrnul(str, '\n');
+    fprintf(f, "%c%*s\n", mark_char, (int)(eol - str), str);
+    str = eol;
+    if (*str == '\n')
+      str++;
+  }
+}
+
 int stats_file_validate_program_header(const char *path, char *line_buf)
 {
 #define SF_PROPERTY_CHAR '$'

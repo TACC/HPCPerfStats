@@ -9,6 +9,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | Artifact | Role |
 |----------|------|
 | `test_likwid_rapl_scale.c` | RAPL energy scaling helper sanity checks |
+| `test_string1.c` | `wsep` / `strsep_ne` (header-only `string1.h`) |
 | `test_schema_parse.c` | `parse_schema_entry` / schema option strings |
 | `test_stats_file_format.c` | `stats_file_validate_program_header`, schema suffix formatting |
 | `test_monitor_cli.c` | RabbitMQ daemon CLI (`monitor_cli_*`), including `-h` via subprocess |

@@ -52,6 +52,48 @@ static void test_validate_rejects_version_too_new(void)
   assert(stats_file_validate_program_header("/fake/path", buf) < 0);
 }
 
+static void test_classify_directives(void)
+{
+  assert(stats_file_classify_header_directive('!') == STATS_FILE_HDR_SCHEMA);
+  assert(stats_file_classify_header_directive('@') == STATS_FILE_HDR_DEVICES);
+  assert(stats_file_classify_header_directive('#') == STATS_FILE_HDR_COMMENT);
+  assert(stats_file_classify_header_directive('$') == STATS_FILE_HDR_PROPERTY);
+  assert(stats_file_classify_header_directive('%') == STATS_FILE_HDR_MARK);
+  assert(stats_file_classify_header_directive('x') == STATS_FILE_HDR_UNKNOWN);
+  assert(stats_file_classify_header_directive('\0') == STATS_FILE_HDR_UNKNOWN);
+}
+
+static void test_mark_multiline(void)
+{
+  char *out = NULL;
+  size_t n = 0;
+  FILE *f = open_memstream(&out, &n);
+  assert(f != NULL);
+  stats_file_fprint_mark_multiline(f, '%', "one\ntwo");
+  fclose(f);
+
+  assert(strstr(out, "%one\n") != NULL);
+  assert(strstr(out, "%two\n") != NULL);
+  free(out);
+}
+
+static void test_mark_null_payload_writes_nothing(void)
+{
+  char *out = NULL;
+  size_t n = 0;
+  FILE *f = open_memstream(&out, &n);
+  assert(f != NULL);
+  stats_file_fprint_mark_multiline(f, '%', NULL);
+  fclose(f);
+  assert(n == 0);
+  free(out);
+}
+
+static void test_mark_null_file_is_noop(void)
+{
+  stats_file_fprint_mark_multiline(NULL, '%', "should_not_crash");
+}
+
 static void test_suffix_control_event_unit_width(void)
 {
   struct schema_entry *se =
@@ -83,6 +125,10 @@ static void test_suffix_control_event_unit_width(void)
 
 int main(void)
 {
+  test_classify_directives();
+  test_mark_multiline();
+  test_mark_null_payload_writes_nothing();
+  test_mark_null_file_is_noop();
   test_validate_good_header();
   test_validate_rejects_bad_magic();
   test_validate_rejects_bad_program();

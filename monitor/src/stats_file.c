@@ -51,10 +51,12 @@ static void stats_file_write_property_banner(struct stats_file *sf)
 static int sf_rd_dispatch_header_line(struct stats_file *sf, char *first, char *line, int line_nr)
 {
   struct stats_type *type;
+  stats_file_header_directive_kind_t kind =
+      stats_file_classify_header_directive((unsigned char)*first);
 
   TRACE("%s:%d: first `%s', rest `%s'\n", sf->sf_path, line_nr, first, line);
-  switch (*first) {
-  case SF_SCHEMA_CHAR:
+  switch (kind) {
+  case STATS_FILE_HDR_SCHEMA:
     type = stats_type_get(first + 1);
     if (type == NULL) {
       ERROR("%s:%d: unknown type `%s'\n", sf->sf_path, line_nr, first + 1);
@@ -63,11 +65,10 @@ static int sf_rd_dispatch_header_line(struct stats_file *sf, char *first, char *
     type->st_schema_def = strdup(line);
     type->st_enabled = 1;
     break;
-  case SF_DEVICES_CHAR:
-    break;
-  case SF_COMMENT_CHAR:
-  case SF_PROPERTY_CHAR:
-  case SF_MARK_CHAR:
+  case STATS_FILE_HDR_DEVICES:
+  case STATS_FILE_HDR_COMMENT:
+  case STATS_FILE_HDR_PROPERTY:
+  case STATS_FILE_HDR_MARK:
     break;
   default:
     ERROR("%s:%d: bad directive `%s %s'\n", sf->sf_path, line_nr, first, line);
@@ -193,16 +194,8 @@ int stats_file_close(struct stats_file *sf)
 
   sf_printf(sf, "\n%f %s %s\n", current_time, jobid, uts_buf.nodename);
 
-  if (sf->sf_mark != NULL) {
-    const char *str = sf->sf_mark;
-    while (*str != 0) {
-      const char *eol = strchrnul(str, '\n');
-      sf_printf(sf, "%c%*s\n", SF_MARK_CHAR, (int) (eol - str), str);
-      str = eol;
-      if (*str == '\n')
-        str++;
-    }
-  }
+  if (sf->sf_mark != NULL)
+    stats_file_fprint_mark_multiline(sf->sf_file, SF_MARK_CHAR, sf->sf_mark);
 
   size_t i = 0;
   struct stats_type *type;

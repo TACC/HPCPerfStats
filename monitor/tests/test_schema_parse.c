@@ -60,12 +60,76 @@ static void test_parse_unknown_option_ignored(void)
   free_entry(se);
 }
 
+static void test_parse_U_without_equals_skips(void)
+{
+  char *line = strdup("k,U,E");
+  struct schema_entry *se = parse_schema_entry(line);
+  free(line);
+
+  assert(se != NULL);
+  assert(strcmp(se->se_key, "k") == 0);
+  assert(se->se_unit == NULL);
+  assert(se->se_type == SE_EVENT);
+  free_entry(se);
+}
+
+static void test_parse_W_hex(void)
+{
+  char *line = strdup("k,W=0x10");
+  struct schema_entry *se = parse_schema_entry(line);
+  free(line);
+
+  assert(se != NULL);
+  assert(se->se_width == 16u);
+  free_entry(se);
+}
+
+static void test_parse_U_empty_value(void)
+{
+  char *line = strdup("k,U=");
+  struct schema_entry *se = parse_schema_entry(line);
+  free(line);
+
+  assert(se != NULL);
+  assert(se->se_unit != NULL);
+  assert(strcmp(se->se_unit, "") == 0);
+  free_entry(se);
+}
+
+static void test_parse_skips_empty_options(void)
+{
+  char *line = strdup("k,,E,,");
+  struct schema_entry *se = parse_schema_entry(line);
+  free(line);
+
+  assert(se != NULL);
+  assert(strcmp(se->se_key, "k") == 0);
+  assert(se->se_type == SE_EVENT);
+  free_entry(se);
+}
+
+static void test_parse_C_then_E_last_wins(void)
+{
+  char *line = strdup("k,C,E");
+  struct schema_entry *se = parse_schema_entry(line);
+  free(line);
+
+  assert(se != NULL);
+  assert(se->se_type == SE_EVENT);
+  free_entry(se);
+}
+
 int main(void)
 {
   test_parse_event_unit_width();
   test_parse_control();
   test_parse_empty_key_returns_null();
   test_parse_unknown_option_ignored();
+  test_parse_U_without_equals_skips();
+  test_parse_W_hex();
+  test_parse_U_empty_value();
+  test_parse_skips_empty_options();
+  test_parse_C_then_E_last_wins();
   printf("test_schema_parse passed\n");
   return 0;
 }
