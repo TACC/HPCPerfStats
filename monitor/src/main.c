@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -27,11 +28,11 @@ processor_t processor = 0;
 
 static void alarm_handler(int sig)
 {
+  (void)sig;
 }
 
 static int open_lock_timeout(const char *path, int timeout)
 {
-  int fd = -1;
   struct sigaction alarm_action = {
     .sa_handler = &alarm_handler,
   };
@@ -40,36 +41,128 @@ static int open_lock_timeout(const char *path, int timeout)
     .l_whence = SEEK_SET,
   };
 
-  fd = open(path, O_CREAT|O_RDWR, 0600);
+  int fd = open(path, O_CREAT | O_RDWR, 0600);
   if (fd < 0) {
     ERROR("cannot open `%s': %m\n", path);
-    goto err;
+    return -1;
   }
 
   if (sigaction(SIGALRM, &alarm_action, NULL) < 0) {
     ERROR("cannot set alarm handler: %m\n");
-    goto err;
+    close(fd);
+    return -1;
   }
 
-  // Set timer to wait until signal SIGALRM is sent
   alarm(timeout);
-
-  // Wait until any conflicting lock on the file is released. 
-  // If alarm signal (SIGALRM) is caught then go to signal 
-  // handler set in sigaction structure.
   if (fcntl(fd, F_SETLKW, &lock) < 0) {
     ERROR("cannot lock `%s': %m\n", path);
-    goto err;
-  }
-
-  if (0) {
-  err:
-    if (fd >= 0)
-      close(fd);
-    fd = -1;
+    alarm(0);
+    close(fd);
+    return -1;
   }
   alarm(0);
   return fd;
+}
+
+typedef enum {
+  main_cmd_begin,
+  main_cmd_collect,
+  main_cmd_end,
+  main_cmd_rotate,
+} main_cmd_t;
+
+static main_cmd_t main_parse_command_word(const char *cmd_str)
+{
+  if (strcmp(cmd_str, "begin") == 0)
+    return main_cmd_begin;
+  if (strcmp(cmd_str, "collect") == 0)
+    return main_cmd_collect;
+  if (strcmp(cmd_str, "end") == 0)
+    return main_cmd_end;
+  if (strcmp(cmd_str, "rotate") == 0)
+    return main_cmd_rotate;
+  FATAL("invalid command `%s'\n", cmd_str);
+}
+
+static int main_maybe_unlink_current_for_rotate(const char *current_path)
+{
+  if (unlink(current_path) < 0 && errno != ENOENT) {
+    ERROR("cannot unlink `%s': %m\n", current_path);
+    return 1;
+  }
+  return 0;
+}
+
+static void main_refresh_time_and_topology(void)
+{
+  gettimeofday(&tp, NULL);
+  current_time = tp.tv_sec + tp.tv_usec / 1000000.0;
+  pscanf(JOBID_FILE_PATH, "%79s", jobid);
+  nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+  processor = signature(&n_pmcs);
+}
+
+static void main_select_types_named_in_argv(char **arg_list, size_t arg_count)
+{
+  size_t i;
+  for (i = 0; i < arg_count; i++) {
+    struct stats_type *type = stats_type_get(arg_list[i]);
+    if (type == NULL) {
+      ERROR("unknown type `%s'\n", arg_list[i]);
+      continue;
+    }
+    type->st_selected = 1;
+  }
+}
+
+static void main_init_enable_and_collect_types(main_cmd_t cmd, int enable_all,
+					       int select_all)
+{
+  size_t i = 0;
+  struct stats_type *type;
+
+  auto_disable_optional_stats_by_lspci();
+
+  while ((type = stats_type_for_each(&i)) != NULL) {
+    if (enable_all)
+      type->st_enabled = 1;
+
+    if (!type->st_enabled)
+      continue;
+
+    if (stats_type_init(type) < 0) {
+      type->st_enabled = 0;
+      continue;
+    }
+
+    if (select_all)
+      type->st_selected = 1;
+
+    if (cmd == main_cmd_begin && type->st_begin != NULL)
+      (*type->st_begin)(type);
+
+    if (type->st_enabled && type->st_selected)
+      (*type->st_collect)(type);
+  }
+}
+
+static void main_apply_mark_or_jobid(struct stats_file *sf, main_cmd_t cmd,
+				     const char *mark, const char *cmd_str,
+				     char **arg_list, size_t arg_count)
+{
+  if (mark != NULL)
+    stats_file_mark(sf, "%s", mark);
+  else if (cmd == main_cmd_begin || cmd == main_cmd_end)
+    /* Use argv command word (e.g. "rotate" after rotate→begin mapping). */
+    stats_file_mark(sf, "%s %s", cmd_str, arg_count > 0 ? arg_list[0] : "-");
+}
+
+static void main_destroy_all_types(void)
+{
+  size_t i = 0;
+  struct stats_type *type;
+  while ((type = stats_type_for_each(&i)) != NULL)
+    stats_type_destroy(type);
 }
 
 static void usage(void)
@@ -88,9 +181,8 @@ static void usage(void)
 
 int main(int argc, char *argv[])
 {
-  int lock_fd = -1;
-  int lock_timeout = 30;
-  const char *current_path = STATS_DIR_PATH"/current";
+  const int lock_timeout = 30;
+  const char *current_path = STATS_DIR_PATH "/current";
   const char *mark = NULL;
   int rc = 0;
 
@@ -121,44 +213,21 @@ int main(int argc, char *argv[])
 
   const char *cmd_str = argv[optind];
   char **arg_list = argv + optind + 1;
-  size_t arg_count = argc - optind - 1;
+  size_t arg_count = (size_t)(argc - optind - 1);
 
-  enum {
-    cmd_begin,
-    cmd_collect,
-    cmd_end,
-    cmd_rotate,
-  } cmd;
+  main_cmd_t cmd = main_parse_command_word(cmd_str);
 
-  if (strcmp(cmd_str, "begin") == 0)
-    cmd = cmd_begin;
-  else if (strcmp(cmd_str, "collect") == 0)
-    cmd = cmd_collect;
-  else if (strcmp(cmd_str, "end") == 0)
-    cmd = cmd_end;
-  else if (strcmp(cmd_str, "rotate") == 0)
-    cmd = cmd_rotate;
-  else
-    FATAL("invalid command `%s'\n", cmd_str);
-
-  // Ensures only one hpcperfstats is running at any time
-  lock_fd = open_lock_timeout(STATS_LOCK_PATH, lock_timeout);
+  int lock_fd = open_lock_timeout(STATS_LOCK_PATH, lock_timeout);
   if (lock_fd < 0)
     FATAL("cannot acquire lock\n");
+  (void)lock_fd;
 
-  if (cmd == cmd_rotate) {
-    if (unlink(current_path) < 0 && errno != ENOENT) {
-        ERROR("cannot unlink `%s': %m\n", current_path);
-        rc = 1;
-    }
-    cmd = cmd_begin;
+  if (cmd == main_cmd_rotate) {
+    rc = main_maybe_unlink_current_for_rotate(current_path);
+    cmd = main_cmd_begin;
   }
 
-  gettimeofday(&tp,NULL);
-  current_time = tp.tv_sec+tp.tv_usec/1000000.0;
-  pscanf(JOBID_FILE_PATH, "%79s", jobid);
-  nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
-  processor = signature(&n_pmcs);
+  main_refresh_time_and_topology();
 
   if (mkdir(STATS_DIR_PATH, 0777) < 0) {
     if (errno != EEXIST)
@@ -172,7 +241,7 @@ int main(int argc, char *argv[])
   }
 
   int enable_all = 0;
-  int select_all = cmd != cmd_collect || arg_count == 0;
+  int select_all = cmd != main_cmd_collect || arg_count == 0;
 
   if (sf.sf_empty) {
     char *link_path = strf("%s/%ld", STATS_DIR_PATH, (long)current_time);
@@ -185,59 +254,17 @@ int main(int argc, char *argv[])
     select_all = 1;
   }
 
-  size_t i;
-  struct stats_type *type;
+  if (cmd == main_cmd_collect)
+    main_select_types_named_in_argv(arg_list, arg_count);
 
-  if (cmd == cmd_collect) {
-    /* If arg_count is zero then we select all below. */
-    for (i = 0; i < arg_count; i++) {
-      type = stats_type_get(arg_list[i]);
-      if (type == NULL) {
-        ERROR("unknown type `%s'\n", arg_list[i]);
-        continue;
-      }
-      type->st_selected = 1;
-    }
-  }
+  main_init_enable_and_collect_types(cmd, enable_all, select_all);
 
-  auto_disable_optional_stats_by_lspci();
-
-  i = 0;
-  while ((type = stats_type_for_each(&i)) != NULL) {
-    if (enable_all)
-      type->st_enabled = 1;
-
-    if (!type->st_enabled)
-      continue;
-
-    if (stats_type_init(type) < 0) {
-      type->st_enabled = 0;
-      continue;
-    }
-    
-    if (select_all)
-      type->st_selected = 1;
-
-    if (cmd == cmd_begin && type->st_begin != NULL)
-      (*type->st_begin)(type);
-
-    if (type->st_enabled && type->st_selected)
-      (*type->st_collect)(type);
-  }
-
-  if (mark != NULL)
-    stats_file_mark(&sf, "%s", mark);
-  else if (cmd == cmd_begin || cmd == cmd_end)
-    /* On begin set mark to "begin JOBID", and similar for end. */
-    stats_file_mark(&sf, "%s %s", cmd_str, arg_count > 0 ? arg_list[0] : "-");
+  main_apply_mark_or_jobid(&sf, cmd, mark, cmd_str, arg_list, arg_count);
 
   if (stats_file_close(&sf) < 0)
     rc = 1;
 
-  /* Cleanup. */
-  i = 0;
-  while ((type = stats_type_for_each(&i)) != NULL)
-    stats_type_destroy(type);
+  main_destroy_all_types();
 
  out:
   return rc;

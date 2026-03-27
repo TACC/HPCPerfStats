@@ -140,8 +140,77 @@ static void publish_dcgm_cpu_stats(struct stats *stats, int i)
   stats_set(stats, "DF_CTR2", 0);
   stats_set(stats, "DF_CTR3", 0);
 }
+
+static void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *sample,
+					     long long delta_us)
+{
+  if (delta_us <= 0 || sample->clock_khz <= 0.0)
+    return;
+  double ref_cycles = (sample->clock_khz * (double) delta_us) / 1000.0;
+  double act_cycles = ref_cycles * (sample->util_total / 100.0);
+  g_dcgm_mperf[i] += (unsigned long long) (ref_cycles + 0.5);
+  g_dcgm_aperf[i] += (unsigned long long) (act_cycles + 0.5);
+  g_dcgm_inst[i] += (unsigned long long) ((ref_cycles * (sample->util_user / 100.0)) + 0.5);
+  g_dcgm_ctr0[i] += (unsigned long long) ((sample->util_total * (double) delta_us) + 0.5);
+  g_dcgm_ctr1[i] += (unsigned long long) ((sample->util_user * (double) delta_us) + 0.5);
+  g_dcgm_ctr2[i] += (unsigned long long) ((sample->util_sys * (double) delta_us) + 0.5);
+  g_dcgm_ctr3[i] += (unsigned long long) ((sample->util_irq * (double) delta_us) + 0.5);
+  g_dcgm_ctr4[i] += (unsigned long long) ((sample->util_nice * (double) delta_us) + 0.5);
+  g_dcgm_ctr5[i] += (unsigned long long) ((sample->clock_khz * (double) delta_us) / 1000.0 + 0.5);
+}
+
+static int dcgm_backend_begin(struct stats_type *type)
+{
+  size_t n = (size_t) nr_cpus;
+  dcgmReturn_t rc = dcgmInit();
+  if (rc != DCGM_ST_OK) {
+    ERROR("DCGM CPU backend init failed\n");
+    type->st_enabled = 0;
+    return 0;
+  }
+  rc = dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, &g_dcgm_handle);
+  if (rc != DCGM_ST_OK) {
+    ERROR("DCGM CPU backend embedded mode failed\n");
+    (void) dcgmShutdown();
+    type->st_enabled = 0;
+    return 0;
+  }
+  g_dcgm_ctr0 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr0));
+  g_dcgm_ctr1 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr1));
+  g_dcgm_ctr2 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr2));
+  g_dcgm_ctr3 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr3));
+  g_dcgm_ctr4 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr4));
+  g_dcgm_ctr5 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr5));
+  g_dcgm_inst = (unsigned long long *) calloc(n, sizeof(*g_dcgm_inst));
+  g_dcgm_aperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_aperf));
+  g_dcgm_mperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_mperf));
+  g_dcgm_last_ts = (long long *) calloc(n, sizeof(*g_dcgm_last_ts));
+  if (g_dcgm_ctr0 == NULL || g_dcgm_ctr1 == NULL || g_dcgm_ctr2 == NULL ||
+      g_dcgm_ctr3 == NULL || g_dcgm_ctr4 == NULL || g_dcgm_ctr5 == NULL ||
+      g_dcgm_inst == NULL || g_dcgm_aperf == NULL || g_dcgm_mperf == NULL ||
+      g_dcgm_last_ts == NULL) {
+    ERROR("DCGM CPU backend allocation failed\n");
+    type->st_enabled = 0;
+    return 0;
+  }
+  g_dcgm_ready = 1;
+  return 0;
+}
 #else
 static int g_likwid_ready = 0;
+
+static int likwid_backend_begin(struct stats_type *type)
+{
+  (void)type;
+  if (likwid_pmc_adapter_init(nr_cpus) == 0 &&
+      likwid_pmc_adapter_setup_events(likwid_arch_eventset()) == 0) {
+    g_likwid_ready = 1;
+    return 0;
+  }
+  g_likwid_ready = 0;
+  type->st_enabled = 1;
+  return 0;
+}
 #endif
 
 #ifndef MONITOR_CPU_BACKEND_DCGM
@@ -192,49 +261,9 @@ static void fallback_fill(struct stats *stats, const char *cpu)
 static int cpu_counter_metrics_begin(struct stats_type *type)
 {
 #ifdef MONITOR_CPU_BACKEND_DCGM
-  size_t n = (size_t) nr_cpus;
-  dcgmReturn_t rc = dcgmInit();
-  if (rc != DCGM_ST_OK) {
-    ERROR("DCGM CPU backend init failed\n");
-    type->st_enabled = 0;
-    return 0;
-  }
-  rc = dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, &g_dcgm_handle);
-  if (rc != DCGM_ST_OK) {
-    ERROR("DCGM CPU backend embedded mode failed\n");
-    (void) dcgmShutdown();
-    type->st_enabled = 0;
-    return 0;
-  }
-  g_dcgm_ctr0 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr0));
-  g_dcgm_ctr1 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr1));
-  g_dcgm_ctr2 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr2));
-  g_dcgm_ctr3 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr3));
-  g_dcgm_ctr4 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr4));
-  g_dcgm_ctr5 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr5));
-  g_dcgm_inst = (unsigned long long *) calloc(n, sizeof(*g_dcgm_inst));
-  g_dcgm_aperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_aperf));
-  g_dcgm_mperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_mperf));
-  g_dcgm_last_ts = (long long *) calloc(n, sizeof(*g_dcgm_last_ts));
-  if (g_dcgm_ctr0 == NULL || g_dcgm_ctr1 == NULL || g_dcgm_ctr2 == NULL ||
-      g_dcgm_ctr3 == NULL || g_dcgm_ctr4 == NULL || g_dcgm_ctr5 == NULL ||
-      g_dcgm_inst == NULL || g_dcgm_aperf == NULL || g_dcgm_mperf == NULL ||
-      g_dcgm_last_ts == NULL) {
-    ERROR("DCGM CPU backend allocation failed\n");
-    type->st_enabled = 0;
-    return 0;
-  }
-  g_dcgm_ready = 1;
-  return 0;
+  return dcgm_backend_begin(type);
 #else
-  if (likwid_pmc_adapter_init(nr_cpus) == 0 &&
-      likwid_pmc_adapter_setup_events(likwid_arch_eventset()) == 0) {
-    g_likwid_ready = 1;
-    return 0;
-  }
-  g_likwid_ready = 0;
-  type->st_enabled = 1;
-  return 0;
+  return likwid_backend_begin(type);
 #endif
 }
 
@@ -263,19 +292,7 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
           delta_us = sample.ts - g_dcgm_last_ts[i];
         g_dcgm_last_ts[i] = sample.ts;
       }
-      if (delta_us > 0 && sample.clock_khz > 0.0) {
-        double ref_cycles = (sample.clock_khz * (double) delta_us) / 1000.0;
-        double act_cycles = ref_cycles * (sample.util_total / 100.0);
-        g_dcgm_mperf[i] += (unsigned long long) (ref_cycles + 0.5);
-        g_dcgm_aperf[i] += (unsigned long long) (act_cycles + 0.5);
-        g_dcgm_inst[i] += (unsigned long long) ((ref_cycles * (sample.util_user / 100.0)) + 0.5);
-        g_dcgm_ctr0[i] += (unsigned long long) ((sample.util_total * (double) delta_us) + 0.5);
-        g_dcgm_ctr1[i] += (unsigned long long) ((sample.util_user * (double) delta_us) + 0.5);
-        g_dcgm_ctr2[i] += (unsigned long long) ((sample.util_sys * (double) delta_us) + 0.5);
-        g_dcgm_ctr3[i] += (unsigned long long) ((sample.util_irq * (double) delta_us) + 0.5);
-        g_dcgm_ctr4[i] += (unsigned long long) ((sample.util_nice * (double) delta_us) + 0.5);
-        g_dcgm_ctr5[i] += (unsigned long long) ((sample.clock_khz * (double) delta_us) / 1000.0 + 0.5);
-      }
+      dcgm_accumulate_from_util_sample(i, &sample, delta_us);
       publish_dcgm_cpu_stats(stats, i);
       continue;
 #else

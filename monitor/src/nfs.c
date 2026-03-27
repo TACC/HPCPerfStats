@@ -155,13 +155,11 @@ static void nfs_collect_mnt_op(struct stats *stats, const char *op, char *str)
 
 #define KEYS EVENT_KEYS, BYTE_KEYS, XPRT_KEYS, OP_KEYS
 
-/* Return 0 if nfs_collect() should look at *p_line, -1 otherwise.
- * Bail on lines that don't start with a tab character r error. */
+/* Return 0 if nfs_collect() should re-read *p_line, -1 on EOF / parse error. */
 
-static int nfs_collect_mnt(struct stats *stats, FILE *file,
-			   char **p_line, size_t *p_line_size)
+static int nfs_collect_mnt_read_events_xprt_section(struct stats *stats, FILE *file,
+						    char **p_line, size_t *p_line_size)
 {
-  /* Events, bytes, and export (xprt) stats. */
   while (1) {
     if (getline(p_line, p_line_size, file) < 0)
       return -1;
@@ -176,10 +174,7 @@ static int nfs_collect_mnt(struct stats *stats, FILE *file,
 
     char *tag = wsep(&rest);
 
-    /* events: 86104644 8232551112 1009346 29773140 77713963 33967...
-     * bytes:  4886067767364 671548484867 0 0 1268384471881 672423...
-     * RPC iostats version: 1.0  p/v: 100003/3 (nfs)
-     * xprt:   tcp 766 1 1 0 0 172670997 172670964 33 3451662215 2... */
+    /* events: ... bytes: ... xprt: ... */
 
     if (strcmp(tag, "events:") == 0)
       nfs_collect_mnt_events(stats, rest);
@@ -188,11 +183,12 @@ static int nfs_collect_mnt(struct stats *stats, FILE *file,
     else if (strcmp(tag, "xprt:") == 0)
       nfs_collect_mnt_xprt(stats, rest);
   }
+  return 1;
+}
 
-  /* per-op statistics
-   *     NULL: 0 0 0 0 0 0 0 0
-   *  GETATTR: 86102054 86103087 0 13515430340 9643670764 8980... */
-
+static int nfs_collect_mnt_read_per_op_section(struct stats *stats, FILE *file,
+					       char **p_line, size_t *p_line_size)
+{
   while (1) {
     if (getline(p_line, p_line_size, file) < 0)
       return -1;
@@ -204,7 +200,6 @@ static int nfs_collect_mnt(struct stats *stats, FILE *file,
 
     char *tag = wsep(&rest);
 
-    /* Strip colon from tag. */
     char *col = strchr(tag, ':');
     if (col == NULL)
       return -1;
@@ -212,6 +207,15 @@ static int nfs_collect_mnt(struct stats *stats, FILE *file,
 
     nfs_collect_mnt_op(stats, tag, rest);
   }
+}
+
+static int nfs_collect_mnt(struct stats *stats, FILE *file,
+			   char **p_line, size_t *p_line_size)
+{
+  int rc = nfs_collect_mnt_read_events_xprt_section(stats, file, p_line, p_line_size);
+  if (rc <= 0)
+    return rc;
+  return nfs_collect_mnt_read_per_op_section(stats, file, p_line, p_line_size);
 }
 
 static inline int strip_crud(char **str, const char *crud)
