@@ -204,10 +204,10 @@ nodist_hpcperfstatsd_SOURCES = \
 	stats.x
 
 if GPU
-nodist_hpcperfstatsd_SOURCES += \
-	nvml.h 
 TYPES += \
 	nvidia_gpu.c
+hpcperfstatsd_SOURCES += \
+	nvidia_gpu.h
 endif
 
 BUILT_SOURCES = stats.x

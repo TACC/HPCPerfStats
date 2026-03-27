@@ -112,20 +112,46 @@ esac],
 AM_CONDITIONAL([MIC], [test x$mic = xtrue])
 
 AC_ARG_ENABLE([gpu],
-[  --enable-gpu		Enable Nvidia GPU support (default is false)],
+[  --enable-gpu		Enable Nvidia GPU support (default is auto-detect)],
 [case "${enableval}" in
-  yes) gpu=true
-  AC_SEARCH_LIBS([nvmlInit], [nvidia-ml], [have_gpu=yes], 
-  [AC_MSG_ERROR([Unable to find libnvidia-ml.so!])])
-  if test "x${have_gpu}" = xyes; then 
-     AC_CHECK_HEADERS([nvml.h], [gpu=true], 
-     [AC_MSG_ERROR([Unable to find nvml.h on this system!])])  
-  fi
-  ;;
+  yes) gpu=true ;;
   no)  gpu=false ;;
   *) AC_MSG_ERROR([bad value ${enableval} for --enable-gpu]) ;;
 esac],
-[gpu=false])
+[gpu=auto])
+
+gpu_autodetect_result="not-run"
+if test "x$gpu" = "xauto"; then
+  gpu=false
+  gpu_autodetect_result="no-nvidia"
+  AC_PATH_PROG([LSPCI], [lspci], [no])
+  if test "x$LSPCI" != "xno"; then
+    if $LSPCI -nn 2>/dev/null | awk '{
+      l=tolower($0);
+      if ((index(l, "vga compatible controller") || index(l, "3d controller")) && index(l, "nvidia")) found=1
+    } END { exit(found ? 0 : 1) }'; then
+      gpu=true
+      gpu_autodetect_result="nvidia-found"
+    fi
+  else
+    gpu_autodetect_result="lspci-missing"
+  fi
+fi
+
+if test "x$gpu" = "xtrue"; then
+  AC_SEARCH_LIBS([dcgmInit], [dcgm], [have_gpu=yes],
+    [AC_MSG_ERROR([Unable to find libdcgm.so!])])
+  if test "x${have_gpu}" = xyes; then
+    AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [gpu=true],
+      [AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h on this system!])])
+  fi
+fi
+
+if test "x$gpu" = "xtrue"; then
+  AC_MSG_NOTICE([GPU summary: enabled (DCGM required); detect=${gpu_autodetect_result}])
+else
+  AC_MSG_NOTICE([GPU summary: disabled; detect=${gpu_autodetect_result}])
+fi
 AM_CONDITIONAL([GPU], [test x$gpu = xtrue])
 
 AC_ARG_ENABLE([opa],
