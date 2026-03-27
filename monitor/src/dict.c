@@ -55,7 +55,7 @@ int dict_init(struct dict *dict, size_t count)
     table_len *= 2;
 
   memset(dict, 0, sizeof(struct dict));
-  dict->d_table = calloc(table_len, sizeof(struct dict_entry));
+  dict->d_table = (struct dict_entry *) calloc(table_len, sizeof(struct dict_entry));
   if (dict->d_table == NULL)
     return -1;
 
@@ -84,7 +84,7 @@ static int dict_resize(struct dict *dict, size_t new_table_len)
   struct dict_entry *table, *old_table;
   size_t mask, old_table_len;
 
-  table = calloc(new_table_len, sizeof(struct dict_entry));
+  table = (struct dict_entry *) calloc(new_table_len, sizeof(struct dict_entry));
   if (table == NULL)
     return -1;
 
@@ -172,6 +172,7 @@ struct dict_entry *dict_entry_ref(struct dict *dict, hash_t hash, const char *ke
 
 int dict_entry_set(struct dict *dict, struct dict_entry *ent, hash_t hash, char *key)
 {
+  size_t new_load = 0;
   /* If we're overwriting an existing entry then we don't need to
      resize. */
   if (ent->d_key != NULL)
@@ -182,7 +183,7 @@ int dict_entry_set(struct dict *dict, struct dict_entry *ent, hash_t hash, char 
   if (ent->d_hash & DICT_HASH_DUMMY)
     goto out_dummy;
 
-  size_t new_load = dict->d_load + 1;
+  new_load = dict->d_load + 1;
   if (3 * new_load >= 2 * dict->d_table_len) {
     size_t new_count = dict->d_count + 1;
     size_t new_table_len = dict->d_table_len;

@@ -1,8 +1,6 @@
 ACLOCAL_AMFLAGS = -I m4
 
-# Compile monitor C sources in C++ mode during migration.
-CC = $(CXX)
-AM_CFLAGS = -x c++
+# Compile monitor C sources as C.
 
 AM_DISTCHECK_CONFIGURE_FLAGS = \
   --with-systemduserunitdir=$$dc_install_base/$(systemduserunitdir)
@@ -106,7 +104,6 @@ TYPES 	+= \
 TYPES 	+= \
 	amd64_pmc.c \
 	amd64_df.c \
-	amd64_rapl.c \
 	intel_4pmc3.c \
 	intel_8pmc3.c \
 	intel_bdw_cbo.c \
@@ -128,7 +125,6 @@ TYPES 	+= \
 	intel_knl_edc.c \
 	intel_knl_mc.c \
 	intel_pcu.c \
-	intel_rapl.c \
 	intel_skx_cha.c \
 	intel_skx_imc.c \
 	intel_snb_cbo.c \

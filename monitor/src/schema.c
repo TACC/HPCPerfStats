@@ -19,7 +19,7 @@ struct schema_entry *parse_schema_entry(char *str)
   if (*key == 0)
     return NULL;
 
-  se = malloc(sizeof(*se) + strlen(key) + 1);
+  se = (struct schema_entry *) malloc(sizeof(*se) + strlen(key) + 1);
   if (se == NULL)
     return NULL;
 
@@ -66,6 +66,7 @@ int schema_init(struct schema *sc, const char *def)
 {
   int rc = -1;
   size_t nr_se = 0;
+  size_t i = 0;
   char *cpy = strdup(def), *str = cpy, *tok;
 
   if (dict_init(&sc->sc_dict, 0) < 0) {
@@ -84,13 +85,12 @@ int schema_init(struct schema *sc, const char *def)
   }
 
   sc->sc_len = nr_se;
-  sc->sc_ent = calloc(sc->sc_len, sizeof(*sc->sc_ent));
+  sc->sc_ent = (struct schema_entry **) calloc(sc->sc_len, sizeof(*sc->sc_ent));
   if (sc->sc_ent == NULL && sc->sc_len != 0) {
     ERROR("cannot allocate schema entries: %m\n");
     goto err;
   }
 
-  size_t i = 0;
   char *key;
   while ((key = dict_for_each(&sc->sc_dict, &i)) != NULL) {
     struct schema_entry *se = key_to_schema_entry(key);

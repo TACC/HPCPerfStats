@@ -35,7 +35,7 @@ int stats_type_init(struct stats_type *st)
 
 void key_stats_destroy(void *key)
 {
-  stats_destroy(key_to_stats(key));
+  stats_destroy(key_to_stats((const char *) key));
 }
 
 void stats_type_destroy(struct stats_type *st)
@@ -87,11 +87,11 @@ static struct stats *stats_create(struct stats_type *type, const char *dev)
   struct stats *stats = NULL;
   unsigned long long *val = NULL;
 
-  stats = malloc(sizeof(*stats) + strlen(dev) + 1);
+  stats = (struct stats *) malloc(sizeof(*stats) + strlen(dev) + 1);
   if (stats == NULL)
     goto err;
 
-  val = calloc(type->st_schema.sc_len, sizeof(*stats->s_val));
+  val = (unsigned long long *) calloc(type->st_schema.sc_len, sizeof(*stats->s_val));
   if (val == NULL && type->st_schema.sc_len != 0)
     goto err;
 

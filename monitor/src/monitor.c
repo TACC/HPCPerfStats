@@ -31,12 +31,15 @@ extern "C" {
 static char *app_name = NULL;
 static char *conf_file_name = NULL;
 static FILE *log_stream = NULL;
+static const char *default_queue = "default";
+static const char *default_port = "5672";
+static const char *default_dumpfile_dir = "/tmp/hpcperfstats";
 
 static char *server = NULL;
-static char *queue  = "default";
-static char *port   = "5672";
+static char *queue  = (char *) "default";
+static char *port   = (char *) "5672";
 
-static char *dumpfile_dir = "/tmp/hpcperfstats";
+static char *dumpfile_dir = (char *) "/tmp/hpcperfstats";
 static double freq = 300;
 static int max_buffer_size = 4096; // default in-memory ring capacity
 static int allow_ring_buffer_overwrite = 1;
@@ -51,7 +54,7 @@ char jobid[80] = "-";
 
 int nr_cpus;
 int n_pmcs;
-processor_t processor = 0;
+processor_t processor = (processor_t) 0;
 
 int read_conf_file()
 {
@@ -79,18 +82,23 @@ int read_conf_file()
     while (*line  == ' ') line++;
     if (strcmp(key, "server") == 0) { 
       line[strlen(line) - 1] = '\0';
+      free(server);
       server = strdup(line);
       fprintf(log_stream, "%s: Setting server to %s based on file %s\n",
 	      app_name, server, conf_file_name);
     }   
     if (strcmp(key, "queue") == 0) { 
       line[strlen(line) - 1] = '\0';
+      if (queue != NULL && queue != default_queue)
+        free(queue);
       queue = strdup(line);
       fprintf(log_stream, "%s: Setting queue to %s based on file %s\n",
 	      app_name, queue, conf_file_name);
     }
     if (strcmp(key, "port") == 0) {
       line[strlen(line) - 1] = '\0';
+      if (port != NULL && port != default_port)
+        free(port);
       port = strdup(line);
       fprintf(log_stream, "%s: Setting server port to %s based on file %s\n",
 	      app_name, port, conf_file_name);
@@ -153,22 +161,37 @@ static int get_dumpfile_number() {
 static char **get_dumpfile_list() {
   DIR *d;
   struct dirent *dir;
-  char **name_list;
+  char **name_list = NULL;
   int n_files = get_dumpfile_number();
+  int i = 0;
 
   d = opendir(dumpfile_dir);
-  if (d) {
-    name_list = (char**)malloc(sizeof(char*)*n_files);
-    int i = 0;
-    while ((dir = readdir(d)) != NULL) {
-      if (dir->d_type == DT_REG) {
-          name_list[i] = (char*)malloc(sizeof(char)*16 + sizeof(dumpfile_dir));
-          snprintf(name_list[i], sizeof(char)*16 + sizeof(dumpfile_dir), "%s/%s", dumpfile_dir, dir->d_name);
-          i++;
-      }
-    }
+  if (!d)
+    return NULL;
+
+  name_list = (char**)calloc((size_t)n_files, sizeof(char*));
+  if (name_list == NULL) {
     closedir(d);
+    return NULL;
   }
+
+  while ((dir = readdir(d)) != NULL) {
+    if (dir->d_type != DT_REG)
+      continue;
+    size_t path_len = strlen(dumpfile_dir) + 1 + strlen(dir->d_name) + 1;
+    name_list[i] = (char*)malloc(path_len);
+    if (name_list[i] == NULL) {
+      for (int j = 0; j < i; j++)
+        free(name_list[j]);
+      free(name_list);
+      closedir(d);
+      return NULL;
+    }
+    snprintf(name_list[i], path_len, "%s/%s", dumpfile_dir, dir->d_name);
+    i++;
+  }
+
+  closedir(d);
   return name_list;
 }
 
@@ -179,10 +202,10 @@ static char* get_current_dumpfile()
   gettimeofday(&tp, NULL);
   time_t t = tp.tv_sec;
   struct tm * time_info = localtime(&t);
-  char *time_str = malloc(sizeof(char) * 16);
+  char *time_str = (char *) malloc(sizeof(char) * 16);
   strftime(time_str, 16, "%Y-%m-%d.sf", time_info);
 
-  char *file_str = malloc(sizeof(char) * 64);
+  char *file_str = (char *) malloc(sizeof(char) * 64);
   snprintf(file_str, sizeof(char) * 64, "%s/%s", dumpfile_dir, time_str);
 
   free(time_str);
@@ -207,14 +230,16 @@ static int save_file_stats_buffer(struct stats_buffer *sf)
 static int save_file_ring_buffer(struct sf_ring_buffer *w)
 {
   int rc = 0;
+  char *file_path = NULL;
+  struct sf_queue * sf = NULL;
   if (w->q_count == 0) {
     rc = -1;
     goto err;
   }
 
-  char *file_path = get_current_dumpfile();
+  file_path = get_current_dumpfile();
 
-  struct sf_queue * sf = w->q_first;
+  sf = w->q_first;
 
   do {
     rc = stats_buffer_write_file(sf->sf, file_path);
@@ -225,7 +250,8 @@ static int save_file_ring_buffer(struct sf_ring_buffer *w)
   } while (sf != w->q_first);
 
   err:
-    ERROR("Error saving stats to dumpfile %s\n");
+    if (rc != 0)
+      ERROR("Error saving stats to dumpfile %s\n", file_path);
     free(file_path);
     return rc;
 }
@@ -235,13 +261,26 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
 {
     int rc;
     int n_files = get_dumpfile_number();
+    if (n_files <= 0)
+      return;
+
     char **file_list = get_dumpfile_list();
+    if (file_list == NULL) {
+      ERROR("Error listing dumpfiles in `%s'\n", dumpfile_dir);
+      return;
+    }
     int n_files_deleted = 0;
     for (int i = 0; i < n_files; i++)  {
       FILE *f = fopen(file_list[i], "r");
+      if (f == NULL) {
+        fprintf(log_stream, "Error opening stats file %s\n", file_list[i]);
+        send_success_count = 0;
+        break;
+      }
       rc = ring_buffer_load_file(f, w, server, port, queue, max_buffer_size, allow_ring_buffer_overwrite);
+      fclose(f);
       if (rc == 0) {
-        int s = remove(file_list[i]);
+        remove(file_list[i]);
         n_files_deleted++;
         fprintf(log_stream, "Resending stats in the ring buffer\n");
         ring_buffer_resend(w);
@@ -290,7 +329,7 @@ static void rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
 
   struct stats_buffer *sf;
-  sf = malloc(sizeof(*sf));
+  sf = (struct stats_buffer *) malloc(sizeof(*sf));
   if (stats_buffer_open(sf, server, port, queue) < 0)
     ERROR("Failed opening data buffer : %m\n");
 
@@ -327,6 +366,7 @@ static void rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)
   if (w->status == 0) {
     w->s_count++;
     stats_buffer_close(sf);
+    free(sf);
     if (file_mode_enabled == 1)
       send_success_count++;
   }
@@ -366,7 +406,7 @@ static void sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
 
   struct stats_buffer *sf;
-  sf = malloc(sizeof(*sf));
+  sf = (struct stats_buffer *) malloc(sizeof(*sf));
   if (stats_buffer_open(sf, server, port, queue) < 0)
     ERROR("Failed opening data buffer : %m\n");
 
@@ -415,13 +455,13 @@ static void sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)
 }
 
 /* Collect and send data based on IO to JOBID file */
-static void fd_cb(EV_P_ ev_io *w_, int revents)
+static void fd_cb(EV_P_ ev_stat *w_, int revents)
 {
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
 
   struct stats_buffer *sf;
   
-  sf = malloc(sizeof(*sf));
+  sf = (struct stats_buffer *) malloc(sizeof(*sf));
 
   if (stats_buffer_open(sf, server, port, queue) < 0)
     ERROR("Failed opening data buffer : %m\n");
@@ -606,6 +646,7 @@ int main(int argc, char *argv[])
       daemonmode = 1;
       break;     
     case 's':
+      free(server);
       server = strdup(optarg);
       break;
     case 'f':
@@ -615,12 +656,18 @@ int main(int argc, char *argv[])
       conf_file_name = strdup(optarg);
       break;
     case 'q':
+      if (queue != NULL && queue != default_queue)
+        free(queue);
       queue = strdup(optarg);
       break;
     case 'p':
+      if (port != NULL && port != default_port)
+        free(port);
       port = strdup(optarg);
       break;
     case 't':
+      if (dumpfile_dir != NULL && dumpfile_dir != default_dumpfile_dir)
+        free(dumpfile_dir);
       dumpfile_dir = strdup(optarg);
       break;
     case 'b':
@@ -714,6 +761,10 @@ int main(int argc, char *argv[])
   if (conf_file_name != NULL) free(conf_file_name);
   if (log_file_name != NULL) free(log_file_name);
   if (pid_file_name != NULL) free(pid_file_name);
+  if (server != NULL) free(server);
+  if (queue != NULL && queue != default_queue) free(queue);
+  if (port != NULL && port != default_port) free(port);
+  if (dumpfile_dir != NULL && dumpfile_dir != default_dumpfile_dir) free(dumpfile_dir);
 
   return EXIT_SUCCESS;
 }

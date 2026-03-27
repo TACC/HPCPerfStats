@@ -65,10 +65,11 @@ int pci_map_create(char ***dev_paths, int *nr, int *ids, int nr_ids) {
       int i;
       for (i = 0; i < nr_ids; i++)
 	if (ids[i] == reg[1]) { 
-	  *dev_paths = realloc(*dev_paths, (*nr+1)*sizeof(char*));
-	  if (*dev_paths != NULL)
-	    (*dev_paths)[*nr] = malloc(strlen(dev_fun_path)*sizeof(char)+1);
-	  else {
+	  char **tmp_dev_paths = (char **) realloc(*dev_paths, (size_t)(*nr + 1) * sizeof(char *));
+	  if (tmp_dev_paths != NULL) {
+	    *dev_paths = tmp_dev_paths;
+	    (*dev_paths)[*nr] = (char *) malloc(strlen(dev_fun_path) * sizeof(char) + 1);
+	  } else {
 	    TRACE("dev path not allocated\n");
 	    continue;
 	  }

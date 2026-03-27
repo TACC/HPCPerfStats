@@ -37,7 +37,7 @@ extern "C" {
 
 #define sf_printf(sf, fmt, args...) do {			\
     char *tmp_string = sf->sf_data;				\
-    asprintf(&(sf->sf_data), "%s"fmt, sf->sf_data, ##args);	\
+    asprintf(&(sf->sf_data), "%s" fmt, sf->sf_data, ##args);	\
     free(tmp_string);						\
   } while(0)
 
@@ -53,12 +53,14 @@ static int send(struct stats_buffer *sf)
 
   if (!socket) {
     ERROR("socket failed to initialize");
-    return -1;	
+    amqp_destroy_connection(conn);
+    return -1;
   }
   status = amqp_socket_open(socket, sf->sf_host, atoi(sf->sf_port));
   if (status) {
     ERROR("socket failed to open");
-    return -1;	  
+    amqp_destroy_connection(conn);
+    return -1;
   }
 
   ret = amqp_login(conn, RMQ_VHOST, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN,
@@ -209,6 +211,8 @@ int stats_buffer_mark(struct stats_buffer *sf, const char *fmt, ...)
   /* TODO Concatenate new mark with old. */
   va_list args;
   va_start(args, fmt);
+  free(sf->sf_mark);
+  sf->sf_mark = NULL;
 
   if (vasprintf(&sf->sf_mark, fmt, args) < 0)
     sf->sf_mark = NULL;
@@ -220,6 +224,8 @@ int stats_buffer_mark(struct stats_buffer *sf, const char *fmt, ...)
 int stats_buffer_write(struct stats_buffer *sf)
 {
   int rc = 0;
+  size_t i = 0;
+  struct stats_type *type;
 
   struct utsname uts_buf;
   uname(&uts_buf);
@@ -246,8 +252,6 @@ int stats_buffer_write(struct stats_buffer *sf)
   }
 
   /* Write stats. */
-  size_t i = 0;
-  struct stats_type *type;
   while ((type = stats_type_for_each(&i)) != NULL) {
     if (!(type->st_enabled))
       continue;
@@ -298,7 +302,7 @@ int ring_buffer_insert(
   
   /* Case 1: Empty buffer */
   if (w->q_count == 0) {
-    q_new = calloc(1, sizeof(struct sf_queue));
+    q_new = (struct sf_queue *) calloc(1, sizeof(struct sf_queue));
     if (q_new == NULL) {
       rc = -1;
       goto out;
@@ -327,7 +331,7 @@ int ring_buffer_insert(
   }
   
   /* Case 3: Otherwise */
-  q_new = calloc(1, sizeof(struct sf_queue));
+  q_new = (struct sf_queue *) calloc(1, sizeof(struct sf_queue));
   if (q_new == NULL) {
     rc = -1;
     goto out;
@@ -422,10 +426,20 @@ int ring_buffer_load_file(
   size_t line_buf_size = 0;
 
   struct stats_buffer *sf;
-  sf = malloc(sizeof(*sf));
+  sf = (struct stats_buffer *) malloc(sizeof(*sf));
+  if (sf == NULL) {
+    rc = -1;
+    goto out;
+  }
+  if (sf_file == NULL) {
+    rc = -1;
+    free(sf);
+    goto out;
+  }
   if (stats_buffer_open(sf, host, port, queue) < 0) {
     TRACE("Failed opening data buffer : %m\n");
     rc = -1;
+    free(sf);
     goto out;
   }
   while (getline(&line_buf, &line_buf_size, sf_file) != -1)  {
@@ -439,19 +453,32 @@ int ring_buffer_load_file(
     else {
       n_stats++;
       rc = ring_buffer_insert(sf, w, -1, allow_ring_buffer_overwrite);
-      sf = malloc(sizeof(struct stats_buffer));
+      sf = (struct stats_buffer *) malloc(sizeof(struct stats_buffer));
+      if (sf == NULL) {
+        TRACE("Failed allocating data buffer : %m\n");
+        rc = -1;
+        goto out;
+      }
       if (stats_buffer_open(sf, host, port, queue) < 0 || rc < 0) {
         TRACE("Failed inserting data to buffer : %m\n");
+        stats_buffer_close(sf);
+        free(sf);
         rc = -1;
         goto out;
       }
     }
   }
   rc = ring_buffer_insert(sf, w, -1, allow_ring_buffer_overwrite);
+  if (rc < 0) {
+    stats_buffer_close(sf);
+    free(sf);
+    goto out;
+  }
   n_stats++;
   w->l_count += n_stats;
   TRACE("Loaded %d stats from dumpfile\n", n_stats);
 
   out:
+    free(line_buf);
     return rc;
 }

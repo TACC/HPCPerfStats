@@ -27,17 +27,23 @@ int consume(const char *hostname, const char* port, const char* archive_dir)
   char const *bindingkey;
   amqp_socket_t *socket = NULL;
   amqp_connection_state_t conn;
-  amqp_bytes_t queuename;
+  amqp_bytes_t queuename = amqp_empty_bytes;
 
   exchange = "amq.direct";
   bindingkey = HOST_NAME_QUEUE;
 
   conn = amqp_new_connection();
   socket = amqp_tcp_socket_new(conn);
+  if (socket == NULL) {
+    syslog(LOG_ERR, "Error creating RMQ socket\n");
+    rc = 1;
+    goto out;
+  }
 
   if (amqp_socket_open(socket, hostname, atoi(port))) {
     syslog(LOG_ERR,"Error opening RMQ server %s on port %s\n",hostname,port);
-    exit(1);
+    rc = 1;
+    goto out;
   }
  
   amqp_rpc_reply_t rep = 
@@ -46,7 +52,8 @@ int consume(const char *hostname, const char* port, const char* archive_dir)
   if (AMQP_RESPONSE_NORMAL != rep.reply_type) {
     syslog(LOG_ERR,"Error logging into RMQ server %s on port %s\n",
 	   hostname,port);
-    exit(1);
+    rc = 1;
+    goto out;
   }
   
   amqp_channel_open(conn, 1);
@@ -88,24 +95,45 @@ int consume(const char *hostname, const char* port, const char* archive_dir)
       amqp_maybe_release_buffers(conn);
 
       res = amqp_consume_message(conn, &envelope, NULL, 0);
-      status = amqp_basic_ack(conn, 1, envelope.delivery_tag, 0);
       if (AMQP_RESPONSE_NORMAL != res.reply_type) {
         break;
       }
+      status = amqp_basic_ack(conn, 1, envelope.delivery_tag, 0);
+      if (status != AMQP_STATUS_OK) {
+        syslog(LOG_ERR, "Error acknowledging RMQ message\n");
+        amqp_destroy_envelope(&envelope);
+        continue;
+      }
       umask(022);
 
-      char *data_buf;
-      asprintf(&data_buf, "%s", (char *) envelope.message.body.bytes);
+      char *data_buf = NULL;
+      size_t body_len = envelope.message.body.len;
+      data_buf = (char *) malloc(body_len + 1);
+      if (data_buf == NULL) {
+        syslog(LOG_ERR, "Out of memory while copying message body\n");
+        amqp_destroy_envelope(&envelope);
+        continue;
+      }
+      memcpy(data_buf, envelope.message.body.bytes, body_len);
+      data_buf[body_len] = '\0';
       char *tmp_buf = data_buf;
-      char *line, *hostname;
+      char *line, *host_token = NULL;
       line = wsep(&data_buf);
       int new_file = 0;
+      if (line == NULL) {
+        free(tmp_buf);
+        amqp_destroy_envelope(&envelope);
+        continue;
+      }
 
       if (*(line) == '$') {  // If schema get hostname and start new file
 	while(1) {
 	  line = wsep(&data_buf);
+	  if (line == NULL) {
+            break;
+          }
 	  if (strcmp(line  ,"$hostname") == 0) {
-	    hostname = wsep(&data_buf);
+	    host_token = wsep(&data_buf);
 	    break;
 	  }
 	}
@@ -113,27 +141,54 @@ int consume(const char *hostname, const char* port, const char* archive_dir)
       }
       else { // If stats data get hostname
 	line = wsep(&data_buf);
-	hostname = wsep(&data_buf);
+	host_token = wsep(&data_buf);
       }	
+      if (host_token == NULL || *host_token == '\0') {
+        syslog(LOG_ERR, "Cannot extract hostname from RMQ message\n");
+        free(tmp_buf);
+        amqp_destroy_envelope(&envelope);
+        continue;
+      }
       //syslog(LOG_INFO, "Consuming stats data from %s\n", hostname);
       // Make directory for host hostname if it doesn't exist
-      char *stats_dir_path = strf("%s/%s",archive_dir,hostname);
+      char *stats_dir_path = strf("%s/%s", archive_dir, host_token);
       free(tmp_buf);
+      if (stats_dir_path == NULL) {
+        syslog(LOG_ERR, "cannot create stats directory path: %m\n");
+        amqp_destroy_envelope(&envelope);
+        continue;
+      }
       if (mkdir(stats_dir_path, 0777) < 0) {
 	if (errno != EEXIST)
 	  syslog(LOG_ERR, "cannot create directory `%s': %m\n", stats_dir_path);
       }
       char *current_path = strf("%s/%s",stats_dir_path,"current");
+      if (current_path == NULL) {
+        syslog(LOG_ERR, "cannot create current path: %m\n");
+        free(stats_dir_path);
+        amqp_destroy_envelope(&envelope);
+        continue;
+      }
       // Unlink from old file if starting a new file      
       if (new_file) {
 	if (unlink(current_path) < 0 && errno != ENOENT) {
 	  syslog(LOG_ERR, "cannot unlink `%s': %m\n", current_path);
-	  goto out;
 	  rc = 1;
+          free(stats_dir_path);
+          free(current_path);
+          amqp_destroy_envelope(&envelope);
+	  goto out;
 	}
-	syslog(LOG_INFO, "Rotating stats file for %s.\n", hostname);
+	syslog(LOG_INFO, "Rotating stats file for %s.\n", host_token);
 
 	fd = fopen(current_path, "w");
+        if (fd == NULL) {
+          syslog(LOG_ERR,"cannot open file: %s\n", current_path);
+          free(stats_dir_path);
+          free(current_path);
+          amqp_destroy_envelope(&envelope);
+          continue;
+        }
 	struct timeval tp;
 	double current_time;
 	gettimeofday(&tp,NULL);
@@ -167,11 +222,13 @@ int consume(const char *hostname, const char* port, const char* archive_dir)
     }
   }
   
+  rc = 0;
+ out:
+  if (queuename.bytes != NULL)
+    amqp_bytes_free(queuename);
   amqp_channel_close(conn, 1, AMQP_REPLY_SUCCESS);
   amqp_connection_close(conn, AMQP_REPLY_SUCCESS);
   amqp_destroy_connection(conn);
-
- out:
   return rc;
 }
 
