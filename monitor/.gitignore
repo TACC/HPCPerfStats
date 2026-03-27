@@ -40,3 +40,4 @@ Makefile.in
 /src/.deps
 
 *tar.gz
+/.build/

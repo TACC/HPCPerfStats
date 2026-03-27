@@ -7,8 +7,14 @@
 #include <sys/utsname.h>
 #include <syslog.h>
 #include <search.h>
-#include <amqp.h>
 #include <time.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <amqp.h>
+#ifdef __cplusplus
+}
+#endif
 
 #include "stats.h"
 #include "stats_buffer.h"
@@ -368,11 +374,9 @@ int stats_buffer_write_file(struct stats_buffer *sf, char *path)
     ERROR("error writing to `%s': %m\n", path);
     rc = -1;
   }
-  if (fclose(sf_file) < 0) {
-    ERROR("error closing `%s': %m\n", path);
-    rc = -1;
-  }
   out:
+    if (sf_file != NULL)
+      fclose(sf_file);
     return rc;
 }
 

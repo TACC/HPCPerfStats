@@ -15,7 +15,7 @@
 processor_t signature(int *n_pmcs) {
   uint32_t eax = 0, ebx = 0, ecx = 0, edx = 0;
   char vendor[13];
-  int rc = -1;
+  processor_t rc = (processor_t)-1;
   cpuid(0, eax, ebx, ecx, edx);
   snprintf(vendor, sizeof(vendor), "%c%c%c%c%c%c%c%c%c%c%c%c",
            ebx & 0xff, (ebx >> 8) & 0xff, (ebx >> 16) & 0xff, (ebx >> 24) & 0xff,
@@ -126,6 +126,12 @@ int topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, int *nr_core)
   int cpuid_fd = -1;
   uint32_t buf[4];
   int rc = 0;
+  int max_leaf = 0;
+  unsigned int x2APIC_ID = 0;
+  int SMT_Mask_Width = -1, SMT_Select_Mask = -1;
+  int CorePlus_Mask_Width = 0, CoreOnly_Select_Mask = 0;
+  int Pkg_Select_Mask = 0;
+  int nr_smt = 0;
 
   /* Open /dev/cpuid/CPU/cpuid. */
   snprintf(cpuid_path, sizeof(cpuid_path), "/dev/cpu/%s/cpuid", cpu);
@@ -143,7 +149,7 @@ int topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, int *nr_core)
   }
 
   // Get cpuid_level
-  int max_leaf = buf[0];
+  max_leaf = buf[0];
   if (max_leaf < 0xB) 
     goto out;
 
@@ -152,14 +158,10 @@ int topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, int *nr_core)
     ERROR("cannot read x2APIC ID through `%s': %m\n", cpuid_path);
     goto out;
   }
-  unsigned int x2APIC_ID = buf[3] & 0xFFFFFFFF;
+  x2APIC_ID = buf[3] & 0xFFFFFFFF;
   TRACE("APIC ID %d\n", x2APIC_ID);
 
   // Test for x2APIC
-  int SMT_Mask_Width = -1, SMT_Select_Mask = -1;      
-  int CorePlus_Mask_Width, CoreOnly_Select_Mask;
-  int Pkg_Select_Mask;
-  int nr_smt;
   if (buf[1] != 0)
     {
       for (i=0; i <= max_leaf; i++)

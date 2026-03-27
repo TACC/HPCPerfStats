@@ -118,7 +118,7 @@ int str_collect_prefix_key_list(const char *str, struct stats *stats,
   const char *suf;
   while ((suf = va_arg(suf_list, const char *)) != NULL) {
     size_t suf_len = strlen(suf);
-    char *tmp = realloc(key, pre_len + suf_len + 1);
+    char *tmp = (char *)realloc(key, pre_len + suf_len + 1);
     if (tmp == NULL) {
       ERROR("cannot allocate key string: %m\n");
       goto out;
@@ -248,6 +248,7 @@ int path_collect_key_value_dir(const char *dir_path, struct stats *stats)
   struct dirent *ent;
   while ((ent = readdir(dir)) != NULL) {
     char *path = NULL;
+    unsigned long long val = 0;
 
     if (ent->d_name[0] == '.')
       goto next;
@@ -257,7 +258,6 @@ int path_collect_key_value_dir(const char *dir_path, struct stats *stats)
       goto next;
     }
 
-    unsigned long long val = 0;
     if (path_collect_single(path, &val) != 1)
       goto next;
 

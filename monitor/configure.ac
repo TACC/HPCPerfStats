@@ -1,6 +1,7 @@
 AC_INIT([hpcperfstats], [2.4], [rtevans@tacc.utexas.edu])
-AM_INIT_AUTOMAKE([-Wall -Werror -Wno-portability])
+AM_INIT_AUTOMAKE([foreign -Wall -Werror -Wno-portability])
 AC_PROG_CC
+AC_PROG_CXX
 AM_PROG_CC_C_O
 
 AC_ARG_ENABLE([rabbitmq],

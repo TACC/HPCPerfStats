@@ -1,5 +1,9 @@
 ACLOCAL_AMFLAGS = -I m4
 
+# Compile monitor C sources in C++ mode during migration.
+CC = $(CXX)
+AM_CFLAGS = -x c++
+
 AM_DISTCHECK_CONFIGURE_FLAGS = \
   --with-systemduserunitdir=$$dc_install_base/$(systemduserunitdir)
 

@@ -1,6 +1,5 @@
 #include <dirent.h>
 #include <errno.h>
-#include <ev.h>
 #include <getopt.h>
 #include <malloc.h>
 #include <signal.h>
@@ -13,6 +12,13 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/syslog.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <ev.h>
+#ifdef __cplusplus
+}
+#endif
 
 #include "daemonize.h"
 #include "string1.h"
@@ -91,7 +97,7 @@ int read_conf_file()
     if (strcmp(key, "buffer") == 0) {
       line[strlen(line) - 1] = '\0';
       max_buffer_size = atoi(line);
-      fprintf(log_stream, "%s: Setting buffer size to %s based on file %s\n",
+      fprintf(log_stream, "%s: Setting buffer size to %d based on file %s\n",
 	      app_name, max_buffer_size, conf_file_name);
     }
     if (strcmp(key, "freq") == 0) {  
@@ -156,7 +162,7 @@ static char **get_dumpfile_list() {
     while ((dir = readdir(d)) != NULL) {
       if (dir->d_type == DT_REG) {
           name_list[i] = (char*)malloc(sizeof(char)*16 + sizeof(dumpfile_dir));
-          sprintf(name_list[i], "%s/%s", dumpfile_dir, dir->d_name);
+          snprintf(name_list[i], sizeof(char)*16 + sizeof(dumpfile_dir), "%s/%s", dumpfile_dir, dir->d_name);
           i++;
       }
     }
@@ -176,7 +182,7 @@ static char* get_current_dumpfile()
   strftime(time_str, 16, "%Y-%m-%d.sf", time_info);
 
   char *file_str = malloc(sizeof(char) * 64);
-  sprintf(file_str, "%s/%s", dumpfile_dir, time_str);
+  snprintf(file_str, sizeof(char) * 64, "%s/%s", dumpfile_dir, time_str);
 
   free(time_str);
   return file_str;
@@ -200,9 +206,10 @@ static int save_file_stats_buffer(struct stats_buffer *sf)
 static int save_file_ring_buffer(struct sf_ring_buffer *w)
 {
   int rc = 0;
-  if (w->q_count == 0)
+  if (w->q_count == 0) {
     rc = -1;
     goto err;
+  }
 
   char *file_path = get_current_dumpfile();
 
