@@ -31,8 +31,6 @@ extern "C" {
 #define SF_MARK_CHAR '%'
 #define RMQ_EXCHANGE "amq.direct"
 #define RMQ_VHOST "/"
-#define RMQ_USER "hpcperfstats"
-#define RMQ_PASSWORD "hpcperfstats"
 #define RMQ_CHANNEL 1
 
 #define sf_printf(sf, fmt, args...) do {			\
@@ -41,74 +39,83 @@ extern "C" {
     free(tmp_string);						\
   } while(0)
 
+static void close_rmq_connection(amqp_connection_state_t conn, int channel_opened)
+{
+  if (conn == NULL)
+    return;
+  if (channel_opened) {
+    amqp_channel_close(conn, RMQ_CHANNEL, AMQP_REPLY_SUCCESS);
+    amqp_connection_close(conn, AMQP_REPLY_SUCCESS);
+  }
+  amqp_destroy_connection(conn);
+}
+
 static int send(struct stats_buffer *sf)
 {
   int status = -1;
   amqp_socket_t *socket = NULL;
   amqp_connection_state_t conn;
-  static int queue_declared = 0;
+  int channel_opened = 0;
   amqp_rpc_reply_t ret;
   conn = amqp_new_connection();
   socket = amqp_tcp_socket_new(conn);
 
   if (!socket) {
     ERROR("socket failed to initialize");
-    amqp_destroy_connection(conn);
+    close_rmq_connection(conn, channel_opened);
     return -1;
   }
   status = amqp_socket_open(socket, sf->sf_host, atoi(sf->sf_port));
   if (status) {
     ERROR("socket failed to open");
-    amqp_destroy_connection(conn);
+    close_rmq_connection(conn, channel_opened);
     return -1;
   }
 
   ret = amqp_login(conn, RMQ_VHOST, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN,
-                   RMQ_USER, RMQ_PASSWORD);
+                   sf->sf_user, sf->sf_password);
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
     ERROR("amqp login failed");
-    amqp_destroy_connection(conn);
+    close_rmq_connection(conn, channel_opened);
     return -1;
   }
   amqp_channel_open(conn, RMQ_CHANNEL);
   ret = amqp_get_rpc_reply(conn);
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
     ERROR("amqp channel open failed");
-    amqp_destroy_connection(conn);
+    close_rmq_connection(conn, channel_opened);
     return -1;
   }
+  channel_opened = 1;
 
-  if (!queue_declared) {
-    syslog(LOG_INFO, "Attempt declare queue on RMQ server\n");
-    amqp_queue_declare_ok_t *r = amqp_queue_declare(conn, RMQ_CHANNEL, amqp_cstring_bytes(sf->sf_queue),
-						    0, 1, 0, 0, amqp_empty_table);
-    ret = amqp_get_rpc_reply(conn);
-    if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
-      syslog(LOG_ERR, "queue declare failed");
-      amqp_destroy_connection(conn);
+  syslog(LOG_INFO, "Attempt declare queue on RMQ server\n");
+  amqp_queue_declare_ok_t *r = amqp_queue_declare(conn, RMQ_CHANNEL, amqp_cstring_bytes(sf->sf_queue),
+						  0, 1, 0, 0, amqp_empty_table);
+  ret = amqp_get_rpc_reply(conn);
+  if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
+    syslog(LOG_ERR, "queue declare failed");
+    close_rmq_connection(conn, channel_opened);
+    return -1;
+  }
+  {
+    amqp_bytes_t reply_to_queue;
+    reply_to_queue = amqp_bytes_malloc_dup(r->queue);
+    if (reply_to_queue.bytes == NULL) {
+      syslog(LOG_ERR, "Out of memory while copying queue name");
+      close_rmq_connection(conn, channel_opened);
       return -1;
     }
-    else {
-      amqp_bytes_t reply_to_queue;
-      reply_to_queue = amqp_bytes_malloc_dup(r->queue);
-      if (reply_to_queue.bytes == NULL) {
-        syslog(LOG_ERR, "Out of memory while copying queue name");
-        amqp_destroy_connection(conn);
-        return -1;
-      }
-      
-      amqp_queue_bind(conn, RMQ_CHANNEL, reply_to_queue, amqp_cstring_bytes(RMQ_EXCHANGE),
-		      amqp_cstring_bytes(sf->sf_queue), amqp_empty_table);
-      ret = amqp_get_rpc_reply(conn);
-      if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
-        amqp_bytes_free(reply_to_queue);
-        syslog(LOG_ERR, "queue bind failed");
-        amqp_destroy_connection(conn);
-        return -1;
-      }
-      queue_declared = 1;
+    
+    amqp_queue_bind(conn, RMQ_CHANNEL, reply_to_queue, amqp_cstring_bytes(RMQ_EXCHANGE),
+		    amqp_cstring_bytes(sf->sf_queue), amqp_empty_table);
+    ret = amqp_get_rpc_reply(conn);
+    if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
       amqp_bytes_free(reply_to_queue);
+      syslog(LOG_ERR, "queue bind failed");
+      close_rmq_connection(conn, channel_opened);
+      return -1;
     }
+    amqp_bytes_free(reply_to_queue);
   }
 
   {
@@ -126,12 +133,12 @@ static int send(struct stats_buffer *sf)
                                 amqp_cstring_bytes(sf->sf_data));
     if (status != AMQP_STATUS_OK) {
       ERROR("amqp basic publish failed");
-      amqp_destroy_connection(conn);
+      close_rmq_connection(conn, channel_opened);
       return -1;
     }
   }
 
-  amqp_destroy_connection(conn); 
+  close_rmq_connection(conn, channel_opened);
 
   return 0;
 }
@@ -181,7 +188,7 @@ int stats_wr_hdr(struct stats_buffer *sf)
   return 0;
 }
 
-int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *port, const char *queue)
+int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *port, const char *queue, const char *user, const char *password)
 {
   int rc = 0;
   memset(sf, 0, sizeof(*sf));
@@ -189,6 +196,8 @@ int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *por
   sf->sf_host=strdup(host);
   sf->sf_port=strdup(port);
   sf->sf_queue=strdup(queue);
+  sf->sf_user=strdup(user);
+  sf->sf_password=strdup(password);
 
   return rc;
 }
@@ -201,6 +210,8 @@ int stats_buffer_close(struct stats_buffer *sf)
   free(sf->sf_host);
   free(sf->sf_port);
   free(sf->sf_queue);
+  free(sf->sf_user);
+  free(sf->sf_password);
   free(sf->sf_mark);
   memset(sf, 0, sizeof(*sf));
   return rc;
@@ -416,6 +427,8 @@ int ring_buffer_load_file(
   const char *host, 
   const char *port, 
   const char *queue,
+  const char *user,
+  const char *password,
   int max_buffer_size, 
   int allow_ring_buffer_overwrite)
 {
@@ -436,7 +449,7 @@ int ring_buffer_load_file(
     free(sf);
     goto out;
   }
-  if (stats_buffer_open(sf, host, port, queue) < 0) {
+  if (stats_buffer_open(sf, host, port, queue, user, password) < 0) {
     TRACE("Failed opening data buffer : %m\n");
     rc = -1;
     free(sf);
@@ -459,7 +472,7 @@ int ring_buffer_load_file(
         rc = -1;
         goto out;
       }
-      if (stats_buffer_open(sf, host, port, queue) < 0 || rc < 0) {
+      if (stats_buffer_open(sf, host, port, queue, user, password) < 0 || rc < 0) {
         TRACE("Failed inserting data to buffer : %m\n");
         stats_buffer_close(sf);
         free(sf);

@@ -33,11 +33,15 @@ static char *conf_file_name = NULL;
 static FILE *log_stream = NULL;
 static const char *default_queue = "default";
 static const char *default_port = "5672";
+static const char *default_rmq_user = "hpcperfstats";
+static const char *default_rmq_password = "hpcperfstats";
 static const char *default_dumpfile_dir = "/tmp/hpcperfstats";
 
 static char *server = NULL;
 static char *queue  = (char *) "default";
 static char *port   = (char *) "5672";
+static char *rmq_user = (char *) "hpcperfstats";
+static char *rmq_password = (char *) "hpcperfstats";
 
 static char *dumpfile_dir = (char *) "/tmp/hpcperfstats";
 static double freq = 300;
@@ -102,6 +106,22 @@ int read_conf_file()
       port = strdup(line);
       fprintf(log_stream, "%s: Setting server port to %s based on file %s\n",
 	      app_name, port, conf_file_name);
+    }
+    if (strcmp(key, "user") == 0) {
+      line[strlen(line) - 1] = '\0';
+      if (rmq_user != NULL && rmq_user != default_rmq_user)
+        free(rmq_user);
+      rmq_user = strdup(line);
+      fprintf(log_stream, "%s: Setting RMQ user to %s based on file %s\n",
+              app_name, rmq_user, conf_file_name);
+    }
+    if (strcmp(key, "password") == 0) {
+      line[strlen(line) - 1] = '\0';
+      if (rmq_password != NULL && rmq_password != default_rmq_password)
+        free(rmq_password);
+      rmq_password = strdup(line);
+      fprintf(log_stream, "%s: Setting RMQ password from file %s\n",
+              app_name, conf_file_name);
     }
     if (strcmp(key, "buffer") == 0) {
       line[strlen(line) - 1] = '\0';
@@ -277,7 +297,7 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
         send_success_count = 0;
         break;
       }
-      rc = ring_buffer_load_file(f, w, server, port, queue, max_buffer_size, allow_ring_buffer_overwrite);
+      rc = ring_buffer_load_file(f, w, server, port, queue, rmq_user, rmq_password, max_buffer_size, allow_ring_buffer_overwrite);
       fclose(f);
       if (rc == 0) {
         remove(file_list[i]);
@@ -330,7 +350,7 @@ static void rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)
 
   struct stats_buffer *sf;
   sf = (struct stats_buffer *) malloc(sizeof(*sf));
-  if (stats_buffer_open(sf, server, port, queue) < 0)
+  if (stats_buffer_open(sf, server, port, queue, rmq_user, rmq_password) < 0)
     ERROR("Failed opening data buffer : %m\n");
 
   size_t i;
@@ -407,7 +427,7 @@ static void sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)
 
   struct stats_buffer *sf;
   sf = (struct stats_buffer *) malloc(sizeof(*sf));
-  if (stats_buffer_open(sf, server, port, queue) < 0)
+  if (stats_buffer_open(sf, server, port, queue, rmq_user, rmq_password) < 0)
     ERROR("Failed opening data buffer : %m\n");
 
   w->b_count++;
@@ -463,7 +483,7 @@ static void fd_cb(EV_P_ ev_stat *w_, int revents)
   
   sf = (struct stats_buffer *) malloc(sizeof(*sf));
 
-  if (stats_buffer_open(sf, server, port, queue) < 0)
+  if (stats_buffer_open(sf, server, port, queue, rmq_user, rmq_password) < 0)
     ERROR("Failed opening data buffer : %m\n");
 
   char new_jobid[80] = "-";
@@ -764,6 +784,8 @@ int main(int argc, char *argv[])
   if (server != NULL) free(server);
   if (queue != NULL && queue != default_queue) free(queue);
   if (port != NULL && port != default_port) free(port);
+  if (rmq_user != NULL && rmq_user != default_rmq_user) free(rmq_user);
+  if (rmq_password != NULL && rmq_password != default_rmq_password) free(rmq_password);
   if (dumpfile_dir != NULL && dumpfile_dir != default_dumpfile_dir) free(dumpfile_dir);
 
   return EXIT_SUCCESS;

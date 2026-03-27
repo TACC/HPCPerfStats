@@ -8,6 +8,8 @@ struct stats_buffer {
   char *sf_host;
   char *sf_queue;
   char *sf_port;
+  char *sf_user;
+  char *sf_password;
   unsigned int sf_empty:1;
 };
 
@@ -30,7 +32,7 @@ struct sf_ring_buffer {
   int l_count; // # of stats loaded from file (accumulated)
 };
 
-int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *port, const char *queue);
+int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *port, const char *queue, const char *user, const char *password);
 int stats_buffer_close(struct stats_buffer *sf);
 int stats_buffer_mark(struct stats_buffer *sf, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 int stats_buffer_write(struct stats_buffer *sf);
@@ -52,6 +54,8 @@ int ring_buffer_load_file(
   const char *host, 
   const char *port, 
   const char *queue,
+  const char *user,
+  const char *password,
   int max_buffer_size, 
   int allow_ring_buffer_overwrite);
 

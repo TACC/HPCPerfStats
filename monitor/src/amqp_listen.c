@@ -18,6 +18,16 @@
 #include "string1.h"
 #include "trace.h"
 
+static int rpc_ok(amqp_connection_state_t conn, const char *what)
+{
+  amqp_rpc_reply_t reply = amqp_get_rpc_reply(conn);
+  if (reply.reply_type != AMQP_RESPONSE_NORMAL) {
+    syslog(LOG_ERR, "%s failed\n", what);
+    return 0;
+  }
+  return 1;
+}
+
 int consume(const char *hostname, const char* port, const char* archive_dir)
 {
 
@@ -28,6 +38,8 @@ int consume(const char *hostname, const char* port, const char* archive_dir)
   amqp_socket_t *socket = NULL;
   amqp_connection_state_t conn;
   amqp_bytes_t queuename = amqp_empty_bytes;
+  int channel_opened = 0;
+  int logged_in = 0;
 
   exchange = "amq.direct";
   bindingkey = HOST_NAME_QUEUE;
@@ -55,9 +67,14 @@ int consume(const char *hostname, const char* port, const char* archive_dir)
     rc = 1;
     goto out;
   }
+  logged_in = 1;
   
   amqp_channel_open(conn, 1);
-  amqp_get_rpc_reply(conn);
+  if (!rpc_ok(conn, "amqp channel open")) {
+    rc = 1;
+    goto out;
+  }
+  channel_opened = 1;
   syslog(LOG_INFO, "Connect to RMQ server on host %s port %s queue %s\n",
 	 hostname,port,bindingkey);
 
@@ -67,7 +84,10 @@ int consume(const char *hostname, const char* port, const char* archive_dir)
 			 amqp_cstring_bytes(bindingkey), 
 			 0, 1, 0, 0,
 			 amqp_empty_table);
-    amqp_get_rpc_reply(conn);
+    if (!rpc_ok(conn, "queue declare")) {
+      rc = 1;
+      goto out;
+    }
     queuename = amqp_bytes_malloc_dup(r->queue);
     if (queuename.bytes == NULL) {
       syslog(LOG_ERR, "Out of memory while copying queue name\n");
@@ -79,12 +99,18 @@ int consume(const char *hostname, const char* port, const char* archive_dir)
 		  amqp_cstring_bytes(exchange), 
 		  amqp_cstring_bytes(bindingkey),
                   amqp_empty_table);
-  amqp_get_rpc_reply(conn);
+  if (!rpc_ok(conn, "queue bind")) {
+    rc = 1;
+    goto out;
+  }
 
   amqp_basic_consume(conn, 1, queuename, 
 		     amqp_empty_bytes, 
 		     0, 0, 0, amqp_empty_table);
-  amqp_get_rpc_reply(conn);
+  if (!rpc_ok(conn, "basic consume")) {
+    rc = 1;
+    goto out;
+  }
   setbuf(stdout,NULL);
   // Write data to file in hostname directory
   FILE *fd;
@@ -208,6 +234,7 @@ int consume(const char *hostname, const char* port, const char* archive_dir)
 	  syslog(LOG_ERR,"cannot open file: %s\n", current_path);
 	  free(stats_dir_path);
 	  free(current_path);
+          amqp_destroy_envelope(&envelope);
 	  continue;
 	}
       }
@@ -226,8 +253,10 @@ int consume(const char *hostname, const char* port, const char* archive_dir)
  out:
   if (queuename.bytes != NULL)
     amqp_bytes_free(queuename);
-  amqp_channel_close(conn, 1, AMQP_REPLY_SUCCESS);
-  amqp_connection_close(conn, AMQP_REPLY_SUCCESS);
+  if (channel_opened)
+    amqp_channel_close(conn, 1, AMQP_REPLY_SUCCESS);
+  if (logged_in)
+    amqp_connection_close(conn, AMQP_REPLY_SUCCESS);
   amqp_destroy_connection(conn);
   return rc;
 }
