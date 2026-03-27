@@ -31,13 +31,58 @@ if test "x${have_variorum}" = xyes; then
 fi
 AM_CONDITIONAL([VARIORUM], [test x$variorum = xtrue])
 
-AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
-  [AC_MSG_ERROR([Unable to find liblikwid.so!])])
-if test "x${have_likwid}" = xyes; then
-  AC_CHECK_HEADERS([likwid.h], [likwid=true],
-    [AC_MSG_ERROR([Unable to find likwid.h!])])
+AC_ARG_WITH([cpu-counter-backend],
+[AS_HELP_STRING([--with-cpu-counter-backend={auto|likwid|dcgm}], [CPU counter backend selection (default: auto)])],
+[cpu_counter_backend="$withval"],
+[cpu_counter_backend="auto"])
+
+case "$cpu_counter_backend" in
+  auto|likwid|dcgm) ;;
+  *) AC_MSG_ERROR([bad value ${cpu_counter_backend} for --with-cpu-counter-backend]) ;;
+esac
+
+if test "x$cpu_counter_backend" = "xauto"; then
+  case "$host_cpu" in
+    x86_64|i?86) cpu_counter_backend="likwid" ;;
+    aarch64|arm*)
+      if test -r /proc/device-tree/compatible && \
+         tr '[:upper:]' '[:lower:]' </proc/device-tree/compatible 2>/dev/null | awk 'index($0,"nvidia"){found=1} END{exit(found?0:1)}'; then
+        cpu_counter_backend="dcgm"
+      else
+        cpu_counter_backend="likwid"
+      fi
+      ;;
+    *) cpu_counter_backend="likwid" ;;
+  esac
+fi
+
+if test "x$cpu_counter_backend" = "xlikwid"; then
+  AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
+    [AC_MSG_ERROR([Unable to find liblikwid.so!])])
+  if test "x${have_likwid}" = xyes; then
+    AC_CHECK_HEADERS([likwid.h], [likwid=true],
+      [AC_MSG_ERROR([Unable to find likwid.h!])])
+  fi
 fi
 AM_CONDITIONAL([LIKWID], [test x$likwid = xtrue])
+AM_CONDITIONAL([CPU_BACKEND_LIKWID], [test x$cpu_counter_backend = xlikwid])
+AM_CONDITIONAL([CPU_BACKEND_DCGM], [test x$cpu_counter_backend = xdcgm])
+
+dcgm_checked=false
+if test "x$cpu_counter_backend" = "xdcgm"; then
+  AC_SEARCH_LIBS([dcgmInit], [dcgm], [have_dcgm=yes],
+    [AC_MSG_ERROR([Unable to find libdcgm.so! (required for DCGM CPU backend)])])
+  if test "x${have_dcgm}" = xyes; then
+    AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [dcgm_headers=true],
+      [AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h for DCGM CPU backend])])
+  fi
+  dcgm_checked=true
+  CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_DCGM"
+  MONITOR_ARCH_CPPFLAG=""
+else
+  CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_LIKWID"
+fi
+AC_SUBST([CPU_COUNTER_BACKEND_CPPFLAG])
 
 AC_ARG_WITH([monitor-arch],
 [AS_HELP_STRING([--with-monitor-arch={intel|amd|auto}], [Compile-time LIKWID architecture selection (default: auto)])],
@@ -57,14 +102,18 @@ if test "x$monitor_arch" = "xauto"; then
   esac
 fi
 
-if test "x$monitor_arch" = "xintel"; then
-  MONITOR_ARCH_CPPFLAG="-DMONITOR_ARCH_INTEL"
-else
-  MONITOR_ARCH_CPPFLAG="-DMONITOR_ARCH_AMD"
+if test "x$cpu_counter_backend" = "xlikwid"; then
+  if test "x$monitor_arch" = "xintel"; then
+    MONITOR_ARCH_CPPFLAG="-DMONITOR_ARCH_INTEL"
+  else
+    MONITOR_ARCH_CPPFLAG="-DMONITOR_ARCH_AMD"
+  fi
 fi
 AC_SUBST([MONITOR_ARCH_CPPFLAG])
 AM_CONDITIONAL([MONITOR_ARCH_INTEL], [test "x$monitor_arch" = "xintel"])
 AM_CONDITIONAL([MONITOR_ARCH_AMD], [test "x$monitor_arch" = "xamd"])
+
+AC_MSG_NOTICE([CPU counter backend: ${cpu_counter_backend} (host_cpu=${host_cpu})])
 
 AC_ARG_ENABLE([infiniband],
 [  --enable-infiniband	Enable Infiniband support (default is true)],
@@ -139,11 +188,15 @@ if test "x$gpu" = "xauto"; then
 fi
 
 if test "x$gpu" = "xtrue"; then
-  AC_SEARCH_LIBS([dcgmInit], [dcgm], [have_gpu=yes],
-    [AC_MSG_ERROR([Unable to find libdcgm.so!])])
-  if test "x${have_gpu}" = xyes; then
-    AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [gpu=true],
-      [AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h on this system!])])
+  if test "x$dcgm_checked" = "xfalse"; then
+    AC_SEARCH_LIBS([dcgmInit], [dcgm], [have_gpu=yes],
+      [AC_MSG_ERROR([Unable to find libdcgm.so!])])
+    if test "x${have_gpu}" = xyes; then
+      AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [gpu=true],
+        [AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h on this system!])])
+    fi
+  else
+    gpu=true
   fi
 fi
 

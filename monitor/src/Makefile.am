@@ -25,7 +25,8 @@ hpcperfstatsd_CPPFLAGS = \
 	-DSTATS_VERSION=\"@PACKAGE_VERSION@\" \
 	-DSTATS_DIR_PATH=\"$(STATS_DIR_PATH)\" \
 	-DSTATS_LOCK_PATH=\"$(STATS_LOCK_PATH)\" \
-	-DJOBID_FILE_PATH=\"$(JOBID_FILE_PATH)\"
+	-DJOBID_FILE_PATH=\"$(JOBID_FILE_PATH)\" \
+	@CPU_COUNTER_BACKEND_CPPFLAG@
 
 if DEBUG
 hpcperfstatsd_CPPFLAGS += \
@@ -97,12 +98,11 @@ TYPES 	= \
 	vm.c
 
 if HARDWARE
-if LIKWID
+if CPU_BACKEND_LIKWID
 TYPES 	+= \
 	amd64_rapl.c \
 	intel_rapl.c \
-	likwid_metrics.c
-else
+	cpu_counter_metrics.c
 TYPES 	+= \
 	amd64_pmc.c \
 	amd64_df.c \
@@ -136,6 +136,10 @@ TYPES 	+= \
 	intel_snb_imc.c \
 	intel_snb_qpi.c \
 	intel_snb_r2pci.c
+endif
+if CPU_BACKEND_DCGM
+TYPES += \
+	cpu_counter_metrics.c
 endif
 endif
 

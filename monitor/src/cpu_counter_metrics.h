@@ -1,7 +1,7 @@
-#ifndef _LIKWID_METRICS_H_
-#define _LIKWID_METRICS_H_
+#ifndef _CPU_COUNTER_METRICS_H_
+#define _CPU_COUNTER_METRICS_H_
 
-#define LIKWID_METRICS_KEYS \
+#define CPU_COUNTER_METRICS_KEYS \
   X(CTL0, "C", ""), \
   X(CTL1, "C", ""), \
   X(CTL2, "C", ""), \

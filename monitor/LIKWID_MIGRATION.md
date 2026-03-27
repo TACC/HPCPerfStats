@@ -27,12 +27,12 @@ This document tracks LIKWID-based replacement of manual MSR programming paths.
 
 | Module Family | Status | Strategy |
 | --- | --- | --- |
-| `intel_pmc3*`, `amd64_pmc.c`, `amd64_df.c` | unified active path | replaced by `likwid_metrics.c` + compile-time arch map |
+| `intel_pmc3*`, `amd64_pmc.c`, `amd64_df.c` | unified active path | replaced by `cpu_counter_metrics.c` + compile-time arch map |
 | `intel_rapl.c`, `amd64_rapl.c` | unchanged in this plan | remains Variorum-backed energy collection |
 | `intel_uncore.c`, `intel_*_cbo.c`, `intel_skx_cha.c`, `intel_pcu.c`, `intel_skx_imc.c` | fallback retained | custom uncore/box programming remains native |
 
 ## Notes
 
-- Unified PMU type is `likwid_metrics`.
-- Runtime fallback is contained inside `likwid_metrics.c` for must-match metrics
+- Unified PMU type is `cpu_counter_metrics`.
+- Runtime fallback is contained inside `cpu_counter_metrics.c` for must-match metrics
   that cannot be read through the LIKWID eventset on the current host.
