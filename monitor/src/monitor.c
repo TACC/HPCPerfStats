@@ -26,6 +26,7 @@ extern "C" {
 #include "stats_buffer.h"
 #include "trace.h"
 #include "pscanf.h"
+#include "hwdetect.h"
 
 static char *app_name = NULL;
 static char *conf_file_name = NULL;
@@ -301,10 +302,17 @@ static void rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)
   while ((type = stats_type_for_each(&i)) != NULL)
     stats_type_destroy(type);    
   
-  /* Initialize */
+  /* Enable all types, then disable optional types by detected hardware. */
+  i = 0;
+  while ((type = stats_type_for_each(&i)) != NULL)
+    type->st_enabled = 1;
+  auto_disable_optional_stats_by_lspci();
+
+  /* Initialize selected enabled types */
   i = 0;
   while ((type = stats_type_for_each(&i)) != NULL) {
-    type->st_enabled = 1;
+    if (!type->st_enabled)
+      continue;
     if (stats_type_init(type) < 0) {
       type->st_enabled = 0;
       continue;
@@ -312,7 +320,6 @@ static void rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)
     if (type->st_begin != NULL)
       (*type->st_begin)(type);
   }
-
   stats_wr_hdr(sf);
   w->b_count++;
   w->status = send_stats_buffer(sf);
@@ -445,10 +452,17 @@ static void fd_cb(EV_P_ ev_io *w_, int revents)
   while ((type = stats_type_for_each(&i)) != NULL)
     stats_type_destroy(type);    
   
-  /* Initialize */
+  /* Enable all types, then disable optional types by detected hardware. */
+  i = 0;
+  while ((type = stats_type_for_each(&i)) != NULL)
+    type->st_enabled = 1;
+  auto_disable_optional_stats_by_lspci();
+
+  /* Initialize selected enabled types */
   i = 0;
   while ((type = stats_type_for_each(&i)) != NULL) {
-    type->st_enabled = 1;
+    if (!type->st_enabled)
+      continue;
     if (stats_type_init(type) < 0) {
       type->st_enabled = 0;
       continue;
@@ -456,7 +470,6 @@ static void fd_cb(EV_P_ ev_io *w_, int revents)
     if (type->st_begin != NULL)
       (*type->st_begin)(type);
   }
-
   /* Send stats */
   w->b_count++;
   w->status = send_stats_buffer(sf);

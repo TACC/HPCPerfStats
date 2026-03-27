@@ -15,6 +15,7 @@
 #include "trace.h"
 #include "pscanf.h"
 #include "cpuid.h"
+#include "hwdetect.h"
 
 struct timeval tp;
 double current_time;
@@ -198,6 +199,8 @@ int main(int argc, char *argv[])
       type->st_selected = 1;
     }
   }
+
+  auto_disable_optional_stats_by_lspci();
 
   i = 0;
   while ((type = stats_type_for_each(&i)) != NULL) {
