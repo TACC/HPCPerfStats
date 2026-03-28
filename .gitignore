@@ -17,6 +17,7 @@ tacc_stats.egg-info/
 *.pyc
 *.o
 *.sh
+!monitor/scripts/*.sh
 *.so
 *.d
 .project
