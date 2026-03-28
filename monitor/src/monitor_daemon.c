@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <malloc.h>
@@ -52,14 +53,22 @@ processor_t processor = (processor_t) 0;
 static void send_dumpfile_stats(struct sf_ring_buffer *w);
 static int save_file_stats_buffer(struct stats_buffer *sf);
 
-static void monitor_conf_strip_trailing_newline(char *s)
+/* Trim leading/trailing isspace(3) in place so host/port survive tabs in conf files. */
+static void monitor_conf_trim_value(char *s)
 {
-  size_t n;
+  char *p;
+  size_t len;
+
   if (s == NULL || *s == '\0')
     return;
-  n = strlen(s);
-  if (n > 0 && s[n - 1] == '\n')
-    s[n - 1] = '\0';
+  p = s;
+  while (*p != '\0' && isspace((unsigned char)*p))
+    p++;
+  if (p != s)
+    memmove(s, p, strlen(p) + 1);
+  len = strlen(s);
+  while (len > 0 && isspace((unsigned char)s[len - 1]))
+    s[--len] = '\0';
 }
 
 /* Tier B: rate-limit repetitive operational logs on hot paths (ring/dumpfile resend). */
@@ -234,9 +243,7 @@ int read_conf_file(void)
     char *key = strsep(&line, " :\t=");
     if (key == NULL || line == NULL)
       continue;
-    while (*line == ' ')
-      line++;
-    monitor_conf_strip_trailing_newline(line);
+    monitor_conf_trim_value(line);
     if (strcmp(key, "server") == 0) {
       free(server);
       server = strdup(line);
