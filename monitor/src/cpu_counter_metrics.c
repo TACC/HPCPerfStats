@@ -94,12 +94,14 @@ static int read_dcgm_cpu_sample(int core_id, struct dcgm_cpu_sample *s)
   unsigned int f;
   memset(s, 0, sizeof(*s));
   memset(values, 0, sizeof(values));
-  if (dcgmGetLatestValuesForEntity(g_dcgm_handle,
-                                   DCGM_FE_CPU_CORE,
-                                   core_id,
-                                   (unsigned short *) field_ids,
-                                   (unsigned int) (sizeof(field_ids) / sizeof(field_ids[0])),
-                                   values) != DCGM_ST_OK)
+  /* dcgmEntityGetLatestValues is the stable name in dcgm_agent.h; some stacks only
+   * expose that (not dcgmGetLatestValuesForEntity). DCGM_FE_*_CORE from dcgm_fields.h. */
+  if (dcgmEntityGetLatestValues(g_dcgm_handle,
+                                DCGM_FE_CPU_CORE,
+                                core_id,
+                                (unsigned short *) field_ids,
+                                (unsigned int) (sizeof(field_ids) / sizeof(field_ids[0])),
+                                values) != DCGM_ST_OK)
     return -1;
 
   for (f = 0; f < (unsigned int) (sizeof(field_ids) / sizeof(field_ids[0])); f++) {

@@ -19,6 +19,11 @@ Files copied (include order is dcgm_agent.h -> dcgm_structs.h -> dcgm_fields.h):
 
 License: Apache-2.0 (see SPDX headers in each file).
 
+Local patch: dcgm_fields.h extends dcgm_field_entity_group_t with DCGM_FE_LINK,
+DCGM_FE_CPU, DCGM_FE_CPU_CORE, and DCGM_FE_CONNECTX before DCGM_FE_COUNT so values
+match NVIDIA DCGM dcgmlib (Grace / CPU field APIs). The gpu-monitoring-tools snapshot
+predates those enumerators.
+
 Runtime: you still need a compatible libdcgm from NVIDIA DCGM; headers only satisfy
 the compiler. Mismatch between header and library versions can cause build or runtime
 issues; prefer system headers when your distro ships them.

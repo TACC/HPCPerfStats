@@ -184,6 +184,10 @@ typedef enum dcgm_field_entity_group_t
     DCGM_FE_SWITCH,   /*!< Field is associated with a Switch entity */
     DCGM_FE_GPU_I,    /*!< Field is associated with a GPU Instance entity */
     DCGM_FE_GPU_CI,   /*!< Field is associated with a GPU Compute Instance entity */
+    DCGM_FE_LINK,     /*!< Field is associated with an NVLink */
+    DCGM_FE_CPU,      /*!< Field is associated with a CPU node */
+    DCGM_FE_CPU_CORE, /*!< Field is associated with a CPU logical core */
+    DCGM_FE_CONNECTX, /*!< Field is associated with a ConnectX card */
 
     DCGM_FE_COUNT /*!< Number of elements in this enumeration. Keep this entry last */
 } dcgm_field_entity_group_t;
