@@ -194,6 +194,7 @@ build_monitor() {
   export CPPFLAGS="-I${PREFIX}/include ${CPPFLAGS:-}"
   export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
   # Prefer static archives from our tree (no RPATH to PREFIX for runtime).
+  # --disable-infiniband omits libibmad-linked collectors (ib_ext, ib_sw); sysfs-only ib remains.
   local -a cfg=(
     --enable-all-static
     --with-systemduserunitdir=no

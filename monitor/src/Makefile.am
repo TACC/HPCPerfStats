@@ -96,6 +96,7 @@ endif
 TYPES 	= \
 	block.c \
 	cpu.c \
+	ib.c \
 	lnet.c \
 	mem.c \
 	net.c \
@@ -170,7 +171,6 @@ endif
 
 if INFINIBAND
 TYPES	 += \
-	ib.c \
 	ib_ext.c \
 	ib_sw.c
 endif
