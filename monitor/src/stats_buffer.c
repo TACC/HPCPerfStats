@@ -22,6 +22,9 @@
 #include "pscanf.h"
 #include "string1.h"
 
+/* Sample interval from monitor_daemon.c (conf `freq`); pace RMQ TCP reconnect attempts. */
+extern double freq;
+
 #define SF_SCHEMA_CHAR '!'
 #define SF_DEVICES_CHAR '@'
 #define SF_COMMENT_CHAR '#'
@@ -31,9 +34,62 @@
 #define RMQ_VHOST "/"
 #define RMQ_CHANNEL 1
 
-/* One AMQP connection per process (libev single-threaded). Reconnect on credential mismatch or I/O failure. */
+/* One AMQP connection per process (libev single-threaded). Reconnect on credential mismatch or I/O failure.
+ * When the broker is down, allow at most one new TCP connect attempt per conf sample interval (`freq`),
+ * so ring-buffer resend loops in one libev tick do not storm the network. */
 static amqp_connection_state_t rmq_conn;
 static int rmq_channel_open;
+static struct timespec rmq_backoff_until;
+static int rmq_backoff_until_valid;
+
+static void rmq_clear_connect_backoff(void)
+{
+  rmq_backoff_until_valid = 0;
+}
+
+static int rmq_connect_backoff_active(void)
+{
+  struct timespec now;
+
+  if (!rmq_backoff_until_valid)
+    return 0;
+  if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+    return 0;
+  if (now.tv_sec < rmq_backoff_until.tv_sec
+      || (now.tv_sec == rmq_backoff_until.tv_sec && now.tv_nsec < rmq_backoff_until.tv_nsec))
+    return 1;
+  rmq_backoff_until_valid = 0;
+  return 0;
+}
+
+static void rmq_arm_connect_backoff(void)
+{
+  struct timespec now;
+  double f = freq;
+
+  if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+    return;
+  if (f <= 0.0)
+    f = 1.0;
+  {
+    time_t add_sec = (time_t)f;
+    double frac = f - (double)add_sec;
+
+    if (frac < 0.0)
+      frac = 0.0;
+    long add_nsec = (long)(frac * 1e9);
+    if (add_nsec >= 1000000000L)
+      add_nsec = 999999999L;
+    rmq_backoff_until.tv_sec = now.tv_sec + add_sec;
+    rmq_backoff_until.tv_nsec = now.tv_nsec + add_nsec;
+    if (rmq_backoff_until.tv_nsec >= 1000000000L) {
+      rmq_backoff_until.tv_sec++;
+      rmq_backoff_until.tv_nsec -= 1000000000L;
+    }
+  }
+  rmq_backoff_until_valid = 1;
+}
+
 static char *rmq_stored_host;
 static char *rmq_stored_port;
 static char *rmq_stored_user;
@@ -156,6 +212,7 @@ void stats_buffer_rmq_shutdown(void)
 {
   rmq_soft_disconnect();
   rmq_stored_free();
+  rmq_clear_connect_backoff();
 }
 
 void stats_buffer_runtime_caches_reset(void)
@@ -171,6 +228,9 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
   if (rmq_conn != NULL && rmq_stored_matches(sf) && rmq_channel_open)
     return 0;
 
+  if (rmq_connect_backoff_active())
+    return -1;
+
   rmq_soft_disconnect();
 
   if (!rmq_stored_matches(sf))
@@ -179,6 +239,7 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
   rmq_conn = amqp_new_connection();
   if (rmq_conn == NULL) {
     ERROR("amqp_new_connection failed");
+    rmq_arm_connect_backoff();
     return -1;
   }
 
@@ -187,6 +248,7 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
     close_rmq_connection(rmq_conn, rmq_channel_open);
     rmq_conn = NULL;
     rmq_channel_open = 0;
+    rmq_arm_connect_backoff();
     return -1;
   }
 
@@ -194,9 +256,11 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
     close_rmq_connection(rmq_conn, rmq_channel_open);
     rmq_conn = NULL;
     rmq_channel_open = 0;
+    rmq_arm_connect_backoff();
     return -1;
   }
 
+  rmq_clear_connect_backoff();
   return 0;
 }
 
@@ -305,14 +369,17 @@ static int send(struct stats_buffer *sf)
 
   if (rmq_ensure_queue(sf) < 0) {
     rmq_soft_disconnect();
+    rmq_arm_connect_backoff();
     return -1;
   }
 
   if (rmq_publish_text_payload(rmq_conn, sf) < 0) {
     rmq_soft_disconnect();
+    rmq_arm_connect_backoff();
     return -1;
   }
 
+  rmq_clear_connect_backoff();
   return 0;
 }
 

@@ -35,6 +35,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 ## hpcperfstatsd: syscalls and blocking I/O
 
 - **RabbitMQ (blocking)**: Publishing uses **synchronous** rabbitmq-c calls (`amqp_socket_open`, login, `amqp_basic_publish`) from **libev timer callbacks**. If the broker or TCP path stalls, the **whole event loop** blocks until the library returns. Mitigations for heavy deployments: offload AMQP to a **worker thread** with a bounded queue, or adopt a **non-blocking** client integrated with `ev_io` (larger change). Tuning broker, network, and payload size helps without code changes.
+- **RabbitMQ reconnect pacing**: When the broker is unreachable or publish fails, new **TCP** connect attempts are **rate-limited** to at most once per **`freq`** seconds (the same interval as the sample timer from the config file). That avoids a connect storm when draining a large ring buffer in a single callback; each sample tick still attempts a real connect when the backoff window has elapsed.
 - **Collect path (reduced syscalls)**:
   - `pscanf` uses a **stack read** for small files (e.g. JOBID, sysfs flags) and falls back to heap slurp only when the file does not fit.
   - **`cpu`** keeps one `FILE *` on `/proc/stat` and **`rewind`**s each sample; the stream is closed when collect caches are invalidated.
