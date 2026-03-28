@@ -43,10 +43,10 @@ static const char *dcgm_err(dcgmReturn_t rc)
 }
 
 /*
- * Newer DCGM host engines return the handle from dcgmStartEmbedded_v2 only; the legacy
- * dcgmStartEmbedded() pair can report DCGM_ST_OK while leaving *pDcgmHandle at 0.
+ * Prefer embedded hostengine; some installs report success but never publish a handle.
+ * In that case reset the client and attach to a local nv-hostengine (dcgmConnect).
  */
-static dcgmReturn_t nvidia_gpu_start_embedded(dcgmHandle_t *outh)
+static dcgmReturn_t nvidia_try_embedded(dcgmHandle_t *outh)
 {
   dcgmReturn_t rc;
   dcgmStartEmbeddedV2Params_v1 ep;
@@ -66,7 +66,48 @@ static dcgmReturn_t nvidia_gpu_start_embedded(dcgmHandle_t *outh)
     return dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, outh);
   if (rc == DCGM_ST_VER_MISMATCH || rc == DCGM_ST_NOT_SUPPORTED || rc == DCGM_ST_BADPARAM)
     return dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, outh);
+  return dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, outh);
+}
+
+static dcgmReturn_t nvidia_dcgm_connect_loopback(dcgmHandle_t *outh)
+{
+  dcgmReturn_t rc;
+  dcgmConnectV2Params_v2 cp;
+  char localhost[] = "127.0.0.1";
+
+  memset(&cp, 0, sizeof(cp));
+  cp.version = dcgmConnectV2Params_version2;
+  cp.persistAfterDisconnect = 0;
+  cp.timeoutMs = 10000;
+  cp.addressIsUnixSocket = 0;
+  rc = dcgmConnect_v2(localhost, &cp, outh);
   return rc;
+}
+
+static dcgmReturn_t nvidia_gpu_dcgm_attach(dcgmHandle_t *outh, int *use_disconnect)
+{
+  dcgmReturn_t rc;
+
+  *use_disconnect = 0;
+  *outh = (dcgmHandle_t)0;
+
+  rc = nvidia_try_embedded(outh);
+  if (rc == DCGM_ST_OK && *outh != (dcgmHandle_t)0)
+    return DCGM_ST_OK;
+
+  (void) dcgmShutdown();
+  rc = dcgmInit();
+  if (rc != DCGM_ST_OK)
+    return rc;
+
+  rc = nvidia_dcgm_connect_loopback(outh);
+  if (rc == DCGM_ST_OK && *outh != (dcgmHandle_t)0) {
+    *use_disconnect = 1;
+    return DCGM_ST_OK;
+  }
+
+  (void) dcgmShutdown();
+  return (rc != DCGM_ST_OK) ? rc : DCGM_ST_INIT_ERROR;
 }
 
 static int bounded_ratio(double v, double *out)
@@ -209,6 +250,7 @@ static void nvidia_gpu_collect(struct stats_type *type)
   int i;
   int nr = 0;
   int ndev = 0;
+  int dcgm_remote = 0;
   dcgmReturn_t rc;
   dcgmHandle_t dcgm_handle = (dcgmHandle_t) NULL;
   dcgmGpuGrp_t group_id = (dcgmGpuGrp_t) NULL;
@@ -223,13 +265,11 @@ static void nvidia_gpu_collect(struct stats_type *type)
     goto out;
   }
 
-  rc = nvidia_gpu_start_embedded(&dcgm_handle);
-  if (rc != DCGM_ST_OK) {
-    ERROR("DCGM embedded mode failed: %s\n", dcgm_err(rc));
-    goto out;
-  }
-  if (dcgm_handle == (dcgmHandle_t)0) {
-    ERROR("DCGM embedded mode returned null handle after v2 and legacy start\n");
+  rc = nvidia_gpu_dcgm_attach(&dcgm_handle, &dcgm_remote);
+  if (rc != DCGM_ST_OK || dcgm_handle == (dcgmHandle_t)0) {
+    ERROR("DCGM attach failed (embedded or 127.0.0.1 hostengine): %s%s\n",
+          dcgm_err(rc),
+          rc == DCGM_ST_CONNECTION_NOT_VALID ? " (start nv-hostengine on this node?)" : "");
     goto out;
   }
 
@@ -309,8 +349,12 @@ out:
     (void) dcgmFieldGroupDestroy(dcgm_handle, field_group_id);
   if (group_id != (dcgmGpuGrp_t) NULL)
     (void) dcgmGroupDestroy(dcgm_handle, group_id);
-  if (dcgm_handle != (dcgmHandle_t) NULL)
-    (void) dcgmStopEmbedded(dcgm_handle);
+  if (dcgm_handle != (dcgmHandle_t)0) {
+    if (dcgm_remote)
+      (void) dcgmDisconnect(dcgm_handle);
+    else
+      (void) dcgmStopEmbedded(dcgm_handle);
+  }
   (void) dcgmShutdown();
   if (nr == 0)
     type->st_enabled = 0;
