@@ -9,8 +9,12 @@
 #include "trace.h"
 #include "cpuid.h"
 
-#define cpuid(func,ax,bx,cx,dx)\
-  __asm__ __volatile__ ("cpuid": "=a" (ax), "=b" (bx), "=c" (cx), "=d" (dx) : "a" (func));
+#if defined(__i386__) || defined(__x86_64__)
+
+#define cpuid(func, ax, bx, cx, dx)                                            \
+  __asm__ __volatile__("cpuid"                                               \
+                       : "=a"(ax), "=b"(bx), "=c"(cx), "=d"(dx)               \
+                       : "a"(func))
 
 processor_t signature(int *n_pmcs) {
   uint32_t eax = 0, ebx = 0, ecx = 0, edx = 0;
@@ -114,11 +118,9 @@ processor_t signature(int *n_pmcs) {
 
   }
 
-  out:
-    return rc;
+  return rc;
 }
 
-// Determine pkg/core/hyperthread id a logical core belongs too
 int cpuid_read_cpu_topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, int *nr_core)
 {
   int i;
@@ -209,3 +211,29 @@ int cpuid_read_cpu_topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, i
 
   return rc;
 }
+
+#else /* !(__i386__ || __x86_64__): no CPUID instruction (e.g. AArch64 with nvc++/gcc) */
+
+processor_t signature(int *n_pmcs)
+{
+  if (n_pmcs != NULL)
+    *n_pmcs = 0;
+  TRACE("cpuid: non-x86 host; processor signature unavailable\n");
+  return (processor_t)-1;
+}
+
+int cpuid_read_cpu_topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, int *nr_core)
+{
+  (void)cpu;
+  if (pkg_id != NULL)
+    *pkg_id = 0;
+  if (core_id != NULL)
+    *core_id = 0;
+  if (smt_id != NULL)
+    *smt_id = 0;
+  if (nr_core != NULL)
+    *nr_core = 0;
+  return 0;
+}
+
+#endif
