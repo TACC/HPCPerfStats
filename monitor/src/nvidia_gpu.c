@@ -102,6 +102,64 @@ static int list_field_values(unsigned int gpu_id,
   return 0;
 }
 
+/*
+ * dcgmGetAllSupportedDevices / dcgmGetEntityGroupEntities use an IN/OUT count in practice.
+ * Older host engines cap lists at 16 GPUs (see DCGM_MAX_NUM_DEVICES comment in dcgm_structs.h).
+ * Some builds also reject DCGM_GEGE_FLAG_ONLY_SUPPORTED with DCGM_ST_BADPARAM.
+ */
+#define NVIDIA_DCGM_GPU_LIST_LEGACY_CAP 16
+
+static dcgmReturn_t nvidia_gpu_discover_gpu_ids(dcgmHandle_t h,
+                                                unsigned int *gpu_ids,
+                                                int *pndev)
+{
+  static const int caps[] = { DCGM_MAX_NUM_DEVICES, NVIDIA_DCGM_GPU_LIST_LEGACY_CAP };
+  size_t ci;
+  dcgmReturn_t rc = DCGM_ST_BADPARAM;
+
+  for (ci = 0; ci < sizeof(caps) / sizeof(caps[0]); ci++) {
+    *pndev = caps[ci];
+    rc = dcgmGetAllSupportedDevices(h, gpu_ids, pndev);
+    if (rc == DCGM_ST_OK)
+      return rc;
+    if (rc != DCGM_ST_BADPARAM && rc != DCGM_ST_NOT_SUPPORTED)
+      return rc;
+  }
+  for (ci = 0; ci < sizeof(caps) / sizeof(caps[0]); ci++) {
+    *pndev = caps[ci];
+    rc = dcgmGetEntityGroupEntities(h,
+                                    DCGM_FE_GPU,
+                                    (dcgm_field_eid_t *)gpu_ids,
+                                    pndev,
+                                    0);
+    if (rc == DCGM_ST_OK)
+      return rc;
+    if (rc != DCGM_ST_BADPARAM && rc != DCGM_ST_NOT_SUPPORTED)
+      return rc;
+  }
+  for (ci = 0; ci < sizeof(caps) / sizeof(caps[0]); ci++) {
+    *pndev = caps[ci];
+    rc = dcgmGetEntityGroupEntities(h,
+                                    DCGM_FE_GPU,
+                                    (dcgm_field_eid_t *)gpu_ids,
+                                    pndev,
+                                    DCGM_GEGE_FLAG_ONLY_SUPPORTED);
+    if (rc == DCGM_ST_OK)
+      return rc;
+    if (rc != DCGM_ST_BADPARAM && rc != DCGM_ST_NOT_SUPPORTED)
+      return rc;
+  }
+  for (ci = 0; ci < sizeof(caps) / sizeof(caps[0]); ci++) {
+    *pndev = caps[ci];
+    rc = dcgmGetAllDevices(h, gpu_ids, pndev);
+    if (rc == DCGM_ST_OK)
+      return rc;
+    if (rc != DCGM_ST_BADPARAM && rc != DCGM_ST_NOT_SUPPORTED)
+      return rc;
+  }
+  return rc;
+}
+
 static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row)
 {
   stats_set(stats, "temperature", I64_TO_LLU(row->temperature));
@@ -142,22 +200,12 @@ static void nvidia_gpu_collect(struct stats_type *type)
     ERROR("DCGM embedded mode failed: %s\n", dcgm_err(rc));
     goto out;
   }
-
-  /*
-   * Some DCGM builds treat the count argument as IN/OUT (capacity of gpu_ids[]).
-   * Passing *count == 0 yields DCGM_ST_BADPARAM even though the public docs
-   * describe count as OUT-only.
-   */
-  ndev = DCGM_MAX_NUM_DEVICES;
-  rc = dcgmGetAllSupportedDevices(dcgm_handle, gpu_ids, &ndev);
-  if (rc != DCGM_ST_OK) {
-    ndev = DCGM_MAX_NUM_DEVICES;
-    rc = dcgmGetEntityGroupEntities(dcgm_handle,
-                                  DCGM_FE_GPU,
-                                  (dcgm_field_eid_t *)gpu_ids,
-                                  &ndev,
-                                  DCGM_GEGE_FLAG_ONLY_SUPPORTED);
+  if (dcgm_handle == (dcgmHandle_t)0) {
+    ERROR("DCGM embedded mode returned null handle\n");
+    goto out;
   }
+
+  rc = nvidia_gpu_discover_gpu_ids(dcgm_handle, gpu_ids, &ndev);
   if (rc != DCGM_ST_OK) {
     ERROR("DCGM list devices failed: %s\n", dcgm_err(rc));
     goto out;
