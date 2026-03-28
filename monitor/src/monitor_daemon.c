@@ -522,6 +522,7 @@ void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
   (void)revents;
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
   char new_jobid[80] = "-";
+  int job_ended = 0;
   pscanf(JOBID_FILE_PATH, "%79s", new_jobid);
 
   struct stats_buffer *sf = monitor_daemon_alloc_stats_buffer();
@@ -540,12 +541,15 @@ void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
       fprintf(log_stream, "Unloading jobid %s from %s\n", jobid, JOBID_FILE_PATH);
       stats_buffer_mark(sf, "end %s", jobid);
       sample_timer.repeat = 3600;
+      job_ended = 1;
     }
     ev_timer_again(EV_DEFAULT, &sample_timer);
   }
 
   monitor_reset_all_stats_types();
   monitor_init_enabled_stats_types();
+  if (job_ended)
+    stats_wr_hdr(sf);
 
   w->b_count++;
   w->status = send_stats_buffer(sf);
