@@ -143,7 +143,21 @@ static void nvidia_gpu_collect(struct stats_type *type)
     goto out;
   }
 
+  /*
+   * Some DCGM builds treat the count argument as IN/OUT (capacity of gpu_ids[]).
+   * Passing *count == 0 yields DCGM_ST_BADPARAM even though the public docs
+   * describe count as OUT-only.
+   */
+  ndev = DCGM_MAX_NUM_DEVICES;
   rc = dcgmGetAllSupportedDevices(dcgm_handle, gpu_ids, &ndev);
+  if (rc != DCGM_ST_OK) {
+    ndev = DCGM_MAX_NUM_DEVICES;
+    rc = dcgmGetEntityGroupEntities(dcgm_handle,
+                                  DCGM_FE_GPU,
+                                  (dcgm_field_eid_t *)gpu_ids,
+                                  &ndev,
+                                  DCGM_GEGE_FLAG_ONLY_SUPPORTED);
+  }
   if (rc != DCGM_ST_OK) {
     ERROR("DCGM list devices failed: %s\n", dcgm_err(rc));
     goto out;
