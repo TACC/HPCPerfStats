@@ -57,6 +57,9 @@ static int list_field_values(unsigned int gpu_id,
 {
   int i;
   dcgm_data_t *data = (dcgm_data_t *) userdata;
+
+  if (gpu_id >= DCGM_MAX_NUM_DEVICES)
+    return -1;
   for (i = 0; i < num_values; i++) {
     switch (values[i].fieldId) {
       case DCGM_FI_DEV_GPU_TEMP:
@@ -99,19 +102,19 @@ static int list_field_values(unsigned int gpu_id,
   return 0;
 }
 
-static int nvidia_gpu_collect_dev(struct stats *stats, int i, dcgm_data_t *dcgm_data)
+static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row)
 {
-  stats_set(stats, "temperature", I64_TO_LLU(dcgm_data[i].temperature));
-  stats_set(stats, "gpu_util", I64_TO_LLU(dcgm_data[i].gpu_util));
-  stats_set(stats, "mem_util", I64_TO_LLU(dcgm_data[i].mem_util));
-  stats_set(stats, "power_usage", DBL_TO_LLU(dcgm_data[i].power_usage));
-  stats_set(stats, "fp64_active", DBL_TO_LLU_PERCENT(dcgm_data[i].fp64_active));
-  stats_set(stats, "fp32_active", DBL_TO_LLU_PERCENT(dcgm_data[i].fp32_active));
-  stats_set(stats, "fp16_active", DBL_TO_LLU_PERCENT(dcgm_data[i].fp16_active));
-  stats_set(stats, "sm_active", DBL_TO_LLU_PERCENT(dcgm_data[i].sm_active));
-  stats_set(stats, "sm_occupancy", DBL_TO_LLU_PERCENT(dcgm_data[i].sm_occupancy));
-  stats_set(stats, "tensor_active", DBL_TO_LLU_PERCENT(dcgm_data[i].tensor_active));
-  stats_set(stats, "clocks_event_reasons", I64_TO_LLU(dcgm_data[i].clocks_event_reasons));
+  stats_set(stats, "temperature", I64_TO_LLU(row->temperature));
+  stats_set(stats, "gpu_util", I64_TO_LLU(row->gpu_util));
+  stats_set(stats, "mem_util", I64_TO_LLU(row->mem_util));
+  stats_set(stats, "power_usage", DBL_TO_LLU(row->power_usage));
+  stats_set(stats, "fp64_active", DBL_TO_LLU_PERCENT(row->fp64_active));
+  stats_set(stats, "fp32_active", DBL_TO_LLU_PERCENT(row->fp32_active));
+  stats_set(stats, "fp16_active", DBL_TO_LLU_PERCENT(row->fp16_active));
+  stats_set(stats, "sm_active", DBL_TO_LLU_PERCENT(row->sm_active));
+  stats_set(stats, "sm_occupancy", DBL_TO_LLU_PERCENT(row->sm_occupancy));
+  stats_set(stats, "tensor_active", DBL_TO_LLU_PERCENT(row->tensor_active));
+  stats_set(stats, "clocks_event_reasons", I64_TO_LLU(row->clocks_event_reasons));
   return 0;
 }
 
@@ -150,10 +153,17 @@ static void nvidia_gpu_collect(struct stats_type *type)
     goto out;
   }
 
-  rc = dcgmGroupCreate(dcgm_handle, DCGM_GROUP_DEFAULT, group_name, &group_id);
+  rc = dcgmGroupCreate(dcgm_handle, DCGM_GROUP_EMPTY, group_name, &group_id);
   if (rc != DCGM_ST_OK) {
     ERROR("DCGM group creation failed: %s\n", dcgm_err(rc));
     goto out;
+  }
+  for (i = 0; i < ndev; i++) {
+    rc = dcgmGroupAddDevice(dcgm_handle, group_id, gpu_ids[i]);
+    if (rc != DCGM_ST_OK) {
+      ERROR("DCGM group add device gpu_id=%u failed: %s\n", gpu_ids[i], dcgm_err(rc));
+      goto out;
+    }
   }
 
   rc = dcgmFieldGroupCreate(dcgm_handle,
@@ -173,7 +183,11 @@ static void nvidia_gpu_collect(struct stats_type *type)
   }
   usleep(10000000);
 
-  dcgm_data = (dcgm_data_t *) calloc((size_t) ndev, sizeof(*dcgm_data));
+  /*
+   * dcgmGetLatestValues passes each GPU's DCGM id (not 0..ndev-1) to list_field_values.
+   * Size the scratch array by DCGM_MAX_NUM_DEVICES so callbacks never write past the end.
+   */
+  dcgm_data = (dcgm_data_t *) calloc((size_t) DCGM_MAX_NUM_DEVICES, sizeof(*dcgm_data));
   if (dcgm_data == NULL) {
     ERROR("Failed to allocate DCGM data buffer\n");
     goto out;
@@ -188,11 +202,13 @@ static void nvidia_gpu_collect(struct stats_type *type)
   for (i = 0; i < ndev; i++) {
     struct stats *stats;
     char dev[80];
+    unsigned int gid = gpu_ids[i];
+
     snprintf(dev, sizeof(dev), "%d", i);
     stats = get_current_stats(type, dev);
     if (stats == NULL)
       continue;
-    if (nvidia_gpu_collect_dev(stats, i, dcgm_data) == 0)
+    if (nvidia_gpu_collect_dev(stats, &dcgm_data[gid]) == 0)
       nr++;
   }
 
