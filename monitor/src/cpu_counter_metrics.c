@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <time.h>
@@ -68,7 +69,16 @@ static unsigned long long *g_dcgm_inst = NULL;
 static unsigned long long *g_dcgm_aperf = NULL;
 static unsigned long long *g_dcgm_mperf = NULL;
 static long long *g_dcgm_last_ts = NULL;
-static long long *g_dcgm_wall_last_us = NULL;
+static long long g_dcgm_mono_prev_us = 0;
+
+struct dcgm_cpu_jifs {
+  unsigned long long u, nice, sys, idle, iow, irq, sft, stl, gu, gn;
+};
+
+static struct dcgm_cpu_jifs *g_dcjm_prev = NULL;
+static struct dcgm_cpu_jifs *g_dcjm_cur = NULL;
+static int g_dcgm_stat_seeded = 0;
+static FILE *g_dcgm_proc_stat = NULL;
 
 static const unsigned short g_dcgm_cpu_field_ids[] = {
   DCGM_FI_DEV_CPU_UTIL_TOTAL,
@@ -100,22 +110,14 @@ static double clamp_percent(double v)
   return v;
 }
 
-static double dcgm_cpu_nominal_freq_khz(int core_id)
+static double dcgm_cpu_read_khz_sysfs_path(const char *path)
 {
-  char path[128];
   char buf[40];
   int fd;
   ssize_t n;
   long long khz = 0;
 
-  snprintf(path, sizeof(path),
-	   "/sys/devices/system/cpu/cpu%d/cpufreq/base_frequency", core_id);
   fd = open(path, O_RDONLY);
-  if (fd < 0) {
-    snprintf(path, sizeof(path),
-	     "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", core_id);
-    fd = open(path, O_RDONLY);
-  }
   if (fd < 0)
     return 0.0;
   n = read(fd, buf, sizeof(buf) - 1);
@@ -126,6 +128,134 @@ static double dcgm_cpu_nominal_freq_khz(int core_id)
   if (sscanf(buf, "%lld", &khz) != 1 || khz <= 0)
     return 0.0;
   return (double) khz;
+}
+
+static double dcgm_cpu_nominal_freq_khz(int core_id)
+{
+  char path[160];
+  double khz;
+
+  snprintf(path, sizeof(path),
+	   "/sys/devices/system/cpu/cpu%d/cpufreq/base_frequency", core_id);
+  khz = dcgm_cpu_read_khz_sysfs_path(path);
+  if (khz > 0.0)
+    return khz;
+  snprintf(path, sizeof(path),
+	   "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", core_id);
+  khz = dcgm_cpu_read_khz_sysfs_path(path);
+  if (khz > 0.0)
+    return khz;
+  snprintf(path, sizeof(path),
+	   "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_max_freq", core_id);
+  khz = dcgm_cpu_read_khz_sysfs_path(path);
+  if (khz > 0.0)
+    return khz;
+  snprintf(path, sizeof(path),
+	   "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq", core_id);
+  khz = dcgm_cpu_read_khz_sysfs_path(path);
+  if (khz > 0.0)
+    return khz;
+  if (core_id != 0)
+    return dcgm_cpu_nominal_freq_khz(0);
+  return 0.0;
+}
+
+static unsigned long long dcgm_jifs_total(const struct dcgm_cpu_jifs *j)
+{
+  return j->u + j->nice + j->sys + j->idle + j->iow + j->irq + j->sft + j->stl + j->gu + j->gn;
+}
+
+static unsigned long long dcgm_jifs_nid(const struct dcgm_cpu_jifs *j)
+{
+  return j->u + j->nice + j->sys + j->irq + j->sft + j->stl + j->gu + j->gn;
+}
+
+static void dcgm_cpu_scale_util_if_fraction(struct dcgm_cpu_sample *s)
+{
+  if (s->util_total <= 0.0)
+    return;
+  if (s->util_total > 1.0001)
+    return;
+  s->util_total *= 100.0;
+  s->util_user *= 100.0;
+  s->util_nice *= 100.0;
+  s->util_sys *= 100.0;
+  s->util_irq *= 100.0;
+}
+
+static void dcgm_cpu_sample_from_jiffy_diff(struct dcgm_cpu_sample *s, const struct dcgm_cpu_jifs *cur,
+					    const struct dcgm_cpu_jifs *prev)
+{
+  unsigned long long pt = dcgm_jifs_total(prev);
+  unsigned long long ct = dcgm_jifs_total(cur);
+  unsigned long long pn = dcgm_jifs_nid(prev);
+  unsigned long long cn = dcgm_jifs_nid(cur);
+  unsigned long long d_tot, d_nid;
+  unsigned long long d_u, d_ni, d_sy, d_iq, d_sft;
+
+  if (ct < pt || cn < pn)
+    return;
+  d_tot = ct - pt;
+  d_nid = cn - pn;
+  if (d_tot == 0)
+    return;
+  s->util_total = clamp_percent(100.0 * (double) d_nid / (double) d_tot);
+  d_u = (cur->u >= prev->u) ? (cur->u - prev->u) : 0;
+  d_ni = (cur->nice >= prev->nice) ? (cur->nice - prev->nice) : 0;
+  d_sy = (cur->sys >= prev->sys) ? (cur->sys - prev->sys) : 0;
+  d_iq = (cur->irq >= prev->irq) ? (cur->irq - prev->irq) : 0;
+  d_sft = (cur->sft >= prev->sft) ? (cur->sft - prev->sft) : 0;
+  s->util_user = clamp_percent(100.0 * (double) (d_u + d_ni) / (double) d_tot);
+  s->util_sys = clamp_percent(100.0 * (double) d_sy / (double) d_tot);
+  s->util_irq = clamp_percent(100.0 * (double) (d_iq + d_sft) / (double) d_tot);
+  s->util_nice = 0.0;
+}
+
+static int dcgm_proc_stat_read_cpus(struct dcgm_cpu_jifs *out, int ncpus)
+{
+  char *line = NULL;
+  size_t line_size = 0;
+  int any = 0;
+
+  if (ncpus <= 0 || out == NULL)
+    return -1;
+  memset(out, 0, (size_t) ncpus * sizeof(*out));
+  if (g_dcgm_proc_stat == NULL) {
+    g_dcgm_proc_stat = fopen("/proc/stat", "re");
+    if (g_dcgm_proc_stat == NULL)
+      return -1;
+  }
+  rewind(g_dcgm_proc_stat);
+  clearerr(g_dcgm_proc_stat);
+  while (getline(&line, &line_size, g_dcgm_proc_stat) >= 0) {
+    char *p = line;
+    int idcpu = -1;
+
+    if (strncmp(p, "cpu", 3) != 0)
+      continue;
+    p += 3;
+    if (!isdigit((unsigned char) *p))
+      continue;
+    idcpu = (int) strtol(p, &p, 10);
+    if (idcpu < 0 || idcpu >= ncpus)
+      continue;
+    while (*p == ' ' || *p == '\t')
+      p++;
+    {
+      struct dcgm_cpu_jifs j;
+      int nf;
+
+      memset(&j, 0, sizeof(j));
+      nf = sscanf(p, "%llu %llu %llu %llu %llu %llu %llu %llu %llu %llu", &j.u, &j.nice, &j.sys,
+		  &j.idle, &j.iow, &j.irq, &j.sft, &j.stl, &j.gu, &j.gn);
+      if (nf < 4)
+	continue;
+      out[idcpu] = j;
+      any = 1;
+    }
+  }
+  free(line);
+  return any ? 0 : -1;
 }
 
 static int dcgm_cpu_fill_sample_from_v1(unsigned int nfields, const unsigned short *field_ids,
@@ -385,11 +515,12 @@ static int dcgm_backend_begin(struct stats_type *type)
   g_dcgm_aperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_aperf));
   g_dcgm_mperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_mperf));
   g_dcgm_last_ts = (long long *) calloc(n, sizeof(*g_dcgm_last_ts));
-  g_dcgm_wall_last_us = (long long *) calloc(n, sizeof(*g_dcgm_wall_last_us));
+  g_dcjm_prev = (struct dcgm_cpu_jifs *) calloc(n, sizeof(*g_dcjm_prev));
+  g_dcjm_cur = (struct dcgm_cpu_jifs *) calloc(n, sizeof(*g_dcjm_cur));
   if (g_dcgm_ctr0 == NULL || g_dcgm_ctr1 == NULL || g_dcgm_ctr2 == NULL ||
       g_dcgm_ctr3 == NULL || g_dcgm_ctr4 == NULL || g_dcgm_ctr5 == NULL ||
       g_dcgm_inst == NULL || g_dcgm_aperf == NULL || g_dcgm_mperf == NULL ||
-      g_dcgm_last_ts == NULL || g_dcgm_wall_last_us == NULL) {
+      g_dcgm_last_ts == NULL || g_dcjm_prev == NULL || g_dcjm_cur == NULL) {
     ERROR("DCGM CPU backend allocation failed\n");
     dcgm_cpu_watch_cleanup();
     if (g_dcgm_handle != (dcgmHandle_t) NULL) {
@@ -405,6 +536,8 @@ static int dcgm_backend_begin(struct stats_type *type)
   }
   if (dcgm_cpu_watch_install() != 0)
     TRACE("DCGM CPU watch not active; samples may use slower live queries\n");
+  g_dcgm_mono_prev_us = 0;
+  g_dcgm_stat_seeded = 0;
   g_dcgm_ready = 1;
   return 0;
 }
@@ -484,8 +617,25 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
   int i;
 
 #ifdef MONITOR_CPU_BACKEND_DCGM
+  long long delta_us_collect = 0;
+  int proc_stat_ok = 0;
+
   if (g_dcgm_ready && g_dcgm_cpu_nchunks > 0)
     (void) dcgmUpdateAllFields(g_dcgm_handle, 0);
+  if (g_dcgm_ready && g_dcjm_cur != NULL && g_dcjm_prev != NULL && nr_cpus > 0)
+    proc_stat_ok = (dcgm_proc_stat_read_cpus(g_dcjm_cur, nr_cpus) == 0);
+  if (g_dcgm_ready) {
+    struct timespec mono;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &mono) == 0) {
+      long long mono_us_collect =
+	  (long long) mono.tv_sec * 1000000LL + (long long) mono.tv_nsec / 1000LL;
+
+      if (g_dcgm_mono_prev_us > 0 && mono_us_collect > g_dcgm_mono_prev_us)
+	delta_us_collect = mono_us_collect - g_dcgm_mono_prev_us;
+      g_dcgm_mono_prev_us = mono_us_collect;
+    }
+  }
 #endif
   for (i = 0; i < nr_cpus; i++) {
     char cpu[80];
@@ -503,25 +653,33 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     ) {
 #ifdef MONITOR_CPU_BACKEND_DCGM
       struct dcgm_cpu_sample sample;
-      long long delta_us = 0;
-      struct timespec mono;
-      long long mono_us = 0;
+      long long delta_us = delta_us_collect;
+      int rd;
 
       memset(&sample, 0, sizeof(sample));
-      if (clock_gettime(CLOCK_MONOTONIC, &mono) == 0)
-        mono_us = (long long) mono.tv_sec * 1000000LL + (long long) mono.tv_nsec / 1000LL;
-      if (read_dcgm_cpu_sample(i, &sample) == 0) {
-        /* Prefer DCGM field timestamps; many ARM/embedded stacks leave ts at 0. */
-        if (sample.ts > 0) {
-          if (g_dcgm_last_ts[i] > 0 && sample.ts > g_dcgm_last_ts[i])
-            delta_us = sample.ts - g_dcgm_last_ts[i];
-          g_dcgm_last_ts[i] = sample.ts;
-        } else if (mono_us > 0) {
-          if (g_dcgm_wall_last_us[i] > 0 && mono_us > g_dcgm_wall_last_us[i])
-            delta_us = mono_us - g_dcgm_wall_last_us[i];
-          g_dcgm_wall_last_us[i] = mono_us;
-        }
+      rd = read_dcgm_cpu_sample(i, &sample);
+      if (rd == 0)
+	dcgm_cpu_scale_util_if_fraction(&sample);
+      if ((rd != 0 || sample.util_total <= 0.0) && proc_stat_ok && g_dcgm_stat_seeded)
+	dcgm_cpu_sample_from_jiffy_diff(&sample, &g_dcjm_cur[i], &g_dcjm_prev[i]);
+
+      if (rd == 0 && sample.ts > 0) {
+	if (g_dcgm_last_ts[i] > 0 && sample.ts > g_dcgm_last_ts[i]) {
+	  long long dts = sample.ts - g_dcgm_last_ts[i];
+
+	  if (dts > 0 && dts < 3600LL * 1000000LL)
+	    delta_us = dts;
+	}
+	g_dcgm_last_ts[i] = sample.ts;
       }
+
+      if (sample.clock_khz <= 0.0)
+	sample.clock_khz = dcgm_cpu_nominal_freq_khz(i);
+      /* If there is no cpufreq sysfs (common on some ARM hosts), still advance counters
+       * using a neutral scale: ref_cycles ~= delta_us when clock_khz == 1000. */
+      if (sample.clock_khz <= 0.0)
+	sample.clock_khz = 1000.0;
+
       dcgm_accumulate_from_util_sample(i, &sample, delta_us);
       publish_dcgm_cpu_stats(stats, i);
       continue;
@@ -535,6 +693,12 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     fallback_fill(stats, cpu);
 #endif
   }
+#ifdef MONITOR_CPU_BACKEND_DCGM
+  if (g_dcgm_ready && proc_stat_ok && g_dcjm_prev != NULL && g_dcjm_cur != NULL && nr_cpus > 0) {
+    memcpy(g_dcjm_prev, g_dcjm_cur, (size_t) nr_cpus * sizeof(*g_dcjm_prev));
+    g_dcgm_stat_seeded = 1;
+  }
+#endif
 }
 
 struct stats_type cpu_counter_metrics_stats_type = {
