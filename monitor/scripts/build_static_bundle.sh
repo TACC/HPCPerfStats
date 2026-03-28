@@ -20,6 +20,11 @@
 # Pinned versions: edit STATIC_PIN_* below. Runtime overrides: LIBEV_VER,
 # RABBITMQ_VER, LIKWID_TAG, and *_URL_FMT for mirrors.
 #
+# Architecture:
+#   x86_64 / i686: builds LIKWID static libs and configures --with-cpu-counter-backend=likwid.
+#   Other (e.g. aarch64, arm64): builds libev + rabbitmq-c only; configures with
+#   --with-cpu-counter-backend=dcgm (requires NVIDIA DCGM dev packages on the system).
+#
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -86,6 +91,14 @@ fetch_url() {
     exit 1
   fi
   fetch_url_validate_gzip "${dest}" "${url}"
+}
+
+# True when this host matches monitor configure's x86 LIKWID backend (see configure.ac is_x86).
+is_x86_build_host() {
+  case "$(uname -m)" in
+  x86_64 | i?86) return 0 ;;
+  *) return 1 ;;
+  esac
 }
 
 mkdir -p "${SRCDIR}" "${PREFIX}/include" "${PREFIX}/lib" "${PREFIX}/lib/pkgconfig"
@@ -163,22 +176,32 @@ build_monitor() {
   export CPPFLAGS="-I${PREFIX}/include ${CPPFLAGS:-}"
   export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
   # Prefer static archives from our tree (no RPATH to PREFIX for runtime).
-  "${MONITOR_DIR}/configure" \
-    --enable-all-static \
-    --with-systemduserunitdir=no \
-    --disable-lustre \
-    --disable-infiniband \
-    --disable-mic \
-    --disable-gpu \
-    --disable-amd-gpu \
-    --disable-opa \
-    --with-cpu-counter-backend=likwid \
-    "$@"
+  local -a cfg=(
+    --enable-all-static
+    --with-systemduserunitdir=no
+    --disable-lustre
+    --disable-infiniband
+    --disable-mic
+    --disable-gpu
+    --disable-amd-gpu
+    --disable-opa
+  )
+  if is_x86_build_host; then
+    cfg+=(--with-cpu-counter-backend=likwid)
+  else
+    cfg+=(--with-cpu-counter-backend=dcgm)
+    echo "Non-x86 host ($(uname -m)): using DCGM CPU backend; ensure libdcgm and DCGM headers are installed." >&2
+  fi
+  "${MONITOR_DIR}/configure" "${cfg[@]}" "$@"
   make -j"${JOBS}"
   echo ""
   echo "Built: ${MONITOR_DIR}/.build-static/src/hpcperfstatsd"
   if command -v ldd >/dev/null 2>&1; then
-    echo "Dynamic dependencies (expect mostly libc/libpthread only):"
+    if is_x86_build_host; then
+      echo "Dynamic dependencies (expect mostly libc/libpthread only):"
+    else
+      echo "Dynamic dependencies (expect system libc and libdcgm, among others):"
+    fi
     ldd "${MONITOR_DIR}/.build-static/src/hpcperfstatsd" || true
   fi
 }
@@ -188,11 +211,22 @@ print_notes() {
 
 Notes
 -----
+EOF
+  if is_x86_build_host; then
+    cat <<'EOF'
 - This path links rabbitmq-c, libev, and LIKWID statically into hpcperfstatsd.
   LIKWID's static lib embeds bundled Lua and internal hwloc objects; configure also
   pulls -llikwid-hwloc and -llikwid-lua when using --enable-all-static.
 - The monitor uses LIKWID ACCESSMODE_DIRECT for MSR access (PMU + RAPL); run with
   privileges appropriate for MSR access on your site.
+EOF
+  else
+    cat <<'EOF'
+- On non-x86, this path links rabbitmq-c and libev statically; the CPU counter backend is
+  DCGM (system libdcgm), not LIKWID. Install NVIDIA DCGM development packages if configure fails.
+EOF
+  fi
+  cat <<'EOF'
 - Configure routes shared-only stacks after -Wl,-Bdynamic when using
   --enable-all-static: DCGM, Infiniband (libibmad), Omni-Path / OPA (verbs,
   umad, mad, oib_utils, public), and Intel MIC (libmicmgmt). GPUPerfAPI (AMD)
@@ -211,10 +245,15 @@ EOF
 
 build_static_dependencies() {
   if test "${SKIP_DEPS}" != "1"; then
-    echo "Pinned static deps: libev=${LIBEV_VER} rabbitmq-c=${RABBITMQ_VER} likwid=${LIKWID_TAG}"
+    echo "Pinned static deps: libev=${LIBEV_VER} rabbitmq-c=${RABBITMQ_VER}"
     build_libev
     build_rabbitmq_c
-    build_likwid
+    if is_x86_build_host; then
+      echo "Pinned static deps (x86): likwid=${LIKWID_TAG}"
+      build_likwid
+    else
+      echo "Skipping LIKWID build on $(uname -m) (monitor uses DCGM CPU backend here, not LIKWID)." >&2
+    fi
   fi
 }
 
@@ -222,7 +261,7 @@ usage_exit() {
   cat <<EOF
 Usage: $(basename "$0") [--deps-only] [CONFIGURE_ARGS...]
 
-  --deps-only   Build and install static archives (libev, rabbitmq-c, LIKWID)
+  --deps-only   Build and install static archives (libev, rabbitmq-c, and LIKWID on x86)
                 into PREFIX only. Use this when monitor configure
                 --enable-all-static fails at link time with missing static .a
                 archives.
@@ -254,19 +293,15 @@ main() {
     esac
   done
 
-  case "$(uname -m)" in
-    x86_64|i?86) ;;
-    *)
-      echo "This bundle targets x86 with LIKWID. On ARM/other, omit this script and use the DCGM path with shared libs." >&2
-      exit 1
-      ;;
-  esac
-
   build_static_dependencies
   if test "${deps_only}" = "1"; then
     echo ""
     echo "Static dependency install complete: PREFIX=${PREFIX}"
-    echo "Expected archives include: libev.a librabbitmq.a liblikwid.a liblikwid-hwloc.a liblikwid-lua.a"
+    if is_x86_build_host; then
+      echo "Expected archives include: libev.a librabbitmq.a liblikwid.a liblikwid-hwloc.a liblikwid-lua.a"
+    else
+      echo "Expected archives include: libev.a librabbitmq.a (LIKWID not built on this architecture)."
+    fi
     echo "Configure the monitor with the same PREFIX in CPPFLAGS/LDFLAGS, then make (default --enable-all-static)."
     print_notes
     exit 0
