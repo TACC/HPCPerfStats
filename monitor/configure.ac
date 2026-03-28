@@ -263,10 +263,9 @@ if test "x$gpu" = "xauto"; then
   gpu_autodetect_result="no-nvidia"
   AC_PATH_PROG([LSPCI], [lspci], [no])
   if test "x$LSPCI" != "xno"; then
-    if $LSPCI -nn 2>/dev/null | awk '{
-      l=tolower($0);
-      if ((index(l, "vga compatible controller") || index(l, "3d controller")) && index(l, "nvidia")) found=1
-    } END { exit(found ? 0 : 1) }'; then
+    dnl Use match() not index(): m4 treats index() as a macro and corrupts configure.
+    dnl Match common PCI classes for NVIDIA GPUs (3D, Display, Processing accelerators, VGA).
+    if $LSPCI -nn 2>/dev/null | awk '{ l=tolower($0); if ((match(l,/vga compatible controller/) || match(l,/3d controller/) || match(l,/display controller/) || match(l,/processing accelerators/)) && match(l,/nvidia/)) found=1 } END { exit(found ? 0 : 1) }'; then
       gpu=true
       gpu_autodetect_result="nvidia-found"
     fi
@@ -326,11 +325,7 @@ if test "x$amd_gpu" = "xauto"; then
   amd_gpu_autodetect_result="no-amd"
   AC_PATH_PROG([LSPCI], [lspci], [no])
   if test "x$LSPCI" != "xno"; then
-    if $LSPCI -nn 2>/dev/null | awk '{
-      l=tolower($0);
-      if ((index(l, "vga compatible controller") || index(l, "3d controller")) &&
-          (index(l, "advanced micro devices") || index(l, " amd/ati "))) found=1
-    } END { exit(found ? 0 : 1) }'; then
+    if $LSPCI -nn 2>/dev/null | awk '{ l=tolower($0); if ((match(l,/vga compatible controller/) || match(l,/3d controller/) || match(l,/display controller/) || match(l,/processing accelerators/)) && (match(l,/advanced micro devices/) || match(l,/ amd\/ati /))) found=1 } END { exit(found ? 0 : 1) }'; then
       amd_gpu=true
       amd_gpu_autodetect_result="amd-found"
     fi

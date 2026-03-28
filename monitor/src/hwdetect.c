@@ -35,7 +35,9 @@ void auto_disable_optional_stats_by_lspci(void)
   while (fgets(line, sizeof(line), fp) != NULL) {
     to_lower_ascii(line);
     if (strstr(line, "vga compatible controller") != NULL ||
-        strstr(line, "3d controller") != NULL) {
+        strstr(line, "3d controller") != NULL ||
+        strstr(line, "display controller") != NULL ||
+        strstr(line, "processing accelerators") != NULL) {
       if (strstr(line, "nvidia") != NULL)
         has_nvidia_gpu = 1;
       if (strstr(line, "advanced micro devices") != NULL ||

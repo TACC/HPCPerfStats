@@ -20,6 +20,12 @@
 #                   (default: remove it so a prior failed/partial monitor build cannot
 #                   poison the next run)
 #
+# GPU: configure uses --enable-gpu=auto (default). If lspci on the build host shows an
+# NVIDIA GPU and libdcgm is available, nvidia_gpu is compiled in (links libdcgm after
+# -Wl,-Bdynamic). Build on a GPU-less login node without libdcgm: pass --disable-gpu
+# as an extra CONFIGURE_ARGS, or build on a node that has both. Cross-deploy: use
+# --enable-gpu so the GPU path is built whenever libdcgm is present, independent of lspci.
+#
 # Pinned versions: edit STATIC_PIN_* below. Runtime overrides: LIBEV_VER,
 # RABBITMQ_VER, LIKWID_TAG, and *_URL_FMT for mirrors.
 #
@@ -194,7 +200,6 @@ build_monitor() {
     --disable-lustre
     --disable-infiniband
     --disable-mic
-    --disable-gpu
     --disable-amd-gpu
     --disable-opa
   )
