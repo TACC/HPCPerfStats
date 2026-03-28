@@ -32,11 +32,19 @@ static void test_strsep_ne_skips_empty_tokens(void)
   assert(strsep_ne(&p, ",") == NULL);
 }
 
+static void test_str_trim_inplace_strips_tabs_ends(void)
+{
+  char h[] = "\tstats.example\t\n";
+  str_trim_inplace(h);
+  assert(strcmp(h, "stats.example") == 0);
+}
+
 int main(void)
 {
   test_wsep_splits_on_space_and_tab();
   test_wsep_skips_consecutive_delims();
   test_strsep_ne_skips_empty_tokens();
+  test_str_trim_inplace_strips_tabs_ends();
   printf("test_string1 passed\n");
   return 0;
 }

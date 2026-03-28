@@ -1,4 +1,3 @@
-#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <malloc.h>
@@ -52,24 +51,6 @@ processor_t processor = (processor_t) 0;
 
 static void send_dumpfile_stats(struct sf_ring_buffer *w);
 static int save_file_stats_buffer(struct stats_buffer *sf);
-
-/* Trim leading/trailing isspace(3) in place so host/port survive tabs in conf files. */
-static void monitor_conf_trim_value(char *s)
-{
-  char *p;
-  size_t len;
-
-  if (s == NULL || *s == '\0')
-    return;
-  p = s;
-  while (*p != '\0' && isspace((unsigned char)*p))
-    p++;
-  if (p != s)
-    memmove(s, p, strlen(p) + 1);
-  len = strlen(s);
-  while (len > 0 && isspace((unsigned char)s[len - 1]))
-    s[--len] = '\0';
-}
 
 /* Tier B: rate-limit repetitive operational logs on hot paths (ring/dumpfile resend). */
 #ifdef DEBUG
@@ -240,10 +221,18 @@ int read_conf_file(void)
   size_t line_buf_size = 0;
   while (getline(&line_buf, &line_buf_size, conf_file_fd) >= 0) {
     char *line = line_buf;
-    char *key = strsep(&line, " :\t=");
+    char *key;
+
+    str_trim_inplace(line_buf);
+    if (line_buf[0] == '\0')
+      continue;
+    key = strsep(&line, " :\t=");
     if (key == NULL || line == NULL)
       continue;
-    monitor_conf_trim_value(line);
+    str_trim_inplace(key);
+    str_trim_inplace(line);
+    if (key[0] == '\0')
+      continue;
     if (strcmp(key, "server") == 0) {
       free(server);
       server = strdup(line);

@@ -528,6 +528,8 @@ int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *por
 {
   int rc = 0;
   memset(sf, 0, sizeof(*sf));
+  if (host == NULL || port == NULL || queue == NULL || user == NULL || password == NULL)
+    return -1;
   sf->sf_data = strdup("");
   if (sf->sf_data == NULL)
     return -1;
@@ -540,6 +542,16 @@ int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *por
   sf->sf_password = strdup(password);
   if (sf->sf_host == NULL || sf->sf_port == NULL || sf->sf_queue == NULL
       || sf->sf_user == NULL || sf->sf_password == NULL) {
+    stats_buffer_close(sf);
+    return -1;
+  }
+  /* Strip whitespace/tabs so getaddrinfo sees a valid host (config/CLI copy-paste). */
+  str_trim_inplace(sf->sf_host);
+  str_trim_inplace(sf->sf_port);
+  str_trim_inplace(sf->sf_queue);
+  str_trim_inplace(sf->sf_user);
+  if (sf->sf_host[0] == '\0' || sf->sf_port[0] == '\0' || sf->sf_queue[0] == '\0'
+      || sf->sf_user[0] == '\0') {
     stats_buffer_close(sf);
     return -1;
   }

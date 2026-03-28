@@ -3,6 +3,25 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <ctype.h>
+
+/* Leading/trailing isspace(3); safe for in-place trim of strdup'd config fields. */
+static inline void str_trim_inplace(char *s)
+{
+  char *p;
+  size_t len;
+
+  if (s == NULL || *s == '\0')
+    return;
+  p = s;
+  while (*p != '\0' && isspace((unsigned char)*p))
+    p++;
+  if (p != s)
+    memmove(s, p, strlen(p) + 1);
+  len = strlen(s);
+  while (len > 0 && isspace((unsigned char)s[len - 1]))
+    s[--len] = '\0';
+}
 
 static inline char *strsep_ne(char **ref, const char *delim)
 {
