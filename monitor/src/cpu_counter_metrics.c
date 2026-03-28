@@ -5,6 +5,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <time.h>
 #include "stats.h"
 #include "trace.h"
 #include "cpuid.h"
@@ -42,6 +43,7 @@ static unsigned long long *g_dcgm_inst = NULL;
 static unsigned long long *g_dcgm_aperf = NULL;
 static unsigned long long *g_dcgm_mperf = NULL;
 static long long *g_dcgm_last_ts = NULL;
+static long long *g_dcgm_wall_last_us = NULL;
 
 struct dcgm_cpu_sample {
   double util_total;
@@ -92,6 +94,8 @@ static int read_dcgm_cpu_sample(int core_id, struct dcgm_cpu_sample *s)
   };
   dcgmFieldValue_v1 values[sizeof(field_ids) / sizeof(field_ids[0])];
   unsigned int f;
+  int ok_util = 0;
+  int ok_clock = 0;
   memset(s, 0, sizeof(*s));
   memset(values, 0, sizeof(values));
   /* dcgmEntityGetLatestValues is the stable name in dcgm_agent.h; some stacks only
@@ -105,18 +109,32 @@ static int read_dcgm_cpu_sample(int core_id, struct dcgm_cpu_sample *s)
     return -1;
 
   for (f = 0; f < (unsigned int) (sizeof(field_ids) / sizeof(field_ids[0])); f++) {
-    double v = (values[f].fieldType == DCGM_FT_DOUBLE) ? values[f].value.dbl : (double) values[f].value.i64;
+    double v;
+
+    if (values[f].status != DCGM_ST_OK)
+      continue;
+    v = (values[f].fieldType == DCGM_FT_DOUBLE) ? values[f].value.dbl : (double) values[f].value.i64;
     if (values[f].ts > s->ts)
       s->ts = values[f].ts;
     switch (field_ids[f]) {
-      case DCGM_FI_DEV_CPU_UTIL_TOTAL: s->util_total = clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_TOTAL:
+        s->util_total = clamp_percent(v);
+        ok_util = 1;
+        break;
       case DCGM_FI_DEV_CPU_UTIL_USER: s->util_user = clamp_percent(v); break;
       case DCGM_FI_DEV_CPU_UTIL_NICE: s->util_nice = clamp_percent(v); break;
       case DCGM_FI_DEV_CPU_UTIL_SYS: s->util_sys = clamp_percent(v); break;
       case DCGM_FI_DEV_CPU_UTIL_IRQ: s->util_irq = clamp_percent(v); break;
-      case DCGM_FI_DEV_CPU_CLOCK_CURRENT: s->clock_khz = (v < 0.0) ? 0.0 : v; break;
+      case DCGM_FI_DEV_CPU_CLOCK_CURRENT:
+        s->clock_khz = (v < 0.0) ? 0.0 : v;
+        ok_clock = 1;
+        break;
       default: break;
     }
+  }
+  if (!ok_util || !ok_clock) {
+    memset(s, 0, sizeof(*s));
+    return -1;
   }
   return 0;
 }
@@ -187,10 +205,11 @@ static int dcgm_backend_begin(struct stats_type *type)
   g_dcgm_aperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_aperf));
   g_dcgm_mperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_mperf));
   g_dcgm_last_ts = (long long *) calloc(n, sizeof(*g_dcgm_last_ts));
+  g_dcgm_wall_last_us = (long long *) calloc(n, sizeof(*g_dcgm_wall_last_us));
   if (g_dcgm_ctr0 == NULL || g_dcgm_ctr1 == NULL || g_dcgm_ctr2 == NULL ||
       g_dcgm_ctr3 == NULL || g_dcgm_ctr4 == NULL || g_dcgm_ctr5 == NULL ||
       g_dcgm_inst == NULL || g_dcgm_aperf == NULL || g_dcgm_mperf == NULL ||
-      g_dcgm_last_ts == NULL) {
+      g_dcgm_last_ts == NULL || g_dcgm_wall_last_us == NULL) {
     ERROR("DCGM CPU backend allocation failed\n");
     type->st_enabled = 0;
     return 0;
@@ -289,10 +308,23 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
 #ifdef MONITOR_CPU_BACKEND_DCGM
       struct dcgm_cpu_sample sample;
       long long delta_us = 0;
+      struct timespec mono;
+      long long mono_us = 0;
+
+      memset(&sample, 0, sizeof(sample));
+      if (clock_gettime(CLOCK_MONOTONIC, &mono) == 0)
+        mono_us = (long long) mono.tv_sec * 1000000LL + (long long) mono.tv_nsec / 1000LL;
       if (read_dcgm_cpu_sample(i, &sample) == 0) {
-        if (g_dcgm_last_ts[i] > 0 && sample.ts > g_dcgm_last_ts[i])
-          delta_us = sample.ts - g_dcgm_last_ts[i];
-        g_dcgm_last_ts[i] = sample.ts;
+        /* Prefer DCGM field timestamps; many ARM/embedded stacks leave ts at 0. */
+        if (sample.ts > 0) {
+          if (g_dcgm_last_ts[i] > 0 && sample.ts > g_dcgm_last_ts[i])
+            delta_us = sample.ts - g_dcgm_last_ts[i];
+          g_dcgm_last_ts[i] = sample.ts;
+        } else if (mono_us > 0) {
+          if (g_dcgm_wall_last_us[i] > 0 && mono_us > g_dcgm_wall_last_us[i])
+            delta_us = mono_us - g_dcgm_wall_last_us[i];
+          g_dcgm_wall_last_us[i] = mono_us;
+        }
       }
       dcgm_accumulate_from_util_sample(i, &sample, delta_us);
       publish_dcgm_cpu_stats(stats, i);
