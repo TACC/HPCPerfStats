@@ -170,8 +170,11 @@ if test "x$cpu_counter_backend" = "xdcgm"; then
       [AC_MSG_ERROR([Unable to find libdcgm (required for DCGM CPU backend)])])
   fi
   if test "x${have_dcgm}" = xyes; then
+    save_CPPFLAGS=$CPPFLAGS
+    CPPFLAGS="-I${srcdir}/third_party/nvidia-dcgm ${CPPFLAGS}"
     AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [dcgm_headers=true],
-      [AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h for DCGM CPU backend])])
+      [AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h for DCGM CPU backend (see third_party/nvidia-dcgm/README)])])
+    CPPFLAGS=$save_CPPFLAGS
   fi
   dcgm_checked=true
   CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_DCGM"
@@ -288,8 +291,11 @@ if test "x$gpu" = "xtrue"; then
         [AC_MSG_ERROR([Unable to find libdcgm!])])
     fi
     if test "x${have_gpu}" = xyes; then
+      save_CPPFLAGS=$CPPFLAGS
+      CPPFLAGS="-I${srcdir}/third_party/nvidia-dcgm ${CPPFLAGS}"
       AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [gpu=true],
-        [AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h on this system!])])
+        [AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h (see third_party/nvidia-dcgm/README)])])
+      CPPFLAGS=$save_CPPFLAGS
     fi
   else
     gpu=true
@@ -302,6 +308,8 @@ else
   AC_MSG_NOTICE([GPU summary: disabled; detect=${gpu_autodetect_result}])
 fi
 AM_CONDITIONAL([GPU], [test x$gpu = xtrue])
+AM_CONDITIONAL([MONITOR_USE_DCGM_VENDOR_INCLUDES],
+  [test "x$cpu_counter_backend" = "xdcgm" -o "x$gpu" = "xtrue"])
 
 AC_ARG_ENABLE([amd-gpu],
 [  --enable-amd-gpu	Enable AMD GPU support via GPUPerfAPI (default is auto-detect)],

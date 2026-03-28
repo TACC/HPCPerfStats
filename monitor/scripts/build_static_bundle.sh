@@ -23,7 +23,9 @@
 # Architecture:
 #   x86_64 / i686: builds LIKWID static libs and configures --with-cpu-counter-backend=likwid.
 #   Other (e.g. aarch64, arm64): builds libev + rabbitmq-c only; configures with
-#   --with-cpu-counter-backend=dcgm (requires NVIDIA DCGM dev packages on the system).
+#   --with-cpu-counter-backend=dcgm. DCGM C headers are vendored under
+#   monitor/third_party/nvidia-dcgm (from NVIDIA gpu-monitoring-tools bindings); you still
+#   need libdcgm from NVIDIA DCGM at link/runtime.
 #
 set -euo pipefail
 
@@ -190,7 +192,7 @@ build_monitor() {
     cfg+=(--with-cpu-counter-backend=likwid)
   else
     cfg+=(--with-cpu-counter-backend=dcgm)
-    echo "Non-x86 host ($(uname -m)): using DCGM CPU backend; ensure libdcgm and DCGM headers are installed." >&2
+    echo "Non-x86 host ($(uname -m)): using DCGM CPU backend; ensure libdcgm is available (dcgm_agent.h is vendored in third_party/nvidia-dcgm)." >&2
   fi
   "${MONITOR_DIR}/configure" "${cfg[@]}" "$@"
   make -j"${JOBS}"
@@ -223,7 +225,8 @@ EOF
   else
     cat <<'EOF'
 - On non-x86, this path links rabbitmq-c and libev statically; the CPU counter backend is
-  DCGM (system libdcgm), not LIKWID. Install NVIDIA DCGM development packages if configure fails.
+  DCGM (system libdcgm), not LIKWID. C headers ship under third_party/nvidia-dcgm; you still
+  need libdcgm from NVIDIA DCGM. Match header and library generations when possible.
 EOF
   fi
   cat <<'EOF'

@@ -1,0 +1,24 @@
+DCGM C API headers vendored for monitor builds that link against libdcgm but do not
+have a system dcgm-dev / datacenter-gpu-manager-devel package (typical on minimal
+ARM images or static-bundle workflows).
+
+Source repository (archived; headers remain the public C API surface the Go bindings
+used for cgo):
+
+  https://github.com/NVIDIA/gpu-monitoring-tools
+
+Path in that tree: bindings/go/dcgm/
+
+Pinned snapshot commit: 5a2c58442e48254950178d0c2693ba45b297034b
+
+Files copied (include order is dcgm_agent.h -> dcgm_structs.h -> dcgm_fields.h):
+
+  dcgm_agent.h
+  dcgm_structs.h
+  dcgm_fields.h
+
+License: Apache-2.0 (see SPDX headers in each file).
+
+Runtime: you still need a compatible libdcgm from NVIDIA DCGM; headers only satisfy
+the compiler. Mismatch between header and library versions can cause build or runtime
+issues; prefer system headers when your distro ships them.

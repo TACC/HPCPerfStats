@@ -26,6 +26,11 @@ hpcperfstatsd_CPPFLAGS = \
 	-DJOBID_FILE_PATH=\"$(JOBID_FILE_PATH)\" \
 	@CPU_COUNTER_BACKEND_CPPFLAG@
 
+if MONITOR_USE_DCGM_VENDOR_INCLUDES
+hpcperfstatsd_CPPFLAGS += \
+	-I$(top_srcdir)/third_party/nvidia-dcgm
+endif
+
 if DEBUG
 hpcperfstatsd_CPPFLAGS += \
 	-DDEBUG
