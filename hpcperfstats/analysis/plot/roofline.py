@@ -11,7 +11,11 @@ import numpy
 from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.plotting import figure
 
-from hpcperfstats.analysis.gen.utils import INTEL_IMC_STATS_TYPES
+from hpcperfstats.analysis.gen.utils import (
+    INTEL_CORE_PMC_TYPES_ORDERED,
+    INTEL_FP_ARITH_ALL_EVENTS,
+    INTEL_IMC_STATS_TYPES,
+)
 
 # Intel SSE/AVX double FLOP proxy events (SNB/IVB-style; pre-FP_ARITH uarch).
 _INTEL_LEGACY_SSE_FLOP_EVENTS = (
@@ -63,21 +67,12 @@ def _merge_weighted_event_arcs(jt, intel_typ, event_weights, attempts, label):
 
 
 def _intel_fp_arith_flops_gf(jt, attempts):
-    """GFLOP/s from summed FP_ARITH_INST_RETIRED_* on intel_8pmc3 or intel_4pmc3."""
-    fp_events = [
-        "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",
-        "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE",
-        "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE",
-        "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE",
-        "FP_ARITH_INST_RETIRED_SCALAR_SINGLE",
-        "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE",
-        "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE",
-        "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
-    ]
-    for intel_typ in ("intel_8pmc3", "intel_4pmc3"):
-        cand, cand_src = _aggregate_arc(jt, intel_typ, fp_events, 1e-9)
+    """GFLOP/s from summed FP_ARITH_INST_RETIRED_* on Intel PMC or cpu_counter_metrics."""
+    fp_events = list(INTEL_FP_ARITH_ALL_EVENTS)
+    for core_typ in INTEL_CORE_PMC_TYPES_ORDERED:
+        cand, cand_src = _aggregate_arc(jt, core_typ, fp_events, 1e-9)
         attempts.append(
-            f"intel_fp_arith:{intel_typ} rows(flops={len(cand.index)}) src={cand_src}"
+            f"intel_fp_arith:{core_typ} rows(flops={len(cand.index)}) src={cand_src}"
         )
         if not cand.empty and "sum_val" in cand.columns:
             return cand.rename(columns={"sum_val": "flops_gf"})[
@@ -88,10 +83,10 @@ def _intel_fp_arith_flops_gf(jt, attempts):
 
 def _intel_legacy_sse_flops_gf(jt, attempts):
     """GFLOP/s from SNB/IVB-style SSE/AVX double events when FP_ARITH is absent."""
-    for intel_typ in ("intel_8pmc3", "intel_4pmc3"):
+    for core_typ in INTEL_CORE_PMC_TYPES_ORDERED:
         merged = _merge_weighted_event_arcs(
             jt,
-            intel_typ,
+            core_typ,
             _INTEL_LEGACY_SSE_FLOP_EVENTS,
             attempts,
             "intel_legacy_sse",

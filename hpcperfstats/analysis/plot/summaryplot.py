@@ -11,7 +11,13 @@ log = logging.getLogger(__name__)
 
 from pandas import to_datetime
 
-from hpcperfstats.analysis.gen.utils import tz_aware_bokeh_tick_formatter
+from hpcperfstats.analysis.gen.utils import (
+    INTEL_CORE_PMC_TYPES_ORDERED,
+    INTEL_FP_ARITH_DOUBLE_EVENTS,
+    INTEL_FP_ARITH_SINGLE_EVENTS,
+    INTEL_IMC_STATS_TYPES,
+    tz_aware_bokeh_tick_formatter,
+)
 
 from bokeh.layouts import gridplot
 from bokeh.models import ColumnDataSource, HoverTool, Range1d
@@ -35,49 +41,167 @@ def _hover_tooltip_html(value_label, value_field):
   """
 
 
+_CAS_BW_CONV = 64 / (1024 * 1024 * 1024)
+
+
+def _intel_core_tries(events, conv):
+  """(typename, events, conv) rows for intel_8pmc3, intel_4pmc3, cpu_counter_metrics."""
+  ev = list(events)
+  return [(t, ev, conv) for t in INTEL_CORE_PMC_TYPES_ORDERED]
+
+
+# One aggregate per row (fixed typename); used for AMD, fabric, etc.
+_SUMMARY_SINGLE_SPECS = [
+    ("amd64_pmc", "arc", ["FLOPS"], "amd_flops", 1e-9, "FLOPS32b+64b[GF]"),
+    (
+        "amd64_df",
+        "arc",
+        [
+            "MBW_CHANNEL_0",
+            "MBW_CHANNEL_1",
+            "MBW_CHANNEL_2",
+            "MBW_CHANNEL_3",
+        ],
+        "amd_mbw",
+        2 / (1024 * 1024 * 1024),
+        "DRAMBW[GB/s]",
+    ),
+    ("amd64_pmc", "value", ["INST_RETIRED"], "amd_instr", 1, "[#/s]"),
+    ("amd64_pmc", "arc", ["MPERF"], "amd_mcycles", 1, "[#/s]"),
+    ("amd64_pmc", "arc", ["APERF"], "amd_acycles", 1, "[#/s]"),
+    (
+        "intel_rapl",
+        "arc",
+        ["MSR_PKG_ENERGY_STATUS"],
+        "watts",
+        0.00001526,
+        "[watts]",
+    ),
+    (
+        "ib_ext",
+        "arc",
+        ["port_rcv_data", "port_xmit_data"],
+        "ibbw",
+        1 / (1024 * 1024),
+        "FabricBW[MB/s]",
+    ),
+    (
+        "llite",
+        "arc",
+        [
+            "open",
+            "close",
+            "mmap",
+            "fsync",
+            "setattr",
+            "truncate",
+            "flock",
+            "getattr",
+            "statfs",
+            "alloc_inode",
+            "setxattr",
+            "listxattr",
+            "removexattr",
+            "readdir",
+            "create",
+            "lookup",
+            "link",
+            "unlink",
+            "symlink",
+            "mkdir",
+            "rmdir",
+            "mknod",
+            "rename",
+        ],
+        "liops",
+        1,
+        "LustreIOPS[#/s]",
+    ),
+    ("llite", "arc", ["read_bytes", "write_bytes"], "lbw",
+     1 / (1024 * 1024), "LustreBW[MB/s]"),
+    ("cpu", "arc", ["user", "system", "nice"], "cpu", 0.01,
+     "CPU Usage [#cores]"),
+    ("mem", "value", ["MemUsed"], "mem", 1 / (1024 * 1024), "MemUsed[GB]"),
+]
+
+# First typename with full host/time coverage wins (same column name).
+_SUMMARY_FIRST_WIN_SPECS = (
+    {
+        "name": "flops64b",
+        "val_col": "arc",
+        "label": "FLOPS64b[GF]",
+        "tries": _intel_core_tries(INTEL_FP_ARITH_DOUBLE_EVENTS, 1e-9),
+    },
+    {
+        "name": "flops32b",
+        "val_col": "arc",
+        "label": "FLOPS32b[GF]",
+        "tries": _intel_core_tries(INTEL_FP_ARITH_SINGLE_EVENTS, 1e-9),
+    },
+    {
+        "name": "instr",
+        "val_col": "arc",
+        "label": "[#/s]",
+        "tries": _intel_core_tries(["INST_RETIRED"], 1),
+    },
+    {
+        "name": "mcycles",
+        "val_col": "arc",
+        "label": "[#/s]",
+        "tries": _intel_core_tries(["MPERF"], 1),
+    },
+    {
+        "name": "acycles",
+        "val_col": "arc",
+        "label": "[#/s]",
+        "tries": _intel_core_tries(["APERF"], 1),
+    },
+)
+
+
+def _summary_intel_imc_bw_tries():
+  """Intel DRAM BW: first IMC type in INTEL_IMC_STATS_TYPES with usable CAS rows."""
+  cas = ["CAS_READS", "CAS_WRITES"]
+  return [(imc_typ, cas, _CAS_BW_CONV) for imc_typ in INTEL_IMC_STATS_TYPES]
+
+
+def _merge_first_full_coverage(df, jt, column_name, val_col, tries):
+  """Left-merge first (typ, events, conv) whose aggregate has no nulls on base (host, time)."""
+  for typ, events, conv in tries:
+    agg = jt.get_aggregate_df(typ, val_col, events, conv)
+    if agg.empty or "sum_val" not in agg.columns:
+      continue
+    merged = df.merge(
+        agg[["host", "time", "sum_val"]],
+        on=["host", "time"],
+        how="left",
+    )
+    merged[column_name] = merged["sum_val"]
+    merged.drop(columns=["sum_val"], inplace=True)
+    if column_name in merged.columns and merged[column_name].isnull().values.any():
+      continue
+    return merged
+  return df
+
+
+def iter_summary_aggregate_attempts():
+  """Flat (typ, val_col, events, name, conv, label) for diagnostics."""
+  for typ, val, events, name, conv, label in _SUMMARY_SINGLE_SPECS:
+    yield typ, val, events, name, conv, label
+  for fw in _SUMMARY_FIRST_WIN_SPECS:
+    for typ, events, conv in fw["tries"]:
+      yield typ, fw["val_col"], events, fw["name"], conv, fw["label"]
+  for imc_typ, events, conv in _summary_intel_imc_bw_tries():
+    yield imc_typ, "arc", events, "mbw", conv, "DRAMBW[GB/s]"
+
+
 def _summary_metric_specs():
-  """Metric specs used by summary plot and diagnostics."""
-  return [
-      ("amd64_pmc", "arc", ['FLOPS'], "amd_flops", 1e-9, "FLOPS32b+64b[GF]"),
-      ("amd64_df", "arc",
-       ['MBW_CHANNEL_0', 'MBW_CHANNEL_1', 'MBW_CHANNEL_2', 'MBW_CHANNEL_3'
-        ], "amd_mbw", 2 / (1024 * 1024 * 1024), "DRAMBW[GB/s]"),
-      ("amd64_pmc", "value", ['INST_RETIRED'], "amd_instr", 1, '[#/s]'),
-      ("amd64_pmc", "arc", ['MPERF'], "amd_mcycles", 1, '[#/s]'),
-      ("amd64_pmc", "arc", ['APERF'], "amd_acycles", 1, '[#/s]'),
-      ("intel_8pmc3", "arc", [
-          'FP_ARITH_INST_RETIRED_SCALAR_DOUBLE',
-          'FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE',
-          'FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE',
-          'FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE'
-      ], "flops64b", 1e-9, "FLOPS64b[GF]"),
-      ("intel_8pmc3", "arc", [
-          'FP_ARITH_INST_RETIRED_SCALAR_SINGLE',
-          'FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE',
-          'FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE',
-          'FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE'
-      ], "flops32b", 1e-9, "FLOPS32b[GF]"),
-      ("intel_8pmc3", "arc", ['INST_RETIRED'], "instr", 1, '[#/s]'),
-      ("intel_8pmc3", "arc", ['MPERF'], "mcycles", 1, '[#/s]'),
-      ("intel_8pmc3", "arc", ['APERF'], "acycles", 1, '[#/s]'),
-      ("intel_rapl", "arc", ['MSR_PKG_ENERGY_STATUS'], "watts", 0.00001526,
-       '[watts]'),
-      ("intel_skx_imc", "arc", ['CAS_READS', 'CAS_WRITES'], "mbw",
-       64 / (1024 * 1024 * 1024), "DRAMBW[GB/s]"),
-      ("ib_ext", "arc", ['port_rcv_data', 'port_xmit_data'], "ibbw",
-       1 / (1024 * 1024), "FabricBW[MB/s]"),
-      ("llite", "arc", [
-          'open', 'close', 'mmap', 'fsync', 'setattr', 'truncate', 'flock',
-          'getattr', 'statfs', 'alloc_inode', 'setxattr', 'listxattr',
-          'removexattr', 'readdir', 'create', 'lookup', 'link', 'unlink',
-          'symlink', 'mkdir', 'rmdir', 'mknod', 'rename'
-      ], "liops", 1, "LustreIOPS[#/s]"),
-      ("llite", "arc", ['read_bytes', 'write_bytes'], "lbw",
-       1 / (1024 * 1024), "LustreBW[MB/s]"),
-      ("cpu", "arc", ['user', 'system',
-                      'nice'], "cpu", 0.01, "CPU Usage [#cores]"),
-      ("mem", "value", ['MemUsed'], "mem", 1 / (1024 * 1024), "MemUsed[GB]")
-  ]
+  """Ordered (typ, val, events, name, conv, label) for plot() second pass (plot columns only)."""
+  out = list(_SUMMARY_SINGLE_SPECS)
+  for fw in _SUMMARY_FIRST_WIN_SPECS:
+    out.append(("", fw["val_col"], [], fw["name"], 0, fw["label"]))
+  out.append(("intel_imc", "arc", [], "mbw", _CAS_BW_CONV, "DRAMBW[GB/s]"))
+  return out
 
 
 class SummaryPlot():
@@ -155,13 +279,11 @@ class SummaryPlot():
 
     log.debug("Host Count: %s", len(self.host_list))
 
-    metrics = _summary_metric_specs()
-
     df = self.jt.get_host_time_df()
     if df.empty or not self.host_list:
       raise ValueError(MSG_NO_METRIC_DATA)
 
-    for typ, val, events, name, conv, label in metrics:
+    for typ, val, events, name, conv, label in _SUMMARY_SINGLE_SPECS:
       s = time.time()
       agg = self.jt.get_aggregate_df(typ, val, events, conv)
       if agg.empty or "sum_val" not in agg.columns:
@@ -178,6 +300,17 @@ class SummaryPlot():
       if name in df.columns and df[name].isnull().values.any():
         del df[name]
       log.debug("time to compute %s: %s", name, time.time() - s)
+
+    for fw in _SUMMARY_FIRST_WIN_SPECS:
+      s = time.time()
+      df = _merge_first_full_coverage(
+          df, self.jt, fw["name"], fw["val_col"], fw["tries"])
+      log.debug("time to compute %s: %s", fw["name"], time.time() - s)
+
+    df = _merge_first_full_coverage(
+        df, self.jt, "mbw", "arc", _summary_intel_imc_bw_tries())
+
+    metrics = _summary_metric_specs()
 
     if 'acycles' in df.columns and 'mcycles' in df.columns:
       df["freq"] = 2.7 * df["acycles"] / df["mcycles"]
@@ -217,7 +350,7 @@ def plot_and_reason_summary_from_jid_table(jt):
 
     attempts = []
     available = []
-    for typ, val_col, events, name, conv, _label in _summary_metric_specs():
+    for typ, val_col, events, name, conv, _label in iter_summary_aggregate_attempts():
       try:
         agg = jt.get_aggregate_df(typ, val_col, events, conv)
       except Exception:

@@ -112,7 +112,11 @@ class DevPlot:
     type_list = self.data_provider.get_type_list()
 
     metric = "arc"
-    if type_list and ("mem" in type_list or "nvidia_gpu" in type_list):
+    if type_list and (
+        "mem" in type_list
+        or "nvidia_gpu" in type_list
+        or "amd_gpu" in type_list
+    ):
       metric = "value"
 
     for event, unit in event_list:

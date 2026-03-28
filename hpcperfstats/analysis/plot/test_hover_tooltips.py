@@ -44,6 +44,32 @@ class _TypeDetailProvider:
   pass
 
 
+def test_devplot_uses_value_metric_when_amd_gpu_in_type_list():
+  """GPU gauge-style types use value column; amd_gpu must match nvidia_gpu/mem."""
+  t0 = pd.Timestamp("2024-01-01 00:00:00+00:00")
+  metric_calls = []
+
+  class _Provider:
+    def get_host_time_df(self):
+      return pd.DataFrame([("h1", t0)], columns=["host", "time"])
+
+    def get_events_units(self):
+      return [("gpu_util", "%")]
+
+    def get_type_list(self):
+      return ["amd_gpu"]
+
+    def get_aggregate_df(self, event, metric="arc"):
+      metric_calls.append((event, metric))
+      return pd.DataFrame(
+          [("h1", t0, 50.0)], columns=["host", "time", "sum_val"]
+      )
+
+  dp = DevPlot(_Provider(), ["h1"])
+  _df, _grid = dp.plot()
+  assert ("gpu_util", "value") in metric_calls
+
+
 def test_devplot_hover_uses_html_with_separators():
   dp = DevPlot(_TypeDetailProvider(), ["h1", "h2"])
   dp.hc = {"h1": "#333333", "h2": "#444444"}

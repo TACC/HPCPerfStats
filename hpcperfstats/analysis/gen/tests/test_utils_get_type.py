@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import numpy as np
 
 from hpcperfstats.analysis.gen.utils import utils
@@ -73,4 +75,38 @@ def test_cpu_counter_metrics_sets_pmc_for_get_type():
   }
   u = utils(job)
   assert u.pmc == "cpu_counter_metrics"
+
+
+def test_pmc_prefers_amd64_over_intel_when_both_in_schema():
+  """PMC resolution must not depend on dict iteration order (AMD before Intel)."""
+  job = _MockJob()
+  job.schemas = OrderedDict([
+      ("intel_8pmc3", ["INST_RETIRED"]),
+      ("amd64_pmc", ["FLOPS", "APERF"]),
+  ])
+  job.hosts = {
+      "h1": _MockHost({
+          "amd64_pmc": {
+              "0": np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float64),
+          },
+      }),
+  }
+  u = utils(job)
+  assert u.pmc == "amd64_pmc"
   assert u.freq == 2.7
+
+
+def test_imc_first_match_follows_intel_imc_stats_order():
+  """First IMC typename in INTEL_IMC_STATS_TYPES that appears in schemas wins."""
+  from hpcperfstats.analysis.gen.utils import INTEL_IMC_STATS_TYPES
+
+  job = _MockJob()
+  job.schemas = OrderedDict([
+      ("intel_skx_imc", ["CAS_READS"]),
+      ("intel_hsw_imc", ["CAS_READS", "CAS_WRITES"]),
+  ])
+  job.hosts = {"h1": _MockHost({})}
+  u = utils(job)
+  expected_first = next(t for t in INTEL_IMC_STATS_TYPES if t in job.schemas)
+  assert u.imc == expected_first
+  assert u.imc == "intel_hsw_imc"

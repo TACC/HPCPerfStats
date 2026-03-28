@@ -30,6 +30,70 @@ INTEL_IMC_STATS_TYPES = (
     "intel_skx_imc",
 )
 
+# FP_ARITH events for Intel/LIKWID core counters (roofline, summary first-win tries).
+INTEL_FP_ARITH_DOUBLE_EVENTS = (
+    "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",
+    "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE",
+    "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE",
+    "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE",
+)
+INTEL_FP_ARITH_SINGLE_EVENTS = (
+    "FP_ARITH_INST_RETIRED_SCALAR_SINGLE",
+    "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE",
+    "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE",
+    "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
+)
+INTEL_FP_ARITH_ALL_EVENTS = INTEL_FP_ARITH_DOUBLE_EVENTS + INTEL_FP_ARITH_SINGLE_EVENTS
+
+# Intel core PMC typenames tried in order (summary/roofline); LIKWID last when both exist.
+INTEL_CORE_PMC_TYPES_ORDERED = (
+    "intel_8pmc3",
+    "intel_4pmc3",
+    "cpu_counter_metrics",
+)
+
+# Nominal GHz for APERF/MPERF ratio in avg_freq when typename matches.
+_PMC_FREQ_BY_TYPENAME = {
+    "intel_snb": 2.7,
+    "intel_ivb": 2.8,
+    "intel_hsw": 2.3,
+    "intel_bdw": 2.6,
+    "intel_knl": 1.4,
+    "intel_skx": 2.1,
+    "intel_8pmc3": 2.7,
+    "intel_4pmc3": 2.7,
+    "amd64_pmc": 2.7,
+    "cpu_counter_metrics": 2.7,
+}
+
+# Prefer explicit order when multiple PMC-capable types appear in one job schema.
+PMC_TYPENAME_PRIORITY = (
+    "amd64_pmc",
+    "intel_8pmc3",
+    "intel_4pmc3",
+    "cpu_counter_metrics",
+    "intel_skx",
+    "intel_knl",
+    "intel_bdw",
+    "intel_hsw",
+    "intel_ivb",
+    "intel_snb",
+)
+
+CHA_TYPENAME_PRIORITY = ("intel_skx_cha", "intel_knl_cha")
+
+
+def _pick_pmc_typename(schema_keys):
+  """First PMC typename present in schema_keys using PMC_TYPENAME_PRIORITY, else any known key."""
+  keys = set(schema_keys)
+  for typename in PMC_TYPENAME_PRIORITY:
+    if typename in keys:
+      return typename
+  for typename in keys:
+    if typename in _PMC_FREQ_BY_TYPENAME:
+      return typename
+  return None
+
 
 class utils():
   """Minimal job-like wrapper exposing host stats, schemas, times, and type resolution (pmc/imc/cha) for metrics and plots.
@@ -40,22 +104,8 @@ class utils():
     """Initialize from a job object; set nhosts, hostnames, wayness, hours, t, nt, dt, and resolve pmc/imc/cha/freq from schemas.
 
         """
-    freq_list = {
-        "intel_snb": 2.7,
-        "intel_ivb": 2.8,
-        "intel_hsw": 2.3,
-        "intel_bdw": 2.6,
-        "intel_knl": 1.4,
-        "intel_skx": 2.1,
-        "intel_8pmc3": 2.7,
-        "intel_4pmc3": 2.7,
-        # Nominal reference GHz for APERF/MPERF ratio (same role as Intel list above).
-        "amd64_pmc": 2.7,
-        # LIKWID-backed core counters (same fixed-counter semantics as intel_*pmc3 when loaded).
-        "cpu_counter_metrics": 2.7,
-    }
     imc_list = list(INTEL_IMC_STATS_TYPES)
-    cha_list = ["intel_knl_cha", "intel_skx_cha"]
+    cha_list = list(CHA_TYPENAME_PRIORITY)
     self.job = job
     self.nhosts = len(job.hosts.keys())
     self.hostnames = sorted(job.hosts.keys())
@@ -68,14 +118,19 @@ class utils():
     self.imc = None
     self.cha = None
     self.freq = None
-    for typename in job.schemas.keys():
-      if typename in freq_list:
-        self.pmc = typename
-        self.freq = freq_list[typename]
-      if typename in imc_list:
-        self.imc = typename
-      if typename in cha_list:
-        self.cha = typename
+    sk = job.schemas.keys()
+    pmc_pick = _pick_pmc_typename(sk)
+    if pmc_pick is not None:
+      self.pmc = pmc_pick
+      self.freq = _PMC_FREQ_BY_TYPENAME.get(pmc_pick, 2.7)
+    for imc_typ in imc_list:
+      if imc_typ in sk:
+        self.imc = imc_typ
+        break
+    for cha_typ in cha_list:
+      if cha_typ in sk:
+        self.cha = cha_typ
+        break
 
   def get_type(self, typename, aggregate=True):
     """Return (schema, stats) for typename (e.g. pmc/imc/cha); stats is per-host aggregated or per-device dict. Returns (None, {}) if type not in job.

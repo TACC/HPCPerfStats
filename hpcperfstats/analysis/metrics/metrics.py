@@ -31,7 +31,7 @@ except ImportError:
 _COMPLEX_PLACEHOLDER_TYPE_UNITS = {
     "avg_freq": ("pmc", "GHz"),
     "avg_ethbw": ("net", "MB/s"),
-    "avg_gpuutil": ("nvidia_gpu", "%"),
+    "avg_gpuutil": ("gpu", "%"),
     "avg_packetsize": ("ib_ext", "MB"),
     "max_fabricbw": ("ib_ext", "MB/s"),
     "max_lnetbw": ("lnet", "MB/s"),
@@ -830,7 +830,7 @@ class avg_gpuutil():
       if value == 0:
         continue
       return value, typename, '%'
-    return None, "nvidia_gpu", '%'
+    return None, "gpu", '%'
 
 
 class avg_packetsize():
@@ -1133,6 +1133,9 @@ class time_imbalance():
 class vecpercent_64b():
   """Percentage of 64b vectorized FLOPs vs total (from PMC events).
 
+  Requires Intel-style FP_ARITH double events and/or legacy SSE/AVX double
+  counter names. AMD ``amd64_pmc`` typically exposes only aggregate ``FLOPS``,
+  so this metric usually has no data on AMD until width-resolved events exist.
     """
 
   def compute_metric(self, u):
@@ -1173,6 +1176,8 @@ class vecpercent_64b():
 class avg_vector_width_64b():
   """Average 64b vector width (FLOPs-weighted) from PMC events.
 
+  Same event requirements as ``vecpercent_64b``; not populated from aggregate
+  AMD ``FLOPS`` alone.
     """
 
   def compute_metric(self, u):
@@ -1213,6 +1218,7 @@ class avg_vector_width_64b():
 class vecpercent_32b():
   """Percentage of 32b vectorized FLOPs vs total (from PMC events).
 
+  Uses Intel FP_ARITH single-precision events only; no AMD aggregate FLOPS path.
     """
 
   def compute_metric(self, u):
@@ -1248,6 +1254,7 @@ class vecpercent_32b():
 class avg_vector_width_32b():
   """Average 32b vector width (FLOPs-weighted) from PMC events.
 
+  Same as ``vecpercent_32b``: Intel FP_ARITH single events; not AMD FLOPS-wide.
     """
 
   def compute_metric(self, u):

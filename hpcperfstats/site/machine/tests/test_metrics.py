@@ -387,9 +387,15 @@ def test_avg_gpuutil_returns_none_for_short_series_without_warning():
     warnings.simplefilter("always")
     value, typename, units = avg_gpuutil().compute_metric(u)
   assert value is None
-  assert typename == "nvidia_gpu"
+  assert typename == "gpu"
   assert units == "%"
   assert len(captured) == 0
+
+
+def test_job_metrics_catalog_avg_gpuutil_placeholder_type_is_gpu():
+  entries = job_metrics_catalog_entries()
+  gpu = next(e for e in entries if e["metric"] == "avg_gpuutil")
+  assert gpu["type"] == "gpu"
 
 
 def test_job_metrics_catalog_entries_matches_simple_plus_complex():
