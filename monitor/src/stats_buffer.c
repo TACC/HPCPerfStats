@@ -5,11 +5,13 @@
 #include <ctype.h>
 #include <limits.h>
 #include <stdarg.h>
+#include <errno.h>
 #include <sys/utsname.h>
 #include <syslog.h>
 #include <search.h>
 #include <time.h>
 #include <rabbitmq-c/amqp.h>
+#include <rabbitmq-c/framing.h>
 #include <rabbitmq-c/tcp_socket.h>
 
 #include "stats.h"
@@ -33,6 +35,70 @@ extern double freq;
 #define RMQ_EXCHANGE "amq.direct"
 #define RMQ_VHOST "/"
 #define RMQ_CHANNEL 1
+
+#ifdef DEBUG
+/* Decode rabbitmq-c failures for DEBUG builds (syslog via ERROR when RABBITMQ). */
+static void rmq_debug_log_amqp_status(const char *ctx, int st)
+{
+  int save_e = errno;
+  const char *s = amqp_error_string2(st);
+
+  ERROR("%s: %s (%d)", ctx, s != NULL ? s : "?", st);
+  if (st == AMQP_STATUS_SOCKET_ERROR || st == AMQP_STATUS_TCP_ERROR)
+    ERROR("%s: errno=%d (%s)", ctx, save_e, strerror(save_e));
+}
+
+static void rmq_debug_append_reply_text(char *buf, size_t buflen, const amqp_bytes_t *text)
+{
+  if (buflen == 0)
+    return;
+  buf[0] = '\0';
+  if (text == NULL || text->bytes == NULL || text->len == 0)
+    return;
+  size_t n = text->len < buflen - 1 ? text->len : buflen - 1;
+  memcpy(buf, text->bytes, n);
+  buf[n] = '\0';
+}
+
+static void rmq_debug_log_rpc_reply(const char *ctx, amqp_rpc_reply_t r)
+{
+  const char *mn;
+
+  switch (r.reply_type) {
+  case AMQP_RESPONSE_NORMAL:
+    ERROR("%s: unexpected AMQP_RESPONSE_NORMAL in error path", ctx);
+    return;
+  case AMQP_RESPONSE_NONE:
+    ERROR("%s: AMQP_RESPONSE_NONE (unexpected EOF or incomplete read from broker)", ctx);
+    return;
+  case AMQP_RESPONSE_LIBRARY_EXCEPTION:
+    rmq_debug_log_amqp_status(ctx, r.library_error);
+    return;
+  case AMQP_RESPONSE_SERVER_EXCEPTION:
+    mn = amqp_method_name(r.reply.id);
+    ERROR("%s: broker error method=%s id=0x%x", ctx, mn != NULL ? mn : "?", (unsigned)r.reply.id);
+    if (r.reply.id == AMQP_CONNECTION_CLOSE_METHOD && r.reply.decoded != NULL) {
+      amqp_connection_close_t *m = (amqp_connection_close_t *)r.reply.decoded;
+      char textbuf[256];
+
+      rmq_debug_append_reply_text(textbuf, sizeof(textbuf), &m->reply_text);
+      ERROR("%s: connection.close reply_code=%u class_id=%u method_id=%u text=%s", ctx,
+	    (unsigned)m->reply_code, (unsigned)m->class_id, (unsigned)m->method_id, textbuf);
+    } else if (r.reply.id == AMQP_CHANNEL_CLOSE_METHOD && r.reply.decoded != NULL) {
+      amqp_channel_close_t *m = (amqp_channel_close_t *)r.reply.decoded;
+      char textbuf[256];
+
+      rmq_debug_append_reply_text(textbuf, sizeof(textbuf), &m->reply_text);
+      ERROR("%s: channel.close reply_code=%u class_id=%u method_id=%u text=%s", ctx,
+	    (unsigned)m->reply_code, (unsigned)m->class_id, (unsigned)m->method_id, textbuf);
+    }
+    return;
+  default:
+    ERROR("%s: unknown reply_type=%d", ctx, (int)r.reply_type);
+    return;
+  }
+}
+#endif /* DEBUG */
 
 /* One AMQP connection per process (libev single-threaded). Reconnect on credential mismatch or I/O failure.
  * When the broker is down, allow at most one new TCP connect attempt per conf sample interval (`freq`),
@@ -228,17 +294,29 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
   if (rmq_conn != NULL && rmq_stored_matches(sf) && rmq_channel_open)
     return 0;
 
-  if (rmq_connect_backoff_active())
+  if (rmq_connect_backoff_active()) {
+#ifdef DEBUG
+    ERROR("RMQ: connect backoff active, skipping connect attempt (see conf freq)");
+#endif
     return -1;
+  }
 
   rmq_soft_disconnect();
 
   if (!rmq_stored_matches(sf))
     rmq_stored_free();
 
+#ifdef DEBUG
+  ERROR("RMQ: connecting to %s:%s user=%s vhost=%s", sf->sf_host, sf->sf_port, sf->sf_user, RMQ_VHOST);
+#endif
+
   rmq_conn = amqp_new_connection();
   if (rmq_conn == NULL) {
+#ifdef DEBUG
+    ERROR("amqp_new_connection failed (out of memory?)");
+#else
     ERROR("amqp_new_connection failed");
+#endif
     rmq_arm_connect_backoff();
     return -1;
   }
@@ -253,6 +331,9 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
   }
 
   if (!rmq_stored_matches(sf) && rmq_stored_save(sf) < 0) {
+#ifdef DEBUG
+    ERROR("RMQ: failed to stash broker credentials after connect (strdup)");
+#endif
     close_rmq_connection(rmq_conn, rmq_channel_open);
     rmq_conn = NULL;
     rmq_channel_open = 0;
@@ -260,6 +341,9 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
     return -1;
   }
 
+#ifdef DEBUG
+  ERROR("RMQ: TCP + login + channel open OK");
+#endif
   rmq_clear_connect_backoff();
   return 0;
 }
@@ -285,26 +369,45 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
 				    amqp_socket_t **socket_out, int *channel_opened_out)
 {
   amqp_socket_t *socket = amqp_tcp_socket_new(conn);
+  int sock_rc;
+
   *socket_out = socket;
   if (!socket) {
+#ifdef DEBUG
+    ERROR("RMQ: amqp_tcp_socket_new failed");
+#else
     ERROR("socket failed to initialize");
+#endif
     return -1;
   }
-  if (amqp_socket_open(socket, sf->sf_host, atoi(sf->sf_port))) {
+  sock_rc = amqp_socket_open(socket, sf->sf_host, atoi(sf->sf_port));
+  if (sock_rc != AMQP_STATUS_OK) {
+#ifdef DEBUG
+    rmq_debug_log_amqp_status("RMQ amqp_socket_open", sock_rc);
+#else
     ERROR("socket failed to open");
+#endif
     return -1;
   }
 
   amqp_rpc_reply_t ret = amqp_login(conn, RMQ_VHOST, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN,
 				      sf->sf_user, sf->sf_password);
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
+#ifdef DEBUG
+    rmq_debug_log_rpc_reply("RMQ amqp_login", ret);
+#else
     ERROR("amqp login failed");
+#endif
     return -1;
   }
   amqp_channel_open(conn, RMQ_CHANNEL);
   ret = amqp_get_rpc_reply(conn);
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
+#ifdef DEBUG
+    rmq_debug_log_rpc_reply("RMQ amqp_channel_open", ret);
+#else
     ERROR("amqp channel open failed");
+#endif
     return -1;
   }
   *channel_opened_out = 1;
@@ -320,7 +423,11 @@ static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, 
 						  0, 1, 0, 0, amqp_empty_table);
   amqp_rpc_reply_t ret = amqp_get_rpc_reply(conn);
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
+#ifdef DEBUG
+    rmq_debug_log_rpc_reply("RMQ queue declare", ret);
+#else
     syslog(LOG_ERR, "queue declare failed");
+#endif
     return -1;
   }
 
@@ -335,7 +442,11 @@ static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, 
   ret = amqp_get_rpc_reply(conn);
   amqp_bytes_free(reply_to_queue);
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
+#ifdef DEBUG
+    rmq_debug_log_rpc_reply("RMQ queue bind", ret);
+#else
     syslog(LOG_ERR, "queue bind failed");
+#endif
     return -1;
   }
   return 0;
@@ -356,7 +467,11 @@ static int rmq_publish_text_payload(amqp_connection_state_t conn, struct stats_b
 				  &props,
 				  amqp_cstring_bytes(sf->sf_data));
   if (status != AMQP_STATUS_OK) {
+#ifdef DEBUG
+    rmq_debug_log_amqp_status("RMQ amqp_basic_publish", status);
+#else
     ERROR("amqp basic publish failed");
+#endif
     return -1;
   }
   return 0;
