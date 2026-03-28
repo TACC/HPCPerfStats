@@ -1,0 +1,47 @@
+---
+description: Where to bump hpcperfstats/monitor version and keep hpcperfstats.spec in sync
+globs: HPCPerfStats/monitor/configure.ac,HPCPerfStats/monitor/hpcperfstats.spec,HPCPerfStats/README.md
+alwaysApply: false
+---
+
+# Monitor version and RPM spec
+
+## Canonical version (daemon `STATS_VERSION` / `PACKAGE_VERSION`)
+
+Set the release version in **one place**:
+
+- **`HPCPerfStats/monitor/configure.ac`** — `AC_INIT([hpcperfstats], [X.Y.Z], [bug-email])`  
+  The second argument is the **only** source of truth for the monitor tarball name, `configure --version`, and the compile-time `STATS_VERSION` macro (`@PACKAGE_VERSION@` in `Makefile.am`).
+
+After changing `AC_INIT`, regenerate Autotools output from **`HPCPerfStats/monitor/`**:
+
+```bash
+autoreconf -fi
+```
+
+Commit the updated `configure`, `Makefile.in`, and related generated files if your tree tracks them.
+
+## RPM spec (must match `AC_INIT`)
+
+- **`HPCPerfStats/monitor/hpcperfstats.spec`**
+  - **`Version:`** must equal the `AC_INIT` version (e.g. `3.0`).
+  - **`Source:`** uses `hpcperfstats-%{version}.tar.gz`; `make dist` / `make distcheck` in `monitor/` produces a tarball whose basename matches that pattern.
+  - **`Release:`** is the **packaging** iteration (`1%{?dist}`, `2%{?dist}`, …). Increment **Release** for spec-only or rebuild changes **without** changing upstream `Version`. When **`Version`** changes, reset **`Release`** to **`1%{?dist}`** unless your distro policy says otherwise.
+  - **`%changelog`**: add a top entry for every **Version** or meaningful packaging change (static build path, BuildRequires, install paths, etc.).
+
+## Docs that embed the RPM filename
+
+If **`HPCPerfStats/README.md`** (or other docs) mention a concrete RPM like `hpcperfstats-3.0-1.el9.x86_64.rpm`, update that string when **`Version`** or the example **Release** changes so examples stay accurate.
+
+## Agent checklist when bumping version
+
+1. Edit **`configure.ac`** `AC_INIT` version.
+2. Edit **`hpcperfstats.spec`** **`Version:`** to match; set **`Release:`** as appropriate (usually `1%{?dist}` on a new **Version**).
+3. Prepend **`%changelog`** entry (e.g. `3.0-1`).
+4. Run **`autoreconf -fi`** in **`monitor/`** and commit regenerated files if applicable.
+5. Grep for stale literals (`hpcperfstats-2.4`, old RPM examples) under **`HPCPerfStats/`** and fix.
+6. Run **`rpmspec -P hpcperfstats.spec`** (and optional **`rpmbuild -ba`**) per **monitor-static-build-verification**.
+
+## Relation to other rules
+
+- Packaging **build/verify** behavior (static bundle, `make check`, and **`rpmspec -P` / optional `rpmbuild -ba`** for **`hpcperfstats.spec`**) stays under **monitor-static-build-verification** and **global-testing-discipline**; this rule covers **version alignment** and **spec maintenance** (what to edit); that rule covers **how to verify** the spec after edits.

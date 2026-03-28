@@ -7,10 +7,11 @@ alwaysApply: true
 
 # Monitor verification (canonical)
 
-For **HPCPerfStats/monitor** code, dependency wiring, or Autotools changes, **do not** treat simpler checks as sufficient verification:
+For **HPCPerfStats/monitor** code, dependency wiring, Autotools changes, or **`hpcperfstats.spec`** / packaging edits, **do not** treat simpler checks as sufficient verification:
 
 - Do **not** rely on ad-hoc `configure && make` or `make check` alone when the build tree is using **system** `librabbitmq` / `libev` / LIKWID without the **pinned static prefix** produced by the bundle scripts.
 - Do **not** skip the static path because it is slower; it is the **source-of-truth** link and configure path for this project.
+- When **`HPCPerfStats/monitor/hpcperfstats.spec`** changes, do **not** skip **spec verification** below; the spec **`%build`** invokes the same static bundle path and must stay consistent with **`configure.ac`** (**monitor-version-and-packaging**).
 
 ## Canonical verifier
 
@@ -30,6 +31,37 @@ Run **`HPCPerfStats/monitor/scripts/build_static_bundle.sh`** (from `HPCPerfStat
 
 The bundle script runs **`make`** but does **not** run **`make check`**. After a successful script run, run **`make check`** in **`HPCPerfStats/monitor/.build-static`** (build tree root, not `src/`) so the **`tests/`** suite runs, or run **`HPCPerfStats/monitor/tests/run_tests.sh`** with the same build directory.
 
+## RPM spec (`hpcperfstats.spec`)
+
+When **`hpcperfstats.spec`** or **RPM-related** fields (**`Version:`**, **`Release:`**, **`%build`**, **`%install`**, **`BuildRequires`**, **`%changelog`**) change, extend verification beyond the direct **`build_static_bundle.sh`** run (the spec’s **`%build`** already calls that script for real RPM builds).
+
+**Required (parse / query):** requires **`rpmspec`** from the **`rpm-build`** (or equivalent) package:
+
+```bash
+cd HPCPerfStats/monitor
+rpmspec -P hpcperfstats.spec >/dev/null
+```
+
+Optional sanity on **`Name` / `Version` / `Release`** (main package line is first when the host does not synthesize extra query rows):
+
+```bash
+rpmspec -q --queryformat '%{name}-%{version}-%{release}\n' hpcperfstats.spec | head -1
+```
+
+**Full RPM build (optional, CI or before release):** confirms **`%prep` / `%build` / `%install`** end-to-end. From **`HPCPerfStats/monitor/`**:
+
+```bash
+make dist
+mkdir -p rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
+cp hpcperfstats-*.tar.gz rpmbuild/SOURCES/
+cp hpcperfstats.spec rpmbuild/SPECS/
+rpmbuild -ba --define "_topdir $PWD/rpmbuild" rpmbuild/SPECS/hpcperfstats.spec
+```
+
+The spec **`%build`** runs **`./scripts/build_static_bundle.sh`**, so the first full build on a clean host needs **network** access to fetch pinned dependency tarballs (unless you pre-populate **`PREFIX`** / **`SRCDIR`** and adjust the spec to set **`SKIP_DEPS=1`**—not in the stock spec). Install all **`BuildRequires`** from the spec before **`rpmbuild`**.
+
+If **`rpmlint`** is installed, run **`rpmlint hpcperfstats.spec`** on spec edits.
+
 ## Summary for handoffs
 
-When reporting verification, state that **`build_static_bundle.sh` completed** (and **`make check`** in `.build-static` if tests were run). Mention `SKIP_DEPS=1` / `PREFIX` when relevant.
+When reporting verification, state that **`build_static_bundle.sh` completed** (and **`make check`** in `.build-static` if tests were run). Mention `SKIP_DEPS=1` / `PREFIX` when relevant. If **`hpcperfstats.spec`** was touched, state that **`rpmspec -P`** (and **`rpmbuild -ba`**, if a full RPM build was run) **succeeded**.
