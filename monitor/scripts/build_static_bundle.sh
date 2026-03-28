@@ -16,6 +16,9 @@
 #   SRCDIR          Download and build under this directory (default: <repo>/.build/src-static)
 #   JOBS            Parallel jobs (default: nproc)
 #   SKIP_DEPS       If set to 1, skip building deps (use existing PREFIX)
+#   SKIP_CLEAN      If set to 1, do not remove .build-static before configuring
+#                   (default: remove it so a prior failed/partial monitor build cannot
+#                   poison the next run)
 #
 # Pinned versions: edit STATIC_PIN_* below. Runtime overrides: LIBEV_VER,
 # RABBITMQ_VER, LIKWID_TAG, and *_URL_FMT for mirrors.
@@ -52,6 +55,7 @@ PREFIX="${PREFIX:-${REPO_ROOT}/.build/prefix-static}"
 SRCDIR="${SRCDIR:-${REPO_ROOT}/.build/src-static}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 SKIP_DEPS="${SKIP_DEPS:-0}"
+SKIP_CLEAN="${SKIP_CLEAN:-0}"
 
 # Effective pins (env overrides keep legacy names working).
 LIBEV_VER="${LIBEV_VER:-${STATIC_PIN_LIBEV_VERSION}}"
@@ -170,6 +174,12 @@ build_likwid() {
 }
 
 build_monitor() {
+  if test "${SKIP_CLEAN}" != "1"; then
+    if test -d "${MONITOR_DIR}/.build-static"; then
+      echo "Removing prior monitor build tree (failed or stale): ${MONITOR_DIR}/.build-static"
+      rm -rf "${MONITOR_DIR}/.build-static"
+    fi
+  fi
   mkdir -p "${MONITOR_DIR}/.build-static"
   cd "${MONITOR_DIR}/.build-static"
   if test ! -f "${MONITOR_DIR}/configure"; then
@@ -272,7 +282,7 @@ Usage: $(basename "$0") [--deps-only] [CONFIGURE_ARGS...]
   [CONFIGURE_ARGS...] are passed to ../configure inside build_monitor (ignored
   with --deps-only).
 
-Environment: PREFIX, SRCDIR, SKIP_DEPS, JOBS, and pin overrides (see script header).
+Environment: PREFIX, SRCDIR, SKIP_DEPS, SKIP_CLEAN, JOBS, and pin overrides (see script header).
 EOF
   exit "${1:-0}"
 }
