@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include "collect.h"
 #include "dcgm_agent.h"
@@ -39,6 +40,33 @@ static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
 static const char *dcgm_err(dcgmReturn_t rc)
 {
   return errorString(rc);
+}
+
+/*
+ * Newer DCGM host engines return the handle from dcgmStartEmbedded_v2 only; the legacy
+ * dcgmStartEmbedded() pair can report DCGM_ST_OK while leaving *pDcgmHandle at 0.
+ */
+static dcgmReturn_t nvidia_gpu_start_embedded(dcgmHandle_t *outh)
+{
+  dcgmReturn_t rc;
+  dcgmStartEmbeddedV2Params_v1 ep;
+
+  memset(&ep, 0, sizeof(ep));
+  ep.version = dcgmStartEmbeddedV2Params_version1;
+  ep.opMode = DCGM_OPERATION_MODE_AUTO;
+  ep.logFile = NULL;
+  ep.severity = DcgmLoggingSeverityNone;
+
+  rc = dcgmStartEmbedded_v2(&ep);
+  if (rc == DCGM_ST_OK && ep.dcgmHandle != (dcgmHandle_t)0) {
+    *outh = ep.dcgmHandle;
+    return DCGM_ST_OK;
+  }
+  if (rc == DCGM_ST_OK && ep.dcgmHandle == (dcgmHandle_t)0)
+    return dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, outh);
+  if (rc == DCGM_ST_VER_MISMATCH || rc == DCGM_ST_NOT_SUPPORTED || rc == DCGM_ST_BADPARAM)
+    return dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, outh);
+  return rc;
 }
 
 static int bounded_ratio(double v, double *out)
@@ -195,13 +223,13 @@ static void nvidia_gpu_collect(struct stats_type *type)
     goto out;
   }
 
-  rc = dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, &dcgm_handle);
+  rc = nvidia_gpu_start_embedded(&dcgm_handle);
   if (rc != DCGM_ST_OK) {
     ERROR("DCGM embedded mode failed: %s\n", dcgm_err(rc));
     goto out;
   }
   if (dcgm_handle == (dcgmHandle_t)0) {
-    ERROR("DCGM embedded mode returned null handle\n");
+    ERROR("DCGM embedded mode returned null handle after v2 and legacy start\n");
     goto out;
   }
 
