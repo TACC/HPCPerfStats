@@ -41,6 +41,7 @@ static void sysv_shm_collect(struct stats_type *type)
   char file_buf[4096];
   char *line_buf = NULL;
   size_t line_buf_size = 0;
+  unsigned long long mem_used = 0, segs_used = 0;
 
   stats = get_current_stats(type, NULL);
   if (stats == NULL)
@@ -56,8 +57,6 @@ static void sysv_shm_collect(struct stats_type *type)
   /* Skip header. */
   if (getline(&line_buf, &line_buf_size, file) < 0)
     goto out;
-
-  unsigned long long mem_used = 0, segs_used = 0;
 
   while (getline(&line_buf, &line_buf_size, file) >= 0) {
     unsigned long long seg_size = 0;

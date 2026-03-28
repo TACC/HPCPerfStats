@@ -11,6 +11,11 @@
 
 #define SCHEMA_DEF(k,o,d,r...) " " #k "," o
 
+/* Fixed size avoids a trailing flexible array in static struct stats_type objects.
+ * NVC++/LLVM mis-sized st_name[] for some names (e.g. "sysv_shm"); longest current
+ * name is cpu_counter_metrics (19 chars). */
+#define STATS_TYPE_NAME_MAX 40
+
 extern double current_time;
 extern char jobid[80];
 extern int nr_cpus;
@@ -24,7 +29,7 @@ struct stats_type {
   struct schema st_schema;
   struct dict st_current_dict;
   unsigned int st_enabled:1, st_selected:1;
-  char st_name[];
+  char st_name[STATS_TYPE_NAME_MAX];
 };
 
 struct stats {
