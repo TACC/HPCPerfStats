@@ -355,13 +355,15 @@ static int read_dcgm_cpu_sample(int core_id, struct dcgm_cpu_sample *s)
 				(unsigned short *) g_dcgm_cpu_field_ids,
 				DCGM_CPU_NFIELDS,
 				values) == DCGM_ST_OK
-      && dcgm_cpu_fill_sample_from_v1(DCGM_CPU_NFIELDS, g_dcgm_cpu_field_ids, values, s) == 0)
-    goto have_util;
+      && dcgm_cpu_fill_sample_from_v1(DCGM_CPU_NFIELDS, g_dcgm_cpu_field_ids, values, s) == 0) {
+    if (s->clock_khz <= 0.0)
+      s->clock_khz = dcgm_cpu_nominal_freq_khz(core_id);
+    return 0;
+  }
   if (read_dcgm_cpu_sample_live(core_id, s) != 0) {
     memset(s, 0, sizeof(*s));
     return -1;
   }
-have_util:
   if (s->clock_khz <= 0.0)
     s->clock_khz = dcgm_cpu_nominal_freq_khz(core_id);
   return 0;
@@ -675,10 +677,6 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
 
       if (sample.clock_khz <= 0.0)
 	sample.clock_khz = dcgm_cpu_nominal_freq_khz(i);
-      /* If there is no cpufreq sysfs (common on some ARM hosts), still advance counters
-       * using a neutral scale: ref_cycles ~= delta_us when clock_khz == 1000. */
-      if (sample.clock_khz <= 0.0)
-	sample.clock_khz = 1000.0;
 
       dcgm_accumulate_from_util_sample(i, &sample, delta_us);
       publish_dcgm_cpu_stats(stats, i);
