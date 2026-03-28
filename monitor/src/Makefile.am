@@ -93,6 +93,12 @@ hpcperfstatsd_SOURCES += \
 	stats_file.h
 endif
 
+if MONITOR_USE_DCGM_VENDOR_INCLUDES
+hpcperfstatsd_SOURCES += \
+	dcgm_session.c \
+	dcgm_session.h
+endif
+
 TYPES 	= \
 	block.c \
 	cpu.c \

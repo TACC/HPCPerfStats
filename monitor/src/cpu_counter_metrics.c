@@ -11,7 +11,9 @@
 #include "cpuid.h"
 #ifdef MONITOR_CPU_BACKEND_DCGM
 #include "dcgm_agent.h"
+#include "dcgm_fields.h"
 #include "dcgm_structs.h"
+#include "dcgm_session.h"
 #else
 #include "amd64_pmc.h"
 #undef KEYS
@@ -31,8 +33,31 @@
 #define IA32_FIXED_CTR2 0x30B
 
 #ifdef MONITOR_CPU_BACKEND_DCGM
+#ifndef DCGM_FI_DEV_CPU_UTIL_TOTAL
+#define DCGM_FI_DEV_CPU_UTIL_TOTAL 1100
+#endif
+#ifndef DCGM_FI_DEV_CPU_UTIL_USER
+#define DCGM_FI_DEV_CPU_UTIL_USER 1101
+#endif
+#ifndef DCGM_FI_DEV_CPU_UTIL_NICE
+#define DCGM_FI_DEV_CPU_UTIL_NICE 1102
+#endif
+#ifndef DCGM_FI_DEV_CPU_UTIL_SYS
+#define DCGM_FI_DEV_CPU_UTIL_SYS 1103
+#endif
+#ifndef DCGM_FI_DEV_CPU_UTIL_IRQ
+#define DCGM_FI_DEV_CPU_UTIL_IRQ 1104
+#endif
+#ifndef DCGM_FI_DEV_CPU_CLOCK_CURRENT
+#define DCGM_FI_DEV_CPU_CLOCK_CURRENT 1120
+#endif
+
 static int g_dcgm_ready = 0;
 static dcgmHandle_t g_dcgm_handle = (dcgmHandle_t) NULL;
+static int g_dcgm_cpu_use_disconnect = 0;
+static dcgmGpuGrp_t *g_dcgm_cpu_groups = NULL;
+static dcgmFieldGrp_t *g_dcgm_cpu_fgs = NULL;
+static int g_dcgm_cpu_nchunks = 0;
 static unsigned long long *g_dcgm_ctr0 = NULL;
 static unsigned long long *g_dcgm_ctr1 = NULL;
 static unsigned long long *g_dcgm_ctr2 = NULL;
@@ -44,6 +69,17 @@ static unsigned long long *g_dcgm_aperf = NULL;
 static unsigned long long *g_dcgm_mperf = NULL;
 static long long *g_dcgm_last_ts = NULL;
 static long long *g_dcgm_wall_last_us = NULL;
+
+static const unsigned short g_dcgm_cpu_field_ids[] = {
+  DCGM_FI_DEV_CPU_UTIL_TOTAL,
+  DCGM_FI_DEV_CPU_UTIL_USER,
+  DCGM_FI_DEV_CPU_UTIL_NICE,
+  DCGM_FI_DEV_CPU_UTIL_SYS,
+  DCGM_FI_DEV_CPU_UTIL_IRQ,
+  DCGM_FI_DEV_CPU_CLOCK_CURRENT
+};
+
+#define DCGM_CPU_NFIELDS ((unsigned int) (sizeof(g_dcgm_cpu_field_ids) / sizeof(g_dcgm_cpu_field_ids[0])))
 
 struct dcgm_cpu_sample {
   double util_total;
@@ -64,51 +100,42 @@ static double clamp_percent(double v)
   return v;
 }
 
-static int read_dcgm_cpu_sample(int core_id, struct dcgm_cpu_sample *s)
+static double dcgm_cpu_nominal_freq_khz(int core_id)
 {
-#ifndef DCGM_FI_DEV_CPU_UTIL_TOTAL
-#define DCGM_FI_DEV_CPU_UTIL_TOTAL 1100
-#endif
-#ifndef DCGM_FI_DEV_CPU_UTIL_USER
-#define DCGM_FI_DEV_CPU_UTIL_USER 1101
-#endif
-#ifndef DCGM_FI_DEV_CPU_UTIL_NICE
-#define DCGM_FI_DEV_CPU_UTIL_NICE 1102
-#endif
-#ifndef DCGM_FI_DEV_CPU_UTIL_SYS
-#define DCGM_FI_DEV_CPU_UTIL_SYS 1103
-#endif
-#ifndef DCGM_FI_DEV_CPU_UTIL_IRQ
-#define DCGM_FI_DEV_CPU_UTIL_IRQ 1104
-#endif
-#ifndef DCGM_FI_DEV_CPU_CLOCK_CURRENT
-#define DCGM_FI_DEV_CPU_CLOCK_CURRENT 1120
-#endif
-  static const unsigned short field_ids[] = {
-    DCGM_FI_DEV_CPU_UTIL_TOTAL,
-    DCGM_FI_DEV_CPU_UTIL_USER,
-    DCGM_FI_DEV_CPU_UTIL_NICE,
-    DCGM_FI_DEV_CPU_UTIL_SYS,
-    DCGM_FI_DEV_CPU_UTIL_IRQ,
-    DCGM_FI_DEV_CPU_CLOCK_CURRENT
-  };
-  dcgmFieldValue_v1 values[sizeof(field_ids) / sizeof(field_ids[0])];
+  char path[128];
+  char buf[40];
+  int fd;
+  ssize_t n;
+  long long khz = 0;
+
+  snprintf(path, sizeof(path),
+	   "/sys/devices/system/cpu/cpu%d/cpufreq/base_frequency", core_id);
+  fd = open(path, O_RDONLY);
+  if (fd < 0) {
+    snprintf(path, sizeof(path),
+	     "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", core_id);
+    fd = open(path, O_RDONLY);
+  }
+  if (fd < 0)
+    return 0.0;
+  n = read(fd, buf, sizeof(buf) - 1);
+  close(fd);
+  if (n <= 0)
+    return 0.0;
+  buf[n] = '\0';
+  if (sscanf(buf, "%lld", &khz) != 1 || khz <= 0)
+    return 0.0;
+  return (double) khz;
+}
+
+static int dcgm_cpu_fill_sample_from_v1(unsigned int nfields, const unsigned short *field_ids,
+					const dcgmFieldValue_v1 *values, struct dcgm_cpu_sample *s)
+{
   unsigned int f;
   int ok_util = 0;
-  int ok_clock = 0;
-  memset(s, 0, sizeof(*s));
-  memset(values, 0, sizeof(values));
-  /* dcgmEntityGetLatestValues is the stable name in dcgm_agent.h; some stacks only
-   * expose that (not dcgmGetLatestValuesForEntity). DCGM_FE_*_CORE from dcgm_fields.h. */
-  if (dcgmEntityGetLatestValues(g_dcgm_handle,
-                                DCGM_FE_CPU_CORE,
-                                core_id,
-                                (unsigned short *) field_ids,
-                                (unsigned int) (sizeof(field_ids) / sizeof(field_ids[0])),
-                                values) != DCGM_ST_OK)
-    return -1;
 
-  for (f = 0; f < (unsigned int) (sizeof(field_ids) / sizeof(field_ids[0])); f++) {
+  memset(s, 0, sizeof(*s));
+  for (f = 0; f < nfields; f++) {
     double v;
 
     if (values[f].status != DCGM_ST_OK)
@@ -118,24 +145,95 @@ static int read_dcgm_cpu_sample(int core_id, struct dcgm_cpu_sample *s)
       s->ts = values[f].ts;
     switch (field_ids[f]) {
       case DCGM_FI_DEV_CPU_UTIL_TOTAL:
-        s->util_total = clamp_percent(v);
-        ok_util = 1;
-        break;
+	s->util_total = clamp_percent(v);
+	ok_util = 1;
+	break;
       case DCGM_FI_DEV_CPU_UTIL_USER: s->util_user = clamp_percent(v); break;
       case DCGM_FI_DEV_CPU_UTIL_NICE: s->util_nice = clamp_percent(v); break;
       case DCGM_FI_DEV_CPU_UTIL_SYS: s->util_sys = clamp_percent(v); break;
       case DCGM_FI_DEV_CPU_UTIL_IRQ: s->util_irq = clamp_percent(v); break;
       case DCGM_FI_DEV_CPU_CLOCK_CURRENT:
-        s->clock_khz = (v < 0.0) ? 0.0 : v;
-        ok_clock = 1;
-        break;
+	s->clock_khz = (v < 0.0) ? 0.0 : v;
+	break;
       default: break;
     }
   }
-  if (!ok_util || !ok_clock) {
+  return ok_util ? 0 : -1;
+}
+
+static int dcgm_cpu_fill_sample_from_v2(const dcgmFieldValue_v2 *values, unsigned int n,
+					struct dcgm_cpu_sample *s)
+{
+  unsigned int f;
+  int ok_util = 0;
+
+  memset(s, 0, sizeof(*s));
+  for (f = 0; f < n; f++) {
+    double v;
+
+    if (values[f].status != DCGM_ST_OK)
+      continue;
+    v = (values[f].fieldType == DCGM_FT_DOUBLE) ? values[f].value.dbl : (double) values[f].value.i64;
+    if (values[f].ts > s->ts)
+      s->ts = values[f].ts;
+    switch (values[f].fieldId) {
+      case DCGM_FI_DEV_CPU_UTIL_TOTAL:
+	s->util_total = clamp_percent(v);
+	ok_util = 1;
+	break;
+      case DCGM_FI_DEV_CPU_UTIL_USER: s->util_user = clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_NICE: s->util_nice = clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_SYS: s->util_sys = clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_IRQ: s->util_irq = clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_CLOCK_CURRENT:
+	s->clock_khz = (v < 0.0) ? 0.0 : v;
+	break;
+      default: break;
+    }
+  }
+  return ok_util ? 0 : -1;
+}
+
+static int read_dcgm_cpu_sample_live(int core_id, struct dcgm_cpu_sample *s)
+{
+  dcgmGroupEntityPair_t ent;
+  dcgmFieldValue_v2 values[DCGM_CPU_NFIELDS];
+  unsigned int fi;
+  dcgmReturn_t rc;
+
+  ent.entityGroupId = DCGM_FE_CPU_CORE;
+  ent.entityId = (dcgm_field_eid_t) core_id;
+  for (fi = 0; fi < DCGM_CPU_NFIELDS; fi++)
+    values[fi].version = dcgmFieldValue_version2;
+
+  rc = dcgmEntitiesGetLatestValues(g_dcgm_handle, &ent, 1,
+				   (unsigned short *) g_dcgm_cpu_field_ids, DCGM_CPU_NFIELDS,
+				   DCGM_FV_FLAG_LIVE_DATA, values);
+  if (rc != DCGM_ST_OK)
+    return -1;
+  return dcgm_cpu_fill_sample_from_v2(values, DCGM_CPU_NFIELDS, s);
+}
+
+static int read_dcgm_cpu_sample(int core_id, struct dcgm_cpu_sample *s)
+{
+  dcgmFieldValue_v1 values[DCGM_CPU_NFIELDS];
+
+  memset(values, 0, sizeof(values));
+  if (dcgmEntityGetLatestValues(g_dcgm_handle,
+				DCGM_FE_CPU_CORE,
+				core_id,
+				(unsigned short *) g_dcgm_cpu_field_ids,
+				DCGM_CPU_NFIELDS,
+				values) == DCGM_ST_OK
+      && dcgm_cpu_fill_sample_from_v1(DCGM_CPU_NFIELDS, g_dcgm_cpu_field_ids, values, s) == 0)
+    goto have_util;
+  if (read_dcgm_cpu_sample_live(core_id, s) != 0) {
     memset(s, 0, sizeof(*s));
     return -1;
   }
+have_util:
+  if (s->clock_khz <= 0.0)
+    s->clock_khz = dcgm_cpu_nominal_freq_khz(core_id);
   return 0;
 }
 
@@ -149,9 +247,10 @@ static void publish_dcgm_cpu_stats(struct stats *stats, int i)
   stats_set(stats, "CTR5", g_dcgm_ctr5[i]);
   stats_set(stats, "CTR6", 0);
   stats_set(stats, "CTR7", 0);
-  stats_set(stats, "FIXED_CTR0", 0);
-  stats_set(stats, "FIXED_CTR1", 0);
-  stats_set(stats, "FIXED_CTR2", 0);
+  /* Match Intel LIKWID FIXC0..2 mapping (INSTR_RETIRED / core unhalted / ref). */
+  stats_set(stats, "FIXED_CTR0", g_dcgm_inst[i]);
+  stats_set(stats, "FIXED_CTR1", g_dcgm_aperf[i]);
+  stats_set(stats, "FIXED_CTR2", g_dcgm_mperf[i]);
   stats_set(stats, "INST_RETIRED", g_dcgm_inst[i]);
   stats_set(stats, "APERF", g_dcgm_aperf[i]);
   stats_set(stats, "MPERF", g_dcgm_mperf[i]);
@@ -179,18 +278,99 @@ static void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *samp
   g_dcgm_ctr5[i] += (unsigned long long) ((sample->clock_khz * (double) delta_us) / 1000.0 + 0.5);
 }
 
+static void dcgm_cpu_watch_cleanup(void)
+{
+  int c;
+
+  if (g_dcgm_cpu_groups == NULL && g_dcgm_cpu_fgs == NULL)
+    return;
+  if (g_dcgm_handle != (dcgmHandle_t) NULL && g_dcgm_cpu_nchunks > 0 && g_dcgm_cpu_groups != NULL
+      && g_dcgm_cpu_fgs != NULL) {
+    for (c = 0; c < g_dcgm_cpu_nchunks; c++) {
+      if (g_dcgm_cpu_fgs[c] != (dcgmFieldGrp_t) NULL)
+	(void) dcgmFieldGroupDestroy(g_dcgm_handle, g_dcgm_cpu_fgs[c]);
+      if (g_dcgm_cpu_groups[c] != (dcgmGpuGrp_t) NULL)
+	(void) dcgmGroupDestroy(g_dcgm_handle, g_dcgm_cpu_groups[c]);
+    }
+  }
+  free(g_dcgm_cpu_groups);
+  free(g_dcgm_cpu_fgs);
+  g_dcgm_cpu_groups = NULL;
+  g_dcgm_cpu_fgs = NULL;
+  g_dcgm_cpu_nchunks = 0;
+}
+
+static int dcgm_cpu_watch_install(void)
+{
+  int chunk, i, start, end;
+  dcgmReturn_t rc;
+
+  dcgm_cpu_watch_cleanup();
+  if (nr_cpus <= 0)
+    return -1;
+  g_dcgm_cpu_nchunks = (nr_cpus + DCGM_GROUP_MAX_ENTITIES - 1) / DCGM_GROUP_MAX_ENTITIES;
+  g_dcgm_cpu_groups = (dcgmGpuGrp_t *) calloc((size_t) g_dcgm_cpu_nchunks, sizeof(*g_dcgm_cpu_groups));
+  g_dcgm_cpu_fgs = (dcgmFieldGrp_t *) calloc((size_t) g_dcgm_cpu_nchunks, sizeof(*g_dcgm_cpu_fgs));
+  if (g_dcgm_cpu_groups == NULL || g_dcgm_cpu_fgs == NULL) {
+    free(g_dcgm_cpu_groups);
+    free(g_dcgm_cpu_fgs);
+    g_dcgm_cpu_groups = NULL;
+    g_dcgm_cpu_fgs = NULL;
+    g_dcgm_cpu_nchunks = 0;
+    return -1;
+  }
+
+  for (chunk = 0; chunk < g_dcgm_cpu_nchunks; chunk++) {
+    char gname[32];
+    char fname[40];
+
+    snprintf(gname, sizeof(gname), "hpc_cpu_%d", chunk);
+    snprintf(fname, sizeof(fname), "hpc_cpu_fg_%d", chunk);
+    start = chunk * DCGM_GROUP_MAX_ENTITIES;
+    end = start + DCGM_GROUP_MAX_ENTITIES;
+    if (end > nr_cpus)
+      end = nr_cpus;
+    rc = dcgmGroupCreate(g_dcgm_handle, DCGM_GROUP_EMPTY, gname, &g_dcgm_cpu_groups[chunk]);
+    if (rc != DCGM_ST_OK)
+      goto watch_fail;
+    for (i = start; i < end; i++) {
+      rc = dcgmGroupAddEntity(g_dcgm_handle, g_dcgm_cpu_groups[chunk], DCGM_FE_CPU_CORE,
+			      (dcgm_field_eid_t) i);
+      if (rc != DCGM_ST_OK)
+	goto watch_fail;
+    }
+    rc = dcgmFieldGroupCreate(g_dcgm_handle, DCGM_CPU_NFIELDS,
+			      (unsigned short *) g_dcgm_cpu_field_ids, fname, &g_dcgm_cpu_fgs[chunk]);
+    if (rc != DCGM_ST_OK)
+      goto watch_fail;
+    rc = dcgmWatchFields(g_dcgm_handle, g_dcgm_cpu_groups[chunk], g_dcgm_cpu_fgs[chunk], 1000000LL,
+			 3600.0, 3600);
+    if (rc != DCGM_ST_OK)
+      goto watch_fail;
+  }
+  (void) dcgmUpdateAllFields(g_dcgm_handle, 1);
+  return 0;
+
+watch_fail:
+  TRACE("DCGM CPU field watch setup failed (rc=%d); using live reads per core\n", (int) rc);
+  dcgm_cpu_watch_cleanup();
+  return -1;
+}
+
 static int dcgm_backend_begin(struct stats_type *type)
 {
   size_t n = (size_t) nr_cpus;
-  dcgmReturn_t rc = dcgmInit();
+  dcgmReturn_t rc;
+
+  rc = dcgmInit();
   if (rc != DCGM_ST_OK) {
     ERROR("DCGM CPU backend init failed\n");
     type->st_enabled = 0;
     return 0;
   }
-  rc = dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, &g_dcgm_handle);
-  if (rc != DCGM_ST_OK) {
-    ERROR("DCGM CPU backend embedded mode failed\n");
+  rc = monitor_dcgm_attach_for_process(&g_dcgm_handle, &g_dcgm_cpu_use_disconnect);
+  if (rc != DCGM_ST_OK || g_dcgm_handle == (dcgmHandle_t) NULL) {
+    ERROR("DCGM CPU backend attach failed\n");
     (void) dcgmShutdown();
     type->st_enabled = 0;
     return 0;
@@ -211,9 +391,20 @@ static int dcgm_backend_begin(struct stats_type *type)
       g_dcgm_inst == NULL || g_dcgm_aperf == NULL || g_dcgm_mperf == NULL ||
       g_dcgm_last_ts == NULL || g_dcgm_wall_last_us == NULL) {
     ERROR("DCGM CPU backend allocation failed\n");
+    dcgm_cpu_watch_cleanup();
+    if (g_dcgm_handle != (dcgmHandle_t) NULL) {
+      if (g_dcgm_cpu_use_disconnect)
+	(void) dcgmDisconnect(g_dcgm_handle);
+      else
+	(void) dcgmStopEmbedded(g_dcgm_handle);
+      g_dcgm_handle = (dcgmHandle_t) NULL;
+    }
+    (void) dcgmShutdown();
     type->st_enabled = 0;
     return 0;
   }
+  if (dcgm_cpu_watch_install() != 0)
+    TRACE("DCGM CPU watch not active; samples may use slower live queries\n");
   g_dcgm_ready = 1;
   return 0;
 }
@@ -291,6 +482,11 @@ static int cpu_counter_metrics_begin(struct stats_type *type)
 static void cpu_counter_metrics_collect(struct stats_type *type)
 {
   int i;
+
+#ifdef MONITOR_CPU_BACKEND_DCGM
+  if (g_dcgm_ready && g_dcgm_cpu_nchunks > 0)
+    (void) dcgmUpdateAllFields(g_dcgm_handle, 0);
+#endif
   for (i = 0; i < nr_cpus; i++) {
     char cpu[80];
     struct stats *stats;
