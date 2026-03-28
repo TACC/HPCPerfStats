@@ -6,9 +6,17 @@
 #include "collect.h"
 #include "dcgm_agent.h"
 #include "dcgm_structs.h"
+#include "dcgm_fields.h"
 #include "nvidia_gpu.h"
 #include "stats.h"
 #include "trace.h"
+
+/* Current DCGM uses DCGM_FI_DEV_CLOCK_THROTTLE_REASONS; older headers used *_CLOCKS_EVENT_*. */
+#ifndef DCGM_FI_DEV_CLOCK_THROTTLE_REASONS
+# ifdef DCGM_FI_DEV_CLOCKS_EVENT_REASONS
+#  define DCGM_FI_DEV_CLOCK_THROTTLE_REASONS DCGM_FI_DEV_CLOCKS_EVENT_REASONS
+# endif
+#endif
 
 #define DBL_TO_LLU(x) ((unsigned long long) ((x) + 0.5))
 #define DBL_TO_LLU_PERCENT(x) ((unsigned long long) ((100.0 * (x)) + 0.5))
@@ -25,7 +33,7 @@ static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
   DCGM_FI_PROF_PIPE_FP16_ACTIVE,
   DCGM_FI_PROF_SM_ACTIVE,
   DCGM_FI_PROF_SM_OCCUPANCY,
-  DCGM_FI_DEV_CLOCKS_EVENT_REASONS
+  DCGM_FI_DEV_CLOCK_THROTTLE_REASONS
 };
 
 static const char *dcgm_err(dcgmReturn_t rc)
@@ -81,7 +89,7 @@ static int list_field_values(unsigned int gpu_id,
       case DCGM_FI_PROF_PIPE_TENSOR_ACTIVE:
         (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_active);
         break;
-      case DCGM_FI_DEV_CLOCKS_EVENT_REASONS:
+      case DCGM_FI_DEV_CLOCK_THROTTLE_REASONS:
         data[gpu_id].clocks_event_reasons = values[i].value.i64;
         break;
       default:
