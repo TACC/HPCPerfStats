@@ -1,7 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <dirent.h>
+#include <limits.h>
 #include "stats.h"
 #include "collect.h"
 #include "fileio.h"
@@ -28,67 +30,144 @@
   X(symbol_error, "E,W=32", "minor link errors"), \
   X(VL15_dropped, "E,W=32", "")
 
+/* IB_PORT_ACTIVE == 4; sysfs may print "4: ACTIVE", "ACTIVE", or "Active". */
+static int ib_port_logic_active(const char *state_line)
+{
+  const char *p = state_line;
+  char *endp = NULL;
+  unsigned long v;
+
+  while (*p != '\0' && isspace((unsigned char)*p))
+    p++;
+  v = strtoul(p, &endp, 10);
+  if (endp != p && v == 4)
+    return 1;
+  if (strstr(state_line, "ACTIVE") != NULL)
+    return 1;
+  if (strstr(state_line, "Active") != NULL && strstr(state_line, "Inactive") == NULL)
+    return 1;
+  return 0;
+}
+
+/* IB_LINK_LAYER_ACTIVE / LinkUp wording varies by kernel. */
+static int ib_port_phys_link_up(const char *phys_line)
+{
+  const char *p = phys_line;
+  char *endp = NULL;
+  unsigned long v;
+
+  while (*p != '\0' && isspace((unsigned char)*p))
+    p++;
+  v = strtoul(p, &endp, 10);
+  if (endp != p && v == 5)
+    return 1;
+  if (strstr(phys_line, "LinkUp") != NULL || strstr(phys_line, "linkup") != NULL)
+    return 1;
+  return 0;
+}
+
+static int ib_port_collectible(const char *hca, int port)
+{
+  char path[160];
+  char buf[96];
+  FILE *f;
+
+  snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/state", hca, port);
+  f = file_fopen_read(path);
+  if (f != NULL) {
+    if (fgets(buf, sizeof(buf), f) != NULL) {
+      fclose(f);
+      if (ib_port_logic_active(buf))
+        return 1;
+    } else
+      fclose(f);
+  }
+
+  snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/phys_state", hca, port);
+  f = file_fopen_read(path);
+  if (f == NULL)
+    return 0;
+  if (fgets(buf, sizeof(buf), f) == NULL) {
+    fclose(f);
+    return 0;
+  }
+  fclose(f);
+  return ib_port_phys_link_up(buf);
+}
+
+static void ib_merge_counters_dir(struct stats *stats, const char *dir_path)
+{
+  DIR *d = opendir(dir_path);
+
+  if (d == NULL)
+    return;
+  closedir(d);
+  (void) path_collect_key_value_dir(dir_path, stats);
+}
+
+static void ib_collect_port(struct stats_type *type, const char *dev, int port)
+{
+  char path[160], id[80];
+  FILE *file = NULL;
+  char file_buf[4096];
+  unsigned int lid;
+  struct stats *stats = NULL;
+
+  if (!ib_port_collectible(dev, port))
+    return;
+
+  TRACE("dev %s, port %i\n", dev, port);
+
+  snprintf(id, sizeof(id), "%s.%i", dev, port);
+  stats = get_current_stats(type, id);
+  if (stats == NULL)
+    return;
+
+  snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/counters", dev, port);
+  ib_merge_counters_dir(stats, path);
+  snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/hw_counters", dev, port);
+  ib_merge_counters_dir(stats, path);
+
+  snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/lid", dev, port);
+  file = file_fopen_read(path);
+  if (file == NULL)
+    return;
+  setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
+
+  if (fscanf(file, "%x", &lid) != 1) {
+    fclose(file);
+    return;
+  }
+
+  fclose(file);
+}
+
 static void ib_collect_dev(struct stats_type *type, const char *dev)
 {
-  int port;
-  for (port = 1; port <= 2; port++) {
-    char path[80], id[80];//, cmd[160];
-    FILE *file = NULL;
-    char file_buf[4096];
-    unsigned int lid;
-    struct stats *stats = NULL;
+  char ports_path[160];
+  DIR *ports_dir = NULL;
+  struct dirent *ent;
 
-    snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%i/state", dev, port);
-    file = file_fopen_read(path);
-    if (file == NULL)
-      goto next; /* ERROR("cannot open `%s': %m\n", path); */
-    setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
+  snprintf(ports_path, sizeof(ports_path), "/sys/class/infiniband/%s/ports", dev);
+  ports_dir = opendir(ports_path);
+  if (ports_dir == NULL)
+    return;
 
-    char buf[80] = { 0 };
-    if (fgets(buf, sizeof(buf), file) == NULL)
-      goto next;
+  while ((ent = readdir(ports_dir)) != NULL) {
+    char *endp = NULL;
+    long pn;
 
-    fclose(file);
-    file = NULL;
-
-    if (strstr(buf, "ACTIVE") == NULL)
-      goto next;
-
-    TRACE("dev %s, port %i\n", dev, port);
-
-    snprintf(id, sizeof(id), "%s.%i", dev, port); /* XXX */
-    stats = get_current_stats(type, id);
-    if (stats == NULL)
-      goto next;
-
-    snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%i/counters", dev, port);
-    path_collect_key_value_dir(path, stats);
-
-    /* Get the LID for perfquery. */
-    snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%i/lid", dev, port);
-    file = file_fopen_read(path);
-    if (file == NULL)
-      goto next;
-    setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
-
-    if (fscanf(file, "%x", &lid) != 1)
-      goto next;
-
-    fclose(file);
-    file = NULL;
-
-    /* Call perfquery to clear stats.  Blech! */
-    /*
-    snprintf(cmd, sizeof(cmd), "%s -R %#x %d", perfquery, lid, port);
-    int cmd_rc = system(cmd);
-    if (cmd_rc != 0)
-      ERROR("`%s' exited with status %d\n", cmd, cmd_rc);
-    */
-  next:
-    if (file != NULL)
-      fclose(file);
-    file = NULL;
+    if (ent->d_name[0] == '.')
+      continue;
+    pn = strtol(ent->d_name, &endp, 10);
+    if (endp == ent->d_name || *endp != '\0')
+      continue;
+    if (pn < 1 || pn > INT_MAX)
+      continue;
+    ib_collect_port(type, dev, (int)pn);
   }
+
+  closedir(ports_dir);
 }
 
 static void ib_collect(struct stats_type *type)
