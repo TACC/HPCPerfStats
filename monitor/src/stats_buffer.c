@@ -37,7 +37,7 @@ extern double freq;
 #define RMQ_CHANNEL 1
 
 #ifdef DEBUG
-/* Decode rabbitmq-c failures for DEBUG builds (syslog via ERROR when RABBITMQ). */
+/* Decode rabbitmq-c failures for DEBUG builds (ERROR -> stdout when RABBITMQ+DEBUG). */
 static void rmq_debug_log_amqp_status(const char *ctx, int st)
 {
   int save_e = errno;
@@ -417,7 +417,7 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
 static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, struct stats_buffer *sf)
 {
 #ifdef DEBUG
-  syslog(LOG_INFO, "Attempt declare queue on RMQ server\n");
+  ERROR("Attempt declare queue on RMQ server\n");
 #endif
   amqp_queue_declare_ok_t *r = amqp_queue_declare(conn, RMQ_CHANNEL, amqp_cstring_bytes(sf->sf_queue),
 						  0, 1, 0, 0, amqp_empty_table);
@@ -433,7 +433,7 @@ static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, 
 
   amqp_bytes_t reply_to_queue = amqp_bytes_malloc_dup(r->queue);
   if (reply_to_queue.bytes == NULL) {
-    syslog(LOG_ERR, "Out of memory while copying queue name");
+    ERROR("Out of memory while copying queue name\n");
     return -1;
   }
 

@@ -7,7 +7,11 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#ifdef DEBUG
+/* Match trace.h: DEBUG builds log to stdout instead of syslog. */
+#else
 #include <syslog.h>
+#endif
 
 
 int pid_fd;
@@ -87,7 +91,11 @@ void daemonize()
       exit(EXIT_FAILURE);
   }
   /* Try to write PID of daemon to lockfile */
-  syslog(LOG_ERR,"%s\n",pid_file_name);
+#ifdef DEBUG
+  fprintf(stdout, "%s\n", pid_file_name);
+#else
+  syslog(LOG_ERR, "%s\n", pid_file_name);
+#endif
   if (pid_file_name != NULL)
     {
       char str[256];
@@ -98,7 +106,11 @@ void daemonize()
       }
       if (lockf(pid_fd, F_TLOCK, 0) < 0) {
 	/* Can't lock file */
-	syslog(LOG_ERR, "%s already found. Abort second instance.\n", pid_file_name); 
+#ifdef DEBUG
+	fprintf(stdout, "%s already found. Abort second instance.\n", pid_file_name);
+#else
+	syslog(LOG_ERR, "%s already found. Abort second instance.\n", pid_file_name);
+#endif
 	exit(EXIT_FAILURE);
       }
       /* Get current PID */
