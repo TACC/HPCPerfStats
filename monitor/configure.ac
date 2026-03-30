@@ -1,4 +1,4 @@
-AC_INIT([hpcperfstats], [3.0], [rtevans@tacc.utexas.edu])
+AC_INIT([hpcperfstats], [3.0], [sharrell@tacc.utexas.edu])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror -Wno-portability])
 AC_CANONICAL_HOST
 AC_PROG_CC
