@@ -329,9 +329,7 @@ class SummaryPlot():
 
     if 'acycles' in df.columns and 'mcycles' in df.columns:
       df["freq"] = 2.7 * df["acycles"] / df["mcycles"]
-      df["cpi"] = df["acycles"] / df["instr"]
       metrics += [("freq", "arc", [], "freq", 1, "[GHz]")]
-      metrics += [("cpi", "arc", [], "cpi", 1, "CPI [ratio]")]
       del df["mcycles"], df["acycles"], df["instr"]
 
     if 'amd_acycles' in df.columns and 'amd_mcycles' in df.columns:
