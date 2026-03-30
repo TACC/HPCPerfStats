@@ -31,7 +31,7 @@ PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 |---------|-------------|
 | `hpcperfstats/tests/` | Non-Django unit/integration tests (config parsing, service startup/health, listend behavior, sync helpers, cache/date/print/file-locking helpers, XALT models, API key mobile checks). |
 | `hpcperfstats/analysis/**/test*.py` | Analysis/plot/metrics-focused tests (summary/heatmap/roofline behavior, hover tooltips, metrics helpers). |
-| `hpcperfstats/site/machine/tests/` | Django + web tests (ORM/query/update helpers, security headers, API/misc endpoints, SPA rendering, page and browser E2E tests). |
+| `hpcperfstats/site/machine/tests/` | Django + web tests (ORM/query/update helpers, job detail file-system llite vs NFS fallback, security headers, API/misc endpoints, SPA rendering, page and browser E2E tests). |
 
 ## Test runners
 

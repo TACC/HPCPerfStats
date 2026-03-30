@@ -81,6 +81,7 @@ KEY_STATES = "states"
 KEY_ALL_HOSTS = "all_hosts"
 KEY_HOST_LAST = "host_last"
 KEY_LLITE_DELTA = "llite_delta"
+KEY_NFS_FSIO = "nfs_fsio"
 KEY_GPU_QS = "gpu_qs"
 # Aggregate stats (Count/Max/Avg) — distinct cache namespace from legacy row-list KEY_GPU_QS.
 KEY_GPU_AGG = "gpu_agg"

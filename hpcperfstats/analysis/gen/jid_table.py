@@ -15,6 +15,7 @@ from hpcperfstats.site.machine.cache_utils import (
     KEY_HOST_SCHEMA,
     KEY_HOST_TIME_DF,
     KEY_LLITE_DELTA,
+    KEY_NFS_FSIO,
     KEY_TYPE_DETAIL_AGG,
     KEY_TYPE_DETAIL_HOST_TIME,
     cached_orm,
@@ -277,6 +278,45 @@ class jid_table:
     key = make_cache_key(KEY_LLITE_DELTA, self.jid)
     result = cached_orm(key, TIMEOUT_SHORT, _llite_fn)
     return result if result is not None else queryset_to_dataframe(None)
+
+  def get_nfs_delta_totals_mb(self):
+    """Aggregate NFS client byte counters (monitor type `nfs`) to total read/write MB.
+
+    Uses the same counters as the monitor's `nfs.c` BYTE_KEYS: normal/direct/server
+    read and write. Intended for the job detail File System when Lustre `llite`
+    stats are not available.
+    """
+    from django.db.models import Sum
+
+    nfs_read_events = ("normal_read", "direct_read", "server_read")
+    nfs_write_events = ("normal_write", "direct_write", "server_write")
+    all_events = list(nfs_read_events) + list(nfs_write_events)
+
+    def _nfs_fn():
+      qs = (
+          self._host_data_qs(
+              type="nfs",
+              event__in=all_events,
+          ).values("event").annotate(delta_sum=Sum("delta")).order_by("event"))
+      df = queryset_to_dataframe(qs)
+      if df.empty or "delta_sum" not in df.columns:
+        return None
+      read_total = 0.0
+      write_total = 0.0
+      for _, row in df.iterrows():
+        ev = row.get("event")
+        ds = float(row.get("delta_sum") or 0)
+        if ev in nfs_read_events:
+          read_total += ds
+        elif ev in nfs_write_events:
+          write_total += ds
+      if read_total == 0.0 and write_total == 0.0:
+        return None
+      return [read_total / (1024 * 1024), write_total / (1024 * 1024)]
+
+    key = make_cache_key(KEY_NFS_FSIO, self.jid)
+    result = cached_orm(key, TIMEOUT_SHORT, _nfs_fn)
+    return result
 
   def close(self):
     """No-op; provided for context-manager symmetry.

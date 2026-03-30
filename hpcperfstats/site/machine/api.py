@@ -1861,6 +1861,13 @@ def job_detail(request, pk):
                     fsio["llite"] = [read_val, write_val]
             except Exception:
                 pass
+            if "llite" not in fsio:
+                try:
+                    nfs_totals = j.get_nfs_delta_totals_mb()
+                    if nfs_totals is not None:
+                        fsio["nfs"] = nfs_totals
+                except Exception:
+                    pass
             return fsio
         finally:
             close_old_connections()
