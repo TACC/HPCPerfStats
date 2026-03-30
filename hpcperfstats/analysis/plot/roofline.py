@@ -16,6 +16,8 @@ from hpcperfstats.analysis.gen.utils import (
     INTEL_CORE_PMC_TYPES_ORDERED,
     INTEL_FP_ARITH_ALL_EVENTS,
     INTEL_IMC_STATS_TYPES,
+    new_plain_log_tick_formatter,
+    new_plain_number_hover_formatter,
 )
 
 # Intel SSE/AVX double FLOP proxy events (SNB/IVB-style; pre-FP_ARITH uarch).
@@ -312,14 +314,17 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
         tooltips=[("Line", "Roofline")],
         renderers=[],  # set after line is added
     )
+    hover_num_ai = new_plain_number_hover_formatter()
+    hover_num_perf = new_plain_number_hover_formatter()
     hover_job = HoverTool(
         tooltips=[
             ("Line", "Job"),
             ("host", "@host"),
-            ("AI (FLOP/byte)", "@ai{0.4f}"),
-            ("Perf (GFLOP/s)", "@perf{0.2f}"),
+            ("AI (FLOP/byte)", "@ai{custom}"),
+            ("Perf (GFLOP/s)", "@perf{custom}"),
             ("time", "@time"),
         ],
+        formatters={"@ai": hover_num_ai, "@perf": hover_num_perf},
         renderers=[],  # set after circle is added
     )
     p = figure(

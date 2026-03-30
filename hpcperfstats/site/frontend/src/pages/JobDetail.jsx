@@ -4,6 +4,7 @@ import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
+import { formatDecimalStandard } from "../utils/formatDecimal";
 import { useSession } from "../session-context";
 
 function CollapsibleSection({ title, children, defaultOpen = false, empty = false }) {
@@ -248,8 +249,8 @@ export default function JobDetail() {
                 Object.entries(fsio).map(([key, val]) => (
                   <tr key={key}>
                     <td>{key}</td>
-                    <td>{Number(val[0]).toExponential(1)}</td>
-                    <td>{Number(val[1]).toExponential(1)}</td>
+                    <td>{formatDecimalStandard(val[0])}</td>
+                    <td>{formatDecimalStandard(val[1])}</td>
                   </tr>
                 ))
               )}

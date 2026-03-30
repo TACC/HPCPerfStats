@@ -1,6 +1,7 @@
 """Unit tests for hover tooltip formatting in analysis plots."""
 import pandas as pd
 from bokeh.models import HoverTool
+from bokeh.models.tools import CustomJSHover
 
 from hpcperfstats.analysis.plot.devplot import DevPlot
 from hpcperfstats.analysis.plot.summaryplot import SummaryPlot
@@ -35,8 +36,9 @@ def test_summaryplot_hover_uses_html_with_separators():
   assert isinstance(hover.tooltips, str)
   assert "border-bottom" in hover.tooltips
   assert "@time{%F %T}" in hover.tooltips
-  assert "@cpu" in hover.tooltips
-  assert hover.formatters == {"@time": "datetime"}
+  assert "@cpu{custom}" in hover.tooltips
+  assert hover.formatters["@time"] == "datetime"
+  assert isinstance(hover.formatters["@cpu"], CustomJSHover)
   assert len(hover.renderers) == len(_SummaryJt.host_list)
 
 
@@ -88,6 +90,7 @@ def test_devplot_hover_uses_html_with_separators():
   assert isinstance(hover.tooltips, str)
   assert "border-bottom" in hover.tooltips
   assert "@time{%F %T}" in hover.tooltips
-  assert "@MBW_CHANNEL_0" in hover.tooltips
-  assert hover.formatters == {"@time": "datetime"}
+  assert "@MBW_CHANNEL_0{custom}" in hover.tooltips
+  assert hover.formatters["@time"] == "datetime"
+  assert isinstance(hover.formatters["@MBW_CHANNEL_0"], CustomJSHover)
   assert len(hover.renderers) == 2

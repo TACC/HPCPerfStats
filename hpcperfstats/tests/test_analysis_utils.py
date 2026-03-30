@@ -65,3 +65,18 @@ def test_tz_aware_bokeh_tick_formatter_returns_formatter():
   assert "tick" in formatter.code
 
 
+def test_plain_linear_tick_formatter_disables_scientific():
+  """Linear tick formatter opts out of scientific notation for website-facing plots."""
+  from bokeh.plotting import figure
+
+  from hpcperfstats.analysis.gen.utils import (
+    new_plain_linear_tick_formatter,
+    set_linear_axes_plain_numeric,
+  )
+
+  assert new_plain_linear_tick_formatter().use_scientific is False
+  p = figure(width=80, height=60)
+  set_linear_axes_plain_numeric(p)
+  assert p.yaxis.formatter.use_scientific is False
+
+

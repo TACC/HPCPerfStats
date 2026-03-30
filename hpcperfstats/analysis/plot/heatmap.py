@@ -13,6 +13,10 @@ from bokeh.palettes import Viridis
 from bokeh.plotting import figure
 
 from hpcperfstats.analysis.gen import utils
+from hpcperfstats.analysis.gen.utils import (
+    new_plain_linear_tick_formatter,
+    new_plain_number_hover_formatter,
+)
 
 
 def _candidate_series():
@@ -105,7 +109,11 @@ class HeatMap():
              times=list(times) * len(u.hostnames),
              cpi=host_cpi))
 
-    hover = HoverTool(tooltips=[("host", "@hostnames"), ("time", "@times"), ("cpi", "@cpi")])
+    cpi_hover = new_plain_number_hover_formatter()
+    hover = HoverTool(
+        tooltips=[("host", "@hostnames"), ("time", "@times"), ("cpi", "@cpi{custom}")],
+        formatters={"@cpi": cpi_hover},
+    )
 
     # Viridis is colorblind-friendly; scale CPI 0.25–2
     mapper = LinearColorMapper(palette=Viridis[11],
@@ -114,10 +122,11 @@ class HeatMap():
     colors = {"field": "cpi", "transform": mapper}
     color_bar = ColorBar(color_mapper=mapper,
                          location=(0, 0),
-                         ticker=BasicTicker(desired_num_ticks=10))
+                         ticker=BasicTicker(desired_num_ticks=10),
+                         formatter=new_plain_linear_tick_formatter())
 
     hm = figure(
-        title="<Cycles/Instruction> = " + "{0:0.2}".format(host_cpi.mean()),
+        title="<Cycles/Instruction> = " + f"{float(host_cpi.mean()):.4f}",
         x_range=times,
         x_axis_label="Time",
         y_axis_label="Host",
@@ -195,13 +204,22 @@ def plot_and_reason_from_jid_table(jt):
         times=[t for _ in hostnames for t in times],
         cpi=cpi_flat,
     ))
-    hover = HoverTool(tooltips=[("host", "@hostnames"), ("time", "@times"), ("cpi", "@cpi")])
+    cpi_hover = new_plain_number_hover_formatter()
+    hover = HoverTool(
+        tooltips=[("host", "@hostnames"), ("time", "@times"), ("cpi", "@cpi{custom}")],
+        formatters={"@cpi": cpi_hover},
+    )
     # Viridis is colorblind-friendly; scale CPI 0.25–2
     mapper = LinearColorMapper(palette=Viridis[11], low=0.25, high=2)
-    color_bar = ColorBar(color_mapper=mapper, location=(0, 0), ticker=BasicTicker(desired_num_ticks=10))
+    color_bar = ColorBar(
+        color_mapper=mapper,
+        location=(0, 0),
+        ticker=BasicTicker(desired_num_ticks=10),
+        formatter=new_plain_linear_tick_formatter(),
+    )
     mean_cpi = numpy.nanmean(cpi_flat) if cpi_flat else 0
     hm = figure(
-        title="<Cycles/Instruction> = {0:0.2f}".format(mean_cpi),
+        title="<Cycles/Instruction> = " + f"{float(mean_cpi):.4f}",
         x_range=times,
         y_range=hostnames,
         x_axis_label="Time",

@@ -15,7 +15,12 @@ from bokeh.palettes import d3
 from bokeh.plotting import figure
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.analysis.gen.utils import clean_dataframe, tz_aware_bokeh_tick_formatter
+from hpcperfstats.analysis.gen.utils import (
+    clean_dataframe,
+    new_plain_number_hover_formatter,
+    set_linear_axes_plain_numeric,
+    tz_aware_bokeh_tick_formatter,
+)
 
 local_timezone = cfg.get_local_timezone()
 
@@ -26,7 +31,7 @@ def _hover_tooltip_html(value_label, value_field):
     <div style="padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #d0d7de;">
       <div><strong>host:</strong> @host</div>
       <div><strong>time:</strong> @time{{%F %T}}</div>
-      <div><strong>{value_label}:</strong> @{value_field}</div>
+      <div><strong>{value_label}:</strong> @{value_field}{{custom}}</div>
     </div>
   """
 
@@ -64,8 +69,10 @@ class DevPlot:
         y_range=Range1d(-0.1, y_range_end),
         y_axis_label=ylabel,
     )
+    set_linear_axes_plain_numeric(plot)
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
+    num_hover = new_plain_number_hover_formatter()
     circle_renderers = []
     for h in self.host_list:
       source = ColumnDataSource(df[df.host == h])
@@ -89,7 +96,10 @@ class DevPlot:
     plot.add_tools(
         HoverTool(
             tooltips=_hover_tooltip_html(event, event),
-            formatters={"@time": "datetime"},
+            formatters={
+                "@time": "datetime",
+                f"@{event}": num_hover,
+            },
             renderers=circle_renderers,
         )
     )

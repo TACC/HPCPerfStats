@@ -63,6 +63,10 @@ from .cache_utils import (
     TIMEOUT_SHORT,
     TIMEOUT_LONG,
 )
+from hpcperfstats.analysis.gen.utils import (
+    new_plain_number_hover_formatter,
+    set_linear_axes_plain_numeric,
+)
 from hpcperfstats.analysis.metrics.metrics import build_job_metrics_display_list
 from hpcperfstats.dbload.sync_acct import sync_acct_from_content
 from .models import ApiKey, host_data, job_data, metrics_data
@@ -1010,6 +1014,7 @@ def _job_list_histograms_empty_figure():
         title="No histogram data available for this job list.",
         toolbar_location=None,
     )
+    set_linear_axes_plain_numeric(empty)
     return gridplot([[empty]], toolbar_location=None)
 
 
@@ -1148,8 +1153,14 @@ def _job_list_queue_histogram(job_list_qs, width=600, height=400):
             toolbar_location=None,
             tools="pan,wheel_zoom,box_zoom,reset,save",
         )
+        set_linear_axes_plain_numeric(p)
+        q_jobs_hover = new_plain_number_hover_formatter()
         p.add_tools(
-            HoverTool(tooltips=[("queue", "@x"), ("jobs", "@top")], point_policy="snap_to_data")
+            HoverTool(
+                tooltips=[("queue", "@x"), ("jobs", "@top{custom}")],
+                formatters={"@top": q_jobs_hover},
+                point_policy="snap_to_data",
+            )
         )
         p.xaxis.axis_label = "queue"
         p.yaxis.axis_label = "# jobs"
@@ -1186,9 +1197,12 @@ def _job_list_queue_cpu_hours_histogram(job_list_qs, width=600, height=400):
             toolbar_location=None,
             tools="pan,wheel_zoom,box_zoom,reset,save",
         )
+        set_linear_axes_plain_numeric(p)
+        q_nh_hover = new_plain_number_hover_formatter()
         p.add_tools(
             HoverTool(
-                tooltips=[("queue", "@x"), ("node hours", "@top{0,0.00}")],
+                tooltips=[("queue", "@x"), ("node hours", "@top{custom}")],
+                formatters={"@top": q_nh_hover},
                 point_policy="snap_to_data",
             )
         )

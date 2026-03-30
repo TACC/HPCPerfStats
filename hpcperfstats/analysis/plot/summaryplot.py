@@ -16,6 +16,8 @@ from hpcperfstats.analysis.gen.utils import (
     INTEL_FP_ARITH_DOUBLE_EVENTS,
     INTEL_FP_ARITH_SINGLE_EVENTS,
     INTEL_IMC_STATS_TYPES,
+    new_plain_number_hover_formatter,
+    set_linear_axes_plain_numeric,
     tz_aware_bokeh_tick_formatter,
 )
 
@@ -36,7 +38,7 @@ def _hover_tooltip_html(value_label, value_field):
     <div style="padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #d0d7de;">
       <div><strong>host:</strong> @host</div>
       <div><strong>time:</strong> @time{{%F %T}}</div>
-      <div><strong>{value_label}:</strong> @{value_field}</div>
+      <div><strong>{value_label}:</strong> @{value_field}{{custom}}</div>
     </div>
   """
 
@@ -251,8 +253,10 @@ class SummaryPlot():
         y_axis_label=label_text,
         title=label_text,
     )
+    set_linear_axes_plain_numeric(plot)
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
+    num_hover = new_plain_number_hover_formatter()
     circle_renderers = []
     for h in self.host_list:
       source = ColumnDataSource(df[df.host == h])
@@ -276,7 +280,10 @@ class SummaryPlot():
     plot.add_tools(
         HoverTool(
             tooltips=_hover_tooltip_html(label_text, metric),
-            formatters={"@time": "datetime"},
+            formatters={
+                "@time": "datetime",
+                f"@{metric}": num_hover,
+            },
             renderers=circle_renderers,
         )
     )

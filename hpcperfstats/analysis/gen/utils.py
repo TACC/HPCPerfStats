@@ -5,7 +5,12 @@ import hpcperfstats.conf_parser as cfg
 
 import warnings
 
-from bokeh.models import CustomJSTickFormatter
+from bokeh.models import (
+    BasicTickFormatter,
+    CustomJSHover,
+    CustomJSTickFormatter,
+    LinearAxis,
+)
 import numpy as np
 import pandas as pd
 
@@ -286,3 +291,45 @@ try {
 }
 """,
   )
+
+
+# JavaScript: decimal (non-scientific) strings for Bokeh hovers and log-axis ticks.
+_PLAIN_NUMBER_HOVER_JS = """
+const v = value;
+if (v == null || v === "") return "";
+const n = typeof v === "number" ? v : Number(v);
+if (Number.isFinite(n))
+  return new Intl.NumberFormat("en-US", {notation: "standard", maximumFractionDigits: 20}).format(n);
+return String(v);
+"""
+
+_PLAIN_LOG_TICK_JS = """
+const t = tick;
+if (t == null || t === "") return "";
+const n = typeof t === "number" ? t : Number(t);
+if (!Number.isFinite(n)) return String(t);
+return new Intl.NumberFormat("en-US", {notation: "standard", maximumFractionDigits: 20}).format(n);
+"""
+
+
+def new_plain_linear_tick_formatter():
+  """Bokeh tick labels without scientific notation (new instance per axis/plot)."""
+  return BasicTickFormatter(use_scientific=False)
+
+
+def new_plain_log_tick_formatter():
+  """Log-scale tick labels as plain decimals (avoids 10^n style from default log formatter)."""
+  return CustomJSTickFormatter(code=_PLAIN_LOG_TICK_JS.strip())
+
+
+def new_plain_number_hover_formatter():
+  """Hover tooltip numeric fields without scientific notation (new instance per HoverTool)."""
+  return CustomJSHover(code=_PLAIN_NUMBER_HOVER_JS.strip())
+
+
+def set_linear_axes_plain_numeric(plot):
+  """Apply non-scientific tick formatters to every LinearAxis on the figure."""
+  for axis_list in (plot.xaxis, plot.yaxis):
+    for ax in axis_list:
+      if isinstance(ax, LinearAxis):
+        ax.formatter = new_plain_linear_tick_formatter()

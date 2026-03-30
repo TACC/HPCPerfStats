@@ -4,6 +4,11 @@ import hpcperfstats.conf_parser as cfg
 
 import numpy as np
 from bokeh.models import HoverTool
+
+from hpcperfstats.analysis.gen.utils import (
+    new_plain_number_hover_formatter,
+    set_linear_axes_plain_numeric,
+)
 from bokeh.plotting import figure
 from numpy import histogram, isfinite, log
 from pandas import to_numeric
@@ -37,8 +42,13 @@ def job_hist(df, metric, label, width=600, height=400, title=None):
     """
     if metric not in df.columns:
         return None
+    num_hover = new_plain_number_hover_formatter()
     hover = HoverTool(
-        tooltips=[("jobs", "@top"), ("bin", "[@left, @right]")],
+        tooltips=[
+            ("jobs", "@top{custom}"),
+            ("bin", "[@left{custom}, @right{custom}]"),
+        ],
+        formatters={"@top": num_hover, "@left": num_hover, "@right": num_hover},
         point_policy="snap_to_data",
     )
     TOOLS = ["pan,wheel_zoom,box_zoom,reset,save,box_select", hover]
@@ -77,6 +87,7 @@ def job_hist(df, metric, label, width=600, height=400, title=None):
     )
     plot.xaxis.axis_label = label
     plot.yaxis.axis_label = "# jobs"
+    set_linear_axes_plain_numeric(plot)
     plot.quad(top=hist, bottom=1, left=edges[:-1], right=edges[1:])
 
     return plot

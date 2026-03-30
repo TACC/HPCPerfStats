@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { formatDecimalStandard } from "../utils/formatDecimal";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
@@ -67,7 +68,7 @@ export default function TypeDetail() {
                     <th>{time}</th>
                     {values.map((v, j) => (
                       <th key={j}>
-                        {typeof v === "number" ? v.toExponential(2) : v}
+                        {typeof v === "number" ? formatDecimalStandard(v) : v}
                       </th>
                     ))}
                   </tr>
