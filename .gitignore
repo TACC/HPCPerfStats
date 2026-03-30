@@ -18,6 +18,7 @@ tacc_stats.egg-info/
 *.o
 *.sh
 !monitor/scripts/*.sh
+!monitor/tests/*.sh
 *.so
 *.d
 .project

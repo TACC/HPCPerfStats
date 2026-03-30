@@ -39,6 +39,20 @@ if test -z "${pkg}" || test -z "${ver}"; then
   exit 1
 fi
 
+# tests/Makefile.am EXTRA_DIST — each must exist or `make dist` fails with
+# "No rule to make target '<file>'" (partial checkout / stale tree).
+for distfile in \
+  tests/test_monitor_configure_help.sh.in \
+  tests/run_tests.sh \
+  tests/README.md
+do
+  if test ! -f "${MONITOR_DIR}/${distfile}"; then
+    echo "Missing file required for make dist: ${MONITOR_DIR}/${distfile}" >&2
+    echo "Restore tests/ from the full repository; partial copies cannot build the tarball." >&2
+    exit 1
+  fi
+done
+
 tb="${pkg}-${ver}.tar.gz"
 sources_dir="${MONITOR_DIR}/rpmbuild/SOURCES"
 specs_dir="${MONITOR_DIR}/rpmbuild/SPECS"
