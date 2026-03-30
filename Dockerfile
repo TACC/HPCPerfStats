@@ -5,9 +5,15 @@ COPY --chown=node:node . .
 WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
 RUN /bin/bash -o pipefail -c "npm ci && npm run build"
 WORKDIR /home/hpcperfstats
-RUN /bin/bash -o pipefail -c "mkdir -p /tmp/frontend-static && \
-    cp -a /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/ \
-    static/frontend/. /tmp/frontend-static/ && \
+RUN /bin/bash -o pipefail -c "\
+    mkdir -p /tmp/frontend-static && \
+    if [ -d \
+\"/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend\" \
+    ]; then \
+      cp -a \
+\"/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend/.\" \
+        /tmp/frontend-static/; \
+    fi && \
     rm -rf /home/hpcperfstats/hpcperfstats/site/frontend"
 
 # Runtime image.
