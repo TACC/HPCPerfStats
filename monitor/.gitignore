@@ -43,3 +43,4 @@ Makefile.in
 /.agent-*
 *.log
 /.build*
+/rpmbuild

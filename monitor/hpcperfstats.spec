@@ -7,6 +7,10 @@ Vendor: Texas Advanced Computing Center
 Group: System Environment/Base
 Packager: TACC - sharrell@tacc.utexas.edu
 Source: hpcperfstats-%{version}.tar.gz
+#
+# Local rpmbuild: scripts/prepare_rpmbuild_dirs.sh creates ./rpmbuild/*, copies this spec to
+# rpmbuild/SPECS/, runs make dist in this checkout, and copies the tarball to SOURCES.
+# The script prints the rpmbuild -ba command to run next.
 
 # Static bundle: monitor/scripts/build_static_bundle.sh builds pinned libev,
 # rabbitmq-c, and (on x86_64/i686) LIKWID as static archives, then configures

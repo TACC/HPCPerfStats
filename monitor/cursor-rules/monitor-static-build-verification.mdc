@@ -51,11 +51,8 @@ rpmspec -q --queryformat '%{name}-%{version}-%{release}\n' hpcperfstats.spec | h
 **Full RPM build (optional, CI or before release):** confirms **`%prep` / `%build` / `%install`** end-to-end. From **`HPCPerfStats/monitor/`**:
 
 ```bash
-make dist
-mkdir -p rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
-cp hpcperfstats-*.tar.gz rpmbuild/SOURCES/
-cp hpcperfstats.spec rpmbuild/SPECS/
-rpmbuild -ba --define "_topdir $PWD/rpmbuild" rpmbuild/SPECS/hpcperfstats.spec
+./scripts/prepare_rpmbuild_dirs.sh
+# then run the rpmbuild -ba line the script prints (make dist uses this checkout as sources)
 ```
 
 The spec **`%build`** runs **`./scripts/build_static_bundle.sh`**, so the first full build on a clean host needs **network** access to fetch pinned dependency tarballs (unless you pre-populate **`PREFIX`** / **`SRCDIR`** and adjust the spec to set **`SKIP_DEPS=1`**—not in the stock spec). Install all **`BuildRequires`** from the spec before **`rpmbuild`**.
