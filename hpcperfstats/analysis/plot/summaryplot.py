@@ -232,9 +232,13 @@ class SummaryPlot():
 
     df = df[["time", "host", metric]]
 
+    y_min_value = df[metric].min()
     y_range_end = 1.1 * df[metric].max()
+    y_range_start = y_min_value if y_min_value < 0 else 0
     if math.isnan(y_range_end):
       y_range_end = 0
+    if math.isnan(y_range_start):
+      y_range_start = 0
 
     label_text = (label or "").strip() or metric
 
@@ -242,7 +246,7 @@ class SummaryPlot():
         width=400,
         height=150,
         x_axis_type="datetime",
-        y_range=Range1d(-0.1, y_range_end),
+        y_range=Range1d(y_range_start, y_range_end),
         y_axis_label=label_text,
         title=label_text,
     )
