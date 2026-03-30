@@ -1,7 +1,7 @@
 Summary: Job-level Monitoring Client
 Name: hpcperfstats
 Version: 3.0
-Release: 2%{?dist}
+Release: 3%{?dist}
 License: GPL
 Vendor: Texas Advanced Computing Center
 Group: System Environment/Base
@@ -42,9 +42,11 @@ BuildRequires: pciutils
 # InfiniBand (libibmad + headers): omit on hosts where IB support is unwanted.
 BuildRequires: rdma-core-devel
 
-# Non-x86: configure auto-selects DCGM CPU backend (NVIDIA datacenter-gpu-manager on EL).
+# Non-x86: configure auto-selects DCGM CPU backend (libdcgm). EL9 + NVIDIA repos ship
+# DCGM 4 as datacenter-gpu-manager-4-devel (there is no bare "datacenter-gpu-manager" RPM).
+# Older stacks may only offer libdcgm-devel.
 %ifarch aarch64
-BuildRequires: datacenter-gpu-manager
+BuildRequires: (datacenter-gpu-manager-4-devel or libdcgm-devel)
 %endif
 
 %{?systemd_requires}
@@ -105,6 +107,10 @@ install -m 0644 src/hpcperfstats.service %{buildroot}%{_unitdir}/hpcperfstats.se
 %systemd_postun_with_restart hpcperfstats.service
 
 %changelog
+* Sat Mar 28 2026 sharrell@tacc.utexas.edu - 3.0-3
+- aarch64 BuildRequires: use datacenter-gpu-manager-4-devel or libdcgm-devel (rich dep);
+  EL9 NVIDIA DCGM 4 has no package named datacenter-gpu-manager.
+
 * Sat Mar 28 2026 sharrell@tacc.utexas.edu - 3.0-2
 - build_static_bundle.sh: probe IB / DCGM / AMD SDK and use cpu-counter-backend=auto;
   drop %%hpc_extra_configure; add BuildRequires: pciutils, rdma-core-devel.
