@@ -247,6 +247,7 @@ class SummaryPlot():
         height=150,
         x_axis_type="datetime",
         y_range=Range1d(y_range_start, y_range_end),
+        x_axis_label="Time",
         y_axis_label=label_text,
         title=label_text,
     )
@@ -330,7 +331,7 @@ class SummaryPlot():
       df["freq"] = 2.7 * df["acycles"] / df["mcycles"]
       df["cpi"] = df["acycles"] / df["instr"]
       metrics += [("freq", "arc", [], "freq", 1, "[GHz]")]
-      metrics += [("cpi", "arc", [], "cpi", 1, "CPI")]
+      metrics += [("cpi", "arc", [], "cpi", 1, "CPI [ratio]")]
       del df["mcycles"], df["acycles"], df["instr"]
 
     if 'amd_acycles' in df.columns and 'amd_mcycles' in df.columns:
