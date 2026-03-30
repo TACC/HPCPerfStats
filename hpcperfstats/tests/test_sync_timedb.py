@@ -275,8 +275,8 @@ def test_parse_stats_lines_handles_leading_spaces():
   assert len(proc_list) == 0
 
 
-def test_parse_stats_lines_with_missing_jid_keeps_placeholder():
-  """When jid is '-', samples are still ingested with jid='-'."""
+def test_parse_stats_lines_with_missing_jid_placeholder_no_host_data_jid():
+  """When jid is '-', stats rows omit jid (host_data is time/host scoped); proc still uses jid."""
   lines = [
       "1709123456 - cn001\n",
       "!cpu user sys\n",
@@ -285,7 +285,7 @@ def test_parse_stats_lines_with_missing_jid_keeps_placeholder():
   start_idx = 0
   stats_list, proc_list = parse_stats_lines(lines, start_idx)
   assert len(stats_list) == 2
-  assert all(r["jid"] == "-" for r in stats_list)
+  assert all("jid" not in r for r in stats_list)
   assert len(proc_list) == 0
 
 
@@ -348,7 +348,7 @@ def test_build_stats_dataframes_empty():
 def test_build_stats_dataframes_dedupe_proc():
   """Duplicate proc_stats entries are deduplicated."""
   stats_list = [
-      {"time": 1.0, "host": "h", "jid": "j", "type": "cpu", "dev": "0", "event": "a", "value": 1.0, "wid": 64, "mult": 1, "unit": "#"},
+      {"time": 1.0, "host": "h", "type": "cpu", "dev": "0", "event": "a", "value": 1.0, "wid": 64, "mult": 1, "unit": "#"},
   ]
   proc_list = [
       {"jid": "j", "host": "h", "proc": "p"},
@@ -363,7 +363,7 @@ def test_build_stats_dataframes_dedupe_proc():
 def test_build_stats_dataframes_records():
   """Stats list becomes DataFrame with expected columns."""
   stats_list = [
-      {"time": 1.0, "host": "h", "jid": "j", "type": "t", "dev": "d", "event": "e", "value": 10.0, "wid": 48, "mult": 1, "unit": "#"},
+      {"time": 1.0, "host": "h", "type": "t", "dev": "d", "event": "e", "value": 10.0, "wid": 48, "mult": 1, "unit": "#"},
   ]
   stats_df, _ = build_stats_dataframes(stats_list, [])
   assert "value" in stats_df.columns
@@ -376,8 +376,8 @@ def test_build_stats_dataframes_records():
 def test_compute_deltas_and_arc_two_timestamps():
   """Two timestamps: first row keeps value with NaN delta/arc; second has rates."""
   stats_df = pd.DataFrame([
-      {"host": "h", "jid": "j", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 100.0, "value": 100.0, "wid": 48, "mult": 1},
-      {"host": "h", "jid": "j", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 110.0, "value": 250.0, "wid": 48, "mult": 1},
+      {"host": "h", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 100.0, "value": 100.0, "wid": 48, "mult": 1},
+      {"host": "h", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 110.0, "value": 250.0, "wid": 48, "mult": 1},
   ])
   result = compute_deltas_and_arc(stats_df)
   assert len(result) == 2
@@ -390,8 +390,8 @@ def test_compute_deltas_and_arc_two_timestamps():
 def test_compute_deltas_and_arc_rollover():
   """Negative delta is corrected for 48-bit rollover."""
   stats_df = pd.DataFrame([
-      {"host": "h", "jid": "j", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 100.0, "value": 1000.0, "wid": 48, "mult": 1},
-      {"host": "h", "jid": "j", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 110.0, "value": 10.0, "wid": 48, "mult": 1},
+      {"host": "h", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 100.0, "value": 1000.0, "wid": 48, "mult": 1},
+      {"host": "h", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 110.0, "value": 10.0, "wid": 48, "mult": 1},
   ])
   result = compute_deltas_and_arc(stats_df)
   assert len(result) == 2
@@ -403,8 +403,8 @@ def test_compute_deltas_and_arc_rollover():
 def test_compute_deltas_and_arc_keeps_first_timestamp_value():
   """First timestamp per group has NaN delta/arc but value is kept for complex metrics."""
   stats_df = pd.DataFrame([
-      {"host": "h", "jid": "j", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 100.0, "value": 100.0, "wid": 48, "mult": 1},
-      {"host": "h", "jid": "j", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 110.0, "value": 200.0, "wid": 48, "mult": 1},
+      {"host": "h", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 100.0, "value": 100.0, "wid": 48, "mult": 1},
+      {"host": "h", "type": "t", "dev": "d", "event": "e", "unit": "#", "time": 110.0, "value": 200.0, "wid": 48, "mult": 1},
   ])
   result = compute_deltas_and_arc(stats_df)
   assert len(result) == 2
@@ -419,11 +419,11 @@ def test_compute_deltas_and_arc_nvidia_gpu_util_sums_across_dev():
   """nvidia_gpu gpu_util: same timestamp two devs -> value is sum (per plan)."""
   stats_df = pd.DataFrame([
       {
-          "host": "h", "jid": "j", "type": "nvidia_gpu", "dev": "0",
+          "host": "h", "type": "nvidia_gpu", "dev": "0",
           "event": "gpu_util", "unit": "#", "time": 100.0, "value": 40.0, "wid": 48, "mult": 1,
       },
       {
-          "host": "h", "jid": "j", "type": "nvidia_gpu", "dev": "1",
+          "host": "h", "type": "nvidia_gpu", "dev": "1",
           "event": "gpu_util", "unit": "#", "time": 100.0, "value": 50.0, "wid": 48, "mult": 1,
       },
   ])
@@ -436,11 +436,11 @@ def test_compute_deltas_and_arc_nvidia_temperature_means_across_dev():
   """nvidia_gpu temperature: two devs -> mean value and mean delta."""
   stats_df = pd.DataFrame([
       {
-          "host": "h", "jid": "j", "type": "nvidia_gpu", "dev": "0",
+          "host": "h", "type": "nvidia_gpu", "dev": "0",
           "event": "temperature", "unit": "C", "time": 100.0, "value": 60.0, "wid": 48, "mult": 1,
       },
       {
-          "host": "h", "jid": "j", "type": "nvidia_gpu", "dev": "1",
+          "host": "h", "type": "nvidia_gpu", "dev": "1",
           "event": "temperature", "unit": "C", "time": 100.0, "value": 80.0, "wid": 48, "mult": 1,
       },
   ])
@@ -453,11 +453,11 @@ def test_compute_deltas_and_arc_nvidia_clocks_event_reasons_bitwise_or():
   """nvidia_gpu clocks_event_reasons: OR across devs."""
   stats_df = pd.DataFrame([
       {
-          "host": "h", "jid": "j", "type": "nvidia_gpu", "dev": "0",
+          "host": "h", "type": "nvidia_gpu", "dev": "0",
           "event": "clocks_event_reasons", "unit": "#", "time": 100.0, "value": 5.0, "wid": 48, "mult": 1,
       },
       {
-          "host": "h", "jid": "j", "type": "nvidia_gpu", "dev": "1",
+          "host": "h", "type": "nvidia_gpu", "dev": "1",
           "event": "clocks_event_reasons", "unit": "#", "time": 100.0, "value": 2.0, "wid": 48, "mult": 1,
       },
   ])
@@ -512,4 +512,5 @@ def test_sync_timedb_parsing_with_real_sample_produces_deltas_and_arc():
 
   deltas_df = compute_deltas_and_arc(stats_df)
   assert not deltas_df.empty
-  assert {"delta", "arc", "time", "host", "jid"}.issubset(deltas_df.columns)
+  assert {"delta", "arc", "time", "host"}.issubset(deltas_df.columns)
+  assert "jid" not in deltas_df.columns

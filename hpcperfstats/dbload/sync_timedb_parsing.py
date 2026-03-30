@@ -82,7 +82,7 @@ exclude_types = [
     "ib", "ib_sw", "intel_skx_cha", "ps", "sysv_shm", "tmpfs", "vfs"
 ]
 
-# Collapse multi-GPU nvidia_gpu rows (same host/jid/time/event) before DB insert.
+# Collapse multi-GPU nvidia_gpu rows (same host/type/event/unit/time) before DB insert.
 # See plan: sum util/activity/power; mean temperature; bitwise OR for clock bitmask.
 _NVIDIA_GPU_SUM_EVENTS = frozenset({
     "gpu_util",
@@ -100,13 +100,13 @@ _NVIDIA_GPU_SUM_EVENTS = frozenset({
 _NVIDIA_GPU_MEAN_EVENTS = frozenset({"temperature"})
 _NVIDIA_GPU_OR_EVENTS = frozenset({"clocks_event_reasons"})
 
-_COLLAPSE_GROUP_COLS = ["host", "jid", "type", "event", "unit", "time"]
+_COLLAPSE_GROUP_COLS = ["host", "type", "event", "unit", "time"]
 # Pandas groupby.apply passes subframes without the grouping columns; event is in ``group.name``.
 _NVIDIA_GROUP_KEY_EVENT_INDEX = _COLLAPSE_GROUP_COLS.index("event")
 
 
 def _collapse_nvidia_gpu_group(group):
-  """Return one row (value, delta) for a (host, jid, type, event, unit, time) group."""
+  """Return one row (value, delta) for a (host, type, event, unit, time) group."""
   key = group.name
   event_name = key[_NVIDIA_GROUP_KEY_EVENT_INDEX] if isinstance(key, tuple) else key
   if event_name in _NVIDIA_GPU_SUM_EVENTS:
@@ -308,7 +308,7 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
       # these rows before DB insertion.
       jid_val = jid
       insert = True
-      tags = {"time": float(t), "host": host, "jid": jid_val}
+      tags = {"time": float(t), "host": host}
       tags2 = {"jid": jid_val, "host": host}
     elif s[0] == '!':
       label, events = s.split(maxsplit=1)
@@ -338,13 +338,11 @@ def compute_deltas_and_arc(stats_df):
   # stats lines were parsed), return an empty DataFrame with the expected
   # output schema instead of raising KeyError during groupby.
   required_cols = {
-      "host", "jid", "type", "dev", "event", "unit", "time", "value", "wid",
-      "mult"
+      "host", "type", "dev", "event", "unit", "time", "value", "wid", "mult"
   }
   if stats_df.empty or not required_cols.issubset(stats_df.columns):
     return DataFrame(columns=[
-        "time", "host", "jid", "type", "dev", "event", "unit", "value",
-        "delta", "arc"
+        "time", "host", "type", "dev", "event", "unit", "value", "delta", "arc"
     ])
 
   stats_df["delta"] = (
@@ -380,6 +378,5 @@ def compute_deltas_and_arc(stats_df):
   deltat = stats_df.groupby(["host", "type", "event"])["time"].diff()
   stats_df["arc"] = stats_df["delta"] / deltat
   stats_df["time"] = to_datetime(stats_df["time"], unit='s').dt.tz_localize('UTC')
-  stats_df = stats_df.dropna(
-      subset=["host", "jid", "type", "event", "time", "value"])
+  stats_df = stats_df.dropna(subset=["host", "type", "event", "time", "value"])
   return stats_df

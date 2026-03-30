@@ -45,8 +45,8 @@ class job_data(models.Model):
   QOS = models.CharField(max_length=64, blank=True, null=True)
   jobname = models.TextField(blank=True, null=True)
   host_list = ArrayField(models.TextField())
-  # Sum over job hosts of COUNT(DISTINCT time) in host_data for the last metrics
-  # run (jid_table window + accounting host FQDNs); NULL until first persist.
+  # Sum over job hosts of COUNT(DISTINCT time) in host_data between start_time and
+  # end_time on accounting host FQDNs (see LiveDistinctHostTimeCount); NULL until first persist.
   metrics_distinct_time_count = models.IntegerField(blank=True, null=True)
 
   class Meta:
@@ -120,7 +120,6 @@ class metrics_data(models.Model):
     query_create_hostdata_table = CREATE TABLE IF NOT EXISTS host_data (
                                                time  TIMESTAMPTZ NOT NULL,
                                                host  VARCHAR(64),
-                                               jid   VARCHAR(32),
                                                type  VARCHAR(32),
                                                dev   VARCHAR(64),
                                                event VARCHAR(64),
@@ -132,11 +131,10 @@ class metrics_data(models.Model):
                                                );
 
                                           CREATE INDEX ON host_data (host, time DESC);
-                                          CREATE INDEX ON host_data (jid, time DESC);
 
     SELECT create_hypertable('host_data', by_range('time', 86400000000));
     query_create_compression = ALTER TABLE host_data SET \
-                                  (timescaledb.compress, timescaledb.compress_orderby = 'time DESC', timescaledb.compress_segmentby = 'host,jid,type,event');
+                                  (timescaledb.compress, timescaledb.compress_orderby = 'time DESC', timescaledb.compress_segmentby = 'host,type,event');
                                   SELECT add_compression_policy('host_data', INTERVAL '12h', if_not_exists => true);
 
 
@@ -152,7 +150,12 @@ class metrics_data(models.Model):
 
 
 class host_data(models.Model):
-  """TimescaleDB hypertable: per (time, host, jid, type, event) value/delta/arc. Table: host_data.
+  """TimescaleDB hypertable: per (time, host, jid, type, event) value/delta/arc.
+
+  Job/sample scoping in the application uses job_data.start_time/end_time and
+  job_data.host_list (FQDNs); host_data.jid is retained for compatibility and
+  ad-hoc queries but is not used when gathering job samples.
+  Table: host_data.
 
     """
   time = models.DateTimeField(primary_key=True)
@@ -172,7 +175,8 @@ class host_data(models.Model):
     indexes = [
         models.Index(fields=["host", "time"]),
         models.Index(fields=["jid", "time"]),
-        models.Index(fields=["jid", "type", "event", "time"], name="host_data_jid_type_ev_time_idx"),
+        models.Index(fields=["jid", "type", "event", "time"],
+                     name="host_data_jid_type_ev_time_idx"),
     ]
 
 

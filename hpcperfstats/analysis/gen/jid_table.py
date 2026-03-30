@@ -23,14 +23,9 @@ from hpcperfstats.site.machine.cache_utils import (
     TIMEOUT_SHORT,
 )
 from hpcperfstats.site.machine.models import host_data, job_data
-from django.db.models import Q, Sum
+from django.db.models import Sum
 
 local_timezone = cfg.get_local_timezone()
-
-
-def type_detail_host_data_jid_q(jid):
-  """Match host_data rows for type-detail: exact jid or missing/blank jid (telemetry not job-scoped)."""
-  return Q(jid=jid) | Q(jid__isnull=True) | Q(jid="")
 
 
 def _ensure_tz(dt):
@@ -349,12 +344,12 @@ class jid_table:
 
 
 class TypeDetailDataProvider:
-  """ORM-based provider for type-detail view: host_data filtered by jid, type, time range. Used by DevPlot instead of raw connection + temp table type_detail.
+  """ORM-based provider for type-detail view: host_data scoped by job start/end and accounting host_list (no host_data.jid).
 
     """
 
   def __init__(self, jid, type_name, start_time, end_time, host_list):
-    """Build base filter for jid, type_name, time range, and optional host_list.
+    """Build base filter for type_name, time range, and optional host_list. ``jid`` is only for cache keys / API identity.
 
         """
     self.jid = jid
@@ -364,7 +359,7 @@ class TypeDetailDataProvider:
     self.host_list = list(host_list) if host_list else []
 
   def _qs(self, **extra):
-    """Base host_data queryset for this provider (jid, type, time range, optional host_list).
+    """Base host_data queryset for this provider (type, time range, optional host_list).
 
         """
     flt = {
@@ -374,7 +369,7 @@ class TypeDetailDataProvider:
     }
     if self.host_list:
       flt["host__in"] = self.host_list
-    return host_data.objects.filter(type_detail_host_data_jid_q(self.jid), **flt, **extra)
+    return host_data.objects.filter(**flt, **extra)
 
   def get_host_time_df(self):
     """DataFrame of (host, time) distinct, ordered by host, time (cached).

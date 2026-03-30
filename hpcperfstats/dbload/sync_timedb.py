@@ -211,7 +211,6 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
               host_data(
                   time=row.time.to_pydatetime(),
                   host=row.host,
-                  jid=row.jid,
                   type=row.type,
                   dev=None,
                   event=row.event,
@@ -268,7 +267,6 @@ def _insert_host_data_individually(stats_df):
         host_data(
             time=row.time.to_pydatetime(),
             host=row.host,
-            jid=row.jid,
             type=row.type,
             dev=None,
             event=row.event,

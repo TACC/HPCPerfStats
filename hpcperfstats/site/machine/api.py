@@ -1769,9 +1769,11 @@ def job_detail(request, pk):
                     f"{KEY_GPU_AGG}:{job.jid}",
                     job_cache_timeout,
                     lambda: host_data.objects.filter(
-                        jid=job.jid,
                         type="nvidia_gpu",
                         event="utilization",
+                        time__gte=j.start_time,
+                        time__lte=j.end_time,
+                        host__in=j.acct_host_list or [],
                     ).aggregate(
                         cnt=Count("time"),
                         vmax=Max("value"),
@@ -2272,7 +2274,6 @@ def type_detail(request, jid, type_name):
     def _type_hosts_fn():
         return list(
             host_data.objects.filter(
-                jid_table.type_detail_host_data_jid_q(jid),
                 type=type_name,
                 time__gte=start_time,
                 time__lte=end_time,
