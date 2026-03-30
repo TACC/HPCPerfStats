@@ -151,10 +151,14 @@ TYPES 	+= \
 	intel_snb_imc.c \
 	intel_snb_qpi.c \
 	intel_snb_r2pci.c
+hpcperfstatsd_SOURCES += \
+	cpu_counter_metrics.h
 endif
 if CPU_BACKEND_DCGM
 TYPES += \
 	cpu_counter_metrics.c
+hpcperfstatsd_SOURCES += \
+	cpu_counter_metrics.h
 endif
 endif
 
