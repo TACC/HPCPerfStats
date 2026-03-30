@@ -1,12 +1,15 @@
+%global srcname hpcperfstats
+# Tarball / unpacked dir prefix: %%{srcname}-%%{version} (matches configure.ac AC_INIT / make dist).
+# Output RPM/SRPM names use %%{name} = hpcperfstatsd.
 Summary: Job-level Monitoring Client
-Name: hpcperfstats
+Name: hpcperfstatsd
 Version: 3.0
-Release: 3%{?dist}
+Release: 1%{?dist}
 License: GPL
 Vendor: Texas Advanced Computing Center
 Group: System Environment/Base
 Packager: TACC - sharrell@tacc.utexas.edu
-Source: hpcperfstats-%{version}.tar.gz
+Source: %{srcname}-%{version}.tar.gz
 #
 # Local rpmbuild: scripts/prepare_rpmbuild_dirs.sh creates ./rpmbuild/*, copies this spec to
 # rpmbuild/SPECS/, builds pinned static deps into rpmbuild/static-prefix (same role as
@@ -67,10 +70,10 @@ third_party/nvidia-dcgm API headers, stats buffer/file handling, and RabbitMQ
 robustness.
 
 %prep
-%setup -q
+%setup -q -n %{srcname}-%{version}
 
 %build
-cd "%{_builddir}/%{name}-%{version}"
+cd "%{_builddir}/%{srcname}-%{version}"
 export PREFIX="%{_builddir}/hpcperfstats-static-prefix"
 export SRCDIR="%{_builddir}/hpcperfstats-static-src"
 export JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
@@ -83,7 +86,7 @@ sed -i 's/localhost/stats.frontera.tacc.utexas.edu/' src/hpcperfstats.conf
 sed -i 's/default/frontera/' src/hpcperfstats.conf
 
 %install
-cd "%{_builddir}/%{name}-%{version}"
+cd "%{_builddir}/%{srcname}-%{version}"
 mkdir -p %{buildroot}%{_sbindir}/
 mkdir -p %{buildroot}%{_sysconfdir}/hpcperfstats/
 mkdir -p %{buildroot}%{_unitdir}/
@@ -107,6 +110,9 @@ install -m 0644 src/hpcperfstats.service %{buildroot}%{_unitdir}/hpcperfstats.se
 %systemd_postun_with_restart hpcperfstats.service
 
 %changelog
+* Sat Mar 28 2026 sharrell@tacc.utexas.edu - 3.0-4
+- Rename package to hpcperfstatsd; source tarball prefix stays hpcperfstats (AC_INIT / make dist).
+
 * Sat Mar 28 2026 sharrell@tacc.utexas.edu - 3.0-3
 - aarch64 BuildRequires: use datacenter-gpu-manager-4-devel or libdcgm-devel (rich dep);
   EL9 NVIDIA DCGM 4 has no package named datacenter-gpu-manager.

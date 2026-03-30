@@ -17,7 +17,7 @@ The **hpcperfstats** package is split into two parts:
 
 - **Collected data definitions:** [attributes-definition.md](docs/attributes-definition.md)
 
-Building and installing the `hpcperfstats-3.0-1.el9.x86_64.rpm` package (via `monitor/hpcperfstats.spec`) installs a **systemd** service `hpcperfstats`. This service runs a daemon with ~3% overhead on a single core at 1 Hz sampling; it is typically configured for **5‑minute** intervals, with samples at job start and end. The daemon **hpcperfstatsd** sends data to a **RabbitMQ** server over the administrative network. RabbitMQ must be installed and running on the server to receive data.
+Building and installing the `hpcperfstatsd-3.0-4.el9.x86_64.rpm` package (via `monitor/hpcperfstats.spec`) installs a **systemd** service `hpcperfstats`. This service runs a daemon with ~3% overhead on a single core at 1 Hz sampling; it is typically configured for **5‑minute** intervals, with samples at job start and end. The daemon **hpcperfstatsd** sends data to a **RabbitMQ** server over the administrative network. RabbitMQ must be installed and running on the server to receive data.
 
 The **hpcperfstats** container orchestration sets up a Django/PostgreSQL ingest and archival stack plus a RabbitMQ server to receive data from the monitor on the nodes.
 

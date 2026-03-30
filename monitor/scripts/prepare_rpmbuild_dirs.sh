@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Create ./rpmbuild/* under the monitor directory, copy hpcperfstats.spec into SPECS,
-# and build hpcperfstats-<Version>.tar.gz from this checkout via make dist (no external
+# and build <AC_INIT>-<Version>.tar.gz from this checkout via make dist (no external
 # tarball download — the tree containing this script is the package source).
 #
 # Before ./configure, runs scripts/build_static_bundle.sh --deps-only so pinned static
@@ -32,10 +32,11 @@ if test ! -f "${SPEC_SRC}"; then
   exit 1
 fi
 
-pkg="$(monitor_spec_field Name "${SPEC_SRC}")"
 ver="$(monitor_spec_field Version "${SPEC_SRC}")"
-if test -z "${pkg}" || test -z "${ver}"; then
-  echo "Could not read Name/Version from ${SPEC_SRC}" >&2
+# Tarball name follows configure.ac AC_INIT (must match spec Source and %%global srcname there).
+tarbase="$(sed -n 's/^AC_INIT(\[\([^]]*\)\].*/\1/p' "${MONITOR_DIR}/configure.ac" | head -1)"
+if test -z "${ver}" || test -z "${tarbase}"; then
+  echo "Could not read Version from ${SPEC_SRC} or package name from configure.ac AC_INIT" >&2
   exit 1
 fi
 
@@ -53,7 +54,7 @@ do
   fi
 done
 
-tb="${pkg}-${ver}.tar.gz"
+tb="${tarbase}-${ver}.tar.gz"
 sources_dir="${MONITOR_DIR}/rpmbuild/SOURCES"
 specs_dir="${MONITOR_DIR}/rpmbuild/SPECS"
 topdir="${MONITOR_DIR}/rpmbuild"
