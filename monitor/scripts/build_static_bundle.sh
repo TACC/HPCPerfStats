@@ -19,22 +19,28 @@
 #   SKIP_CLEAN      If set to 1, do not remove .build-static before configuring
 #                   (default: remove it so a prior failed/partial monitor build cannot
 #                   poison the next run)
+#   HPC_BUNDLE_RELEASE_BUILD  When 1 (or yes/true), apply optimized CFLAGS/CXXFLAGS,
+#                   link-time --gc-sections, configure --disable-debug, and strip(1)
+#                   the daemon after link. Intended for RPM packaging (see hpcperfstats.spec
+#                   %%global hpc_release_build). CLI: pass --release.
 #
-# GPU: configure uses --enable-gpu=auto (default). If lspci on the build host shows an
-# NVIDIA GPU and libdcgm is available, nvidia_gpu is compiled in (links libdcgm after
-# -Wl,-Bdynamic). Build on a GPU-less login node without libdcgm: pass --disable-gpu
-# as an extra CONFIGURE_ARGS, or build on a node that has both. Cross-deploy: use
-# --enable-gpu so the GPU path is built whenever libdcgm is present, independent of lspci.
+# Optional stacks (InfiniBand MAD, NVIDIA DCGM GPU, AMD GPUPerfAPI): this script probes the
+# build host and passes --disable-* when development libs/headers are missing so configure
+# does not fail (configure defaults IB on; GPU/AMD use auto + lspci and then hard-require
+# libdcgm / GPUPerfAPI headers when hardware matches). Extra CONFIGURE_ARGS still override
+# or extend (e.g. --disable-lustre).
+#
+# CPU counters: configure uses --with-cpu-counter-backend=auto (x86 -> LIKWID, else DCGM);
+# non-x86 builds still need system libdcgm for the DCGM CPU path.
 #
 # Pinned versions: edit STATIC_PIN_* below. Runtime overrides: LIBEV_VER,
 # RABBITMQ_VER, LIKWID_TAG, and *_URL_FMT for mirrors.
 #
-# Architecture:
-#   x86_64 / i686: builds LIKWID static libs and configures --with-cpu-counter-backend=likwid.
-#   Other (e.g. aarch64, arm64): builds libev + rabbitmq-c only; configures with
-#   --with-cpu-counter-backend=dcgm. DCGM C headers are vendored under
-#   monitor/third_party/nvidia-dcgm (from NVIDIA gpu-monitoring-tools bindings); you still
-#   need libdcgm from NVIDIA DCGM at link/runtime.
+# Architecture (deps + configure):
+#   x86_64 / i686: builds LIKWID static libs; configure auto-selects LIKWID CPU backend.
+#   Other (e.g. aarch64): builds libev + rabbitmq-c only; configure auto-selects DCGM.
+#   DCGM GPU/CPU headers are vendored under monitor/third_party/nvidia-dcgm; linking still
+#   needs libdcgm from the NVIDIA DCGM package when those paths are enabled.
 #
 set -euo pipefail
 
@@ -62,6 +68,46 @@ SRCDIR="${SRCDIR:-${REPO_ROOT}/.build/src-static}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 SKIP_DEPS="${SKIP_DEPS:-0}"
 SKIP_CLEAN="${SKIP_CLEAN:-0}"
+
+# Populated by static_bundle_print_detection_summary(); used by build_monitor (no second probe pass).
+STATIC_BUNDLE_FEAT_FLAGS=()
+
+static_bundle_release_build_enabled() {
+  case "${HPC_BUNDLE_RELEASE_BUILD:-0}" in
+  1 | yes | YES | true | TRUE | on | ON) return 0 ;;
+  *) return 1 ;;
+  esac
+}
+
+# Remove debug and conflicting -O* tokens so release base flags win; remaining tokens
+# (e.g. hardening from rpmbuild) are preserved.
+static_bundle_sanitize_compiler_flags() {
+  local out="" tok
+  for tok in "$@"; do
+    case "$tok" in
+    -g | -g[0-9] | -ggdb | -ggdb[0-9] | -gdb | -gdwarf-* | -grecord-gcc-switches) continue ;;
+    -O0 | -O1 | -O2 | -O3 | -Os | -Ofast | -Og) continue ;;
+    esac
+    out+=" ${tok}"
+  done
+  printf '%s' "${out# }"
+}
+
+static_bundle_apply_release_build_flags() {
+  static_bundle_release_build_enabled || return 0
+  local base="-O3 -pipe -DNDEBUG -ffunction-sections -fdata-sections"
+  local c_rest cxx_rest ld_extra
+  c_rest="$(static_bundle_sanitize_compiler_flags ${CFLAGS-})"
+  cxx_rest="$(static_bundle_sanitize_compiler_flags ${CXXFLAGS-})"
+  export CFLAGS="${base}${c_rest:+ }${c_rest}"
+  export CXXFLAGS="${base}${cxx_rest:+ }${cxx_rest}"
+  ld_extra="-Wl,-O1 -Wl,--as-needed -Wl,--gc-sections"
+  case " ${LDFLAGS-} " in
+  *" --gc-sections "* | *" -Wl,--gc-sections "*) ;;
+  *) export LDFLAGS="${ld_extra} ${LDFLAGS-}" ;;
+  esac
+  echo "Static bundle: release build (HPC_BUNDLE_RELEASE_BUILD): ${CFLAGS}" >&2
+}
 
 # Effective pins (env overrides keep legacy names working).
 LIBEV_VER="${LIBEV_VER:-${STATIC_PIN_LIBEV_VERSION}}"
@@ -113,6 +159,134 @@ is_x86_build_host() {
   esac
 }
 
+# Compile+link a one-line C program; mirrors configure's optional stack checks.
+monitor_link_probe() {
+  local snippet="$1"
+  shift
+  local tbase out rc
+  tbase="$(mktemp "${TMPDIR:-/tmp}/hpsmonprobe.XXXXXX")"
+  out="${tbase}.out"
+  printf '%s\n' "$snippet" >"${tbase}.c"
+  rc=1
+  if "${CC:-cc}" -o "${out}" "${tbase}.c" "$@" 2>/dev/null; then
+    rc=0
+  fi
+  rm -f "${tbase}.c" "${out}"
+  return "${rc}"
+}
+
+monitor_probe_infiniband_stack() {
+  monitor_link_probe '#include <infiniband/mad.h>
+#include <infiniband/umad.h>
+int main(void){return 0;}' -libmad -libumad
+}
+
+monitor_probe_dcgm_vendor_link() {
+  local inc="-I${MONITOR_DIR}/third_party/nvidia-dcgm"
+  monitor_link_probe '#include <dcgm_agent.h>
+int main(void){(void)dcgmInit();return 0;}' ${inc} -ldcgm -ldl
+}
+
+monitor_probe_amd_gpup_perfapi_sdk() {
+  test -f /usr/include/gpu_performance_api/gpu_perf_api.h \
+    || test -f /usr/local/include/gpu_performance_api/gpu_perf_api.h
+}
+
+# Match configure.ac GPU auto-detect (lspci + awk); used for summary only.
+monitor_lspci_sees_nvidia() {
+  command -v lspci >/dev/null 2>&1 || return 1
+  lspci -nn 2>/dev/null | awk '
+    { l = tolower($0)
+      if ((match(l, /vga compatible controller/) || match(l, /3d controller/) || \
+           match(l, /display controller/) || match(l, /processing accelerators/)) && \
+          match(l, /nvidia/))
+        found = 1
+    }
+    END { exit(found ? 0 : 1) }'
+}
+
+monitor_lspci_sees_amd() {
+  command -v lspci >/dev/null 2>&1 || return 1
+  lspci -nn 2>/dev/null | awk '
+    { l = tolower($0)
+      if ((match(l, /vga compatible controller/) || match(l, /3d controller/) || \
+           match(l, /display controller/) || match(l, /processing accelerators/)) && \
+          (match(l, /advanced micro devices/) || match(l, / amd\/ati /)))
+        found = 1
+    }
+    END { exit(found ? 0 : 1) }'
+}
+
+# Prints detection summary and sets STATIC_BUNDLE_FEAT_FLAGS (configure --disable-* list).
+static_bundle_print_detection_summary() {
+  STATIC_BUNDLE_FEAT_FLAGS=()
+  local mach cpu_backend likwid_build lspci_path pci_nvidia pci_amd ib_ok dcgm_ok amd_ok
+
+  mach="$(uname -m 2>/dev/null || echo unknown)"
+  if is_x86_build_host; then
+    cpu_backend="LIKWID"
+    likwid_build="yes (this run compiles LIKWID into PREFIX unless SKIP_DEPS=1)"
+  else
+    cpu_backend="DCGM"
+    likwid_build="no (non-x86; needs system libdcgm for CPU counters)"
+  fi
+
+  if command -v lspci >/dev/null 2>&1; then
+    lspci_path="$(command -v lspci)"
+    if monitor_lspci_sees_nvidia; then pci_nvidia=detected; else pci_nvidia="not detected"; fi
+    if monitor_lspci_sees_amd; then pci_amd=detected; else pci_amd="not detected"; fi
+  else
+    lspci_path="(not in PATH; configure GPU auto-detect may be limited)"
+    pci_nvidia=n/a
+    pci_amd=n/a
+  fi
+
+  if monitor_probe_infiniband_stack; then
+    ib_ok=detected
+  else
+    ib_ok="not detected"
+    STATIC_BUNDLE_FEAT_FLAGS+=(--disable-infiniband)
+  fi
+
+  if monitor_probe_dcgm_vendor_link; then
+    dcgm_ok=detected
+  else
+    dcgm_ok="not detected"
+    STATIC_BUNDLE_FEAT_FLAGS+=(--disable-gpu)
+  fi
+
+  if monitor_probe_amd_gpup_perfapi_sdk; then
+    amd_ok=detected
+  else
+    amd_ok="not detected"
+    STATIC_BUNDLE_FEAT_FLAGS+=(--disable-amd-gpu)
+  fi
+
+  printf '\n'
+  printf '%s\n' "=== Static bundle: build host detection (before any compile) ==="
+  printf '%-36s %s\n' "Machine (uname -m):" "${mach}"
+  printf '%-36s %s\n' "CPU counter backend (configure auto):" "${cpu_backend}"
+  printf '%-36s %s\n' "LIKWID static dependency build:" "${likwid_build}"
+  printf '%-36s %s\n' "lspci:" "${lspci_path}"
+  printf '%-36s %s\n' "PCI class hint (NVIDIA GPU):" "${pci_nvidia}"
+  printf '%-36s %s\n' "PCI class hint (AMD GPU):" "${pci_amd}"
+  printf '%-36s %s\n' "InfiniBand devel (libibmad + headers):" "${ib_ok}"
+  printf '%-36s %s\n' "NVIDIA DCGM link (libdcgm + vendored hdr):" "${dcgm_ok}"
+  printf '%-36s %s\n' "AMD GPUPerfAPI header (gpu_perf_api.h):" "${amd_ok}"
+  if test "${#STATIC_BUNDLE_FEAT_FLAGS[@]}" -gt 0; then
+    printf '%-36s %s\n' "Extra configure flags from probes:" "${STATIC_BUNDLE_FEAT_FLAGS[*]}"
+  else
+    printf '%-36s %s\n' "Extra configure flags from probes:" "(none)"
+  fi
+  if static_bundle_release_build_enabled; then
+    printf '%-36s %s\n' "Release build (HPC_BUNDLE_RELEASE_BUILD):" \
+      "yes (-O3, -DNDEBUG, -ffunction/data-sections, link GC, --disable-debug, strip)"
+  else
+    printf '%-36s %s\n' "Release build (HPC_BUNDLE_RELEASE_BUILD):" "no"
+  fi
+  printf '%s\n\n' "=== end detection summary ==="
+}
+
 mkdir -p "${SRCDIR}" "${PREFIX}/include" "${PREFIX}/lib" "${PREFIX}/lib/pkgconfig"
 
 export PATH="${PREFIX}/bin:${PATH}"
@@ -140,10 +314,18 @@ build_rabbitmq_c() {
   fi
   mkdir -p "${d}/build"
   cd "${d}/build"
+  local -a cmake_extra=()
+  if test -n "${CFLAGS:-}"; then
+    cmake_extra+=(-DCMAKE_C_FLAGS="${CFLAGS}")
+  fi
+  if test -n "${CXXFLAGS:-}"; then
+    cmake_extra+=(-DCMAKE_CXX_FLAGS="${CXXFLAGS}")
+  fi
   cmake .. \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    "${cmake_extra[@]}" \
     -DBUILD_SHARED_LIBS=OFF \
     -DBUILD_STATIC_LIBS=ON \
     -DENABLE_SSL_SUPPORT=OFF \
@@ -173,10 +355,16 @@ build_likwid() {
   if grep -q '^SHARED_LIBRARY = true' config.mk 2>/dev/null; then
     sed -i 's/^SHARED_LIBRARY = true/SHARED_LIBRARY = false/' config.mk
   fi
+  local -a likwid_mk=()
+  if test -n "${CFLAGS:-}"; then
+    likwid_mk+=(CFLAGS="${CFLAGS}")
+  fi
   make -j"${JOBS}" PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \
-    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false
+    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false \
+    "${likwid_mk[@]}"
   make install PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \
-    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false
+    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false \
+    "${likwid_mk[@]}"
 }
 
 build_monitor() {
@@ -194,33 +382,36 @@ build_monitor() {
   export CPPFLAGS="-I${PREFIX}/include ${CPPFLAGS:-}"
   export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
   # Prefer static archives from our tree (no RPATH to PREFIX for runtime).
-  # --disable-infiniband omits libibmad-linked collectors (ib_ext, ib_sw); sysfs-only ib remains.
+  local -a feat=("${STATIC_BUNDLE_FEAT_FLAGS[@]}")
   local -a cfg=(
     --enable-all-static
     --with-systemduserunitdir=no
-    --disable-lustre
-    --disable-infiniband
-    --disable-mic
-    --disable-amd-gpu
-    --disable-opa
+    --with-cpu-counter-backend=auto
+    "${feat[@]}"
   )
-  if is_x86_build_host; then
-    cfg+=(--with-cpu-counter-backend=likwid)
-  else
-    cfg+=(--with-cpu-counter-backend=dcgm)
-    echo "Non-x86 host ($(uname -m)): using DCGM CPU backend; ensure libdcgm is available (dcgm_agent.h is vendored in third_party/nvidia-dcgm)." >&2
+  if static_bundle_release_build_enabled; then
+    cfg+=(--disable-debug)
   fi
   "${MONITOR_DIR}/configure" "${cfg[@]}" "$@"
   make -j"${JOBS}"
+  local daemon="${MONITOR_DIR}/.build-static/src/hpcperfstatsd"
+  if static_bundle_release_build_enabled && test -f "${daemon}"; then
+    if command -v strip >/dev/null 2>&1; then
+      strip --strip-unneeded "${daemon}" 2>/dev/null || strip "${daemon}" 2>/dev/null || true
+      echo "Release build: stripped ${daemon}" >&2
+    else
+      echo "Release build: strip(1) not found; leaving symbols on ${daemon}" >&2
+    fi
+  fi
   echo ""
-  echo "Built: ${MONITOR_DIR}/.build-static/src/hpcperfstatsd"
+  echo "Built: ${daemon}"
   if command -v ldd >/dev/null 2>&1; then
     if is_x86_build_host; then
-      echo "Dynamic dependencies (expect mostly libc/libpthread only):"
+      echo "Dynamic dependencies (libc/libpthread; plus libdcgm/ibmad if those features stayed enabled):"
     else
-      echo "Dynamic dependencies (expect system libc and libdcgm, among others):"
+      echo "Dynamic dependencies (expect system libc and libdcgm when DCGM CPU backend is used):"
     fi
-    ldd "${MONITOR_DIR}/.build-static/src/hpcperfstatsd" || true
+    ldd "${daemon}" || true
   fi
 }
 
@@ -246,11 +437,12 @@ EOF
 EOF
   fi
   cat <<'EOF'
-- Configure routes shared-only stacks after -Wl,-Bdynamic when using
-  --enable-all-static: DCGM, Infiniband (libibmad), Omni-Path / OPA (verbs,
-  umad, mad, oib_utils, public), and Intel MIC (libmicmgmt). GPUPerfAPI (AMD)
-  is dlopen'd at runtime. Optional -lmemusage for OPA stays on LDFLAGS from
-  Makefile.am (typically resolves as shared).
+- This script probes the build host for InfiniBand (libibmad + headers), NVIDIA
+  DCGM (libdcgm + vendored dcgm_agent.h), and AMD GPUPerfAPI headers; missing
+  pieces become --disable-infiniband / --disable-gpu / --disable-amd-gpu so
+  configure can succeed. Configure routes shared-only stacks after -Wl,-Bdynamic
+  when using --enable-all-static: DCGM, Infiniband (libibmad), Omni-Path / OPA,
+  and Intel MIC when enabled. GPUPerfAPI (AMD) is dlopen'd at runtime.
 - A fully static executable (including glibc) needs musl or careful NSS
   handling; partial static linking (this script) avoids installing the
   third-party deps system-wide while still using the system C library.
@@ -278,17 +470,21 @@ build_static_dependencies() {
 
 usage_exit() {
   cat <<EOF
-Usage: $(basename "$0") [--deps-only] [CONFIGURE_ARGS...]
+Usage: $(basename "$0") [--deps-only] [--release] [CONFIGURE_ARGS...]
 
   --deps-only   Build and install static archives (libev, rabbitmq-c, and LIKWID on x86)
                 into PREFIX only. Use this when monitor configure
                 --enable-all-static fails at link time with missing static .a
                 archives.
 
-  [CONFIGURE_ARGS...] are passed to ../configure inside build_monitor (ignored
-  with --deps-only).
+  --release     Same as HPC_BUNDLE_RELEASE_BUILD=1: -O3, -DNDEBUG, section GC,
+                --disable-debug, strip hpcperfstatsd (see script header).
 
-Environment: PREFIX, SRCDIR, SKIP_DEPS, SKIP_CLEAN, JOBS, and pin overrides (see script header).
+  [CONFIGURE_ARGS...] are appended to configure inside build_monitor (e.g.
+  --disable-lustre); ignored with --deps-only.
+
+Environment: PREFIX, SRCDIR, SKIP_DEPS, SKIP_CLEAN, JOBS, HPC_BUNDLE_RELEASE_BUILD,
+  and pin overrides (see script header).
 EOF
   exit "${1:-0}"
 }
@@ -302,6 +498,10 @@ main() {
         deps_only=1
         shift
         ;;
+      --release)
+        HPC_BUNDLE_RELEASE_BUILD=1
+        shift
+        ;;
       -h|--help)
         usage_exit 0
         ;;
@@ -312,6 +512,8 @@ main() {
     esac
   done
 
+  static_bundle_print_detection_summary
+  static_bundle_apply_release_build_flags
   build_static_dependencies
   if test "${deps_only}" = "1"; then
     echo ""

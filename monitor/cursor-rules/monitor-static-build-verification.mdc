@@ -18,7 +18,7 @@ For **HPCPerfStats/monitor** code, dependency wiring, Autotools changes, or **`h
 Run **`HPCPerfStats/monitor/scripts/build_static_bundle.sh`** (from `HPCPerfStats/monitor/` as cwd, or pass the script path explicitly). It:
 
 1. Builds and installs **pinned** static archives into `PREFIX` (default: repo `.build/prefix-static`) unless `SKIP_DEPS=1`.
-2. Configures the monitor with **`--enable-all-static`**, LIKWID CPU backend, and the same flags the project expects for a representative static build.
+2. Configures the monitor with **`--enable-all-static`**, **`--with-cpu-counter-backend=auto`**, and host probes that add **`--disable-infiniband`**, **`--disable-gpu`**, or **`--disable-amd-gpu`** when matching devel stacks are missing (see script header).
 3. Runs **`make`** in `HPCPerfStats/monitor/.build-static` and prints **`ldd`** hints for `hpcperfstatsd`.
 
 **Environment**: `PREFIX`, `SRCDIR`, `SKIP_DEPS`, `JOBS`; see script header. Use **`SKIP_DEPS=1`** when `PREFIX` already contains the static `.a` files and you only changed monitor sources.

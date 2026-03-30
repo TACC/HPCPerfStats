@@ -2,10 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
-extern "C" {
+#include <stdint.h>
 #include <infiniband/umad.h>
 #include <infiniband/mad.h>
-}
 #include "stats.h"
 #include "trace.h"
 #include "pscanf.h"

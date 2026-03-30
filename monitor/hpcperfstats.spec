@@ -1,7 +1,7 @@
 Summary: Job-level Monitoring Client
 Name: hpcperfstats
 Version: 3.0
-Release: 1%{?dist}
+Release: 2%{?dist}
 License: GPL
 Vendor: Texas Advanced Computing Center
 Group: System Environment/Base
@@ -10,14 +10,10 @@ Source: hpcperfstats-%{version}.tar.gz
 
 # Static bundle: monitor/scripts/build_static_bundle.sh builds pinned libev,
 # rabbitmq-c, and (on x86_64/i686) LIKWID as static archives, then configures
-# with --enable-all-static. Runtime does not require system libev, librabbitmq,
-# or likwid packages.
-#
-# Extra configure flags (e.g. --enable-infiniband after the script's defaults)
-# may be passed at rpmbuild time, e.g.:
-#   rpmbuild -ba hpcperfstats.spec \
-#     --define 'hpc_extra_configure --enable-infiniband --enable-gpu'
-%global hpc_extra_configure %{nil}
+# with --enable-all-static. It probes InfiniBand, NVIDIA DCGM, and AMD GPUPerfAPI
+# on the build host and passes --disable-* when devel stacks are missing; CPU
+# backend is --with-cpu-counter-backend=auto (LIKWID on x86, DCGM elsewhere).
+# Runtime does not require system libev, librabbitmq, or likwid packages.
 
 # Toolchain and tools to compile vendored deps (libev: autotools; rabbitmq-c: cmake).
 BuildRequires: gcc
@@ -36,15 +32,14 @@ BuildRequires: curl
 # LIKWID static build (x86_64) uses the upstream Makefile; perl/gawk are commonly required.
 BuildRequires: perl
 BuildRequires: gawk
+# configure auto-detects NVIDIA/AMD GPUs via lspci during %%build.
+BuildRequires: pciutils
+# InfiniBand (libibmad + headers): omit on hosts where IB support is unwanted.
+BuildRequires: rdma-core-devel
 
-# InfiniBand / Lustre / OPA / MIC are disabled in the bundle script's default
-# configure line for a portable binary; enable via %%hpc_extra_configure and add
-# the matching -devel BuildRequires on your build host.
-
-# Non-x86: monitor uses --with-cpu-counter-backend=dcgm and links system libdcgm.
-# Package name varies (e.g. datacenter-gpu-manager / libdcgm); adjust for your distro.
+# Non-x86: configure auto-selects DCGM CPU backend (NVIDIA datacenter-gpu-manager on EL).
 %ifarch aarch64
-BuildRequires: libdcgm-devel
+BuildRequires: datacenter-gpu-manager
 %endif
 
 %{?systemd_requires}
@@ -75,7 +70,7 @@ export JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 mkdir -p "${PREFIX}/include" "${PREFIX}/lib" "${PREFIX}/lib64" "${PREFIX}/lib/pkgconfig"
 # Network access is required on first build to fetch pinned dependency tarballs
 # unless you pre-populate ${SRCDIR} / ${PREFIX} and set SKIP_DEPS=1 below.
-./scripts/build_static_bundle.sh %{?hpc_extra_configure}
+./scripts/build_static_bundle.sh
 sed -i 's/CONFIGFILE/\%{_sysconfdir}\/hpcperfstats\/hpcperfstats.conf/' src/hpcperfstats.service
 sed -i 's/localhost/stats.frontera.tacc.utexas.edu/' src/hpcperfstats.conf
 sed -i 's/default/frontera/' src/hpcperfstats.conf
@@ -105,6 +100,11 @@ install -m 0644 src/hpcperfstats.service %{buildroot}%{_unitdir}/hpcperfstats.se
 %systemd_postun_with_restart hpcperfstats.service
 
 %changelog
+* Sat Mar 28 2026 sharrell@tacc.utexas.edu - 3.0-2
+- build_static_bundle.sh: probe IB / DCGM / AMD SDK and use cpu-counter-backend=auto;
+  drop %%hpc_extra_configure; add BuildRequires: pciutils, rdma-core-devel.
+- Fix ib_ext.c / ib_sw.c InfiniBand includes for C (remove invalid extern-C blocks).
+
 * Sat Mar 28 2026 sharrell@tacc.utexas.edu - 3.0-1
 - Bump upstream version to 3.0 (sync with monitor/configure.ac AC_INIT).
 - See .cursor/rules/monitor-version-and-packaging.mdc for version/spec maintenance.
@@ -114,8 +114,7 @@ install -m 0644 src/hpcperfstats.service %{buildroot}%{_unitdir}/hpcperfstats.se
   libev, rabbitmq-c, LIKWID (x86); drop runtime deps on those distro packages.
 - BuildRequires: gcc-c++, cmake, curl, gzip, tar, perl, gawk; aarch64 BR
   libdcgm-devel for DCGM CPU backend link.
-- Install binary from .build-static/src/hpcperfstatsd; document
-  %%hpc_extra_configure for IB/GPU and offline SKIP_DEPS workflows.
+- Install binary from .build-static/src/hpcperfstatsd; document offline SKIP_DEPS workflows.
 
 * Sat Mar 28 2026 sharrell@tacc.utexas.edu - 2.4-2
 - Align packaging notes and BuildRequires with monitor_woooosah branch.

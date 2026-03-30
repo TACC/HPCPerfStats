@@ -3,10 +3,9 @@
 #include <string.h>
 #include <dirent.h>
 #include <ctype.h>
-extern "C" {
+#include <stdint.h>
 #include <infiniband/umad.h>
 #include <infiniband/mad.h>
-}
 #include "stats.h"
 #include "trace.h"
 #include "pscanf.h"
