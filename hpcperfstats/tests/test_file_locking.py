@@ -16,6 +16,9 @@ def test_file_write_lock_creates_corresponding_lock_file(tmp_path):
   with file_write_lock(str(target)):
     assert lock_path.exists()
 
+  # Lock file should be cleaned up after the write lock is released.
+  assert not lock_path.exists()
+
 
 def test_file_write_lock_does_not_double_append_lock_suffix(tmp_path):
   """Passing an already lock-path should not create nested lock files."""
@@ -104,3 +107,16 @@ def test_stale_lock_file_is_expired_before_acquire(tmp_path):
 
   with file_write_lock(str(target), timeout_seconds=1):
     assert lock_path.exists()
+
+
+def test_file_read_lock_cleans_up_lock_file(tmp_path):
+  target = tmp_path / "data.txt"
+  target.write_text("ok")
+  lock_path = tmp_path / "data.txt.fnctl.lock"
+  assert not lock_path.exists()
+
+  with file_read_lock_wait(str(target), timeout_seconds=1):
+    assert lock_path.exists()
+
+  # Lock file should be removed once the read lock context exits.
+  assert not lock_path.exists()

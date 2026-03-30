@@ -94,10 +94,21 @@ def file_write_lock(target_path,
     os.utime(_lock_path(target_path), None)
     yield
   finally:
+    lock_path = _lock_path(target_path)
     try:
       flock(lock_fd, LOCK_UN)
     finally:
-      lock_fd.close()
+      try:
+        lock_fd.close()
+      finally:
+        try:
+          os.remove(lock_path)
+        except FileNotFoundError:
+          pass
+        except OSError:
+          # Best-effort cleanup; failure to remove the lock file should not
+          # break callers once the advisory lock itself is released.
+          pass
 
 
 @contextmanager
@@ -136,7 +147,18 @@ def file_read_lock_wait(target_path,
   try:
     yield
   finally:
+    lock_path = _lock_path(target_path)
     try:
       flock(lock_fd, LOCK_UN)
     finally:
-      lock_fd.close()
+      try:
+        lock_fd.close()
+      finally:
+        try:
+          os.remove(lock_path)
+        except FileNotFoundError:
+          pass
+        except OSError:
+          # Best-effort cleanup; failure to remove the lock file should not
+          # break callers once the advisory lock itself is released.
+          pass
