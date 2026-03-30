@@ -60,6 +60,7 @@ static void amd_gpu_collect(struct stats_type *type)
   stats_set(stats, "fp16_active", 0);
   stats_set(stats, "tensor_active", 0);
   stats_set(stats, "clocks_event_reasons", 0);
+  stats_set(stats, "gpu_count", 1);
 }
 
 struct stats_type amd_gpu_stats_type = {

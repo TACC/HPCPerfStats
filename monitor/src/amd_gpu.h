@@ -14,6 +14,7 @@
   X(fp32_active, "", "Ratio of cycles fp32 pipes are active (in %)"), \
   X(fp16_active, "", "Ratio of cycles fp16 pipes are active (in %)"), \
   X(tensor_active, "", "Ratio of cycles matrix/tensor pipes are active (in %)"), \
-  X(clocks_event_reasons, "", "Bitmask of GPU clock slowdown reasons")
+  X(clocks_event_reasons, "", "Bitmask of GPU clock slowdown reasons"), \
+  X(gpu_count, "", "Number of GPU device rows for this type (stub uses 1)")
 
 #endif

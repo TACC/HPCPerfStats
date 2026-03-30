@@ -170,7 +170,7 @@ static dcgmReturn_t nvidia_gpu_discover_gpu_ids(dcgmHandle_t h,
   return rc;
 }
 
-static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row)
+static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, int gpu_count)
 {
   stats_set(stats, "temperature", I64_TO_LLU(row->temperature));
   stats_set(stats, "gpu_util", I64_TO_LLU(row->gpu_util));
@@ -185,6 +185,7 @@ static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row)
   stats_set(stats, "sm_occupancy", DBL_TO_LLU_PERCENT(row->sm_occupancy));
   stats_set(stats, "tensor_active", DBL_TO_LLU_PERCENT(row->tensor_active));
   stats_set(stats, "clocks_event_reasons", I64_TO_LLU(row->clocks_event_reasons));
+  stats_set(stats, "gpu_count", (unsigned long long) (gpu_count < 0 ? 0 : gpu_count));
   return 0;
 }
 
@@ -281,7 +282,7 @@ static void nvidia_gpu_collect(struct stats_type *type)
     stats = get_current_stats(type, dev);
     if (stats == NULL)
       continue;
-    if (nvidia_gpu_collect_dev(stats, &dcgm_data[gid]) == 0)
+    if (nvidia_gpu_collect_dev(stats, &dcgm_data[gid], ndev) == 0)
       nr++;
   }
 

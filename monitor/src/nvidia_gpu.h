@@ -18,7 +18,8 @@
   X(fp32_active, "", "Ratio of cycles fp32 pipes are active (in %)"), \
   X(fp16_active, "", "Ratio of cycles fp16 pipes are active (in %)"), \
   X(tensor_active, "", "Ratio of cycles any tensor pipe is active (in %)"), \
-  X(clocks_event_reasons, "", "Bitmask of GPU clock slowdown reasons")
+  X(clocks_event_reasons, "", "Bitmask of GPU clock slowdown reasons"), \
+  X(gpu_count, "", "Number of GPUs on this node (DCGM-visible; same value on each device row)")
 
 typedef struct dcgm_data {
   int64_t mem_util;
