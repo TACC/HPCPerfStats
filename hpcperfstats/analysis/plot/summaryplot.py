@@ -135,6 +135,10 @@ _SUMMARY_SINGLE_SPECS = [
     ("mem", "value", ["MemUsed"], "mem", 1 / (1024 * 1024), "MemUsed[GB]"),
 ]
 
+# Metrics that may be sampled on a sparse (host, time) grid vs the union grid from
+# get_host_time_df(); do not drop the column when a left-merge leaves NaN gaps.
+_SUMMARY_ALLOW_PARTIAL_NULL = frozenset({"nv_gpu_util", "nv_mem_util"})
+
 # First typename with full host/time coverage wins (same column name).
 _SUMMARY_FIRST_WIN_SPECS = (
     {
@@ -322,7 +326,11 @@ class SummaryPlot():
       if name == "amd_watts":
         log.debug("amd_watts: %s", df[name].tolist())
       if name in df.columns and df[name].isnull().values.any():
-        del df[name]
+        keep_sparse = (
+            name in _SUMMARY_ALLOW_PARTIAL_NULL and df[name].notna().any()
+        )
+        if not keep_sparse:
+          del df[name]
       log.debug("time to compute %s: %s", name, time.time() - s)
 
     for fw in _SUMMARY_FIRST_WIN_SPECS:
