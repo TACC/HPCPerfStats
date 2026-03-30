@@ -1,4 +1,5 @@
 """Django REST Framework API views for machine app. All data via JSON for React SPA."""
+import hashlib
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
@@ -18,6 +19,7 @@ from rest_framework.response import Response
 from django.conf import settings
 from django.core.cache import cache
 from django.db import connection, close_old_connections
+from django.utils.encoding import iri_to_uri
 
 from django.views.decorators.cache import cache_page
 
@@ -272,6 +274,24 @@ def _require_auth(request):
     )
 
 
+def _get_redis_cache_client():
+    """Best-effort unwrap of a redis-py client from Django's cache backend."""
+    client = getattr(cache, "_cache", None)
+    if hasattr(client, "get_client"):
+        try:
+            client = client.get_client()
+        except Exception:
+            client = None
+    if client is None:
+        client = getattr(cache, "client", None)
+        if hasattr(client, "get_client"):
+            try:
+                client = client.get_client()
+            except Exception:
+                client = None
+    return client
+
+
 def _get_cache_stats():
     """Return basic Redis/cache statistics for the HPCPerfStats Monitor."""
     # First try to return a recently cached snapshot of the Redis stats so that
@@ -294,19 +314,7 @@ def _get_cache_stats():
         # Django's built-in Redis cache exposes a RedisCacheClient instance on
         # _cache, which must be further unwrapped via get_client() to get the
         # actual redis-py client that implements .info(), .scan_iter(), etc.
-        client = getattr(cache, "_cache", None)
-        if hasattr(client, "get_client"):
-            try:
-                client = client.get_client()
-            except Exception:
-                client = None
-        if client is None:
-            client = getattr(cache, "client", None)
-            if hasattr(client, "get_client"):
-                try:
-                    client = client.get_client()
-                except Exception:
-                    client = None
+        client = _get_redis_cache_client()
 
         if client is not None and hasattr(client, "info"):
             info = client.info()
@@ -800,6 +808,81 @@ def drop_staff_for_session(request):
                 "Log out and log back in to restore staff access."
             ),
             "is_staff": False,
+        }
+    )
+
+
+@api_view(["POST"])
+def invalidate_cache_for_page(request):
+    """Invalidate Redis cache keys associated with the provided page path."""
+    err = _require_auth(request)
+    if err is not None:
+        return err
+    if not request.session.get("is_staff", False):
+        return Response(
+            {"error": "Staff access required"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    page_path = (request.data.get("page_path") or "").strip()
+    if not page_path:
+        return Response(
+            {"error": "Missing page_path"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not page_path.startswith("/"):
+        page_path = f"/{page_path}"
+
+    normalized_path = page_path.rstrip("/") or "/"
+    path_variants = {normalized_path}
+    if normalized_path != "/":
+        path_variants.add(f"{normalized_path}/")
+
+    host = request.get_host() or "localhost"
+    url_hashes = set()
+    for variant in path_variants:
+        for scheme in ("http", "https"):
+            absolute_uri = f"{scheme}://{host}{variant}"
+            url_hashes.add(hashlib.md5(iri_to_uri(absolute_uri).encode("ascii")).hexdigest())
+
+    client = _get_redis_cache_client()
+    if client is None or not hasattr(client, "scan_iter"):
+        return Response(
+            {"error": "Cache backend does not support key scanning"},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    deleted_count = 0
+    scanned_count = 0
+    matched_keys = []
+    max_scan = 5000
+    for raw_key in client.scan_iter(count=500):
+        scanned_count += 1
+        if scanned_count > max_scan:
+            break
+
+        key_str = raw_key.decode("utf-8", "replace") if isinstance(raw_key, bytes) else str(raw_key)
+        has_path_match = any(path_variant in key_str for path_variant in path_variants)
+        has_hash_match = any(url_hash in key_str for url_hash in url_hashes)
+        if not has_path_match and not has_hash_match:
+            continue
+
+        try:
+            client.delete(raw_key)
+            deleted_count += 1
+            if len(matched_keys) < 25:
+                matched_keys.append(key_str)
+        except Exception:
+            continue
+
+    return Response(
+        {
+            "ok": True,
+            "page_path": normalized_path,
+            "deleted_keys": deleted_count,
+            "scanned_keys": scanned_count,
+            "matched_sample": matched_keys,
+            "truncated_scan": scanned_count > max_scan,
         }
     )
 

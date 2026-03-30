@@ -151,6 +151,12 @@ class TestWebPagesEndToEnd:
           content_type="text/plain",
       )
       assert staff_ingest.status_code == 200
+      staff_invalidate = client.post(
+          "/api/cache/invalidate-page/",
+          data={"page_path": "/machine/jobs"},
+          content_type="application/json",
+      )
+      assert staff_invalidate.status_code in (200, 503)
 
       non_staff_session = client.session
       non_staff_session["is_staff"] = False
@@ -164,6 +170,12 @@ class TestWebPagesEndToEnd:
           content_type="text/plain",
       )
       assert non_staff_ingest.status_code == 403
+      non_staff_invalidate = client.post(
+          "/api/cache/invalidate-page/",
+          data={"page_path": "/machine/jobs"},
+          content_type="application/json",
+      )
+      assert non_staff_invalidate.status_code == 403
 
   def test_session_staff_flag_drives_frontend_plot_error_visibility(self):
     """Session API should expose staff state used by frontend error-detail gating."""

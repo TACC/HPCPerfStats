@@ -46,6 +46,7 @@ def test_browser_flow_for_web_pages():
   <a id="job-monitor-link" href="/machine/job_monitor/" hidden>Job Monitor</a>
   <a id="admin-monitor-link" href="/machine/admin_monitor/" hidden>HPCPerfStats Monitor</a>
   <button id="disable-staff-btn" type="button" hidden>Disable staff for session</button>
+  <button id="invalidate-cache-btn" type="button" hidden>Invalidate Cache For Page</button>
   <div id="staff-message"></div>
   <div id="plot-unavailable">Plot not available</div>
   <span id="plot-error-detail" hidden>Error Detail</span>
@@ -57,6 +58,7 @@ def test_browser_flow_for_web_pages():
       const jobMonitorLink = document.getElementById("job-monitor-link");
       const adminMonitorLink = document.getElementById("admin-monitor-link");
       const disableStaffBtn = document.getElementById("disable-staff-btn");
+      const invalidateCacheBtn = document.getElementById("invalidate-cache-btn");
       const staffMessage = document.getElementById("staff-message");
       const plotErrorDetail = document.getElementById("plot-error-detail");
       const copyErrorDetailBtn = document.getElementById("copy-error-detail-btn");
@@ -66,6 +68,7 @@ def test_browser_flow_for_web_pages():
         jobMonitorLink.hidden = !shouldShow;
         adminMonitorLink.hidden = !shouldShow;
         disableStaffBtn.hidden = !shouldShow;
+        invalidateCacheBtn.hidden = !shouldShow;
         plotErrorDetail.hidden = !shouldShow;
         copyErrorDetailBtn.hidden = !shouldShow;
       }
@@ -120,6 +123,7 @@ def test_browser_flow_for_web_pages():
           assert page.get_by_role("link", name="Job Monitor").is_visible()
           assert page.get_by_role("link", name="HPCPerfStats Monitor").is_visible()
           assert page.get_by_role("button", name="Disable staff for session").is_visible()
+          assert page.get_by_role("button", name="Invalidate Cache For Page").is_visible()
           assert page.get_by_text("Plot not available").is_visible()
           assert page.locator("#plot-error-detail").is_visible()
           assert page.get_by_role("button", name="Copy Error Detail").is_visible()
@@ -129,6 +133,7 @@ def test_browser_flow_for_web_pages():
           assert page.locator("#job-monitor-link").is_hidden()
           assert page.locator("#admin-monitor-link").is_hidden()
           assert page.locator("#disable-staff-btn").is_hidden()
+          assert page.locator("#invalidate-cache-btn").is_hidden()
           assert page.get_by_text("Plot not available").is_visible()
           assert page.locator("#plot-error-detail").is_hidden()
           assert page.locator("#copy-error-detail-btn").is_hidden()
@@ -139,6 +144,7 @@ def test_browser_flow_for_web_pages():
           assert page.locator("#job-monitor-link").is_hidden()
           assert page.locator("#admin-monitor-link").is_hidden()
           assert page.locator("#disable-staff-btn").is_hidden()
+          assert page.locator("#invalidate-cache-btn").is_hidden()
           assert "Staff access removed for this session." in page.locator(
               "#staff-message"
           ).inner_text()

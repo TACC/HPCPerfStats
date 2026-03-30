@@ -1,14 +1,16 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api";
 import ExtendedSearch from "./components/ExtendedSearch";
 
 export default function Layout({ session, onSessionChange, children }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [extendedSearchOpen, setExtendedSearchOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [staffMessage, setStaffMessage] = useState("");
   const [isDroppingStaff, setIsDroppingStaff] = useState(false);
+  const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
 
   async function handleDropStaffForSession() {
     if (isDroppingStaff) return;
@@ -28,6 +30,23 @@ export default function Layout({ session, onSessionChange, children }) {
       setStaffMessage(error?.message || "Unable to remove staff access for this session.");
     } finally {
       setIsDroppingStaff(false);
+    }
+  }
+
+  async function handleInvalidateCacheForPage() {
+    if (isInvalidatingCache) return;
+    setIsInvalidatingCache(true);
+    setStaffMessage("");
+    try {
+      const response = await api.invalidateCacheForPage(location.pathname);
+      const deletedCount = Number(response?.deleted_keys || 0);
+      setStaffMessage(
+        `Invalidated ${deletedCount} cache key${deletedCount === 1 ? "" : "s"} for ${location.pathname}.`
+      );
+    } catch (error) {
+      setStaffMessage(error?.message || "Unable to invalidate cache for this page.");
+    } finally {
+      setIsInvalidatingCache(false);
     }
   }
 
@@ -88,6 +107,16 @@ export default function Layout({ session, onSessionChange, children }) {
                       disabled={isDroppingStaff}
                     >
                       {isDroppingStaff ? "Removing staff access..." : "Disable Staff Permissions"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline-danger btn-sm ms-2"
+                      onClick={handleInvalidateCacheForPage}
+                      disabled={isInvalidatingCache}
+                    >
+                      {isInvalidatingCache
+                        ? "Invalidating cache..."
+                        : "Invalidate Cache For Page"}
                     </button>
                   </>
                 )}

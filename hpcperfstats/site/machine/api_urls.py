@@ -5,6 +5,7 @@ from . import api
 urlpatterns = [
     path("session/", api.session_info),
     path("session/drop-staff/", api.drop_staff_for_session),
+    path("cache/invalidate-page/", api.invalidate_cache_for_page),
     path("home/", api.home_options),
     path("search/", api.search_dispatch),
     path("jobs/", api.job_list),
