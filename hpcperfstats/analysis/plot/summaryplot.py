@@ -330,6 +330,10 @@ class SummaryPlot():
     for typ, val, events, name, conv, label in metrics:
       if name not in df.columns:
         continue
+      if name == "freq":
+        freq_max = df[name].max()
+        if freq_max is None or math.isnan(freq_max) or freq_max <= 500:
+          continue
       plots += [self.plot_metric(df, name, label)]
 
     if not plots:
