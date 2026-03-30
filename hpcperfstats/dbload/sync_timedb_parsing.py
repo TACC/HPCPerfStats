@@ -88,8 +88,11 @@ def parse_first_timestamp_line(lines):
     if not l:
       continue
     try:
-      if l[0].isdigit():
-        t, jid, host = l.split()
+      s = l.lstrip()
+      if not s:
+        continue
+      if s[0].isdigit():
+        t, jid, host = s.split()
         return (t, jid, host)
     except Exception:
       pass
@@ -102,10 +105,13 @@ def find_processing_start_index(lines, itimes_set):
   last_idx = 0
   need_archival = True
   for i, line in enumerate(lines):
-    if not line or not line[0]:
+    if not line:
       continue
-    if line[0].isdigit():
-      t, jid, host = line.split()
+    s = line.lstrip()
+    if not s:
+      continue
+    if s[0].isdigit():
+      t, jid, host = s.split()
       if jid == '-':
         continue
       if int(float(t)) not in itimes_set:
@@ -153,13 +159,16 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
   timestamp_job_missing = False
 
   for i, line in enumerate(lines):
-    if not line or not line[0]:
+    if not line:
+      continue
+    s = line.lstrip()
+    if not s:
       continue
 
-    if line[0].isalpha() and insert:
+    if s[0].isalpha() and insert:
       if timestamp_job_missing:
         continue
-      typ, dev, vals = line.split(maxsplit=2)
+      typ, dev, vals = s.split(maxsplit=2)
       vals = vals.split()
       if typ in exclude_types_list:
         continue
@@ -172,7 +181,7 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
         eventmap = eventmaps_by_type[typ]
         vals = map_hardware_counter_vals(typ, schema[typ], vals, eventmap)
       elif typ == "proc":
-        proc_name = (line.split()[1]).split('/')[0]
+        proc_name = (s.split()[1]).split('/')[0]
         proc_stats.append({**tags2, "proc": proc_name})
         continue
       else:
@@ -208,8 +217,8 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
             "unit": unit
         })
 
-    elif i >= start_idx and line[0].isdigit():
-      t, jid, host = line.split()
+    elif i >= start_idx and s[0].isdigit():
+      t, jid, host = s.split()
       if jid == '-':
         timestamp_job_missing = True
         continue
@@ -217,8 +226,8 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
       insert = True
       tags = {"time": float(t), "host": host, "jid": jid}
       tags2 = {"jid": jid, "host": host}
-    elif line[0] == '!':
-      label, events = line.split(maxsplit=1)
+    elif s[0] == '!':
+      label, events = s.split(maxsplit=1)
       typ, events = label[1:], events.split()
       schema[typ] = events
 

@@ -84,7 +84,9 @@ def test_load_stats_file_lines_reads_file(tmp_path):
   assert err is None
   assert len(lines) >= 1
   assert "1709123456" in lines[0]
-  assert (tmp_path / "host" / "123.fnctl.lock").exists()
+  # Lock file is created while reading and cleaned up on release; it should not
+  # remain after load_stats_file_lines returns.
+  assert not (tmp_path / "host" / "123.fnctl.lock").exists()
 
 
 # --- parse_first_timestamp_line ---
@@ -119,6 +121,15 @@ def test_parse_first_timestamp_line_no_digit():
 def test_parse_first_timestamp_line_skips_bad_line():
   """Line with wrong number of tokens is skipped, next digit line used."""
   lines = ["12345\n", "1709123456 job1 cn001\n"]
+  t, jid, host = parse_first_timestamp_line(lines)
+  assert t == "1709123456"
+  assert jid == "job1"
+  assert host == "cn001"
+
+
+def test_parse_first_timestamp_line_ignores_leading_spaces():
+  """Leading whitespace before timestamp is ignored."""
+  lines = ["   1709123456 job1 cn001\n"]
   t, jid, host = parse_first_timestamp_line(lines)
   assert t == "1709123456"
   assert jid == "job1"
@@ -178,6 +189,18 @@ def test_find_processing_start_index_skips_job_missing():
   assert need_archival is False
 
 
+def test_find_processing_start_index_with_leading_spaces():
+  """Leading whitespace before timestamps should not prevent detection."""
+  lines = [
+      "   1709123456 job1 cn001\n",
+      "   1709123460 job1 cn001\n",
+  ]
+  itimes_set = set()
+  start_idx, need_archival = find_processing_start_index(lines, itimes_set)
+  assert start_idx == 0
+  assert need_archival is False
+
+
 # --- map_hardware_counter_vals ---
 
 
@@ -228,6 +251,23 @@ def test_parse_stats_lines_minimal_software():
       eventmaps_by_type=eventmaps,
       exclude_types_list=exclude,
   )
+  assert len(stats_list) == 2
+  assert stats_list[0]["event"] == "user"
+  assert stats_list[0]["value"] == 100.0
+  assert stats_list[1]["event"] == "sys"
+  assert stats_list[1]["value"] == 200.0
+  assert len(proc_list) == 0
+
+
+def test_parse_stats_lines_handles_leading_spaces():
+  """Parser should tolerate leading whitespace on all line types."""
+  lines = [
+      "   1709123456 job1 cn001\n",
+      "   !cpu user sys\n",
+      "   cpu 0 100 200\n",
+  ]
+  start_idx = 0
+  stats_list, proc_list = parse_stats_lines(lines, start_idx)
   assert len(stats_list) == 2
   assert stats_list[0]["event"] == "user"
   assert stats_list[0]["value"] == 100.0

@@ -51,8 +51,11 @@ def _get_first_timestamp_seconds(file_path, use_lock=True):
           for line in fd:
             if not line:
               continue
-            if line[0].isdigit():
-              t = line.split(maxsplit=1)[0]
+            s = line.lstrip()
+            if not s:
+              continue
+            if s[0].isdigit():
+              t = s.split(maxsplit=1)[0]
               # The file may store floats (epoch with fractional seconds).
               return int(float(t))
     else:
@@ -60,8 +63,11 @@ def _get_first_timestamp_seconds(file_path, use_lock=True):
         for line in fd:
           if not line:
             continue
-          if line[0].isdigit():
-            t = line.split(maxsplit=1)[0]
+          s = line.lstrip()
+          if not s:
+            continue
+          if s[0].isdigit():
+            t = s.split(maxsplit=1)[0]
             return int(float(t))
   except Exception:
     pass
