@@ -11,6 +11,7 @@ export default function Layout({ session, onSessionChange, children }) {
   const [staffMessage, setStaffMessage] = useState("");
   const [isDroppingStaff, setIsDroppingStaff] = useState(false);
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
+  const [staffActionValue, setStaffActionValue] = useState("");
 
   async function handleDropStaffForSession() {
     if (isDroppingStaff) return;
@@ -50,6 +51,37 @@ export default function Layout({ session, onSessionChange, children }) {
     }
   }
 
+  async function handleStaffActionChange(event) {
+    const action = event.target.value;
+    setStaffActionValue(action);
+    if (!action) {
+      return;
+    }
+
+    if (action === "job_monitor") {
+      navigate("/job_monitor");
+      setStaffActionValue("");
+      return;
+    }
+    if (action === "admin_monitor") {
+      navigate("/admin_monitor");
+      setStaffActionValue("");
+      return;
+    }
+    if (action === "drop_staff") {
+      await handleDropStaffForSession();
+      setStaffActionValue("");
+      return;
+    }
+    if (action === "invalidate_cache") {
+      await handleInvalidateCacheForPage();
+      setStaffActionValue("");
+      return;
+    }
+
+    setStaffActionValue("");
+  }
+
   return (
     <div className="container-fluid">
       <nav className="navbar navbar-expand-lg navbar-light bg-light" role="navigation">
@@ -87,38 +119,19 @@ export default function Layout({ session, onSessionChange, children }) {
             <div className="navbar-actions ms-auto">
               <div className="navbar-actions-row">
                 {session?.is_staff && (
-                  <>
-                    <Link
-                      to="/job_monitor"
-                      className="btn btn-outline-secondary btn-sm me-2"
-                    >
-                      Job Monitor
-                    </Link>
-                    <Link
-                      to="/admin_monitor"
-                      className="btn btn-outline-secondary btn-sm"
-                    >
-                      HPCPerfStats Monitor
-                    </Link>
-                    <button
-                      type="button"
-                      className="btn btn-outline-warning btn-sm ms-2"
-                      onClick={handleDropStaffForSession}
-                      disabled={isDroppingStaff}
-                    >
-                      {isDroppingStaff ? "Removing staff access..." : "Disable Staff Permissions"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-outline-danger btn-sm ms-2"
-                      onClick={handleInvalidateCacheForPage}
-                      disabled={isInvalidatingCache}
-                    >
-                      {isInvalidatingCache
-                        ? "Invalidating cache..."
-                        : "Invalidate Cache For Page"}
-                    </button>
-                  </>
+                  <select
+                    className="form-select form-select-sm me-2"
+                    value={staffActionValue}
+                    onChange={handleStaffActionChange}
+                    aria-label="Staff actions"
+                    disabled={isDroppingStaff || isInvalidatingCache}
+                  >
+                    <option value="">Staff Actions</option>
+                    <option value="job_monitor">Job Failure Monitor</option>
+                    <option value="admin_monitor">HPCPerfStats Monitor</option>
+                    <option value="drop_staff">Disable Staff Permissions</option>
+                    <option value="invalidate_cache">Invalidate Cache For Page</option>
+                  </select>
                 )}
                 <a href="/logout/" className="btn btn-outline-secondary btn-sm">Logout</a>
               </div>

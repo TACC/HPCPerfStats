@@ -43,10 +43,13 @@ def test_browser_flow_for_web_pages():
 <head><title>HPCPerfStats SPA</title></head>
 <body>
   <div id="root">spa-shell</div>
-  <a id="job-monitor-link" href="/machine/job_monitor/" hidden>Job Monitor</a>
-  <a id="admin-monitor-link" href="/machine/admin_monitor/" hidden>HPCPerfStats Monitor</a>
-  <button id="disable-staff-btn" type="button" hidden>Disable staff for session</button>
-  <button id="invalidate-cache-btn" type="button" hidden>Invalidate Cache For Page</button>
+  <select id="staff-actions" aria-label="Staff actions" hidden>
+    <option value="">Staff Actions</option>
+    <option value="job_monitor">Job Failure Monitor</option>
+    <option value="admin_monitor">HPCPerfStats Monitor</option>
+    <option value="drop_staff">Disable Staff Permissions</option>
+    <option value="invalidate_cache">Invalidate Cache For Page</option>
+  </select>
   <div id="staff-message"></div>
   <div id="plot-unavailable">Plot not available</div>
   <span id="plot-error-detail" hidden>Error Detail</span>
@@ -55,29 +58,26 @@ def test_browser_flow_for_web_pages():
     (function () {
       const params = new URLSearchParams(window.location.search);
       const isStaff = params.get("staff") === "1";
-      const jobMonitorLink = document.getElementById("job-monitor-link");
-      const adminMonitorLink = document.getElementById("admin-monitor-link");
-      const disableStaffBtn = document.getElementById("disable-staff-btn");
-      const invalidateCacheBtn = document.getElementById("invalidate-cache-btn");
+      const staffActions = document.getElementById("staff-actions");
       const staffMessage = document.getElementById("staff-message");
       const plotErrorDetail = document.getElementById("plot-error-detail");
       const copyErrorDetailBtn = document.getElementById("copy-error-detail-btn");
 
       function setStaffUi(flag) {
         const shouldShow = !!flag;
-        jobMonitorLink.hidden = !shouldShow;
-        adminMonitorLink.hidden = !shouldShow;
-        disableStaffBtn.hidden = !shouldShow;
-        invalidateCacheBtn.hidden = !shouldShow;
+        staffActions.hidden = !shouldShow;
         plotErrorDetail.hidden = !shouldShow;
         copyErrorDetailBtn.hidden = !shouldShow;
       }
 
       setStaffUi(isStaff);
-      disableStaffBtn.addEventListener("click", function () {
-        setStaffUi(false);
-        staffMessage.textContent =
-          "Staff access removed for this session. Log out and log back in to restore staff access.";
+      staffActions.addEventListener("change", function () {
+        if (staffActions.value === "drop_staff") {
+          setStaffUi(false);
+          staffMessage.textContent =
+            "Staff access removed for this session. Log out and log back in to restore staff access.";
+        }
+        staffActions.value = "";
       });
     })();
   </script>
@@ -120,31 +120,33 @@ def test_browser_flow_for_web_pages():
 
           # Staff-only controls appear for staff sessions.
           page.goto(f"{base_url}/machine/?staff=1")
-          assert page.get_by_role("link", name="Job Monitor").is_visible()
-          assert page.get_by_role("link", name="HPCPerfStats Monitor").is_visible()
-          assert page.get_by_role("button", name="Disable staff for session").is_visible()
-          assert page.get_by_role("button", name="Invalidate Cache For Page").is_visible()
+          assert page.get_by_role("combobox", name="Staff actions").is_visible()
+          option_labels = page.eval_on_selector_all(
+              "#staff-actions option",
+              "options => options.map((opt) => opt.textContent.trim())",
+          )
+          assert option_labels == [
+              "Staff Actions",
+              "Job Failure Monitor",
+              "HPCPerfStats Monitor",
+              "Disable Staff Permissions",
+              "Invalidate Cache For Page",
+          ]
           assert page.get_by_text("Plot not available").is_visible()
           assert page.locator("#plot-error-detail").is_visible()
           assert page.get_by_role("button", name="Copy Error Detail").is_visible()
 
           # Staff-only controls are absent for non-staff sessions.
           page.goto(f"{base_url}/machine/?staff=0")
-          assert page.locator("#job-monitor-link").is_hidden()
-          assert page.locator("#admin-monitor-link").is_hidden()
-          assert page.locator("#disable-staff-btn").is_hidden()
-          assert page.locator("#invalidate-cache-btn").is_hidden()
+          assert page.locator("#staff-actions").is_hidden()
           assert page.get_by_text("Plot not available").is_visible()
           assert page.locator("#plot-error-detail").is_hidden()
           assert page.locator("#copy-error-detail-btn").is_hidden()
 
           # Demoting staff hides controls and shows the informational message.
           page.goto(f"{base_url}/machine/?staff=1")
-          page.get_by_role("button", name="Disable staff for session").click()
-          assert page.locator("#job-monitor-link").is_hidden()
-          assert page.locator("#admin-monitor-link").is_hidden()
-          assert page.locator("#disable-staff-btn").is_hidden()
-          assert page.locator("#invalidate-cache-btn").is_hidden()
+          page.select_option("#staff-actions", "drop_staff")
+          assert page.locator("#staff-actions").is_hidden()
           assert "Staff access removed for this session." in page.locator(
               "#staff-message"
           ).inner_text()
