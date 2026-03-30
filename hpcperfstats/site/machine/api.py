@@ -1768,24 +1768,39 @@ def job_detail(request, pk):
                 agg = cached_orm(
                     f"{KEY_GPU_AGG}:{job.jid}",
                     job_cache_timeout,
-                    lambda: host_data.objects.filter(
-                        type="nvidia_gpu",
-                        event="utilization",
-                        time__gte=j.start_time,
-                        time__lte=j.end_time,
-                        host__in=j.acct_host_list or [],
-                    ).aggregate(
-                        cnt=Count("time"),
-                        vmax=Max("value"),
-                        vmean=Avg("value"),
+                    lambda: list(
+                        host_data.objects.filter(
+                            type="nvidia_gpu",
+                            event__in=["gpu_util", "utilization"],
+                            time__gte=j.start_time,
+                            time__lte=j.end_time,
+                            host__in=j.acct_host_list or [],
+                        )
+                        .values("event")
+                        .annotate(
+                            cnt=Count("time"),
+                            vmax=Max("value"),
+                            vmean=Avg("value"),
+                        )
                     ),
                 )
-                cnt = int(agg.get("cnt") or 0)
+                # Backwards compatibility: cached_orm might return a single
+                # aggregate dict (old shape) or a list of per-event rows.
+                if isinstance(agg, dict):
+                    row = agg
+                else:
+                    rows = list(agg or [])
+                    by_event = {
+                        str(r.get("event")): r for r in rows if isinstance(r, dict)
+                    }
+                    row = by_event.get("gpu_util") or by_event.get("utilization") or {}
+
+                cnt = int(row.get("cnt") or 0)
                 if cnt > 2:
-                    vmax = agg.get("vmax")
+                    vmax = row.get("vmax")
                     if vmax is not None:
                         gpu_max = float(vmax)
-                        vmean = agg.get("vmean")
+                        vmean = row.get("vmean")
                         gpu_mean = float(vmean) if vmean is not None else None
                         if not isnan(gpu_max):
                             gpu_active = ceil(gpu_max / 100.0)

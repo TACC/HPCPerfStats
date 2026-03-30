@@ -56,9 +56,19 @@ class DevPlot:
 
     df = df[["time", "host", event]]
 
-    y_range_end = 1.1 * df[event].max()
+    y_min_value = df[event].min()
+    y_max_value = df[event].max()
+    if math.isnan(y_max_value):
+      y_max_value = 0
+
+    y_range_end = 1.1 * y_max_value
     if math.isnan(y_range_end):
       y_range_end = 0
+
+    if math.isnan(y_min_value):
+      y_min_value = 0
+
+    y_range_start = y_min_value if y_min_value < 0 else 0
 
     ylabel = event + " (" + (unit or "") + ")"
 
@@ -66,7 +76,7 @@ class DevPlot:
         width=400,
         height=150,
         x_axis_type="datetime",
-        y_range=Range1d(-0.1, y_range_end),
+        y_range=Range1d(y_range_start, y_range_end),
         y_axis_label=ylabel,
     )
     set_linear_axes_plain_numeric(plot)

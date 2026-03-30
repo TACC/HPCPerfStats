@@ -832,35 +832,34 @@ class avg_gpuutil():
 
     """
 
+  def _avg_gpuutil_for_event(self, u, typename, event_name):
+    """Mean utilization (%) for one ``typename`` / ``event_name``, or None if unusable."""
+    schema, _stats = u.get_type(typename)
+    if schema is None or event_name not in schema.events:
+      return None
+    ui = schema[event_name].index
+    per_host = []
+    for hostname, stats in _stats.items():
+      window = stats[1:-1, ui]
+      if window.size == 0:
+        continue
+      per_host.append(float(mean(window)))
+    if not per_host:
+      return None
+    value = float(mean(per_host))
+    if value == 0:
+      return None
+    return value, typename, '%'
+
   def compute_metric(self, u):
-    # nvidia: monitor emits gpu_util; keep utilization for older archives only.
-    for typename, cols in (
-        ("nvidia_gpu", ("gpu_util", "utilization")),
-        ("amd_gpu", ("gpu_util",)),
-    ):
-      schema, _stats = u.get_type(typename)
-      if schema is None:
-        continue
-      col = None
-      for c in cols:
-        if c in schema.events:
-          col = c
-          break
-      if col is None:
-        continue
-      ui = schema[col].index
-      per_host = []
-      for hostname, stats in _stats.items():
-        window = stats[1:-1, ui]
-        if window.size == 0:
-          continue
-        per_host.append(float(mean(window)))
-      if not per_host:
-        continue
-      value = float(mean(per_host))
-      if value == 0:
-        continue
-      return value, typename, '%'
+    # nvidia: same order as summary plot / job_detail — try gpu_util, then utilization.
+    for event_name in ("gpu_util", "utilization"):
+      r = self._avg_gpuutil_for_event(u, "nvidia_gpu", event_name)
+      if r is not None:
+        return r
+    r = self._avg_gpuutil_for_event(u, "amd_gpu", "gpu_util")
+    if r is not None:
+      return r
     return None, "gpu", '%'
 
 

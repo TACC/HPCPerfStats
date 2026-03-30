@@ -193,6 +193,80 @@ def test_summaryplot_includes_nvidia_gpu_util_and_mem_used_mb_columns():
   assert mem_used_y_caps[0] == pytest.approx(1.1 * 16384.0)
 
 
+def test_summaryplot_nv_gpu_util_falls_back_to_utilization_event():
+  """When gpu_util has no rows, summary plot uses nvidia_gpu utilization (legacy)."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if val_col == "value" and typ == "nvidia_gpu":
+      ev = list(events)
+      if ev == ["gpu_util"]:
+        return empty
+      if ev == ["utilization"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 55.0)], columns=["host", "time", "sum_val"]
+        )
+      if ev == ["mem_used_mb"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 4096.0)], columns=["host", "time", "sum_val"]
+        )
+      if ev == ["mem_total_mb"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 16384.0)], columns=["host", "time", "sum_val"]
+        )
+      return empty
+    if val_col == "arc" and typ == "cpu" and "user" in list(events):
+      return pd.DataFrame(
+          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+      )
+    if val_col != "arc":
+      return empty
+    if typ in ("amd64_pmc", "amd64_df", "intel_rapl", "ib_ext", "llite"):
+      return empty
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics"):
+      event_list = list(events)
+      if event_list == fp64:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+        )
+      if event_list == ["MPERF"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+        )
+      if event_list == ["APERF"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 180.0)], columns=["host", "time", "sum_val"]
+        )
+      if event_list == ["INST_RETIRED"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
+        )
+      return empty
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  summary = SummaryPlot(jt)
+  captured_metrics = []
+
+  def fake_plot_metric(df, metric, label, y_range_end=None):
+    del label, y_range_end
+    captured_metrics.append(metric)
+    return figure(width=100, height=60)
+
+  summary.plot_metric = fake_plot_metric
+  fig = summary.plot()
+  assert fig is not None
+  assert "nv_gpu_util" in captured_metrics
+
+
 def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
   """Dense host_time_df + sparse GPU rows used to drop nv_* columns entirely."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")

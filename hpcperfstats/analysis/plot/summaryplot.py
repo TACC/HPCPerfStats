@@ -232,9 +232,42 @@ def _merge_first_full_coverage(df, jt, column_name, val_col, tries):
   return df
 
 
+def _merge_nvidia_gpu_util_column(df, jt):
+  """Left-merge ``nv_gpu_util`` from ``nvidia_gpu`` ``value``: prefer ``gpu_util``, else ``utilization``.
+
+  Matches ``avg_gpuutil`` / job_detail GPU stats: newer monitor emits ``gpu_util``;
+  older archives may only have ``utilization``.
+  """
+  name = "nv_gpu_util"
+  for events in (["gpu_util"], ["utilization"]):
+    agg = jt.get_aggregate_df("nvidia_gpu", "value", events, 1.0)
+    if agg.empty or "sum_val" not in agg.columns:
+      continue
+    merged = df.merge(
+        agg[["host", "time", "sum_val"]],
+        on=["host", "time"],
+        how="left",
+    )
+    merged[name] = merged["sum_val"]
+    merged.drop(columns=["sum_val"], inplace=True)
+    if name in merged.columns and merged[name].isnull().values.any():
+      keep_sparse = (
+          name in _SUMMARY_ALLOW_PARTIAL_NULL and merged[name].notna().any()
+      )
+      if not keep_sparse:
+        del merged[name]
+        continue
+    return merged
+  return df
+
+
 def iter_summary_aggregate_attempts():
   """Flat (typ, val_col, events, name, conv, label) for diagnostics."""
   for typ, val, events, name, conv, label in _SUMMARY_SINGLE_SPECS:
+    if name == "nv_gpu_util":
+      yield "nvidia_gpu", "value", ["gpu_util"], name, conv, label
+      yield "nvidia_gpu", "value", ["utilization"], name, conv, label
+      continue
     yield typ, val, events, name, conv, label
   for fw in _SUMMARY_FIRST_WIN_SPECS:
     for typ, events, conv in fw["tries"]:
@@ -346,6 +379,8 @@ class SummaryPlot():
       raise ValueError(MSG_NO_METRIC_DATA)
 
     for typ, val, events, name, conv, label in _SUMMARY_SINGLE_SPECS:
+      if name == "nv_gpu_util":
+        continue
       s = time.time()
       agg = self.jt.get_aggregate_df(typ, val, events, conv)
       if agg.empty or "sum_val" not in agg.columns:
@@ -366,6 +401,8 @@ class SummaryPlot():
         if not keep_sparse:
           del df[name]
       log.debug("time to compute %s: %s", name, time.time() - s)
+
+    df = _merge_nvidia_gpu_util_column(df, self.jt)
 
     for fw in _SUMMARY_FIRST_WIN_SPECS:
       s = time.time()
