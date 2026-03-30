@@ -176,24 +176,23 @@ def test_find_processing_start_index_one_missing():
   assert need_archival is False
 
 
-def test_find_processing_start_index_skips_job_missing():
-  """Lines with jid '-' are skipped and do not update last_idx."""
-  lines = [
-      "1709123456 - cn001\n",
-      "1709123460 job1 cn001\n",
-  ]
-  itimes_set = set()
-  start_idx, need_archival = find_processing_start_index(lines, itimes_set)
-  # First line has jid '-', so last_idx stays 0; second line is first "valid" and missing from times
-  assert start_idx == 0
-  assert need_archival is False
-
-
 def test_find_processing_start_index_with_leading_spaces():
   """Leading whitespace before timestamps should not prevent detection."""
   lines = [
       "   1709123456 job1 cn001\n",
       "   1709123460 job1 cn001\n",
+  ]
+  itimes_set = set()
+  start_idx, need_archival = find_processing_start_index(lines, itimes_set)
+  assert start_idx == 0
+  assert need_archival is False
+
+
+def test_find_processing_start_index_includes_job_missing():
+  """Lines with jid '-' still drive processing start detection."""
+  lines = [
+      "1709123456 - cn001\n",
+      "1709123460 - cn001\n",
   ]
   itimes_set = set()
   start_idx, need_archival = find_processing_start_index(lines, itimes_set)
@@ -273,6 +272,20 @@ def test_parse_stats_lines_handles_leading_spaces():
   assert stats_list[0]["value"] == 100.0
   assert stats_list[1]["event"] == "sys"
   assert stats_list[1]["value"] == 200.0
+  assert len(proc_list) == 0
+
+
+def test_parse_stats_lines_with_missing_jid_uses_none():
+  """When jid is '-', samples are still ingested with jid=None."""
+  lines = [
+      "1709123456 - cn001\n",
+      "!cpu user sys\n",
+      "cpu 0 100 200\n",
+  ]
+  start_idx = 0
+  stats_list, proc_list = parse_stats_lines(lines, start_idx)
+  assert len(stats_list) == 2
+  assert all(r["jid"] is None for r in stats_list)
   assert len(proc_list) == 0
 
 

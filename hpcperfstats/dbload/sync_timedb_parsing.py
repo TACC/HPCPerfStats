@@ -111,9 +111,7 @@ def find_processing_start_index(lines, itimes_set):
     if not s:
       continue
     if s[0].isdigit():
-      t, jid, host = s.split()
-      if jid == '-':
-        continue
+      t, _jid, _host = s.split()
       if int(float(t)) not in itimes_set:
         start_idx = last_idx
         need_archival = False
@@ -156,7 +154,6 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
   stats = []
   proc_stats = []
   insert = False
-  timestamp_job_missing = False
 
   for i, line in enumerate(lines):
     if not line:
@@ -166,8 +163,6 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
       continue
 
     if s[0].isalpha() and insert:
-      if timestamp_job_missing:
-        continue
       typ, dev, vals = s.split(maxsplit=2)
       vals = vals.split()
       if typ in exclude_types_list:
@@ -219,13 +214,13 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
 
     elif i >= start_idx and s[0].isdigit():
       t, jid, host = s.split()
-      if jid == '-':
-        timestamp_job_missing = True
-        continue
-      timestamp_job_missing = False
+      # Some deployments may not emit a job id and instead use '-' as a
+      # placeholder. We still want to ingest these host-level samples, so map
+      # the missing jid to None for downstream consumers.
+      jid_val = None if jid == "-" else jid
       insert = True
-      tags = {"time": float(t), "host": host, "jid": jid}
-      tags2 = {"jid": jid, "host": host}
+      tags = {"time": float(t), "host": host, "jid": jid_val}
+      tags2 = {"jid": jid_val, "host": host}
     elif s[0] == '!':
       label, events = s.split(maxsplit=1)
       typ, events = label[1:], events.split()
