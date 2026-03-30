@@ -73,9 +73,11 @@ if test -f "${MONITOR_DIR}/Makefile"; then
   (cd "${MONITOR_DIR}" && make distclean)
 fi
 
-if test ! -f "${MONITOR_DIR}/configure"; then
-  (cd "${MONITOR_DIR}" && autoreconf -fi)
-fi
+# Regenerate Makefile.in etc. from *.am even when configure exists. Otherwise
+# make dist can fail (e.g. stale tests/Makefile.in still listing
+# test_monitor_configure_help.sh while Makefile.am ships .sh.in only).
+echo "Running autoreconf -fi in ${MONITOR_DIR} ..."
+(cd "${MONITOR_DIR}" && autoreconf -fi)
 
 if ! (cd "${MONITOR_DIR}" && ./configure --with-systemduserunitdir=no); then
   cat <<EOF >&2
