@@ -68,8 +68,17 @@ static unsigned long long *g_dcgm_ctr5 = NULL;
 static unsigned long long *g_dcgm_inst = NULL;
 static unsigned long long *g_dcgm_aperf = NULL;
 static unsigned long long *g_dcgm_mperf = NULL;
+static unsigned long long *g_dcgm_arm_est_flops = NULL;
+static unsigned long long *g_dcgm_arm_dram_bytes = NULL;
 static long long *g_dcgm_last_ts = NULL;
 static long long g_dcgm_mono_prev_us = 0;
+
+/* Approximation knobs for ARM/DCGM-derived roofline metrics.
+ * DCGM CPU does not expose direct DRAM-channel bytes or architectural FP
+ * counters; we synthesize monotonic host-level signals from active cycles.
+ */
+#define ARM_APPROX_FLOPS_PER_ACTIVE_CYCLE 2.0
+#define ARM_APPROX_DRAM_BYTES_PER_ACTIVE_CYCLE 16.0
 
 struct dcgm_cpu_jifs {
   unsigned long long u, nice, sys, idle, iow, irq, sft, stl, gu, gn;
@@ -390,6 +399,8 @@ static void publish_dcgm_cpu_stats(struct stats *stats, int i)
   stats_set(stats, "DF_CTR1", 0);
   stats_set(stats, "DF_CTR2", 0);
   stats_set(stats, "DF_CTR3", 0);
+  stats_set(stats, "ARM_EST_FLOPS", g_dcgm_arm_est_flops[i]);
+  stats_set(stats, "ARM_DRAM_BW_BYTES", g_dcgm_arm_dram_bytes[i]);
 }
 
 static void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *sample,
@@ -408,6 +419,10 @@ static void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *samp
   g_dcgm_ctr3[i] += (unsigned long long) ((sample->util_irq * (double) delta_us) + 0.5);
   g_dcgm_ctr4[i] += (unsigned long long) ((sample->util_nice * (double) delta_us) + 0.5);
   g_dcgm_ctr5[i] += (unsigned long long) ((sample->clock_khz * (double) delta_us) / 1000.0 + 0.5);
+  g_dcgm_arm_est_flops[i] +=
+      (unsigned long long) ((act_cycles * ARM_APPROX_FLOPS_PER_ACTIVE_CYCLE) + 0.5);
+  g_dcgm_arm_dram_bytes[i] +=
+      (unsigned long long) ((act_cycles * ARM_APPROX_DRAM_BYTES_PER_ACTIVE_CYCLE) + 0.5);
 }
 
 static void dcgm_cpu_watch_cleanup(void)
@@ -516,12 +531,15 @@ static int dcgm_backend_begin(struct stats_type *type)
   g_dcgm_inst = (unsigned long long *) calloc(n, sizeof(*g_dcgm_inst));
   g_dcgm_aperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_aperf));
   g_dcgm_mperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_mperf));
+  g_dcgm_arm_est_flops = (unsigned long long *) calloc(n, sizeof(*g_dcgm_arm_est_flops));
+  g_dcgm_arm_dram_bytes = (unsigned long long *) calloc(n, sizeof(*g_dcgm_arm_dram_bytes));
   g_dcgm_last_ts = (long long *) calloc(n, sizeof(*g_dcgm_last_ts));
   g_dcjm_prev = (struct dcgm_cpu_jifs *) calloc(n, sizeof(*g_dcjm_prev));
   g_dcjm_cur = (struct dcgm_cpu_jifs *) calloc(n, sizeof(*g_dcjm_cur));
   if (g_dcgm_ctr0 == NULL || g_dcgm_ctr1 == NULL || g_dcgm_ctr2 == NULL ||
       g_dcgm_ctr3 == NULL || g_dcgm_ctr4 == NULL || g_dcgm_ctr5 == NULL ||
       g_dcgm_inst == NULL || g_dcgm_aperf == NULL || g_dcgm_mperf == NULL ||
+      g_dcgm_arm_est_flops == NULL || g_dcgm_arm_dram_bytes == NULL ||
       g_dcgm_last_ts == NULL || g_dcjm_prev == NULL || g_dcjm_cur == NULL) {
     ERROR("DCGM CPU backend allocation failed\n");
     dcgm_cpu_watch_cleanup();
@@ -602,6 +620,8 @@ static void fallback_fill(struct stats *stats, const char *cpu)
   if (read_msr_u64(cpu, MSR_DF_CTR2, &v) == 0) stats_set(stats, "DF_CTR2", v);
   if (read_msr_u64(cpu, MSR_DF_CTR3, &v) == 0) stats_set(stats, "DF_CTR3", v);
 #endif
+  stats_set(stats, "ARM_EST_FLOPS", 0);
+  stats_set(stats, "ARM_DRAM_BW_BYTES", 0);
 }
 #endif
 

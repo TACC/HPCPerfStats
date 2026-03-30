@@ -214,6 +214,11 @@ fi
 AC_SUBST([MONITOR_ARCH_CPPFLAG])
 AM_CONDITIONAL([MONITOR_ARCH_INTEL], [test "x$monitor_arch" = "xintel"])
 AM_CONDITIONAL([MONITOR_ARCH_AMD], [test "x$monitor_arch" = "xamd"])
+case "$host_cpu" in
+  aarch64|arm*) monitor_arch_arm=true ;;
+  *) monitor_arch_arm=false ;;
+esac
+AM_CONDITIONAL([MONITOR_ARCH_ARM], [test "x$monitor_arch_arm" = "xtrue"])
 
 AC_MSG_NOTICE([CPU counter backend: ${cpu_counter_backend} (host_cpu=${host_cpu})])
 

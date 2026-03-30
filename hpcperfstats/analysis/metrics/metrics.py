@@ -18,7 +18,7 @@ from django.db import transaction, close_old_connections
 from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.gen import jid_table
-from hpcperfstats.analysis.gen.utils import INTEL_IMC_STATS_TYPES, utils
+from hpcperfstats.analysis.gen.utils import ARM_IMC_STATS_TYPES, INTEL_IMC_STATS_TYPES, utils
 from hpcperfstats.site.machine.models import job_data, metrics_data
 
 try:
@@ -576,6 +576,16 @@ class Metrics():
       return v, "amd64_df"
     cas_conv = 64 / (1024 ** 3)
     for imc_typ in INTEL_IMC_STATS_TYPES:
+      v = self.job_arc(
+          jt,
+          typename=imc_typ,
+          events=["CAS_READS", "CAS_WRITES"],
+          conv=cas_conv,
+          units="GB/s",
+      )
+      if v is not None:
+        return v, imc_typ
+    for imc_typ in ARM_IMC_STATS_TYPES:
       v = self.job_arc(
           jt,
           typename=imc_typ,

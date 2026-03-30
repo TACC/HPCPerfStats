@@ -122,3 +122,66 @@ def test_roofline_succeeds_with_cpu_counter_metrics_flops_and_imc_bw():
   fig, reason = plot_and_reason_roofline_from_jid_table(jt)
   assert fig is not None
   assert reason is None
+
+
+def test_roofline_succeeds_with_arm_dcgm_approx_metrics():
+  """ARM fallback uses cpu_counter_metrics ARM_EST_FLOPS + ARM_DRAM_BW_BYTES."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if val_col != "arc":
+      return empty
+    if typ == "cpu_counter_metrics" and list(events) == ["ARM_EST_FLOPS"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 6.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ == "cpu_counter_metrics" and list(events) == ["ARM_DRAM_BW_BYTES"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"]
+      )
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  fig, reason = plot_and_reason_roofline_from_jid_table(jt)
+  assert fig is not None
+  assert reason is None
+
+
+def test_roofline_uses_arm_imc_cas_bandwidth_when_present():
+  """ARM path accepts arm_imc CAS counters for bandwidth."""
+  from hpcperfstats.analysis.gen.utils import INTEL_FP_ARITH_ALL_EVENTS
+
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  fp_events = list(INTEL_FP_ARITH_ALL_EVENTS)
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if val_col != "arc":
+      return empty
+    if typ == "cpu_counter_metrics" and list(events) == fp_events:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 5.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ == "arm_imc" and list(events) == ["CAS_READS", "CAS_WRITES"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 0.75)], columns=["host", "time", "sum_val"]
+      )
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  fig, reason = plot_and_reason_roofline_from_jid_table(jt)
+  assert fig is not None
+  assert reason is None

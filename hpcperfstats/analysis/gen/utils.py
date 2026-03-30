@@ -35,6 +35,9 @@ INTEL_IMC_STATS_TYPES = (
     "intel_skx_imc",
 )
 
+# ARM memory-controller types that expose CAS_READS/CAS_WRITES semantics.
+ARM_IMC_STATS_TYPES = ("arm_imc",)
+
 # FP_ARITH events for Intel/LIKWID core counters (roofline, summary first-win tries).
 INTEL_FP_ARITH_DOUBLE_EVENTS = (
     "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",

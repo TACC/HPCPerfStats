@@ -12,6 +12,7 @@ from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.plotting import figure
 
 from hpcperfstats.analysis.gen.utils import (
+    ARM_IMC_STATS_TYPES,
     INTEL_CORE_PMC_TYPES_ORDERED,
     INTEL_FP_ARITH_ALL_EVENTS,
     INTEL_IMC_STATS_TYPES,
@@ -113,6 +114,43 @@ def _intel_imc_bw_gb(jt, attempts):
     return None
 
 
+def _arm_dcgm_flops_bw(jt, attempts):
+    """Approximate ARM roofline from cpu_counter_metrics synthetic counters."""
+    flops_agg, flops_src = _aggregate_arc(jt, "cpu_counter_metrics", ["ARM_EST_FLOPS"], 1e-9)
+    bw_agg, bw_src = _aggregate_arc(
+        jt, "cpu_counter_metrics", ["ARM_DRAM_BW_BYTES"], 1 / (1024 ** 3)
+    )
+    attempts.append(
+        f"arm_dcgm:cpu_counter_metrics rows(flops={len(flops_agg.index)}, bw={len(bw_agg.index)}) "
+        f"src(flops={flops_src}, bw={bw_src})"
+    )
+    if (
+        flops_agg.empty
+        or "sum_val" not in flops_agg.columns
+        or bw_agg.empty
+        or "sum_val" not in bw_agg.columns
+    ):
+        return None, None
+    flops = flops_agg.rename(columns={"sum_val": "flops_gf"})[["host", "time", "flops_gf"]]
+    bw = bw_agg.rename(columns={"sum_val": "bw_gb"})[["host", "time", "bw_gb"]]
+    return flops, bw
+
+
+def _arm_imc_bw_gb(jt, attempts):
+    """Memory bandwidth (GB/s) from ARM IMC CAS_READS+CAS_WRITES."""
+    conv = 64 / (1024 ** 3)
+    for imc_typ in ARM_IMC_STATS_TYPES:
+        agg_bw, bw_src = _aggregate_arc(jt, imc_typ, ["CAS_READS", "CAS_WRITES"], conv)
+        attempts.append(
+            f"arm_imc:{imc_typ} rows(bw={len(agg_bw.index)}) src(bw={bw_src})"
+        )
+        if not agg_bw.empty and "sum_val" in agg_bw.columns:
+            return agg_bw.rename(columns={"sum_val": "bw_gb"})[
+                ["host", "time", "bw_gb"]
+            ]
+    return None
+
+
 def _get_flops_bw_df_and_reason(jt):
     """Get (df, reason) where df has host,time,flops_gf,bw_gb or None with detailed reason."""
     base = jt.get_host_time_df()
@@ -151,8 +189,7 @@ def _get_flops_bw_df_and_reason(jt):
         flops_gf = agg_flops.rename(columns={"sum_val": "flops_gf"})[["host", "time", "flops_gf"]]
         bw_gb = agg_bw.rename(columns={"sum_val": "bw_gb"})[["host", "time", "bw_gb"]]
 
-    # Intel (and x86/ARM via cpu_counter_metrics): FP (FP_ARITH or legacy SSE)
-    # and IMC CAS_READS+CAS_WRITES
+    # Intel: FP (FP_ARITH or legacy SSE) and IMC CAS_READS+CAS_WRITES
     if flops_gf is None or bw_gb is None:
         if flops_gf is None:
             flops_gf = _intel_fp_arith_flops_gf(jt, attempts)
@@ -160,6 +197,17 @@ def _get_flops_bw_df_and_reason(jt):
             flops_gf = _intel_legacy_sse_flops_gf(jt, attempts)
         if bw_gb is None:
             bw_gb = _intel_imc_bw_gb(jt, attempts)
+        if bw_gb is None:
+            bw_gb = _arm_imc_bw_gb(jt, attempts)
+
+    # ARM/DCGM fallback: approximate FLOPS and DRAM bytes from synthetic
+    # cpu_counter_metrics events populated by the monitor.
+    if flops_gf is None or bw_gb is None:
+        arm_flops, arm_bw = _arm_dcgm_flops_bw(jt, attempts)
+        if flops_gf is None:
+            flops_gf = arm_flops
+        if bw_gb is None:
+            bw_gb = arm_bw
 
     if flops_gf is None or bw_gb is None:
         # Distinguish the common architecture-specific cases so users get a
@@ -172,9 +220,7 @@ def _get_flops_bw_df_and_reason(jt):
         # Heuristic: ARM/CPU via DCGM backends emit cpu_counter_metrics but may
         # lack any IMC/DF CAS/MBW sources. Do not silently claim generic
         # missing counters when only bandwidth is absent on ARM.
-        has_cpu_counter_metrics = any(
-            "cpu_counter_metrics" in a for a in attempts
-        )
+        has_cpu_counter_metrics = any("cpu_counter_metrics" in a for a in attempts)
         has_any_imc_or_df = any(
             t.startswith("amd") or "imc" in t
             for t in [att.split(":")[0] for att in attempts if att]

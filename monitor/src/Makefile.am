@@ -157,6 +157,12 @@ endif
 if CPU_BACKEND_DCGM
 TYPES += \
 	cpu_counter_metrics.c
+if MONITOR_ARCH_ARM
+TYPES += \
+	arm_imc.c
+hpcperfstatsd_SOURCES += \
+	arm_imc.h
+endif
 hpcperfstatsd_SOURCES += \
 	cpu_counter_metrics.h
 endif

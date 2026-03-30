@@ -27,6 +27,8 @@
   X(DF_CTR0, "E,W=48", ""), \
   X(DF_CTR1, "E,W=48", ""), \
   X(DF_CTR2, "E,W=48", ""), \
-  X(DF_CTR3, "E,W=48", "")
+  X(DF_CTR3, "E,W=48", ""), \
+  X(ARM_EST_FLOPS, "E,W=64,U=FLOP", ""), \
+  X(ARM_DRAM_BW_BYTES, "E,W=64,U=B", "")
 
 #endif
