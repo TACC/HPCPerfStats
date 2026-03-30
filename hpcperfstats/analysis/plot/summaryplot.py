@@ -130,6 +130,8 @@ _SUMMARY_SINGLE_SPECS = [
      1 / (1024 * 1024), "LustreBW[MB/s]"),
     ("cpu", "arc", ["user", "system", "nice"], "cpu", 0.01,
      "CPU Usage [#cores]"),
+    ("nvidia_gpu", "value", ["gpu_util"], "nv_gpu_util", 1, "GPU util [%]"),
+    ("nvidia_gpu", "value", ["mem_util"], "nv_mem_util", 1, "GPU mem util [%]"),
     ("mem", "value", ["MemUsed"], "mem", 1 / (1024 * 1024), "MemUsed[GB]"),
 ]
 

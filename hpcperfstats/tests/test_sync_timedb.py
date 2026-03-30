@@ -415,6 +415,57 @@ def test_compute_deltas_and_arc_keeps_first_timestamp_value():
   assert pd.isna(result.iloc[0]["arc"])
 
 
+def test_compute_deltas_and_arc_nvidia_gpu_util_sums_across_dev():
+  """nvidia_gpu gpu_util: same timestamp two devs -> value is sum (per plan)."""
+  stats_df = pd.DataFrame([
+      {
+          "host": "h", "jid": "j", "type": "nvidia_gpu", "dev": "0",
+          "event": "gpu_util", "unit": "#", "time": 100.0, "value": 40.0, "wid": 48, "mult": 1,
+      },
+      {
+          "host": "h", "jid": "j", "type": "nvidia_gpu", "dev": "1",
+          "event": "gpu_util", "unit": "#", "time": 100.0, "value": 50.0, "wid": 48, "mult": 1,
+      },
+  ])
+  result = compute_deltas_and_arc(stats_df)
+  assert len(result) == 1
+  assert result.iloc[0]["value"] == 90.0
+
+
+def test_compute_deltas_and_arc_nvidia_temperature_means_across_dev():
+  """nvidia_gpu temperature: two devs -> mean value and mean delta."""
+  stats_df = pd.DataFrame([
+      {
+          "host": "h", "jid": "j", "type": "nvidia_gpu", "dev": "0",
+          "event": "temperature", "unit": "C", "time": 100.0, "value": 60.0, "wid": 48, "mult": 1,
+      },
+      {
+          "host": "h", "jid": "j", "type": "nvidia_gpu", "dev": "1",
+          "event": "temperature", "unit": "C", "time": 100.0, "value": 80.0, "wid": 48, "mult": 1,
+      },
+  ])
+  result = compute_deltas_and_arc(stats_df)
+  assert len(result) == 1
+  assert result.iloc[0]["value"] == 70.0
+
+
+def test_compute_deltas_and_arc_nvidia_clocks_event_reasons_bitwise_or():
+  """nvidia_gpu clocks_event_reasons: OR across devs."""
+  stats_df = pd.DataFrame([
+      {
+          "host": "h", "jid": "j", "type": "nvidia_gpu", "dev": "0",
+          "event": "clocks_event_reasons", "unit": "#", "time": 100.0, "value": 5.0, "wid": 48, "mult": 1,
+      },
+      {
+          "host": "h", "jid": "j", "type": "nvidia_gpu", "dev": "1",
+          "event": "clocks_event_reasons", "unit": "#", "time": 100.0, "value": 2.0, "wid": 48, "mult": 1,
+      },
+  ])
+  result = compute_deltas_and_arc(stats_df)
+  assert len(result) == 1
+  assert int(result.iloc[0]["value"]) == 7
+
+
 def test_sync_timedb_parsing_with_real_sample_produces_deltas_and_arc():
   """Use HPCPerfStatsdDataSample to validate real parsing + delta/arc computation."""
   sample_path = os.path.abspath(

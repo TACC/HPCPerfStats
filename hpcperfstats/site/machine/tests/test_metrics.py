@@ -331,7 +331,7 @@ def test_avg_gpuutil_amd_gpu_uses_gpu_util_column():
 
 
 def test_avg_gpuutil_nvidia_takes_precedence_over_amd():
-  schema_n = _Schema(["utilization"])
+  schema_n = _Schema(["gpu_util"])
   schema_a = _Schema(["gpu_util"])
   sn = np.array([[0.0], [20.0], [40.0]], dtype=np.float64)
   sa = np.array([[0.0], [99.0], [99.0]], dtype=np.float64)
@@ -348,6 +348,41 @@ def test_avg_gpuutil_nvidia_takes_precedence_over_amd():
   value, typename, units = avg_gpuutil().compute_metric(u)
   assert typename == "nvidia_gpu"
   assert value == pytest.approx(20.0)
+
+
+def test_avg_gpuutil_nvidia_prefers_gpu_util_over_legacy_utilization():
+  """When both columns exist, use gpu_util (monitor) not utilization (legacy)."""
+  schema_n = _Schema(["gpu_util", "utilization"])
+  sn = np.array([[0.0, 0.0], [10.0, 99.0], [20.0, 99.0]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema_n, {"h1": sn}
+      return None, {}
+
+  u = MockU()
+  value, typename, units = avg_gpuutil().compute_metric(u)
+  assert typename == "nvidia_gpu"
+  assert units == "%"
+  assert value == pytest.approx(10.0)
+
+
+def test_avg_gpuutil_nvidia_legacy_utilization_only():
+  """Older archives with only utilization still compute avg_gpuutil."""
+  schema = _Schema(["utilization"])
+  stats = np.array([[0.0], [30.0], [50.0]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema, {"h1": stats}
+      return None, {}
+
+  u = MockU()
+  value, typename, units = avg_gpuutil().compute_metric(u)
+  assert typename == "nvidia_gpu"
+  assert value == pytest.approx(30.0)
 
 
 def test_avg_ethbw_mean_across_hosts():
@@ -375,7 +410,7 @@ def test_avg_ethbw_mean_across_hosts():
 
 def test_avg_gpuutil_returns_none_for_short_series_without_warning():
   """avg_gpuutil skips hosts with <3 samples (empty trimmed window) and returns None."""
-  schema = _Schema(["utilization"])
+  schema = _Schema(["gpu_util"])
   short_stats = np.array([[10.0], [20.0]], dtype=np.float64)
 
   class MockU:

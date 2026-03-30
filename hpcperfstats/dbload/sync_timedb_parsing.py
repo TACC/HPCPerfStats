@@ -1,5 +1,6 @@
 """Pure parsing helpers for stats files (no Django). Used by sync_timedb and by unit tests."""
-from pandas import DataFrame, to_datetime
+import pandas as pd
+from pandas import DataFrame, concat, to_datetime
 
 from hpcperfstats.file_locking import file_read_lock_wait
 
@@ -80,6 +81,56 @@ intel_knl_mc_dclk_eventmap = {
 exclude_types = [
     "ib", "ib_sw", "intel_skx_cha", "ps", "sysv_shm", "tmpfs", "vfs"
 ]
+
+# Collapse multi-GPU nvidia_gpu rows (same host/jid/time/event) before DB insert.
+# See plan: sum util/activity/power; mean temperature; bitwise OR for clock bitmask.
+_NVIDIA_GPU_SUM_EVENTS = frozenset({
+    "gpu_util",
+    "mem_util",
+    "fp64_active",
+    "fp32_active",
+    "fp16_active",
+    "sm_active",
+    "sm_occupancy",
+    "tensor_active",
+    "power_usage",
+})
+_NVIDIA_GPU_MEAN_EVENTS = frozenset({"temperature"})
+_NVIDIA_GPU_OR_EVENTS = frozenset({"clocks_event_reasons"})
+
+_COLLAPSE_GROUP_COLS = ["host", "jid", "type", "event", "unit", "time"]
+# Pandas groupby.apply passes subframes without the grouping columns; event is in ``group.name``.
+_NVIDIA_GROUP_KEY_EVENT_INDEX = _COLLAPSE_GROUP_COLS.index("event")
+
+
+def _collapse_nvidia_gpu_group(group):
+  """Return one row (value, delta) for a (host, jid, type, event, unit, time) group."""
+  key = group.name
+  event_name = key[_NVIDIA_GROUP_KEY_EVENT_INDEX] if isinstance(key, tuple) else key
+  if event_name in _NVIDIA_GPU_SUM_EVENTS:
+    return pd.Series({
+        "value": group["value"].sum(min_count=1),
+        "delta": group["delta"].sum(min_count=1),
+    })
+  if event_name in _NVIDIA_GPU_MEAN_EVENTS:
+    return pd.Series({
+        "value": group["value"].mean(),
+        "delta": group["delta"].mean(),
+    })
+  if event_name in _NVIDIA_GPU_OR_EVENTS:
+    acc = 0
+    mask64 = (1 << 64) - 1
+    for v in group["value"]:
+      if pd.notna(v):
+        acc |= int(v) & mask64
+    return pd.Series({
+        "value": float(acc & mask64),
+        "delta": group["delta"].sum(min_count=1),
+    })
+  return pd.Series({
+      "value": group["value"].sum(min_count=1),
+      "delta": group["delta"].sum(min_count=1),
+  })
 
 EVENTMAPS_BY_TYPE = {
     "amd64_pmc": amd64_pmc_eventmap,
@@ -300,10 +351,29 @@ def compute_deltas_and_arc(stats_df):
       stats_df["delta"] < 0, 2**stats_df["wid"] + stats_df["delta"])
   stats_df["delta"] = stats_df["delta"] * stats_df["mult"]
   stats_df.drop(columns=["wid", "mult"], inplace=True)
-  stats_df = stats_df.groupby(
-      ["host", "jid", "type", "event", "unit", "time"],
-      observed=True,
-  ).sum(min_count=1).reset_index()
+
+  gcols = _COLLAPSE_GROUP_COLS
+  nv_mask = stats_df["type"] == "nvidia_gpu"
+  nv_df = stats_df[nv_mask]
+  rest_df = stats_df[~nv_mask]
+  parts = []
+  if not rest_df.empty:
+    # Non-nvidia types (cpu, mem/NUMA, IB, IMC, …): sum across dev is intentional for counters.
+    parts.append(
+        rest_df.groupby(gcols, observed=True).sum(min_count=1).reset_index()
+    )
+  if not nv_df.empty:
+    nv_collapsed = nv_df.groupby(gcols, observed=True).apply(
+        _collapse_nvidia_gpu_group,
+    )
+    nv_collapsed = nv_collapsed.reset_index()
+    parts.append(nv_collapsed)
+
+  if not parts:
+    stats_df = DataFrame(columns=gcols + ["value", "delta"])
+  else:
+    stats_df = concat(parts, ignore_index=True)
+
   stats_df = stats_df.sort_values(by=["host", "type", "event", "time"])
   deltat = stats_df.groupby(["host", "type", "event"])["time"].diff()
   stats_df["arc"] = stats_df["delta"] / deltat

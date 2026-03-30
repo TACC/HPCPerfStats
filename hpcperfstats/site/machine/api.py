@@ -2265,13 +2265,14 @@ def type_detail(request, jid, type_name):
     start_time = start_time.astimezone(local_timezone)
     end_time = end_time.astimezone(local_timezone)
 
-    from hpcperfstats.analysis.gen.jid_table import TypeDetailDataProvider
-    provider = TypeDetailDataProvider(jid, type_name, start_time, end_time, acct_host_list)
+    provider = jid_table.TypeDetailDataProvider(
+        jid, type_name, start_time, end_time, acct_host_list
+    )
 
     def _type_hosts_fn():
         return list(
             host_data.objects.filter(
-                jid=jid,
+                jid_table.type_detail_host_data_jid_q(jid),
                 type=type_name,
                 time__gte=start_time,
                 time__lte=end_time,
@@ -2302,9 +2303,8 @@ def type_detail(request, jid, type_name):
 
     sp = plots.DevPlot(provider, data_host_list)
     df, plot_comp = sp.plot()
-    _, plot_json = sp.plot()
     tscript, tdiv = components(plot_comp)
-    tplot_item = json_item(plot_json)
+    tplot_item = json_item(plot_comp)
     schema = [
         c for c in df.columns
         if c not in ("host", "time", "index")

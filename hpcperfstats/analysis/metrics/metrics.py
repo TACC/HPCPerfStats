@@ -833,9 +833,20 @@ class avg_gpuutil():
     """
 
   def compute_metric(self, u):
-    for typename, col in (("nvidia_gpu", "utilization"), ("amd_gpu", "gpu_util")):
+    # nvidia: monitor emits gpu_util; keep utilization for older archives only.
+    for typename, cols in (
+        ("nvidia_gpu", ("gpu_util", "utilization")),
+        ("amd_gpu", ("gpu_util",)),
+    ):
       schema, _stats = u.get_type(typename)
-      if schema is None or col not in schema.events:
+      if schema is None:
+        continue
+      col = None
+      for c in cols:
+        if c in schema.events:
+          col = c
+          break
+      if col is None:
         continue
       ui = schema[col].index
       per_host = []

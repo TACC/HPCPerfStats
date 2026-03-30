@@ -23,9 +23,14 @@ from hpcperfstats.site.machine.cache_utils import (
     TIMEOUT_SHORT,
 )
 from hpcperfstats.site.machine.models import host_data, job_data
-from django.db.models import Sum
+from django.db.models import Q, Sum
 
 local_timezone = cfg.get_local_timezone()
+
+
+def type_detail_host_data_jid_q(jid):
+  """Match host_data rows for type-detail: exact jid or missing/blank jid (telemetry not job-scoped)."""
+  return Q(jid=jid) | Q(jid__isnull=True) | Q(jid="")
 
 
 def _ensure_tz(dt):
@@ -357,20 +362,19 @@ class TypeDetailDataProvider:
     self.start_time = start_time
     self.end_time = end_time
     self.host_list = list(host_list) if host_list else []
-    self._base_filter = {
-        "jid": jid,
-        "type": type_name,
-        "time__gte": start_time,
-        "time__lte": end_time,
-    }
-    if self.host_list:
-      self._base_filter["host__in"] = self.host_list
 
   def _qs(self, **extra):
     """Base host_data queryset for this provider (jid, type, time range, optional host_list).
 
         """
-    return host_data.objects.filter(**self._base_filter, **extra)
+    flt = {
+        "type": self.type_name,
+        "time__gte": self.start_time,
+        "time__lte": self.end_time,
+    }
+    if self.host_list:
+      flt["host__in"] = self.host_list
+    return host_data.objects.filter(type_detail_host_data_jid_q(self.jid), **flt, **extra)
 
   def get_host_time_df(self):
     """DataFrame of (host, time) distinct, ordered by host, time (cached).

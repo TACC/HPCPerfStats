@@ -111,3 +111,72 @@ def test_summaryplot_skips_freq_plot_when_ghz_never_exceeds_500():
   fig = summary.plot()
   assert fig is not None
   assert "freq" not in captured_metrics
+
+
+def test_summaryplot_includes_nvidia_gpu_util_and_mem_util_columns():
+  """Summary grid includes nv_gpu_util and nv_mem_util when aggregates exist."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if val_col == "value" and typ == "nvidia_gpu":
+      ev = list(events)
+      if ev == ["gpu_util"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 72.0)], columns=["host", "time", "sum_val"]
+        )
+      if ev == ["mem_util"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 40.0)], columns=["host", "time", "sum_val"]
+        )
+      return empty
+    if val_col == "arc" and typ == "cpu" and "user" in list(events):
+      return pd.DataFrame(
+          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+      )
+    if val_col != "arc":
+      return empty
+    if typ in ("amd64_pmc", "amd64_df", "intel_rapl", "ib_ext", "llite"):
+      return empty
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics"):
+      event_list = list(events)
+      if event_list == fp64:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+        )
+      if event_list == ["MPERF"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+        )
+      if event_list == ["APERF"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 180.0)], columns=["host", "time", "sum_val"]
+        )
+      if event_list == ["INST_RETIRED"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
+        )
+      return empty
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  summary = SummaryPlot(jt)
+  captured_metrics = []
+
+  def fake_plot_metric(df, metric, label):
+    del df, label
+    captured_metrics.append(metric)
+    return figure(width=100, height=60)
+
+  summary.plot_metric = fake_plot_metric
+  fig = summary.plot()
+  assert fig is not None
+  assert "nv_gpu_util" in captured_metrics
+  assert "nv_mem_util" in captured_metrics
