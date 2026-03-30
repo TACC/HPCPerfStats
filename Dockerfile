@@ -1,40 +1,37 @@
-# pull official base image
-FROM python:3.12-trixie
+# Build frontend assets in a dedicated node stage.
+FROM node:22-bookworm-slim AS frontend-builder
+WORKDIR /home/hpcperfstats
+COPY --chown=node:node . .
+WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
+RUN npm ci && npm run build
+WORKDIR /home/hpcperfstats
+RUN rm -rf /home/hpcperfstats/hpcperfstats/site/frontend
 
-# Setup Users and Directories
-RUN useradd -u 901860  -ms /bin/bash hpcperfstats 
+# Runtime image.
+FROM python:3.12-trixie
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Setup users, directories, and required runtime packages.
+RUN useradd -u 901860 -ms /bin/bash hpcperfstats && \
+    mkdir -p /hpcperfstats /hpcperfstatslog /home/hpcperfstats/.ssh && \
+    chmod 700 /home/hpcperfstats/.ssh && \
+    chown hpcperfstats:hpcperfstats /home/hpcperfstats/.ssh && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        netcat-openbsd supervisor rsync syslog-ng vim net-tools lsof pigz nano && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /home/hpcperfstats
 
-# Setup working directories and get ssh-keys for rsync
-RUN mkdir -p /hpcperfstats/
-RUN mkdir -p /hpcperfstatslog/
-RUN mkdir -p -m700 /home/hpcperfstats/.ssh/
-RUN chown hpcperfstats:hpcperfstats /home/hpcperfstats/.ssh/
+# Copy source and built frontend artifacts from the builder image.
+COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats /home/hpcperfstats /home/hpcperfstats
 
-# Upgrade the base OS and grab some important packages
-RUN apt-get update -y && \
-    apt-get upgrade -y && \
-    apt-get install netcat-openbsd supervisor rsync syslog-ng  \
-        vim net-tools lsof pigz nano npm nodejs -y
+# Set python install variables.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_ROOT_USER_ACTION=ignore
 
-# Copy the package to the container
-COPY --chown=hpcperfstats:hpcperfstats . .
-
-# Keep the container updated everytime it is built, even when previous steps are cached
-RUN apt-get update -y  && \
-    apt-get upgrade -y
-
-# install nodejs react dependencies and build the frontend
-RUN cd hpcperfstats/site/frontend && npm install && \
-    npm run build && cd .. && rm -rf hpcperfstats/site/frontend  && \
-    apt-get remove -y npm nodejs && apt autoremove -y && apt-get clean
-
-# Set python install variables
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-ENV PIP_ROOT_USER_ACTION ignore
-
-# install version specific python dependencies and hpcperfstats package
+# Install Python dependencies and the hpcperfstats package.
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir . && \
     pip cache purge
