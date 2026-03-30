@@ -38,7 +38,7 @@ endif
 
 TESTS = $(check_PROGRAMS) test_monitor_configure_help.sh
 
-EXTRA_DIST = test_monitor_configure_help.sh run_tests.sh README.md
+EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md
 
 test_likwid_rapl_scale_SOURCES = test_likwid_rapl_scale.c
 

@@ -17,7 +17,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_stats_file_format.c` | `stats_file_validate_program_header`, schema suffix formatting |
 | `test_monitor_cli.c` | RabbitMQ daemon CLI (`monitor_cli_*`), including `-h` via subprocess |
 | `test_monitor_cli_globals.c` | Stub globals for `test_monitor_cli` |
-| `test_monitor_configure_help.sh` | Regression: `configure --help` mentions `--enable-all-static` |
+| `test_monitor_configure_help.sh` (from `test_monitor_configure_help.sh.in`) | Regression: `configure --help` mentions `--enable-all-static` |
 | `Makefile.am` | Automake `check_PROGRAMS` / `TESTS`; **keep `monitor_unit_cppflags` in sync** with `src/Makefile.am` `hpcperfstatsd_CPPFLAGS` for `-D` flags |
 | `run_tests.sh` | Convenience wrapper around `make check` in a build directory |
 | `../scripts/profile_hpcperfstatsd_example.sh` | Prints `perf record` / `perf stat` recipes for CPU baseline comparisons |
