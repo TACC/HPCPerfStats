@@ -29,6 +29,8 @@ static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
   DCGM_FI_DEV_GPU_TEMP,
   DCGM_FI_DEV_MEM_COPY_UTIL,
   DCGM_FI_DEV_GPU_UTIL,
+  DCGM_FI_DEV_FB_TOTAL,
+  DCGM_FI_DEV_FB_USED,
   DCGM_FI_PROF_PIPE_TENSOR_ACTIVE,
   DCGM_FI_PROF_PIPE_FP64_ACTIVE,
   DCGM_FI_PROF_PIPE_FP32_ACTIVE,
@@ -75,6 +77,12 @@ static int list_field_values(unsigned int gpu_id,
         break;
       case DCGM_FI_DEV_MEM_COPY_UTIL:
         data[gpu_id].mem_util = values[i].value.i64;
+        break;
+      case DCGM_FI_DEV_FB_TOTAL:
+        data[gpu_id].fb_total_mb = values[i].value.i64;
+        break;
+      case DCGM_FI_DEV_FB_USED:
+        data[gpu_id].fb_used_mb = values[i].value.i64;
         break;
       case DCGM_FI_PROF_SM_ACTIVE:
         (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].sm_active);
@@ -167,6 +175,8 @@ static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row)
   stats_set(stats, "temperature", I64_TO_LLU(row->temperature));
   stats_set(stats, "gpu_util", I64_TO_LLU(row->gpu_util));
   stats_set(stats, "mem_util", I64_TO_LLU(row->mem_util));
+  stats_set(stats, "mem_total_mb", I64_TO_LLU(row->fb_total_mb));
+  stats_set(stats, "mem_used_mb", I64_TO_LLU(row->fb_used_mb));
   stats_set(stats, "power_usage", DBL_TO_LLU(row->power_usage));
   stats_set(stats, "fp64_active", DBL_TO_LLU_PERCENT(row->fp64_active));
   stats_set(stats, "fp32_active", DBL_TO_LLU_PERCENT(row->fp32_active));

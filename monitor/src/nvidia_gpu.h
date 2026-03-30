@@ -3,11 +3,13 @@
 
 #include <stdint.h>
 
-#define NVIDIA_GPU_NFIELDS 11
+#define NVIDIA_GPU_NFIELDS 13
 
 #define KEYS \
   X(gpu_util, "", "GPU utilization in %"), \
   X(mem_util, "", "Memory utilization in %"), \
+  X(mem_total_mb, "U=MB", "Total GPU framebuffer memory (device-reported MB)"), \
+  X(mem_used_mb, "U=MB", "Used GPU framebuffer memory (device-reported MB)"), \
   X(power_usage, "U=W", "Power draw in Watts"), \
   X(temperature, "U=C", "GPU temperature in C"), \
   X(fp64_active, "", "Ratio of cycles fp64 pipes are active (in %)"), \
@@ -20,6 +22,8 @@
 
 typedef struct dcgm_data {
   int64_t mem_util;
+  int64_t fb_total_mb;
+  int64_t fb_used_mb;
   int64_t gpu_util;
   int64_t temperature;
   int64_t clocks_event_reasons;
