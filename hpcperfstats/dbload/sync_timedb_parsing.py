@@ -215,9 +215,9 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
     elif i >= start_idx and s[0].isdigit():
       t, jid, host = s.split()
       # Some deployments may not emit a job id and instead use '-' as a
-      # placeholder. We still want to ingest these host-level samples, so map
-      # the missing jid to None for downstream consumers.
-      jid_val = None if jid == "-" else jid
+      # placeholder. Keep '-' as-is so pandas groupby/dropna does not discard
+      # these rows before DB insertion.
+      jid_val = jid
       insert = True
       tags = {"time": float(t), "host": host, "jid": jid_val}
       tags2 = {"jid": jid_val, "host": host}

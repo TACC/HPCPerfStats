@@ -275,8 +275,8 @@ def test_parse_stats_lines_handles_leading_spaces():
   assert len(proc_list) == 0
 
 
-def test_parse_stats_lines_with_missing_jid_uses_none():
-  """When jid is '-', samples are still ingested with jid=None."""
+def test_parse_stats_lines_with_missing_jid_keeps_placeholder():
+  """When jid is '-', samples are still ingested with jid='-'."""
   lines = [
       "1709123456 - cn001\n",
       "!cpu user sys\n",
@@ -285,7 +285,7 @@ def test_parse_stats_lines_with_missing_jid_uses_none():
   start_idx = 0
   stats_list, proc_list = parse_stats_lines(lines, start_idx)
   assert len(stats_list) == 2
-  assert all(r["jid"] is None for r in stats_list)
+  assert all(r["jid"] == "-" for r in stats_list)
   assert len(proc_list) == 0
 
 
