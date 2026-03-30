@@ -51,6 +51,7 @@ from .cache_utils import (
     KEY_ALL_HOSTS,
     KEY_HOST_LAST,
     KEY_GPU_AGG,
+    KEY_GPU_COUNT,
     KEY_XALT,
     KEY_TYPE_DETAIL_HOSTS,
     KEY_JOB,
@@ -1761,12 +1762,12 @@ def job_detail(request, pk):
 
     def _fetch_gpu():
         # SQL Count/Max/Avg avoids loading every utilization row (was timing out).
-        gpu_active, gpu_max, gpu_mean = None, None, None
+        gpu_active, gpu_max, gpu_mean, gpu_count_total = None, None, None, None
         close_old_connections()
         try:
             try:
                 agg = cached_orm(
-                    f"{KEY_GPU_AGG}:{job.jid}",
+                    f"{KEY_GPU_AGG}:v2:{job.jid}",
                     job_cache_timeout,
                     lambda: list(
                         host_data.objects.filter(
@@ -1806,7 +1807,49 @@ def job_detail(request, pk):
                             gpu_active = ceil(gpu_max / 100.0)
             except Exception:
                 pass
-            return (gpu_active, gpu_max, gpu_mean)
+
+            def _gpu_count_fn():
+                """Sum over job hosts of max(gpu_count) in window (monitor nvidia_gpu or amd_gpu)."""
+                hosts = j.acct_host_list or []
+                if not hosts:
+                    return None
+                for gpu_typ in ("nvidia_gpu", "amd_gpu"):
+                    rows = list(
+                        host_data.objects.filter(
+                            type=gpu_typ,
+                            event="gpu_count",
+                            time__gte=j.start_time,
+                            time__lte=j.end_time,
+                            host__in=hosts,
+                        )
+                        .values("host")
+                        .annotate(mv=Max("value"))
+                    )
+                    if not rows:
+                        continue
+                    total = 0
+                    for r in rows:
+                        v = r.get("mv")
+                        if v is None:
+                            continue
+                        try:
+                            total += int(round(float(v)))
+                        except (TypeError, ValueError):
+                            continue
+                    if total > 0:
+                        return total
+                return None
+
+            try:
+                gpu_count_total = cached_orm(
+                    f"{KEY_GPU_COUNT}:{job.jid}",
+                    job_cache_timeout,
+                    _gpu_count_fn,
+                )
+            except Exception:
+                gpu_count_total = None
+
+            return (gpu_active, gpu_max, gpu_mean, gpu_count_total)
         finally:
             close_old_connections()
 
@@ -1930,7 +1973,7 @@ def job_detail(request, pk):
         finally:
             close_old_connections()
 
-    gpu_active = gpu_utilization_max = gpu_utilization_mean = None
+    gpu_active = gpu_utilization_max = gpu_utilization_mean = gpu_count = None
     xalt_payload = None
     fsio = {}
     schema = {}
@@ -1963,7 +2006,7 @@ def job_detail(request, pk):
         for key, result in results_by_key.items():
             try:
                 if key == "gpu":
-                    gpu_active, gpu_utilization_max, gpu_utilization_mean = result
+                    gpu_active, gpu_utilization_max, gpu_utilization_mean, gpu_count = result
                 elif key == "xalt":
                     xalt_payload = result
                 elif key == "fsio":
@@ -1977,7 +2020,7 @@ def job_detail(request, pk):
     else:
         # Light mode: skip heavy parallel tasks (XALT, schema, fsio, etc.) so
         # the response returns quickly and the React UI can render first.
-        gpu_active = gpu_utilization_max = gpu_utilization_mean = None
+        gpu_active = gpu_utilization_max = gpu_utilization_mean = gpu_count = None
         xalt_payload = None
         fsio = {}
         schema = {}
@@ -2036,6 +2079,7 @@ def job_detail(request, pk):
         "gpu_active": gpu_active,
         "gpu_utilization_max": gpu_utilization_max,
         "gpu_utilization_mean": gpu_utilization_mean,
+        "gpu_count": gpu_count,
         "metrics_list": metrics_list,
         "proc_list": proc_list,
     })

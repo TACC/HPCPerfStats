@@ -9,7 +9,7 @@ from django.test import RequestFactory
 from hpcperfstats.site.machine import cache_utils as cu
 
 
-def _patch_job_detail_context(api_module, jid, gpu_agg):
+def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
   """Return context manager that stubs job_detail dependencies (no ORM)."""
   mock_j = MagicMock()
   mock_j.acct_host_list = ["n1.example.com"]
@@ -30,6 +30,8 @@ def _patch_job_detail_context(api_module, jid, gpu_agg):
       return job_mock
     if key.startswith(f"{cu.KEY_GPU_AGG}:"):
       return gpu_agg
+    if key.startswith(f"{cu.KEY_GPU_COUNT}:"):
+      return gpu_count_cached
     if key.startswith(f"{cu.KEY_PROC_LIST}:"):
       return []
     return fn()
@@ -61,7 +63,7 @@ def test_job_detail_gpu_stats_from_aggregate_dict():
   request.session = {"username": "u1", "is_staff": False}
 
   gpu_agg = {"cnt": 4, "vmax": 250.0, "vmean": 80.0}
-  ctx = _patch_job_detail_context(api, jid, gpu_agg)
+  ctx = _patch_job_detail_context(api, jid, gpu_agg, gpu_count_cached=8)
 
   with ThreadPoolExecutor(max_workers=4) as executor:
     with ExitStack() as stack:
@@ -75,6 +77,7 @@ def test_job_detail_gpu_stats_from_aggregate_dict():
   assert data["gpu_utilization_max"] == 250.0
   assert data["gpu_active"] == 3
   assert data["gpu_utilization_mean"] == 80.0
+  assert data["gpu_count"] == 8
 
 
 def test_job_detail_gpu_stats_none_when_two_or_fewer_samples():
@@ -100,3 +103,4 @@ def test_job_detail_gpu_stats_none_when_two_or_fewer_samples():
   assert response.data["gpu_active"] is None
   assert response.data["gpu_utilization_max"] is None
   assert response.data["gpu_utilization_mean"] is None
+  assert response.data["gpu_count"] is None

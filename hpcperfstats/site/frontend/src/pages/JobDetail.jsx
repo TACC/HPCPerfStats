@@ -144,6 +144,7 @@ export default function JobDetail() {
     gpu_active,
     gpu_utilization_max,
     gpu_utilization_mean,
+    gpu_count,
     metrics_list = [],
     proc_list = [],
   } = data;
@@ -286,9 +287,9 @@ export default function JobDetail() {
         )}
       </div>
 
-      {(detailsLoading || gpu_active != null) && (
+      {(detailsLoading || gpu_active != null || gpu_count != null) && (
         <>
-          {detailsLoading && gpu_active == null ? (
+          {detailsLoading && gpu_active == null && gpu_count == null ? (
             <p className="text-muted" role="status" style={{ marginTop: "1rem" }}>
               Loading GPU statistics…
             </p>
@@ -296,6 +297,14 @@ export default function JobDetail() {
             <table border="1" style={{ marginTop: "1rem" }}>
               <caption>GPU Statistics</caption>
               <tbody>
+                <tr>
+                  <td style={{ border: "1px solid lightgrey" }}>
+                    <b>GPU count (monitor):</b>
+                  </td>
+                  <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
+                    {formatDecimalStandard(gpu_count)}
+                  </td>
+                </tr>
                 <tr>
                   <td style={{ border: "1px solid lightgrey" }}>
                     <b>Number of GPUs active:</b>

@@ -24,6 +24,8 @@ def _patch_job_detail_fsio_context(api_module, jid, mock_j):
       return job_mock
     if key.startswith(f"{cu.KEY_GPU_AGG}:"):
       return None
+    if key.startswith(f"{cu.KEY_GPU_COUNT}:"):
+      return None
     if key.startswith(f"{cu.KEY_PROC_LIST}:"):
       return []
     return fn()

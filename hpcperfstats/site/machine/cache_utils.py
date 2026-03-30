@@ -85,6 +85,8 @@ KEY_NFS_FSIO = "nfs_fsio"
 KEY_GPU_QS = "gpu_qs"
 # Aggregate stats (Count/Max/Avg) — distinct cache namespace from legacy row-list KEY_GPU_QS.
 KEY_GPU_AGG = "gpu_agg"
+# Per-job sum of per-host max(nvidia_gpu/amd_gpu gpu_count) in the accounting window.
+KEY_GPU_COUNT = "gpu_count"
 KEY_XALT = "xalt"
 KEY_TYPE_DETAIL_HOSTS = "type_detail_hosts"
 KEY_HOST_DATA_DF = "host_data_df"

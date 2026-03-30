@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
@@ -30,6 +30,7 @@ const minimalJobDetailResponse = {
   gpu_active: null,
   gpu_utilization_max: null,
   gpu_utilization_mean: null,
+  gpu_count: null,
   metrics_list: [],
   proc_list: [],
 };
@@ -248,5 +249,33 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
     });
+  });
+
+  it("shows GPU count from monitor when utilization stats are absent", async () => {
+    const detailGpuCountOnly = {
+      ...minimalJobDetailResponse,
+      gpu_active: null,
+      gpu_utilization_max: null,
+      gpu_utilization_mean: null,
+      gpu_count: 4,
+    };
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+      detailGpuCountOnly
+    );
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
+      detailGpuCountOnly
+    );
+    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(
+      minimalPlotsResponse
+    );
+
+    renderJobDetail("12345");
+
+    await waitFor(() => {
+      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+    });
+    expect(screen.getByText("GPU count (monitor):")).toBeInTheDocument();
+    const gpuTable = screen.getByRole("table", { name: "GPU Statistics" });
+    expect(within(gpuTable).getByText("4")).toBeInTheDocument();
   });
 });
