@@ -1,5 +1,6 @@
 """Unit tests for summary plot diagnostics from jid_table aggregates."""
 import pandas as pd
+import pytest
 from unittest.mock import MagicMock
 from bokeh.plotting import figure
 
@@ -102,8 +103,8 @@ def test_summaryplot_skips_freq_plot_when_ghz_never_exceeds_500():
   summary = SummaryPlot(jt)
   captured_metrics = []
 
-  def fake_plot_metric(df, metric, label):
-    del df, label
+  def fake_plot_metric(df, metric, label, y_range_end=None):
+    del df, label, y_range_end
     captured_metrics.append(metric)
     return figure(width=100, height=60)
 
@@ -113,8 +114,8 @@ def test_summaryplot_skips_freq_plot_when_ghz_never_exceeds_500():
   assert "freq" not in captured_metrics
 
 
-def test_summaryplot_includes_nvidia_gpu_util_and_mem_util_columns():
-  """Summary grid includes nv_gpu_util and nv_mem_util when aggregates exist."""
+def test_summaryplot_includes_nvidia_gpu_util_and_mem_used_mb_columns():
+  """Summary grid includes nv_gpu_util and nv_mem_used_mb when aggregates exist."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
@@ -128,9 +129,13 @@ def test_summaryplot_includes_nvidia_gpu_util_and_mem_util_columns():
         return pd.DataFrame(
             [("n1.cluster", t0, 72.0)], columns=["host", "time", "sum_val"]
         )
-      if ev == ["mem_util"]:
+      if ev == ["mem_used_mb"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 40.0)], columns=["host", "time", "sum_val"]
+            [("n1.cluster", t0, 4096.0)], columns=["host", "time", "sum_val"]
+        )
+      if ev == ["mem_total_mb"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 16384.0)], columns=["host", "time", "sum_val"]
         )
       return empty
     if val_col == "arc" and typ == "cpu" and "user" in list(events):
@@ -169,17 +174,23 @@ def test_summaryplot_includes_nvidia_gpu_util_and_mem_util_columns():
 
   summary = SummaryPlot(jt)
   captured_metrics = []
+  mem_used_y_caps = []
 
-  def fake_plot_metric(df, metric, label):
-    del df, label
+  def fake_plot_metric(df, metric, label, y_range_end=None):
+    del label
     captured_metrics.append(metric)
+    if metric == "nv_mem_used_mb":
+      mem_used_y_caps.append(y_range_end)
     return figure(width=100, height=60)
 
   summary.plot_metric = fake_plot_metric
   fig = summary.plot()
   assert fig is not None
   assert "nv_gpu_util" in captured_metrics
-  assert "nv_mem_util" in captured_metrics
+  assert "nv_mem_used_mb" in captured_metrics
+  assert "nv_mem_total_mb" not in captured_metrics
+  assert len(mem_used_y_caps) == 1
+  assert mem_used_y_caps[0] == pytest.approx(1.1 * 16384.0)
 
 
 def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
@@ -201,9 +212,17 @@ def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
         return pd.DataFrame(
             [("n1.cluster", t0, 72.0)], columns=["host", "time", "sum_val"]
         )
-      if ev == ["mem_util"]:
+      if ev == ["mem_used_mb"]:
         return pd.DataFrame(
-            [("n1.cluster", t1, 40.0)], columns=["host", "time", "sum_val"]
+            [("n1.cluster", t1, 8192.0)], columns=["host", "time", "sum_val"]
+        )
+      if ev == ["mem_total_mb"]:
+        return pd.DataFrame(
+            [
+                ("n1.cluster", t0, 16384.0),
+                ("n1.cluster", t1, 16384.0),
+            ],
+            columns=["host", "time", "sum_val"],
         )
       return empty
     if val_col == "arc" and typ == "cpu" and "user" in list(events):
@@ -243,8 +262,8 @@ def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
   summary = SummaryPlot(jt)
   captured_metrics = []
 
-  def fake_plot_metric(df, metric, label):
-    del label
+  def fake_plot_metric(df, metric, label, y_range_end=None):
+    del label, y_range_end
     captured_metrics.append(metric)
     return figure(width=100, height=60)
 
@@ -252,4 +271,5 @@ def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
   fig = summary.plot()
   assert fig is not None
   assert "nv_gpu_util" in captured_metrics
-  assert "nv_mem_util" in captured_metrics
+  assert "nv_mem_used_mb" in captured_metrics
+  assert "nv_mem_total_mb" not in captured_metrics

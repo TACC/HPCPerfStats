@@ -87,6 +87,8 @@ exclude_types = [
 _NVIDIA_GPU_SUM_EVENTS = frozenset({
     "gpu_util",
     "mem_util",
+    "mem_used_mb",
+    "mem_total_mb",
     "fp64_active",
     "fp32_active",
     "fp16_active",

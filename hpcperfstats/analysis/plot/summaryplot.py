@@ -9,6 +9,7 @@ import time
 
 log = logging.getLogger(__name__)
 
+from pandas import isna as pd_isna
 from pandas import to_datetime
 
 from hpcperfstats.analysis.gen.utils import (
@@ -131,13 +132,28 @@ _SUMMARY_SINGLE_SPECS = [
     ("cpu", "arc", ["user", "system", "nice"], "cpu", 0.01,
      "CPU Usage [#cores]"),
     ("nvidia_gpu", "value", ["gpu_util"], "nv_gpu_util", 1, "GPU util [%]"),
-    ("nvidia_gpu", "value", ["mem_util"], "nv_mem_util", 1, "GPU mem util [%]"),
+    ("nvidia_gpu", "value", ["mem_used_mb"], "nv_mem_used_mb", 1, "GPU mem used [MB]"),
+    (
+        "nvidia_gpu",
+        "value",
+        ["mem_total_mb"],
+        "nv_mem_total_mb",
+        1,
+        "GPU mem total [MB]",
+    ),
     ("mem", "value", ["MemUsed"], "mem", 1 / (1024 * 1024), "MemUsed[GB]"),
 ]
 
 # Metrics that may be sampled on a sparse (host, time) grid vs the union grid from
 # get_host_time_df(); do not drop the column when a left-merge leaves NaN gaps.
-_SUMMARY_ALLOW_PARTIAL_NULL = frozenset({"nv_gpu_util", "nv_mem_util"})
+_SUMMARY_ALLOW_PARTIAL_NULL = frozenset({
+    "nv_gpu_util",
+    "nv_mem_used_mb",
+    "nv_mem_total_mb",
+})
+
+# Merged for scaling/context only; not rendered as its own subplot.
+_SUMMARY_SKIP_PLOT_METRICS = frozenset({"nv_mem_total_mb"})
 
 # First typename with full host/time coverage wins (same column name).
 _SUMMARY_FIRST_WIN_SPECS = (
@@ -172,6 +188,23 @@ _SUMMARY_FIRST_WIN_SPECS = (
         "tries": _intel_core_tries(["APERF"], 1),
     },
 )
+
+
+def _summary_nv_mem_used_y_range_end(df):
+  """Upper y bound for GPU mem used plot: max(used, total) when total column exists."""
+  if "nv_mem_used_mb" not in df.columns or "nv_mem_total_mb" not in df.columns:
+    return None
+  candidates = []
+  for col in ("nv_mem_used_mb", "nv_mem_total_mb"):
+    mx = df[col].max()
+    if mx is not None and not pd_isna(mx):
+      try:
+        candidates.append(float(mx))
+      except (TypeError, ValueError):
+        pass
+  if not candidates:
+    return None
+  return 1.1 * max(candidates)
 
 
 def _summary_intel_imc_bw_tries():
@@ -232,7 +265,7 @@ class SummaryPlot():
     self.jt = jt
     self.host_list = jt.host_list
 
-  def plot_metric(self, df, metric, label):
+  def plot_metric(self, df, metric, label, y_range_end=None):
     """Create one Bokeh figure with step glyphs per host for the given metric column and label.
 
         """
@@ -241,7 +274,8 @@ class SummaryPlot():
     df = df[["time", "host", metric]]
 
     y_min_value = df[metric].min()
-    y_range_end = 1.1 * df[metric].max()
+    if y_range_end is None or pd_isna(y_range_end):
+      y_range_end = 1.1 * df[metric].max()
     y_range_start = y_min_value if y_min_value < 0 else 0
     if math.isnan(y_range_end):
       y_range_end = 0
@@ -360,11 +394,16 @@ class SummaryPlot():
     for typ, val, events, name, conv, label in metrics:
       if name not in df.columns:
         continue
+      if name in _SUMMARY_SKIP_PLOT_METRICS:
+        continue
       if name == "freq":
         freq_max = df[name].max()
         if freq_max is None or math.isnan(freq_max) or freq_max <= 500:
           continue
-      plots += [self.plot_metric(df, name, label)]
+      y_top = (
+          _summary_nv_mem_used_y_range_end(df) if name == "nv_mem_used_mb" else None
+      )
+      plots += [self.plot_metric(df, name, label, y_range_end=y_top)]
 
     if not plots:
       raise ValueError(MSG_NO_METRIC_DATA)
