@@ -3,8 +3,16 @@
 # and build hpcperfstats-<Version>.tar.gz from this checkout via make dist (no external
 # tarball download — the tree containing this script is the package source).
 #
+# Before ./configure, runs scripts/build_static_bundle.sh --deps-only so pinned static
+# libev, rabbitmq-c, and (on x86) LIKWID exist under rpmbuild/static-prefix; configure
+# sees them via CPPFLAGS/LDFLAGS/PKG_CONFIG_PATH (same idea as the RPM %%build PREFIX).
+#
 # Usage (from anywhere; paths are anchored to HPCPerfStats/monitor):
 #   ./scripts/prepare_rpmbuild_dirs.sh
+#
+# Environment:
+#   SKIP_DEPS  If 1, skip rebuilding static deps when PREFIX already has the .a files
+#              (passed through to build_static_bundle.sh --deps-only).
 #
 set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,6 +43,8 @@ tb="${pkg}-${ver}.tar.gz"
 sources_dir="${MONITOR_DIR}/rpmbuild/SOURCES"
 specs_dir="${MONITOR_DIR}/rpmbuild/SPECS"
 topdir="${MONITOR_DIR}/rpmbuild"
+static_prefix="${topdir}/static-prefix"
+static_srcdir="${topdir}/static-src"
 
 mkdir -p \
   "${sources_dir}" \
@@ -47,18 +57,33 @@ mkdir -p \
 cp -f "${SPEC_SRC}" "${specs_dir}/hpcperfstats.spec"
 echo "Spec installed: ${specs_dir}/hpcperfstats.spec"
 
-echo "Building ${tb} from ${MONITOR_DIR} (make dist) ..."
-if test ! -f "${MONITOR_DIR}/Makefile"; then
-  if test ! -f "${MONITOR_DIR}/configure"; then
-    (cd "${MONITOR_DIR}" && autoreconf -fi)
-  fi
-  if ! (cd "${MONITOR_DIR}" && ./configure --with-systemduserunitdir=no); then
-    cat <<EOF >&2
+echo "Building pinned static deps into ${static_prefix} (build_static_bundle.sh --deps-only) ..."
+export PREFIX="${static_prefix}"
+export SRCDIR="${static_srcdir}"
+mkdir -p "${PREFIX}/include" "${PREFIX}/lib" "${PREFIX}/lib64" "${PREFIX}/lib/pkgconfig"
+(cd "${MONITOR_DIR}" && ./scripts/build_static_bundle.sh --deps-only)
+
+export CPPFLAGS="-I${PREFIX}/include ${CPPFLAGS:-}"
+export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
+export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
+
+echo "Building ${tb} from ${MONITOR_DIR} (make distclean; configure; make dist) ..."
+if test -f "${MONITOR_DIR}/Makefile"; then
+  echo "Running make distclean ..."
+  (cd "${MONITOR_DIR}" && make distclean)
+fi
+
+if test ! -f "${MONITOR_DIR}/configure"; then
+  (cd "${MONITOR_DIR}" && autoreconf -fi)
+fi
+
+if ! (cd "${MONITOR_DIR}" && ./configure --with-systemduserunitdir=no); then
+  cat <<EOF >&2
 configure failed while running make dist for ${tb}.
-Install BuildRequires from hpcperfstats.spec (e.g. rabbitmq-c / librabbitmq devel), then re-run.
+Static libraries were expected under ${PREFIX} (from build_static_bundle.sh --deps-only).
+Check the bundle script output, network access for pinned tarballs, and host toolchain.
 EOF
-    exit 1
-  fi
+  exit 1
 fi
 
 (cd "${MONITOR_DIR}" && make dist)

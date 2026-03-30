@@ -1,5 +1,7 @@
 AC_INIT([hpcperfstats], [3.0], [sharrell@tacc.utexas.edu])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror -Wno-portability])
+dnl Avoid Makefile rules that re-run autoconf/automake during make dist / normal builds.
+AM_MAINTAINER_MODE([disable])
 AC_CANONICAL_HOST
 AC_PROG_CC
 AM_PROG_CC_C_O

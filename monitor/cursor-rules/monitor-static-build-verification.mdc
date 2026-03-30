@@ -55,6 +55,8 @@ rpmspec -q --queryformat '%{name}-%{version}-%{release}\n' hpcperfstats.spec | h
 # then run the rpmbuild -ba line the script prints (make dist uses this checkout as sources)
 ```
 
+Prepare runs **`build_static_bundle.sh --deps-only`** into **`rpmbuild/static-prefix`** before **`./configure`**, so **`make dist`** does not require system **librabbitmq** / **libev** / **likwid** devel packages.
+
 The spec **`%build`** runs **`./scripts/build_static_bundle.sh`**, so the first full build on a clean host needs **network** access to fetch pinned dependency tarballs (unless you pre-populate **`PREFIX`** / **`SRCDIR`** and adjust the spec to set **`SKIP_DEPS=1`**—not in the stock spec). Install all **`BuildRequires`** from the spec before **`rpmbuild`**.
 
 If **`rpmlint`** is installed, run **`rpmlint hpcperfstats.spec`** on spec edits.
