@@ -66,9 +66,16 @@ _SUMMARY_SINGLE_SPECS = [
         2 / (1024 * 1024 * 1024),
         "DRAMBW[GB/s]",
     ),
-    ("amd64_pmc", "value", ["INST_RETIRED"], "amd_instr", 1, "[#/s]"),
-    ("amd64_pmc", "arc", ["MPERF"], "amd_mcycles", 1, "[#/s]"),
-    ("amd64_pmc", "arc", ["APERF"], "amd_acycles", 1, "[#/s]"),
+    (
+        "amd64_pmc",
+        "value",
+        ["INST_RETIRED"],
+        "amd_instr",
+        1,
+        "Instructions [#/s]",
+    ),
+    ("amd64_pmc", "arc", ["MPERF"], "amd_mcycles", 1, "Reference Cycles [#/s]"),
+    ("amd64_pmc", "arc", ["APERF"], "amd_acycles", 1, "Actual Cycles [#/s]"),
     (
         "intel_rapl",
         "arc",
@@ -141,19 +148,19 @@ _SUMMARY_FIRST_WIN_SPECS = (
     {
         "name": "instr",
         "val_col": "arc",
-        "label": "[#/s]",
+        "label": "Instructions [#/s]",
         "tries": _intel_core_tries(["INST_RETIRED"], 1),
     },
     {
         "name": "mcycles",
         "val_col": "arc",
-        "label": "[#/s]",
+        "label": "Reference Cycles [#/s]",
         "tries": _intel_core_tries(["MPERF"], 1),
     },
     {
         "name": "acycles",
         "val_col": "arc",
-        "label": "[#/s]",
+        "label": "Actual Cycles [#/s]",
         "tries": _intel_core_tries(["APERF"], 1),
     },
 )
