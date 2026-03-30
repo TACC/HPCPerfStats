@@ -396,7 +396,5 @@ AS_IF([test "x$with_systemduserunitdir" != "xno"],
 AM_CONDITIONAL([HAVE_SYSTEMD], [test "x$with_systemduserunitdir" != "xno"])
 
 AC_CONFIG_FILES([Makefile src/Makefile tests/Makefile])
-AC_CONFIG_FILES([tests/test_monitor_configure_help.sh],
-  [chmod +x tests/test_monitor_configure_help.sh])
 AC_OUTPUT
 

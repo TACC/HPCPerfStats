@@ -31,6 +31,8 @@ Run **`HPCPerfStats/monitor/scripts/build_static_bundle.sh`** (from `HPCPerfStat
 
 The bundle script runs **`make`** but does **not** run **`make check`**. After a successful script run, run **`make check`** in **`HPCPerfStats/monitor/.build-static`** (build tree root, not `src/`) so the **`tests/`** suite runs, or run **`HPCPerfStats/monitor/tests/run_tests.sh`** with the same build directory.
 
+After **`make check`** (and any other compile/test steps in **`.build-static`**) **succeed**, run **`make distclean`** in **`HPCPerfStats/monitor/.build-static`** before finishing—see **monitor-post-verify-distclean** (in-source **`monitor/`** builds and **`make dist`** flows included there).
+
 ## RPM spec (`hpcperfstats.spec`)
 
 When **`hpcperfstats.spec`** or **RPM-related** fields (**`Version:`**, **`Release:`**, **`%build`**, **`%install`**, **`BuildRequires`**, **`%changelog`**) change, extend verification beyond the direct **`build_static_bundle.sh`** run (the spec’s **`%build`** already calls that script for real RPM builds).
@@ -63,4 +65,4 @@ If **`rpmlint`** is installed, run **`rpmlint hpcperfstats.spec`** on spec edits
 
 ## Summary for handoffs
 
-When reporting verification, state that **`build_static_bundle.sh` completed** (and **`make check`** in `.build-static` if tests were run). Mention `SKIP_DEPS=1` / `PREFIX` when relevant. If **`hpcperfstats.spec`** was touched, state that **`rpmspec -P`** (and **`rpmbuild -ba`**, if a full RPM build was run) **succeeded**.
+When reporting verification, state that **`build_static_bundle.sh` completed** (and **`make check`** in `.build-static` if tests were run), and that **`make distclean`** ran in the build directory after success (**monitor-post-verify-distclean**). Mention `SKIP_DEPS=1` / `PREFIX` when relevant. If **`hpcperfstats.spec`** was touched, state that **`rpmspec -P`** (and **`rpmbuild -ba`**, if a full RPM build was run) **succeeded**.

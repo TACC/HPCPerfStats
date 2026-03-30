@@ -1,23 +1,33 @@
 ---
-description: Run make distclean in the monitor build tree after successful compile/test verification
+description: After monitor compile/test/dist verification, run make distclean in the build directory used
+globs:
+  - HPCPerfStats/monitor/**
 alwaysApply: true
 ---
 
-# Monitor build tree cleanup after verify
+# Monitor: `make distclean` after verification
 
-When you run **monitor Autotools** compile or test commands in a **configured build directory** under `HPCPerfStats/monitor` (canonical: **`HPCPerfStats/monitor/.build-static`**), run **`make distclean`** in **that same build directory** after verification succeeds.
+After you successfully run **monitor Autotools** verification in a directory that has a generated **`Makefile`** from **`./configure`**, run **`make distclean`** in **that same directory** before treating the work as done—unless the user explicitly asked to keep the configured tree or you still need that tree in the **same turn** for a follow-up step.
 
-## Ordering (do not break multi-step verify)
+## Which directory
 
-- If you run **more than one** compile/test step in the **same** build tree in one session (e.g. **`build_static_bundle.sh`** then **`make check`** in `.build-static`), run **`make distclean` only once**, **after the last** successful step—not between them.
-- If verification **fails**, fix the failure first; run **`make distclean`** only after a **successful** final compile or test run for that pass.
+| Verification flow | Where to run `make distclean` |
+|-------------------|------------------------------|
+| **`build_static_bundle.sh`** then **`make` / `make check`** | **`HPCPerfStats/monitor/.build-static`** (the bundle’s build tree root) |
+| **`./configure` in `HPCPerfStats/monitor`** then **`make check`** or **`make dist`** | **`HPCPerfStats/monitor`** (in-source build) |
+| **`tests/run_tests.sh`** / **`make -C <dir> check`** | **`<dir>`** (the configured build directory passed to `make -C`) |
 
-## Scope
+**Not** in **`PREFIX`** / **`rpmbuild/static-prefix`** / **`.build/prefix-static`**—those are dependency install trees, not the monitor Autotools build dir.
 
-- Applies to **`make`**, **`make check`**, and other **compile/test** targets run in an Autotools **out-of-tree** build dir under **`HPCPerfStats/monitor/`**.
-- Do **not** run **`make distclean`** in the **source** tree unless it is also the configured build directory (unusual for this project).
-- **`PREFIX`** / **`.build/prefix-static`** from the static bundle scripts are separate from the Autotools build tree; this rule is about the directory that contains the generated **`Makefile`** (e.g. **`.build-static`**).
+## Ordering
+
+- Multiple steps in the **same** build dir (e.g. **`make`** then **`make check`**): run **`make distclean` once**, **after the last** successful step—not between them.
+- Verification **fails**: fix it first; run **`make distclean`** only after a **successful** final run for that verification pass (or state in the handoff that cleanup was skipped because verify never succeeded).
 
 ## Handoffs
 
-When reporting verification, note that **`make distclean`** was run in the build tree after success (or state explicitly if you skipped cleanup because verification did not complete successfully).
+State that **`make distclean`** ran in the relevant build directory after success, or say explicitly that cleanup was skipped (failed verify, user override, or same-turn follow-up still using the tree).
+
+## Relation to other rules
+
+This supplements **global-testing-discipline** and **monitor-static-build-verification** (canonical **`build_static_bundle.sh`** + **`make check`**): those rules require *running* tests; this rule requires *cleaning up* the Autotools tree afterward when verification succeeded.

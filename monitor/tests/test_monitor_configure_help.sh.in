@@ -1,5 +1,6 @@
 #!/bin/sh
 # Regression: --enable-all-static must remain in configure --help (static bundle).
+# Invoked by check-local via $(SHELL) $(srcdir)/this-file (not AC_CONFIG_FILES).
 set -e
 cd "$(dirname "$0")/.." || exit 1
 test -f ./configure
