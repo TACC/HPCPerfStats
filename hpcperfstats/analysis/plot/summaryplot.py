@@ -236,12 +236,15 @@ class SummaryPlot():
     if math.isnan(y_range_end):
       y_range_end = 0
 
+    label_text = (label or "").strip() or metric
+
     plot = figure(
         width=400,
         height=150,
         x_axis_type="datetime",
         y_range=Range1d(-0.1, y_range_end),
-        y_axis_label=label,
+        y_axis_label=label_text,
+        title=label_text,
     )
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
@@ -267,7 +270,7 @@ class SummaryPlot():
     # Hover shows which sample point (host) and value; no legend (identify line by hovering).
     plot.add_tools(
         HoverTool(
-            tooltips=_hover_tooltip_html(label, metric),
+            tooltips=_hover_tooltip_html(label_text, metric),
             formatters={"@time": "datetime"},
             renderers=circle_renderers,
         )
