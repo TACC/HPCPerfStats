@@ -102,6 +102,11 @@ install -m 0644 src/hpcperfstats.service %{buildroot}%{_unitdir}/hpcperfstats.se
 
 %post
 %systemd_post hpcperfstats.service
+/usr/bin/systemctl enable hpcperfstats.service >/dev/null 2>&1 || :
+if /usr/bin/systemctl --quiet is-active hpcperfstats.service; then
+    /usr/bin/systemctl stop hpcperfstats.service >/dev/null 2>&1 || :
+fi
+/usr/bin/systemctl start hpcperfstats.service >/dev/null 2>&1 || :
 
 %preun
 %systemd_preun hpcperfstats.service
