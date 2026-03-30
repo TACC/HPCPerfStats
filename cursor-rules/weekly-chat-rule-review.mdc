@@ -33,6 +33,11 @@ alwaysApply: true
 - Keep rule text concise, concrete, and action-oriented.
 - Prefer safety and correctness rules before style-only guidance.
 
+## Overlap And Duplication Check
+- For each candidate rule, explicitly list overlapping existing rules (if any).
+- Prefer updating an existing rule over creating a new one when overlap is substantial.
+- New rules must include a one-line reason why an update was insufficient.
+
 ## Output Format For Weekly Review
 1. Weekly findings summary:
    - pattern name

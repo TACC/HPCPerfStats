@@ -34,6 +34,12 @@ in the same task.
   - `tests/run_web_e2e_workflow.sh`
   - optionally pass seed recreation logic: `tests/run_web_e2e_workflow.sh --seed-cmd "<seed command>"`
 
+## Required Assertion Coverage For Page Changes
+- For changed page/header/layout behavior, include explicit assertions for:
+  - responsive/topbar non-overlap and center alignment expectations
+  - role-gated visibility differences (staff vs non-staff) for controls and error actions
+- Apply these assertions in both required E2E files.
+
 ## Browser E2E runtime notes
 - `test_web_pages_browser_e2e.py` uses Playwright and requires browser binaries.
 - If Playwright is unavailable, the browser E2E module may be skipped; this is acceptable only in environments where browser tooling cannot be installed.

@@ -12,3 +12,11 @@ alwaysApply: true
 - After service config changes, verify startup and basic health behavior end-to-end.
 - At minimum, verify config syntax/parsing and confirm services reach a healthy/running state before considering the change complete.
 - When runtime tuning changes behavior, add or update tests that validate correctness and guard against regressions.
+
+## Metrics/Ingestion Regression Gate
+- Trigger: changes under ingestion/metrics paths (for example dbload, update_metrics, metric aggregation, invalidation/recompute checks).
+- Required: add or update targeted tests for:
+  - idempotent recomputation behavior
+  - DB aggregation/grouping correctness assumptions
+  - retry/failure handling on transient DB/Redis errors
+- Do not consider the task complete until those tests pass in the relevant runtime.
