@@ -19,7 +19,7 @@ amd64_df_eventmap = {
     0x433907: "MBW_CHANNEL_4,W=48,U=64B",
     0x433947: "MBW_CHANNEL_5,W=48,U=64B",
     0x433987: "MBW_CHANNEL_6,W=48,U=64B",
-    0x4339c7: "MBW_CHANNEL_7,W=48,U=64B"
+    0x4339c7: "MBW_CHANNEL_7,W=48,U=64B",
 }
 
 intel_8pmc3_eventmap = {
@@ -45,7 +45,36 @@ intel_skx_imc_eventmap = {
     0x400304: "CAS_READS,W=48",
     0x400c04: "CAS_WRITES,W=48",
     0x400b01: "ACT_COUNT,W=48",
-    0x400102: "PRE_COUNT_MISS,W=48"
+    0x400102: "PRE_COUNT_MISS,W=48",
+}
+
+# Older Intel IMC generations use different perf-event encodings for the same
+# logical CAS_* signals. Keep these mappings in sync with
+# dbload/hardware_counter_maps/intel_process.py so roofline/avg_mbw can rely on
+# CAS_READS/CAS_WRITES across SNB/IVB/HSW/BDW/KNL/SKX.
+intel_snb_imc_eventmap = {
+    # IMC_PERF_EVENT(0x04, 0x03)
+    0x400304: "CAS_READS,W=48",
+    # IMC_PERF_EVENT(0x04, 0x0b)
+    0x400b04: "CAS_WRITES,W=48",
+}
+
+intel_ivb_imc_eventmap = intel_snb_imc_eventmap
+
+intel_hsw_imc_eventmap = {
+    # IMC_PERF_EVENT(0x04, 0x03)
+    0x400304: "CAS_READS,W=48",
+    # IMC_PERF_EVENT(0x04, 0x0b)
+    0x400b04: "CAS_WRITES,W=48",
+}
+
+intel_bdw_imc_eventmap = intel_hsw_imc_eventmap
+
+intel_knl_mc_dclk_eventmap = {
+    # KNL_MC_DCLK_PERF_EVENT(0x03, 0x01)
+    0x300301: "CAS_READS,W=48",
+    # KNL_MC_DCLK_PERF_EVENT(0x03, 0x09)
+    0x300309: "CAS_WRITES,W=48",
 }
 
 exclude_types = [
@@ -58,6 +87,13 @@ EVENTMAPS_BY_TYPE = {
     "intel_8pmc3": intel_8pmc3_eventmap,
     # Same CTL/fixed layout and event programming family as intel_8pmc3.
     "intel_4pmc3": intel_8pmc3_eventmap,
+    # Intel IMC / KNL MC: expose CAS_READS/CAS_WRITES everywhere so
+    # INTEL_IMC_STATS_TYPES can treat generations uniformly.
+    "intel_snb_imc": intel_snb_imc_eventmap,
+    "intel_ivb_imc": intel_ivb_imc_eventmap,
+    "intel_hsw_imc": intel_hsw_imc_eventmap,
+    "intel_bdw_imc": intel_bdw_imc_eventmap,
+    "intel_knl_mc_dclk": intel_knl_mc_dclk_eventmap,
     "intel_skx_imc": intel_skx_imc_eventmap,
 }
 

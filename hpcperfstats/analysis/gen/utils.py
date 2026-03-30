@@ -21,6 +21,11 @@ jid_table = None
 local_timezone = cfg.get_timezone()
 
 # Intel IMC types that expose CAS_READS/CAS_WRITES (used by roofline and utils.imc).
+# For Knights Landing, the monitor stats type is "intel_knl_mc"; the dbload
+# hardware_counter_maps/intel_process layer normalizes per-function names to
+# "intel_knl_mc_dclk" (DRAM clock domain). INTEL_IMC_STATS_TYPES uses the
+# normalized typename so metric/roofline code can treat KNL like other IMC
+# generations.
 INTEL_IMC_STATS_TYPES = (
     "intel_snb_imc",
     "intel_ivb_imc",

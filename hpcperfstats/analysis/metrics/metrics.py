@@ -393,8 +393,14 @@ class Metrics():
         "avg_mbw": {
             "typename": "amd64_df",
             "events": [
-                "MBW_CHANNEL_0", "MBW_CHANNEL_1", "MBW_CHANNEL_2",
-                "MBW_CHANNEL_3"
+                "MBW_CHANNEL_0",
+                "MBW_CHANNEL_1",
+                "MBW_CHANNEL_2",
+                "MBW_CHANNEL_3",
+                "MBW_CHANNEL_4",
+                "MBW_CHANNEL_5",
+                "MBW_CHANNEL_6",
+                "MBW_CHANNEL_7",
             ],
             "conv": 2 / (1024 * 1024 * 1024),
             "units": "GB/s"
@@ -558,6 +564,10 @@ class Metrics():
             "MBW_CHANNEL_1",
             "MBW_CHANNEL_2",
             "MBW_CHANNEL_3",
+            "MBW_CHANNEL_4",
+            "MBW_CHANNEL_5",
+            "MBW_CHANNEL_6",
+            "MBW_CHANNEL_7",
         ],
         conv=2 / (1024 ** 3),
         units="GB/s",

@@ -125,9 +125,23 @@ def _get_flops_bw_df_and_reason(jt):
 
     # AMD: FLOPS and MBW channels
     agg_flops, flops_src = _aggregate_arc(jt, "amd64_pmc", ["FLOPS"], 1e-9)
+    # Sum all available DRAM channel counters; keep 0–3 for backwards
+    # compatibility but include 4–7 when present so newer parts are not
+    # artificially bandwidth-limited in the plot.
+    amd_bw_events = [
+        "MBW_CHANNEL_0",
+        "MBW_CHANNEL_1",
+        "MBW_CHANNEL_2",
+        "MBW_CHANNEL_3",
+        "MBW_CHANNEL_4",
+        "MBW_CHANNEL_5",
+        "MBW_CHANNEL_6",
+        "MBW_CHANNEL_7",
+    ]
     agg_bw, bw_src = _aggregate_arc(
-        jt, "amd64_df",
-        ["MBW_CHANNEL_0", "MBW_CHANNEL_1", "MBW_CHANNEL_2", "MBW_CHANNEL_3"],
+        jt,
+        "amd64_df",
+        amd_bw_events,
         2 / (1024 ** 3),
     )
     attempts.append(
@@ -137,7 +151,8 @@ def _get_flops_bw_df_and_reason(jt):
         flops_gf = agg_flops.rename(columns={"sum_val": "flops_gf"})[["host", "time", "flops_gf"]]
         bw_gb = agg_bw.rename(columns={"sum_val": "bw_gb"})[["host", "time", "bw_gb"]]
 
-    # Intel: FP (FP_ARITH or legacy SSE) and IMC CAS_READS+CAS_WRITES
+    # Intel (and x86/ARM via cpu_counter_metrics): FP (FP_ARITH or legacy SSE)
+    # and IMC CAS_READS+CAS_WRITES
     if flops_gf is None or bw_gb is None:
         if flops_gf is None:
             flops_gf = _intel_fp_arith_flops_gf(jt, attempts)
@@ -147,12 +162,31 @@ def _get_flops_bw_df_and_reason(jt):
             bw_gb = _intel_imc_bw_gb(jt, attempts)
 
     if flops_gf is None or bw_gb is None:
-        return (
-            None,
+        # Distinguish the common architecture-specific cases so users get a
+        # clearer message about what is missing.
+        attempted = "; ".join(attempts)
+        reason = (
             "Missing roofline counters in host_data (need FLOPS + memory-bandwidth counters). "
-            + "Attempted: "
-            + "; ".join(attempts),
+            f"Attempted: {attempted}"
         )
+        # Heuristic: ARM/CPU via DCGM backends emit cpu_counter_metrics but may
+        # lack any IMC/DF CAS/MBW sources. Do not silently claim generic
+        # missing counters when only bandwidth is absent on ARM.
+        has_cpu_counter_metrics = any(
+            "cpu_counter_metrics" in a for a in attempts
+        )
+        has_any_imc_or_df = any(
+            t.startswith("amd") or "imc" in t
+            for t in [att.split(":")[0] for att in attempts if att]
+        )
+        if has_cpu_counter_metrics and not has_any_imc_or_df:
+            reason = (
+                "Roofline not available on this job: cpu_counter_metrics FLOPS "
+                "are present (e.g. via DCGM backend), but no DRAM bandwidth "
+                "source (AMD DF or Intel IMC CAS_READS/CAS_WRITES) was found "
+                "in host_data for these hosts."
+            )
+        return (None, reason)
 
     df = base.merge(flops_gf, on=["host", "time"], how="inner")
     df = df.merge(bw_gb, on=["host", "time"], how="inner")
