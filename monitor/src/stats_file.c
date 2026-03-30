@@ -144,27 +144,31 @@ static int sf_wr_hdr(struct stats_file *sf)
 
 int stats_file_open(struct stats_file *sf, const char *path)
 {
-  int rc = 0;
   memset(sf, 0, sizeof(*sf));
 
   sf->sf_path = strdup(path);
   if (sf->sf_path == NULL) {
     ERROR("cannot create path: %m\n");
-    goto err;
+    return -1;
   }
 
   sf->sf_file = file_fopen_append(sf->sf_path);
   if (sf->sf_file == NULL) {
     ERROR("cannot open `%s': %m\n", path);
-    goto err;
+    free(sf->sf_path);
+    sf->sf_path = NULL;
+    return -1;
   }
 
   if (sf_rd_hdr(sf) < 0) {
- err:
-    rc = -1;
+    fclose(sf->sf_file);
+    sf->sf_file = NULL;
+    free(sf->sf_path);
+    sf->sf_path = NULL;
+    return -1;
   }
 
-  return rc;
+  return 0;
 }
 
 int stats_file_mark(struct stats_file *sf, const char *fmt, ...)

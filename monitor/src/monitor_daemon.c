@@ -358,8 +358,16 @@ static char *get_current_dumpfile(void)
   time_t t = tp.tv_sec;
   struct tm *time_info = localtime(&t);
   char *time_str = (char *)malloc(sizeof(char) * 16);
+  char *file_str;
+
+  if (time_str == NULL)
+    return NULL;
   strftime(time_str, 16, "%Y-%m-%d.sf", time_info);
-  char *file_str = (char *)malloc(sizeof(char) * 64);
+  file_str = (char *)malloc(sizeof(char) * 64);
+  if (file_str == NULL) {
+    free(time_str);
+    return NULL;
+  }
   snprintf(file_str, sizeof(char) * 64, "%s/%s", dumpfile_dir, time_str);
   free(time_str);
   return file_str;
@@ -369,6 +377,11 @@ static int save_file_stats_buffer(struct stats_buffer *sf)
 {
   int rc;
   char *file_path = get_current_dumpfile();
+
+  if (file_path == NULL) {
+    ERROR("Failed allocating dumpfile path\n");
+    return -1;
+  }
   rc = stats_buffer_write_file(sf, file_path);
   if (rc != 0)
     ERROR("Failed saving stats to dumpfile\n");
@@ -386,6 +399,11 @@ static int save_file_ring_buffer(struct sf_ring_buffer *w)
     goto err;
   }
   file_path = get_current_dumpfile();
+  if (file_path == NULL) {
+    ERROR("Failed allocating dumpfile path\n");
+    rc = -1;
+    goto err;
+  }
   sfq = w->q_first;
   do {
     rc = stats_buffer_write_file(sfq->sf, file_path);

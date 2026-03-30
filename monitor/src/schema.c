@@ -7,6 +7,26 @@
 #include "schema.h"
 #include "string1.h"
 
+/* Free partially built schema after dict_set/parse/calloc failure. */
+static void schema_init_abort(struct schema *sc)
+{
+  if (sc->sc_dict.d_table != NULL) {
+    size_t j = 0;
+    char *key;
+    while ((key = dict_for_each(&sc->sc_dict, &j)) != NULL) {
+      struct schema_entry *se = key_to_schema_entry(key);
+      free(se->se_unit);
+      free(se->se_desc);
+      free(se);
+    }
+    dict_destroy(&sc->sc_dict, NULL);
+  }
+  free(sc->sc_ent);
+  sc->sc_ent = NULL;
+  sc->sc_len = 0;
+  memset(&sc->sc_dict, 0, sizeof(sc->sc_dict));
+}
+
 int schema_init(struct schema *sc, const char *def)
 {
   int rc = -1;
@@ -22,18 +42,22 @@ int schema_init(struct schema *sc, const char *def)
   while ((tok = wsep(&str)) != NULL) {
     struct schema_entry *se = parse_schema_entry(tok);
     if (se == NULL)
-      goto err;
+      goto err_abort;
 
     se->se_index = nr_se++;
-    if (dict_set(&sc->sc_dict, se->se_key) < 0)
-      goto err;
+    if (dict_set(&sc->sc_dict, se->se_key) < 0) {
+      free(se->se_unit);
+      free(se->se_desc);
+      free(se);
+      goto err_abort;
+    }
   }
 
   sc->sc_len = nr_se;
   sc->sc_ent = (struct schema_entry **) calloc(sc->sc_len, sizeof(*sc->sc_ent));
   if (sc->sc_ent == NULL && sc->sc_len != 0) {
     ERROR("cannot allocate schema entries: %m\n");
-    goto err;
+    goto err_abort;
   }
 
   char *key;
@@ -44,6 +68,10 @@ int schema_init(struct schema *sc, const char *def)
   }
 
   rc = 0;
+  goto err;
+
+ err_abort:
+  schema_init_abort(sc);
  err:
   free(cpy);
   return rc;

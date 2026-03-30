@@ -119,8 +119,19 @@ static void test_parse_C_then_E_last_wins(void)
   free_entry(se);
 }
 
+static void test_schema_init_aborts_cleanly_on_second_invalid_token(void)
+{
+  struct schema sc;
+
+  memset(&sc, 0, sizeof(sc));
+  /* First token parses; second token ",E" has empty key -> parse_schema_entry NULL. */
+  assert(schema_init(&sc, "cpu,E ,E") < 0);
+  schema_destroy(&sc);
+}
+
 int main(void)
 {
+  test_schema_init_aborts_cleanly_on_second_invalid_token();
   test_parse_event_unit_width();
   test_parse_control();
   test_parse_empty_key_returns_null();

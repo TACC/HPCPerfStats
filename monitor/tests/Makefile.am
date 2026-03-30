@@ -62,7 +62,9 @@ test_pscanf_SOURCES = \
 
 test_schema_parse_SOURCES = \
 	test_schema_parse.c \
-	$(top_srcdir)/src/schema_entry_parse.c
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/dict.c
 
 test_stats_file_format_SOURCES = \
 	test_stats_file_format.c \
