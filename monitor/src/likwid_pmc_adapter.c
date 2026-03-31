@@ -3,9 +3,12 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include "trace.h"
 #include "stats.h"
 #include "likwid_pmc_adapter.h"
+#include "amd64_pmc.h"
 
 #ifdef HAVE_LIKWID
 #include <likwid.h>
@@ -122,12 +125,42 @@ static void set_counter_by_name(struct stats *stats, const char *counter_name,
     stats_set(stats, "CTR7", value);
 }
 
+static int read_msr_u64_cpu(int cpu, uint64_t reg, unsigned long long *val)
+{
+  int fd;
+  char msr_path[80];
+  uint64_t tmp = 0;
+
+  if (cpu < 0 || val == NULL)
+    return -1;
+  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%d/msr", cpu);
+  fd = open(msr_path, O_RDONLY);
+  if (fd < 0)
+    return -1;
+  if (pread(fd, &tmp, sizeof(tmp), reg) != (ssize_t) sizeof(tmp)) {
+    close(fd);
+    return -1;
+  }
+  close(fd);
+  *val = (unsigned long long) tmp;
+  return 0;
+}
+
 int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events,
                                 int nr_events, int max_ctrs)
 {
 #ifdef HAVE_LIKWID
   int i = 0;
   int n_events = 0;
+  unsigned long long inst_retired = 0;
+  unsigned long long aperf = 0;
+  unsigned long long mperf = 0;
+  int have_fixed0 = 0;
+  int have_fixed1 = 0;
+  int have_fixed2 = 0;
+  int have_inst = 0;
+  int have_aperf = 0;
+  int have_mperf = 0;
   (void) max_ctrs;
   if (!g_initialized || g_group < 0 || stats == NULL || cpu < 0)
     return -1;
@@ -136,8 +169,62 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events,
   n_events = perfmon_getNumberOfEvents(g_group);
   for (i = 0; i < n_events; i++) {
     const char *counter_name = perfmon_getCounterName(g_group, i);
+    const char *event_name = perfmon_getEventName(g_group, i);
     unsigned long long val = (unsigned long long) perfmon_getResult(g_group, i, cpu);
     set_counter_by_name(stats, counter_name, val);
+    if (counter_name != NULL && strcmp(counter_name, "FIXC0") == 0) {
+      inst_retired = val;
+      have_fixed0 = 1;
+      have_inst = 1;
+    } else if (counter_name != NULL && strcmp(counter_name, "FIXC1") == 0) {
+      aperf = val;
+      have_fixed1 = 1;
+      have_aperf = 1;
+    } else if (counter_name != NULL && strcmp(counter_name, "FIXC2") == 0) {
+      mperf = val;
+      have_fixed2 = 1;
+      have_mperf = 1;
+    }
+    if (event_name != NULL) {
+      if (strcmp(event_name, "INSTR_RETIRED_ANY") == 0 ||
+          strcmp(event_name, "RETIRED_INSTRUCTIONS") == 0) {
+        inst_retired = val;
+        have_inst = 1;
+      } else if (strcmp(event_name, "CPU_CLK_UNHALTED_CORE") == 0) {
+        aperf = val;
+        have_aperf = 1;
+      } else if (strcmp(event_name, "CPU_CLK_UNHALTED_REF") == 0) {
+        mperf = val;
+        have_mperf = 1;
+      }
+    }
+  }
+
+  /* Backfill cross-arch semantic counters from AMD MSRs if LIKWID group did not provide them. */
+  if (!have_inst &&
+      read_msr_u64_cpu(cpu, (uint64_t) MSR_PERF_INST_RETIRED, &inst_retired) == 0)
+    have_inst = 1;
+  if (!have_aperf &&
+      read_msr_u64_cpu(cpu, (uint64_t) MSR_PERF_APERF, &aperf) == 0)
+    have_aperf = 1;
+  if (!have_mperf &&
+      read_msr_u64_cpu(cpu, (uint64_t) MSR_PERF_MPERF, &mperf) == 0)
+    have_mperf = 1;
+
+  if (have_inst) {
+    stats_set(stats, "INST_RETIRED", inst_retired);
+    if (!have_fixed0)
+      stats_set(stats, "FIXED_CTR0", inst_retired);
+  }
+  if (have_aperf) {
+    stats_set(stats, "APERF", aperf);
+    if (!have_fixed1)
+      stats_set(stats, "FIXED_CTR1", aperf);
+  }
+  if (have_mperf) {
+    stats_set(stats, "MPERF", mperf);
+    if (!have_fixed2)
+      stats_set(stats, "FIXED_CTR2", mperf);
   }
   for (i = 0; i < nr_events; i++) {
     char key[16];
