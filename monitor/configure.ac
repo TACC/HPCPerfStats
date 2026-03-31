@@ -206,7 +206,17 @@ esac
 
 if test "x$monitor_arch" = "xauto"; then
   case "$host_cpu" in
-    x86_64|i?86) monitor_arch="intel" ;;
+    x86_64|i?86)
+      if test -r /proc/cpuinfo; then
+        if grep -Eiq 'vendor_id[[:space:]]*:[[:space:]]*(AuthenticAMD|HygonGenuine)' /proc/cpuinfo; then
+          monitor_arch="amd"
+        else
+          monitor_arch="intel"
+        fi
+      else
+        monitor_arch="intel"
+      fi
+      ;;
     aarch64|arm*|ppc64*|riscv64) monitor_arch="intel" ;;
     *) monitor_arch="intel" ;;
   esac
