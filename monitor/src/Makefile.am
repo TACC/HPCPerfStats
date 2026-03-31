@@ -207,8 +207,7 @@ hpcperfstatsd_SOURCES += \
 
 TYPES += \
 	mdc.c \
-	llite.c \
-	osc.c
+	llite.c
 endif
 
 if MIC
