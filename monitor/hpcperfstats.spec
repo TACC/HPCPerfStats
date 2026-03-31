@@ -30,7 +30,9 @@ BuildRequires: make
 BuildRequires: autoconf
 BuildRequires: automake
 BuildRequires: libtool
-BuildRequires: cmake >= 3.5
+# NOTE: some HPC sites provide CMake via environment modules (Lmod) rather than
+# an installed RPM package, so we do not hard-require cmake/cmake3 RPM metadata.
+# %build still requires a working cmake command in PATH.
 BuildRequires: pkgconfig
 BuildRequires: systemd-rpm-macros
 BuildRequires: gzip
@@ -74,6 +76,16 @@ robustness.
 
 %build
 cd "%{_builddir}/%{srcname}-%{version}"
+if ! command -v cmake >/dev/null 2>&1 && ! command -v cmake3 >/dev/null 2>&1; then
+  echo "ERROR: cmake (or cmake3) is required in PATH during %build." >&2
+  echo "If your site uses Lmod, load a cmake module before invoking rpmbuild." >&2
+  exit 1
+fi
+if ! command -v cmake >/dev/null 2>&1 && command -v cmake3 >/dev/null 2>&1; then
+  mkdir -p .rpmbuild-tools
+  ln -sf "$(command -v cmake3)" .rpmbuild-tools/cmake
+  export PATH="$(pwd)/.rpmbuild-tools:${PATH}"
+fi
 export PREFIX="%{_builddir}/hpcperfstats-static-prefix"
 export SRCDIR="%{_builddir}/hpcperfstats-static-src"
 export JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
