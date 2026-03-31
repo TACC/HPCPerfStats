@@ -14,6 +14,14 @@
 static int g_initialized = 0;
 static int g_group = -1;
 
+static int likwid_env_verbosity(void)
+{
+  const char *v = getenv("HPCPERFSTATS_LIKWID_VERBOSITY");
+  if (v == NULL || *v == '\0')
+    return 0;
+  return atoi(v);
+}
+
 int likwid_pmc_adapter_init(int nr_threads)
 {
 #ifdef HAVE_LIKWID
@@ -31,6 +39,8 @@ int likwid_pmc_adapter_init(int nr_threads)
     cpus[i] = i;
   topology_init();
   numa_init();
+  /* Default to quiet LIKWID logs; override with HPCPERFSTATS_LIKWID_VERBOSITY. */
+  perfmon_setVerbosity(likwid_env_verbosity());
   /* Direct MSR access enables LIKWID power_init / RAPL (likwid_rapl). */
   HPMmode(ACCESSMODE_DIRECT);
   if (HPMinit() < 0) {

@@ -572,6 +572,8 @@ static int likwid_backend_begin(struct stats_type *type)
     g_likwid_ready = 1;
     return 0;
   }
+  /* LIKWID PMCs unavailable/busy: use direct-MSR fallback path for collection. */
+  likwid_pmc_adapter_finalize();
   g_likwid_ready = 0;
   type->st_enabled = 1;
   return 0;
