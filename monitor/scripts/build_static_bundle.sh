@@ -360,10 +360,10 @@ build_likwid() {
     likwid_mk+=(CFLAGS="${CFLAGS}")
   fi
   make -j"${JOBS}" PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \
-    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false \
+    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=direct \
     "${likwid_mk[@]}"
   make install PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \
-    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false \
+    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=direct \
     "${likwid_mk[@]}"
 }
 
