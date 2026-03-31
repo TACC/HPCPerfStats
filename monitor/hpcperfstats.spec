@@ -1,4 +1,8 @@
 %global srcname hpcperfstats
+# Release RPM only: disable automatic debuginfo/debugsource subpackages.
+# The static-bundle release path strips the daemon, which can leave debugsource empty.
+%global debug_package %{nil}
+%global _debugsource_packages 0
 # Tarball / unpacked dir prefix: %%{srcname}-%%{version} (matches configure.ac AC_INIT / make dist).
 # Output RPM/SRPM names use %%{name} = hpcperfstatsd.
 Summary: Job-level Monitoring Client
