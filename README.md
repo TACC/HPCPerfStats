@@ -17,7 +17,7 @@ The **hpcperfstats** package is split into two parts:
 
 - **Collected data definitions:** [attributes-definition.md](docs/attributes-definition.md)
 
-Building and installing the `hpcperfstatsd-3.0-4.el9.x86_64.rpm` package (via `monitor/hpcperfstats.spec`) installs a **systemd** service `hpcperfstats`. This service runs a daemon with ~3% overhead on a single core at 1 Hz sampling; it is typically configured for **5‑minute** intervals, with samples at job start and end. The daemon **hpcperfstatsd** sends data to a **RabbitMQ** server over the administrative network. RabbitMQ must be installed and running on the server to receive data.
+Building and installing the `hpcperfstatsd-3.0-1.el9.x86_64.rpm` package (via `monitor/hpcperfstats.spec`) installs a **systemd** service `hpcperfstats`. This service runs a daemon with ~3% overhead on a single core at 1 Hz sampling; it is typically configured for **5-minute** intervals, with samples at job start and end. The daemon **hpcperfstatsd** sends data to a **RabbitMQ** server over the administrative network. RabbitMQ must be installed and running on the server to receive data.
 
 The **hpcperfstats** container orchestration sets up a Django/PostgreSQL ingest and archival stack plus a RabbitMQ server to receive data from the monitor on the nodes.
 
@@ -27,32 +27,70 @@ The **hpcperfstats** container orchestration sets up a Django/PostgreSQL ingest 
 
 ### Monitor subpackage
 
-1. **Install RabbitMQ development files** (build and compute nodes):
+The monitor now uses a **static-bundle** build flow for packaging. The canonical path builds pinned static archives for `libev`, `rabbitmq-c`, and (on x86) `LIKWID`, then compiles `hpcperfstatsd` with `--enable-all-static`.
+
+1. **Install RPM build prerequisites** (Rocky/EL-like systems):
 
    ```bash
-   sudo dnf install librabbitmq-devel
+   sudo dnf install \
+     gcc gcc-c++ make autoconf automake libtool cmake pkgconfig \
+     systemd-rpm-macros gzip tar curl perl gawk pciutils rdma-core-devel \
+     rpm-build
    ```
 
-2. **Build and install:**
+   On aarch64, install one of:
 
    ```bash
-   ./configure
-   make
-   make install
+   sudo dnf install datacenter-gpu-manager-4-devel
+   # or
+   sudo dnf install libdcgm-devel
    ```
 
-   **Optional configure flags:**
+2. **Prepare rpmbuild directories and source tarball** (from `HPCPerfStats/monitor`):
 
-   | Flag | Effect |
-   |------|--------|
-   | `--enable-mic` | Monitor Xeon Phi coprocessors |
-   | `--disable-infiniband` | Disable InfiniBand monitoring |
-   | `--disable-lustre` | Disable Lustre filesystem monitoring |
-   | `--disable-hardware` | Disable hardware counter monitoring |
+   ```bash
+   ./scripts/prepare_rpmbuild_dirs.sh
+   ```
 
-   Disabling RabbitMQ yields a legacy build that uses the shared filesystem for data; **not recommended** (testing only). If libraries or headers are not found, set `CPPFLAGS` and/or `LDFLAGS` as usual for autoconf.
+   This script:
+   - creates `monitor/rpmbuild/{SPECS,SOURCES,BUILD,RPMS,SRPMS,BUILDROOT}`
+   - runs `scripts/build_static_bundle.sh --deps-only` into `monitor/rpmbuild/static-prefix`
+   - runs `autoreconf -fi`, `./configure`, and `make dist`
+   - copies `hpcperfstats-<version>.tar.gz` to `rpmbuild/SOURCES`
 
-3. **Configuration** — after install, edit `/etc/hpcperfstats/hpcperfstats.conf`:
+3. **Build the RPM**:
+
+   Use the `rpmbuild` command printed by `scripts/prepare_rpmbuild_dirs.sh`. A typical script output is:
+
+   ```bash
+   rpmbuild -ba --define "_topdir $(pwd)/rpmbuild" rpmbuild/SPECS/hpcperfstats.spec
+   ```
+
+4. **Optional build options**:
+
+   - Reuse existing static deps when already staged:
+     ```bash
+     SKIP_DEPS=1 ./scripts/prepare_rpmbuild_dirs.sh
+     ```
+   - Build dependencies + monitor binary directly (without rpmbuild staging):
+     ```bash
+     ./scripts/build_static_bundle.sh
+     ```
+   - Build only pinned dependency archives:
+     ```bash
+     ./scripts/build_static_bundle.sh --deps-only
+     ```
+   - Release-optimized monitor build:
+     ```bash
+     ./scripts/build_static_bundle.sh --release
+     # equivalent to: HPC_BUNDLE_RELEASE_BUILD=1 ./scripts/build_static_bundle.sh
+     ```
+   - Pass extra configure args through bundle build (example):
+     ```bash
+     ./scripts/build_static_bundle.sh --disable-lustre
+     ```
+
+5. **Configuration** — after install, edit `/etc/hpcperfstats/hpcperfstats.conf`:
 
    | Field | Description |
    |-------|-------------|
@@ -72,20 +110,7 @@ The **hpcperfstats** container orchestration sets up a Django/PostgreSQL ingest 
 
    Reload a running daemon with: `kill -HUP <pid>` (or restart the service).
 
-4. **RPM build:**
-
-   ```bash
-   rpmbuild -bb hpcperfstats.spec
-   ```
-
-   The spec file uses `sed` to set server and queue in `src/hpcperfstats.conf`. Adjust for your site, e.g.:
-
-   ```bash
-   sed -i 's/localhost/stats.frontera.tacc.utexas.edu/' src/hpcperfstats.conf
-   sed -i 's/default/frontera/' src/hpcperfstats.conf
-   ```
-
-5. **Service control:**
+6. **Service control:**
 
    ```bash
    sudo systemctl start hpcperfstats
