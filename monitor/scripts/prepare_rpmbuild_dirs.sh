@@ -121,7 +121,7 @@ EOF
   fi
 
   # Some toolchains need explicit static group ordering for LIKWID during configure probes.
-  export LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm ${LIBS:-}"
+  export LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm -lrt ${LIBS:-}"
   if ! verify_likwid_static_link_probe; then
     cat <<EOF >&2
 Unable to link a trivial LIKWID program from PREFIX=${PREFIX}.
