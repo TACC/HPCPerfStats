@@ -13,6 +13,8 @@
 # Environment:
 #   SKIP_DEPS  If 1, skip rebuilding static deps when PREFIX already has the .a files
 #              (passed through to build_static_bundle.sh --deps-only).
+#   HPC_BUNDLE_RELEASE_BUILD  Defaults to 1 in this script so rpmbuild staging
+#              prefers optimized dependency builds; set to 0 to override.
 #
 set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -100,6 +102,7 @@ echo "Spec installed: ${specs_dir}/hpcperfstats.spec"
 echo "Building pinned static deps into ${static_prefix} (build_static_bundle.sh --deps-only) ..."
 export PREFIX="${static_prefix}"
 export SRCDIR="${static_srcdir}"
+export HPC_BUNDLE_RELEASE_BUILD="${HPC_BUNDLE_RELEASE_BUILD:-1}"
 mkdir -p "${PREFIX}/include" "${PREFIX}/lib" "${PREFIX}/lib64" "${PREFIX}/lib/pkgconfig"
 (cd "${MONITOR_DIR}" && ./scripts/build_static_bundle.sh --deps-only)
 
