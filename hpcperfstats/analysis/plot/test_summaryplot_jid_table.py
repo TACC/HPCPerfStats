@@ -137,6 +137,10 @@ def test_summaryplot_includes_nvidia_gpu_util_and_mem_used_mb_columns():
         return pd.DataFrame(
             [("n1.cluster", t0, 16384.0)], columns=["host", "time", "sum_val"]
         )
+      if ev == ["gpu_count"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"]
+        )
       return empty
     if val_col == "arc" and typ == "cpu" and "user" in list(events):
       return pd.DataFrame(
@@ -175,12 +179,15 @@ def test_summaryplot_includes_nvidia_gpu_util_and_mem_used_mb_columns():
   summary = SummaryPlot(jt)
   captured_metrics = []
   mem_used_y_caps = []
+  gpu_util_y_caps = []
 
   def fake_plot_metric(df, metric, label, y_range_end=None):
     del label
     captured_metrics.append(metric)
     if metric == "nv_mem_used_mb":
       mem_used_y_caps.append(y_range_end)
+    if metric == "nv_gpu_util":
+      gpu_util_y_caps.append(y_range_end)
     return figure(width=100, height=60)
 
   summary.plot_metric = fake_plot_metric
@@ -189,9 +196,12 @@ def test_summaryplot_includes_nvidia_gpu_util_and_mem_used_mb_columns():
   assert "nv_gpu_util" in captured_metrics
   assert "nv_mem_used_mb" in captured_metrics
   assert "nv_mem_total_mb" not in captured_metrics
+  assert "nv_gpu_count" not in captured_metrics
   assert len(mem_used_y_caps) == 1
+  assert len(gpu_util_y_caps) == 1
   # Mock aggregate side effects ignore conversion factors and return raw values.
   assert mem_used_y_caps[0] == pytest.approx(1.1 * 16384.0)
+  assert gpu_util_y_caps[0] == pytest.approx(200.0)
 
 
 def test_summaryplot_nv_gpu_util_falls_back_to_utilization_event():
