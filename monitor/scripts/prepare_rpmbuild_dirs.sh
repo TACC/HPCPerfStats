@@ -25,6 +25,31 @@ monitor_spec_field() {
   grep -E "^${field}:" "${file}" | head -1 | sed 's/^[^:]*:[[:space:]]*//;s/[[:space:]]*$//'
 }
 
+is_x86_build_host() {
+  case "$(uname -m)" in
+    x86_64|i?86) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+have_static_archive_basename() {
+  local name="$1"
+  test -f "${PREFIX}/lib/${name}" || test -f "${PREFIX}/lib64/${name}"
+}
+
+verify_likwid_static_link_probe() {
+  local tbase out rc
+  tbase="$(mktemp "${TMPDIR:-/tmp}/hps_likwid_probe.XXXXXX")"
+  out="${tbase}.out"
+  printf '%s\n' '#include <likwid.h>' 'int main(void){ return perfmon_init(0, (int*)0); }' > "${tbase}.c"
+  rc=0
+  if ! ${CC:-gcc} ${CPPFLAGS:-} ${LDFLAGS:-} "${tbase}.c" ${LIBS:-} -o "${out}" >/dev/null 2>&1; then
+    rc=1
+  fi
+  rm -f "${tbase}.c" "${out}"
+  return "${rc}"
+}
+
 cd "${MONITOR_DIR}"
 
 if test ! -f "${SPEC_SRC}"; then
@@ -81,6 +106,33 @@ mkdir -p "${PREFIX}/include" "${PREFIX}/lib" "${PREFIX}/lib64" "${PREFIX}/lib/pk
 export CPPFLAGS="-I${PREFIX}/include ${CPPFLAGS:-}"
 export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
 export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
+
+if is_x86_build_host; then
+  if ! have_static_archive_basename "liblikwid.a" \
+     || ! have_static_archive_basename "liblikwid-hwloc.a" \
+     || ! have_static_archive_basename "liblikwid-lua.a"; then
+    cat <<EOF >&2
+LIKWID static archives were not found under ${PREFIX}/lib or ${PREFIX}/lib64.
+Expected: liblikwid.a, liblikwid-hwloc.a, liblikwid-lua.a
+Rebuild deps with SKIP_DEPS unset:
+  PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
+EOF
+    exit 1
+  fi
+
+  # Some toolchains need explicit static group ordering for LIKWID during configure probes.
+  export LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm ${LIBS:-}"
+  if ! verify_likwid_static_link_probe; then
+    cat <<EOF >&2
+Unable to link a trivial LIKWID program from PREFIX=${PREFIX}.
+Check that liblikwid*.a archives match this host/toolchain and that no stale build artifacts remain.
+Try:
+  rm -rf "${PREFIX}" "${SRCDIR}"
+  PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
+EOF
+    exit 1
+  fi
+fi
 
 echo "Building ${tb} from ${MONITOR_DIR} (make distclean; configure; make dist) ..."
 if test -f "${MONITOR_DIR}/Makefile"; then
