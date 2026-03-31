@@ -494,7 +494,7 @@ export default function JobDetail() {
                 <BokehEmbed
                   item={rplot_item}
                   id={`job-roofline-${pk}`}
-                  plotName="Roofline"
+                  plotName="CPU Roofline"
                   unavailableReason={rplot_unavailable_reason}
                 />
               </td>

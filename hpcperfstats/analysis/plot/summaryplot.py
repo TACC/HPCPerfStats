@@ -132,16 +132,16 @@ _SUMMARY_SINGLE_SPECS = [
     ("cpu", "arc", ["user", "system", "nice"], "cpu", 0.01,
      "CPU Usage [#cores]"),
     ("nvidia_gpu", "value", ["gpu_util"], "nv_gpu_util", 1, "GPU util [%]"),
-    ("nvidia_gpu", "value", ["mem_used_mb"], "nv_mem_used_mb", 1, "GPU mem used [MB]"),
+    ("nvidia_gpu", "value", ["mem_used_mb"], "nv_mem_used_mb", 1 / 1024, "GPU mem used [GB]"),
     (
         "nvidia_gpu",
         "value",
         ["mem_total_mb"],
         "nv_mem_total_mb",
-        1,
-        "GPU mem total [MB]",
+        1 / 1024,
+        "GPU mem total [GB]",
     ),
-    ("mem", "value", ["MemUsed"], "mem", 1 / (1024 * 1024), "MemUsed[GB]"),
+    ("mem", "value", ["MemUsed"], "mem", 1 / (1024 * 1024), "CPU MemUsed[GB]"),
 ]
 
 # Metrics that may be sampled on a sparse (host, time) grid vs the union grid from
@@ -329,6 +329,7 @@ class SummaryPlot():
         y_axis_label=label_text,
         title=label_text,
     )
+    plot.xaxis.ticker.desired_num_ticks = 6
     set_linear_axes_plain_numeric(plot)
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 

@@ -4,6 +4,7 @@ from bokeh.models import HoverTool
 from bokeh.models.tools import CustomJSHover
 
 from hpcperfstats.analysis.plot.devplot import DevPlot
+from hpcperfstats.analysis.plot.roofline import _build_roofline_figure
 from hpcperfstats.analysis.plot.summaryplot import SummaryPlot
 
 
@@ -94,3 +95,32 @@ def test_devplot_hover_uses_html_with_separators():
   assert hover.formatters["@time"] == "datetime"
   assert isinstance(hover.formatters["@MBW_CHANNEL_0"], CustomJSHover)
   assert len(hover.renderers) == 2
+
+
+def test_roofline_job_hover_uses_html_with_separators():
+  df = pd.DataFrame({
+      "host": ["h1", "h2"],
+      "time": [
+          pd.Timestamp("2024-01-01 00:00:00+00:00"),
+          pd.Timestamp("2024-01-01 00:00:00+00:00"),
+      ],
+      "flops_gf": [100.0, 120.0],
+      "bw_gb": [10.0, 12.0],
+  })
+
+  plot = _build_roofline_figure(df, peak_flops_gf=1000.0, peak_bw_gb=100.0, title="Roofline")
+  assert plot is not None
+
+  tools = [tool for tool in plot.tools if isinstance(tool, HoverTool)]
+  job_hovers = [
+      hover for hover in tools
+      if isinstance(hover.tooltips, str) and "@ai{custom}" in hover.tooltips
+  ]
+  assert len(job_hovers) == 1
+  hover = job_hovers[0]
+
+  assert "border-bottom" in hover.tooltips
+  assert "@perf{custom}" in hover.tooltips
+  assert "@host" in hover.tooltips
+  assert isinstance(hover.formatters["@ai"], CustomJSHover)
+  assert isinstance(hover.formatters["@perf"], CustomJSHover)

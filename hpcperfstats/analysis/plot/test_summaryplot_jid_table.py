@@ -190,6 +190,7 @@ def test_summaryplot_includes_nvidia_gpu_util_and_mem_used_mb_columns():
   assert "nv_mem_used_mb" in captured_metrics
   assert "nv_mem_total_mb" not in captured_metrics
   assert len(mem_used_y_caps) == 1
+  # Mock aggregate side effects ignore conversion factors and return raw values.
   assert mem_used_y_caps[0] == pytest.approx(1.1 * 16384.0)
 
 
@@ -347,3 +348,20 @@ def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
   assert "nv_gpu_util" in captured_metrics
   assert "nv_mem_used_mb" in captured_metrics
   assert "nv_mem_total_mb" not in captured_metrics
+
+
+def test_summaryplot_plot_metric_caps_time_tick_count_to_six():
+  """Summary plot x-axis should target at most six datetime tick labels."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  df = pd.DataFrame(
+      [("n1.cluster", t0, 1.0)],
+      columns=["host", "time", "cpu"],
+  )
+  jt = MagicMock()
+  jt.jid = 123
+  jt.host_list = ["n1.cluster"]
+  summary = SummaryPlot(jt)
+  summary.hc = {"n1.cluster": "#1f77b4"}
+
+  fig = summary.plot_metric(df, "cpu", "CPU Usage [#cores]")
+  assert fig.xaxis[0].ticker.desired_num_ticks == 6

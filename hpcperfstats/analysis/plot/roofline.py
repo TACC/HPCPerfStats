@@ -33,6 +33,19 @@ DEFAULT_PEAK_FLOPS_GF = 1000.0
 DEFAULT_PEAK_BW_GB = 100.0
 
 
+def _hover_tooltip_html_roofline_job():
+    """Build HTML hover template with spacing between multi-point hits."""
+    return """
+    <div style="padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #d0d7de;">
+      <div><strong>Line:</strong> Job</div>
+      <div><strong>host:</strong> @host</div>
+      <div><strong>AI (FLOP/byte):</strong> @ai{custom}</div>
+      <div><strong>Perf (GFLOP/s):</strong> @perf{custom}</div>
+      <div><strong>time:</strong> @time</div>
+    </div>
+  """
+
+
 def _aggregate_arc(jt, typ, events, conv):
     """Get aggregate df for typ/events from arc deltas."""
     agg = jt.get_aggregate_df(typ, "arc", events, conv)
@@ -309,13 +322,7 @@ def _build_roofline_figure(df, peak_flops_gf, peak_bw_gb, title):
     hover_num_ai = new_plain_number_hover_formatter()
     hover_num_perf = new_plain_number_hover_formatter()
     hover_job = HoverTool(
-        tooltips=[
-            ("Line", "Job"),
-            ("host", "@host"),
-            ("AI (FLOP/byte)", "@ai{custom}"),
-            ("Perf (GFLOP/s)", "@perf{custom}"),
-            ("time", "@time"),
-        ],
+        tooltips=_hover_tooltip_html_roofline_job(),
         formatters={"@ai": hover_num_ai, "@perf": hover_num_perf},
         renderers=[],  # set after circle is added
     )
@@ -437,7 +444,7 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
         df,
         peak_flops_gf=peak_flops_gf,
         peak_bw_gb=peak_bw_gb,
-        title="Roofline (job)",
+        title="CPU Roofline (job)",
     )
 
 
