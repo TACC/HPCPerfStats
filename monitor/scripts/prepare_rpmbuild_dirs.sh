@@ -43,7 +43,7 @@ verify_likwid_static_link_probe() {
   out="${tbase}.out"
   printf '%s\n' '#include <likwid.h>' 'int main(void){ return perfmon_init(0, (int*)0); }' > "${tbase}.c"
   rc=0
-  if ! ${CC:-gcc} ${CPPFLAGS:-} ${LDFLAGS:-} "${tbase}.c" ${LIBS:-} -o "${out}" >/dev/null 2>&1; then
+  if ! ${CC:-gcc} ${CPPFLAGS:-} ${LDFLAGS:-} "${tbase}.c" ${LIBS:-} -lpthread -ldl -o "${out}" >/dev/null 2>&1; then
     rc=1
   fi
   rm -f "${tbase}.c" "${out}"
