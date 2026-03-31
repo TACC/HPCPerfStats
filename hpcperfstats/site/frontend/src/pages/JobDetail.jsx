@@ -156,6 +156,8 @@ export default function JobDetail() {
     hplot_unavailable_reason,
     rplot_item,
     rplot_unavailable_reason,
+    grplot_item,
+    grplot_unavailable_reason,
   } = plots || {};
 
   const hasDeviceData = Object.keys(schema).length > 0;
@@ -485,12 +487,20 @@ export default function JobDetail() {
               </td>
             </tr>
             <tr>
-              <td colSpan={2}>
+              <td>
                 <BokehEmbed
                   item={rplot_item}
                   id={`job-roofline-${pk}`}
                   plotName="Roofline"
                   unavailableReason={rplot_unavailable_reason}
+                />
+              </td>
+              <td>
+                <BokehEmbed
+                  item={grplot_item}
+                  id={`job-gpu-roofline-${pk}`}
+                  plotName="GPU Roofline"
+                  unavailableReason={grplot_unavailable_reason}
                 />
               </td>
             </tr>

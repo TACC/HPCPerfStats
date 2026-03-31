@@ -2115,9 +2115,19 @@ def job_plots(request, pk):
     job_cache_timeout = _job_detail_cache_ttl_for_end_time(getattr(job, "end_time", None))
 
     plot_kind = (request.GET.get("plot") or "").strip().lower()
-    if plot_kind and plot_kind not in ("summary_plot", "heatmap", "roofline"):
+    if plot_kind and plot_kind not in (
+        "summary_plot",
+        "heatmap",
+        "roofline",
+        "gpu_roofline",
+    ):
         return Response(
-            {"error": "Invalid plot parameter. Use summary_plot, heatmap, or roofline."},
+            {
+                "error": (
+                    "Invalid plot parameter. "
+                    "Use summary_plot, heatmap, roofline, or gpu_roofline."
+                )
+            },
             status=status.HTTP_400_BAD_REQUEST,
         )
     if not plot_kind:
@@ -2182,17 +2192,42 @@ def job_plots(request, pk):
         finally:
             close_old_connections()
 
+    def _fetch_gpu_roofline():
+        grplot_item, reason = None, None
+        close_old_connections()
+        try:
+            try:
+                roof_fig_json, roof_reason = plots.plot_and_reason_gpu_roofline_from_jid_table(j)
+                if roof_fig_json is not None:
+                    grplot_item = json_item(roof_fig_json)
+                else:
+                    reason = roof_reason or plots.MSG_NO_ROOFLINE_DATA
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    "Failed to generate gpu roofline for jid %s: %s", job.jid, e, exc_info=True
+                )
+                reason = str(e)
+            return (grplot_item, reason)
+        finally:
+            close_old_connections()
+
     fetchers = {
         "summary_plot": _fetch_summary_plot,
         "heatmap": _fetch_heatmap,
         "roofline": _fetch_roofline,
+        "gpu_roofline": _fetch_gpu_roofline,
     }
     field_map = {
         "summary_plot": ("mplot_item", "mplot_unavailable_reason"),
         "heatmap": ("hplot_item", "hplot_unavailable_reason"),
         "roofline": ("rplot_item", "rplot_unavailable_reason"),
+        "gpu_roofline": ("grplot_item", "grplot_unavailable_reason"),
     }
-    requested_keys = [plot_kind] if plot_kind != "all" else ["summary_plot", "heatmap", "roofline"]
+    requested_keys = (
+        [plot_kind]
+        if plot_kind != "all"
+        else ["summary_plot", "heatmap", "roofline", "gpu_roofline"]
+    )
 
     # Cache each plot separately so clients can poll each plot independently.
     cached_results = {}
@@ -2220,7 +2255,18 @@ def job_plots(request, pk):
             and cached_entry.get("plot_item") is None
             and cached_entry.get("unavailable_reason") == plots.MSG_NO_ROOFLINE_DATA
         )
-        if stale_generic_summary_reason or stale_generic_heatmap_reason or stale_generic_roofline_reason:
+        stale_generic_gpu_roofline_reason = (
+            key == "gpu_roofline"
+            and isinstance(cached_entry, dict)
+            and cached_entry.get("plot_item") is None
+            and cached_entry.get("unavailable_reason") == plots.MSG_NO_ROOFLINE_DATA
+        )
+        if (
+            stale_generic_summary_reason
+            or stale_generic_heatmap_reason
+            or stale_generic_roofline_reason
+            or stale_generic_gpu_roofline_reason
+        ):
             missing_keys.append(key)
             continue
         if isinstance(cached_entry, dict):
@@ -2294,6 +2340,10 @@ def job_plots(request, pk):
         "rdiv": "",
         "rplot_item": cached_results["roofline"]["plot_item"],
         "rplot_unavailable_reason": cached_results["roofline"]["unavailable_reason"],
+        "grscript": "",
+        "grdiv": "",
+        "grplot_item": cached_results["gpu_roofline"]["plot_item"],
+        "grplot_unavailable_reason": cached_results["gpu_roofline"]["unavailable_reason"],
     }
     return Response(payload)
 

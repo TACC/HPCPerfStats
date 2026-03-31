@@ -42,6 +42,8 @@ const minimalPlotsResponse = {
   hplot_unavailable_reason: null,
   rplot_item: null,
   rplot_unavailable_reason: null,
+  grplot_item: null,
+  grplot_unavailable_reason: null,
 };
 
 function renderJobDetail(pk = "12345", session = { is_staff: false }) {
@@ -277,5 +279,22 @@ describe("JobDetail", () => {
     expect(screen.getByText("GPU count (monitor):")).toBeInTheDocument();
     const gpuTable = screen.getByRole("table", { name: "GPU Statistics" });
     expect(within(gpuTable).getByText("4")).toBeInTheDocument();
+  });
+
+  it("renders second GPU roofline panel in host-level plots", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+      minimalJobDetailResponse
+    );
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
+      minimalJobDetailResponse
+    );
+    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(
+      minimalPlotsResponse
+    );
+
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(document.querySelectorAll(".bokeh-embed-wrapper").length).toBe(4);
+    });
   });
 });

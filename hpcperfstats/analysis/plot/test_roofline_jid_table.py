@@ -2,7 +2,10 @@
 import pandas as pd
 from unittest.mock import MagicMock
 
-from hpcperfstats.analysis.plot.roofline import plot_and_reason_roofline_from_jid_table
+from hpcperfstats.analysis.plot.roofline import (
+  plot_and_reason_gpu_roofline_from_jid_table,
+  plot_and_reason_roofline_from_jid_table,
+)
 
 
 def _make_jt(base_rows, agg_map):
@@ -183,5 +186,86 @@ def test_roofline_uses_arm_imc_cas_bandwidth_when_present():
   jt.get_aggregate_df.side_effect = get_aggregate_df
 
   fig, reason = plot_and_reason_roofline_from_jid_table(jt)
+  assert fig is not None
+  assert reason is None
+
+
+def test_gpu_roofline_succeeds_with_nvidia_arc_counters():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt(
+      [("n1.cluster", t0)],
+      {
+          ("nvidia_gpu", "arc"): [("n1.cluster", t0, 20.0)],
+      },
+  )
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
+      return pd.DataFrame([("n1.cluster", t0, 20.0)], columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_mem_total_bytes"]:
+      return pd.DataFrame([("n1.cluster", t0, 5.0)], columns=["host", "time", "sum_val"])
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+  fig, reason = plot_and_reason_gpu_roofline_from_jid_table(jt)
+  assert fig is not None
+  assert reason is None
+
+
+def test_gpu_roofline_falls_back_to_rate_value_events():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt([("n1.cluster", t0)], {})
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if typ == "nvidia_gpu" and val_col == "value" and list(events) == ["gpu_flops_rate"]:
+      return pd.DataFrame([("n1.cluster", t0, 12.0)], columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and val_col == "value" and list(events) == ["gpu_mem_bw_bytes_rate"]:
+      return pd.DataFrame([("n1.cluster", t0, 3.0)], columns=["host", "time", "sum_val"])
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+  fig, reason = plot_and_reason_gpu_roofline_from_jid_table(jt)
+  assert fig is not None
+  assert reason is None
+
+
+def test_gpu_roofline_reports_missing_reason_when_bw_missing():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt([("n1.cluster", t0)], {})
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
+      return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+  fig, reason = plot_and_reason_gpu_roofline_from_jid_table(jt)
+  assert fig is None
+  assert "Missing strict GPU roofline counters in host_data" in reason
+
+
+def test_gpu_roofline_prefers_nvidia_when_both_vendor_counters_exist():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt([("n1.cluster", t0)], {})
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if val_col != "arc":
+      return pd.DataFrame(columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and list(events) == ["gpu_flops"]:
+      return pd.DataFrame([("n1.cluster", t0, 40.0)], columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and list(events) == ["gpu_mem_total_bytes"]:
+      return pd.DataFrame([("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"])
+    if typ == "amd_gpu" and list(events) == ["gpu_flops"]:
+      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    if typ == "amd_gpu" and list(events) == ["gpu_mem_total_bytes"]:
+      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+  fig, reason = plot_and_reason_gpu_roofline_from_jid_table(jt)
   assert fig is not None
   assert reason is None

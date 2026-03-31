@@ -39,6 +39,12 @@ def _aggregate_arc(jt, typ, events, conv):
     return agg, "arc"
 
 
+def _aggregate_value(jt, typ, events, conv):
+    """Get aggregate df for typ/events from value samples."""
+    agg = jt.get_aggregate_df(typ, "value", events, conv)
+    return agg, "value"
+
+
 def _merge_weighted_event_arcs(jt, intel_typ, event_weights, attempts, label):
     """Sum per-(host,time) arc-derived GF/s for events with different FLOP weights."""
     merged = None
@@ -246,22 +252,8 @@ def _get_flops_bw_df_and_reason(jt):
     return (df, None)
 
 
-def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
-    """Build roofline plot from jid_table (ORM). Returns a Bokeh figure or None if no FLOPS/BW data.
-
-    X-axis: arithmetic intensity (FLOP/byte, log scale).
-    Y-axis: performance (GFLOP/s, log scale).
-    Scatter: (AI, perf) per (host, time). Roofline curve: min(peak_flops, peak_bw * AI).
-
-    peak_flops_gf and peak_bw_gb can be provided; otherwise DEFAULT_PEAK_FLOPS_GF and DEFAULT_PEAK_BW_GB are used.
-    """
-    if not jt.host_list:
-        return None
-
-    df, _reason = _get_flops_bw_df_and_reason(jt)
-    if df is None or df.empty:
-        return None
-
+def _build_roofline_figure(df, peak_flops_gf, peak_bw_gb, title):
+    """Render a roofline figure from host,time,flops_gf,bw_gb data."""
     peak_flops_gf = peak_flops_gf if peak_flops_gf is not None else DEFAULT_PEAK_FLOPS_GF
     peak_bw_gb = peak_bw_gb if peak_bw_gb is not None else DEFAULT_PEAK_BW_GB
 
@@ -336,7 +328,7 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
         y_range=(min(perf.min(), peak_bw_gb * plot_ai_min) * 0.5, peak_flops_gf * 1.2),
         x_axis_label="Arithmetic intensity (FLOP/byte)",
         y_axis_label="Performance (GFLOP/s)",
-        title="Roofline (job)",
+        title=title,
         tools=["pan", "wheel_zoom", "box_zoom", "reset", "save"],
     )
     r_roof = p.line("ai", "perf", source=roof_source, line_width=2, color="navy")
@@ -356,6 +348,114 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
     return p
 
 
+def _get_gpu_flops_bw_df_and_reason(jt):
+    """Get GPU roofline data using strict GPU FLOPS/BW counters only."""
+    base = jt.get_host_time_df()
+    if base.empty or not jt.host_list:
+        return (None, "No hosts/timestamps found in host_data for this job/time range")
+
+    attempts = []
+    gpu_types = ("nvidia_gpu", "amd_gpu")
+    missing_reasons = []
+
+    for gpu_typ in gpu_types:
+        flops_arc, flops_arc_src = _aggregate_arc(jt, gpu_typ, ["gpu_flops"], 1e-9)
+        bw_arc, bw_arc_src = _aggregate_arc(
+            jt, gpu_typ, ["gpu_mem_total_bytes"], 1 / (1024 ** 3)
+        )
+        attempts.append(
+            f"{gpu_typ}:arc rows(flops={len(flops_arc.index)}, bw={len(bw_arc.index)}) "
+            f"src(flops={flops_arc_src}, bw={bw_arc_src})"
+        )
+        if (
+            not flops_arc.empty
+            and "sum_val" in flops_arc.columns
+            and not bw_arc.empty
+            and "sum_val" in bw_arc.columns
+        ):
+            flops_gf = flops_arc.rename(columns={"sum_val": "flops_gf"})[
+                ["host", "time", "flops_gf"]
+            ]
+            bw_gb = bw_arc.rename(columns={"sum_val": "bw_gb"})[
+                ["host", "time", "bw_gb"]
+            ]
+            df = base.merge(flops_gf, on=["host", "time"], how="inner")
+            df = df.merge(bw_gb, on=["host", "time"], how="inner")
+            if not df.empty:
+                return (df, None)
+            missing_reasons.append(
+                f"{gpu_typ}: counters found in arc but no overlapping host/time samples"
+            )
+
+        flops_val, flops_val_src = _aggregate_value(
+            jt, gpu_typ, ["gpu_flops_rate"], 1e-9
+        )
+        bw_val, bw_val_src = _aggregate_value(
+            jt, gpu_typ, ["gpu_mem_bw_bytes_rate"], 1 / (1024 ** 3)
+        )
+        attempts.append(
+            f"{gpu_typ}:value rows(flops={len(flops_val.index)}, bw={len(bw_val.index)}) "
+            f"src(flops={flops_val_src}, bw={bw_val_src})"
+        )
+        if (
+            not flops_val.empty
+            and "sum_val" in flops_val.columns
+            and not bw_val.empty
+            and "sum_val" in bw_val.columns
+        ):
+            flops_gf = flops_val.rename(columns={"sum_val": "flops_gf"})[
+                ["host", "time", "flops_gf"]
+            ]
+            bw_gb = bw_val.rename(columns={"sum_val": "bw_gb"})[
+                ["host", "time", "bw_gb"]
+            ]
+            df = base.merge(flops_gf, on=["host", "time"], how="inner")
+            df = df.merge(bw_gb, on=["host", "time"], how="inner")
+            if not df.empty:
+                return (df, None)
+            missing_reasons.append(
+                f"{gpu_typ}: counters found in value but no overlapping host/time samples"
+            )
+
+    detail = "; ".join(missing_reasons) if missing_reasons else "; ".join(attempts)
+    return (
+        None,
+        "Missing strict GPU roofline counters in host_data "
+        "(need GPU FLOPS + GPU memory-bandwidth counters from nvidia_gpu/amd_gpu). "
+        f"Attempted: {detail}",
+    )
+
+
+def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
+    """Build CPU/host roofline plot from jid_table."""
+    if not jt.host_list:
+        return None
+    df, _reason = _get_flops_bw_df_and_reason(jt)
+    if df is None or df.empty:
+        return None
+    return _build_roofline_figure(
+        df,
+        peak_flops_gf=peak_flops_gf,
+        peak_bw_gb=peak_bw_gb,
+        title="Roofline (job)",
+    )
+
+
+def plot_gpu_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
+    """Build strict GPU roofline plot from jid_table."""
+    if not jt.host_list:
+        return None
+    df, _reason = _get_gpu_flops_bw_df_and_reason(jt)
+    if df is None or df.empty:
+        return None
+    return _build_roofline_figure(
+        df,
+        peak_flops_gf=peak_flops_gf,
+        peak_bw_gb=peak_bw_gb,
+        title="GPU Roofline (job)",
+    )
+
+
 def plot_and_reason_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
     """Build roofline plot and return (figure_or_none, unavailable_reason_or_none)."""
     if not jt.host_list:
@@ -370,4 +470,21 @@ def plot_and_reason_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=N
     )
     if fig is None:
         return (None, reason or "No valid roofline points after AI/perf filtering")
+    return (fig, None)
+
+
+def plot_and_reason_gpu_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
+    """Build strict GPU roofline plot and return (figure_or_none, unavailable_reason_or_none)."""
+    if not jt.host_list:
+        return (None, "No hosts found in host_data for this job/time range")
+
+    df, reason = _get_gpu_flops_bw_df_and_reason(jt)
+    if df is None or df.empty:
+        return (None, reason)
+
+    fig = plot_gpu_roofline_from_jid_table(
+        jt, peak_flops_gf=peak_flops_gf, peak_bw_gb=peak_bw_gb
+    )
+    if fig is None:
+        return (None, reason or "No valid GPU roofline points after AI/perf filtering")
     return (fig, None)
