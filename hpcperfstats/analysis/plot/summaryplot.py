@@ -314,6 +314,9 @@ class SummaryPlot():
       y_range_end = 0
     if math.isnan(y_range_start):
       y_range_start = 0
+    if y_range_end <= y_range_start:
+      # Keep a non-degenerate y-range so all-zero/all-constant series still render.
+      y_range_end = y_range_start + 1
 
     label_text = (label or "").strip() or metric
 

@@ -297,11 +297,10 @@ export default function JobDetail() {
             </p>
           ) : (
             <table border="1" style={{ marginTop: "1rem" }}>
-              <caption>GPU Statistics</caption>
               <tbody>
                 <tr>
                   <td style={{ border: "1px solid lightgrey" }}>
-                    <b>GPU count (monitor):</b>
+                    <b>GPU Count:</b>
                   </td>
                   <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
                     {formatDecimalStandard(gpu_count)}

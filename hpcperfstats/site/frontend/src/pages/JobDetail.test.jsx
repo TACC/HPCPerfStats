@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
@@ -276,9 +276,8 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByText("Job Detail")).toBeInTheDocument();
     });
-    expect(screen.getByText("GPU count (monitor):")).toBeInTheDocument();
-    const gpuTable = screen.getByRole("table", { name: "GPU Statistics" });
-    expect(within(gpuTable).getByText("4.00")).toBeInTheDocument();
+    expect(screen.getByText("GPU Count:")).toBeInTheDocument();
+    expect(screen.getByText("4.00")).toBeInTheDocument();
   });
 
   it("renders second GPU roofline panel in host-level plots", async () => {

@@ -69,6 +69,9 @@ class DevPlot:
       y_min_value = 0
 
     y_range_start = y_min_value if y_min_value < 0 else 0
+    if y_range_end <= y_range_start:
+      # Keep a non-degenerate y-range so all-zero/all-constant series still render.
+      y_range_end = y_range_start + 1
 
     ylabel = event + " (" + (unit or "") + ")"
 
