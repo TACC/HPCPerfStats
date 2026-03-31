@@ -174,15 +174,8 @@ hpcperfstatsd_SOURCES += \
 	likwid_rapl.c \
 	likwid_pmc_adapter.h \
 	likwid_pmc_adapter.c \
-	likwid_arch_map.h
-if MONITOR_ARCH_INTEL
-hpcperfstatsd_SOURCES += \
-	likwid_arch_map_intel.c
-endif
-if MONITOR_ARCH_AMD
-hpcperfstatsd_SOURCES += \
-	likwid_arch_map_amd.c
-endif
+	likwid_arch_map.h \
+	likwid_arch_map.c
 endif
 
 if INFINIBAND
