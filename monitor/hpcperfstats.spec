@@ -89,6 +89,8 @@ fi
 export PREFIX="%{_builddir}/hpcperfstats-static-prefix"
 export SRCDIR="%{_builddir}/hpcperfstats-static-src"
 export JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+# RPM builds must produce an optimized release daemon from the static bundle path.
+export HPC_BUNDLE_RELEASE_BUILD=1
 mkdir -p "${PREFIX}/include" "${PREFIX}/lib" "${PREFIX}/lib64" "${PREFIX}/lib/pkgconfig"
 # Network access is required on first build to fetch pinned dependency tarballs
 # unless you pre-populate ${SRCDIR} / ${PREFIX} and set SKIP_DEPS=1 below.
