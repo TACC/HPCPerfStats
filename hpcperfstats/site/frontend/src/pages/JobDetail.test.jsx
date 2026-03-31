@@ -278,7 +278,7 @@ describe("JobDetail", () => {
     });
     expect(screen.getByText("GPU count (monitor):")).toBeInTheDocument();
     const gpuTable = screen.getByRole("table", { name: "GPU Statistics" });
-    expect(within(gpuTable).getByText("4")).toBeInTheDocument();
+    expect(within(gpuTable).getByText("4.00")).toBeInTheDocument();
   });
 
   it("renders second GPU roofline panel in host-level plots", async () => {

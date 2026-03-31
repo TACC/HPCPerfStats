@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import LoadingMessage from "../components/LoadingMessage";
+import { formatDecimalStandard } from "../utils/formatDecimal";
 
 export default function JobMonitor() {
   const [rows, setRows] = useState([]);
@@ -174,19 +175,11 @@ export default function JobMonitor() {
                       "(unknown)"
                     )}
                   </td>
-                  <td>{row.total_jobs}</td>
-                  <td>{row.failed_jobs}</td>
-                  <td>
-                    {row.failed_rate?.toFixed
-                      ? row.failed_rate.toFixed(2)
-                      : row.failed_rate}
-                  </td>
-                  <td>{row.timedout_jobs}</td>
-                  <td>
-                    {row.timedout_rate?.toFixed
-                      ? row.timedout_rate.toFixed(2)
-                      : row.timedout_rate}
-                  </td>
+                  <td>{formatDecimalStandard(row.total_jobs)}</td>
+                  <td>{formatDecimalStandard(row.failed_jobs)}</td>
+                  <td>{formatDecimalStandard(row.failed_rate)}</td>
+                  <td>{formatDecimalStandard(row.timedout_jobs)}</td>
+                  <td>{formatDecimalStandard(row.timedout_rate)}</td>
                 </tr>
               ))}
               {rows.length === 0 && (

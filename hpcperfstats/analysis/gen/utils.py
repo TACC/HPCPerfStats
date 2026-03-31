@@ -299,7 +299,7 @@ const v = value;
 if (v == null || v === "") return "";
 const n = typeof v === "number" ? v : Number(v);
 if (Number.isFinite(n))
-  return new Intl.NumberFormat("en-US", {notation: "standard", maximumFractionDigits: 20}).format(n);
+  return new Intl.NumberFormat("en-US", {notation: "standard", minimumFractionDigits: 2, maximumFractionDigits: 2}).format(n);
 return String(v);
 """
 
@@ -308,13 +308,13 @@ const t = tick;
 if (t == null || t === "") return "";
 const n = typeof t === "number" ? t : Number(t);
 if (!Number.isFinite(n)) return String(t);
-return new Intl.NumberFormat("en-US", {notation: "standard", maximumFractionDigits: 20}).format(n);
+return new Intl.NumberFormat("en-US", {notation: "standard", minimumFractionDigits: 2, maximumFractionDigits: 2}).format(n);
 """
 
 
 def new_plain_linear_tick_formatter():
   """Bokeh tick labels without scientific notation (new instance per axis/plot)."""
-  return BasicTickFormatter(use_scientific=False)
+  return BasicTickFormatter(use_scientific=False, precision=2)
 
 
 def new_plain_log_tick_formatter():

@@ -29,7 +29,7 @@ function CollapsibleSection({ title, children, defaultOpen = false, empty = fals
 
 function formatJobMetricCell(obj, isStaff) {
   if (obj.value != null && obj.value !== "") {
-    return Number(obj.value).toFixed(2);
+    return formatDecimalStandard(obj.value);
   }
   if (isStaff) {
     return obj.no_data_reason || "Data not available.";
@@ -205,8 +205,8 @@ export default function JobDetail() {
               </td>
               <td>{formatDateTime(job.start_time)}</td>
               <td>{formatDateTime(job.end_time)}</td>
-              <td>{job.runtime}</td>
-              <td>{job.timelimit}</td>
+              <td>{formatDecimalStandard(job.runtime)}</td>
+              <td>{formatDecimalStandard(job.timelimit)}</td>
               <td>
                 {job.queue ? (
                   <Link to={`/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</Link>
@@ -216,8 +216,8 @@ export default function JobDetail() {
               </td>
               <td>{job.jobname}</td>
               <td>{job.state}</td>
-              <td>{job.ncores}</td>
-              <td>{job.nhosts}</td>
+              <td>{formatDecimalStandard(job.ncores)}</td>
+              <td>{formatDecimalStandard(job.nhosts)}</td>
             </tr>
           </tbody>
           </table>
@@ -312,7 +312,7 @@ export default function JobDetail() {
                     <b>Number of GPUs active:</b>
                   </td>
                   <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
-                    {gpu_active}
+                    {formatDecimalStandard(gpu_active)}
                   </td>
                 </tr>
                 <tr>
@@ -320,7 +320,9 @@ export default function JobDetail() {
                     <b>Max GPU Utilization:</b>
                   </td>
                   <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
-                    {gpu_utilization_max}%
+                    {gpu_utilization_max != null && gpu_utilization_max !== ""
+                      ? `${formatDecimalStandard(gpu_utilization_max)}%`
+                      : ""}
                   </td>
                 </tr>
                 <tr>
@@ -328,7 +330,9 @@ export default function JobDetail() {
                     <b>Mean GPU Utilization:</b>
                   </td>
                   <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
-                    {gpu_utilization_mean != null ? gpu_utilization_mean.toFixed(1) : ""}%
+                    {gpu_utilization_mean != null && gpu_utilization_mean !== ""
+                      ? `${formatDecimalStandard(gpu_utilization_mean)}%`
+                      : ""}
                   </td>
                 </tr>
               </tbody>

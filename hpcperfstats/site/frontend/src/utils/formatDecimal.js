@@ -11,6 +11,7 @@ export function formatDecimalStandard(value) {
   }
   return new Intl.NumberFormat("en-US", {
     notation: "standard",
-    maximumFractionDigits: 20,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(n);
 }

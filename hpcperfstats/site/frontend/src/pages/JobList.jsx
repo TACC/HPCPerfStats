@@ -5,6 +5,7 @@ import { api } from "../api";
 import HistogramThumbnails from "../components/HistogramThumbnails";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
+import { formatDecimalStandard } from "../utils/formatDecimal";
 
 const ResolvedReactPaginate = ReactPaginate?.default || ReactPaginate;
 
@@ -233,7 +234,9 @@ export default function JobList() {
       <hr />
       <h4>#Jobs = {nj}</h4>
       {totalNodeHours != null && (
-        <p className="mb-0">Total Node Hours (all matching jobs): {Number(totalNodeHours).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+        <p className="mb-0">
+          Total Node Hours (all matching jobs): {formatDecimalStandard(totalNodeHours)}
+        </p>
       )}
 
       {num_pages > 1 && (
@@ -326,7 +329,7 @@ export default function JobList() {
               </td>
               <td>{formatDateTime(job.start_time)}</td>
               <td>{formatDateTime(job.end_time)}</td>
-              <td>{job.runtime}</td>
+              <td>{formatDecimalStandard(job.runtime)}</td>
               <td>
                 {job.queue ? (
                   <Link to={`/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</Link>
@@ -336,9 +339,9 @@ export default function JobList() {
               </td>
               <td>{job.jobname}</td>
               <td>{job.state}</td>
-              <td>{job.ncores}</td>
-              <td>{job.nhosts}</td>
-              <td>{job.node_hrs != null ? Number(job.node_hrs).toFixed(2) : ""}</td>
+              <td>{formatDecimalStandard(job.ncores)}</td>
+              <td>{formatDecimalStandard(job.nhosts)}</td>
+              <td>{formatDecimalStandard(job.node_hrs)}</td>
             </tr>
           ))}
         </tbody>
