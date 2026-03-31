@@ -135,9 +135,16 @@ if test "x$cpu_counter_backend" = "xlikwid"; then
   dnl Static liblikwid.a needs hwloc/lua archives and -lm on the same link line; AC_SEARCH_LIBS
   dnl probes with -llikwid only unless we pass other libs for the try link.
   if test "x$enable_all_static" = xyes; then
-    AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
-      [AC_MSG_ERROR([Unable to find liblikwid!])],
-      [-llikwid-hwloc -llikwid-lua -lm])
+    save_LIBS=$LIBS
+    LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm $LIBS"
+    AC_LINK_IFELSE(
+      [AC_LANG_PROGRAM([[#include <likwid.h>]], [[perfmon_init(0, NULL);]])],
+      [have_likwid=yes],
+      [have_likwid=no]
+    )
+    LIBS=$save_LIBS
+    AS_IF([test "x$have_likwid" != xyes], [AC_MSG_ERROR([Unable to find liblikwid!])])
+    LIBS="$LIBS -llikwid"
   else
     AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
       [AC_MSG_ERROR([Unable to find liblikwid!])])
