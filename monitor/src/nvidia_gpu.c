@@ -1,8 +1,10 @@
 #include <inttypes.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include "collect.h"
 #include "dcgm_agent.h"
@@ -39,6 +41,30 @@ static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
   DCGM_FI_PROF_SM_OCCUPANCY,
   DCGM_FI_DEV_CLOCK_THROTTLE_REASONS
 };
+
+/* Coarse roofline approximations from utilization signals. */
+#define NVIDIA_GPU_APPROX_PEAK_FLOPS_PER_S 60000000000000.0
+#define NVIDIA_GPU_APPROX_PEAK_MEM_BW_BYTES_PER_S 1000000000000.0
+
+static unsigned long long g_gpu_est_flops[DCGM_MAX_NUM_DEVICES];
+static unsigned long long g_gpu_est_mem_read_bytes[DCGM_MAX_NUM_DEVICES];
+static unsigned long long g_gpu_est_mem_write_bytes[DCGM_MAX_NUM_DEVICES];
+static unsigned long long g_gpu_est_mem_total_bytes[DCGM_MAX_NUM_DEVICES];
+static long long g_gpu_prev_collect_us = 0;
+
+static unsigned long long clamp_double_to_ull(double v)
+{
+  if (v <= 0.0)
+    return 0ULL;
+  if (v >= (double) ULLONG_MAX)
+    return ULLONG_MAX;
+  return (unsigned long long) (v + 0.5);
+}
+
+static unsigned long long ull_add_sat(unsigned long long a, unsigned long long b)
+{
+  return (ULLONG_MAX - a < b) ? ULLONG_MAX : (a + b);
+}
 
 static const char *dcgm_err(dcgmReturn_t rc)
 {
@@ -170,8 +196,42 @@ static dcgmReturn_t nvidia_gpu_discover_gpu_ids(dcgmHandle_t h,
   return rc;
 }
 
-static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, int gpu_count)
+static int nvidia_gpu_collect_dev(struct stats *stats,
+                                  const dcgm_data_t *row,
+                                  unsigned int gid,
+                                  int gpu_count,
+                                  long long delta_us)
 {
+  double fp_mix;
+  double flops_rate;
+  double mem_bw_rate;
+  unsigned long long delta_flops = 0ULL;
+  unsigned long long delta_mem_bytes = 0ULL;
+  unsigned long long delta_mem_read_bytes = 0ULL;
+  unsigned long long delta_mem_write_bytes = 0ULL;
+
+  fp_mix = row->fp64_active + row->fp32_active + row->fp16_active + row->tensor_active;
+  if (fp_mix < 0.0)
+    fp_mix = 0.0;
+  if (fp_mix > 1.0)
+    fp_mix = 1.0;
+  flops_rate = fp_mix * NVIDIA_GPU_APPROX_PEAK_FLOPS_PER_S;
+  mem_bw_rate = ((double) row->mem_util / 100.0) * NVIDIA_GPU_APPROX_PEAK_MEM_BW_BYTES_PER_S;
+  if (mem_bw_rate < 0.0)
+    mem_bw_rate = 0.0;
+
+  if (delta_us > 0) {
+    double dt_sec = (double) delta_us / 1000000.0;
+    delta_flops = clamp_double_to_ull(flops_rate * dt_sec);
+    delta_mem_bytes = clamp_double_to_ull(mem_bw_rate * dt_sec);
+    delta_mem_read_bytes = delta_mem_bytes / 2ULL;
+    delta_mem_write_bytes = delta_mem_bytes - delta_mem_read_bytes;
+    g_gpu_est_flops[gid] = ull_add_sat(g_gpu_est_flops[gid], delta_flops);
+    g_gpu_est_mem_total_bytes[gid] = ull_add_sat(g_gpu_est_mem_total_bytes[gid], delta_mem_bytes);
+    g_gpu_est_mem_read_bytes[gid] = ull_add_sat(g_gpu_est_mem_read_bytes[gid], delta_mem_read_bytes);
+    g_gpu_est_mem_write_bytes[gid] = ull_add_sat(g_gpu_est_mem_write_bytes[gid], delta_mem_write_bytes);
+  }
+
   stats_set(stats, "temperature", I64_TO_LLU(row->temperature));
   stats_set(stats, "gpu_util", I64_TO_LLU(row->gpu_util));
   stats_set(stats, "mem_util", I64_TO_LLU(row->mem_util));
@@ -185,6 +245,12 @@ static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, i
   stats_set(stats, "sm_occupancy", DBL_TO_LLU_PERCENT(row->sm_occupancy));
   stats_set(stats, "tensor_active", DBL_TO_LLU_PERCENT(row->tensor_active));
   stats_set(stats, "clocks_event_reasons", I64_TO_LLU(row->clocks_event_reasons));
+  stats_set(stats, "gpu_flops_rate", clamp_double_to_ull(flops_rate));
+  stats_set(stats, "gpu_mem_bw_bytes_rate", clamp_double_to_ull(mem_bw_rate));
+  stats_set(stats, "gpu_flops", g_gpu_est_flops[gid]);
+  stats_set(stats, "gpu_mem_read_bytes", g_gpu_est_mem_read_bytes[gid]);
+  stats_set(stats, "gpu_mem_write_bytes", g_gpu_est_mem_write_bytes[gid]);
+  stats_set(stats, "gpu_mem_total_bytes", g_gpu_est_mem_total_bytes[gid]);
   stats_set(stats, "gpu_count", (unsigned long long) (gpu_count < 0 ? 0 : gpu_count));
   return 0;
 }
@@ -195,6 +261,7 @@ static void nvidia_gpu_collect(struct stats_type *type)
   int nr = 0;
   int ndev = 0;
   int dcgm_remote = 0;
+  long long delta_us = 0;
   dcgmReturn_t rc;
   dcgmHandle_t dcgm_handle = (dcgmHandle_t) NULL;
   dcgmGpuGrp_t group_id = (dcgmGpuGrp_t) NULL;
@@ -204,6 +271,17 @@ static void nvidia_gpu_collect(struct stats_type *type)
   char group_name[] = "gpu_all";
 
   rc = dcgmInit();
+  {
+    struct timespec mono;
+    if (clock_gettime(CLOCK_MONOTONIC, &mono) == 0) {
+      long long now_us =
+          (long long) mono.tv_sec * 1000000LL + (long long) mono.tv_nsec / 1000LL;
+      if (g_gpu_prev_collect_us > 0 && now_us > g_gpu_prev_collect_us)
+        delta_us = now_us - g_gpu_prev_collect_us;
+      g_gpu_prev_collect_us = now_us;
+    }
+  }
+
   if (rc != DCGM_ST_OK) {
     ERROR("DCGM init failed: %s\n", dcgm_err(rc));
     goto out;
@@ -278,11 +356,14 @@ static void nvidia_gpu_collect(struct stats_type *type)
     char dev[80];
     unsigned int gid = gpu_ids[i];
 
+    if (gid >= DCGM_MAX_NUM_DEVICES)
+      continue;
+
     snprintf(dev, sizeof(dev), "%d", i);
     stats = get_current_stats(type, dev);
     if (stats == NULL)
       continue;
-    if (nvidia_gpu_collect_dev(stats, &dcgm_data[gid], ndev) == 0)
+    if (nvidia_gpu_collect_dev(stats, &dcgm_data[gid], gid, ndev, delta_us) == 0)
       nr++;
   }
 

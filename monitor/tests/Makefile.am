@@ -31,7 +31,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_pscanf test_schema_parse test_stats_file_format
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli
 endif
@@ -70,6 +70,9 @@ test_stats_file_format_SOURCES = \
 	test_stats_file_format.c \
 	$(top_srcdir)/src/stats_file_format.c
 
+test_gpu_schema_contract_SOURCES = \
+	test_gpu_schema_contract.c
+
 if RABBITMQ
 test_monitor_cli_SOURCES = \
 	test_monitor_cli.c \
@@ -85,6 +88,7 @@ test_path_collect_LDADD = $(LDADD)
 test_pscanf_LDADD = $(LDADD)
 test_schema_parse_LDADD = $(LDADD)
 test_stats_file_format_LDADD = $(LDADD)
+test_gpu_schema_contract_LDADD = $(LDADD)
 if RABBITMQ
 test_monitor_cli_LDADD = $(LDADD)
 endif

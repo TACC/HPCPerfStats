@@ -60,6 +60,12 @@ static void amd_gpu_collect(struct stats_type *type)
   stats_set(stats, "fp16_active", 0);
   stats_set(stats, "tensor_active", 0);
   stats_set(stats, "clocks_event_reasons", 0);
+  stats_set(stats, "gpu_flops_rate", 0);
+  stats_set(stats, "gpu_mem_bw_bytes_rate", 0);
+  stats_set(stats, "gpu_flops", 0);
+  stats_set(stats, "gpu_mem_read_bytes", 0);
+  stats_set(stats, "gpu_mem_write_bytes", 0);
+  stats_set(stats, "gpu_mem_total_bytes", 0);
   stats_set(stats, "gpu_count", 1);
 }
 
