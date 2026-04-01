@@ -66,6 +66,8 @@ _SHARED_FS_READ_METRIC = "shared_fs_read_mb_s"
 _SHARED_FS_WRITE_METRIC = "shared_fs_write_mb_s"
 _SHARED_FS_READ_LABEL = "SharedFS Read [MB/s]"
 _SHARED_FS_WRITE_LABEL = "SharedFS Write [MB/s]"
+_SHARED_FS_IOPS_METRIC = "shared_fs_iops"
+_SHARED_FS_IOPS_LABEL = "SharedFS IOPS Per Host [#/s]"
 
 
 def _intel_core_tries(events, conv):
@@ -175,6 +177,7 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset({
     "nv_gpu_count",
     _SHARED_FS_READ_METRIC,
     _SHARED_FS_WRITE_METRIC,
+    _SHARED_FS_IOPS_METRIC,
 })
 
 # Merged for scaling/context only; not rendered as its own subplot.
@@ -252,7 +255,7 @@ def _summary_intel_imc_bw_tries():
 
 
 def _merge_shared_fs_metric(df, jt, metric_name, source_specs):
-  """Merge shared filesystem throughput from multiple source counters into one metric."""
+  """Merge shared filesystem counters into one per-host/per-time metric."""
   merged = df
   accum_col = "__shared_fs_accum__"
   merged[accum_col] = 0.0
@@ -354,6 +357,35 @@ def iter_summary_aggregate_attempts():
         else _SHARED_FS_WRITE_LABEL
     )
     yield typ, val_col, events, shared_name, conv, shared_label
+  for typ, val_col, events, conv in (
+      ("llite", "arc", [
+          "open",
+          "close",
+          "mmap",
+          "fsync",
+          "setattr",
+          "truncate",
+          "flock",
+          "getattr",
+          "statfs",
+          "alloc_inode",
+          "setxattr",
+          "listxattr",
+          "removexattr",
+          "readdir",
+          "create",
+          "lookup",
+          "link",
+          "unlink",
+          "symlink",
+          "mkdir",
+          "rmdir",
+          "mknod",
+          "rename",
+      ], 1.0),
+      ("nfs", "arc", ["READ_ops", "WRITE_ops"], 1.0),
+  ):
+    yield typ, val_col, events, _SHARED_FS_IOPS_METRIC, conv, _SHARED_FS_IOPS_LABEL
 
 
 def _summary_metric_specs():
@@ -364,6 +396,7 @@ def _summary_metric_specs():
   out.append(("intel_imc", "arc", [], "mbw", _CAS_BW_CONV, "DRAMBW[GB/s]"))
   out.append(("", "", [], _SHARED_FS_READ_METRIC, 0, _SHARED_FS_READ_LABEL))
   out.append(("", "", [], _SHARED_FS_WRITE_METRIC, 0, _SHARED_FS_WRITE_LABEL))
+  out.append(("", "", [], _SHARED_FS_IOPS_METRIC, 0, _SHARED_FS_IOPS_LABEL))
   return out
 
 
@@ -384,6 +417,7 @@ def _summary_plot_order_key(metric_name):
       "ibbw": 999,
       _SHARED_FS_READ_METRIC: 1000,
       _SHARED_FS_WRITE_METRIC: 1001,
+      _SHARED_FS_IOPS_METRIC: 1002,
   }
   return priority.get(metric_name, 100)
 
@@ -536,6 +570,36 @@ class SummaryPlot():
         df, self.jt, _SHARED_FS_READ_METRIC, shared_read_sources)
     df = _merge_shared_fs_metric(
         df, self.jt, _SHARED_FS_WRITE_METRIC, shared_write_sources)
+    shared_iops_sources = (
+        ("llite", "arc", [
+            "open",
+            "close",
+            "mmap",
+            "fsync",
+            "setattr",
+            "truncate",
+            "flock",
+            "getattr",
+            "statfs",
+            "alloc_inode",
+            "setxattr",
+            "listxattr",
+            "removexattr",
+            "readdir",
+            "create",
+            "lookup",
+            "link",
+            "unlink",
+            "symlink",
+            "mkdir",
+            "rmdir",
+            "mknod",
+            "rename",
+        ], 1.0),
+        ("nfs", "arc", ["READ_ops", "WRITE_ops"], 1.0),
+    )
+    df = _merge_shared_fs_metric(
+        df, self.jt, _SHARED_FS_IOPS_METRIC, shared_iops_sources)
 
     metrics = _summary_metric_specs()
 
