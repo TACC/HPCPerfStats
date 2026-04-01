@@ -85,6 +85,7 @@ static void nfs_collect_mnt_xprt(struct stats *stats, char *str)
  * net/sunrpc/stats.c. */
 
 #define _OP_DIAG_KEYS(o) \
+  X(o##_ops,        "E",      "count of "#o" RPC ops"), \
   X(o##_timeouts,   "E",      "count of "#o" major timeouts"), \
   X(o##_queue,      "E,U=ms", "time "#o" RPC queued for send"), \
   X(o##_rtt,        "E,U=ms", "RTT for "#o" RPC")
@@ -123,6 +124,8 @@ static void nfs_collect_mnt_op(struct stats *stats, const char *op, char *str)
 
   snprintf(key, sizeof(key), "%s_timeouts", op);
   stats_set(stats, key, v[2]);
+  snprintf(key, sizeof(key), "%s_ops", op);
+  stats_set(stats, key, v[1]);
   snprintf(key, sizeof(key), "%s_queue", op);
   stats_set(stats, key, v[5]);
   snprintf(key, sizeof(key), "%s_rtt", op);

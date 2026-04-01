@@ -25,6 +25,8 @@
 */
 
 #define KEYS \
+  X(read, "E", ""), \
+  X(write, "E", ""), \
   X(read_bytes, "E,U=B", ""), \
   X(write_bytes, "E,U=B", ""), \
   X(direct_read, "E,U=B", ""), \
