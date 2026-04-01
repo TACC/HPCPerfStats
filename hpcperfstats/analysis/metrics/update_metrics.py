@@ -22,7 +22,7 @@ from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
 from django.db import close_old_connections, connections
-from django.db.models import Count, F, IntegerField, OuterRef, Q, Subquery, Value
+from django.db.models import Count, F, IntegerField, Max, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, DatabaseError
 
@@ -39,7 +39,7 @@ from hpcperfstats.shutdown_utils import (
     send_sigchld_to_parent,
     sleep_until_shutdown,
 )
-from hpcperfstats.site.machine.models import job_data, metrics_data
+from hpcperfstats.site.machine.models import host_data, job_data, metrics_data
 
 DEBUG = cfg.get_debug()
 
@@ -185,6 +185,63 @@ def _job_refs_from_jids(jids):
   return [SimpleNamespace(jid=jid) for jid in jids]
 
 
+def _fqdn_hosts_for_job(job_row):
+  """Return job host_list as FQDN hostnames used by host_data."""
+  suffix = "." + cfg.get_host_name_ext()
+  hosts = []
+  for host in (job_row.get("host_list") or []):
+    h = str(host or "").strip()
+    if not h:
+      continue
+    hosts.append(h if "." in h else (h + suffix))
+  return hosts
+
+
+def _filter_jids_with_samples_after_end(jids):
+  """Keep jids where every job host has latest host_data.time strictly after end_time."""
+  if not jids:
+    return []
+
+  jobs = list(
+      job_data.objects.filter(jid__in=list(jids)).values("jid", "end_time", "host_list")
+  )
+  if not jobs:
+    return []
+
+  unique_hosts = set()
+  job_hosts = {}
+  for row in jobs:
+    hosts = _fqdn_hosts_for_job(row)
+    job_hosts[row["jid"]] = hosts
+    unique_hosts.update(hosts)
+
+  latest_by_host = {}
+  if unique_hosts:
+    for row in (
+        host_data.objects.filter(host__in=list(unique_hosts))
+        .values("host")
+        .annotate(last_time=Max("time"))
+    ):
+      latest_by_host[row.get("host")] = row.get("last_time")
+
+  ready = []
+  for row in jobs:
+    jid = row["jid"]
+    end_time = row.get("end_time")
+    hosts = job_hosts.get(jid) or []
+    if end_time is None or not hosts:
+      continue
+    is_ready = True
+    for host in hosts:
+      latest = latest_by_host.get(host)
+      if latest is None or latest <= end_time:
+        is_ready = False
+        break
+    if is_ready:
+      ready.append(jid)
+  return ready
+
+
 def update_metrics(date, rerun=False):
   """Compute and persist metrics for all jobs ending on date (runtime >= min_time).
 
@@ -220,11 +277,16 @@ def update_metrics(date, rerun=False):
       log_print(name)
 
     processed = 0
+    skipped_not_ready = 0
     for pk_chunk, _ in _iter_chunked_pks(qs, CHUNK_SIZE):
       if shutdown_requested[0]:
         break
       try:
-        jobs_chunk = _job_refs_from_jids(pk_chunk)
+        ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+        skipped_not_ready += max(0, len(pk_chunk) - len(ready_jids))
+        if not ready_jids:
+          continue
+        jobs_chunk = _job_refs_from_jids(ready_jids)
         metrics_manager.run(jobs_chunk)
         processed += len(jobs_chunk)
       except (OperationalError, DatabaseError) as exc:
@@ -235,7 +297,11 @@ def update_metrics(date, rerun=False):
             "for date {1}: {2}".format(len(pk_chunk), date, exc)
         )
         close_old_connections()
-        jobs_chunk = _job_refs_from_jids(pk_chunk)
+        ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+        skipped_not_ready += max(0, len(pk_chunk) - len(ready_jids))
+        if not ready_jids:
+          continue
+        jobs_chunk = _job_refs_from_jids(ready_jids)
         metrics_manager.run(jobs_chunk)
         processed += len(jobs_chunk)
       finally:
@@ -247,8 +313,8 @@ def update_metrics(date, rerun=False):
         break
 
     log_print(
-        "Finished metrics for date {0}: processed {1} jobs".format(
-            date.strftime("%Y-%m-%d"), processed
+        "Finished metrics for date {0}: processed {1} jobs, skipped {2} not-ready jobs".format(
+            date.strftime("%Y-%m-%d"), processed, skipped_not_ready
         )
     )
 

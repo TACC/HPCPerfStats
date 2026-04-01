@@ -207,6 +207,7 @@ def test_update_metrics_stops_between_chunks_on_shutdown(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
 
   update_metrics.shutdown_requested[0] = False
   seen = []
@@ -246,6 +247,7 @@ def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
 
   # If a regression re-introduces ORM fetches, fail loudly.
   class _NoQueryManager:
@@ -268,3 +270,35 @@ def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
 
   update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
   assert seen == [[101, 102], [103]]
+
+
+def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
+  """Jobs without host latest sample strictly after end_time are skipped."""
+  monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
+  monkeypatch.setattr(
+      update_metrics,
+      "_iter_chunked_pks",
+      lambda qs, chunk: iter([([101, 102, 103], 3)]),
+  )
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(
+      update_metrics,
+      "_filter_jids_with_samples_after_end",
+      lambda jids: [jid for jid in jids if jid in (101, 103)],
+  )
+
+  seen = []
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def run(self, jobs):
+      seen.append([j.jid for j in jobs])
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "DEBUG", False)
+
+  update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
+  assert seen == [[101, 103]]
