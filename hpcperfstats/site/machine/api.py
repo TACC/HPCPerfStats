@@ -348,8 +348,10 @@ def _apply_zoom_layout_to_json_item(plot_item):
         "TabPanel",
     }
 
-    def _apply_attrs(attrs, allow_dimension_reset=False):
+    def _apply_attrs(attrs, apply_layout_sizing=False, allow_dimension_reset=False):
         if not isinstance(attrs, dict):
+            return
+        if not apply_layout_sizing:
             return
         attrs["sizing_mode"] = "stretch_both"
         attrs["width_policy"] = "max"
@@ -371,7 +373,12 @@ def _apply_zoom_layout_to_json_item(plot_item):
             attrs = node.get("attributes")
             if isinstance(attrs, dict):
                 model_name = node.get("name")
-                _apply_attrs(attrs, allow_dimension_reset=model_name in layout_model_names)
+                is_layout_model = model_name in layout_model_names
+                _apply_attrs(
+                    attrs,
+                    apply_layout_sizing=is_layout_model,
+                    allow_dimension_reset=is_layout_model,
+                )
             for value in node.values():
                 _walk(value)
         elif isinstance(node, list):

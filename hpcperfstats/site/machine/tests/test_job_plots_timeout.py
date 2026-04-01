@@ -400,3 +400,27 @@ def test_apply_zoom_layout_to_json_item_keeps_glyph_dimensions():
   assert rect_attrs["width"] == {"type": "value", "value": 1}
   assert rect_attrs["height"] == {"type": "value", "value": 1}
 
+
+def test_apply_zoom_layout_to_json_item_does_not_mutate_document_config():
+  """Zoom JSON transform must not inject unsupported attrs into DocumentConfig."""
+  from hpcperfstats.site.machine.api import _apply_zoom_layout_to_json_item
+
+  item = {
+      "doc": {
+          "roots": [
+              {
+                  "type": "object",
+                  "name": "DocumentConfig",
+                  "id": "cfg-1",
+                  "attributes": {"notifications": {"type": "value", "value": []}},
+              }
+          ]
+      }
+  }
+
+  out = _apply_zoom_layout_to_json_item(item)
+  cfg_attrs = out["doc"]["roots"][0]["attributes"]
+  assert "sizing_mode" not in cfg_attrs
+  assert "width_policy" not in cfg_attrs
+  assert "height_policy" not in cfg_attrs
+
