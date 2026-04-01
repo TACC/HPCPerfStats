@@ -310,6 +310,43 @@ def test_job_arc_avg_flops_cpu_counter_metrics():
   assert typename == "cpu_counter_metrics"
 
 
+def test_job_arc_avg_flops_arm_counter_fallback():
+  """avg_flops falls back to cpu_counter_metrics ARM_EST_FLOPS when FP events are absent."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") == "cpu_counter_metrics" and list(kw.get("events") or []) == ["ARM_EST_FLOPS"]:
+      return 4.25
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_flops(object())
+  assert abs(value - 4.25) < 1e-9
+  assert typename == "cpu_counter_metrics"
+
+
+def test_job_arc_avg_mbw_arm_counter_fallback():
+  """avg_mbw falls back to cpu_counter_metrics ARM_DRAM_BW_BYTES when IMC rows are absent."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") == "cpu_counter_metrics" and list(kw.get("events") or []) == ["ARM_DRAM_BW_BYTES"]:
+      return 6.5
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    with patch(
+        "hpcperfstats.analysis.metrics.metrics.INTEL_IMC_STATS_TYPES",
+        (),
+    ), patch(
+        "hpcperfstats.analysis.metrics.metrics.ARM_IMC_STATS_TYPES",
+        (),
+    ):
+      m = Metrics()
+      value, typename = m._job_arc_avg_mbw(object())
+  assert abs(value - 6.5) < 1e-9
+  assert typename == "cpu_counter_metrics"
+
+
 def test_avg_gpuutil_amd_gpu_uses_gpu_util_column():
   """avg_gpuutil reads amd_gpu.gpu_util when nvidia is absent."""
   schema = _Schema(["gpu_util"])

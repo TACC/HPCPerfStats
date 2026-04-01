@@ -549,6 +549,16 @@ class Metrics():
           total = part if total is None else total + part
       if total is not None and total > 0:
         return total, core_typ
+    # ARM monitor path: cpu_counter_metrics synthetic cumulative FLOP counter.
+    v = self.job_arc(
+        jt,
+        typename="cpu_counter_metrics",
+        events=["ARM_EST_FLOPS"],
+        conv=1e-9,
+        units="GF",
+    )
+    if v is not None:
+      return v, "cpu_counter_metrics"
     return None, None
 
   def _job_arc_avg_mbw(self, jt):
@@ -595,6 +605,16 @@ class Metrics():
       )
       if v is not None:
         return v, imc_typ
+    # ARM monitor path: cpu_counter_metrics synthetic cumulative DRAM bytes.
+    v = self.job_arc(
+        jt,
+        typename="cpu_counter_metrics",
+        events=["ARM_DRAM_BW_BYTES"],
+        conv=1 / (1024 ** 3),
+        units="GB/s",
+    )
+    if v is not None:
+      return v, "cpu_counter_metrics"
     return None, None
 
   # Compute metric
