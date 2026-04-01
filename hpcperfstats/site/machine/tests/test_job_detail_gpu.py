@@ -104,3 +104,32 @@ def test_job_detail_gpu_stats_none_when_two_or_fewer_samples():
   assert response.data["gpu_utilization_max"] is None
   assert response.data["gpu_utilization_mean"] is None
   assert response.data["gpu_count"] is None
+
+
+def test_compute_job_gpu_stats_helper_matches_job_detail_gpu_logic():
+  """Shared helper returns active/max/mean/count from cached aggregate values."""
+  from hpcperfstats.site.machine import api
+
+  job = MagicMock()
+  job.jid = "test-gpu-jid-helper"
+  j = MagicMock()
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  j.start_time = t0
+  j.end_time = t0
+  j.acct_host_list = ["n1.example.com"]
+
+  def cached_se(key, timeout, fn):
+    del timeout, fn
+    if key.startswith(f"{cu.KEY_GPU_AGG}:"):
+      return {"cnt": 4, "vmax": 250.0, "vmean": 80.0}
+    if key.startswith(f"{cu.KEY_GPU_COUNT}:"):
+      return 8
+    return None
+
+  with patch.object(api, "cached_orm", side_effect=cached_se):
+    gpu_active, gpu_max, gpu_mean, gpu_count = api._compute_job_gpu_stats(job, j, 3600)
+
+  assert gpu_max == 250.0
+  assert gpu_active == 3
+  assert gpu_mean == 80.0
+  assert gpu_count == 8

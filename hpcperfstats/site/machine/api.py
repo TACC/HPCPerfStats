@@ -171,6 +171,100 @@ def _job_detail_cache_ttl_for_jid(jid):
     except Exception:
         return JOB_DETAIL_CACHE_TTL_RECENT
     return _job_detail_cache_ttl_for_end_time(end_time)
+
+
+def _compute_job_gpu_stats(job, j, job_cache_timeout):
+    """Compute per-job GPU stats using the same logic as job_detail."""
+    gpu_active, gpu_max, gpu_mean, gpu_count_total = None, None, None, None
+    close_old_connections()
+    try:
+        try:
+            agg = cached_orm(
+                f"{KEY_GPU_AGG}:v2:{job.jid}",
+                job_cache_timeout,
+                lambda: list(
+                    host_data.objects.filter(
+                        type="nvidia_gpu",
+                        event__in=["gpu_util", "utilization"],
+                        time__gte=j.start_time,
+                        time__lte=j.end_time,
+                        host__in=j.acct_host_list or [],
+                    )
+                    .values("event")
+                    .annotate(
+                        cnt=Count("time"),
+                        vmax=Max("value"),
+                        vmean=Avg("value"),
+                    )
+                ),
+            )
+            # Backwards compatibility: cached_orm might return a single
+            # aggregate dict (old shape) or a list of per-event rows.
+            if isinstance(agg, dict):
+                row = agg
+            else:
+                rows = list(agg or [])
+                by_event = {
+                    str(r.get("event")): r for r in rows if isinstance(r, dict)
+                }
+                row = by_event.get("gpu_util") or by_event.get("utilization") or {}
+
+            cnt = int(row.get("cnt") or 0)
+            if cnt > 2:
+                vmax = row.get("vmax")
+                if vmax is not None:
+                    gpu_max = float(vmax)
+                    vmean = row.get("vmean")
+                    gpu_mean = float(vmean) if vmean is not None else None
+                    if not isnan(gpu_max):
+                        gpu_active = ceil(gpu_max / 100.0)
+        except Exception:
+            pass
+
+        def _gpu_count_fn():
+            """Sum over job hosts of max(gpu_count) in window (nvidia_gpu or amd_gpu)."""
+            hosts = j.acct_host_list or []
+            if not hosts:
+                return None
+            for gpu_typ in ("nvidia_gpu", "amd_gpu"):
+                rows = list(
+                    host_data.objects.filter(
+                        type=gpu_typ,
+                        event="gpu_count",
+                        time__gte=j.start_time,
+                        time__lte=j.end_time,
+                        host__in=hosts,
+                    )
+                    .values("host")
+                    .annotate(mv=Max("value"))
+                )
+                if not rows:
+                    continue
+                total = 0
+                for r in rows:
+                    v = r.get("mv")
+                    if v is None:
+                        continue
+                    try:
+                        total += int(round(float(v)))
+                    except (TypeError, ValueError):
+                        continue
+                if total > 0:
+                    return total
+            return None
+
+        try:
+            gpu_count_total = cached_orm(
+                f"{KEY_GPU_COUNT}:{job.jid}",
+                job_cache_timeout,
+                _gpu_count_fn,
+            )
+        except Exception:
+            gpu_count_total = None
+
+        return (gpu_active, gpu_max, gpu_mean, gpu_count_total)
+    finally:
+        close_old_connections()
 from django.db.models import (
     Case,
     Avg,
@@ -1762,96 +1856,7 @@ def job_detail(request, pk):
 
     def _fetch_gpu():
         # SQL Count/Max/Avg avoids loading every utilization row (was timing out).
-        gpu_active, gpu_max, gpu_mean, gpu_count_total = None, None, None, None
-        close_old_connections()
-        try:
-            try:
-                agg = cached_orm(
-                    f"{KEY_GPU_AGG}:v2:{job.jid}",
-                    job_cache_timeout,
-                    lambda: list(
-                        host_data.objects.filter(
-                            type="nvidia_gpu",
-                            event__in=["gpu_util", "utilization"],
-                            time__gte=j.start_time,
-                            time__lte=j.end_time,
-                            host__in=j.acct_host_list or [],
-                        )
-                        .values("event")
-                        .annotate(
-                            cnt=Count("time"),
-                            vmax=Max("value"),
-                            vmean=Avg("value"),
-                        )
-                    ),
-                )
-                # Backwards compatibility: cached_orm might return a single
-                # aggregate dict (old shape) or a list of per-event rows.
-                if isinstance(agg, dict):
-                    row = agg
-                else:
-                    rows = list(agg or [])
-                    by_event = {
-                        str(r.get("event")): r for r in rows if isinstance(r, dict)
-                    }
-                    row = by_event.get("gpu_util") or by_event.get("utilization") or {}
-
-                cnt = int(row.get("cnt") or 0)
-                if cnt > 2:
-                    vmax = row.get("vmax")
-                    if vmax is not None:
-                        gpu_max = float(vmax)
-                        vmean = row.get("vmean")
-                        gpu_mean = float(vmean) if vmean is not None else None
-                        if not isnan(gpu_max):
-                            gpu_active = ceil(gpu_max / 100.0)
-            except Exception:
-                pass
-
-            def _gpu_count_fn():
-                """Sum over job hosts of max(gpu_count) in window (monitor nvidia_gpu or amd_gpu)."""
-                hosts = j.acct_host_list or []
-                if not hosts:
-                    return None
-                for gpu_typ in ("nvidia_gpu", "amd_gpu"):
-                    rows = list(
-                        host_data.objects.filter(
-                            type=gpu_typ,
-                            event="gpu_count",
-                            time__gte=j.start_time,
-                            time__lte=j.end_time,
-                            host__in=hosts,
-                        )
-                        .values("host")
-                        .annotate(mv=Max("value"))
-                    )
-                    if not rows:
-                        continue
-                    total = 0
-                    for r in rows:
-                        v = r.get("mv")
-                        if v is None:
-                            continue
-                        try:
-                            total += int(round(float(v)))
-                        except (TypeError, ValueError):
-                            continue
-                    if total > 0:
-                        return total
-                return None
-
-            try:
-                gpu_count_total = cached_orm(
-                    f"{KEY_GPU_COUNT}:{job.jid}",
-                    job_cache_timeout,
-                    _gpu_count_fn,
-                )
-            except Exception:
-                gpu_count_total = None
-
-            return (gpu_active, gpu_max, gpu_mean, gpu_count_total)
-        finally:
-            close_old_connections()
+        return _compute_job_gpu_stats(job, j, job_cache_timeout)
 
     def _fetch_xalt():
         close_old_connections()
@@ -2858,26 +2863,69 @@ def job_monitor(request):
         .order_by("-failed_rate", "username")
     )
 
+    stats_rows = list(stats_qs)
+    selected_usernames = [str(r.get("username") or "") for r in stats_rows]
+    gpu_rollup_by_user = {}
+    if selected_usernames:
+        jobs_for_gpu = (
+            base_qs.filter(username__in=selected_usernames)
+            .only("jid", "username", "start_time", "end_time")
+            .iterator(chunk_size=200)
+        )
+        for job in jobs_for_gpu:
+            try:
+                j = jid_table.jid_table(job.jid)
+                job_timeout = _job_detail_cache_ttl_for_end_time(getattr(job, "end_time", None))
+                gpu_active, _gpu_max, _gpu_mean, gpu_count_total = _compute_job_gpu_stats(
+                    job, j, job_timeout
+                )
+            except Exception:
+                continue
+            username = str(getattr(job, "username", "") or "")
+            rollup = gpu_rollup_by_user.setdefault(
+                username,
+                {
+                    "gpu_count_total": None,
+                    "gpu_active_total": None,
+                },
+            )
+            if gpu_count_total is not None:
+                rollup["gpu_count_total"] = (rollup["gpu_count_total"] or 0) + int(gpu_count_total)
+            if gpu_active is not None:
+                rollup["gpu_active_total"] = (rollup["gpu_active_total"] or 0) + int(gpu_active)
+
     rows = []
-    for row in stats_qs:
+    for row in stats_rows:
         total = int(row.get("total_jobs") or 0)
         failed = int(row.get("failed_jobs") or 0)
         timedout = int(row.get("timedout_jobs") or 0)
         rate = float(row.get("failed_rate") or 0.0)
         timeout_rate = float(row.get("timedout_rate") or 0.0)
+        username = row.get("username") or ""
+        gpu_rollup = gpu_rollup_by_user.get(str(username), {})
+        gpu_count_total = gpu_rollup.get("gpu_count_total")
+        gpu_active_total = gpu_rollup.get("gpu_active_total")
+        gpu_active_percentage = None
+        if (
+            gpu_count_total is not None
+            and gpu_active_total is not None
+            and float(gpu_count_total) > 0
+        ):
+            gpu_active_percentage = round(
+                100.0 * float(gpu_active_total) / float(gpu_count_total),
+                2,
+            )
         rows.append(
             {
-                "username": row.get("username") or "",
+                "username": username,
                 "total_jobs": total,
                 "failed_jobs": failed,
                 "failed_rate": round(rate, 2),
                 "timedout_jobs": timedout,
                 "timedout_rate": round(timeout_rate, 2),
-                # GPU aggregate fields are nullable in this endpoint unless
-                # upstream persisted GPU rollups are available.
-                "gpu_count_total": None,
-                "gpu_active_total": None,
-                "gpu_active_percentage": None,
+                "gpu_count_total": gpu_count_total,
+                "gpu_active_total": gpu_active_total,
+                "gpu_active_percentage": gpu_active_percentage,
             }
         )
 
