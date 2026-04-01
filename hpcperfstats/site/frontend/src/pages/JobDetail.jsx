@@ -37,6 +37,35 @@ function formatJobMetricCell(obj, isStaff) {
   return "Data not available.";
 }
 
+function PlotPanel({
+  item,
+  id,
+  plotName,
+  unavailableReason,
+  onZoom,
+}) {
+  return (
+    <div>
+      <BokehEmbed
+        item={item}
+        id={id}
+        plotName={plotName}
+        unavailableReason={unavailableReason}
+      />
+      <div style={{ marginTop: "0.35rem", textAlign: "center" }}>
+        <button
+          type="button"
+          className="btn btn-link p-0"
+          onClick={onZoom}
+          aria-label={`Zoom ${plotName}`}
+        >
+          zoom
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function JobDetail() {
   const session = useSession();
   const isStaff = !!session?.is_staff;
@@ -47,6 +76,7 @@ export default function JobDetail() {
   const [loading, setLoading] = useState(true);
   const [plotsLoading, setPlotsLoading] = useState(true);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [zoomPlotKey, setZoomPlotKey] = useState(null);
 
   useEffect(() => {
     if (!pk) return;
@@ -161,6 +191,37 @@ export default function JobDetail() {
   } = plots || {};
 
   const hasDeviceData = Object.keys(schema).length > 0;
+  const plotPanels = [
+    {
+      key: "summary",
+      item: mplot_item,
+      id: `job-mscript-${pk}`,
+      plotName: "Summary plot",
+      unavailableReason: mplot_unavailable_reason,
+    },
+    {
+      key: "heatmap",
+      item: hplot_item,
+      id: `job-hscript-${pk}`,
+      plotName: "Heatmap",
+      unavailableReason: hplot_unavailable_reason,
+    },
+    {
+      key: "cpu-roofline",
+      item: rplot_item,
+      id: `job-roofline-${pk}`,
+      plotName: "CPU Roofline",
+      unavailableReason: rplot_unavailable_reason,
+    },
+    {
+      key: "gpu-roofline",
+      item: grplot_item,
+      id: `job-gpu-roofline-${pk}`,
+      plotName: "GPU Roofline",
+      unavailableReason: grplot_unavailable_reason,
+    },
+  ];
+  const zoomedPanel = plotPanels.find((panel) => panel.key === zoomPlotKey) || null;
 
   return (
     <>
@@ -473,43 +534,96 @@ export default function JobDetail() {
           <tbody>
             <tr>
               <td>
-                <BokehEmbed
+                <PlotPanel
                   item={mplot_item}
                   id={`job-mscript-${pk}`}
                   plotName="Summary plot"
                   unavailableReason={mplot_unavailable_reason}
+                  onZoom={() => setZoomPlotKey("summary")}
                 />
               </td>
               <td>
-                <BokehEmbed
+                <PlotPanel
                   item={hplot_item}
                   id={`job-hscript-${pk}`}
                   plotName="Heatmap"
                   unavailableReason={hplot_unavailable_reason}
+                  onZoom={() => setZoomPlotKey("heatmap")}
                 />
               </td>
             </tr>
             <tr>
               <td>
-                <BokehEmbed
+                <PlotPanel
                   item={rplot_item}
                   id={`job-roofline-${pk}`}
                   plotName="CPU Roofline"
                   unavailableReason={rplot_unavailable_reason}
+                  onZoom={() => setZoomPlotKey("cpu-roofline")}
                 />
               </td>
               <td>
-                <BokehEmbed
+                <PlotPanel
                   item={grplot_item}
                   id={`job-gpu-roofline-${pk}`}
                   plotName="GPU Roofline"
                   unavailableReason={grplot_unavailable_reason}
+                  onZoom={() => setZoomPlotKey("gpu-roofline")}
                 />
               </td>
             </tr>
           </tbody>
         </table>
       </center>
+
+      {zoomedPanel ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${zoomedPanel.plotName} zoom view`}
+          style={{
+            position: "fixed",
+            inset: 0,
+            width: "100vw",
+            height: "100vh",
+            zIndex: 1100,
+            backgroundColor: "rgba(0, 0, 0, 0.72)",
+            display: "flex",
+            alignItems: "stretch",
+            justifyContent: "stretch",
+            padding: "1rem",
+            boxSizing: "border-box",
+          }}
+        >
+          <div
+            style={{
+              position: "relative",
+              width: "100%",
+              height: "100%",
+              backgroundColor: "#fff",
+              borderRadius: 6,
+              padding: "2.25rem 1rem 1rem 1rem",
+              overflow: "auto",
+            }}
+          >
+            <button
+              type="button"
+              className="btn btn-link p-0"
+              aria-label="Close zoom window"
+              onClick={() => setZoomPlotKey(null)}
+              style={{ position: "absolute", top: "0.5rem", right: "0.75rem" }}
+            >
+              x
+            </button>
+            <BokehEmbed
+              item={zoomedPanel.item}
+              id={`${zoomedPanel.id}-zoom`}
+              plotName={zoomedPanel.plotName}
+              unavailableReason={zoomedPanel.unavailableReason}
+            />
+          </div>
+        </div>
+      ) : null}
 
       <center>
         <h4>Device Data and Plots</h4>

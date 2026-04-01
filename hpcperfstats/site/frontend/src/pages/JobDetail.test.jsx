@@ -296,4 +296,34 @@ describe("JobDetail", () => {
       expect(document.querySelectorAll(".bokeh-embed-wrapper").length).toBe(4);
     });
   });
+
+  it("shows zoom links for each host-level plot and closes zoom overlay with x", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+      minimalJobDetailResponse
+    );
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
+      minimalJobDetailResponse
+    );
+    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(
+      minimalPlotsResponse
+    );
+
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByText("Host-level Plots")).toBeInTheDocument();
+    });
+
+    const zoomLinks = screen.getAllByRole("button", { name: /^Zoom /i });
+    expect(zoomLinks.length).toBe(4);
+
+    await userEvent.click(screen.getByRole("button", { name: "Zoom Summary plot" }));
+    expect(
+      screen.getByRole("dialog", { name: "Summary plot zoom view" })
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Close zoom window" }));
+    expect(
+      screen.queryByRole("dialog", { name: "Summary plot zoom view" })
+    ).not.toBeInTheDocument();
+  });
 });
