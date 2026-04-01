@@ -218,6 +218,14 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events,
   (void) max_ctrs;
   if (!g_initialized || g_group < 0 || stats == NULL || cpu < 0)
     return -1;
+  stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_SINGLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE", 0);
   if (perfmon_readCounters() < 0)
     return -1;
   n_events = perfmon_getNumberOfEvents(g_group);
@@ -240,6 +248,22 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events,
       have_mperf = 1;
     }
     if (event_name != NULL) {
+      if (strcmp(event_name, "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE") == 0)
+        stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", val);
+      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE") == 0)
+        stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE", val);
+      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE") == 0)
+        stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE", val);
+      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE") == 0)
+        stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE", val);
+      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_SCALAR_SINGLE") == 0)
+        stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_SINGLE", val);
+      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE") == 0)
+        stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE", val);
+      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE") == 0)
+        stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE", val);
+      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE") == 0)
+        stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE", val);
       if (strcmp(event_name, "INSTR_RETIRED_ANY") == 0 ||
           strcmp(event_name, "RETIRED_INSTRUCTIONS") == 0) {
         inst_retired = val;

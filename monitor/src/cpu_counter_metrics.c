@@ -70,6 +70,14 @@ static unsigned long long *g_dcgm_aperf = NULL;
 static unsigned long long *g_dcgm_mperf = NULL;
 static unsigned long long *g_dcgm_arm_est_flops = NULL;
 static unsigned long long *g_dcgm_arm_dram_bytes = NULL;
+static unsigned long long *g_dcgm_fp_sca_d = NULL;
+static unsigned long long *g_dcgm_fp_128_d = NULL;
+static unsigned long long *g_dcgm_fp_256_d = NULL;
+static unsigned long long *g_dcgm_fp_512_d = NULL;
+static unsigned long long *g_dcgm_fp_sca_s = NULL;
+static unsigned long long *g_dcgm_fp_128_s = NULL;
+static unsigned long long *g_dcgm_fp_256_s = NULL;
+static unsigned long long *g_dcgm_fp_512_s = NULL;
 static long long *g_dcgm_last_ts = NULL;
 static long long g_dcgm_mono_prev_us = 0;
 
@@ -79,6 +87,12 @@ static long long g_dcgm_mono_prev_us = 0;
  */
 #define ARM_APPROX_FLOPS_PER_ACTIVE_CYCLE 2.0
 #define ARM_APPROX_DRAM_BYTES_PER_ACTIVE_CYCLE 16.0
+/* Synthesize width-resolved FP_ARITH-style counters for ARM/DCGM so
+ * vecpercent/avg_vector_width metrics can be computed in analysis.
+ */
+#define ARM_APPROX_FP64_FLOP_SHARE 0.5
+#define ARM_APPROX_FP64_VECTOR_FLOP_SHARE 0.6
+#define ARM_APPROX_FP32_VECTOR_FLOP_SHARE 0.8
 
 struct dcgm_cpu_jifs {
   unsigned long long u, nice, sys, idle, iow, irq, sft, stl, gu, gn;
@@ -399,6 +413,14 @@ static void publish_dcgm_cpu_stats(struct stats *stats, int i)
   stats_set(stats, "DF_CTR1", 0);
   stats_set(stats, "DF_CTR2", 0);
   stats_set(stats, "DF_CTR3", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", g_dcgm_fp_sca_d[i]);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE", g_dcgm_fp_128_d[i]);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE", g_dcgm_fp_256_d[i]);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE", g_dcgm_fp_512_d[i]);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_SINGLE", g_dcgm_fp_sca_s[i]);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE", g_dcgm_fp_128_s[i]);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE", g_dcgm_fp_256_s[i]);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE", g_dcgm_fp_512_s[i]);
   stats_set(stats, "ARM_EST_FLOPS", g_dcgm_arm_est_flops[i]);
   stats_set(stats, "ARM_DRAM_BW_BYTES", g_dcgm_arm_dram_bytes[i]);
 }
@@ -423,6 +445,20 @@ static void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *samp
       (unsigned long long) ((act_cycles * ARM_APPROX_FLOPS_PER_ACTIVE_CYCLE) + 0.5);
   g_dcgm_arm_dram_bytes[i] +=
       (unsigned long long) ((act_cycles * ARM_APPROX_DRAM_BYTES_PER_ACTIVE_CYCLE) + 0.5);
+  {
+    double total_flops = act_cycles * ARM_APPROX_FLOPS_PER_ACTIVE_CYCLE;
+    double flops64 = total_flops * ARM_APPROX_FP64_FLOP_SHARE;
+    double flops32 = total_flops - flops64;
+    double flops64_vec = flops64 * ARM_APPROX_FP64_VECTOR_FLOP_SHARE;
+    double flops64_sca = flops64 - flops64_vec;
+    double flops32_vec = flops32 * ARM_APPROX_FP32_VECTOR_FLOP_SHARE;
+    double flops32_sca = flops32 - flops32_vec;
+    /* Map vector FLOPs to 128b packed buckets by default (2x64b, 4x32b). */
+    g_dcgm_fp_sca_d[i] += (unsigned long long) (flops64_sca + 0.5);
+    g_dcgm_fp_128_d[i] += (unsigned long long) (flops64_vec / 2.0 + 0.5);
+    g_dcgm_fp_sca_s[i] += (unsigned long long) (flops32_sca + 0.5);
+    g_dcgm_fp_128_s[i] += (unsigned long long) (flops32_vec / 4.0 + 0.5);
+  }
 }
 
 static void dcgm_cpu_watch_cleanup(void)
@@ -533,6 +569,14 @@ static int dcgm_backend_begin(struct stats_type *type)
   g_dcgm_mperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_mperf));
   g_dcgm_arm_est_flops = (unsigned long long *) calloc(n, sizeof(*g_dcgm_arm_est_flops));
   g_dcgm_arm_dram_bytes = (unsigned long long *) calloc(n, sizeof(*g_dcgm_arm_dram_bytes));
+  g_dcgm_fp_sca_d = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_sca_d));
+  g_dcgm_fp_128_d = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_128_d));
+  g_dcgm_fp_256_d = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_256_d));
+  g_dcgm_fp_512_d = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_512_d));
+  g_dcgm_fp_sca_s = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_sca_s));
+  g_dcgm_fp_128_s = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_128_s));
+  g_dcgm_fp_256_s = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_256_s));
+  g_dcgm_fp_512_s = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_512_s));
   g_dcgm_last_ts = (long long *) calloc(n, sizeof(*g_dcgm_last_ts));
   g_dcjm_prev = (struct dcgm_cpu_jifs *) calloc(n, sizeof(*g_dcjm_prev));
   g_dcjm_cur = (struct dcgm_cpu_jifs *) calloc(n, sizeof(*g_dcjm_cur));
@@ -540,6 +584,10 @@ static int dcgm_backend_begin(struct stats_type *type)
       g_dcgm_ctr3 == NULL || g_dcgm_ctr4 == NULL || g_dcgm_ctr5 == NULL ||
       g_dcgm_inst == NULL || g_dcgm_aperf == NULL || g_dcgm_mperf == NULL ||
       g_dcgm_arm_est_flops == NULL || g_dcgm_arm_dram_bytes == NULL ||
+      g_dcgm_fp_sca_d == NULL || g_dcgm_fp_128_d == NULL ||
+      g_dcgm_fp_256_d == NULL || g_dcgm_fp_512_d == NULL ||
+      g_dcgm_fp_sca_s == NULL || g_dcgm_fp_128_s == NULL ||
+      g_dcgm_fp_256_s == NULL || g_dcgm_fp_512_s == NULL ||
       g_dcgm_last_ts == NULL || g_dcjm_prev == NULL || g_dcjm_cur == NULL) {
     ERROR("DCGM CPU backend allocation failed\n");
     dcgm_cpu_watch_cleanup();
@@ -622,6 +670,14 @@ static void fallback_fill(struct stats *stats, const char *cpu)
   if (read_msr_u64(cpu, MSR_DF_CTR2, &v) == 0) stats_set(stats, "DF_CTR2", v);
   if (read_msr_u64(cpu, MSR_DF_CTR3, &v) == 0) stats_set(stats, "DF_CTR3", v);
 #endif
+  stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_SINGLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE", 0);
+  stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE", 0);
   stats_set(stats, "ARM_EST_FLOPS", 0);
   stats_set(stats, "ARM_DRAM_BW_BYTES", 0);
 }
