@@ -18,9 +18,13 @@ from hpcperfstats.analysis.metrics.metrics import (
     avg_ethbw,
     avg_freq,
     avg_gpuutil,
+    avg_packetsize,
     build_job_metrics_display_list,
     expected_job_metric_row_count,
     job_metrics_catalog_entries,
+    max_fabricbw,
+    max_mds,
+    max_packetrate,
 )
 
 
@@ -345,6 +349,148 @@ def test_job_arc_avg_mbw_arm_counter_fallback():
       value, typename = m._job_arc_avg_mbw(object())
   assert abs(value - 6.5) < 1e-9
   assert typename == "cpu_counter_metrics"
+
+
+def test_job_arc_avg_lustreiops_includes_nfs_when_available():
+  """avg_lustreiops sums llite and nfs operation counters when both exist."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") == "llite":
+      return 20.0
+    if kw.get("typename") == "nfs":
+      return 5.0
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_lustreiops(object())
+  assert abs(value - 25.0) < 1e-9
+  assert typename == "llite"
+
+
+def test_job_arc_avg_lustrebw_falls_back_to_nfs():
+  """avg_lustrebw uses nfs byte counters when llite counters are absent."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") == "llite":
+      return None
+    if kw.get("typename") == "nfs":
+      return 7.0
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_lustrebw(object())
+  assert abs(value - 7.0) < 1e-9
+  assert typename == "nfs"
+
+
+def test_job_arc_avg_ibbw_falls_back_to_ethernet():
+  """avg_ibbw uses net rx/tx bytes when ib_ext/opa are unavailable."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") in ("ib_ext", "opa"):
+      return None
+    if kw.get("typename") == "net":
+      return 12.0
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_ibbw(object())
+  assert value == pytest.approx(12.0)
+  assert typename == "net"
+
+
+def test_max_mds_uses_nfs_ops_when_llite_missing():
+  """max_mds falls back to nfs READ_ops/WRITE_ops when llite telemetry is missing."""
+  schema_nfs = _Schema(["READ_ops", "WRITE_ops"])
+  stats = np.array(
+      [[0.0, 0.0], [100.0, 20.0], [220.0, 40.0]],
+      dtype=np.float64,
+  )
+
+  class MockU:
+    t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
+    job = type("J", (), {"cluster_mean_by_type": {}})()
+
+    def get_type(self, typename):
+      if typename == "llite":
+        return None, {}
+      if typename == "nfs":
+        return schema_nfs, {"h1": stats}
+      return None, {}
+
+  value, typename, units = max_mds().compute_metric(MockU())
+  assert value is not None
+  assert value == pytest.approx(14.0)
+  assert typename == "llite"
+  assert units == "iops"
+
+
+def test_avg_packetsize_falls_back_to_ethernet_packets():
+  """avg_packetsize uses net bytes/packets when IB and OPA are absent."""
+  schema = _Schema(["tx_packets", "rx_packets", "tx_bytes", "rx_bytes"])
+  stats = np.array([[0.0, 0.0, 0.0, 0.0], [100.0, 100.0, 1000.0, 1000.0]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename in ("ib_ext", "opa"):
+        return None, {}
+      if typename == "net":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = avg_packetsize().compute_metric(MockU())
+  expected = 2000.0 / (200.0 * 1024 * 1024)
+  assert value == pytest.approx(expected)
+  assert typename == "net"
+  assert units == "MB"
+
+
+def test_max_fabricbw_falls_back_to_ethernet():
+  """max_fabricbw uses net tx/rx byte rate when IB and OPA are absent."""
+  schema = _Schema(["tx_bytes", "rx_bytes"])
+  stats = np.array([[0.0, 0.0], [100.0, 50.0], [300.0, 150.0]], dtype=np.float64)
+
+  class MockU:
+    t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
+    job = type("J", (), {"cluster_mean_by_type": {}})()
+
+    def get_type(self, typename):
+      if typename in ("ib_ext", "opa"):
+        return None, {}
+      if typename == "net":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = max_fabricbw().compute_metric(MockU())
+  # max interval bytes/s = (200+100)/10 = 30, /MiB
+  assert value == pytest.approx(30.0 / (1024 * 1024))
+  assert typename == "net"
+  assert units == "MB/s"
+
+
+def test_max_packetrate_falls_back_to_ethernet():
+  """max_packetrate uses net tx/rx packet rate when IB and OPA are absent."""
+  schema = _Schema(["tx_packets", "rx_packets"])
+  stats = np.array([[0.0, 0.0], [100.0, 20.0], [220.0, 40.0]], dtype=np.float64)
+
+  class MockU:
+    t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
+    job = type("J", (), {"cluster_mean_by_type": {}})()
+
+    def get_type(self, typename):
+      if typename in ("ib_ext", "opa"):
+        return None, {}
+      if typename == "net":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = max_packetrate().compute_metric(MockU())
+  assert value == pytest.approx(14.0)
+  assert typename == "net"
+  assert units == "#/s"
 
 
 def test_avg_gpuutil_amd_gpu_uses_gpu_util_column():

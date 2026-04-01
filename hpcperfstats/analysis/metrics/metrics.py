@@ -53,7 +53,7 @@ _COMPLEX_NO_DATA_REASONS = {
     "avg_packetsize": "No usable InfiniBand/OPA telemetry for packet size",
     "max_fabricbw": "No usable fabric telemetry for peak bandwidth",
     "max_lnetbw": "No usable LNET telemetry for peak bandwidth",
-    "max_mds": "No usable Lustre llite telemetry for MDS operation rate",
+    "max_mds": "No usable Lustre/NFS telemetry for metadata/operation rate",
     "max_packetrate": "No usable fabric telemetry for peak packet rate",
     "mem_hwm": "No usable memory telemetry for high-water mark",
     "node_imbalance": "No usable CPU telemetry for node imbalance",
@@ -617,6 +617,109 @@ class Metrics():
       return v, "cpu_counter_metrics"
     return None, None
 
+  def _job_arc_avg_lustreiops(self, jt):
+    """Shared filesystem IOPS from Lustre llite and NFS operation counters.
+
+    Returns summed contribution from available sources and a representative type.
+    """
+    total = 0.0
+    used = []
+    llite = self.job_arc(
+        jt,
+        typename="llite",
+        events=[
+            "open", "close", "mmap", "fsync", "setattr", "truncate", "flock",
+            "getattr", "statfs", "alloc_inode", "setxattr", "listxattr",
+            "removexattr", "readdir", "create", "lookup", "link", "unlink",
+            "symlink", "mkdir", "rmdir", "mknod", "rename",
+        ],
+        conv=1,
+        units="iops",
+    )
+    if llite is not None:
+      total += llite
+      used.append("llite")
+    nfs = self.job_arc(
+        jt,
+        typename="nfs",
+        events=["READ_ops", "WRITE_ops"],
+        conv=1,
+        units="iops",
+    )
+    if nfs is not None:
+      total += nfs
+      used.append("nfs")
+    if not used:
+      return None, None
+    return total, used[0]
+
+  def _job_arc_avg_lustrebw(self, jt):
+    """Shared filesystem bandwidth from Lustre llite and NFS byte counters.
+
+    Returns summed contribution from available sources and a representative type.
+    """
+    conv = 1.0 / (1024 * 1024)
+    total = 0.0
+    used = []
+    llite = self.job_arc(
+        jt,
+        typename="llite",
+        events=["read_bytes", "write_bytes"],
+        conv=conv,
+        units="MB/s",
+    )
+    if llite is not None:
+      total += llite
+      used.append("llite")
+    nfs = self.job_arc(
+        jt,
+        typename="nfs",
+        events=[
+            "normal_read", "normal_write",
+            "direct_read", "direct_write",
+            "server_read", "server_write",
+        ],
+        conv=conv,
+        units="MB/s",
+    )
+    if nfs is not None:
+      total += nfs
+      used.append("nfs")
+    if not used:
+      return None, None
+    return total, used[0]
+
+  def _job_arc_avg_ibbw(self, jt):
+    """Fabric bandwidth from IB/OPA, with Ethernet fallback when unavailable."""
+    v = self.job_arc(
+        jt,
+        typename="ib_ext",
+        events=["port_xmit_data", "port_rcv_data"],
+        conv=1.0 / (1024 * 1024),
+        units="MB/s",
+    )
+    if v is not None:
+      return v, "ib_ext"
+    v = self.job_arc(
+        jt,
+        typename="opa",
+        events=["PortXmitData", "PortRcvData"],
+        conv=1.0 / 125000,
+        units="MB/s",
+    )
+    if v is not None:
+      return v, "opa"
+    v = self.job_arc(
+        jt,
+        typename="net",
+        events=["rx_bytes", "tx_bytes"],
+        conv=1.0 / (1024 * 1024),
+        units="MB/s",
+    )
+    if v is not None:
+      return v, "net"
+    return None, None
+
   # Compute metric
   def compute_metrics(self, job):
     """Compute metrics for one job; return dict with rows (metrics_data-shaped dicts) and distinct_time_count.
@@ -658,6 +761,15 @@ class Metrics():
         elif metric_name == "avg_mbw":
           value, mbw_typename = self._job_arc_avg_mbw(jt)
           row_type = mbw_typename or metric_obj["typename"]
+        elif metric_name == "avg_lustreiops":
+          value, fs_typename = self._job_arc_avg_lustreiops(jt)
+          row_type = fs_typename or metric_obj["typename"]
+        elif metric_name == "avg_lustrebw":
+          value, fs_typename = self._job_arc_avg_lustrebw(jt)
+          row_type = fs_typename or metric_obj["typename"]
+        elif metric_name == "avg_ibbw":
+          value, fabric_typename = self._job_arc_avg_ibbw(jt)
+          row_type = fabric_typename or metric_obj["typename"]
         else:
           value = self.job_arc(jt, **metric_obj)
           row_type = metric_obj["typename"]
@@ -889,22 +1001,27 @@ class avg_packetsize():
     """
 
   def compute_metric(self, u):
-    try:
-      typename = "ib_ext"
-      schema, _stats = u.get_type(typename)
-      if schema is None:
-        return None, typename, 'MB'
+    typename = "ib_ext"
+    schema, _stats = u.get_type(typename)
+    if schema is not None:
       tx, rx = schema["port_xmit_pkts"].index, schema["port_rcv_pkts"].index
       tb, rb = schema["port_xmit_data"].index, schema["port_rcv_data"].index
       conv2mb = 1024 * 1024
-    except Exception:
+    else:
       typename = "opa"
       schema, _stats = u.get_type(typename)
-      if schema is None:
-        return None, typename, 'MB'
-      tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
-      tb, rb = schema["PortXmitData"].index, schema["PortRcvData"].index
-      conv2mb = 125000
+      if schema is not None:
+        tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
+        tb, rb = schema["PortXmitData"].index, schema["PortRcvData"].index
+        conv2mb = 125000
+      else:
+        typename = "net"
+        schema, _stats = u.get_type(typename)
+        if schema is None:
+          return None, "ib_ext", 'MB'
+        tx, rx = schema["tx_packets"].index, schema["rx_packets"].index
+        tb, rb = schema["tx_bytes"].index, schema["rx_bytes"].index
+        conv2mb = 1024 * 1024
 
     per_host = []
     for hostname, stats in _stats.items():
@@ -930,20 +1047,24 @@ class max_fabricbw():
 
   def compute_metric(self, u):
     max_bw = 0
-    try:
-      typename = "ib_ext"
-      schema, _stats = u.get_type(typename)
-      if schema is None:
-        return None, typename, 'MB'
+    typename = "ib_ext"
+    schema, _stats = u.get_type(typename)
+    if schema is not None:
       tx, rx = schema["port_xmit_data"].index, schema["port_rcv_data"].index
       conv2mb = 1024 * 1024
-    except Exception:
+    else:
       typename = "opa"
       schema, _stats = u.get_type(typename)
-      if schema is None:
-        return None, typename, 'MB'
-      tx, rx = schema["PortXmitData"].index, schema["PortRcvData"].index
-      conv2mb = 125000
+      if schema is not None:
+        tx, rx = schema["PortXmitData"].index, schema["PortRcvData"].index
+        conv2mb = 125000
+      else:
+        typename = "net"
+        schema, _stats = u.get_type(typename)
+        if schema is None:
+          return None, "ib_ext", 'MB/s'
+        tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
+        conv2mb = 1024 * 1024
     cluster_peak = _peak_interval_rate_from_cluster_mean(
         u, typename, [tx, rx], conv2mb)
     if cluster_peak is not None:
@@ -996,52 +1117,66 @@ class max_mds():
     max_mds = 0
     typename = "llite"
     schema, _stats = u.get_type(typename)
-    if schema is None:
-      return None, typename, 'iops'
     mds_cols = [
         "open", "close", "mmap", "fsync", "setattr", "truncate", "flock",
         "getattr", "statfs", "alloc_inode", "setxattr", "listxattr",
         "removexattr", "readdir", "create", "lookup", "link", "unlink",
         "symlink", "mkdir", "rmdir", "mknod", "rename",
     ]
-    col_idx = [schema[c].index for c in mds_cols]
-    cluster_peak = _peak_interval_rate_from_cluster_mean(
-        u, typename, col_idx, 1)
-    if cluster_peak is not None:
-      return cluster_peak, typename, 'iops'
-    for hostname, stats in _stats.items():
-      mds_sum = (
-          stats[:, schema["open"].index] +
-          stats[:, schema["close"].index] +
-          stats[:, schema["mmap"].index] +
-          stats[:, schema["fsync"].index] +
-          stats[:, schema["setattr"].index] +
-          stats[:, schema["truncate"].index] +
-          stats[:, schema["flock"].index] +
-          stats[:, schema["getattr"].index] +
-          stats[:, schema["statfs"].index] +
-          stats[:, schema["alloc_inode"].index] +
-          stats[:, schema["setxattr"].index] +
-          stats[:, schema["listxattr"].index] +
-          stats[:, schema["removexattr"].index] +
-          stats[:, schema["readdir"].index] +
-          stats[:, schema["create"].index] +
-          stats[:, schema["lookup"].index] +
-          stats[:, schema["link"].index] +
-          stats[:, schema["unlink"].index] +
-          stats[:, schema["symlink"].index] +
-          stats[:, schema["mkdir"].index] +
-          stats[:, schema["rmdir"].index] +
-          stats[:, schema["mknod"].index] +
-          stats[:, schema["rename"].index])
-      mds_diff = _per_interval_rate(mds_sum, u.t)
-      fin = mds_diff[np.isfinite(mds_diff)]
-      if fin.size > 0:
-        max_mds = max(max_mds, fin.max())
+    if schema is not None:
+      col_idx = [schema[c].index for c in mds_cols]
+      cluster_peak = _peak_interval_rate_from_cluster_mean(
+          u, typename, col_idx, 1)
+      if cluster_peak is not None:
+        return cluster_peak, typename, 'iops'
+      for hostname, stats in _stats.items():
+        mds_sum = (
+            stats[:, schema["open"].index] +
+            stats[:, schema["close"].index] +
+            stats[:, schema["mmap"].index] +
+            stats[:, schema["fsync"].index] +
+            stats[:, schema["setattr"].index] +
+            stats[:, schema["truncate"].index] +
+            stats[:, schema["flock"].index] +
+            stats[:, schema["getattr"].index] +
+            stats[:, schema["statfs"].index] +
+            stats[:, schema["alloc_inode"].index] +
+            stats[:, schema["setxattr"].index] +
+            stats[:, schema["listxattr"].index] +
+            stats[:, schema["removexattr"].index] +
+            stats[:, schema["readdir"].index] +
+            stats[:, schema["create"].index] +
+            stats[:, schema["lookup"].index] +
+            stats[:, schema["link"].index] +
+            stats[:, schema["unlink"].index] +
+            stats[:, schema["symlink"].index] +
+            stats[:, schema["mkdir"].index] +
+            stats[:, schema["rmdir"].index] +
+            stats[:, schema["mknod"].index] +
+            stats[:, schema["rename"].index])
+        mds_diff = _per_interval_rate(mds_sum, u.t)
+        fin = mds_diff[np.isfinite(mds_diff)]
+        if fin.size > 0:
+          max_mds = max(max_mds, fin.max())
+    nfs_typename = "nfs"
+    nfs_schema, nfs_stats = u.get_type(nfs_typename)
+    if nfs_schema is not None and all(
+        ev in nfs_schema.events for ev in ("READ_ops", "WRITE_ops")
+    ):
+      tx, rx = nfs_schema["READ_ops"].index, nfs_schema["WRITE_ops"].index
+      cluster_peak = _peak_interval_rate_from_cluster_mean(
+          u, nfs_typename, [tx, rx], 1)
+      if cluster_peak is not None:
+        max_mds = max(max_mds, cluster_peak)
+      for hostname, stats in nfs_stats.items():
+        ratio = _per_interval_rate(stats[:, tx] + stats[:, rx], u.t)
+        fin = ratio[np.isfinite(ratio)]
+        if fin.size > 0:
+          max_mds = max(max_mds, fin.max())
     if max_mds == 0:
-      return None, typename, 'iops'
+      return None, "llite", 'iops'
     value = max_mds
-    return value, typename, 'iops'
+    return value, "llite", 'iops'
 
 
 class max_packetrate():
@@ -1051,18 +1186,21 @@ class max_packetrate():
 
   def compute_metric(self, u):
     max_pr = 0
-    try:
-      typename = "ib_ext"
-      schema, _stats = u.get_type(typename)
-      if schema is None:
-        return None, typename, '#/s'
+    typename = "ib_ext"
+    schema, _stats = u.get_type(typename)
+    if schema is not None:
       tx, rx = schema["port_xmit_pkts"].index, schema["port_rcv_pkts"].index
-    except Exception:
+    else:
       typename = "opa"
       schema, _stats = u.get_type(typename)
-      if schema is None:
-        return None, typename, '#/s'
-      tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
+      if schema is not None:
+        tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
+      else:
+        typename = "net"
+        schema, _stats = u.get_type(typename)
+        if schema is None:
+          return None, "ib_ext", '#/s'
+        tx, rx = schema["tx_packets"].index, schema["rx_packets"].index
 
     cluster_peak = _peak_interval_rate_from_cluster_mean(
         u, typename, [tx, rx], 1)
