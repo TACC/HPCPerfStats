@@ -121,6 +121,7 @@ export default function BokehEmbed({
   onPlotReadyChange,
   fillHeight = false,
   maximizeInContainer = false,
+  isLoadingExternal = false,
 }) {
   const session = useSession();
   const canViewErrorDetails = !!session?.is_staff;
@@ -199,7 +200,7 @@ export default function BokehEmbed({
   }, [item, id, onPlotReadyChange, maximizeInContainer]);
 
   const detailsMessage = loadFailed ? failureReason : unavailableReason;
-  const isLoading = hasData && !plotReady && !loadFailed;
+  const isLoading = !!isLoadingExternal || (hasData && !plotReady && !loadFailed);
   const isUnavailable = !isLoading && showPlaceholder;
   let message;
   if (isLoading) {

@@ -77,6 +77,18 @@ describe("BokehEmbed", () => {
     expect(screen.queryByRole("button", { name: "Copy Error Detail" })).not.toBeInTheDocument();
   });
 
+  it("shows loading message while external plot query is still running", () => {
+    renderBokehEmbed(
+      <BokehEmbed
+        plotName="Summary plot"
+        isLoadingExternal
+      />
+    );
+
+    expect(screen.getByText("Loading Summary plot…")).toBeInTheDocument();
+    expect(screen.queryByText("Data not available.")).not.toBeInTheDocument();
+  });
+
   it("does not execute legacy script/div payloads", () => {
     const embedItem = vi.fn();
     window.Bokeh = { embed: { embed_item: embedItem } };

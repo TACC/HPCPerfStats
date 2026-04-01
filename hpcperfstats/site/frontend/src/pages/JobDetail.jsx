@@ -42,6 +42,7 @@ function PlotPanel({
   id,
   plotName,
   unavailableReason,
+  isLoading,
   onZoom,
 }) {
   const [isPlotRendered, setIsPlotRendered] = useState(false);
@@ -53,6 +54,7 @@ function PlotPanel({
         id={id}
         plotName={plotName}
         unavailableReason={unavailableReason}
+        isLoadingExternal={isLoading}
         onPlotReadyChange={setIsPlotRendered}
       />
       {isPlotRendered ? (
@@ -297,6 +299,7 @@ export default function JobDetail() {
   const plotPanels = JOB_PLOT_CONFIGS.map((config) => ({
     key: config.panelKey,
     item: plots?.[config.key]?.plotItem ?? null,
+    isLoading: !!plots?.[config.key]?.loading,
     id: `${config.idPrefix}-${pk}`,
     plotName: config.plotName,
     unavailableReason: plots?.[config.key]?.unavailableReason ?? null,
@@ -621,6 +624,7 @@ export default function JobDetail() {
                       id={panel.id}
                       plotName={panel.plotName}
                       unavailableReason={panel.unavailableReason}
+                      isLoading={panel.isLoading}
                       onZoom={() => setZoomPlotKey(panel.key)}
                     />
                   </td>
@@ -679,6 +683,7 @@ export default function JobDetail() {
                 id={`${zoomedPanel.id}-zoom`}
                 plotName={zoomedPanel.plotName}
                 unavailableReason={zoomPlotState.unavailableReason || zoomedPanel.unavailableReason}
+                isLoadingExternal={zoomPlotState.loading}
                 fillHeight
                 maximizeInContainer
               />
