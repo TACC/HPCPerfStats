@@ -2902,9 +2902,9 @@ def job_monitor(request):
     - total_jobs: number of jobs run
     - failed_jobs: number of jobs with state OUT_OF_MEMORY or FAILED
     - failed_rate: percentage of failed jobs (0–100), sorted descending.
-    - gpu_count_total: total GPUs allocated (nullable if unavailable)
-    - gpu_active_total: GPUs active (nullable if unavailable)
-    - gpu_active_percentage: active/allocated * 100 (nullable if unavailable)
+    GPU fields are intentionally omitted from this initial endpoint so the page
+    can render quickly; per-user GPU stats are fetched asynchronously from
+    job_monitor_gpu_for_user.
     """
     err = _require_auth(request)
     if err is not None:
@@ -2953,75 +2953,14 @@ def job_monitor(request):
         .order_by("-failed_rate", "username")
     )
 
-    stats_rows = list(stats_qs)
-    selected_usernames = [str(r.get("username") or "") for r in stats_rows]
-    gpu_rollup_by_user = {}
-    if selected_usernames:
-        jobs_for_gpu = list(
-            base_qs.filter(username__in=selected_usernames)
-            .only("jid", "username", "start_time", "end_time")
-            .iterator(chunk_size=200)
-        )
-        if jobs_for_gpu:
-            executor = _get_small_executor()
-
-            def _compute_job_gpu_for_monitor(job_ref):
-                try:
-                    j = jid_table.jid_table(job_ref.jid)
-                    job_timeout = _job_detail_cache_ttl_for_end_time(getattr(job_ref, "end_time", None))
-                    gpu_active, _gpu_max, _gpu_mean, gpu_count_total = _compute_job_gpu_stats(
-                        job_ref, j, job_timeout
-                    )
-                    return (
-                        str(getattr(job_ref, "username", "") or ""),
-                        gpu_active,
-                        gpu_count_total,
-                    )
-                except Exception:
-                    return None
-
-            futures = [executor.submit(_compute_job_gpu_for_monitor, job) for job in jobs_for_gpu]
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                except Exception:
-                    continue
-                if not result:
-                    continue
-                username, gpu_active, gpu_count_total = result
-                rollup = gpu_rollup_by_user.setdefault(
-                    username,
-                    {
-                        "gpu_count_total": None,
-                        "gpu_active_total": None,
-                    },
-                )
-                if gpu_count_total is not None:
-                    rollup["gpu_count_total"] = (rollup["gpu_count_total"] or 0) + int(gpu_count_total)
-                if gpu_active is not None:
-                    rollup["gpu_active_total"] = (rollup["gpu_active_total"] or 0) + int(gpu_active)
-
     rows = []
-    for row in stats_rows:
+    for row in stats_qs:
         total = int(row.get("total_jobs") or 0)
         failed = int(row.get("failed_jobs") or 0)
         timedout = int(row.get("timedout_jobs") or 0)
         rate = float(row.get("failed_rate") or 0.0)
         timeout_rate = float(row.get("timedout_rate") or 0.0)
         username = row.get("username") or ""
-        gpu_rollup = gpu_rollup_by_user.get(str(username), {})
-        gpu_count_total = gpu_rollup.get("gpu_count_total")
-        gpu_active_total = gpu_rollup.get("gpu_active_total")
-        gpu_active_percentage = None
-        if (
-            gpu_count_total is not None
-            and gpu_active_total is not None
-            and float(gpu_count_total) > 0
-        ):
-            gpu_active_percentage = round(
-                100.0 * float(gpu_active_total) / float(gpu_count_total),
-                2,
-            )
         rows.append(
             {
                 "username": username,
@@ -3030,9 +2969,6 @@ def job_monitor(request):
                 "failed_rate": round(rate, 2),
                 "timedout_jobs": timedout,
                 "timedout_rate": round(timeout_rate, 2),
-                "gpu_count_total": gpu_count_total,
-                "gpu_active_total": gpu_active_total,
-                "gpu_active_percentage": gpu_active_percentage,
             }
         )
 
@@ -3044,6 +2980,78 @@ def job_monitor(request):
             "results": rows,
         }
     )
+
+
+@api_view(["GET"])
+def job_monitor_gpu_for_user(request):
+    """Staff-only per-user GPU rollup for Job Monitor async row updates."""
+    err = _require_auth(request)
+    if err is not None:
+        return err
+    if not request.session.get("is_staff", False):
+        return Response(
+            {"error": "Staff access required"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    username = str((request.GET.get("username") or "").strip())
+    if not username:
+        return Response(
+            {"error": "Missing required query param: username"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        days_param = int(request.GET.get("days", "") or 30)
+    except (TypeError, ValueError):
+        days_param = 30
+    window_days = max(1, min(days_param, 365))
+    now = dj_timezone_utils.now()
+    start_time = now - timedelta(days=window_days)
+    cache_key = make_cache_key("JOB_MONITOR_GPU_USER", window_days, username)
+
+    def _compute_user_gpu():
+        gpu_count_total = None
+        gpu_active_total = None
+        jobs_for_gpu = (
+            job_data.objects.filter(end_time__gte=start_time, username=username)
+            .only("jid", "username", "start_time", "end_time")
+            .iterator(chunk_size=200)
+        )
+        for job in jobs_for_gpu:
+            try:
+                j = jid_table.jid_table(job.jid)
+                job_timeout = _job_detail_cache_ttl_for_end_time(getattr(job, "end_time", None))
+                gpu_active, _gpu_max, _gpu_mean, per_job_gpu_count = _compute_job_gpu_stats(
+                    job, j, job_timeout
+                )
+            except Exception:
+                continue
+            if per_job_gpu_count is not None:
+                gpu_count_total = (gpu_count_total or 0) + int(per_job_gpu_count)
+            if gpu_active is not None:
+                gpu_active_total = (gpu_active_total or 0) + int(gpu_active)
+        gpu_active_percentage = None
+        if (
+            gpu_count_total is not None
+            and gpu_active_total is not None
+            and float(gpu_count_total) > 0
+        ):
+            gpu_active_percentage = round(
+                100.0 * float(gpu_active_total) / float(gpu_count_total),
+                2,
+            )
+        has_data = gpu_count_total is not None or gpu_active_total is not None
+        return {
+            "username": username,
+            "gpu_count_total": gpu_count_total,
+            "gpu_active_total": gpu_active_total,
+            "gpu_active_percentage": gpu_active_percentage,
+            "has_data": has_data,
+        }
+
+    result = cached_orm(cache_key, TIMEOUT_SHORT, _compute_user_gpu)
+    return Response(result)
 
 
 @api_view(["POST"])

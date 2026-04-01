@@ -13,11 +13,66 @@ export default function JobMonitor() {
   const [sortKey, setSortKey] = useState("failed_rate");
   const [sortDir, setSortDir] = useState("desc"); // "asc" | "desc"
 
-  const formatGpuValue = (value) => {
+  const formatGpuValue = (value, loadingState) => {
+    if (loadingState === "loading") return "Loading";
     if (value === null || value === undefined || value === "") return "N/A";
     const n = Number(value);
     if (!Number.isFinite(n)) return "N/A";
     return formatDecimalStandard(n);
+  };
+
+  const loadGpuRowsAsync = (rowsData, daysForWindow) => {
+    (rowsData || []).forEach((row) => {
+      const username = row?.username || "";
+      if (!username) {
+        setRows((prev) =>
+          prev.map((r) =>
+            r.username === username
+              ? {
+                  ...r,
+                  gpuLoadingState: "no_data",
+                  gpu_count_total: null,
+                  gpu_active_total: null,
+                  gpu_active_percentage: null,
+                }
+              : r
+          )
+        );
+        return;
+      }
+      api
+        .getJobMonitorGpuForUser(username, daysForWindow)
+        .then((gpuRes) => {
+          setRows((prev) =>
+            prev.map((r) => {
+              if ((r.username || "") !== username) return r;
+              const hasData = !!gpuRes?.has_data;
+              return {
+                ...r,
+                gpu_count_total: hasData ? gpuRes.gpu_count_total : null,
+                gpu_active_total: hasData ? gpuRes.gpu_active_total : null,
+                gpu_active_percentage: hasData ? gpuRes.gpu_active_percentage : null,
+                gpuLoadingState: hasData ? "loaded" : "no_data",
+              };
+            })
+          );
+        })
+        .catch(() => {
+          setRows((prev) =>
+            prev.map((r) =>
+              (r.username || "") === username
+                ? {
+                    ...r,
+                    gpu_count_total: null,
+                    gpu_active_total: null,
+                    gpu_active_percentage: null,
+                    gpuLoadingState: "no_data",
+                  }
+                : r
+            )
+          );
+        });
+    });
   };
 
   const loadData = (daysOverride) => {
@@ -26,10 +81,20 @@ export default function JobMonitor() {
     api
       .getJobMonitor(daysOverride)
       .then((res) => {
-        setRows(res.results || []);
+        const nextRows = (res.results || []).map((row) => ({
+          ...row,
+          gpu_count_total: null,
+          gpu_active_total: null,
+          gpu_active_percentage: null,
+          gpuLoadingState: "loading",
+        }));
+        setRows(nextRows);
         if (typeof res.window_days === "number") {
           setWindowDays(res.window_days);
           setInputDays(String(res.window_days));
+          loadGpuRowsAsync(nextRows, res.window_days);
+        } else {
+          loadGpuRowsAsync(nextRows, daysOverride);
         }
       })
       .catch((e) => setError(e.message))
@@ -58,12 +123,14 @@ export default function JobMonitor() {
         return (row.username || "").toLowerCase();
       }
       if (key === "gpu_active_percentage") {
+        if (row.gpuLoadingState === "loading") return Number.NEGATIVE_INFINITY;
         const v = row.gpu_active_percentage;
         if (v === null || v === undefined || v === "") return Number.NEGATIVE_INFINITY;
         const n = Number(v);
         return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
       }
       if (key === "gpu_count_total" || key === "gpu_active_total") {
+        if (row.gpuLoadingState === "loading") return Number.NEGATIVE_INFINITY;
         const v = row[key];
         if (v === null || v === undefined || v === "") return Number.NEGATIVE_INFINITY;
         const n = Number(v);
@@ -220,10 +287,12 @@ export default function JobMonitor() {
                   <td>{formatDecimalStandard(row.failed_rate)}</td>
                   <td>{formatDecimalStandard(row.timedout_jobs)}</td>
                   <td>{formatDecimalStandard(row.timedout_rate)}</td>
-                  <td>{formatGpuValue(row.gpu_count_total)}</td>
-                  <td>{formatGpuValue(row.gpu_active_total)}</td>
+                  <td>{formatGpuValue(row.gpu_count_total, row.gpuLoadingState)}</td>
+                  <td>{formatGpuValue(row.gpu_active_total, row.gpuLoadingState)}</td>
                   <td>
-                    {row.gpu_active_percentage === null ||
+                    {row.gpuLoadingState === "loading"
+                      ? "Loading"
+                      : row.gpu_active_percentage === null ||
                     row.gpu_active_percentage === undefined ||
                     row.gpu_active_percentage === ""
                       ? "N/A"

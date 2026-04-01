@@ -20,11 +20,15 @@ describe("JobMonitor", () => {
           failed_rate: 10,
           timedout_jobs: 1,
           timedout_rate: 5,
-          gpu_count_total: null,
-          gpu_active_total: null,
-          gpu_active_percentage: null,
         },
       ],
+    });
+    vi.spyOn(apiModule.api, "getJobMonitorGpuForUser").mockResolvedValue({
+      username: "alice",
+      gpu_count_total: null,
+      gpu_active_total: null,
+      gpu_active_percentage: null,
+      has_data: false,
     });
 
     render(
@@ -40,6 +44,8 @@ describe("JobMonitor", () => {
     expect(screen.getByText("Total GPUs Allocated")).toBeInTheDocument();
     expect(screen.getByText("Number of GPUs Active")).toBeInTheDocument();
     expect(screen.getByText("Percentage of GPUs Active")).toBeInTheDocument();
-    expect(screen.getAllByText("N/A")).toHaveLength(3);
+    await waitFor(() => {
+      expect(screen.getAllByText("N/A")).toHaveLength(3);
+    });
   });
 });

@@ -104,6 +104,11 @@ export const api = {
       : "";
     return request(`/job_monitor/${search}`);
   },
+  getJobMonitorGpuForUser: (username, days) => {
+    const params = new URLSearchParams({ username: String(username || "") });
+    if (days) params.set("days", String(days));
+    return request(`/job_monitor/gpu/?${params.toString()}`);
+  },
 };
 
 export default api;

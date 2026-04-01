@@ -16,5 +16,6 @@ urlpatterns = [
     path("host_plot/", api.host_plot),
     path("admin_monitor/", api.admin_monitor),
     path("job_monitor/", api.job_monitor),
+    path("job_monitor/gpu/", api.job_monitor_gpu_for_user),
     path("sacct/ingest/", api.sacct_ingest),
 ]
