@@ -181,21 +181,19 @@ class host_data(models.Model):
 
 
 class proc_data(models.Model):
-  """Process names observed per (jid, host, time). Table: proc_data.
+  """Process names observed per (jid, host). Table: proc_data.
 
     """
   jid = models.CharField(max_length=32, blank=True, null=True)
   host = models.CharField(max_length=64, blank=True, null=True)
   proc = models.CharField(max_length=512, blank=True, null=True)
-  time = models.DateTimeField(blank=True, null=True)
 
   class Meta:
     managed = True
     db_table = 'proc_data'
-    unique_together = (('jid', 'host', 'proc', 'time'),)
+    unique_together = (('jid', 'host', 'proc'),)
     indexes = [
         models.Index(fields=["jid"]),
-        models.Index(fields=["host", "time"]),
     ]
 
   def __str__(self):

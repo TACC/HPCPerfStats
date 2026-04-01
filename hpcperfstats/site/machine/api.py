@@ -1961,21 +1961,11 @@ def job_detail(request, pk):
 
         close_old_connections()
         try:
-            hosts = j.acct_host_list or []
-            start_time = j.start_time
-            end_time = j.end_time
-            if not hosts or start_time is None or end_time is None:
-                return []
-
             return cached_orm(
-                f"{KEY_PROC_LIST}:{job.jid}:{start_time.isoformat() if start_time else ''}:{end_time.isoformat() if end_time else ''}",
+                f"{KEY_PROC_LIST}:{job.jid}",
                 job_cache_timeout,
                 lambda: list(
-                    proc_data.objects.filter(
-                        host__in=hosts,
-                        time__gte=start_time,
-                        time__lte=end_time,
-                    )
+                    proc_data.objects.filter(jid=job.jid)
                     .values_list("proc", flat=True)
                     .distinct()
                 ),
