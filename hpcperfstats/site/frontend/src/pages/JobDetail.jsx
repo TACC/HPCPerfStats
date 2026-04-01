@@ -48,7 +48,25 @@ function PlotPanel({
   const [isPlotRendered, setIsPlotRendered] = useState(false);
 
   return (
-    <div>
+    <div style={{ position: "relative" }}>
+      {isPlotRendered ? (
+        <button
+          type="button"
+          className="btn btn-link p-0"
+          onClick={onZoom}
+          aria-label={`Zoom ${plotName}`}
+          style={{
+            position: "absolute",
+            top: "0.4rem",
+            right: "0.55rem",
+            zIndex: 2,
+            backgroundColor: "rgba(255, 255, 255, 0.9)",
+            borderRadius: "0.2rem",
+          }}
+        >
+          zoom
+        </button>
+      ) : null}
       <BokehEmbed
         item={item}
         id={id}
@@ -57,18 +75,6 @@ function PlotPanel({
         isLoadingExternal={isLoading}
         onPlotReadyChange={setIsPlotRendered}
       />
-      {isPlotRendered ? (
-        <div style={{ marginTop: "0.35rem", textAlign: "center" }}>
-          <button
-            type="button"
-            className="btn btn-link p-0"
-            onClick={onZoom}
-            aria-label={`Zoom ${plotName}`}
-          >
-            zoom
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }
