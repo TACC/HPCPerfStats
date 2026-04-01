@@ -276,7 +276,7 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByText("Job Detail")).toBeInTheDocument();
     });
-    expect(screen.getByText("GPU Count:")).toBeInTheDocument();
+    expect(screen.getByText("Total GPUs per Machine:")).toBeInTheDocument();
     expect(screen.getByText("4.00")).toBeInTheDocument();
   });
 
