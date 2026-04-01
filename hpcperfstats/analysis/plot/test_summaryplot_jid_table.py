@@ -468,8 +468,8 @@ def test_summaryplot_orders_cpu_then_gpu_then_fabricbw():
   assert captured_metrics.index("nv_gpu_util") < captured_metrics.index("ibbw")
 
 
-def test_summaryplot_orders_cpu_mem_then_gpu_then_fabricbw_last():
-  """Order: cpu, mem, gpu metrics, and FabricBW at the end."""
+def test_summaryplot_orders_shared_fs_read_write_after_fabricbw():
+  """Order keeps shared FS read/write as the final two summary plots."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
@@ -491,6 +491,18 @@ def test_summaryplot_orders_cpu_mem_then_gpu_then_fabricbw_last():
         return pd.DataFrame([("n1.cluster", t0, 8192.0)], columns=["host", "time", "sum_val"])
       if ev == ["gpu_count"]:
         return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
+      return empty
+    if typ == "llite" and val_col == "arc":
+      if ev == ["read_bytes"]:
+        return pd.DataFrame([("n1.cluster", t0, 1024.0)], columns=["host", "time", "sum_val"])
+      if ev == ["write_bytes"]:
+        return pd.DataFrame([("n1.cluster", t0, 2048.0)], columns=["host", "time", "sum_val"])
+      return empty
+    if typ == "nfs" and val_col == "arc":
+      if ev == ["normal_read", "direct_read", "server_read"]:
+        return pd.DataFrame([("n1.cluster", t0, 512.0)], columns=["host", "time", "sum_val"])
+      if ev == ["normal_write", "direct_write", "server_write"]:
+        return pd.DataFrame([("n1.cluster", t0, 256.0)], columns=["host", "time", "sum_val"])
       return empty
     if typ == "ib_ext" and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
       return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
@@ -518,4 +530,78 @@ def test_summaryplot_orders_cpu_mem_then_gpu_then_fabricbw_last():
   assert captured_metrics.index("cpu") < captured_metrics.index("mem")
   assert captured_metrics.index("mem") < captured_metrics.index("nv_gpu_util")
   assert captured_metrics.index("nv_gpu_util") < captured_metrics.index("nv_mem_used_mb")
-  assert captured_metrics.index("ibbw") == len(captured_metrics) - 1
+  assert captured_metrics.index("ibbw") < captured_metrics.index("shared_fs_read_mb_s")
+  assert captured_metrics.index("shared_fs_read_mb_s") < captured_metrics.index("shared_fs_write_mb_s")
+  assert captured_metrics.index("shared_fs_write_mb_s") == len(captured_metrics) - 1
+
+
+def test_summaryplot_shared_fs_read_write_plots_use_per_host_time_series():
+  """Shared FS plots should render host/time series from Lustre and NFS counters."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  t1 = pd.Timestamp("2024-06-01 12:01:00+00:00")
+  base = pd.DataFrame(
+      [("n1.cluster", t0), ("n2.cluster", t0), ("n1.cluster", t1), ("n2.cluster", t1)],
+      columns=["host", "time"],
+  )
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    ev = list(events)
+    if typ == "cpu" and val_col == "arc" and ev == ["user", "system", "nice"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 1.0), ("n2.cluster", t0, 1.1), ("n1.cluster", t1, 1.2), ("n2.cluster", t1, 1.3)],
+          columns=["host", "time", "sum_val"],
+      )
+    if typ == "llite" and val_col == "arc":
+      if ev == ["read_bytes"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 10.0), ("n2.cluster", t1, 20.0)],
+            columns=["host", "time", "sum_val"],
+        )
+      if ev == ["write_bytes"]:
+        return pd.DataFrame(
+            [("n1.cluster", t1, 30.0), ("n2.cluster", t0, 40.0)],
+            columns=["host", "time", "sum_val"],
+        )
+      return empty
+    if typ == "nfs" and val_col == "arc":
+      if ev == ["normal_read", "direct_read", "server_read"]:
+        return pd.DataFrame(
+            [("n2.cluster", t0, 5.0), ("n1.cluster", t1, 7.0)],
+            columns=["host", "time", "sum_val"],
+        )
+      if ev == ["normal_write", "direct_write", "server_write"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 3.0), ("n2.cluster", t1, 9.0)],
+            columns=["host", "time", "sum_val"],
+        )
+      return empty
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics") and val_col == "arc" and ev == fp64:
+      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster", "n2.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  summary = SummaryPlot(jt)
+  captured_series = {}
+
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
+    del label, y_range_end, x_range
+    if metric in ("shared_fs_read_mb_s", "shared_fs_write_mb_s"):
+      captured_series[metric] = df[["host", "time", metric]].copy()
+    return figure(width=100, height=60)
+
+  summary.plot_metric = fake_plot_metric
+  fig = summary.plot()
+  assert fig is not None
+  assert "shared_fs_read_mb_s" in captured_series
+  assert "shared_fs_write_mb_s" in captured_series
+  assert set(captured_series["shared_fs_read_mb_s"]["host"].unique()) == {"n1.cluster", "n2.cluster"}
+  assert set(captured_series["shared_fs_write_mb_s"]["host"].unique()) == {"n1.cluster", "n2.cluster"}
+  assert captured_series["shared_fs_read_mb_s"]["time"].nunique() == 2
+  assert captured_series["shared_fs_write_mb_s"]["time"].nunique() == 2

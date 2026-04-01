@@ -61,6 +61,11 @@ def _hover_tooltip_html(value_label, value_field):
 
 
 _CAS_BW_CONV = 64 / (1024 * 1024 * 1024)
+_BYTES_TO_MB = 1 / (1024 * 1024)
+_SHARED_FS_READ_METRIC = "shared_fs_read_mb_s"
+_SHARED_FS_WRITE_METRIC = "shared_fs_write_mb_s"
+_SHARED_FS_READ_LABEL = "SharedFS Read [MB/s]"
+_SHARED_FS_WRITE_LABEL = "SharedFS Write [MB/s]"
 
 
 def _intel_core_tries(events, conv):
@@ -168,6 +173,8 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset({
     "nv_mem_used_mb",
     "nv_mem_total_mb",
     "nv_gpu_count",
+    _SHARED_FS_READ_METRIC,
+    _SHARED_FS_WRITE_METRIC,
 })
 
 # Merged for scaling/context only; not rendered as its own subplot.
@@ -244,6 +251,31 @@ def _summary_intel_imc_bw_tries():
   return [(imc_typ, cas, _CAS_BW_CONV) for imc_typ in INTEL_IMC_STATS_TYPES]
 
 
+def _merge_shared_fs_metric(df, jt, metric_name, source_specs):
+  """Merge shared filesystem throughput from multiple source counters into one metric."""
+  merged = df
+  accum_col = "__shared_fs_accum__"
+  merged[accum_col] = 0.0
+  has_data = False
+  for typ, val_col, events, conv in source_specs:
+    agg = jt.get_aggregate_df(typ, val_col, events, conv)
+    if agg.empty or "sum_val" not in agg.columns:
+      continue
+    has_data = True
+    merged = merged.merge(
+        agg[["host", "time", "sum_val"]],
+        on=["host", "time"],
+        how="left",
+    )
+    merged["sum_val"] = merged["sum_val"].fillna(0.0)
+    merged[accum_col] = merged[accum_col] + merged["sum_val"]
+    merged.drop(columns=["sum_val"], inplace=True)
+  if has_data:
+    merged[metric_name] = merged[accum_col]
+  merged.drop(columns=[accum_col], inplace=True)
+  return merged
+
+
 def _merge_first_full_coverage(df, jt, column_name, val_col, tries):
   """Left-merge first (typ, events, conv) whose aggregate has no nulls on base (host, time)."""
   for typ, events, conv in tries:
@@ -305,6 +337,23 @@ def iter_summary_aggregate_attempts():
       yield typ, fw["val_col"], events, fw["name"], conv, fw["label"]
   for imc_typ, events, conv in _summary_intel_imc_bw_tries():
     yield imc_typ, "arc", events, "mbw", conv, "DRAMBW[GB/s]"
+  for typ, val_col, events, conv in (
+      ("llite", "arc", ["read_bytes"], _BYTES_TO_MB),
+      ("nfs", "arc", ["normal_read", "direct_read", "server_read"], _BYTES_TO_MB),
+      ("llite", "arc", ["write_bytes"], _BYTES_TO_MB),
+      ("nfs", "arc", ["normal_write", "direct_write", "server_write"], _BYTES_TO_MB),
+  ):
+    shared_name = (
+        _SHARED_FS_READ_METRIC
+        if "read" in events[0]
+        else _SHARED_FS_WRITE_METRIC
+    )
+    shared_label = (
+        _SHARED_FS_READ_LABEL
+        if shared_name == _SHARED_FS_READ_METRIC
+        else _SHARED_FS_WRITE_LABEL
+    )
+    yield typ, val_col, events, shared_name, conv, shared_label
 
 
 def _summary_metric_specs():
@@ -313,6 +362,8 @@ def _summary_metric_specs():
   for fw in _SUMMARY_FIRST_WIN_SPECS:
     out.append(("", fw["val_col"], [], fw["name"], 0, fw["label"]))
   out.append(("intel_imc", "arc", [], "mbw", _CAS_BW_CONV, "DRAMBW[GB/s]"))
+  out.append(("", "", [], _SHARED_FS_READ_METRIC, 0, _SHARED_FS_READ_LABEL))
+  out.append(("", "", [], _SHARED_FS_WRITE_METRIC, 0, _SHARED_FS_WRITE_LABEL))
   return out
 
 
@@ -331,6 +382,8 @@ def _summary_plot_order_key(metric_name):
       "nv_mem_used_mb": 3,
       # Keep fabric bandwidth at the end of the grid.
       "ibbw": 999,
+      _SHARED_FS_READ_METRIC: 1000,
+      _SHARED_FS_WRITE_METRIC: 1001,
   }
   return priority.get(metric_name, 100)
 
@@ -471,6 +524,18 @@ class SummaryPlot():
 
     df = _merge_first_full_coverage(
         df, self.jt, "mbw", "arc", _summary_intel_imc_bw_tries())
+    shared_read_sources = (
+        ("llite", "arc", ["read_bytes"], _BYTES_TO_MB),
+        ("nfs", "arc", ["normal_read", "direct_read", "server_read"], _BYTES_TO_MB),
+    )
+    shared_write_sources = (
+        ("llite", "arc", ["write_bytes"], _BYTES_TO_MB),
+        ("nfs", "arc", ["normal_write", "direct_write", "server_write"], _BYTES_TO_MB),
+    )
+    df = _merge_shared_fs_metric(
+        df, self.jt, _SHARED_FS_READ_METRIC, shared_read_sources)
+    df = _merge_shared_fs_metric(
+        df, self.jt, _SHARED_FS_WRITE_METRIC, shared_write_sources)
 
     metrics = _summary_metric_specs()
 
