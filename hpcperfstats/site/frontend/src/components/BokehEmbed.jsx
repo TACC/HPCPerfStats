@@ -20,6 +20,38 @@ function whenBokehReady(timeoutMs = 10000) {
   });
 }
 
+function maximizeEmbeddedPlot(targetId) {
+  const targetEl = typeof document !== "undefined" ? document.getElementById(targetId) : null;
+  if (!targetEl) return;
+
+  // Make the embedded root fill the available zoom container area.
+  const rootEl = targetEl.querySelector(".bk-root");
+  if (rootEl) {
+    rootEl.style.width = "100%";
+    rootEl.style.height = "100%";
+    rootEl.style.maxWidth = "none";
+  }
+
+  // Ask Bokeh models in this target to use stretch sizing.
+  try {
+    const index = window.Bokeh?.index || {};
+    Object.values(index).forEach((view) => {
+      if (!view?.el || !targetEl.contains(view.el) || !view?.model) return;
+      view.model.sizing_mode = "stretch_both";
+      view.model.width_policy = "max";
+      view.model.height_policy = "max";
+      if (typeof view.request_render === "function") view.request_render();
+    });
+  } catch {
+    // Best-effort sizing only.
+  }
+
+  // Trigger a layout pass after styles/model hints are applied.
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("resize"));
+  }
+}
+
 const PLACEHOLDER_STYLE = {
   minHeight: 120,
   display: "flex",
@@ -63,6 +95,7 @@ export default function BokehEmbed({
   unavailableReason,
   onPlotReadyChange,
   fillHeight = false,
+  maximizeInContainer = false,
 }) {
   const session = useSession();
   const canViewErrorDetails = !!session?.is_staff;
@@ -101,11 +134,20 @@ export default function BokehEmbed({
           return;
         }
         try {
-          window.Bokeh.embed.embed_item(item, id);
-          if (!cancelled) {
-            setPlotReady(true);
-            if (onPlotReadyChange) onPlotReadyChange(true);
-          }
+          const embedResult = window.Bokeh.embed.embed_item(item, id);
+          Promise.resolve(embedResult)
+            .then(() => {
+              if (cancelled) return;
+              if (maximizeInContainer) maximizeEmbeddedPlot(id);
+              setPlotReady(true);
+              if (onPlotReadyChange) onPlotReadyChange(true);
+            })
+            .catch((err) => {
+              if (cancelled) return;
+              setFailureReason(err?.message || "Embed failed");
+              setLoadFailed(true);
+              if (onPlotReadyChange) onPlotReadyChange(false);
+            });
         } catch (err) {
           console.warn("Bokeh embed_item failed:", err);
           if (!cancelled) {
@@ -126,7 +168,7 @@ export default function BokehEmbed({
     return () => {
       cancelled = true;
     };
-  }, [item, id, onPlotReadyChange]);
+  }, [item, id, onPlotReadyChange, maximizeInContainer]);
 
   const detailsMessage = loadFailed ? failureReason : unavailableReason;
   const isLoading = hasData && !plotReady && !loadFailed;

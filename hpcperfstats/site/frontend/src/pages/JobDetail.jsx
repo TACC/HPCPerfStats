@@ -629,6 +629,7 @@ export default function JobDetail() {
                 plotName={zoomedPanel.plotName}
                 unavailableReason={zoomedPanel.unavailableReason}
                 fillHeight
+                maximizeInContainer
               />
             </div>
           </div>
