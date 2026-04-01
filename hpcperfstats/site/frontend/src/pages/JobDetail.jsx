@@ -66,6 +66,33 @@ function PlotPanel({
   );
 }
 
+const JOB_PLOT_CONFIGS = [
+  {
+    key: "summary_plot",
+    panelKey: "summary",
+    idPrefix: "job-mscript",
+    plotName: "Summary plot",
+  },
+  {
+    key: "heatmap",
+    panelKey: "heatmap",
+    idPrefix: "job-hscript",
+    plotName: "Heatmap",
+  },
+  {
+    key: "roofline",
+    panelKey: "cpu-roofline",
+    idPrefix: "job-roofline",
+    plotName: "CPU Roofline",
+  },
+  {
+    key: "gpu_roofline",
+    panelKey: "gpu-roofline",
+    idPrefix: "job-gpu-roofline",
+    plotName: "GPU Roofline",
+  },
+];
+
 export default function JobDetail() {
   const session = useSession();
   const isStaff = !!session?.is_staff;
@@ -101,37 +128,63 @@ export default function JobDetail() {
         // 2) Fetch full job detail in the background to fill heavy fields.
         setDetailsLoading(true);
 
-        // 2) Load plots after we've rendered the job page.
-        const fetchPlotsWithPolling = async () => {
+        const emptyPlotsState = JOB_PLOT_CONFIGS.reduce((acc, config) => {
+          acc[config.key] = {
+            loading: true,
+            plotItem: null,
+            unavailableReason: null,
+          };
+          return acc;
+        }, {});
+        setPlots(emptyPlotsState);
+        setPlotsLoading(true);
+
+        const fetchPlotWithPolling = async (plotKey) => {
           let keepLoading = false;
           try {
-            const jobPlots = await api.getJobPlots(pk);
+            const plotResponse = await api.getJobPlots(pk, plotKey);
             if (cancelled) return;
 
-            if (jobPlots?.status === "loading") {
+            if (plotResponse?.status === "loading") {
               keepLoading = true;
               const retryAfterMs = Math.max(
                 250,
-                Number(jobPlots.retry_after_seconds ?? 2) * 1000
+                Number(plotResponse.retry_after_seconds ?? 2) * 1000
               );
               setTimeout(() => {
-                if (!cancelled) fetchPlotsWithPolling();
+                if (!cancelled) fetchPlotWithPolling(plotKey);
               }, retryAfterMs);
               return;
             }
 
-            setPlots(jobPlots);
+            setPlots((prev) => ({
+              ...(prev || {}),
+              [plotKey]: {
+                loading: false,
+                plotItem: plotResponse?.plot_item ?? null,
+                unavailableReason: plotResponse?.unavailable_reason ?? null,
+              },
+            }));
           } catch {
-            // eslint-disable-next-line no-console
-            console.warn("Failed to load job plots");
-          } finally {
             if (cancelled) return;
-            if (!keepLoading) {
-              setPlotsLoading(false);
-            }
+            // eslint-disable-next-line no-console
+            console.warn(`Failed to load ${plotKey} for job ${pk}`);
+            setPlots((prev) => ({
+              ...(prev || {}),
+              [plotKey]: {
+                loading: false,
+                plotItem: null,
+                unavailableReason: null,
+              },
+            }));
+          } finally {
+            if (cancelled || keepLoading) return;
           }
         };
-        fetchPlotsWithPolling();
+
+        JOB_PLOT_CONFIGS.forEach((config) => {
+          fetchPlotWithPolling(config.key);
+        });
 
         api
           .getJobDetail(pk)
@@ -159,6 +212,14 @@ export default function JobDetail() {
     };
   }, [pk]);
 
+  useEffect(() => {
+    if (!plots) return;
+    const allFinished = JOB_PLOT_CONFIGS.every(
+      (config) => plots?.[config.key] && plots[config.key].loading === false
+    );
+    if (allFinished) setPlotsLoading(false);
+  }, [plots]);
+
   if (loading) return <LoadingMessage message="Loading job detail…" />;
   if (error) return <div className="container text-danger">Error: {error}</div>;
   if (!data) return null;
@@ -179,48 +240,14 @@ export default function JobDetail() {
     proc_list = [],
   } = data;
 
-  const {
-    mplot_item,
-    mplot_unavailable_reason,
-    hplot_item,
-    hplot_unavailable_reason,
-    rplot_item,
-    rplot_unavailable_reason,
-    grplot_item,
-    grplot_unavailable_reason,
-  } = plots || {};
-
   const hasDeviceData = Object.keys(schema).length > 0;
-  const plotPanels = [
-    {
-      key: "summary",
-      item: mplot_item,
-      id: `job-mscript-${pk}`,
-      plotName: "Summary plot",
-      unavailableReason: mplot_unavailable_reason,
-    },
-    {
-      key: "heatmap",
-      item: hplot_item,
-      id: `job-hscript-${pk}`,
-      plotName: "Heatmap",
-      unavailableReason: hplot_unavailable_reason,
-    },
-    {
-      key: "cpu-roofline",
-      item: rplot_item,
-      id: `job-roofline-${pk}`,
-      plotName: "CPU Roofline",
-      unavailableReason: rplot_unavailable_reason,
-    },
-    {
-      key: "gpu-roofline",
-      item: grplot_item,
-      id: `job-gpu-roofline-${pk}`,
-      plotName: "GPU Roofline",
-      unavailableReason: grplot_unavailable_reason,
-    },
-  ];
+  const plotPanels = JOB_PLOT_CONFIGS.map((config) => ({
+    key: config.panelKey,
+    item: plots?.[config.key]?.plotItem ?? null,
+    id: `${config.idPrefix}-${pk}`,
+    plotName: config.plotName,
+    unavailableReason: plots?.[config.key]?.unavailableReason ?? null,
+  }));
   const zoomedPanel = plotPanels.find((panel) => panel.key === zoomPlotKey) || null;
 
   return (
@@ -532,46 +559,21 @@ export default function JobDetail() {
         )}
         <table>
           <tbody>
-            <tr>
-              <td>
-                <PlotPanel
-                  item={mplot_item}
-                  id={`job-mscript-${pk}`}
-                  plotName="Summary plot"
-                  unavailableReason={mplot_unavailable_reason}
-                  onZoom={() => setZoomPlotKey("summary")}
-                />
-              </td>
-              <td>
-                <PlotPanel
-                  item={hplot_item}
-                  id={`job-hscript-${pk}`}
-                  plotName="Heatmap"
-                  unavailableReason={hplot_unavailable_reason}
-                  onZoom={() => setZoomPlotKey("heatmap")}
-                />
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <PlotPanel
-                  item={rplot_item}
-                  id={`job-roofline-${pk}`}
-                  plotName="CPU Roofline"
-                  unavailableReason={rplot_unavailable_reason}
-                  onZoom={() => setZoomPlotKey("cpu-roofline")}
-                />
-              </td>
-              <td>
-                <PlotPanel
-                  item={grplot_item}
-                  id={`job-gpu-roofline-${pk}`}
-                  plotName="GPU Roofline"
-                  unavailableReason={grplot_unavailable_reason}
-                  onZoom={() => setZoomPlotKey("gpu-roofline")}
-                />
-              </td>
-            </tr>
+            {[plotPanels.slice(0, 2), plotPanels.slice(2, 4)].map((row, rowIndex) => (
+              <tr key={`plot-row-${rowIndex}`}>
+                {row.map((panel) => (
+                  <td key={panel.key}>
+                    <PlotPanel
+                      item={panel.item}
+                      id={panel.id}
+                      plotName={panel.plotName}
+                      unavailableReason={panel.unavailableReason}
+                      onZoom={() => setZoomPlotKey(panel.key)}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
           </tbody>
         </table>
       </center>

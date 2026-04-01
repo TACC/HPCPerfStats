@@ -81,7 +81,13 @@ export const api = {
     ),
   getJobDetail: (pk) => request(`/jobs/${encodeURIComponent(pk)}/`),
   getJobDetailLight: (pk) => request(`/jobs/${encodeURIComponent(pk)}/?light=1`),
-  getJobPlots: (pk) => request(`/jobs/${encodeURIComponent(pk)}/plots/`),
+  getJobPlots: (pk, plot = null) => {
+    const params = new URLSearchParams();
+    if (plot) params.set("plot", plot);
+    const queryString = params.toString();
+    const suffix = queryString ? `?${queryString}` : "";
+    return request(`/jobs/${encodeURIComponent(pk)}/plots/${suffix}`);
+  },
   getTypeDetail: (jid, typeName) =>
     request(`/jobs/${encodeURIComponent(jid)}/${encodeURIComponent(typeName)}/`),
   getHostPlot: (params) =>

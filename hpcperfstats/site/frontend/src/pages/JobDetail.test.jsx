@@ -36,14 +36,9 @@ const minimalJobDetailResponse = {
 };
 
 const minimalPlotsResponse = {
-  mplot_item: null,
-  mplot_unavailable_reason: null,
-  hplot_item: null,
-  hplot_unavailable_reason: null,
-  rplot_item: null,
-  rplot_unavailable_reason: null,
-  grplot_item: null,
-  grplot_unavailable_reason: null,
+  status: "ready",
+  plot_item: null,
+  unavailable_reason: null,
 };
 
 function renderJobDetail(pk = "12345", session = { is_staff: false }) {
@@ -63,11 +58,15 @@ describe("JobDetail", () => {
     vi.restoreAllMocks();
   });
 
+  function mockAllPlotCallsReady() {
+    return vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(minimalPlotsResponse);
+  }
+
   it("shows loading indicator while job detail is fetching", () => {
     vi.spyOn(apiModule.api, "getJobDetailLight").mockReturnValue(
       new Promise(() => {})
     );
-    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(minimalPlotsResponse);
+    mockAllPlotCallsReady();
 
     renderJobDetail();
     expect(
@@ -85,9 +84,9 @@ describe("JobDetail", () => {
     const getJobPlotsSpy = vi
       .spyOn(apiModule.api, "getJobPlots")
       .mockImplementation(
-        () =>
+        (_pk, plot) =>
           new Promise((resolve) => {
-            setTimeout(() => resolve(minimalPlotsResponse), 100);
+            setTimeout(() => resolve({ ...minimalPlotsResponse, plot }), 100);
           })
       );
 
@@ -100,7 +99,10 @@ describe("JobDetail", () => {
     expect(screen.getByText("testjob")).toBeInTheDocument();
 
     expect(getJobDetailLightSpy).toHaveBeenCalledWith("12345");
-    expect(getJobPlotsSpy).toHaveBeenCalledWith("12345");
+    expect(getJobPlotsSpy).toHaveBeenCalledWith("12345", "summary_plot");
+    expect(getJobPlotsSpy).toHaveBeenCalledWith("12345", "heatmap");
+    expect(getJobPlotsSpy).toHaveBeenCalledWith("12345", "roofline");
+    expect(getJobPlotsSpy).toHaveBeenCalledWith("12345", "gpu_roofline");
 
     expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
 
@@ -136,9 +138,7 @@ describe("JobDetail", () => {
     vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
       minimalJobDetailResponse
     );
-    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(
-      minimalPlotsResponse
-    );
+    mockAllPlotCallsReady();
 
     const { container } = renderJobDetail("12345");
 
@@ -169,9 +169,7 @@ describe("JobDetail", () => {
     vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
       detailWithMetricMessage
     );
-    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(
-      minimalPlotsResponse
-    );
+    mockAllPlotCallsReady();
 
     renderJobDetail("12345", { is_staff: true });
 
@@ -205,9 +203,7 @@ describe("JobDetail", () => {
     vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
       detailWithMetricMessage
     );
-    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(
-      minimalPlotsResponse
-    );
+    mockAllPlotCallsReady();
 
     renderJobDetail("12345", { is_staff: false });
 
@@ -246,7 +242,7 @@ describe("JobDetail", () => {
     expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(getJobPlotsSpy).toHaveBeenCalledTimes(2);
+      expect(getJobPlotsSpy).toHaveBeenCalledTimes(5);
     });
     await waitFor(() => {
       expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
@@ -267,9 +263,7 @@ describe("JobDetail", () => {
     vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
       detailGpuCountOnly
     );
-    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(
-      minimalPlotsResponse
-    );
+    mockAllPlotCallsReady();
 
     renderJobDetail("12345");
 
@@ -287,9 +281,7 @@ describe("JobDetail", () => {
     vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
       minimalJobDetailResponse
     );
-    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(
-      minimalPlotsResponse
-    );
+    mockAllPlotCallsReady();
 
     renderJobDetail("12345");
     await waitFor(() => {
@@ -304,9 +296,7 @@ describe("JobDetail", () => {
     vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
       minimalJobDetailResponse
     );
-    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(
-      minimalPlotsResponse
-    );
+    mockAllPlotCallsReady();
 
     renderJobDetail("12345");
     await waitFor(() => {
