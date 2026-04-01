@@ -360,8 +360,8 @@ def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
   assert "nv_mem_total_mb" not in captured_metrics
 
 
-def test_summaryplot_plot_metric_caps_time_tick_count_to_six():
-  """Summary plot x-axis should target at most six datetime tick labels."""
+def test_summaryplot_plot_metric_caps_time_tick_count_to_five():
+  """Summary plot x-axis should target at most five datetime tick labels."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   df = pd.DataFrame(
       [("n1.cluster", t0, 1.0)],
@@ -374,4 +374,53 @@ def test_summaryplot_plot_metric_caps_time_tick_count_to_six():
   summary.hc = {"n1.cluster": "#1f77b4"}
 
   fig = summary.plot_metric(df, "cpu", "CPU Usage [#cores]")
-  assert fig.xaxis[0].ticker.desired_num_ticks == 6
+  assert fig.xaxis[0].ticker.desired_num_ticks == 5
+
+
+def test_summaryplot_orders_cpu_then_gpu_then_fabricbw():
+  """Summary subplot order starts with CPU, then GPU, then FabricBW."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    ev = list(events)
+    if typ == "cpu" and val_col == "arc" and ev == ["user", "system", "nice"]:
+      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and val_col == "value":
+      if ev == ["gpu_util"]:
+        return pd.DataFrame([("n1.cluster", t0, 50.0)], columns=["host", "time", "sum_val"])
+      if ev == ["mem_used_mb"]:
+        return pd.DataFrame([("n1.cluster", t0, 2048.0)], columns=["host", "time", "sum_val"])
+      if ev == ["mem_total_mb"]:
+        return pd.DataFrame([("n1.cluster", t0, 8192.0)], columns=["host", "time", "sum_val"])
+      if ev == ["gpu_count"]:
+        return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
+      return empty
+    if typ == "ib_ext" and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
+      return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics") and val_col == "arc":
+      if ev == fp64:
+        return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  summary = SummaryPlot(jt)
+  captured_metrics = []
+
+  def fake_plot_metric(df, metric, label, y_range_end=None):
+    del df, label, y_range_end
+    captured_metrics.append(metric)
+    return figure(width=100, height=60)
+
+  summary.plot_metric = fake_plot_metric
+  fig = summary.plot()
+  assert fig is not None
+  assert captured_metrics.index("cpu") < captured_metrics.index("nv_gpu_util")
+  assert captured_metrics.index("nv_gpu_util") < captured_metrics.index("ibbw")

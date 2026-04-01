@@ -300,6 +300,17 @@ def _summary_metric_specs():
   return out
 
 
+def _summary_plot_order_key(metric_name):
+  """Priority order for summary subplots: CPU, GPU, then fabric bandwidth."""
+  priority = {
+      "cpu": 0,
+      "nv_gpu_util": 1,
+      "nv_mem_used_mb": 2,
+      "ibbw": 3,
+  }
+  return priority.get(metric_name, 100)
+
+
 class SummaryPlot():
   """Builds a grid of Bokeh step plots (one per metric) from jid_table aggregate DataFrames.
 
@@ -344,7 +355,7 @@ class SummaryPlot():
         y_axis_label=label_text,
         title=label_text,
     )
-    plot.xaxis.ticker.desired_num_ticks = 6
+    plot.xaxis.ticker.desired_num_ticks = 5
     set_linear_axes_plain_numeric(plot)
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
@@ -446,7 +457,7 @@ class SummaryPlot():
     df["time"] = to_datetime(df["time"], utc=True)
     df["time"] = df["time"].dt.tz_convert(local_timezone)
 
-    plots = []
+    render_specs = []
     for typ, val, events, name, conv, label in metrics:
       if name not in df.columns:
         continue
@@ -461,6 +472,12 @@ class SummaryPlot():
         y_top = _summary_nv_mem_used_y_range_end(df)
       elif name == "nv_gpu_util":
         y_top = _summary_nv_gpu_util_y_range_end(df)
+      render_specs.append((name, label, y_top))
+
+    render_specs.sort(key=lambda item: _summary_plot_order_key(item[0]))
+
+    plots = []
+    for name, label, y_top in render_specs:
       plots += [self.plot_metric(df, name, label, y_range_end=y_top)]
 
     if not plots:
