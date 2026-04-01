@@ -56,7 +56,13 @@ const PLACEHOLDER_OVERLAY_STYLE = {
  * Accepts only Bokeh `json_item` payloads to avoid executing untrusted HTML/JS.
  * Shows "Data not available." in the plot area when there is no data or when the plot fails to load.
  */
-export default function BokehEmbed({ item, id = "bokeh-embed", plotName, unavailableReason }) {
+export default function BokehEmbed({
+  item,
+  id = "bokeh-embed",
+  plotName,
+  unavailableReason,
+  onPlotReadyChange,
+}) {
   const session = useSession();
   const canViewErrorDetails = !!session?.is_staff;
   const containerRef = useRef(null);
@@ -75,7 +81,8 @@ export default function BokehEmbed({ item, id = "bokeh-embed", plotName, unavail
     setFailureReason(null);
     setShowDetails(false);
     setCopyStatus("");
-  }, [item, id]);
+    if (onPlotReadyChange) onPlotReadyChange(false);
+  }, [item, id, onPlotReadyChange]);
 
   useEffect(() => {
     if (!item) return;
@@ -94,12 +101,16 @@ export default function BokehEmbed({ item, id = "bokeh-embed", plotName, unavail
         }
         try {
           window.Bokeh.embed.embed_item(item, id);
-          if (!cancelled) setPlotReady(true);
+          if (!cancelled) {
+            setPlotReady(true);
+            if (onPlotReadyChange) onPlotReadyChange(true);
+          }
         } catch (err) {
           console.warn("Bokeh embed_item failed:", err);
           if (!cancelled) {
             setFailureReason(err?.message || "Embed failed");
             setLoadFailed(true);
+            if (onPlotReadyChange) onPlotReadyChange(false);
           }
         }
       })
@@ -107,13 +118,14 @@ export default function BokehEmbed({ item, id = "bokeh-embed", plotName, unavail
         if (!cancelled) {
           setFailureReason(err?.message || "Bokeh JS did not load in time");
           setLoadFailed(true);
+          if (onPlotReadyChange) onPlotReadyChange(false);
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [item, id]);
+  }, [item, id, onPlotReadyChange]);
 
   const detailsMessage = loadFailed ? failureReason : unavailableReason;
   const isLoading = hasData && !plotReady && !loadFailed;

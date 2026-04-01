@@ -56,6 +56,7 @@ function renderJobDetail(pk = "12345", session = { is_staff: false }) {
 describe("JobDetail", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    delete window.Bokeh;
   });
 
   function mockAllPlotCallsReady() {
@@ -290,19 +291,32 @@ describe("JobDetail", () => {
   });
 
   it("shows zoom links for each host-level plot and closes zoom overlay with x", async () => {
+    window.Bokeh = {
+      embed: {
+        embed_item: vi.fn(),
+      },
+    };
     vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
       minimalJobDetailResponse
     );
     vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
       minimalJobDetailResponse
     );
-    mockAllPlotCallsReady();
+    vi.spyOn(apiModule.api, "getJobPlots").mockImplementation(async (_pk, plot) => ({
+      status: "ready",
+      plot,
+      plot_item: { doc: {}, root_ids: [`${plot}-root`] },
+      unavailable_reason: null,
+    }));
 
     renderJobDetail("12345");
     await waitFor(() => {
       expect(screen.getByText("Host-level Plots")).toBeInTheDocument();
     });
 
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: /^Zoom /i }).length).toBe(4);
+    });
     const zoomLinks = screen.getAllByRole("button", { name: /^Zoom /i });
     expect(zoomLinks.length).toBe(4);
 
@@ -315,5 +329,27 @@ describe("JobDetail", () => {
     expect(
       screen.queryByRole("dialog", { name: "Summary plot zoom view" })
     ).not.toBeInTheDocument();
+  });
+
+  it("does not show zoom links until plots finish rendering", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+      minimalJobDetailResponse
+    );
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
+      minimalJobDetailResponse
+    );
+    vi.spyOn(apiModule.api, "getJobPlots").mockImplementation(async (_pk, plot) => ({
+      status: "ready",
+      plot,
+      plot_item: { doc: {}, root_ids: [`${plot}-root`] },
+      unavailable_reason: null,
+    }));
+
+    renderJobDetail("12345");
+
+    await waitFor(() => {
+      expect(screen.getByText("Host-level Plots")).toBeInTheDocument();
+    });
+    expect(screen.queryAllByRole("button", { name: /^Zoom /i })).toHaveLength(0);
   });
 });

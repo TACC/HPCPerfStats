@@ -44,6 +44,8 @@ function PlotPanel({
   unavailableReason,
   onZoom,
 }) {
+  const [isPlotRendered, setIsPlotRendered] = useState(false);
+
   return (
     <div>
       <BokehEmbed
@@ -51,17 +53,20 @@ function PlotPanel({
         id={id}
         plotName={plotName}
         unavailableReason={unavailableReason}
+        onPlotReadyChange={setIsPlotRendered}
       />
-      <div style={{ marginTop: "0.35rem", textAlign: "center" }}>
-        <button
-          type="button"
-          className="btn btn-link p-0"
-          onClick={onZoom}
-          aria-label={`Zoom ${plotName}`}
-        >
-          zoom
-        </button>
-      </div>
+      {isPlotRendered ? (
+        <div style={{ marginTop: "0.35rem", textAlign: "center" }}>
+          <button
+            type="button"
+            className="btn btn-link p-0"
+            onClick={onZoom}
+            aria-label={`Zoom ${plotName}`}
+          >
+            zoom
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
