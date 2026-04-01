@@ -301,12 +301,20 @@ def _summary_metric_specs():
 
 
 def _summary_plot_order_key(metric_name):
-  """Priority order for summary subplots: CPU, GPU, then fabric bandwidth."""
+  """Priority order for summary subplots.
+
+  Desired job-detail ordering:
+  - Row 1: CPU Usage, CPU MemUsed
+  - Row 2: GPU util, GPU MemUsed
+  - Last row: FabricBW
+  """
   priority = {
       "cpu": 0,
-      "nv_gpu_util": 1,
-      "nv_mem_used_mb": 2,
-      "ibbw": 3,
+      "mem": 1,
+      "nv_gpu_util": 2,
+      "nv_mem_used_mb": 3,
+      # Keep fabric bandwidth at the end of the grid.
+      "ibbw": 999,
   }
   return priority.get(metric_name, 100)
 
