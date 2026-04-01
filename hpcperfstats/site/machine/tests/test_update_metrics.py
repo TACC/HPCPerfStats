@@ -302,3 +302,50 @@ def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
 
   update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
   assert seen == [[101, 103]]
+
+
+def test_filter_jids_with_samples_after_end_requires_all_hosts(monkeypatch):
+  """A job is ready only when every host has latest sample strictly after end_time."""
+  end = datetime(2025, 4, 10, 12, 0, 0)
+  jobs_rows = [
+      {
+          "jid": 101,
+          "end_time": end,
+          "host_list": ["n1.example.org", "n2.example.org"],
+      },
+      {
+          "jid": 102,
+          "end_time": end,
+          "host_list": ["n3.example.org", "n4.example.org"],
+      },
+  ]
+  # n2 does not meet strict > end_time, so jid 101 must be excluded.
+  latest_rows = [
+      {"host": "n1.example.org", "last_time": datetime(2025, 4, 10, 12, 0, 1)},
+      {"host": "n2.example.org", "last_time": datetime(2025, 4, 10, 12, 0, 0)},
+      {"host": "n3.example.org", "last_time": datetime(2025, 4, 10, 12, 0, 5)},
+      {"host": "n4.example.org", "last_time": datetime(2025, 4, 10, 12, 0, 2)},
+  ]
+
+  class _JobManager:
+    def filter(self, **kwargs):
+      class _Qs:
+        def values(self, *fields):
+          return jobs_rows
+      return _Qs()
+
+  class _HostManager:
+    def filter(self, **kwargs):
+      class _Qs:
+        def values(self, *fields):
+          class _Annotate:
+            def annotate(self, **ann):
+              return latest_rows
+          return _Annotate()
+      return _Qs()
+
+  monkeypatch.setattr(update_metrics.job_data, "objects", _JobManager())
+  monkeypatch.setattr(update_metrics.host_data, "objects", _HostManager())
+
+  ready = update_metrics._filter_jids_with_samples_after_end([101, 102])
+  assert ready == [102]

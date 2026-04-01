@@ -211,7 +211,9 @@ def _filter_jids_with_samples_after_end(jids):
   unique_hosts = set()
   job_hosts = {}
   for row in jobs:
-    hosts = _fqdn_hosts_for_job(row)
+    # De-duplicate host_list entries; gating is based on unique hosts and each
+    # unique host must have data strictly after job end.
+    hosts = sorted(set(_fqdn_hosts_for_job(row)))
     job_hosts[row["jid"]] = hosts
     unique_hosts.update(hosts)
 
@@ -231,13 +233,12 @@ def _filter_jids_with_samples_after_end(jids):
     hosts = job_hosts.get(jid) or []
     if end_time is None or not hosts:
       continue
-    is_ready = True
+    ready_hosts = 0
     for host in hosts:
       latest = latest_by_host.get(host)
-      if latest is None or latest <= end_time:
-        is_ready = False
-        break
-    if is_ready:
+      if latest is not None and latest > end_time:
+        ready_hosts += 1
+    if ready_hosts == len(hosts):
       ready.append(jid)
   return ready
 
