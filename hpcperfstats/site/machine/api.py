@@ -337,17 +337,30 @@ def _apply_zoom_layout_to_json_item(plot_item):
     except Exception:
         return plot_item
 
-    def _apply_attrs(attrs):
+    layout_model_names = {
+        "Figure",
+        "Plot",
+        "GridPlot",
+        "Row",
+        "Column",
+        "ToolbarBox",
+        "Tabs",
+        "TabPanel",
+    }
+
+    def _apply_attrs(attrs, allow_dimension_reset=False):
         if not isinstance(attrs, dict):
             return
         attrs["sizing_mode"] = "stretch_both"
         attrs["width_policy"] = "max"
         attrs["height_policy"] = "max"
-        # Drop fixed dimensions when present so layout can expand.
-        if "width" in attrs:
-            attrs["width"] = None
-        if "height" in attrs:
-            attrs["height"] = None
+        # Only reset fixed width/height on layout models. Applying this to all
+        # model attrs can corrupt glyph geometry (for example heatmap rect width).
+        if allow_dimension_reset:
+            if "width" in attrs:
+                attrs["width"] = None
+            if "height" in attrs:
+                attrs["height"] = None
         if "min_width" in attrs and attrs["min_width"] is None:
             attrs["min_width"] = 600
         if "min_height" in attrs and attrs["min_height"] is None:
@@ -357,7 +370,8 @@ def _apply_zoom_layout_to_json_item(plot_item):
         if isinstance(node, dict):
             attrs = node.get("attributes")
             if isinstance(attrs, dict):
-                _apply_attrs(attrs)
+                model_name = node.get("name")
+                _apply_attrs(attrs, allow_dimension_reset=model_name in layout_model_names)
             for value in node.values():
                 _walk(value)
         elif isinstance(node, list):
@@ -2351,7 +2365,7 @@ def job_plots(request, pk):
     cached_results = {}
     missing_keys = []
     for key in requested_keys:
-        size_key = "zoom_v2" if zoom_mode else "normal"
+        size_key = "zoom_v3" if zoom_mode else "normal"
         cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key, size_key)
         cached_entry = cache.get(cache_key)
         # Back-compat refresh: older cached heatmap results used a generic
@@ -2410,7 +2424,7 @@ def job_plots(request, pk):
         missing_keys = still_missing
 
     for key in missing_keys:
-        inflight_key = (job.jid, key, "zoom_v2" if zoom_mode else "normal")
+        inflight_key = (job.jid, key, "zoom_v3" if zoom_mode else "normal")
         with _job_plots_lock:
             future = _job_plot_inflight.get(inflight_key)
             if future is None:
@@ -2421,7 +2435,7 @@ def job_plots(request, pk):
             try:
                 plot_item, unavailable_reason = future.result()
                 cached_results[key] = {"plot_item": plot_item, "unavailable_reason": unavailable_reason}
-                size_key = "zoom_v2" if zoom_mode else "normal"
+                size_key = "zoom_v3" if zoom_mode else "normal"
                 cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key, size_key)
                 try:
                     cache.set(cache_key, cached_results[key], timeout=job_cache_timeout)

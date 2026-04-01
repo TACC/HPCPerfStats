@@ -363,3 +363,40 @@ def test_job_plots_refreshes_stale_cached_generic_gpu_roofline_reason():
       == "Missing strict GPU roofline counters in host_data"
   )
 
+
+def test_apply_zoom_layout_to_json_item_keeps_glyph_dimensions():
+  """Zoom JSON transform should not clobber glyph width/height value specs."""
+  from hpcperfstats.site.machine.api import _apply_zoom_layout_to_json_item
+
+  item = {
+      "doc": {
+          "roots": [
+              {
+                  "type": "object",
+                  "name": "Figure",
+                  "id": "fig-1",
+                  "attributes": {"width": 400, "height": 200},
+              },
+              {
+                  "type": "object",
+                  "name": "Rect",
+                  "id": "glyph-1",
+                  "attributes": {
+                      "width": {"type": "value", "value": 1},
+                      "height": {"type": "value", "value": 1},
+                  },
+              },
+          ]
+      }
+  }
+
+  out = _apply_zoom_layout_to_json_item(item)
+  roots = out["doc"]["roots"]
+  fig_attrs = roots[0]["attributes"]
+  rect_attrs = roots[1]["attributes"]
+
+  assert fig_attrs["width"] is None
+  assert fig_attrs["height"] is None
+  assert rect_attrs["width"] == {"type": "value", "value": 1}
+  assert rect_attrs["height"] == {"type": "value", "value": 1}
+
