@@ -2867,32 +2867,49 @@ def job_monitor(request):
     selected_usernames = [str(r.get("username") or "") for r in stats_rows]
     gpu_rollup_by_user = {}
     if selected_usernames:
-        jobs_for_gpu = (
+        jobs_for_gpu = list(
             base_qs.filter(username__in=selected_usernames)
             .only("jid", "username", "start_time", "end_time")
             .iterator(chunk_size=200)
         )
-        for job in jobs_for_gpu:
-            try:
-                j = jid_table.jid_table(job.jid)
-                job_timeout = _job_detail_cache_ttl_for_end_time(getattr(job, "end_time", None))
-                gpu_active, _gpu_max, _gpu_mean, gpu_count_total = _compute_job_gpu_stats(
-                    job, j, job_timeout
+        if jobs_for_gpu:
+            executor = _get_small_executor()
+
+            def _compute_job_gpu_for_monitor(job_ref):
+                try:
+                    j = jid_table.jid_table(job_ref.jid)
+                    job_timeout = _job_detail_cache_ttl_for_end_time(getattr(job_ref, "end_time", None))
+                    gpu_active, _gpu_max, _gpu_mean, gpu_count_total = _compute_job_gpu_stats(
+                        job_ref, j, job_timeout
+                    )
+                    return (
+                        str(getattr(job_ref, "username", "") or ""),
+                        gpu_active,
+                        gpu_count_total,
+                    )
+                except Exception:
+                    return None
+
+            futures = [executor.submit(_compute_job_gpu_for_monitor, job) for job in jobs_for_gpu]
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                except Exception:
+                    continue
+                if not result:
+                    continue
+                username, gpu_active, gpu_count_total = result
+                rollup = gpu_rollup_by_user.setdefault(
+                    username,
+                    {
+                        "gpu_count_total": None,
+                        "gpu_active_total": None,
+                    },
                 )
-            except Exception:
-                continue
-            username = str(getattr(job, "username", "") or "")
-            rollup = gpu_rollup_by_user.setdefault(
-                username,
-                {
-                    "gpu_count_total": None,
-                    "gpu_active_total": None,
-                },
-            )
-            if gpu_count_total is not None:
-                rollup["gpu_count_total"] = (rollup["gpu_count_total"] or 0) + int(gpu_count_total)
-            if gpu_active is not None:
-                rollup["gpu_active_total"] = (rollup["gpu_active_total"] or 0) + int(gpu_active)
+                if gpu_count_total is not None:
+                    rollup["gpu_count_total"] = (rollup["gpu_count_total"] or 0) + int(gpu_count_total)
+                if gpu_active is not None:
+                    rollup["gpu_active_total"] = (rollup["gpu_active_total"] or 0) + int(gpu_active)
 
     rows = []
     for row in stats_rows:
