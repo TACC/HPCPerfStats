@@ -622,12 +622,15 @@ export default function JobDetail() {
             >
               x
             </button>
-            <BokehEmbed
-              item={zoomedPanel.item}
-              id={`${zoomedPanel.id}-zoom`}
-              plotName={zoomedPanel.plotName}
-              unavailableReason={zoomedPanel.unavailableReason}
-            />
+            <div style={{ width: "100%", height: "100%" }}>
+              <BokehEmbed
+                item={zoomedPanel.item}
+                id={`${zoomedPanel.id}-zoom`}
+                plotName={zoomedPanel.plotName}
+                unavailableReason={zoomedPanel.unavailableReason}
+                fillHeight
+              />
+            </div>
           </div>
         </div>
       ) : null}

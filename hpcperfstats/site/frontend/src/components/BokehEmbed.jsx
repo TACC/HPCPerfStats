@@ -62,6 +62,7 @@ export default function BokehEmbed({
   plotName,
   unavailableReason,
   onPlotReadyChange,
+  fillHeight = false,
 }) {
   const session = useSession();
   const canViewErrorDetails = !!session?.is_staff;
@@ -215,6 +216,7 @@ export default function BokehEmbed({
     ? {
         display: "block",
         width: "100%",
+        height: fillHeight ? "100%" : undefined,
         minHeight: showPlaceholder ? BOKEH_EMBED_MIN_HEIGHT_PX : undefined,
       }
     : {};
@@ -227,6 +229,7 @@ export default function BokehEmbed({
         className="bokeh-embed-wrapper"
         style={{
           position: "relative",
+          height: fillHeight ? "100%" : undefined,
           minHeight: overlayActive ? BOKEH_EMBED_MIN_HEIGHT_PX : undefined,
         }}
       >
