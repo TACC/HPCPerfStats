@@ -24,6 +24,17 @@ function maximizeEmbeddedPlot(targetId) {
   const targetEl = typeof document !== "undefined" ? document.getElementById(targetId) : null;
   if (!targetEl) return;
 
+  const forceFillBokehDom = () => {
+    const els = targetEl.querySelectorAll(
+      ".bk-root, .bk, .bk-layout-box, .bk-plot-layout, .bk-canvas-events, canvas"
+    );
+    els.forEach((el) => {
+      el.style.setProperty("width", "100%", "important");
+      el.style.setProperty("height", "100%", "important");
+      el.style.setProperty("max-width", "none", "important");
+    });
+  };
+
   // Make the embedded root fill the available zoom container area.
   const rootEl = targetEl.querySelector(".bk-root");
   if (rootEl) {
@@ -45,6 +56,20 @@ function maximizeEmbeddedPlot(targetId) {
   } catch {
     // Best-effort sizing only.
   }
+
+  // Bokeh may apply fixed inline sizes after the initial embed pass.
+  // Re-apply fill sizing over a few ticks so the zoom plot truly expands.
+  let attempts = 0;
+  const maxAttempts = 8;
+  const repaint = () => {
+    forceFillBokehDom();
+    attempts += 1;
+    if (attempts < maxAttempts) {
+      window.setTimeout(repaint, 40);
+    }
+  };
+  forceFillBokehDom();
+  window.setTimeout(repaint, 0);
 
   // Trigger a layout pass after styles/model hints are applied.
   if (typeof window !== "undefined") {
