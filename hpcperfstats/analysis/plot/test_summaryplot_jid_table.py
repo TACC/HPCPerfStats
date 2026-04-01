@@ -103,8 +103,8 @@ def test_summaryplot_skips_freq_plot_when_ghz_never_exceeds_500():
   summary = SummaryPlot(jt)
   captured_metrics = []
 
-  def fake_plot_metric(df, metric, label, y_range_end=None):
-    del df, label, y_range_end
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
+    del df, label, y_range_end, x_range
     captured_metrics.append(metric)
     return figure(width=100, height=60)
 
@@ -181,13 +181,14 @@ def test_summaryplot_includes_nvidia_gpu_util_and_mem_used_mb_columns():
   mem_used_y_caps = []
   gpu_util_y_caps = []
 
-  def fake_plot_metric(df, metric, label, y_range_end=None):
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
     del label
     captured_metrics.append(metric)
     if metric == "nv_mem_used_mb":
       mem_used_y_caps.append(y_range_end)
     if metric == "nv_gpu_util":
       gpu_util_y_caps.append(y_range_end)
+    del x_range
     return figure(width=100, height=60)
 
   summary.plot_metric = fake_plot_metric
@@ -267,8 +268,8 @@ def test_summaryplot_nv_gpu_util_falls_back_to_utilization_event():
   summary = SummaryPlot(jt)
   captured_metrics = []
 
-  def fake_plot_metric(df, metric, label, y_range_end=None):
-    del label, y_range_end
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
+    del label, y_range_end, x_range
     captured_metrics.append(metric)
     return figure(width=100, height=60)
 
@@ -347,8 +348,8 @@ def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
   summary = SummaryPlot(jt)
   captured_metrics = []
 
-  def fake_plot_metric(df, metric, label, y_range_end=None):
-    del label, y_range_end
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
+    del label, y_range_end, x_range
     captured_metrics.append(metric)
     return figure(width=100, height=60)
 
@@ -375,6 +376,47 @@ def test_summaryplot_plot_metric_caps_time_tick_count_to_five():
 
   fig = summary.plot_metric(df, "cpu", "CPU Usage [#cores]")
   assert fig.xaxis[0].ticker.desired_num_ticks == 5
+
+
+def test_summaryplot_uses_job_window_for_x_range():
+  """Summary plots should use job start/end as explicit x-axis bounds."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  t1 = pd.Timestamp("2024-06-01 12:01:00+00:00")
+  job_start = pd.Timestamp("2024-06-01 11:55:00+00:00")
+  job_end = pd.Timestamp("2024-06-01 12:10:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0), ("n1.cluster", t1)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if typ == "cpu" and val_col == "arc" and list(events) == ["user", "system", "nice"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 1.0), ("n1.cluster", t1, 1.2)],
+          columns=["host", "time", "sum_val"],
+      )
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.start_time = job_start
+  jt.end_time = job_end
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  summary = SummaryPlot(jt)
+  seen_x_ranges = []
+
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
+    del df, metric, label, y_range_end
+    seen_x_ranges.append(x_range)
+    return figure(width=100, height=60)
+
+  summary.plot_metric = fake_plot_metric
+  fig = summary.plot()
+  assert fig is not None
+  assert seen_x_ranges
+  assert pd.Timestamp(seen_x_ranges[0].start).tz_convert("UTC") == job_start
+  assert pd.Timestamp(seen_x_ranges[0].end).tz_convert("UTC") == job_end
 
 
 def test_summaryplot_orders_cpu_then_gpu_then_fabricbw():
@@ -414,8 +456,8 @@ def test_summaryplot_orders_cpu_then_gpu_then_fabricbw():
   summary = SummaryPlot(jt)
   captured_metrics = []
 
-  def fake_plot_metric(df, metric, label, y_range_end=None):
-    del df, label, y_range_end
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
+    del df, label, y_range_end, x_range
     captured_metrics.append(metric)
     return figure(width=100, height=60)
 
@@ -465,8 +507,8 @@ def test_summaryplot_orders_cpu_mem_then_gpu_then_fabricbw_last():
   summary = SummaryPlot(jt)
   captured_metrics = []
 
-  def fake_plot_metric(df, metric, label, y_range_end=None):
-    del df, label, y_range_end
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
+    del df, label, y_range_end, x_range
     captured_metrics.append(metric)
     return figure(width=100, height=60)
 

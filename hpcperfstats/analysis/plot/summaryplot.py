@@ -33,6 +33,22 @@ from hpcperfstats.analysis.plot import MSG_NO_METRIC_DATA
 local_timezone = cfg.get_local_timezone()
 
 
+def _job_time_bounds(jt):
+  """Return (start, end) in local timezone when a valid job window is available."""
+  start = getattr(jt, "start_time", None)
+  end = getattr(jt, "end_time", None)
+  if start is None or end is None:
+    return (None, None)
+  try:
+    start_ts = to_datetime(start, utc=True)
+    end_ts = to_datetime(end, utc=True)
+  except (TypeError, ValueError):
+    return (None, None)
+  if pd_isna(start_ts) or pd_isna(end_ts) or end_ts <= start_ts:
+    return (None, None)
+  return (start_ts.tz_convert(local_timezone), end_ts.tz_convert(local_timezone))
+
+
 def _hover_tooltip_html(value_label, value_field):
   """Build an HTML hover template with spacing between multi-point hits."""
   return f"""
@@ -332,7 +348,7 @@ class SummaryPlot():
     self.jt = jt
     self.host_list = jt.host_list
 
-  def plot_metric(self, df, metric, label, y_range_end=None):
+  def plot_metric(self, df, metric, label, y_range_end=None, x_range=None):
     """Create one Bokeh figure with step glyphs per host for the given metric column and label.
 
         """
@@ -354,14 +370,19 @@ class SummaryPlot():
 
     label_text = (label or "").strip() or metric
 
+    plot_kwargs = {
+        "width": 400,
+        "height": 150,
+        "x_axis_type": "datetime",
+        "y_range": Range1d(y_range_start, y_range_end),
+        "x_axis_label": "Time",
+        "y_axis_label": label_text,
+        "title": label_text,
+    }
+    if x_range is not None:
+      plot_kwargs["x_range"] = x_range
     plot = figure(
-        width=400,
-        height=150,
-        x_axis_type="datetime",
-        y_range=Range1d(y_range_start, y_range_end),
-        x_axis_label="Time",
-        y_axis_label=label_text,
-        title=label_text,
+        **plot_kwargs,
     )
     plot.xaxis.ticker.desired_num_ticks = 5
     set_linear_axes_plain_numeric(plot)
@@ -484,9 +505,12 @@ class SummaryPlot():
 
     render_specs.sort(key=lambda item: _summary_plot_order_key(item[0]))
 
+    x_start, x_end = _job_time_bounds(self.jt)
+    x_range = Range1d(x_start, x_end) if x_start is not None and x_end is not None else None
+
     plots = []
     for name, label, y_top in render_specs:
-      plots += [self.plot_metric(df, name, label, y_range_end=y_top)]
+      plots += [self.plot_metric(df, name, label, y_range_end=y_top, x_range=x_range)]
 
     if not plots:
       raise ValueError(MSG_NO_METRIC_DATA)

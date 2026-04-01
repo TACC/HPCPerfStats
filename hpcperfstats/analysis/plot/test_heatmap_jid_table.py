@@ -109,3 +109,22 @@ def test_plot_from_jid_table_cpu_counter_metrics_typ():
 
   # Skip intel_8pmc3/4/amd candidates (empty), then cpu_counter_metrics matches.
   assert plot_from_jid_table(jt) is not None
+
+
+def test_plot_from_jid_table_heatmap_time_axis_includes_job_start_and_end():
+  """Categorical heatmap time axis should include full job window bounds."""
+  t_sample = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  job_start = pd.Timestamp("2024-06-01 11:55:00+00:00")
+  job_end = pd.Timestamp("2024-06-01 12:10:00+00:00")
+
+  jt = _make_jt_with_agg({
+      "APERF": [("n1.cluster", t_sample, 200.0)],
+      "INST_RETIRED": [("n1.cluster", t_sample, 100.0)],
+  })
+  jt.start_time = job_start
+  jt.end_time = job_end
+
+  fig = plot_from_jid_table(jt)
+  assert fig is not None
+  assert fig.x_range.factors[0] == str(job_start)
+  assert fig.x_range.factors[-1] == str(job_end)
