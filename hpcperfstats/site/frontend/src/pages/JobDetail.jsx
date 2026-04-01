@@ -6,6 +6,7 @@ import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { useSession } from "../session-context";
+import { VariableInfoLabel } from "../components/VariableInfoLabel";
 
 function CollapsibleSection({ title, children, defaultOpen = false, empty = false }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -320,18 +321,42 @@ export default function JobDetail() {
           <table className="table table-sm table-bordered">
           <thead>
             <tr>
-              <th>Job ID</th>
-              <th>user</th>
-              <th>project</th>
-              <th>start time</th>
-              <th>end time</th>
-              <th>run time (s)</th>
-              <th>requested time (s)</th>
-              <th>queue</th>
-              <th>name</th>
-              <th>status</th>
-              <th>ncores</th>
-              <th>nnodes</th>
+              <th>
+                <VariableInfoLabel variableName="jid" labelText="Job ID" enableHelp />
+              </th>
+              <th>
+                <VariableInfoLabel variableName="username" labelText="user" enableHelp />
+              </th>
+              <th>
+                <VariableInfoLabel variableName="account" labelText="project" enableHelp />
+              </th>
+              <th>
+                <VariableInfoLabel variableName="start_time" labelText="start time" enableHelp />
+              </th>
+              <th>
+                <VariableInfoLabel variableName="end_time" labelText="end time" enableHelp />
+              </th>
+              <th>
+                <VariableInfoLabel variableName="runtime" labelText="run time (s)" enableHelp />
+              </th>
+              <th>
+                <VariableInfoLabel variableName="timelimit" labelText="requested time (s)" enableHelp />
+              </th>
+              <th>
+                <VariableInfoLabel variableName="queue" labelText="queue" enableHelp />
+              </th>
+              <th>
+                <VariableInfoLabel variableName="jobname" labelText="name" enableHelp />
+              </th>
+              <th>
+                <VariableInfoLabel variableName="state" labelText="status" enableHelp />
+              </th>
+              <th>
+                <VariableInfoLabel variableName="ncores" labelText="ncores" enableHelp />
+              </th>
+              <th>
+                <VariableInfoLabel variableName="nhosts" labelText="nnodes" enableHelp />
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -521,7 +546,12 @@ export default function JobDetail() {
                 {(metrics_list || []).map((obj) => (
                   <tr key={obj.metric}>
                     <th>
-                      {obj.metric} [{obj.units}]
+                      <VariableInfoLabel
+                        variableName={obj.metric}
+                        labelText={obj.metric}
+                        enableHelp
+                      />{" "}
+                      [{obj.units}]
                     </th>
                     <td className={obj.value != null && obj.value !== "" ? "" : "text-muted"}>
                       {formatJobMetricCell(obj, isStaff)}
@@ -724,7 +754,18 @@ export default function JobDetail() {
                       <Link to={`/job/${job.jid}/${type_name}/`}>{type_name}</Link>
                     </td>
                     <td style={{ textAlign: "left" }}>
-                      {Array.isArray(event) ? event.join(", ") : event}
+                      {Array.isArray(event)
+                        ? event.map((ev, i) => (
+                            <span key={ev}>
+                              {i > 0 ? ", " : ""}
+                              <VariableInfoLabel
+                                variableName={ev}
+                                labelText={ev}
+                                enableHelp
+                              />
+                            </span>
+                          ))
+                        : event}
                     </td>
                   </tr>
                 ))}
