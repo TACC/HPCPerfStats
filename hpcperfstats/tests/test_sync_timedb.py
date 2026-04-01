@@ -301,6 +301,7 @@ def test_parse_stats_lines_proc_type():
   assert len(proc_list) == 1
   assert proc_list[0]["proc"] == "usr"
   assert proc_list[0]["jid"] == "job1"
+  assert proc_list[0]["time"] == 1709123456.0
 
 
 def test_parse_stats_lines_excluded_type():
@@ -351,8 +352,8 @@ def test_build_stats_dataframes_dedupe_proc():
       {"time": 1.0, "host": "h", "type": "cpu", "dev": "0", "event": "a", "value": 1.0, "wid": 64, "mult": 1, "unit": "#"},
   ]
   proc_list = [
-      {"jid": "j", "host": "h", "proc": "p"},
-      {"jid": "j", "host": "h", "proc": "p"},
+      {"jid": "j", "host": "h", "time": 1.0, "proc": "p"},
+      {"jid": "j", "host": "h", "time": 1.0, "proc": "p"},
   ]
   stats_df, proc_df = build_stats_dataframes(stats_list, proc_list)
   assert len(stats_df) == 1

@@ -266,7 +266,7 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
         vals = map_hardware_counter_vals(typ, schema[typ], vals, eventmap)
       elif typ == "proc":
         proc_name = (s.split()[1]).split('/')[0]
-        proc_stats.append({**tags2, "proc": proc_name})
+        proc_stats.append({**tags2, "time": tags["time"], "proc": proc_name})
         continue
       else:
         if typ in schema:

@@ -182,7 +182,13 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         if not batch:
           break
         proc_objs = [
-            proc_data(jid=row.jid, host=row.host, proc=row.proc) for row in batch
+            proc_data(
+                jid=row.jid,
+                host=row.host,
+                proc=row.proc,
+                time=pd.to_datetime(row.time, unit="s", utc=True).to_pydatetime(),
+            )
+            for row in batch
         ]
         proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
     except Exception as e:
@@ -241,7 +247,12 @@ def _insert_proc_data_individually(proc_stats_df):
   unique_violations = 0
   for row in proc_stats_df.itertuples(index=False):
     try:
-      proc_data(jid=row.jid, host=row.host, proc=row.proc).save()
+      proc_data(
+          jid=row.jid,
+          host=row.host,
+          proc=row.proc,
+          time=pd.to_datetime(row.time, unit="s", utc=True).to_pydatetime(),
+      ).save()
     except IntegrityError:
       unique_violations += 1
     except Exception as e:
