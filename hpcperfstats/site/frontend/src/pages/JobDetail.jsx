@@ -671,8 +671,11 @@ export default function JobDetail() {
               x
             </button>
             <div style={{ width: "100%", height: "100%" }}>
+              {zoomPlotState.loading && (
+                <LoadingMessage message={`Loading ${zoomedPanel.plotName}…`} />
+              )}
               <BokehEmbed
-                item={zoomPlotState.item || zoomedPanel.item}
+                item={zoomPlotState.item}
                 id={`${zoomedPanel.id}-zoom`}
                 plotName={zoomedPanel.plotName}
                 unavailableReason={zoomPlotState.unavailableReason || zoomedPanel.unavailableReason}

@@ -284,11 +284,12 @@ def _apply_zoom_layout_to_bokeh_model(root_model):
                 model.width_policy = "max"
             if hasattr(model, "height_policy"):
                 model.height_policy = "max"
-            # Clear hard size constraints where present.
-            if hasattr(model, "width") and getattr(model, "width", None) is not None:
-                model.width = None
-            if hasattr(model, "height") and getattr(model, "height", None) is not None:
-                model.height = None
+            # Ensure zoom plots are generated with large dimensions so they
+            # genuinely fill fullscreen overlays after embed.
+            if hasattr(model, "width"):
+                model.width = 1600
+            if hasattr(model, "height"):
+                model.height = 900
     except Exception:
         # Keep this strictly best-effort; never fail plot generation due to sizing.
         pass

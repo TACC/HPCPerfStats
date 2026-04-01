@@ -134,6 +134,9 @@ export default function BokehEmbed({
           return;
         }
         try {
+          // Re-embedding into the same target (e.g., normal -> zoom item swap)
+          // can otherwise leave duplicate Bokeh roots in the container.
+          el.innerHTML = "";
           const embedResult = window.Bokeh.embed.embed_item(item, id);
           Promise.resolve(embedResult)
             .then(() => {
