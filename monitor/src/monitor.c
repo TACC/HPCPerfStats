@@ -52,16 +52,16 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   fprintf(log_stream, "Setting hpcperfstatsd schema header rotation every %ds\n", schema_hdr_rotate_sec);
 
   fd_watcher.data = (void *)rb;
-  ev_stat_init(&fd_watcher, monitor_daemon_fd_cb, JOBID_FILE_PATH, EV_READ);
+  ev_stat_init(&fd_watcher, monitor_daemon_fd_cb, jobid_file_path, EV_READ);
   ev_stat_start(EV_DEFAULT, &fd_watcher);
-  fprintf(log_stream, "Starting hpcperfstatsd watching fd %s\n", JOBID_FILE_PATH);
+  fprintf(log_stream, "Starting hpcperfstatsd watching fd %s\n", jobid_file_path);
 
   sample_timer.data = (void *)rb;
   ev_timer_init(&sample_timer, monitor_daemon_sample_timer_cb, freq, freq);
   ev_timer_start(EV_DEFAULT, &sample_timer);
   fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs\n", freq);
 
-  if (pscanf(JOBID_FILE_PATH, "%79s", jobid) < 1)
+  if (pscanf(jobid_file_path, "%79s", jobid) < 1)
     strcpy(jobid, "-");
 }
 

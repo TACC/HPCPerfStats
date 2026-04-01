@@ -17,6 +17,17 @@
 static int g_initialized = 0;
 static int g_group = -1;
 
+static int likwid_env_setup_quiet(void)
+{
+  const char *v = getenv("HPCPERFSTATS_LIKWID_SETUP_QUIET");
+  if (v == NULL || *v == '\0')
+    return 1;
+  if (strcmp(v, "0") == 0 || strcmp(v, "false") == 0 || strcmp(v, "FALSE") == 0 ||
+      strcmp(v, "no") == 0 || strcmp(v, "NO") == 0)
+    return 0;
+  return 1;
+}
+
 static int likwid_env_verbosity(void)
 {
   const char *v = getenv("HPCPERFSTATS_LIKWID_VERBOSITY");
@@ -80,16 +91,59 @@ void likwid_pmc_adapter_finalize(void)
 int likwid_pmc_adapter_setup_events(const char *event_string)
 {
 #ifdef HAVE_LIKWID
+  int saved_stderr = -1;
+  int null_fd = -1;
+  int quiet = 0;
   if (!g_initialized || event_string == NULL)
     return -1;
+  quiet = likwid_env_setup_quiet();
+  if (quiet) {
+    saved_stderr = dup(STDERR_FILENO);
+    if (saved_stderr >= 0) {
+      null_fd = open("/dev/null", O_WRONLY);
+      if (null_fd >= 0)
+        (void) dup2(null_fd, STDERR_FILENO);
+    }
+  }
   g_group = perfmon_addEventSet(event_string);
+  if (quiet && saved_stderr >= 0) {
+    (void) dup2(saved_stderr, STDERR_FILENO);
+    close(saved_stderr);
+    saved_stderr = -1;
+  }
+  if (quiet && null_fd >= 0) {
+    close(null_fd);
+    null_fd = -1;
+  }
   if (g_group < 0)
     return -1;
+  if (quiet) {
+    saved_stderr = dup(STDERR_FILENO);
+    if (saved_stderr >= 0) {
+      null_fd = open("/dev/null", O_WRONLY);
+      if (null_fd >= 0)
+        (void) dup2(null_fd, STDERR_FILENO);
+    }
+  }
   if (perfmon_setupCounters(g_group) < 0)
-    return -1;
+    goto err;
   if (perfmon_startCounters() < 0)
-    return -1;
+    goto err;
+  if (quiet && saved_stderr >= 0) {
+    (void) dup2(saved_stderr, STDERR_FILENO);
+    close(saved_stderr);
+  }
+  if (quiet && null_fd >= 0)
+    close(null_fd);
   return 0;
+err:
+  if (quiet && saved_stderr >= 0) {
+    (void) dup2(saved_stderr, STDERR_FILENO);
+    close(saved_stderr);
+  }
+  if (quiet && null_fd >= 0)
+    close(null_fd);
+  return -1;
 #else
   (void) event_string;
   return -1;

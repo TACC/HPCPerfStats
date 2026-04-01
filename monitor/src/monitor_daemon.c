@@ -35,6 +35,7 @@ char *port   = (char *)monitor_cli_lit_port;
 char *rmq_user = (char *)monitor_cli_lit_rmq_user;
 char *rmq_password = (char *)monitor_cli_lit_rmq_password;
 char *dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
+char *jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
 double freq = 300;
 int max_buffer_size = 4096;
 int allow_ring_buffer_overwrite = 1;
@@ -269,6 +270,11 @@ int read_conf_file(void)
         fprintf(log_stream, "%s: Setting frequency to %f based on file %s\n",
                 app_name, freq, conf_file_name);
     }
+    if (strcmp(key, "jobid_file") == 0) {
+      monitor_cli_heap_dup_setting(&jobid_file_path, monitor_cli_lit_jobid_file_path, line);
+      fprintf(log_stream, "%s: Setting jobid file to %s based on file %s\n",
+              app_name, jobid_file_path, conf_file_name);
+    }
   }
   if (line_buf)
     free(line_buf);
@@ -491,7 +497,7 @@ void monitor_daemon_rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
 {
   (void)loop;
   (void)revents;
-  pscanf(JOBID_FILE_PATH, "%79s", jobid);
+  pscanf(jobid_file_path, "%79s", jobid);
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
   struct stats_buffer *sf = monitor_daemon_alloc_stats_buffer();
   if (sf == NULL)
@@ -541,7 +547,7 @@ void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
   char new_jobid[80] = "-";
   int job_ended = 0;
-  pscanf(JOBID_FILE_PATH, "%79s", new_jobid);
+  pscanf(jobid_file_path, "%79s", new_jobid);
 
   struct stats_buffer *sf = monitor_daemon_alloc_stats_buffer();
   if (sf == NULL) {
@@ -552,11 +558,11 @@ void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
   if (strcmp(jobid, new_jobid) != 0) {
     if (strcmp(new_jobid, "-") != 0) {
       strcpy(jobid, new_jobid);
-      fprintf(log_stream, "Loading jobid %s from %s\n", jobid, JOBID_FILE_PATH);
+      fprintf(log_stream, "Loading jobid %s from %s\n", jobid, jobid_file_path);
       stats_buffer_mark(sf, "begin %s", jobid);
       sample_timer.repeat = freq;
     } else {
-      fprintf(log_stream, "Unloading jobid %s from %s\n", jobid, JOBID_FILE_PATH);
+      fprintf(log_stream, "Unloading jobid %s from %s\n", jobid, jobid_file_path);
       stats_buffer_mark(sf, "end %s", jobid);
       sample_timer.repeat = 3600;
       job_ended = 1;

@@ -13,6 +13,7 @@ const char monitor_cli_lit_port[] = "5672";
 const char monitor_cli_lit_rmq_user[] = "hpcperfstats";
 const char monitor_cli_lit_rmq_password[] = "hpcperfstats";
 const char monitor_cli_lit_dumpfile_dir[] = "/tmp/hpcperfstats";
+const char monitor_cli_lit_jobid_file_path[] = "/var/run/stats_jobid";
 
 void monitor_cli_heap_dup_setting(char **slot, const char *default_literal,
 				  const char *value)
@@ -128,4 +129,8 @@ void monitor_cli_free_heap(void)
   if (dumpfile_dir != NULL && dumpfile_dir != (char *)monitor_cli_lit_dumpfile_dir)
     free(dumpfile_dir);
   dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
+
+  if (jobid_file_path != NULL && jobid_file_path != (char *)monitor_cli_lit_jobid_file_path)
+    free(jobid_file_path);
+  jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
 }

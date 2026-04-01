@@ -83,12 +83,16 @@ static void test_help_invokes_usage_and_exits_zero(void)
 static void test_free_heap_resets_queue_to_default(void)
 {
   next_cli_test();
+  monitor_cli_heap_dup_setting(&jobid_file_path, monitor_cli_lit_jobid_file_path,
+			       "/tmp/jobid_path");
   char *argv[] = { "prog", "-q", "myqueue" };
   int dm;
   monitor_cli_parse_args(3, argv, &dm);
   assert(queue != (char *)monitor_cli_lit_queue);
+  assert(jobid_file_path != (char *)monitor_cli_lit_jobid_file_path);
   monitor_cli_free_heap();
   assert(queue == (char *)monitor_cli_lit_queue);
+  assert(jobid_file_path == (char *)monitor_cli_lit_jobid_file_path);
   assert(server == NULL);
   assert(conf_file_name == NULL);
 }

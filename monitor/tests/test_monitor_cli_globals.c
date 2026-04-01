@@ -24,6 +24,7 @@ char *port = (char *)monitor_cli_lit_port;
 char *rmq_user = (char *)monitor_cli_lit_rmq_user;
 char *rmq_password = (char *)monitor_cli_lit_rmq_password;
 char *dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
+char *jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
 double freq = 300;
 int max_buffer_size = 4096;
 int allow_ring_buffer_overwrite = 1;
@@ -48,6 +49,8 @@ void test_monitor_cli_reset_globals(void)
     free(rmq_password);
   if (dumpfile_dir != NULL && dumpfile_dir != (char *)monitor_cli_lit_dumpfile_dir)
     free(dumpfile_dir);
+  if (jobid_file_path != NULL && jobid_file_path != (char *)monitor_cli_lit_jobid_file_path)
+    free(jobid_file_path);
 
   app_name = NULL;
   conf_file_name = NULL;
@@ -60,6 +63,7 @@ void test_monitor_cli_reset_globals(void)
   rmq_user = (char *)monitor_cli_lit_rmq_user;
   rmq_password = (char *)monitor_cli_lit_rmq_password;
   dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
+  jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
   freq = 300;
   max_buffer_size = 4096;
   allow_ring_buffer_overwrite = 1;

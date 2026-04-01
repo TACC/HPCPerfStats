@@ -18,6 +18,7 @@ extern char *port;
 extern char *rmq_user;
 extern char *rmq_password;
 extern char *dumpfile_dir;
+extern char *jobid_file_path;
 extern double freq;
 extern int max_buffer_size;
 extern int allow_ring_buffer_overwrite;

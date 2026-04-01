@@ -744,6 +744,10 @@ int ring_buffer_insert(
       rc = -1;
       goto out;
     }
+    if (w->q->forward->sf != NULL) {
+      stats_buffer_close(w->q->forward->sf);
+      free(w->q->forward->sf);
+    }
     w->q->forward->sf = sf;
     w->q = w->q->forward;
     w->q_first = w->q->forward;
@@ -785,6 +789,7 @@ void ring_buffer_resend(struct sf_ring_buffer *w)
     /* Case 1: Remove the last stats in buffer */
     if (w->q_count == 1) {
       stats_buffer_close(sf->sf);
+      free(sf->sf);
       sf_del = sf;
       remque(sf);
       free(sf_del);
@@ -801,6 +806,7 @@ void ring_buffer_resend(struct sf_ring_buffer *w)
     }
     sf = sf->forward;
     stats_buffer_close((sf->backward)->sf);
+    free((sf->backward)->sf);
     sf_del = sf->backward;
     remque(sf->backward);
     free(sf_del);
