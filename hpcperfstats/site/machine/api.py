@@ -2807,6 +2807,9 @@ def job_monitor(request):
     - total_jobs: number of jobs run
     - failed_jobs: number of jobs with state OUT_OF_MEMORY or FAILED
     - failed_rate: percentage of failed jobs (0–100), sorted descending.
+    - gpu_count_total: total GPUs allocated (nullable if unavailable)
+    - gpu_active_total: GPUs active (nullable if unavailable)
+    - gpu_active_percentage: active/allocated * 100 (nullable if unavailable)
     """
     err = _require_auth(request)
     if err is not None:
@@ -2870,6 +2873,11 @@ def job_monitor(request):
                 "failed_rate": round(rate, 2),
                 "timedout_jobs": timedout,
                 "timedout_rate": round(timeout_rate, 2),
+                # GPU aggregate fields are nullable in this endpoint unless
+                # upstream persisted GPU rollups are available.
+                "gpu_count_total": None,
+                "gpu_active_total": None,
+                "gpu_active_percentage": None,
             }
         )
 

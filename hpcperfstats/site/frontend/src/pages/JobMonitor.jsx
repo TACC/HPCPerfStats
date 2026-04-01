@@ -13,6 +13,13 @@ export default function JobMonitor() {
   const [sortKey, setSortKey] = useState("failed_rate");
   const [sortDir, setSortDir] = useState("desc"); // "asc" | "desc"
 
+  const formatGpuValue = (value) => {
+    if (value === null || value === undefined || value === "") return "N/A";
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "N/A";
+    return formatDecimalStandard(n);
+  };
+
   const loadData = (daysOverride) => {
     setLoading(true);
     setError(null);
@@ -49,6 +56,18 @@ export default function JobMonitor() {
     const getVal = (row, key) => {
       if (key === "username") {
         return (row.username || "").toLowerCase();
+      }
+      if (key === "gpu_active_percentage") {
+        const v = row.gpu_active_percentage;
+        if (v === null || v === undefined || v === "") return Number.NEGATIVE_INFINITY;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
+      }
+      if (key === "gpu_count_total" || key === "gpu_active_total") {
+        const v = row[key];
+        if (v === null || v === undefined || v === "") return Number.NEGATIVE_INFINITY;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
       }
       return Number(row[key] ?? 0);
     };
@@ -161,6 +180,27 @@ export default function JobMonitor() {
                   % timed out
                   {sortKey === "timedout_rate" && (sortDir === "asc" ? " ▲" : " ▼")}
                 </th>
+                <th
+                  role="button"
+                  onClick={() => handleSort("gpu_count_total")}
+                >
+                  Total GPUs Allocated
+                  {sortKey === "gpu_count_total" && (sortDir === "asc" ? " ▲" : " ▼")}
+                </th>
+                <th
+                  role="button"
+                  onClick={() => handleSort("gpu_active_total")}
+                >
+                  Number of GPUs Active
+                  {sortKey === "gpu_active_total" && (sortDir === "asc" ? " ▲" : " ▼")}
+                </th>
+                <th
+                  role="button"
+                  onClick={() => handleSort("gpu_active_percentage")}
+                >
+                  Percentage of GPUs Active
+                  {sortKey === "gpu_active_percentage" && (sortDir === "asc" ? " ▲" : " ▼")}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -180,11 +220,20 @@ export default function JobMonitor() {
                   <td>{formatDecimalStandard(row.failed_rate)}</td>
                   <td>{formatDecimalStandard(row.timedout_jobs)}</td>
                   <td>{formatDecimalStandard(row.timedout_rate)}</td>
+                  <td>{formatGpuValue(row.gpu_count_total)}</td>
+                  <td>{formatGpuValue(row.gpu_active_total)}</td>
+                  <td>
+                    {row.gpu_active_percentage === null ||
+                    row.gpu_active_percentage === undefined ||
+                    row.gpu_active_percentage === ""
+                      ? "N/A"
+                      : `${formatDecimalStandard(row.gpu_active_percentage)}%`}
+                  </td>
                 </tr>
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan="6" className="text-center text-muted">
+                  <td colSpan="9" className="text-center text-muted">
                     No jobs found in the selected time window.
                   </td>
                 </tr>
