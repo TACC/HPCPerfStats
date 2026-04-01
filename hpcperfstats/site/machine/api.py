@@ -498,6 +498,35 @@ def _require_auth(request):
     )
 
 
+def _apply_non_staff_job_visibility(queryset, request):
+    """Restrict non-staff visibility to own jobs and jobs in own-used accounts."""
+    session = getattr(request, "session", None)
+    if session is None:
+        raw_req = getattr(request, "_request", None)
+        session = getattr(raw_req, "session", None)
+    if session is None:
+        # Keep behavior unchanged for call-sites/tests that do not attach session.
+        return queryset
+
+    if session.get("is_staff", False):
+        return queryset
+
+    username = str(session.get("username") or "").strip()
+    if not username:
+        return queryset.none()
+
+    account_list = list(
+        job_data.objects.filter(username=username)
+        .exclude(account__isnull=True)
+        .exclude(account="")
+        .values_list("account", flat=True)
+        .distinct()
+    )
+    if account_list:
+        return queryset.filter(Q(username=username) | Q(account__in=account_list))
+    return queryset.filter(username=username)
+
+
 def _get_redis_cache_client():
     """Best-effort unwrap of a redis-py client from Django's cache backend."""
     client = getattr(cache, "_cache", None)
@@ -1190,10 +1219,11 @@ def search_dispatch(request):
 
     if request.GET.get("jid"):
         jid = request.GET["jid"]
+        base_qs = _apply_non_staff_job_visibility(job_data.objects.all(), request)
         job_jid = cached_orm(
             f"{KEY_JOB}:{jid}",
             TIMEOUT_SHORT,
-            lambda: job_data.objects.filter(jid=jid).values_list("jid", flat=True).first(),
+            lambda: base_qs.filter(jid=jid).values_list("jid", flat=True).first(),
         )
         if job_jid:
             return Response({"redirect": f"/machine/job/{job_jid}/"})
@@ -1273,6 +1303,7 @@ def _build_histogram_queryset(request):
         }
         order_by = get_job_list_order_by(fields) or "-end_time"
         job_list_qs = job_data.objects.filter(**acct_data)
+        job_list_qs = _apply_non_staff_job_visibility(job_list_qs, request)
         if order_by.lstrip("-") == "has_metrics":
             job_list_qs = job_list_qs.annotate(
                 has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
@@ -1458,6 +1489,7 @@ def _job_list_histograms(request):
     }
     order_by = get_job_list_order_by(fields) or "-end_time"
     job_list_qs = job_data.objects.filter(**acct_data)
+    job_list_qs = _apply_non_staff_job_visibility(job_list_qs, request)
     if order_by.lstrip("-") == "has_metrics":
         job_list_qs = job_list_qs.annotate(
             has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
@@ -1867,7 +1899,8 @@ def job_list(request):
         )
     }
     order_by = get_job_list_order_by(fields) or "-end_time"
-    job_list_qs = job_data.objects.filter(**acct_data).annotate(
+    job_list_qs = job_data.objects.filter(**acct_data)
+    job_list_qs = _apply_non_staff_job_visibility(job_list_qs, request).annotate(
         has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
     )
     job_list_qs = job_list_qs.order_by(order_by)
@@ -1967,12 +2000,11 @@ def job_detail(request, pk):
 
     job_cache_timeout = _job_detail_cache_ttl_for_end_time(getattr(job, "end_time", None))
 
-    if not request.session.get("is_staff", False):
-        if job.username != request.session.get("username"):
-            return Response(
-                {"error": "Not allowed to view this job"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    if not _apply_non_staff_job_visibility(job_data.objects.filter(jid=pk), request).exists():
+        return Response(
+            {"error": "Not allowed to view this job"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     j = jid_table.jid_table(job.jid)
     host_list = j.acct_host_list
@@ -2241,6 +2273,11 @@ def job_plots(request, pk):
         return Response(
             {"error": "Job not found"},
             status=status.HTTP_404_NOT_FOUND,
+        )
+    if not _apply_non_staff_job_visibility(job_data.objects.filter(jid=pk), request).exists():
+        return Response(
+            {"error": "Not allowed to view this job"},
+            status=status.HTTP_403_FORBIDDEN,
         )
     job_cache_timeout = _job_detail_cache_ttl_for_end_time(getattr(job, "end_time", None))
 

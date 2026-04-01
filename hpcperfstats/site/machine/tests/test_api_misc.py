@@ -341,6 +341,40 @@ class TestSearchDispatch:
     assert response.data["ok"] is True
 
 
+class TestNonStaffJobVisibility:
+  def test_apply_non_staff_visibility_includes_own_and_seen_accounts(self):
+    from hpcperfstats.site.machine import api
+
+    request = MagicMock()
+    request.session = {"username": "alice", "is_staff": False}
+    qs = MagicMock()
+    filtered_qs = MagicMock()
+    qs.filter.return_value = filtered_qs
+
+    account_qs = MagicMock()
+    account_qs.exclude.return_value = account_qs
+    account_qs.values_list.return_value.distinct.return_value = ["proj-a", "proj-b"]
+
+    with patch("hpcperfstats.site.machine.api.job_data.objects.filter", return_value=account_qs):
+      out = api._apply_non_staff_job_visibility(qs, request)
+
+    assert out == filtered_qs
+    assert qs.filter.call_count == 1
+
+  def test_apply_non_staff_visibility_without_username_returns_none_queryset(self):
+    from hpcperfstats.site.machine import api
+
+    request = MagicMock()
+    request.session = {"is_staff": False}
+    qs = MagicMock()
+    none_qs = MagicMock()
+    qs.none.return_value = none_qs
+
+    out = api._apply_non_staff_job_visibility(qs, request)
+    assert out == none_qs
+    qs.none.assert_called_once()
+
+
 class TestFormatLogTimestamp:
   def test_format_log_timestamp_naive_assumes_utc(self):
     from hpcperfstats.site.machine import api
