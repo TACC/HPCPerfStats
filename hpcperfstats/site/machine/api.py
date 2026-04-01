@@ -2,6 +2,7 @@
 import hashlib
 import logging
 import threading
+import copy
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import timezone as dt_timezone
 
@@ -265,6 +266,61 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout):
         return (gpu_active, gpu_max, gpu_mean, gpu_count_total)
     finally:
         close_old_connections()
+
+
+def _apply_zoom_layout_to_bokeh_model(root_model):
+    """Best-effort layout expansion so a plot can fill fullscreen zoom overlays."""
+    try:
+        candidates = [root_model]
+        if hasattr(root_model, "select"):
+            try:
+                candidates.extend(list(root_model.select({})))
+            except Exception:
+                pass
+        for model in candidates:
+            if hasattr(model, "sizing_mode"):
+                model.sizing_mode = "stretch_both"
+            if hasattr(model, "width_policy"):
+                model.width_policy = "max"
+            if hasattr(model, "height_policy"):
+                model.height_policy = "max"
+            # Clear hard size constraints where present.
+            if hasattr(model, "width") and getattr(model, "width", None) is not None:
+                model.width = None
+            if hasattr(model, "height") and getattr(model, "height", None) is not None:
+                model.height = None
+    except Exception:
+        # Keep this strictly best-effort; never fail plot generation due to sizing.
+        pass
+
+
+def _apply_zoom_layout_to_json_item(plot_item):
+    """Return a zoom-sized json_item clone from cached plot data."""
+    if not isinstance(plot_item, dict):
+        return plot_item
+    try:
+        cloned = copy.deepcopy(plot_item)
+    except Exception:
+        return plot_item
+
+    try:
+        refs = cloned.get("doc", {}).get("roots", {}).get("references", [])
+        for ref in refs:
+            if not isinstance(ref, dict):
+                continue
+            attrs = ref.get("attributes")
+            if not isinstance(attrs, dict):
+                continue
+            attrs["sizing_mode"] = "stretch_both"
+            attrs["width_policy"] = "max"
+            attrs["height_policy"] = "max"
+            if "width" in attrs:
+                attrs["width"] = None
+            if "height" in attrs:
+                attrs["height"] = None
+    except Exception:
+        return plot_item
+    return cloned
 from django.db.models import (
     Case,
     Avg,
@@ -2120,6 +2176,7 @@ def job_plots(request, pk):
     job_cache_timeout = _job_detail_cache_ttl_for_end_time(getattr(job, "end_time", None))
 
     plot_kind = (request.GET.get("plot") or "").strip().lower()
+    zoom_mode = str(request.GET.get("zoom", "")).lower() in ("1", "true", "yes")
     if plot_kind and plot_kind not in (
         "summary_plot",
         "heatmap",
@@ -2147,6 +2204,8 @@ def job_plots(request, pk):
             try:
                 plot_json, plot_reason = plots.plot_and_reason_summary_from_jid_table(j)
                 if plot_json is not None:
+                    if zoom_mode:
+                        _apply_zoom_layout_to_bokeh_model(plot_json)
                     mplot_item = json_item(plot_json)
                 else:
                     reason = plot_reason or plots.MSG_NO_METRIC_DATA
@@ -2166,6 +2225,8 @@ def job_plots(request, pk):
             try:
                 hm_fig_json, hm_reason = plots.plot_and_reason_from_jid_table(j)
                 if hm_fig_json is not None:
+                    if zoom_mode:
+                        _apply_zoom_layout_to_bokeh_model(hm_fig_json)
                     hplot_item = json_item(hm_fig_json)
                 else:
                     reason = hm_reason or plots.MSG_NO_HOST_MSR_DATA
@@ -2185,6 +2246,8 @@ def job_plots(request, pk):
             try:
                 roof_fig_json, roof_reason = plots.plot_and_reason_roofline_from_jid_table(j)
                 if roof_fig_json is not None:
+                    if zoom_mode:
+                        _apply_zoom_layout_to_bokeh_model(roof_fig_json)
                     rplot_item = json_item(roof_fig_json)
                 else:
                     reason = roof_reason or plots.MSG_NO_ROOFLINE_DATA
@@ -2204,6 +2267,8 @@ def job_plots(request, pk):
             try:
                 roof_fig_json, roof_reason = plots.plot_and_reason_gpu_roofline_from_jid_table(j)
                 if roof_fig_json is not None:
+                    if zoom_mode:
+                        _apply_zoom_layout_to_bokeh_model(roof_fig_json)
                     grplot_item = json_item(roof_fig_json)
                 else:
                     reason = roof_reason or plots.MSG_NO_ROOFLINE_DATA
@@ -2238,7 +2303,8 @@ def job_plots(request, pk):
     cached_results = {}
     missing_keys = []
     for key in requested_keys:
-        cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key)
+        size_key = "zoom" if zoom_mode else "normal"
+        cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key, size_key)
         cached_entry = cache.get(cache_key)
         # Back-compat refresh: older cached heatmap results used a generic
         # unavailable reason. Recompute once to return precise diagnostics.
@@ -2279,8 +2345,24 @@ def job_plots(request, pk):
         else:
             missing_keys.append(key)
 
+    # Reuse cached plot data payload (size-independent) to build zoom plot JSON
+    # without recomputing expensive aggregates.
+    if zoom_mode and missing_keys:
+        still_missing = []
+        for key in missing_keys:
+            data_cache_key = make_cache_key("JOB_PLOTS_DATA", job.jid, key)
+            cached_plot_data = cache.get(data_cache_key)
+            if isinstance(cached_plot_data, dict):
+                cached_results[key] = {
+                    "plot_item": _apply_zoom_layout_to_json_item(cached_plot_data),
+                    "unavailable_reason": None,
+                }
+            else:
+                still_missing.append(key)
+        missing_keys = still_missing
+
     for key in missing_keys:
-        inflight_key = (job.jid, key)
+        inflight_key = (job.jid, key, "zoom" if zoom_mode else "normal")
         with _job_plots_lock:
             future = _job_plot_inflight.get(inflight_key)
             if future is None:
@@ -2291,11 +2373,18 @@ def job_plots(request, pk):
             try:
                 plot_item, unavailable_reason = future.result()
                 cached_results[key] = {"plot_item": plot_item, "unavailable_reason": unavailable_reason}
-                cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key)
+                size_key = "zoom" if zoom_mode else "normal"
+                cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key, size_key)
                 try:
                     cache.set(cache_key, cached_results[key], timeout=job_cache_timeout)
                 except Exception:
                     pass
+                if plot_item is not None:
+                    try:
+                        data_cache_key = make_cache_key("JOB_PLOTS_DATA", job.jid, key)
+                        cache.set(data_cache_key, plot_item, timeout=job_cache_timeout)
+                    except Exception:
+                        pass
             except Exception as e:
                 logging.getLogger(__name__).warning(
                     "job_plots task failed for jid=%s key=%s: %s",

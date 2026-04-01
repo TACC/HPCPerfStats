@@ -81,9 +81,10 @@ export const api = {
     ),
   getJobDetail: (pk) => request(`/jobs/${encodeURIComponent(pk)}/`),
   getJobDetailLight: (pk) => request(`/jobs/${encodeURIComponent(pk)}/?light=1`),
-  getJobPlots: (pk, plot = null) => {
+  getJobPlots: (pk, plot = null, zoom = false) => {
     const params = new URLSearchParams();
     if (plot) params.set("plot", plot);
+    if (zoom) params.set("zoom", "1");
     const queryString = params.toString();
     const suffix = queryString ? `?${queryString}` : "";
     return request(`/jobs/${encodeURIComponent(pk)}/plots/${suffix}`);

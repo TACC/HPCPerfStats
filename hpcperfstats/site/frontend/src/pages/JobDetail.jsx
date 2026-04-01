@@ -109,6 +109,11 @@ export default function JobDetail() {
   const [plotsLoading, setPlotsLoading] = useState(true);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [zoomPlotKey, setZoomPlotKey] = useState(null);
+  const [zoomPlotState, setZoomPlotState] = useState({
+    loading: false,
+    item: null,
+    unavailableReason: null,
+  });
 
   useEffect(() => {
     if (!pk) return;
@@ -224,6 +229,49 @@ export default function JobDetail() {
     );
     if (allFinished) setPlotsLoading(false);
   }, [plots]);
+
+  useEffect(() => {
+    if (!zoomPlotKey || !pk) {
+      setZoomPlotState({ loading: false, item: null, unavailableReason: null });
+      return;
+    }
+
+    const selectedConfig = JOB_PLOT_CONFIGS.find((config) => config.panelKey === zoomPlotKey);
+    if (!selectedConfig) return;
+
+    let cancelled = false;
+    setZoomPlotState({ loading: true, item: null, unavailableReason: null });
+
+    const fetchZoomPlot = async () => {
+      try {
+        const zoomResponse = await api.getJobPlots(pk, selectedConfig.key, true);
+        if (cancelled) return;
+        if (zoomResponse?.status === "loading") {
+          const retryAfterMs = Math.max(
+            250,
+            Number(zoomResponse.retry_after_seconds ?? 2) * 1000
+          );
+          setTimeout(() => {
+            if (!cancelled) fetchZoomPlot();
+          }, retryAfterMs);
+          return;
+        }
+        setZoomPlotState({
+          loading: false,
+          item: zoomResponse?.plot_item ?? null,
+          unavailableReason: zoomResponse?.unavailable_reason ?? null,
+        });
+      } catch {
+        if (cancelled) return;
+        setZoomPlotState({ loading: false, item: null, unavailableReason: null });
+      }
+    };
+
+    fetchZoomPlot();
+    return () => {
+      cancelled = true;
+    };
+  }, [zoomPlotKey, pk]);
 
   if (loading) return <LoadingMessage message="Loading job detail…" />;
   if (error) return <div className="container text-danger">Error: {error}</div>;
@@ -624,10 +672,10 @@ export default function JobDetail() {
             </button>
             <div style={{ width: "100%", height: "100%" }}>
               <BokehEmbed
-                item={zoomedPanel.item}
+                item={zoomPlotState.item || zoomedPanel.item}
                 id={`${zoomedPanel.id}-zoom`}
                 plotName={zoomedPanel.plotName}
-                unavailableReason={zoomedPanel.unavailableReason}
+                unavailableReason={zoomPlotState.unavailableReason || zoomedPanel.unavailableReason}
                 fillHeight
                 maximizeInContainer
               />
