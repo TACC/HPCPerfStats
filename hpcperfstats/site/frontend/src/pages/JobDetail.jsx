@@ -361,7 +361,7 @@ export default function JobDetail() {
               <tbody>
                 <tr>
                   <td style={{ border: "1px solid lightgrey" }}>
-                    <b>Total GPUs per Machine:</b>
+                    <b>Total GPUs allocated:</b>
                   </td>
                   <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
                     {formatDecimalStandard(gpu_count)}
