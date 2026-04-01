@@ -133,3 +133,36 @@ def test_compute_job_gpu_stats_helper_matches_job_detail_gpu_logic():
   assert gpu_active == 3
   assert gpu_mean == 80.0
   assert gpu_count == 8
+
+
+def test_compute_job_gpu_stats_helper_uses_host_device_aware_active_count():
+  """Active GPUs are counted per (host,dev) when v3 aggregate rows are available."""
+  from hpcperfstats.site.machine import api
+
+  job = MagicMock()
+  job.jid = "test-gpu-jid-host-aware"
+  j = MagicMock()
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  j.start_time = t0
+  j.end_time = t0
+  j.acct_host_list = ["n1.example.com", "n2.example.com"]
+
+  def cached_se(key, timeout, fn):
+    del timeout, fn
+    if key.startswith(f"{cu.KEY_GPU_AGG}:"):
+      return [
+        {"host": "n1.example.com", "dev": "0", "event": "gpu_util", "cnt": 4, "vmax": 90.0, "vmean": 50.0},
+        {"host": "n1.example.com", "dev": "1", "event": "gpu_util", "cnt": 4, "vmax": 0.0, "vmean": 0.0},
+        {"host": "n2.example.com", "dev": "0", "event": "gpu_util", "cnt": 4, "vmax": 70.0, "vmean": 40.0},
+      ]
+    if key.startswith(f"{cu.KEY_GPU_COUNT}:"):
+      return 3
+    return None
+
+  with patch.object(api, "cached_orm", side_effect=cached_se):
+    gpu_active, gpu_max, gpu_mean, gpu_count = api._compute_job_gpu_stats(job, j, 3600)
+
+  assert gpu_active == 2
+  assert gpu_max == 160.0
+  assert gpu_mean == 90.0
+  assert gpu_count == 3

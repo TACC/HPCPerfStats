@@ -181,7 +181,7 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout):
     try:
         try:
             agg = cached_orm(
-                f"{KEY_GPU_AGG}:v2:{job.jid}",
+                f"{KEY_GPU_AGG}:v3:{job.jid}",
                 job_cache_timeout,
                 lambda: list(
                     host_data.objects.filter(
@@ -191,7 +191,7 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout):
                         time__lte=j.end_time,
                         host__in=j.acct_host_list or [],
                     )
-                    .values("event")
+                    .values("host", "dev", "event")
                     .annotate(
                         cnt=Count("time"),
                         vmax=Max("value"),
@@ -203,22 +203,55 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout):
             # aggregate dict (old shape) or a list of per-event rows.
             if isinstance(agg, dict):
                 row = agg
+                cnt = int(row.get("cnt") or 0)
+                if cnt > 2:
+                    vmax = row.get("vmax")
+                    if vmax is not None:
+                        gpu_max = float(vmax)
+                        vmean = row.get("vmean")
+                        gpu_mean = float(vmean) if vmean is not None else None
+                        if not isnan(gpu_max):
+                            gpu_active = ceil(gpu_max / 100.0)
             else:
-                rows = list(agg or [])
-                by_event = {
-                    str(r.get("event")): r for r in rows if isinstance(r, dict)
-                }
-                row = by_event.get("gpu_util") or by_event.get("utilization") or {}
+                rows = [r for r in (agg or []) if isinstance(r, dict)]
+                per_device = {}
+                for r in rows:
+                    device_key = (str(r.get("host") or ""), str(r.get("dev") or ""))
+                    event = str(r.get("event") or "")
+                    slot = per_device.setdefault(device_key, {})
+                    slot[event] = r
 
-            cnt = int(row.get("cnt") or 0)
-            if cnt > 2:
-                vmax = row.get("vmax")
-                if vmax is not None:
-                    gpu_max = float(vmax)
+                selected_rows = []
+                for slot in per_device.values():
+                    row = slot.get("gpu_util") or slot.get("utilization")
+                    if row:
+                        selected_rows.append(row)
+
+                valid_rows = []
+                for row in selected_rows:
+                    cnt = int(row.get("cnt") or 0)
+                    vmax = row.get("vmax")
                     vmean = row.get("vmean")
-                    gpu_mean = float(vmean) if vmean is not None else None
-                    if not isnan(gpu_max):
-                        gpu_active = ceil(gpu_max / 100.0)
+                    if cnt <= 2 or vmax is None:
+                        continue
+                    try:
+                        vmax_f = float(vmax)
+                        vmean_f = float(vmean) if vmean is not None else None
+                    except (TypeError, ValueError):
+                        continue
+                    valid_rows.append((cnt, vmax_f, vmean_f))
+
+                if valid_rows:
+                    # Host-aware sums across valid device rows.
+                    gpu_max = sum(vmax_f for _cnt, vmax_f, _vmean_f in valid_rows)
+                    mean_values = [
+                        vmean_f
+                        for _cnt, _vmax_f, vmean_f in valid_rows
+                        if vmean_f is not None
+                    ]
+                    if mean_values:
+                        gpu_mean = sum(mean_values)
+                    gpu_active = sum(1 for _cnt, vmax_f, _vmean_f in valid_rows if vmax_f > 0.0)
         except Exception:
             pass
 
