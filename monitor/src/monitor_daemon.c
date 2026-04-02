@@ -312,7 +312,7 @@ static int send_stats_buffer(struct stats_buffer *sf)
     if (type->st_enabled)
       (*type->st_collect)(type);
   }
-  if (stats_buffer_write(sf) < 0)
+  if (stats_buffer_collect(sf) < 0)
     rc = -1;
   return rc;
 }
@@ -333,7 +333,7 @@ static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_h
   w->b_count++;
   w->status = send_stats_buffer(sf);
   if (w->status < 0) {
-    ERROR("Failed collecting stats payload. Dropping sample\n");
+    ERROR("Failed building stats payload. Dropping sample\n");
     stats_buffer_close(sf);
     free(sf);
     return;
