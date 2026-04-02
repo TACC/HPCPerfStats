@@ -318,50 +318,54 @@ def update_metrics(date, rerun=False):
 
     processed = 0
     skipped_not_ready = 0
-    for chunk_number, (pk_chunk, _) in enumerate(_iter_chunked_pks(qs, CHUNK_SIZE), start=1):
-      if shutdown_requested[0]:
-        break
-      jobs_chunk = None
-      ready_jids = None
-      try:
-        ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
-        skipped_not_ready += (len(pk_chunk) - len(ready_jids))
-        if not ready_jids:
-          continue
-        jobs_chunk = _job_refs_from_jids(ready_jids)
-        metrics_manager.run(jobs_chunk)
-        processed += len(jobs_chunk)
-      except (OperationalError, DatabaseError) as exc:
-        # Drop any broken/unsynchronised connection and retry this chunk once
-        # with a fresh connection. If it still fails, let the exception bubble.
-        log_print(
-            "Database error while processing metrics chunk (size {0}) "
-            "for date {1}: {2}".format(len(pk_chunk), date, exc)
-        )
-        close_old_connections()
-        # If DB failed after readiness filtering (e.g. during run/persist), reuse
-        # computed ready_jids to avoid extra query/CPU on retry.
-        if ready_jids is None:
-          ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
-          skipped_not_ready += (len(pk_chunk) - len(ready_jids))
-        if not ready_jids:
-          continue
-        jobs_chunk = _job_refs_from_jids(ready_jids)
-        metrics_manager.run(jobs_chunk)
-        processed += len(jobs_chunk)
-      finally:
-        # Release references promptly; GC can then free memory before next chunk.
+    shared_pool = metrics_manager.ensure_pool()
+    try:
+      for chunk_number, (pk_chunk, _) in enumerate(_iter_chunked_pks(qs, CHUNK_SIZE), start=1):
+        if shutdown_requested[0]:
+          break
         jobs_chunk = None
         ready_jids = None
-        if (
-            GC_COLLECT_EVERY_N_CHUNKS > 0
-            and chunk_number % GC_COLLECT_EVERY_N_CHUNKS == 0
-            and gc.get_count()[0] > 10000
-        ):
-          gc.collect()
+        try:
+          ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+          skipped_not_ready += (len(pk_chunk) - len(ready_jids))
+          if not ready_jids:
+            continue
+          jobs_chunk = _job_refs_from_jids(ready_jids)
+          metrics_manager.run(jobs_chunk, pool=shared_pool)
+          processed += len(jobs_chunk)
+        except (OperationalError, DatabaseError) as exc:
+          # Drop any broken/unsynchronised connection and retry this chunk once
+          # with a fresh connection. If it still fails, let the exception bubble.
+          log_print(
+              "Database error while processing metrics chunk (size {0}) "
+              "for date {1}: {2}".format(len(pk_chunk), date, exc)
+          )
+          close_old_connections()
+          # If DB failed after readiness filtering (e.g. during run/persist), reuse
+          # computed ready_jids to avoid extra query/CPU on retry.
+          if ready_jids is None:
+            ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+            skipped_not_ready += (len(pk_chunk) - len(ready_jids))
+          if not ready_jids:
+            continue
+          jobs_chunk = _job_refs_from_jids(ready_jids)
+          metrics_manager.run(jobs_chunk, pool=shared_pool)
+          processed += len(jobs_chunk)
+        finally:
+          # Release references promptly; GC can then free memory before next chunk.
+          jobs_chunk = None
+          ready_jids = None
+          if (
+              GC_COLLECT_EVERY_N_CHUNKS > 0
+              and chunk_number % GC_COLLECT_EVERY_N_CHUNKS == 0
+              and gc.get_count()[0] > 10000
+          ):
+            gc.collect()
 
-      if shutdown_requested[0]:
-        break
+        if shutdown_requested[0]:
+          break
+    finally:
+      metrics_manager.close_pool()
 
     log_print(
         "Finished metrics for date {0}: processed {1} jobs, skipped {2} not-ready jobs".format(

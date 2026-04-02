@@ -11,6 +11,7 @@ import sys
 import time
 
 import numpy as np
+import numexpr as ne
 from numpy import amax, diff, isnan, maximum, mean, zeros
 from pandas import to_datetime
 
@@ -25,6 +26,15 @@ try:
   from numpy import trapezoid as trapz
 except ImportError:
   from numpy import trapz
+
+NUMEXPR_MIN_ARRAY_SIZE = 100_000
+
+
+def _add_arrays(a, b):
+  """Fast path for a+b on large arrays."""
+  if getattr(a, "size", 0) >= NUMEXPR_MIN_ARRAY_SIZE:
+    return ne.evaluate("a + b")
+  return a + b
 
 # Default (type, units) for complex metrics when building the catalog / no-time-series rows.
 # Types match the primary telemetry source for each metric (see compute_metric classes).
@@ -192,9 +202,9 @@ class _JobForMetrics:
       self.cluster_mean_by_type = {}
       return
 
-    # Global sorted time axis
-    df = df.sort_values("time")
+    # Global sorted time axis.
     df["time"] = to_datetime(df["time"]).dt.tz_localize(None)
+    df = df.sort_values("time")
     # Sample count for invalidation: per-host COUNT(DISTINCT time), summed
     # (same semantics as live host_data subquery in update_metrics).
     self.per_host_distinct_time_sum = int(
@@ -233,8 +243,7 @@ class _JobForMetrics:
         continue
 
       # Mean across hosts at each (time, event) for interval-rate peak metrics.
-      pavg = type_df[["time", "event", "value"]].copy()
-      pavg["time"] = to_datetime(pavg["time"]).dt.tz_localize(None)
+      pavg = type_df[["time", "event", "value"]]
       try:
         cluster_pivot = (
             pavg.groupby(["time", "event"])["value"].mean().unstack(fill_value=np.nan)
@@ -413,9 +422,36 @@ class Metrics():
         'node_imbalance', 'time_imbalance', 'vecpercent_64b',
         'avg_vector_width_64b', 'vecpercent_32b', 'avg_vector_width_32b'
     ]
+    self._shared_pool = None
+
+  def _worker_process_count(self):
+    threads = int(int(cfg.get_total_cores()) / 2)
+    return threads if threads > 0 else 1
+
+  def _imap_chunksize(self, job_count, threads):
+    if job_count <= 0:
+      return 1
+    # Balance IPC overhead and fairness.
+    return max(1, job_count // (threads * 4))
+
+  def ensure_pool(self):
+    """Create and retain a shared worker pool for repeated run() calls."""
+    if self._shared_pool is None:
+      self._shared_pool = multiprocessing.Pool(
+          processes=self._worker_process_count()
+      )
+    return self._shared_pool
+
+  def close_pool(self):
+    """Close retained worker pool (idempotent)."""
+    if self._shared_pool is None:
+      return
+    self._shared_pool.close()
+    self._shared_pool.join()
+    self._shared_pool = None
 
   # Compute metrics in parallel (Shared memory only)
-  def run(self, job_list):
+  def run(self, job_list, pool=None):
     """Run metric computation for each job in job_list in a process pool; persist results via metrics_data.update_or_create.
 
         """
@@ -423,13 +459,18 @@ class Metrics():
       log_print("Please specify a job list.")
       return
 
-    threads = int(int(cfg.get_total_cores()) / 2)
-    if threads < 1:
-      threads = 1
-
-    with multiprocessing.Pool(processes=threads) as pool:
-      for payload in pool.imap_unordered(_unwrap,
-                                         ((self, job) for job in job_list)):
+    threads = self._worker_process_count()
+    pool_chunksize = self._imap_chunksize(len(job_list), threads)
+    own_pool = pool is None
+    active_pool = pool
+    if active_pool is None:
+      active_pool = multiprocessing.Pool(processes=threads)
+    try:
+      for payload in active_pool.imap_unordered(
+          _unwrap,
+          ((self, job) for job in job_list),
+          chunksize=pool_chunksize,
+      ):
         if not payload:
           continue
         job_rows = payload["rows"]
@@ -449,6 +490,10 @@ class Metrics():
               if attempt == 0:
                 continue
             raise
+    finally:
+      if own_pool:
+        active_pool.close()
+        active_pool.join()
 
   def job_arc(self,
               jt,
@@ -456,7 +501,8 @@ class Metrics():
               typename=None,
               events=None,
               conv=0,
-              units=None):
+              units=None,
+              cache=None):
     """Aggregate arc by host and 5m time bucket via Django ORM.
 
     For each host: mean of per-bucket summed arc (after dropping the first bucket
@@ -473,6 +519,11 @@ class Metrics():
     hosts = base.get("host__in") or []
     if not hosts:
       return None
+    cache_key = None
+    if cache is not None:
+      cache_key = (typename, tuple(events or ()), float(conv))
+      if cache_key in cache:
+        return cache[cache_key]
     # Fetch raw samples via ORM.
     qs = (
         host_data.objects.filter(
@@ -487,12 +538,17 @@ class Metrics():
     )
     rows = list(qs)
     if not rows:
+      if cache is not None:
+        cache[cache_key] = None
       return None
     df = pd.DataFrame(rows)
     if df.empty:
+      if cache is not None:
+        cache[cache_key] = None
       return None
     # Floor timestamps to 5‑minute buckets.
-    df["time"] = pd.to_datetime(df["time"])
+    if not pd.api.types.is_datetime64_any_dtype(df["time"]):
+      df["time"] = pd.to_datetime(df["time"])
     df["bucket"] = df["time"].dt.floor("5min")
     grouped = (
         df.groupby(["host", "bucket"], as_index=False)["arc"].sum().rename(
@@ -501,17 +557,23 @@ class Metrics():
     )
     grouped["sum"] = grouped["sum"] * conv
     if grouped.empty or "host" not in grouped.columns:
+      if cache is not None:
+        cache[cache_key] = None
       return None
     # Drop first time sample per host to match original behaviour.
-    grouped = grouped.sort_values(["host", "time"])
     first_idx = grouped.groupby("host", group_keys=False).head(1).index
     grouped = grouped.drop(index=first_idx)
     if grouped.empty:
+      if cache is not None:
+        cache[cache_key] = None
       return None
     per_host_vals = grouped.groupby("host")["sum"].mean()
-    return float(per_host_vals.mean())
+    value = float(per_host_vals.mean())
+    if cache is not None:
+      cache[cache_key] = value
+    return value
 
-  def _job_arc_avg_flops(self, jt):
+  def _job_arc_avg_flops(self, jt, cache=None):
     """GFLOP/s from amd64_pmc FLOPS, else FP_ARITH/SSE proxies on intel_*pmc3 or cpu_counter_metrics.
 
     Returns (mean_gf, typename_used) or (None, None).
@@ -522,6 +584,7 @@ class Metrics():
         events=["FLOPS"],
         conv=1e-9,
         units="GF",
+        cache=cache,
     )
     if v is not None:
       return v, "amd64_pmc"
@@ -532,6 +595,7 @@ class Metrics():
           events=_INTEL_FP_ARITH_EVENTS,
           conv=1e-9,
           units="GF",
+          cache=cache,
       )
       if v is not None:
         return v, core_typ
@@ -544,6 +608,7 @@ class Metrics():
             events=[ev],
             conv=1e-9 * weight,
             units="GF",
+            cache=cache,
         )
         if part is not None:
           total = part if total is None else total + part
@@ -556,12 +621,13 @@ class Metrics():
         events=["ARM_EST_FLOPS"],
         conv=1e-9,
         units="GF",
+        cache=cache,
     )
     if v is not None:
       return v, "cpu_counter_metrics"
     return None, None
 
-  def _job_arc_avg_mbw(self, jt):
+  def _job_arc_avg_mbw(self, jt, cache=None):
     """Memory bandwidth (GB/s): AMD DF MBW channels, else Intel IMC CAS sum.
 
     Returns (mean_gbw, typename_used) or (None, None).
@@ -581,6 +647,7 @@ class Metrics():
         ],
         conv=2 / (1024 ** 3),
         units="GB/s",
+        cache=cache,
     )
     if v is not None:
       return v, "amd64_df"
@@ -592,6 +659,7 @@ class Metrics():
           events=["CAS_READS", "CAS_WRITES"],
           conv=cas_conv,
           units="GB/s",
+          cache=cache,
       )
       if v is not None:
         return v, imc_typ
@@ -602,6 +670,7 @@ class Metrics():
           events=["CAS_READS", "CAS_WRITES"],
           conv=cas_conv,
           units="GB/s",
+          cache=cache,
       )
       if v is not None:
         return v, imc_typ
@@ -612,12 +681,13 @@ class Metrics():
         events=["ARM_DRAM_BW_BYTES"],
         conv=1 / (1024 ** 3),
         units="GB/s",
+        cache=cache,
     )
     if v is not None:
       return v, "cpu_counter_metrics"
     return None, None
 
-  def _job_arc_avg_lustreiops(self, jt):
+  def _job_arc_avg_lustreiops(self, jt, cache=None):
     """Shared filesystem IOPS from Lustre llite and NFS operation counters.
 
     Returns summed contribution from available sources and a representative type.
@@ -635,6 +705,7 @@ class Metrics():
         ],
         conv=1,
         units="iops",
+        cache=cache,
     )
     if llite is not None:
       total += llite
@@ -645,6 +716,7 @@ class Metrics():
         events=["READ_ops", "WRITE_ops"],
         conv=1,
         units="iops",
+        cache=cache,
     )
     if nfs is not None:
       total += nfs
@@ -653,7 +725,7 @@ class Metrics():
       return None, None
     return total, used[0]
 
-  def _job_arc_avg_lustrebw(self, jt):
+  def _job_arc_avg_lustrebw(self, jt, cache=None):
     """Shared filesystem bandwidth from Lustre llite and NFS byte counters.
 
     Returns summed contribution from available sources and a representative type.
@@ -667,6 +739,7 @@ class Metrics():
         events=["read_bytes", "write_bytes"],
         conv=conv,
         units="MB/s",
+        cache=cache,
     )
     if llite is not None:
       total += llite
@@ -681,6 +754,7 @@ class Metrics():
         ],
         conv=conv,
         units="MB/s",
+        cache=cache,
     )
     if nfs is not None:
       total += nfs
@@ -689,7 +763,7 @@ class Metrics():
       return None, None
     return total, used[0]
 
-  def _job_arc_avg_ibbw(self, jt):
+  def _job_arc_avg_ibbw(self, jt, cache=None):
     """Fabric bandwidth from IB/OPA, with Ethernet fallback when unavailable."""
     v = self.job_arc(
         jt,
@@ -697,6 +771,7 @@ class Metrics():
         events=["port_xmit_data", "port_rcv_data"],
         conv=1.0 / (1024 * 1024),
         units="MB/s",
+        cache=cache,
     )
     if v is not None:
       return v, "ib_ext"
@@ -706,6 +781,7 @@ class Metrics():
         events=["PortXmitData", "PortRcvData"],
         conv=1.0 / 125000,
         units="MB/s",
+        cache=cache,
     )
     if v is not None:
       return v, "opa"
@@ -715,6 +791,7 @@ class Metrics():
         events=["rx_bytes", "tx_bytes"],
         conv=1.0 / (1024 * 1024),
         units="MB/s",
+        cache=cache,
     )
     if v is not None:
       return v, "net"
@@ -733,6 +810,7 @@ class Metrics():
 
     # Job-scoped host_data via ORM (no temp table)
     with jid_table.jid_table(job.jid) as jt:
+      simple_metric_cache = {}
 
       job_view = _JobForMetrics(jt)
       distinct_time_count = job_view.per_host_distinct_time_sum
@@ -756,22 +834,27 @@ class Metrics():
 
       for metric_name, metric_obj in self.simple_metrics_list.items():
         if metric_name == "avg_flops":
-          value, flops_typename = self._job_arc_avg_flops(jt)
+          value, flops_typename = self._job_arc_avg_flops(
+              jt, cache=simple_metric_cache)
           row_type = flops_typename or metric_obj["typename"]
         elif metric_name == "avg_mbw":
-          value, mbw_typename = self._job_arc_avg_mbw(jt)
+          value, mbw_typename = self._job_arc_avg_mbw(
+              jt, cache=simple_metric_cache)
           row_type = mbw_typename or metric_obj["typename"]
         elif metric_name == "avg_lustreiops":
-          value, fs_typename = self._job_arc_avg_lustreiops(jt)
+          value, fs_typename = self._job_arc_avg_lustreiops(
+              jt, cache=simple_metric_cache)
           row_type = fs_typename or metric_obj["typename"]
         elif metric_name == "avg_lustrebw":
-          value, fs_typename = self._job_arc_avg_lustrebw(jt)
+          value, fs_typename = self._job_arc_avg_lustrebw(
+              jt, cache=simple_metric_cache)
           row_type = fs_typename or metric_obj["typename"]
         elif metric_name == "avg_ibbw":
-          value, fabric_typename = self._job_arc_avg_ibbw(jt)
+          value, fabric_typename = self._job_arc_avg_ibbw(
+              jt, cache=simple_metric_cache)
           row_type = fabric_typename or metric_obj["typename"]
         else:
-          value = self.job_arc(jt, **metric_obj)
+          value = self.job_arc(jt, cache=simple_metric_cache, **metric_obj)
           row_type = metric_obj["typename"]
 
         if value is None:
@@ -1070,7 +1153,7 @@ class max_fabricbw():
     if cluster_peak is not None:
       return cluster_peak, typename, 'MB/s'
     for hostname, stats in _stats.items():
-      ratio = _per_interval_rate(stats[:, tx] + stats[:, rx], u.t)
+      ratio = _per_interval_rate(_add_arrays(stats[:, tx], stats[:, rx]), u.t)
       fin = ratio[np.isfinite(ratio)]
       if fin.size > 0:
         max_bw = max(max_bw, fin.max())
@@ -1098,7 +1181,7 @@ class max_lnetbw():
     if cluster_peak is not None:
       return cluster_peak, typename, 'MB/s'
     for hostname, stats in _stats.items():
-      ratio = _per_interval_rate(stats[:, tx] + stats[:, rx], u.t)
+      ratio = _per_interval_rate(_add_arrays(stats[:, tx], stats[:, rx]), u.t)
       fin = ratio[np.isfinite(ratio)]
       if fin.size > 0:
         max_bw = max(max_bw, fin.max())
@@ -1169,7 +1252,7 @@ class max_mds():
       if cluster_peak is not None:
         max_mds = max(max_mds, cluster_peak)
       for hostname, stats in nfs_stats.items():
-        ratio = _per_interval_rate(stats[:, tx] + stats[:, rx], u.t)
+        ratio = _per_interval_rate(_add_arrays(stats[:, tx], stats[:, rx]), u.t)
         fin = ratio[np.isfinite(ratio)]
         if fin.size > 0:
           max_mds = max(max_mds, fin.max())
@@ -1208,7 +1291,7 @@ class max_packetrate():
       return cluster_peak, typename, '#/s'
 
     for hostname, stats in _stats.items():
-      ratio = _per_interval_rate(stats[:, tx] + stats[:, rx], u.t)
+      ratio = _per_interval_rate(_add_arrays(stats[:, tx], stats[:, rx]), u.t)
       fin = ratio[np.isfinite(ratio)]
       if fin.size > 0:
         max_pr = max(max_pr, fin.max())

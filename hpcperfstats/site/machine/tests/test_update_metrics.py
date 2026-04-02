@@ -222,7 +222,13 @@ def test_update_metrics_stops_between_chunks_on_shutdown(monkeypatch):
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def run(self, jobs):
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
       seen.append([j.jid for j in jobs])
       # Simulate shutdown arriving mid-processing; updater should stop on
       # the next chunk boundary.
@@ -268,7 +274,13 @@ def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def run(self, jobs):
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
       seen.append([j.jid for j in jobs])
 
   monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
@@ -300,7 +312,13 @@ def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def run(self, jobs):
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
       seen.append([j.jid for j in jobs])
 
   monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
@@ -308,6 +326,42 @@ def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
 
   update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
   assert seen == [[101, 103]]
+
+
+def test_update_metrics_reuses_shared_pool_per_date(monkeypatch):
+  """update_metrics should initialize one shared pool and reuse it per chunk."""
+  monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
+  monkeypatch.setattr(
+      update_metrics,
+      "_iter_chunked_pks",
+      lambda qs, chunk: iter([([101, 102], 2), ([103], 3)]),
+  )
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+
+  pool_token = object()
+  pool_calls = []
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self):
+      pool_calls.append("ensure")
+      return pool_token
+
+    def close_pool(self):
+      pool_calls.append("close")
+
+    def run(self, jobs, pool=None):
+      pool_calls.append(pool)
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "DEBUG", False)
+
+  update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
+  assert pool_calls == ["ensure", pool_token, pool_token, "close"]
 
 
 def test_filter_jids_with_samples_after_end_requires_all_hosts(monkeypatch):

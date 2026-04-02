@@ -687,3 +687,40 @@ def test_build_job_metrics_display_list_puts_not_computed_yet_last():
   assert all(flags[first_pending:])
   assert out[0]["metric"] == first["metric"]
   assert out[0]["value"] == 1.0
+
+
+def test_metrics_run_uses_supplied_pool(monkeypatch):
+  """Metrics.run should use caller-supplied pool and not manage lifecycle."""
+  m = Metrics()
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.metrics._persist_metrics_batch",
+      lambda rows, distinct_n: None,
+  )
+  monkeypatch.setattr(
+      m,
+      "_worker_process_count",
+      lambda: 4,
+  )
+
+  class FakePool:
+    def __init__(self):
+      self.chunksize = None
+      self.closed = False
+      self.joined = False
+
+    def imap_unordered(self, fn, args_iter, chunksize=1):
+      self.chunksize = chunksize
+      _ = list(args_iter)
+      return iter([{"rows": [{"jid": MagicMock(jid=1)}], "distinct_time_count": 1}])
+
+    def close(self):
+      self.closed = True
+
+    def join(self):
+      self.joined = True
+
+  pool = FakePool()
+  m.run([MagicMock(jid=1), MagicMock(jid=2)], pool=pool)
+  assert pool.chunksize == 1
+  assert pool.closed is False
+  assert pool.joined is False
