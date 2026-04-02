@@ -25,13 +25,15 @@ char *rmq_user = (char *)monitor_cli_lit_rmq_user;
 char *rmq_password = (char *)monitor_cli_lit_rmq_password;
 char *dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
 char *jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
-double freq = 300;
-int max_buffer_size = 4096;
+double sample_freq = 300;
+double send_freq = 300;
+int max_buffer_size = 0;
 int allow_ring_buffer_overwrite = 1;
 int file_mode_enabled = 0;
 int send_success_count = 0;
 int send_success_count_max = 3;
 ev_timer sample_timer;
+ev_timer send_timer;
 ev_timer rotate_timer;
 
 void test_monitor_cli_reset_globals(void)
@@ -64,12 +66,14 @@ void test_monitor_cli_reset_globals(void)
   rmq_password = (char *)monitor_cli_lit_rmq_password;
   dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
   jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
-  freq = 300;
-  max_buffer_size = 4096;
+  sample_freq = 300;
+  send_freq = 300;
+  max_buffer_size = 0;
   allow_ring_buffer_overwrite = 1;
   file_mode_enabled = 0;
   send_success_count = 0;
   send_success_count_max = 3;
   memset(&sample_timer, 0, sizeof(sample_timer));
+  memset(&send_timer, 0, sizeof(send_timer));
   memset(&rotate_timer, 0, sizeof(rotate_timer));
 }

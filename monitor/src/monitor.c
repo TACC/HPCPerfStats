@@ -57,9 +57,15 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   fprintf(log_stream, "Starting hpcperfstatsd watching fd %s\n", jobid_file_path);
 
   sample_timer.data = (void *)rb;
-  ev_timer_init(&sample_timer, monitor_daemon_sample_timer_cb, freq, freq);
+  ev_timer_init(&sample_timer, monitor_daemon_sample_timer_cb, sample_freq, sample_freq);
   ev_timer_start(EV_DEFAULT, &sample_timer);
-  fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs\n", freq);
+  fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs\n", sample_freq);
+
+  send_timer.data = (void *)rb;
+  ev_timer_init(&send_timer, monitor_daemon_send_timer_cb, send_freq, send_freq);
+  ev_timer_start(EV_DEFAULT, &send_timer);
+  fprintf(log_stream, "Setting hpcperfstatsd send frequency to %.1fs\n", send_freq);
+  fprintf(log_stream, "Setting hpcperfstatsd buffer capacity to %d samples (6h)\n", max_buffer_size);
 
   if (pscanf(jobid_file_path, "%79s", jobid) < 1)
     strcpy(jobid, "-");
@@ -84,6 +90,7 @@ int main(int argc, char *argv[])
 
   log_stream = stderr;
   read_conf_file();
+  monitor_daemon_finalize_runtime_settings();
 
   if (daemonmode) {
     if (pid_file_name == NULL)

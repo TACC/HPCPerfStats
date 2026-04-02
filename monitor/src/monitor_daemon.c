@@ -7,6 +7,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <math.h>
+#include <limits.h>
 #include <sys/fcntl.h>
 #include <sys/time.h>
 #include <sys/stat.h>
@@ -36,14 +38,17 @@ char *rmq_user = (char *)monitor_cli_lit_rmq_user;
 char *rmq_password = (char *)monitor_cli_lit_rmq_password;
 char *dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
 char *jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
-double freq = 300;
-int max_buffer_size = 4096;
+double sample_freq = 300;
+double send_freq = 300;
+int max_buffer_size = 0;
 int allow_ring_buffer_overwrite = 1;
 int file_mode_enabled = 0;
 int send_success_count = 0;
 int send_success_count_max = 3;
 ev_timer sample_timer;
+ev_timer send_timer;
 ev_timer rotate_timer;
+static int max_buffer_size_explicit = 0;
 
 char jobid[80] = "-";
 int nr_cpus;
@@ -91,6 +96,26 @@ static struct stats_buffer *monitor_daemon_alloc_stats_buffer(void)
   return sf;
 }
 
+static int monitor_daemon_buffer_size_for_6h(double sfreq)
+{
+  double slots;
+  if (sfreq <= 0.0)
+    sfreq = 1.0;
+  slots = ceil((6.0 * 3600.0) / sfreq);
+  if (slots < 1.0)
+    slots = 1.0;
+  if (slots > (double) INT_MAX)
+    slots = (double) INT_MAX;
+  return (int) slots;
+}
+
+static void monitor_daemon_apply_dynamic_buffer_size_if_needed(void)
+{
+  if (max_buffer_size_explicit)
+    return;
+  max_buffer_size = monitor_daemon_buffer_size_for_6h(sample_freq);
+}
+
 /* After a send attempt: if the ring buffer still has entries, try to drain it over RMQ. */
 static void monitor_daemon_resend_ring_buffer_if_nonempty(struct sf_ring_buffer *w)
 {
@@ -123,51 +148,6 @@ static void monitor_daemon_maybe_send_dumpfiles_after_jobid_cleared(struct sf_ri
     return;
   monitor_daemon_log_dumpfile_resend_line();
   send_dumpfile_stats(w);
-}
-
-static void monitor_daemon_dispose_successful_send(struct sf_ring_buffer *w, struct stats_buffer *sf)
-{
-  w->s_count++;
-  stats_buffer_close(sf);
-  free(sf);
-  if (file_mode_enabled == 1)
-    send_success_count++;
-}
-
-/* Rotate timer: clear send_success_count before attempting ring insert. */
-static void monitor_daemon_dispose_failed_send_rotate(struct sf_ring_buffer *w, struct stats_buffer *sf)
-{
-  ERROR("Failed sending stats. Adding stats to ring buffer\n");
-  send_success_count = 0;
-  int rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
-  if (rc < 0) {
-    ERROR("Failed adding stats to ring buffer. Saving stats to dumpfile\n");
-    rc = save_file_stats_buffer(sf);
-    stats_buffer_close(sf);
-    free(sf);
-    if (rc == 0) {
-      w->f_count++;
-      file_mode_enabled = 1;
-    }
-  }
-}
-
-/* Sample timer: clear send_success_count after ring insert (matches historical ordering). */
-static void monitor_daemon_dispose_failed_send_sample(struct sf_ring_buffer *w, struct stats_buffer *sf)
-{
-  ERROR("Failed sending stats. Adding stats to ring buffer\n");
-  int rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
-  send_success_count = 0;
-  if (rc < 0) {
-    ERROR("Failed adding stats to ring buffer. Saving stats to dumpfile\n");
-    rc = save_file_stats_buffer(sf);
-    stats_buffer_close(sf);
-    free(sf);
-    if (rc == 0) {
-      w->f_count++;
-      file_mode_enabled = 1;
-    }
-  }
 }
 
 static void monitor_reset_all_stats_types(void)
@@ -203,13 +183,24 @@ static void monitor_init_enabled_stats_types(void)
 
 static int get_dumpfile_number(void);
 
+void monitor_daemon_finalize_runtime_settings(void)
+{
+  if (sample_freq <= 0.0)
+    sample_freq = 1.0;
+  if (send_freq <= 0.0)
+    send_freq = 1.0;
+  monitor_daemon_apply_dynamic_buffer_size_if_needed();
+}
+
 int read_conf_file(void)
 {
   FILE *conf_file_fd = NULL;
   int ret = 0;
 
-  if (conf_file_name == NULL)
+  if (conf_file_name == NULL) {
+    monitor_daemon_finalize_runtime_settings();
     return 0;
+  }
 
   conf_file_fd = file_fopen_read(conf_file_name);
   if (conf_file_fd == NULL) {
@@ -262,13 +253,24 @@ int read_conf_file(void)
     }
     if (strcmp(key, "buffer") == 0) {
       max_buffer_size = atoi(line);
+      max_buffer_size_explicit = 1;
       fprintf(log_stream, "%s: Setting buffer size to %d based on file %s\n",
               app_name, max_buffer_size, conf_file_name);
     }
+    if (strcmp(key, "sample_freq") == 0) {
+      if (sscanf(line, "%lf", &sample_freq) == 1)
+        fprintf(log_stream, "%s: Setting sample frequency to %f based on file %s\n",
+                app_name, sample_freq, conf_file_name);
+    }
+    if (strcmp(key, "send_freq") == 0) {
+      if (sscanf(line, "%lf", &send_freq) == 1)
+        fprintf(log_stream, "%s: Setting send frequency to %f based on file %s\n",
+                app_name, send_freq, conf_file_name);
+    }
     if (strcmp(key, "freq") == 0) {
-      if (sscanf(line, "%lf", &freq) == 1)
-        fprintf(log_stream, "%s: Setting frequency to %f based on file %s\n",
-                app_name, freq, conf_file_name);
+      if (sscanf(line, "%lf", &sample_freq) == 1)
+        fprintf(log_stream, "%s: Deprecated key `freq` mapped to sample_freq=%f in file %s\n",
+                app_name, sample_freq, conf_file_name);
     }
     if (strcmp(key, "jobid_file") == 0) {
       monitor_cli_heap_dup_setting(&jobid_file_path, monitor_cli_lit_jobid_file_path, line);
@@ -279,6 +281,7 @@ int read_conf_file(void)
   if (line_buf)
     free(line_buf);
   fclose(conf_file_fd);
+  monitor_daemon_finalize_runtime_settings();
   return ret;
 }
 
@@ -302,6 +305,41 @@ static int send_stats_buffer(struct stats_buffer *sf)
   if (stats_buffer_write(sf) < 0)
     rc = -1;
   return rc;
+}
+
+static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_hdr, const char *mark_line)
+{
+  struct stats_buffer *sf = monitor_daemon_alloc_stats_buffer();
+  int rc;
+  if (sf == NULL)
+    return;
+
+  monitor_reset_all_stats_types();
+  monitor_init_enabled_stats_types();
+  if (write_hdr)
+    stats_wr_hdr(sf);
+  if (mark_line != NULL)
+    stats_buffer_mark(sf, "%s", mark_line);
+  w->b_count++;
+  w->status = send_stats_buffer(sf);
+  if (w->status < 0) {
+    ERROR("Failed collecting stats payload. Dropping sample\n");
+    stats_buffer_close(sf);
+    free(sf);
+    return;
+  }
+  rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
+  if (rc < 0) {
+    ERROR("Failed adding stats to ring buffer. Saving stats to dumpfile\n");
+    rc = save_file_stats_buffer(sf);
+    stats_buffer_close(sf);
+    free(sf);
+    if (rc == 0) {
+      w->f_count++;
+      file_mode_enabled = 1;
+      send_success_count = 0;
+    }
+  }
 }
 
 static int get_dumpfile_number(void)
@@ -497,23 +535,8 @@ void monitor_daemon_rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
 {
   (void)loop;
   (void)revents;
-  pscanf(jobid_file_path, "%79s", jobid);
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
-  struct stats_buffer *sf = monitor_daemon_alloc_stats_buffer();
-  if (sf == NULL)
-    return;
-
-  monitor_reset_all_stats_types();
-  monitor_init_enabled_stats_types();
-  stats_wr_hdr(sf);
-  w->b_count++;
-  w->status = send_stats_buffer(sf);
-
-  if (w->status == 0)
-    monitor_daemon_dispose_successful_send(w, sf);
-  else
-    monitor_daemon_dispose_failed_send_rotate(w, sf);
-  monitor_daemon_resend_ring_buffer_if_nonempty(w);
+  monitor_daemon_collect_to_ring(w, 1, NULL);
   print_buffer_status(w);
 }
 
@@ -523,19 +546,21 @@ void monitor_daemon_sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
   (void)revents;
   /* jobid: refreshed on ev_stat (JOBID file) and at startup; avoids fopen/fclose each tick. */
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
-  struct stats_buffer *sf = monitor_daemon_alloc_stats_buffer();
-  if (sf == NULL)
-    return;
+  monitor_daemon_collect_to_ring(w, 0, NULL);
+  print_buffer_status(w);
+}
 
-  w->b_count++;
-  w->status = send_stats_buffer(sf);
-
-  if (w->status == 0)
-    monitor_daemon_dispose_successful_send(w, sf);
-  else
-    monitor_daemon_dispose_failed_send_sample(w, sf);
-
+void monitor_daemon_send_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)
+{
+  (void)loop;
+  (void)revents;
+  struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
+  int q_before = w->q_count;
   monitor_daemon_resend_ring_buffer_if_nonempty(w);
+  if (w->q_count < q_before)
+    send_success_count++;
+  else if (w->q_count > 0)
+    send_success_count = 0;
   monitor_daemon_maybe_send_dumpfiles_after_sample_timer(w);
   print_buffer_status(w);
 }
@@ -546,61 +571,27 @@ void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
   (void)revents;
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
   char new_jobid[80] = "-";
-  int job_ended = 0;
   pscanf(jobid_file_path, "%79s", new_jobid);
 
-  struct stats_buffer *sf = monitor_daemon_alloc_stats_buffer();
-  if (sf == NULL) {
-    strcpy(jobid, new_jobid);
-    return;
-  }
-
+  const char *mark_line = NULL;
+  int write_hdr = 0;
   if (strcmp(jobid, new_jobid) != 0) {
     if (strcmp(new_jobid, "-") != 0) {
       strcpy(jobid, new_jobid);
       fprintf(log_stream, "Loading jobid %s from %s\n", jobid, jobid_file_path);
-      stats_buffer_mark(sf, "begin %s", jobid);
-      sample_timer.repeat = freq;
+      sample_timer.repeat = sample_freq;
+      mark_line = strf("begin %s", jobid);
     } else {
       fprintf(log_stream, "Unloading jobid %s from %s\n", jobid, jobid_file_path);
-      stats_buffer_mark(sf, "end %s", jobid);
+      mark_line = strf("end %s", jobid);
       sample_timer.repeat = 3600;
-      job_ended = 1;
+      write_hdr = 1;
     }
     ev_timer_again(EV_DEFAULT, &sample_timer);
-  }
-
-  monitor_reset_all_stats_types();
-  monitor_init_enabled_stats_types();
-  if (job_ended)
-    stats_wr_hdr(sf);
-
-  w->b_count++;
-  w->status = send_stats_buffer(sf);
-
-  if (w->status == 0) {
-    monitor_daemon_dispose_successful_send(w, sf);
-    if (w->q_count > 0) {
-      monitor_daemon_log_ring_resend_line();
-      ring_buffer_resend(w);
-      if (w->q_count != 0)
-        send_success_count = 0;
-    }
+    monitor_daemon_collect_to_ring(w, write_hdr, mark_line);
+    if (mark_line != NULL)
+      free((void *) mark_line);
     monitor_daemon_maybe_send_dumpfiles_after_jobid_cleared(w, new_jobid);
-  } else {
-    ERROR("Failed sending stats. Adding stats to ring buffer\n");
-    int rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
-    if (rc < 0) {
-      ERROR("Failed adding stats to ring buffer. Saving stats to file\n");
-      rc = save_file_stats_buffer(sf);
-      stats_buffer_close(sf);
-      free(sf);
-      if (rc == 0) {
-        w->f_count++;
-        file_mode_enabled = 1;
-        send_success_count = 0;
-      }
-    }
   }
   strcpy(jobid, new_jobid);
   print_buffer_status(w);
@@ -637,8 +628,13 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
   fprintf(log_stream, "Reloading hpcperfstatsd config file %s\n", conf_file_name);
   stats_buffer_runtime_caches_reset();
   read_conf_file();
-  sample_timer.repeat = freq;
+  sample_timer.repeat = sample_freq;
+  send_timer.repeat = send_freq;
   ev_timer_again(EV_DEFAULT, &sample_timer);
+  ev_timer_again(EV_DEFAULT, &send_timer);
+  fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs\n", sample_freq);
+  fprintf(log_stream, "Setting hpcperfstatsd send frequency to %.1fs\n", send_freq);
+  fprintf(log_stream, "Setting hpcperfstatsd buffer capacity to %d samples (6h)\n", max_buffer_size);
   send_success_count = 0;
   print_buffer_status(w);
 }

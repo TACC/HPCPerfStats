@@ -24,8 +24,8 @@
 #include "pscanf.h"
 #include "string1.h"
 
-/* Sample interval from monitor_daemon.c (conf `freq`); pace RMQ TCP reconnect attempts. */
-extern double freq;
+/* RMQ send interval from monitor_daemon.c; pace RMQ TCP reconnect attempts. */
+extern double send_freq;
 
 #define SF_SCHEMA_CHAR '!'
 #define SF_DEVICES_CHAR '@'
@@ -101,7 +101,7 @@ static void rmq_debug_log_rpc_reply(const char *ctx, amqp_rpc_reply_t r)
 #endif /* DEBUG */
 
 /* One AMQP connection per process (libev single-threaded). Reconnect on credential mismatch or I/O failure.
- * When the broker is down, allow at most one new TCP connect attempt per conf sample interval (`freq`),
+ * When the broker is down, allow at most one new TCP connect attempt per configured send interval (`send_freq`),
  * so ring-buffer resend loops in one libev tick do not storm the network. */
 static amqp_connection_state_t rmq_conn;
 static int rmq_channel_open;
@@ -131,7 +131,7 @@ static int rmq_connect_backoff_active(void)
 static void rmq_arm_connect_backoff(void)
 {
   struct timespec now;
-  double f = freq;
+  double f = send_freq;
 
   if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
     return;
@@ -296,7 +296,7 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
 
   if (rmq_connect_backoff_active()) {
 #ifdef DEBUG
-    ERROR("RMQ: connect backoff active, skipping connect attempt (see conf freq)");
+    ERROR("RMQ: connect backoff active, skipping connect attempt (see conf send_freq)");
 #endif
     return -1;
   }
@@ -674,7 +674,7 @@ static void stats_buffer_append_enabled_type_rows(struct stats_buffer *sf)
   }
 }
 
-int stats_buffer_write(struct stats_buffer *sf)
+int stats_buffer_collect(struct stats_buffer *sf)
 {
   int rc = 0;
 
@@ -690,6 +690,15 @@ int stats_buffer_write(struct stats_buffer *sf)
 
   stats_buffer_append_mark_lines(sf);
   stats_buffer_append_enabled_type_rows(sf);
+ out:
+  return rc;
+}
+
+int stats_buffer_write(struct stats_buffer *sf)
+{
+  int rc = stats_buffer_collect(sf);
+  if (rc < 0)
+    return rc;
   rc = send(sf);
 
   /* For debugging */
@@ -697,7 +706,6 @@ int stats_buffer_write(struct stats_buffer *sf)
     rc = -1;
   else
     rc = 0;*/
- out:
   return rc;
 }
 

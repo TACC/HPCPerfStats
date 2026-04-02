@@ -38,6 +38,7 @@ int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *por
 int stats_buffer_close(struct stats_buffer *sf);
 int stats_buffer_mark(struct stats_buffer *sf, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 int stats_buffer_write(struct stats_buffer *sf);
+int stats_buffer_collect(struct stats_buffer *sf);
 int stats_wr_hdr(struct stats_buffer *sf);
 int stats_buffer_resend(struct stats_buffer *sf);
 int stats_buffer_write_file(struct stats_buffer *sf, char *path);

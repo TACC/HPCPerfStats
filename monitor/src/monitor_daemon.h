@@ -19,20 +19,24 @@ extern char *rmq_user;
 extern char *rmq_password;
 extern char *dumpfile_dir;
 extern char *jobid_file_path;
-extern double freq;
+extern double sample_freq;
+extern double send_freq;
 extern int max_buffer_size;
 extern int allow_ring_buffer_overwrite;
 extern int file_mode_enabled;
 extern int send_success_count;
 extern int send_success_count_max;
 extern ev_timer sample_timer;
+extern ev_timer send_timer;
 extern ev_timer rotate_timer;
 
 int read_conf_file(void);
+void monitor_daemon_finalize_runtime_settings(void);
 void monitor_daemon_prime_file_mode_from_dumpdir(void);
 
 void monitor_daemon_rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents);
 void monitor_daemon_sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents);
+void monitor_daemon_send_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents);
 void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents);
 void monitor_daemon_signal_cb_int(struct ev_loop *loop, ev_signal *sig, int revents);
 void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int revents);

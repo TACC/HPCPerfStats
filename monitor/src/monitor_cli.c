@@ -37,7 +37,9 @@ void monitor_cli_print_usage(FILE *stream)
 	  "  -p [PORT]       or --port       [PORT]       Port to use (5672 is the default).\n"
 	  "  -t [TMP_DIR]    or --tmp        [TMP_DIR]    Directory for dumpfiles (/tmp/hpcperfstats is the default).\n"
 	  "  -b [BUFFER]     or --buffer     [BUFFER]     Max size (in # of stats) for temporary in-memory storage (4096 is the default).\n"
-	  "  -f [FREQUENCY]  or --frequency  [FREQUENCY]  Frequency to sample (300 seconds is the default).\n",
+	  "  -f [FREQUENCY]  or --frequency  [FREQUENCY]  Deprecated alias for --sample-frequency.\n"
+	  "     [SECONDS]    or --sample-frequency [SECONDS] Sampling cadence in seconds (default 300).\n"
+	  "     [SECONDS]    or --send-frequency   [SECONDS] RabbitMQ send cadence in seconds (default 300).\n",
 	  program_invocation_short_name);
 }
 
@@ -53,13 +55,15 @@ void monitor_cli_parse_args(int argc, char *argv[], int *daemonmode_out)
     { "conf_file", required_argument, 0, 'c'},
     { "tmp_dir",   required_argument, 0, 't' },
     { "frequency", required_argument, 0, 'f' },
+    { "sample-frequency", required_argument, 0, 'F' },
+    { "send-frequency", required_argument, 0, 'S' },
     { NULL, 0, 0, 0 },
   };
 
   *daemonmode_out = 0;
 
   int c;
-  while ((c = getopt_long(argc, argv, "hdc:s:q:f:p:b:t:", opts, 0)) != -1) {
+  while ((c = getopt_long(argc, argv, "hdc:s:q:f:F:S:p:b:t:", opts, 0)) != -1) {
     switch (c) {
     case 'd':
       *daemonmode_out = 1;
@@ -69,7 +73,13 @@ void monitor_cli_parse_args(int argc, char *argv[], int *daemonmode_out)
       server = strdup(optarg);
       break;
     case 'f':
-      freq = atof(optarg);
+      sample_freq = atof(optarg);
+      break;
+    case 'F':
+      sample_freq = atof(optarg);
+      break;
+    case 'S':
+      send_freq = atof(optarg);
       break;
     case 'c':
       free(conf_file_name);
