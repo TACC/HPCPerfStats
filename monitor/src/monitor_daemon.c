@@ -445,32 +445,32 @@ static int save_file_stats_buffer(struct stats_buffer *sf)
 
 static int save_file_ring_buffer(struct sf_ring_buffer *w)
 {
-  int rc = 0;
-  char *file_path = NULL;
-  struct sf_queue *sfq = NULL;
-  if (w->q_count == 0) {
-    rc = -1;
-    goto err;
-  }
+  int rc;
+  char *file_path;
+  struct sf_queue *sfq;
+
+  /* Nothing buffered (common on SIGINT/SIGTERM after successful sends) — not an error. */
+  if (w->q_count == 0)
+    return 0;
+
   file_path = get_current_dumpfile();
   if (file_path == NULL) {
     ERROR("Failed allocating dumpfile path\n");
-    rc = -1;
-    goto err;
+    return -1;
   }
   sfq = w->q_first;
   do {
     rc = stats_buffer_write_file(sfq->sf, file_path);
-    if (rc == -1)
-      goto err;
+    if (rc == -1) {
+      ERROR("Error saving stats to dumpfile %s\n", file_path);
+      free(file_path);
+      return -1;
+    }
     w->f_count++;
     sfq = sfq->forward;
   } while (sfq != w->q_first);
-err:
-  if (rc != 0)
-    ERROR("Error saving stats to dumpfile %s\n", file_path);
   free(file_path);
-  return rc;
+  return 0;
 }
 
 static void send_dumpfile_stats(struct sf_ring_buffer *w)
