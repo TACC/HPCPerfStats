@@ -1,0 +1,52 @@
+---
+description: On-demand analysis of chat transcripts to propose or refine Cursor rules; use only when the user asks to analyze chats for patterns or rule ideas.
+alwaysApply: false
+---
+
+# Chat analysis for Cursor rules
+
+## When this applies
+
+- **Only** when the user explicitly asks to analyze chats, transcripts, or conversation history for patterns, mistakes, preferences, or candidate Cursor rules.
+- **Do not** run this process on any schedule, on Mondays, or without a direct user request.
+
+## Typical triggers (examples)
+
+- "Analyze my recent chats for new rules"
+- "Review chat history for recurring mistakes"
+- "What should we add to `.cursor/rules` based on our conversations?"
+
+If the user’s scope is unclear, ask once for a time window (e.g. last N days, date range, or specific transcript paths) before proceeding.
+
+## Process
+
+1. Use the scope the user gives (dates, folders, or transcript files). If none, ask once.
+2. Read **parent** agent transcripts (or paths the user specifies). Do not rely on subagent-only transcripts for rule evidence unless the user says otherwise.
+3. Identify repeated mistakes, rework loops, or stable user preferences that would benefit from a **narrow, testable** rule.
+4. Check overlap with existing rules under `.cursor/rules/` and `cursor-rules/`; prefer **updating** an existing rule over adding a duplicate.
+5. For each candidate, document:
+   - the pattern it addresses
+   - evidence (references to parent chats in that scope)
+   - the expected behavior change
+   - whether to **create** a new `.mdc` or **update** an existing one
+6. **Do not create or edit any `.mdc` file** until the user explicitly approves the specific text and target path.
+
+## Candidate rule quality bar
+
+- Prefer evidence from **multiple** chats in the chosen scope when claiming a recurring pattern (three is a strong bar; one-off issues are usually not worth a rule).
+- For high-impact rules (safety, data loss, destructive commands), require either multiple incidents with material risk, or one severe incident with a clear preventive rule.
+- Avoid broad catch-all rules; keep each rule focused and actionable.
+- Prefer safety and correctness over style-only guidance.
+
+## Overlap and duplication
+
+- For each candidate, list overlapping existing rules (if any).
+- Prefer updating an existing rule when overlap is substantial.
+- If adding a new rule, include a one-line reason an update was insufficient.
+
+## Output format
+
+1. **Findings:** pattern name, how often it appeared, linked parent chat references.
+2. **Proposals:** new vs update, target filename, one-sentence rationale.
+3. **Draft `.mdc` text** only for user-approved candidates.
+4. After any approved edits: short note of which rule files changed and why.
