@@ -392,6 +392,150 @@ def test_job_plots_refreshes_stale_cached_generic_gpu_roofline_reason():
   )
 
 
+def test_job_plots_progressive_returns_200_partial_while_tasks_pending():
+  """progressive=1 returns 200 partial JSON (not 202) when plots are still running."""
+  from hpcperfstats.site.machine import api
+
+  api._job_plot_inflight.clear()
+  factory = RequestFactory()
+  request = factory.get("/api/jobs/2945017/plots/?progressive=1")
+  request.session = {"username": "alice", "is_staff": True}
+
+  fake_job = SimpleNamespace(jid=2945017)
+
+  class _FakeExecutor:
+    def submit(self, fn):
+      fut = Future()
+      return fut
+
+  vis_qs = MagicMock()
+  vis_qs.exists.return_value = True
+  with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+      "hpcperfstats.site.machine.api.cached_orm", return_value=fake_job
+  ), patch(
+      "hpcperfstats.site.machine.api._apply_non_staff_job_visibility",
+      return_value=vis_qs,
+  ), patch("hpcperfstats.site.machine.api.cache") as mock_cache, patch(
+      "hpcperfstats.site.machine.api.jid_table.jid_table",
+      return_value=SimpleNamespace(),
+  ), patch(
+      "hpcperfstats.site.machine.api._get_small_executor",
+      return_value=_FakeExecutor(),
+  ), patch(
+      "hpcperfstats.site.machine.api.logging.getLogger",
+      return_value=MagicMock(),
+  ):
+    mock_cache.get.return_value = None
+    response = api.job_plots(request, 2945017)
+
+  assert response.status_code == 200
+  payload = response.data
+  assert payload["status"] == "partial"
+  assert payload["progressive"] is True
+  assert set(payload["loading_plots"]) == {
+      "summary_plot",
+      "heatmap",
+      "roofline",
+      "gpu_roofline",
+  }
+  assert "mplot_item" not in payload
+
+
+def test_job_plots_progressive_partial_includes_completed_plot_fields():
+  """progressive partial responses embed finished plots and omit keys still loading."""
+  from hpcperfstats.site.machine import api
+
+  api._job_plot_inflight.clear()
+  factory = RequestFactory()
+  request = factory.get("/api/jobs/2945017/plots/?progressive=1")
+  request.session = {"username": "alice", "is_staff": True}
+
+  fake_job = SimpleNamespace(jid=2945017)
+  summary_future = Future()
+  summary_future.set_result(({"kind": "summary"}, None))
+  heat_future = Future()
+  roof_future = Future()
+  gpu_future = Future()
+  queue = iter([summary_future, heat_future, roof_future, gpu_future])
+
+  class _FakeExecutor:
+    def submit(self, fn):
+      return next(queue)
+
+  vis_qs = MagicMock()
+  vis_qs.exists.return_value = True
+  with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+      "hpcperfstats.site.machine.api.cached_orm", return_value=fake_job
+  ), patch(
+      "hpcperfstats.site.machine.api._apply_non_staff_job_visibility",
+      return_value=vis_qs,
+  ), patch("hpcperfstats.site.machine.api.cache") as mock_cache, patch(
+      "hpcperfstats.site.machine.api.jid_table.jid_table",
+      return_value=SimpleNamespace(),
+  ), patch(
+      "hpcperfstats.site.machine.api._get_small_executor",
+      return_value=_FakeExecutor(),
+  ), patch(
+      "hpcperfstats.site.machine.api.logging.getLogger",
+      return_value=MagicMock(),
+  ):
+    mock_cache.get.return_value = None
+    response = api.job_plots(request, 2945017)
+
+  assert response.status_code == 200
+  payload = response.data
+  assert payload["status"] == "partial"
+  assert payload["mplot_item"] == {"kind": "summary"}
+  assert payload["mplot_unavailable_reason"] is None
+  assert "hplot_item" not in payload
+  assert "heatmap" in payload["loading_plots"]
+
+
+def test_job_plots_progressive_final_payload_includes_ready_metadata():
+  """When all plots are ready, progressive=1 adds status/loading_plots to the batch body."""
+  from hpcperfstats.site.machine import api
+
+  api._job_plot_inflight.clear()
+  factory = RequestFactory()
+  request = factory.get("/api/jobs/2945017/plots/?progressive=1")
+  request.session = {"username": "alice", "is_staff": True}
+
+  fake_job = SimpleNamespace(jid=2945017)
+  futures = [Future() for _ in range(4)]
+  for fut in futures:
+    fut.set_result(({"ok": True}, None))
+
+  class _FakeExecutor:
+    def submit(self, fn):
+      return futures.pop(0)
+
+  vis_qs = MagicMock()
+  vis_qs.exists.return_value = True
+  with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+      "hpcperfstats.site.machine.api.cached_orm", return_value=fake_job
+  ), patch(
+      "hpcperfstats.site.machine.api._apply_non_staff_job_visibility",
+      return_value=vis_qs,
+  ), patch("hpcperfstats.site.machine.api.cache") as mock_cache, patch(
+      "hpcperfstats.site.machine.api.jid_table.jid_table",
+      return_value=SimpleNamespace(),
+  ), patch(
+      "hpcperfstats.site.machine.api._get_small_executor",
+      return_value=_FakeExecutor(),
+  ), patch(
+      "hpcperfstats.site.machine.api.logging.getLogger",
+      return_value=MagicMock(),
+  ):
+    mock_cache.get.return_value = None
+    response = api.job_plots(request, 2945017)
+
+  assert response.status_code == 200
+  payload = response.data
+  assert payload["status"] == "ready"
+  assert payload["progressive"] is True
+  assert payload["loading_plots"] == []
+
+
 def test_apply_zoom_layout_to_json_item_keeps_glyph_dimensions():
   """Zoom JSON transform should not clobber glyph width/height value specs."""
   from hpcperfstats.site.machine.api import _apply_zoom_layout_to_json_item

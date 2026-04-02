@@ -95,6 +95,14 @@ JOB_DETAIL_CACHE_TTL_OLD = 30 * 24 * 3600
 _job_plot_inflight = {}
 _JOB_PLOT_INFLIGHT_TTL_SECONDS = 180
 
+# job_plots JSON field names (plot=all): kind -> (json_item_key, unavailable_reason_key)
+_JOB_PLOT_JSON_KEYS = {
+    "summary_plot": ("mplot_item", "mplot_unavailable_reason"),
+    "heatmap": ("hplot_item", "hplot_unavailable_reason"),
+    "roofline": ("rplot_item", "rplot_unavailable_reason"),
+    "gpu_roofline": ("grplot_item", "grplot_unavailable_reason"),
+}
+
 
 def _collect_future_results_with_deadline(future_to_key, max_wait_seconds):
     """
@@ -2264,6 +2272,14 @@ def job_plots(request, pk):
     - Summary plot
     - Heatmap
     - Roofline
+    - GPU roofline
+
+    Query params:
+    - plot: omit or ``all`` for all four; or one of summary_plot, heatmap, roofline, gpu_roofline.
+    - zoom: ``1`` for zoom layout (single-plot requests only).
+    - progressive: ``1`` with plot=all (no zoom): HTTP 200 with ``status`` partial/ready and
+      only completed plot fields included while others are listed in ``loading_plots``;
+      avoids 202 while still using one endpoint and shared background tasks.
     """
     err = _require_auth(request)
     if err is not None:
@@ -2308,6 +2324,12 @@ def job_plots(request, pk):
         )
     if not plot_kind:
         plot_kind = "all"
+
+    progressive = (
+        not zoom_mode
+        and plot_kind == "all"
+        and str(request.GET.get("progressive", "")).lower() in ("1", "true", "yes")
+    )
 
     j = jid_table.jid_table(job.jid)
 
@@ -2401,12 +2423,44 @@ def job_plots(request, pk):
         "roofline": _fetch_roofline,
         "gpu_roofline": _fetch_gpu_roofline,
     }
-    field_map = {
-        "summary_plot": ("mplot_item", "mplot_unavailable_reason"),
-        "heatmap": ("hplot_item", "hplot_unavailable_reason"),
-        "roofline": ("rplot_item", "rplot_unavailable_reason"),
-        "gpu_roofline": ("grplot_item", "grplot_unavailable_reason"),
-    }
+    _job_plots_log = logging.getLogger(__name__)
+
+    def _finalize_job_plot_future(key, inflight_key, future):
+        """If *future* is done, store its result in *cached_results* and caches; clear inflight."""
+        if not future.done():
+            return
+        try:
+            try:
+                plot_item, unavailable_reason = future.result()
+                cached_results[key] = {
+                    "plot_item": plot_item,
+                    "unavailable_reason": unavailable_reason,
+                }
+                size_key = "zoom_v3" if zoom_mode else "normal"
+                cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key, size_key)
+                try:
+                    cache.set(cache_key, cached_results[key], timeout=job_cache_timeout)
+                except Exception:
+                    pass
+                if plot_item is not None:
+                    try:
+                        data_cache_key = make_cache_key("JOB_PLOTS_DATA", job.jid, key)
+                        cache.set(data_cache_key, plot_item, timeout=job_cache_timeout)
+                    except Exception:
+                        pass
+            except Exception as e:
+                _job_plots_log.warning(
+                    "job_plots task failed for jid=%s key=%s: %s",
+                    job.jid,
+                    key,
+                    e,
+                    exc_info=True,
+                )
+                cached_results[key] = {"plot_item": None, "unavailable_reason": str(e)}
+        finally:
+            with _job_plots_lock:
+                _job_plot_inflight.pop(inflight_key, None)
+
     requested_keys = (
         [plot_kind]
         if plot_kind != "all"
@@ -2488,37 +2542,46 @@ def job_plots(request, pk):
                     "future": future,
                     "created_at": time.monotonic(),
                 }
-        if future.done():
-            try:
-                plot_item, unavailable_reason = future.result()
-                cached_results[key] = {"plot_item": plot_item, "unavailable_reason": unavailable_reason}
-                size_key = "zoom_v3" if zoom_mode else "normal"
-                cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key, size_key)
-                try:
-                    cache.set(cache_key, cached_results[key], timeout=job_cache_timeout)
-                except Exception:
-                    pass
-                if plot_item is not None:
-                    try:
-                        data_cache_key = make_cache_key("JOB_PLOTS_DATA", job.jid, key)
-                        cache.set(data_cache_key, plot_item, timeout=job_cache_timeout)
-                    except Exception:
-                        pass
-            except Exception as e:
-                logging.getLogger(__name__).warning(
-                    "job_plots task failed for jid=%s key=%s: %s",
-                    job.jid,
-                    key,
-                    e,
-                    exc_info=True,
-                )
-                cached_results[key] = {"plot_item": None, "unavailable_reason": str(e)}
-            finally:
-                with _job_plots_lock:
-                    _job_plot_inflight.pop(inflight_key, None)
+        _finalize_job_plot_future(key, inflight_key, future)
+
+    # Harvest completions that finish shortly after submit so one request can often
+    # return the full payload (avoids an extra client poll round).
+    pending_meta = {}
+    for key in requested_keys:
+        if key in cached_results:
+            continue
+        inflight_key = (job.jid, key, "zoom_v3" if zoom_mode else "normal")
+        with _job_plots_lock:
+            meta = _job_plot_inflight.get(inflight_key) or {}
+            fut = meta.get("future")
+        if fut is not None:
+            pending_meta[fut] = (key, inflight_key)
+    _harvest_timeout_s = 0.55 if progressive else 0.4
+    if pending_meta:
+        try:
+            for fut in as_completed(pending_meta.keys(), timeout=_harvest_timeout_s):
+                k, ik = pending_meta[fut]
+                _finalize_job_plot_future(k, ik, fut)
+        except FuturesTimeoutError:
+            pass
 
     still_loading = [key for key in requested_keys if key not in cached_results]
     if still_loading:
+        if progressive:
+            body = {
+                "status": "partial",
+                "detail": "Some plots are still being generated. Retry this request shortly.",
+                "retry_after_seconds": 2,
+                "loading_plots": still_loading,
+                "progressive": True,
+            }
+            for key in requested_keys:
+                if key not in cached_results:
+                    continue
+                item_key, reason_key = _JOB_PLOT_JSON_KEYS[key]
+                body[item_key] = cached_results[key]["plot_item"]
+                body[reason_key] = cached_results[key]["unavailable_reason"]
+            return Response(body, status=status.HTTP_200_OK)
         return Response(
             {
                 "status": "loading",
@@ -2558,6 +2621,10 @@ def job_plots(request, pk):
         "grplot_item": cached_results["gpu_roofline"]["plot_item"],
         "grplot_unavailable_reason": cached_results["gpu_roofline"]["unavailable_reason"],
     }
+    if progressive:
+        payload["status"] = "ready"
+        payload["progressive"] = True
+        payload["loading_plots"] = []
     return Response(payload)
 
 

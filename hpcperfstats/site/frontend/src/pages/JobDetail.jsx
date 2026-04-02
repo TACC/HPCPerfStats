@@ -107,6 +107,57 @@ const JOB_PLOT_CONFIGS = [
   },
 ];
 
+/** Maps React plot keys to `job_plots` batch payload fields (plot=all). */
+const JOB_PLOTS_BATCH_FIELDS = {
+  summary_plot: { item: "mplot_item", reason: "mplot_unavailable_reason" },
+  heatmap: { item: "hplot_item", reason: "hplot_unavailable_reason" },
+  roofline: { item: "rplot_item", reason: "rplot_unavailable_reason" },
+  gpu_roofline: { item: "grplot_item", reason: "grplot_unavailable_reason" },
+};
+
+function plotsStateFromBatchResponse(resp) {
+  return JOB_PLOT_CONFIGS.reduce((acc, config) => {
+    const fields = JOB_PLOTS_BATCH_FIELDS[config.key];
+    acc[config.key] = {
+      loading: false,
+      plotItem: resp[fields.item] ?? null,
+      unavailableReason: resp[fields.reason] ?? null,
+    };
+    return acc;
+  }, {});
+}
+
+/** Merge a progressive `job_plots` partial payload into existing per-plot state. */
+export function mergeProgressiveJobPlotsState(prevPlots, resp) {
+  const loadingSet = new Set(resp.loading_plots ?? []);
+  return JOB_PLOT_CONFIGS.reduce((acc, config) => {
+    const fields = JOB_PLOTS_BATCH_FIELDS[config.key];
+    const previous = prevPlots?.[config.key] ?? {
+      loading: true,
+      plotItem: null,
+      unavailableReason: null,
+    };
+    if (loadingSet.has(config.key)) {
+      acc[config.key] = {
+        loading: true,
+        plotItem: previous.plotItem,
+        unavailableReason: previous.unavailableReason,
+      };
+      return acc;
+    }
+    if (Object.hasOwn(resp, fields.item)) {
+      acc[config.key] = {
+        loading: false,
+        plotItem: resp[fields.item] ?? null,
+        unavailableReason: resp[fields.reason] ?? null,
+      };
+      return acc;
+    }
+    acc[config.key] = { ...previous, loading: true };
+    return acc;
+  }, {});
+}
+
 export default function JobDetail() {
   const session = useSession();
   const isStaff = !!session?.is_staff;
@@ -158,10 +209,10 @@ export default function JobDetail() {
         setPlots(emptyPlotsState);
         setPlotsLoading(true);
 
-        const fetchPlotWithPolling = async (plotKey) => {
+        const fetchAllJobPlotsWithPolling = async () => {
           let keepLoading = false;
           try {
-            const plotResponse = await api.getJobPlots(pk, plotKey);
+            const plotResponse = await api.getJobPlots(pk, null, false, true);
             if (cancelled) return;
 
             if (plotResponse?.status === "loading") {
@@ -171,39 +222,68 @@ export default function JobDetail() {
                 Number(plotResponse.retry_after_seconds ?? 2) * 1000
               );
               setTimeout(() => {
-                if (!cancelled) fetchPlotWithPolling(plotKey);
+                if (!cancelled) fetchAllJobPlotsWithPolling();
               }, retryAfterMs);
               return;
             }
 
-            setPlots((prev) => ({
-              ...(prev || {}),
-              [plotKey]: {
-                loading: false,
-                plotItem: plotResponse?.plot_item ?? null,
-                unavailableReason: plotResponse?.unavailable_reason ?? null,
-              },
-            }));
+            if (plotResponse?.status === "partial" && plotResponse?.progressive) {
+              keepLoading = true;
+              setPlots((prev) => mergeProgressiveJobPlotsState(prev, plotResponse));
+              const retryAfterMs = Math.max(
+                250,
+                Number(plotResponse.retry_after_seconds ?? 2) * 1000
+              );
+              setTimeout(() => {
+                if (!cancelled) fetchAllJobPlotsWithPolling();
+              }, retryAfterMs);
+              return;
+            }
+
+            if (
+              plotResponse?.progressive &&
+              plotResponse?.status === "ready" &&
+              Object.hasOwn(plotResponse, "mplot_item")
+            ) {
+              setPlots(plotsStateFromBatchResponse(plotResponse));
+            } else if (
+              plotResponse &&
+              typeof plotResponse === "object" &&
+              Object.hasOwn(plotResponse, "mplot_item")
+            ) {
+              setPlots(plotsStateFromBatchResponse(plotResponse));
+            } else {
+              setPlots(
+                JOB_PLOT_CONFIGS.reduce((acc, config) => {
+                  acc[config.key] = {
+                    loading: false,
+                    plotItem: null,
+                    unavailableReason: null,
+                  };
+                  return acc;
+                }, {})
+              );
+            }
           } catch {
             if (cancelled) return;
             // eslint-disable-next-line no-console
-            console.warn(`Failed to load ${plotKey} for job ${pk}`);
-            setPlots((prev) => ({
-              ...(prev || {}),
-              [plotKey]: {
-                loading: false,
-                plotItem: null,
-                unavailableReason: null,
-              },
-            }));
+            console.warn(`Failed to load job plots for job ${pk}`);
+            setPlots(
+              JOB_PLOT_CONFIGS.reduce((acc, config) => {
+                acc[config.key] = {
+                  loading: false,
+                  plotItem: null,
+                  unavailableReason: null,
+                };
+                return acc;
+              }, {})
+            );
           } finally {
             if (cancelled || keepLoading) return;
           }
         };
 
-        JOB_PLOT_CONFIGS.forEach((config) => {
-          fetchPlotWithPolling(config.key);
-        });
+        fetchAllJobPlotsWithPolling();
 
         api
           .getJobDetail(pk)
@@ -233,10 +313,10 @@ export default function JobDetail() {
 
   useEffect(() => {
     if (!plots) return;
-    const allFinished = JOB_PLOT_CONFIGS.every(
+    const anyPlotReady = JOB_PLOT_CONFIGS.some(
       (config) => plots?.[config.key] && plots[config.key].loading === false
     );
-    if (allFinished) setPlotsLoading(false);
+    if (anyPlotReady) setPlotsLoading(false);
   }, [plots]);
 
   useEffect(() => {
