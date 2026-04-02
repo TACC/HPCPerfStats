@@ -1,0 +1,15 @@
+---
+description: Trim whitespace on RabbitMQ host/port/queue and related config strings in the monitor
+globs:
+  - HPCPerfStats/monitor/**/*.c
+  - HPCPerfStats/monitor/**/*.h
+alwaysApply: false
+---
+
+# Monitor: network and queue config trimming
+
+- **User-edited config** (`hpcperfstats.conf`, CLI overrides) can contain leading/trailing **ASCII whitespace** (spaces, tabs). Treat **host**, **port**, **queue**, and other connection identifiers as **logical strings** after trim.
+- **Apply the same trim** on every path that consumes these values: **file config load**, **SIGHUP reload**, **CLI defaults**, and any code path that **reconnects** or **re-declares** queues after credential or name changes.
+- Use **`isspace()`**-style trimming (or the project’s existing helper if one exists) consistently; do not trim only on first load and skip on reload.
+- After trim, treat **empty** host/queue as invalid where the feature requires them; avoid passing whitespace-only strings to **`getaddrinfo`**, AMQP declare, or URL assembly.
+- **Contract**: Payload and archive paths still depend on stable **host** identity for downstream consumers (see **monitor-workspace-contract**); trimming must not strip **non-whitespace** characters or change hostname case unless explicitly specified.

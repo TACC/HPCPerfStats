@@ -1,0 +1,17 @@
+---
+description: `--enable-debug` vs compiler `-g` / symbol tables in the monitor build
+globs:
+  - HPCPerfStats/monitor/configure.ac
+  - HPCPerfStats/monitor/**/*.am
+alwaysApply: false
+---
+
+# Monitor: debug build vs debug symbols
+
+- **`--enable-debug`** (or the project’s equivalent) typically controls **compile-time `DEBUG` macros**: extra logging, verbose syslog, diagnostic branches, and possibly **assert**-like checks. Treat it as **behavioral** debug, not merely “symbols.”
+- **`-g` / DWARF**: **Debug symbols** for **gdb**/`perf` can be present **without** defining **`DEBUG`**. Release-style builds may still use **`-g`** for **separate debuginfo** (RPM) or post-mortem analysis; do not conflate “has `-g`” with “daemon spews verbose logs.”
+- When documenting or answering “is this a debug build?”, distinguish:
+  - **Macro `DEBUG`** → verbose code paths, extra prints.
+  - **Optimizer level** (`-O0` vs `-O2`) → debugging vs production performance.
+  - **Symbols** → stack traces in **gdb** without changing runtime behavior.
+- Changing **`configure.ac`** defaults for **CFLAGS** should be reviewed for **static bundle** and **RPM** expectations (see **monitor-version-and-packaging**, **monitor-static-build-verification**).

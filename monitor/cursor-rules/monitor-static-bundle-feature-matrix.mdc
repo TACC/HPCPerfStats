@@ -1,0 +1,18 @@
+---
+description: How static bundle configure flags map to collectors (IB sysfs vs MAD, GPU, etc.)
+globs:
+  - HPCPerfStats/monitor/scripts/build_static_bundle.sh
+  - HPCPerfStats/monitor/configure.ac
+  - HPCPerfStats/monitor/src/**/*.c
+alwaysApply: false
+---
+
+# Monitor static bundle: feature matrix vs `--disable-*`
+
+- **Canonical build**: **`HPCPerfStats/monitor/scripts/build_static_bundle.sh`** probes the host and may pass **`--disable-infiniband`**, **`--disable-gpu`**, **`--disable-amd-gpu`**, etc., when matching devel stacks are missing. See **monitor-static-build-verification** for verification steps.
+- **Infiniband**:
+  - Disabling **does not always mean “no IB counters.”** Some paths use **sysfs** (`/sys/class/infiniband`) without libibverbs/MAD; others require **MAD** / full verbs stack.
+  - When changing IB-related code, state clearly whether the change affects **sysfs-only**, **MAD**, or **both**, and whether **`--disable-infiniband`** is expected to remove all IB-related output.
+- **GPU paths**: NVIDIA vs AMD have separate disable flags; **`--disable-gpu`** vs vendor-specific options must stay consistent with **`configure.ac`** and **`build_static_bundle.sh`**.
+- **CPU counters / DCGM**: Backend selection (LIKWID vs DCGM) interacts with GPU libraries and headers; see **monitor-dcgm-integration** when touching DCGM or `cpu_counter_metrics.c`.
+- **Docs**: If behavior changes, update **`README.md`** or packaging notes per **monitor-readme-maintenance** when user-visible flags or outputs change.

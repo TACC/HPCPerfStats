@@ -1,0 +1,42 @@
+---
+description: How to analyze Cursor chats and transcripts to propose new .cursor/rules (workspace copy)
+globs: **
+alwaysApply: false
+---
+
+# Chat analysis for rules (monitor workspace)
+
+This document is the **workspace-local** copy for **`hpcperfstats_monitor_dev`**. Use it when turning **conversation history** into **durable Cursor rules** under **`.cursor/rules/`**. It complements **cursor-rules-maker** (always-applied RuleMaker process).
+
+## When to run
+
+- After **multi-session** work on the same subsystem (GPU, IB, static bundle, configure, RabbitMQ).
+- When the same **mistake class** appears more than once (e.g. m4/`awk` in `configure.ac`, untrimmed config, DCGM field mismatches).
+- On request: **“analyze chats / transcripts and suggest rules.”**
+
+## Inputs
+
+- **Agent transcripts** (if available): `~/.cursor/projects/<project>/agent-transcripts/*.jsonl` — search for **errors**, **reverted edits**, and **repeated explanations**.
+- **Recent edits** under **`HPCPerfStats/monitor/`** (per **monitor-workspace-contract**).
+- **Existing rules** in **`.cursor/rules/`** — avoid duplicating **monitor-static-build-verification**, **monitor-workspace-contract**, **traceback-fix-discipline**, etc.
+
+## Analysis steps
+
+1. **Extract themes**: Group messages by topic (build, DCGM, IB, config, tests).
+2. **Count recurrence**: Favor rules when the same issue appears **≥3** times or causes **rework** (failed CI, wrong flag, contract risk).
+3. **Separate symptom vs cause**: Prefer rules that point to the **owning file** (e.g. fix **`configure.ac`**, not only patch generated **`configure`**).
+4. **Check contracts**: For message/payload or host parsing, cross-check **`HPCPerfStats/hpcperfstats/listend.py`** (read-only) per **monitor-workspace-contract**; do not propose consumer changes without an explicit user override.
+5. **Scope**: Prefer **one narrow rule file** per theme (`monitor-dcgm-integration`, `configure-autoconf-awk-m4`) over one huge file.
+
+## Outputs
+
+For each candidate rule:
+
+- **Name** (file: `kebab-case.mdc`).
+- **description** + **globs** + **alwaysApply** (usually `false` unless project-wide).
+- **Bullets**: actionable constraints, pointers to scripts (`build_static_bundle.sh`), and cross-links to existing rules by **filename** (e.g. **monitor-static-build-verification**).
+
+## Approval and writing
+
+- Follow **cursor-rules-maker**: do **not** write new rules until the user approves, **unless** they explicitly asked to **save** or **create** rules in the current message.
+- Use **`.mdc`** frontmatter format consistent with other files in **`.cursor/rules/`**.

@@ -1,0 +1,14 @@
+---
+description: Autoconf/m4 safety in configure.ac — avoid names that break m4 expansion
+globs:
+  - HPCPerfStats/monitor/configure.ac
+alwaysApply: false
+---
+
+# Autoconf: `awk` and `index()` in `configure.ac`
+
+- **`configure.ac` is processed by `m4`**. Macros and builtins can expand unexpectedly when shell fragments use names that collide with **GNU m4** builtins.
+- **Avoid** using `awk` as a **variable name** in shell embedded in `configure.ac` (e.g. `awk='...'`). Prefer a different name (`awk_prog`, `AWK_CMD`, etc.) so expansion does not treat `awk` as the m4 `awk` builtin in fragile contexts.
+- **Avoid** calling **`index(...)`** in shell where m4 may still interpret it as the **`index` builtin** (substring position). Prefer **`match()`** in `awk` one-liners, or structure the shell so `index` is not parsed as m4 at the problematic point.
+- When adding probes that embed **awk** scripts, run **`autoconf`** (or the project’s **`./bootstrap.sh` / `autoreconf`**) and confirm **`./configure`** runs cleanly; watch for **m4 expansion** or **unexpected token** errors near new `awk`/`index` usage.
+- **Generated `configure`**: Prefer fixing **`configure.ac`** and regenerating **`configure`**, rather than hand-editing the generated file.

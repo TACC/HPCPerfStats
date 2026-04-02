@@ -1,0 +1,17 @@
+---
+description: DCGM usage, field IDs, sessions, and fallbacks in the HPCPerfStats monitor
+globs:
+  - HPCPerfStats/monitor/src/**/*dcgm*
+  - HPCPerfStats/monitor/src/cpu_counter_metrics.c
+  - HPCPerfStats/monitor/src/nvidia_gpu.c
+alwaysApply: false
+---
+
+# Monitor: DCGM integration
+
+- **Scope**: DCGM is optional and gated at **configure** time. Do not assume DCGM headers or libraries exist in minimal builds; guard with **`#ifdef`** / build-time flags consistent with **`configure.ac`**.
+- **Sessions and handles**: Follow NVIDIA DCGM lifecycle: init → **start embedded** or attach to host engine as the project already does → **watch fields / groups** → collect → teardown on error or shutdown. Avoid leaking DCGM handles across **SIGHUP** reload paths; reset or recreate per project patterns in `dcgm_session.c` (or equivalent).
+- **Field IDs**: CPU and GPU metrics use **DCGM field IDs** that can differ by DCGM version. When adding metrics, confirm IDs against the **target DCGM version** in release notes; prefer named constants or a small compatibility table if multiple versions are supported.
+- **Discovery**: GPU index / PCI mapping can change across driver reloads; avoid caching stale **GPU IDs** indefinitely without invalidation on re-init.
+- **Fallbacks**: If DCGM is unavailable at runtime (even when compiled in), keep **graceful degradation**: log at appropriate level, skip DCGM rows, and avoid crashing the daemon or blocking the **libev** loop.
+- **Testing**: Prefer unit tests for pure helpers; integration with real DCGM may be environment-specific—document requirements in **`tests/README.md`** if new tests need GPUs or DCGM.
