@@ -165,6 +165,10 @@ class _Schema:
     """Return _EventIndex for the given event name."""
     return _EventIndex(self._index[name])
 
+  def __iter__(self):
+    """Iterate event names (required: without this, ``for x in schema`` uses integer indices and breaks __getitem__)."""
+    return iter(self.events)
+
 
 class _Host:
   """Minimal host container with a stats dict (typename -> dev -> array).
