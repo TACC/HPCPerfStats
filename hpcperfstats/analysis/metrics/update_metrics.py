@@ -46,6 +46,9 @@ DEBUG = cfg.get_debug()
 # Process jobs in chunks to bound memory; full job rows are not all held at once.
 CHUNK_SIZE = 500
 
+# Running a full GC every chunk is expensive on large backfills; amortize it.
+GC_COLLECT_EVERY_N_CHUNKS = 20
+
 # When argv has no start/end dates, process this many calendar days ending today.
 DEFAULT_METRICS_RANGE_DAYS = 7
 
@@ -104,6 +107,12 @@ def _expected_job_metrics_row_count():
   return expected_job_metric_row_count()
 
 
+@functools.lru_cache(maxsize=1)
+def _host_name_suffix():
+  """FQDN suffix used by host_data host names."""
+  return "." + cfg.get_host_name_ext()
+
+
 def _jobs_queryset(date, min_time, rerun):
   """Jobs ending on ``date`` with runtime >= min_time, newest first (end_time, jid)."""
   qs = job_data.objects.filter(end_time__date=date.date()).exclude(
@@ -143,9 +152,8 @@ def _jobs_queryset(date, min_time, rerun):
   # of COUNT(DISTINCT time) per host) than at last metrics persist (same window
   # + FQDN host list as jid_table).
   if connections["default"].vendor == "postgresql":
-    host_suffix = "." + cfg.get_host_name_ext()
     annotated = annotated.annotate(
-        live_distinct_time_count=LiveDistinctHostTimeCount(host_suffix),
+        live_distinct_time_count=LiveDistinctHostTimeCount(_host_name_suffix()),
     )
     need_metrics |= (
         Q(metrics_distinct_time_count__isnull=False)
@@ -187,7 +195,7 @@ def _job_refs_from_jids(jids):
 
 def _fqdn_hosts_for_job(job_row):
   """Return job host_list as FQDN hostnames used by host_data."""
-  suffix = "." + cfg.get_host_name_ext()
+  suffix = _host_name_suffix()
   hosts = []
   for host in (job_row.get("host_list") or []):
     h = str(host or "").strip()
@@ -203,7 +211,7 @@ def _filter_jids_with_samples_after_end(jids):
     return []
 
   jobs = list(
-      job_data.objects.filter(jid__in=list(jids)).values("jid", "end_time", "host_list")
+      job_data.objects.filter(jid__in=jids).values("jid", "end_time", "host_list")
   )
   if not jobs:
     return []
@@ -213,14 +221,14 @@ def _filter_jids_with_samples_after_end(jids):
   for row in jobs:
     # De-duplicate host_list entries; gating is based on unique hosts and each
     # unique host must have data strictly after job end.
-    hosts = sorted(set(_fqdn_hosts_for_job(row)))
+    hosts = list(set(_fqdn_hosts_for_job(row)))
     job_hosts[row["jid"]] = hosts
     unique_hosts.update(hosts)
 
   latest_by_host = {}
   if unique_hosts:
     for row in (
-        host_data.objects.filter(host__in=list(unique_hosts))
+        host_data.objects.filter(host__in=unique_hosts)
         .values("host")
         .annotate(last_time=Max("time"))
     ):
@@ -279,7 +287,7 @@ def update_metrics(date, rerun=False):
 
     processed = 0
     skipped_not_ready = 0
-    for pk_chunk, _ in _iter_chunked_pks(qs, CHUNK_SIZE):
+    for chunk_number, (pk_chunk, _) in enumerate(_iter_chunked_pks(qs, CHUNK_SIZE), start=1):
       if shutdown_requested[0]:
         break
       try:
@@ -308,7 +316,8 @@ def update_metrics(date, rerun=False):
       finally:
         # Release references promptly; GC can then free memory before next chunk.
         del jobs_chunk
-        gc.collect()
+        if GC_COLLECT_EVERY_N_CHUNKS > 0 and chunk_number % GC_COLLECT_EVERY_N_CHUNKS == 0:
+          gc.collect()
 
       if shutdown_requested[0]:
         break
