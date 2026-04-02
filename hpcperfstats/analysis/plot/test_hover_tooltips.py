@@ -40,7 +40,7 @@ def test_summaryplot_hover_uses_html_with_separators():
   assert "@cpu{custom}" in hover.tooltips
   assert hover.formatters["@time"] == "datetime"
   assert isinstance(hover.formatters["@cpu"], CustomJSHover)
-  assert len(hover.renderers) == len(_SummaryJt.host_list)
+  assert len(hover.renderers) == 1
 
 
 class _TypeDetailProvider:

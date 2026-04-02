@@ -1,4 +1,6 @@
 """Unit tests for summary plot diagnostics from jid_table aggregates."""
+import threading
+
 import pandas as pd
 import pytest
 from unittest.mock import MagicMock
@@ -15,6 +17,7 @@ def test_summary_plot_reports_missing_counter_reason():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = MagicMock()
   jt.host_list = ["n1.cluster"]
+  jt.schema = {"cpu": ["user"]}
   jt.get_host_time_df.return_value = pd.DataFrame(
       [("n1.cluster", t0)],
       columns=["host", "time"],
@@ -24,7 +27,37 @@ def test_summary_plot_reports_missing_counter_reason():
   fig, reason = plot_and_reason_summary_from_jid_table(jt)
   assert fig is None
   assert "Missing summary counters in host_data" in reason
-  assert "Attempted:" in reason
+  assert "host_data metric types present:" in reason
+  assert "Detail:" in reason
+
+
+def test_summaryplot_schema_skips_aggregates_for_absent_types():
+  """When jt.schema is a real dict, do not query types that cannot exist for the job."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  lock = threading.Lock()
+  types_seen = []
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv, events, val_col
+    with lock:
+      types_seen.append(typ)
+    if typ == "cpu":
+      return pd.DataFrame(
+          [("n1.cluster", t0, 0.5)], columns=["host", "time", "sum_val"]
+      )
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.schema = {"cpu": ["user", "system", "nice"]}
+  jt.get_host_time_df.return_value = pd.DataFrame(
+      [("n1.cluster", t0)], columns=["host", "time"]
+  )
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  SummaryPlot(jt).plot()
+  assert "amd64_pmc" not in types_seen
+  assert "cpu" in types_seen
 
 
 def test_summaryplot_plot_includes_mbw_from_first_intel_imc_with_data():

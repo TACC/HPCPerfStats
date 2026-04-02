@@ -6,8 +6,16 @@ import hpcperfstats.conf_parser as cfg
 import logging
 import math
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 log = logging.getLogger(__name__)
+
+from django.db import close_old_connections
+
+from hpcperfstats.analysis.gen.jid_table import (
+    begin_summary_aggregate_counting,
+    end_summary_aggregate_counting,
+)
 
 from pandas import isna as pd_isna
 from pandas import to_datetime
@@ -24,9 +32,9 @@ from hpcperfstats.analysis.gen.utils import (
 
 from bokeh.layouts import gridplot
 from bokeh.models import ColumnDataSource, HoverTool, Range1d
-from bokeh.models.glyphs import Step
 from bokeh.palettes import d3
 from bokeh.plotting import figure
+from bokeh.transform import factor_cmap
 
 from hpcperfstats.analysis.plot import MSG_NO_METRIC_DATA
 
@@ -68,6 +76,80 @@ _SHARED_FS_READ_LABEL = "SharedFS Read [MB/s]"
 _SHARED_FS_WRITE_LABEL = "SharedFS Write [MB/s]"
 _SHARED_FS_IOPS_METRIC = "shared_fs_iops"
 _SHARED_FS_IOPS_LABEL = "SharedFS IOPS Per Host [#/s]"
+
+
+def _summary_type_events_feasible(schema, typ, events):
+  """Return False when schema is known and no requested event exists for typ (skip ORM work)."""
+  if not isinstance(schema, dict) or not schema:
+    return True
+  if typ not in schema:
+    return False
+  if not events:
+    return True
+  have = set(schema[typ])
+  return len(have.intersection(events)) > 0
+
+
+def _empty_agg_df():
+  import pandas as pd
+
+  return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+
+def _get_agg_if_feasible(jt, typ, val_col, events, conv):
+  """Like jt.get_aggregate_df but no-op when schema rules out this type/events."""
+  raw_schema = getattr(jt, "schema", None)
+  schema = raw_schema if isinstance(raw_schema, dict) else {}
+  if not _summary_type_events_feasible(schema, typ, events):
+    return _empty_agg_df()
+  return jt.get_aggregate_df(typ, val_col, list(events), conv)
+
+
+def _step_polyline_xy(times, values):
+  """Build x/y lists for a step-before polyline through (time, value) samples."""
+  if times is None or len(times) == 0:
+    return [], []
+  t = times.tolist() if hasattr(times, "tolist") else list(times)
+  v = values.tolist() if hasattr(values, "tolist") else list(values)
+  if len(t) != len(v):
+    return [], []
+  xs = [t[0]]
+  ys = [v[0]]
+  for i in range(1, len(t)):
+    xs.append(t[i])
+    ys.append(v[i - 1])
+    xs.append(t[i])
+    ys.append(v[i])
+  return xs, ys
+
+
+def _prefetch_single_spec_aggregates(jt, spec_rows):
+  """Parallel fetch for (typ, val, events, conv, name) rows; returns name -> DataFrame."""
+  import pandas as pd
+
+  raw_schema = getattr(jt, "schema", None)
+  schema = raw_schema if isinstance(raw_schema, dict) else {}
+
+  def _one(row):
+    typ, val, events, conv, name = row
+    close_old_connections()
+    try:
+      if not _summary_type_events_feasible(schema, typ, events):
+        return name, pd.DataFrame(columns=["host", "time", "sum_val"])
+      return name, jt.get_aggregate_df(typ, val, list(events), conv)
+    finally:
+      close_old_connections()
+
+  out = {}
+  if not spec_rows:
+    return out
+  max_workers = min(8, len(spec_rows))
+  with ThreadPoolExecutor(max_workers=max_workers) as pool:
+    futures = [pool.submit(_one, row) for row in spec_rows]
+    for fut in as_completed(futures):
+      name, df = fut.result()
+      out[name] = df
+  return out
 
 
 def _intel_core_tries(events, conv):
@@ -261,7 +343,7 @@ def _merge_shared_fs_metric(df, jt, metric_name, source_specs):
   merged[accum_col] = 0.0
   has_data = False
   for typ, val_col, events, conv in source_specs:
-    agg = jt.get_aggregate_df(typ, val_col, events, conv)
+    agg = _get_agg_if_feasible(jt, typ, val_col, events, conv)
     if agg.empty or "sum_val" not in agg.columns:
       continue
     has_data = True
@@ -282,7 +364,7 @@ def _merge_shared_fs_metric(df, jt, metric_name, source_specs):
 def _merge_first_full_coverage(df, jt, column_name, val_col, tries):
   """Left-merge first (typ, events, conv) whose aggregate has no nulls on base (host, time)."""
   for typ, events, conv in tries:
-    agg = jt.get_aggregate_df(typ, val_col, events, conv)
+    agg = _get_agg_if_feasible(jt, typ, val_col, events, conv)
     if agg.empty or "sum_val" not in agg.columns:
       continue
     merged = df.merge(
@@ -306,7 +388,7 @@ def _merge_nvidia_gpu_util_column(df, jt):
   """
   name = "nv_gpu_util"
   for events in (["gpu_util"], ["utilization"]):
-    agg = jt.get_aggregate_df("nvidia_gpu", "value", events, 1.0)
+    agg = _get_agg_if_feasible(jt, "nvidia_gpu", "value", events, 1.0)
     if agg.empty or "sum_val" not in agg.columns:
       continue
     merged = df.merge(
@@ -436,12 +518,15 @@ class SummaryPlot():
     self.host_list = jt.host_list
 
   def plot_metric(self, df, metric, label, y_range_end=None, x_range=None):
-    """Create one Bokeh figure with step glyphs per host for the given metric column and label.
+    """Create one Bokeh figure with step-shaped lines and scatter hits per host.
 
+        Uses one multi_line glyph plus one scatter (single HoverTool) so large host
+        counts avoid O(hosts) separate data sources while preserving hover fields.
         """
     s = time.time()
 
-    df = df[["time", "host", metric]]
+    df = df[["time", "host", metric]].copy()
+    df["host"] = df["host"].astype(str)
 
     y_min_value = df[metric].min()
     if y_range_end is None or pd_isna(y_range_end):
@@ -475,27 +560,47 @@ class SummaryPlot():
     set_linear_axes_plain_numeric(plot)
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
-    num_hover = new_plain_number_hover_formatter()
-    circle_renderers = []
+    xs_list = []
+    ys_list = []
+    colors_list = []
     for h in self.host_list:
-      source = ColumnDataSource(df[df.host == h])
-      plot.add_glyph(
-          source,
-          Step(x="time", y=metric, mode="before", line_color=self.hc[h]),
-      )
-      # Bokeh 3.4+: use scatter(size=...) instead of circle(size=...).
-      circle = plot.scatter(
-          x="time",
-          y=metric,
-          source=source,
-          size=4,
-          marker="circle",
-          color=self.hc[h],
-          alpha=0.9,
-      )
-      circle_renderers.append(circle)
+      host_key = str(h)
+      sub = df[(df["host"] == host_key) & df[metric].notna()].sort_values("time")
+      if sub.empty:
+        xs_list.append([])
+        ys_list.append([])
+      else:
+        xi, yi = _step_polyline_xy(sub["time"], sub[metric])
+        xs_list.append(xi)
+        ys_list.append(yi)
+      colors_list.append(self.hc[h])
 
-    # Hover shows which sample point (host) and value; no legend (identify line by hovering).
+    line_source = ColumnDataSource(
+        data={"xs": xs_list, "ys": ys_list, "line_color": colors_list}
+    )
+    plot.multi_line(
+        xs="xs",
+        ys="ys",
+        line_color="line_color",
+        source=line_source,
+        line_width=1.5,
+    )
+
+    scatter_df = df.dropna(subset=[metric]).sort_values(["host", "time"])
+    scatter_source = ColumnDataSource(scatter_df)
+    palette = d3["Category20"][20]
+    factors = [str(h) for h in self.host_list]
+    scatter = plot.scatter(
+        x="time",
+        y=metric,
+        source=scatter_source,
+        size=4,
+        marker="circle",
+        color=factor_cmap("host", palette=palette, factors=factors),
+        alpha=0.9,
+    )
+
+    num_hover = new_plain_number_hover_formatter()
     plot.add_tools(
         HoverTool(
             tooltips=_hover_tooltip_html(label_text, metric),
@@ -503,7 +608,7 @@ class SummaryPlot():
                 "@time": "datetime",
                 f"@{metric}": num_hover,
             },
-            renderers=circle_renderers,
+            renderers=[scatter],
         )
     )
     log.debug("time to plot %s: %s", metric, time.time() - s)
@@ -524,11 +629,20 @@ class SummaryPlot():
     if df.empty or not self.host_list:
       raise ValueError(MSG_NO_METRIC_DATA)
 
+    spec_rows = [
+        (typ, val, tuple(events), conv, name)
+        for typ, val, events, name, conv, label in _SUMMARY_SINGLE_SPECS
+        if name != "nv_gpu_util"
+    ]
+    prefetched = _prefetch_single_spec_aggregates(self.jt, spec_rows)
+
     for typ, val, events, name, conv, label in _SUMMARY_SINGLE_SPECS:
       if name == "nv_gpu_util":
         continue
       s = time.time()
-      agg = self.jt.get_aggregate_df(typ, val, events, conv)
+      agg = prefetched.get(name)
+      if agg is None:
+        agg = _empty_agg_df()
       if agg.empty or "sum_val" not in agg.columns:
         df[name] = float("nan")
       else:
@@ -648,38 +762,38 @@ class SummaryPlot():
 
 def plot_and_reason_summary_from_jid_table(jt):
   """Build summary plot and return (figure_or_none, unavailable_reason_or_none)."""
+  t0 = time.monotonic()
+  begin_summary_aggregate_counting()
   try:
     fig = SummaryPlot(jt).plot()
-    return (fig, None)
-  except Exception:
-    # Build diagnostics from available aggregates.
+  except Exception as plot_exc:
+    end_summary_aggregate_counting()
     host_time_df = jt.get_host_time_df()
     if host_time_df.empty or not jt.host_list:
       return (None, "No hosts/timestamps found in host_data for this job/time range")
 
-    attempts = []
-    available = []
-    for typ, val_col, events, name, conv, _label in iter_summary_aggregate_attempts():
-      try:
-        agg = jt.get_aggregate_df(typ, val_col, events, conv)
-      except Exception:
-        attempts.append(f"{name}:{typ}:{val_col} rows(error)")
-        continue
-      rows = 0 if agg is None else len(agg.index)
-      attempts.append(f"{name}:{typ}:{val_col} rows({rows})")
-      if rows > 0 and "sum_val" in agg.columns:
-        available.append(name)
-
-    if not available:
+    schema = getattr(jt, "schema", None)
+    if isinstance(schema, dict) and schema:
+      type_keys = ", ".join(sorted(schema.keys())[:24])
+      if len(schema) > 24:
+        type_keys += ", ..."
       return (
           None,
-          "Missing summary counters in host_data (no configured summary metrics had usable rows). "
-          + "Attempted: "
-          + "; ".join(attempts),
+          "Missing summary counters in host_data (no renderable series). "
+          f"host_data metric types present: {type_keys}. "
+          f"Detail: {plot_exc!s}",
       )
     return (
         None,
-        "Summary aggregates exist but no renderable series were produced. "
-        + "Available metric aggregates: "
-        + ", ".join(sorted(set(available))),
+        "Missing summary counters in host_data (no renderable series). "
+        f"Detail: {plot_exc!s}",
     )
+  else:
+    n_aggs = end_summary_aggregate_counting()
+    log.debug(
+        "summary plot success jid=%s elapsed_s=%.3f get_aggregate_df_calls=%s",
+        getattr(jt, "jid", None),
+        time.monotonic() - t0,
+        n_aggs,
+    )
+    return (fig, None)

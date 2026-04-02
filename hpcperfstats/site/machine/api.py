@@ -2340,6 +2340,7 @@ def job_plots(request, pk):
     def _fetch_summary_plot():
         mplot_item, reason = None, None
         close_old_connections()
+        _plot_wall_t0 = time.monotonic()
         try:
             try:
                 plot_json, plot_reason = plots.plot_and_reason_summary_from_jid_table(j)
@@ -2356,6 +2357,11 @@ def job_plots(request, pk):
                 reason = str(e)
             return (mplot_item, reason)
         finally:
+            logging.getLogger(__name__).debug(
+                "job_plots summary_plot jid=%s wall_s=%.3f",
+                job.jid,
+                time.monotonic() - _plot_wall_t0,
+            )
             close_old_connections()
 
     def _fetch_heatmap():

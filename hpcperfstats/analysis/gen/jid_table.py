@@ -2,6 +2,7 @@
 
 """
 import logging
+import threading
 import time
 from datetime import timezone as dt_utc
 import hpcperfstats.conf_parser as cfg
@@ -27,6 +28,36 @@ from django.db.models import Sum
 
 local_timezone = cfg.get_local_timezone()
 _logger = logging.getLogger(__name__)
+
+# Optional instrumentation: count get_aggregate_df entries while building summary plots.
+_summary_agg_count_lock = threading.Lock()
+_summary_agg_count = 0
+_summary_agg_counting = False
+
+
+def begin_summary_aggregate_counting():
+    """Start counting ``get_aggregate_df`` calls (thread-safe)."""
+    global _summary_agg_counting, _summary_agg_count
+    with _summary_agg_count_lock:
+        _summary_agg_count = 0
+        _summary_agg_counting = True
+
+
+def end_summary_aggregate_counting():
+    """Stop counting and return the number of ``get_aggregate_df`` calls seen."""
+    global _summary_agg_counting, _summary_agg_count
+    with _summary_agg_count_lock:
+        _summary_agg_counting = False
+        return _summary_agg_count
+
+
+def _incr_summary_aggregate_count_if_active():
+    global _summary_agg_count
+    if not _summary_agg_counting:
+        return
+    with _summary_agg_count_lock:
+        if _summary_agg_counting:
+            _summary_agg_count += 1
 
 
 def _ensure_tz(dt):
@@ -173,17 +204,15 @@ class jid_table:
   def get_aggregate_df(self, typ, val_col, events, conv=1.0):
     """Aggregate val_col (e.g. 'arc' or 'value') for given type and events. Returns DataFrame with columns host, time, sum_val (sum * conv). Result is cached per (jid, typ, val_col, events).
         """
+    _incr_summary_aggregate_count_if_active()
     events_key = ":".join(sorted(events))
 
-    def _fn():
+    def _fn_pandas_groupby():
       hosts = [str(h) for h in self._base_filter.get("host__in") or []]
       if not hosts:
         import pandas as pd
         return pd.DataFrame(columns=["host", "time", "sum_val"])
 
-      # Fetch raw samples (no SQL GROUP BY) and aggregate in pandas. This avoids
-      # backend-specific grouping quirks that have been causing
-      # "column host_data.host must appear in the GROUP BY" errors.
       qs = host_data.objects.filter(
           host__in=hosts,
           time__gte=self._base_filter["time__gte"],
@@ -198,6 +227,9 @@ class jid_table:
       if df_raw.empty or "host" not in df_raw.columns or "time" not in df_raw.columns:
         return pd.DataFrame(columns=["host", "time", "sum_val"])
 
+      if val_col not in df_raw.columns:
+        return pd.DataFrame(columns=["host", "time", "sum_val"])
+
       df_grouped = (
           df_raw.groupby(["host", "time"], as_index=False)[val_col].sum()
           .rename(columns={val_col: "sum_val"})
@@ -205,6 +237,47 @@ class jid_table:
       )
       df_grouped["sum_val"] = df_grouped["sum_val"] * conv
       return df_grouped
+
+    def _fn():
+      import pandas as pd
+
+      hosts = [str(h) for h in self._base_filter.get("host__in") or []]
+      if not hosts:
+        return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+      _ALLOWED = ("arc", "value", "delta")
+      if val_col not in _ALLOWED:
+        return _fn_pandas_groupby()
+
+      try:
+        from django.db.models import Sum, Value
+        from django.db.models.functions import Coalesce
+
+        qs_sql = (
+            host_data.objects.filter(
+                host__in=hosts,
+                time__gte=self._base_filter["time__gte"],
+                time__lte=self._base_filter["time__lte"],
+                type=typ,
+                event__in=list(events),
+            )
+            .values("host", "time")
+            .annotate(sum_val=Coalesce(Sum(val_col), Value(0)))
+            .order_by("host", "time")
+        )
+        df_sql = queryset_to_dataframe(qs_sql)
+        if df_sql.empty or "sum_val" not in df_sql.columns:
+          return pd.DataFrame(columns=["host", "time", "sum_val"])
+        df_sql["sum_val"] = df_sql["sum_val"].astype("float64") * conv
+        return df_sql
+      except Exception:
+        _logger.debug(
+            "get_aggregate_df SQL aggregate failed jid=%s typ=%s; using pandas",
+            self.jid,
+            typ,
+            exc_info=True,
+        )
+        return _fn_pandas_groupby()
 
     key = make_cache_key(KEY_AGG_DF, self.jid, typ, val_col, events_key)
     result = cached_orm(key, TIMEOUT_SHORT, _fn)
@@ -516,6 +589,7 @@ class HostDataProvider:
 
   def get_aggregate_df(self, typ, val_col, events, conv=1.0):
     """Aggregate val_col for type and events; returns DataFrame with host, time, sum_val (sum * conv)."""
+    _incr_summary_aggregate_count_if_active()
     _ALLOWED_METRICS = ("arc", "value", "delta")
     if val_col not in _ALLOWED_METRICS:
       val_col = "arc"
