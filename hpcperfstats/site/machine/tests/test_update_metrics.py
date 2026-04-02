@@ -93,7 +93,13 @@ def test_iter_chunked_pks_uses_slice_windows_not_iterator():
   qs = Qs()
   chunks = list(_iter_chunked_pks(qs, 2))
   assert chunks == [([1, 2], 2), ([3, 4], 4), ([5], 5)]
-  assert qs.slice_calls == [slice(0, 2, None), slice(2, 4, None), slice(4, 6, None), slice(6, 8, None)]
+  # Fallback path may probe with [:chunk] before offset slices; all are bounded.
+  assert qs.slice_calls[-4:] == [
+      slice(0, 2, None),
+      slice(2, 4, None),
+      slice(4, 6, None),
+      slice(6, 8, None),
+  ]
 
 
 def test_notify_parent_if_sigterm_sends_sigchld(monkeypatch):

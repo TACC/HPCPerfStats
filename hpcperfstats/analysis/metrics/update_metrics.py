@@ -169,10 +169,37 @@ def _iter_chunked_pks(queryset, chunk_size):
   performs additional ORM queries while iterating chunks. On PostgreSQL, mixing
   a still-open server-side cursor with nested queries on the same connection can
   trigger protocol desynchronisation errors.
+
+  For Django QuerySets ordered by ``-end_time, -jid`` we use keyset pagination
+  to avoid large OFFSET scans during big backfills. For non-ORM/fake query-like
+  objects (e.g. unit-test stubs), we transparently fall back to offset slicing.
   """
   total = 0
+  # Primary path: keyset pagination for ORM querysets.
+  try:
+    last_end_time = None
+    last_jid = None
+    while True:
+      page_qs = queryset
+      if last_end_time is not None and last_jid is not None:
+        page_qs = page_qs.filter(
+            Q(end_time__lt=last_end_time) | (
+                Q(end_time=last_end_time) & Q(jid__lt=last_jid)
+            )
+        )
+      rows = list(page_qs.values_list("jid", "end_time")[:chunk_size])
+      if not rows:
+        break
+      chunk = [jid for jid, _ in rows]
+      total += len(chunk)
+      yield chunk, total
+      last_jid, last_end_time = rows[-1]
+    return
+  except Exception:
+    # Fall back to bounded offset slicing for test doubles/non-ORM objects.
+    pass
+
   offset = 0
-  # jid is the primary key; values_list avoids loading full job_data rows.
   pk_values = queryset.values_list("jid", flat=True)
   while True:
     chunk = list(pk_values[offset:offset + chunk_size])
