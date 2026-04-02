@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
+import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
 
@@ -21,7 +22,7 @@ export default function TypeDetail() {
   }, [jid, typeName]);
 
   if (loading) return <LoadingMessage message="Loading type detail…" />;
-  if (error) return <div className="container text-danger">Error: {error}</div>;
+  if (error) return <BannerErrorMessage message={error} />;
   if (!data) return null;
 
   const {

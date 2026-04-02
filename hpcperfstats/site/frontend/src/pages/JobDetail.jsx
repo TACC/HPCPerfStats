@@ -1,12 +1,14 @@
 import { useCallback, useEffect, memo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../api";
+import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { useSession } from "../session-context";
 import { VariableInfoLabel } from "../components/VariableInfoLabel";
+import { scheduleJobPlotsRetry } from "../utils/job-plots-polling";
 
 function CollapsibleSection({ title, children, defaultOpen = false, empty = false }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -113,6 +115,17 @@ const JOB_PLOT_CONFIGS = [
     plotName: "GPU Roofline",
   },
 ];
+
+function createEmptyJobPlotsState(loading) {
+  return JOB_PLOT_CONFIGS.reduce((acc, config) => {
+    acc[config.key] = {
+      loading,
+      plotItem: null,
+      unavailableReason: null,
+    };
+    return acc;
+  }, {});
+}
 
 /** Maps React plot keys to `job_plots` batch payload fields (plot=all). */
 const JOB_PLOTS_BATCH_FIELDS = {
@@ -225,15 +238,7 @@ export default function JobDetail() {
         // 2) Fetch full job detail in the background to fill heavy fields.
         setDetailsLoading(true);
 
-        const emptyPlotsState = JOB_PLOT_CONFIGS.reduce((acc, config) => {
-          acc[config.key] = {
-            loading: true,
-            plotItem: null,
-            unavailableReason: null,
-          };
-          return acc;
-        }, {});
-        setPlots(emptyPlotsState);
+        setPlots(createEmptyJobPlotsState(true));
         setPlotsLoading(true);
 
         const fetchAllJobPlotsWithPolling = async () => {
@@ -244,13 +249,11 @@ export default function JobDetail() {
 
             if (plotResponse?.status === "loading") {
               keepLoading = true;
-              const retryAfterMs = Math.max(
-                250,
-                Number(plotResponse.retry_after_seconds ?? 2) * 1000
+              scheduleJobPlotsRetry(
+                fetchAllJobPlotsWithPolling,
+                plotResponse.retry_after_seconds,
+                () => cancelled
               );
-              setTimeout(() => {
-                if (!cancelled) fetchAllJobPlotsWithPolling();
-              }, retryAfterMs);
               return;
             }
 
@@ -260,26 +263,15 @@ export default function JobDetail() {
                 const merged = mergeProgressiveJobPlotsState(prev, plotResponse);
                 return jobPlotStatesEqual(prev, merged) ? prev : merged;
               });
-              const retryAfterMs = Math.max(
-                250,
-                Number(plotResponse.retry_after_seconds ?? 2) * 1000
+              scheduleJobPlotsRetry(
+                fetchAllJobPlotsWithPolling,
+                plotResponse.retry_after_seconds,
+                () => cancelled
               );
-              setTimeout(() => {
-                if (!cancelled) fetchAllJobPlotsWithPolling();
-              }, retryAfterMs);
               return;
             }
 
             if (
-              plotResponse?.progressive &&
-              plotResponse?.status === "ready" &&
-              Object.hasOwn(plotResponse, "mplot_item")
-            ) {
-              setPlots((prev) => {
-                const next = plotsStateFromBatchResponse(plotResponse);
-                return jobPlotStatesEqual(prev, next) ? prev : next;
-              });
-            } else if (
               plotResponse &&
               typeof plotResponse === "object" &&
               Object.hasOwn(plotResponse, "mplot_item")
@@ -289,31 +281,13 @@ export default function JobDetail() {
                 return jobPlotStatesEqual(prev, next) ? prev : next;
               });
             } else {
-              setPlots(
-                JOB_PLOT_CONFIGS.reduce((acc, config) => {
-                  acc[config.key] = {
-                    loading: false,
-                    plotItem: null,
-                    unavailableReason: null,
-                  };
-                  return acc;
-                }, {})
-              );
+              setPlots(createEmptyJobPlotsState(false));
             }
           } catch {
             if (cancelled) return;
             // eslint-disable-next-line no-console
             console.warn(`Failed to load job plots for job ${pk}`);
-            setPlots(
-              JOB_PLOT_CONFIGS.reduce((acc, config) => {
-                acc[config.key] = {
-                  loading: false,
-                  plotItem: null,
-                  unavailableReason: null,
-                };
-                return acc;
-              }, {})
-            );
+            setPlots(createEmptyJobPlotsState(false));
           } finally {
             if (cancelled || keepLoading) return;
           }
@@ -372,13 +346,11 @@ export default function JobDetail() {
         const zoomResponse = await api.getJobPlots(pk, selectedConfig.key, true);
         if (cancelled) return;
         if (zoomResponse?.status === "loading") {
-          const retryAfterMs = Math.max(
-            250,
-            Number(zoomResponse.retry_after_seconds ?? 2) * 1000
+          scheduleJobPlotsRetry(
+            fetchZoomPlot,
+            zoomResponse.retry_after_seconds,
+            () => cancelled
           );
-          setTimeout(() => {
-            if (!cancelled) fetchZoomPlot();
-          }, retryAfterMs);
           return;
         }
         setZoomPlotState({
@@ -403,7 +375,7 @@ export default function JobDetail() {
   }, []);
 
   if (loading) return <LoadingMessage message="Loading job detail…" />;
-  if (error) return <div className="container text-danger">Error: {error}</div>;
+  if (error) return <BannerErrorMessage message={error} />;
   if (!data) return null;
 
   const job = data.job_data || {};
@@ -422,6 +394,39 @@ export default function JobDetail() {
     proc_list = [],
     staff_metrics_distinct_time_count: staffMetricsDistinctTimeCount,
   } = data;
+
+  const gpuStatsTableCellStyle = {
+    label: { border: "1px solid lightgrey" },
+    value: { border: "1px solid lightgrey", textAlign: "right" },
+  };
+  const gpuStatsRows = [
+    {
+      key: "gpu_count",
+      label: "Total GPUs allocated:",
+      value: formatDecimalStandard(gpu_count),
+    },
+    {
+      key: "gpu_active",
+      label: "Number of GPUs active:",
+      value: formatDecimalStandard(gpu_active),
+    },
+    {
+      key: "gpu_util_max",
+      label: "Max GPU Utilization:",
+      value:
+        gpu_utilization_max != null && gpu_utilization_max !== ""
+          ? `${formatDecimalStandard(gpu_utilization_max)}%`
+          : "",
+    },
+    {
+      key: "gpu_util_mean",
+      label: "Mean GPU Utilization:",
+      value:
+        gpu_utilization_mean != null && gpu_utilization_mean !== ""
+          ? `${formatDecimalStandard(gpu_utilization_mean)}%`
+          : "",
+    },
+  ];
 
   const hasDeviceData = Object.keys(schema).length > 0;
   const plotPanels = JOB_PLOT_CONFIGS.map((config) => ({
@@ -621,42 +626,14 @@ export default function JobDetail() {
           ) : (
             <table border="1" style={{ marginTop: "1rem" }}>
               <tbody>
-                <tr>
-                  <td style={{ border: "1px solid lightgrey" }}>
-                    <b>Total GPUs allocated:</b>
-                  </td>
-                  <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
-                    {formatDecimalStandard(gpu_count)}
-                  </td>
-                </tr>
-                <tr>
-                  <td style={{ border: "1px solid lightgrey" }}>
-                    <b>Number of GPUs active:</b>
-                  </td>
-                  <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
-                    {formatDecimalStandard(gpu_active)}
-                  </td>
-                </tr>
-                <tr>
-                  <td style={{ border: "1px solid lightgrey" }}>
-                    <b>Max GPU Utilization:</b>
-                  </td>
-                  <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
-                    {gpu_utilization_max != null && gpu_utilization_max !== ""
-                      ? `${formatDecimalStandard(gpu_utilization_max)}%`
-                      : ""}
-                  </td>
-                </tr>
-                <tr>
-                  <td style={{ border: "1px solid lightgrey" }}>
-                    <b>Mean GPU Utilization:</b>
-                  </td>
-                  <td style={{ border: "1px solid lightgrey", textAlign: "right" }}>
-                    {gpu_utilization_mean != null && gpu_utilization_mean !== ""
-                      ? `${formatDecimalStandard(gpu_utilization_mean)}%`
-                      : ""}
-                  </td>
-                </tr>
+                {gpuStatsRows.map((row) => (
+                  <tr key={row.key}>
+                    <td style={gpuStatsTableCellStyle.label}>
+                      <b>{row.label}</b>
+                    </td>
+                    <td style={gpuStatsTableCellStyle.value}>{row.value}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           )}

@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../api";
+import BannerErrorMessage from "./BannerErrorMessage";
 import LoadingMessage from "./LoadingMessage";
+import { useHomeOptions } from "../hooks/use-home-options";
 
 const ALLOWED_PARAMS = [
   "jid",
@@ -22,17 +22,7 @@ const ALLOWED_PARAMS = [
 
 export default function ExtendedSearch({ onClose }) {
   const navigate = useNavigate();
-  const [options, setOptions] = useState(null);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api
-      .getHomeOptions()
-      .then(setOptions)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+  const { options, error, loading } = useHomeOptions();
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -63,7 +53,15 @@ export default function ExtendedSearch({ onClose }) {
   };
 
   if (loading) return <LoadingMessage message="Loading search options…" />;
-  if (error) return <div className="text-danger" style={{ padding: "0.5rem 0" }}>Error: {error}</div>;
+  if (error) {
+    return (
+      <BannerErrorMessage
+        message={error}
+        className="text-danger"
+        style={{ padding: "0.5rem 0" }}
+      />
+    );
+  }
 
   const { metrics = [], queues = [], states = [] } = options || {};
 

@@ -1,0 +1,29 @@
+---
+description: Refactor and deduplication priorities (less code, simplicity, branches, merge surface)
+alwaysApply: true
+---
+
+# Refactor And Deduplication Priorities
+
+When refactoring or removing duplication (Python under `hpcperfstats/`, React/JS under `hpcperfstats/site/frontend/src/`, excluding `monitor/` unless the user explicitly allows it), **choose approaches in this strict order**:
+
+1. **Less code** — Net fewer lines and fewer moving parts; delete the second copy. Do **not** add new modules, hooks, or layers unless they **clearly** reduce total code and ongoing duplication.
+2. **Simplicity** — Shallow nesting, obvious data flow, names that match behavior. **Do not** replace readable code with a dense one-liner that saves lines but hurts comprehension.
+3. **Execution branch reduction** — Fewer `if` / `elif` chains and symmetric duplicate branches; prefer one parameterized path or a small data-driven loop (e.g. threshold table, `SECTIONS.map`, shared loader factory) when it **reduces** branches **and** fits 1–2.
+4. **Merge surface reduction** — One canonical place for shared logic so fewer files need parallel edits. Treat as a **bonus** after 1–3, unless it coincides with deleting a duplicate.
+
+## Heuristics
+
+- After a refactor, if a named helper is only referenced **once**, **inline** it unless the name makes the call site materially clearer.
+- Prefer **deleting** duplicate implementations over introducing abstractions that add indirection without a net line/branch win.
+- When extracting shared UI or API glue, verify the extraction **removes** more repetition than it adds (markup, props, test surface).
+
+## Tests (refactors)
+
+- Before changing behavior-bearing code, add or extend **unit tests** that lock current behavior (pytest / Vitest as appropriate for the layer).
+- After the refactor, run the **relevant** unit tests and keep them green before considering the task done.
+- Follow existing workspace rules for E2E, `TESTING.md`, and `monitor/` guardrails; this rule does not relax them.
+
+## Overlap
+
+- Complements `react-js-cursor-rule.mdc` (React style and tests on touch) and `django-python-cursor-rules.mdc` (Django patterns). This rule is the **decision order** for refactors; those rules still govern style, security, and framework usage.

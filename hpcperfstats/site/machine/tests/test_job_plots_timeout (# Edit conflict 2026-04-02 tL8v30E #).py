@@ -271,9 +271,7 @@ def test_job_plots_refreshes_stale_cached_generic_roofline_reason():
       }
     return None
 
-  with _patch_allow_job_visibility(), patch(
-      "hpcperfstats.site.machine.api._require_auth", return_value=None
-  ), patch(
+  with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
       "hpcperfstats.site.machine.api.cached_orm", return_value=fake_job
   ), patch("hpcperfstats.site.machine.api.cache") as mock_cache, patch(
       "hpcperfstats.site.machine.api.jid_table.jid_table",
@@ -328,9 +326,7 @@ def test_job_plots_refreshes_stale_cached_generic_summary_reason():
       return {"plot_item": {"kind": "roofline"}, "unavailable_reason": None}
     return None
 
-  with _patch_allow_job_visibility(), patch(
-      "hpcperfstats.site.machine.api._require_auth", return_value=None
-  ), patch(
+  with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
       "hpcperfstats.site.machine.api.cached_orm", return_value=fake_job
   ), patch("hpcperfstats.site.machine.api.cache") as mock_cache, patch(
       "hpcperfstats.site.machine.api.jid_table.jid_table",
@@ -385,9 +381,7 @@ def test_job_plots_refreshes_stale_cached_generic_gpu_roofline_reason():
       return {"plot_item": {"kind": "roofline"}, "unavailable_reason": None}
     return None
 
-  with _patch_allow_job_visibility(), patch(
-      "hpcperfstats.site.machine.api._require_auth", return_value=None
-  ), patch(
+  with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
       "hpcperfstats.site.machine.api.cached_orm", return_value=fake_job
   ), patch("hpcperfstats.site.machine.api.cache") as mock_cache, patch(
       "hpcperfstats.site.machine.api.jid_table.jid_table",

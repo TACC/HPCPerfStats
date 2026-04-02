@@ -37,35 +37,10 @@ from bokeh.plotting import figure
 from bokeh.transform import factor_cmap
 
 from hpcperfstats.analysis.plot import MSG_NO_METRIC_DATA
+from hpcperfstats.analysis.plot.hover_html import hover_tooltip_html_host_time_value
+from hpcperfstats.analysis.plot.job_window import job_window_bounds_local
 
 local_timezone = cfg.get_local_timezone()
-
-
-def _job_time_bounds(jt):
-  """Return (start, end) in local timezone when a valid job window is available."""
-  start = getattr(jt, "start_time", None)
-  end = getattr(jt, "end_time", None)
-  if start is None or end is None:
-    return (None, None)
-  try:
-    start_ts = to_datetime(start, utc=True)
-    end_ts = to_datetime(end, utc=True)
-  except (TypeError, ValueError):
-    return (None, None)
-  if pd_isna(start_ts) or pd_isna(end_ts) or end_ts <= start_ts:
-    return (None, None)
-  return (start_ts.tz_convert(local_timezone), end_ts.tz_convert(local_timezone))
-
-
-def _hover_tooltip_html(value_label, value_field):
-  """Build an HTML hover template with spacing between multi-point hits."""
-  return f"""
-    <div style="padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #d0d7de;">
-      <div><strong>host:</strong> @host</div>
-      <div><strong>time:</strong> @time{{%F %T}}</div>
-      <div><strong>{value_label}:</strong> @{value_field}{{custom}}</div>
-    </div>
-  """
 
 
 _CAS_BW_CONV = 64 / (1024 * 1024 * 1024)
@@ -603,7 +578,7 @@ class SummaryPlot():
     num_hover = new_plain_number_hover_formatter()
     plot.add_tools(
         HoverTool(
-            tooltips=_hover_tooltip_html(label_text, metric),
+            tooltips=hover_tooltip_html_host_time_value(label_text, metric),
             formatters={
                 "@time": "datetime",
                 f"@{metric}": num_hover,
@@ -748,7 +723,7 @@ class SummaryPlot():
 
     render_specs.sort(key=lambda item: _summary_plot_order_key(item[0]))
 
-    x_start, x_end = _job_time_bounds(self.jt)
+    x_start, x_end = job_window_bounds_local(self.jt)
     x_range = Range1d(x_start, x_end) if x_start is not None and x_end is not None else None
 
     plots = []

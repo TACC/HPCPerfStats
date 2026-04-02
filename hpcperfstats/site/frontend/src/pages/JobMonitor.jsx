@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDecimalStandard } from "../utils/formatDecimal";
+import {
+  JOB_MONITOR_GPU_NO_DATA_ROW,
+  jobMonitorSortComparable,
+  patchJobMonitorGpuRowByUsername,
+} from "../utils/job-monitor-gpu";
 
 export default function JobMonitor() {
   const [rows, setRows] = useState([]);
@@ -26,50 +32,29 @@ export default function JobMonitor() {
       const username = row?.username || "";
       if (!username) {
         setRows((prev) =>
-          prev.map((r) =>
-            r.username === username
-              ? {
-                  ...r,
-                  gpuLoadingState: "no_data",
-                  gpu_count_total: null,
-                  gpu_active_total: null,
-                  gpu_active_percentage: null,
-                }
-              : r
-          )
+          patchJobMonitorGpuRowByUsername(prev, username, JOB_MONITOR_GPU_NO_DATA_ROW),
         );
         return;
       }
       api
         .getJobMonitorGpuForUser(username, daysForWindow)
         .then((gpuRes) => {
+          const hasData = !!gpuRes?.has_data;
+          const patch = hasData
+            ? {
+                gpu_count_total: gpuRes.gpu_count_total,
+                gpu_active_total: gpuRes.gpu_active_total,
+                gpu_active_percentage: gpuRes.gpu_active_percentage,
+                gpuLoadingState: "loaded",
+              }
+            : JOB_MONITOR_GPU_NO_DATA_ROW;
           setRows((prev) =>
-            prev.map((r) => {
-              if ((r.username || "") !== username) return r;
-              const hasData = !!gpuRes?.has_data;
-              return {
-                ...r,
-                gpu_count_total: hasData ? gpuRes.gpu_count_total : null,
-                gpu_active_total: hasData ? gpuRes.gpu_active_total : null,
-                gpu_active_percentage: hasData ? gpuRes.gpu_active_percentage : null,
-                gpuLoadingState: hasData ? "loaded" : "no_data",
-              };
-            })
+            patchJobMonitorGpuRowByUsername(prev, username, patch),
           );
         })
         .catch(() => {
           setRows((prev) =>
-            prev.map((r) =>
-              (r.username || "") === username
-                ? {
-                    ...r,
-                    gpu_count_total: null,
-                    gpu_active_total: null,
-                    gpu_active_percentage: null,
-                    gpuLoadingState: "no_data",
-                  }
-                : r
-            )
+            patchJobMonitorGpuRowByUsername(prev, username, JOB_MONITOR_GPU_NO_DATA_ROW),
           );
         });
     });
@@ -118,28 +103,8 @@ export default function JobMonitor() {
   };
 
   const sortedRows = [...rows].sort((a, b) => {
-    const getVal = (row, key) => {
-      if (key === "username") {
-        return (row.username || "").toLowerCase();
-      }
-      if (key === "gpu_active_percentage") {
-        if (row.gpuLoadingState === "loading") return Number.NEGATIVE_INFINITY;
-        const v = row.gpu_active_percentage;
-        if (v === null || v === undefined || v === "") return Number.NEGATIVE_INFINITY;
-        const n = Number(v);
-        return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
-      }
-      if (key === "gpu_count_total" || key === "gpu_active_total") {
-        if (row.gpuLoadingState === "loading") return Number.NEGATIVE_INFINITY;
-        const v = row[key];
-        if (v === null || v === undefined || v === "") return Number.NEGATIVE_INFINITY;
-        const n = Number(v);
-        return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
-      }
-      return Number(row[key] ?? 0);
-    };
-    const av = getVal(a, sortKey);
-    const bv = getVal(b, sortKey);
+    const av = jobMonitorSortComparable(a, sortKey);
+    const bv = jobMonitorSortComparable(b, sortKey);
     if (av < bv) return sortDir === "asc" ? -1 : 1;
     if (av > bv) return sortDir === "asc" ? 1 : -1;
     // Tiebreaker by username
@@ -198,7 +163,11 @@ export default function JobMonitor() {
       </form>
       {loading && <LoadingMessage message="Loading job monitor data…" />}
       {error && !loading && (
-        <div className="text-danger mb-3">Error loading job monitor data: {error}</div>
+        <BannerErrorMessage
+          variant="inline"
+          className="text-danger mb-3"
+          message={`Error loading job monitor data: ${error}`}
+        />
       )}
       {!loading && !error && (
         <div className="table-responsive">

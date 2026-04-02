@@ -21,19 +21,9 @@ from hpcperfstats.analysis.gen.utils import (
     set_linear_axes_plain_numeric,
     tz_aware_bokeh_tick_formatter,
 )
+from hpcperfstats.analysis.plot.hover_html import hover_tooltip_html_host_time_value
 
 local_timezone = cfg.get_local_timezone()
-
-
-def _hover_tooltip_html(value_label, value_field):
-  """Build an HTML hover template with spacing between multi-point hits."""
-  return f"""
-    <div style="padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #d0d7de;">
-      <div><strong>host:</strong> @host</div>
-      <div><strong>time:</strong> @time{{%F %T}}</div>
-      <div><strong>{value_label}:</strong> @{value_field}{{custom}}</div>
-    </div>
-  """
 
 
 class DevPlot:
@@ -108,7 +98,7 @@ class DevPlot:
     # Hover shows which sample point (host) and value; no legend (identify line by hovering).
     plot.add_tools(
         HoverTool(
-            tooltips=_hover_tooltip_html(event, event),
+            tooltips=hover_tooltip_html_host_time_value(event, event),
             formatters={
                 "@time": "datetime",
                 f"@{event}": num_hover,

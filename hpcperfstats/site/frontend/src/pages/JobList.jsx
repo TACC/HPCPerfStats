@@ -2,10 +2,13 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useParams, useLocation, Link, useNavigate } from "react-router-dom";
 import ReactPaginate from "react-paginate";
 import { api } from "../api";
+import BannerErrorMessage from "../components/BannerErrorMessage";
 import HistogramThumbnails from "../components/HistogramThumbnails";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
+import { buildJobListApiParams } from "../utils/build-job-list-api-params";
+import { normalizeJobListHistogramEntry } from "../utils/normalize-job-list-histogram-entry";
 
 const ResolvedReactPaginate = ReactPaginate?.default || ReactPaginate;
 
@@ -36,13 +39,7 @@ export default function JobList() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const params = { ...Object.fromEntries(searchParams.entries()) };
-    if (paramsFromRoute.year) params.end_time__date = paramsFromRoute.year;
-    if (paramsFromRoute.date) params.end_time__date = paramsFromRoute.date;
-    if (paramsFromRoute.username) params.username = paramsFromRoute.username;
-    if (paramsFromRoute.account) params.account = paramsFromRoute.account;
-    if (paramsFromRoute.queue) params.queue = paramsFromRoute.queue;
-    if (paramsFromRoute.host) params.host = paramsFromRoute.host;
+    const params = buildJobListApiParams(searchParams, paramsFromRoute);
     setLoading(true);
     setError(null);
     setData(null);
@@ -65,12 +62,9 @@ export default function JobList() {
       try {
         const queueData = await api.getJobQueueHistograms(params);
         const queuePlots = queueData?.plots || [];
-        baseHistograms = queuePlots.map((p) => ({
-          title: p.title,
-          plot_item_thumb: p.plot_item_thumb,
-          plot_item_full: p.plot_item_full,
-          plot_unavailable_reason: p.plot_unavailable_reason || null,
-        }));
+        baseHistograms = queuePlots
+          .map((p) => normalizeJobListHistogramEntry(p))
+          .filter(Boolean);
         setQueueHistStatus({ loading: false, error: null });
       } catch (e) {
         // Queue histogram errors should not break the main page; log to console for debugging.
@@ -95,12 +89,7 @@ export default function JobList() {
               ...prev,
               [metric]: { loading: false, error: null },
             }));
-            return {
-              title: metricData.title || metricData.metric || metric,
-              plot_item_thumb: metricData.plot_item_thumb,
-              plot_item_full: metricData.plot_item_full,
-              plot_unavailable_reason: metricData.plot_unavailable_reason || null,
-            };
+            return normalizeJobListHistogramEntry(metricData, metric);
           })
           .catch((err) => {
             // Metric-specific failures should not break other histograms.
@@ -132,7 +121,7 @@ export default function JobList() {
   }, [searchParams, paramsFromRoute]);
 
   if (loading) return <LoadingMessage message="Loading job list…" />;
-  if (error) return <div className="container text-danger">Error: {error}</div>;
+  if (error) return <BannerErrorMessage message={error} />;
   if (!data) return null;
 
   const {
@@ -147,13 +136,7 @@ export default function JobList() {
   const totalNodeHours = aggregates.total_node_hours;
   const { page, num_pages } = pagination;
 
-  const paginationParams = Object.fromEntries(searchParams.entries());
-  if (paramsFromRoute.year) paginationParams.end_time__date = paramsFromRoute.year;
-  if (paramsFromRoute.date) paginationParams.end_time__date = paramsFromRoute.date;
-  if (paramsFromRoute.username) paginationParams.username = paramsFromRoute.username;
-  if (paramsFromRoute.account) paginationParams.account = paramsFromRoute.account;
-  if (paramsFromRoute.queue) paginationParams.queue = paramsFromRoute.queue;
-  if (paramsFromRoute.host) paginationParams.host = paramsFromRoute.host;
+  const paginationParams = buildJobListApiParams(searchParams, paramsFromRoute);
 
   const paginationQuery = (pageNum) =>
     new URLSearchParams({ ...paginationParams, page: String(pageNum) }).toString();

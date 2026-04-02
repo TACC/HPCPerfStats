@@ -19,7 +19,13 @@ from django.db import transaction, close_old_connections
 from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.gen import jid_table
-from hpcperfstats.analysis.gen.utils import ARM_IMC_STATS_TYPES, INTEL_IMC_STATS_TYPES, utils
+from hpcperfstats.analysis.gen.utils import (
+    ARM_IMC_STATS_TYPES,
+    INTEL_FP_ARITH_ALL_EVENTS,
+    INTEL_IMC_STATS_TYPES,
+    INTEL_LEGACY_SSE_FLOP_EVENTS,
+    utils,
+)
 from hpcperfstats.site.machine.models import job_data, metrics_data
 
 try:
@@ -79,26 +85,6 @@ NO_SIMPLE_SAMPLES_MSG = (
     "No host_data samples for this metric in the job window"
 )
 METRIC_NOT_COMPUTED_YET = "Metric not computed"
-
-# Intel FP_ARITH events summed for GFLOP/s when amd64_pmc FLOPS is unavailable.
-_INTEL_FP_ARITH_EVENTS = [
-    "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",
-    "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE",
-    "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE",
-    "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE",
-    "FP_ARITH_INST_RETIRED_SCALAR_SINGLE",
-    "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE",
-    "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE",
-    "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
-]
-
-# SNB/IVB-style SSE/AVX double proxies (same weights as roofline / vecpercent_64b).
-_INTEL_LEGACY_SSE_FLOP_EVENTS = [
-    ("SSE_DOUBLE_SCALAR", 1),
-    ("SSE_DOUBLE_PACKED", 2),
-    ("SIMD_DOUBLE_256", 4),
-]
-
 
 def _per_interval_rate(values, t):
   """Compute diff(values) / diff(t) without divide-by-zero.
@@ -607,7 +593,7 @@ class Metrics():
       v = self.job_arc(
           jt,
           typename=core_typ,
-          events=_INTEL_FP_ARITH_EVENTS,
+          events=list(INTEL_FP_ARITH_ALL_EVENTS),
           conv=1e-9,
           units="GF",
           cache=cache,
@@ -616,7 +602,7 @@ class Metrics():
         return v, core_typ
     for core_typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics"):
       total = None
-      for ev, weight in _INTEL_LEGACY_SSE_FLOP_EVENTS:
+      for ev, weight in INTEL_LEGACY_SSE_FLOP_EVENTS:
         part = self.job_arc(
             jt,
             typename=core_typ,

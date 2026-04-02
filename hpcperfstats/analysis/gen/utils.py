@@ -58,6 +58,13 @@ INTEL_FP_ARITH_SINGLE_EVENTS = (
 )
 INTEL_FP_ARITH_ALL_EVENTS = INTEL_FP_ARITH_DOUBLE_EVENTS + INTEL_FP_ARITH_SINGLE_EVENTS
 
+# Intel SSE/AVX double FLOP proxies when FP_ARITH is absent (metrics, roofline, vecpercent).
+INTEL_LEGACY_SSE_FLOP_EVENTS = (
+    ("SSE_DOUBLE_SCALAR", 1),
+    ("SSE_DOUBLE_PACKED", 2),
+    ("SIMD_DOUBLE_256", 4),
+)
+
 # Intel core PMC typenames tried in order (summary/roofline); LIKWID last when both exist.
 INTEL_CORE_PMC_TYPES_ORDERED = (
     "intel_8pmc3",

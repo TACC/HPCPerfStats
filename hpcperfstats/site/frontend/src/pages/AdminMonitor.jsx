@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
+import { createAdminMonitorSectionLoader } from "../utils/create-admin-monitor-section-loader";
 
 const BADGE_MAP = {
   ok: { label: "OK (≤ 10 minutes)", class: "badge badge-freshness-ok" },
@@ -17,6 +19,51 @@ const ROW_CLASS = {
   gt_day: "tr-freshness-gt_day",
   gt_week: "tr-freshness-gt_week",
 };
+
+const HOST_STATUS_ORDER = {
+  ok: 0,
+  gt_10min: 1,
+  gt_hour: 2,
+  gt_day: 3,
+  gt_week: 4,
+};
+
+function compareAdminMonitorHostRows(a, b, sort) {
+  const dir = sort.direction === "asc" ? 1 : -1;
+  if (sort.column === "host") {
+    return a.host.localeCompare(b.host) * dir;
+  }
+  if (sort.column === "last_time") {
+    const aTime = a.last_time ? new Date(a.last_time).getTime() : 0;
+    const bTime = b.last_time ? new Date(b.last_time).getTime() : 0;
+    return (aTime - bTime) * dir;
+  }
+  if (sort.column === "status") {
+    const aBucket = HOST_STATUS_ORDER[a.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
+    const bBucket = HOST_STATUS_ORDER[b.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
+    return (aBucket - bBucket) * dir;
+  }
+  return 0;
+}
+
+function sortAdminMonitorColumnArrow(sort, column) {
+  if (sort.column !== column) return "";
+  return sort.direction === "asc" ? "▲" : "▼";
+}
+
+function makeAdminMonitorSortHandler(setSort) {
+  return function handleSort(column) {
+    setSort((prev) => {
+      if (prev.column === column) {
+        return {
+          column,
+          direction: prev.direction === "asc" ? "desc" : "asc",
+        };
+      }
+      return { column, direction: "asc" };
+    });
+  };
+}
 
 export default function AdminMonitor() {
   const [hostTimeExpanded, setHostTimeExpanded] = useState(false);
@@ -65,91 +112,130 @@ export default function AdminMonitor() {
     (row) => row.host && row.host.includes(".")
   );
 
-  function loadHostStats(forceRefresh = false) {
-    setHostLoading(true);
-    setHostError(null);
-    api
-      .getAdminMonitorSection("hosts", { refresh: forceRefresh })
-      .then((res) => {
-        setHostStats(res.host_stats || []);
-      })
-      .catch((e) => setHostError(e.message))
-      .finally(() => setHostLoading(false));
-  }
+  const loadHostStats = useMemo(
+    () =>
+      createAdminMonitorSectionLoader({
+        section: "hosts",
+        pickResponse: (res) => res.host_stats || [],
+        setLoading: setHostLoading,
+        setError: setHostError,
+        setData: setHostStats,
+        apiClient: api,
+      }),
+    [],
+  );
 
-  function loadRabbitHostStats(forceRefresh = false) {
-    setRabbitHostLoading(true);
-    setRabbitHostError(null);
-    api
-      .getAdminMonitorSection("rabbitmq_hosts", { refresh: forceRefresh })
-      .then((res) => {
-        setRabbitHostStats(res.rabbitmq_host_stats || []);
-      })
-      .catch((e) => setRabbitHostError(e.message))
-      .finally(() => setRabbitHostLoading(false));
-  }
+  const loadRabbitHostStats = useMemo(
+    () =>
+      createAdminMonitorSectionLoader({
+        section: "rabbitmq_hosts",
+        pickResponse: (res) => res.rabbitmq_host_stats || [],
+        setLoading: setRabbitHostLoading,
+        setError: setRabbitHostError,
+        setData: setRabbitHostStats,
+        apiClient: api,
+      }),
+    [],
+  );
 
-  function loadCacheStats(forceRefresh = false) {
-    setCacheLoading(true);
-    setCacheError(null);
-    api
-      .getAdminMonitorSection("cache", { refresh: forceRefresh })
-      .then((res) => {
-        setCacheStats(res.cache_stats || null);
-      })
-      .catch((e) => setCacheError(e.message))
-      .finally(() => setCacheLoading(false));
-  }
+  const loadCacheStats = useMemo(
+    () =>
+      createAdminMonitorSectionLoader({
+        section: "cache",
+        pickResponse: (res) => res.cache_stats || null,
+        setLoading: setCacheLoading,
+        setError: setCacheError,
+        setData: setCacheStats,
+        apiClient: api,
+      }),
+    [],
+  );
 
-  function loadRabbitStats(forceRefresh = false) {
-    setRabbitLoading(true);
-    setRabbitError(null);
-    api
-      .getAdminMonitorSection("rabbitmq", { refresh: forceRefresh })
-      .then((res) => {
-        setRabbitStats(res.rabbitmq_stats || null);
-      })
-      .catch((e) => setRabbitError(e.message))
-      .finally(() => setRabbitLoading(false));
-  }
+  const loadRabbitStats = useMemo(
+    () =>
+      createAdminMonitorSectionLoader({
+        section: "rabbitmq",
+        pickResponse: (res) => res.rabbitmq_stats || null,
+        setLoading: setRabbitLoading,
+        setError: setRabbitError,
+        setData: setRabbitStats,
+        apiClient: api,
+      }),
+    [],
+  );
 
-  function loadTimescaledbStats(forceRefresh = false) {
-    setTimescaledbLoading(true);
-    setTimescaledbError(null);
-    api
-      .getAdminMonitorSection("timescaledb", { refresh: forceRefresh })
-      .then((res) => {
-        setTimescaledbStats(res.timescaledb_stats || null);
-      })
-      .catch((e) => setTimescaledbError(e.message))
-      .finally(() => setTimescaledbLoading(false));
-  }
+  const loadTimescaledbStats = useMemo(
+    () =>
+      createAdminMonitorSectionLoader({
+        section: "timescaledb",
+        pickResponse: (res) => res.timescaledb_stats || null,
+        setLoading: setTimescaledbLoading,
+        setError: setTimescaledbError,
+        setData: setTimescaledbStats,
+        apiClient: api,
+      }),
+    [],
+  );
 
-  function loadXaltStats(forceRefresh = false) {
-    setXaltLoading(true);
-    setXaltError(null);
-    api
-      .getAdminMonitorSection("xalt", { refresh: forceRefresh })
-      .then((res) => {
-        setXaltStats(res.xalt_stats || null);
-      })
-      .catch((e) => setXaltError(e.message))
-      .finally(() => setXaltLoading(false));
-  }
+  const loadXaltStats = useMemo(
+    () =>
+      createAdminMonitorSectionLoader({
+        section: "xalt",
+        pickResponse: (res) => res.xalt_stats || null,
+        setLoading: setXaltLoading,
+        setError: setXaltError,
+        setData: setXaltStats,
+        apiClient: api,
+      }),
+    [],
+  );
 
-  // Lazily load host stats when the section is first expanded.
+  // Lazily load section payloads when each block is first expanded.
   useEffect(() => {
-    if (!hostTimeExpanded || hostRequested) return;
-    setHostRequested(true);
-    loadHostStats();
-  }, [hostTimeExpanded, hostRequested]);
-
-  // Lazily load RabbitMQ/Redis host stats when the section is first expanded.
-  useEffect(() => {
-    if (!rabbitHostTimeExpanded || rabbitHostRequested) return;
-    setRabbitHostRequested(true);
-    loadRabbitHostStats();
-  }, [rabbitHostTimeExpanded, rabbitHostRequested]);
+    if (hostTimeExpanded && !hostRequested) {
+      setHostRequested(true);
+      loadHostStats();
+    }
+    if (rabbitHostTimeExpanded && !rabbitHostRequested) {
+      setRabbitHostRequested(true);
+      loadRabbitHostStats();
+    }
+    if (cacheExpanded && !cacheRequested) {
+      setCacheRequested(true);
+      loadCacheStats();
+    }
+    if (rabbitExpanded && !rabbitRequested) {
+      setRabbitRequested(true);
+      loadRabbitStats();
+    }
+    if (timescaledbExpanded && !timescaledbRequested) {
+      setTimescaledbRequested(true);
+      loadTimescaledbStats();
+    }
+    if (xaltExpanded && !xaltRequested) {
+      setXaltRequested(true);
+      loadXaltStats();
+    }
+  }, [
+    hostTimeExpanded,
+    hostRequested,
+    loadHostStats,
+    rabbitHostTimeExpanded,
+    rabbitHostRequested,
+    loadRabbitHostStats,
+    cacheExpanded,
+    cacheRequested,
+    loadCacheStats,
+    rabbitExpanded,
+    rabbitRequested,
+    loadRabbitStats,
+    timescaledbExpanded,
+    timescaledbRequested,
+    loadTimescaledbStats,
+    xaltExpanded,
+    xaltRequested,
+    loadXaltStats,
+  ]);
 
   // Build comma-separated list of FQDNs not seen in the past 36 hours when the
   // host section is open and hostStats are available.
@@ -168,34 +254,6 @@ export default function AdminMonitor() {
     const list = Array.from(fqdnSet).sort().join(",");
     setNonRespondingHosts36(list);
   }, [hostTimeExpanded, hostLoading, hostError, fqdnHostStats]);
-
-  // Lazily load cache stats when the section is first expanded.
-  useEffect(() => {
-    if (!cacheExpanded || cacheRequested) return;
-    setCacheRequested(true);
-    loadCacheStats();
-  }, [cacheExpanded, cacheRequested]);
-
-  // Lazily load RabbitMQ stats when the section is first expanded.
-  useEffect(() => {
-    if (!rabbitExpanded || rabbitRequested) return;
-    setRabbitRequested(true);
-    loadRabbitStats();
-  }, [rabbitExpanded, rabbitRequested]);
-
-  // Lazily load TimescaleDB stats when the section is first expanded.
-  useEffect(() => {
-    if (!timescaledbExpanded || timescaledbRequested) return;
-    setTimescaledbRequested(true);
-    loadTimescaledbStats();
-  }, [timescaledbExpanded, timescaledbRequested]);
-
-  // Lazily load XALT coverage stats when the section is first expanded.
-  useEffect(() => {
-    if (!xaltExpanded || xaltRequested) return;
-    setXaltRequested(true);
-    loadXaltStats();
-  }, [xaltExpanded, xaltRequested]);
 
   const totalHosts = fqdnHostStats.length;
   const bucketCounts = fqdnHostStats.reduce(
@@ -239,78 +297,29 @@ export default function AdminMonitor() {
         } · Missing: ${xaltStats.jids_missing_xalt_data ?? 0}`
       : "";
 
-  const HOST_STATUS_ORDER = {
-    ok: 0,
-    gt_10min: 1,
-    gt_hour: 2,
-    gt_day: 3,
-    gt_week: 4,
-  };
+  const handleHostSort = useMemo(
+    () => makeAdminMonitorSortHandler(setHostSort),
+    [],
+  );
+  const handleRabbitHostSort = useMemo(
+    () => makeAdminMonitorSortHandler(setRabbitHostSort),
+    [],
+  );
 
-  const sortedHostStats = [...fqdnHostStats].sort((a, b) => {
-    const dir = hostSort.direction === "asc" ? 1 : -1;
-    if (hostSort.column === "host") {
-      return a.host.localeCompare(b.host) * dir;
-    }
-    if (hostSort.column === "last_time") {
-      const aTime = a.last_time ? new Date(a.last_time).getTime() : 0;
-      const bTime = b.last_time ? new Date(b.last_time).getTime() : 0;
-      return (aTime - bTime) * dir;
-    }
-    if (hostSort.column === "status") {
-      const aBucket = HOST_STATUS_ORDER[a.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
-      const bBucket = HOST_STATUS_ORDER[b.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
-      return (aBucket - bBucket) * dir;
-    }
-    return 0;
-  });
-
-  const handleHostSort = (column) => {
-    setHostSort((prev) => {
-      if (prev.column === column) {
-        return {
-          column,
-          direction: prev.direction === "asc" ? "desc" : "asc",
-        };
-      }
-      return { column, direction: "asc" };
-    });
-  };
-
-  const sortIndicator = (column) => {
-    if (hostSort.column !== column) return "";
-    return hostSort.direction === "asc" ? "▲" : "▼";
-  };
-  const sortedRabbitHostStats = [...fqdnRabbitHostStats].sort((a, b) => {
-    const dir = rabbitHostSort.direction === "asc" ? 1 : -1;
-    if (rabbitHostSort.column === "host") return a.host.localeCompare(b.host) * dir;
-    if (rabbitHostSort.column === "last_time") {
-      const aTime = a.last_time ? new Date(a.last_time).getTime() : 0;
-      const bTime = b.last_time ? new Date(b.last_time).getTime() : 0;
-      return (aTime - bTime) * dir;
-    }
-    if (rabbitHostSort.column === "status") {
-      const aBucket = HOST_STATUS_ORDER[a.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
-      const bBucket = HOST_STATUS_ORDER[b.age_bucket] ?? HOST_STATUS_ORDER.gt_week;
-      return (aBucket - bBucket) * dir;
-    }
-    return 0;
-  });
-  const handleRabbitHostSort = (column) => {
-    setRabbitHostSort((prev) => {
-      if (prev.column === column) {
-        return {
-          column,
-          direction: prev.direction === "asc" ? "desc" : "asc",
-        };
-      }
-      return { column, direction: "asc" };
-    });
-  };
-  const rabbitSortIndicator = (column) => {
-    if (rabbitHostSort.column !== column) return "";
-    return rabbitHostSort.direction === "asc" ? "▲" : "▼";
-  };
+  const sortedHostStats = useMemo(
+    () =>
+      [...fqdnHostStats].sort((a, b) =>
+        compareAdminMonitorHostRows(a, b, hostSort),
+      ),
+    [fqdnHostStats, hostSort],
+  );
+  const sortedRabbitHostStats = useMemo(
+    () =>
+      [...fqdnRabbitHostStats].sort((a, b) =>
+        compareAdminMonitorHostRows(a, b, rabbitHostSort),
+      ),
+    [fqdnRabbitHostStats, rabbitHostSort],
+  );
 
   const formatHostTime = (value) => {
     if (!value) return "—";
@@ -375,7 +384,10 @@ export default function AdminMonitor() {
           </div>
           {hostLoading && <LoadingMessage message="Loading host timestamps…" />}
           {hostError && !hostLoading && (
-            <div className="text-danger">Error loading host data: {hostError}</div>
+            <BannerErrorMessage
+              variant="inline"
+              message={`Error loading host data: ${hostError}`}
+            />
           )}
           {!hostLoading && !hostError && (
             <>
@@ -407,7 +419,7 @@ export default function AdminMonitor() {
                         className="btn btn-link btn-sm p-0"
                         onClick={() => handleHostSort("host")}
                       >
-                        Host {sortIndicator("host")}
+                        Host {sortAdminMonitorColumnArrow(hostSort, "host")}
                       </button>
                     </th>
                     <th scope="col">
@@ -416,7 +428,8 @@ export default function AdminMonitor() {
                         className="btn btn-link btn-sm p-0"
                         onClick={() => handleHostSort("last_time")}
                       >
-                        Last Timestamp {sortIndicator("last_time")}
+                        Last Timestamp{" "}
+                        {sortAdminMonitorColumnArrow(hostSort, "last_time")}
                       </button>
                     </th>
                     <th scope="col">
@@ -425,7 +438,7 @@ export default function AdminMonitor() {
                         className="btn btn-link btn-sm p-0"
                         onClick={() => handleHostSort("status")}
                       >
-                        Status {sortIndicator("status")}
+                        Status {sortAdminMonitorColumnArrow(hostSort, "status")}
                       </button>
                     </th>
                   </tr>
@@ -491,14 +504,19 @@ export default function AdminMonitor() {
           </div>
           {xaltLoading && <LoadingMessage message="Loading XALT coverage…" />}
           {xaltError && !xaltLoading && (
-            <div className="text-danger">
-              Error loading XALT coverage: {xaltError}
-            </div>
+            <BannerErrorMessage
+              variant="inline"
+              message={`Error loading XALT coverage: ${xaltError}`}
+            />
           )}
           {!xaltLoading && !xaltError && xaltStats && (
             <>
               {xaltStats.error && (
-                <div className="text-danger mb-2">{xaltStats.error}</div>
+                <BannerErrorMessage
+                  variant="inline"
+                  className="text-danger mb-2"
+                  message={xaltStats.error}
+                />
               )}
               {!xaltStats.error && (
                 <>
@@ -661,9 +679,10 @@ export default function AdminMonitor() {
             <LoadingMessage message="Loading RabbitMQ host timestamps…" />
           )}
           {rabbitHostError && !rabbitHostLoading && (
-            <div className="text-danger">
-              Error loading RabbitMQ host data: {rabbitHostError}
-            </div>
+            <BannerErrorMessage
+              variant="inline"
+              message={`Error loading RabbitMQ host data: ${rabbitHostError}`}
+            />
           )}
           {!rabbitHostLoading && !rabbitHostError && (
             <div className="table-responsive">
@@ -676,7 +695,7 @@ export default function AdminMonitor() {
                         className="btn btn-link btn-sm p-0"
                         onClick={() => handleRabbitHostSort("host")}
                       >
-                        Host {rabbitSortIndicator("host")}
+                        Host {sortAdminMonitorColumnArrow(rabbitHostSort, "host")}
                       </button>
                     </th>
                     <th scope="col">
@@ -685,7 +704,8 @@ export default function AdminMonitor() {
                         className="btn btn-link btn-sm p-0"
                         onClick={() => handleRabbitHostSort("last_time")}
                       >
-                        Last Timestamp {rabbitSortIndicator("last_time")}
+                        Last Timestamp{" "}
+                        {sortAdminMonitorColumnArrow(rabbitHostSort, "last_time")}
                       </button>
                     </th>
                     <th scope="col">
@@ -694,7 +714,8 @@ export default function AdminMonitor() {
                         className="btn btn-link btn-sm p-0"
                         onClick={() => handleRabbitHostSort("status")}
                       >
-                        Status {rabbitSortIndicator("status")}
+                        Status{" "}
+                        {sortAdminMonitorColumnArrow(rabbitHostSort, "status")}
                       </button>
                     </th>
                   </tr>
@@ -761,9 +782,10 @@ export default function AdminMonitor() {
             <LoadingMessage message="Loading TimescaleDB statistics…" />
           )}
           {timescaledbError && !timescaledbLoading && (
-            <div className="text-danger">
-              Error loading TimescaleDB stats: {timescaledbError}
-            </div>
+            <BannerErrorMessage
+              variant="inline"
+              message={`Error loading TimescaleDB stats: ${timescaledbError}`}
+            />
           )}
           {!timescaledbLoading && !timescaledbError && timescaledbStats && (
             <div className="table-responsive">
@@ -850,7 +872,10 @@ export default function AdminMonitor() {
           </div>
           {cacheLoading && <LoadingMessage message="Loading cache statistics…" />}
           {cacheError && !cacheLoading && (
-            <div className="text-danger">Error loading cache stats: {cacheError}</div>
+            <BannerErrorMessage
+              variant="inline"
+              message={`Error loading cache stats: ${cacheError}`}
+            />
           )}
           {!cacheLoading && !cacheError && cacheStats && Object.keys(cacheStats).length > 0 && (
             <div className="table-responsive">
@@ -918,16 +943,19 @@ export default function AdminMonitor() {
             <LoadingMessage message="Loading RabbitMQ statistics…" />
           )}
           {rabbitError && !rabbitLoading && (
-            <div className="text-danger">
-              Error loading RabbitMQ stats: {rabbitError}
-            </div>
+            <BannerErrorMessage
+              variant="inline"
+              message={`Error loading RabbitMQ stats: ${rabbitError}`}
+            />
           )}
           {!rabbitLoading && !rabbitError && rabbitStats && (
             <>
               {rabbitStats.error && (
-                <div className="text-danger mb-2">
-                  RabbitMQ reported an error: {rabbitStats.error}
-                </div>
+                <BannerErrorMessage
+                  variant="inline"
+                  className="text-danger mb-2"
+                  message={`RabbitMQ reported an error: ${rabbitStats.error}`}
+                />
               )}
               <div className="table-responsive">
                 <table className="table table-sm table-bordered">

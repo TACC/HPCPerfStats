@@ -120,6 +120,7 @@ export default function Layout({ session, onSessionChange, children }) {
               <div className="navbar-actions-row">
                 {session?.is_staff && (
                   <select
+                    id="staff-actions"
                     className="form-select form-select-sm me-2"
                     value={staffActionValue}
                     onChange={handleStaffActionChange}
@@ -136,7 +137,11 @@ export default function Layout({ session, onSessionChange, children }) {
                 <a href="/logout/" className="btn btn-outline-secondary btn-sm">Logout</a>
               </div>
               {staffMessage && (
-                <div className="alert alert-info py-1 px-2 mb-0 navbar-staff-message" role="alert">
+                <div
+                  id="staff-message"
+                  className="alert alert-info py-1 px-2 mb-0 navbar-staff-message"
+                  role="alert"
+                >
                   {staffMessage}
                 </div>
               )}

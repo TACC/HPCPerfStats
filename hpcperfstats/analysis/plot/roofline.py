@@ -16,15 +16,9 @@ from hpcperfstats.analysis.gen.utils import (
     INTEL_CORE_PMC_TYPES_ORDERED,
     INTEL_FP_ARITH_ALL_EVENTS,
     INTEL_IMC_STATS_TYPES,
+    INTEL_LEGACY_SSE_FLOP_EVENTS,
     new_plain_log_tick_formatter,
     new_plain_number_hover_formatter,
-)
-
-# Intel SSE/AVX double FLOP proxy events (SNB/IVB-style; pre-FP_ARITH uarch).
-_INTEL_LEGACY_SSE_FLOP_EVENTS = (
-    ("SSE_DOUBLE_SCALAR", 1),
-    ("SSE_DOUBLE_PACKED", 2),
-    ("SIMD_DOUBLE_256", 4),
 )
 
 
@@ -109,7 +103,7 @@ def _intel_legacy_sse_flops_gf(jt, attempts):
         merged = _merge_weighted_event_arcs(
             jt,
             core_typ,
-            _INTEL_LEGACY_SSE_FLOP_EVENTS,
+            INTEL_LEGACY_SSE_FLOP_EVENTS,
             attempts,
             "intel_legacy_sse",
         )
@@ -355,6 +349,59 @@ def _build_roofline_figure(df, peak_flops_gf, peak_bw_gb, title):
     return p
 
 
+def _merge_gpu_flops_bw_on_base(base, flops_agg, bw_agg):
+    """Inner-join FLOPS and BW aggregates onto host/time base; None if unusable or empty."""
+    if (
+        flops_agg.empty
+        or "sum_val" not in flops_agg.columns
+        or bw_agg.empty
+        or "sum_val" not in bw_agg.columns
+    ):
+        return None
+    flops_gf = flops_agg.rename(columns={"sum_val": "flops_gf"})[
+        ["host", "time", "flops_gf"]
+    ]
+    bw_gb = bw_agg.rename(columns={"sum_val": "bw_gb"})[["host", "time", "bw_gb"]]
+    df = base.merge(flops_gf, on=["host", "time"], how="inner").merge(
+        bw_gb, on=["host", "time"], how="inner"
+    )
+    return df if not df.empty else None
+
+
+def _try_gpu_roofline_flops_bw_merge(
+    jt,
+    gpu_typ,
+    base,
+    source_tag,
+    aggregate_fn,
+    flops_events,
+    flops_conv,
+    bw_events,
+    bw_conv,
+):
+    """One arc or value attempt for strict GPU roofline; returns (df_or_none, log_line, overlap_miss_or_none)."""
+    flops_agg, flops_src = aggregate_fn(jt, gpu_typ, flops_events, flops_conv)
+    bw_agg, bw_src = aggregate_fn(jt, gpu_typ, bw_events, bw_conv)
+    log_line = (
+        f"{gpu_typ}:{source_tag} rows(flops={len(flops_agg.index)}, bw={len(bw_agg.index)}) "
+        f"src(flops={flops_src}, bw={bw_src})"
+    )
+    df = _merge_gpu_flops_bw_on_base(base, flops_agg, bw_agg)
+    if df is not None:
+        return df, log_line, None
+    overlap_miss = None
+    if (
+        not flops_agg.empty
+        and "sum_val" in flops_agg.columns
+        and not bw_agg.empty
+        and "sum_val" in bw_agg.columns
+    ):
+        overlap_miss = (
+            f"{gpu_typ}: counters found in {source_tag} but no overlapping host/time samples"
+        )
+    return None, log_line, overlap_miss
+
+
 def _get_gpu_flops_bw_df_and_reason(jt):
     """Get GPU roofline data using strict GPU FLOPS/BW counters only."""
     base = jt.get_host_time_df()
@@ -362,67 +409,36 @@ def _get_gpu_flops_bw_df_and_reason(jt):
         return (None, "No hosts/timestamps found in host_data for this job/time range")
 
     attempts = []
-    gpu_types = ("nvidia_gpu", "amd_gpu")
     missing_reasons = []
+    _gpu_roofline_branches = (
+        (
+            "arc",
+            _aggregate_arc,
+            ["gpu_flops"],
+            1e-9,
+            ["gpu_mem_total_bytes"],
+            1 / (1024**3),
+        ),
+        (
+            "value",
+            _aggregate_value,
+            ["gpu_flops_rate"],
+            1e-9,
+            ["gpu_mem_bw_bytes_rate"],
+            1 / (1024**3),
+        ),
+    )
 
-    for gpu_typ in gpu_types:
-        flops_arc, flops_arc_src = _aggregate_arc(jt, gpu_typ, ["gpu_flops"], 1e-9)
-        bw_arc, bw_arc_src = _aggregate_arc(
-            jt, gpu_typ, ["gpu_mem_total_bytes"], 1 / (1024 ** 3)
-        )
-        attempts.append(
-            f"{gpu_typ}:arc rows(flops={len(flops_arc.index)}, bw={len(bw_arc.index)}) "
-            f"src(flops={flops_arc_src}, bw={bw_arc_src})"
-        )
-        if (
-            not flops_arc.empty
-            and "sum_val" in flops_arc.columns
-            and not bw_arc.empty
-            and "sum_val" in bw_arc.columns
-        ):
-            flops_gf = flops_arc.rename(columns={"sum_val": "flops_gf"})[
-                ["host", "time", "flops_gf"]
-            ]
-            bw_gb = bw_arc.rename(columns={"sum_val": "bw_gb"})[
-                ["host", "time", "bw_gb"]
-            ]
-            df = base.merge(flops_gf, on=["host", "time"], how="inner")
-            df = df.merge(bw_gb, on=["host", "time"], how="inner")
-            if not df.empty:
-                return (df, None)
-            missing_reasons.append(
-                f"{gpu_typ}: counters found in arc but no overlapping host/time samples"
+    for gpu_typ in ("nvidia_gpu", "amd_gpu"):
+        for tag, agg_fn, fe, fc, be, bc in _gpu_roofline_branches:
+            df, line, miss = _try_gpu_roofline_flops_bw_merge(
+                jt, gpu_typ, base, tag, agg_fn, fe, fc, be, bc
             )
-
-        flops_val, flops_val_src = _aggregate_value(
-            jt, gpu_typ, ["gpu_flops_rate"], 1e-9
-        )
-        bw_val, bw_val_src = _aggregate_value(
-            jt, gpu_typ, ["gpu_mem_bw_bytes_rate"], 1 / (1024 ** 3)
-        )
-        attempts.append(
-            f"{gpu_typ}:value rows(flops={len(flops_val.index)}, bw={len(bw_val.index)}) "
-            f"src(flops={flops_val_src}, bw={bw_val_src})"
-        )
-        if (
-            not flops_val.empty
-            and "sum_val" in flops_val.columns
-            and not bw_val.empty
-            and "sum_val" in bw_val.columns
-        ):
-            flops_gf = flops_val.rename(columns={"sum_val": "flops_gf"})[
-                ["host", "time", "flops_gf"]
-            ]
-            bw_gb = bw_val.rename(columns={"sum_val": "bw_gb"})[
-                ["host", "time", "bw_gb"]
-            ]
-            df = base.merge(flops_gf, on=["host", "time"], how="inner")
-            df = df.merge(bw_gb, on=["host", "time"], how="inner")
-            if not df.empty:
+            attempts.append(line)
+            if df is not None:
                 return (df, None)
-            missing_reasons.append(
-                f"{gpu_typ}: counters found in value but no overlapping host/time samples"
-            )
+            if miss:
+                missing_reasons.append(miss)
 
     detail = "; ".join(missing_reasons) if missing_reasons else "; ".join(attempts)
     return (

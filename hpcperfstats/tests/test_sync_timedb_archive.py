@@ -90,6 +90,7 @@ def test_iter_tar_tasks_chunked_streams_without_accumulating(monkeypatch):
 
 def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
   """Corrupt tar with sibling .gz is restored via pigz and retried once."""
+  import hpcperfstats.dbload.pigz_cli as pigz_cli
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 
   tar_path = str(tmp_path / "broken.tar")
@@ -141,7 +142,7 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
       lambda p: remove_calls.append(p),
   )
   monkeypatch.setattr(
-      helpers.subprocess,
+      pigz_cli.subprocess,
       "run",
       lambda cmd, capture_output, text, check: pigz_calls.append(cmd) or subprocess.CompletedProcess(
           cmd, 0, stdout="", stderr=""
@@ -183,6 +184,7 @@ def test_get_tar_file_tasks_raises_when_corrupt_and_no_gz(monkeypatch, tmp_path)
 
 def test_get_tar_file_tasks_raises_when_pigz_restore_fails(monkeypatch, tmp_path):
   """Corrupt tar with .gz still raises when pigz restore fails."""
+  import hpcperfstats.dbload.pigz_cli as pigz_cli
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 
   tar_path = str(tmp_path / "broken.tar")
@@ -204,7 +206,7 @@ def test_get_tar_file_tasks_raises_when_pigz_restore_fails(monkeypatch, tmp_path
   monkeypatch.setattr(helpers.os.path, "exists", lambda p: p == gz_path or p == tar_path)
   monkeypatch.setattr(helpers.os, "remove", lambda _p: None)
   monkeypatch.setattr(
-      helpers.subprocess,
+      pigz_cli.subprocess,
       "run",
       lambda cmd, capture_output, text, check: subprocess.CompletedProcess(
           cmd, 2, stdout="", stderr=""

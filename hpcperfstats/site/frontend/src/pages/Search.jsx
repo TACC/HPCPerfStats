@@ -1,23 +1,13 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
+import { useHomeOptions } from "../hooks/use-home-options";
 
 export default function Search() {
-  const [options, setOptions] = useState(null);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api
-      .getHomeOptions()
-      .then(setOptions)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+  const { options, error, loading } = useHomeOptions();
 
   if (loading) return <LoadingMessage message="Loading…" />;
-  if (error) return <div className="container text-danger">Error: {error}</div>;
+  if (error) return <BannerErrorMessage message={error} />;
 
   const { year_list = [], date_list = [] } = options || {};
 

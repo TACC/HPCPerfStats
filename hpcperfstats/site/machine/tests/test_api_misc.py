@@ -6,7 +6,7 @@ Covers:
 - search_dispatch: jid and host branches, including 404 when jid not found.
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -405,7 +405,7 @@ class TestJobDetailCacheTtl:
 
     now = datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc)
     end_time = datetime(2026, 3, 22, 12, 0, 1, tzinfo=timezone.utc)
-    with patch("hpcperfstats.site.machine.api.dj_timezone_utils.now", return_value=now):
+    with patch("hpcperfstats.site.machine.api.timezone.now", return_value=now):
       ttl = api._job_detail_cache_ttl_for_end_time(end_time)
     assert ttl == 4 * 3600
 
@@ -414,7 +414,7 @@ class TestJobDetailCacheTtl:
 
     now = datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc)
     end_time = datetime(2026, 3, 15, 11, 59, 59, tzinfo=timezone.utc)
-    with patch("hpcperfstats.site.machine.api.dj_timezone_utils.now", return_value=now):
+    with patch("hpcperfstats.site.machine.api.timezone.now", return_value=now):
       ttl = api._job_detail_cache_ttl_for_end_time(end_time)
     assert ttl == 30 * 24 * 3600
 
@@ -594,6 +594,54 @@ class TestAdminMonitor:
 
     hosts = sorted([row["host"] for row in host_stats])
     assert hosts == ["node1.example.com", "node2.example.com"]
+
+
+class TestAgeBucket:
+  """_age_bucket matches Redis and DB-backed admin host stats labeling."""
+
+  @pytest.mark.parametrize(
+      "age,expected",
+      [
+          (timedelta(weeks=1, microseconds=1), "gt_week"),
+          (timedelta(days=1, seconds=1), "gt_day"),
+          (timedelta(hours=1, seconds=1), "gt_hour"),
+          (timedelta(minutes=10, seconds=1), "gt_10min"),
+          (timedelta(minutes=5), "ok"),
+          (timedelta(0), "ok"),
+      ],
+  )
+  def test_age_bucket_thresholds(self, age, expected):
+    from hpcperfstats.site.machine import api
+
+    assert api._age_bucket(age) == expected
+
+  def test_age_bucket_exact_week_is_not_gt_week(self):
+    from hpcperfstats.site.machine import api
+
+    assert api._age_bucket(timedelta(weeks=1)) == "gt_day"
+
+
+class TestAdminMonitorHostStatDict:
+  """_admin_monitor_host_stat_dict centralizes FQDN + age_bucket rows."""
+
+  def test_returns_none_without_fqdn_or_last_time(self):
+    from hpcperfstats.site.machine import api
+
+    now = datetime(2024, 1, 10, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime(2024, 1, 10, 11, 0, 0, tzinfo=timezone.utc)
+    assert api._admin_monitor_host_stat_dict("", t0, now) is None
+    assert api._admin_monitor_host_stat_dict("host", None, now) is None
+    assert api._admin_monitor_host_stat_dict("short", t0, now) is None
+
+  def test_returns_row_with_isoformat_and_bucket(self):
+    from hpcperfstats.site.machine import api
+
+    now = datetime(2024, 1, 10, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime(2024, 1, 10, 11, 55, 0, tzinfo=timezone.utc)
+    row = api._admin_monitor_host_stat_dict("n.example.com", t0, now)
+    assert row["host"] == "n.example.com"
+    assert row["last_time"] == t0.isoformat()
+    assert row["age_bucket"] == "ok"
 
 
 class TestApiKeyValid:

@@ -18,28 +18,13 @@ from hpcperfstats.analysis.gen.utils import (
     new_plain_linear_tick_formatter,
     new_plain_number_hover_formatter,
 )
-
-
-def _job_time_label_bounds(jt):
-  """Return (start_label, end_label) from jt job window, or (None, None)."""
-  start = getattr(jt, "start_time", None)
-  end = getattr(jt, "end_time", None)
-  if start is None or end is None:
-    return (None, None)
-  try:
-    start_ts = pd.to_datetime(start, utc=True)
-    end_ts = pd.to_datetime(end, utc=True)
-  except (TypeError, ValueError):
-    return (None, None)
-  if pd.isna(start_ts) or pd.isna(end_ts) or end_ts <= start_ts:
-    return (None, None)
-  return (str(start_ts), str(end_ts))
+from hpcperfstats.analysis.plot.job_window import job_window_label_strings
 
 
 def _build_heatmap_time_axis_labels(base_times, jt):
   """Ensure categorical heatmap x-axis always includes job start and end labels."""
   labels = list(base_times or [])
-  start_label, end_label = _job_time_label_bounds(jt)
+  start_label, end_label = job_window_label_strings(jt)
   if start_label is None or end_label is None:
     return labels
   if not labels:

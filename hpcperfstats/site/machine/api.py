@@ -4,8 +4,9 @@ import logging
 import threading
 import copy
 import time
+from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
-from datetime import timezone as dt_timezone
+from datetime import datetime, timedelta, timezone as dt_timezone
 
 import hpcperfstats.conf_parser as cfg
 from bokeh.embed import components, json_item
@@ -139,13 +140,19 @@ def _collect_future_results_with_deadline(future_to_key, max_wait_seconds):
 
 
 def _evict_stale_inflight_plot_tasks():
-    """Remove completed or stale in-flight plot tasks to bound map growth."""
+    """Remove stale in-flight plot tasks to bound map growth.
+
+    Do not evict entries solely because ``future.done()`` is true: ``job_plots``
+    must run ``_finalize_job_plot_future`` first to persist results to the cache.
+    Otherwise a plot that finishes after the previous request returns 202 can be
+    dropped before the client polls again.
+    """
     now = time.monotonic()
     stale_keys = []
     for inflight_key, inflight_meta in list(_job_plot_inflight.items()):
         future = inflight_meta.get("future")
         created_at = float(inflight_meta.get("created_at", 0.0))
-        if future is None or future.done() or (now - created_at) > _JOB_PLOT_INFLIGHT_TTL_SECONDS:
+        if future is None or (now - created_at) > _JOB_PLOT_INFLIGHT_TTL_SECONDS:
             if future is not None and not future.done():
                 future.cancel()
             stale_keys.append(inflight_key)
@@ -171,7 +178,7 @@ def _job_detail_cache_ttl_for_end_time(end_time):
         return JOB_DETAIL_CACHE_TTL_RECENT
     if end_time.tzinfo is None:
         end_time = timezone.make_aware(end_time, dt_timezone.utc)
-    age = dj_timezone_utils.now() - end_time
+    age = timezone.now() - end_time
     if age > timedelta(days=7):
         return JOB_DETAIL_CACHE_TTL_OLD
     return JOB_DETAIL_CACHE_TTL_RECENT
@@ -422,8 +429,6 @@ from django.db.models import (
     Max,
 )
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
-from django.utils import timezone as dj_timezone_utils
-from datetime import datetime, timedelta
 from numpy import isnan
 from math import ceil
 
@@ -431,6 +436,33 @@ import hpcperfstats.analysis.gen.jid_table as jid_table
 from hpcperfstats.analysis.gen.jid_table import HostDataProvider
 import hpcperfstats.analysis.plot as plots
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
+
+
+def _age_bucket(age: timedelta) -> str:
+    """Map last-seen age to admin monitor bucket labels (Redis + DB host stats)."""
+    thresholds = (
+        (timedelta(weeks=1), "gt_week"),
+        (timedelta(days=1), "gt_day"),
+        (timedelta(hours=1), "gt_hour"),
+        (timedelta(minutes=10), "gt_10min"),
+    )
+    for td, label in thresholds:
+        if age > td:
+            return label
+    return "ok"
+
+
+def _admin_monitor_host_stat_dict(host, last_time, now):
+    """Build one ``host_stats`` row for admin monitor, or ``None`` to skip this host."""
+    host = host or ""
+    if not host or last_time is None or "." not in host:
+        return None
+    age = now - last_time
+    return {
+        "host": host,
+        "last_time": last_time.isoformat() if last_time else None,
+        "age_bucket": _age_bucket(age),
+    }
 
 
 def _format_log_timestamp(ts):
@@ -484,7 +516,7 @@ def _api_key_valid(key: str):
         return None
     # Best-effort last-used update; ignore errors.
     try:
-        api_key_obj.last_used_at = dj_timezone_utils.now()
+        api_key_obj.last_used_at = timezone.now()
         api_key_obj.save(update_fields=["last_used_at"])
     except Exception:
         pass
@@ -916,7 +948,7 @@ def _get_rabbitmq_stats():
 
             # Use cached snapshot of cumulative publish counter to approximate
             # messages published over the last interval and scale to ~24h.
-            now = dj_timezone_utils.now()
+            now = timezone.now()
             snapshot = None
             try:
                 snapshot = cache.get(KEY_ADMIN_RMQ_SNAPSHOT)
@@ -1017,24 +1049,9 @@ def _get_recent_rabbitmq_host_stats():
                 except (TypeError, ValueError, OSError):
                     continue
 
-                age = now - last_time
-                if age > timedelta(weeks=1):
-                    bucket = "gt_week"
-                elif age > timedelta(days=1):
-                    bucket = "gt_day"
-                elif age > timedelta(hours=1):
-                    bucket = "gt_hour"
-                elif age > timedelta(minutes=10):
-                    bucket = "gt_10min"
-                else:
-                    bucket = "ok"
-                host_stats.append(
-                    {
-                        "host": host,
-                        "last_time": last_time.isoformat(),
-                        "age_bucket": bucket,
-                    }
-                )
+                row = _admin_monitor_host_stat_dict(host, last_time, now)
+                if row is not None:
+                    host_stats.append(row)
     except Exception:
         host_stats = []
     return host_stats
@@ -1395,42 +1412,60 @@ def _build_histogram_dataframe(job_list_qs, cur_metrics):
     return df, hist_metrics, jids_ordered
 
 
-def _job_list_queue_histogram(job_list_qs, width=600, height=400):
-    """Build a Bokeh bar chart of job count per queue from the full filtered job list (non-paginated)."""
+def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="jobs"):
+    """Bokeh vbar of per-queue job count or summed node hours (full filtered job list, non-paginated).
+
+    metric: ``"jobs"`` — Count(jid) per queue; ``"node_hours"`` — Sum(node_hrs) per queue.
+    """
     from bokeh.models import ColumnDataSource, HoverTool
 
     close_old_connections()
     try:
-        queue_counts = list(
-            job_list_qs.values("queue")
-            .annotate(count=Count("jid"))
-            .order_by("-count")
-            .values_list("queue", "count")
-        )
-        if not queue_counts:
+        if metric == "jobs":
+            rows = list(
+                job_list_qs.values("queue")
+                .annotate(_bar_top=Count("jid"))
+                .order_by("-_bar_top")
+                .values_list("queue", "_bar_top")
+            )
+            title = "Jobs by queue"
+            y_label = "# jobs"
+            hover_label = "jobs"
+            tops = [c for _, c in rows]
+        else:
+            rows = list(
+                job_list_qs.values("queue")
+                .annotate(_bar_top=Sum("node_hrs"))
+                .order_by("-_bar_top")
+                .values_list("queue", "_bar_top")
+            )
+            title = "Node hours by queue"
+            y_label = "node hours"
+            hover_label = "node hours"
+            tops = [(v or 0.0) for _, v in rows]
+        if not rows:
             return None
-        queue_names = [q if q else "(no queue)" for q, _ in queue_counts]
-        counts = [c for _, c in queue_counts]
-        source = ColumnDataSource(dict(x=queue_names, top=counts))
+        queue_names = [q if q else "(no queue)" for q, _ in rows]
+        source = ColumnDataSource(dict(x=queue_names, top=tops))
         p = figure(
             x_range=queue_names,
             height=height,
             width=width,
-            title="Jobs by queue",
+            title=title,
             toolbar_location=None,
             tools="pan,wheel_zoom,box_zoom,reset,save",
         )
         set_linear_axes_plain_numeric(p)
-        q_jobs_hover = new_plain_number_hover_formatter()
+        num_hover = new_plain_number_hover_formatter()
         p.add_tools(
             HoverTool(
-                tooltips=[("queue", "@x"), ("jobs", "@top{custom}")],
-                formatters={"@top": q_jobs_hover},
+                tooltips=[("queue", "@x"), (hover_label, "@top{custom}")],
+                formatters={"@top": num_hover},
                 point_policy="snap_to_data",
             )
         )
         p.xaxis.axis_label = "queue"
-        p.yaxis.axis_label = "# jobs"
+        p.yaxis.axis_label = y_label
         p.vbar(x="x", top="top", source=source, width=0.7)
         p.xgrid.visible = False
         p.xaxis.major_label_orientation = "vertical" if len(queue_names) > 5 else "horizontal"
@@ -1439,137 +1474,83 @@ def _job_list_queue_histogram(job_list_qs, width=600, height=400):
         close_old_connections()
 
 
-def _job_list_queue_cpu_hours_histogram(job_list_qs, width=600, height=400):
-    """Build a Bokeh bar chart of node hours (sum of node_hrs) per queue from the full filtered job list (non-paginated)."""
-    from bokeh.models import ColumnDataSource, HoverTool
+# (metric_key, response_key, title, unavailable_message) for job_list_histograms group=queue
+_JOB_LIST_QUEUE_HIST_SPECS = (
+    ("jobs", "jobs_by_queue", "Jobs by queue", "No queue histogram data available for this query."),
+    (
+        "node_hours",
+        "cpu_hours_by_queue",
+        "Node hours by queue",
+        "No queue node-hour histogram data available for this query.",
+    ),
+)
 
-    close_old_connections()
-    try:
-        queue_runtime = list(
-            job_list_qs.values("queue")
-            .annotate(total_node_hours=Sum("node_hrs"))
-            .order_by("-total_node_hours")
-            .values_list("queue", "total_node_hours")
+
+def _job_list_metric_hist_pair(df, metric_name, label, display_title, thumb_wh, full_wh):
+    """Return (thumb_figure, full_figure) for one metric via ``job_hist``."""
+    tw, th = thumb_wh
+    fw, fh = full_wh
+    p_thumb = job_hist(
+        df, metric_name, label, width=tw, height=th, title=display_title
+    )
+    p_full = job_hist(
+        df, metric_name, label, width=fw, height=fh, title=display_title
+    )
+    return p_thumb, p_full
+
+
+def _job_list_metric_hist_sidecar_result(df, m, lbl, thumb_wh, full_wh):
+    """Build (display_title, p_thumb, p_full) for parallel legacy histogram sidecar."""
+    display_title = JOB_HIST_DISPLAY_NAMES.get(m, m)
+    p_thumb, p_full = _job_list_metric_hist_pair(
+        df, m, lbl, display_title, thumb_wh, full_wh
+    )
+    return display_title, p_thumb, p_full
+
+
+def _job_list_queue_histogram_sidecar_entries(job_list_qs, thumb_wh, full_wh):
+    """Queue thumb/full json items for legacy combined job-list histogram response."""
+    executor = _get_small_executor()
+    out = []
+    for metric, _plot_key, title, _unavail_msg in _JOB_LIST_QUEUE_HIST_SPECS:
+        f_thumb = executor.submit(
+            partial(_job_list_queue_bar_chart, metric=metric),
+            job_list_qs,
+            *thumb_wh,
         )
-        if not queue_runtime:
-            return None
-        queue_names = [q if q else "(no queue)" for q, _ in queue_runtime]
-        node_hours = [(nh or 0.0) for _, nh in queue_runtime]
-        source = ColumnDataSource(dict(x=queue_names, top=node_hours))
-        p = figure(
-            x_range=queue_names,
-            height=height,
-            width=width,
-            title="Node hours by queue",
-            toolbar_location=None,
-            tools="pan,wheel_zoom,box_zoom,reset,save",
+        f_full = executor.submit(
+            partial(_job_list_queue_bar_chart, metric=metric),
+            job_list_qs,
+            *full_wh,
         )
-        set_linear_axes_plain_numeric(p)
-        q_nh_hover = new_plain_number_hover_formatter()
-        p.add_tools(
-            HoverTool(
-                tooltips=[("queue", "@x"), ("node hours", "@top{custom}")],
-                formatters={"@top": q_nh_hover},
-                point_policy="snap_to_data",
+        thumb_plot = f_thumb.result()
+        full_plot = f_full.result()
+        if thumb_plot is not None and full_plot is not None:
+            out.append(
+                {
+                    "title": title,
+                    "plot_item_thumb": json_item(thumb_plot),
+                    "plot_item_full": json_item(full_plot),
+                }
             )
-        )
-        p.xaxis.axis_label = "queue"
-        p.yaxis.axis_label = "node hours"
-        p.vbar(x="x", top="top", source=source, width=0.7)
-        p.xgrid.visible = False
-        p.xaxis.major_label_orientation = "vertical" if len(queue_names) > 5 else "horizontal"
-        return p
-    finally:
-        close_old_connections()
+    return out
 
 
 def _job_list_histograms(request):
     """Build Bokeh script/div and json_item for job list histograms. Returns (script, div, plot_item)."""
-    fields = request.GET.dict()
-    fields = {k: v for k, v in fields.items() if v}
-    fields = normalize_job_list_query_params(fields)
-    fields = expand_month_date_to_range(fields)
-
-    acct_data = {
-        k: v
-        for k, v in fields.items()
-        if k.split("_", 1)[0] != "metrics"
-        and k
-        not in (
-            "page",
-            "order_by",
-            # Histogram grouping/query-only parameters, not model fields:
-            "group",
-            "metric",
-        )
-    }
-    order_by = get_job_list_order_by(fields) or "-end_time"
-    job_list_qs = job_data.objects.filter(**acct_data)
-    job_list_qs = _apply_non_staff_job_visibility(job_list_qs, request)
-    if order_by.lstrip("-") == "has_metrics":
-        job_list_qs = job_list_qs.annotate(
-            has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
-        )
-    job_list_qs = job_list_qs.order_by(order_by)
-
-    cur_metrics = {
-        k.split("_", 1)[1]: v
-        for k, v in fields.items()
-        if k.split("_", 1)[0] == "metrics"
-    }
-    for key, val in cur_metrics.items():
-        name, op = key.split("__")
-        mquery = {
-            "metrics_data__metric": name,
-            "metrics_data__value__" + op: val,
-        }
-        job_list_qs = job_list_qs.filter(**mquery)
-
-    nj = job_list_qs.count()
-    df_fields = list(set(name for name, _ in (key.split("__") for key in cur_metrics)))
+    job_list_qs, nj, _fields, cur_metrics = _build_histogram_queryset(request)
 
     if nj == 0:
         gp = _job_list_histograms_empty_figure()
         script, div = components(gp)
         return script, div, json_item(gp), []
 
-    acc_cols = ["jid", "start_time", "submit_time", "runtime", "nhosts"]
-    job_rows = list(job_list_qs.values(*acc_cols))
-    jids_ordered = [r["jid"] for r in job_rows]
-    job_df = DataFrame(job_rows).set_index("jid")
-
-    metrics_rows = list(
-        metrics_data.objects.filter(jid_id__in=jids_ordered).values(
-            "jid_id", "metric", "units", "value"
-        )
-    )
-    metric_dict = {}
-    hist_metrics_set = set()
-    for row in metrics_rows:
-        jid_id = row["jid_id"]
-        metric_dict.setdefault(row["metric"], []).append((jid_id, row["value"]))
-        hist_metrics_set.add((row["metric"], row["units"]))
-
-    jid_dict = {"jid": jids_ordered}
-    for name in df_fields:
-        jid_to_val = {jid: val for jid, val in metric_dict.get(name, [])}
-        jid_dict[name] = [jid_to_val.get(jid, None) for jid in jids_ordered]
-    df = DataFrame(jid_dict).set_index("jid")
-    hist_metrics = list(hist_metrics_set)
-    df = df.join(job_df)
-    df["queue_wait"] = (
-        to_timedelta(df["start_time"] - df["submit_time"]).dt.total_seconds() / 3600
-    )
-    df["runtime"] = df["runtime"] / 3600
-    # Fixed histograms use actual df column names; display titles mapped for UI
-    hist_metrics += [("runtime", "hours"), ("nhosts", "# nodes"), ("queue_wait", "hours")]
-    # Keep df numeric for histograms; do not run clean_dataframe here (it would
-    # replace NaN with '' and break job_hist). job_hist filters to finite values.
-    # Only plot metrics that exist as columns (df has filter metrics + runtime/nhosts/queue_wait)
-    hist_metrics = [(m, label) for m, label in hist_metrics if m in df.columns]
+    df, hist_metrics, _jids_ordered = _build_histogram_dataframe(job_list_qs, cur_metrics)
 
     THUMB_WIDTH, THUMB_HEIGHT = 280, 200
     FULL_WIDTH, FULL_HEIGHT = 600, 400
+    thumb_wh = (THUMB_WIDTH, THUMB_HEIGHT)
+    full_wh = (FULL_WIDTH, FULL_HEIGHT)
 
     def _build_grid_plot_list():
         """Build list of figures for the main grid (each figure must be used in only one document)."""
@@ -1578,71 +1559,22 @@ def _job_list_histograms(request):
             for metric, label in hist_metrics
         ]
         pl = [p for p in pl if p is not None]
-        q_full = _job_list_queue_histogram(job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT)
-        if q_full is not None:
-            pl.append(q_full)
-        q_cpu_full = _job_list_queue_cpu_hours_histogram(
-            job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT
-        )
-        if q_cpu_full is not None:
-            pl.append(q_cpu_full)
+        for metric, _pk, _title, _unavail in _JOB_LIST_QUEUE_HIST_SPECS:
+            q_full = _job_list_queue_bar_chart(
+                job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT, metric=metric
+            )
+            if q_full is not None:
+                pl.append(q_full)
         return pl
-
-    def _one_metric_histograms(m, lbl):
-        """Build thumb and full job_hist figures for one metric. Returns (display_title, p_thumb, p_full)."""
-        display_title = JOB_HIST_DISPLAY_NAMES.get(m, m)
-        p_thumb = job_hist(
-            df, m, lbl,
-            width=THUMB_WIDTH, height=THUMB_HEIGHT,
-            title=display_title,
-        )
-        p_full = job_hist(
-            df, m, lbl,
-            width=FULL_WIDTH, height=FULL_HEIGHT,
-            title=display_title,
-        )
-        return (display_title, p_thumb, p_full)
 
     script = ""
     div = ""
     plot_item = None
     histograms = []
     try:
-        # Build queue histograms in parallel
-        executor = _get_small_executor()
-        queue_thumb_f = executor.submit(
-            _job_list_queue_histogram,
-            job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT,
+        histograms.extend(
+            _job_list_queue_histogram_sidecar_entries(job_list_qs, thumb_wh, full_wh)
         )
-        queue_full_f = executor.submit(
-            _job_list_queue_histogram,
-            job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT,
-        )
-        queue_cpu_thumb_f = executor.submit(
-            _job_list_queue_cpu_hours_histogram,
-            job_list_qs, width=THUMB_WIDTH, height=THUMB_HEIGHT,
-        )
-        queue_cpu_full_f = executor.submit(
-            _job_list_queue_cpu_hours_histogram,
-            job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT,
-        )
-        queue_thumb = queue_thumb_f.result()
-        queue_full = queue_full_f.result()
-        queue_cpu_thumb = queue_cpu_thumb_f.result()
-        queue_cpu_full = queue_cpu_full_f.result()
-
-        if queue_thumb is not None and queue_full is not None:
-            histograms.append({
-                "title": "Jobs by queue",
-                "plot_item_thumb": json_item(queue_thumb),
-                "plot_item_full": json_item(queue_full),
-            })
-        if queue_cpu_thumb is not None and queue_cpu_full is not None:
-            histograms.append({
-                "title": "Node hours by queue",
-                "plot_item_thumb": json_item(queue_cpu_thumb),
-                "plot_item_full": json_item(queue_cpu_full),
-            })
 
         plot_list_1 = _build_grid_plot_list()
         if plot_list_1:
@@ -1650,7 +1582,14 @@ def _job_list_histograms(request):
             metric_hist_by_key = {}
             executor = _get_metric_hist_executor()
             futures = {
-                executor.submit(_one_metric_histograms, m, lbl): (m, lbl)
+                executor.submit(
+                    _job_list_metric_hist_sidecar_result,
+                    df,
+                    m,
+                    lbl,
+                    thumb_wh,
+                    full_wh,
+                ): (m, lbl)
                 for m, lbl in hist_metrics
             }
             for fut in as_completed(futures):
@@ -1759,60 +1698,38 @@ def job_list_histograms(request):
     FULL_WIDTH, FULL_HEIGHT = 600, 400
 
     if group == "queue":
-        # Build queue histograms in parallel, but only for this group.
         executor = _get_small_executor()
-        queue_thumb_f = executor.submit(
-            _job_list_queue_histogram,
-            job_list_qs,
-            THUMB_WIDTH,
-            THUMB_HEIGHT,
-        )
-        queue_full_f = executor.submit(
-            _job_list_queue_histogram,
-            job_list_qs,
-            FULL_WIDTH,
-            FULL_HEIGHT,
-        )
-        queue_cpu_thumb_f = executor.submit(
-            _job_list_queue_cpu_hours_histogram,
-            job_list_qs,
-            THUMB_WIDTH,
-            THUMB_HEIGHT,
-        )
-        queue_cpu_full_f = executor.submit(
-            _job_list_queue_cpu_hours_histogram,
-            job_list_qs,
-            FULL_WIDTH,
-            FULL_HEIGHT,
-        )
-        queue_thumb = queue_thumb_f.result()
-        queue_full = queue_full_f.result()
-        queue_cpu_thumb = queue_cpu_thumb_f.result()
-        queue_cpu_full = queue_cpu_full_f.result()
+        thumb_wh = (THUMB_WIDTH, THUMB_HEIGHT)
+        full_wh = (FULL_WIDTH, FULL_HEIGHT)
+        pending = []
+        for metric, plot_key, title, unavail_msg in _JOB_LIST_QUEUE_HIST_SPECS:
+            f_thumb = executor.submit(
+                partial(_job_list_queue_bar_chart, metric=metric),
+                job_list_qs,
+                *thumb_wh,
+            )
+            f_full = executor.submit(
+                partial(_job_list_queue_bar_chart, metric=metric),
+                job_list_qs,
+                *full_wh,
+            )
+            pending.append((plot_key, title, unavail_msg, f_thumb, f_full))
 
         plots = []
-        plots.append(
-            {
-                "key": "jobs_by_queue",
-                "title": "Jobs by queue",
-                "plot_item_thumb": json_item(queue_thumb) if queue_thumb is not None else None,
-                "plot_item_full": json_item(queue_full) if queue_full is not None else None,
-                "plot_unavailable_reason": None
-                if (queue_thumb is not None and queue_full is not None)
-                else "No queue histogram data available for this query.",
-            }
-        )
-        plots.append(
-            {
-                "key": "cpu_hours_by_queue",
-                "title": "Node hours by queue",
-                "plot_item_thumb": json_item(queue_cpu_thumb) if queue_cpu_thumb is not None else None,
-                "plot_item_full": json_item(queue_cpu_full) if queue_cpu_full is not None else None,
-                "plot_unavailable_reason": None
-                if (queue_cpu_thumb is not None and queue_cpu_full is not None)
-                else "No queue node-hour histogram data available for this query.",
-            }
-        )
+        for plot_key, title, unavail_msg, f_thumb, f_full in pending:
+            thumb_plot = f_thumb.result()
+            full_plot = f_full.result()
+            plots.append(
+                {
+                    "key": plot_key,
+                    "title": title,
+                    "plot_item_thumb": json_item(thumb_plot) if thumb_plot is not None else None,
+                    "plot_item_full": json_item(full_plot) if full_plot is not None else None,
+                    "plot_unavailable_reason": None
+                    if (thumb_plot is not None and full_plot is not None)
+                    else unavail_msg,
+                }
+            )
         return _JSONResponse(
             {
                 "group": "queue",
@@ -1848,21 +1765,13 @@ def job_list_histograms(request):
             )
 
         display_title = JOB_HIST_DISPLAY_NAMES.get(metric_name, metric_name)
-        p_thumb = job_hist(
+        p_thumb, p_full = _job_list_metric_hist_pair(
             df,
             metric_name,
             label,
-            width=THUMB_WIDTH,
-            height=THUMB_HEIGHT,
-            title=display_title,
-        )
-        p_full = job_hist(
-            df,
-            metric_name,
-            label,
-            width=FULL_WIDTH,
-            height=FULL_HEIGHT,
-            title=display_title,
+            display_title,
+            (THUMB_WIDTH, THUMB_HEIGHT),
+            (FULL_WIDTH, FULL_HEIGHT),
         )
 
         return _JSONResponse(
@@ -2337,95 +2246,67 @@ def job_plots(request, pk):
 
     j = jid_table.jid_table(job.jid)
 
-    def _fetch_summary_plot():
-        mplot_item, reason = None, None
+    def _run_job_plot_fetch(plot_pair_fn, empty_reason_fallback, log_fail_action, wall_time=False):
+        """Build one (json_item, unavailable_reason) tuple from a plot_and_reason_* helper."""
+        plot_item, reason = None, None
         close_old_connections()
-        _plot_wall_t0 = time.monotonic()
+        wall_t0 = time.monotonic() if wall_time else None
         try:
             try:
-                plot_json, plot_reason = plots.plot_and_reason_summary_from_jid_table(j)
+                plot_json, plot_reason = plot_pair_fn(j)
                 if plot_json is not None:
                     if zoom_mode:
                         _apply_zoom_layout_to_bokeh_model(plot_json)
-                    mplot_item = json_item(plot_json)
+                    plot_item = json_item(plot_json)
                 else:
-                    reason = plot_reason or plots.MSG_NO_METRIC_DATA
+                    reason = plot_reason or empty_reason_fallback
             except Exception as e:
                 logging.getLogger(__name__).warning(
-                    "Failed to generate summary plot for jid %s: %s", job.jid, e, exc_info=True
+                    "Failed to %s for jid %s: %s",
+                    log_fail_action,
+                    job.jid,
+                    e,
+                    exc_info=True,
                 )
                 reason = str(e)
-            return (mplot_item, reason)
+            return (plot_item, reason)
         finally:
-            logging.getLogger(__name__).debug(
-                "job_plots summary_plot jid=%s wall_s=%.3f",
-                job.jid,
-                time.monotonic() - _plot_wall_t0,
-            )
+            if wall_time:
+                logging.getLogger(__name__).debug(
+                    "job_plots summary_plot jid=%s wall_s=%.3f",
+                    job.jid,
+                    time.monotonic() - wall_t0,
+                )
             close_old_connections()
+
+    def _fetch_summary_plot():
+        return _run_job_plot_fetch(
+            plots.plot_and_reason_summary_from_jid_table,
+            plots.MSG_NO_METRIC_DATA,
+            "generate summary plot",
+            wall_time=True,
+        )
 
     def _fetch_heatmap():
-        hplot_item, reason = None, None
-        close_old_connections()
-        try:
-            try:
-                hm_fig_json, hm_reason = plots.plot_and_reason_from_jid_table(j)
-                if hm_fig_json is not None:
-                    if zoom_mode:
-                        _apply_zoom_layout_to_bokeh_model(hm_fig_json)
-                    hplot_item = json_item(hm_fig_json)
-                else:
-                    reason = hm_reason or plots.MSG_NO_HOST_MSR_DATA
-            except Exception as e:
-                logging.getLogger(__name__).warning(
-                    "Failed to generate heatmap for jid %s: %s", job.jid, e, exc_info=True
-                )
-                reason = str(e)
-            return (hplot_item, reason)
-        finally:
-            close_old_connections()
+        return _run_job_plot_fetch(
+            plots.plot_and_reason_from_jid_table,
+            plots.MSG_NO_HOST_MSR_DATA,
+            "generate heatmap",
+        )
 
     def _fetch_roofline():
-        rplot_item, reason = None, None
-        close_old_connections()
-        try:
-            try:
-                roof_fig_json, roof_reason = plots.plot_and_reason_roofline_from_jid_table(j)
-                if roof_fig_json is not None:
-                    if zoom_mode:
-                        _apply_zoom_layout_to_bokeh_model(roof_fig_json)
-                    rplot_item = json_item(roof_fig_json)
-                else:
-                    reason = roof_reason or plots.MSG_NO_ROOFLINE_DATA
-            except Exception as e:
-                logging.getLogger(__name__).warning(
-                    "Failed to generate roofline for jid %s: %s", job.jid, e, exc_info=True
-                )
-                reason = str(e)
-            return (rplot_item, reason)
-        finally:
-            close_old_connections()
+        return _run_job_plot_fetch(
+            plots.plot_and_reason_roofline_from_jid_table,
+            plots.MSG_NO_ROOFLINE_DATA,
+            "generate roofline",
+        )
 
     def _fetch_gpu_roofline():
-        grplot_item, reason = None, None
-        close_old_connections()
-        try:
-            try:
-                roof_fig_json, roof_reason = plots.plot_and_reason_gpu_roofline_from_jid_table(j)
-                if roof_fig_json is not None:
-                    if zoom_mode:
-                        _apply_zoom_layout_to_bokeh_model(roof_fig_json)
-                    grplot_item = json_item(roof_fig_json)
-                else:
-                    reason = roof_reason or plots.MSG_NO_ROOFLINE_DATA
-            except Exception as e:
-                logging.getLogger(__name__).warning(
-                    "Failed to generate gpu roofline for jid %s: %s", job.jid, e, exc_info=True
-                )
-                reason = str(e)
-            return (grplot_item, reason)
-        finally:
-            close_old_connections()
+        return _run_job_plot_fetch(
+            plots.plot_and_reason_gpu_roofline_from_jid_table,
+            plots.MSG_NO_ROOFLINE_DATA,
+            "generate gpu roofline",
+        )
 
     fetchers = {
         "summary_plot": _fetch_summary_plot,
@@ -2750,7 +2631,6 @@ def host_plot(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    from datetime import datetime
     try:
         start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
     except (ValueError, TypeError):
@@ -2994,35 +2874,13 @@ def admin_monitor(request):
             )
             return []
 
-        # Build stats directly from latest_qs; only include fully-qualified
-        # hostnames (contain a dot) to avoid duplicate short-name entries.
         host_stats_local = []
         for row in latest_qs:
             host = row.get("host") or ""
             last_time = row.get("last_time")
-            if not host or last_time is None:
-                continue
-            # Skip short hostnames; only return FQDNs.
-            if "." not in host:
-                continue
-            age = now - last_time
-            if age > timedelta(weeks=1):
-                bucket = "gt_week"
-            elif age > timedelta(days=1):
-                bucket = "gt_day"
-            elif age > timedelta(hours=1):
-                bucket = "gt_hour"
-            elif age > timedelta(minutes=10):
-                bucket = "gt_10min"
-            else:
-                bucket = "ok"
-            host_stats_local.append(
-                {
-                    "host": host,
-                    "last_time": last_time.isoformat() if last_time else None,
-                    "age_bucket": bucket,
-                }
-            )
+            entry = _admin_monitor_host_stat_dict(host, last_time, now)
+            if entry is not None:
+                host_stats_local.append(entry)
         return host_stats_local
 
     section = (request.GET.get("section") or "").strip().lower()
@@ -3116,7 +2974,7 @@ def job_monitor(request):
     except (TypeError, ValueError):
         days_param = 30
     window_days = max(1, min(days_param, 365))
-    now = dj_timezone_utils.now()
+    now = timezone.now()
     start_time = now - timedelta(days=window_days)
 
     base_qs = job_data.objects.filter(end_time__gte=start_time)
@@ -3201,7 +3059,7 @@ def job_monitor_gpu_for_user(request):
     except (TypeError, ValueError):
         days_param = 30
     window_days = max(1, min(days_param, 365))
-    now = dj_timezone_utils.now()
+    now = timezone.now()
     start_time = now - timedelta(days=window_days)
     cache_key = make_cache_key("JOB_MONITOR_GPU_USER", window_days, username)
 

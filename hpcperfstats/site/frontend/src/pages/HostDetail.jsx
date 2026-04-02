@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
@@ -30,7 +31,7 @@ export default function HostDetail() {
   }, [host, searchParams]);
 
   if (loading) return <LoadingMessage message="Loading host plot…" />;
-  if (error) return <div className="container text-danger">Error: {error}</div>;
+  if (error) return <BannerErrorMessage message={error} />;
   if (!data) return null;
 
   const { host: hostName, plot_item, plot_unavailable_reason } = data;

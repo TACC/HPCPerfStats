@@ -20,16 +20,15 @@ from functools import partial
 from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
-# Django 5.0+ removed django.utils.timezone.utc; ensure it exists for ORM/code that references it (Django 6 still does not provide it).
-import django.utils.timezone as _django_tz
-if not hasattr(_django_tz, "utc"):
-  _django_tz.utc = timezone.utc
+import hpcperfstats.dbload.django_timezone_utc_shim  # noqa: F401
 
 from django.db import IntegrityError, close_old_connections, connections
 import pandas as pd
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
+from hpcperfstats.dbload.io_helpers import host_data_instance_from_stats_row
+from hpcperfstats.dbload.pigz_cli import pigz_decompress_verbose
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.shutdown_utils import (
     shutdown_requested,
@@ -210,20 +209,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
           batch = list(itertools.islice(stats_it, bulk_create_batch_size))
           if not batch:
             break
-          host_objs = [
-              host_data(
-                  time=row.time.to_pydatetime(),
-                  host=row.host,
-                  type=row.type,
-                  dev=None,
-                  event=row.event,
-                  unit=row.unit,
-                  value=float(row.value) if pd.notna(row.value) else None,
-                  delta=float(row.delta) if pd.notna(row.delta) else None,
-                  arc=float(row.arc) if pd.notna(row.arc) else None,
-              )
-              for row in batch
-          ]
+          host_objs = [host_data_instance_from_stats_row(row) for row in batch]
           host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
     except Exception as e:
       if DEBUG:
@@ -267,17 +253,7 @@ def _insert_host_data_individually(stats_df):
     )
     for row in stats_df.itertuples(index=False):
       try:
-        host_data(
-            time=row.time.to_pydatetime(),
-            host=row.host,
-            type=row.type,
-            dev=None,
-            event=row.event,
-            unit=row.unit,
-            value=float(row.value) if pd.notna(row.value) else None,
-            delta=float(row.delta) if pd.notna(row.delta) else None,
-            arc=float(row.arc) if pd.notna(row.arc) else None,
-        ).save()
+        host_data_instance_from_stats_row(row).save()
       except IntegrityError:
         unique_violations += 1
       except Exception as e:
@@ -296,19 +272,7 @@ def _decompress_gz(gz_path):
     return
   try:
     with file_write_lock(gz_path):
-      result = subprocess.run(
-          ['/usr/bin/pigz', '-v', '-d', '-p', str(pigz_thread_count), gz_path],
-          capture_output=True,
-          text=True,
-          check=False,
-      )
-    if result.stdout:
-      log_print(result.stdout)
-    if result.stderr:
-      log_print(result.stderr)
-    if result.returncode != 0:
-      raise subprocess.CalledProcessError(
-          result.returncode, result.args, output=result.stdout, stderr=result.stderr)
+      pigz_decompress_verbose(gz_path, pigz_thread_count)
   except subprocess.CalledProcessError:
     pass
 

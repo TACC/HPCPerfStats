@@ -22,6 +22,7 @@ from hpcperfstats.dbload.date_utils import (
     parse_start_end_dates,
     to_pydatetime_or_none,
 )
+from hpcperfstats.dbload.io_helpers import job_data_instance_from_acct_row
 from hpcperfstats.file_locking import file_read_lock_wait
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.shutdown_utils import (
@@ -135,25 +136,7 @@ def _sync_acct_dataframe(df, jobs_in_db):
   df["host_list"] = df["host_list"].apply(hostlist.expand_hostlist)
   df["node_hrs"] = df["nhosts"] * df["runtime"] / 3600.
 
-  objs = [
-      job_data(
-          jid=str(row.jid),
-          username=row.username,
-          account=row.account if pd.notna(row.account) else None,
-          start_time=to_pydatetime_or_none(row.start_time),
-          end_time=to_pydatetime_or_none(row.end_time),
-          submit_time=to_pydatetime_or_none(row.submit_time),
-          queue=row.queue if pd.notna(row.queue) else None,
-          timelimit=float(row.timelimit) if pd.notna(row.timelimit) else None,
-          jobname=str(row.jobname) if pd.notna(row.jobname) else None,
-          state=row.state if pd.notna(row.state) else None,
-          nhosts=int(row.nhosts) if pd.notna(row.nhosts) else None,
-          ncores=int(row.ncores) if pd.notna(row.ncores) else None,
-          host_list=list(row.host_list) if row.host_list else [],
-          runtime=float(row.runtime) if pd.notna(row.runtime) else None,
-          node_hrs=float(row.node_hrs) if pd.notna(row.node_hrs) else None,
-      ) for row in df.itertuples(index=False)
-  ]
+  objs = [job_data_instance_from_acct_row(row) for row in df.itertuples(index=False)]
 
   if not objs:
     log_print("Total number of new entries: 0")
@@ -185,23 +168,7 @@ def _insert_job_data_individually(df):
   inserted = 0
   for row in df.itertuples(index=False):
     try:
-      job_data(
-          jid=str(row.jid),
-          username=row.username,
-          account=row.account if pd.notna(row.account) else None,
-          start_time=to_pydatetime_or_none(row.start_time),
-          end_time=to_pydatetime_or_none(row.end_time),
-          submit_time=to_pydatetime_or_none(row.submit_time),
-          queue=row.queue if pd.notna(row.queue) else None,
-          timelimit=float(row.timelimit) if pd.notna(row.timelimit) else None,
-          jobname=str(row.jobname) if pd.notna(row.jobname) else None,
-          state=row.state if pd.notna(row.state) else None,
-          nhosts=int(row.nhosts) if pd.notna(row.nhosts) else None,
-          ncores=int(row.ncores) if pd.notna(row.ncores) else None,
-          host_list=list(row.host_list) if row.host_list else [],
-          runtime=float(row.runtime) if pd.notna(row.runtime) else None,
-          node_hrs=float(row.node_hrs) if pd.notna(row.node_hrs) else None,
-      ).save()
+      job_data_instance_from_acct_row(row).save()
       inserted += 1
     except IntegrityError:
       pass  # skip duplicate jid

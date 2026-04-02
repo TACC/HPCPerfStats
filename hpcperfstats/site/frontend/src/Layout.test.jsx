@@ -37,16 +37,16 @@ describe("Layout", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows staff demotion button only for staff sessions", () => {
+  it("shows staff actions select only for staff sessions", () => {
     const firstRender = renderLayout({ logged_in: true, username: "alice", is_staff: true });
     expect(
-      screen.getByRole("button", { name: "Disable Staff Permissions" })
+      screen.getByRole("combobox", { name: "Staff actions" })
     ).toBeInTheDocument();
     firstRender.unmount();
 
     renderLayout({ logged_in: true, username: "bob", is_staff: false });
     expect(
-      screen.queryByRole("button", { name: "Disable Staff Permissions" })
+      screen.queryByRole("combobox", { name: "Staff actions" })
     ).not.toBeInTheDocument();
   });
 
@@ -66,8 +66,9 @@ describe("Layout", () => {
     const user = userEvent.setup();
     render(<SessionHarness />);
 
-    await user.click(
-      screen.getByRole("button", { name: "Disable Staff Permissions" })
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Staff actions" }),
+      "drop_staff"
     );
 
     expect(api.dropStaffForSession).toHaveBeenCalledTimes(1);
@@ -78,7 +79,7 @@ describe("Layout", () => {
       )
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Disable Staff Permissions" })
+      screen.queryByRole("combobox", { name: "Staff actions" })
     ).not.toBeInTheDocument();
   });
 });
