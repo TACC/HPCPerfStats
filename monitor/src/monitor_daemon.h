@@ -34,6 +34,7 @@ extern ev_timer rotate_timer;
 int read_conf_file(void);
 void monitor_daemon_finalize_runtime_settings(void);
 void monitor_daemon_prime_file_mode_from_dumpdir(void);
+void monitor_daemon_replay_dumpfiles_if_present(struct sf_ring_buffer *w);
 
 void monitor_daemon_rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents);
 void monitor_daemon_sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents);

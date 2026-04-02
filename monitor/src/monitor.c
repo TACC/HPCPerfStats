@@ -38,6 +38,11 @@ static void monitor_install_ev_handlers(struct sf_ring_buffer *rb)
   sighup.data = (void *)rb;
   ev_signal_init(&sighup, monitor_daemon_signal_cb_hup, SIGHUP);
   ev_signal_start(EV_DEFAULT, &sighup);
+
+  static struct ev_signal sigterm;
+  sigterm.data = (void *)rb;
+  ev_signal_init(&sigterm, monitor_daemon_signal_cb_int, SIGTERM);
+  ev_signal_start(EV_DEFAULT, &sigterm);
 }
 
 static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
@@ -109,6 +114,7 @@ int main(int argc, char *argv[])
 
   monitor_install_ev_handlers(&ring_buffer);
   monitor_require_server_or_exit();
+  monitor_daemon_replay_dumpfiles_if_present(&ring_buffer);
   monitor_start_timers_and_jobid_watcher(&ring_buffer);
 
   nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);

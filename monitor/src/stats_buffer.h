@@ -65,4 +65,9 @@ int ring_buffer_load_file(
 void stats_buffer_rmq_shutdown(void);
 void stats_buffer_runtime_caches_reset(void);
 
+#ifdef STATS_BUFFER_TEST_SEND_HOOK
+/* Unit tests provide this to exercise ring_buffer_resend without a live broker. */
+int stats_buffer_test_send_hook(struct stats_buffer *sf);
+#endif
+
 #endif

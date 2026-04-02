@@ -33,7 +33,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
 check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_nfs_schema_subset
 if RABBITMQ
-check_PROGRAMS += test_monitor_cli
+check_PROGRAMS += test_monitor_cli test_ring_buffer
 endif
 
 TESTS = $(check_PROGRAMS)
@@ -42,7 +42,7 @@ TESTS = $(check_PROGRAMS)
 check-local:
 	$(SHELL) '$(srcdir)/test_monitor_configure_help.sh.in'
 
-EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md
+EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c
 
 test_likwid_rapl_scale_SOURCES = test_likwid_rapl_scale.c
 
@@ -82,6 +82,13 @@ test_monitor_cli_SOURCES = \
 	test_monitor_cli.c \
 	test_monitor_cli_globals.c \
 	$(top_srcdir)/src/monitor_cli.c
+
+test_ring_buffer_SOURCES = \
+	test_ring_buffer.c \
+	test_ring_buffer_stubs.c \
+	$(top_srcdir)/src/stats_buffer.c \
+	$(top_srcdir)/src/stats_buffer_data_append.c
+test_ring_buffer_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
 endif
 
 # Link flags/libs match the configured tree (LDFLAGS/LIBS from configure).
@@ -96,4 +103,5 @@ test_gpu_schema_contract_LDADD = $(LDADD)
 test_nfs_schema_subset_LDADD = $(LDADD)
 if RABBITMQ
 test_monitor_cli_LDADD = $(LDADD)
+test_ring_buffer_LDADD = $(LDADD)
 endif

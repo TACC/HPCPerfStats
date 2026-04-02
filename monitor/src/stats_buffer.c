@@ -477,6 +477,12 @@ static int rmq_publish_text_payload(amqp_connection_state_t conn, struct stats_b
   return 0;
 }
 
+#ifdef STATS_BUFFER_TEST_SEND_HOOK
+static int send(struct stats_buffer *sf)
+{
+  return stats_buffer_test_send_hook(sf);
+}
+#else
 static int send(struct stats_buffer *sf)
 {
   if (rmq_ensure_connected(sf) < 0)
@@ -497,6 +503,7 @@ static int send(struct stats_buffer *sf)
   rmq_clear_connect_backoff();
   return 0;
 }
+#endif
 
 static int stats_buffer_is_schema_payload(const struct stats_buffer *sf)
 {

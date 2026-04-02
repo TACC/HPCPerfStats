@@ -520,6 +520,11 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
   free(file_list);
 }
 
+void monitor_daemon_replay_dumpfiles_if_present(struct sf_ring_buffer *w)
+{
+  send_dumpfile_stats(w);
+}
+
 static void print_buffer_status(struct sf_ring_buffer *w)
 {
 #ifdef DEBUG
@@ -613,6 +618,7 @@ void monitor_daemon_signal_cb_int(struct ev_loop *loop, ev_signal *sig, int reve
   size_t i = 0;
   struct stats_type *type;
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)sig->data;
+  monitor_daemon_resend_ring_buffer_if_nonempty(w);
   save_file_ring_buffer(w);
   print_buffer_status(w);
   stats_buffer_rmq_shutdown();
@@ -638,6 +644,14 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
   fprintf(log_stream, "Reloading hpcperfstatsd config file %s\n", conf_file_name);
   stats_buffer_runtime_caches_reset();
   read_conf_file();
+  monitor_daemon_prime_file_mode_from_dumpdir();
+  monitor_daemon_resend_ring_buffer_if_nonempty(w);
+  if (w->q_count == 0)
+    monitor_daemon_replay_dumpfiles_if_present(w);
+  else
+    fprintf(log_stream,
+	    "Skipping dumpfile replay on reload: ring buffer still has %d queued sample(s)\n",
+	    w->q_count);
   sample_timer.repeat = sample_freq;
   send_timer.repeat = send_freq;
   ev_timer_again(EV_DEFAULT, &sample_timer);
