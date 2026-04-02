@@ -1,9 +1,7 @@
 """Unit tests for dbload parsing logic (sync_acct column handling, sync_timedb line parsing).
 
 """
-import pandas as pd
 
-import pytest
 
 
 def test_sync_acct_columns_kept():

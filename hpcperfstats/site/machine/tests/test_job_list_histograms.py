@@ -1,7 +1,7 @@
-"""Unit tests for job list histograms endpoint and _job_list_histograms helper.
+"""Unit tests for job list histograms endpoint (split `?group=` API).
 
-Tests the split histogram API (job_list_histograms) and that job_list no longer
-returns script/div. Run with pytest; requires Django (site.machine.tests).
+Tests `job_list_histograms` and that `job_list` no longer returns script/div.
+Run with pytest; requires Django (site.machine.tests).
 """
 from concurrent.futures import Future
 from unittest.mock import MagicMock, patch
@@ -46,7 +46,7 @@ class TestJobListHistogramsView:
 
     def test_returns_200_with_queue_group_when_db_unavailable(self):
         """job_list_histograms returns 200 and queue payload even when DB layer raises."""
-        from hpcperfstats.site.machine.api import job_list_histograms, _build_histogram_queryset
+        from hpcperfstats.site.machine.api import job_list_histograms
 
         factory = RequestFactory()
         request = factory.get("/api/jobs/histograms/", {"group": "queue"})
@@ -167,100 +167,101 @@ def test_metric_group_null_plot_items_when_job_hist_returns_none():
     )
 
 
-def test_job_list_histograms_helper_returns_empty_figure_when_no_jobs():
-    """_job_list_histograms returns valid script/div/plot_item (empty-state figure) when queryset count is 0."""
-    from hpcperfstats.site.machine.api import _job_list_histograms
-
-    factory = RequestFactory()
-    request = factory.get("/api/jobs/histograms/")
-
-    with patch(
-        "hpcperfstats.site.machine.api._build_histogram_queryset",
-        return_value=(MagicMock(), 0, {}, {}),
-    ):
-        script, div, plot_item, histograms = _job_list_histograms(request)
-
-    assert script != ""
-    assert div != ""
-    assert plot_item is not None
-    assert histograms == []
-
-
-def test_job_list_histograms_helper_returns_tuple_when_mocked():
-    """_job_list_histograms returns (script, div, plot_item) when data and components are mocked."""
-    from hpcperfstats.site.machine.api import _job_list_histograms
-
-    factory = RequestFactory()
-    request = factory.get("/api/jobs/histograms/")
-
-    mock_qs = MagicMock()
-    mock_df = pd.DataFrame(
-        {"runtime": [1.0], "nhosts": [1.0], "queue_wait": [0.0]},
-        index=["12345"],
-    )
-    mock_gp = MagicMock()
-
-    with patch(
-        "hpcperfstats.site.machine.api._build_histogram_queryset",
-        return_value=(mock_qs, 1, {}, {}),
-    ), patch(
-        "hpcperfstats.site.machine.api._build_histogram_dataframe",
-        return_value=(mock_df, [("runtime", "hours")], ["12345"]),
-    ), patch(
-        "hpcperfstats.site.machine.api.job_hist", return_value=MagicMock()
-    ), patch(
-        "hpcperfstats.site.machine.api.gridplot", return_value=mock_gp
-    ), patch(
-        "hpcperfstats.site.machine.api.components",
-        return_value=("<script></script>", "<div></div>"),
-    ), patch(
-        "hpcperfstats.site.machine.api.json_item", return_value={"doc": {}, "root_id": "x"}
-    ):
-        script, div, plot_item, histograms = _job_list_histograms(request)
-
-    assert isinstance(script, str)
-    assert isinstance(div, str)
-    assert script == "<script></script>"
-    assert div == "<div></div>"
-    assert plot_item is not None
-    assert isinstance(histograms, list)
-
-
-def test_job_list_histograms_uses_build_histogram_helpers():
-    """_job_list_histograms delegates queryset and dataframe construction to shared helpers."""
+def test_queue_group_with_jobs_does_not_call_build_histogram_dataframe():
+    """group=queue only needs the job queryset, not the histogram dataframe."""
     from hpcperfstats.site.machine import api as api_module
-    from hpcperfstats.site.machine.api import _job_list_histograms
+    from hpcperfstats.site.machine.api import job_list_histograms
 
     factory = RequestFactory()
-    request = factory.get("/api/jobs/histograms/")
+    request = factory.get("/api/jobs/histograms/", {"group": "queue"})
 
-    with patch.object(
-        api_module, "_build_histogram_queryset", return_value=(MagicMock(), 0, {}, {})
-    ) as mock_qs_build, patch.object(api_module, "_build_histogram_dataframe") as mock_df_build:
-        _job_list_histograms(request)
+    with override_settings(
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                "LOCATION": "job-list-hist-queue-delegate-test",
+            }
+        }
+    ), patch.object(
+        api_module, "_build_histogram_queryset", return_value=(MagicMock(), 2, {}, {})
+    ) as mock_qs_build, patch.object(
+        api_module, "_build_histogram_dataframe"
+    ) as mock_df_build, patch(
+        "hpcperfstats.site.machine.api.check_for_tokens", return_value=True
+    ), patch(
+        "hpcperfstats.site.machine.api._get_small_executor",
+        return_value=_SyncExecutor(),
+    ), patch(
+        "hpcperfstats.site.machine.api._job_list_queue_bar_chart",
+        return_value=MagicMock(),
+    ), patch(
+        "hpcperfstats.site.machine.api.json_item",
+        return_value={"stub": True},
+    ):
+        job_list_histograms(request)
 
     mock_qs_build.assert_called_once_with(request)
     mock_df_build.assert_not_called()
 
 
-@pytest.mark.django_db
-class TestJobListNoHistogramsInResponse:
-  """Ensure job_list response no longer includes script/div."""
-
-  def test_job_list_response_omits_script_and_div(self):
-    """job_list returns JSON without 'script' or 'div' keys."""
-    from hpcperfstats.site.machine.api import job_list
+def test_metric_group_calls_build_histogram_dataframe_when_jobs_present():
+    """group=metric builds the dataframe from the queryset."""
+    from hpcperfstats.site.machine import api as api_module
+    from hpcperfstats.site.machine.api import job_list_histograms
 
     factory = RequestFactory()
-    request = factory.get("/api/jobs/")
+    request = factory.get(
+        "/api/jobs/histograms/",
+        {"group": "metric", "metric": "runtime"},
+    )
+    mock_df = pd.DataFrame({"runtime": [1.0]}, index=["1"])
 
-    with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True):
-      response = job_list(request)
+    with override_settings(
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                "LOCATION": "job-list-hist-metric-delegate-test",
+            }
+        }
+    ), patch.object(
+        api_module, "_build_histogram_queryset", return_value=(MagicMock(), 1, {}, {})
+    ) as mock_qs_build, patch.object(
+        api_module,
+        "_build_histogram_dataframe",
+        return_value=(mock_df, [("runtime", "hours")], ["1"]),
+    ) as mock_df_build, patch(
+        "hpcperfstats.site.machine.api.check_for_tokens", return_value=True
+    ), patch(
+        "hpcperfstats.site.machine.api._job_list_metric_hist_pair",
+        return_value=(MagicMock(), MagicMock()),
+    ), patch(
+        "hpcperfstats.site.machine.api.json_item",
+        return_value={"stub": True},
+    ):
+        job_list_histograms(request)
 
-    # With empty DB we may get 404 (no data) or 200 (empty list)
-    if response.status_code == 200:
-      data = response.json()
-      assert "script" not in data, "job_list must not return script (use histograms endpoint)"
-      assert "div" not in data, "job_list must not return div (use histograms endpoint)"
-      assert "job_list" in data
-      assert "pagination" in data
+    mock_qs_build.assert_called_once_with(request)
+    mock_df_build.assert_called_once()
+
+
+@pytest.mark.django_db
+class TestJobListNoHistogramsInResponse:
+    """Ensure job_list response no longer includes script/div."""
+
+    def test_job_list_response_omits_script_and_div(self):
+        """job_list returns JSON without 'script' or 'div' keys."""
+        from hpcperfstats.site.machine.api import job_list
+
+        factory = RequestFactory()
+        request = factory.get("/api/jobs/")
+
+        with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True):
+            response = job_list(request)
+
+        # With empty DB we may get 404 (no data) or 200 (empty list)
+        if response.status_code == 200:
+            data = response.json()
+            assert "script" not in data, "job_list must not return script (use histograms endpoint)"
+            assert "div" not in data, "job_list must not return div (use histograms endpoint)"
+            assert "job_list" in data
+            assert "pagination" in data

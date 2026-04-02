@@ -2,7 +2,6 @@
 """XALT data enrichment script. Uses Django ORM for xalt DB (run, join_run_object, lib). Note: Current job_data has no exe/exec_path/cwd/threads; XALT run data is still queried in views. This script optionally iterates by date and logs xalt runs for jobs.
 
 """
-import os
 import sys
 from datetime import datetime
 
@@ -12,7 +11,7 @@ ensure_django()
 from hpcperfstats.dbload.date_utils import daterange, parse_start_end_dates
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.site.machine.models import job_data
-from hpcperfstats.site.xalt.models import join_run_object, lib, run
+from hpcperfstats.site.xalt.models import run
 
 default_start = datetime.now()
 default_end = default_start

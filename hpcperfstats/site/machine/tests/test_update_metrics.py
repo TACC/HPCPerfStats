@@ -4,7 +4,6 @@
 from datetime import datetime
 from unittest.mock import MagicMock
 
-import pytest
 
 from hpcperfstats.analysis.metrics.update_metrics import _iter_chunked_pks
 from hpcperfstats.analysis.metrics import update_metrics

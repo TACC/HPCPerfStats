@@ -1,5 +1,4 @@
 """Unit tests for query_utils date normalization and month expansion."""
-import pytest
 
 from hpcperfstats.site.machine.query_utils import (
     expand_month_date_to_range,

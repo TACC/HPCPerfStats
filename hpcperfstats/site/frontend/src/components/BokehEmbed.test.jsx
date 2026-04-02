@@ -89,6 +89,22 @@ describe("BokehEmbed", () => {
     expect(screen.queryByText("Data not available.")).not.toBeInTheDocument();
   });
 
+  it("stops Bokeh readiness polling when unmounted before Bokeh loads", async () => {
+    vi.useFakeTimers();
+    const clearIntervalSpy = vi.spyOn(global, "clearInterval");
+    delete window.Bokeh;
+
+    const { unmount } = renderBokehEmbed(
+      <BokehEmbed item={{ doc: {}, root_ids: ["r1"] }} id="bokeh-timer-test" />
+    );
+
+    unmount();
+    await vi.runOnlyPendingTimersAsync();
+    expect(clearIntervalSpy).toHaveBeenCalled();
+    clearIntervalSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
   it("does not execute legacy script/div payloads", () => {
     const embedItem = vi.fn();
     window.Bokeh = { embed: { embed_item: embedItem } };

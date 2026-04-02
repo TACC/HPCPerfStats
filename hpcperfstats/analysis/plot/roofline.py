@@ -17,7 +17,6 @@ from hpcperfstats.analysis.gen.utils import (
     INTEL_FP_ARITH_ALL_EVENTS,
     INTEL_IMC_STATS_TYPES,
     INTEL_LEGACY_SSE_FLOP_EVENTS,
-    new_plain_log_tick_formatter,
     new_plain_number_hover_formatter,
 )
 

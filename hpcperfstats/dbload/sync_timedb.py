@@ -23,7 +23,6 @@ ensure_django()
 import hpcperfstats.dbload.django_timezone_utc_shim  # noqa: F401
 
 from django.db import IntegrityError, close_old_connections, connections
-import pandas as pd
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
@@ -40,9 +39,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     collect_stats_files_in_range,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
-    get_stats_chunk,
     rescan_pending_stats_files,
-    get_tar_member_name,
     get_verified_files_to_remove,
     stats_file_is_active_segment,
 )

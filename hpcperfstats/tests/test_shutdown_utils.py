@@ -1,4 +1,3 @@
-import types
 
 import pytest
 

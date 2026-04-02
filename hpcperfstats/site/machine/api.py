@@ -10,13 +10,11 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 
 import hpcperfstats.conf_parser as cfg
 from bokeh.embed import components, json_item
-from bokeh.layouts import gridplot
 from bokeh.plotting import figure
 from django.utils import timezone
 from pandas import DataFrame, to_timedelta
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from django.conf import settings
@@ -88,7 +86,6 @@ from .views import (
 
 # Shared thread pools (capped total threads per process).
 _small_executor = None   # dashboard, queue histograms, job_detail, job_plots (≤8 tasks)
-_metric_hist_executor = None  # per-metric histograms in job list (up to 8)
 _job_plots_lock = threading.Lock()
 
 JOB_DETAIL_CACHE_TTL_RECENT = 4 * 3600
@@ -164,12 +161,6 @@ def _get_small_executor():
     if _small_executor is None:
         _small_executor = ThreadPoolExecutor(max_workers=8)
     return _small_executor
-
-def _get_metric_hist_executor():
-    global _metric_hist_executor
-    if _metric_hist_executor is None:
-        _metric_hist_executor = ThreadPoolExecutor(max_workers=8)
-    return _metric_hist_executor
 
 
 def _job_detail_cache_ttl_for_end_time(end_time):
@@ -1289,18 +1280,6 @@ JOB_HIST_DISPLAY_NAMES = {
 }
 
 
-def _job_list_histograms_empty_figure():
-    """Return a single Bokeh figure for empty histogram state (no jobs or no plottable metrics)."""
-    empty = figure(
-        height=400,
-        width=600,
-        title="No histogram data available for this job list.",
-        toolbar_location=None,
-    )
-    set_linear_axes_plain_numeric(empty)
-    return gridplot([[empty]], toolbar_location=None)
-
-
 def _build_histogram_queryset(request):
     """
     Build the base queryset and metric filters for histogram endpoints.
@@ -1497,138 +1476,6 @@ def _job_list_metric_hist_pair(df, metric_name, label, display_title, thumb_wh, 
         df, metric_name, label, width=fw, height=fh, title=display_title
     )
     return p_thumb, p_full
-
-
-def _job_list_metric_hist_sidecar_result(df, m, lbl, thumb_wh, full_wh):
-    """Build (display_title, p_thumb, p_full) for parallel legacy histogram sidecar."""
-    display_title = JOB_HIST_DISPLAY_NAMES.get(m, m)
-    p_thumb, p_full = _job_list_metric_hist_pair(
-        df, m, lbl, display_title, thumb_wh, full_wh
-    )
-    return display_title, p_thumb, p_full
-
-
-def _job_list_queue_histogram_sidecar_entries(job_list_qs, thumb_wh, full_wh):
-    """Queue thumb/full json items for legacy combined job-list histogram response."""
-    executor = _get_small_executor()
-    out = []
-    for metric, _plot_key, title, _unavail_msg in _JOB_LIST_QUEUE_HIST_SPECS:
-        f_thumb = executor.submit(
-            partial(_job_list_queue_bar_chart, metric=metric),
-            job_list_qs,
-            *thumb_wh,
-        )
-        f_full = executor.submit(
-            partial(_job_list_queue_bar_chart, metric=metric),
-            job_list_qs,
-            *full_wh,
-        )
-        thumb_plot = f_thumb.result()
-        full_plot = f_full.result()
-        if thumb_plot is not None and full_plot is not None:
-            out.append(
-                {
-                    "title": title,
-                    "plot_item_thumb": json_item(thumb_plot),
-                    "plot_item_full": json_item(full_plot),
-                }
-            )
-    return out
-
-
-def _job_list_histograms(request):
-    """Build Bokeh script/div and json_item for job list histograms. Returns (script, div, plot_item)."""
-    job_list_qs, nj, _fields, cur_metrics = _build_histogram_queryset(request)
-
-    if nj == 0:
-        gp = _job_list_histograms_empty_figure()
-        script, div = components(gp)
-        return script, div, json_item(gp), []
-
-    df, hist_metrics, _jids_ordered = _build_histogram_dataframe(job_list_qs, cur_metrics)
-
-    THUMB_WIDTH, THUMB_HEIGHT = 280, 200
-    FULL_WIDTH, FULL_HEIGHT = 600, 400
-    thumb_wh = (THUMB_WIDTH, THUMB_HEIGHT)
-    full_wh = (FULL_WIDTH, FULL_HEIGHT)
-
-    def _build_grid_plot_list():
-        """Build list of figures for the main grid (each figure must be used in only one document)."""
-        pl = [
-            job_hist(df, metric, label, title=JOB_HIST_DISPLAY_NAMES.get(metric, metric))
-            for metric, label in hist_metrics
-        ]
-        pl = [p for p in pl if p is not None]
-        for metric, _pk, _title, _unavail in _JOB_LIST_QUEUE_HIST_SPECS:
-            q_full = _job_list_queue_bar_chart(
-                job_list_qs, width=FULL_WIDTH, height=FULL_HEIGHT, metric=metric
-            )
-            if q_full is not None:
-                pl.append(q_full)
-        return pl
-
-    script = ""
-    div = ""
-    plot_item = None
-    histograms = []
-    try:
-        histograms.extend(
-            _job_list_queue_histogram_sidecar_entries(job_list_qs, thumb_wh, full_wh)
-        )
-
-        plot_list_1 = _build_grid_plot_list()
-        if plot_list_1:
-            # Build per-metric thumb/full figures in parallel
-            metric_hist_by_key = {}
-            executor = _get_metric_hist_executor()
-            futures = {
-                executor.submit(
-                    _job_list_metric_hist_sidecar_result,
-                    df,
-                    m,
-                    lbl,
-                    thumb_wh,
-                    full_wh,
-                ): (m, lbl)
-                for m, lbl in hist_metrics
-            }
-            for fut in as_completed(futures):
-                m, lbl = futures[fut]
-                try:
-                    display_title, p_thumb, p_full = fut.result()
-                    if p_thumb is not None and p_full is not None:
-                        metric_hist_by_key[(m, lbl)] = (display_title, p_thumb, p_full)
-                except Exception:
-                    pass
-            for metric, label in hist_metrics:
-                entry = metric_hist_by_key.get((metric, label))
-                if entry is not None:
-                    display_title, p_thumb, p_full = entry
-                    histograms.append({
-                        "title": display_title,
-                        "plot_item_thumb": json_item(p_thumb),
-                        "plot_item_full": json_item(p_full),
-                    })
-            # Two separate gridplots: Bokeh models can belong to only one document
-            plot_list_2 = _build_grid_plot_list()
-            gp1 = gridplot(plot_list_1, ncols=2)
-            gp2 = gridplot(plot_list_2, ncols=2)
-            script, div = components(gp1)
-            plot_item = json_item(gp2)
-        else:
-            gp1 = _job_list_histograms_empty_figure()
-            gp2 = _job_list_histograms_empty_figure()
-            script, div = components(gp1)
-            plot_item = json_item(gp2)
-    except Exception as e:
-        logging.getLogger(__name__).warning(
-            "Failed to generate job list histograms: %s", e, exc_info=True
-        )
-        gp1 = _job_list_histograms_empty_figure()
-        gp2 = _job_list_histograms_empty_figure()
-        script, div = components(gp1)
-        plot_item = json_item(gp2)
-    return script, div, plot_item, histograms
 
 
 @cache_page(TIMEOUT_MEDIUM)

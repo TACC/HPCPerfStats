@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 from types import SimpleNamespace
 
 from hpcperfstats.dbload.io_helpers import (

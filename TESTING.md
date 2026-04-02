@@ -83,6 +83,35 @@ E2E_SEED_CMD="python your_seed_script.py" tests/run_web_e2e_workflow.sh
 - **Django tests**: PostgreSQL/Redis availability and valid `HPCPERFSTATS_INI` with required sections (`[PORTAL]`, `[DEFAULT]`).
 - **Browser E2E tests**: Playwright/Chromium tooling (installed by the E2E workflow script unless skipped).
 
+## Optional memory profiling (development)
+
+Use these on a machine with DB/Redis available (for example the Docker Compose `web` service) when investigating RSS growth in long-lived workers or CLI jobs. They are not part of CI.
+
+**tracemalloc** (stdlib) around a focused pytest node:
+
+```bash
+PYTHONPATH=. python -X tracemalloc=25 -m pytest -q \
+  hpcperfstats/site/machine/tests/test_job_plots_timeout.py \
+  --tb=no 2>&1 | tail -20
+```
+
+**memray** (install with `pip install memray` in the same environment) on a single test file:
+
+```bash
+PYTHONPATH=. memray run -m pytest -q hpcperfstats/site/machine/tests/test_job_plots_timeout.py
+memray flamegraph memray-*.bin
+```
+
+For ingestion-style workloads, run `memray` against a short `sync_timedb` invocation or a targeted dbload test module instead of the full archive scan.
+
+**Unused imports (ruff F401):** install [Ruff](https://docs.astral.sh/ruff/) in your environment (`pip install ruff`), then from the project root:
+
+```bash
+ruff check hpcperfstats --select F401
+```
+
+Use `ruff check hpcperfstats --select F401 --fix` only after reviewing the diff (tests and dynamic imports can confuse static analysis).
+
 ## Notes
 
 - `pyproject.toml` exposes the canonical web E2E runner path under `[tool.hpcperfstats.testing].web_e2e_runner`.

@@ -1,6 +1,4 @@
-import time
 
-import pytest
 
 import hpcperfstats.listend as listend
 

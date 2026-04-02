@@ -5,10 +5,8 @@ import inspect
 import subprocess
 import sys
 from pathlib import Path
-import warnings
 
 from django.conf import settings
-from django.core.cache.backends.base import CacheKeyWarning
 
 import hpcperfstats.conf_parser as cfg
 import hpcperfstats.site.hpcperfstats_site.settings as site_settings

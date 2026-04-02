@@ -1,6 +1,4 @@
-import types
 
-import pytest
 
 
 class _FakeQueueMethod:

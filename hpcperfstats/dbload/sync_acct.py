@@ -20,7 +20,6 @@ import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.date_utils import (
     log_date_range,
     parse_start_end_dates,
-    to_pydatetime_or_none,
 )
 from hpcperfstats.dbload.io_helpers import job_data_instance_from_acct_row
 from hpcperfstats.file_locking import file_read_lock_wait

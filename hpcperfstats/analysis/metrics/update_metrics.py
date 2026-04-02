@@ -12,10 +12,8 @@ first** (``end_time`` descending, then ``jid`` descending as a stable tiebreaker
 """
 import functools
 import gc
-import os
 import signal
 import sys
-import time
 from types import SimpleNamespace
 from datetime import datetime, timedelta
 from hpcperfstats.django_bootstrap import ensure_django

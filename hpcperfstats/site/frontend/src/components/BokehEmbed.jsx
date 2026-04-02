@@ -1,20 +1,52 @@
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "../session-context";
 
-/** Poll until window.Bokeh is defined (Bokeh JS loaded), then resolve. */
-function whenBokehReady(timeoutMs = 10000) {
-  if (typeof window !== "undefined" && window.Bokeh) return Promise.resolve();
+/**
+ * Poll until window.Bokeh is defined (Bokeh JS loaded), then resolve.
+ * Pass `signal` (e.g. AbortController.signal) so unmount clears the interval and rejects with AbortError.
+ */
+function whenBokehReady(timeoutMs = 10000, options = {}) {
+  const signal = options.signal;
+  if (typeof window !== "undefined" && window.Bokeh) {
+    return Promise.resolve();
+  }
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let intervalId = null;
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+
+    const onAbort = () => {
+      if (intervalId !== null) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+      finish(() => reject(new DOMException("Bokeh wait aborted", "AbortError")));
+    };
+
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
     const deadline = Date.now() + timeoutMs;
-    const t = setInterval(() => {
+    intervalId = setInterval(() => {
       if (typeof window !== "undefined" && window.Bokeh) {
-        clearInterval(t);
-        resolve();
+        clearInterval(intervalId);
+        intervalId = null;
+        finish(() => resolve());
         return;
       }
       if (Date.now() > deadline) {
-        clearInterval(t);
-        reject(new Error("Bokeh JS did not load in time"));
+        clearInterval(intervalId);
+        intervalId = null;
+        finish(() => reject(new Error("Bokeh JS did not load in time")));
       }
     }, 50);
   });
@@ -148,7 +180,8 @@ export default function BokehEmbed({
     if (!item) return;
 
     let cancelled = false;
-    whenBokehReady()
+    const bokehWait = new AbortController();
+    whenBokehReady(10000, { signal: bokehWait.signal })
       .then(() => {
         if (cancelled || !containerRef.current) return;
         const el = document.getElementById(id);
@@ -187,15 +220,15 @@ export default function BokehEmbed({
         }
       })
       .catch((err) => {
-        if (!cancelled) {
-          setFailureReason(err?.message || "Bokeh JS did not load in time");
-          setLoadFailed(true);
-          if (onPlotReadyChange) onPlotReadyChange(false);
-        }
+        if (cancelled || err?.name === "AbortError") return;
+        setFailureReason(err?.message || "Bokeh JS did not load in time");
+        setLoadFailed(true);
+        if (onPlotReadyChange) onPlotReadyChange(false);
       });
 
     return () => {
       cancelled = true;
+      bokehWait.abort();
     };
   }, [item, id, onPlotReadyChange, maximizeInContainer]);
 

@@ -4,7 +4,6 @@
 import numpy as np
 import pandas as pd
 
-import pytest
 
 
 def test_clean_dataframe_fillna():

@@ -24,7 +24,6 @@ from hpcperfstats.site.machine.cache_utils import (
     TIMEOUT_SHORT,
 )
 from hpcperfstats.site.machine.models import host_data, job_data
-from django.db.models import Sum
 
 local_timezone = cfg.get_local_timezone()
 _logger = logging.getLogger(__name__)

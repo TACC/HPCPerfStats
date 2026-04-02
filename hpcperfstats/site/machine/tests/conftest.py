@@ -4,7 +4,6 @@
 import os
 import tempfile
 
-import pytest
 
 
 def pytest_configure(config):

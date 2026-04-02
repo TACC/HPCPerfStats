@@ -1,8 +1,6 @@
 """Heatmap plot: CPI (cycles/instruction) per host per time for a job using utils and Bokeh rects."""
-import hpcperfstats.conf_parser as cfg
 
 import numpy
-import pandas as pd
 from bokeh.models import (
     BasicTicker,
     ColorBar,

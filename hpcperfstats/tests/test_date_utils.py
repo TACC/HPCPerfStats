@@ -1,7 +1,6 @@
 """Unit tests for dbload.date_utils."""
 from datetime import datetime, timedelta
 
-import pytest
 
 from hpcperfstats.dbload.date_utils import daterange, parse_start_end_dates
 
