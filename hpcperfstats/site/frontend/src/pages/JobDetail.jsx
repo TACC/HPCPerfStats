@@ -50,33 +50,39 @@ const PlotPanel = memo(function PlotPanel({
   const [isPlotRendered, setIsPlotRendered] = useState(false);
 
   return (
-    <div style={{ position: "relative" }}>
-      {isPlotRendered ? (
-        <button
-          type="button"
-          className="btn btn-link p-0"
-          onClick={() => onZoom(panelKey)}
-          aria-label={`Zoom ${plotName}`}
-          style={{
-            position: "absolute",
-            top: "0.4rem",
-            right: "0.55rem",
-            zIndex: 2,
-            backgroundColor: "rgba(255, 255, 255, 0.9)",
-            borderRadius: "0.2rem",
-          }}
-        >
-          zoom
-        </button>
-      ) : null}
-      <BokehEmbed
-        item={item}
-        id={id}
-        plotName={plotName}
-        unavailableReason={unavailableReason}
-        isLoadingExternal={isLoading}
-        onPlotReadyChange={setIsPlotRendered}
-      />
+    <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          alignItems: "center",
+          flexShrink: 0,
+          minHeight: isPlotRendered ? "1.625rem" : 0,
+          marginBottom: isPlotRendered ? "0.15rem" : 0,
+        }}
+      >
+        {isPlotRendered ? (
+          <button
+            type="button"
+            className="btn btn-link btn-sm py-0 px-1"
+            onClick={() => onZoom(panelKey)}
+            aria-label={`Zoom ${plotName}`}
+            style={{ lineHeight: 1.35, textDecoration: "underline" }}
+          >
+            zoom
+          </button>
+        ) : null}
+      </div>
+      <div style={{ position: "relative", minWidth: 0, width: "100%" }}>
+        <BokehEmbed
+          item={item}
+          id={id}
+          plotName={plotName}
+          unavailableReason={unavailableReason}
+          isLoadingExternal={isLoading}
+          onPlotReadyChange={setIsPlotRendered}
+        />
+      </div>
     </div>
   );
 });
