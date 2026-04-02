@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, memo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../api";
 import BokehEmbed from "../components/BokehEmbed";
@@ -38,7 +38,8 @@ function formatJobMetricCell(obj, isStaff) {
   return "Data not available.";
 }
 
-function PlotPanel({
+const PlotPanel = memo(function PlotPanel({
+  panelKey,
   item,
   id,
   plotName,
@@ -54,7 +55,7 @@ function PlotPanel({
         <button
           type="button"
           className="btn btn-link p-0"
-          onClick={onZoom}
+          onClick={() => onZoom(panelKey)}
           aria-label={`Zoom ${plotName}`}
           style={{
             position: "absolute",
@@ -78,7 +79,7 @@ function PlotPanel({
       />
     </div>
   );
-}
+});
 
 const JOB_PLOT_CONFIGS = [
   {
@@ -158,6 +159,26 @@ export function mergeProgressiveJobPlotsState(prevPlots, resp) {
   }, {});
 }
 
+export function jobPlotEntryEqual(p, q) {
+  if (p === q) return true;
+  if (!p || !q) return false;
+  if (p.loading !== q.loading || p.unavailableReason !== q.unavailableReason) return false;
+  if (p.plotItem === q.plotItem) return true;
+  if (p.plotItem == null && q.plotItem == null) return true;
+  if (p.plotItem == null || q.plotItem == null) return false;
+  try {
+    return JSON.stringify(p.plotItem) === JSON.stringify(q.plotItem);
+  } catch {
+    return false;
+  }
+}
+
+export function jobPlotStatesEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return JOB_PLOT_CONFIGS.every((cfg) => jobPlotEntryEqual(a[cfg.key], b[cfg.key]));
+}
+
 export default function JobDetail() {
   const session = useSession();
   const isStaff = !!session?.is_staff;
@@ -229,7 +250,10 @@ export default function JobDetail() {
 
             if (plotResponse?.status === "partial" && plotResponse?.progressive) {
               keepLoading = true;
-              setPlots((prev) => mergeProgressiveJobPlotsState(prev, plotResponse));
+              setPlots((prev) => {
+                const merged = mergeProgressiveJobPlotsState(prev, plotResponse);
+                return jobPlotStatesEqual(prev, merged) ? prev : merged;
+              });
               const retryAfterMs = Math.max(
                 250,
                 Number(plotResponse.retry_after_seconds ?? 2) * 1000
@@ -245,13 +269,19 @@ export default function JobDetail() {
               plotResponse?.status === "ready" &&
               Object.hasOwn(plotResponse, "mplot_item")
             ) {
-              setPlots(plotsStateFromBatchResponse(plotResponse));
+              setPlots((prev) => {
+                const next = plotsStateFromBatchResponse(plotResponse);
+                return jobPlotStatesEqual(prev, next) ? prev : next;
+              });
             } else if (
               plotResponse &&
               typeof plotResponse === "object" &&
               Object.hasOwn(plotResponse, "mplot_item")
             ) {
-              setPlots(plotsStateFromBatchResponse(plotResponse));
+              setPlots((prev) => {
+                const next = plotsStateFromBatchResponse(plotResponse);
+                return jobPlotStatesEqual(prev, next) ? prev : next;
+              });
             } else {
               setPlots(
                 JOB_PLOT_CONFIGS.reduce((acc, config) => {
@@ -361,6 +391,10 @@ export default function JobDetail() {
       cancelled = true;
     };
   }, [zoomPlotKey, pk]);
+
+  const handlePlotZoom = useCallback((panelKey) => {
+    setZoomPlotKey(panelKey);
+  }, []);
 
   if (loading) return <LoadingMessage message="Loading job detail…" />;
   if (error) return <div className="container text-danger">Error: {error}</div>;
@@ -736,12 +770,13 @@ export default function JobDetail() {
                 {row.map((panel) => (
                   <td key={panel.key}>
                     <PlotPanel
+                      panelKey={panel.key}
                       item={panel.item}
                       id={panel.id}
                       plotName={panel.plotName}
                       unavailableReason={panel.unavailableReason}
                       isLoading={panel.isLoading}
-                      onZoom={() => setZoomPlotKey(panel.key)}
+                      onZoom={handlePlotZoom}
                     />
                   </td>
                 ))}

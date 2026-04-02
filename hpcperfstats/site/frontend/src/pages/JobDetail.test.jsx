@@ -2,7 +2,11 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
-import JobDetail, { mergeProgressiveJobPlotsState } from "./JobDetail";
+import JobDetail, {
+  jobPlotEntryEqual,
+  jobPlotStatesEqual,
+  mergeProgressiveJobPlotsState,
+} from "./JobDetail";
 import * as apiModule from "../api";
 import { SessionContext } from "../session-context";
 
@@ -417,6 +421,56 @@ describe("JobDetail", () => {
       expect(screen.getByText("Host-level Plots")).toBeInTheDocument();
     });
     expect(screen.queryAllByRole("button", { name: /^Zoom /i })).toHaveLength(0);
+  });
+});
+
+describe("jobPlotStatesEqual", () => {
+  it("returns true when only nested object identities differ but payload matches", () => {
+    const a = {
+      summary_plot: {
+        loading: false,
+        plotItem: { doc: { id: "1" }, root_ids: ["r"] },
+        unavailableReason: null,
+      },
+      heatmap: { loading: true, plotItem: null, unavailableReason: null },
+      roofline: { loading: true, plotItem: null, unavailableReason: null },
+      gpu_roofline: { loading: true, plotItem: null, unavailableReason: null },
+    };
+    const b = {
+      summary_plot: {
+        loading: false,
+        plotItem: { doc: { id: "1" }, root_ids: ["r"] },
+        unavailableReason: null,
+      },
+      heatmap: { loading: true, plotItem: null, unavailableReason: null },
+      roofline: { loading: true, plotItem: null, unavailableReason: null },
+      gpu_roofline: { loading: true, plotItem: null, unavailableReason: null },
+    };
+    expect(a.summary_plot.plotItem).not.toBe(b.summary_plot.plotItem);
+    expect(jobPlotStatesEqual(a, b)).toBe(true);
+  });
+
+  it("returns false when loading flips for one plot", () => {
+    const a = {
+      summary_plot: { loading: true, plotItem: null, unavailableReason: null },
+      heatmap: { loading: true, plotItem: null, unavailableReason: null },
+      roofline: { loading: true, plotItem: null, unavailableReason: null },
+      gpu_roofline: { loading: true, plotItem: null, unavailableReason: null },
+    };
+    const b = {
+      ...a,
+      summary_plot: { loading: false, plotItem: { x: 1 }, unavailableReason: null },
+    };
+    expect(jobPlotStatesEqual(a, b)).toBe(false);
+  });
+});
+
+describe("jobPlotEntryEqual", () => {
+  it("compares plotItem by structure when references differ", () => {
+    const p = { loading: false, plotItem: { a: 1 }, unavailableReason: null };
+    const q = { loading: false, plotItem: { a: 1 }, unavailableReason: null };
+    expect(p.plotItem).not.toBe(q.plotItem);
+    expect(jobPlotEntryEqual(p, q)).toBe(true);
   });
 });
 
