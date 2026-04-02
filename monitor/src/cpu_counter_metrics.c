@@ -483,6 +483,53 @@ static void dcgm_cpu_watch_cleanup(void)
   g_dcgm_cpu_nchunks = 0;
 }
 
+static void dcgm_backend_cleanup(void)
+{
+  dcgm_cpu_watch_cleanup();
+
+  free(g_dcgm_ctr0); g_dcgm_ctr0 = NULL;
+  free(g_dcgm_ctr1); g_dcgm_ctr1 = NULL;
+  free(g_dcgm_ctr2); g_dcgm_ctr2 = NULL;
+  free(g_dcgm_ctr3); g_dcgm_ctr3 = NULL;
+  free(g_dcgm_ctr4); g_dcgm_ctr4 = NULL;
+  free(g_dcgm_ctr5); g_dcgm_ctr5 = NULL;
+  free(g_dcgm_inst); g_dcgm_inst = NULL;
+  free(g_dcgm_aperf); g_dcgm_aperf = NULL;
+  free(g_dcgm_mperf); g_dcgm_mperf = NULL;
+  free(g_dcgm_arm_est_flops); g_dcgm_arm_est_flops = NULL;
+  free(g_dcgm_arm_dram_bytes); g_dcgm_arm_dram_bytes = NULL;
+  free(g_dcgm_fp_sca_d); g_dcgm_fp_sca_d = NULL;
+  free(g_dcgm_fp_128_d); g_dcgm_fp_128_d = NULL;
+  free(g_dcgm_fp_256_d); g_dcgm_fp_256_d = NULL;
+  free(g_dcgm_fp_512_d); g_dcgm_fp_512_d = NULL;
+  free(g_dcgm_fp_sca_s); g_dcgm_fp_sca_s = NULL;
+  free(g_dcgm_fp_128_s); g_dcgm_fp_128_s = NULL;
+  free(g_dcgm_fp_256_s); g_dcgm_fp_256_s = NULL;
+  free(g_dcgm_fp_512_s); g_dcgm_fp_512_s = NULL;
+  free(g_dcgm_last_ts); g_dcgm_last_ts = NULL;
+  free(g_dcjm_prev); g_dcjm_prev = NULL;
+  free(g_dcjm_cur); g_dcjm_cur = NULL;
+
+  if (g_dcgm_proc_stat != NULL) {
+    fclose(g_dcgm_proc_stat);
+    g_dcgm_proc_stat = NULL;
+  }
+
+  if (g_dcgm_handle != (dcgmHandle_t) NULL) {
+    if (g_dcgm_cpu_use_disconnect)
+      (void) dcgmDisconnect(g_dcgm_handle);
+    else
+      (void) dcgmStopEmbedded(g_dcgm_handle);
+    g_dcgm_handle = (dcgmHandle_t) NULL;
+  }
+  (void) dcgmShutdown();
+
+  g_dcgm_cpu_use_disconnect = 0;
+  g_dcgm_stat_seeded = 0;
+  g_dcgm_mono_prev_us = 0;
+  g_dcgm_ready = 0;
+}
+
 static int dcgm_cpu_watch_install(void)
 {
   int chunk, i, start, end;
@@ -545,6 +592,11 @@ static int dcgm_backend_begin(struct stats_type *type)
   size_t n = (size_t) nr_cpus;
   dcgmReturn_t rc;
 
+  if (g_dcgm_ready)
+    return 0;
+  /* Defensive: if prior init failed halfway, release leftovers first. */
+  dcgm_backend_cleanup();
+
   rc = dcgmInit();
   if (rc != DCGM_ST_OK) {
     ERROR("DCGM CPU backend init failed\n");
@@ -590,15 +642,7 @@ static int dcgm_backend_begin(struct stats_type *type)
       g_dcgm_fp_256_s == NULL || g_dcgm_fp_512_s == NULL ||
       g_dcgm_last_ts == NULL || g_dcjm_prev == NULL || g_dcjm_cur == NULL) {
     ERROR("DCGM CPU backend allocation failed\n");
-    dcgm_cpu_watch_cleanup();
-    if (g_dcgm_handle != (dcgmHandle_t) NULL) {
-      if (g_dcgm_cpu_use_disconnect)
-	(void) dcgmDisconnect(g_dcgm_handle);
-      else
-	(void) dcgmStopEmbedded(g_dcgm_handle);
-      g_dcgm_handle = (dcgmHandle_t) NULL;
-    }
-    (void) dcgmShutdown();
+    dcgm_backend_cleanup();
     type->st_enabled = 0;
     return 0;
   }

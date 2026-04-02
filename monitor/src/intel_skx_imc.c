@@ -148,12 +148,13 @@ const uint64_t mmconfig_size = 0x10000000;
 static int intel_skx_imc_begin(struct stats_type *type)
 {
   int nr = 0;
+  char **dev_paths = NULL;
+  int nr_devs = 0;
+  uint32_t *mmconfig_ptr = MAP_FAILED;
+  int fd = -1;
 
   if (processor != SKYLAKE) goto out;
-
-  uint32_t *mmconfig_ptr;
-
-  int fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
+  fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
   if (fd < 0) {
     ERROR("cannot open /dev/mem\n");
     goto out;
@@ -164,8 +165,6 @@ static int intel_skx_imc_begin(struct stats_type *type)
     goto out;
   }
 
-  char **dev_paths = NULL;
-  int nr_devs;
   int nr_events = 4;
 
   if (pci_map_create(&dev_paths, &nr_devs, imc_dclk_dids, 3) < 0) {
@@ -177,17 +176,20 @@ static int intel_skx_imc_begin(struct stats_type *type)
   // Functions: 0x02 0x06 0x02 (Channels)
   int i;  
   for (i = 0; i < nr_devs; i++) {
-    uint32_t bus = strtol(strsep_ne(&dev_paths[i], "/"), NULL, 16);
-    uint32_t dev = strtol(strsep_ne(&dev_paths[i], "."), NULL, 16);
-    uint32_t fun = strtol(dev_paths[i], NULL, 16);
+    char *cursor = dev_paths[i];
+    uint32_t bus = strtol(strsep_ne(&cursor, "/"), NULL, 16);
+    uint32_t dev = strtol(strsep_ne(&cursor, "."), NULL, 16);
+    uint32_t fun = strtol(cursor, NULL, 16);
       
     if (intel_skx_imc_begin_dev(bus, dev, fun, mmconfig_ptr, events, nr_events) == 0)
       nr++;      
   }
-  munmap(mmconfig_ptr, mmconfig_size);
-  //pci_map_destroy(&dev_paths, nr_devs);
 
  out:
+  if (dev_paths != NULL)
+    pci_map_destroy(&dev_paths, nr_devs);
+  if (mmconfig_ptr != MAP_FAILED)
+    munmap(mmconfig_ptr, mmconfig_size);
   if (fd >= 0)
     close(fd);
 
@@ -198,9 +200,12 @@ static int intel_skx_imc_begin(struct stats_type *type)
 
 static void intel_skx_imc_collect(struct stats_type *type)
 {
-  uint32_t *mmconfig_ptr;
+  uint32_t *mmconfig_ptr = MAP_FAILED;
+  char **dev_paths = NULL;
+  int nr_devs = 0;
+  int fd = -1;
 
-  int fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
+  fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
   if (fd < 0) {
     ERROR("cannot open /dev/mem\n");
     goto out;
@@ -211,8 +216,6 @@ static void intel_skx_imc_collect(struct stats_type *type)
     goto out;
   }
 
-  char **dev_paths = NULL;
-  int nr_devs;
   if (pci_map_create(&dev_paths, &nr_devs, imc_dclk_dids, 3) < 0) {
     TRACE("Failed to identify pci devices");
     goto out;
@@ -220,15 +223,18 @@ static void intel_skx_imc_collect(struct stats_type *type)
 
   int i;
   for (i = 0; i < nr_devs; i++) {
-      uint32_t bus = strtol(strsep_ne(&dev_paths[i], "/"), NULL, 16);
-      uint32_t dev = strtol(strsep_ne(&dev_paths[i], "."), NULL, 16);
-      uint32_t fun = strtol(dev_paths[i], NULL, 16);
+      char *cursor = dev_paths[i];
+      uint32_t bus = strtol(strsep_ne(&cursor, "/"), NULL, 16);
+      uint32_t dev = strtol(strsep_ne(&cursor, "."), NULL, 16);
+      uint32_t fun = strtol(cursor, NULL, 16);
 
       intel_skx_imc_collect_dev(type, bus, dev, fun, mmconfig_ptr);
   }  
-  munmap(mmconfig_ptr, mmconfig_size);
-  //pci_map_destroy(&dev_paths, nr_devs);
  out:
+  if (dev_paths != NULL)
+    pci_map_destroy(&dev_paths, nr_devs);
+  if (mmconfig_ptr != MAP_FAILED)
+    munmap(mmconfig_ptr, mmconfig_size);
   if (fd >= 0)
     close(fd);
 }

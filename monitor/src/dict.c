@@ -239,10 +239,6 @@ char *dict_ref(struct dict *dict, const char *key)
 {
   hash_t hash = dict_strhash(key);
   struct dict_entry *ent = dict_entry_ref(dict, hash, key);
-
-  if (ent->d_hash & DICT_HASH_DUMMY) /* I don't think we need this. */
-    return NULL;
-
   return ent->d_key;
 }
 

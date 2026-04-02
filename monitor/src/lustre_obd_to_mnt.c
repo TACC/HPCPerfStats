@@ -50,7 +50,7 @@ static void sb_dict_init(void)
     /* lov_name is of the form `work-clilov-ffff8102658ec800'. */
     if (strlen(lov_name) < 16) {
       ERROR("invalid lov name `%s'\n", lov_name);
-      goto next;
+      continue;
     }
     
     /* Get superblock address (the `ffff8102658ec800' part). */
@@ -59,7 +59,7 @@ static void sb_dict_init(void)
     struct dict_entry *de = dict_entry_ref(&sb_dict, hash, sb);
     if (de->d_key != NULL) {
       TRACE("multiple filesystems with super block `%s'\n", sb);
-      goto next;
+      continue;
     }
     
     /* Get name of lov w/ superblock address stripped */
@@ -70,7 +70,7 @@ static void sb_dict_init(void)
     sb_mnt = malloc(16 + 1 + strlen(lov_name) + 1);
     if (sb_mnt == NULL) {
       ERROR("cannot allocate sb_mnt: %m\n");
-      goto next;
+      continue;
     }
     
     strcpy(sb_mnt, sb);
@@ -79,11 +79,8 @@ static void sb_dict_init(void)
     if (dict_entry_set(&sb_dict, de, hash, sb_mnt) < 0) {
       ERROR("cannot set sb_dict entry: %m\n");
       free(sb_mnt);
-      goto next;
+      continue;
     }
-
-  next:
-    continue;
   }
 
  out:

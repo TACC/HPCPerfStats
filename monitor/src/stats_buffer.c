@@ -695,6 +695,7 @@ int stats_buffer_collect(struct stats_buffer *sf)
 
   if (clock_gettime(CLOCK_REALTIME, &time) != 0) {
     fprintf(stderr, "cannot clock_gettime(): %m\n");
+    rc = -1;
     goto out;
   }
   stats_buffer_ensure_uts_cached();

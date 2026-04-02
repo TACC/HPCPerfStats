@@ -32,6 +32,25 @@ struct arm_imc_dev {
 static struct arm_imc_dev g_arm_imc[ARM_IMC_MAX_DEVS];
 static int g_arm_imc_n = 0;
 
+static void arm_imc_cleanup(void)
+{
+  int i;
+  for (i = 0; i < g_arm_imc_n; i++) {
+    if (g_arm_imc[i].fd_read >= 0) {
+      close(g_arm_imc[i].fd_read);
+      g_arm_imc[i].fd_read = -1;
+    }
+    if (g_arm_imc[i].fd_write >= 0) {
+      close(g_arm_imc[i].fd_write);
+      g_arm_imc[i].fd_write = -1;
+    }
+    memset(&g_arm_imc[i], 0, sizeof(g_arm_imc[i]));
+    g_arm_imc[i].fd_read = -1;
+    g_arm_imc[i].fd_write = -1;
+  }
+  g_arm_imc_n = 0;
+}
+
 static long perf_event_open_wrap(struct perf_event_attr *attr, pid_t pid, int cpu, int group_fd, unsigned long flags)
 {
   return syscall(__NR_perf_event_open, attr, pid, cpu, group_fd, flags);
@@ -221,7 +240,7 @@ static int arm_imc_begin(struct stats_type *type)
   struct dirent *de;
   const char *read_aliases[] = {"cas_count_read", "read_cas", "reads", "read_bytes", NULL};
   const char *write_aliases[] = {"cas_count_write", "write_cas", "writes", "write_bytes", NULL};
-  g_arm_imc_n = 0;
+  arm_imc_cleanup();
   d = opendir("/sys/bus/event_source/devices");
   if (d == NULL) {
     type->st_enabled = 0;
