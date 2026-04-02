@@ -161,6 +161,11 @@ def test_browser_flow_for_web_pages():
             page.goto(f"{base_url}{path}")
             assert "spa-shell" in page.locator("#root").inner_text()
 
+          # Job detail deep link with staff query still serves SPA shell (staff-only
+          # job diagnostics come from JSON; see test_job_detail_staff_sample_count).
+          page.goto(f"{base_url}/machine/job/123/?staff=1")
+          assert "spa-shell" in page.locator("#root").inner_text()
+
           page.goto(f"{base_url}/robots.txt")
           robots_text = page.locator("body").inner_text()
           assert "User-agent: *" in robots_text

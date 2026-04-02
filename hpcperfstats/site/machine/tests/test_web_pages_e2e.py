@@ -197,3 +197,32 @@ class TestWebPagesEndToEnd:
     non_staff_response = client.get("/api/session/")
     assert non_staff_response.status_code == 200
     assert non_staff_response.json()["is_staff"] is False
+
+
+def test_job_detail_api_includes_staff_metrics_distinct_time_count_for_staff():
+  """Staff job detail JSON includes sample-count field (SPA Job Detail page; no DB)."""
+  from concurrent.futures import ThreadPoolExecutor
+  from contextlib import ExitStack
+  from django.test import RequestFactory
+  from unittest.mock import patch
+
+  from hpcperfstats.site.machine import api
+  from hpcperfstats.site.machine.tests.test_job_detail_staff_sample_count import (
+      _patch_job_detail_for_staff_count,
+  )
+
+  jid = "e2e-staff-metrics-distinct-jid"
+  factory = RequestFactory()
+  request = factory.get(f"/api/jobs/{jid}/")
+  request.session = {"username": "e2e-user", "is_staff": True}
+
+  ctx = _patch_job_detail_for_staff_count(api, jid, 42_000)
+  with ThreadPoolExecutor(max_workers=4) as executor:
+    with ExitStack() as stack:
+      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
+      for cm in ctx:
+        stack.enter_context(cm)
+      response = api.job_detail(request, jid)
+
+  assert response.status_code == 200
+  assert response.data["staff_metrics_distinct_time_count"] == 42_000

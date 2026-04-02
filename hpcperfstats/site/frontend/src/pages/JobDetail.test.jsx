@@ -94,6 +94,45 @@ describe("JobDetail", () => {
     return vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(minimalBatchPlotsResponse);
   }
 
+  it("shows Sample Count for staff when API includes staff_metrics_distinct_time_count", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue({
+      ...minimalJobDetailResponse,
+      staff_metrics_distinct_time_count: 1250,
+    });
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue({
+      ...minimalJobDetailResponse,
+      staff_metrics_distinct_time_count: 1250,
+    });
+    mockAllPlotCallsReady();
+
+    renderJobDetail("12345", { is_staff: true });
+
+    await waitFor(() => {
+      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Sample Count")).toBeInTheDocument();
+    expect(screen.getByText("1,250.00")).toBeInTheDocument();
+  });
+
+  it("does not show Sample Count table for non-staff", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue({
+      ...minimalJobDetailResponse,
+      staff_metrics_distinct_time_count: 999,
+    });
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue({
+      ...minimalJobDetailResponse,
+      staff_metrics_distinct_time_count: 999,
+    });
+    mockAllPlotCallsReady();
+
+    renderJobDetail("12345", { is_staff: false });
+
+    await waitFor(() => {
+      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Sample Count")).not.toBeInTheDocument();
+  });
+
   it("shows loading indicator while job detail is fetching", () => {
     vi.spyOn(apiModule.api, "getJobDetailLight").mockReturnValue(
       new Promise(() => {})

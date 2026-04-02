@@ -18,6 +18,10 @@ export const VARIABLE_METADATA = {
   state: { description: "Final scheduler state for the job (e.g., COMPLETED, FAILED)." },
   ncores: { description: "Number of CPU cores allocated to the job." },
   nhosts: { description: "Number of nodes allocated to the job." },
+  metrics_distinct_time_count: {
+    description:
+      "Sum over job hosts of distinct sample timestamps in host_data for this job’s time window, as recorded when job-level metrics were last persisted. This is not the raw row count of host_data.",
+  },
 
   // ===== Derived job-level metrics (docs/attributes-definition.md) =====
   avg_cpuusage: {

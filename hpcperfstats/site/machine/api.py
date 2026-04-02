@@ -2246,7 +2246,7 @@ def job_detail(request, pk):
 
     metrics_list = build_job_metrics_display_list(job)
 
-    return Response({
+    payload = {
         "job_data": JobListSerializer(job).data,
         "host_list": host_list,
         "fsio": fsio,
@@ -2260,7 +2260,11 @@ def job_detail(request, pk):
         "gpu_count": gpu_count,
         "metrics_list": metrics_list,
         "proc_list": proc_list,
-    })
+    }
+    if request.session.get("is_staff", False):
+        payload["staff_metrics_distinct_time_count"] = job.metrics_distinct_time_count
+
+    return Response(payload)
 
 
 @api_view(["GET"])

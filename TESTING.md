@@ -32,6 +32,7 @@ PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 | `hpcperfstats/tests/` | Non-Django unit/integration tests (config parsing, service startup/health, listend behavior, sync helpers, cache/date/print/file-locking helpers, XALT models, API key mobile checks). |
 | `hpcperfstats/analysis/**/test*.py` | Analysis/plot/metrics-focused tests (summary/heatmap/roofline behavior, hover tooltips, metrics helpers). |
 | `hpcperfstats/site/machine/tests/` | Django + web tests (ORM/query/update helpers, job detail file-system llite vs NFS fallback, security headers, API/misc endpoints, SPA rendering, page and browser E2E tests). Includes `test_type_detail_api.py`, which asserts type-detail `host_data` ORM SQL does not reference `jid` (job scope is start/end time + accounting hosts) with `django_db(databases=[])` so it does not need a live DB. |
+| `hpcperfstats/site/machine/tests/test_job_detail_staff_sample_count.py` | Staff-only `staff_metrics_distinct_time_count` on `job_detail` JSON (mocked ORM; no live DB required). |
 
 ## Test runners
 
@@ -47,7 +48,7 @@ PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 
 Use this for web-page E2E modules:
 
-- `hpcperfstats/site/machine/tests/test_web_pages_e2e.py`
+- `hpcperfstats/site/machine/tests/test_web_pages_e2e.py` (includes a module-level `test_job_detail_api_includes_staff_metrics_distinct_time_count_for_staff` that does not use the `django_db` class marker, so it can run without a reachable Postgres host)
 - `hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py`
 
 The workflow script handles Docker lifecycle and runs both files in one session:

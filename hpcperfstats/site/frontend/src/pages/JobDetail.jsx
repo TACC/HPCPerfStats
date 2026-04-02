@@ -420,6 +420,7 @@ export default function JobDetail() {
     gpu_count,
     metrics_list = [],
     proc_list = [],
+    staff_metrics_distinct_time_count: staffMetricsDistinctTimeCount,
   } = data;
 
   const hasDeviceData = Object.keys(schema).length > 0;
@@ -518,6 +519,33 @@ export default function JobDetail() {
           </table>
         </div>
       </div>
+
+      {isStaff ? (
+        <div className="table-responsive mb-2" style={{ maxWidth: 360 }}>
+          <table className="table table-sm table-bordered">
+            <thead>
+              <tr>
+                <th>
+                  <VariableInfoLabel
+                    variableName="metrics_distinct_time_count"
+                    labelText="Sample Count"
+                    enableHelp
+                  />
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  {staffMetricsDistinctTimeCount != null && staffMetricsDistinctTimeCount !== ""
+                    ? formatDecimalStandard(staffMetricsDistinctTimeCount)
+                    : "Not computed yet."}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      ) : null}
 
       <div className="row">
         <div className="col-md-3">

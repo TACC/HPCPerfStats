@@ -21,6 +21,10 @@ describe("getDescriptionForVariable", () => {
     expect(getDescriptionForVariable("mem_hwm")).toBeTruthy();
   });
 
+  it("documents metrics_distinct_time_count for staff Sample Count help", () => {
+    expect(getDescriptionForVariable("metrics_distinct_time_count")).toMatch(/distinct sample timestamps/i);
+  });
+
   it("returns a description for code-derived definitions", () => {
     expect(getDescriptionForVariable("utilization")).toMatch(/GPU utilization/i);
     expect(getDescriptionForVariable("read_bytes")).toMatch(/Bytes read/i);

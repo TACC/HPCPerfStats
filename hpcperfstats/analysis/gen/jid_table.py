@@ -1,11 +1,11 @@
 """Job-scoped host_data access via Django ORM. Provides jid_table, TypeDetailDataProvider, and HostDataProvider for querying job/host metrics without raw SQL. Uses Redis caching for heavy queries.
 
 """
+import logging
 import time
 from datetime import timezone as dt_utc
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
-from hpcperfstats.print_utils import log_print
 from hpcperfstats.site.machine.cache_utils import (
     KEY_AGG_DF,
     KEY_JOB,
@@ -26,6 +26,7 @@ from hpcperfstats.site.machine.models import host_data, job_data
 from django.db.models import Sum
 
 local_timezone = cfg.get_local_timezone()
+_logger = logging.getLogger(__name__)
 
 
 def _ensure_tz(dt):
@@ -49,7 +50,7 @@ class jid_table:
     """Build job-scoped filter from job_data and populate host_list and schema from host_data.
 
         """
-    log_print("Initializing table for job {0}".format(jid))
+    _logger.debug("Initializing jid_table for job %s", jid)
 
     self.jid = jid
 
@@ -98,7 +99,7 @@ class jid_table:
         TIMEOUT_SHORT,
         _host_list_fn,
     ) or []
-    log_print("query time: {0:.1f}".format(time.time() - qtime))
+    _logger.debug("jid_table host_list query time: %.1fs", time.time() - qtime)
 
     if len(self.host_list) == 0:
       self.schema = {}
@@ -148,7 +149,7 @@ class jid_table:
       for t in types:
         self.schema[t] = sorted(
             schema_df[schema_df["type"] == t]["event"].unique().tolist())
-    log_print("schema time: {0:.1f}".format(time.time() - etime))
+    _logger.debug("jid_table schema time: %.1fs", time.time() - etime)
 
   def _host_data_qs(self, **extra_filters):
     """Base host_data queryset for this job (time range + hosts).
