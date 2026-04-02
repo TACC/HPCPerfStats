@@ -3,6 +3,7 @@ import hashlib
 import logging
 import threading
 import copy
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import timezone as dt_timezone
 
@@ -49,8 +50,6 @@ from .cache_utils import (
     KEY_METRICS_DISTINCT,
     KEY_QUEUES,
     KEY_STATES,
-    KEY_ALL_HOSTS,
-    KEY_HOST_LAST,
     KEY_GPU_AGG,
     KEY_GPU_COUNT,
     KEY_XALT,
@@ -87,7 +86,6 @@ from .views import (
 )
 
 # Shared thread pools (capped total threads per process).
-_host_last_executor = None
 _small_executor = None   # dashboard, queue histograms, job_detail, job_plots (≤8 tasks)
 _metric_hist_executor = None  # per-metric histograms in job list (up to 8)
 _job_plots_lock = threading.Lock()
@@ -95,6 +93,7 @@ _job_plots_lock = threading.Lock()
 JOB_DETAIL_CACHE_TTL_RECENT = 4 * 3600
 JOB_DETAIL_CACHE_TTL_OLD = 30 * 24 * 3600
 _job_plot_inflight = {}
+_JOB_PLOT_INFLIGHT_TTL_SECONDS = 180
 
 
 def _collect_future_results_with_deadline(future_to_key, max_wait_seconds):
@@ -130,11 +129,20 @@ def _collect_future_results_with_deadline(future_to_key, max_wait_seconds):
 
     return results_by_key, remaining_keys
 
-def _get_host_last_executor():
-    global _host_last_executor
-    if _host_last_executor is None:
-        _host_last_executor = ThreadPoolExecutor(max_workers=16)
-    return _host_last_executor
+
+def _evict_stale_inflight_plot_tasks():
+    """Remove completed or stale in-flight plot tasks to bound map growth."""
+    now = time.monotonic()
+    stale_keys = []
+    for inflight_key, inflight_meta in list(_job_plot_inflight.items()):
+        future = inflight_meta.get("future")
+        created_at = float(inflight_meta.get("created_at", 0.0))
+        if future is None or future.done() or (now - created_at) > _JOB_PLOT_INFLIGHT_TTL_SECONDS:
+            if future is not None and not future.done():
+                future.cancel()
+            stale_keys.append(inflight_key)
+    for inflight_key in stale_keys:
+        _job_plot_inflight.pop(inflight_key, None)
 
 def _get_small_executor():
     global _small_executor
@@ -2470,11 +2478,16 @@ def job_plots(request, pk):
     for key in missing_keys:
         inflight_key = (job.jid, key, "zoom_v3" if zoom_mode else "normal")
         with _job_plots_lock:
-            future = _job_plot_inflight.get(inflight_key)
+            _evict_stale_inflight_plot_tasks()
+            inflight_meta = _job_plot_inflight.get(inflight_key) or {}
+            future = inflight_meta.get("future")
             if future is None:
                 executor = _get_small_executor()
                 future = executor.submit(fetchers[key])
-                _job_plot_inflight[inflight_key] = future
+                _job_plot_inflight[inflight_key] = {
+                    "future": future,
+                    "created_at": time.monotonic(),
+                }
         if future.done():
             try:
                 plot_item, unavailable_reason = future.result()

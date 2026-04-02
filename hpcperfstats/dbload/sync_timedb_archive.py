@@ -4,6 +4,7 @@ tar by (path, member_name) so the main process never holds file contents.
 
 """
 import io
+import itertools
 import multiprocessing
 import sys
 import tarfile
@@ -20,6 +21,7 @@ from hpcperfstats.shutdown_utils import (
 )
 
 thread_count = cfg.get_worker_thread_count(4)
+TAR_TASK_CHUNK_SIZE = 50
 
 
 def _process_tar_member(lock, tar_path, member_name):
@@ -39,6 +41,18 @@ def _process_tar_member(lock, tar_path, member_name):
   sync_timedb.add_stats_file_to_db(lock, member_name, content)
 
 
+def _iter_tar_tasks_chunked(tar_files, chunk_size=TAR_TASK_CHUNK_SIZE):
+  """Yield (tar_path, member_name) tasks in bounded chunks."""
+  if chunk_size < 1:
+    chunk_size = 1
+  tasks_iter = itertools.chain.from_iterable(get_tar_file_tasks(path) for path in tar_files)
+  while True:
+    chunk = list(itertools.islice(tasks_iter, chunk_size))
+    if not chunk:
+      break
+    yield chunk
+
+
 if __name__ == '__main__':
   sync_timedb.database_startup()
 
@@ -46,11 +60,8 @@ if __name__ == '__main__':
 
   start = time.time()
 
-  # Build only (tar_path, member_name) pairs; no file contents in main process.
-  tasks = []
   for tar_file_name in tar_files:
     log_print(tar_file_name)
-    tasks.extend(get_tar_file_tasks(tar_file_name))
 
   manager = multiprocessing.Manager()
   try:
@@ -58,13 +69,11 @@ if __name__ == '__main__':
     with multiprocessing.get_context('spawn').Pool(
         processes=thread_count) as pool:
       worker = partial(_process_tar_member, manager_lock)
-      # Process in chunks so SIGTERM can exit between chunks.
-      chunk_size = max(1, min(50, len(tasks) or 1))
-      for i in range(0, len(tasks), chunk_size):
+      # Process in chunks so SIGTERM can exit between chunks and memory stays bounded.
+      for chunk in _iter_tar_tasks_chunked(tar_files, TAR_TASK_CHUNK_SIZE):
         if shutdown_requested[0]:
           log_print("Exiting due to SIGTERM")
           break
-        chunk = tasks[i:i + chunk_size]
         pool.starmap(worker, chunk)
   finally:
     manager.shutdown()

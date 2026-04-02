@@ -41,6 +41,34 @@ def test_job_plots_returns_loading_while_background_tasks_are_pending():
   assert payload["retry_after_seconds"] == 2
 
 
+def test_evict_stale_inflight_plot_tasks_removes_hung_entries():
+  from hpcperfstats.site.machine import api
+
+  api._job_plot_inflight.clear()
+  stale_future = Future()
+  done_future = Future()
+  done_future.set_result(("ok", None))
+  api._job_plot_inflight[("j1", "summary_plot", "normal")] = {
+      "future": stale_future,
+      "created_at": 10.0,
+  }
+  api._job_plot_inflight[("j2", "heatmap", "normal")] = {
+      "future": done_future,
+      "created_at": 20.0,
+  }
+  api._job_plot_inflight[("j3", "roofline", "normal")] = {
+      "future": Future(),
+      "created_at": 300.0,
+  }
+
+  with patch("hpcperfstats.site.machine.api.time.monotonic", return_value=400.0):
+    api._evict_stale_inflight_plot_tasks()
+
+  assert ("j1", "summary_plot", "normal") not in api._job_plot_inflight
+  assert ("j2", "heatmap", "normal") not in api._job_plot_inflight
+  assert ("j3", "roofline", "normal") in api._job_plot_inflight
+
+
 def test_job_plots_returns_full_payload_after_loading_state():
   from hpcperfstats.site.machine import api
 

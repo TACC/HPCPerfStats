@@ -18,6 +18,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     rescan_pending_stats_files,
     stats_file_is_active_segment,
 )
+from hpcperfstats.dbload.sync_timedb_archive import _iter_tar_tasks_chunked
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
 from hpcperfstats.file_locking import LOCK_SUFFIX
 
@@ -68,6 +69,23 @@ def test_get_tar_file_tasks_empty_tar(tmp_path):
   with tarfile.open(tar_path, "w"):
     pass
   assert get_tar_file_tasks(str(tar_path)) == []
+
+
+def test_iter_tar_tasks_chunked_streams_without_accumulating(monkeypatch):
+  """Task chunk iterator yields bounded chunks from multiple tar inputs."""
+  by_tar = {
+      "a.tar": [("a.tar", "m1"), ("a.tar", "m2"), ("a.tar", "m3")],
+      "b.tar": [("b.tar", "m1")],
+  }
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive.get_tar_file_tasks",
+      lambda tar_path: by_tar.get(tar_path, []),
+  )
+  chunks = list(_iter_tar_tasks_chunked(["a.tar", "b.tar"], chunk_size=2))
+  assert chunks == [
+      [("a.tar", "m1"), ("a.tar", "m2")],
+      [("a.tar", "m3"), ("b.tar", "m1")],
+  ]
 
 
 def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):

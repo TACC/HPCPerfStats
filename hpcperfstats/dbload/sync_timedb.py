@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import warnings
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from hpcperfstats.django_bootstrap import ensure_django
@@ -86,6 +87,8 @@ days_to_process = 5
 chunk_size = 100
 # Rescan stats directory after this many processed chunks
 rescan_every_chunks = 10
+# Bound processed-file tracking to avoid unbounded set growth in long runs.
+processed_files_max_size = 200000
 
 # Rows per bulk_create batch to limit peak memory per worker
 bulk_create_batch_size = 10000
@@ -463,6 +466,7 @@ if __name__ == '__main__':
           processes=archive_thread_count) as archive_pool:
         archive_job = None
         processed_files = set()
+        processed_files_order = deque()
         pending_stats_files = list(stats_files)
         chunk_counter = 0
 
@@ -527,7 +531,14 @@ if __name__ == '__main__':
               archive_stats_files, list(ar_file_mapping.items()))
 
           log_print("Archival running in the background")
-          processed_files.update(stats_files_chunk)
+          for stats_path in stats_files_chunk:
+            if stats_path in processed_files:
+              continue
+            processed_files.add(stats_path)
+            processed_files_order.append(stats_path)
+          while len(processed_files_order) > processed_files_max_size:
+            old_path = processed_files_order.popleft()
+            processed_files.discard(old_path)
           pending_stats_files = pending_stats_files[chunk_size:]
           chunk_counter += 1
 
