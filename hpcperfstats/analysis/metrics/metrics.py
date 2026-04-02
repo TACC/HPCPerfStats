@@ -424,6 +424,17 @@ class Metrics():
     ]
     self._shared_pool = None
 
+  def __getstate__(self):
+    """Exclude non-picklable runtime pool when sending self to workers."""
+    state = dict(self.__dict__)
+    state["_shared_pool"] = None
+    return state
+
+  def __setstate__(self, state):
+    self.__dict__.update(state)
+    if "_shared_pool" not in self.__dict__:
+      self._shared_pool = None
+
   def _worker_process_count(self):
     threads = int(int(cfg.get_total_cores()) / 2)
     return threads if threads > 0 else 1
