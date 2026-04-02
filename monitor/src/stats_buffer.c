@@ -498,6 +498,19 @@ static int send(struct stats_buffer *sf)
   return 0;
 }
 
+static int stats_buffer_is_schema_payload(const struct stats_buffer *sf)
+{
+  const char *p;
+
+  if (sf == NULL || sf->sf_data == NULL)
+    return 0;
+
+  p = sf->sf_data;
+  while (*p != '\0' && isspace((unsigned char)*p))
+    p++;
+  return *p == SF_PROPERTY_CHAR;
+}
+
 int stats_wr_hdr(struct stats_buffer *sf)
 {
   unsigned long long uptime = 0;
@@ -778,48 +791,105 @@ int ring_buffer_insert(
     return rc;
 }
 
+static void ring_buffer_drop_first(struct sf_ring_buffer *w)
+{
+  struct sf_queue *sf = w->q_first;
+
+  if (sf == NULL || w->q_count <= 0)
+    return;
+
+  if (w->q_count == 1) {
+    stats_buffer_close(sf->sf);
+    free(sf->sf);
+    remque(sf);
+    free(sf);
+    w->q = NULL;
+    w->q_first = NULL;
+    w->q_count = 0;
+    return;
+  }
+
+  w->q_first = sf->forward;
+  if (w->q == sf)
+    w->q = sf->backward;
+
+  stats_buffer_close(sf->sf);
+  free(sf->sf);
+  remque(sf);
+  free(sf);
+  w->q_count -= 1;
+}
+
 void ring_buffer_resend(struct sf_ring_buffer *w)
 {
-  struct sf_queue * sf = w->q_first;
-  struct sf_queue * sf_del;
-  int reset_first;
-  do {
-    reset_first = 0;
-    /* Resend stats_buffer */
-    w->status = stats_buffer_resend(sf->sf);
-    /* Move to the next if failed */
-    if (w->status == -1)  {
-      sf = sf->forward;
-      continue;
-    }
-    else
+  enum { max_batch_entries = 10 };
+
+  while (w->q_count > 0) {
+    struct sf_queue *head = w->q_first;
+    struct sf_queue *node;
+    size_t batch_len = 1;
+    int batch_count = 0;
+
+    if (head == NULL || head->sf == NULL)
+      break;
+
+    /* Keep schema/header payloads isolated: listend.py treats `$` specially. */
+    if (stats_buffer_is_schema_payload(head->sf)) {
+      w->status = stats_buffer_resend(head->sf);
+      if (w->status != 0)
+        break;
       w->r_count++;
-    /* Case 1: Remove the last stats in buffer */
-    if (w->q_count == 1) {
-      stats_buffer_close(sf->sf);
-      free(sf->sf);
-      sf_del = sf;
-      remque(sf);
-      free(sf_del);
-      w->q_count -= 1;
+      ring_buffer_drop_first(w);
       continue;
     }
-    /* Case 2: Remove the head stats in buffer */
-    if (sf == w->q_first) {
-      w->q_first = sf->forward;
-      reset_first = 1;
-    } /* Case 3: Remove the lastest stats in buffer */
-    else if (sf == w->q)  {
-      w->q = sf->backward;
+
+    node = head;
+    while (batch_count < w->q_count && batch_count < max_batch_entries) {
+      if (node == NULL || node->sf == NULL || node->sf->sf_data == NULL)
+        break;
+      if (stats_buffer_is_schema_payload(node->sf))
+        break;
+      batch_len += strlen(node->sf->sf_data);
+      batch_count++;
+      node = node->forward;
+      if (node == head)
+        break;
     }
-    sf = sf->forward;
-    stats_buffer_close((sf->backward)->sf);
-    free((sf->backward)->sf);
-    sf_del = sf->backward;
-    remque(sf->backward);
-    free(sf_del);
-    w->q_count -= 1;
-  } while ((sf != w->q_first || reset_first == 1) && w->q_count > 0);
+
+    if (batch_count <= 0)
+      break;
+
+    if (batch_count == 1) {
+      w->status = stats_buffer_resend(head->sf);
+    } else {
+      char *merged = (char *)malloc(batch_len);
+      struct stats_buffer merged_sf;
+
+      if (merged == NULL) {
+        w->status = -1;
+        break;
+      }
+      merged[0] = '\0';
+
+      node = head;
+      for (int i = 0; i < batch_count; i++) {
+        strcat(merged, node->sf->sf_data);
+        node = node->forward;
+      }
+
+      merged_sf = *head->sf;
+      merged_sf.sf_data = merged;
+      w->status = send(&merged_sf);
+      free(merged);
+    }
+
+    if (w->status != 0)
+      break;
+
+    w->r_count += batch_count;
+    for (int i = 0; i < batch_count; i++)
+      ring_buffer_drop_first(w);
+  }
 }
 
 int stats_buffer_write_file(struct stats_buffer *sf, char *path)
