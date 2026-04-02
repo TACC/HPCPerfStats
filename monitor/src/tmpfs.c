@@ -7,6 +7,7 @@
 #include <sys/statfs.h>
 #include "stats.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 
 #define KEYS \
   X(bytes_used, "U=B", "bytes used"), \
@@ -17,9 +18,11 @@ static void tmpfs_collect(struct stats_type *type)
   const char *me_path = "/proc/mounts";
   FILE *me_file = NULL;
 
+  if (path_open_is_skipped(me_path))
+    goto out;
   me_file = setmntent(me_path, "r");
   if (me_file == NULL) {
-    ERROR("cannot open `%s': %m\n", me_path);
+    path_open_record_failure_once(me_path);
     goto out;
   }
 

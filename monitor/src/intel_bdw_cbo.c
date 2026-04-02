@@ -48,6 +48,7 @@
 #include <fcntl.h>
 #include "stats.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 #include "pscanf.h"
 #include "cpuid.h"
 
@@ -218,9 +219,11 @@ static int intel_bdw_cbo_begin_box(char *cpu, int box, uint64_t *events, size_t 
   int offset = box*16;
 
   snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
+  if (path_open_is_skipped(msr_path))
+    goto out;
   msr_fd = open(msr_path, O_RDWR);
   if (msr_fd < 0) {
-    ERROR("cannot open `%s': %m\n", msr_path);
+    path_open_record_failure_once(msr_path);
     goto out;
   }
 
@@ -325,9 +328,11 @@ static void intel_bdw_cbo_collect_box(struct stats_type *type, char *cpu, int pk
     goto out;
 
   snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
+  if (path_open_is_skipped(msr_path))
+    goto out;
   msr_fd = open(msr_path, O_RDONLY);
   if (msr_fd < 0) {
-    ERROR("cannot open `%s': %m\n", msr_path);
+    path_open_record_failure_once(msr_path);
     goto out;
   }
 

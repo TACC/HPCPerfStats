@@ -31,7 +31,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_nfs_schema_subset
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_nfs_schema_subset
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer
 endif
@@ -42,7 +42,7 @@ TESTS = $(check_PROGRAMS)
 check-local:
 	$(SHELL) '$(srcdir)/test_monitor_configure_help.sh.in'
 
-EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c
+EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_path_open_fail_once.c
 
 test_likwid_rapl_scale_SOURCES = test_likwid_rapl_scale.c
 
@@ -54,7 +54,12 @@ test_stats_buffer_data_append_SOURCES = \
 
 test_path_collect_SOURCES = \
 	test_path_collect.c \
-	$(top_srcdir)/src/collect.c
+	$(top_srcdir)/src/collect.c \
+	$(top_srcdir)/src/path_open_fail_once.c
+
+test_path_open_fail_once_SOURCES = \
+	test_path_open_fail_once.c \
+	$(top_srcdir)/src/path_open_fail_once.c
 
 test_pscanf_SOURCES = \
 	test_pscanf.c \
@@ -87,7 +92,8 @@ test_ring_buffer_SOURCES = \
 	test_ring_buffer.c \
 	test_ring_buffer_stubs.c \
 	$(top_srcdir)/src/stats_buffer.c \
-	$(top_srcdir)/src/stats_buffer_data_append.c
+	$(top_srcdir)/src/stats_buffer_data_append.c \
+	$(top_srcdir)/src/path_open_fail_once.c
 test_ring_buffer_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
 endif
 
@@ -96,6 +102,7 @@ test_likwid_rapl_scale_LDADD = $(LDADD)
 test_string1_LDADD = $(LDADD)
 test_stats_buffer_data_append_LDADD = $(LDADD)
 test_path_collect_LDADD = $(LDADD)
+test_path_open_fail_once_LDADD = $(LDADD)
 test_pscanf_LDADD = $(LDADD)
 test_schema_parse_LDADD = $(LDADD)
 test_stats_file_format_LDADD = $(LDADD)

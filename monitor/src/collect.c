@@ -9,6 +9,7 @@
 #include "stats.h"
 #include "trace.h"
 #include "collect.h"
+#include "path_open_fail_once.h"
 #include "string1.h"
 
 #ifndef O_CLOEXEC
@@ -31,9 +32,11 @@ static int collect_read_small(const char *path, char *buf, size_t bufsz, size_t 
     return -1;
   }
 
+  if (path_open_is_skipped(path))
+    return -1;
   fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
-    ERROR("cannot open `%s': %m\n", path);
+    path_open_record_failure_once(path);
     return -1;
   }
 
@@ -68,9 +71,13 @@ static char *collect_slurp_file(const char *path)
     return NULL;
   }
 
+  if (path_open_is_skipped(path)) {
+    free(buf);
+    return NULL;
+  }
   fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
-    ERROR("cannot open `%s': %m\n", path);
+    path_open_record_failure_once(path);
     free(buf);
     return NULL;
   }
@@ -345,9 +352,8 @@ int path_collect_key_value_dir(const char *dir_path, struct stats *stats)
   int rc = 0;
   DIR *dir = NULL;
 
-  dir = opendir(dir_path);
+  dir = path_opendir_or_record_fail(dir_path);
   if (dir == NULL) {
-    ERROR("cannot open `%s': %m\n", dir_path);
     rc = -1;
     goto out;
   }

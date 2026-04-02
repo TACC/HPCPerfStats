@@ -6,6 +6,7 @@
 #include "trace.h"
 #include "string1.h"
 #include "lustre_obd_to_mnt.h"
+#include "path_open_fail_once.h"
 
 #define OSC_DIR_PATH "/proc/fs/lustre/osc"
 
@@ -34,11 +35,9 @@ static void osc_collect_fs(struct stats *stats, const char *d_name)
     goto out;
   }
 
-  file = file_fopen_read(path);
-  if (file == NULL) {
-    ERROR("cannot open `%s': %m\n", path);
+  file = path_file_fopen_read(path);
+  if (file == NULL)
     goto out;
-  }
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
 
   // $ cat /proc/fs/lustre/osc/work-OST0000-osc-ffff81032792f800/stats
@@ -89,11 +88,9 @@ static void osc_collect(struct stats_type *type)
   const char *osc_dir_path = OSC_DIR_PATH;
   DIR *osc_dir = NULL;
 
-  osc_dir = opendir(osc_dir_path);
-  if (osc_dir == NULL) {
-    ERROR("cannot open `%s': %m\n", osc_dir_path);
+  osc_dir = path_opendir_or_record_fail(osc_dir_path);
+  if (osc_dir == NULL)
     goto out;
-  }
 
   struct dirent *de;
   while ((de = readdir(osc_dir)) != NULL) {

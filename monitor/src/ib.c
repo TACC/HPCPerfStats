@@ -8,6 +8,7 @@
 #include "collect.h"
 #include "fileio.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 
 // const char *perfquery = "/opt/ofed/sbin/perfquery";
 
@@ -73,7 +74,7 @@ static int ib_port_collectible(const char *hca, int port)
   FILE *f;
 
   snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/state", hca, port);
-  f = file_fopen_read(path);
+  f = path_file_fopen_read(path);
   if (f != NULL) {
     if (fgets(buf, sizeof(buf), f) != NULL) {
       fclose(f);
@@ -84,7 +85,7 @@ static int ib_port_collectible(const char *hca, int port)
   }
 
   snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/phys_state", hca, port);
-  f = file_fopen_read(path);
+  f = path_file_fopen_read(path);
   if (f == NULL)
     return 0;
   if (fgets(buf, sizeof(buf), f) == NULL) {
@@ -97,11 +98,6 @@ static int ib_port_collectible(const char *hca, int port)
 
 static void ib_merge_counters_dir(struct stats *stats, const char *dir_path)
 {
-  DIR *d = opendir(dir_path);
-
-  if (d == NULL)
-    return;
-  closedir(d);
   (void) path_collect_key_value_dir(dir_path, stats);
 }
 
@@ -129,7 +125,7 @@ static void ib_collect_port(struct stats_type *type, const char *dev, int port)
   ib_merge_counters_dir(stats, path);
 
   snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/lid", dev, port);
-  file = file_fopen_read(path);
+  file = path_file_fopen_read(path);
   if (file == NULL)
     return;
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
@@ -149,7 +145,7 @@ static void ib_collect_dev(struct stats_type *type, const char *dev)
   struct dirent *ent;
 
   snprintf(ports_path, sizeof(ports_path), "/sys/class/infiniband/%s/ports", dev);
-  ports_dir = opendir(ports_path);
+  ports_dir = path_opendir_or_record_fail(ports_path);
   if (ports_dir == NULL)
     return;
 
@@ -175,11 +171,9 @@ static void ib_collect(struct stats_type *type)
   const char *path = "/sys/class/infiniband";
   DIR *dir = NULL;
 
-  dir = opendir(path);
-  if (dir == NULL) {
-    ERROR("cannot open `%s': %m\n", path);
+  dir = path_opendir_or_record_fail(path);
+  if (dir == NULL)
     goto out;
-  }
 
   struct dirent *ent;
   while ((ent = readdir(dir)) != NULL) {

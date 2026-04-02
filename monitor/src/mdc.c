@@ -6,6 +6,7 @@
 #include "trace.h"
 #include "string1.h"
 #include "lustre_obd_to_mnt.h"
+#include "path_open_fail_once.h"
 
 #define MDC_DIR_PATH "/proc/fs/lustre/mdc"
 
@@ -34,11 +35,9 @@ static void mdc_collect_fs(struct stats *stats, const char *d_name)
     goto out;
   }
 
-  file = file_fopen_read(path);
-  if (file == NULL) {
-    ERROR("cannot open `%s': %m\n", path);
+  file = path_file_fopen_read(path);
+  if (file == NULL)
     goto out;
-  }
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
 
   // $ cat /proc/fs/lustre/mdc/work-MDT0000-mdc-ffff8104435c8c00/stats
@@ -86,11 +85,9 @@ static void mdc_collect(struct stats_type *type)
   const char *mdc_dir_path = MDC_DIR_PATH;
   DIR *mdc_dir = NULL;
 
-  mdc_dir = opendir(mdc_dir_path);
-  if (mdc_dir == NULL) {
-    ERROR("cannot open `%s': %m\n", mdc_dir_path);
+  mdc_dir = path_opendir_or_record_fail(mdc_dir_path);
+  if (mdc_dir == NULL)
     goto out;
-  }
 
   struct dirent *de;
   while ((de = readdir(mdc_dir)) != NULL) {

@@ -6,6 +6,7 @@
 #include "pscanf.h"
 #include "stats.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 #include "oib_utils.h"
 #include "iba/stl_pa.h"
 #include "iba/stl_sm.h"
@@ -138,11 +139,9 @@ static void collect_opa(struct stats_type *type)
   const char *ib_dir_path = "/sys/class/infiniband";
   DIR *ib_dir = NULL;
 
-  ib_dir = opendir(ib_dir_path);
-  if (ib_dir == NULL) {
-    ERROR("cannot open `%s': %m\n", ib_dir_path);
+  ib_dir = path_opendir_or_record_fail(ib_dir_path);
+  if (ib_dir == NULL)
     goto out;
-  }
 
   struct dirent *hfi_ent;
   while ((hfi_ent = readdir(ib_dir)) != NULL) {
@@ -154,11 +153,9 @@ static void collect_opa(struct stats_type *type)
       goto next_hfi;
 
     snprintf(ports_path, sizeof(ports_path), "%s/%s/ports", ib_dir_path, hfi);
-    ports_dir = opendir(ports_path);
-    if (ports_dir == NULL) {
-      ERROR("cannot open `%s': %m\n", ports_path);
+    ports_dir = path_opendir_or_record_fail(ports_path);
+    if (ports_dir == NULL)
       goto next_hfi;
-    }
 
     struct dirent *port_ent;
     while ((port_ent = readdir(ports_dir)) != NULL) {

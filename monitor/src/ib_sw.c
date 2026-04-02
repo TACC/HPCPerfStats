@@ -7,6 +7,7 @@
 #include <infiniband/mad.h>
 #include "stats.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 #include "pscanf.h"
 
 /* ib_sw collects IB HCA/PORT statistics by querying the extended
@@ -93,11 +94,9 @@ static void collect_ib_sw(struct stats_type *type)
   const char *ib_dir_path = "/sys/class/infiniband";
   DIR *ib_dir = NULL;
 
-  ib_dir = opendir(ib_dir_path);
-  if (ib_dir == NULL) {
-    ERROR("cannot open `%s': %m\n", ib_dir_path);
+  ib_dir = path_opendir_or_record_fail(ib_dir_path);
+  if (ib_dir == NULL)
     goto out;
-  }
 
   struct dirent *hca_ent;
   while ((hca_ent = readdir(ib_dir)) != NULL) {
@@ -109,11 +108,9 @@ static void collect_ib_sw(struct stats_type *type)
       goto next_hca;
 
     snprintf(ports_path, sizeof(ports_path), "%s/%s/ports", ib_dir_path, hca);
-    ports_dir = opendir(ports_path);
-    if (ports_dir == NULL) {
-      ERROR("cannot open `%s': %m\n", ports_path);
+    ports_dir = path_opendir_or_record_fail(ports_path);
+    if (ports_dir == NULL)
       goto next_hca;
-    }
 
     struct dirent *port_ent;
     while ((port_ent = readdir(ports_dir)) != NULL) {

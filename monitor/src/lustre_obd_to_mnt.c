@@ -10,6 +10,7 @@
 #include "dict.h"
 #include "string1.h"
 #include "lustre_obd_to_mnt.h"
+#include "path_open_fail_once.h"
 
 /* 
 This function grabs the super block address from 
@@ -33,11 +34,9 @@ static void sb_dict_init(void)
   char *sb_mnt = NULL;
   DIR *lov_dir = NULL;
 
-  lov_dir = opendir(lov_dir_path);
-  if (lov_dir == NULL) {
-    ERROR("cannot open `%s': %m\n", lov_dir_path);
+  lov_dir = path_opendir_or_record_fail(lov_dir_path);
+  if (lov_dir == NULL)
     goto out;
-  }
 
   struct dirent *de;
   while ((de = readdir(lov_dir)) != NULL) {
@@ -106,13 +105,23 @@ char *lustre_obd_to_mnt(const char *name)
   /* name should be of the form `work-clilov-ffff8102658ec800'. */
 
   if (strlen(name) < 16) {
-    ERROR("invalid obd name `%s'\n", name);
+    char inv[192];
+    snprintf(inv, sizeof inv, "lustre:inv:%s", name);
+    if (!path_open_is_skipped(inv)) {
+      ERROR("invalid obd name `%s'\n", name);
+      path_fail_mark(inv);
+    }
     return NULL;
   }
 
   sb_mnt = dict_ref(&sb_dict, name + strlen(name) - 16);
   if (sb_mnt == NULL) {
-    ERROR("no super block found for obd `%s'. build a new super block dict\n", name);
+    char miss[384];
+    snprintf(miss, sizeof miss, "lustre:sb:%s", name);
+    if (!path_open_is_skipped(miss)) {
+      ERROR("no super block found for obd `%s'. build a new super block dict\n", name);
+      path_fail_mark(miss);
+    }
     sb_dict_init();
     sb_mnt = dict_ref(&sb_dict, name + strlen(name) - 16);
   }

@@ -14,6 +14,7 @@
 #include "stats.h"
 #include "stats_file.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 #include "pscanf.h"
 #include "cpuid.h"
 #include "hwdetect.h"
@@ -41,9 +42,11 @@ static int open_lock_timeout(const char *path, int timeout)
     .l_whence = SEEK_SET,
   };
 
+  if (path_open_is_skipped(path))
+    return -1;
   int fd = open(path, O_CREAT | O_RDWR, 0600);
   if (fd < 0) {
-    ERROR("cannot open `%s': %m\n", path);
+    path_open_record_failure_once(path);
     return -1;
   }
 

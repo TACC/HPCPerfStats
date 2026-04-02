@@ -53,6 +53,8 @@ hpcperfstatsd_SOURCES = \
 	daemonize.c \
 	dict.h \
 	dict.c \
+	path_open_fail_once.h \
+	path_open_fail_once.c \
 	fileio.h \
 	hwdetect.h \
 	hwdetect.c \

@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include "stats.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 #include "pscanf.h"
 #include "pci.h"
 
@@ -56,9 +57,11 @@ static int intel_pmc_uncore_begin_dev(char *bus_dev, uint32_t *events, size_t nr
 
   snprintf(pci_path, sizeof(pci_path), "/proc/bus/pci/%s", bus_dev);
 
+  if (path_open_is_skipped(pci_path))
+    goto out;
   pci_fd = open(pci_path, O_RDWR);
   if (pci_fd < 0) {
-    ERROR("cannot open `%s': %m\n", pci_path);
+    path_open_record_failure_once(pci_path);
     goto out;
   }
 
@@ -109,9 +112,11 @@ static void intel_pmc_uncore_collect_dev(struct stats_type *type, char *bus_dev)
   TRACE("bus/dev %s\n", bus_dev);
 
   snprintf(pci_path, sizeof(pci_path), "/proc/bus/pci/%s", bus_dev);
+  if (path_open_is_skipped(pci_path))
+    goto out;
   pci_fd = open(pci_path, O_RDONLY);
   if (pci_fd < 0) {
-    ERROR("cannot open `%s': %m\n", pci_path);
+    path_open_record_failure_once(pci_path);
     goto out;
   }
 

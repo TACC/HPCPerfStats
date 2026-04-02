@@ -50,6 +50,7 @@
 #include <fcntl.h>
 #include "stats.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 #include "pscanf.h"
 #include "cpuid.h"
 
@@ -237,9 +238,11 @@ static int intel_pcu_begin_socket(char *cpu, uint64_t *events)
   uint64_t ctl;
 
   snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
+  if (path_open_is_skipped(msr_path))
+    goto out;
   msr_fd = open(msr_path, O_RDWR);
   if (msr_fd < 0) {
-    ERROR("cannot open `%s': %m\n", msr_path);
+    path_open_record_failure_once(msr_path);
     goto out;
   }
 
@@ -336,9 +339,11 @@ static void intel_pcu_collect_socket(struct stats_type *type, char *cpu, int pkg
     goto out;
 
   snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
+  if (path_open_is_skipped(msr_path))
+    goto out;
   msr_fd = open(msr_path, O_RDONLY);
   if (msr_fd < 0) {
-    ERROR("cannot open `%s': %m\n", msr_path);
+    path_open_record_failure_once(msr_path);
     goto out;
   }
 

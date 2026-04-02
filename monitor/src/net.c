@@ -13,6 +13,7 @@
 #include "collect.h"
 #include "pscanf.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 
 #define KEYS \
   X(collisions, "E", ""), \
@@ -84,11 +85,9 @@ static void net_iface_cache_rebuild(struct stats_type *type)
   (void)type;
   net_stats_invalidate_iface_cache();
 
-  dir = opendir(dir_path);
-  if (dir == NULL) {
-    ERROR("cannot open `%s': %m\n", dir_path);
+  dir = path_opendir_or_record_fail(dir_path);
+  if (dir == NULL)
     return;
-  }
 
   while ((ent = readdir(dir)) != NULL) {
     unsigned int flags;

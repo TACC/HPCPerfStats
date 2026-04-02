@@ -6,6 +6,7 @@
 #include "trace.h"
 #include "string1.h"
 #include "lustre_obd_to_mnt.h"
+#include "path_open_fail_once.h"
 
 #define LLITE_DIR_PATH "/proc/fs/lustre/llite"
 
@@ -76,11 +77,9 @@ static void llite_collect_fs(struct stats *stats, const char *d_name)
     goto out;
   }
 
-  file = file_fopen_read(path);
-  if (file == NULL) {
-    ERROR("cannot open `%s': %m\n", path);
+  file = path_file_fopen_read(path);
+  if (file == NULL)
     goto out;
-  }
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
 
   // $ cat /proc/fs/lustre/llite/scratch-ffff81019a4eb000/stats
@@ -118,11 +117,9 @@ static void llite_collect(struct stats_type *type)
   const char *llite_dir_path = LLITE_DIR_PATH;
   DIR *llite_dir = NULL;
 
-  llite_dir = opendir(llite_dir_path);
-  if (llite_dir == NULL) {
-    ERROR("cannot open `%s': %m\n", llite_dir_path);
+  llite_dir = path_opendir_or_record_fail(llite_dir_path);
+  if (llite_dir == NULL)
     goto out;
-  }
 
   struct dirent *de;
   while ((de = readdir(llite_dir)) != NULL) {

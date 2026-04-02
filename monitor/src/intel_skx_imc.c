@@ -14,6 +14,7 @@
 #include "stats.h"
 #include "string1.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 
 #define pci_cfg_address(bus, dev, func) (bus << 20) | (dev << 15) | (func << 12)
 #define index(address, off) (address | off)/4
@@ -79,9 +80,11 @@ static int intel_skx_imc_begin_dev(uint32_t bus, uint32_t dev, uint32_t fun, uin
   uint32_t pci = pci_cfg_address(bus, dev, fun);
 
   snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", "0");
+  if (path_open_is_skipped(msr_path))
+    goto out;
   msr_fd = open(msr_path, O_RDWR);
   if (msr_fd < 0) {
-    ERROR("cannot open `%s': %m\n", msr_path);
+    path_open_record_failure_once(msr_path);
     goto out;
   }
 
@@ -154,9 +157,11 @@ static int intel_skx_imc_begin(struct stats_type *type)
   int fd = -1;
 
   if (processor != SKYLAKE) goto out;
+  if (path_open_is_skipped(path))
+    goto out;
   fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
   if (fd < 0) {
-    ERROR("cannot open /dev/mem\n");
+    path_open_record_failure_once(path);
     goto out;
   }
   mmconfig_ptr = mmap(NULL, mmconfig_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mmconfig_base);
@@ -205,9 +210,11 @@ static void intel_skx_imc_collect(struct stats_type *type)
   int nr_devs = 0;
   int fd = -1;
 
+  if (path_open_is_skipped(path))
+    goto out;
   fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
   if (fd < 0) {
-    ERROR("cannot open /dev/mem\n");
+    path_open_record_failure_once(path);
     goto out;
   }
   mmconfig_ptr = mmap(NULL, mmconfig_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mmconfig_base);

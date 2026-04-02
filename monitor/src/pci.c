@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include "trace.h"
+#include "path_open_fail_once.h"
 
 #define PCI_DIR_PATH "/proc/bus/pci"
 
@@ -16,11 +17,9 @@ int pci_map_create(char ***dev_paths, int *nr, int *ids, int nr_ids) {
   const char *pci_dir_path = PCI_DIR_PATH;
   DIR *pci_dir = NULL;
   
-  pci_dir = opendir(pci_dir_path);
-  if (pci_dir == NULL) {
-    ERROR("cannot open `%s': %m\n", pci_dir_path);
+  pci_dir = path_opendir_or_record_fail(pci_dir_path);
+  if (pci_dir == NULL)
     goto out;
-  }
   
   struct dirent *bus_no;
   while ((bus_no = readdir(pci_dir)) != NULL) {
@@ -32,11 +31,9 @@ int pci_map_create(char ***dev_paths, int *nr, int *ids, int nr_ids) {
 	     pci_dir_path, bus_no->d_name);
 
     DIR *bus_dir = NULL;
-    bus_dir = opendir(bus_dir_path);
-    if (bus_dir == NULL) {
-      ERROR("cannot open `%s': %m\n", bus_no->d_name);
+    bus_dir = path_opendir_or_record_fail(bus_dir_path);
+    if (bus_dir == NULL)
       continue;
-    }
 
     struct dirent *dev_fun_no;
     while ((dev_fun_no = readdir(bus_dir)) != NULL) {
@@ -48,9 +45,11 @@ int pci_map_create(char ***dev_paths, int *nr, int *ids, int nr_ids) {
       snprintf(dev_fun_path, sizeof(dev_fun_path), "%s/%s/%s", 
 	       pci_dir_path, bus_no->d_name, dev_fun_no->d_name);
       
+      if (path_open_is_skipped(dev_fun_path))
+	continue;
       pci_fd = open(dev_fun_path, O_RDONLY);
       if (pci_fd < 0) {
-	ERROR("cannot open device file %s\n", dev_fun_path);
+	path_open_record_failure_once(dev_fun_path);
 	continue;
       }
 

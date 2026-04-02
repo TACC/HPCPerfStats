@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include "stats.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 #include "cpuid.h"
 
 /*! 
@@ -272,9 +273,11 @@ static int intel_pmc3_begin_cpu(char *cpu)
   }
 
   snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
+  if (path_open_is_skipped(msr_path))
+    goto out;
   msr_fd = open(msr_path, O_RDWR);
   if (msr_fd < 0) {
-    ERROR("cannot open `%s': %m\n", msr_path);
+    path_open_record_failure_once(msr_path);
     goto out;
   }
 

@@ -13,6 +13,7 @@
 #include "cpuid.h"
 #include "stats.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 
 #define pci_cfg_address(bus, dev, func) (bus << 20) | (dev << 15) | (func << 12)
 #define reg(address, off) (address | off)/4
@@ -209,10 +210,12 @@ static int intel_knl_edc_begin(struct stats_type *type)
   uint64_t mmconfig_base = 0xc0000000;
   uint64_t mmconfig_size = 0x10000000;
   uint32_t *mmconfig_ptr;
-  
+
+  if (path_open_is_skipped(path))
+    goto out;
   fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
   if (fd < 0) {
-    ERROR("cannot open /dev/mem\n");
+    path_open_record_failure_once(path);
     goto out;
   }
 
@@ -245,10 +248,13 @@ static void intel_knl_edc_collect(struct stats_type *type)
   uint64_t mmconfig_base = 0xc0000000;
   uint64_t mmconfig_size = 0x10000000;
   uint32_t *mmconfig_ptr;
+  int fd = -1;
 
-  int fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
+  if (path_open_is_skipped(path))
+    goto out;
+  fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
   if (fd < 0) {
-    ERROR("cannot open /dev/mem\n");
+    path_open_record_failure_once(path);
     goto out;
   }
   mmconfig_ptr = mmap(NULL, mmconfig_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mmconfig_base);

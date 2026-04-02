@@ -4,6 +4,7 @@
 #include "stats.h"
 #include "collect.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 
 /* Need to account for units.  According to block/stat.txt, in
    /sys/block/DEV/stat sector means 512B (as opposed to real sector
@@ -42,11 +43,9 @@ static void block_collect(struct stats_type *type)
   const char *path = "/sys/block";
   DIR *dir = NULL;
 
-  dir = opendir(path);
-  if (dir == NULL) {
-    ERROR("cannot open `%s': %m\n", path);
+  dir = path_opendir_or_record_fail(path);
+  if (dir == NULL)
     goto out;
-  }
 
   struct dirent *ent;
   while ((ent = readdir(dir)) != NULL) {

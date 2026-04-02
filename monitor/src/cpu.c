@@ -7,6 +7,7 @@
 #include "stats.h"
 #include "collect.h"
 #include "fileio.h"
+#include "path_open_fail_once.h"
 #include "trace.h"
 #include "string1.h"
 
@@ -44,9 +45,11 @@ static void cpu_collect(struct stats_type *type)
   size_t line_size = 0;
 
   if (g_cpu_proc_stat == NULL) {
+    if (path_open_is_skipped(path))
+      goto out;
     g_cpu_proc_stat = file_fopen_read(path);
     if (g_cpu_proc_stat == NULL) {
-      ERROR("cannot open `%s': %m\n", path);
+      path_open_record_failure_once(path);
       goto out;
     }
     setvbuf(g_cpu_proc_stat, g_cpu_proc_stat_io_buf, _IOFBF, sizeof(g_cpu_proc_stat_io_buf));

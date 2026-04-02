@@ -10,6 +10,7 @@
 #include "collect.h"
 #include "fileio.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 
 // i182-101# cat /sys/devices/system/node/node0/meminfo
 //
@@ -68,11 +69,9 @@ static void mem_collect_node(struct stats *stats, const char *node)
   size_t line_size = 0;
 
   snprintf(path, sizeof(path), "/sys/devices/system/node/node%s/meminfo", node);
-  file = file_fopen_read(path);
-  if (file == NULL) {
-    ERROR("cannot open `%s': %m\n", path);
+  file = path_file_fopen_read(path);
+  if (file == NULL)
     goto out;
-  }
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
 
   while (getline(&line, &line_size, file) >= 0) {
@@ -100,11 +99,9 @@ static void mem_collect(struct stats_type *type)
   const char *dir_path = "/sys/devices/system/node";
   DIR *dir = NULL;
 
-  dir = opendir(dir_path);
-  if (dir == NULL) {
-    ERROR("cannot open `%s': %m\n", dir_path);
+  dir = path_opendir_or_record_fail(dir_path);
+  if (dir == NULL)
     goto out;
-  }
 
   struct dirent *ent;
   while ((ent = readdir(dir)) != NULL) {

@@ -9,6 +9,7 @@
 #include "stats.h"
 #include "collect.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 
 // # cat /sys/devices/system/node/node0/numastat
 // numa_hit 24972369
@@ -31,11 +32,9 @@ static void numa_collect(struct stats_type *type)
   const char *dir_path = "/sys/devices/system/node";
   DIR *dir = NULL;
 
-  dir = opendir(dir_path);
-  if (dir == NULL) {
-    ERROR("cannot open `%s': %m\n", dir_path);
+  dir = path_opendir_or_record_fail(dir_path);
+  if (dir == NULL)
     goto out;
-  }
 
   struct dirent *ent;
   while ((ent = readdir(dir)) != NULL) {

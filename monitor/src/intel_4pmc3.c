@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include "stats.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 #include "intel_pmc3.h"
 
 //! Collect values in counters for cpu
@@ -28,9 +29,11 @@ static void intel_4pmc3_collect_cpu(struct stats_type *type, char *cpu)
   TRACE("cpu %s\n", cpu);
 
   snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
+  if (path_open_is_skipped(msr_path))
+    goto out;
   msr_fd = open(msr_path, O_RDONLY);
   if (msr_fd < 0) {
-    ERROR("cannot open `%s': %m\n", msr_path);
+    path_open_record_failure_once(msr_path);
     goto out;
   }
   

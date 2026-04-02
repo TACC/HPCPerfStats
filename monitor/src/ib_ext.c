@@ -8,6 +8,7 @@
 #include <infiniband/mad.h>
 #include "stats.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 #include "pscanf.h"
 
 /* CHECKME Is unit 4B for extended counters as well? */
@@ -116,11 +117,9 @@ static void collect_ib_ext(struct stats_type *type)
   const char *sys_path = "/sys/class/infiniband";
   DIR *sys_dir = NULL;
 
-  sys_dir = opendir(sys_path);
-  if (sys_dir == NULL) {
-    ERROR("cannot open `%s': %m\n", sys_path);
+  sys_dir = path_opendir_or_record_fail(sys_path);
+  if (sys_dir == NULL)
     goto out;
-  }
 
   struct dirent *sys_ent;
   while ((sys_ent = readdir(sys_dir)) != NULL) {
@@ -133,11 +132,9 @@ static void collect_ib_ext(struct stats_type *type)
       goto next;
 
     snprintf(ports_path, sizeof(ports_path), "%s/%s/ports", sys_path, hca);
-    ports_dir = opendir(ports_path);
-    if (ports_dir == NULL) {
-      ERROR("cannot open `%s': %m\n", ports_path);
+    ports_dir = path_opendir_or_record_fail(ports_path);
+    if (ports_dir == NULL)
       goto next;
-    }
 
     while ((ent = readdir(ports_dir)) != NULL) {
       if (isdigit(ent->d_name[0]))

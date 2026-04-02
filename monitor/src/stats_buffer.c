@@ -17,6 +17,7 @@
 #include "stats.h"
 #include "collect.h"
 #include "fileio.h"
+#include "path_open_fail_once.h"
 #include "stats_buffer.h"
 #include "stats_buffer_data_append.h"
 #include "schema.h"
@@ -903,9 +904,8 @@ void ring_buffer_resend(struct sf_ring_buffer *w)
 int stats_buffer_write_file(struct stats_buffer *sf, char *path)
 {
   int rc = 0;
-  FILE *sf_file = file_fopen_append(path);
+  FILE *sf_file = path_file_fopen_append(path);
   if (sf_file == NULL) {
-    ERROR("cannot open `%s': %m\n", path);
     rc = -1;
     goto out;
   }

@@ -13,6 +13,7 @@
 #include "trace.h"
 #include "pscanf.h"
 #include "fileio.h"
+#include "path_open_fail_once.h"
 #include "string1.h"
 
 #define SF_SCHEMA_CHAR '!'
@@ -152,9 +153,8 @@ int stats_file_open(struct stats_file *sf, const char *path)
     return -1;
   }
 
-  sf->sf_file = file_fopen_append(sf->sf_path);
+  sf->sf_file = path_file_fopen_append(sf->sf_path);
   if (sf->sf_file == NULL) {
-    ERROR("cannot open `%s': %m\n", path);
     free(sf->sf_path);
     sf->sf_path = NULL;
     return -1;

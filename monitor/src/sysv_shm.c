@@ -6,6 +6,7 @@
 #include "stats.h"
 #include "fileio.h"
 #include "trace.h"
+#include "path_open_fail_once.h"
 
 // From ipc/shm.c
 // # cat /proc/sysvipc/shm
@@ -47,11 +48,9 @@ static void sysv_shm_collect(struct stats_type *type)
   if (stats == NULL)
     goto out;
 
-  file = file_fopen_read(path);
-  if (file == NULL) {
-    ERROR("cannot open `%s': %m\n", path);
+  file = path_file_fopen_read(path);
+  if (file == NULL)
     goto out;
-  }
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
 
   /* Skip header. */

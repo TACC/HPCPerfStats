@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include "trace.h"
+#include "path_open_fail_once.h"
 #include "cpuid.h"
 
 #if defined(__i386__) || defined(__x86_64__)
@@ -137,10 +138,12 @@ int cpuid_read_cpu_topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, i
 
   /* Open /dev/cpuid/CPU/cpuid. */
   snprintf(cpuid_path, sizeof(cpuid_path), "/dev/cpu/%s/cpuid", cpu);
+  if (path_open_is_skipped(cpuid_path))
+    goto out;
   cpuid_fd = open(cpuid_path, O_RDONLY);
 
   if (cpuid_fd < 0) {
-    ERROR("cannot open `%s': %m\n", cpuid_path);
+    path_open_record_failure_once(cpuid_path);
     goto out;
   }
 
