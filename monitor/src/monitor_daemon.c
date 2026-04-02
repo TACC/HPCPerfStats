@@ -40,6 +40,7 @@ char *dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
 char *jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
 double sample_freq = 300;
 double send_freq = 300;
+double buffer_hours = 6.0;
 int max_buffer_size = 0;
 int allow_ring_buffer_overwrite = 1;
 int file_mode_enabled = 0;
@@ -96,12 +97,14 @@ static struct stats_buffer *monitor_daemon_alloc_stats_buffer(void)
   return sf;
 }
 
-static int monitor_daemon_buffer_size_for_6h(double sfreq)
+static int monitor_daemon_buffer_size_for_hours(double sfreq, double hours)
 {
   double slots;
   if (sfreq <= 0.0)
     sfreq = 1.0;
-  slots = ceil((6.0 * 3600.0) / sfreq);
+  if (hours <= 0.0)
+    hours = 1.0;
+  slots = ceil((hours * 3600.0) / sfreq);
   if (slots < 1.0)
     slots = 1.0;
   if (slots > (double) INT_MAX)
@@ -113,7 +116,7 @@ static void monitor_daemon_apply_dynamic_buffer_size_if_needed(void)
 {
   if (max_buffer_size_explicit)
     return;
-  max_buffer_size = monitor_daemon_buffer_size_for_6h(sample_freq);
+  max_buffer_size = monitor_daemon_buffer_size_for_hours(sample_freq, buffer_hours);
 }
 
 /* After a send attempt: if the ring buffer still has entries, try to drain it over RMQ. */
@@ -189,6 +192,8 @@ void monitor_daemon_finalize_runtime_settings(void)
     sample_freq = 1.0;
   if (send_freq <= 0.0)
     send_freq = 1.0;
+  if (buffer_hours <= 0.0)
+    buffer_hours = 1.0;
   monitor_daemon_apply_dynamic_buffer_size_if_needed();
 }
 
@@ -266,6 +271,11 @@ int read_conf_file(void)
       if (sscanf(line, "%lf", &send_freq) == 1)
         fprintf(log_stream, "%s: Setting send frequency to %f based on file %s\n",
                 app_name, send_freq, conf_file_name);
+    }
+    if (strcmp(key, "buffer_hours") == 0) {
+      if (sscanf(line, "%lf", &buffer_hours) == 1)
+        fprintf(log_stream, "%s: Setting buffer hours to %f based on file %s\n",
+                app_name, buffer_hours, conf_file_name);
     }
     if (strcmp(key, "freq") == 0) {
       if (sscanf(line, "%lf", &sample_freq) == 1)
@@ -634,7 +644,8 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
   ev_timer_again(EV_DEFAULT, &send_timer);
   fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs\n", sample_freq);
   fprintf(log_stream, "Setting hpcperfstatsd send frequency to %.1fs\n", send_freq);
-  fprintf(log_stream, "Setting hpcperfstatsd buffer capacity to %d samples (6h)\n", max_buffer_size);
+  fprintf(log_stream, "Setting hpcperfstatsd buffer capacity to %d samples (%.2fh)\n",
+          max_buffer_size, buffer_hours);
   send_success_count = 0;
   print_buffer_status(w);
 }

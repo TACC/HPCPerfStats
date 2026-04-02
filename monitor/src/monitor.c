@@ -65,7 +65,8 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   ev_timer_init(&send_timer, monitor_daemon_send_timer_cb, send_freq, send_freq);
   ev_timer_start(EV_DEFAULT, &send_timer);
   fprintf(log_stream, "Setting hpcperfstatsd send frequency to %.1fs\n", send_freq);
-  fprintf(log_stream, "Setting hpcperfstatsd buffer capacity to %d samples (6h)\n", max_buffer_size);
+  fprintf(log_stream, "Setting hpcperfstatsd buffer capacity to %d samples (%.2fh)\n",
+          max_buffer_size, buffer_hours);
 
   if (pscanf(jobid_file_path, "%79s", jobid) < 1)
     strcpy(jobid, "-");

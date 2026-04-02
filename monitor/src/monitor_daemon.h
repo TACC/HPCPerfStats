@@ -21,6 +21,7 @@ extern char *dumpfile_dir;
 extern char *jobid_file_path;
 extern double sample_freq;
 extern double send_freq;
+extern double buffer_hours;
 extern int max_buffer_size;
 extern int allow_ring_buffer_overwrite;
 extern int file_mode_enabled;
