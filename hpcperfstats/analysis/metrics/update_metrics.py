@@ -205,14 +205,8 @@ def _fqdn_hosts_for_job(job_row):
   return hosts
 
 
-def _filter_jids_with_samples_after_end(jids):
-  """Keep jids where every job host has latest host_data.time strictly after end_time."""
-  if not jids:
-    return []
-
-  jobs = list(
-      job_data.objects.filter(jid__in=jids).values("jid", "end_time", "host_list")
-  )
+def _ready_jids_from_job_rows(jobs):
+  """Return ready jids from pre-fetched job rows (jid/end_time/host_list)."""
   if not jobs:
     return []
 
@@ -221,7 +215,7 @@ def _filter_jids_with_samples_after_end(jids):
   for row in jobs:
     # De-duplicate host_list entries; gating is based on unique hosts and each
     # unique host must have data strictly after job end.
-    hosts = list(set(_fqdn_hosts_for_job(row)))
+    hosts = set(_fqdn_hosts_for_job(row))
     job_hosts[row["jid"]] = hosts
     unique_hosts.update(hosts)
 
@@ -238,17 +232,26 @@ def _filter_jids_with_samples_after_end(jids):
   for row in jobs:
     jid = row["jid"]
     end_time = row.get("end_time")
-    hosts = job_hosts.get(jid) or []
+    hosts = job_hosts.get(jid) or set()
     if end_time is None or not hosts:
       continue
-    ready_hosts = 0
-    for host in hosts:
-      latest = latest_by_host.get(host)
-      if latest is not None and latest > end_time:
-        ready_hosts += 1
-    if ready_hosts == len(hosts):
+    if all(
+        (latest_by_host.get(host) is not None and latest_by_host[host] > end_time)
+        for host in hosts
+    ):
       ready.append(jid)
   return ready
+
+
+def _filter_jids_with_samples_after_end(jids):
+  """Keep jids where every job host has latest host_data.time strictly after end_time."""
+  if not jids:
+    return []
+
+  jobs = list(
+      job_data.objects.filter(jid__in=jids).values("jid", "end_time", "host_list")
+  )
+  return _ready_jids_from_job_rows(jobs)
 
 
 def update_metrics(date, rerun=False):
@@ -270,10 +273,11 @@ def update_metrics(date, rerun=False):
     ORM holding onto a cursor/connection that has just been closed, which can
     manifest as psycopg 'lost synchronization with server' errors.
     """
+    date_ymd = date.strftime("%Y-%m-%d")
     qs = _jobs_queryset(date, min_time, rerun)
     # Avoid a separate COUNT(*) that repeats the same filter work as the iterator below.
     log_print(
-        "Streaming jobs needing metrics for date {0}".format(date.strftime("%Y-%m-%d"))
+        "Streaming jobs needing metrics for date {0}".format(date_ymd)
     )
 
     metrics_manager = metrics.Metrics()
@@ -290,9 +294,11 @@ def update_metrics(date, rerun=False):
     for chunk_number, (pk_chunk, _) in enumerate(_iter_chunked_pks(qs, CHUNK_SIZE), start=1):
       if shutdown_requested[0]:
         break
+      jobs_chunk = None
+      ready_jids = None
       try:
         ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
-        skipped_not_ready += max(0, len(pk_chunk) - len(ready_jids))
+        skipped_not_ready += (len(pk_chunk) - len(ready_jids))
         if not ready_jids:
           continue
         jobs_chunk = _job_refs_from_jids(ready_jids)
@@ -306,8 +312,11 @@ def update_metrics(date, rerun=False):
             "for date {1}: {2}".format(len(pk_chunk), date, exc)
         )
         close_old_connections()
-        ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
-        skipped_not_ready += max(0, len(pk_chunk) - len(ready_jids))
+        # If DB failed after readiness filtering (e.g. during run/persist), reuse
+        # computed ready_jids to avoid extra query/CPU on retry.
+        if ready_jids is None:
+          ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+          skipped_not_ready += (len(pk_chunk) - len(ready_jids))
         if not ready_jids:
           continue
         jobs_chunk = _job_refs_from_jids(ready_jids)
@@ -315,8 +324,13 @@ def update_metrics(date, rerun=False):
         processed += len(jobs_chunk)
       finally:
         # Release references promptly; GC can then free memory before next chunk.
-        del jobs_chunk
-        if GC_COLLECT_EVERY_N_CHUNKS > 0 and chunk_number % GC_COLLECT_EVERY_N_CHUNKS == 0:
+        jobs_chunk = None
+        ready_jids = None
+        if (
+            GC_COLLECT_EVERY_N_CHUNKS > 0
+            and chunk_number % GC_COLLECT_EVERY_N_CHUNKS == 0
+            and gc.get_count()[0] > 10000
+        ):
           gc.collect()
 
       if shutdown_requested[0]:
@@ -324,7 +338,7 @@ def update_metrics(date, rerun=False):
 
     log_print(
         "Finished metrics for date {0}: processed {1} jobs, skipped {2} not-ready jobs".format(
-            date.strftime("%Y-%m-%d"), processed, skipped_not_ready
+            date_ymd, processed, skipped_not_ready
         )
     )
 
@@ -368,14 +382,9 @@ def main(argv=None, sleep_after=True):
   log_date_range("metrics to update", startdate, enddate)
   #################################################################
 
-  date = startdate
-  all_dates = []
-  while date <= enddate:
-    all_dates.append(date)
-    date += timedelta(days=1)
-
+  day_count = (enddate - startdate).days + 1
   # Newest calendar day first (end of range / today before older days).
-  all_dates = sorted(all_dates, reverse=True)
+  all_dates = [enddate - timedelta(days=i) for i in range(day_count)]
   log_print(all_dates)
   for d in all_dates:
     if shutdown_requested[0]:
