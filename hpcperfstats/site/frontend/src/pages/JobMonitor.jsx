@@ -140,8 +140,8 @@ export default function JobMonitor() {
 
   return (
     <>
-      <h1 className="h3">Job failure monitor</h1>
-      <p className="text-muted">
+      <h1 className="h2 mb-3">Job failure monitor</h1>
+      <p className="text-muted mb-3">
         Aggregated job outcomes by user for the last {windowDays} days. Only users
         who have run more than {windowDays / 2} jobs in this window are included.
       </p>

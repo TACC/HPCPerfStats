@@ -149,10 +149,8 @@ export default function Search() {
     );
 
   return (
-    <div className="row">
-      <hr />
-      <div className="container-fluid search-home">
-        <h1 className="h3 mb-2">Browse jobs by time</h1>
+    <div className="search-home">
+      <h1 className="h2 mb-3">Browse jobs by time</h1>
         <p className="text-muted small mb-3">
           Open a year or calendar day to see job lists. If you already know a job ID, use{" "}
           <strong>Find Job</strong> in the header; for richer filters, use{" "}
@@ -213,7 +211,6 @@ export default function Search() {
           <h2 className="visually-hidden">Browse by calendar date</h2>
           {calendarBrowsePrimary}
         </section>
-      </div>
     </div>
   );
 }

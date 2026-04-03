@@ -254,7 +254,7 @@ export default function JobList() {
 
   return (
     <>
-      <h1 className="h4">{qname}</h1>
+      <h1 className="h2 mb-3">{qname}</h1>
       {pageSummary ? (
         <p className="text-muted small mb-2 job-list-page-summary">{pageSummary}</p>
       ) : null}

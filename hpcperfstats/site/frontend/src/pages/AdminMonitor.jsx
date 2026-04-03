@@ -358,7 +358,7 @@ export default function AdminMonitor() {
 
   return (
     <>
-      <h1 className="h3">HPCPerfStats Monitor</h1>
+      <h1 className="h2 mb-3">HPCPerfStats Monitor</h1>
 
       <div className="admin-monitor-section">
         <button

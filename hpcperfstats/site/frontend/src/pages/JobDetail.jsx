@@ -503,7 +503,7 @@ export default function JobDetail() {
 
   return (
     <>
-      <h1 className="h2">Job {job.jid}</h1>
+      <h1 className="h2 mb-3">Job {job.jid}</h1>
 
       <nav className="job-detail-toc border-bottom pb-2 mb-3" aria-label="On this page">
         <ul className="list-inline small mb-0">

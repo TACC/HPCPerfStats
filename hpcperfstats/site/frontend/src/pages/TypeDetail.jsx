@@ -47,11 +47,11 @@ export default function TypeDetail() {
   } = data;
 
   return (
-    <div className="container-fluid">
-      <h1 className="h2">
+    <>
+      <h1 className="h2 mb-3">
         Job {jobid} / Type {type_name}
       </h1>
-      <h2 className="h5">Rates Aggregated over devices</h2>
+      <h2 className="h5 mb-2">Rates Aggregated over devices</h2>
       <div className="graphs">
         <BokehEmbed
           item={tplot_item}
@@ -64,7 +64,7 @@ export default function TypeDetail() {
       </div>
       {stats_data.length > 0 && (
         <>
-          <h2 className="h5">Counts Aggregated over devices and hosts</h2>
+          <h2 className="h5 mb-2 mt-4">Counts Aggregated over devices and hosts</h2>
           <div className="table-responsive">
             <table className="table table-sm table-bordered">
               <caption className="visually-hidden">
@@ -96,6 +96,6 @@ export default function TypeDetail() {
           </div>
         </>
       )}
-    </div>
+    </>
   );
 }

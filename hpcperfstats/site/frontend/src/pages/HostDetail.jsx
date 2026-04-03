@@ -48,9 +48,9 @@ export default function HostDetail() {
   const { host: hostName, plot_item, plot_unavailable_reason } = data;
 
   return (
-    <div className="container-fluid">
-      <h1 className="h2">Host: {hostName}</h1>
-      <p className="text-muted">
+    <>
+      <h1 className="h2 mb-3">Host: {hostName}</h1>
+      <p className="text-muted mb-3">
         Time range: {formatDateTime(data.end_time__gte)} — {data.end_time__lte === "now()" ? "Now" : formatDateTime(data.end_time__lte)}
       </p>
       <div className="graphs">
@@ -61,6 +61,6 @@ export default function HostDetail() {
           unavailableReason={plot_unavailable_reason}
         />
       </div>
-    </div>
+    </>
   );
 }
