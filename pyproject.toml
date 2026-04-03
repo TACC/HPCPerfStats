@@ -36,7 +36,6 @@ dependencies = [
   "mysqlclient",
   "gunicorn",
   "requests",
-  "pytz",
   "tzdata",
   "redis",
   "djangorestframework",
