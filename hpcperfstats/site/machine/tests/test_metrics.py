@@ -351,8 +351,8 @@ def test_job_arc_avg_mbw_arm_counter_fallback():
   assert typename == "cpu_counter_metrics"
 
 
-def test_job_arc_avg_lustreiops_includes_nfs_when_available():
-  """avg_lustreiops sums llite and nfs operation counters when both exist."""
+def test_job_arc_avg_sharedfs_iops_includes_nfs_when_available():
+  """avg_sharedfs_iops sums llite and nfs operation counters when both exist."""
 
   def fake_job_arc(self, jt, **kw):
     if kw.get("typename") == "llite":
@@ -363,13 +363,13 @@ def test_job_arc_avg_lustreiops_includes_nfs_when_available():
 
   with patch.object(Metrics, "job_arc", fake_job_arc):
     m = Metrics()
-    value, typename = m._job_arc_avg_lustreiops(object())
+    value, typename = m._job_arc_avg_sharedfs_iops(object())
   assert abs(value - 25.0) < 1e-9
   assert typename == "llite"
 
 
-def test_job_arc_avg_lustrebw_falls_back_to_nfs():
-  """avg_lustrebw uses nfs byte counters when llite counters are absent."""
+def test_job_arc_avg_sharedfs_bw_falls_back_to_nfs():
+  """avg_sharedfs_bw uses nfs byte counters when llite counters are absent."""
 
   def fake_job_arc(self, jt, **kw):
     if kw.get("typename") == "llite":
@@ -380,7 +380,7 @@ def test_job_arc_avg_lustrebw_falls_back_to_nfs():
 
   with patch.object(Metrics, "job_arc", fake_job_arc):
     m = Metrics()
-    value, typename = m._job_arc_avg_lustrebw(object())
+    value, typename = m._job_arc_avg_sharedfs_bw(object())
   assert abs(value - 7.0) < 1e-9
   assert typename == "nfs"
 

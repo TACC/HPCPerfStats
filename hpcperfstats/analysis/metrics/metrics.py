@@ -368,7 +368,7 @@ class Metrics():
             "conv": 0.01,
             "units": "#cores"
         },
-        "avg_lustreiops": {
+        "avg_sharedfs_iops": {
             "typename": "llite",
             "events": [
                 "open", "close", "mmap", "fsync", "setattr", "truncate",
@@ -379,7 +379,7 @@ class Metrics():
             "conv": 1,
             "units": "iops"
         },
-        "avg_lustrebw": {
+        "avg_sharedfs_bw": {
             "typename": "llite",
             "events": ["read_bytes", "write_bytes"],
             "conv": 1.0 / (1024 * 1024),
@@ -696,7 +696,7 @@ class Metrics():
       return v, "cpu_counter_metrics"
     return None, None
 
-  def _job_arc_avg_lustreiops(self, jt, cache=None):
+  def _job_arc_avg_sharedfs_iops(self, jt, cache=None):
     """Shared filesystem IOPS from Lustre llite and NFS operation counters.
 
     Returns summed contribution from available sources and a representative type.
@@ -734,7 +734,7 @@ class Metrics():
       return None, None
     return total, used[0]
 
-  def _job_arc_avg_lustrebw(self, jt, cache=None):
+  def _job_arc_avg_sharedfs_bw(self, jt, cache=None):
     """Shared filesystem bandwidth from Lustre llite and NFS byte counters.
 
     Returns summed contribution from available sources and a representative type.
@@ -850,12 +850,12 @@ class Metrics():
           value, mbw_typename = self._job_arc_avg_mbw(
               jt, cache=simple_metric_cache)
           row_type = mbw_typename or metric_obj["typename"]
-        elif metric_name == "avg_lustreiops":
-          value, fs_typename = self._job_arc_avg_lustreiops(
+        elif metric_name == "avg_sharedfs_iops":
+          value, fs_typename = self._job_arc_avg_sharedfs_iops(
               jt, cache=simple_metric_cache)
           row_type = fs_typename or metric_obj["typename"]
-        elif metric_name == "avg_lustrebw":
-          value, fs_typename = self._job_arc_avg_lustrebw(
+        elif metric_name == "avg_sharedfs_bw":
+          value, fs_typename = self._job_arc_avg_sharedfs_bw(
               jt, cache=simple_metric_cache)
           row_type = fs_typename or metric_obj["typename"]
         elif metric_name == "avg_ibbw":

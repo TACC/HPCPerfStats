@@ -559,7 +559,7 @@ export default function JobDetail() {
             <table className="table table-sm table-bordered">
             <thead>
               <tr>
-                <th>File System</th>
+                <th>Shared File System</th>
                 <th>MB Read</th>
                 <th>MB Written</th>
               </tr>
@@ -568,7 +568,7 @@ export default function JobDetail() {
               {detailsLoading ? (
                 <tr>
                   <td colSpan={3} className="text-muted">
-                    Loading file system data…
+                    Loading shared file system data…
                   </td>
                 </tr>
               ) : Object.keys(fsio).length === 0 ? (

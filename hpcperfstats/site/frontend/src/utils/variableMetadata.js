@@ -115,13 +115,13 @@ export const VARIABLE_METADATA = {
     description:
       "Average block-device throughput computed from read and write sectors over the job.",
   },
-  avg_lustreiops: {
+  avg_sharedfs_iops: {
     description:
-      "Average Lustre metadata operation rate computed from Lustre client counters over the job.",
+      "Average metadata and I/O operation rate for the shared filesystem named in the Shared File System section on this page (from Lustre client and/or NFS counters over the job).",
   },
-  avg_lustrebw: {
+  avg_sharedfs_bw: {
     description:
-      "Average Lustre read+write bandwidth computed from Lustre client byte counters over the job.",
+      "Average read+write bandwidth for the shared filesystem named in the Shared File System section on this page (from Lustre client and/or NFS byte counters over the job).",
   },
   avg_ibbw: {
     description:

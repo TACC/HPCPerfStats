@@ -21,6 +21,15 @@ describe("getDescriptionForVariable", () => {
     expect(getDescriptionForVariable("mem_hwm")).toBeTruthy();
   });
 
+  it("documents shared filesystem metrics with the job detail section", () => {
+    expect(getDescriptionForVariable("avg_sharedfs_bw")).toMatch(
+      /Shared File System section/i,
+    );
+    expect(getDescriptionForVariable("avg_sharedfs_iops")).toMatch(
+      /Shared File System section/i,
+    );
+  });
+
   it("documents metrics_distinct_time_count for staff Sample Count help", () => {
     expect(getDescriptionForVariable("metrics_distinct_time_count")).toMatch(/distinct sample timestamps/i);
   });

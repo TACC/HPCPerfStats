@@ -94,6 +94,18 @@ describe("JobDetail", () => {
     return vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(minimalBatchPlotsResponse);
   }
 
+  it("labels the fsio table column Shared File System", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(minimalJobDetailResponse);
+    mockAllPlotCallsReady();
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(
+        screen.getByRole("columnheader", { name: "Shared File System" }),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("shows Sample Count for staff when API includes staff_metrics_distinct_time_count", async () => {
     vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue({
       ...minimalJobDetailResponse,
