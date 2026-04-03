@@ -22,8 +22,6 @@ from django.core.cache import cache
 from django.db import connection, close_old_connections
 from django.utils.encoding import iri_to_uri
 
-from django.views.decorators.cache import cache_page
-
 import os
 
 
@@ -38,6 +36,7 @@ class _JSONResponse(Response):
     def json(self):
         return self.data
 
+from .cache_middleware import dynamic_cache_page
 from .cache_utils import (
     KEY_ADMIN_CACHE_STATS,
     KEY_ADMIN_RMQ_STATS,
@@ -57,11 +56,9 @@ from .cache_utils import (
     KEY_PROC_LIST,
     KEY_HOST_PLOT,
     cached_orm,
+    get_site_content_cache_timeout,
     make_cache_key,
     TIMEOUT_ADMIN_STATS,
-    TIMEOUT_MEDIUM,
-    TIMEOUT_SHORT,
-    TIMEOUT_LONG,
 )
 from hpcperfstats.analysis.gen.utils import (
     new_plain_number_hover_formatter,
@@ -88,10 +85,13 @@ from .views import (
 _small_executor = None   # dashboard, queue histograms, job_detail, job_plots (≤8 tasks)
 _job_plots_lock = threading.Lock()
 
-JOB_DETAIL_CACHE_TTL_RECENT = 4 * 3600
-JOB_DETAIL_CACHE_TTL_OLD = 30 * 24 * 3600
 _job_plot_inflight = {}
 _JOB_PLOT_INFLIGHT_TTL_SECONDS = 180
+
+
+def site_response_cache_timeout(request):
+    """Per-request TTL for @dynamic_cache_page (site-aware)."""
+    return get_site_content_cache_timeout()
 
 # job_plots JSON field names (plot=all): kind -> (json_item_key, unavailable_reason_key)
 _JOB_PLOT_JSON_KEYS = {
@@ -161,31 +161,6 @@ def _get_small_executor():
     if _small_executor is None:
         _small_executor = ThreadPoolExecutor(max_workers=8)
     return _small_executor
-
-
-def _job_detail_cache_ttl_for_end_time(end_time):
-    """Return cache TTL for job-detail related caches based on job age."""
-    if end_time is None:
-        return JOB_DETAIL_CACHE_TTL_RECENT
-    if end_time.tzinfo is None:
-        end_time = timezone.make_aware(end_time, dt_timezone.utc)
-    age = timezone.now() - end_time
-    if age > timedelta(days=7):
-        return JOB_DETAIL_CACHE_TTL_OLD
-    return JOB_DETAIL_CACHE_TTL_RECENT
-
-
-def _job_detail_cache_ttl_for_jid(jid):
-    """Best-effort TTL lookup from job end_time before cached job fetch."""
-    try:
-        end_time = (
-            job_data.objects.filter(jid=jid)
-            .values_list("end_time", flat=True)
-            .first()
-        )
-    except Exception:
-        return JOB_DETAIL_CACHE_TTL_RECENT
-    return _job_detail_cache_ttl_for_end_time(end_time)
 
 
 def _compute_job_gpu_stats(job, j, job_cache_timeout):
@@ -1164,13 +1139,15 @@ def invalidate_cache_for_page(request):
     )
 
 
-@cache_page(TIMEOUT_MEDIUM)
+@dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 def home_options(request):
     """Return options for search form: date_list, metrics, queues, states, machine_name."""
     err = _require_auth(request)
     if err is not None:
         return err
+
+    site_ttl = get_site_content_cache_timeout()
 
     def _dates_fn():
         return sorted(job_data.objects.dates("end_time", "day"))
@@ -1194,16 +1171,16 @@ def home_options(request):
 
     executor = _get_small_executor()
     date_future = executor.submit(
-        cached_orm, KEY_DATES, TIMEOUT_MEDIUM, _dates_fn
+        cached_orm, KEY_DATES, site_ttl, _dates_fn
     )
     metrics_future = executor.submit(
-        cached_orm, KEY_METRICS_DISTINCT, TIMEOUT_LONG, _metrics_fn
+        cached_orm, KEY_METRICS_DISTINCT, site_ttl, _metrics_fn
     )
     queues_future = executor.submit(
-        cached_orm, KEY_QUEUES, TIMEOUT_MEDIUM, _queues_fn
+        cached_orm, KEY_QUEUES, site_ttl, _queues_fn
     )
     states_future = executor.submit(
-        cached_orm, KEY_STATES, TIMEOUT_MEDIUM, _states_fn
+        cached_orm, KEY_STATES, site_ttl, _states_fn
     )
     date_list = date_future.result()
     metrics = metrics_future.result()
@@ -1231,7 +1208,7 @@ def home_options(request):
     })
 
 
-@cache_page(TIMEOUT_SHORT)
+@dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 def search_dispatch(request):
     """
@@ -1241,12 +1218,14 @@ def search_dispatch(request):
     if err is not None:
         return err
 
+    site_ttl = get_site_content_cache_timeout()
+
     if request.GET.get("jid"):
         jid = request.GET["jid"]
         base_qs = _apply_non_staff_job_visibility(job_data.objects.all(), request)
         job_jid = cached_orm(
             f"{KEY_JOB}:{jid}",
-            TIMEOUT_SHORT,
+            site_ttl,
             lambda: base_qs.filter(jid=jid).values_list("jid", flat=True).first(),
         )
         if job_jid:
@@ -1478,7 +1457,7 @@ def _job_list_metric_hist_pair(df, metric_name, label, display_title, thumb_wh, 
     return p_thumb, p_full
 
 
-@cache_page(TIMEOUT_MEDIUM)
+@dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 def job_list_histograms(request):
     """
@@ -1644,7 +1623,7 @@ def job_list_histograms(request):
     )
 
 
-@cache_page(TIMEOUT_MEDIUM)
+@dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 def job_list(request):
     """Paginated job list only (histograms via separate job_list_histograms endpoint)."""
@@ -1756,7 +1735,7 @@ def job_detail(request, pk):
     if err is not None:
         return err
 
-    job_cache_timeout = _job_detail_cache_ttl_for_jid(pk)
+    job_cache_timeout = get_site_content_cache_timeout()
     job = cached_orm(
         f"{KEY_JOB}:{pk}",
         job_cache_timeout,
@@ -1769,8 +1748,6 @@ def job_detail(request, pk):
             {"error": "Job not found"},
             status=status.HTTP_404_NOT_FOUND,
         )
-
-    job_cache_timeout = _job_detail_cache_ttl_for_end_time(getattr(job, "end_time", None))
 
     if not _apply_non_staff_job_visibility(job_data.objects.filter(jid=pk), request).exists():
         return Response(
@@ -2045,7 +2022,7 @@ def job_plots(request, pk):
     if err is not None:
         return err
 
-    job_cache_timeout = _job_detail_cache_ttl_for_jid(pk)
+    job_cache_timeout = get_site_content_cache_timeout()
     job = cached_orm(
         f"{KEY_JOB}:{pk}",
         job_cache_timeout,
@@ -2063,7 +2040,6 @@ def job_plots(request, pk):
             {"error": "Not allowed to view this job"},
             status=status.HTTP_403_FORBIDDEN,
         )
-    job_cache_timeout = _job_detail_cache_ttl_for_end_time(getattr(job, "end_time", None))
 
     plot_kind = (request.GET.get("plot") or "").strip().lower()
     zoom_mode = str(request.GET.get("zoom", "")).lower() in ("1", "true", "yes")
@@ -2366,7 +2342,7 @@ def job_plots(request, pk):
     return Response(payload)
 
 
-@cache_page(TIMEOUT_SHORT)
+@dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 def type_detail(request, jid, type_name):
     """Type detail: Bokeh tscript/tdiv, stats_data, schema."""
@@ -2374,9 +2350,11 @@ def type_detail(request, jid, type_name):
     if err is not None:
         return err
 
+    site_ttl = get_site_content_cache_timeout()
+
     job = cached_orm(
         f"{KEY_JOB}:{jid}",
-        TIMEOUT_SHORT,
+        site_ttl,
         lambda: job_data.objects.filter(jid=jid)
         .only("host_list", "start_time", "end_time")
         .first(),
@@ -2414,7 +2392,7 @@ def type_detail(request, jid, type_name):
     _et = end_time.isoformat() if end_time else ""
     data_host_list = cached_orm(
         f"{KEY_TYPE_DETAIL_HOSTS}:{jid}:{type_name}:{_st}:{_et}",
-        TIMEOUT_SHORT,
+        site_ttl,
         _type_hosts_fn,
     )
     if len(data_host_list) == 0:
@@ -2460,13 +2438,15 @@ def type_detail(request, jid, type_name):
     })
 
 
-@cache_page(TIMEOUT_SHORT)
+@dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 def host_plot(request):
     """Return Bokeh plot_item for a single host and time range (GET host, end_time__gte, end_time__lte)."""
     err = _require_auth(request)
     if err is not None:
         return err
+
+    site_ttl = get_site_content_cache_timeout()
 
     host_fqdn = (request.GET.get("host") or "").strip()
     start_time = request.GET.get("end_time__gte", "").strip()
@@ -2508,7 +2488,7 @@ def host_plot(request):
     cache_key = make_cache_key(
         KEY_HOST_PLOT, host_fqdn, start_dt.isoformat(), end_dt.isoformat()
     )
-    plot_item = cached_orm(cache_key, TIMEOUT_SHORT, _host_plot_fn)
+    plot_item = cached_orm(cache_key, site_ttl, _host_plot_fn)
 
     return Response({
         "host": host_fqdn,
@@ -2789,7 +2769,7 @@ def admin_monitor(request):
     )
 
 
-@cache_page(TIMEOUT_SHORT)
+@dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 def job_monitor(request):
     """Staff-only: aggregate job failure statistics per user over a recent window.
@@ -2909,6 +2889,7 @@ def job_monitor_gpu_for_user(request):
     now = timezone.now()
     start_time = now - timedelta(days=window_days)
     cache_key = make_cache_key("JOB_MONITOR_GPU_USER", window_days, username)
+    site_ttl = get_site_content_cache_timeout()
 
     def _compute_user_gpu():
         gpu_count_total = None
@@ -2921,9 +2902,8 @@ def job_monitor_gpu_for_user(request):
         for job in jobs_for_gpu:
             try:
                 j = jid_table.jid_table(job.jid)
-                job_timeout = _job_detail_cache_ttl_for_end_time(getattr(job, "end_time", None))
                 gpu_active, _gpu_max, _gpu_mean, per_job_gpu_count = _compute_job_gpu_stats(
-                    job, j, job_timeout
+                    job, j, site_ttl
                 )
             except Exception:
                 continue
@@ -2950,7 +2930,7 @@ def job_monitor_gpu_for_user(request):
             "has_data": has_data,
         }
 
-    result = cached_orm(cache_key, TIMEOUT_SHORT, _compute_user_gpu)
+    result = cached_orm(cache_key, site_ttl, _compute_user_gpu)
     return Response(result)
 
 

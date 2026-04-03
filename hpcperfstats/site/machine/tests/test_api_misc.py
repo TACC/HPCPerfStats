@@ -399,24 +399,34 @@ class TestFormatLogTimestamp:
     assert out == "not-a-datetime"
 
 
-class TestJobDetailCacheTtl:
-  def test_recent_job_uses_four_hour_ttl(self):
-    from hpcperfstats.site.machine import api
+class TestSiteContentCacheTimeout:
+  """Site TTL is driven by cache_utils.get_site_content_cache_timeout (not per-job age)."""
+
+  def test_empty_db_uses_one_hour_ttl(self):
+    from hpcperfstats.site.machine import cache_utils
+
+    with patch.object(cache_utils, "get_site_newest_job_end_time", return_value=None):
+      assert cache_utils.get_site_content_cache_timeout() == cache_utils.SITE_CACHE_TTL_FRESH_SECONDS
+
+  def test_recent_newest_end_uses_one_hour_ttl(self):
+    from hpcperfstats.site.machine import cache_utils
 
     now = datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc)
-    end_time = datetime(2026, 3, 22, 12, 0, 1, tzinfo=timezone.utc)
-    with patch("hpcperfstats.site.machine.api.timezone.now", return_value=now):
-      ttl = api._job_detail_cache_ttl_for_end_time(end_time)
-    assert ttl == 4 * 3600
+    newest = datetime(2026, 3, 20, 0, 0, 0, tzinfo=timezone.utc)
+    with patch.object(cache_utils, "get_site_newest_job_end_time", return_value=newest), patch.object(
+        cache_utils.timezone, "now", return_value=now
+    ):
+      assert cache_utils.get_site_content_cache_timeout() == cache_utils.SITE_CACHE_TTL_FRESH_SECONDS
 
-  def test_old_job_uses_one_month_ttl(self):
-    from hpcperfstats.site.machine import api
+  def test_stale_newest_end_uses_unlimited_cache_ttl(self):
+    from hpcperfstats.site.machine import cache_utils
 
     now = datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc)
-    end_time = datetime(2026, 3, 15, 11, 59, 59, tzinfo=timezone.utc)
-    with patch("hpcperfstats.site.machine.api.timezone.now", return_value=now):
-      ttl = api._job_detail_cache_ttl_for_end_time(end_time)
-    assert ttl == 30 * 24 * 3600
+    newest = datetime(2026, 3, 1, 0, 0, 0, tzinfo=timezone.utc)
+    with patch.object(cache_utils, "get_site_newest_job_end_time", return_value=newest), patch.object(
+        cache_utils.timezone, "now", return_value=now
+    ):
+      assert cache_utils.get_site_content_cache_timeout() is None
 
 
 class TestGetApiKeyFromRequest:

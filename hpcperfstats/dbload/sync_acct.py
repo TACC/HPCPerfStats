@@ -32,6 +32,22 @@ from hpcperfstats.site.machine.models import job_data
 
 local_timezone = dt_timezone.utc
 
+
+def _notify_job_cache_after_acct_ingest(inserted, job_objs=None):
+  """Invalidate site/reference caches; optionally warm KEY_JOB after accounting ingest."""
+  try:
+    from hpcperfstats.site.machine.cache_utils import (
+        get_site_content_cache_timeout,
+        invalidate_after_job_data_ingest,
+        warm_job_cache_entries,
+    )
+
+    invalidate_after_job_data_ingest(inserted)
+    if inserted > 0 and job_objs:
+      warm_job_cache_entries(job_objs, get_site_content_cache_timeout())
+  except Exception:
+    pass
+
 COLUMNS_TO_READ = [
     'JobID', 'User', 'Account', 'Start', 'End', 'Submit', 'Partition',
     'Timelimit', 'JobName', 'State', 'NNodes', 'ReqCPUS', 'NodeList'
@@ -152,11 +168,13 @@ def _sync_acct_dataframe(df, jobs_in_db):
     log_print("error in bulk_create:", str(e))
     inserted = _insert_job_data_individually(df)
     log_print("Total number of new entries (fallback single inserts):", inserted)
+    _notify_job_cache_after_acct_ingest(inserted, None)
     return inserted
 
   existing_after = job_data.objects.filter(jid__in=jids).count()
   inserted = max(0, existing_after - existing_before)
   log_print("Total number of new entries:", inserted)
+  _notify_job_cache_after_acct_ingest(inserted, objs)
   return inserted
 
 

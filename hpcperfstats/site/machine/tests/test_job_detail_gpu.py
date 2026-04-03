@@ -36,9 +36,14 @@ def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
       return []
     return fn()
 
+  vis = MagicMock()
+  vis.exists.return_value = True
   return (
       patch.object(api_module, "_require_auth", return_value=None),
-      patch.object(api_module, "_job_detail_cache_ttl_for_jid", return_value=3600),
+      patch.object(
+          api_module, "_apply_non_staff_job_visibility", return_value=vis
+      ),
+      patch.object(api_module, "get_site_content_cache_timeout", return_value=3600),
       patch.object(api_module.jid_table, "jid_table", return_value=mock_j),
       patch.object(api_module, "build_job_metrics_display_list", return_value=[]),
       patch.object(api_module.cfg, "get_xalt_user", return_value=""),

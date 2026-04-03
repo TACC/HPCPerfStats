@@ -198,8 +198,8 @@ def get_job_host_data_and_job_dict(jid):
   from hpcperfstats.site.machine.cache_utils import (
     KEY_JOB_DICT,
     cached_orm,
+    get_site_content_cache_timeout,
     make_cache_key,
-    TIMEOUT_SHORT,
   )
 
   def _job_dict_fn():
@@ -216,7 +216,9 @@ def get_job_host_data_and_job_dict(jid):
 
   try:
     job_dict = cached_orm(
-        make_cache_key(KEY_JOB_DICT, jid), TIMEOUT_SHORT, _job_dict_fn
+        make_cache_key(KEY_JOB_DICT, jid),
+        get_site_content_cache_timeout(),
+        _job_dict_fn,
     )
   except Exception:
     job_dict = None

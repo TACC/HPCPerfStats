@@ -215,6 +215,24 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   finally:
     lock.release()
 
+  try:
+    from hpcperfstats.site.machine.cache_utils import (
+        invalidate_jid_derived_cache_keys,
+        invalidate_job_plot_cache_keys_for_jids,
+    )
+
+    jids = set()
+    if not stats.empty:
+      if "jid" in stats.columns:
+        jids.update(str(x) for x in stats["jid"].dropna().unique())
+    if not proc_stats.empty and "jid" in proc_stats.columns:
+      jids.update(str(x) for x in proc_stats["jid"].dropna().unique())
+    if jids:
+      invalidate_jid_derived_cache_keys(jids)
+      invalidate_job_plot_cache_keys_for_jids(jids)
+  except Exception:
+    pass
+
   if DEBUG:
     log_print("File successfully added to DB")
   return (stats_file, need_archival)

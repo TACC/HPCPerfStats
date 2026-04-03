@@ -79,3 +79,64 @@ def test_cached_orm_exception_falls_back_to_query_fn():
     from hpcperfstats.site.machine import cache_utils
     result = cache_utils.cached_orm("key_err", 60, lambda: "fallback")
   assert result == "fallback"
+
+
+def test_get_site_content_cache_timeout_fresh_when_newest_within_window():
+  """Newest job end within SITE_FRESHNESS_WINDOW_DAYS => 3600."""
+  from datetime import datetime, timedelta, timezone as dt_tz
+
+  from hpcperfstats.site.machine import cache_utils
+
+  now = datetime(2026, 4, 2, 12, 0, 0, tzinfo=dt_tz.utc)
+  newest = now - timedelta(days=10)
+  with patch.object(cache_utils, "get_site_newest_job_end_time", return_value=newest), patch.object(
+      cache_utils.timezone, "now", return_value=now
+  ):
+    assert cache_utils.get_site_content_cache_timeout() == 3600
+
+
+def test_get_site_content_cache_timeout_none_when_newest_stale():
+  """Newest job end older than window => None (no Redis expiry)."""
+  from datetime import datetime, timedelta, timezone as dt_tz
+
+  from hpcperfstats.site.machine import cache_utils
+
+  now = datetime(2026, 4, 2, 12, 0, 0, tzinfo=dt_tz.utc)
+  newest = now - timedelta(days=20)
+  with patch.object(cache_utils, "get_site_newest_job_end_time", return_value=newest), patch.object(
+      cache_utils.timezone, "now", return_value=now
+  ):
+    assert cache_utils.get_site_content_cache_timeout() is None
+
+
+def test_invalidate_after_job_data_ingest_noop_when_zero():
+  mock_cache = MagicMock()
+  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
+    from hpcperfstats.site.machine import cache_utils
+
+    cache_utils.invalidate_after_job_data_ingest(0)
+  mock_cache.delete.assert_not_called()
+
+
+def test_invalidate_after_job_data_ingest_deletes_keys():
+  mock_cache = MagicMock()
+  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
+    from hpcperfstats.site.machine import cache_utils
+
+    cache_utils.invalidate_after_job_data_ingest(3)
+  assert mock_cache.delete.call_count == 4
+
+
+def test_warm_job_cache_entries_sets_job_keys():
+  mock_cache = MagicMock()
+  mock_job = MagicMock()
+  mock_job.jid = "j1"
+  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
+    from hpcperfstats.site.machine import cache_utils
+
+    cache_utils.warm_job_cache_entries([mock_job], 3600)
+  mock_cache.set.assert_called_once()
+  args, kwargs = mock_cache.set.call_args
+  assert args[0] == f"{cache_utils.KEY_JOB}:j1"
+  assert args[1] is mock_job
+  assert kwargs.get("timeout") == 3600

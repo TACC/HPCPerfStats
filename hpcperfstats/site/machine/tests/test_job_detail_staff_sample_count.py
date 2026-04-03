@@ -42,7 +42,7 @@ def _patch_job_detail_for_staff_count(api_module, jid, metrics_distinct_time_cou
   return (
       patch.object(api_module, "_require_auth", return_value=None),
       patch.object(api_module, "_apply_non_staff_job_visibility", return_value=vis_qs),
-      patch.object(api_module, "_job_detail_cache_ttl_for_jid", return_value=3600),
+      patch.object(api_module, "get_site_content_cache_timeout", return_value=3600),
       patch.object(api_module.jid_table, "jid_table", return_value=mock_j),
       patch.object(api_module, "build_job_metrics_display_list", return_value=[]),
       patch.object(api_module.cfg, "get_xalt_user", return_value=""),

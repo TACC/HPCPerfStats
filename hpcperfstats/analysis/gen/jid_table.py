@@ -20,8 +20,8 @@ from hpcperfstats.site.machine.cache_utils import (
     KEY_TYPE_DETAIL_AGG,
     KEY_TYPE_DETAIL_HOST_TIME,
     cached_orm,
+    get_site_content_cache_timeout,
     make_cache_key,
-    TIMEOUT_SHORT,
 )
 from hpcperfstats.site.machine.models import host_data, job_data
 
@@ -87,7 +87,7 @@ class jid_table:
     try:
       job = cached_orm(
           make_cache_key(KEY_JOB, jid),
-          TIMEOUT_SHORT,
+          get_site_content_cache_timeout(),
           lambda: job_data.objects.filter(jid=jid).only("host_list", "start_time", "end_time").first(),
       )
     except Exception:
@@ -126,7 +126,7 @@ class jid_table:
     _et = self.end_time.isoformat() if self.end_time else ""
     self.host_list = cached_orm(
         make_cache_key(KEY_JOB_HOST_LIST, jid, _st, _et),
-        TIMEOUT_SHORT,
+        get_site_content_cache_timeout(),
         _host_list_fn,
     ) or []
     _logger.debug("jid_table host_list query time: %.1fs", time.time() - qtime)
@@ -168,7 +168,7 @@ class jid_table:
 
     schema_df = cached_orm(
         make_cache_key(KEY_JOB_SCHEMA, jid, self.host_list[0]),
-        TIMEOUT_SHORT,
+        get_site_content_cache_timeout(),
         _schema_fn,
     )
     if schema_df is None or schema_df.empty or "type" not in schema_df.columns:
@@ -197,7 +197,7 @@ class jid_table:
       return queryset_to_dataframe(qs)
 
     key = make_cache_key(KEY_HOST_TIME_DF, self.jid)
-    result = cached_orm(key, TIMEOUT_SHORT, _fn)
+    result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     return result if result is not None else queryset_to_dataframe(None)
 
   def get_aggregate_df(self, typ, val_col, events, conv=1.0):
@@ -279,7 +279,7 @@ class jid_table:
         return _fn_pandas_groupby()
 
     key = make_cache_key(KEY_AGG_DF, self.jid, typ, val_col, events_key)
-    result = cached_orm(key, TIMEOUT_SHORT, _fn)
+    result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     if result is not None:
       return result
     return pd.DataFrame(columns=["host", "time", "sum_val"])
@@ -332,7 +332,7 @@ class jid_table:
       return pd.DataFrame(rows, columns=cols)
 
     key = make_cache_key(KEY_HOST_DATA_DF, self.jid)
-    result = cached_orm(key, TIMEOUT_SHORT, _fn)
+    result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     return result if result is not None else queryset_to_dataframe(None)
 
   def get_llite_delta_by_event(self):
@@ -349,7 +349,7 @@ class jid_table:
       return queryset_to_dataframe(qs)
 
     key = make_cache_key(KEY_LLITE_DELTA, self.jid)
-    result = cached_orm(key, TIMEOUT_SHORT, _llite_fn)
+    result = cached_orm(key, get_site_content_cache_timeout(), _llite_fn)
     return result if result is not None else queryset_to_dataframe(None)
 
   def get_nfs_delta_totals_mb(self):
@@ -388,7 +388,7 @@ class jid_table:
       return [read_total / (1024 * 1024), write_total / (1024 * 1024)]
 
     key = make_cache_key(KEY_NFS_FSIO, self.jid)
-    result = cached_orm(key, TIMEOUT_SHORT, _nfs_fn)
+    result = cached_orm(key, get_site_content_cache_timeout(), _nfs_fn)
     return result
 
   def close(self):
@@ -458,7 +458,7 @@ class TypeDetailDataProvider:
       qs = (self._qs().values("host", "time").distinct().order_by("host", "time"))
       return queryset_to_dataframe(qs)
 
-    result = cached_orm(key, TIMEOUT_SHORT, _fn)
+    result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     return result if result is not None else queryset_to_dataframe(None)
 
   def get_events_units(self):
@@ -515,7 +515,7 @@ class TypeDetailDataProvider:
           .sort_values(["host", "time"])
       )
 
-    result = cached_orm(key, TIMEOUT_SHORT, _fn)
+    result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     if result is not None:
       return result
     return pd.DataFrame()
@@ -570,7 +570,7 @@ class HostDataProvider:
             schema_df[schema_df["type"] == t]["event"].unique().tolist())
       return schema
 
-    self.schema = cached_orm(cache_key, TIMEOUT_SHORT, _schema_fn) or {}
+    self.schema = cached_orm(cache_key, get_site_content_cache_timeout(), _schema_fn) or {}
 
   def _host_data_qs(self, **extra_filters):
     """Base host_data queryset for this host (time range).

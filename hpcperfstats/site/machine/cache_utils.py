@@ -7,12 +7,24 @@ Cache keys should be unique per query; timeouts are in seconds.
 import logging
 import os
 import time
+from datetime import timedelta
+from datetime import timezone as dt_timezone
 
 from django.conf import settings
 from django.core.cache import cache
+from django.db.models import Max
+from django.utils import timezone
 
 # Sentinel so we can cache None (e.g. "job not found")
 _CACHE_MISS = object()
+
+# Site-wide freshness: max(job_data.end_time) within this window => short TTL.
+SITE_FRESHNESS_WINDOW_DAYS = 14
+SITE_CACHE_TTL_FRESH_SECONDS = 3600
+# How long to cache the Max(end_time) probe itself (seconds).
+SITE_NEWEST_END_META_TTL_SECONDS = 60
+
+KEY_SITE_NEWEST_JOB_END = "site_newest_job_end_v1"
 
 
 def _cache_debug_enabled() -> bool:
@@ -65,7 +77,148 @@ def cached_orm(cache_key, timeout, query_fn):
     return query_fn()
 
 
-# Default timeouts (seconds)
+def _unwrap_meta_value(wrapped):
+  if isinstance(wrapped, tuple) and len(wrapped) == 1:
+    return wrapped[0]
+  return wrapped
+
+
+def get_site_newest_job_end_time():
+  """Return max(job_data.end_time) with a short-lived cache; None if no jobs."""
+  try:
+    wrapped = cache.get(KEY_SITE_NEWEST_JOB_END, _CACHE_MISS)
+    if wrapped is not _CACHE_MISS:
+      return _unwrap_meta_value(wrapped)
+    from .models import job_data
+
+    m = job_data.objects.aggregate(x=Max("end_time"))["x"]
+    cache.set(
+        KEY_SITE_NEWEST_JOB_END,
+        (m,) if m is None else m,
+        timeout=SITE_NEWEST_END_META_TTL_SECONDS,
+    )
+    return m
+  except Exception:
+    try:
+      from .models import job_data
+
+      return job_data.objects.aggregate(x=Max("end_time"))["x"]
+    except Exception:
+      return None
+
+
+def get_site_content_cache_timeout():
+  """TTL for workload/reference cache entries: 1h if DB is fresh, else None (LRU only).
+
+    Empty DB (no end_time) uses the fresh TTL so new deployments do not stick forever.
+    """
+  m = get_site_newest_job_end_time()
+  if m is None:
+    return SITE_CACHE_TTL_FRESH_SECONDS
+  if m.tzinfo is None:
+    m = timezone.make_aware(m, dt_timezone.utc)
+  now = timezone.now()
+  if now - m < timedelta(days=SITE_FRESHNESS_WINDOW_DAYS):
+    return SITE_CACHE_TTL_FRESH_SECONDS
+  return None
+
+
+def invalidate_after_job_data_ingest(inserted_count):
+  """Drop site freshness probe and home_options reference keys after new job_data rows."""
+  if inserted_count <= 0:
+    return
+  try:
+    cache.delete(KEY_SITE_NEWEST_JOB_END)
+    cache.delete(KEY_DATES)
+    cache.delete(KEY_QUEUES)
+    cache.delete(KEY_STATES)
+  except Exception:
+    pass
+
+
+def warm_job_cache_entries(job_instances, timeout):
+  """Seed KEY_JOB:{jid} from in-memory job_data instances (e.g. post bulk_create)."""
+  if not job_instances:
+    return
+  try:
+    for obj in job_instances:
+      jid = getattr(obj, "jid", None)
+      if jid:
+        cache.set(f"{KEY_JOB}:{jid}", obj, timeout=timeout)
+  except Exception:
+    pass
+
+
+def invalidate_jid_derived_cache_keys(jids):
+  """Remove per-job aggregate caches after host_data / proc_data ingest."""
+  if not jids:
+    return
+  try:
+    for jid in jids:
+      if not jid:
+        continue
+      cache.delete(f"{KEY_GPU_AGG}:v3:{jid}")
+      cache.delete(f"{KEY_GPU_COUNT}:{jid}")
+      cache.delete(f"{KEY_XALT}:{jid}")
+      cache.delete(f"{KEY_PROC_LIST}:{jid}")
+  except Exception:
+    pass
+
+
+def _get_redis_py_client():
+  """Best-effort redis-py client from Django's default cache (for SCAN)."""
+  backend = getattr(cache, "_cache", None)
+  if backend is None:
+    return None
+  client = backend
+  if hasattr(client, "get_client"):
+    try:
+      client = client.get_client()
+    except Exception:
+      return None
+  if client is None:
+    client = getattr(cache, "client", None)
+    if hasattr(client, "get_client"):
+      try:
+        client = client.get_client()
+      except Exception:
+        client = None
+  return client
+
+
+def invalidate_job_plot_cache_keys_for_jids(jids):
+  """Delete JOB_PLOTS_JSON / JOB_PLOTS_DATA Redis keys for the given jids (SCAN)."""
+  if not jids:
+    return
+  client = _get_redis_py_client()
+  if client is None:
+    return
+  try:
+    for jid in jids:
+      if not jid:
+        continue
+      for needle in (f":JOB_PLOTS_JSON:{jid}:", f":JOB_PLOTS_DATA:{jid}:"):
+        try:
+          for raw_key in client.scan_iter(match=f"*{needle}*", count=500):
+            try:
+              client.delete(raw_key)
+            except Exception:
+              pass
+        except Exception:
+          pass
+  except Exception:
+    pass
+
+
+def invalidate_metrics_distinct_cache():
+  """Clear distinct metrics list after metrics_data writes."""
+  try:
+    cache.delete(KEY_METRICS_DISTINCT)
+  except Exception:
+    pass
+
+
+# Default timeouts (seconds) — legacy; content paths should use get_site_content_cache_timeout().
 TIMEOUT_SHORT = 60  # Job-specific, host-specific (1 min)
 TIMEOUT_MEDIUM = 300  # Reference data: queues, states, date list (5 min)
 TIMEOUT_LONG = 600  # Rarely changing: distinct metrics list (10 min)

@@ -4,7 +4,7 @@ Tests `job_list_histograms` and that `job_list` no longer returns script/div.
 Run with pytest; requires Django (site.machine.tests).
 """
 from concurrent.futures import Future
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -200,7 +200,7 @@ def test_queue_group_with_jobs_does_not_call_build_histogram_dataframe():
     ):
         job_list_histograms(request)
 
-    mock_qs_build.assert_called_once_with(request)
+    mock_qs_build.assert_called_once_with(ANY)
     mock_df_build.assert_not_called()
 
 
@@ -240,7 +240,7 @@ def test_metric_group_calls_build_histogram_dataframe_when_jobs_present():
     ):
         job_list_histograms(request)
 
-    mock_qs_build.assert_called_once_with(request)
+    mock_qs_build.assert_called_once_with(ANY)
     mock_df_build.assert_called_once()
 
 

@@ -337,6 +337,14 @@ def _persist_metrics_batch(job_results, distinct_time_count):
         jo.metrics_distinct_time_count = distinct_time_count
       job_data.objects.bulk_update(jobs_up, ["metrics_distinct_time_count"])
 
+  if to_create or to_update_list:
+    try:
+      from hpcperfstats.site.machine.cache_utils import invalidate_metrics_distinct_cache
+
+      invalidate_metrics_distinct_cache()
+    except Exception:
+      pass
+
 
 class Metrics():
   """Computes simple and complex metrics for a list of jobs in parallel and writes results to metrics_data.
