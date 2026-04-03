@@ -55,14 +55,6 @@ _CHA_ARC_EVENTS = (
     "BYPASS_CHA_IMC_ALL,E",
     "LLC_LOOKUP_WRITE",
 )
-_SHARED_FS_READ_METRIC = "shared_fs_read_mb_s"
-_SHARED_FS_WRITE_METRIC = "shared_fs_write_mb_s"
-_SHARED_FS_READ_LABEL = "SharedFS Read [MB/s]"
-_SHARED_FS_WRITE_LABEL = "SharedFS Write [MB/s]"
-_SHARED_FS_IOPS_METRIC = "shared_fs_iops"
-_SHARED_FS_IOPS_LABEL = "SharedFS IOPS Per Host [#/s]"
-
-
 def _summary_type_events_feasible(schema, typ, events):
   """Return False when schema is known and no requested event exists for typ (skip ORM work)."""
   if not isinstance(schema, dict) or not schema:
@@ -247,10 +239,27 @@ _SUMMARY_SINGLE_SPECS = [
         ],
         "liops",
         1,
-        "LustreIOPS[#/s]",
+        "Lustre IOPS [#/s]",
     ),
-    ("llite", "arc", ["read_bytes", "write_bytes"], "lbw",
-     1 / (1024 * 1024), "LustreBW[MB/s]"),
+    ("llite", "arc", ["read_bytes"], "lustre_read_mb_s", _BYTES_TO_MB, "Lustre read [MB/s]"),
+    ("llite", "arc", ["write_bytes"], "lustre_write_mb_s", _BYTES_TO_MB, "Lustre write [MB/s]"),
+    (
+        "nfs",
+        "arc",
+        ["normal_read", "direct_read", "server_read"],
+        "nfs_read_mb_s",
+        _BYTES_TO_MB,
+        "NFS read [MB/s]",
+    ),
+    (
+        "nfs",
+        "arc",
+        ["normal_write", "direct_write", "server_write"],
+        "nfs_write_mb_s",
+        _BYTES_TO_MB,
+        "NFS write [MB/s]",
+    ),
+    ("nfs", "arc", ["READ_ops", "WRITE_ops"], "nfs_iops", 1.0, "NFS IOPS [#/s]"),
     ("cpu", "arc", ["user", "system", "nice"], "cpu", 0.01,
      "CPU Usage [#cores]"),
     ("nvidia_gpu", "value", ["gpu_util"], "nv_gpu_util", 1, "GPU util [%]"),
@@ -357,9 +366,11 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset({
     "opa_wait_cong",
     "opa_ecn",
     "numa_remote_refs",
-    _SHARED_FS_READ_METRIC,
-    _SHARED_FS_WRITE_METRIC,
-    _SHARED_FS_IOPS_METRIC,
+    "lustre_read_mb_s",
+    "lustre_write_mb_s",
+    "nfs_read_mb_s",
+    "nfs_write_mb_s",
+    "nfs_iops",
 })
 
 # Merged for scaling/context only; not rendered as its own subplot.
@@ -440,31 +451,6 @@ def _summary_intel_imc_bw_tries():
   """Intel DRAM BW: first IMC type in INTEL_IMC_STATS_TYPES with usable CAS rows."""
   cas = ["CAS_READS", "CAS_WRITES"]
   return [(imc_typ, cas, _CAS_BW_CONV) for imc_typ in INTEL_IMC_STATS_TYPES]
-
-
-def _merge_shared_fs_metric(df, jt, metric_name, source_specs):
-  """Merge shared filesystem counters into one per-host/per-time metric."""
-  merged = df
-  accum_col = "__shared_fs_accum__"
-  merged[accum_col] = 0.0
-  has_data = False
-  for typ, val_col, events, conv in source_specs:
-    agg = _get_agg_if_feasible(jt, typ, val_col, events, conv)
-    if agg.empty or "sum_val" not in agg.columns:
-      continue
-    has_data = True
-    merged = merged.merge(
-        agg[["host", "time", "sum_val"]],
-        on=["host", "time"],
-        how="left",
-    )
-    merged["sum_val"] = merged["sum_val"].fillna(0.0)
-    merged[accum_col] = merged[accum_col] + merged["sum_val"]
-    merged.drop(columns=["sum_val"], inplace=True)
-  if has_data:
-    merged[metric_name] = merged[accum_col]
-  merged.drop(columns=[accum_col], inplace=True)
-  return merged
 
 
 def _merge_first_full_coverage(df, jt, column_name, val_col, tries):
@@ -669,52 +655,6 @@ def iter_summary_aggregate_attempts():
       yield typ, fw["val_col"], events, fw["name"], conv, fw["label"]
   for imc_typ, events, conv in _summary_intel_imc_bw_tries():
     yield imc_typ, "arc", events, "mbw", conv, "DRAMBW[GB/s]"
-  for typ, val_col, events, conv in (
-      ("llite", "arc", ["read_bytes"], _BYTES_TO_MB),
-      ("nfs", "arc", ["normal_read", "direct_read", "server_read"], _BYTES_TO_MB),
-      ("llite", "arc", ["write_bytes"], _BYTES_TO_MB),
-      ("nfs", "arc", ["normal_write", "direct_write", "server_write"], _BYTES_TO_MB),
-  ):
-    shared_name = (
-        _SHARED_FS_READ_METRIC
-        if "read" in events[0]
-        else _SHARED_FS_WRITE_METRIC
-    )
-    shared_label = (
-        _SHARED_FS_READ_LABEL
-        if shared_name == _SHARED_FS_READ_METRIC
-        else _SHARED_FS_WRITE_LABEL
-    )
-    yield typ, val_col, events, shared_name, conv, shared_label
-  for typ, val_col, events, conv in (
-      ("llite", "arc", [
-          "open",
-          "close",
-          "mmap",
-          "fsync",
-          "setattr",
-          "truncate",
-          "flock",
-          "getattr",
-          "statfs",
-          "alloc_inode",
-          "setxattr",
-          "listxattr",
-          "removexattr",
-          "readdir",
-          "create",
-          "lookup",
-          "link",
-          "unlink",
-          "symlink",
-          "mkdir",
-          "rmdir",
-          "mknod",
-          "rename",
-      ], 1.0),
-      ("nfs", "arc", ["READ_ops", "WRITE_ops"], 1.0),
-  ):
-    yield typ, val_col, events, _SHARED_FS_IOPS_METRIC, conv, _SHARED_FS_IOPS_LABEL
 
 
 def _summary_metric_specs():
@@ -727,47 +667,77 @@ def _summary_metric_specs():
   out.append(("", "", [], "fabric_mb_per_gflops", 0, "Fabric MB/s per GFLOPS"))
   out.append(("", "", [], "fabric_mb_per_avg_tensor", 0, "Fabric MB/s per tensor %"))
   out.append(("", "", [], "node_power_est_w", 0, "Est. node power [W]"))
-  out.append(("", "", [], _SHARED_FS_READ_METRIC, 0, _SHARED_FS_READ_LABEL))
-  out.append(("", "", [], _SHARED_FS_WRITE_METRIC, 0, _SHARED_FS_WRITE_LABEL))
-  out.append(("", "", [], _SHARED_FS_IOPS_METRIC, 0, _SHARED_FS_IOPS_LABEL))
   return out
 
 
 def _summary_plot_order_key(metric_name):
-  """Priority order for summary subplots.
+  """Priority order for summary subplots (ascending).
 
-  Desired job-detail ordering:
-  - Row 1: CPU Usage, CPU MemUsed
-  - Row 2: GPU util, GPU MemUsed
-  - Last row: FabricBW
+  Product ordering (each block is contiguous when those metrics exist):
+  1) CPU usage
+  2) CPU memory (NUMA + DRAM bandwidth)
+  3) CPU flops / cycles / package power / uncore CHA
+  4) GPU usage
+  5) GPU memory
+  6) GPU FLOPS / tensors / SM / HBM BW estimate
+  7) GPU other (power, PCIe/NVLink)
+  8) Lustre client (llite): read / write / metadata IOPS
+  9) NFS client: read / write / IOPS
+  10) Network: InfiniBand/OPA bytes, fabric/compute ratios, OPA quality counters
   """
   priority = {
-      "cpu": 0,
-      "mem": 1,
-      "numa_remote_refs": 2,
-      "nv_gpu_util": 3,
-      "nv_mem_used_mb": 4,
-      "nv_tensor_active": 5,
-      "nv_sm_occupancy": 6,
-      "nv_fp16_active": 7,
-      "nv_fp32_active": 8,
-      "nv_mem_util_pct": 9,
-      "nv_power_w": 10,
-      "node_power_est_w": 10.5,
-      "nv_gpu_mem_bw_gbs": 11,
-      "nv_gpu_link_gbs": 12,
-      "cha_counter_arc_sum": 85,
-      # Fabric block: bandwidth, comm/compute ratio, OPA quality, then shared FS.
-      "ibbw": 990,
-      "fabric_mb_per_gflops": 991,
-      "fabric_mb_per_avg_tensor": 9915,
-      "opa_wait_cong": 992,
-      "opa_ecn": 993,
-      _SHARED_FS_READ_METRIC: 1000,
-      _SHARED_FS_WRITE_METRIC: 1001,
-      _SHARED_FS_IOPS_METRIC: 1002,
+      # --- 1) CPU usage ---
+      "cpu": 100,
+      # --- 2) CPU memory ---
+      "mem": 200,
+      "numa_remote_refs": 210,
+      "mbw": 220,
+      "amd_mbw": 230,
+      # --- 3) CPU flops / cycles / power / uncore ---
+      "amd_flops": 300,
+      "flops64b": 310,
+      "flops32b": 320,
+      "instr": 330,
+      "amd_instr": 335,
+      "mcycles": 340,
+      "acycles": 350,
+      "amd_mcycles": 355,
+      "amd_acycles": 360,
+      "freq": 370,
+      "watts": 380,
+      "cha_counter_arc_sum": 390,
+      # --- 4) GPU usage ---
+      "nv_gpu_util": 500,
+      # --- 5) GPU memory ---
+      "nv_mem_used_mb": 510,
+      "nv_mem_util_pct": 520,
+      # --- 6) GPU FLOPS / tensors ---
+      "nv_tensor_active": 600,
+      "nv_sm_occupancy": 610,
+      "nv_fp16_active": 620,
+      "nv_fp32_active": 630,
+      "nv_gpu_mem_bw_gbs": 640,
+      # --- 7) GPU other ---
+      "nv_power_w": 700,
+      "node_power_est_w": 710,
+      "nv_gpu_link_gbs": 720,
+      # --- 8) Lustre (llite) ---
+      "lustre_read_mb_s": 800,
+      "lustre_write_mb_s": 803,
+      "liops": 806,
+      # --- 9) NFS ---
+      "nfs_read_mb_s": 810,
+      "nfs_write_mb_s": 813,
+      "nfs_iops": 816,
+      # --- 10) Network ---
+      "ibbw": 900,
+      "fabric_mb_per_gflops": 910,
+      "fabric_mb_per_avg_tensor": 920,
+      "opa_wait_cong": 930,
+      "opa_ecn": 940,
   }
-  return priority.get(metric_name, 100)
+  # Unknown metrics: after CPU/CHA block, before GPU (avoids splitting CPU story).
+  return priority.get(metric_name, 395)
 
 
 class SummaryPlot():
@@ -938,48 +908,6 @@ class SummaryPlot():
 
     df = _merge_first_full_coverage(
         df, self.jt, "mbw", "arc", _summary_intel_imc_bw_tries())
-    shared_read_sources = (
-        ("llite", "arc", ["read_bytes"], _BYTES_TO_MB),
-        ("nfs", "arc", ["normal_read", "direct_read", "server_read"], _BYTES_TO_MB),
-    )
-    shared_write_sources = (
-        ("llite", "arc", ["write_bytes"], _BYTES_TO_MB),
-        ("nfs", "arc", ["normal_write", "direct_write", "server_write"], _BYTES_TO_MB),
-    )
-    df = _merge_shared_fs_metric(
-        df, self.jt, _SHARED_FS_READ_METRIC, shared_read_sources)
-    df = _merge_shared_fs_metric(
-        df, self.jt, _SHARED_FS_WRITE_METRIC, shared_write_sources)
-    shared_iops_sources = (
-        ("llite", "arc", [
-            "open",
-            "close",
-            "mmap",
-            "fsync",
-            "setattr",
-            "truncate",
-            "flock",
-            "getattr",
-            "statfs",
-            "alloc_inode",
-            "setxattr",
-            "listxattr",
-            "removexattr",
-            "readdir",
-            "create",
-            "lookup",
-            "link",
-            "unlink",
-            "symlink",
-            "mkdir",
-            "rmdir",
-            "mknod",
-            "rename",
-        ], 1.0),
-        ("nfs", "arc", ["READ_ops", "WRITE_ops"], 1.0),
-    )
-    df = _merge_shared_fs_metric(
-        df, self.jt, _SHARED_FS_IOPS_METRIC, shared_iops_sources)
 
     df = _merge_cha_counter_arc_sum(df, self.jt)
     df = _merge_opa_fabric_if_no_ib_ext(df, self.jt)

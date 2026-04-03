@@ -454,7 +454,7 @@ def test_summaryplot_uses_job_window_for_x_range():
 
 
 def test_summaryplot_orders_cpu_then_gpu_then_fabricbw():
-  """Summary subplot order starts with CPU, then GPU, then FabricBW."""
+  """Summary subplot order: CPU block before GPU block before fabric (ibbw)."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
@@ -502,12 +502,97 @@ def test_summaryplot_orders_cpu_then_gpu_then_fabricbw():
   assert captured_metrics.index("nv_gpu_util") < captured_metrics.index("ibbw")
 
 
-def test_summaryplot_orders_shared_fs_plots_at_end():
-  """Order keeps shared FS read/write/IOPS as the final summary plots."""
+def test_summaryplot_orders_buckets_cpu_memory_compute_gpu_subblocks_network():
+  """Enforce bucket order: CPU usage → CPU memory → CPU compute → GPU usage → GPU memory → GPU tensor → GPU other → ibbw."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    ev = list(events)
+    if typ == "cpu" and val_col == "arc" and ev == ["user", "system", "nice"]:
+      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    if typ == "mem" and val_col == "value" and ev == ["MemUsed"]:
+      return pd.DataFrame([("n1.cluster", t0, 1024.0)], columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and val_col == "value":
+      if ev == ["gpu_util"]:
+        return pd.DataFrame([("n1.cluster", t0, 50.0)], columns=["host", "time", "sum_val"])
+      if ev == ["mem_used_mb"]:
+        return pd.DataFrame([("n1.cluster", t0, 2048.0)], columns=["host", "time", "sum_val"])
+      if ev == ["mem_total_mb"]:
+        return pd.DataFrame([("n1.cluster", t0, 8192.0)], columns=["host", "time", "sum_val"])
+      if ev == ["gpu_count"]:
+        return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
+      if ev == ["tensor_active"]:
+        return pd.DataFrame([("n1.cluster", t0, 12.0)], columns=["host", "time", "sum_val"])
+      if ev == ["power_usage"]:
+        return pd.DataFrame([("n1.cluster", t0, 180.0)], columns=["host", "time", "sum_val"])
+      return empty
+    if typ == "ib_ext" and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
+      return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics") and val_col == "arc":
+      if ev == fp64:
+        return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  summary = SummaryPlot(jt)
+  captured_metrics = []
+
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
+    del df, label, y_range_end, x_range
+    captured_metrics.append(metric)
+    return figure(width=100, height=60)
+
+  summary.plot_metric = fake_plot_metric
+  fig = summary.plot()
+  assert fig is not None
+  assert captured_metrics.index("cpu") < captured_metrics.index("mem")
+  assert captured_metrics.index("mem") < captured_metrics.index("flops64b")
+  assert captured_metrics.index("flops64b") < captured_metrics.index("nv_gpu_util")
+  assert captured_metrics.index("nv_gpu_util") < captured_metrics.index("nv_mem_used_mb")
+  assert captured_metrics.index("nv_mem_used_mb") < captured_metrics.index("nv_tensor_active")
+  assert captured_metrics.index("nv_tensor_active") < captured_metrics.index("nv_power_w")
+  assert captured_metrics.index("nv_power_w") < captured_metrics.index("ibbw")
+
+
+def test_summaryplot_orders_lustre_nfs_before_network():
+  """Lustre plots, then NFS plots, then network (ibbw); no merged shared_fs metrics."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
+  llite_meta_events = [
+      "open",
+      "close",
+      "mmap",
+      "fsync",
+      "setattr",
+      "truncate",
+      "flock",
+      "getattr",
+      "statfs",
+      "alloc_inode",
+      "setxattr",
+      "listxattr",
+      "removexattr",
+      "readdir",
+      "create",
+      "lookup",
+      "link",
+      "unlink",
+      "symlink",
+      "mkdir",
+      "rmdir",
+      "mknod",
+      "rename",
+  ]
 
   def get_aggregate_df(typ, val_col, events, conv=1.0):
     del conv
@@ -531,6 +616,8 @@ def test_summaryplot_orders_shared_fs_plots_at_end():
         return pd.DataFrame([("n1.cluster", t0, 1024.0)], columns=["host", "time", "sum_val"])
       if ev == ["write_bytes"]:
         return pd.DataFrame([("n1.cluster", t0, 2048.0)], columns=["host", "time", "sum_val"])
+      if ev == llite_meta_events:
+        return pd.DataFrame([("n1.cluster", t0, 64.0)], columns=["host", "time", "sum_val"])
       return empty
     if typ == "nfs" and val_col == "arc":
       if ev == ["normal_read", "direct_read", "server_read"]:
@@ -566,17 +653,23 @@ def test_summaryplot_orders_shared_fs_plots_at_end():
   assert captured_metrics.index("cpu") < captured_metrics.index("mem")
   assert captured_metrics.index("mem") < captured_metrics.index("nv_gpu_util")
   assert captured_metrics.index("nv_gpu_util") < captured_metrics.index("nv_mem_used_mb")
-  assert captured_metrics.index("ibbw") < captured_metrics.index("shared_fs_read_mb_s")
-  assert captured_metrics.index("shared_fs_read_mb_s") < captured_metrics.index("shared_fs_write_mb_s")
-  assert captured_metrics.index("shared_fs_write_mb_s") < captured_metrics.index("shared_fs_iops")
-  assert captured_metrics.index("shared_fs_iops") == len(captured_metrics) - 1
+  assert captured_metrics.index("lustre_read_mb_s") < captured_metrics.index("lustre_write_mb_s")
+  assert captured_metrics.index("lustre_write_mb_s") < captured_metrics.index("liops")
+  assert captured_metrics.index("liops") < captured_metrics.index("nfs_read_mb_s")
+  assert captured_metrics.index("nfs_read_mb_s") < captured_metrics.index("nfs_write_mb_s")
+  assert captured_metrics.index("nfs_write_mb_s") < captured_metrics.index("nfs_iops")
+  assert captured_metrics.index("nfs_iops") < captured_metrics.index("ibbw")
+  idx_ibbw = captured_metrics.index("ibbw")
+  for name in ("fabric_mb_per_gflops", "fabric_mb_per_avg_tensor", "opa_wait_cong", "opa_ecn"):
+    if name in captured_metrics:
+      assert idx_ibbw < captured_metrics.index(name)
   assert isinstance(fig, GridPlot)
   assert len(captured_metrics) > 2
   assert max(child[2] for child in fig.children) <= 1
 
 
-def test_summaryplot_shared_fs_read_write_plots_use_per_host_time_series():
-  """Shared FS plots should render host/time series from Lustre and NFS counters."""
+def test_summaryplot_lustre_and_nfs_read_write_use_per_host_time_series():
+  """Lustre and NFS read/write are separate columns with per-host time series."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   t1 = pd.Timestamp("2024-06-01 12:01:00+00:00")
   base = pd.DataFrame(
@@ -632,23 +725,31 @@ def test_summaryplot_shared_fs_read_write_plots_use_per_host_time_series():
 
   def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
     del label, y_range_end, x_range
-    if metric in ("shared_fs_read_mb_s", "shared_fs_write_mb_s"):
+    if metric in (
+        "lustre_read_mb_s",
+        "lustre_write_mb_s",
+        "nfs_read_mb_s",
+        "nfs_write_mb_s",
+    ):
       captured_series[metric] = df[["host", "time", metric]].copy()
     return figure(width=100, height=60)
 
   summary.plot_metric = fake_plot_metric
   fig = summary.plot()
   assert fig is not None
-  assert "shared_fs_read_mb_s" in captured_series
-  assert "shared_fs_write_mb_s" in captured_series
-  assert set(captured_series["shared_fs_read_mb_s"]["host"].unique()) == {"n1.cluster", "n2.cluster"}
-  assert set(captured_series["shared_fs_write_mb_s"]["host"].unique()) == {"n1.cluster", "n2.cluster"}
-  assert captured_series["shared_fs_read_mb_s"]["time"].nunique() == 2
-  assert captured_series["shared_fs_write_mb_s"]["time"].nunique() == 2
+  for key in (
+      "lustre_read_mb_s",
+      "lustre_write_mb_s",
+      "nfs_read_mb_s",
+      "nfs_write_mb_s",
+  ):
+    assert key in captured_series
+    assert set(captured_series[key]["host"].unique()) == {"n1.cluster", "n2.cluster"}
+    assert captured_series[key]["time"].nunique() == 2
 
 
-def test_summaryplot_shared_fs_iops_uses_nfs_ops_and_llite_ops():
-  """Shared FS IOPS should remain per-host while combining llite + NFS ops."""
+def test_summaryplot_liops_and_nfs_iops_are_separate_per_host():
+  """Lustre metadata IOPS (liops) and NFS ops (nfs_iops) are not merged."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0), ("n2.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
@@ -708,24 +809,24 @@ def test_summaryplot_shared_fs_iops_uses_nfs_ops_and_llite_ops():
   jt.get_aggregate_df.side_effect = get_aggregate_df
 
   summary = SummaryPlot(jt)
-  captured_iops_df = None
+  captured = {}
 
   def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
-    nonlocal captured_iops_df
     del label, y_range_end, x_range
-    if metric == "shared_fs_iops":
-      captured_iops_df = df[["host", "time", metric]].copy()
+    if metric in ("liops", "nfs_iops"):
+      captured[metric] = df[["host", "time", metric]].copy()
     return figure(width=100, height=60)
 
   summary.plot_metric = fake_plot_metric
   fig = summary.plot()
   assert fig is not None
-  assert captured_iops_df is not None
-  by_host = {
-      row["host"]: row["shared_fs_iops"] for _, row in captured_iops_df.iterrows()
-  }
-  assert by_host["n1.cluster"] == 100.0
-  assert by_host["n2.cluster"] == 50.0
+  assert "liops" in captured and "nfs_iops" in captured
+  liops_by_host = {row["host"]: row["liops"] for _, row in captured["liops"].iterrows()}
+  nfs_by_host = {row["host"]: row["nfs_iops"] for _, row in captured["nfs_iops"].iterrows()}
+  assert liops_by_host["n1.cluster"] == 70.0
+  assert liops_by_host["n2.cluster"] == 40.0
+  assert nfs_by_host["n1.cluster"] == 30.0
+  assert nfs_by_host["n2.cluster"] == 10.0
 
 
 def test_summaryplot_node_power_est_w_intel_plus_gpu():
