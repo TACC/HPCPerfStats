@@ -96,6 +96,8 @@ body {
 @media (min-width: 992px) {
   .navbar-expand-lg .container-fluid {
     position: relative;
+    /* Room below the absolutely centered title/cluster so wrapped text does not sit on the navbar edge */
+    padding-bottom: 0.5rem;
   }
   .navbar-expand-lg .navbar-collapse {
     display: flex !important;
@@ -153,7 +155,9 @@ body {
 .navbar-brand-cluster {
   font-size: 0.95em;
   color: #555;
-  margin-bottom: 2px;
+  margin-bottom: 0;
+  padding-bottom: 0.5rem;
+  line-height: 1.35;
 }
 
 /* Topbar actions: consistent hitbox height for all buttons and links */
