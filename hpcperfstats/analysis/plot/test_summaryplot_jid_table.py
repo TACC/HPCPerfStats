@@ -4,6 +4,7 @@ import threading
 import pandas as pd
 import pytest
 from unittest.mock import MagicMock
+from bokeh.models.plots import GridPlot
 from bokeh.plotting import figure
 
 from hpcperfstats.analysis.gen.utils import INTEL_FP_ARITH_DOUBLE_EVENTS
@@ -569,6 +570,9 @@ def test_summaryplot_orders_shared_fs_plots_at_end():
   assert captured_metrics.index("shared_fs_read_mb_s") < captured_metrics.index("shared_fs_write_mb_s")
   assert captured_metrics.index("shared_fs_write_mb_s") < captured_metrics.index("shared_fs_iops")
   assert captured_metrics.index("shared_fs_iops") == len(captured_metrics) - 1
+  assert isinstance(fig, GridPlot)
+  assert len(captured_metrics) > 2
+  assert max(child[2] for child in fig.children) <= 1
 
 
 def test_summaryplot_shared_fs_read_write_plots_use_per_host_time_series():

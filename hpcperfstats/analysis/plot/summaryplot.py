@@ -732,7 +732,7 @@ class SummaryPlot():
 
     if not plots:
       raise ValueError(MSG_NO_METRIC_DATA)
-    return gridplot(plots, ncols=len(plots) // 4 + 1)
+    return gridplot(plots, ncols=min(2, len(plots)))
 
 
 def plot_and_reason_summary_from_jid_table(jt):
