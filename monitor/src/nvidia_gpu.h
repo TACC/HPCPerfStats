@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define NVIDIA_GPU_NFIELDS 13
+#define NVIDIA_GPU_NFIELDS 17
 
 #define KEYS \
   X(gpu_util, "", "GPU utilization in %"), \
@@ -25,6 +25,7 @@
   X(gpu_mem_read_bytes, "E,W=64,U=B", "Estimated cumulative GPU memory read bytes"), \
   X(gpu_mem_write_bytes, "E,W=64,U=B", "Estimated cumulative GPU memory write bytes"), \
   X(gpu_mem_total_bytes, "E,W=64,U=B", "Estimated cumulative GPU memory total bytes"), \
+  X(gpu_io_link_total_bytes, "E,W=64,U=B", "Cumulative PCIe plus NvLink link bytes (DCGM PROF TX/RX; not HBM/DRAM framebuffer)"), \
   X(gpu_count, "", "Number of GPUs on this node (DCGM-visible; same value on each device row)")
 
 typedef struct dcgm_data {
@@ -41,6 +42,10 @@ typedef struct dcgm_data {
   double fp16_active;
   double sm_active;
   double sm_occupancy;
+  uint64_t prof_pcie_tx_bytes;
+  uint64_t prof_pcie_rx_bytes;
+  uint64_t prof_nvlink_tx_bytes;
+  uint64_t prof_nvlink_rx_bytes;
 } dcgm_data_t;
 
 #endif

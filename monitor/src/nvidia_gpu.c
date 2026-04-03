@@ -1,5 +1,6 @@
 #include <inttypes.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +23,19 @@
 # endif
 #endif
 
+#ifndef DCGM_FI_PROF_PCIE_TX_BYTES
+#define DCGM_FI_PROF_PCIE_TX_BYTES 1009
+#endif
+#ifndef DCGM_FI_PROF_PCIE_RX_BYTES
+#define DCGM_FI_PROF_PCIE_RX_BYTES 1010
+#endif
+#ifndef DCGM_FI_PROF_NVLINK_TX_BYTES
+#define DCGM_FI_PROF_NVLINK_TX_BYTES 1011
+#endif
+#ifndef DCGM_FI_PROF_NVLINK_RX_BYTES
+#define DCGM_FI_PROF_NVLINK_RX_BYTES 1012
+#endif
+
 #define DBL_TO_LLU(x) ((unsigned long long) ((x) + 0.5))
 #define DBL_TO_LLU_PERCENT(x) ((unsigned long long) ((100.0 * (x)) + 0.5))
 #define I64_TO_LLU(x) ((unsigned long long) (x))
@@ -39,7 +53,11 @@ static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
   DCGM_FI_PROF_PIPE_FP16_ACTIVE,
   DCGM_FI_PROF_SM_ACTIVE,
   DCGM_FI_PROF_SM_OCCUPANCY,
-  DCGM_FI_DEV_CLOCK_THROTTLE_REASONS
+  DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+  DCGM_FI_PROF_PCIE_TX_BYTES,
+  DCGM_FI_PROF_PCIE_RX_BYTES,
+  DCGM_FI_PROF_NVLINK_TX_BYTES,
+  DCGM_FI_PROF_NVLINK_RX_BYTES
 };
 
 /* Coarse roofline approximations from utilization signals. */
@@ -50,6 +68,12 @@ static unsigned long long g_gpu_est_flops[DCGM_MAX_NUM_DEVICES];
 static unsigned long long g_gpu_est_mem_read_bytes[DCGM_MAX_NUM_DEVICES];
 static unsigned long long g_gpu_est_mem_write_bytes[DCGM_MAX_NUM_DEVICES];
 static unsigned long long g_gpu_est_mem_total_bytes[DCGM_MAX_NUM_DEVICES];
+static unsigned long long g_gpu_io_link_total_bytes[DCGM_MAX_NUM_DEVICES];
+static uint64_t g_io_prev_pcie_tx[DCGM_MAX_NUM_DEVICES];
+static uint64_t g_io_prev_pcie_rx[DCGM_MAX_NUM_DEVICES];
+static uint64_t g_io_prev_nvlink_tx[DCGM_MAX_NUM_DEVICES];
+static uint64_t g_io_prev_nvlink_rx[DCGM_MAX_NUM_DEVICES];
+static unsigned char g_io_link_baseln[DCGM_MAX_NUM_DEVICES];
 static long long g_gpu_prev_collect_us = 0;
 
 static unsigned long long clamp_double_to_ull(double v)
@@ -78,6 +102,70 @@ static int bounded_ratio(double v, double *out)
     return 0;
   }
   return -1;
+}
+
+/*
+ * DCGM reports PROF byte fields as int64 or fp64 depending on build; normalize to uint64 for deltas.
+ */
+static void dcgm_field_value_u64(const dcgmFieldValue_v1 *v, uint64_t *out)
+{
+  if (v->fieldType == DCGM_FT_DOUBLE) {
+    *out = clamp_double_to_ull(v->value.dbl);
+    return;
+  }
+  if (v->fieldType == DCGM_FT_INT64) {
+    if (v->value.i64 <= 0)
+      *out = 0;
+    else
+      *out = (uint64_t) v->value.i64;
+    return;
+  }
+  *out = 0;
+}
+
+/*
+ * DCGM PROF link byte metrics are documented as byte counts; GetLatestValues returns monotonic
+ * hardware-style counters on typical stacks. If values decrease (counter reset), treat current as
+ * delta since reset. First sample after monitor start establishes baseline (no backlog).
+ */
+static unsigned long long nvidia_gpu_link_u64_delta(uint64_t cur, uint64_t *prev)
+{
+  if (cur >= *prev) {
+    unsigned long long d = (unsigned long long) (cur - *prev);
+
+    *prev = cur;
+    return d;
+  }
+  *prev = cur;
+  return (unsigned long long) cur;
+}
+
+static void nvidia_gpu_io_link_accumulate(unsigned int gid, const dcgm_data_t *row)
+{
+  if (gid >= DCGM_MAX_NUM_DEVICES)
+    return;
+
+  if (!g_io_link_baseln[gid]) {
+    g_io_prev_pcie_tx[gid] = row->prof_pcie_tx_bytes;
+    g_io_prev_pcie_rx[gid] = row->prof_pcie_rx_bytes;
+    g_io_prev_nvlink_tx[gid] = row->prof_nvlink_tx_bytes;
+    g_io_prev_nvlink_rx[gid] = row->prof_nvlink_rx_bytes;
+    g_io_link_baseln[gid] = 1;
+    return;
+  }
+
+  g_gpu_io_link_total_bytes[gid] =
+      ull_add_sat(g_gpu_io_link_total_bytes[gid],
+                  nvidia_gpu_link_u64_delta(row->prof_pcie_tx_bytes, &g_io_prev_pcie_tx[gid]));
+  g_gpu_io_link_total_bytes[gid] =
+      ull_add_sat(g_gpu_io_link_total_bytes[gid],
+                  nvidia_gpu_link_u64_delta(row->prof_pcie_rx_bytes, &g_io_prev_pcie_rx[gid]));
+  g_gpu_io_link_total_bytes[gid] =
+      ull_add_sat(g_gpu_io_link_total_bytes[gid],
+                  nvidia_gpu_link_u64_delta(row->prof_nvlink_tx_bytes, &g_io_prev_nvlink_tx[gid]));
+  g_gpu_io_link_total_bytes[gid] =
+      ull_add_sat(g_gpu_io_link_total_bytes[gid],
+                  nvidia_gpu_link_u64_delta(row->prof_nvlink_rx_bytes, &g_io_prev_nvlink_rx[gid]));
 }
 
 static int list_field_values(unsigned int gpu_id,
@@ -132,6 +220,18 @@ static int list_field_values(unsigned int gpu_id,
         break;
       case DCGM_FI_DEV_CLOCK_THROTTLE_REASONS:
         data[gpu_id].clocks_event_reasons = values[i].value.i64;
+        break;
+      case DCGM_FI_PROF_PCIE_TX_BYTES:
+        dcgm_field_value_u64(&values[i], &data[gpu_id].prof_pcie_tx_bytes);
+        break;
+      case DCGM_FI_PROF_PCIE_RX_BYTES:
+        dcgm_field_value_u64(&values[i], &data[gpu_id].prof_pcie_rx_bytes);
+        break;
+      case DCGM_FI_PROF_NVLINK_TX_BYTES:
+        dcgm_field_value_u64(&values[i], &data[gpu_id].prof_nvlink_tx_bytes);
+        break;
+      case DCGM_FI_PROF_NVLINK_RX_BYTES:
+        dcgm_field_value_u64(&values[i], &data[gpu_id].prof_nvlink_rx_bytes);
         break;
       default:
         break;
@@ -222,6 +322,8 @@ static int nvidia_gpu_collect_dev(struct stats *stats,
   if (mem_bw_rate < 0.0)
     mem_bw_rate = 0.0;
 
+  nvidia_gpu_io_link_accumulate(gid, row);
+
   if (delta_us > 0) {
     double dt_sec = (double) delta_us / 1000000.0;
     delta_flops = clamp_double_to_ull(flops_rate * dt_sec);
@@ -253,6 +355,7 @@ static int nvidia_gpu_collect_dev(struct stats *stats,
   stats_set(stats, "gpu_mem_read_bytes", g_gpu_est_mem_read_bytes[gid]);
   stats_set(stats, "gpu_mem_write_bytes", g_gpu_est_mem_write_bytes[gid]);
   stats_set(stats, "gpu_mem_total_bytes", g_gpu_est_mem_total_bytes[gid]);
+  stats_set(stats, "gpu_io_link_total_bytes", g_gpu_io_link_total_bytes[gid]);
   stats_set(stats, "gpu_count", (unsigned long long) (gpu_count < 0 ? 0 : gpu_count));
   return 0;
 }
