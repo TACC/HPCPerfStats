@@ -91,6 +91,8 @@ static int list_field_values(unsigned int gpu_id,
   if (gpu_id >= DCGM_MAX_NUM_DEVICES)
     return -1;
   for (i = 0; i < num_values; i++) {
+    if (values[i].status != DCGM_ST_OK)
+      continue;
     switch (values[i].fieldId) {
       case DCGM_FI_DEV_GPU_TEMP:
         data[gpu_id].temperature = values[i].value.i64;
