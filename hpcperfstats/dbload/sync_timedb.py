@@ -86,6 +86,8 @@ days_to_process = 5
 
 # How many files to proccess and archive at once
 chunk_size = 100
+# Max paths per ``tar uvf`` (avoid ARG_MAX / exec failures with long FQDN paths).
+tar_append_batch_size = 32
 # Rescan stats directory after this many processed chunks
 rescan_every_chunks = 10
 # Bound processed-file tracking to avoid unbounded set growth in long runs.
@@ -298,24 +300,39 @@ def _decompress_gz(gz_path):
 
 
 def _append_to_tar(tar_path, file_paths):
-  """Append file_paths to tar at tar_path. Does nothing if file_paths is empty."""
+  """Append file_paths to tar at tar_path. Does nothing if file_paths is empty.
+
+  Runs ``tar uvf`` in batches of ``tar_append_batch_size`` so the argv list
+  stays below OS limits (long cluster paths × many files → exit status 2).
+  """
   if not file_paths:
     return
-  with file_write_lock(tar_path):
-    result = subprocess.run(
-        ['/bin/tar', 'uvf', tar_path] + file_paths,
-        capture_output=True,
-        text=True,
-        check=False,
+  batch = max(1, int(tar_append_batch_size))
+  for off in range(0, len(file_paths), batch):
+    chunk = file_paths[off : off + batch]
+    with file_write_lock(tar_path):
+      result = subprocess.run(
+          ['/bin/tar', 'uvf', tar_path] + chunk,
+          capture_output=True,
+          text=True,
+          check=False,
+      )
+    if result.stdout:
+      log_print(result.stdout, flush=True)
+    if result.stderr:
+      log_print(result.stderr, flush=True)
+    if result.returncode != 0:
+      raise subprocess.CalledProcessError(
+          result.returncode,
+          result.args,
+          output=result.stdout,
+          stderr=result.stderr,
+      )
+    log_print(
+        "Archived batch %d-%d (%d file(s)) -> %s"
+        % (off + 1, off + len(chunk), len(chunk), tar_path),
+        flush=True,
     )
-  if result.stdout:
-    log_print(result.stdout, flush=True)
-  if result.stderr:
-    log_print(result.stderr, flush=True)
-  if result.returncode != 0:
-    raise subprocess.CalledProcessError(
-        result.returncode, result.args, output=result.stdout, stderr=result.stderr)
-  log_print("Archived: " + str(file_paths))
 
 
 def archive_stats_files(archive_info):
