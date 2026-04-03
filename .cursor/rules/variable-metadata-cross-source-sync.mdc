@@ -1,0 +1,71 @@
+---
+description: Keep variable and metric tooltip metadata synchronized across generator, React, Python summary text, and docs
+globs:
+  - "**/variableMetadata.js"
+  - "**/variableMetadataMonitorEvents.js"
+  - "**/variableMetadata.test.js"
+  - "**/generate-variable-metadata-monitor-events.py"
+  - "**/summary_metric_descriptions.py"
+  - "**/docs/MONITOR_VARIABLES.md"
+  - "**/docs/regenerate_monitor_variables_catalog.py"
+  - "**/docs/augment_monitor_variables_diagnostics.py"
+alwaysApply: false
+---
+
+# Variable Metadata — Cross-Source Sync
+
+Tooltip and help text for metrics/events live in **several files**. After changing any of them, update the **downstream** artifacts and keep **paired** sources aligned.
+
+## Source map
+
+| Layer | Authoritative / hand-edited | Generated or paired copy |
+|-------|-----------------------------|---------------------------|
+| Monitor `host_data.event` names | Monitor `KEYS` macros + dbload renames (see `variable-metadata-monitor-contract.mdc`) | — |
+| Per-event descriptions | `hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py` (`DESC`, `generic()`, `collect_all_names()` extras) | `variableMetadataMonitorEvents.js` (`MONITOR_EVENT_METADATA`) |
+| Merged UI map | `variableMetadata.js` (`JOB_ACCOUNTING_AND_DERIVED_METADATA`, `SUMMARY_PLOT_METRIC_METADATA`) spread over `MONITOR_EVENT_METADATA` | `VARIABLE_METADATA` / `getDescriptionForVariable` |
+| Job catalog metrics | `metrics.py` + `variableMetadata.js` `JOB_ACCOUNTING_*` | See `variable-metadata-derived-metrics-sync.mdc` |
+| Summary subplot column help | **`variableMetadata.js` → `SUMMARY_PLOT_METRIC_METADATA`** | **`hpcperfstats/analysis/plot/summary_metric_descriptions.py` → `SUMMARY_METRIC_DESCRIPTIONS`** — **same keys, same prose** (see comment at top of `summary_metric_descriptions.py`) |
+| Operator catalog + diagnostics | Regen scripts (below) | `docs/MONITOR_VARIABLES.md` |
+| Diagnostic bullets for unwired events | `docs/augment_monitor_variables_diagnostics.py` (`diagnostic_for_key`, wiring heuristics) | Inserted into `MONITOR_VARIABLES.md` when augment runs |
+
+**Do not hand-edit** `variableMetadataMonitorEvents.js` or the variable **catalog** section of `MONITOR_VARIABLES.md`; regenerate them.
+
+## Regeneration commands (repo root = `HPCPerfStats/` with `.venv`)
+
+After changing **`generate-variable-metadata-monitor-events.py`** or monitor-exposed event names (when editing `DESC` / generator logic):
+
+```bash
+.venv/bin/python hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py
+.venv/bin/python docs/regenerate_monitor_variables_catalog.py
+.venv/bin/python docs/augment_monitor_variables_diagnostics.py
+```
+
+Then run frontend checks that touch metadata:
+
+```bash
+cd hpcperfstats/site/frontend && npm test -- --run src/utils/variableMetadata.test.js
+```
+
+After changing **`augment_monitor_variables_diagnostics.py`** only (diagnostic wording or “wired” heuristics), rerun **augment**; if catalog structure changed, rerun **regenerate** then **augment**.
+
+## Pairing rules (manual sync)
+
+1. **`SUMMARY_PLOT_METRIC_METADATA` ↔ `SUMMARY_METRIC_DESCRIPTIONS`**  
+   Any add/rename/remove of a summary subplot metric key or its description string must be applied in **both** files in the **same task**.
+
+2. **`JOB_ACCOUNTING_AND_DERIVED_METADATA` ↔ `metrics.py` catalog**  
+   Follow `variable-metadata-derived-metrics-sync.mdc`.
+
+3. **New monitor event names**  
+   Follow `variable-metadata-monitor-contract.mdc` (generator + regen JS + regen doc).
+
+## Display policy
+
+- No scientific notation in user-visible description strings (project-wide rule).  
+- Prefer one clear sentence per tooltip; units may be omitted when the UI already shows units.
+
+## Overlap
+
+- `variable-metadata-monitor-contract.mdc` — monitor ↔ generator ↔ `MONITOR_EVENT_METADATA`.  
+- `variable-metadata-derived-metrics-sync.mdc` — `metrics.py` ↔ `JOB_ACCOUNTING_AND_DERIVED_METADATA`.  
+- `testing-doc-sync.mdc` — if you add new test scripts or documented commands for this workflow, update `TESTING.md` in the same task.

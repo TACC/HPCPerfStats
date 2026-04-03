@@ -1,5 +1,9 @@
 ---
 description: Keep variableMetadata in sync when job-level derived metrics change
+globs:
+  - "**/hpcperfstats/analysis/metrics/metrics.py"
+  - "**/variableMetadata.js"
+  - "**/variableMetadata.test.js"
 alwaysApply: false
 ---
 
@@ -23,4 +27,5 @@ When adding, renaming, or removing a derived metric in `metrics.py` (simple or c
 ## Overlap
 
 - Complements `variable-metadata-monitor-contract.mdc` (raw monitor events vs merged `VARIABLE_METADATA`).
+- **`variable-metadata-cross-source-sync.mdc`** — also covers summary-plot keys (`SUMMARY_PLOT_METRIC_METADATA` ↔ `summary_metric_descriptions.py`) and doc regen.
 - Complements `runtime-resource-and-metrics-safety.mdc` when metrics changes need regression tests on the Python side.

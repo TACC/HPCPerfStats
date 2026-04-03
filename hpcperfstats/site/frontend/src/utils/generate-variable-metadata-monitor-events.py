@@ -291,6 +291,76 @@ DESC: dict[str, str] = {
     "SSE_DOUBLE_SCALAR": "Intel core PMU: retired SSE/AVX double-precision scalar FP operations (legacy FLOP proxy).",
     "SSE_DOUBLE_PACKED": "Intel core PMU: retired SSE/AVX packed double-precision FP operations (legacy FLOP proxy).",
     "SIMD_DOUBLE_256": "Intel core PMU: retired 256-bit packed double-precision SIMD FP operations (legacy FLOP proxy).",
+    # Lustre llite: /proc/fs/lustre/llite/*/stats (monitor llite.c; llite_opcode_table lineage).
+    "alloc_inode": "Lustre llite: inode allocation operations counted in per-mount `/proc/fs/lustre/llite/*/stats`.",
+    "close": "Lustre llite: `close(2)` operation count per mount (`/proc/fs/lustre/llite/*/stats`).",
+    "create": "Lustre llite: file create operation count.",
+    "dirty_pages_hits": "Lustre llite: dirty client-page cache hits (samples line in `/proc/fs/lustre/llite/*/stats`).",
+    "dirty_pages_misses": "Lustre llite: dirty client-page cache misses; high misses vs hits can mean poor cache reuse.",
+    "flock": "Lustre llite: advisory `flock` operation count.",
+    "fsync": "Lustre llite: `fsync` operation count.",
+    "getattr": "Lustre llite: getattr / stat-style metadata operation count.",
+    "getxattr": "Lustre llite: `getxattr` syscall count.",
+    "inode_permission": "Lustre llite: inode permission check count (security / ACL path activity).",
+    "ioctl": "Lustre llite: `ioctl` operation count on this mount.",
+    "link": "Lustre llite: hard `link` operation count.",
+    "listxattr": "Lustre llite: `listxattr` syscall count.",
+    "lookup": "Lustre llite: pathname `lookup` operation count.",
+    "mkdir": "Lustre llite: `mkdir` operation count.",
+    "mknod": "Lustre llite: `mknod` operation count.",
+    "mmap": "Lustre llite: `mmap` operation count.",
+    "open": "Lustre llite: `open(2)` operation count.",
+    "osc_read": "Lustre llite: bytes attributed to OSC read path in llite stats (byte sum field; complements OSC counters).",
+    "osc_write": "Lustre llite: bytes attributed to OSC write path in llite stats (byte sum field; complements OSC counters).",
+    "read": "Lustre llite: `read(2)` syscall operation count (volume is in `read_bytes`, not return-value based in llite stats).",
+    "read_bytes": (
+        "Cumulative bytes read on the Lustre client from llite or OSC `/proc/fs/lustre/*/stats` "
+        "(llite counts requested read size per `read(2)`; OSC aggregates byte totals from OST RPCs)."
+    ),
+    "readdir": "Lustre llite: `readdir` operation count.",
+    "removexattr": "Lustre llite: `removexattr` syscall count.",
+    "rename": "Lustre llite: `rename` operation count.",
+    "rmdir": "Lustre llite: `rmdir` operation count.",
+    "seek": "Lustre llite: `seek` operation count.",
+    "setattr": "Lustre llite: `setattr` metadata updates (mode/owner/size, etc.).",
+    "setxattr": "Lustre llite: `setxattr` syscall count.",
+    "statfs": "Lustre llite: `statfs` operation count.",
+    "symlink": "Lustre llite: `symlink` creation operation count.",
+    "truncate": "Lustre llite: `truncate` operation count.",
+    "unlink": "Lustre llite: `unlink` operation count.",
+    "write": "Lustre llite: `write(2)` syscall operation count (byte volume in `write_bytes`).",
+    "write_bytes": "Cumulative bytes written on the Lustre client from llite or OSC `/proc/fs/lustre/*/stats`.",
+    # Lustre OSC: /proc/fs/lustre/osc/*/stats (monitor osc.c; req_waittime aggregation).
+    "reqs": "Lustre OSC: sample count taken from `req_waittime` lines in `/proc/fs/lustre/osc/*/stats` (paired with `wait`).",
+    "wait": (
+        "Lustre OSC: cumulative microseconds from the `req_waittime` sum field in "
+        "`/proc/fs/lustre/osc/*/stats` (use deltas with `reqs` for average wait in a window)."
+    ),
+    # InfiniBand base sysfs (monitor ib.c; /sys/class/infiniband/.../ports/.../counters).
+    "excessive_buffer_overrun_errors": "InfiniBand port counter: excessive buffer overruns (base IB sysfs counters).",
+    "link_downed": "InfiniBand port counter: failed link error recoveries (link went down; monitor comment in ib.c).",
+    "link_error_recovery": "InfiniBand port counter: successful link error recovery events (monitor ib.c).",
+    "local_link_integrity_errors": "InfiniBand port counter: local link integrity errors (hardware / cable quality).",
+    # Linux netdev extended statistics (/sys/class/net/*/statistics; monitor net.c).
+    "rx_compressed": "Linux netdev: received compressed frames (per-interface sysfs statistics).",
+    "rx_crc_errors": "Linux netdev: frames received with CRC or FCS errors (physical layer or interference).",
+    "rx_fifo_errors": "Linux netdev: receiver FIFO overrun errors.",
+    "rx_frame_errors": "Linux netdev: framing errors (misaligned or malformed Ethernet frames).",
+    "rx_length_errors": "Linux netdev: received frames with invalid length field.",
+    "rx_missed_errors": "Linux netdev: packets missed by the receiver (often ring buffer exhaustion).",
+    "rx_over_errors": "Linux netdev: receiver overrun errors.",
+    "tx_aborted_errors": "Linux netdev: aborted transmissions (driver or hardware abort).",
+    "tx_carrier_errors": "Linux netdev: loss of carrier during transmit (cable, duplex, or link partner).",
+    "tx_compressed": "Linux netdev: transmitted compressed frames.",
+    "tx_fifo_errors": "Linux netdev: transmit FIFO errors (underrun/overrun, driver dependent).",
+    "tx_heartbeat_errors": "Linux netdev: heartbeat / half-duplex loss-of-carrier style errors.",
+    "tx_window_errors": "Linux netdev: classic transmitter window errors on outbound frames.",
+    # Linux /proc/vmstat transparent hugepages (monitor vm.c).
+    "thp_fault_alloc": "Linux /proc/vmstat: transparent hugepage allocations satisfied on fault.",
+    "thp_fault_fallback": "Linux /proc/vmstat: THP fault handling fell back to small pages.",
+    "thp_collapse_alloc": "Linux /proc/vmstat: successful collapse of page tables into a THP.",
+    "thp_collapse_alloc_failed": "Linux /proc/vmstat: failed attempts to collapse mappings into a THP.",
+    "thp_split": "Linux /proc/vmstat: transparent hugepage splits (e.g. unmap, compaction, or policy).",
 }
 
 
