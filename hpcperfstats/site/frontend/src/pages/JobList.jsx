@@ -10,6 +10,7 @@ import { formatDecimalStandard } from "../utils/formatDecimal";
 import { buildJobListApiParams } from "../utils/build-job-list-api-params";
 import { normalizeJobListHistogramEntry } from "../utils/normalize-job-list-histogram-entry";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
+import { jobListRouteTitleContext } from "../utils/job-list-route-title-context";
 
 const ResolvedReactPaginate = ReactPaginate?.default || ReactPaginate;
 
@@ -38,6 +39,7 @@ export default function JobList() {
   );
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [histogramReloadKey, setHistogramReloadKey] = useState(0);
 
   useEffect(() => {
     const params = buildJobListApiParams(searchParams, paramsFromRoute);
@@ -119,13 +121,24 @@ export default function JobList() {
     };
 
     loadHistograms();
-  }, [searchParams, paramsFromRoute]);
+  }, [searchParams, paramsFromRoute, histogramReloadKey]);
 
+  const routeCtx = jobListRouteTitleContext(paramsFromRoute, searchParams);
   const documentTitleSegment = error
-    ? "Job list"
+    ? routeCtx
+      ? `Job list · ${routeCtx}`
+      : "Job list"
     : loading
-      ? "Loading job list"
-      : data?.qname || "Job list";
+      ? routeCtx
+        ? `Loading job list · ${routeCtx}`
+        : "Loading job list"
+      : data?.qname
+        ? routeCtx
+          ? `${data.qname} · ${routeCtx}`
+          : data.qname
+        : routeCtx
+          ? `Job list · ${routeCtx}`
+          : "Job list";
   useDocumentTitle(documentTitleSegment);
 
   if (loading) {
@@ -200,6 +213,24 @@ export default function JobList() {
     return "none";
   };
 
+  const queueHistDone = !queueHistStatus.loading;
+  const allMetricHistsDone = metricNames.every(
+    (m) => !metricHistStatus[m]?.loading,
+  );
+  const histogramsFinishedLoading = queueHistDone && allMetricHistsDone;
+  const failedHistogramLabels = [];
+  if (queueHistStatus.error) failedHistogramLabels.push("queues");
+  const labelMap = {
+    runtime: "Runtime",
+    nhosts: "Node count",
+    queue_wait: "Queue wait",
+  };
+  metricNames.forEach((metric) => {
+    if (metricHistStatus[metric]?.error) {
+      failedHistogramLabels.push(labelMap[metric] || metric);
+    }
+  });
+
   const columns = [
     { label: "Job ID", field: "jid", sortable: true },
     { label: "Performance Data", field: "has_metrics", sortable: true },
@@ -223,20 +254,10 @@ export default function JobList() {
         {queueHistStatus.loading && (
           <LoadingMessage message="Loading queue histograms…" />
         )}
-        {!queueHistStatus.loading && queueHistStatus.error && (
-          <p className="text-danger small mt-2" role="status">
-            Queue histograms failed to load. Job list data is still available.
-          </p>
-        )}
         {metricNames.map((metric) => {
           const status = metricHistStatus[metric] || {
             loading: false,
             error: null,
-          };
-          const labelMap = {
-            runtime: "Runtime",
-            nhosts: "Node count",
-            queue_wait: "Queue wait",
           };
           const friendlyName = labelMap[metric] || metric;
           return (
@@ -246,15 +267,29 @@ export default function JobList() {
                   message={`Loading ${friendlyName.toLowerCase()} histogram…`}
                 />
               )}
-              {!status.loading && status.error && (
-                <p className="text-danger small mt-2" role="status">
-                  {friendlyName} histogram failed to load. Job list data is
-                  still available.
-                </p>
-              )}
             </div>
           );
         })}
+        {histogramsFinishedLoading && failedHistogramLabels.length > 0 ? (
+          <div
+            className="alert alert-warning small mt-2 mx-auto text-start"
+            style={{ maxWidth: 520 }}
+            role="status"
+            aria-live="polite"
+          >
+            <p className="mb-2">
+              Some histograms could not be loaded ({failedHistogramLabels.join(", ")}).
+              The job table below is unchanged.
+            </p>
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm"
+              onClick={() => setHistogramReloadKey((k) => k + 1)}
+            >
+              Retry histograms
+            </button>
+          </div>
+        ) : null}
         <HistogramThumbnails histograms={histograms} />
       </div>
       <hr />

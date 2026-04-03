@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { api } from "./api";
 import Layout from "./Layout";
 import LoadingMessage from "./components/LoadingMessage";
+import { useDocumentTitle } from "./utils/useDocumentTitle";
 import Search from "./pages/Search";
 import JobList from "./pages/JobList";
 import JobDetail from "./pages/JobDetail";
@@ -11,6 +12,20 @@ import HostDetail from "./pages/HostDetail";
 import AdminMonitor from "./pages/AdminMonitor";
 import JobMonitor from "./pages/JobMonitor";
 import { SessionContext } from "./session-context";
+
+function SessionGateLayout({ message, title }) {
+  useDocumentTitle(title);
+  return (
+    <>
+      <a href="#main-content" className="visually-hidden visually-hidden-focusable">
+        Skip to main content
+      </a>
+      <main id="main-content" tabIndex={-1}>
+        <LoadingMessage message={message} />
+      </main>
+    </>
+  );
+}
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -33,11 +48,18 @@ export default function App() {
   }, [loading, session]);
 
   if (loading) {
-    return <LoadingMessage message="Loading session…" />;
+    return (
+      <SessionGateLayout message="Loading session…" title="Loading session" />
+    );
   }
 
   if (!session || !session.logged_in) {
-    return <LoadingMessage message="Redirecting to sign in…" />;
+    return (
+      <SessionGateLayout
+        message="Redirecting to sign in…"
+        title="Redirecting to sign in"
+      />
+    );
   }
 
   return (

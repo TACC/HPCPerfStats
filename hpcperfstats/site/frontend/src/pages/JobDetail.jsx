@@ -213,9 +213,11 @@ export default function JobDetail() {
 
   useDocumentTitle(
     error
-      ? "Job detail"
+      ? pk
+        ? `Job ${pk} (error)`
+        : "Job detail"
       : loading && pk
-        ? `Job ${pk}`
+        ? `Loading job ${pk}`
         : data?.job_data?.jid
           ? `Job ${data.job_data.jid}`
           : pk

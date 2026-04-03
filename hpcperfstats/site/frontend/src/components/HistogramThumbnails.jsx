@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import BokehEmbed from "./BokehEmbed";
 import LoadingMessage from "./LoadingMessage";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 const THUMB_SIZE = { width: 280, height: 200 };
 const MOBILE_BREAKPOINT = 768;
@@ -29,10 +30,16 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
   const [hasOpened, setHasOpened] = useState(false);
   const wrapperRef = useRef(null);
   const leaveTimerRef = useRef(null);
+  const thumbActivatorRef = useRef(null);
+  const popoverRef = useRef(null);
+  const closeButtonRef = useRef(null);
+
+  const showPopover = !isMobile && (hovered || expanded);
+  const trapPopoverFocus = !isMobile && expanded && showPopover;
+  useFocusTrap(popoverRef, trapPopoverFocus);
 
   const thumbId = `hist-thumb-${index}`;
   const fullId = `hist-full-${index}`;
-  const showPopover = !isMobile && (hovered || expanded);
 
   const handleMouseEnter = () => {
     if (leaveTimerRef.current) {
@@ -47,6 +54,13 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
     leaveTimerRef.current = setTimeout(() => setHovered(false), 150);
   };
 
+  const collapseExpanded = useCallback(() => {
+    setExpanded(false);
+    window.requestAnimationFrame(() => {
+      thumbActivatorRef.current?.focus();
+    });
+  }, []);
+
   const handleClick = () => {
     setExpanded((prev) => !prev);
     setHasOpened(true);
@@ -59,7 +73,8 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
       setHasOpened(true);
     }
     if (e.key === "Escape" && expanded) {
-      setExpanded(false);
+      e.preventDefault();
+      collapseExpanded();
     }
   };
 
@@ -70,13 +85,24 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
   }, []);
 
   useEffect(() => {
+    if (!expanded || !showPopover || isMobile) return;
+    const id = window.requestAnimationFrame(() => {
+      closeButtonRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [expanded, showPopover, isMobile]);
+
+  useEffect(() => {
     if (!expanded) return;
-    const onKeyDown = (e) => {
-      if (e.key === "Escape") setExpanded(false);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [expanded]);
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        collapseExpanded();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [expanded, collapseExpanded]);
 
   /* Mobile: full histogram only, no popover, container sized for viewport */
   if (isMobile) {
@@ -105,6 +131,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
     >
       <div className="histogram-desktop-title">{title}</div>
       <div
+        ref={thumbActivatorRef}
         role="button"
         tabIndex={0}
         aria-label={`${title}: enlarge chart (click, Enter, or Space)`}
@@ -131,19 +158,22 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
       </div>
       {showPopover && (
         <div
+          ref={popoverRef}
           className="histogram-thumbnail-popover"
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
           role="dialog"
+          aria-modal={expanded ? "true" : undefined}
           aria-label={`Full size: ${title}`}
         >
           <div className="histogram-thumbnail-popover-title">
             {title}
             {expanded && (
               <button
+                ref={closeButtonRef}
                 type="button"
                 className="histogram-thumbnail-close"
-                onClick={() => setExpanded(false)}
+                onClick={() => collapseExpanded()}
                 aria-label="Close full size view"
                 style={{
                   marginLeft: 8,

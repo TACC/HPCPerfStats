@@ -16,10 +16,12 @@ export default function HostDetail() {
 
   useDocumentTitle(
     loading && host
-      ? `Host ${host} (loading)`
-      : host
-        ? `Host ${host}`
-        : "Host plot",
+      ? `Loading host ${host}`
+      : host && data?.host
+        ? `Host ${data.host} · plot`
+        : host
+          ? `Host ${host}`
+          : "Host plot",
   );
 
   useEffect(() => {

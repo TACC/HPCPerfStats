@@ -48,6 +48,10 @@ body {
 .variable-info-help {
   display: inline;
   margin-left: 0.15em;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
   font-size: 0.75em;
   font-weight: 600;
   color: #0d6efd; /* Bootstrap primary blue */
@@ -56,9 +60,9 @@ body {
   line-height: 1;
   user-select: none;
 }
-.variable-info-help:focus {
-  outline: 1px dotted currentColor;
-  outline-offset: 1px;
+.variable-info-help:focus-visible {
+  outline: 2px solid #0a58ca;
+  outline-offset: 2px;
 }
 .variable-info-tooltip {
   position: absolute;

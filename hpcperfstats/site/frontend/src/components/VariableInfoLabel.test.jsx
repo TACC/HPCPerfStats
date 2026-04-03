@@ -35,13 +35,13 @@ describe("VariableInfoLabel", () => {
     expect(screen.getByTestId("variable-info-help")).toBeInTheDocument();
   });
 
-  it("renders a help marker for code-derived definitions", () => {
+  it("opens help text on button click", () => {
     render(
       <VariableInfoLabel variableName="utilization" labelText="utilization" enableHelp />
     );
     expect(screen.getByText("utilization")).toBeInTheDocument();
-    const help = screen.getByTestId("variable-info-help");
-    fireEvent.mouseEnter(help);
+    const help = screen.getByRole("button", { name: /help: utilization/i });
+    fireEvent.click(help);
     expect(screen.getByTestId("variable-info-tooltip")).toHaveTextContent(
       /GPU utilization/i
     );

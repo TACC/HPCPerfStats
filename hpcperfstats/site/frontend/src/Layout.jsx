@@ -8,7 +8,11 @@ import { useRouteFocusMain } from "./utils/useRouteFocusMain";
 export default function Layout({ session, onSessionChange, children }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   useRouteFocusMain(location.pathname);
+  useEffect(() => {
+    setMoreMenuOpen(false);
+  }, [location.pathname]);
   const [extendedSearchOpen, setExtendedSearchOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [staffMessage, setStaffMessage] = useState("");
@@ -134,6 +138,7 @@ export default function Layout({ session, onSessionChange, children }) {
   function navigateStaff(path) {
     navigate(path);
     setStaffMenuOpen(false);
+    setMoreMenuOpen(false);
   }
 
   const staffMenuBusy = isDroppingStaff || isInvalidatingCache;
@@ -227,7 +232,7 @@ export default function Layout({ session, onSessionChange, children }) {
                   </button>
                 </form>
               </div>
-              <div className="navbar-actions-row">
+              <div className="d-none d-lg-flex navbar-actions-row">
                 {session?.is_staff && (
                   <div className="dropdown" ref={staffMenuRef}>
                     <button
@@ -304,6 +309,76 @@ export default function Layout({ session, onSessionChange, children }) {
                 <a href="/logout/" className="btn btn-outline-secondary btn-sm">
                   Logout
                 </a>
+              </div>
+              <div className="d-lg-none w-100 mt-1">
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm w-100"
+                  aria-expanded={moreMenuOpen}
+                  aria-controls="navbar-more-menu"
+                  onClick={() => setMoreMenuOpen((o) => !o)}
+                >
+                  {moreMenuOpen ? "Hide account menu" : "Account and tools"}
+                </button>
+                {moreMenuOpen ? (
+                  <div
+                    id="navbar-more-menu"
+                    className="d-flex flex-column gap-1 align-items-stretch mt-2"
+                    role="group"
+                    aria-label="Account and staff tools"
+                  >
+                    {session?.is_staff ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm text-start"
+                          disabled={staffMenuBusy}
+                          onClick={() => navigateStaff("/job_monitor")}
+                        >
+                          Job Failure Monitor
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm text-start"
+                          disabled={staffMenuBusy}
+                          onClick={() => navigateStaff("/admin_monitor")}
+                        >
+                          HPCPerfStats Monitor
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm text-start"
+                          disabled={staffMenuBusy}
+                          onClick={() => void handleDropStaffForSession()}
+                        >
+                          Disable Staff Permissions
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm text-start"
+                          disabled={staffMenuBusy}
+                          onClick={() => void handleInvalidateCacheForPage()}
+                        >
+                          Invalidate Cache For Page
+                        </button>
+                      </>
+                    ) : null}
+                    <a
+                      href="/api-key/"
+                      className="btn btn-outline-secondary btn-sm"
+                      onClick={() => setMoreMenuOpen(false)}
+                    >
+                      API key
+                    </a>
+                    <a
+                      href="/logout/"
+                      className="btn btn-outline-secondary btn-sm"
+                      onClick={() => setMoreMenuOpen(false)}
+                    >
+                      Logout
+                    </a>
+                  </div>
+                ) : null}
               </div>
               {staffMessage && (
                 <div

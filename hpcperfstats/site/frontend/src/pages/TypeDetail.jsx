@@ -13,11 +13,12 @@ export default function TypeDetail() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  const typeLabel = data?.type_name || typeName;
   useDocumentTitle(
     loading && jid && typeName
-      ? `Job ${jid} / ${typeName} (loading)`
+      ? `Loading job ${jid} · ${typeName}`
       : jid && typeName
-        ? `Job ${jid} / ${typeName}`
+        ? `Job ${jid} · ${typeLabel || typeName}`
         : "Type detail",
   );
 

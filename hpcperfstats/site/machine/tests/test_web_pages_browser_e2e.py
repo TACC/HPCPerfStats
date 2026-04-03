@@ -229,7 +229,12 @@ def test_browser_flow_for_web_pages():
           axe_bundle = _axe_core_bundle_path()
           if axe_bundle is not None:
             page.add_init_script(path=str(axe_bundle))
-            for axe_url in (f"{base_url}/machine/?staff=0", f"{base_url}/api-key/"):
+            for axe_url in (
+                f"{base_url}/machine/?staff=0",
+                f"{base_url}/machine/job/123/",
+                f"{base_url}/machine/admin_monitor/",
+                f"{base_url}/api-key/",
+            ):
               page.goto(axe_url)
               violations = page.evaluate(
                   """async () => {

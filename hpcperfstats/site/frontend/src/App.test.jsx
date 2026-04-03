@@ -33,6 +33,8 @@ describe("App", () => {
 
     renderApp();
     expect(screen.getByText("Loading session…")).toBeInTheDocument();
+    expect(screen.getByRole("main")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /skip to main content/i })).toBeInTheDocument();
   });
 
   it("redirects to login_prompt when not logged in", async () => {
