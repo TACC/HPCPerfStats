@@ -3,6 +3,8 @@ Description=Job-level Monitoring Service
 
 [Service]
 Type=simple
+# Default per-process soft FD limit is often 1024; collectors + LIKWID + dumpfiles can exceed it (EMFILE).
+LimitNOFILE=1048576
 ExecStart=/usr/sbin/hpcperfstatsd -c CONFIGFILE
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
