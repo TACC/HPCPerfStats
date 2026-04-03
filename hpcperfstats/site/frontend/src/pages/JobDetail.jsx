@@ -56,7 +56,8 @@ const PlotPanel = memo(function PlotPanel({
       <div
         style={{
           display: "flex",
-          justifyContent: "flex-end",
+          justifyContent: "flex-start",
+          alignSelf: "flex-start",
           alignItems: "center",
           flexShrink: 0,
           minHeight: isPlotRendered ? "1.625rem" : 0,
