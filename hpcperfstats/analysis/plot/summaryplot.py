@@ -1033,7 +1033,9 @@ class SummaryPlot():
 
     if not plots:
       raise ValueError(MSG_NO_METRIC_DATA)
-    return gridplot(plots, ncols=min(2, len(plots)))
+    # Root GridPlot must stretch horizontally so the grid uses the full embed width
+    # (child figures already use stretch_width via figure_embed_kw).
+    return gridplot(plots, ncols=min(2, len(plots)), sizing_mode="stretch_width")
 
 
 def plot_and_reason_summary_from_jid_table(jt):
