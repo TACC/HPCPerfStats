@@ -448,6 +448,70 @@ def test_compute_deltas_and_arc_nvidia_temperature_means_across_dev():
   assert result.iloc[0]["value"] == 70.0
 
 
+def test_compute_deltas_and_arc_dcg_cpu_power_clusters_sockets():
+  """Grace DCGM CPU power: repeated per-core readings cluster into per-socket sums."""
+  rows = []
+  for _ in range(3):
+    rows.append({
+        "host": "h",
+        "type": "cpu_counter_metrics",
+        "dev": str(len(rows)),
+        "event": "DCGM_CPU_POWER_UTIL_W",
+        "unit": "W",
+        "time": 100.0,
+        "value": 100.0,
+        "wid": 48,
+        "mult": 1,
+    })
+  for _ in range(3):
+    rows.append({
+        "host": "h",
+        "type": "cpu_counter_metrics",
+        "dev": str(len(rows)),
+        "event": "DCGM_CPU_POWER_UTIL_W",
+        "unit": "W",
+        "time": 100.0,
+        "value": 80.0,
+        "wid": 48,
+        "mult": 1,
+    })
+  stats_df = pd.DataFrame(rows)
+  result = compute_deltas_and_arc(stats_df)
+  assert len(result) == 1
+  assert abs(float(result.iloc[0]["value"]) - 180.0) < 1e-6
+
+
+def test_compute_deltas_and_arc_nvidia_module_power_max_across_dev():
+  """module_power_usage: max across GPU devs (avoid double-count on superchips)."""
+  stats_df = pd.DataFrame([
+      {
+          "host": "h",
+          "type": "nvidia_gpu",
+          "dev": "0",
+          "event": "module_power_usage",
+          "unit": "W",
+          "time": 100.0,
+          "value": 500.0,
+          "wid": 48,
+          "mult": 1,
+      },
+      {
+          "host": "h",
+          "type": "nvidia_gpu",
+          "dev": "1",
+          "event": "module_power_usage",
+          "unit": "W",
+          "time": 100.0,
+          "value": 500.0,
+          "wid": 48,
+          "mult": 1,
+      },
+  ])
+  result = compute_deltas_and_arc(stats_df)
+  assert len(result) == 1
+  assert float(result.iloc[0]["value"]) == 500.0
+
+
 def test_compute_deltas_and_arc_nvidia_clocks_event_reasons_bitwise_or():
   """nvidia_gpu clocks_event_reasons: OR across devs."""
   stats_df = pd.DataFrame([

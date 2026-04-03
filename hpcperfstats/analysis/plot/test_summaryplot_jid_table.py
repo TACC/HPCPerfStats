@@ -726,3 +726,165 @@ def test_summaryplot_shared_fs_iops_uses_nfs_ops_and_llite_ops():
   }
   assert by_host["n1.cluster"] == 100.0
   assert by_host["n2.cluster"] == 50.0
+
+
+def test_summaryplot_node_power_est_w_intel_plus_gpu():
+  """node_power_est_w merges Intel PKG watts and summed GPU power when no module reading."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    ev = list(events)
+    if typ == "intel_rapl" and val_col == "arc" and ev == ["MSR_PKG_ENERGY_STATUS"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 100.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ == "nvidia_gpu" and val_col == "value" and ev == ["power_usage"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 250.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ == "nvidia_gpu" and val_col == "value" and ev == ["module_power_usage"]:
+      return empty
+    if typ == "cpu_counter_metrics" and val_col == "value" and ev == [
+        "DCGM_CPU_POWER_UTIL_W",
+    ]:
+      return empty
+    if typ == "amd64_rapl" and val_col == "arc" and ev == ["MSR_PKG_ENERGY_STAT"]:
+      return empty
+    if val_col == "arc" and typ == "cpu" and "user" in ev:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+      )
+    if val_col != "arc":
+      return empty
+    if typ in ("amd64_pmc", "amd64_df", "ib_ext", "llite"):
+      return empty
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics") and ev == fp64:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics") and ev == [
+        "MPERF",
+    ]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics") and ev == [
+        "APERF",
+    ]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 200.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics") and ev == [
+        "INST_RETIRED",
+    ]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
+      )
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  captured = []
+
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
+    del label, y_range_end, x_range
+    if metric == "node_power_est_w":
+      captured.append(float(df[metric].iloc[0]))
+    return figure(width=100, height=60)
+
+  summary = SummaryPlot(jt)
+  summary.plot_metric = fake_plot_metric
+  fig = summary.plot()
+  assert fig is not None
+  assert captured
+  # MagicMock aggregate returns raw sum_val; real jid_table applies conv in get_aggregate_df.
+  assert captured[0] == 350.0
+
+
+def test_summaryplot_node_power_est_w_prefers_module_branch():
+  """When module_power_usage > 0, node estimate uses module only (not CPU+GPU sum)."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    ev = list(events)
+    if typ == "intel_rapl" and val_col == "arc" and ev == ["MSR_PKG_ENERGY_STATUS"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 50.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ == "nvidia_gpu" and val_col == "value" and ev == ["power_usage"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 400.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ == "nvidia_gpu" and val_col == "value" and ev == ["module_power_usage"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 900.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ == "cpu_counter_metrics" and val_col == "value" and ev == [
+        "DCGM_CPU_POWER_UTIL_W",
+    ]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 120.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ == "amd64_rapl" and val_col == "arc" and ev == ["MSR_PKG_ENERGY_STAT"]:
+      return empty
+    if val_col == "arc" and typ == "cpu" and "user" in ev:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+      )
+    if val_col != "arc":
+      return empty
+    if typ in ("amd64_pmc", "amd64_df", "ib_ext", "llite"):
+      return empty
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics") and ev == fp64:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics") and ev == [
+        "MPERF",
+    ]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics") and ev == [
+        "APERF",
+    ]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 200.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics") and ev == [
+        "INST_RETIRED",
+    ]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
+      )
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  captured = []
+
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
+    del label, y_range_end, x_range
+    if metric == "node_power_est_w":
+      captured.append(float(df[metric].iloc[0]))
+    return figure(width=100, height=60)
+
+  summary = SummaryPlot(jt)
+  summary.plot_metric = fake_plot_metric
+  fig = summary.plot()
+  assert fig is not None
+  assert captured == [900.0]

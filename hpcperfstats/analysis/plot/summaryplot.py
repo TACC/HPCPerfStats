@@ -178,6 +178,14 @@ _SUMMARY_SINGLE_SPECS = [
         "[watts]",
     ),
     (
+        "amd64_rapl",
+        "arc",
+        ["MSR_PKG_ENERGY_STAT"],
+        "amd_pkg_w",
+        0.00001526,
+        "AMD PKG power [W]",
+    ),
+    (
         "ib_ext",
         "arc",
         ["port_rcv_data", "port_xmit_data"],
@@ -293,6 +301,22 @@ _SUMMARY_SINGLE_SPECS = [
     (
         "nvidia_gpu",
         "value",
+        ["module_power_usage"],
+        "nv_module_power_w",
+        1.0,
+        "GPU module power [W]",
+    ),
+    (
+        "cpu_counter_metrics",
+        "value",
+        ["DCGM_CPU_POWER_UTIL_W"],
+        "dcg_cpu_power_w",
+        1.0,
+        "Grace CPU power [W]",
+    ),
+    (
+        "nvidia_gpu",
+        "value",
         ["gpu_mem_bw_bytes_rate"],
         "nv_gpu_mem_bw_gbs",
         _BYTES_TO_GB,
@@ -322,6 +346,10 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset({
     "nv_fp32_active",
     "nv_mem_util_pct",
     "nv_power_w",
+    "nv_module_power_w",
+    "dcg_cpu_power_w",
+    "amd_pkg_w",
+    "node_power_est_w",
     "nv_gpu_mem_bw_gbs",
     "nv_gpu_link_gbs",
     "cha_counter_arc_sum",
@@ -335,7 +363,13 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset({
 })
 
 # Merged for scaling/context only; not rendered as its own subplot.
-_SUMMARY_SKIP_PLOT_METRICS = frozenset({"nv_mem_total_mb", "nv_gpu_count"})
+_SUMMARY_SKIP_PLOT_METRICS = frozenset({
+    "nv_mem_total_mb",
+    "nv_gpu_count",
+    "nv_module_power_w",
+    "dcg_cpu_power_w",
+    "amd_pkg_w",
+})
 
 # First typename with full host/time coverage wins (same column name).
 _SUMMARY_FIRST_WIN_SPECS = (
@@ -555,6 +589,56 @@ def _add_fabric_mb_per_gflops_column(df):
   return df
 
 
+def _add_node_power_est_column(df):
+  """Estimated on-node power (W): module-only when ``nv_module_power_w`` > 0, else CPU + GPU.
+
+  CPU side: ``dcg_cpu_power_w`` (Grace DCGM) if present, else Intel ``watts``, else ``amd_pkg_w``.
+  GPU side: ``nv_power_w`` (summed per-GPU draw). Does **not** add module + DCGM + per-GPU together.
+  """
+  n = len(df.index)
+  out = np.full(n, np.nan, dtype=np.float64)
+  has_mod = "nv_module_power_w" in df.columns
+  has_gpu = "nv_power_w" in df.columns
+  dcg = df["dcg_cpu_power_w"] if "dcg_cpu_power_w" in df.columns else None
+  intel = df["watts"] if "watts" in df.columns else None
+  amd = df["amd_pkg_w"] if "amd_pkg_w" in df.columns else None
+  for i in range(n):
+    if has_mod:
+      modv = df["nv_module_power_w"].iloc[i]
+      if not pd_isna(modv) and float(modv) > 0.0:
+        out[i] = float(modv)
+        continue
+    cpu = float("nan")
+    if dcg is not None:
+      v = dcg.iloc[i]
+      if not pd_isna(v):
+        cpu = float(v)
+    if math.isnan(cpu) and intel is not None:
+      v = intel.iloc[i]
+      if not pd_isna(v):
+        cpu = float(v)
+    if math.isnan(cpu) and amd is not None:
+      v = amd.iloc[i]
+      if not pd_isna(v):
+        cpu = float(v)
+    gpu = float("nan")
+    if has_gpu:
+      gv = df["nv_power_w"].iloc[i]
+      if not pd_isna(gv):
+        gpu = float(gv)
+    if math.isnan(cpu) and math.isnan(gpu):
+      continue
+    total = 0.0
+    if math.isfinite(cpu):
+      total += cpu
+    if math.isfinite(gpu):
+      total += gpu
+    if math.isfinite(cpu) or math.isfinite(gpu):
+      out[i] = total
+  df["node_power_est_w"] = out
+  return df
+
+
 def _add_fabric_mb_per_avg_tensor_column(df):
   """Fabric MB/s divided by tensor-activity fraction (tensor column is 0–100 from DCGM)."""
   if "ibbw" not in df.columns or not df["ibbw"].notna().any():
@@ -642,6 +726,7 @@ def _summary_metric_specs():
   out.append(("", "", [], "cha_counter_arc_sum", 0, "Intel CHA counters [#/s]"))
   out.append(("", "", [], "fabric_mb_per_gflops", 0, "Fabric MB/s per GFLOPS"))
   out.append(("", "", [], "fabric_mb_per_avg_tensor", 0, "Fabric MB/s per tensor %"))
+  out.append(("", "", [], "node_power_est_w", 0, "Est. node power [W]"))
   out.append(("", "", [], _SHARED_FS_READ_METRIC, 0, _SHARED_FS_READ_LABEL))
   out.append(("", "", [], _SHARED_FS_WRITE_METRIC, 0, _SHARED_FS_WRITE_LABEL))
   out.append(("", "", [], _SHARED_FS_IOPS_METRIC, 0, _SHARED_FS_IOPS_LABEL))
@@ -668,6 +753,7 @@ def _summary_plot_order_key(metric_name):
       "nv_fp32_active": 8,
       "nv_mem_util_pct": 9,
       "nv_power_w": 10,
+      "node_power_est_w": 10.5,
       "nv_gpu_mem_bw_gbs": 11,
       "nv_gpu_link_gbs": 12,
       "cha_counter_arc_sum": 85,
@@ -899,6 +985,7 @@ class SummaryPlot():
     df = _merge_opa_fabric_if_no_ib_ext(df, self.jt)
     df = _add_fabric_mb_per_gflops_column(df)
     df = _add_fabric_mb_per_avg_tensor_column(df)
+    df = _add_node_power_est_column(df)
 
     metrics = _summary_metric_specs()
 
@@ -917,6 +1004,8 @@ class SummaryPlot():
     render_specs = []
     for typ, val, events, name, conv, label in metrics:
       if name not in df.columns:
+        continue
+      if name == "node_power_est_w" and not df[name].notna().any():
         continue
       if name in _SUMMARY_SKIP_PLOT_METRICS:
         continue

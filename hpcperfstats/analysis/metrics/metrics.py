@@ -62,6 +62,8 @@ _COMPLEX_PLACEHOLDER_TYPE_UNITS = {
     "avg_tensor_active": ("nvidia_gpu", "%"),
     "avg_gpu_mem_bw_gbps": ("nvidia_gpu", "GB/s"),
     "max_gpu_power": ("nvidia_gpu", "W"),
+    "max_node_power_est_w": ("job", "W"),
+    "avg_node_power_est_w": ("job", "W"),
     "max_gpu_link_gbps": ("nvidia_gpu", "GB/s"),
     "max_gpu_clock_event_reasons": ("nvidia_gpu", "#"),
     "gpu_util_node_imbalance": ("nvidia_gpu", "%"),
@@ -94,6 +96,8 @@ _COMPLEX_NO_DATA_REASONS = {
     "avg_tensor_active": "No usable GPU tensor-activity telemetry",
     "avg_gpu_mem_bw_gbps": "No usable GPU memory bandwidth rate telemetry",
     "max_gpu_power": "No usable GPU power telemetry",
+    "max_node_power_est_w": "No usable node power estimate telemetry",
+    "avg_node_power_est_w": "No usable node power estimate telemetry",
     "max_gpu_link_gbps": "No usable GPU PCIe/NVLink byte telemetry",
     "max_gpu_clock_event_reasons": "No usable GPU clock event reason telemetry",
     "gpu_util_node_imbalance": "No usable GPU utilization telemetry for imbalance",
@@ -470,7 +474,8 @@ class Metrics():
         'avg_freq', 'avg_ethbw', 'avg_gpuutil', 'avg_packetsize',
         'max_fabricbw', 'max_lnetbw', 'max_mds', 'max_packetrate',
         'max_opa_congestion_rate', 'max_numa_remote_rate',
-        'max_gpu_power', 'max_gpu_link_gbps', 'max_gpu_clock_event_reasons',
+        'max_gpu_power', 'max_node_power_est_w', 'avg_node_power_est_w',
+        'max_gpu_link_gbps', 'max_gpu_clock_event_reasons',
         'mem_hwm',
         'node_imbalance', 'time_imbalance', 'flops_node_imbalance',
         'fabric_node_imbalance', 'dram_bw_node_imbalance', 'lnet_node_imbalance',
@@ -1087,8 +1092,21 @@ class Metrics():
       u = utils(job_view)
 
       for metric_name in self.complex_metrics_list:
-        value, typename, units = getattr(sys.modules[__name__],
-                                         metric_name)().compute_metric(u)
+        if metric_name == "max_node_power_est_w":
+          from hpcperfstats.analysis.gen.node_power_est import (
+              max_node_power_est_w as _max_npe,
+          )
+          value = _max_npe(jt)
+          typename, units = "job", "W"
+        elif metric_name == "avg_node_power_est_w":
+          from hpcperfstats.analysis.gen.node_power_est import (
+              mean_node_power_est_w as _mean_npe,
+          )
+          value = _mean_npe(jt)
+          typename, units = "job", "W"
+        else:
+          value, typename, units = getattr(sys.modules[__name__],
+                                           metric_name)().compute_metric(u)
 
         if value is None:
           reason = _COMPLEX_NO_DATA_REASONS.get(

@@ -167,6 +167,14 @@ export const VARIABLE_METADATA = {
     description:
       "Maximum sampled GPU power draw (watts) over the job across all GPUs and hosts.",
   },
+  max_node_power_est_w: {
+    description:
+      "Peak estimated on-node power (watts) from telemetry: Intel/AMD RAPL or Grace DCGM CPU plus GPU draw, or DCGM module power alone when that branch applies—not BMC or PDU.",
+  },
+  avg_node_power_est_w: {
+    description:
+      "Mean estimated on-node power (watts) over samples where the estimate is defined (same construction as max_node_power_est_w).",
+  },
   max_gpu_link_gbps: {
     description:
       "Peak PCIe plus NVLink byte rate (GB/s) from DCGM PROF link counters (NVIDIA nvidia_gpu type).",

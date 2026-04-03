@@ -25,6 +25,8 @@ describe("getDescriptionForVariable", () => {
     expect(getDescriptionForVariable("flops_node_imbalance")).toMatch(/FLOP/i);
     expect(getDescriptionForVariable("avg_tensor_active")).toMatch(/tensor/i);
     expect(getDescriptionForVariable("dram_bw_node_imbalance")).toMatch(/DRAM/i);
+    expect(getDescriptionForVariable("max_node_power_est_w")).toMatch(/node power/i);
+    expect(getDescriptionForVariable("avg_node_power_est_w")).toMatch(/Mean estimated on-node power/i);
   });
 
   it("documents shared filesystem metrics with the job detail section", () => {

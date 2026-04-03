@@ -1,4 +1,5 @@
 """Pure parsing helpers for stats files (no Django). Used by sync_timedb and by unit tests."""
+import numpy as np
 import pandas as pd
 from pandas import DataFrame, concat, to_datetime
 
@@ -98,18 +99,72 @@ _NVIDIA_GPU_SUM_EVENTS = frozenset({
     "tensor_active",
     "power_usage",
 })
+# Module / SysIO power is duplicated across GPU entities on superchips; do not sum.
+_NVIDIA_GPU_MAX_EVENTS = frozenset({
+    "module_power_usage",
+    "sysio_power_usage",
+})
 _NVIDIA_GPU_MEAN_EVENTS = frozenset({"temperature"})
 _NVIDIA_GPU_OR_EVENTS = frozenset({"clocks_event_reasons"})
+
+# Grace DCGM CPU power: same watt reading on every logical CPU row per socket.
+_DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS = frozenset({
+    "DCGM_CPU_POWER_UTIL_W",
+    "DCGM_CPU_POWER_LIMIT_W",
+})
 
 _COLLAPSE_GROUP_COLS = ["host", "type", "event", "unit", "time"]
 # Pandas groupby.apply passes subframes without the grouping columns; event is in ``group.name``.
 _NVIDIA_GROUP_KEY_EVENT_INDEX = _COLLAPSE_GROUP_COLS.index("event")
 
 
+def _cluster_mean_sum_sorted(values, gap_threshold):
+  """Cluster sorted finite samples and sum cluster means (socket-level gauges).
+
+  Used when each socket repeats the same reading on many logical CPUs: clusters
+  are separated by a gap larger than ``gap_threshold``. If two sockets report
+  identical wattage, they form one cluster and this **underestimates** (rare).
+  """
+  v = np.asarray(values, dtype=np.float64)
+  v = v[np.isfinite(v)]
+  if v.size == 0:
+    return float("nan")
+  v.sort()
+  total = 0.0
+  cluster = [float(v[0])]
+  for i in range(1, v.size):
+    if v[i] - v[i - 1] <= gap_threshold:
+      cluster.append(float(v[i]))
+    else:
+      total += float(np.mean(cluster))
+      cluster = [float(v[i])]
+  total += float(np.mean(cluster))
+  return total
+
+
+def _collapse_dcg_cpu_power_gauge_group(group):
+  """Collapse per-CPU Grace DCGM power rows to one host sample (sum of sockets)."""
+  vals = group["value"].to_numpy(dtype=np.float64, copy=False)
+  dvals = group["delta"].to_numpy(dtype=np.float64, copy=False)
+  vtot = _cluster_mean_sum_sorted(vals, 1.0)
+  d_gap = 1e-6
+  if np.any(np.isfinite(dvals)):
+    dabs = np.nanmax(np.abs(dvals[np.isfinite(dvals)]))
+    if np.isfinite(dabs) and dabs > 0:
+      d_gap = max(1e-9, 0.05 * float(dabs))
+  dtot = _cluster_mean_sum_sorted(dvals, d_gap)
+  return pd.Series({"value": vtot, "delta": dtot})
+
+
 def _collapse_nvidia_gpu_group(group):
   """Return one row (value, delta) for a (host, type, event, unit, time) group."""
   key = group.name
   event_name = key[_NVIDIA_GROUP_KEY_EVENT_INDEX] if isinstance(key, tuple) else key
+  if event_name in _NVIDIA_GPU_MAX_EVENTS:
+    return pd.Series({
+        "value": float(group["value"].max()),
+        "delta": group["delta"].mean(),
+    })
   if event_name in _NVIDIA_GPU_SUM_EVENTS:
     return pd.Series({
         "value": group["value"].sum(min_count=1),
@@ -359,10 +414,21 @@ def compute_deltas_and_arc(stats_df):
   rest_df = stats_df[~nv_mask]
   parts = []
   if not rest_df.empty:
-    # Non-nvidia types (cpu, mem/NUMA, IB, IMC, …): sum across dev is intentional for counters.
-    parts.append(
-        rest_df.groupby(gcols, observed=True).sum(min_count=1).reset_index()
-    )
+    ccm_power_mask = (
+        (rest_df["type"] == "cpu_counter_metrics")
+        & rest_df["event"].isin(_DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS))
+    ccm_power_df = rest_df[ccm_power_mask]
+    rest_other = rest_df[~ccm_power_mask]
+    if not rest_other.empty:
+      # Non-nvidia types (cpu, mem/NUMA, IB, IMC, …): sum across dev is intentional for counters.
+      parts.append(
+          rest_other.groupby(gcols, observed=True).sum(min_count=1).reset_index()
+      )
+    if not ccm_power_df.empty:
+      ccm_collapsed = ccm_power_df.groupby(
+          gcols, observed=True).apply(_collapse_dcg_cpu_power_gauge_group)
+      ccm_collapsed = ccm_collapsed.reset_index()
+      parts.append(ccm_collapsed)
   if not nv_df.empty:
     nv_collapsed = nv_df.groupby(gcols, observed=True).apply(
         _collapse_nvidia_gpu_group,
