@@ -1138,7 +1138,13 @@ class Metrics():
 
 
 def job_metrics_catalog_entries():
-  """Ordered catalog of every job-level metric for UI and completeness checks."""
+  """Ordered catalog of every job-level metric for UI and completeness checks.
+
+  Short labels for the Job detail table are defined in
+  ``hpcperfstats.analysis.metrics.job_metric_display_labels.JOB_METRIC_SHORT_LABELS``
+  (Python) and mirrored in the SPA
+  ``hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.js``.
+  """
   m = Metrics()
   missing = set(m.complex_metrics_list) - set(_COMPLEX_PLACEHOLDER_TYPE_UNITS)
   if missing:

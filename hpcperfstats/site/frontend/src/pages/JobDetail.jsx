@@ -1,4 +1,4 @@
-import { useCallback, useEffect, memo, useRef, useState } from "react";
+import { useCallback, useEffect, memo, useId, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
@@ -11,29 +11,7 @@ import { VariableInfoLabel } from "../components/VariableInfoLabel";
 import { scheduleJobPlotsRetry } from "../utils/job-plots-polling";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import { useFocusTrap } from "../hooks/useFocusTrap";
-
-function CollapsibleSection({ title, children, defaultOpen = false, empty = false, fullWidth = false }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className={fullWidth ? "col-12 mb-3" : "col-md-3 mb-2"}>
-      <button
-        type="button"
-        className="btn btn-outline-secondary btn-sm d-flex align-items-center gap-2 w-100 text-start"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-      >
-        <span
-          className={`collapsible-section-chevron flex-shrink-0${open ? " collapsible-section-chevron-open" : ""}`}
-          aria-hidden
-        >
-          ▶
-        </span>
-        <strong>{title}{empty ? " (Data not available.)" : ""}</strong>
-      </button>
-      {open && <div className="border border-top-0 rounded-bottom p-2">{children}</div>}
-    </div>
-  );
-}
+import { getJobMetricShortLabel } from "../utils/jobMetricDisplayLabels";
 
 function formatJobMetricCell(obj, isStaff) {
   if (obj.value != null && obj.value !== "") {
@@ -204,6 +182,12 @@ export default function JobDetail() {
   const zoomCloseButtonRef = useRef(null);
   const zoomDialogRef = useRef(null);
   const [plotEmbedReady, setPlotEmbedReady] = useState({});
+  const [analysisTab, setAnalysisTab] = useState("metrics");
+  const tabMetricsId = useId();
+  const tabProcessesId = useId();
+  const tabExecHostsId = useId();
+  const tabDeviceId = useId();
+  const tabPlotsId = useId();
 
   const handlePlotEmbedReady = useCallback((panelKey, ready) => {
     setPlotEmbedReady((prev) => ({ ...prev, [panelKey]: ready }));
@@ -505,28 +489,27 @@ export default function JobDetail() {
     <>
       <h1 className="h2 mb-3">Job {job.jid}</h1>
 
-      <nav className="job-detail-toc border-bottom pb-2 mb-3" aria-label="On this page">
-        <ul className="list-inline small mb-0">
-          <li className="list-inline-item me-2">
-            <a href="#job-detail-glance">Overview</a>
+      <nav className="job-detail-page-nav mb-3" aria-label="On this page">
+        <ul className="nav nav-tabs flex-wrap job-detail-page-tabs">
+          <li className="nav-item">
+            <a className="nav-link" href="#job-detail-glance">
+              Overview
+            </a>
           </li>
-          <li className="list-inline-item me-2">
-            <a href="#job-detail-scheduling">Scheduling</a>
+          <li className="nav-item">
+            <a className="nav-link" href="#job-detail-scheduling">
+              Scheduling
+            </a>
           </li>
-          <li className="list-inline-item me-2">
-            <a href="#job-detail-performance">Performance</a>
+          <li className="nav-item">
+            <a className="nav-link" href="#job-detail-resources">
+              Resources
+            </a>
           </li>
-          <li className="list-inline-item me-2">
-            <a href="#job-detail-metrics">Metrics</a>
-          </li>
-          <li className="list-inline-item me-2">
-            <a href="#job-detail-resources">Resources</a>
-          </li>
-          <li className="list-inline-item me-2">
-            <a href="#job-detail-device">Device data</a>
-          </li>
-          <li className="list-inline-item me-2">
-            <a href="#job-detail-advanced">Details</a>
+          <li className="nav-item">
+            <a className="nav-link" href="#job-detail-analysis">
+              Job data
+            </a>
           </li>
         </ul>
       </nav>
@@ -600,6 +583,22 @@ export default function JobDetail() {
                 <div className="text-muted">Job name</div>
                 <div>{job.jobname}</div>
               </div>
+              {isStaff ? (
+                <div className="col-12">
+                  <div className="text-muted">
+                    <VariableInfoLabel
+                      variableName="metrics_distinct_time_count"
+                      labelText="Sample Count"
+                      enableHelp
+                    />
+                  </div>
+                  <div>
+                    {staffMetricsDistinctTimeCount != null && staffMetricsDistinctTimeCount !== ""
+                      ? formatDecimalStandard(staffMetricsDistinctTimeCount)
+                      : "Not computed yet."}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -697,124 +696,6 @@ export default function JobDetail() {
         </details>
       </section>
 
-      <section
-        id="job-detail-performance"
-        className="job-detail-plots text-center mb-4"
-        aria-labelledby="job-detail-performance-heading"
-      >
-        <h2 id="job-detail-performance-heading" className="h3">
-          Performance
-        </h2>
-        <p className="job-detail-plots-intro text-muted small">
-          Host-level plots for this job. Loads progressively; use Expand for a larger view.
-        </p>
-        {plotsLoading && (
-          <LoadingMessage message="Loading job plots…" />
-        )}
-        <div className="job-detail-plots-grid">
-          {plotPanels.map((panel) => {
-            const canExpand =
-              Boolean(panel.item) &&
-              !panel.isLoading &&
-              plotEmbedReady[panel.key] === true;
-            return (
-              <div key={panel.key} className="job-detail-plot-card">
-                <div className="job-detail-plot-card-header">
-                  <h3 className="h6 mb-0 text-start">{panel.plotName}</h3>
-                  <button
-                    type="button"
-                    className="btn btn-outline-secondary btn-sm flex-shrink-0"
-                    disabled={!canExpand}
-                    onClick={() => handlePlotZoom(panel.key)}
-                    aria-label={`Expand ${panel.plotName}`}
-                  >
-                    Expand plot
-                  </button>
-                </div>
-                <div className="job-detail-plot-card-body">
-                  <PlotPanel
-                    panelKey={panel.key}
-                    item={panel.item}
-                    id={panel.id}
-                    plotName={panel.plotName}
-                    unavailableReason={panel.unavailableReason}
-                    isLoading={panel.isLoading}
-                    onEmbedReadyChange={handlePlotEmbedReady}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {zoomedPanel ? (
-        <div
-          ref={zoomDialogRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label={`${zoomedPanel.plotName} zoom view`}
-          className="job-detail-zoom-backdrop"
-        >
-          <div className="job-detail-zoom-panel">
-            <button
-              ref={zoomCloseButtonRef}
-              type="button"
-              className="btn btn-close job-detail-zoom-close"
-              aria-label="Close zoom window"
-              onClick={closeZoom}
-            />
-            <div className="job-detail-zoom-plot">
-              {zoomPlotState.loading && (
-                <LoadingMessage message={`Loading ${zoomedPanel.plotName}…`} />
-              )}
-              <BokehEmbed
-                item={zoomPlotState.item}
-                id={`${zoomedPanel.id}-zoom`}
-                plotName={zoomedPanel.plotName}
-                unavailableReason={zoomPlotState.unavailableReason || zoomedPanel.unavailableReason}
-                isLoadingExternal={zoomPlotState.loading}
-                fillHeight={false}
-                maximizeInContainer="width"
-              />
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      <section id="job-detail-metrics" className="mb-4" aria-labelledby="job-detail-metrics-heading">
-        <h2 id="job-detail-metrics-heading" className="h5">
-          Job-level metrics
-        </h2>
-        {detailsLoading ? (
-          <p className="text-muted">Loading job-level metrics…</p>
-        ) : !metrics_list.length ? (
-          <p className="text-muted">Data not available.</p>
-        ) : (
-          <div className="table-responsive">
-            <table className="table table-sm table-bordered">
-              <tbody>
-                {(metrics_list || []).map((obj) => (
-                  <tr key={obj.metric}>
-                    <th scope="row">
-                      <VariableInfoLabel
-                        variableName={obj.metric}
-                        labelText={obj.metric}
-                        enableHelp
-                      />{" "}
-                      [{obj.units}]
-                    </th>
-                    <td className={obj.value != null && obj.value !== "" ? "" : "text-muted"}>
-                      {formatJobMetricCell(obj, isStaff)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
       <section id="job-detail-resources" className="mb-4" aria-labelledby="job-detail-resources-heading">
         <h2 id="job-detail-resources-heading" className="h5">
           Resources
@@ -904,122 +785,157 @@ export default function JobDetail() {
       </section>
 
       <section
-        id="job-detail-device"
+        id="job-detail-analysis"
         className="mb-4"
-        aria-labelledby="job-detail-device-heading"
+        aria-labelledby="job-detail-analysis-heading"
       >
-        <h2 id="job-detail-device-heading" className="h5 text-md-start text-center">
-          Device data and type plots
+        <h2 id="job-detail-analysis-heading" className="h5">
+          Job data
         </h2>
-        <div className="text-center text-md-start">
-          {detailsLoading ? (
-            <p className="text-muted" role="status">
-              Loading device data and plots…
-            </p>
-          ) : !hasDeviceData ? (
-            <p className="text-muted" role="status">
-              Data not available.
-            </p>
-          ) : (
-            <div className="table-responsive">
-              <table className="table table-sm table-bordered">
-                <thead>
-                  <tr>
-                    <th>Type Name</th>
-                    <th>Recorded Performance Events</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(schema).map(([type_name, event]) => (
-                    <tr key={type_name}>
-                      <td>
-                        <Link to={`/job/${job.jid}/${type_name}/`}>{type_name}</Link>
-                      </td>
-                      <td style={{ textAlign: "left" }}>
-                        {Array.isArray(event)
-                          ? event.map((ev, i) => (
-                              <span key={ev}>
-                                {i > 0 ? ", " : ""}
-                                <VariableInfoLabel
-                                  variableName={ev}
-                                  labelText={ev}
-                                  enableHelp
-                                />
-                              </span>
-                            ))
-                          : event}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section id="job-detail-advanced" className="mb-4" aria-labelledby="job-detail-advanced-heading">
-        <h2 id="job-detail-advanced-heading" className="h5">
-          Details
-        </h2>
-        {isStaff ? (
-          <div className="table-responsive mb-3" style={{ maxWidth: 360 }}>
-            <table className="table table-sm table-bordered">
-              <thead>
-                <tr>
-                  <th>
-                    <VariableInfoLabel
-                      variableName="metrics_distinct_time_count"
-                      labelText="Sample Count"
-                      enableHelp
-                    />
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>
-                    {staffMetricsDistinctTimeCount != null && staffMetricsDistinctTimeCount !== ""
-                      ? formatDecimalStandard(staffMetricsDistinctTimeCount)
-                      : "Not computed yet."}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-        <div className="row">
-          <CollapsibleSection
-            title="Processes"
-            fullWidth
-            empty={!detailsLoading && !(proc_list || []).length}
+        <ul
+          className="nav nav-tabs flex-wrap job-detail-analysis-tabs mb-0"
+          role="tablist"
+          aria-label="Job data views"
+        >
+          <li className="nav-item" role="presentation">
+            <button
+              type="button"
+              className={`nav-link ${analysisTab === "metrics" ? "active" : ""}`}
+              id={tabMetricsId}
+              role="tab"
+              aria-selected={analysisTab === "metrics"}
+              aria-controls="job-detail-panel-metrics"
+              tabIndex={analysisTab === "metrics" ? 0 : -1}
+              onClick={() => setAnalysisTab("metrics")}
+            >
+              Metrics
+            </button>
+          </li>
+          <li className="nav-item" role="presentation">
+            <button
+              type="button"
+              className={`nav-link ${analysisTab === "processes" ? "active" : ""}`}
+              id={tabProcessesId}
+              role="tab"
+              aria-selected={analysisTab === "processes"}
+              aria-controls="job-detail-panel-processes"
+              tabIndex={analysisTab === "processes" ? 0 : -1}
+              onClick={() => setAnalysisTab("processes")}
+            >
+              Processes
+            </button>
+          </li>
+          <li className="nav-item" role="presentation">
+            <button
+              type="button"
+              className={`nav-link ${analysisTab === "execHosts" ? "active" : ""}`}
+              id={tabExecHostsId}
+              role="tab"
+              aria-selected={analysisTab === "execHosts"}
+              aria-controls="job-detail-panel-exec-hosts"
+              tabIndex={analysisTab === "execHosts" ? 0 : -1}
+              onClick={() => setAnalysisTab("execHosts")}
+            >
+              Execution and hosts
+            </button>
+          </li>
+          <li className="nav-item" role="presentation">
+            <button
+              type="button"
+              className={`nav-link ${analysisTab === "device" ? "active" : ""}`}
+              id={tabDeviceId}
+              role="tab"
+              aria-selected={analysisTab === "device"}
+              aria-controls="job-detail-panel-device"
+              tabIndex={analysisTab === "device" ? 0 : -1}
+              onClick={() => setAnalysisTab("device")}
+            >
+              Device data
+            </button>
+          </li>
+          <li className="nav-item" role="presentation">
+            <button
+              type="button"
+              className={`nav-link ${analysisTab === "plots" ? "active" : ""}`}
+              id={tabPlotsId}
+              role="tab"
+              aria-selected={analysisTab === "plots"}
+              aria-controls="job-detail-panel-plots"
+              tabIndex={analysisTab === "plots" ? 0 : -1}
+              onClick={() => setAnalysisTab("plots")}
+            >
+              Plots
+            </button>
+          </li>
+        </ul>
+        <div className="job-detail-analysis-panel border border-top-0 rounded-bottom p-3 bg-body">
+          <div
+            id="job-detail-panel-metrics"
+            role="tabpanel"
+            aria-labelledby={tabMetricsId}
+            hidden={analysisTab !== "metrics"}
           >
             {detailsLoading ? (
-              <div className="text-muted">Loading processes…</div>
+              <p className="text-muted mb-0">Loading job-level metrics…</p>
+            ) : !metrics_list.length ? (
+              <p className="text-muted mb-0">Data not available.</p>
             ) : (
-              <table className="table table-sm table-bordered">
-                <tbody>
-                  {(proc_list || []).map((proc, i) => (
-                    <tr key={i}>
-                      <td>{proc}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="table-responsive">
+                <table className="table table-sm table-bordered">
+                  <tbody>
+                    {(metrics_list || []).map((obj) => (
+                      <tr key={obj.metric}>
+                        <th scope="row">
+                          <VariableInfoLabel
+                            variableName={obj.metric}
+                            labelText={getJobMetricShortLabel(obj.metric)}
+                            enableHelp
+                          />{" "}
+                          [{obj.units}]
+                        </th>
+                        <td className={obj.value != null && obj.value !== "" ? "" : "text-muted"}>
+                          {formatJobMetricCell(obj, isStaff)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
-          </CollapsibleSection>
-          <CollapsibleSection
-            title="Execution Parameters"
-            fullWidth
-            empty={
-              !detailsLoading &&
-              !(xalt_data.exec_path || []).length &&
-              !(xalt_data.cwd || []).length &&
-              !(xalt_data.libset || []).length
-            }
+          </div>
+          <div
+            id="job-detail-panel-processes"
+            role="tabpanel"
+            aria-labelledby={tabProcessesId}
+            hidden={analysisTab !== "processes"}
           >
             {detailsLoading ? (
-              <div className="text-muted">Loading execution parameters…</div>
+              <p className="text-muted mb-0">Loading processes…</p>
+            ) : !(proc_list || []).length ? (
+              <p className="text-muted mb-0">Data not available.</p>
+            ) : (
+              <div className="table-responsive">
+                <table className="table table-sm table-bordered">
+                  <tbody>
+                    {(proc_list || []).map((proc, i) => (
+                      <tr key={i}>
+                        <td>{proc}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <div
+            id="job-detail-panel-exec-hosts"
+            role="tabpanel"
+            aria-labelledby={tabExecHostsId}
+            hidden={analysisTab !== "execHosts"}
+          >
+            <h3 className="h6">Execution parameters</h3>
+            {detailsLoading ? (
+              <p className="text-muted">Loading execution parameters…</p>
             ) : (
               <>
                 <table className="table table-sm table-bordered">
@@ -1056,7 +972,7 @@ export default function JobDetail() {
                     </tr>
                   </tbody>
                 </table>
-                <table className="table table-sm table-bordered">
+                <table className="table table-sm table-bordered mt-2">
                   <thead>
                     <tr>
                       <th>Module</th>
@@ -1082,20 +998,158 @@ export default function JobDetail() {
                 </table>
               </>
             )}
-          </CollapsibleSection>
-          <CollapsibleSection title="Hosts" fullWidth empty={!host_list.length}>
-            <table className="table table-sm table-bordered">
-              <tbody>
-                {host_list.map((host, i) => (
-                  <tr key={i}>
-                    <td>{host}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CollapsibleSection>
+            <h3 className="h6 mt-3">Hosts</h3>
+            {!host_list.length ? (
+              <p className="text-muted mb-0">Data not available.</p>
+            ) : (
+              <div className="table-responsive">
+                <table className="table table-sm table-bordered">
+                  <tbody>
+                    {host_list.map((host, i) => (
+                      <tr key={i}>
+                        <td>{host}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <div
+            id="job-detail-panel-device"
+            role="tabpanel"
+            aria-labelledby={tabDeviceId}
+            hidden={analysisTab !== "device"}
+          >
+            <div className="text-center text-md-start">
+              {detailsLoading ? (
+                <p className="text-muted mb-0" role="status">
+                  Loading device data and plots…
+                </p>
+              ) : !hasDeviceData ? (
+                <p className="text-muted mb-0" role="status">
+                  Data not available.
+                </p>
+              ) : (
+                <div className="table-responsive">
+                  <table className="table table-sm table-bordered">
+                    <thead>
+                      <tr>
+                        <th>Type Name</th>
+                        <th>Recorded Performance Events</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(schema).map(([type_name, event]) => (
+                        <tr key={type_name}>
+                          <td>
+                            <Link to={`/job/${job.jid}/${type_name}/`}>{type_name}</Link>
+                          </td>
+                          <td style={{ textAlign: "left" }}>
+                            {Array.isArray(event)
+                              ? event.map((ev, i) => (
+                                  <span key={ev}>
+                                    {i > 0 ? ", " : ""}
+                                    <VariableInfoLabel
+                                      variableName={ev}
+                                      labelText={ev}
+                                      enableHelp
+                                    />
+                                  </span>
+                                ))
+                              : event}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+          <div
+            id="job-detail-panel-plots"
+            role="tabpanel"
+            aria-labelledby={tabPlotsId}
+            className="job-detail-plots text-center"
+            hidden={analysisTab !== "plots"}
+          >
+            <p className="job-detail-plots-intro text-muted small">
+              Host-level plots for this job. Loads progressively; use Expand for a larger view.
+            </p>
+            {plotsLoading && <LoadingMessage message="Loading job plots…" />}
+            <div className="job-detail-plots-grid">
+              {plotPanels.map((panel) => {
+                const canExpand =
+                  Boolean(panel.item) &&
+                  !panel.isLoading &&
+                  plotEmbedReady[panel.key] === true;
+                return (
+                  <div key={panel.key} className="job-detail-plot-card">
+                    <div className="job-detail-plot-card-header">
+                      <h3 className="h6 mb-0 text-start">{panel.plotName}</h3>
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary btn-sm flex-shrink-0"
+                        disabled={!canExpand}
+                        onClick={() => handlePlotZoom(panel.key)}
+                        aria-label={`Expand ${panel.plotName}`}
+                      >
+                        Expand plot
+                      </button>
+                    </div>
+                    <div className="job-detail-plot-card-body">
+                      <PlotPanel
+                        panelKey={panel.key}
+                        item={panel.item}
+                        id={panel.id}
+                        plotName={panel.plotName}
+                        unavailableReason={panel.unavailableReason}
+                        isLoading={panel.isLoading}
+                        onEmbedReadyChange={handlePlotEmbedReady}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </section>
+
+      {zoomedPanel ? (
+        <div
+          ref={zoomDialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${zoomedPanel.plotName} zoom view`}
+          className="job-detail-zoom-backdrop"
+        >
+          <div className="job-detail-zoom-panel">
+            <button
+              ref={zoomCloseButtonRef}
+              type="button"
+              className="btn btn-close job-detail-zoom-close"
+              aria-label="Close zoom window"
+              onClick={closeZoom}
+            />
+            <div className="job-detail-zoom-plot">
+              {zoomPlotState.loading && (
+                <LoadingMessage message={`Loading ${zoomedPanel.plotName}…`} />
+              )}
+              <BokehEmbed
+                item={zoomPlotState.item}
+                id={`${zoomedPanel.id}-zoom`}
+                plotName={zoomedPanel.plotName}
+                unavailableReason={zoomPlotState.unavailableReason || zoomedPanel.unavailableReason}
+                isLoadingExternal={zoomPlotState.loading}
+                fillHeight={false}
+                maximizeInContainer="width"
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

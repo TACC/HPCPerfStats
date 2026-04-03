@@ -182,11 +182,11 @@ describe("JobDetail", () => {
     expect(getJobDetailLightSpy).toHaveBeenCalledWith("12345");
     expect(getJobPlotsSpy).toHaveBeenCalledWith("12345", null, false, true);
 
-    expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
+    expect(screen.getByText("Loading job plots…", { hidden: true })).toBeInTheDocument();
 
     await waitFor(
       () => {
-        expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
+        expect(screen.queryByText("Loading job plots…", { hidden: true })).not.toBeInTheDocument();
       },
       { timeout: 200 }
     );
@@ -315,13 +315,13 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
-    expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
+    expect(screen.getByText("Loading job plots…", { hidden: true })).toBeInTheDocument();
 
     await waitFor(() => {
       expect(getJobPlotsSpy).toHaveBeenCalledTimes(2);
     });
     await waitFor(() => {
-      expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
+      expect(screen.queryByText("Loading job plots…", { hidden: true })).not.toBeInTheDocument();
     });
   });
 
@@ -355,7 +355,7 @@ describe("JobDetail", () => {
     });
     expect(getJobPlotsSpy).toHaveBeenLastCalledWith("12345", null, false, true);
     await waitFor(() => {
-      expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
+      expect(screen.queryByText("Loading job plots…", { hidden: true })).not.toBeInTheDocument();
     });
   });
 
@@ -425,10 +425,9 @@ describe("JobDetail", () => {
 
     renderJobDetail("12345");
     await waitFor(() => {
-      expect(
-        screen.getByRole("heading", { name: "Performance", level: 2 }),
-      ).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
     });
+    await userEvent.click(screen.getByRole("tab", { name: "Plots" }));
 
     expect(screen.getByRole("heading", { name: "Summary plot" })).toBeInTheDocument();
 
@@ -486,10 +485,9 @@ describe("JobDetail", () => {
     renderJobDetail("12345");
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("heading", { name: "Performance", level: 2 }),
-      ).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
     });
+    await userEvent.click(screen.getByRole("tab", { name: "Plots" }));
     expect(screen.getByRole("button", { name: "Expand Summary plot" })).toBeDisabled();
   });
 });

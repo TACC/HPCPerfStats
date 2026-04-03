@@ -9,6 +9,7 @@ from pandas import Timestamp
 
 from unittest.mock import MagicMock, patch
 
+from hpcperfstats.analysis.metrics.job_metric_display_labels import JOB_METRIC_SHORT_LABELS
 from hpcperfstats.analysis.metrics.metrics import (
     METRIC_NOT_COMPUTED_YET,
     Metrics,
@@ -623,6 +624,12 @@ def test_job_metrics_catalog_entries_matches_simple_plus_complex():
   names = [e["metric"] for e in entries]
   assert names.count("avg_cpuusage") == 1
   assert "mem_hwm" in names
+
+
+def test_job_metric_short_labels_cover_catalog():
+  """Every catalog metric has a Job detail short label (JS mirror must stay in sync)."""
+  for entry in job_metrics_catalog_entries():
+    assert entry["metric"] in JOB_METRIC_SHORT_LABELS, entry["metric"]
 
 
 def test_build_job_metrics_display_list_fills_catalog_when_no_rows():
