@@ -17,6 +17,11 @@ STATS_DIR_PATH = /var/log/hpcperfstats
 STATS_LOCK_PATH = /var/lock/hpcperfstats
 JOBID_FILE_PATH = /var/run/stats_jobid
 
+# rabbitmq-c 0.9+ handshake/RPC timeout APIs (stats_buffer.c). Empty this when linking pre-0.9 headers.
+MONITOR_AMQP_TIMEOUT_CPPFLAGS = \
+	-DHAVE_AMQP_SET_RPC_TIMEOUT=1 \
+	-DHAVE_AMQP_SET_HANDSHAKE_TIMEOUT=1
+
 hpcperfstatsd_CPPFLAGS = \
 	-D_GNU_SOURCE \
 	-DSTATS_PROGRAM=\"@PACKAGE@\" \
@@ -85,7 +90,8 @@ hpcperfstatsd_SOURCES += \
 	stats_buffer.c \
 	stats_buffer.h
 hpcperfstatsd_CPPFLAGS += \
-	-DRABBITMQ
+	-DRABBITMQ \
+	$(MONITOR_AMQP_TIMEOUT_CPPFLAGS)
 else
 hpcperfstatsd_SOURCES += \
 	main.c \

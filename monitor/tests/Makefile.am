@@ -6,6 +6,11 @@ STATS_DIR_PATH = /var/log/hpcperfstats
 STATS_LOCK_PATH = /var/lock/hpcperfstats
 JOBID_FILE_PATH = /var/run/stats_jobid
 
+# Aligned with src/Makefile.am (RabbitMQ timeout feature flags).
+MONITOR_AMQP_TIMEOUT_CPPFLAGS = \
+	-DHAVE_AMQP_SET_RPC_TIMEOUT=1 \
+	-DHAVE_AMQP_SET_HANDSHAKE_TIMEOUT=1
+
 # Keep -D flags aligned with src/Makefile.am hpcperfstatsd_CPPFLAGS (include path
 # is only -I$(top_srcdir)/src here).
 monitor_unit_cppflags = \
@@ -26,7 +31,7 @@ monitor_unit_cppflags += -DHAVE_LIKWID @MONITOR_ARCH_CPPFLAG@
 endif
 
 if RABBITMQ
-monitor_unit_cppflags += -DRABBITMQ
+monitor_unit_cppflags += -DRABBITMQ $(MONITOR_AMQP_TIMEOUT_CPPFLAGS)
 endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)

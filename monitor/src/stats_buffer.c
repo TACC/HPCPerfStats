@@ -6,6 +6,8 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/utsname.h>
 #include <syslog.h>
 #include <search.h>
@@ -25,7 +27,7 @@
 #include "pscanf.h"
 #include "string1.h"
 
-/* RMQ send interval from monitor_daemon.c; pace RMQ TCP reconnect attempts. */
+/* RMQ send interval from monitor_daemon.c; reconnect backoff uses min(send_freq, cap) with a floor. */
 extern double send_freq;
 
 #define SF_SCHEMA_CHAR '!'
@@ -36,6 +38,17 @@ extern double send_freq;
 #define RMQ_EXCHANGE "amq.direct"
 #define RMQ_VHOST "/"
 #define RMQ_CHANNEL 1
+
+/* Bounded broker I/O (libev thread); generous wall-clock limits vs kernel defaults. */
+#define RMQ_TCP_CONNECT_TIMEOUT_SEC 25
+#define RMQ_HANDSHAKE_TIMEOUT_SEC 15
+#define RMQ_RPC_TIMEOUT_SEC 30
+#define RMQ_SOCK_IO_TIMEOUT_SEC 30
+#define RMQ_AMQP_HEARTBEAT_SEC 30
+
+/* Reconnect pacing: sample/send cadence still uses send_freq elsewhere; TCP retry delay is capped. */
+#define RMQ_RECONNECT_BACKOFF_CAP_SEC 30
+#define RMQ_RECONNECT_BACKOFF_MIN_SEC 2
 
 #ifdef DEBUG
 /* Decode rabbitmq-c failures for DEBUG builds (ERROR -> stdout when RABBITMQ+DEBUG). */
@@ -102,8 +115,10 @@ static void rmq_debug_log_rpc_reply(const char *ctx, amqp_rpc_reply_t r)
 #endif /* DEBUG */
 
 /* One AMQP connection per process (libev single-threaded). Reconnect on credential mismatch or I/O failure.
- * When the broker is down, allow at most one new TCP connect attempt per configured send interval (`send_freq`),
- * so ring-buffer resend loops in one libev tick do not storm the network. */
+ * When the broker is down, TCP reconnect attempts are rate-limited with a delay of
+ * max(RMQ_RECONNECT_BACKOFF_MIN_SEC, min(send_freq, RMQ_RECONNECT_BACKOFF_CAP_SEC)) seconds so ring-buffer
+ * resend loops in one libev tick do not storm the network, while large send_freq does not postpone retries
+ * for many minutes. Stats sampling and payload scheduling still follow send_freq in the daemon. */
 static amqp_connection_state_t rmq_conn;
 static int rmq_channel_open;
 static struct timespec rmq_backoff_until;
@@ -133,14 +148,20 @@ static void rmq_arm_connect_backoff(void)
 {
   struct timespec now;
   double f = send_freq;
+  double delay;
 
   if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
     return;
   if (f <= 0.0)
     f = 1.0;
+  delay = f;
+  if (delay > (double)RMQ_RECONNECT_BACKOFF_CAP_SEC)
+    delay = (double)RMQ_RECONNECT_BACKOFF_CAP_SEC;
+  if (delay < (double)RMQ_RECONNECT_BACKOFF_MIN_SEC)
+    delay = (double)RMQ_RECONNECT_BACKOFF_MIN_SEC;
   {
-    time_t add_sec = (time_t)f;
-    double frac = f - (double)add_sec;
+    time_t add_sec = (time_t)delay;
+    double frac = delay - (double)add_sec;
 
     if (frac < 0.0)
       frac = 0.0;
@@ -181,6 +202,30 @@ static size_t row_line_cap;
 static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buffer *sf,
 				  amqp_socket_t **socket_out, int *channel_opened_out);
 static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, struct stats_buffer *sf);
+
+static void rmq_timeval_seconds(struct timeval *tv, long sec)
+{
+  tv->tv_sec = sec;
+  tv->tv_usec = 0;
+}
+
+static int rmq_apply_sock_timeouts(amqp_socket_t *socket)
+{
+  struct timeval tv;
+  int fd;
+
+  if (socket == NULL)
+    return -1;
+  fd = amqp_socket_get_sockfd(socket);
+  if (fd < 0)
+    return -1;
+  rmq_timeval_seconds(&tv, RMQ_SOCK_IO_TIMEOUT_SEC);
+  if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, (socklen_t)sizeof(tv)) != 0)
+    return -1;
+  if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, (socklen_t)sizeof(tv)) != 0)
+    return -1;
+  return 0;
+}
 
 /* Payload assembly uses stats_buffer_data_append.c (incremental realloc; unit-tested). */
 static void stats_buffer_append_fmt(struct stats_buffer *sf, const char *fmt, ...)
@@ -297,7 +342,8 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
 
   if (rmq_connect_backoff_active()) {
 #ifdef DEBUG
-    ERROR("RMQ: connect backoff active, skipping connect attempt (see conf send_freq)");
+    ERROR("RMQ: connect backoff active, skipping connect attempt (capped min(send_freq,%ds), floor %ds)",
+	  RMQ_RECONNECT_BACKOFF_CAP_SEC, RMQ_RECONNECT_BACKOFF_MIN_SEC);
 #endif
     return -1;
   }
@@ -370,8 +416,12 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
 				    amqp_socket_t **socket_out, int *channel_opened_out)
 {
   amqp_socket_t *socket = amqp_tcp_socket_new(conn);
+  struct timeval connect_tv;
+  struct timeval hs_tv;
+  struct timeval rpc_tv;
   int sock_rc;
 
+  *channel_opened_out = 0;
   *socket_out = socket;
   if (!socket) {
 #ifdef DEBUG
@@ -381,35 +431,80 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
 #endif
     return -1;
   }
-  sock_rc = amqp_socket_open(socket, sf->sf_host, atoi(sf->sf_port));
+
+#ifdef HAVE_AMQP_SET_HANDSHAKE_TIMEOUT
+  rmq_timeval_seconds(&hs_tv, RMQ_HANDSHAKE_TIMEOUT_SEC);
+  sock_rc = amqp_set_handshake_timeout(conn, &hs_tv);
   if (sock_rc != AMQP_STATUS_OK) {
 #ifdef DEBUG
-    rmq_debug_log_amqp_status("RMQ amqp_socket_open", sock_rc);
+    rmq_debug_log_amqp_status("RMQ amqp_set_handshake_timeout", sock_rc);
+#else
+    ERROR("amqp handshake timeout setup failed");
+#endif
+    return -1;
+  }
+#endif
+
+  rmq_timeval_seconds(&connect_tv, RMQ_TCP_CONNECT_TIMEOUT_SEC);
+  sock_rc = amqp_socket_open_noblock(socket, sf->sf_host, atoi(sf->sf_port), &connect_tv);
+  if (sock_rc != AMQP_STATUS_OK) {
+#ifdef DEBUG
+    rmq_debug_log_amqp_status("RMQ amqp_socket_open_noblock", sock_rc);
 #else
     ERROR("socket failed to open");
 #endif
     return -1;
   }
 
-  amqp_rpc_reply_t ret = amqp_login(conn, RMQ_VHOST, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN,
-				      sf->sf_user, sf->sf_password);
-  if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
+  if (rmq_apply_sock_timeouts(socket) < 0) {
 #ifdef DEBUG
-    rmq_debug_log_rpc_reply("RMQ amqp_login", ret);
+    ERROR("RMQ: setsockopt SO_RCVTIMEO/SO_SNDTIMEO failed errno=%d (%s)", errno, strerror(errno));
 #else
-    ERROR("amqp login failed");
+    ERROR("socket timeout setup failed");
 #endif
     return -1;
   }
-  amqp_channel_open(conn, RMQ_CHANNEL);
-  ret = amqp_get_rpc_reply(conn);
-  if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
+
+  {
+    amqp_rpc_reply_t ret = amqp_login(conn, RMQ_VHOST, 0, 131072, RMQ_AMQP_HEARTBEAT_SEC,
+					AMQP_SASL_METHOD_PLAIN, sf->sf_user, sf->sf_password);
+
+    if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
 #ifdef DEBUG
-    rmq_debug_log_rpc_reply("RMQ amqp_channel_open", ret);
+      rmq_debug_log_rpc_reply("RMQ amqp_login", ret);
 #else
-    ERROR("amqp channel open failed");
+      ERROR("amqp login failed");
+#endif
+      return -1;
+    }
+  }
+
+#ifdef HAVE_AMQP_SET_RPC_TIMEOUT
+  rmq_timeval_seconds(&rpc_tv, RMQ_RPC_TIMEOUT_SEC);
+  sock_rc = amqp_set_rpc_timeout(conn, &rpc_tv);
+  if (sock_rc != AMQP_STATUS_OK) {
+#ifdef DEBUG
+    rmq_debug_log_amqp_status("RMQ amqp_set_rpc_timeout", sock_rc);
+#else
+    ERROR("amqp rpc timeout setup failed");
 #endif
     return -1;
+  }
+#endif
+
+  {
+    amqp_rpc_reply_t ret;
+
+    amqp_channel_open(conn, RMQ_CHANNEL);
+    ret = amqp_get_rpc_reply(conn);
+    if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
+#ifdef DEBUG
+      rmq_debug_log_rpc_reply("RMQ amqp_channel_open", ret);
+#else
+      ERROR("amqp channel open failed");
+#endif
+      return -1;
+    }
   }
   *channel_opened_out = 1;
   return 0;
@@ -479,12 +574,12 @@ static int rmq_publish_text_payload(amqp_connection_state_t conn, struct stats_b
 }
 
 #ifdef STATS_BUFFER_TEST_SEND_HOOK
-static int send(struct stats_buffer *sf)
+static int stats_buffer_send_payload(struct stats_buffer *sf)
 {
   return stats_buffer_test_send_hook(sf);
 }
 #else
-static int send(struct stats_buffer *sf)
+static int stats_buffer_send_payload(struct stats_buffer *sf)
 {
   if (rmq_ensure_connected(sf) < 0)
     return -1;
@@ -721,7 +816,7 @@ int stats_buffer_write(struct stats_buffer *sf)
   int rc = stats_buffer_collect(sf);
   if (rc < 0)
     return rc;
-  rc = send(sf);
+  rc = stats_buffer_send_payload(sf);
 
   /* For debugging */
   /*if ((double)rand() / (double)RAND_MAX < 0.9)
@@ -739,7 +834,7 @@ int stats_buffer_resend(struct stats_buffer *sf)
     return -1;
   else
     return 0;*/
-  return send(sf);
+  return stats_buffer_send_payload(sf);
 }
 
 int ring_buffer_insert(
@@ -888,7 +983,7 @@ void ring_buffer_resend(struct sf_ring_buffer *w)
 
       merged_sf = *head->sf;
       merged_sf.sf_data = merged;
-      w->status = send(&merged_sf);
+      w->status = stats_buffer_send_payload(&merged_sf);
       free(merged);
     }
 
