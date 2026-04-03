@@ -1073,3 +1073,4 @@ def plot_and_reason_summary_from_jid_table(jt):
         n_aggs,
     )
     return (fig, None)
+
