@@ -5,12 +5,17 @@ import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
+import { useDocumentTitle } from "../utils/useDocumentTitle";
 
 export default function TypeDetail() {
   const { jid, typeName } = useParams();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  useDocumentTitle(
+    jid && typeName ? `Job ${jid} / ${typeName}` : "Type detail",
+  );
 
   useEffect(() => {
     if (!jid || !typeName) return;
@@ -38,8 +43,10 @@ export default function TypeDetail() {
 
   return (
     <div className="container-fluid">
-      <h2>Job {jobid} / Type {type_name}</h2>
-      <h4>Rates Aggregated over devices</h4>
+      <h1 className="h2">
+        Job {jobid} / Type {type_name}
+      </h1>
+      <h2 className="h5">Rates Aggregated over devices</h2>
       <div className="graphs">
         <BokehEmbed
           item={tplot_item}
@@ -52,7 +59,7 @@ export default function TypeDetail() {
       </div>
       {stats_data.length > 0 && (
         <>
-          <h4>Counts Aggregated over devices and hosts</h4>
+          <h2 className="h5">Counts Aggregated over devices and hosts</h2>
           <div className="table-responsive">
             <table className="table table-sm table-bordered">
               <thead>

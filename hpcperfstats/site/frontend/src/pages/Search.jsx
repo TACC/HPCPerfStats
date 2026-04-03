@@ -2,9 +2,12 @@ import { Link } from "react-router-dom";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import { useHomeOptions } from "../hooks/use-home-options";
+import { useDocumentTitle } from "../utils/useDocumentTitle";
 
 export default function Search() {
   const { options, error, loading } = useHomeOptions();
+
+  useDocumentTitle(loading ? "Loading search" : error ? "Search" : "Search home");
 
   if (loading) return <LoadingMessage message="Loading…" />;
   if (error) return <BannerErrorMessage message={error} />;
@@ -15,8 +18,9 @@ export default function Search() {
     <div className="row">
       <hr />
       <div className="container-fluid search-home">
+        <h1 className="h4 mb-3">Search jobs</h1>
         <section className="search-home-section">
-          <h4>List all jobs for a given year</h4>
+          <h2 className="h5">List all jobs for a given year</h2>
           {year_list.length > 0 ? (
             <nav aria-label="Year list" className="mb-4">
               <ul className="pagination pagination-sm flex-wrap">
@@ -33,7 +37,7 @@ export default function Search() {
         </section>
 
         <section className="search-home-section search-date-list-section">
-          <h4>List all jobs for a given date</h4>
+          <h2 className="h5">List all jobs for a given date</h2>
           {date_list.length > 0 ? (
             <details className="search-date-list-details" open>
               <summary className="search-date-list-summary">

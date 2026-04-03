@@ -89,8 +89,8 @@ def api_key_page(request):
         key_message = (
             "<p>Your API key for programmatic access is:</p>"
             '<div class="api-key-row">'
-            f'<code id="api-key-value">{generated_api_key}</code>'
-            '<button type="button" id="copy-api-key" class="copy-api-key-button" aria-label="Copy API key">'
+            f'<code id="api-key-value" class="api-key-code-block">{generated_api_key}</code>'
+            '<button type="button" id="copy-api-key" class="btn btn-outline-secondary btn-sm" aria-label="Copy API key">'
             "Copy"
             "</button>"
             "</div>"
@@ -110,9 +110,16 @@ def api_key_page(request):
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>HPCPerfStats API key</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.0/dist/spacelab/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous" />
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; }}
+    body {{ margin: 2rem; }}
+    @media (prefers-color-scheme: dark) {{
+      .api-key-code-block {{
+        background: #2b3035 !important;
+        color: #e9ecef;
+      }}
+    }}
     code {{
       padding: 0.2rem 0.4rem;
       background: #f5f5f5;
@@ -120,33 +127,31 @@ def api_key_page(request):
       word-break: break-all;
       overflow-wrap: anywhere;
     }}
-    .box {{ border: 1px solid #ddd; border-radius: 6px; padding: 1rem 1.5rem; max-width: 640px; width: 100%; }}
-    .api-key-row {{ display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem; }}
-    .copy-api-key-button {{
-      padding: 0.35rem 0.7rem;
-      border: 1px solid #ced4da;
-      border-radius: 6px;
-      background: #fff;
-      cursor: pointer;
-      font-weight: 600;
+    .api-key-code-block {{
+      padding: 0.35rem 0.5rem;
     }}
-    .copy-api-key-button[disabled] {{ opacity: 0.6; cursor: not-allowed; }}
+    .api-key-row {{ display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem; }}
     .api-key-copy-status {{ margin-top: 0.35rem; color: #444; font-size: 0.95rem; min-height: 1.25em; }}
-    @media (max-width: 480px) {{ body {{ margin: 0.75rem; }} .box {{ padding: 1rem; }} }}
+    @media (max-width: 480px) {{ body {{ margin: 0.75rem; }} }}
   </style>
 </head>
 <body>
-  <div class="box">
-    <h1>HPCPerfStats API key</h1>
+  <div class="container" style="max-width: 640px;">
+    <p class="mb-3"><a href="/machine/" class="link-primary">Back to HPCPerfStats</a></p>
+    <div class="card shadow-sm">
+      <div class="card-body">
+    <h1 class="h3 card-title">HPCPerfStats API key</h1>
     <p>Signed in as: <strong>{username}</strong></p>
     {key_message}
     <p>Store this key securely. You can use it with the <code>hpcperfstats-jobstats</code>
     and <code>hpcperfstats-sacct-gen</code> tools (from the hpcperfstats-tools package)
     by passing <code>--api-key</code> or using the cached key in <code>~/.hpcperfstats-api</code>.</p>
-    <form method="post" style="margin-top: 1.5rem;">
+    <form method="post" class="mt-4">
       <input type="hidden" name="csrfmiddlewaretoken" value="{csrf_token}" />
-      <button type="submit">Invalidate and Create New Key</button>
+      <button type="submit" class="btn btn-warning">Invalidate and Create New Key</button>
     </form>
+      </div>
+    </div>
   </div>
   <script>
     (function () {{

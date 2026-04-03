@@ -1,4 +1,4 @@
-import { useCallback, useEffect, memo, useState } from "react";
+import { useCallback, useEffect, memo, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
@@ -9,6 +9,7 @@ import { formatDecimalStandard } from "../utils/formatDecimal";
 import { useSession } from "../session-context";
 import { VariableInfoLabel } from "../components/VariableInfoLabel";
 import { scheduleJobPlotsRetry } from "../utils/job-plots-polling";
+import { useDocumentTitle } from "../utils/useDocumentTitle";
 
 function CollapsibleSection({ title, children, defaultOpen = false, empty = false }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -215,6 +216,10 @@ export default function JobDetail() {
     item: null,
     unavailableReason: null,
   });
+  const zoomFocusReturnRef = useRef(null);
+  const zoomCloseButtonRef = useRef(null);
+
+  useDocumentTitle(pk ? `Job ${pk}` : "Job detail");
 
   useEffect(() => {
     if (!pk) return;
@@ -371,9 +376,36 @@ export default function JobDetail() {
     };
   }, [zoomPlotKey, pk]);
 
+  const closeZoom = useCallback(() => {
+    setZoomPlotKey(null);
+    const el = zoomFocusReturnRef.current;
+    zoomFocusReturnRef.current = null;
+    requestAnimationFrame(() => {
+      if (el && typeof el.focus === "function") {
+        el.focus();
+      }
+    });
+  }, []);
+
   const handlePlotZoom = useCallback((panelKey) => {
+    const ae = document.activeElement;
+    zoomFocusReturnRef.current =
+      ae && typeof ae.focus === "function" ? ae : null;
     setZoomPlotKey(panelKey);
   }, []);
+
+  useEffect(() => {
+    if (!zoomPlotKey) return;
+    zoomCloseButtonRef.current?.focus();
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeZoom();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [zoomPlotKey, closeZoom]);
 
   if (loading) return <LoadingMessage message="Loading job detail…" />;
   if (error) return <BannerErrorMessage message={error} />;
@@ -443,7 +475,7 @@ export default function JobDetail() {
   return (
     <>
       <div>
-        <h2>Job Detail</h2>
+        <h1 className="h2">Job {job.jid}</h1>
         <div className="table-responsive">
           <table className="table table-sm table-bordered">
           <thead>
@@ -770,8 +802,8 @@ export default function JobDetail() {
       </div>
 
       <hr />
-      <center className="job-detail-plots">
-        <h3>Host-level Plots</h3>
+      <div className="job-detail-plots text-center">
+        <h2 className="h3">Host-level Plots</h2>
         {plotsLoading && (
           <LoadingMessage message="Loading job plots…" />
         )}
@@ -796,7 +828,7 @@ export default function JobDetail() {
             ))}
           </tbody>
         </table>
-      </center>
+      </div>
 
       {zoomedPanel ? (
         <div
@@ -829,10 +861,11 @@ export default function JobDetail() {
             }}
           >
             <button
+              ref={zoomCloseButtonRef}
               type="button"
               className="btn btn-link p-0"
               aria-label="Close zoom window"
-              onClick={() => setZoomPlotKey(null)}
+              onClick={closeZoom}
               style={{ position: "absolute", top: "0.5rem", right: "0.75rem" }}
             >
               x
@@ -855,8 +888,8 @@ export default function JobDetail() {
         </div>
       ) : null}
 
-      <center>
-        <h4>Device Data and Plots</h4>
+      <div className="text-center">
+        <h2 className="h4">Device Data and Plots</h2>
         {detailsLoading ? (
           <p className="text-muted" role="status">
             Loading device data and plots…
@@ -900,7 +933,7 @@ export default function JobDetail() {
             </table>
           </div>
         )}
-      </center>
+      </div>
     </>
   );
 }

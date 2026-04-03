@@ -120,7 +120,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345", { is_staff: true });
 
     await waitFor(() => {
-      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     expect(screen.getByText("Sample Count")).toBeInTheDocument();
     expect(screen.getByText("1,250.00")).toBeInTheDocument();
@@ -140,7 +140,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345", { is_staff: false });
 
     await waitFor(() => {
-      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     expect(screen.queryByText("Sample Count")).not.toBeInTheDocument();
   });
@@ -174,7 +174,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345");
 
     await waitFor(() => {
-      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     expect(screen.getByText("12345", { selector: "a" })).toBeInTheDocument();
     expect(screen.getByText("testjob")).toBeInTheDocument();
@@ -221,7 +221,7 @@ describe("JobDetail", () => {
     const { container } = renderJobDetail("12345");
 
     await waitFor(() => {
-      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
 
     expect(container.querySelector(".col-sm-20")).toBeNull();
@@ -252,7 +252,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345", { is_staff: true });
 
     await waitFor(() => {
-      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     await userEvent.click(
       screen.getByRole("button", { name: /Job-level Metrics/i })
@@ -286,7 +286,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345", { is_staff: false });
 
     await waitFor(() => {
-      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     await userEvent.click(
       screen.getByRole("button", { name: /Job-level Metrics/i })
@@ -315,7 +315,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345");
 
     await waitFor(() => {
-      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
 
@@ -350,7 +350,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345");
 
     await waitFor(() => {
-      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     await waitFor(() => {
       expect(getJobPlotsSpy).toHaveBeenCalledTimes(2);
@@ -380,7 +380,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345");
 
     await waitFor(() => {
-      expect(screen.getByText("Job Detail")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     expect(screen.getByText("Total GPUs allocated:")).toBeInTheDocument();
     expect(screen.getByText("4.00")).toBeInTheDocument();

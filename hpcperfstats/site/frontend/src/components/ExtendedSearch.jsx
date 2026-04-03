@@ -82,28 +82,33 @@ export default function ExtendedSearch({ onClose }) {
       )}
       <form id="extended-search-form" onSubmit={handleSubmit}>
         <p className="text-muted small">Search fields are combined.</p>
-        <div className="row">
-          <div className="col-12 col-md-1">
-            <label>Start Date</label>
+        <fieldset className="border-0 p-0 mb-3">
+          <legend className="h6">Time range</legend>
+          <div className="row">
+            <div className="col-12 col-md-2">
+              <label htmlFor="ext-end-time-gte">Start Date</label>
+            </div>
+            <div className="col-12 col-md-2">
+              <input
+                id="ext-end-time-gte"
+                type="date"
+                className="form-control form-control-sm"
+                name="end_time__gte"
+              />
+            </div>
+            <div className="col-12 col-md-2">
+              <label htmlFor="ext-end-time-lte">End Date</label>
+            </div>
+            <div className="col-12 col-md-2">
+              <input
+                id="ext-end-time-lte"
+                type="date"
+                className="form-control form-control-sm"
+                name="end_time__lte"
+              />
+            </div>
           </div>
-          <div className="col-12 col-md-2">
-            <input
-              type="date"
-              className="form-control form-control-sm"
-              name="end_time__gte"
-            />
-          </div>
-          <div className="col-12 col-md-1">
-            <label>End Date</label>
-          </div>
-          <div className="col-12 col-md-2">
-            <input
-              type="date"
-              className="form-control form-control-sm"
-              name="end_time__lte"
-            />
-          </div>
-        </div>
+        </fieldset>
         <div className="row">
           <div className="col-12 col-md-2">
             <label htmlFor="ext-host">Host</label>
@@ -169,95 +174,125 @@ export default function ExtendedSearch({ onClose }) {
             </select>
           </div>
         </div>
-        <h5>Search on Resources</h5>
-        <div className="row">
-          <div className="col-12 col-md-2">
-            <label>Runtime</label>
-          </div>
-          <div className="col-12 col-md-1">
-            <input
-              type="text"
-              className="form-control form-control-sm"
-              name="runtime__gte"
-              placeholder="min seconds"
-            />
-          </div>
-          <div className="col-12 col-md-1">
-            <input
-              type="text"
-              className="form-control form-control-sm"
-              name="runtime__lte"
-              placeholder="max seconds"
-            />
-          </div>
-        </div>
-        <div className="row">
-          <div className="col-12 col-md-2">
-            <label>Nodes</label>
-          </div>
-          <div className="col-12 col-md-1">
-            <input
-              type="text"
-              className="form-control form-control-sm"
-              name="nhosts__gte"
-              placeholder="min nodes"
-            />
-          </div>
-          <div className="col-12 col-md-1">
-            <input
-              type="text"
-              className="form-control form-control-sm"
-              name="nhosts__lte"
-              placeholder="max nodes"
-            />
-          </div>
-        </div>
-        <div className="row">
-          <div className="col-12 col-md-2">
-            <label>Node-hrs</label>
-          </div>
-          <div className="col-12 col-md-1">
-            <input
-              type="text"
-              className="form-control form-control-sm"
-              name="node_hrs__gte"
-              placeholder="min nodes-hrs"
-            />
-          </div>
-          <div className="col-12 col-md-1">
-            <input
-              type="text"
-              className="form-control form-control-sm"
-              name="node_hrs__lte"
-              placeholder="max node-hrs"
-            />
-          </div>
-        </div>
-        <h5>Search on Derived Metrics</h5>
-        {metrics.map((m) => (
-          <div className="row" key={m.metric}>
+        <fieldset className="border-0 p-0 mb-3">
+          <legend className="h5">Search on Resources</legend>
+          <div className="row">
             <div className="col-12 col-md-2">
-              <label>{m.metric}</label>
+              <label htmlFor="ext-runtime-gte">Runtime minimum (seconds)</label>
             </div>
-            <div className="col-12 col-md-1">
+            <div className="col-12 col-md-2">
               <input
+                id="ext-runtime-gte"
                 type="text"
                 className="form-control form-control-sm"
-                name={`metrics_${m.metric}__gte`}
-                placeholder={`Min ${m.units}`}
+                name="runtime__gte"
+                placeholder="min seconds"
               />
             </div>
-            <div className="col-12 col-md-1">
+            <div className="col-12 col-md-2">
+              <label htmlFor="ext-runtime-lte">Runtime maximum (seconds)</label>
+            </div>
+            <div className="col-12 col-md-2">
               <input
+                id="ext-runtime-lte"
                 type="text"
                 className="form-control form-control-sm"
-                name={`metrics_${m.metric}__lte`}
-                placeholder={`Max ${m.units}`}
+                name="runtime__lte"
+                placeholder="max seconds"
               />
             </div>
           </div>
-        ))}
-        <button type="submit" className="btn btn-outline-secondary btn-sm">
+          <div className="row">
+            <div className="col-12 col-md-2">
+              <label htmlFor="ext-nhosts-gte">Nodes minimum</label>
+            </div>
+            <div className="col-12 col-md-2">
+              <input
+                id="ext-nhosts-gte"
+                type="text"
+                className="form-control form-control-sm"
+                name="nhosts__gte"
+                placeholder="min nodes"
+              />
+            </div>
+            <div className="col-12 col-md-2">
+              <label htmlFor="ext-nhosts-lte">Nodes maximum</label>
+            </div>
+            <div className="col-12 col-md-2">
+              <input
+                id="ext-nhosts-lte"
+                type="text"
+                className="form-control form-control-sm"
+                name="nhosts__lte"
+                placeholder="max nodes"
+              />
+            </div>
+          </div>
+          <div className="row">
+            <div className="col-12 col-md-2">
+              <label htmlFor="ext-node-hrs-gte">Node-hours minimum</label>
+            </div>
+            <div className="col-12 col-md-2">
+              <input
+                id="ext-node-hrs-gte"
+                type="text"
+                className="form-control form-control-sm"
+                name="node_hrs__gte"
+                placeholder="min node-hrs"
+              />
+            </div>
+            <div className="col-12 col-md-2">
+              <label htmlFor="ext-node-hrs-lte">Node-hours maximum</label>
+            </div>
+            <div className="col-12 col-md-2">
+              <input
+                id="ext-node-hrs-lte"
+                type="text"
+                className="form-control form-control-sm"
+                name="node_hrs__lte"
+                placeholder="max node-hrs"
+              />
+            </div>
+          </div>
+        </fieldset>
+        <fieldset className="border-0 p-0 mb-3">
+          <legend className="h5">Search on Derived Metrics</legend>
+          {metrics.map((m, idx) => (
+            <div className="row" key={m.metric}>
+              <div className="col-12 col-md-2">
+                <span className="form-label d-block" id={`ext-metric-name-${idx}`}>
+                  {m.metric}{" "}
+                  <span className="text-muted small">({m.units})</span>
+                </span>
+              </div>
+              <div className="col-12 col-md-2">
+                <label htmlFor={`ext-metric-${idx}-gte`} className="visually-hidden">
+                  {m.metric} minimum ({m.units})
+                </label>
+                <input
+                  id={`ext-metric-${idx}-gte`}
+                  type="text"
+                  className="form-control form-control-sm"
+                  name={`metrics_${m.metric}__gte`}
+                  placeholder={`Min ${m.units}`}
+                />
+              </div>
+              <div className="col-12 col-md-2">
+                <label htmlFor={`ext-metric-${idx}-lte`} className="visually-hidden">
+                  {m.metric} maximum ({m.units})
+                </label>
+                <input
+                  id={`ext-metric-${idx}-lte`}
+                  type="text"
+                  className="form-control form-control-sm"
+                  name={`metrics_${m.metric}__lte`}
+                  placeholder={`Max ${m.units}`}
+                />
+              </div>
+            </div>
+          ))}
+        </fieldset>
+        <button type="submit" className="btn btn-primary btn-sm">
           Search
         </button>
       </form>

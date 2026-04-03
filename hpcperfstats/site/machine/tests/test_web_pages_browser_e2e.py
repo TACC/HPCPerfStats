@@ -43,13 +43,17 @@ def test_browser_flow_for_web_pages():
 <head><title>HPCPerfStats SPA</title></head>
 <body>
   <div id="root">spa-shell</div>
-  <select id="staff-actions" aria-label="Staff actions" hidden>
-    <option value="">Staff Actions</option>
-    <option value="job_monitor">Job Failure Monitor</option>
-    <option value="admin_monitor">HPCPerfStats Monitor</option>
-    <option value="drop_staff">Disable Staff Permissions</option>
-    <option value="invalidate_cache">Invalidate Cache For Page</option>
-  </select>
+  <div id="staff-actions-root" hidden>
+    <button type="button" id="staff-actions-toggle" aria-label="Staff actions" aria-expanded="false" aria-haspopup="true">
+      Staff actions
+    </button>
+    <ul id="staff-actions-menu" role="menu" hidden style="list-style:none;padding-left:0;margin:0;">
+      <li><button type="button" role="menuitem" class="staff-menu-item" data-action="job_monitor">Job Failure Monitor</button></li>
+      <li><button type="button" role="menuitem" class="staff-menu-item" data-action="admin_monitor">HPCPerfStats Monitor</button></li>
+      <li><button type="button" role="menuitem" class="staff-menu-item" data-action="drop_staff">Disable Staff Permissions</button></li>
+      <li><button type="button" role="menuitem" class="staff-menu-item" data-action="invalidate_cache">Invalidate Cache For Page</button></li>
+    </ul>
+  </div>
   <div id="staff-message"></div>
   <div id="plot-unavailable">Plot not available</div>
   <span id="plot-error-detail" hidden>Error Detail</span>
@@ -58,26 +62,38 @@ def test_browser_flow_for_web_pages():
     (function () {
       const params = new URLSearchParams(window.location.search);
       const isStaff = params.get("staff") === "1";
-      const staffActions = document.getElementById("staff-actions");
+      const staffRoot = document.getElementById("staff-actions-root");
+      const staffToggle = document.getElementById("staff-actions-toggle");
+      const staffMenu = document.getElementById("staff-actions-menu");
       const staffMessage = document.getElementById("staff-message");
       const plotErrorDetail = document.getElementById("plot-error-detail");
       const copyErrorDetailBtn = document.getElementById("copy-error-detail-btn");
 
       function setStaffUi(flag) {
         const shouldShow = !!flag;
-        staffActions.hidden = !shouldShow;
+        staffRoot.hidden = !shouldShow;
         plotErrorDetail.hidden = !shouldShow;
         copyErrorDetailBtn.hidden = !shouldShow;
+        staffMenu.hidden = true;
+        staffToggle.setAttribute("aria-expanded", "false");
       }
 
       setStaffUi(isStaff);
-      staffActions.addEventListener("change", function () {
-        if (staffActions.value === "drop_staff") {
-          setStaffUi(false);
-          staffMessage.textContent =
-            "Staff access removed for this session. Log out and log back in to restore staff access.";
-        }
-        staffActions.value = "";
+      staffToggle.addEventListener("click", function () {
+        const open = staffMenu.hidden;
+        staffMenu.hidden = !open;
+        staffToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+      staffMenu.querySelectorAll(".staff-menu-item").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          if (btn.getAttribute("data-action") === "drop_staff") {
+            setStaffUi(false);
+            staffMessage.textContent =
+              "Staff access removed for this session. Log out and log back in to restore staff access.";
+          }
+          staffMenu.hidden = true;
+          staffToggle.setAttribute("aria-expanded", "false");
+        });
       });
     })();
   </script>
@@ -118,15 +134,15 @@ def test_browser_flow_for_web_pages():
           assert "/machine/" in page.url
           assert "spa-shell" in page.locator("#root").inner_text()
 
-          # Staff-only controls appear for staff sessions.
+          # Staff-only controls appear for staff sessions (mirrors SPA staff menu).
           page.goto(f"{base_url}/machine/?staff=1")
-          assert page.get_by_role("combobox", name="Staff actions").is_visible()
-          option_labels = page.eval_on_selector_all(
-              "#staff-actions option",
-              "options => options.map((opt) => opt.textContent.trim())",
+          assert page.locator("#staff-actions-root").is_visible()
+          page.get_by_role("button", name="Staff actions").click()
+          menuitem_labels = page.eval_on_selector_all(
+              "#staff-actions-menu [role='menuitem']",
+              "els => els.map((el) => el.textContent.trim())",
           )
-          assert option_labels == [
-              "Staff Actions",
+          assert menuitem_labels == [
               "Job Failure Monitor",
               "HPCPerfStats Monitor",
               "Disable Staff Permissions",
@@ -138,15 +154,16 @@ def test_browser_flow_for_web_pages():
 
           # Staff-only controls are absent for non-staff sessions.
           page.goto(f"{base_url}/machine/?staff=0")
-          assert page.locator("#staff-actions").is_hidden()
+          assert page.locator("#staff-actions-root").is_hidden()
           assert page.get_by_text("Plot not available").is_visible()
           assert page.locator("#plot-error-detail").is_hidden()
           assert page.locator("#copy-error-detail-btn").is_hidden()
 
           # Demoting staff hides controls and shows the informational message.
           page.goto(f"{base_url}/machine/?staff=1")
-          page.select_option("#staff-actions", "drop_staff")
-          assert page.locator("#staff-actions").is_hidden()
+          page.get_by_role("button", name="Staff actions").click()
+          page.get_by_role("menuitem", name="Disable Staff Permissions").click()
+          assert page.locator("#staff-actions-root").is_hidden()
           assert "Staff access removed for this session." in page.locator(
               "#staff-message"
           ).inner_text()
@@ -173,6 +190,7 @@ def test_browser_flow_for_web_pages():
 
           page.goto(f"{base_url}/api-key/")
           assert "HPCPerfStats API key" in page.locator("body").inner_text()
+          assert page.get_by_role("link", name="Back to HPCPerfStats").is_visible()
           page.click("button[type='submit']")
           page.wait_for_load_state("domcontentloaded")
           assert "This key is shown only once." in page.locator("body").inner_text()

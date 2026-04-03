@@ -33,7 +33,7 @@ PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 | `hpcperfstats/analysis/**/test*.py` | Analysis/plot/metrics-focused tests (summary/heatmap/roofline behavior, roofline peak inference from `host_data.type` schema keys, hover tooltips, shared job-window parsing, metrics helpers). `analysis/metrics/test_per_interval_rate.py` also covers node-imbalance variants (DRAM, LNET, GPU util/tensor) and GPU peak helpers. |
 | `hpcperfstats/site/machine/tests/` | Django + web tests (ORM/query/update helpers, job detail file-system llite vs NFS fallback, security headers, API/misc endpoints, SPA rendering, page and browser E2E tests). Includes `test_type_detail_api.py`, which asserts type-detail `host_data` ORM SQL does not reference `jid` (job scope is start/end time + accounting hosts) with `django_db(databases=[])` so it does not need a live DB. |
 | `hpcperfstats/site/machine/tests/test_job_detail_staff_sample_count.py` | Staff-only `staff_metrics_distinct_time_count` on `job_detail` JSON (mocked ORM; no live DB required). |
-| `hpcperfstats/site/frontend` | React SPA unit tests (Vitest): `npm test` from that directory. Vitest picks up `*.test.jsx` / `*.test.js` under `src/` (pages, components, utils), including small pure helpers such as `normalize-job-list-histogram-entry.test.js`. |
+| `hpcperfstats/site/frontend` | React SPA unit tests (Vitest): `npm test` from that directory. Vitest picks up `*.test.jsx` / `*.test.js` under `src/` (pages, components, utils), including small pure helpers such as `normalize-job-list-histogram-entry.test.js` and `useDocumentTitle.test.js`. |
 
 ## Test runners
 
@@ -50,7 +50,7 @@ PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 Use this for web-page E2E modules:
 
 - `hpcperfstats/site/machine/tests/test_web_pages_e2e.py` (includes a module-level `test_job_detail_api_includes_staff_metrics_distinct_time_count_for_staff` that does not use the `django_db` class marker, so it can run without a reachable Postgres host)
-- `hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py`
+- `hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py` (uses a minimal static `index.html` stub for `/machine/*` that mirrors key SPA affordances—staff menu, plot-unavailable copy—rather than the full Vite bundle)
 
 The workflow script handles Docker lifecycle and runs both files in one session:
 

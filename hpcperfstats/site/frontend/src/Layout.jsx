@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api";
 import ExtendedSearch from "./components/ExtendedSearch";
@@ -11,10 +11,29 @@ export default function Layout({ session, onSessionChange, children }) {
   const [staffMessage, setStaffMessage] = useState("");
   const [isDroppingStaff, setIsDroppingStaff] = useState(false);
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
-  const [staffActionValue, setStaffActionValue] = useState("");
+  const [staffMenuOpen, setStaffMenuOpen] = useState(false);
+  const staffMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!staffMenuOpen) return;
+    function handlePointerDown(event) {
+      if (staffMenuRef.current && !staffMenuRef.current.contains(event.target)) {
+        setStaffMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [staffMenuOpen]);
 
   async function handleDropStaffForSession() {
     if (isDroppingStaff) return;
+    if (
+      !window.confirm(
+        "Remove staff permissions for this browser session? You can restore them by signing out and signing in again.",
+      )
+    ) {
+      return;
+    }
     setIsDroppingStaff(true);
     setStaffMessage("");
     try {
@@ -25,71 +44,59 @@ export default function Layout({ session, onSessionChange, children }) {
       }
       setStaffMessage(
         response?.message ||
-          "Staff access removed for this session. Log out and log back in to restore staff access."
+          "Staff access removed for this session. Log out and log back in to restore staff access.",
       );
     } catch (error) {
       setStaffMessage(error?.message || "Unable to remove staff access for this session.");
     } finally {
       setIsDroppingStaff(false);
+      setStaffMenuOpen(false);
     }
   }
 
   async function handleInvalidateCacheForPage() {
     if (isInvalidatingCache) return;
+    if (
+      !window.confirm(
+        `Invalidate cached data for the current page path (${location.pathname})?`,
+      )
+    ) {
+      return;
+    }
     setIsInvalidatingCache(true);
     setStaffMessage("");
     try {
       const response = await api.invalidateCacheForPage(location.pathname);
       const deletedCount = Number(response?.deleted_keys || 0);
       setStaffMessage(
-        `Invalidated ${deletedCount} cache key${deletedCount === 1 ? "" : "s"} for ${location.pathname}.`
+        `Invalidated ${deletedCount} cache key${deletedCount === 1 ? "" : "s"} for ${location.pathname}.`,
       );
     } catch (error) {
       setStaffMessage(error?.message || "Unable to invalidate cache for this page.");
     } finally {
       setIsInvalidatingCache(false);
+      setStaffMenuOpen(false);
     }
   }
 
-  async function handleStaffActionChange(event) {
-    const action = event.target.value;
-    setStaffActionValue(action);
-    if (!action) {
-      return;
-    }
-
-    if (action === "job_monitor") {
-      navigate("/job_monitor");
-      setStaffActionValue("");
-      return;
-    }
-    if (action === "admin_monitor") {
-      navigate("/admin_monitor");
-      setStaffActionValue("");
-      return;
-    }
-    if (action === "drop_staff") {
-      await handleDropStaffForSession();
-      setStaffActionValue("");
-      return;
-    }
-    if (action === "invalidate_cache") {
-      await handleInvalidateCacheForPage();
-      setStaffActionValue("");
-      return;
-    }
-
-    setStaffActionValue("");
+  function navigateStaff(path) {
+    navigate(path);
+    setStaffMenuOpen(false);
   }
+
+  const staffMenuBusy = isDroppingStaff || isInvalidatingCache;
 
   return (
     <div className="container-fluid">
+      <a href="#main-content" className="visually-hidden visually-hidden-focusable">
+        Skip to main content
+      </a>
       <nav className="navbar navbar-expand-lg navbar-light bg-light" role="navigation">
         <div className="container-fluid">
           <Link to="/" className="navbar-brand navbar-header-logo">
             <img
               src="/media/logo.png"
-              alt="TACC"
+              alt="TACC — HPCPerfStats home"
               className="navbar-logo-img"
             />
           </Link>
@@ -119,20 +126,74 @@ export default function Layout({ session, onSessionChange, children }) {
             <div className="navbar-actions ms-auto">
               <div className="navbar-actions-row">
                 {session?.is_staff && (
-                  <select
-                    id="staff-actions"
-                    className="form-select form-select-sm me-2"
-                    value={staffActionValue}
-                    onChange={handleStaffActionChange}
-                    aria-label="Staff actions"
-                    disabled={isDroppingStaff || isInvalidatingCache}
-                  >
-                    <option value="">Staff Actions</option>
-                    <option value="job_monitor">Job Failure Monitor</option>
-                    <option value="admin_monitor">HPCPerfStats Monitor</option>
-                    <option value="drop_staff">Disable Staff Permissions</option>
-                    <option value="invalidate_cache">Invalidate Cache For Page</option>
-                  </select>
+                  <div className="dropdown" ref={staffMenuRef}>
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary btn-sm dropdown-toggle"
+                      id="staff-actions-menu-button"
+                      aria-expanded={staffMenuOpen}
+                      aria-haspopup="true"
+                      aria-label="Staff actions"
+                      disabled={staffMenuBusy}
+                      onClick={() => setStaffMenuOpen((o) => !o)}
+                    >
+                      Staff actions
+                    </button>
+                    {staffMenuOpen ? (
+                      <ul
+                        className="dropdown-menu dropdown-menu-end show"
+                        role="menu"
+                        aria-labelledby="staff-actions-menu-button"
+                        style={{ position: "absolute", zIndex: 1080 }}
+                      >
+                        <li>
+                          <button
+                            type="button"
+                            className="dropdown-item"
+                            role="menuitem"
+                            onClick={() => navigateStaff("/job_monitor")}
+                          >
+                            Job Failure Monitor
+                          </button>
+                        </li>
+                        <li>
+                          <button
+                            type="button"
+                            className="dropdown-item"
+                            role="menuitem"
+                            onClick={() => navigateStaff("/admin_monitor")}
+                          >
+                            HPCPerfStats Monitor
+                          </button>
+                        </li>
+                        <li>
+                          <hr className="dropdown-divider" />
+                        </li>
+                        <li>
+                          <button
+                            type="button"
+                            className="dropdown-item"
+                            role="menuitem"
+                            disabled={staffMenuBusy}
+                            onClick={() => void handleDropStaffForSession()}
+                          >
+                            Disable Staff Permissions
+                          </button>
+                        </li>
+                        <li>
+                          <button
+                            type="button"
+                            className="dropdown-item"
+                            role="menuitem"
+                            disabled={staffMenuBusy}
+                            onClick={() => void handleInvalidateCacheForPage()}
+                          >
+                            Invalidate Cache For Page
+                          </button>
+                        </li>
+                      </ul>
+                    ) : null}
+                  </div>
                 )}
                 <a href="/logout/" className="btn btn-outline-secondary btn-sm">Logout</a>
               </div>
@@ -164,11 +225,16 @@ export default function Layout({ session, onSessionChange, children }) {
                   }}
                 >
                   <div className="form-group">
+                    <label htmlFor="navbar-jid-search" className="visually-hidden">
+                      Job ID search
+                    </label>
                     <input
+                      id="navbar-jid-search"
                       type="text"
                       className="form-control form-control-sm"
                       name="jid"
                       placeholder="Job ID"
+                      autoComplete="off"
                     />
                   </div>
                   <button type="submit" className="btn btn-outline-secondary btn-sm">
@@ -190,7 +256,7 @@ export default function Layout({ session, onSessionChange, children }) {
           <ExtendedSearch onClose={() => setExtendedSearchOpen(false)} />
         </div>
       )}
-      <main className="mt-4">
+      <main id="main-content" className="mt-4" tabIndex={-1}>
         {children}
       </main>
     </div>

@@ -9,6 +9,7 @@ import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { buildJobListApiParams } from "../utils/build-job-list-api-params";
 import { normalizeJobListHistogramEntry } from "../utils/normalize-job-list-histogram-entry";
+import { useDocumentTitle } from "../utils/useDocumentTitle";
 
 const ResolvedReactPaginate = ReactPaginate?.default || ReactPaginate;
 
@@ -120,6 +121,10 @@ export default function JobList() {
     loadHistograms();
   }, [searchParams, paramsFromRoute]);
 
+  const documentTitleSegment =
+    loading || error || !data ? "Job list" : data.qname || "Job list";
+  useDocumentTitle(documentTitleSegment);
+
   if (loading) return <LoadingMessage message="Loading job list…" />;
   if (error) return <BannerErrorMessage message={error} />;
   if (!data) return null;
@@ -157,6 +162,13 @@ export default function JobList() {
     return "";
   };
 
+  const ariaSortForField = (field, sortable) => {
+    if (!sortable) return undefined;
+    if (orderBy === field) return "ascending";
+    if (orderBy === `-${field}`) return "descending";
+    return "none";
+  };
+
   const columns = [
     { label: "Job ID", field: "jid", sortable: true },
     { label: "Performance Data", field: "has_metrics", sortable: true },
@@ -175,8 +187,8 @@ export default function JobList() {
 
   return (
     <>
-      <h4>{qname}</h4>
-      <center>
+      <h1 className="h4">{qname}</h1>
+      <div className="text-center">
         {queueHistStatus.loading && (
           <LoadingMessage message="Loading queue histograms…" />
         )}
@@ -213,9 +225,9 @@ export default function JobList() {
           );
         })}
         <HistogramThumbnails histograms={histograms} />
-      </center>
+      </div>
       <hr />
-      <h4>#Jobs = {nj}</h4>
+      <h2 className="h5">#Jobs = {nj}</h2>
       {totalNodeHours != null && (
         <p className="mb-0">
           Total Node Hours (all matching jobs): {formatDecimalStandard(totalNodeHours)}
@@ -273,10 +285,13 @@ export default function JobList() {
 
       <div className="table-responsive">
         <table className="table table-sm table-bordered">
+          <caption className="visually-hidden">
+            Job list for {qname}. {nj} jobs.
+          </caption>
           <thead>
             <tr>
               {columns.map(({ label, field, sortable }) => (
-              <th key={field}>
+              <th key={field} aria-sort={ariaSortForField(field, sortable)}>
                 {sortable ? (
                   <Link to={sortLink(field)}>
                     {label}
@@ -295,7 +310,17 @@ export default function JobList() {
               <td>
                 <Link to={`/job/${job.jid}/`}>{job.jid}</Link>
               </td>
-              <td>{job.has_metrics ? "True" : "False"}</td>
+              <td>
+                {job.has_metrics ? (
+                  <span className="badge text-bg-success" aria-label="Performance data available">
+                    True
+                  </span>
+                ) : (
+                  <span className="badge text-bg-secondary" aria-label="No performance data">
+                    False
+                  </span>
+                )}
+              </td>
               <td>
                 {job.username ? (
                   <Link to={`/username/${job.username}/`}>{job.username}</Link>

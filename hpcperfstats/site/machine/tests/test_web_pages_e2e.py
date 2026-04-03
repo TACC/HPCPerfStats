@@ -83,6 +83,8 @@ class TestWebPagesEndToEnd:
       assert first_response.status_code == 200
       first_html = first_response.content.decode("utf-8")
       assert "HPCPerfStats API key" in first_html
+      assert 'href="/machine/"' in first_html
+      assert "Back to HPCPerfStats" in first_html
       assert "Invalidate and Create New Key" in first_html
       assert "Signed in as: <strong>webtest-user</strong>" in first_html
       assert "Active key prefix:" in first_html

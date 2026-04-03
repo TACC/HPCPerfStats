@@ -9,8 +9,11 @@ import {
   jobMonitorSortComparable,
   patchJobMonitorGpuRowByUsername,
 } from "../utils/job-monitor-gpu";
+import { useDocumentTitle } from "../utils/useDocumentTitle";
 
 export default function JobMonitor() {
+  useDocumentTitle("Job failure monitor");
+
   const [rows, setRows] = useState([]);
   const [windowDays, setWindowDays] = useState(30);
   const [inputDays, setInputDays] = useState("30");
@@ -117,7 +120,7 @@ export default function JobMonitor() {
 
   return (
     <>
-      <h3>Job Monitor</h3>
+      <h1 className="h3">Job failure monitor</h1>
       <p className="text-muted">
         Aggregated job outcomes by user for the last {windowDays} days. Only users
         who have run more than {windowDays / 2} jobs in this window are included.

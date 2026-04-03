@@ -24,14 +24,20 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (loading) return;
+    if (session?.logged_in) return;
+    const next = encodeURIComponent(window.location.pathname + window.location.search);
+    const target = next ? `/login_prompt?next=${next}` : "/login_prompt";
+    window.location.replace(target);
+  }, [loading, session]);
+
   if (loading) {
     return <LoadingMessage message="Loading session…" />;
   }
 
   if (!session || !session.logged_in) {
-    const next = encodeURIComponent(window.location.pathname + window.location.search);
-    window.location.href = next ? `/login_prompt?next=${next}` : "/login_prompt";
-    return null;
+    return <LoadingMessage message="Redirecting to sign in…" />;
   }
 
   return (

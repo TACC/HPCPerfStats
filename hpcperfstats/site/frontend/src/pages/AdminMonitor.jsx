@@ -3,6 +3,7 @@ import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import { createAdminMonitorSectionLoader } from "../utils/create-admin-monitor-section-loader";
+import { useDocumentTitle } from "../utils/useDocumentTitle";
 
 const BADGE_MAP = {
   ok: { label: "OK (≤ 10 minutes)", class: "badge badge-freshness-ok" },
@@ -66,6 +67,8 @@ function makeAdminMonitorSortHandler(setSort) {
 }
 
 export default function AdminMonitor() {
+  useDocumentTitle("HPCPerfStats Monitor");
+
   const [hostTimeExpanded, setHostTimeExpanded] = useState(false);
   const [rabbitHostTimeExpanded, setRabbitHostTimeExpanded] = useState(false);
   const [cacheExpanded, setCacheExpanded] = useState(false);
@@ -350,7 +353,7 @@ export default function AdminMonitor() {
 
   return (
     <>
-      <h3>HPCPerfStats Monitor</h3>
+      <h1 className="h3">HPCPerfStats Monitor</h1>
 
       <div className="admin-monitor-section">
         <button

@@ -36,8 +36,8 @@ describe("App", () => {
   });
 
   it("redirects to login_prompt when not logged in", async () => {
-    const hrefSpy = vi
-      .spyOn(window.location, "href", "set")
+    const replaceSpy = vi
+      .spyOn(window.location, "replace")
       .mockImplementation(() => {});
     vi.spyOn(apiModule.api, "getSession").mockResolvedValue({
       logged_in: false,
@@ -46,7 +46,7 @@ describe("App", () => {
     renderApp();
 
     await waitFor(() => {
-      expect(hrefSpy).toHaveBeenCalledWith("/login_prompt?next=%2F");
+      expect(replaceSpy).toHaveBeenCalledWith("/login_prompt?next=%2F");
     });
   });
 
@@ -55,10 +55,17 @@ describe("App", () => {
       logged_in: true,
       username: "test-user",
     });
+    vi.spyOn(apiModule.api, "getHomeOptions").mockResolvedValue({
+      year_list: [],
+      date_list: [],
+      metrics: [],
+      queues: [],
+      states: [],
+    });
 
     renderApp();
 
-    await screen.findByText(/Search/i);
+    await screen.findByRole("heading", { name: /search jobs/i });
   });
 });
 

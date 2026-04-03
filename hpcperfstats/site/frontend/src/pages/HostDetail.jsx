@@ -5,6 +5,7 @@ import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
+import { useDocumentTitle } from "../utils/useDocumentTitle";
 
 export default function HostDetail() {
   const { host } = useParams();
@@ -12,6 +13,8 @@ export default function HostDetail() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  useDocumentTitle(host ? `Host ${host}` : "Host plot");
 
   useEffect(() => {
     if (!host) return;
@@ -38,7 +41,7 @@ export default function HostDetail() {
 
   return (
     <div className="container-fluid">
-      <h2>Host: {hostName}</h2>
+      <h1 className="h2">Host: {hostName}</h1>
       <p className="text-muted">
         Time range: {formatDateTime(data.end_time__gte)} — {data.end_time__lte === "now()" ? "Now" : formatDateTime(data.end_time__lte)}
       </p>
