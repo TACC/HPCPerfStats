@@ -23,6 +23,8 @@ describe("getDescriptionForVariable", () => {
       /fabric bandwidth/i,
     );
     expect(getDescriptionForVariable("flops_node_imbalance")).toMatch(/FLOP/i);
+    expect(getDescriptionForVariable("avg_tensor_active")).toMatch(/tensor/i);
+    expect(getDescriptionForVariable("dram_bw_node_imbalance")).toMatch(/DRAM/i);
   });
 
   it("documents shared filesystem metrics with the job detail section", () => {

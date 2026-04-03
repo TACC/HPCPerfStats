@@ -196,3 +196,121 @@ def test_max_opa_congestion_rate_per_host_fallback():
   assert units == "#/s"
   assert val is not None
   assert val >= 100.0
+
+
+def test_dram_bw_node_imbalance_amd_df():
+  schema = metrics._Schema(["MBW_CHANNEL_0"])
+  hi = np.array([[0.0], [20.0], [80.0]], dtype=np.float64)
+  lo = np.array([[0.0], [10.0], [40.0]], dtype=np.float64)
+
+  class _Host:
+    def __init__(self, arr):
+      self.stats = {"amd64_df": {"agg": arr}}
+
+  class _Job:
+    def __init__(self):
+      self.hosts = {"a": _Host(hi), "b": _Host(lo)}
+      self.schemas = {"amd64_df": schema}
+      self.times = np.array([0.0, 1.0, 2.0], dtype=np.float64)
+      self.acct = {"cores": 1, "nodes": 2}
+
+  u = job_utils(_Job())
+  val, typename, units = metrics.dram_bw_node_imbalance().compute_metric(u)
+  assert typename == "amd64_df"
+  assert units == "%"
+  assert val is not None
+  assert val > 40.0
+
+
+def test_lnet_node_imbalance_two_hosts():
+  schema = metrics._Schema(["tx_bytes", "rx_bytes"])
+  hi = np.array([[0.0, 0.0], [20.0, 20.0], [60.0, 60.0]], dtype=np.float64)
+  lo = np.array([[0.0, 0.0], [10.0, 10.0], [30.0, 30.0]], dtype=np.float64)
+
+  class _Host:
+    def __init__(self, arr):
+      self.stats = {"lnet": {"agg": arr}}
+
+  class _Job:
+    def __init__(self):
+      self.hosts = {"a": _Host(hi), "b": _Host(lo)}
+      self.schemas = {"lnet": schema}
+      self.times = np.array([0.0, 1.0, 2.0], dtype=np.float64)
+      self.acct = {"cores": 1, "nodes": 2}
+
+  u = job_utils(_Job())
+  val, typename, units = metrics.lnet_node_imbalance().compute_metric(u)
+  assert typename == "lnet"
+  assert units == "%"
+  assert val is not None
+  assert val > 40.0
+
+
+def test_gpu_util_node_imbalance_nvidia_snapshots():
+  schema = metrics._Schema(["gpu_util"])
+  a = np.array([[80.0], [80.0], [80.0]], dtype=np.float64)
+  b = np.array([[40.0], [40.0], [40.0]], dtype=np.float64)
+
+  class _Host:
+    def __init__(self, arr):
+      self.stats = {"nvidia_gpu": {"agg": arr}}
+
+  class _Job:
+    def __init__(self):
+      self.hosts = {"a": _Host(a), "b": _Host(b)}
+      self.schemas = {"nvidia_gpu": schema}
+      self.times = np.array([0.0, 1.0, 2.0], dtype=np.float64)
+      self.acct = {"cores": 1, "nodes": 2}
+
+  u = job_utils(_Job())
+  val, typename, units = metrics.gpu_util_node_imbalance().compute_metric(u)
+  assert typename == "nvidia_gpu"
+  assert units == "%"
+  assert val is not None
+  assert 45.0 < val < 55.0
+
+
+def test_tensor_node_imbalance_nvidia():
+  schema = metrics._Schema(["tensor_active"])
+  a = np.array([[100.0], [100.0]], dtype=np.float64)
+  b = np.array([[50.0], [50.0]], dtype=np.float64)
+
+  class _Host:
+    def __init__(self, arr):
+      self.stats = {"nvidia_gpu": {"agg": arr}}
+
+  class _Job:
+    def __init__(self):
+      self.hosts = {"a": _Host(a), "b": _Host(b)}
+      self.schemas = {"nvidia_gpu": schema}
+      self.times = np.array([0.0, 1.0], dtype=np.float64)
+      self.acct = {"cores": 1, "nodes": 2}
+
+  u = job_utils(_Job())
+  val, typename, units = metrics.tensor_node_imbalance().compute_metric(u)
+  assert typename == "nvidia_gpu"
+  assert units == "%"
+  assert val is not None
+  assert 45.0 < val < 55.0
+
+
+def test_max_gpu_power_nvidia():
+  schema = metrics._Schema(["power_usage"])
+  a = np.array([[200.0], [350.0]], dtype=np.float64)
+
+  class _Host:
+    def __init__(self):
+      self.stats = {"nvidia_gpu": {"agg": a}}
+
+  class _Job:
+    def __init__(self):
+      self.hosts = {"n1": _Host()}
+      self.schemas = {"nvidia_gpu": schema}
+      self.times = np.array([0.0, 1.0], dtype=np.float64)
+      self.acct = {"cores": 1, "nodes": 1}
+
+  u = job_utils(_Job())
+  val, typename, units = metrics.max_gpu_power().compute_metric(u)
+  assert units == "W"
+  assert val == 350.0
+  assert typename == "nvidia_gpu"

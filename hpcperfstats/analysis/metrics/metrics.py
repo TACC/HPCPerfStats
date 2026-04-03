@@ -57,6 +57,16 @@ _COMPLEX_PLACEHOLDER_TYPE_UNITS = {
     "max_numa_remote_rate": ("numa", "#/s"),
     "flops_node_imbalance": ("pmc", "%"),
     "fabric_node_imbalance": ("ib_ext", "%"),
+    "dram_bw_node_imbalance": ("imc", "%"),
+    "lnet_node_imbalance": ("lnet", "%"),
+    "avg_tensor_active": ("nvidia_gpu", "%"),
+    "avg_gpu_mem_bw_gbps": ("nvidia_gpu", "GB/s"),
+    "max_gpu_power": ("nvidia_gpu", "W"),
+    "max_gpu_link_gbps": ("nvidia_gpu", "GB/s"),
+    "max_gpu_clock_event_reasons": ("nvidia_gpu", "#"),
+    "gpu_util_node_imbalance": ("nvidia_gpu", "%"),
+    "tensor_node_imbalance": ("nvidia_gpu", "%"),
+    "avg_fabric_mb_per_avg_tensor": ("ib_ext", "MB/s"),
     "mem_hwm": ("mem", "GiB"),
     "node_imbalance": ("cpu", "%"),
     "time_imbalance": ("cpu", "%"),
@@ -79,6 +89,16 @@ _COMPLEX_NO_DATA_REASONS = {
     "max_numa_remote_rate": "No usable NUMA remote-access telemetry",
     "flops_node_imbalance": "No usable FLOPs telemetry for node imbalance",
     "fabric_node_imbalance": "No usable fabric telemetry for node imbalance",
+    "dram_bw_node_imbalance": "No usable DRAM bandwidth telemetry for node imbalance",
+    "lnet_node_imbalance": "No usable LNET byte telemetry for node imbalance",
+    "avg_tensor_active": "No usable GPU tensor-activity telemetry",
+    "avg_gpu_mem_bw_gbps": "No usable GPU memory bandwidth rate telemetry",
+    "max_gpu_power": "No usable GPU power telemetry",
+    "max_gpu_link_gbps": "No usable GPU PCIe/NVLink byte telemetry",
+    "max_gpu_clock_event_reasons": "No usable GPU clock event reason telemetry",
+    "gpu_util_node_imbalance": "No usable GPU utilization telemetry for imbalance",
+    "tensor_node_imbalance": "No usable GPU tensor telemetry for imbalance",
+    "avg_fabric_mb_per_avg_tensor": "No usable fabric and tensor telemetry for ratio",
     "mem_hwm": "No usable memory telemetry for high-water mark",
     "node_imbalance": "No usable CPU telemetry for node imbalance",
     "time_imbalance": "No usable CPU telemetry for time imbalance",
@@ -405,6 +425,24 @@ class Metrics():
             "conv": 0.0,
             "units": "MB/GF",
         },
+        "avg_tensor_active": {
+            "typename": "nvidia_gpu",
+            "events": ["tensor_active"],
+            "conv": 0.0,
+            "units": "%",
+        },
+        "avg_gpu_mem_bw_gbps": {
+            "typename": "nvidia_gpu",
+            "events": ["gpu_mem_bw_bytes_rate"],
+            "conv": 0.0,
+            "units": "GB/s",
+        },
+        "avg_fabric_mb_per_avg_tensor": {
+            "typename": "ib_ext",
+            "events": [],
+            "conv": 0.0,
+            "units": "MB/s",
+        },
         "avg_flops": {
             "typename": "amd64_pmc",
             "events": ["FLOPS"],
@@ -432,9 +470,11 @@ class Metrics():
         'avg_freq', 'avg_ethbw', 'avg_gpuutil', 'avg_packetsize',
         'max_fabricbw', 'max_lnetbw', 'max_mds', 'max_packetrate',
         'max_opa_congestion_rate', 'max_numa_remote_rate',
+        'max_gpu_power', 'max_gpu_link_gbps', 'max_gpu_clock_event_reasons',
         'mem_hwm',
         'node_imbalance', 'time_imbalance', 'flops_node_imbalance',
-        'fabric_node_imbalance',
+        'fabric_node_imbalance', 'dram_bw_node_imbalance', 'lnet_node_imbalance',
+        'gpu_util_node_imbalance', 'tensor_node_imbalance',
         'vecpercent_64b',
         'avg_vector_width_64b', 'vecpercent_32b', 'avg_vector_width_32b'
     ]
@@ -588,6 +628,73 @@ class Metrics():
         cache[cache_key] = None
       return None
     # Drop first time sample per host to match original behaviour.
+    first_idx = grouped.groupby("host", group_keys=False).head(1).index
+    grouped = grouped.drop(index=first_idx)
+    if grouped.empty:
+      if cache is not None:
+        cache[cache_key] = None
+      return None
+    per_host_vals = grouped.groupby("host")["sum"].mean()
+    value = float(per_host_vals.mean())
+    if cache is not None:
+      cache[cache_key] = value
+    return value
+
+  def job_value_mean(self,
+                     jt,
+                     typename=None,
+                     events=None,
+                     conv=1.0,
+                     cache=None):
+    """Mean sampled ``value`` by host and 5m bucket (same bucketing as ``job_arc``)."""
+    import pandas as pd
+    from hpcperfstats.site.machine.models import host_data
+
+    if not getattr(jt, "_base_filter", None):
+      return None
+    base = jt._base_filter
+    hosts = base.get("host__in") or []
+    if not hosts:
+      return None
+    cache_key = None
+    if cache is not None:
+      cache_key = ("vm", typename, tuple(events or ()), float(conv))
+      if cache_key in cache:
+        return cache[cache_key]
+    qs = (
+        host_data.objects.filter(
+            time__gte=base["time__gte"],
+            time__lte=base["time__lte"],
+            host__in=list(hosts),
+            type=typename,
+            event__in=list(events or []),
+        )
+        .values("host", "time", "value")
+        .order_by("host", "time")
+    )
+    rows = list(qs)
+    if not rows:
+      if cache is not None:
+        cache[cache_key] = None
+      return None
+    df = pd.DataFrame(rows)
+    if df.empty:
+      if cache is not None:
+        cache[cache_key] = None
+      return None
+    if not pd.api.types.is_datetime64_any_dtype(df["time"]):
+      df["time"] = pd.to_datetime(df["time"])
+    df["bucket"] = df["time"].dt.floor("5min")
+    grouped = (
+        df.groupby(["host", "bucket"], as_index=False)["value"].mean().rename(
+            columns={"bucket": "time", "value": "sum"}
+        )
+    )
+    grouped["sum"] = grouped["sum"] * float(conv)
+    if grouped.empty or "host" not in grouped.columns:
+      if cache is not None:
+        cache[cache_key] = None
+      return None
     first_idx = grouped.groupby("host", group_keys=False).head(1).index
     grouped = grouped.drop(index=first_idx)
     if grouped.empty:
@@ -897,6 +1004,63 @@ class Metrics():
             row_type = (
                 fabric_typename or flops_typename or metric_obj["typename"]
             )
+        elif metric_name == "avg_tensor_active":
+          value = None
+          row_type = "nvidia_gpu"
+          for gt in ("nvidia_gpu", "amd_gpu"):
+            v = self.job_value_mean(
+                jt,
+                typename=gt,
+                events=["tensor_active"],
+                conv=1.0,
+                cache=simple_metric_cache,
+            )
+            if v is not None and float(v) > 0:
+              value = float(v)
+              row_type = gt
+              break
+        elif metric_name == "avg_gpu_mem_bw_gbps":
+          value = None
+          row_type = "nvidia_gpu"
+          for gt in ("nvidia_gpu", "amd_gpu"):
+            v = self.job_value_mean(
+                jt,
+                typename=gt,
+                events=["gpu_mem_bw_bytes_rate"],
+                conv=1.0 / 1e9,
+                cache=simple_metric_cache,
+            )
+            if v is not None and float(v) > 0:
+              value = float(v)
+              row_type = gt
+              break
+        elif metric_name == "avg_fabric_mb_per_avg_tensor":
+          fb, fabric_typename = self._job_arc_avg_ibbw(
+              jt, cache=simple_metric_cache)
+          ts = self.job_value_mean(
+              jt,
+              typename="nvidia_gpu",
+              events=["tensor_active"],
+              conv=1.0,
+              cache=simple_metric_cache,
+          )
+          if ts is None:
+            ts = self.job_value_mean(
+                jt,
+                typename="amd_gpu",
+                events=["tensor_active"],
+                conv=1.0,
+                cache=simple_metric_cache,
+            )
+          if (
+              fb is not None and ts is not None
+              and float(ts) > 1e-6 and float(fb) >= 0
+          ):
+            value = float(fb) / (float(ts) / 100.0)
+            row_type = fabric_typename or metric_obj["typename"]
+          else:
+            value = None
+            row_type = fabric_typename or metric_obj["typename"]
         else:
           value = self.job_arc(jt, cache=simple_metric_cache, **metric_obj)
           row_type = metric_obj["typename"]
@@ -1504,6 +1668,178 @@ class flops_node_imbalance():
     if v is None:
       return None, typename, "%"
     return v, typename, "%"
+
+
+def _dram_bw_weighted_events_for_imbalance(u):
+  """Return (typename, [(event, weight), ...]) for DRAM CAS/MBW imbalance, or (None, None)."""
+  schema_df, _ = u.get_type("amd64_df")
+  if schema_df is not None:
+    chans = [f"MBW_CHANNEL_{i}" for i in range(8)]
+    found = [c for c in chans if c in schema_df]
+    if found:
+      return "amd64_df", [(c, 1.0) for c in found]
+  imc = u.imc
+  if not imc:
+    return None, None
+  schema_imc, _ = u.get_type(imc)
+  if schema_imc is None:
+    return None, None
+  pair = []
+  if "CAS_READS" in schema_imc:
+    pair.append(("CAS_READS", 1.0))
+  if "CAS_WRITES" in schema_imc:
+    pair.append(("CAS_WRITES", 1.0))
+  if pair:
+    return imc, pair
+  return None, None
+
+
+def _node_imbalance_instantaneous_percent(u, typename, event_name):
+  """Imbalance for snapshot ``value`` columns (e.g. GPU util): per-time max vs each host."""
+  schema, _stats = u.get_type(typename)
+  if schema is None or event_name not in schema or not _stats:
+    return None
+  j = schema[event_name].index
+  nt = u.nt
+  max_per_t = np.full(nt, -np.inf, dtype=np.float64)
+  for hostname, stats in _stats.items():
+    max_per_t = np.maximum(max_per_t, stats[:, j].astype(np.float64))
+  max_imbalance = []
+  for hostname, stats in _stats.items():
+    v = stats[:, j].astype(np.float64)
+    valid = max_per_t > 0
+    if not np.any(valid):
+      max_imbalance.append(float("nan"))
+      continue
+    rel = (max_per_t[valid] - v[valid]) / max_per_t[valid]
+    max_imbalance.append(float(mean(rel)))
+  if not max_imbalance:
+    return None
+  return 100 * amax([0. if isnan(x) else x for x in max_imbalance])
+
+
+class max_gpu_power():
+  """Peak GPU power draw (W) from ``nvidia_gpu`` or ``amd_gpu`` samples."""
+
+  def compute_metric(self, u):
+    mx = 0.0
+    used = None
+    for typename in ("nvidia_gpu", "amd_gpu"):
+      schema, _stats = u.get_type(typename)
+      if schema is None or "power_usage" not in schema or not _stats:
+        continue
+      j = schema["power_usage"].index
+      for hostname, stats in _stats.items():
+        col = stats[:, j].astype(float)
+        if col.size:
+          mx = max(mx, float(amax(col)))
+          used = typename
+    if mx <= 0 or used is None:
+      return None, "nvidia_gpu", "W"
+    return mx, used, "W"
+
+
+class max_gpu_link_gbps():
+  """Peak PCIe+NVLink byte rate (GB/s) from ``nvidia_gpu`` ``gpu_io_link_total_bytes`` arc."""
+
+  def compute_metric(self, u):
+    typename = "nvidia_gpu"
+    schema, _stats = u.get_type(typename)
+    if schema is None or "gpu_io_link_total_bytes" not in schema:
+      return None, typename, "GB/s"
+    j = schema["gpu_io_link_total_bytes"].index
+    cluster_peak = _peak_interval_rate_from_cluster_mean(
+        u, typename, [j], 1e9)
+    if cluster_peak is not None:
+      return cluster_peak, typename, "GB/s"
+    max_bw = 0.0
+    for hostname, stats in _stats.items():
+      ratio = _per_interval_rate(stats[:, j], u.t)
+      fin = ratio[np.isfinite(ratio)]
+      if fin.size > 0:
+        max_bw = max(max_bw, float(fin.max()))
+    if max_bw <= 0:
+      return None, typename, "GB/s"
+    return max_bw / 1e9, typename, "GB/s"
+
+
+class max_gpu_clock_event_reasons():
+  """Maximum observed DCGM clock throttle reason bitmask (opaque; non-zero implies throttling)."""
+
+  def compute_metric(self, u):
+    mx = 0
+    used = None
+    for typename in ("nvidia_gpu", "amd_gpu"):
+      schema, _stats = u.get_type(typename)
+      if schema is None or "clocks_event_reasons" not in schema or not _stats:
+        continue
+      j = schema["clocks_event_reasons"].index
+      for hostname, stats in _stats.items():
+        col = stats[:, j].astype(np.float64)
+        if col.size:
+          cmax = int(amax(col))
+          if cmax > mx:
+            mx = cmax
+            used = typename
+    if used is None or mx == 0:
+      return None, "nvidia_gpu", "#"
+    return float(mx), used, "#"
+
+
+class dram_bw_node_imbalance():
+  """DRAM bandwidth rate imbalance across nodes (%); AMD DF MBW or Intel IMC CAS."""
+
+  def compute_metric(self, u):
+    typename, we = _dram_bw_weighted_events_for_imbalance(u)
+    if not typename or not we:
+      return None, "imc", "%"
+    v = _node_imbalance_percent_weighted(u, typename, we)
+    if v is None:
+      return None, typename, "%"
+    return v, typename, "%"
+
+
+class lnet_node_imbalance():
+  """LNET tx+rx byte rate imbalance across nodes (%)."""
+
+  def compute_metric(self, u):
+    typename = "lnet"
+    evw = [("tx_bytes", 1.0), ("rx_bytes", 1.0)]
+    schema, _stats = u.get_type(typename)
+    if schema is None or not _stats:
+      return None, typename, "%"
+    if not all(e in schema for e, _ in evw):
+      return None, typename, "%"
+    v = _node_imbalance_percent_weighted(u, typename, evw)
+    if v is None:
+      return None, typename, "%"
+    return v, typename, "%"
+
+
+class gpu_util_node_imbalance():
+  """GPU utilization imbalance across nodes from snapshot ``gpu_util`` (or legacy names)."""
+
+  def compute_metric(self, u):
+    for typename, events in (
+        ("nvidia_gpu", ("gpu_util", "utilization")),
+        ("amd_gpu", ("gpu_util",)),
+    ):
+      for ev in events:
+        v = _node_imbalance_instantaneous_percent(u, typename, ev)
+        if v is not None:
+          return v, typename, "%"
+    return None, "nvidia_gpu", "%"
+
+
+class tensor_node_imbalance():
+  """Tensor-pipe activity imbalance across nodes (``tensor_active`` snapshot)."""
+
+  def compute_metric(self, u):
+    for typename in ("nvidia_gpu", "amd_gpu"):
+      v = _node_imbalance_instantaneous_percent(u, typename, "tensor_active")
+      if v is not None:
+        return v, typename, "%"
+    return None, "nvidia_gpu", "%"
 
 
 class fabric_node_imbalance():

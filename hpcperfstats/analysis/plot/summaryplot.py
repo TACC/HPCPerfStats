@@ -22,6 +22,7 @@ from pandas import isna as pd_isna
 from pandas import to_datetime
 
 from hpcperfstats.analysis.gen.utils import (
+    CHA_TYPENAME_PRIORITY,
     INTEL_CORE_PMC_TYPES_ORDERED,
     INTEL_FP_ARITH_DOUBLE_EVENTS,
     INTEL_FP_ARITH_SINGLE_EVENTS,
@@ -46,6 +47,14 @@ local_timezone = cfg.get_local_timezone()
 
 _CAS_BW_CONV = 64 / (1024 * 1024 * 1024)
 _BYTES_TO_MB = 1 / (1024 * 1024)
+_BYTES_TO_GB = 1 / (1024 * 1024 * 1024)
+# Intel CHA counter names after dbload event map (must match host_data.event strings).
+_CHA_ARC_EVENTS = (
+    "SF_EVICTIONS_MES,E",
+    "LLC_LOOKUP_DATA_READ_LOCAL,E",
+    "BYPASS_CHA_IMC_ALL,E",
+    "LLC_LOOKUP_WRITE",
+)
 _SHARED_FS_READ_METRIC = "shared_fs_read_mb_s"
 _SHARED_FS_WRITE_METRIC = "shared_fs_write_mb_s"
 _SHARED_FS_READ_LABEL = "SharedFS Read [MB/s]"
@@ -247,6 +256,56 @@ _SUMMARY_SINGLE_SPECS = [
         "GPU mem total [GB]",
     ),
     ("nvidia_gpu", "value", ["gpu_count"], "nv_gpu_count", 1, "GPU count"),
+    (
+        "nvidia_gpu",
+        "value",
+        ["tensor_active"],
+        "nv_tensor_active",
+        1.0,
+        "GPU tensor pipe [%]",
+    ),
+    (
+        "nvidia_gpu",
+        "value",
+        ["sm_occupancy"],
+        "nv_sm_occupancy",
+        1.0,
+        "GPU SM occupancy [%]",
+    ),
+    (
+        "nvidia_gpu",
+        "value",
+        ["fp16_active"],
+        "nv_fp16_active",
+        1.0,
+        "GPU FP16 pipe [%]",
+    ),
+    (
+        "nvidia_gpu",
+        "value",
+        ["fp32_active"],
+        "nv_fp32_active",
+        1.0,
+        "GPU FP32 pipe [%]",
+    ),
+    ("nvidia_gpu", "value", ["mem_util"], "nv_mem_util_pct", 1.0, "GPU mem util [%]"),
+    ("nvidia_gpu", "value", ["power_usage"], "nv_power_w", 1.0, "GPU power [W]"),
+    (
+        "nvidia_gpu",
+        "value",
+        ["gpu_mem_bw_bytes_rate"],
+        "nv_gpu_mem_bw_gbs",
+        _BYTES_TO_GB,
+        "GPU HBM BW est. [GB/s]",
+    ),
+    (
+        "nvidia_gpu",
+        "arc",
+        ["gpu_io_link_total_bytes"],
+        "nv_gpu_link_gbs",
+        _BYTES_TO_GB,
+        "GPU PCIe+NVLink [GB/s]",
+    ),
     ("mem", "value", ["MemUsed"], "mem", 1 / (1024 * 1024), "CPU MemUsed[GB]"),
 ]
 
@@ -257,6 +316,16 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset({
     "nv_mem_used_mb",
     "nv_mem_total_mb",
     "nv_gpu_count",
+    "nv_tensor_active",
+    "nv_sm_occupancy",
+    "nv_fp16_active",
+    "nv_fp32_active",
+    "nv_mem_util_pct",
+    "nv_power_w",
+    "nv_gpu_mem_bw_gbs",
+    "nv_gpu_link_gbs",
+    "cha_counter_arc_sum",
+    "fabric_mb_per_avg_tensor",
     "opa_wait_cong",
     "opa_ecn",
     "numa_remote_refs",
@@ -435,6 +504,31 @@ def _merge_opa_fabric_if_no_ib_ext(df, jt):
   return merged
 
 
+def _merge_cha_counter_arc_sum(df, jt):
+  """Sum selected Intel CHA ``arc`` counters (all boxes); first matching CHA typename in schema."""
+  raw_schema = getattr(jt, "schema", None)
+  schema = raw_schema if isinstance(raw_schema, dict) else {}
+  for cha_typ in CHA_TYPENAME_PRIORITY:
+    if cha_typ not in schema:
+      continue
+    have = set(schema[cha_typ])
+    evs = [e for e in _CHA_ARC_EVENTS if e in have]
+    if not evs:
+      continue
+    agg = _get_agg_if_feasible(jt, cha_typ, "arc", evs, 1.0)
+    if agg.empty or "sum_val" not in agg.columns:
+      continue
+    merged = df.merge(
+        agg[["host", "time", "sum_val"]],
+        on=["host", "time"],
+        how="left",
+    )
+    merged["cha_counter_arc_sum"] = merged["sum_val"]
+    merged.drop(columns=["sum_val"], inplace=True)
+    return merged
+  return df
+
+
 def _add_fabric_mb_per_gflops_column(df):
   """Fabric MB/s divided by GFLOPS (AMD ``amd_flops`` or Intel ``flops64b``+``flops32b``) for comm/compute intensity."""
   if "ibbw" not in df.columns or not df["ibbw"].notna().any():
@@ -458,6 +552,23 @@ def _add_fabric_mb_per_gflops_column(df):
   df["fabric_mb_per_gflops"] = ratio
   if not df["fabric_mb_per_gflops"].notna().any():
     del df["fabric_mb_per_gflops"]
+  return df
+
+
+def _add_fabric_mb_per_avg_tensor_column(df):
+  """Fabric MB/s divided by tensor-activity fraction (tensor column is 0–100 from DCGM)."""
+  if "ibbw" not in df.columns or not df["ibbw"].notna().any():
+    return df
+  if "nv_tensor_active" not in df.columns:
+    return df
+  tens = np.asarray(df["nv_tensor_active"], dtype=np.float64)
+  num = np.asarray(df["ibbw"], dtype=np.float64)
+  denom = np.where(tens > 1e-6, tens / 100.0, np.nan)
+  with np.errstate(divide="ignore", invalid="ignore"):
+    ratio = num / denom
+  df["fabric_mb_per_avg_tensor"] = ratio
+  if not df["fabric_mb_per_avg_tensor"].notna().any():
+    del df["fabric_mb_per_avg_tensor"]
   return df
 
 
@@ -528,7 +639,9 @@ def _summary_metric_specs():
   for fw in _SUMMARY_FIRST_WIN_SPECS:
     out.append(("", fw["val_col"], [], fw["name"], 0, fw["label"]))
   out.append(("intel_imc", "arc", [], "mbw", _CAS_BW_CONV, "DRAMBW[GB/s]"))
+  out.append(("", "", [], "cha_counter_arc_sum", 0, "Intel CHA counters [#/s]"))
   out.append(("", "", [], "fabric_mb_per_gflops", 0, "Fabric MB/s per GFLOPS"))
+  out.append(("", "", [], "fabric_mb_per_avg_tensor", 0, "Fabric MB/s per tensor %"))
   out.append(("", "", [], _SHARED_FS_READ_METRIC, 0, _SHARED_FS_READ_LABEL))
   out.append(("", "", [], _SHARED_FS_WRITE_METRIC, 0, _SHARED_FS_WRITE_LABEL))
   out.append(("", "", [], _SHARED_FS_IOPS_METRIC, 0, _SHARED_FS_IOPS_LABEL))
@@ -549,9 +662,19 @@ def _summary_plot_order_key(metric_name):
       "numa_remote_refs": 2,
       "nv_gpu_util": 3,
       "nv_mem_used_mb": 4,
+      "nv_tensor_active": 5,
+      "nv_sm_occupancy": 6,
+      "nv_fp16_active": 7,
+      "nv_fp32_active": 8,
+      "nv_mem_util_pct": 9,
+      "nv_power_w": 10,
+      "nv_gpu_mem_bw_gbs": 11,
+      "nv_gpu_link_gbs": 12,
+      "cha_counter_arc_sum": 85,
       # Fabric block: bandwidth, comm/compute ratio, OPA quality, then shared FS.
       "ibbw": 990,
       "fabric_mb_per_gflops": 991,
+      "fabric_mb_per_avg_tensor": 9915,
       "opa_wait_cong": 992,
       "opa_ecn": 993,
       _SHARED_FS_READ_METRIC: 1000,
@@ -772,8 +895,10 @@ class SummaryPlot():
     df = _merge_shared_fs_metric(
         df, self.jt, _SHARED_FS_IOPS_METRIC, shared_iops_sources)
 
+    df = _merge_cha_counter_arc_sum(df, self.jt)
     df = _merge_opa_fabric_if_no_ib_ext(df, self.jt)
     df = _add_fabric_mb_per_gflops_column(df)
+    df = _add_fabric_mb_per_avg_tensor_column(df)
 
     metrics = _summary_metric_specs()
 

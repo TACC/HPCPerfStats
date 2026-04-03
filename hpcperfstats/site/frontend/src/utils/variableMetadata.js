@@ -147,6 +147,46 @@ export const VARIABLE_METADATA = {
     description:
       "Maximum across nodes of mean relative shortfall in fabric byte rate versus the busiest node (InfiniBand preferred, else Omni-Path).",
   },
+  dram_bw_node_imbalance: {
+    description:
+      "DRAM bandwidth imbalance across nodes from AMD DF memory channels or Intel IMC CAS counters (same relative shortfall construction as fabric node imbalance).",
+  },
+  lnet_node_imbalance: {
+    description:
+      "Lustre LNET client byte-rate imbalance across nodes (transmit plus receive counter rates).",
+  },
+  avg_tensor_active: {
+    description:
+      "Average DCGM tensor-pipe activity percentage (NVIDIA preferred; AMD GPU when the same field is populated).",
+  },
+  avg_gpu_mem_bw_gbps: {
+    description:
+      "Average estimated GPU HBM/memory bandwidth rate from DCGM (GB/s), job-mean across hosts and time buckets.",
+  },
+  max_gpu_power: {
+    description:
+      "Maximum sampled GPU power draw (watts) over the job across all GPUs and hosts.",
+  },
+  max_gpu_link_gbps: {
+    description:
+      "Peak PCIe plus NVLink byte rate (GB/s) from DCGM PROF link counters (NVIDIA nvidia_gpu type).",
+  },
+  max_gpu_clock_event_reasons: {
+    description:
+      "Largest observed DCGM GPU clock event reasons bitmask over the job (non-zero values indicate some clock throttling was reported).",
+  },
+  gpu_util_node_imbalance: {
+    description:
+      "GPU utilization imbalance across nodes from per-sample utilization versus the max-util GPU at each timestamp.",
+  },
+  tensor_node_imbalance: {
+    description:
+      "Tensor-pipe activity imbalance across nodes (same construction as GPU util imbalance on tensor_active).",
+  },
+  avg_fabric_mb_per_avg_tensor: {
+    description:
+      "Heuristic ratio: average fabric MB/s divided by average tensor-activity percent (scaled to a fractional duty cycle), for coupled MPI plus GPU workloads.",
+  },
   avg_flops: {
     description:
       "Average floating-point throughput computed from hardware floating-point performance counters over the job.",
