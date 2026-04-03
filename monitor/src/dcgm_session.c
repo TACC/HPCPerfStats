@@ -18,10 +18,6 @@ static dcgmReturn_t monitor_dcgm_try_embedded(dcgmHandle_t *outh)
     *outh = ep.dcgmHandle;
     return DCGM_ST_OK;
   }
-  if (rc == DCGM_ST_OK && ep.dcgmHandle == (dcgmHandle_t)0)
-    return dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, outh);
-  if (rc == DCGM_ST_VER_MISMATCH || rc == DCGM_ST_NOT_SUPPORTED || rc == DCGM_ST_BADPARAM)
-    return dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, outh);
   return dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, outh);
 }
 

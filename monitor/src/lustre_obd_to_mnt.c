@@ -131,5 +131,3 @@ char *lustre_obd_to_mnt(const char *name)
 
   return sb_mnt + 16 + 1;
 }
-
-/* XXX dict_destroy(&sb_dict, &free); */

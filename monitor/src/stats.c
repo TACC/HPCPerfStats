@@ -40,7 +40,8 @@ void key_stats_destroy(void *key)
 
 void stats_type_destroy(struct stats_type *st)
 {
-  extern char _edata[]; /* XXX */
+  /* Linker symbol: end of initialized data; strdup'd schema strings live above. */
+  extern char _edata[];
   if (st->st_schema_def >= _edata) {
     free(st->st_schema_def);
     st->st_schema_def = NULL;

@@ -81,7 +81,7 @@ static void ps_collect_loadavg(struct stats *stats)
              &load[1][0], &load[1][1],
              &load[2][0], &load[2][1],
              &nr_running, &nr_threads) != 8) {
-    /* XXX */
+    TRACE("ps: short or malformed `%s'\n", path);
     return;
   }
 
