@@ -1,3 +1,6 @@
+# ProtonDrive / cloud-sync conflict sidecars (never commit; not source of truth)
+*Edit conflict*
+
 *.lock
 patch
 .coverage
