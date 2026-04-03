@@ -101,3 +101,98 @@ def test_schema_iteration_yields_event_names_not_indices():
   schema = metrics._Schema(["SSE_D_ALL", "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE"])
   assert list(schema) == ["SSE_D_ALL", "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE"]
   assert schema["SSE_D_ALL"].index == 0
+
+
+def test_flops_node_imbalance_detects_slower_host():
+  """FLOPs imbalance uses the same relative shortfall vs peak host as CPU imbalance."""
+  schema = metrics._Schema(["FLOPS"])
+  fast = np.array([[0.0], [10.0], [40.0]], dtype=np.float64)
+  slow = np.array([[0.0], [5.0], [20.0]], dtype=np.float64)
+
+  class _Host:
+    def __init__(self, arr):
+      self.stats = {"amd64_pmc": {"agg": arr}}
+
+  class _Job:
+    def __init__(self):
+      self.hosts = {"a": _Host(fast), "b": _Host(slow)}
+      self.schemas = {"amd64_pmc": schema}
+      self.times = np.array([0.0, 1.0, 2.0], dtype=np.float64)
+      self.acct = {"cores": 1, "nodes": 2}
+
+  u = job_utils(_Job())
+  val, typename, units = metrics.flops_node_imbalance().compute_metric(u)
+  assert typename == "amd64_pmc"
+  assert units == "%"
+  assert val is not None
+  assert val > 40.0
+
+
+def test_fabric_node_imbalance_ib_ext_two_hosts():
+  schema = metrics._Schema(["port_xmit_data", "port_rcv_data"])
+  hi = np.array([[0.0, 0.0], [20.0, 20.0], [60.0, 60.0]], dtype=np.float64)
+  lo = np.array([[0.0, 0.0], [10.0, 10.0], [30.0, 30.0]], dtype=np.float64)
+
+  class _Host:
+    def __init__(self, arr):
+      self.stats = {"ib_ext": {"agg": arr}}
+
+  class _Job:
+    def __init__(self):
+      self.hosts = {"a": _Host(hi), "b": _Host(lo)}
+      self.schemas = {"ib_ext": schema}
+      self.times = np.array([0.0, 1.0, 2.0], dtype=np.float64)
+      self.acct = {"cores": 1, "nodes": 2}
+
+  u = job_utils(_Job())
+  val, typename, units = metrics.fabric_node_imbalance().compute_metric(u)
+  assert typename == "ib_ext"
+  assert units == "%"
+  assert val is not None
+  assert val > 40.0
+
+
+def test_max_numa_remote_rate_per_host_fallback():
+  schema = metrics._Schema(["numa_miss"])
+  a = np.array([[0.0], [100.0], [400.0]], dtype=np.float64)
+
+  class _Host:
+    def __init__(self):
+      self.stats = {"numa": {"agg": a}}
+
+  class _Job:
+    def __init__(self):
+      self.hosts = {"n1": _Host()}
+      self.schemas = {"numa": schema}
+      self.times = np.array([0.0, 1.0, 2.0], dtype=np.float64)
+      self.acct = {"cores": 1, "nodes": 1}
+
+  u = job_utils(_Job())
+  val, typename, units = metrics.max_numa_remote_rate().compute_metric(u)
+  assert typename == "numa"
+  assert units == "#/s"
+  assert val is not None
+  assert val >= 200.0
+
+
+def test_max_opa_congestion_rate_per_host_fallback():
+  schema = metrics._Schema(["PortXmitWait"])
+  a = np.array([[0.0], [50.0], [200.0]], dtype=np.float64)
+
+  class _Host:
+    def __init__(self):
+      self.stats = {"opa": {"agg": a}}
+
+  class _Job:
+    def __init__(self):
+      self.hosts = {"n1": _Host()}
+      self.schemas = {"opa": schema}
+      self.times = np.array([0.0, 1.0, 2.0], dtype=np.float64)
+      self.acct = {"cores": 1, "nodes": 1}
+
+  u = job_utils(_Job())
+  val, typename, units = metrics.max_opa_congestion_rate().compute_metric(u)
+  assert typename == "opa"
+  assert units == "#/s"
+  assert val is not None
+  assert val >= 100.0

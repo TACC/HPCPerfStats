@@ -53,6 +53,10 @@ _COMPLEX_PLACEHOLDER_TYPE_UNITS = {
     "max_lnetbw": ("lnet", "MB/s"),
     "max_mds": ("llite", "iops"),
     "max_packetrate": ("ib_ext", "#/s"),
+    "max_opa_congestion_rate": ("opa", "#/s"),
+    "max_numa_remote_rate": ("numa", "#/s"),
+    "flops_node_imbalance": ("pmc", "%"),
+    "fabric_node_imbalance": ("ib_ext", "%"),
     "mem_hwm": ("mem", "GiB"),
     "node_imbalance": ("cpu", "%"),
     "time_imbalance": ("cpu", "%"),
@@ -71,6 +75,10 @@ _COMPLEX_NO_DATA_REASONS = {
     "max_lnetbw": "No usable LNET telemetry for peak bandwidth",
     "max_mds": "No usable Lustre/NFS telemetry for metadata/operation rate",
     "max_packetrate": "No usable fabric telemetry for peak packet rate",
+    "max_opa_congestion_rate": "No usable OPA congestion telemetry",
+    "max_numa_remote_rate": "No usable NUMA remote-access telemetry",
+    "flops_node_imbalance": "No usable FLOPs telemetry for node imbalance",
+    "fabric_node_imbalance": "No usable fabric telemetry for node imbalance",
     "mem_hwm": "No usable memory telemetry for high-water mark",
     "node_imbalance": "No usable CPU telemetry for node imbalance",
     "time_imbalance": "No usable CPU telemetry for time imbalance",
@@ -391,6 +399,12 @@ class Metrics():
             "conv": 1.0 / (1024 * 1024),
             "units": "MB/s"
         },
+        "avg_fabric_mb_per_gflops": {
+            "typename": "ib_ext",
+            "events": [],
+            "conv": 0.0,
+            "units": "MB/GF",
+        },
         "avg_flops": {
             "typename": "amd64_pmc",
             "events": ["FLOPS"],
@@ -416,8 +430,12 @@ class Metrics():
 
     self.complex_metrics_list = [
         'avg_freq', 'avg_ethbw', 'avg_gpuutil', 'avg_packetsize',
-        'max_fabricbw', 'max_lnetbw', 'max_mds', 'max_packetrate', 'mem_hwm',
-        'node_imbalance', 'time_imbalance', 'vecpercent_64b',
+        'max_fabricbw', 'max_lnetbw', 'max_mds', 'max_packetrate',
+        'max_opa_congestion_rate', 'max_numa_remote_rate',
+        'mem_hwm',
+        'node_imbalance', 'time_imbalance', 'flops_node_imbalance',
+        'fabric_node_imbalance',
+        'vecpercent_64b',
         'avg_vector_width_64b', 'vecpercent_32b', 'avg_vector_width_32b'
     ]
     self._shared_pool = None
@@ -862,6 +880,23 @@ class Metrics():
           value, fabric_typename = self._job_arc_avg_ibbw(
               jt, cache=simple_metric_cache)
           row_type = fabric_typename or metric_obj["typename"]
+        elif metric_name == "avg_fabric_mb_per_gflops":
+          gf, flops_typename = self._job_arc_avg_flops(
+              jt, cache=simple_metric_cache)
+          fb, fabric_typename = self._job_arc_avg_ibbw(
+              jt, cache=simple_metric_cache)
+          if (
+              gf is not None and fb is not None
+              and float(gf) > 0 and float(fb) >= 0
+          ):
+            value = float(fb) / float(gf)
+            row_type = fabric_typename or flops_typename or metric_obj[
+                "typename"]
+          else:
+            value = None
+            row_type = (
+                fabric_typename or flops_typename or metric_obj["typename"]
+            )
         else:
           value = self.job_arc(jt, cache=simple_metric_cache, **metric_obj)
           row_type = metric_obj["typename"]
@@ -1335,6 +1370,159 @@ class mem_hwm():
       return None, typename, 'GiB'
     value = max_memusage / (2.**30)
     return value, typename, 'GiB'
+
+
+def _flops_weighted_events_for_schema(schema):
+  """Return [(event, weight), ...] for total FLOP-equivalent arc columns, or None."""
+  if schema is None:
+    return None
+  if "FLOPS" in schema:
+    return [("FLOPS", 1.0)]
+  fp = [(e, 1.0) for e in INTEL_FP_ARITH_ALL_EVENTS if e in schema]
+  if fp:
+    return fp
+  leg = [(e, float(w)) for e, w in INTEL_LEGACY_SSE_FLOP_EVENTS if e in schema]
+  if leg:
+    return leg
+  if "ARM_EST_FLOPS" in schema:
+    return [("ARM_EST_FLOPS", 1.0)]
+  return None
+
+
+def _node_imbalance_percent_weighted(u, typename, weighted_events):
+  """Like ``node_imbalance`` but on a weighted sum of counter columns."""
+  schema, _stats = u.get_type(typename)
+  if schema is None or not _stats:
+    return None
+  idx_w = []
+  for ev, w in weighted_events:
+    if ev not in schema:
+      return None
+    idx_w.append((schema[ev].index, float(w)))
+  max_usage = zeros(u.nt - 1)
+  for hostname, stats in _stats.items():
+    s = np.zeros(stats.shape[0], dtype=np.float64)
+    for j, w in idx_w:
+      s = s + w * stats[:, j].astype(np.float64)
+    rate = _per_interval_rate(s, u.t)
+    max_usage = maximum(max_usage, np.nan_to_num(rate, nan=-np.inf))
+  max_imbalance = []
+  for hostname, stats in _stats.items():
+    s = np.zeros(stats.shape[0], dtype=np.float64)
+    for j, w in idx_w:
+      s = s + w * stats[:, j].astype(np.float64)
+    rate = _per_interval_rate(s, u.t)
+    valid = (max_usage > 0) & np.isfinite(rate)
+    if np.any(valid):
+      rel = (max_usage[valid] - rate[valid]) / max_usage[valid]
+      max_imbalance += [mean(rel)]
+    else:
+      max_imbalance += [float("nan")]
+  if not max_imbalance:
+    return None
+  value = 100 * amax([0. if isnan(x) else x for x in max_imbalance])
+  return value
+
+
+class max_opa_congestion_rate():
+  """Peak interval rate of summed OPA congestion-related counters (events/s)."""
+
+  def compute_metric(self, u):
+    typename = "opa"
+    schema, _stats = u.get_type(typename)
+    if schema is None:
+      return None, typename, "#/s"
+    cands = (
+        "PortXmitWait",
+        "SwPortCongestion",
+        "PortRcvFECN",
+        "PortRcvBECN",
+    )
+    indices = [schema[ev].index for ev in cands if ev in schema]
+    if not indices:
+      return None, typename, "#/s"
+    cluster_peak = _peak_interval_rate_from_cluster_mean(
+        u, typename, indices, 1.0)
+    if cluster_peak is not None:
+      return cluster_peak, typename, "#/s"
+    max_r = 0.0
+    for hostname, stats in _stats.items():
+      s = np.zeros(stats.shape[0], dtype=np.float64)
+      for j in indices:
+        s = s + stats[:, j].astype(np.float64)
+      ratio = _per_interval_rate(s, u.t)
+      fin = ratio[np.isfinite(ratio)]
+      if fin.size > 0:
+        max_r = max(max_r, float(fin.max()))
+    if max_r <= 0:
+      return None, typename, "#/s"
+    return max_r, typename, "#/s"
+
+
+class max_numa_remote_rate():
+  """Peak interval rate of NUMA remote-access counters (miss/foreign/other_node)."""
+
+  def compute_metric(self, u):
+    typename = "numa"
+    schema, _stats = u.get_type(typename)
+    if schema is None:
+      return None, typename, "#/s"
+    cands = ("numa_miss", "numa_foreign", "other_node")
+    indices = [schema[ev].index for ev in cands if ev in schema]
+    if not indices:
+      return None, typename, "#/s"
+    cluster_peak = _peak_interval_rate_from_cluster_mean(
+        u, typename, indices, 1.0)
+    if cluster_peak is not None:
+      return cluster_peak, typename, "#/s"
+    max_r = 0.0
+    for hostname, stats in _stats.items():
+      s = np.zeros(stats.shape[0], dtype=np.float64)
+      for j in indices:
+        s = s + stats[:, j].astype(np.float64)
+      ratio = _per_interval_rate(s, u.t)
+      fin = ratio[np.isfinite(ratio)]
+      if fin.size > 0:
+        max_r = max(max_r, float(fin.max()))
+    if max_r <= 0:
+      return None, typename, "#/s"
+    return max_r, typename, "#/s"
+
+
+class flops_node_imbalance():
+  """FLOPs rate imbalance across nodes (%), same construction as ``node_imbalance``."""
+
+  def compute_metric(self, u):
+    typename = u.pmc
+    if not typename:
+      return None, "pmc", "%"
+    schema, _stats = u.get_type(typename)
+    we = _flops_weighted_events_for_schema(schema)
+    if not we or not _stats:
+      return None, typename, "%"
+    v = _node_imbalance_percent_weighted(u, typename, we)
+    if v is None:
+      return None, typename, "%"
+    return v, typename, "%"
+
+
+class fabric_node_imbalance():
+  """Fabric byte-rate imbalance across nodes (%); prefers ``ib_ext`` then ``opa``."""
+
+  def compute_metric(self, u):
+    for typename, evw in (
+        ("ib_ext", [("port_xmit_data", 1.0), ("port_rcv_data", 1.0)]),
+        ("opa", [("PortXmitData", 1.0), ("PortRcvData", 1.0)]),
+    ):
+      schema, _stats = u.get_type(typename)
+      if schema is None or not _stats:
+        continue
+      if not all(e in schema for e, _ in evw):
+        continue
+      v = _node_imbalance_percent_weighted(u, typename, evw)
+      if v is not None:
+        return v, typename, "%"
+    return None, "ib_ext", "%"
 
 
 class node_imbalance():

@@ -19,6 +19,10 @@ describe("getDescriptionForVariable", () => {
   it("returns a description for a documented metric", () => {
     expect(getDescriptionForVariable("avg_cpuusage")).toBeTruthy();
     expect(getDescriptionForVariable("mem_hwm")).toBeTruthy();
+    expect(getDescriptionForVariable("avg_fabric_mb_per_gflops")).toMatch(
+      /fabric bandwidth/i,
+    );
+    expect(getDescriptionForVariable("flops_node_imbalance")).toMatch(/FLOP/i);
   });
 
   it("documents shared filesystem metrics with the job detail section", () => {

@@ -17,6 +17,7 @@ from hpcperfstats.analysis.gen.jid_table import (
     end_summary_aggregate_counting,
 )
 
+import numpy as np
 from pandas import isna as pd_isna
 from pandas import to_datetime
 
@@ -176,6 +177,30 @@ _SUMMARY_SINGLE_SPECS = [
         "FabricBW[MB/s]",
     ),
     (
+        "opa",
+        "arc",
+        ["PortXmitWait", "SwPortCongestion"],
+        "opa_wait_cong",
+        1.0,
+        "OPA wait+switch congestion [#/s]",
+    ),
+    (
+        "opa",
+        "arc",
+        ["PortRcvFECN", "PortRcvBECN"],
+        "opa_ecn",
+        1.0,
+        "OPA FECN+BECN [#/s]",
+    ),
+    (
+        "numa",
+        "arc",
+        ["numa_miss", "numa_foreign", "other_node"],
+        "numa_remote_refs",
+        1.0,
+        "NUMA remote refs [#/s]",
+    ),
+    (
         "llite",
         "arc",
         [
@@ -232,6 +257,9 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset({
     "nv_mem_used_mb",
     "nv_mem_total_mb",
     "nv_gpu_count",
+    "opa_wait_cong",
+    "opa_ecn",
+    "numa_remote_refs",
     _SHARED_FS_READ_METRIC,
     _SHARED_FS_WRITE_METRIC,
     _SHARED_FS_IOPS_METRIC,
@@ -384,6 +412,55 @@ def _merge_nvidia_gpu_util_column(df, jt):
   return df
 
 
+def _merge_opa_fabric_if_no_ib_ext(df, jt):
+  """When ``ib_ext`` bytes are absent, fill ``ibbw`` from Omni-Path (same scaling as ``avg_ibbw`` OPA path)."""
+  if "ibbw" in df.columns and df["ibbw"].notna().any():
+    return df
+  agg = _get_agg_if_feasible(
+      jt,
+      "opa",
+      "arc",
+      ["PortXmitData", "PortRcvData"],
+      1.0 / 125000.0,
+  )
+  if agg.empty or "sum_val" not in agg.columns:
+    return df
+  merged = df.merge(
+      agg[["host", "time", "sum_val"]],
+      on=["host", "time"],
+      how="left",
+  )
+  merged["ibbw"] = merged["sum_val"]
+  merged.drop(columns=["sum_val"], inplace=True)
+  return merged
+
+
+def _add_fabric_mb_per_gflops_column(df):
+  """Fabric MB/s divided by GFLOPS (AMD ``amd_flops`` or Intel ``flops64b``+``flops32b``) for comm/compute intensity."""
+  if "ibbw" not in df.columns or not df["ibbw"].notna().any():
+    return df
+  gflops = None
+  if "amd_flops" in df.columns and df["amd_flops"].notna().any():
+    gflops = df["amd_flops"]
+  else:
+    intel_parts = [c for c in ("flops64b", "flops32b") if c in df.columns]
+    if intel_parts:
+      stack = df[intel_parts]
+      if stack.notna().any().any():
+        gflops = stack.fillna(0.0).sum(axis=1).where(stack.notna().any(axis=1))
+  if gflops is None:
+    return df
+  denom = np.asarray(gflops, dtype=np.float64)
+  num = np.asarray(df["ibbw"], dtype=np.float64)
+  with np.errstate(divide="ignore", invalid="ignore"):
+    ratio = num / denom
+  ratio = np.where(np.abs(denom) > 1e-30, ratio, np.nan)
+  df["fabric_mb_per_gflops"] = ratio
+  if not df["fabric_mb_per_gflops"].notna().any():
+    del df["fabric_mb_per_gflops"]
+  return df
+
+
 def iter_summary_aggregate_attempts():
   """Flat (typ, val_col, events, name, conv, label) for diagnostics."""
   for typ, val, events, name, conv, label in _SUMMARY_SINGLE_SPECS:
@@ -451,6 +528,7 @@ def _summary_metric_specs():
   for fw in _SUMMARY_FIRST_WIN_SPECS:
     out.append(("", fw["val_col"], [], fw["name"], 0, fw["label"]))
   out.append(("intel_imc", "arc", [], "mbw", _CAS_BW_CONV, "DRAMBW[GB/s]"))
+  out.append(("", "", [], "fabric_mb_per_gflops", 0, "Fabric MB/s per GFLOPS"))
   out.append(("", "", [], _SHARED_FS_READ_METRIC, 0, _SHARED_FS_READ_LABEL))
   out.append(("", "", [], _SHARED_FS_WRITE_METRIC, 0, _SHARED_FS_WRITE_LABEL))
   out.append(("", "", [], _SHARED_FS_IOPS_METRIC, 0, _SHARED_FS_IOPS_LABEL))
@@ -468,10 +546,14 @@ def _summary_plot_order_key(metric_name):
   priority = {
       "cpu": 0,
       "mem": 1,
-      "nv_gpu_util": 2,
-      "nv_mem_used_mb": 3,
-      # Keep fabric bandwidth at the end of the grid.
-      "ibbw": 999,
+      "numa_remote_refs": 2,
+      "nv_gpu_util": 3,
+      "nv_mem_used_mb": 4,
+      # Fabric block: bandwidth, comm/compute ratio, OPA quality, then shared FS.
+      "ibbw": 990,
+      "fabric_mb_per_gflops": 991,
+      "opa_wait_cong": 992,
+      "opa_ecn": 993,
       _SHARED_FS_READ_METRIC: 1000,
       _SHARED_FS_WRITE_METRIC: 1001,
       _SHARED_FS_IOPS_METRIC: 1002,
@@ -689,6 +771,9 @@ class SummaryPlot():
     )
     df = _merge_shared_fs_metric(
         df, self.jt, _SHARED_FS_IOPS_METRIC, shared_iops_sources)
+
+    df = _merge_opa_fabric_if_no_ib_ext(df, self.jt)
+    df = _add_fabric_mb_per_gflops_column(df)
 
     metrics = _summary_metric_specs()
 

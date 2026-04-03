@@ -620,7 +620,6 @@ def test_job_metrics_catalog_entries_matches_simple_plus_complex():
   """Catalog length is all simple + complex metric names (API / update_metrics)."""
   entries = job_metrics_catalog_entries()
   assert len(entries) == expected_job_metric_row_count()
-  assert len(entries) == 22
   names = [e["metric"] for e in entries]
   assert names.count("avg_cpuusage") == 1
   assert "mem_hwm" in names

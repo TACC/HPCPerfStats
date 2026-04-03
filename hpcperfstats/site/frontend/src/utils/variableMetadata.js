@@ -127,6 +127,26 @@ export const VARIABLE_METADATA = {
     description:
       "Average fabric (InfiniBand/OPA) bandwidth computed from transmitted and received data counters over the job.",
   },
+  avg_fabric_mb_per_gflops: {
+    description:
+      "Ratio of average fabric bandwidth (MB/s) to average floating-point throughput (GFLOP/s), using the same job-mean fabric and FLOPs paths as avg_ibbw and avg_flops.",
+  },
+  max_opa_congestion_rate: {
+    description:
+      "Peak combined rate of Omni-Path congestion-related port counters (wait, switch congestion, FECN/BECN) over the job.",
+  },
+  max_numa_remote_rate: {
+    description:
+      "Peak combined rate of NUMA counters indicating non-local memory access (miss, foreign, other_node) over the job.",
+  },
+  flops_node_imbalance: {
+    description:
+      "Maximum across nodes of mean relative shortfall in FLOP rate versus the fastest node (same construction as CPU node imbalance).",
+  },
+  fabric_node_imbalance: {
+    description:
+      "Maximum across nodes of mean relative shortfall in fabric byte rate versus the busiest node (InfiniBand preferred, else Omni-Path).",
+  },
   avg_flops: {
     description:
       "Average floating-point throughput computed from hardware floating-point performance counters over the job.",
