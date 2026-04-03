@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define NVIDIA_GPU_NFIELDS 17
+#define NVIDIA_GPU_NFIELDS 19
 
 #define KEYS \
   X(gpu_util, "", "GPU utilization in %"), \
@@ -11,6 +11,8 @@
   X(mem_total_mb, "U=MB", "Total GPU framebuffer memory (device-reported MB)"), \
   X(mem_used_mb, "U=MB", "Used GPU framebuffer memory (device-reported MB)"), \
   X(power_usage, "U=W", "Power draw in Watts"), \
+  X(sysio_power_usage, "U=W", "DCGM SysIO instantaneous power (W) when exposed; do not sum with power_usage/module without vendor guidance"), \
+  X(module_power_usage, "U=W", "DCGM module-scope power (W) on superchips when exposed; may overlap GPU+Grace readings—avoid double-counting in totals"), \
   X(temperature, "U=C", "GPU temperature in C"), \
   X(fp64_active, "", "Ratio of cycles fp64 pipes are active (in %)"), \
   X(sm_active, "", "Ratio of cycles an SM has at least one warp assigned (in %)"), \
@@ -36,6 +38,8 @@ typedef struct dcgm_data {
   int64_t temperature;
   int64_t clocks_event_reasons;
   double power_usage;
+  double sysio_power_usage;
+  double module_power_usage;
   double tensor_active;
   double fp64_active;
   double fp32_active;

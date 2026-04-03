@@ -13,6 +13,7 @@
 
 #define MSR_PKG_ENERGY_STATUS_INTEL 0x611u
 #define MSR_PP0_ENERGY_STATUS_INTEL 0x639u
+#define MSR_PP1_ENERGY_STATUS_INTEL 0x641u
 #define MSR_DRAM_ENERGY_STATUS_INTEL 0x619u
 
 #define MSR_AMD_CORE_ENERGY_STATUS 0xC001029Au
@@ -64,7 +65,8 @@ static void
 collect_intel_socket_mj(int cpu_id, unsigned long long *pkg_mj,
                           unsigned long long *core_mj,
                           unsigned long long *dram_mj, int *has_pkg,
-                          int *has_core, int *has_dram)
+                          int *has_core, int *has_dram,
+                          unsigned long long *pp1_mj, int *has_pp1)
 {
   *has_pkg = *has_core = *has_dram = 0;
   try_read_mj(cpu_id, MSR_PKG_ENERGY_STATUS_INTEL, (int)PKG, pkg_mj, has_pkg);
@@ -72,6 +74,12 @@ collect_intel_socket_mj(int cpu_id, unsigned long long *pkg_mj,
               has_core);
   try_read_mj(cpu_id, MSR_DRAM_ENERGY_STATUS_INTEL, (int)DRAM, dram_mj,
               has_dram);
+  if (pp1_mj != NULL && has_pp1 != NULL) {
+    *has_pp1 = 0;
+    *pp1_mj = 0;
+    try_read_mj(cpu_id, MSR_PP1_ENERGY_STATUS_INTEL, (int)PP1, pp1_mj,
+                has_pp1);
+  }
 }
 
 static void
@@ -93,7 +101,8 @@ likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id,
                               unsigned long long *pkg_mj,
                               unsigned long long *core_mj,
                               unsigned long long *dram_mj, int *has_pkg,
-                              int *has_core, int *has_dram)
+                              int *has_core, int *has_dram,
+                              unsigned long long *pp1_mj, int *has_pp1)
 {
 #ifdef HAVE_LIKWID
   PowerInfo_t pi;
@@ -104,6 +113,10 @@ likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id,
     return -1;
   *pkg_mj = *core_mj = *dram_mj = 0;
   *has_pkg = *has_core = *has_dram = 0;
+  if (pp1_mj != NULL && has_pp1 != NULL) {
+    *pp1_mj = 0;
+    *has_pp1 = 0;
+  }
   if (cpu_id < 0 || cpu_id >= nr_cpus) {
     TRACE("likwid_rapl: invalid cpu_id %d\n", cpu_id);
     return -1;
@@ -115,7 +128,7 @@ likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id,
   }
 #if defined(MONITOR_ARCH_INTEL)
   collect_intel_socket_mj(cpu_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core,
-                          has_dram);
+                          has_dram, pp1_mj, has_pp1);
 #elif defined(MONITOR_ARCH_AMD)
   collect_amd_socket_mj(cpu_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core,
                         has_dram);
@@ -123,7 +136,8 @@ likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id,
   (void)cpu_id;
   return -1;
 #endif
-  return (*has_pkg || *has_core || *has_dram) ? 0 : -1;
+  return (*has_pkg || *has_core || *has_dram
+	  || (has_pp1 != NULL && *has_pp1)) ? 0 : -1;
 #else
   (void)cpu_id;
   (void)socket_id;
@@ -133,6 +147,8 @@ likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id,
   (void)has_pkg;
   (void)has_core;
   (void)has_dram;
+  (void)pp1_mj;
+  (void)has_pp1;
   return -1;
 #endif
 }

@@ -54,8 +54,9 @@
 
 #define KEYS						\
   X(MSR_PKG_ENERGY_STATUS, "E,W=32,U=mJ", ""),		\
-    X(MSR_PP0_ENERGY_STATUS, "E,W=32,U=mJ", ""),		\
-    X(MSR_DRAM_ENERGY_STATUS, "E,W=32,U=mJ", "")
+  X(MSR_PP0_ENERGY_STATUS, "E,W=32,U=mJ", ""),		\
+  X(MSR_PP1_ENERGY_STATUS, "E,W=32,U=mJ", ""),		\
+  X(MSR_DRAM_ENERGY_STATUS, "E,W=32,U=mJ", "")
 
 static int intel_rapl_begin(struct stats_type *type)
 {
@@ -74,9 +75,11 @@ static void intel_rapl_collect_socket(struct stats_type *type, char *cpu, int pk
   unsigned long long pkg_mj = 0;
   unsigned long long core_mj = 0;
   unsigned long long dram_mj = 0;
+  unsigned long long pp1_mj = 0;
   int has_pkg = 0;
   int has_core = 0;
   int has_dram = 0;
+  int has_pp1 = 0;
   
   snprintf(pkg, sizeof(pkg), "%d", pkg_id);
 
@@ -87,7 +90,7 @@ static void intel_rapl_collect_socket(struct stats_type *type, char *cpu, int pk
     goto out;
   if (likwid_rapl_collect_socket_mj(atoi(cpu), (unsigned int) pkg_id, &pkg_mj,
                                     &core_mj, &dram_mj, &has_pkg, &has_core,
-                                    &has_dram) < 0) {
+                                    &has_dram, &pp1_mj, &has_pp1) < 0) {
     TRACE("unable to collect LIKWID RAPL energy for pkg %d (cpu %s)\n", pkg_id,
           cpu);
     goto out;
@@ -96,6 +99,8 @@ static void intel_rapl_collect_socket(struct stats_type *type, char *cpu, int pk
     stats_set(stats, "MSR_PKG_ENERGY_STATUS", pkg_mj);
   if (has_core)
     stats_set(stats, "MSR_PP0_ENERGY_STATUS", core_mj);
+  if (has_pp1)
+    stats_set(stats, "MSR_PP1_ENERGY_STATUS", pp1_mj);
   if (has_dram)
     stats_set(stats, "MSR_DRAM_ENERGY_STATUS", dram_mj);
 

@@ -35,6 +35,12 @@
 #ifndef DCGM_FI_PROF_NVLINK_RX_BYTES
 #define DCGM_FI_PROF_NVLINK_RX_BYTES 1012
 #endif
+#ifndef DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT
+#define DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT 1132
+#endif
+#ifndef DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT
+#define DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT 1133
+#endif
 
 #define DBL_TO_LLU(x) ((unsigned long long) ((x) + 0.5))
 #define DBL_TO_LLU_PERCENT(x) ((unsigned long long) ((100.0 * (x)) + 0.5))
@@ -57,7 +63,9 @@ static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
   DCGM_FI_PROF_PCIE_TX_BYTES,
   DCGM_FI_PROF_PCIE_RX_BYTES,
   DCGM_FI_PROF_NVLINK_TX_BYTES,
-  DCGM_FI_PROF_NVLINK_RX_BYTES
+  DCGM_FI_PROF_NVLINK_RX_BYTES,
+  DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT,
+  DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT
 };
 
 /* Coarse roofline approximations from utilization signals. */
@@ -107,6 +115,18 @@ static int bounded_ratio(double v, double *out)
 /*
  * DCGM reports PROF byte fields as int64 or fp64 depending on build; normalize to uint64 for deltas.
  */
+static void dcgm_field_value_watts(const dcgmFieldValue_v1 *v, double *out)
+{
+  if (v->fieldType == DCGM_FT_DOUBLE) {
+    *out = v->value.dbl;
+    return;
+  }
+  if (v->fieldType == DCGM_FT_INT64)
+    *out = (double) v->value.i64;
+  else
+    *out = 0.0;
+}
+
 static void dcgm_field_value_u64(const dcgmFieldValue_v1 *v, uint64_t *out)
 {
   if (v->fieldType == DCGM_FT_DOUBLE) {
@@ -186,7 +206,13 @@ static int list_field_values(unsigned int gpu_id,
         data[gpu_id].temperature = values[i].value.i64;
         break;
       case DCGM_FI_DEV_POWER_USAGE:
-        data[gpu_id].power_usage = values[i].value.dbl;
+        dcgm_field_value_watts(&values[i], &data[gpu_id].power_usage);
+        break;
+      case DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT:
+        dcgm_field_value_watts(&values[i], &data[gpu_id].sysio_power_usage);
+        break;
+      case DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT:
+        dcgm_field_value_watts(&values[i], &data[gpu_id].module_power_usage);
         break;
       case DCGM_FI_DEV_GPU_UTIL:
         data[gpu_id].gpu_util = values[i].value.i64;
@@ -342,6 +368,8 @@ static int nvidia_gpu_collect_dev(struct stats *stats,
   stats_set(stats, "mem_total_mb", I64_TO_LLU(row->fb_total_mb));
   stats_set(stats, "mem_used_mb", I64_TO_LLU(row->fb_used_mb));
   stats_set(stats, "power_usage", DBL_TO_LLU(row->power_usage));
+  stats_set(stats, "sysio_power_usage", DBL_TO_LLU(row->sysio_power_usage));
+  stats_set(stats, "module_power_usage", DBL_TO_LLU(row->module_power_usage));
   stats_set(stats, "fp64_active", DBL_TO_LLU_PERCENT(row->fp64_active));
   stats_set(stats, "fp32_active", DBL_TO_LLU_PERCENT(row->fp32_active));
   stats_set(stats, "fp16_active", DBL_TO_LLU_PERCENT(row->fp16_active));

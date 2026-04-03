@@ -11,6 +11,7 @@ int likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id,
                                  unsigned long long *pkg_mj,
                                  unsigned long long *core_mj,
                                  unsigned long long *dram_mj,
-                                 int *has_pkg, int *has_core, int *has_dram);
+                                 int *has_pkg, int *has_core, int *has_dram,
+                                 unsigned long long *pp1_mj, int *has_pp1);
 
 #endif

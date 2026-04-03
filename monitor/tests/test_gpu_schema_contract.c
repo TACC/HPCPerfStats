@@ -28,6 +28,8 @@ static void assert_common_gpu_roofline_keys(const char *schema_def)
 
 int main(void)
 {
+  assert(strstr(nvidia_schema_def, " module_power_usage,U=W") != NULL);
+  assert(strstr(nvidia_schema_def, " sysio_power_usage,U=W") != NULL);
   assert_common_gpu_roofline_keys(nvidia_schema_def);
   assert_common_gpu_roofline_keys(amd_schema_def);
   printf("test_gpu_schema_contract passed\n");

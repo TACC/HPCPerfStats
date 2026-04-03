@@ -52,8 +52,8 @@ static void amd64_rapl_collect_cpu(struct stats_type *type, char *cpu, char *soc
   if (stats == NULL)
     goto out;
   if (likwid_rapl_collect_socket_mj(atoi(cpu), socket_id, &pkg_mj, &core_mj,
-                                    &dram_mj, &has_pkg, &has_core, &has_dram) <
-      0) {
+                                    &dram_mj, &has_pkg, &has_core, &has_dram,
+                                    NULL, NULL) < 0) {
     TRACE("unable to collect LIKWID RAPL energy for socket %s (cpu %s)\n", socket,
           cpu);
     goto out;

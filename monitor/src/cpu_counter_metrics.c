@@ -52,6 +52,12 @@
 #ifndef DCGM_FI_DEV_CPU_CLOCK_CURRENT
 #define DCGM_FI_DEV_CPU_CLOCK_CURRENT 1120
 #endif
+#ifndef DCGM_FI_DEV_CPU_POWER_UTIL_CURRENT
+#define DCGM_FI_DEV_CPU_POWER_UTIL_CURRENT 1130
+#endif
+#ifndef DCGM_FI_DEV_CPU_POWER_LIMIT
+#define DCGM_FI_DEV_CPU_POWER_LIMIT 1131
+#endif
 
 static int g_dcgm_ready = 0;
 static dcgmHandle_t g_dcgm_handle = (dcgmHandle_t) NULL;
@@ -80,6 +86,22 @@ static unsigned long long *g_dcgm_fp_256_s = NULL;
 static unsigned long long *g_dcgm_fp_512_s = NULL;
 static long long *g_dcgm_last_ts = NULL;
 static long long g_dcgm_mono_prev_us = 0;
+
+/* DCGM_FE_CPU (socket) power: fields 1130/1131; mapped to logical CPUs via sysfs packages. */
+static dcgmGpuGrp_t g_dcgm_sock_group = (dcgmGpuGrp_t) NULL;
+static dcgmFieldGrp_t g_dcgm_sock_fg = (dcgmFieldGrp_t) NULL;
+static int *g_dcgm_cpu_entity_list = NULL;
+static int g_dcgm_ncpu_entities = 0;
+static int *g_dcgm_logical_to_power_slot = NULL;
+static double *g_dcgm_sock_power_util = NULL;
+static double *g_dcgm_sock_power_limit = NULL;
+static int g_dcgm_sock_map_mismatch_logged = 0;
+static const unsigned short g_dcgm_cpu_power_field_ids[] = {
+  DCGM_FI_DEV_CPU_POWER_UTIL_CURRENT,
+  DCGM_FI_DEV_CPU_POWER_LIMIT
+};
+#define DCGM_CPU_POWER_NFIELDS \
+  ((unsigned int) (sizeof(g_dcgm_cpu_power_field_ids) / sizeof(g_dcgm_cpu_power_field_ids[0])))
 
 /* Approximation knobs for ARM/DCGM-derived roofline metrics.
  * DCGM CPU does not expose direct DRAM-channel bytes or architectural FP
@@ -392,6 +414,270 @@ static int read_dcgm_cpu_sample(int core_id, struct dcgm_cpu_sample *s)
   return 0;
 }
 
+static int dcgm_cmp_int(const void *a, const void *b)
+{
+  int x = *(const int *) a;
+  int y = *(const int *) b;
+
+  if (x < y)
+    return -1;
+  if (x > y)
+    return 1;
+  return 0;
+}
+
+static int dcgm_sysfs_physical_package_id(int cpu_idx, int *pkg_out)
+{
+  char path[120];
+  char buf[32];
+  int fd;
+  ssize_t n;
+  long v;
+
+  if (pkg_out == NULL)
+    return -1;
+  snprintf(path, sizeof(path),
+	   "/sys/devices/system/cpu/cpu%d/topology/physical_package_id", cpu_idx);
+  fd = open(path, O_RDONLY);
+  if (fd < 0)
+    return -1;
+  n = read(fd, buf, sizeof(buf) - 1);
+  close(fd);
+  if (n <= 0)
+    return -1;
+  buf[n] = '\0';
+  if (sscanf(buf, "%ld", &v) != 1)
+    return -1;
+  *pkg_out = (int) v;
+  return 0;
+}
+
+static unsigned long long dcgm_watts_dbl_to_ull(double v)
+{
+  if (v <= 0.0)
+    return 0ULL;
+  if (v >= (double) ULLONG_MAX)
+    return ULLONG_MAX;
+  return (unsigned long long) (v + 0.5);
+}
+
+static void dcgm_cpu_sock_watch_cleanup(void)
+{
+  if (g_dcgm_handle != (dcgmHandle_t) NULL) {
+    if (g_dcgm_sock_fg != (dcgmFieldGrp_t) NULL)
+      (void) dcgmFieldGroupDestroy(g_dcgm_handle, g_dcgm_sock_fg);
+    if (g_dcgm_sock_group != (dcgmGpuGrp_t) NULL)
+      (void) dcgmGroupDestroy(g_dcgm_handle, g_dcgm_sock_group);
+  }
+  g_dcgm_sock_fg = (dcgmFieldGrp_t) NULL;
+  g_dcgm_sock_group = (dcgmGpuGrp_t) NULL;
+  free(g_dcgm_cpu_entity_list);
+  g_dcgm_cpu_entity_list = NULL;
+  g_dcgm_ncpu_entities = 0;
+  free(g_dcgm_logical_to_power_slot);
+  g_dcgm_logical_to_power_slot = NULL;
+  free(g_dcgm_sock_power_util);
+  g_dcgm_sock_power_util = NULL;
+  free(g_dcgm_sock_power_limit);
+  g_dcgm_sock_power_limit = NULL;
+  g_dcgm_sock_map_mismatch_logged = 0;
+}
+
+/*
+ * Pair Linux physical_package_id values (sorted unique) with sorted DCGM_FE_CPU
+ * entity ids when counts match; otherwise disable per-socket power for this session.
+ */
+static int dcgm_topology_build_sock_power_map(void)
+{
+  int *pkg_per_cpu = NULL;
+  int *sorted_pkgs = NULL;
+  int *unique_pkg = NULL;
+  dcgm_field_eid_t *ent_buf = NULL;
+  int n_ent = 0;
+  int i, j, nu;
+  dcgmReturn_t rc;
+
+  dcgm_cpu_sock_watch_cleanup();
+  if (nr_cpus <= 0 || g_dcgm_handle == (dcgmHandle_t) NULL)
+    return -1;
+
+  pkg_per_cpu = (int *) calloc((size_t) nr_cpus, sizeof(*pkg_per_cpu));
+  sorted_pkgs = (int *) calloc((size_t) nr_cpus, sizeof(*sorted_pkgs));
+  unique_pkg = (int *) calloc((size_t) nr_cpus, sizeof(*unique_pkg));
+  g_dcgm_logical_to_power_slot = (int *) calloc((size_t) nr_cpus, sizeof(*g_dcgm_logical_to_power_slot));
+  if (pkg_per_cpu == NULL || sorted_pkgs == NULL || unique_pkg == NULL
+      || g_dcgm_logical_to_power_slot == NULL) {
+    free(pkg_per_cpu);
+    free(sorted_pkgs);
+    free(unique_pkg);
+    free(g_dcgm_logical_to_power_slot);
+    g_dcgm_logical_to_power_slot = NULL;
+    return -1;
+  }
+
+  for (i = 0; i < nr_cpus; i++) {
+    if (dcgm_sysfs_physical_package_id(i, &pkg_per_cpu[i]) != 0)
+      pkg_per_cpu[i] = 0;
+    sorted_pkgs[i] = pkg_per_cpu[i];
+  }
+  qsort(sorted_pkgs, (size_t) nr_cpus, sizeof(*sorted_pkgs), dcgm_cmp_int);
+  nu = 0;
+  for (i = 0; i < nr_cpus; i++) {
+    if (i == 0 || sorted_pkgs[i] != sorted_pkgs[i - 1])
+      unique_pkg[nu++] = sorted_pkgs[i];
+  }
+
+  n_ent = 32;
+  ent_buf = (dcgm_field_eid_t *) calloc((size_t) n_ent, sizeof(*ent_buf));
+  if (ent_buf == NULL)
+    goto map_fail;
+  rc = dcgmGetEntityGroupEntities(g_dcgm_handle, DCGM_FE_CPU, ent_buf, &n_ent, 0);
+  if (rc == DCGM_ST_INSUFFICIENT_SIZE && n_ent > 0) {
+    free(ent_buf);
+    ent_buf = (dcgm_field_eid_t *) calloc((size_t) n_ent, sizeof(*ent_buf));
+    if (ent_buf == NULL)
+      goto map_fail;
+    rc = dcgmGetEntityGroupEntities(g_dcgm_handle, DCGM_FE_CPU, ent_buf, &n_ent, 0);
+  }
+  if (rc != DCGM_ST_OK || n_ent <= 0) {
+    TRACE("DCGM_FE_CPU enumeration failed (rc=%d n=%d); Grace CPU power fields skipped\n",
+	  (int) rc, n_ent);
+    goto map_fail;
+  }
+
+  g_dcgm_cpu_entity_list = (int *) calloc((size_t) n_ent, sizeof(*g_dcgm_cpu_entity_list));
+  g_dcgm_sock_power_util = (double *) calloc((size_t) n_ent, sizeof(*g_dcgm_sock_power_util));
+  g_dcgm_sock_power_limit = (double *) calloc((size_t) n_ent, sizeof(*g_dcgm_sock_power_limit));
+  if (g_dcgm_cpu_entity_list == NULL || g_dcgm_sock_power_util == NULL
+      || g_dcgm_sock_power_limit == NULL)
+    goto map_fail;
+
+  for (i = 0; i < n_ent; i++)
+    g_dcgm_cpu_entity_list[i] = (int) ent_buf[i];
+  free(ent_buf);
+  ent_buf = NULL;
+  qsort(g_dcgm_cpu_entity_list, (size_t) n_ent, sizeof(*g_dcgm_cpu_entity_list), dcgm_cmp_int);
+
+  if (nu != n_ent) {
+    if (!g_dcgm_sock_map_mismatch_logged) {
+      TRACE("DCGM CPU power: package count %d != DCGM_FE_CPU count %d; socket power not mapped\n",
+	    nu, n_ent);
+      g_dcgm_sock_map_mismatch_logged = 1;
+    }
+    for (i = 0; i < nr_cpus; i++)
+      g_dcgm_logical_to_power_slot[i] = -1;
+  } else {
+    for (i = 0; i < nr_cpus; i++) {
+      int p = pkg_per_cpu[i];
+      int slot = -1;
+
+      for (j = 0; j < nu; j++) {
+	if (unique_pkg[j] == p) {
+	  slot = j;
+	  break;
+	}
+      }
+      g_dcgm_logical_to_power_slot[i] = slot;
+    }
+  }
+
+  g_dcgm_ncpu_entities = n_ent;
+  free(pkg_per_cpu);
+  free(sorted_pkgs);
+  free(unique_pkg);
+  return 0;
+
+map_fail:
+  free(ent_buf);
+  free(pkg_per_cpu);
+  free(sorted_pkgs);
+  free(unique_pkg);
+  dcgm_cpu_sock_watch_cleanup();
+  return -1;
+}
+
+static int dcgm_cpu_sock_watch_install(void)
+{
+  dcgmReturn_t rc;
+  int j;
+
+  if (g_dcgm_handle == (dcgmHandle_t) NULL || g_dcgm_ncpu_entities <= 0
+      || g_dcgm_cpu_entity_list == NULL)
+    return -1;
+
+  rc = dcgmGroupCreate(g_dcgm_handle, DCGM_GROUP_EMPTY, "hpc_cpu_sock", &g_dcgm_sock_group);
+  if (rc != DCGM_ST_OK)
+    goto sock_fail;
+  for (j = 0; j < g_dcgm_ncpu_entities; j++) {
+    rc = dcgmGroupAddEntity(g_dcgm_handle, g_dcgm_sock_group, DCGM_FE_CPU,
+			    (dcgm_field_eid_t) g_dcgm_cpu_entity_list[j]);
+    if (rc != DCGM_ST_OK)
+      goto sock_fail;
+  }
+  rc = dcgmFieldGroupCreate(g_dcgm_handle, DCGM_CPU_POWER_NFIELDS,
+			    (unsigned short *) g_dcgm_cpu_power_field_ids, "hpc_cpu_sock_fg",
+			    &g_dcgm_sock_fg);
+  if (rc != DCGM_ST_OK)
+    goto sock_fail;
+  rc = dcgmWatchFields(g_dcgm_handle, g_dcgm_sock_group, g_dcgm_sock_fg, 1000000LL, 3600.0, 3600);
+  if (rc != DCGM_ST_OK)
+    goto sock_fail;
+  return 0;
+
+sock_fail:
+  TRACE("DCGM CPU socket power watch failed (rc=%d); using per-entity reads\n", (int) rc);
+  if (g_dcgm_sock_fg != (dcgmFieldGrp_t) NULL)
+    (void) dcgmFieldGroupDestroy(g_dcgm_handle, g_dcgm_sock_fg);
+  if (g_dcgm_sock_group != (dcgmGpuGrp_t) NULL)
+    (void) dcgmGroupDestroy(g_dcgm_handle, g_dcgm_sock_group);
+  g_dcgm_sock_fg = (dcgmFieldGrp_t) NULL;
+  g_dcgm_sock_group = (dcgmGpuGrp_t) NULL;
+  return -1;
+}
+
+static void dcgm_cpu_refresh_socket_power(void)
+{
+  int j;
+
+  if (g_dcgm_handle == (dcgmHandle_t) NULL || g_dcgm_ncpu_entities <= 0
+      || g_dcgm_cpu_entity_list == NULL || g_dcgm_sock_power_util == NULL
+      || g_dcgm_sock_power_limit == NULL)
+    return;
+
+  for (j = 0; j < g_dcgm_ncpu_entities; j++) {
+    dcgmFieldValue_v1 vals[DCGM_CPU_POWER_NFIELDS];
+    int eid = g_dcgm_cpu_entity_list[j];
+    double u = 0.0, lim = 0.0;
+
+    memset(vals, 0, sizeof(vals));
+    if (dcgmEntityGetLatestValues(g_dcgm_handle, DCGM_FE_CPU, eid,
+				  (unsigned short *) g_dcgm_cpu_power_field_ids,
+				  DCGM_CPU_POWER_NFIELDS, vals) != DCGM_ST_OK) {
+      g_dcgm_sock_power_util[j] = 0.0;
+      g_dcgm_sock_power_limit[j] = 0.0;
+      continue;
+    }
+    if (vals[0].status == DCGM_ST_OK) {
+      if (vals[0].fieldType == DCGM_FT_DOUBLE)
+	u = vals[0].value.dbl;
+      else
+	u = (double) vals[0].value.i64;
+    }
+    if (vals[1].status == DCGM_ST_OK) {
+      if (vals[1].fieldType == DCGM_FT_DOUBLE)
+	lim = vals[1].value.dbl;
+      else
+	lim = (double) vals[1].value.i64;
+    }
+    if (u < 0.0)
+      u = 0.0;
+    if (lim < 0.0)
+      lim = 0.0;
+    g_dcgm_sock_power_util[j] = u;
+    g_dcgm_sock_power_limit[j] = lim;
+  }
+}
+
 static void publish_dcgm_cpu_stats(struct stats *stats, int i)
 {
   stats_set(stats, "CTR0", g_dcgm_ctr0[i]);
@@ -423,6 +709,23 @@ static void publish_dcgm_cpu_stats(struct stats *stats, int i)
   stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE", g_dcgm_fp_512_s[i]);
   stats_set(stats, "ARM_EST_FLOPS", g_dcgm_arm_est_flops[i]);
   stats_set(stats, "ARM_DRAM_BW_BYTES", g_dcgm_arm_dram_bytes[i]);
+  if (g_dcgm_logical_to_power_slot != NULL && i >= 0 && i < nr_cpus) {
+    int slot = g_dcgm_logical_to_power_slot[i];
+
+    if (slot >= 0 && slot < g_dcgm_ncpu_entities && g_dcgm_sock_power_util != NULL
+	&& g_dcgm_sock_power_limit != NULL) {
+      stats_set(stats, "DCGM_CPU_POWER_UTIL_W",
+		dcgm_watts_dbl_to_ull(g_dcgm_sock_power_util[slot]));
+      stats_set(stats, "DCGM_CPU_POWER_LIMIT_W",
+		dcgm_watts_dbl_to_ull(g_dcgm_sock_power_limit[slot]));
+    } else {
+      stats_set(stats, "DCGM_CPU_POWER_UTIL_W", 0ULL);
+      stats_set(stats, "DCGM_CPU_POWER_LIMIT_W", 0ULL);
+    }
+  } else {
+    stats_set(stats, "DCGM_CPU_POWER_UTIL_W", 0ULL);
+    stats_set(stats, "DCGM_CPU_POWER_LIMIT_W", 0ULL);
+  }
 }
 
 static void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *sample,
@@ -465,6 +768,7 @@ static void dcgm_cpu_watch_cleanup(void)
 {
   int c;
 
+  dcgm_cpu_sock_watch_cleanup();
   if (g_dcgm_cpu_groups == NULL && g_dcgm_cpu_fgs == NULL)
     return;
   if (g_dcgm_handle != (dcgmHandle_t) NULL && g_dcgm_cpu_nchunks > 0 && g_dcgm_cpu_groups != NULL
@@ -648,6 +952,10 @@ static int dcgm_backend_begin(struct stats_type *type)
   }
   if (dcgm_cpu_watch_install() != 0)
     TRACE("DCGM CPU watch not active; samples may use slower live queries\n");
+  if (dcgm_topology_build_sock_power_map() != 0)
+    TRACE("DCGM CPU socket power mapping unavailable (sysfs packages vs DCGM_FE_CPU)\n");
+  else if (dcgm_cpu_sock_watch_install() != 0)
+    TRACE("DCGM CPU socket power field watch not active; using entity reads\n");
   g_dcgm_mono_prev_us = 0;
   g_dcgm_stat_seeded = 0;
   g_dcgm_ready = 1;
@@ -724,6 +1032,8 @@ static void fallback_fill(struct stats *stats, const char *cpu)
   stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE", 0);
   stats_set(stats, "ARM_EST_FLOPS", 0);
   stats_set(stats, "ARM_DRAM_BW_BYTES", 0);
+  stats_set(stats, "DCGM_CPU_POWER_UTIL_W", 0ULL);
+  stats_set(stats, "DCGM_CPU_POWER_LIMIT_W", 0ULL);
 }
 #endif
 
@@ -744,8 +1054,10 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
   long long delta_us_collect = 0;
   int proc_stat_ok = 0;
 
-  if (g_dcgm_ready && g_dcgm_cpu_nchunks > 0)
+  if (g_dcgm_ready)
     (void) dcgmUpdateAllFields(g_dcgm_handle, 0);
+  if (g_dcgm_ready && g_dcgm_ncpu_entities > 0)
+    dcgm_cpu_refresh_socket_power();
   if (g_dcgm_ready && g_dcjm_cur != NULL && g_dcjm_prev != NULL && nr_cpus > 0)
     proc_stat_ok = (dcgm_proc_stat_read_cpus(g_dcjm_cur, nr_cpus) == 0);
   if (g_dcgm_ready) {

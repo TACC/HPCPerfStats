@@ -15,6 +15,10 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_pscanf.c` | `pscanf` (`open`/`read` + `vsscanf`) and `file_fopen_read` |
 | `test_schema_parse.c` | `parse_schema_entry`, `schema_init` / `schema_destroy` (links `schema.c`, `dict.c`) |
 | `test_stats_file_format.c` | `stats_file_validate_program_header`, schema suffix formatting |
+| `test_cpu_counter_metrics_schema.c` | `CPU_COUNTER_METRICS_KEYS` includes Grace DCGM power schema tokens |
+| `test_dcgm_pkg_uniq.c` | Sorted package-id unique-count logic (maps to DCGM_FE_CPU pairing) |
+| `test_gpu_schema_contract.c` | NVIDIA/AMD GPU schema substrings (incl. module/sysio power keys) |
+| `test_nfs_schema_subset.c` | NFS collector schema tokens vs. `nfs.c` |
 | `test_monitor_cli.c` | RabbitMQ daemon CLI (`monitor_cli_*`), including `-h` via subprocess |
 | `test_monitor_cli_globals.c` | Stub globals for `test_monitor_cli` |
 | `test_monitor_configure_help.sh.in` | Regression (via `check-local`): `configure --help` mentions `--enable-all-static` |

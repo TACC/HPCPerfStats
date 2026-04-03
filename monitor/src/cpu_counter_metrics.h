@@ -37,6 +37,8 @@
   X(FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE, "E,W=48", ""), \
   X(FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE, "E,W=48", ""), \
   X(ARM_EST_FLOPS, "E,W=64,U=FLOP", ""), \
-  X(ARM_DRAM_BW_BYTES, "E,W=64,U=B", "")
+  X(ARM_DRAM_BW_BYTES, "E,W=64,U=B", ""), \
+  X(DCGM_CPU_POWER_UTIL_W, "U=W", "Grace DCGM per-socket CPU power (W); same value on each core in that socket"), \
+  X(DCGM_CPU_POWER_LIMIT_W, "U=W", "Grace DCGM per-socket CPU power limit (W); same value on each core in that socket")
 
 #endif

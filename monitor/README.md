@@ -32,6 +32,13 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Archive header / schema suffix / directive class / marks (file mode) | `stats_file_format.c`, `stats_file_format.h` (`stats_file_classify_header_directive`, `stats_file_fprint_mark_multiline`, …); orchestration in `stats_file.c`. |
 | RMQ text payloads | `stats_buffer.c` + `stats_buffer_data_append.c` (persistent AMQP; cached `uname` for header + sample lines; batched rows; declare `syslog` INFO in `DEBUG` only). |
 
+## Power telemetry (DCGM, RAPL, and interpretation)
+
+- **`cpu_counter_metrics` (DCGM CPU backend on Grace)**: publishes **`DCGM_CPU_POWER_UTIL_W`** and **`DCGM_CPU_POWER_LIMIT_W`** (DCGM fields 1130/1131 on **`DCGM_FE_CPU`**). Values are **per NVIDIA CPU entity** (socket); the monitor repeats the same watts on every **logical CPU row** belonging to that socket. Mapping pairs sorted **Linux `physical_package_id`** values from sysfs with sorted **`DCGM_FE_CPU`** entity IDs when counts match; otherwise these columns stay zero.
+- **`nvidia_gpu`**: adds **`sysio_power_usage`** and **`module_power_usage`** when the host engine exposes DCGM fields **1132** and **1133**. **`power_usage`** remains the per-GPU draw. On superchips, **module** / **SysIO** readings can **overlap** GPU and Grace CPU DCGM power—do not add them blindly into a single “node total” without NVIDIA/platform documentation.
+- **`intel_rapl`**: adds **`MSR_PP1_ENERGY_STATUS`** (Intel PP1 / uncore plane, MSR `0x641`) when LIKWID can read the **PP1** RAPL domain. PKG/PP0/DRAM semantics are unchanged.
+- **Not in this monitor**: chassis / PSU input (BMC), rack PDU, NIC/DPU, and NVMe device power would need separate collectors or future types (SNMP/Modbus, vendor tools, NVMe-MI, etc.).
+
 ## hpcperfstatsd: syscalls and blocking I/O
 
 - **RabbitMQ (blocking)**: Publishing uses **synchronous** rabbitmq-c calls (`amqp_socket_open`, login, `amqp_basic_publish`) from **libev timer callbacks**. If the broker or TCP path stalls, the **whole event loop** blocks until the library returns. Mitigations for heavy deployments: offload AMQP to a **worker thread** with a bounded queue, or adopt a **non-blocking** client integrated with `ev_io` (larger change). Tuning broker, network, and payload size helps without code changes.

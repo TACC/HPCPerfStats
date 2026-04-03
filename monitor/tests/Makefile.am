@@ -31,7 +31,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_nfs_schema_subset
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_dcgm_pkg_uniq test_nfs_schema_subset
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer
 endif
@@ -78,6 +78,10 @@ test_stats_file_format_SOURCES = \
 test_gpu_schema_contract_SOURCES = \
 	test_gpu_schema_contract.c
 
+test_dcgm_pkg_uniq_SOURCES = test_dcgm_pkg_uniq.c
+
+test_cpu_counter_metrics_schema_SOURCES = test_cpu_counter_metrics_schema.c
+
 test_nfs_schema_subset_SOURCES = \
 	test_nfs_schema_subset.c \
 	$(top_srcdir)/src/nfs.c
@@ -107,6 +111,8 @@ test_pscanf_LDADD = $(LDADD)
 test_schema_parse_LDADD = $(LDADD)
 test_stats_file_format_LDADD = $(LDADD)
 test_gpu_schema_contract_LDADD = $(LDADD)
+test_dcgm_pkg_uniq_LDADD = $(LDADD)
+test_cpu_counter_metrics_schema_LDADD = $(LDADD)
 test_nfs_schema_subset_LDADD = $(LDADD)
 if RABBITMQ
 test_monitor_cli_LDADD = $(LDADD)
