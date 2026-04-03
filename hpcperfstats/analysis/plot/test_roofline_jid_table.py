@@ -213,7 +213,8 @@ def test_gpu_roofline_succeeds_with_nvidia_arc_counters():
   assert reason is None
 
 
-def test_gpu_roofline_falls_back_to_rate_value_events():
+def test_gpu_roofline_uses_rate_value_events_when_present():
+  """DCGM rate fields (value) are preferred so FLOP/s and B/s stay aligned."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = _make_jt([("n1.cluster", t0)], {})
 
@@ -224,6 +225,33 @@ def test_gpu_roofline_falls_back_to_rate_value_events():
     if typ == "nvidia_gpu" and val_col == "value" and list(events) == ["gpu_mem_bw_bytes_rate"]:
       return pd.DataFrame([("n1.cluster", t0, 3.0)], columns=["host", "time", "sum_val"])
     return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+  fig, reason = plot_and_reason_gpu_roofline_from_jid_table(jt)
+  assert fig is not None
+  assert reason is None
+
+
+def test_gpu_roofline_prefers_value_rates_over_arc_when_both_exist():
+  """Arc-only mem bytes can be flat when mem_util is zero while FP pipes are active."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt([("n1.cluster", t0)], {})
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    ev = list(events)
+    if typ != "nvidia_gpu":
+      return empty
+    if val_col == "value" and ev == ["gpu_flops_rate"]:
+      return pd.DataFrame([("n1.cluster", t0, 5e9)], columns=["host", "time", "sum_val"])
+    if val_col == "value" and ev == ["gpu_mem_bw_bytes_rate"]:
+      return pd.DataFrame([("n1.cluster", t0, 2e9)], columns=["host", "time", "sum_val"])
+    if val_col == "arc" and ev == ["gpu_flops"]:
+      return pd.DataFrame([("n1.cluster", t0, 100.0)], columns=["host", "time", "sum_val"])
+    if val_col == "arc" and ev == ["gpu_mem_total_bytes"]:
+      return pd.DataFrame([("n1.cluster", t0, 0.0)], columns=["host", "time", "sum_val"])
+    return empty
 
   jt.get_aggregate_df.side_effect = get_aggregate_df
   fig, reason = plot_and_reason_gpu_roofline_from_jid_table(jt)

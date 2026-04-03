@@ -410,21 +410,27 @@ def _get_gpu_flops_bw_df_and_reason(jt):
 
     attempts = []
     missing_reasons = []
+    # Prefer instantaneous rate counters (``value``) over arc-derived cumulative
+    # pairs. The monitor ties ``gpu_mem_total_bytes`` growth to ``mem_util``;
+    # ``gpu_flops`` can still grow from FP-pipe activity when ``mem_util`` is
+    # zero, yielding merged (flops>0, bw=0) rows that ``_build_roofline_figure``
+    # drops. DCGM already publishes ``gpu_flops_rate`` and
+    # ``gpu_mem_bw_bytes_rate`` as aligned FLOP/s and B/s snapshots.
     _gpu_roofline_branches = (
-        (
-            "arc",
-            _aggregate_arc,
-            ["gpu_flops"],
-            1e-9,
-            ["gpu_mem_total_bytes"],
-            1 / (1024**3),
-        ),
         (
             "value",
             _aggregate_value,
             ["gpu_flops_rate"],
             1e-9,
             ["gpu_mem_bw_bytes_rate"],
+            1 / (1024**3),
+        ),
+        (
+            "arc",
+            _aggregate_arc,
+            ["gpu_flops"],
+            1e-9,
+            ["gpu_mem_total_bytes"],
             1 / (1024**3),
         ),
     )
