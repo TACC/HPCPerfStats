@@ -141,7 +141,7 @@ def _intel_core_tries(events, conv):
 
 # One aggregate per row (fixed typename); used for AMD, fabric, etc.
 _SUMMARY_SINGLE_SPECS = [
-    ("amd64_pmc", "arc", ["FLOPS"], "amd_flops", 1e-9, "FLOPS32b+64b[GF]"),
+    ("amd64_pmc", "arc", ["FLOPS"], "amd_flops", 1e-9, "CPU FLOPS32b+64b[GF]"),
     (
         "amd64_df",
         "arc",
@@ -153,7 +153,7 @@ _SUMMARY_SINGLE_SPECS = [
         ],
         "amd_mbw",
         2 / (1024 * 1024 * 1024),
-        "DRAMBW[GB/s]",
+        "CPU DRAMBW[GB/s]",
     ),
     (
         "amd64_pmc",
@@ -161,17 +161,17 @@ _SUMMARY_SINGLE_SPECS = [
         ["INST_RETIRED"],
         "amd_instr",
         1,
-        "Instructions [#/s]",
+        "CPU Instructions [#/s]",
     ),
-    ("amd64_pmc", "arc", ["MPERF"], "amd_mcycles", 1, "Reference Cycles [#/s]"),
-    ("amd64_pmc", "arc", ["APERF"], "amd_acycles", 1, "Actual Cycles [#/s]"),
+    ("amd64_pmc", "arc", ["MPERF"], "amd_mcycles", 1, "CPU Reference Cycles [#/s]"),
+    ("amd64_pmc", "arc", ["APERF"], "amd_acycles", 1, "CPU Actual Cycles [#/s]"),
     (
         "intel_rapl",
         "arc",
         ["MSR_PKG_ENERGY_STATUS"],
         "watts",
         0.00001526,
-        "[watts]",
+        "CPU package power [W]",
     ),
     (
         "amd64_rapl",
@@ -179,7 +179,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["MSR_PKG_ENERGY_STAT"],
         "amd_pkg_w",
         0.00001526,
-        "AMD PKG power [W]",
+        "CPU package power (AMD) [W]",
     ),
     (
         "ib_ext",
@@ -211,7 +211,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["numa_miss", "numa_foreign", "other_node"],
         "numa_remote_refs",
         1.0,
-        "NUMA remote refs [#/s]",
+        "CPU NUMA remote refs [#/s]",
     ),
     (
         "llite",
@@ -391,31 +391,31 @@ _SUMMARY_FIRST_WIN_SPECS = (
     {
         "name": "flops64b",
         "val_col": "arc",
-        "label": "FLOPS64b[GF]",
+        "label": "CPU FLOPS64b[GF]",
         "tries": _intel_core_tries(INTEL_FP_ARITH_DOUBLE_EVENTS, 1e-9),
     },
     {
         "name": "flops32b",
         "val_col": "arc",
-        "label": "FLOPS32b[GF]",
+        "label": "CPU FLOPS32b[GF]",
         "tries": _intel_core_tries(INTEL_FP_ARITH_SINGLE_EVENTS, 1e-9),
     },
     {
         "name": "instr",
         "val_col": "arc",
-        "label": "Instructions [#/s]",
+        "label": "CPU Instructions [#/s]",
         "tries": _intel_core_tries(["INST_RETIRED"], 1),
     },
     {
         "name": "mcycles",
         "val_col": "arc",
-        "label": "Reference Cycles [#/s]",
+        "label": "CPU Reference Cycles [#/s]",
         "tries": _intel_core_tries(["MPERF"], 1),
     },
     {
         "name": "acycles",
         "val_col": "arc",
-        "label": "Actual Cycles [#/s]",
+        "label": "CPU Actual Cycles [#/s]",
         "tries": _intel_core_tries(["APERF"], 1),
     },
 )
@@ -658,7 +658,7 @@ def iter_summary_aggregate_attempts():
     for typ, events, conv in fw["tries"]:
       yield typ, fw["val_col"], events, fw["name"], conv, fw["label"]
   for imc_typ, events, conv in _summary_intel_imc_bw_tries():
-    yield imc_typ, "arc", events, "mbw", conv, "DRAMBW[GB/s]"
+    yield imc_typ, "arc", events, "mbw", conv, "CPU DRAMBW[GB/s]"
 
 
 def _summary_metric_specs():
@@ -666,11 +666,11 @@ def _summary_metric_specs():
   out = list(_SUMMARY_SINGLE_SPECS)
   for fw in _SUMMARY_FIRST_WIN_SPECS:
     out.append(("", fw["val_col"], [], fw["name"], 0, fw["label"]))
-  out.append(("intel_imc", "arc", [], "mbw", _CAS_BW_CONV, "DRAMBW[GB/s]"))
-  out.append(("", "", [], "cha_counter_arc_sum", 0, "Intel CHA counters [#/s]"))
-  out.append(("", "", [], "fabric_mb_per_gflops", 0, "Fabric MB/s per GFLOPS"))
-  out.append(("", "", [], "fabric_mb_per_avg_tensor", 0, "Fabric MB/s per tensor %"))
-  out.append(("", "", [], "node_power_est_w", 0, "Est. node power [W]"))
+  out.append(("intel_imc", "arc", [], "mbw", _CAS_BW_CONV, "CPU DRAMBW[GB/s]"))
+  out.append(("", "", [], "cha_counter_arc_sum", 0, "CPU CHA uncore [#/s]"))
+  out.append(("", "", [], "fabric_mb_per_gflops", 0, "Fabric MB/s per CPU GFLOPS"))
+  out.append(("", "", [], "fabric_mb_per_avg_tensor", 0, "Fabric MB/s per GPU tensor %"))
+  out.append(("", "", [], "node_power_est_w", 0, "Est. node power (CPU+GPU) [W]"))
   return out
 
 
@@ -993,7 +993,7 @@ class SummaryPlot():
 
     if 'acycles' in df.columns and 'mcycles' in df.columns:
       df["freq"] = 2.7 * df["acycles"] / df["mcycles"]
-      metrics += [("freq", "arc", [], "freq", 1, "[GHz]")]
+      metrics += [("freq", "arc", [], "freq", 1, "CPU freq [GHz]")]
       del df["mcycles"], df["acycles"], df["instr"]
 
     if 'amd_acycles' in df.columns and 'amd_mcycles' in df.columns:
