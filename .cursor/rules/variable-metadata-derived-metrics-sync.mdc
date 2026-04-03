@@ -1,0 +1,26 @@
+---
+description: Keep variableMetadata in sync when job-level derived metrics change
+alwaysApply: false
+---
+
+# Derived Metrics ↔ Variable Metadata Sync
+
+Job-level metrics shown in the UI are computed in **`hpcperfstats/analysis/metrics/metrics.py`** (`Metrics.simple_metrics_list`, `Metrics.complex_metrics_list`, and `job_metrics_catalog_entries()`). Each **metric** name stored in `metrics_data.metric` should have a tooltip entry in the frontend.
+
+## Canonical map
+
+- **Python catalog:** `job_metrics_catalog_entries()` in `metrics.py` defines the full ordered list of `(type, metric, units)` rows.
+- **Frontend:** `hpcperfstats/site/frontend/src/utils/variableMetadata.js` → object `JOB_ACCOUNTING_AND_DERIVED_METADATA` (merged into `VARIABLE_METADATA`). Every catalog `metric` string must appear there with `{ description: "..." }`.
+
+## Required actions
+
+When adding, renaming, or removing a derived metric in `metrics.py` (simple or complex lists, or catalog helpers):
+
+1. Add or update the matching key in `JOB_ACCOUNTING_AND_DERIVED_METADATA` in `variableMetadata.js` with a clear, user-facing description (units may be omitted from text if the UI already shows units).
+2. Extend **`hpcperfstats/site/frontend/src/utils/variableMetadata.test.js`** if new behavior or wording should be asserted (optional but preferred for high-visibility metrics).
+3. Do **not** rely on the generic fallback string for catalog metrics; reviewers should treat missing entries as a defect.
+
+## Overlap
+
+- Complements `variable-metadata-monitor-contract.mdc` (raw monitor events vs merged `VARIABLE_METADATA`).
+- Complements `runtime-resource-and-metrics-safety.mdc` when metrics changes need regression tests on the Python side.

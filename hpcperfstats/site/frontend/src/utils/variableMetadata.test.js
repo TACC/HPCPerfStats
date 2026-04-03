@@ -47,6 +47,11 @@ describe("getDescriptionForVariable", () => {
     expect(getDescriptionForVariable("read_bytes")).toMatch(/Bytes read/i);
   });
 
+  it("merges monitor event metadata from variableMetadataMonitorEvents", () => {
+    expect(getDescriptionForVariable("CAS_READS")).toMatch(/DRAM|memory controller/i);
+    expect(getDescriptionForVariable("port_xmit_data")).toMatch(/InfiniBand|fabric/i);
+  });
+
   it("falls back for unknown variables", () => {
     expect(getDescriptionForVariable("unknown_metric_xyz")).toMatch(/Telemetry variable/i);
   });

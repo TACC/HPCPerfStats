@@ -1,0 +1,31 @@
+---
+description: Contract between monitor host_data events and frontend variable metadata
+alwaysApply: false
+---
+
+# Variable Metadata ↔ Monitor Contract
+
+`host_data.event` strings are defined by the HPCPerfStats **monitor** (`HPCPerfStats/monitor/src/*.c` / `*.h` schema `KEYS` macros) and optional ingest renaming (for example AMD DF channels as `MBW_CHANNEL_*` in `hpcperfstats/dbload/sync_timedb_parsing.py`).
+
+## Canonical UI map
+
+- **Generated module:** `hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.js`  
+  Export: `MONITOR_EVENT_METADATA` — each key is an event name; each value is `{ description: string }`.
+- **Generator:** `hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py`  
+  Run from repo root:  
+  `python3 hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py`
+- **Merged export:** `hpcperfstats/site/frontend/src/utils/variableMetadata.js`  
+  Merges `MONITOR_EVENT_METADATA` with job accounting and derived-metric entries (later keys override monitor text when both exist).
+
+## Required actions when changing the monitor
+
+**Do not edit** `HPCPerfStats/monitor/` under normal workspace guardrails. When monitor changes **are** approved and merged:
+
+1. If new `KEYS` / `ARM_IMC_KEYS` / `CPU_COUNTER_METRICS_KEYS` / NFS `EVENT_KEYS` / `BYTE_KEYS` / `XPRT_KEYS` event names are added, or ingest maps new counter aliases into `host_data.event`, update the generator if needed (extra names, or `DESC` entries in the script for clarity).
+2. Regenerate `variableMetadataMonitorEvents.js` with the command above.
+3. Keep one human-readable sentence per `description` (no scientific notation in strings; project-wide display rules still apply elsewhere).
+
+## Overlap
+
+- Complements `monitor-analysis-architecture-sync.mdc` (analysis must follow monitor typenames). This rule is the **UI/tooltip contract** for raw and renamed **event** names.
+- Workspace guardrails: monitor sources remain read-only unless the user explicitly allows edits.
