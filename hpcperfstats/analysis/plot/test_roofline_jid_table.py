@@ -191,67 +191,17 @@ def test_roofline_uses_arm_imc_cas_bandwidth_when_present():
 
 
 def test_gpu_roofline_succeeds_with_nvidia_arc_counters():
+  """GPU roofline uses arc gpu_flops + arc gpu_io_link_total_bytes (non-zero BW for scatter)."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  jt = _make_jt(
-      [("n1.cluster", t0)],
-      {
-          ("nvidia_gpu", "arc"): [("n1.cluster", t0, 20.0)],
-      },
-  )
+  jt = _make_jt([("n1.cluster", t0)], {})
 
   def get_aggregate_df(typ, val_col, events, conv=1.0):
     del conv
     if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
       return pd.DataFrame([("n1.cluster", t0, 20.0)], columns=["host", "time", "sum_val"])
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_mem_total_bytes"]:
+    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_io_link_total_bytes"]:
       return pd.DataFrame([("n1.cluster", t0, 5.0)], columns=["host", "time", "sum_val"])
     return pd.DataFrame(columns=["host", "time", "sum_val"])
-
-  jt.get_aggregate_df.side_effect = get_aggregate_df
-  fig, reason = plot_and_reason_gpu_roofline_from_jid_table(jt)
-  assert fig is not None
-  assert reason is None
-
-
-def test_gpu_roofline_uses_rate_value_events_when_present():
-  """DCGM rate fields (value) are preferred so FLOP/s and B/s stay aligned."""
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  jt = _make_jt([("n1.cluster", t0)], {})
-
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
-    if typ == "nvidia_gpu" and val_col == "value" and list(events) == ["gpu_flops_rate"]:
-      return pd.DataFrame([("n1.cluster", t0, 12.0)], columns=["host", "time", "sum_val"])
-    if typ == "nvidia_gpu" and val_col == "value" and list(events) == ["gpu_mem_bw_bytes_rate"]:
-      return pd.DataFrame([("n1.cluster", t0, 3.0)], columns=["host", "time", "sum_val"])
-    return pd.DataFrame(columns=["host", "time", "sum_val"])
-
-  jt.get_aggregate_df.side_effect = get_aggregate_df
-  fig, reason = plot_and_reason_gpu_roofline_from_jid_table(jt)
-  assert fig is not None
-  assert reason is None
-
-
-def test_gpu_roofline_prefers_value_rates_over_arc_when_both_exist():
-  """Arc-only mem bytes can be flat when mem_util is zero while FP pipes are active."""
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  jt = _make_jt([("n1.cluster", t0)], {})
-  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
-
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
-    ev = list(events)
-    if typ != "nvidia_gpu":
-      return empty
-    if val_col == "value" and ev == ["gpu_flops_rate"]:
-      return pd.DataFrame([("n1.cluster", t0, 5e9)], columns=["host", "time", "sum_val"])
-    if val_col == "value" and ev == ["gpu_mem_bw_bytes_rate"]:
-      return pd.DataFrame([("n1.cluster", t0, 2e9)], columns=["host", "time", "sum_val"])
-    if val_col == "arc" and ev == ["gpu_flops"]:
-      return pd.DataFrame([("n1.cluster", t0, 100.0)], columns=["host", "time", "sum_val"])
-    if val_col == "arc" and ev == ["gpu_mem_total_bytes"]:
-      return pd.DataFrame([("n1.cluster", t0, 0.0)], columns=["host", "time", "sum_val"])
-    return empty
 
   jt.get_aggregate_df.side_effect = get_aggregate_df
   fig, reason = plot_and_reason_gpu_roofline_from_jid_table(jt)
@@ -273,9 +223,10 @@ def test_gpu_roofline_reports_missing_reason_when_bw_missing():
   fig, reason = plot_and_reason_gpu_roofline_from_jid_table(jt)
   assert fig is None
   assert "Missing strict GPU roofline counters in host_data" in reason
+  assert "gpu_io_link_total_bytes" in reason
 
 
-def test_gpu_roofline_prefers_nvidia_when_both_vendor_counters_exist():
+def test_gpu_roofline_succeeds_for_nvidia_when_flops_and_link_arc_present():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = _make_jt([("n1.cluster", t0)], {})
 
@@ -285,12 +236,8 @@ def test_gpu_roofline_prefers_nvidia_when_both_vendor_counters_exist():
       return pd.DataFrame(columns=["host", "time", "sum_val"])
     if typ == "nvidia_gpu" and list(events) == ["gpu_flops"]:
       return pd.DataFrame([("n1.cluster", t0, 40.0)], columns=["host", "time", "sum_val"])
-    if typ == "nvidia_gpu" and list(events) == ["gpu_mem_total_bytes"]:
+    if typ == "nvidia_gpu" and list(events) == ["gpu_io_link_total_bytes"]:
       return pd.DataFrame([("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"])
-    if typ == "amd_gpu" and list(events) == ["gpu_flops"]:
-      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
-    if typ == "amd_gpu" and list(events) == ["gpu_mem_total_bytes"]:
-      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
   jt.get_aggregate_df.side_effect = get_aggregate_df

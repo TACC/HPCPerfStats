@@ -86,6 +86,7 @@ exclude_types = [
 # See plan: sum util/activity/power; mean temperature; bitwise OR for clock bitmask.
 _NVIDIA_GPU_SUM_EVENTS = frozenset({
     "gpu_util",
+    "gpu_io_link_total_bytes",
     "mem_util",
     "mem_used_mb",
     "mem_total_mb",

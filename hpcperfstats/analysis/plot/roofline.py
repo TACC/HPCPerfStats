@@ -403,39 +403,28 @@ def _try_gpu_roofline_flops_bw_merge(
 
 
 def _get_gpu_flops_bw_df_and_reason(jt):
-    """Get GPU roofline data using strict GPU FLOPS/BW counters only."""
+    """Get GPU roofline from arc-derived GFLOP/s and PCIe/NvLink GB/s (monitor DCGM PROF bytes)."""
     base = jt.get_host_time_df()
     if base.empty or not jt.host_list:
         return (None, "No hosts/timestamps found in host_data for this job/time range")
 
     attempts = []
     missing_reasons = []
-    # Prefer instantaneous rate counters (``value``) over arc-derived cumulative
-    # pairs. The monitor ties ``gpu_mem_total_bytes`` growth to ``mem_util``;
-    # ``gpu_flops`` can still grow from FP-pipe activity when ``mem_util`` is
-    # zero, yielding merged (flops>0, bw=0) rows that ``_build_roofline_figure``
-    # drops. DCGM already publishes ``gpu_flops_rate`` and
-    # ``gpu_mem_bw_bytes_rate`` as aligned FLOP/s and B/s snapshots.
+    # Bandwidth axis uses ``gpu_io_link_total_bytes`` (cumulative DCGM PROF PCIe+NvLink
+    # byte counters), not framebuffer proxy rates. FLOPS axis uses integrated ``gpu_flops``.
+    # amd_gpu does not yet emit link bytes; nvidia_gpu only.
     _gpu_roofline_branches = (
-        (
-            "value",
-            _aggregate_value,
-            ["gpu_flops_rate"],
-            1e-9,
-            ["gpu_mem_bw_bytes_rate"],
-            1 / (1024**3),
-        ),
         (
             "arc",
             _aggregate_arc,
             ["gpu_flops"],
             1e-9,
-            ["gpu_mem_total_bytes"],
+            ["gpu_io_link_total_bytes"],
             1 / (1024**3),
         ),
     )
 
-    for gpu_typ in ("nvidia_gpu", "amd_gpu"):
+    for gpu_typ in ("nvidia_gpu",):
         for tag, agg_fn, fe, fc, be, bc in _gpu_roofline_branches:
             df, line, miss = _try_gpu_roofline_flops_bw_merge(
                 jt, gpu_typ, base, tag, agg_fn, fe, fc, be, bc
@@ -450,7 +439,7 @@ def _get_gpu_flops_bw_df_and_reason(jt):
     return (
         None,
         "Missing strict GPU roofline counters in host_data "
-        "(need GPU FLOPS + GPU memory-bandwidth counters from nvidia_gpu/amd_gpu). "
+        "(need nvidia_gpu arc for gpu_flops and gpu_io_link_total_bytes). "
         f"Attempted: {detail}",
     )
 
@@ -474,7 +463,7 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
 
 
 def plot_gpu_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
-    """Build strict GPU roofline plot from jid_table."""
+    """Build GPU roofline from jid_table (GFLOP/s vs PCIe/NvLink byte-arc GB/s)."""
     if not jt.host_list:
         return None
     df, _reason = _get_gpu_flops_bw_df_and_reason(jt)
@@ -484,7 +473,7 @@ def plot_gpu_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
         df,
         peak_flops_gf=peak_flops_gf,
         peak_bw_gb=peak_bw_gb,
-        title="GPU Roofline (job)",
+        title="GPU Roofline (job, PCIe/NvLink bytes)",
     )
 
 

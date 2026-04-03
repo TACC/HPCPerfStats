@@ -113,7 +113,7 @@ const JOB_PLOT_CONFIGS = [
     key: "gpu_roofline",
     panelKey: "gpu-roofline",
     idPrefix: "job-gpu-roofline",
-    plotName: "GPU Roofline",
+    plotName: "GPU Roofline (PCIe/NvLink)",
   },
 ];
 
