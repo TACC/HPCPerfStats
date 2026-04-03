@@ -1,0 +1,42 @@
+---
+description: WCAG 2.2 AA compliance and mobile layout when changing user-facing web UI
+globs:
+  - "hpcperfstats/site/frontend/**/*.jsx"
+  - "hpcperfstats/site/frontend/**/*.js"
+  - "hpcperfstats/site/frontend/index.html"
+  - "hpcperfstats/site/frontend/src/index.css"
+  - "hpcperfstats/site/hpcperfstats_site/views.py"
+  - "hpcperfstats/site/**/templates/**/*.html"
+alwaysApply: false
+---
+
+# WCAG 2.2 AA And Mobile View For Web Pages
+
+## Target
+
+User-visible surfaces (React SPA under `/machine/`, standalone Django HTML such as `/api-key/`, and operator templates) must **maintain alignment with WCAG 2.2 Level AA** and **remain usable on mobile viewports** whenever those pages or their shared styles are changed.
+
+Documented limitations (e.g. Bokeh canvas for screen readers, OAuth IdP UI) do not relax requirements for everything the app controls.
+
+## WCAG 2.2 AA (when touching web UI)
+
+- **Keyboard**: All interactive controls reachable and operable without a pointer; predictable focus order; **Escape** (and Tab traps where modals exist) behave correctly; visible **`:focus-visible`** (do not remove outlines without an equivalent).
+- **Semantics**: Correct landmarks (`main`, `nav`, labeled regions/dialogs), headings in logical order, **labels** / **`aria-*`** on forms and dynamic status (e.g. `aria-live` where appropriate), tables with **`scope`** / captions when tabular.
+- **Perceivable**: Sufficient **contrast** for text and UI chrome; do not rely on **color alone** for meaning; respect **`prefers-reduced-motion`** for non-essential animation.
+- **Titles**: Keep **`useDocumentTitle`** (or equivalent) accurate for the view after your change.
+- **Verification**: Run frontend tests (`npm test -- --run` under `hpcperfstats/site/frontend`). Follow **Accessibility** in [`TESTING.md`](TESTING.md) for manual checks on substantive UX changes.
+
+## Mobile view (when touching any webpage)
+
+Any edit to a **page, route-level layout, or component that affects layout** must **preserve or improve small-screen behavior**:
+
+- Use existing breakpoints and patterns in `hpcperfstats/site/frontend/src/index.css` (e.g. `max-width: 991.98px` / `767.98px`) or Bootstrap responsive utilities; add or adjust rules when the desktop layout would break stacking, overflow, or touch targets on narrow widths.
+- Aim for **minimum ~44×44 CSS px** touch targets for primary controls where feasible (pagination, toggles, primary buttons); avoid horizontal-only critical flows without a scroll container.
+- After layout or chrome changes, **mentally verify** (or briefly test) **~375px width**: navbar, tables in `.table-responsive`, plot areas, dialogs, and forms.
+
+## Overlap
+
+- Complements **`react-js-cursor-rule.mdc`** (component style and tests on touch).
+- Complements **`web-pages-e2e-test-maintenance.mdc`** when routes or visible behavior changes.
+- Complements **`no-scientific-notation-web.mdc`** for numeric display; accessibility rules do not override it.
+- Django **admin** HTML: keep keyboard behavior and upstream admin patterns intact; add minimal chrome (e.g. back link) without breaking admin templates.
