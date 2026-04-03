@@ -42,8 +42,10 @@ describe("VariableInfoLabel", () => {
     expect(screen.getByText("utilization")).toBeInTheDocument();
     const help = screen.getByRole("button", { name: /help: utilization/i });
     fireEvent.click(help);
-    expect(screen.getByTestId("variable-info-tooltip")).toHaveTextContent(
-      /GPU utilization/i
-    );
+    const panel = screen.getByTestId("variable-info-tooltip");
+    expect(panel).toHaveTextContent(/GPU utilization/i);
+    expect(panel).toBeInTheDocument();
+    expect(document.body.contains(panel)).toBe(true);
+    expect(panel.classList.contains("variable-info-tooltip-portal")).toBe(true);
   });
 });

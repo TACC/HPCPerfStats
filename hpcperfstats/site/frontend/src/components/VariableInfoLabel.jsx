@@ -1,5 +1,41 @@
-import { useId, useState, useEffect, useRef } from "react";
+import { useId, useState, useEffect, useRef, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { getDescriptionForVariable } from "../utils/variableMetadata";
+
+const VIEWPORT_MARGIN = 8;
+const GAP_PX = 6;
+
+function placeTooltipNearButton(buttonEl, tooltipEl) {
+  const br = buttonEl.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  tooltipEl.style.top = `${br.bottom + GAP_PX}px`;
+  tooltipEl.style.left = `${br.left}px`;
+
+  const tr = tooltipEl.getBoundingClientRect();
+
+  let top = br.bottom + GAP_PX;
+  if (top + tr.height > vh - VIEWPORT_MARGIN) {
+    const above = br.top - GAP_PX - tr.height;
+    if (above >= VIEWPORT_MARGIN) {
+      top = above;
+    } else {
+      top = Math.max(VIEWPORT_MARGIN, vh - VIEWPORT_MARGIN - tr.height);
+    }
+  }
+
+  let left = br.left;
+  if (left + tr.width > vw - VIEWPORT_MARGIN) {
+    left = vw - VIEWPORT_MARGIN - tr.width;
+  }
+  if (left < VIEWPORT_MARGIN) {
+    left = VIEWPORT_MARGIN;
+  }
+
+  tooltipEl.style.top = `${top}px`;
+  tooltipEl.style.left = `${left}px`;
+}
 
 /**
  * Renders a variable label with an optional inline help control when metadata exists.
@@ -16,6 +52,7 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
   const panelId = useId();
   const [open, setOpen] = useState(false);
   const buttonRef = useRef(null);
+  const tooltipRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
@@ -30,9 +67,41 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
+  useLayoutEffect(() => {
+    if (!open) return;
+    const btnEl = buttonRef.current;
+    const tipEl = tooltipRef.current;
+    if (!btnEl || !tipEl) return;
+
+    function updatePosition() {
+      placeTooltipNearButton(btnEl, tipEl);
+    }
+
+    updatePosition();
+    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      window.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [open, description]);
+
   if (!description) {
     return <>{text}</>;
   }
+
+  const tooltipNode = open ? (
+    <span
+      ref={tooltipRef}
+      id={panelId}
+      role="region"
+      className="variable-info-tooltip variable-info-tooltip-portal"
+      data-testid="variable-info-tooltip"
+      aria-label={`${variableName} description`}
+    >
+      {description}
+    </span>
+  ) : null;
 
   return (
     <>
@@ -44,24 +113,14 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
           className="variable-info-help"
           data-testid="variable-info-help"
           aria-expanded={open}
-          aria-controls={panelId}
+          aria-controls={open ? panelId : undefined}
           aria-label={`Help: ${variableName}`}
           onClick={() => setOpen((o) => !o)}
         >
           ?
         </button>
-        {open ? (
-          <span
-            id={panelId}
-            role="region"
-            className="variable-info-tooltip"
-            data-testid="variable-info-tooltip"
-            aria-label={`${variableName} description`}
-          >
-            {description}
-          </span>
-        ) : null}
       </span>
+      {tooltipNode && document.body ? createPortal(tooltipNode, document.body) : null}
     </>
   );
 }
