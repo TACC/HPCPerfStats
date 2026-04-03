@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files. Runs in parallel with configurable chunk size.
+"""Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; ``pigz`` seal and raw-file removal on ``archive_pigz_interval_seconds``, default 4h). Runs in parallel with configurable chunk size. After ingest, idles until SIGTERM.
 
 CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini).
 
@@ -37,11 +37,16 @@ from hpcperfstats.shutdown_utils import (
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
     collect_stats_files_in_range,
+    dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
+    remove_verified_archived_raw_files,
+    replace_corrupt_tar_from_gzip_backup,
     rescan_pending_stats_files,
-    get_verified_files_to_remove,
+    seal_dirty_daily_archives,
     stats_file_is_active_segment,
+    tar_has_duplicate_file_members,
+    verify_tar_archive_readable,
 )
 from hpcperfstats.file_locking import file_write_lock
 from hpcperfstats.dbload.sync_timedb_parsing import (
@@ -313,52 +318,67 @@ def _append_to_tar(tar_path, file_paths):
   log_print("Archived: " + str(file_paths))
 
 
-def _compress_tar_gz(tar_path, num_threads=None):
-  """Compress .tar with pigz. num_threads defaults to one quarter total cores."""
-  if num_threads is None:
-    num_threads = pigz_thread_count
-  if not os.path.exists(tar_path):
-    return
-  gz_path = "%s.gz" % tar_path
-  with file_write_lock(tar_path):
-    result = subprocess.run(
-        ['/usr/bin/pigz', '-f', '-8', '-v', '-p', str(num_threads), tar_path],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.stdout:
-      log_print(result.stdout, flush=True)
-    if result.stderr:
-      log_print(result.stderr, flush=True)
-    if result.returncode != 0:
-      raise subprocess.CalledProcessError(
-          result.returncode, result.args, output=result.stdout, stderr=result.stderr)
-  # pigz rewrites tar_path to tar_path.gz, so synchronize on the resulting file too.
-  if os.path.exists(gz_path):
-    with file_write_lock(gz_path):
-      pass
-
-
 def archive_stats_files(archive_info):
-  """Append stats files to a daily .tar, compress with pigz, and remove originals after verification."""
+  """Append stats files to a daily ``.tar`` (verify, recover, dedupe).
+
+  ``pigz`` sealing and removal of raw stats run on ``archive_pigz_interval_seconds``
+  (see main loop), not after each append.
+  """
   archive_fname, stats_files = archive_info
   archive_tar_fname = archive_fname[:-3]
 
-  _decompress_gz(archive_fname)
+  if not os.path.exists(archive_tar_fname):
+    if os.path.exists(archive_fname):
+      _decompress_gz(archive_fname)
   existing_members = get_existing_archive_members(archive_tar_fname)
 
   stats_files_to_tar = filter_files_to_add_to_archive(
       stats_files, existing_members, debug=DEBUG)
   _append_to_tar(archive_tar_fname, stats_files_to_tar)
 
-  existing_members = get_existing_archive_members(archive_tar_fname)
-  for path in get_verified_files_to_remove(stats_files, existing_members):
-    log_print("removing stats file:" + path)
-    with file_write_lock(path):
-      os.remove(path)
+  if stats_files_to_tar:
+    if not verify_tar_archive_readable(archive_tar_fname):
+      log_print(
+          "Daily tar failed integrity check after append; recovering from "
+          ".tar.gz or clearing for rebuild: %s" % archive_tar_fname,
+          flush=True,
+      )
+      if not replace_corrupt_tar_from_gzip_backup(
+          archive_tar_fname, archive_fname, pigz_thread_count):
+        log_print(
+            "ERROR: could not restore daily tar from %s; leaving raw stats "
+            "files in place" % archive_fname,
+            flush=True,
+        )
+        return
+      existing_after = get_existing_archive_members(archive_tar_fname)
+      to_retry = filter_files_to_add_to_archive(
+          stats_files_to_tar, existing_after, debug=DEBUG)
+      if to_retry:
+        _append_to_tar(archive_tar_fname, to_retry)
+      if not verify_tar_archive_readable(archive_tar_fname):
+        log_print(
+            "ERROR: daily tar still unreadable after recovery append; leaving "
+            "raw stats files in place: %s" % archive_tar_fname,
+            flush=True,
+        )
+        return
 
-  _compress_tar_gz(archive_tar_fname)
+  if os.path.isfile(archive_tar_fname) and tar_has_duplicate_file_members(
+      archive_tar_fname):
+    log_print(
+        "Duplicate member paths in daily tar; rewriting (keep largest per path): "
+        "%s" % archive_tar_fname,
+        flush=True,
+    )
+    if not dedupe_tar_keep_largest_file_per_member(
+        archive_tar_fname, log_fn=log_print):
+      log_print(
+          "ERROR: tar dedupe failed; leaving raw stats files in place: %s"
+          % archive_tar_fname,
+          flush=True,
+      )
+      return
 
 
 def database_startup():
@@ -537,12 +557,46 @@ if __name__ == '__main__':
         if archive_job is not None:
           archive_job.get()
 
-      log_print("sync_timedb sleeping")
+      pigz_interval = cfg.get_archive_pigz_interval_seconds()
+      last_archive_maint = time.time() - pigz_interval
 
-      # Close DB connections before long sleep to avoid idle connections.
+      def _run_scheduled_archive_maintenance():
+        seal_dirty_daily_archives(
+            tgz_archive_dir,
+            local_tz=local_timezone,
+            pigz_threads=pigz_thread_count,
+            compress_level=cfg.get_archive_pigz_level(),
+            keep_uncompressed_tar=cfg.get_archive_keep_uncompressed_tar(),
+            idle_seconds=cfg.get_archive_seal_idle_seconds(),
+            seal_immediately_if_dirty=True,
+            log_fn=log_print,
+        )
+        remove_verified_archived_raw_files(
+            directory,
+            host_name_ext,
+            tgz_archive_dir,
+            log_fn=log_print,
+        )
+
+      log_print(
+          "sync_timedb ingest pass complete; idle until next pigz + removal "
+          "(every %s s, first run shortly)" % int(pigz_interval),
+          flush=True,
+      )
+
       close_old_connections()
       connections.close_all()
-      sleep_until_shutdown(600)
+      while not shutdown_requested[0]:
+        if time.time() - last_archive_maint >= pigz_interval:
+          log_print(
+              "Running scheduled daily-archive pigz and raw file removal",
+              flush=True,
+          )
+          _run_scheduled_archive_maintenance()
+          last_archive_maint = time.time()
+          close_old_connections()
+          connections.close_all()
+        sleep_until_shutdown(60)
 
       if DEBUG:
         log_print("sync_timedb finished")

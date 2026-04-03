@@ -1,22 +1,38 @@
 """Unit tests for sync_timedb archive helpers and main-block helpers (no Django)."""
+import io
 import os
+import shutil
 import subprocess
 import tarfile
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
+from hpcperfstats.dbload.pigz_cli import pigz_executable
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+    atomic_seal_tar_to_gz,
     build_archive_mapping,
     collect_stats_files_in_range,
+    dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
+    get_existing_archive_members_for_daily_archive,
+    get_file_member_sizes_from_gzip_archive,
     get_stats_chunk,
     get_tar_file_tasks,
     get_tar_member_name,
     get_verified_files_to_remove,
+    is_daily_tar_gz_dirty,
+    parse_archive_date_from_daily_tar_path,
+    remove_verified_archived_raw_files,
+    replace_corrupt_tar_from_gzip_backup,
     rescan_pending_stats_files,
+    resolve_preferred_archive_path_for_read,
+    should_seal_daily_tar,
     stats_file_is_active_segment,
+    validate_sealed_daily_archive_for_raw_removal,
+    tar_has_duplicate_file_members,
+    verify_tar_archive_readable,
 )
 from hpcperfstats.dbload.sync_timedb_archive import _iter_tar_tasks_chunked
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
@@ -41,7 +57,228 @@ def test_get_tar_member_name_multiple_slashes():
   assert get_tar_member_name("/a/b/c") == "a/b/c"
 
 
-# --- get_existing_archive_members ---
+# --- resolve_preferred_archive_path_for_read ---
+
+
+def test_resolve_preferred_archive_path_prefers_tar_when_both_exist(tmp_path):
+  """When .tar and .tar.gz exist, read from uncompressed tar."""
+  tar_p = tmp_path / "2020-01-01.tar"
+  gz_p = tmp_path / "2020-01-01.tar.gz"
+  tar_p.write_text("t")
+  gz_p.write_text("z")
+  assert resolve_preferred_archive_path_for_read(str(gz_p)) == str(tar_p)
+
+
+def test_resolve_preferred_archive_path_keeps_gz_when_no_tar(tmp_path):
+  """Only .tar.gz present: use gzip path."""
+  gz_p = tmp_path / "2020-01-01.tar.gz"
+  gz_p.write_text("z")
+  assert resolve_preferred_archive_path_for_read(str(gz_p)) == str(gz_p)
+
+
+def test_resolve_preferred_archive_path_plain_tar_unchanged(tmp_path):
+  p = tmp_path / "2020-01-01.tar"
+  p.write_text("t")
+  assert resolve_preferred_archive_path_for_read(str(p)) == str(p)
+
+
+# --- verify_tar_archive_readable / replace_corrupt_tar_from_gzip_backup ---
+
+
+def test_verify_tar_archive_readable_accepts_valid_tar(tmp_path):
+  tar_path = tmp_path / "ok.tar"
+  inner = tmp_path / "inner.txt"
+  inner.write_text("hello")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(inner), arcname="inner.txt")
+  assert verify_tar_archive_readable(str(tar_path))
+
+
+def test_verify_tar_archive_readable_rejects_truncated(tmp_path):
+  tar_path = tmp_path / "bad.tar"
+  inner = tmp_path / "z.txt"
+  inner.write_text("abcdefghij" * 500)
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(inner), arcname="z.txt")
+  raw = tar_path.read_bytes()
+  tar_path.write_bytes(raw[:200])
+  assert not verify_tar_archive_readable(str(tar_path))
+
+
+def test_verify_tar_archive_readable_rejects_garbage(tmp_path):
+  tar_path = tmp_path / "garbage.tar"
+  tar_path.write_bytes(b"not a tar archive" * 20)
+  assert not verify_tar_archive_readable(str(tar_path))
+
+
+def test_verify_tar_archive_readable_false_for_missing(tmp_path):
+  assert not verify_tar_archive_readable(str(tmp_path / "nope.tar"))
+
+
+def test_replace_corrupt_tar_from_gzip_backup_without_gz_removes_tar(tmp_path):
+  tar_path = tmp_path / "2020-01-01.tar"
+  tar_path.write_text("corrupt")
+  assert replace_corrupt_tar_from_gzip_backup(
+      str(tar_path), str(tmp_path / "2020-01-01.tar.gz"), 1)
+  assert not tar_path.exists()
+
+
+def test_replace_corrupt_tar_from_gzip_backup_restores_via_pigz(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2020-01-02.tar"
+  gz_path = tmp_path / "2020-01-02.tar.gz"
+  tar_path.write_text("bad")
+  gz_path.write_text("not-used")
+
+  def _fake_decomp(gz, threads):
+    assert gz == str(gz_path)
+    inner = tmp_path / "inn.txt"
+    inner.write_text("ok")
+    with tarfile.open(str(tar_path), "w") as tf:
+      tf.add(str(inner), arcname="only.txt")
+
+  monkeypatch.setattr(helpers, "pigz_decompress_verbose", _fake_decomp)
+  assert replace_corrupt_tar_from_gzip_backup(
+      str(tar_path), str(gz_path), 1)
+  assert verify_tar_archive_readable(str(tar_path))
+
+
+# --- parse_archive_date_from_daily_tar_path ---
+
+
+def test_parse_archive_date_from_daily_tar_path_ok():
+  assert parse_archive_date_from_daily_tar_path("/x/2020-06-15.tar") == date(2020, 6, 15)
+
+
+def test_parse_archive_date_from_daily_tar_path_rejects_non_daily_name():
+  assert parse_archive_date_from_daily_tar_path("/x/other.tar") is None
+
+
+# --- is_daily_tar_gz_dirty / should_seal_daily_tar ---
+
+
+def test_is_daily_tar_gz_dirty_missing_gz(tmp_path):
+  tar_p = tmp_path / "2020-01-01.tar"
+  tar_p.write_text("x")
+  assert is_daily_tar_gz_dirty(str(tar_p), str(tmp_path / "2020-01-01.tar.gz"))
+
+
+def test_is_daily_tar_gz_dirty_tar_newer(tmp_path):
+  tar_p = tmp_path / "2020-01-01.tar"
+  gz_p = tmp_path / "2020-01-01.tar.gz"
+  tar_p.write_text("x")
+  gz_p.write_text("y")
+  old = datetime(2010, 1, 1).timestamp()
+  os.utime(gz_p, (old, old))
+  newer = datetime(2011, 1, 1).timestamp()
+  os.utime(tar_p, (newer, newer))
+  assert is_daily_tar_gz_dirty(str(tar_p), str(gz_p))
+
+
+def test_should_seal_prior_calendar_day_without_waiting_idle(tmp_path, monkeypatch):
+  """Dirty archive for a date before *today* seals even if idle_seconds is huge."""
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_helpers.time.time",
+      lambda: 1_600_000_000.0,
+  )
+  tar_p = tmp_path / "2019-12-31.tar"
+  gz_p = tmp_path / "2019-12-31.tar.gz"
+  tar_p.write_text("t")
+  gz_p.write_text("g")
+  os.utime(tar_p, (1_600_000_000, 1_600_000_000))
+  os.utime(gz_p, (1_500_000_000, 1_500_000_000))
+  today = date(2020, 1, 5)
+  assert should_seal_daily_tar(
+      str(tar_p), str(gz_p), idle_seconds=999_999, today_local_date=today)
+
+
+def test_should_seal_today_respects_idle(monkeypatch, tmp_path):
+  base = 1_700_000_000
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_helpers.time.time",
+      lambda: base + 30,
+  )
+  tar_p = tmp_path / "2024-01-15.tar"
+  gz_p = tmp_path / "2024-01-15.tar.gz"
+  tar_p.write_text("t")
+  gz_p.write_text("g")
+  os.utime(tar_p, (base, base))
+  os.utime(gz_p, (base, base - 100))
+  today = date(2024, 1, 15)
+  assert not should_seal_daily_tar(
+      str(tar_p), str(gz_p), idle_seconds=60, today_local_date=today)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_helpers.time.time",
+      lambda: base + 120,
+  )
+  assert should_seal_daily_tar(
+      str(tar_p), str(gz_p), idle_seconds=60, today_local_date=today)
+
+
+def test_should_seal_immediately_if_dirty_bypasses_idle(monkeypatch, tmp_path):
+  base = 1_700_000_000
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_helpers.time.time",
+      lambda: base + 1,
+  )
+  tar_p = tmp_path / "2024-01-15.tar"
+  gz_p = tmp_path / "2024-01-15.tar.gz"
+  tar_p.write_text("t")
+  gz_p.write_text("g")
+  os.utime(tar_p, (base, base))
+  os.utime(gz_p, (base, base - 1))
+  today = date(2024, 1, 15)
+  assert should_seal_daily_tar(
+      str(tar_p),
+      str(gz_p),
+      idle_seconds=99999,
+      today_local_date=today,
+      seal_immediately_if_dirty=True,
+  )
+
+
+@pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")
+def test_atomic_seal_tar_to_gz_creates_valid_gzip(tmp_path):
+  """Integration: temp gzip + pigz -t + replace; keeps .tar when requested."""
+  tar_path = tmp_path / "2021-03-01.tar"
+  gz_path = tmp_path / "2021-03-01.tar.gz"
+  member = tmp_path / "a.txt"
+  member.write_text("hello")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="a.txt")
+  atomic_seal_tar_to_gz(
+      str(tar_path),
+      str(gz_path),
+      num_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  assert gz_path.is_file()
+  subprocess.run([pigz_executable(), "-t", str(gz_path)], check=True)
+  assert tar_path.is_file()
+  assert not (tmp_path / "2021-03-01.tar.gz.tmp").exists()
+
+
+@pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")
+def test_atomic_seal_tar_to_gz_can_drop_uncompressed(tmp_path):
+  tar_path = tmp_path / "2021-03-02.tar"
+  gz_path = tmp_path / "2021-03-02.tar.gz"
+  member = tmp_path / "b.txt"
+  member.write_text("x")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="b.txt")
+  atomic_seal_tar_to_gz(
+      str(tar_path),
+      str(gz_path),
+      num_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=False,
+      log_fn=None,
+  )
+  assert gz_path.is_file()
+  assert not tar_path.exists()
 
 
 # --- get_tar_file_tasks ---
@@ -69,6 +306,26 @@ def test_get_tar_file_tasks_empty_tar(tmp_path):
   with tarfile.open(tar_path, "w"):
     pass
   assert get_tar_file_tasks(str(tar_path)) == []
+
+
+def test_get_tar_file_tasks_prefers_uncompressed_tar_when_both_exist(tmp_path):
+  """Deferred compression: mutable .tar wins over sibling .tar.gz for reads."""
+  day_tar = tmp_path / "2020-06-01.tar"
+  day_gz = tmp_path / "2020-06-01.tar.gz"
+  inner = tmp_path / "member.txt"
+  inner.write_text("from-plain-tar")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(inner), arcname="from-tar.txt")
+  other = tmp_path / "other.txt"
+  other.write_text("from-gz-only")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(other), arcname="from-gz.txt")
+  tasks = get_tar_file_tasks(str(day_gz))
+  paths = {t[0] for t in tasks}
+  names = {t[1] for t in tasks}
+  assert paths == {str(day_tar)}
+  assert "from-tar.txt" in names
+  assert "from-gz.txt" not in names
 
 
 def test_iter_tar_tasks_chunked_streams_without_accumulating(monkeypatch):
@@ -153,7 +410,7 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
   assert open_calls["count"] == 2
   assert remove_calls == [tar_path]
   assert pigz_calls == [[
-      "/usr/bin/pigz", "-v", "-d", "-p", str(helpers.pigz_thread_count), gz_path
+      pigz_executable(), "-v", "-d", "-p", str(helpers.pigz_thread_count), gz_path
   ]]
 
 
@@ -247,6 +504,153 @@ def test_get_existing_archive_members_with_files(tmp_path):
   assert members["a.txt"] == 5
   assert members["sub/b.txt"] == 5
   assert not (tmp_path / "test.tar.fnctl.lock").exists()
+
+
+def test_get_existing_archive_members_for_daily_prefers_tar(tmp_path):
+  """When both .tar and .tar.gz exist, member map comes from .tar."""
+  day_tar = tmp_path / "2022-05-01.tar"
+  day_gz = tmp_path / "2022-05-01.tar.gz"
+  inner = tmp_path / "x.txt"
+  inner.write_text("hello")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(inner), arcname="from.tar")
+  other = tmp_path / "y.txt"
+  other.write_text("gz")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(other), arcname="from.gz")
+  m = get_existing_archive_members_for_daily_archive(str(day_gz))
+  assert m["from.tar"] == 5
+  assert "from.gz" not in m
+
+
+def test_get_existing_archive_members_for_daily_reads_gz_when_no_tar(tmp_path):
+  day_gz = tmp_path / "2022-05-02.tar.gz"
+  inner = tmp_path / "z.txt"
+  inner.write_text("abc")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="onlymember")
+  m = get_existing_archive_members_for_daily_archive(str(day_gz))
+  assert m["onlymember"] == 3
+
+
+def test_remove_verified_archived_raw_files_removes_when_verified(tmp_path):
+  """Removal requires matching .tar and .tar.gz validation (same members/sizes)."""
+  arch_suffix = "cluster.integration.test"
+  host = tmp_path / ("n." + arch_suffix)
+  host.mkdir()
+  ts = int(datetime(2022, 5, 3, 15, 30, 0).timestamp())
+  seg = host / str(ts)
+  seg.write_text("%d job1 cn001\nline\n" % ts)
+  os.utime(seg, (ts, ts))
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  gz_key = str(tgz_dir / "2022-05-03.tar.gz")
+  tar_path = gz_key[:-len(".gz")]
+  arcname = get_tar_member_name(str(seg))
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(seg), arcname=arcname)
+  with tarfile.open(gz_key, "w:gz") as tf:
+    tf.add(str(seg), arcname=arcname)
+  assert validate_sealed_daily_archive_for_raw_removal(gz_key, log_fn=None)[0]
+  remove_verified_archived_raw_files(
+      str(tmp_path), arch_suffix, str(tgz_dir), log_fn=None)
+  assert not seg.is_file()
+
+
+def test_validate_sealed_daily_archive_fails_on_tar_gz_mismatch(tmp_path):
+  gz = tmp_path / "2022-01-01.tar.gz"
+  tar_p = tmp_path / "2022-01-01.tar"
+  a = tmp_path / "a.txt"
+  a.write_text("aa")
+  b = tmp_path / "b.txt"
+  b.write_text("bbbb")
+  with tarfile.open(tar_p, "w") as tf:
+    tf.add(str(a), arcname="same/name")
+  with tarfile.open(gz, "w:gz") as tf:
+    tf.add(str(b), arcname="same/name")
+  ok, members = validate_sealed_daily_archive_for_raw_removal(str(gz), log_fn=None)
+  assert not ok
+  assert members is None
+
+
+def test_validate_sealed_daily_archive_gzip_only_ok(tmp_path):
+  gz = tmp_path / "2022-01-02.tar.gz"
+  f = tmp_path / "one.txt"
+  f.write_text("hi")
+  with tarfile.open(gz, "w:gz") as tf:
+    tf.add(str(f), arcname="one.txt")
+  ok, members = validate_sealed_daily_archive_for_raw_removal(str(gz), log_fn=None)
+  assert ok
+  assert members["one.txt"] == 2
+
+
+def test_get_file_member_sizes_from_gzip_archive_reads_gz_only(tmp_path):
+  gz = tmp_path / "x.tar.gz"
+  tar_p = tmp_path / "x.tar"
+  f = tmp_path / "inner.txt"
+  f.write_text("zzz")
+  with tarfile.open(tar_p, "w") as tf:
+    tf.add(str(f), arcname="only")
+  with tarfile.open(gz, "w:gz") as tf:
+    tf.add(str(f), arcname="only")
+  assert get_file_member_sizes_from_gzip_archive(str(gz)) == {"only": 3}
+
+
+def _tar_add_bytes(tf, name, data):
+  ti = tarfile.TarInfo(name=name)
+  ti.size = len(data)
+  ti.mtime = 0
+  tf.addfile(ti, io.BytesIO(data))
+
+
+def test_get_existing_archive_members_uses_max_size_for_duplicate_paths(tmp_path):
+  """Same member path twice: reported size is the larger payload."""
+  tar_path = tmp_path / "dup.tar"
+  with tarfile.open(tar_path, "w") as tf:
+    _tar_add_bytes(tf, "host/stats", b"aa")
+    _tar_add_bytes(tf, "host/stats", b"longer")
+  assert get_existing_archive_members(str(tar_path))["host/stats"] == 6
+
+
+def test_tar_has_duplicate_file_members_true_when_same_name_twice(tmp_path):
+  tar_path = tmp_path / "d.tar"
+  with tarfile.open(tar_path, "w") as tf:
+    _tar_add_bytes(tf, "x", b"1")
+    _tar_add_bytes(tf, "x", b"22")
+  assert tar_has_duplicate_file_members(str(tar_path))
+
+
+def test_tar_has_duplicate_file_members_false_when_unique(tmp_path):
+  tar_path = tmp_path / "u.tar"
+  with tarfile.open(tar_path, "w") as tf:
+    _tar_add_bytes(tf, "a", b"x")
+    _tar_add_bytes(tf, "b", b"y")
+  assert not tar_has_duplicate_file_members(str(tar_path))
+
+
+def test_dedupe_tar_keep_largest_file_per_member_keeps_largest(tmp_path):
+  tar_path = tmp_path / "dedupe.tar"
+  with tarfile.open(tar_path, "w") as tf:
+    _tar_add_bytes(tf, "p/q", b"small")
+    _tar_add_bytes(tf, "p/q", b"muchlonger")
+  assert dedupe_tar_keep_largest_file_per_member(str(tar_path), log_fn=None)
+  assert not tar_has_duplicate_file_members(str(tar_path))
+  assert get_existing_archive_members(str(tar_path))["p/q"] == 10
+  with tarfile.open(tar_path, "r") as tf:
+    names = [m.name for m in tf.getmembers() if m.isfile()]
+  assert names == ["p/q"]
+
+
+def test_dedupe_tar_tie_same_size_keeps_last(tmp_path):
+  """Equal sizes: last archive entry is retained."""
+  tar_path = tmp_path / "tie.tar"
+  with tarfile.open(tar_path, "w") as tf:
+    _tar_add_bytes(tf, "n", b"abcd")
+    _tar_add_bytes(tf, "n", b"wxyz")
+  assert dedupe_tar_keep_largest_file_per_member(str(tar_path), log_fn=None)
+  with tarfile.open(tar_path, "r") as tf:
+    bodies = [tf.extractfile(m).read() for m in tf.getmembers() if m.isfile()]
+  assert bodies == [b"wxyz"]
 
 
 # --- filter_files_to_add_to_archive ---

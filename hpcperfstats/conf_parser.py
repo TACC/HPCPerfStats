@@ -130,6 +130,40 @@ def get_daily_archive_dir_path():
   return _get('PORTAL', 'daily_archive_dir')
 
 
+def get_archive_keep_uncompressed_tar():
+  """Return True if daily ``.tar`` should be kept after sealing (default True).
+
+  If False, only ``.tar.gz`` remains; the next append will decompress again.
+  """
+  _ensure_cfg_loaded()
+  return cfg.get(
+      'PORTAL', 'archive_keep_uncompressed_tar', fallback='yes',
+  ).lower() in ('yes', 'true', '1')
+
+
+def get_archive_seal_idle_seconds():
+  """Minimum seconds since last ``.tar`` mtime before sealing *today's* archive.
+
+  Prior calendar days seal as soon as the tar/gz pair is dirty (no idle wait).
+  """
+  _ensure_cfg_loaded()
+  return float(cfg.get('PORTAL', 'archive_seal_idle_seconds', fallback='60'))
+
+
+def get_archive_pigz_level():
+  """pigz compression level (1--11) for sealing daily archives. Default 8."""
+  _ensure_cfg_loaded()
+  return int(cfg.get('PORTAL', 'archive_pigz_level', fallback='8'))
+
+
+def get_archive_pigz_interval_seconds():
+  """Seconds between ``pigz`` seal runs and removal of verified raw stats (default 4h)."""
+  _ensure_cfg_loaded()
+  return float(
+      cfg.get('PORTAL', 'archive_pigz_interval_seconds', fallback=str(4 * 3600))
+  )
+
+
 def get_rmq_server():
   """Return the RabbitMQ server host from RMQ config."""
   return _get('RMQ', 'rmq_server')
