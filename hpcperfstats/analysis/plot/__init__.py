@@ -20,6 +20,10 @@ from hpcperfstats.analysis.plot.roofline import (
     plot_gpu_roofline_from_jid_table,
     plot_roofline_from_jid_table,
 )
+from hpcperfstats.analysis.plot.roofline_peaks import (
+    infer_cpu_roofline_peak_flops_and_bw_gbps,
+    lookup_roofline_cpu_peaks,
+)
 from hpcperfstats.analysis.plot.summaryplot import SummaryPlot
 from hpcperfstats.analysis.plot.summaryplot import plot_and_reason_summary_from_jid_table
 
@@ -34,6 +38,8 @@ __all__ = [
     "plot_and_reason_roofline_from_jid_table",
     "plot_gpu_roofline_from_jid_table",
     "plot_and_reason_gpu_roofline_from_jid_table",
+    "infer_cpu_roofline_peak_flops_and_bw_gbps",
+    "lookup_roofline_cpu_peaks",
     "MSG_NO_METRIC_DATA",
     "MSG_NO_HOST_MSR_DATA",
     "MSG_NO_ROOFLINE_DATA",

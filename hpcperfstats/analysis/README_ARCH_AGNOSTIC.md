@@ -9,6 +9,18 @@ This note summarizes how CPU/GPU vendors are handled in `hpcperfstats/analysis` 
 - **Roofline**: Intel FLOPS paths use `INTEL_CORE_PMC_TYPES_ORDERED` (includes `cpu_counter_metrics`). AMD needs `amd64_pmc` FLOPS plus `amd64_df` MBW channels (family 17h/19h when the monitor exposes them).
 - **Heatmap CPI**: Candidate list includes Intel PMC types, `amd64_pmc`, and `cpu_counter_metrics`.
 
+### Monitor ↔ analysis contract (`host_data.type`)
+
+All of the typenames above are whatever the **monitor** publishes as `host_data.type` (see `HPCPerfStats/monitor/` `stats_type.st_name` and ingest). Analysis must **not** introduce parallel names: when adding Intel IMC generations, ARM IMC, or AMD paths, align `INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, roofline merge logic, and tests with the monitor’s actual schema.
+
+### Roofline nominal peaks (`roofline_peaks.py`)
+
+- **File**: `hpcperfstats/analysis/plot/roofline_peaks.py` defines `ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS` and `infer_cpu_roofline_peak_flops_and_bw_gbps(jt)` using **`jid_table.schema`** (keys = `host_data.type` values for the job).
+- **Intel**: One table row per entry in **`INTEL_IMC_STATS_TYPES`** (same strings as the monitor). Inference picks the **first** typename in that tuple present in the schema—matching roofline’s IMC bandwidth scan order.
+- **AMD**: `amd64_pmc` + `amd64_df` → default 2S EPYC-class peak row (`amd64_epyc_2s_default`); Zen generation is **not** in `host_data.type`, so optional per-generation rows are for documentation/overrides only until host metadata or config exists.
+- **ARM Grace-class**: `arm_imc` in schema → Grace single-die peak row; synthetic DCGM counters remain under `cpu_counter_metrics` (see monitor `cpu_counter_metrics.c`).
+- **Cursor rule**: `HPCPerfStats/cursor-rules/monitor-analysis-architecture-sync.mdc` summarizes how these pieces stay in sync when the monitor or analysis changes.
+
 ## GPU (NVIDIA, AMD)
 
 - **`avg_gpuutil`**: Prefers `nvidia_gpu.utilization`, else `amd_gpu.gpu_util`. Catalog placeholder type is `gpu` (not vendor-specific).
@@ -25,4 +37,6 @@ When the monitor adds new `host_data.type` values:
 1. Add a nominal APERF/MPERF reference frequency to `_PMC_FREQ_BY_TYPENAME` in `gen/utils.py` if the type should act as PMC.
 2. Append the typename to `PMC_TYPENAME_PRIORITY` in the desired precedence order.
 3. Add summary/roofline/heatmap specs or event lists if the counter semantics match an existing path.
-4. Add unit tests with mocked `get_aggregate_df` / job schemas.
+4. If the type is an **Intel IMC** DRAM counter source, append it to **`INTEL_IMC_STATS_TYPES`** (correct probe order) and add a matching row in **`roofline_peaks.py`**.
+5. If the type is **ARM IMC** (`arm_imc` pattern), update **`ARM_IMC_STATS_TYPES`** and roofline ARM paths as needed.
+6. Add unit tests with mocked `get_aggregate_df` / job schemas (including `test_roofline_peaks.py` when inference or peak keys change).

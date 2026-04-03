@@ -1,0 +1,47 @@
+---
+description: Keep analysis metrics/plots aligned with monitor host_data types and roofline peak tables
+alwaysApply: true
+---
+
+# Monitor ↔ Analysis Architecture Sync
+
+HPCPerfStats ingests **`host_data.type`** values produced by the monitor executable (`HPCPerfStats/monitor/` → RabbitMQ → `listend.py`). Analysis code (`hpcperfstats/analysis/`) must treat those typenames as the **contract**: lists, plot logic, and roofline peak tables should **match what the monitor can emit**, not an independent naming scheme.
+
+## Canonical references (Python)
+
+| Concern | Location |
+|--------|----------|
+| Intel IMC precedence (DRAM CAS for `mbw` / roofline BW) | `hpcperfstats/analysis/gen/utils.py` → `INTEL_IMC_STATS_TYPES` |
+| ARM IMC DRAM CAS | `ARM_IMC_STATS_TYPES` in the same file |
+| Intel core PMC / LIKWID order (FLOPS / FP paths) | `INTEL_CORE_PMC_TYPES_ORDERED` |
+| PMC type priority for generic metrics | `PMC_TYPENAME_PRIORITY` |
+| **Roofline nominal peaks + schema inference** | `hpcperfstats/analysis/plot/roofline_peaks.py` → `ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS`, `infer_cpu_roofline_peak_flops_and_bw_gbps` |
+| CPU roofline counter merge logic | `hpcperfstats/analysis/plot/roofline.py` |
+
+## How pieces fit together
+
+- **Intel CPU roofline:** FLOPS from typenames in `INTEL_CORE_PMC_TYPES_ORDERED` (e.g. `intel_8pmc3`, `cpu_counter_metrics`); memory bandwidth from the **first** IMC typename in `INTEL_IMC_STATS_TYPES` that has data for the job (same order as summary `mbw` and `roofline._intel_imc_bw_gb`).
+- **AMD CPU roofline:** Requires **`amd64_pmc`** (FLOPS) and **`amd64_df`** (MBW channels) in `host_data`, when the monitor enables them (e.g. Zen family DF counters).
+- **ARM / Grace-class:** **`arm_imc`** exposes `CAS_READS` / `CAS_WRITES` when built and PMU is present; DCGM-backed **`cpu_counter_metrics`** can publish synthetic **`ARM_EST_FLOPS`** / **`ARM_DRAM_BW_BYTES`** (see monitor `cpu_counter_metrics.c`). Roofline inference maps **`arm_imc`** in the job schema to Grace-class peaks in `roofline_peaks.py`.
+
+## Rules when the monitor or schema changes
+
+1. **New or renamed `host_data.type` for CPU/memory** (monitor `stats_type.st_name`, ingest schema):  
+   - Update **`gen/utils.py`** lists (`INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, `INTEL_CORE_PMC_TYPES_ORDERED`, or `PMC_TYPENAME_PRIORITY`) so metrics, summary, heatmap, and roofline **try the same typenames in a consistent order**.  
+   - Extend **`roofline.py`** (and tests) if new events or merge rules are required.  
+   - For **Intel IMC** typenames: add a **`ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS`** entry whose key **exactly matches** the monitor typename, and insert the typename into **`INTEL_IMC_STATS_TYPES`** in the **same relative order** roofline/summary should probe (unless intentionally different—then document why).
+
+2. **`INTEL_IMC_STATS_TYPES` order changes:**  
+   - Update **`infer_cpu_roofline_peak_flops_and_bw_gbps`** in `roofline_peaks.py` already iterates that tuple—peaks follow automatically **if** every member has a dict row.  
+   - Re-run / extend **`test_roofline_peaks.py`** and any roofline jid_table tests that assume ordering.
+
+3. **AMD:** The monitor does not encode Zen generation in `type`; `amd64_pmc` + `amd64_df` map to **`amd64_epyc_2s_default`** for peaks. If operators need per-generation roofs, that is **config or future host metadata**—document in `roofline_peaks.py`, do not invent fake `host_data.type` names.
+
+4. **Do not edit `HPCPerfStats/monitor/` sources** under normal workspace guardrails; when the user asks for monitor changes, confirm explicitly. Analysis-side updates **must still** reflect whatever typenames the **shipped** monitor actually publishes (inspect `monitor/src/*stats*.c` `.st_name` and schema macros).
+
+5. **Documentation:** Keep **`hpcperfstats/analysis/README_ARCH_AGNOSTIC.md`** in sync with new types and roofline-peak behavior in the same task when behavior or extension steps change.
+
+## Overlap
+
+- Complements **`workspace-guardrails.mdc`** (monitor read-only unless approved).  
+- Complements **`runtime-resource-and-metrics-safety.mdc`** for metrics-path regressions—add tests when changing aggregation or roofline inference.

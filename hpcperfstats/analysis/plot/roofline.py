@@ -19,6 +19,7 @@ from hpcperfstats.analysis.gen.utils import (
     INTEL_LEGACY_SSE_FLOP_EVENTS,
     new_plain_number_hover_formatter,
 )
+from hpcperfstats.analysis.plot.roofline_peaks import infer_cpu_roofline_peak_flops_and_bw_gbps
 
 
 # Default peak specs (GFLOP/s and GB/s) when not in config; ridge = peak_flops / peak_bw
@@ -455,6 +456,9 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
     df, _reason = _get_flops_bw_df_and_reason(jt)
     if df is None or df.empty:
         return None
+    inf_f, inf_b = infer_cpu_roofline_peak_flops_and_bw_gbps(jt)
+    peak_flops_gf = peak_flops_gf if peak_flops_gf is not None else inf_f
+    peak_bw_gb = peak_bw_gb if peak_bw_gb is not None else inf_b
     return _build_roofline_figure(
         df,
         peak_flops_gf=peak_flops_gf,
