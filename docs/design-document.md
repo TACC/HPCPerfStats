@@ -235,9 +235,10 @@ This section records **typical** tradeoffs implicit in the design—not a formal
 
 | Topic | Location |
 |-------|-----------|
-| Install, monitor RPM, broker config | `HPCPerfStats/README.md` |
-| Attribute / metric definitions | `docs/attributes-definition.md` |
-| Monitor variables catalog | `docs/MONITOR_VARIABLES.md` |
+| Install, monitor RPM, broker config, and **index of all `docs/`** | `HPCPerfStats/README.md` |
+| Telemetry / variable definitions (canonical) | `docs/MONITOR_VARIABLES.md` |
+| Regenerate / augment `MONITOR_VARIABLES.md` | `docs/regenerate_monitor_variables_catalog.py`, `docs/augment_monitor_variables_diagnostics.py` |
+| Researcher-facing web UI guide | `docs/using-the-website-as-a-researcher.md` |
 | Architecture-agnostic analysis | `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md` |
 | Compose topology | `docker-compose.yaml`, `docker-compose.app.yaml` |
 | Supervisor programs (example) | `services-conf/supervisord.conf.example` |

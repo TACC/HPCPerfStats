@@ -15,7 +15,17 @@ The **hpcperfstats** package is split into two parts:
 | **monitor** | Autotools | Online data collection and transmission in production |
 | **hpcperfstats** | Python setuptools | Data curation and analysis (off-cluster) |
 
-- **Collected data definitions:** [attributes-definition.md](docs/attributes-definition.md)
+### Documentation (`docs/`)
+
+| Document | What it is for |
+|----------|----------------|
+| [**MONITOR_VARIABLES.md**](docs/MONITOR_VARIABLES.md) | **Canonical reference** for monitor-reported variables: names, types, units, and semantics. Use this instead of any legacy “attributes definition” doc. |
+| [**design-document.md**](docs/design-document.md) | As-built system design: architecture, data flow, components, contracts, and operations context. |
+| [**using-the-website-as-a-researcher.md**](docs/using-the-website-as-a-researcher.md) | How to read the Django/React job UI—plots, metrics, and diagnostic themes—for HPC users and researchers. |
+
+**Maintaining `MONITOR_VARIABLES.md`:** the catalog is generated and augmented by maintainer scripts in the same folder: [`regenerate_monitor_variables_catalog.py`](docs/regenerate_monitor_variables_catalog.py), [`augment_monitor_variables_diagnostics.py`](docs/augment_monitor_variables_diagnostics.py).
+
+For test commands, CI, and compose-backed workflows, see [**TESTING.md**](TESTING.md) (repo root, next to this README).
 
 Building and installing the `hpcperfstatsd-3.0-1.el9.x86_64.rpm` package (via `monitor/hpcperfstats.spec`) installs a **systemd** service `hpcperfstats`. This service runs a daemon with ~3% overhead on a single core at 1 Hz sampling; it is typically configured for **5-minute** intervals, with samples at job start and end. The daemon **hpcperfstatsd** sends data to a **RabbitMQ** server over the administrative network. RabbitMQ must be installed and running on the server to receive data.
 
