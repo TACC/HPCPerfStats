@@ -52,6 +52,11 @@ function sortAdminMonitorColumnArrow(sort, column) {
   return sort.direction === "asc" ? "▲" : "▼";
 }
 
+function adminMonitorAriaSort(sort, column) {
+  if (sort.column !== column) return undefined;
+  return sort.direction === "asc" ? "ascending" : "descending";
+}
+
 function makeAdminMonitorSortHandler(setSort) {
   return function handleSort(column) {
     setSort((prev) => {
@@ -414,9 +419,13 @@ export default function AdminMonitor() {
               </div>
               <div className="table-responsive">
                 <table className="table table-sm table-bordered">
+                <caption className="visually-hidden">
+                  Monitor agents reporting host data. Sort by host, last timestamp, or
+                  status freshness using the column header buttons.
+                </caption>
                 <thead>
                   <tr>
-                    <th scope="col">
+                    <th scope="col" aria-sort={adminMonitorAriaSort(hostSort, "host")}>
                       <button
                         type="button"
                         className="btn btn-link btn-sm p-0"
@@ -425,7 +434,10 @@ export default function AdminMonitor() {
                         Host {sortAdminMonitorColumnArrow(hostSort, "host")}
                       </button>
                     </th>
-                    <th scope="col">
+                    <th
+                      scope="col"
+                      aria-sort={adminMonitorAriaSort(hostSort, "last_time")}
+                    >
                       <button
                         type="button"
                         className="btn btn-link btn-sm p-0"
@@ -435,7 +447,7 @@ export default function AdminMonitor() {
                         {sortAdminMonitorColumnArrow(hostSort, "last_time")}
                       </button>
                     </th>
-                    <th scope="col">
+                    <th scope="col" aria-sort={adminMonitorAriaSort(hostSort, "status")}>
                       <button
                         type="button"
                         className="btn btn-link btn-sm p-0"
@@ -551,6 +563,10 @@ export default function AdminMonitor() {
                   {xaltListMode === "missing" && xaltStats.jids_missing_xalt_data > 0 && (
                     <div className="table-responsive">
                       <table className="table table-sm table-bordered">
+                        <caption className="visually-hidden">
+                          Job IDs from the last three days that are missing XALT coverage.
+                          List may be truncated.
+                        </caption>
                         <thead>
                           <tr>
                             <th scope="col">Missing JIDs (truncated)</th>
@@ -591,6 +607,10 @@ export default function AdminMonitor() {
                   {xaltListMode === "found" && xaltStats.jids_with_xalt_data > 0 && (
                     <div className="table-responsive">
                       <table className="table table-sm table-bordered">
+                        <caption className="visually-hidden">
+                          Job IDs from the last three days that have XALT coverage. List may
+                          be truncated.
+                        </caption>
                         <thead>
                           <tr>
                             <th scope="col">Found JIDs (truncated)</th>
@@ -690,9 +710,16 @@ export default function AdminMonitor() {
           {!rabbitHostLoading && !rabbitHostError && (
             <div className="table-responsive">
               <table className="table table-sm table-bordered">
+                <caption className="visually-hidden">
+                  Hosts seen via RabbitMQ and their last data timestamps. Sort by host, last
+                  timestamp, or status freshness using the column header buttons.
+                </caption>
                 <thead>
                   <tr>
-                    <th scope="col">
+                    <th
+                      scope="col"
+                      aria-sort={adminMonitorAriaSort(rabbitHostSort, "host")}
+                    >
                       <button
                         type="button"
                         className="btn btn-link btn-sm p-0"
@@ -701,7 +728,10 @@ export default function AdminMonitor() {
                         Host {sortAdminMonitorColumnArrow(rabbitHostSort, "host")}
                       </button>
                     </th>
-                    <th scope="col">
+                    <th
+                      scope="col"
+                      aria-sort={adminMonitorAriaSort(rabbitHostSort, "last_time")}
+                    >
                       <button
                         type="button"
                         className="btn btn-link btn-sm p-0"
@@ -711,7 +741,10 @@ export default function AdminMonitor() {
                         {sortAdminMonitorColumnArrow(rabbitHostSort, "last_time")}
                       </button>
                     </th>
-                    <th scope="col">
+                    <th
+                      scope="col"
+                      aria-sort={adminMonitorAriaSort(rabbitHostSort, "status")}
+                    >
                       <button
                         type="button"
                         className="btn btn-link btn-sm p-0"
@@ -793,6 +826,9 @@ export default function AdminMonitor() {
           {!timescaledbLoading && !timescaledbError && timescaledbStats && (
             <div className="table-responsive">
               <table className="table table-sm table-bordered">
+              <caption className="visually-hidden">
+                TimescaleDB database and hypertable size statistics.
+              </caption>
               <tbody>
                 {(() => {
                   const LABELS = {
@@ -883,6 +919,9 @@ export default function AdminMonitor() {
           {!cacheLoading && !cacheError && cacheStats && Object.keys(cacheStats).length > 0 && (
             <div className="table-responsive">
               <table className="table table-sm table-bordered">
+              <caption className="visually-hidden">
+                Cache and Redis key statistics for the application.
+              </caption>
               <tbody>
                 {Object.entries(cacheStats).map(([key, value]) => {
                   let displayValue;
@@ -962,6 +1001,9 @@ export default function AdminMonitor() {
               )}
               <div className="table-responsive">
                 <table className="table table-sm table-bordered">
+                <caption className="visually-hidden">
+                  RabbitMQ queue depth, consumer, and message volume statistics.
+                </caption>
                 <tbody>
                   {(() => {
                     const LABELS = {

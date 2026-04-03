@@ -143,7 +143,8 @@ const PLACEHOLDER_OVERLAY_STYLE = {
 /**
  * Injects Bokeh plot from API.
  * Accepts only Bokeh `json_item` payloads to avoid executing untrusted HTML/JS.
- * Shows "Data not available." in the plot area when there is no data or when the plot fails to load.
+ * Shows an explicit unavailable status plus "Data not available." when there is no data or
+ * when the plot fails to load (text status, not color alone).
  */
 export default function BokehEmbed({
   item,
@@ -164,8 +165,9 @@ export default function BokehEmbed({
   const [plotReady, setPlotReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [failureReason, setFailureReason] = useState(null);
-  const [showDetails, setShowDetails] = useState(false);
+  const [errorDetailsOpen, setErrorDetailsOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
+  const errorDetailsPanelId = `${id}-plot-error-details`;
 
   const hasData = !!item;
   const showPlaceholder = !hasData || !plotReady || loadFailed;
@@ -174,7 +176,7 @@ export default function BokehEmbed({
     setPlotReady(false);
     setLoadFailed(false);
     setFailureReason(null);
-    setShowDetails(false);
+    setErrorDetailsOpen(false);
     setCopyStatus("");
     if (onPlotReadyChange) onPlotReadyChange(false);
   }, [item, id, onPlotReadyChange]);
@@ -235,6 +237,17 @@ export default function BokehEmbed({
     };
   }, [item, id, onPlotReadyChange, maximizeInContainer]);
 
+  useEffect(() => {
+    if (!errorDetailsOpen) return;
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        setErrorDetailsOpen(false);
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [errorDetailsOpen]);
+
   const detailsMessage = loadFailed ? failureReason : unavailableReason;
   const isLoading = !!isLoadingExternal || (hasData && !plotReady && !loadFailed);
   const isUnavailable = !isLoading && showPlaceholder;
@@ -243,7 +256,7 @@ export default function BokehEmbed({
     // Plot is present but still being rendered; show a per-plot loading message.
     message = plotName ? `Loading ${plotName}…` : "Loading plot…";
   } else {
-    message = "Data not available.";
+    message = "Unavailable — Data not available.";
   }
   const handleCopyDetails = async () => {
     if (!detailsMessage) return;
@@ -259,59 +272,57 @@ export default function BokehEmbed({
     }
   };
   const renderPlaceholder = (style) => (
-    <div className="bokeh-plot-unavailable" style={style} aria-live="polite">
+    <div
+      className="bokeh-plot-unavailable"
+      style={style}
+      aria-live="polite"
+      role="status"
+    >
       <span>{message}</span>
       {isUnavailable && detailsMessage && canViewErrorDetails ? (
-        <span
-          style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 8, position: "relative" }}
-          onMouseEnter={() => setShowDetails(true)}
-          onMouseLeave={() => setShowDetails(false)}
-        >
-          <span style={{ textDecoration: "underline", cursor: "help" }} aria-label="Show plot error details">
-            Error Detail
-          </span>
-          {showDetails ? (
-            <span
-              style={{
-                position: "absolute",
-                top: "120%",
-                left: 0,
-                minWidth: 280,
-                maxWidth: 520,
-                textAlign: "left",
-                backgroundColor: "#fff",
-                color: "#111",
-                border: "1px solid #ced4da",
-                borderRadius: 4,
-                padding: 10,
-                boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                zIndex: 10,
-              }}
-              role="tooltip"
-            >
-              <div style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
-                {detailsMessage}
-              </div>
-            </span>
-          ) : null}
-        </span>
-      ) : null}
-      {isUnavailable && detailsMessage && canViewErrorDetails ? (
-        <span style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 8 }}>
+        <div className="bokeh-plot-error-detail-controls mt-2 d-flex flex-column align-items-center gap-2 w-100">
           <button
             type="button"
-            className="btn btn-outline-secondary btn-sm"
-            onClick={handleCopyDetails}
-            style={{ fontSize: "0.4375rem", padding: "0.125rem 0.25rem", lineHeight: 1.1 }}
+            className="btn btn-link btn-sm p-0"
+            aria-expanded={errorDetailsOpen}
+            aria-controls={errorDetailsPanelId}
+            onClick={() => setErrorDetailsOpen((o) => !o)}
           >
-            Copy Error Detail
+            {errorDetailsOpen ? "Hide plot error details" : "Show plot error details"}
           </button>
-          {copyStatus ? (
-            <span style={{ fontSize: "0.85em" }} aria-live="polite">
-              {copyStatus}
-            </span>
+          {errorDetailsOpen ? (
+            <div
+              id={errorDetailsPanelId}
+              role="region"
+              aria-label="Plot error details"
+              className="bokeh-plot-error-detail-panel w-100 text-start border rounded p-2 small"
+              style={{
+                maxWidth: 520,
+                backgroundColor: "#fff",
+                color: "#111",
+                borderColor: "#ced4da",
+                whiteSpace: "normal",
+                wordBreak: "break-word",
+              }}
+            >
+              {detailsMessage}
+            </div>
           ) : null}
-        </span>
+          <div className="d-inline-flex align-items-center gap-2 flex-wrap justify-content-center">
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm"
+              onClick={handleCopyDetails}
+            >
+              Copy error detail
+            </button>
+            {copyStatus ? (
+              <span className="small" aria-live="polite">
+                {copyStatus}
+              </span>
+            ) : null}
+          </div>
+        </div>
       ) : null}
     </div>
   );

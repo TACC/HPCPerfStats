@@ -17,6 +17,20 @@ except ModuleNotFoundError:
   pytest.skip("playwright is required for browser E2E tests", allow_module_level=True)
 
 
+def _axe_core_bundle_path():
+  """Resolve axe-core for Playwright (bundled in Docker image or local npm install)."""
+  tests_dir = Path(__file__).resolve().parent
+  bundled = tests_dir / "support" / "axe-core.min.js"
+  if bundled.is_file():
+    return bundled
+  here = Path(__file__).resolve()
+  for directory in here.parents:
+    candidate = directory / "hpcperfstats/site/frontend/node_modules/axe-core/axe.min.js"
+    if candidate.is_file():
+      return candidate
+  return None
+
+
 @contextmanager
 def _temporary_wsgi_server():
   """Run a lightweight local WSGI server for browser navigation."""
@@ -39,9 +53,10 @@ def test_browser_flow_for_web_pages():
     frontend_dir.mkdir(parents=True, exist_ok=True)
     (frontend_dir / "index.html").write_text(
         """<!doctype html>
-<html>
+<html lang="en">
 <head><title>HPCPerfStats SPA</title></head>
 <body>
+<main id="machine-spa-stub-main">
   <div id="root">spa-shell</div>
   <div id="staff-actions-root" hidden>
     <button type="button" id="staff-actions-toggle" aria-label="Staff actions" aria-expanded="false" aria-haspopup="true">
@@ -56,8 +71,8 @@ def test_browser_flow_for_web_pages():
   </div>
   <div id="staff-message"></div>
   <div id="plot-unavailable">Plot not available</div>
-  <span id="plot-error-detail" hidden>Error Detail</span>
-  <button id="copy-error-detail-btn" type="button" hidden>Copy Error Detail</button>
+  <button type="button" id="show-plot-error-details" hidden>Show plot error details</button>
+  <button id="copy-error-detail-btn" type="button" hidden>Copy error detail</button>
   <script>
     (function () {
       const params = new URLSearchParams(window.location.search);
@@ -66,13 +81,13 @@ def test_browser_flow_for_web_pages():
       const staffToggle = document.getElementById("staff-actions-toggle");
       const staffMenu = document.getElementById("staff-actions-menu");
       const staffMessage = document.getElementById("staff-message");
-      const plotErrorDetail = document.getElementById("plot-error-detail");
+      const showPlotErrorDetailsBtn = document.getElementById("show-plot-error-details");
       const copyErrorDetailBtn = document.getElementById("copy-error-detail-btn");
 
       function setStaffUi(flag) {
         const shouldShow = !!flag;
         staffRoot.hidden = !shouldShow;
-        plotErrorDetail.hidden = !shouldShow;
+        showPlotErrorDetailsBtn.hidden = !shouldShow;
         copyErrorDetailBtn.hidden = !shouldShow;
         staffMenu.hidden = true;
         staffToggle.setAttribute("aria-expanded", "false");
@@ -97,6 +112,7 @@ def test_browser_flow_for_web_pages():
       });
     })();
   </script>
+</main>
 </body>
 </html>""",
         encoding="utf-8",
@@ -149,15 +165,15 @@ def test_browser_flow_for_web_pages():
               "Invalidate Cache For Page",
           ]
           assert page.get_by_text("Plot not available").is_visible()
-          assert page.locator("#plot-error-detail").is_visible()
-          assert page.get_by_role("button", name="Copy Error Detail").is_visible()
+          assert page.get_by_role("button", name="Show plot error details").is_visible()
+          assert page.get_by_role("button", name="Copy error detail").is_visible()
 
           # Staff-only controls are absent for non-staff sessions.
           page.goto(f"{base_url}/machine/?staff=0")
           assert page.locator("#staff-actions-root").is_hidden()
           assert page.get_by_text("Plot not available").is_visible()
-          assert page.locator("#plot-error-detail").is_hidden()
-          assert page.locator("#copy-error-detail-btn").is_hidden()
+          assert page.get_by_role("button", name="Show plot error details").is_hidden()
+          assert page.get_by_role("button", name="Copy error detail").is_hidden()
 
           # Demoting staff hides controls and shows the informational message.
           page.goto(f"{base_url}/machine/?staff=1")
@@ -209,5 +225,23 @@ def test_browser_flow_for_web_pages():
               base_url,
           )
           assert status_code == 403
+
+          axe_bundle = _axe_core_bundle_path()
+          if axe_bundle is not None:
+            page.add_init_script(path=str(axe_bundle))
+            for axe_url in (f"{base_url}/machine/?staff=0", f"{base_url}/api-key/"):
+              page.goto(axe_url)
+              violations = page.evaluate(
+                  """async () => {
+                    const results = await axe.run(document, {
+                      runOnly: {
+                        type: 'tag',
+                        values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'],
+                      },
+                    });
+                    return results.violations;
+                  }""",
+              )
+              assert not violations, violations
 
           browser.close()

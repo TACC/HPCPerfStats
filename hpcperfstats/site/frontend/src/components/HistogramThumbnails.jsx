@@ -103,10 +103,11 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
       onMouseLeave={handleMouseLeave}
       style={{ position: "relative" }}
     >
+      <div className="histogram-desktop-title">{title}</div>
       <div
         role="button"
         tabIndex={0}
-        aria-label={`${title}, click or press Enter to view full size`}
+        aria-label={`${title}: enlarge chart (click, Enter, or Space)`}
         aria-expanded={expanded}
         className="histogram-thumbnail"
         style={{
@@ -205,8 +206,9 @@ export default function HistogramThumbnails({ histograms }) {
   }
 
   return (
-    <div
+    <section
       className="histogram-thumbnails-grid"
+      aria-label="Histogram charts for this job list"
       style={{
         display: "grid",
         gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
@@ -224,6 +226,6 @@ export default function HistogramThumbnails({ histograms }) {
           unavailableReason={h.plot_unavailable_reason}
         />
       ))}
-    </div>
+    </section>
   );
 }

@@ -50,7 +50,7 @@ PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 Use this for web-page E2E modules:
 
 - `hpcperfstats/site/machine/tests/test_web_pages_e2e.py` (includes a module-level `test_job_detail_api_includes_staff_metrics_distinct_time_count_for_staff` that does not use the `django_db` class marker, so it can run without a reachable Postgres host)
-- `hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py` (uses a minimal static `index.html` stub for `/machine/*` that mirrors key SPA affordances—staff menu, plot-unavailable copy—rather than the full Vite bundle)
+- `hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py` (uses a minimal static `index.html` stub for `/machine/*` that mirrors key SPA affordances—staff menu, plot-unavailable copy, keyboard-friendly plot error disclosure—rather than the full Vite bundle; when `axe-core` is available it also runs a WCAG-tagged **axe-core** scan on `/machine/` and `/api-key/`. The Docker image copies `axe-core.min.js` into `hpcperfstats/site/machine/tests/support/` from the frontend build stage; host-side pytest can use `hpcperfstats/site/frontend/node_modules/axe-core/axe.min.js` after `npm ci`.)
 
 The workflow script handles Docker lifecycle and runs both files in one session:
 
@@ -87,7 +87,7 @@ The SPA and standalone HTML pages aim for **WCAG 2.2 Level AA** for in-app flows
 cd hpcperfstats/site/frontend && npm test -- --run
 ```
 
-Vitest includes a minimal **axe-core** smoke test (`src/accessibility.smoke.test.jsx`) with `color-contrast` disabled under jsdom (run full contrast checks in a real browser).
+Vitest includes a minimal **axe-core** smoke test (`src/accessibility.smoke.test.jsx`) with `color-contrast` disabled under jsdom. **Playwright** browser E2E (`test_web_pages_browser_e2e.py`) runs axe with WCAG 2.0/2.1 A/AA tags (including color contrast) on the stub `/machine/` shell and on `/api-key/` when the axe bundle is present.
 
 **Manual spot-check (each release or major UI change)**
 

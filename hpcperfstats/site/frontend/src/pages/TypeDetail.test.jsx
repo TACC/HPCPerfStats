@@ -40,10 +40,10 @@ describe("TypeDetail", () => {
     await waitFor(() => {
       expect(screen.getByText("Job 12345 / Type cpu")).toBeInTheDocument();
     });
-    expect(screen.getByText("Data not available.")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable — Data not available.")).toBeInTheDocument();
 
     expect(screen.queryByLabelText("Show plot error details")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy Error Detail" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy error detail" })).not.toBeInTheDocument();
   });
 });
 

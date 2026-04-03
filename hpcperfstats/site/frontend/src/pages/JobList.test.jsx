@@ -165,9 +165,13 @@ describe("JobList", () => {
     await waitFor(() => {
       expect(screen.getByText("#Jobs = 0")).toBeInTheDocument();
     });
-    expect(screen.getAllByText("Data not available.").length).toBeGreaterThan(0);
-    expect(screen.queryByLabelText("Show plot error details")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy Error Detail" })).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText("Unavailable — Data not available.").length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("button", { name: "Show plot error details" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy error detail" })).not.toBeInTheDocument();
   });
 
   it("hides error detail and copy controls in mobile histogram view for non-staff", async () => {
@@ -212,9 +216,10 @@ describe("JobList", () => {
     await waitFor(() => {
       expect(screen.getByText("#Jobs = 0")).toBeInTheDocument();
     });
-    expect(screen.queryByText("Error Detail")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Show plot error details")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy Error Detail" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Show plot error details" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy error detail" })).not.toBeInTheDocument();
   });
 });
 

@@ -47,16 +47,14 @@ describe("BokehEmbed", () => {
       { is_staff: true }
     );
 
-    expect(screen.getByText("Data not available.")).toBeInTheDocument();
-    const detailsTrigger = screen.getByLabelText("Show plot error details");
-    fireEvent.mouseEnter(detailsTrigger);
+    expect(screen.getByText("Unavailable — Data not available.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show plot error details" }));
 
-    expect(screen.getByRole("tooltip")).toHaveTextContent(
-      "Missing CPI counters in host_data"
+    expect(screen.getByRole("region", { name: "Plot error details" })).toHaveTextContent(
+      "Missing CPI counters in host_data",
     );
 
-    expect(screen.getByText("Error Detail")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Copy Error Detail" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy error detail" }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith("Missing CPI counters in host_data");
     });
@@ -72,9 +70,11 @@ describe("BokehEmbed", () => {
       { is_staff: false }
     );
 
-    expect(screen.getByText("Data not available.")).toBeInTheDocument();
-    expect(screen.queryByText("Error Detail")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy Error Detail" })).not.toBeInTheDocument();
+    expect(screen.getByText("Unavailable — Data not available.")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Show plot error details" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy error detail" })).not.toBeInTheDocument();
   });
 
   it("shows loading message while external plot query is still running", () => {
@@ -86,7 +86,7 @@ describe("BokehEmbed", () => {
     );
 
     expect(screen.getByText("Loading Summary plot…")).toBeInTheDocument();
-    expect(screen.queryByText("Data not available.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unavailable — Data not available.")).not.toBeInTheDocument();
   });
 
   it("stops Bokeh readiness polling when unmounted before Bokeh loads", async () => {
@@ -116,7 +116,7 @@ describe("BokehEmbed", () => {
       />
     );
 
-    expect(screen.getByText("Data not available.")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable — Data not available.")).toBeInTheDocument();
     expect(embedItem).not.toHaveBeenCalled();
     expect(window.__injected).toBeUndefined();
   });

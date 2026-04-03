@@ -45,6 +45,9 @@ describe("AdminMonitor", () => {
         screen.getByText("node1.example.com")
       ).toBeInTheDocument();
     });
+
+    const hostHeader = screen.getByRole("columnheader", { name: /Host\b/i });
+    expect(hostHeader).toHaveAttribute("aria-sort", "ascending");
   });
 
   it("loads rabbitmq host stats when section is expanded", async () => {

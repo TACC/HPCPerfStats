@@ -344,7 +344,17 @@ body {
 }
 .histogram-thumbnail-wrapper {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.histogram-desktop-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-bottom: 0.35rem;
+  text-align: center;
+  max-width: 280px;
 }
 
 /* Job detail: host-level Bokeh grid (replaces layout table) */

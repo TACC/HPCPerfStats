@@ -1,0 +1,64 @@
+import { render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import HistogramThumbnails from "./HistogramThumbnails";
+import { SessionContext } from "../session-context";
+
+function renderHistograms(ui) {
+  return render(
+    <SessionContext.Provider
+      value={{ logged_in: true, is_staff: false, username: "tester" }}
+    >
+      {ui}
+    </SessionContext.Provider>,
+  );
+}
+
+describe("HistogramThumbnails", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete window.Bokeh;
+  });
+
+  it("exposes a labelled region and a visible desktop chart title", () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const embedItem = vi.fn().mockResolvedValue(undefined);
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    const item = { doc: {}, root_ids: ["r1"] };
+    renderHistograms(
+      <HistogramThumbnails
+        histograms={[
+          {
+            title: "Jobs by queue",
+            plot_item_thumb: item,
+            plot_item_full: item,
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByRole("region", { name: "Histogram charts for this job list" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Jobs by queue").length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getByRole("button", {
+        name: "Jobs by queue: enlarge chart (click, Enter, or Space)",
+      }),
+    ).toBeInTheDocument();
+  });
+});
