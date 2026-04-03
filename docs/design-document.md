@@ -1,60 +1,246 @@
-# HPCPerfStats Design
+# HPCPerfStats — System Design Document
 
-HPCPerfStats is a package for viewing the performance of HPC jobs. 
+| Field | Value |
+|--------|--------|
+| **Status** | As-built reference (describes the current repository layout and contracts) |
+| **Last updated** | 2026-04-03 |
+| **Scope** | Monitor daemon (C), Python ingest/analysis/site stack, Docker Compose deployment |
 
-## Component Inventory
+This document follows a structure common to technical design docs (problem/context → goals → architecture → data → contracts → operations → risks/alternatives → open questions), aligned with practices described in industry write-ups on design documentation (for example [Google-style design doc flow](https://www.lodely.com/blog/design-docs-at-google) and similar architecture templates).
 
-HPCPerfStats has two major components. The first is the monitor, which runs on each node in a cluster and collects node-level perfromance statistics. This is a standalone C program and an RPM spec file is included to help the installation. The second is a docker-compose web site workflow, including multiple containers, that hosts all data proccessing and web related services. 
+---
 
-### monitor
-The monitor is a C binary that collects node level data from many sources (MSRs, /proc, /sys, accelerator counters, network counters, etc) and collates that data into a singular message and sends that message to rabbitmq for processing. 
+## 1. Context and problem statement
 
-### web site
-The persistent collection and display framework is designed to be deployed as a container orchestration using docker compose. The containers are:
+HPC centers need **multi-resolution visibility** into how jobs use nodes: CPU, memory, accelerators, network, and power, correlated with **scheduler accounting** (job IDs, time ranges, nodelist). Raw telemetry alone is not enough; operators and researchers need **job-indexed** views and derived metrics.
 
-#### web
-This container is generated from a Dockerfile in the code base. The container is a python 3.12 base and contains all packages and python libraries that are needed to run the persistent software for collecting and showing the performace data. In this container instance gunicorn (python webserver) is run loading the DJango website.
+**HPCPerfStats** (formerly known as TACC Stats) addresses this by combining:
 
-#### pipeline
-This container uses the same image as the web container. This container is responsible for running the "data pipeline" which injests raw data from rabbitmq and slurm, does some data clean up, inserts the data into the database and then creates secondary metrics from the data. Additionally, this container archives all the raw data and optionally sends it to an archive. All of the different scripts in the pipeline are coordinated by supervisord. 
+1. A **lightweight node daemon** that samples hardware and ships UTF-8 text payloads to a message broker.
+2. An **off-cluster** Python stack that archives raw messages, loads structured rows into **PostgreSQL/TimescaleDB**, computes **aggregates and plots**, and serves a **Django + React** web application.
 
-#### proxy
-This is a standard nginx container from dockerhub. It is configured to proxy SSL requests to the python webserver. It also redirects any non-SSL traffic to the proper SSL ports.
+---
 
-#### db
-This is standard TimescaleDB/PostgresSQL container from dockerhub. This database is where all injested data ends up and where the web container reads all data for the website. 
+## 2. Goals and success criteria
 
-#### rabbitmq
-This is a standard RabbitMQ container from dockerhub. This rabbitmq instance is sent data from each monitor on each node. The data then waits for the pipeline to read the data off of the message queue.
+### 2.1 Goals
 
+- **Collect** representative node-level performance samples on cluster nodes with bounded overhead (see `HPCPerfStats/README.md`: daemon overhead and typical sampling intervals).
+- **Reliably transport** samples from nodes to a central service via **RabbitMQ**.
+- **Persist** raw archives and normalized time-series/job records for audit and reprocessing.
+- **Join** node telemetry with **Slurm accounting**–backed job metadata to support per-job analysis.
+- **Expose** curated metrics, tables, and Bokeh-backed plots through the web UI and APIs.
 
-## Data Design/Flow
+### 2.2 Non-goals
 
-### Terms
-node-level data: This is raw performance data from the node and does not contain any job information. 
+- Replacing the site batch scheduler or owning cluster provisioning.
+- Modifying application source code on user jobs (optional **XALT**-related documentation and checks are governed by workspace rules; XALT itself is upstream).
+- Guaranteeing sub-second real-time dashboards for every metric (the pipeline is **near-line**; latencies depend on ingest intervals and worker scheduling).
 
-job-level data: This data defines what jobs have been run on the cluster, importantly, the time that the job starts and finishes as well as the nodes invovled in the job.
+### 2.3 How we measure “healthy” operation
 
-job-indexed data: This is the collated data where the node-level data is integrated with the job-level data to create a job performance data view, where the performance data is indexed and can be retrieved by job id. 
+Operational signals used in this repo (not a complete SLO spec):
 
+- Compose **healthchecks** for `db`, `redis`, `rabbitmq`, and `proxy` (`docker-compose.yaml`).
+- Automated tests for **listend** message handling, **sync_timedb** archive edge cases, metrics updates, and web/API behavior (`HPCPerfStats/TESTING.md`).
+- **Idempotent** metrics recomputation expectations where documented under ingestion/metrics rules.
 
-### Data flow in timeline order
+---
 
-On the login nodes, a script dumps the slurm job logs and this data is transfered to the pipeline container.
+## 3. High-level architecture
 
-On each node in the cluster, the monitor collects performance data and sends it to RabbitMQ
+```mermaid
+flowchart LR
+  subgraph cluster["HPC cluster nodes"]
+    M[Monitor hpcperfstatsd]
+  end
+  RMQ[RabbitMQ]
+  L[listend.py]
+  ARC[(Archive files per host)]
+  ST[sync_timedb.py]
+  DB[(PostgreSQL / TimescaleDB)]
+  SA[sync_acct.py and/or API sacct ingest]
+  UM[update_metrics.py]
+  WEB[Django + Gunicorn]
+  FE[React SPA]
+  REDIS[(Redis cache)]
+  PXY[Nginx proxy]
 
-RabbitMQ then holds the data until it is pulled off by "listen.py" script. This script takes each message and writes it out as a raw stats file to the archive directory with a specific directory structure: node_name/epoch_timestamp.
+  M -->|UTF-8 payloads| RMQ
+  RMQ --> L
+  L --> ARC
+  ARC --> ST
+  ST --> DB
+  SA --> DB
+  DB --> UM
+  UM --> DB
+  WEB --> DB
+  WEB --> REDIS
+  FE --> WEB
+  PXY --> WEB
+  L -.->|recent host keys| REDIS
+```
 
-The "sync_timedb.py" script then reads this directory, takes the node-level data from raw messages and imports it to the database.
+**Deployment split:**
 
-The "sync_acct.py" script reads the slurm job log file and imports the job-level data into the database. 
+- **On nodes:** C monitor (`HPCPerfStats/monitor/`), typically via RPM/systemd (`hpcperfstats` service).
+- **Central stack:** Docker Compose (`docker-compose.yaml` includes `docker-compose.app.yaml`): `web`, `pipeline`, `db`, `redis`, `rabbitmq`, `proxy`.
 
-The "update_metrics.py" script then reads the database job-level and node-level data and creates job-indexed data. Additionally, it uses this job-index data to create a number of secondary metrics.
+---
 
-The website then loads the data from the DB, displays the data and plots data over time in a number of ways. 
+## 4. Stakeholders and consumers
 
+| Role | Need |
+|------|------|
+| **HPC operators** | Operate compose services, storage paths, credentials, broker capacity, and ingest schedules. |
+| **Researchers / users** | Inspect job performance, compare runs, interpret plots and summaries. |
+| **Developers** | Preserve **monitor↔consumer** and **`host_data.type`↔analysis** contracts when extending metrics or UI. |
 
+Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced Computing Center).
 
+---
 
+## 5. Component inventory
 
+### 5.1 Monitor (C daemon)
+
+- **Purpose:** Collect node-level statistics from MSRs, `/proc`, `/sys`, accelerators (e.g. DCGM), network counters, etc., and publish **one message per sample** to RabbitMQ (or append in file mode).
+- **Build:** Autotools; production packaging via static-bundle + RPM spec under `HPCPerfStats/monitor/` (see `README.md`).
+- **Workspace rule split:** Application Python code treats `monitor/` as **read-only** unless the user explicitly approves edits; monitor-only work follows `HPCPerfStats/monitor/cursor-rules/` (which explicitly **ignores** root `HPCPerfStats/cursor-rules/` for monitor changes).
+
+### 5.2 Docker Compose services
+
+| Service | Role |
+|---------|------|
+| **web** | Builds from repo `Dockerfile`; runs Django via `services-conf/django_startup.sh`; exposes app port (default host `8000` via `HPCPERFSTATS_WEB_PORT`). Depends on healthy `db` and `redis`. |
+| **pipeline** | Same image as `web`; runs `supervisor_startup.sh` to supervise long-running ingest/processing programs (see §6.2). Uses bound volumes for archive/accounting/log paths (`docker-compose.app.yaml`). |
+| **db** | TimescaleDB/PostgreSQL 15 image; primary system of record for ingested and derived data. |
+| **redis** | Django cache backend and auxiliary keys (e.g. listend recent-host tracking). |
+| **rabbitmq** | Broker for monitor→site message delivery. |
+| **proxy** | Nginx TLS/front door; configuration under `services-conf/` (see workspace guardrails). |
+
+### 5.3 Python package layout (concise)
+
+- **`hpcperfstats/listend.py`** — RabbitMQ consumer; archive writer (§7.2).
+- **`hpcperfstats/dbload/`** — Time-series and accounting loaders (`sync_timedb.py`, `sync_acct.py`, helpers).
+- **`hpcperfstats/analysis/`** — Metrics computation, plotting, roofline and vendor-specific logic.
+- **`hpcperfstats/site/`** — Django project, DRF APIs, React frontend under `site/frontend/`.
+
+### 5.4 External API client
+
+- **`hpcperfstats-tools`** (sibling/client repository) is the **canonical CLI/client** for the Django API (endpoints, auth headers, schemas). Server-side business rules stay in Django; the client validates responses (workspace guardrails).
+
+---
+
+## 6. Runtime processes (pipeline)
+
+The example supervisor configuration (`services-conf/supervisord.conf.example`) defines long-running programs including:
+
+- **`listend.py`** — RabbitMQ listener (archive append/rotation).
+- **`sync_timedb.py all`** — Imports node-level data from the archive into the database.
+- **`update_metrics.py`** — Builds/updates job-indexed and secondary metrics from DB state.
+
+It also includes **syslog-ng** and **logrotate** hooks for operational logging.
+
+**Accounting (job-level) ingest** is **not** listed in that example file: operators either:
+
+- Run **`sync_acct.py`** on a schedule against pipe-delimited files under the configured accounting directory (date-prefixed filenames), and/or  
+- Use **`hpcperfstats-sacct-gen`** from **hpcperfstats-tools** to run `sacct` and **POST** results to the API ingest path (`README.md`).
+
+---
+
+## 7. Data design
+
+### 7.1 Glossary
+
+| Term | Meaning |
+|------|--------|
+| **Node-level data** | Raw performance samples from a host; **not** inherently tied to a job ID in the payload. |
+| **Job-level data** | Scheduler accounting fields (job ID, user, start/end, nodelist, partition, etc.). |
+| **Job-indexed data** | Derived association of node samples with jobs using time overlap and nodelist, plus downstream aggregates. |
+
+### 7.2 Archive layout (listend)
+
+`listend.py` appends monitor payloads under the configured **archive directory**, per host, using a **`current`** file and **`$`-prefixed rotation** semantics. Epoch-named files and hardlink relationships are coordinated so **`sync_timedb`** can avoid racing active writes (see `hpcperfstats/dbload/sync_timedb_archive_helpers.py` and listend tests). This is the **transport/archive contract** documented in `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc`.
+
+**Canonical consumer/parser contract** for monitor output: treat **`hpcperfstats/listend.py`** as source of truth for:
+
+- UTF-8 text payloads.
+- **Schema/rotation** lines starting with `$` (host identification on the consumer side uses the prescribed token positions).
+- **Stats** lines: whitespace-separated fields with **host as the third token** (`<timestamp> <jobid> <host> ...`).
+
+### 7.3 Database and metrics
+
+- Time-series and job tables are read by **`update_metrics.py`** to populate derived metrics used by the site and plots.
+- **Deterministic, DB-backed aggregation** is preferred over ad-hoc recompute (runtime/metrics safety rule).
+
+### 7.4 Monitor ↔ analysis contract (`host_data.type`)
+
+The monitor publishes **`host_data.type`** strings (from C `stats_type.st_name` / schema). **Analysis code must treat those names as the contract**: Intel IMC ordering, PMC priority, AMD (`amd64_pmc` / `amd64_df`), ARM/Grace paths, and **roofline nominal peaks** must stay aligned with what the monitor can emit.
+
+Canonical Python references (see `HPCPerfStats/cursor-rules/monitor-analysis-architecture-sync.mdc` and `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md`):
+
+- `hpcperfstats/analysis/gen/utils.py` — `INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, `INTEL_CORE_PMC_TYPES_ORDERED`, `PMC_TYPENAME_PRIORITY`, etc.
+- `hpcperfstats/analysis/plot/roofline_peaks.py` — peak tables and inference.
+- `hpcperfstats/analysis/plot/roofline.py` — merge logic.
+
+---
+
+## 8. Web application and APIs
+
+- **Django** serves the backend, **DRF** exposes JSON APIs consumed by the React SPA and by **hpcperfstats-tools**.
+- **React** SPA routes under **`/machine/`** (see web E2E test maintenance rules).
+- **Display policy:** User-visible numbers and plot ticks must **not** use scientific notation (dedicated workspace rule: use shared formatters in Python/Bokeh and `formatDecimalStandard` / standard notation in JS).
+
+---
+
+## 9. Security, configuration, and operations
+
+- **Configuration** is driven by `hpcperfstats.ini` (container path commonly `/home/hpcperfstats/hpcperfstats.ini`) and files under `services-conf/`. `*.example` files document intended shapes; copy/rename per `README.md`.
+- **Secrets** (TLS certs, API keys) are environment- and deployment-specific; nginx and Django settings consume paths defined in compose and `services-conf/`.
+- **CSP** changes should be minimal and scoped when touching frontend pages (React workspace rule).
+
+---
+
+## 10. Testing and documentation expectations
+
+- **Python:** pytest with Django settings (`pyproject.toml`); many tests under `hpcperfstats/tests/` and `hpcperfstats/site/.../tests/`.
+- **Web E2E:** `test_web_pages_e2e.py` and Playwright `test_web_pages_browser_e2e.py` must be updated when web routes or SPA behavior changes.
+- **Compose workflows:** For DB/Redis-dependent tests, use the Docker Compose network so hostnames like `db` resolve (see `full-test-with-db-redis` and `local-compose-db-lifecycle-for-web-tests` rules).
+- **Testing entrypoints:** `HPCPerfStats/TESTING.md` must stay in sync when test commands or runners change.
+
+---
+
+## 11. Alternatives considered (historical / architectural)
+
+This section records **typical** tradeoffs implicit in the design—not a formal ADR log.
+
+| Alternative | Why not primary here |
+|-------------|----------------------|
+| Pull-based polling from nodes | Push via RabbitMQ decouples node connectivity from DB availability and buffers bursts. |
+| Single monolithic “do everything” container | Split **web** vs **pipeline** isolates request serving from long-running ingest loops. |
+| Only API-based accounting | File-based **`sync_acct.py`** remains supported for sites that batch-export `sacct` output to disk. |
+
+---
+
+## 12. Open questions and follow-ups
+
+- **Exact production scheduling** for `sync_acct.py` vs API-only ingest varies by site; document operator runbooks per deployment.
+- **Capacity planning** (RabbitMQ queue depth, archive storage growth, DB retention) is deployment-specific and not fully specified in-repo.
+- **Per-site hostname allowlists and INI paths** (`HPCPERFSTATS_INI`) must match compose mounts—verify on each environment.
+
+---
+
+## 13. References (in-repo)
+
+| Topic | Location |
+|-------|-----------|
+| Install, monitor RPM, broker config | `HPCPerfStats/README.md` |
+| Attribute / metric definitions | `docs/attributes-definition.md` |
+| Monitor variables catalog | `docs/MONITOR_VARIABLES.md` |
+| Architecture-agnostic analysis | `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md` |
+| Compose topology | `docker-compose.yaml`, `docker-compose.app.yaml` |
+| Supervisor programs (example) | `services-conf/supervisord.conf.example` |
+| Workspace guardrails (monitor/tools/nginx/redis) | `HPCPerfStats/cursor-rules/workspace-guardrails.mdc` |
+| Monitor message contract | `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc` |
+| Monitor ↔ analysis type sync | `HPCPerfStats/cursor-rules/monitor-analysis-architecture-sync.mdc` |
