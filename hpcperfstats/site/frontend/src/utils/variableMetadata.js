@@ -248,9 +248,160 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
 };
 
+/** Job summary Bokeh subplot column names — keep prose in sync with ``summary_metric_descriptions.py``. */
+const SUMMARY_PLOT_METRIC_METADATA = {
+  cpu: {
+    description:
+      "CPU cores in use from sampled user, system, and nice time deltas (normalized to cores; one core fully busy ≈ 1.0).",
+  },
+  mem: {
+    description:
+      "Resident CPU memory (MemUsed) from the memory monitor, per sample and host (scaled to GiB in the plot label).",
+  },
+  numa_remote_refs: {
+    description:
+      "Combined rate of NUMA counters (miss, foreign, other_node) indicating memory references served from non-local nodes.",
+  },
+  mbw: {
+    description:
+      "DRAM bandwidth from Intel integrated memory controller CAS read/write counters (first IMC typename in the job schema with data), in GB/s.",
+  },
+  amd_mbw: {
+    description:
+      "DRAM bandwidth summed across AMD Data Fabric memory channels (MBW_CHANNEL_*), in GB/s.",
+  },
+  amd_flops: {
+    description:
+      "Floating-point operation rate from AMD PMC FLOPS events (32b + 64b), in GFLOP/s.",
+  },
+  flops64b: {
+    description:
+      "Double-precision floating-point operation rate from Intel FP_ARITH or equivalent core PMCs, in GFLOP/s.",
+  },
+  flops32b: {
+    description:
+      "Single-precision floating-point operation rate from Intel FP_ARITH or equivalent core PMCs, in GFLOP/s.",
+  },
+  instr: {
+    description:
+      "Retired instruction rate from core performance counters (INST_RETIRED), per second.",
+  },
+  amd_instr: {
+    description:
+      "Retired instruction rate from AMD core PMC (INST_RETIRED), per second.",
+  },
+  mcycles: {
+    description: "Reference (fixed-frequency) core cycle rate from MPERF, per second.",
+  },
+  acycles: {
+    description: "Actual core cycle rate from APERF (frequency-scaled), per second.",
+  },
+  amd_mcycles: {
+    description: "Reference core cycle rate from AMD MPERF, per second.",
+  },
+  amd_acycles: {
+    description: "Actual core cycle rate from AMD APERF, per second.",
+  },
+  freq: {
+    description:
+      "Effective CPU frequency (GHz) from the APERF/MPERF ratio (scaled by a fixed factor in this plot).",
+  },
+  watts: {
+    description:
+      "Intel package power estimated from RAPL MSR_PKG_ENERGY_STATUS deltas, in watts.",
+  },
+  cha_counter_arc_sum: {
+    description:
+      "Sum of selected Intel CHA (uncore) arc counters present in the job schema (cache/IMC related events), per second.",
+  },
+  nv_gpu_util: {
+    description:
+      "GPU utilization percentage from DCGM or legacy utilization samples (NVIDIA; AMD GPU when the same fields are populated).",
+  },
+  nv_mem_used_mb: {
+    description:
+      "GPU device memory used (DCGM mem_used_mb), scaled to GiB in the axis label.",
+  },
+  nv_mem_util_pct: {
+    description: "GPU memory utilization percentage from DCGM mem_util when available.",
+  },
+  nv_tensor_active: {
+    description: "Tensor core / tensor pipe activity percentage from DCGM (NVIDIA).",
+  },
+  nv_sm_occupancy: {
+    description: "Streaming multiprocessor occupancy percentage from DCGM when available.",
+  },
+  nv_fp16_active: {
+    description: "FP16 pipeline activity percentage from DCGM when available.",
+  },
+  nv_fp32_active: {
+    description: "FP32 pipeline activity percentage from DCGM when available.",
+  },
+  nv_gpu_mem_bw_gbs: {
+    description:
+      "Estimated GPU HBM/memory bandwidth from DCGM gpu_mem_bw_bytes_rate, in GB/s.",
+  },
+  nv_power_w: {
+    description:
+      "GPU board power draw summed across GPUs (DCGM power_usage), in watts.",
+  },
+  node_power_est_w: {
+    description:
+      "Estimated on-node power: DCGM module power when that branch applies, otherwise CPU package (RAPL or Grace DCGM) plus summed GPU draw.",
+  },
+  nv_gpu_link_gbs: {
+    description:
+      "PCIe plus NVLink byte rate from DCGM gpu_io_link_total_bytes, in GB/s.",
+  },
+  lustre_read_mb_s: {
+    description:
+      "Lustre client read bandwidth from llite read_bytes deltas, in MB/s (NFS is plotted separately).",
+  },
+  lustre_write_mb_s: {
+    description:
+      "Lustre client write bandwidth from llite write_bytes deltas, in MB/s (NFS is plotted separately).",
+  },
+  liops: {
+    description:
+      "Lustre client metadata and inode operation rate from summed llite operation counters (open, close, getattr, etc.), per second.",
+  },
+  nfs_read_mb_s: {
+    description:
+      "NFS client read throughput from normal, direct, and server read byte counters, in MB/s (Lustre is plotted separately).",
+  },
+  nfs_write_mb_s: {
+    description:
+      "NFS client write throughput from normal, direct, and server write byte counters, in MB/s (Lustre is plotted separately).",
+  },
+  nfs_iops: {
+    description:
+      "NFS client read plus write operation rate from READ_ops and WRITE_ops, per second (Lustre metadata IOPS is plotted separately).",
+  },
+  ibbw: {
+    description:
+      "High-speed fabric data rate from InfiniBand extended port byte counters (receive plus transmit), in MB/s; Omni-Path may fill this when IB bytes are absent.",
+  },
+  fabric_mb_per_gflops: {
+    description:
+      "Fabric bandwidth (MB/s) divided by floating-point throughput (GFLOP/s) from the same job’s summary FLOPS column (AMD or Intel path).",
+  },
+  fabric_mb_per_avg_tensor: {
+    description:
+      "Fabric MB/s divided by tensor-activity percent (scaled as a fractional duty cycle) for coupled communication and GPU tensor workloads.",
+  },
+  opa_wait_cong: {
+    description:
+      "Omni-Path combined rate of port transmit wait and switch congestion counters.",
+  },
+  opa_ecn: {
+    description: "Omni-Path combined rate of FECN and BECN receive counters.",
+  },
+};
+
 export const VARIABLE_METADATA = {
   ...MONITOR_EVENT_METADATA,
   ...JOB_ACCOUNTING_AND_DERIVED_METADATA,
+  ...SUMMARY_PLOT_METRIC_METADATA,
 };
 
 /** First token before whitespace or bracket — matches stored metric names. */

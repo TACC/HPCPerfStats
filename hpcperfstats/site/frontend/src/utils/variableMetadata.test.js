@@ -56,6 +56,13 @@ describe("getDescriptionForVariable", () => {
     expect(getDescriptionForVariable("unknown_metric_xyz")).toMatch(/Telemetry variable/i);
   });
 
+  it("documents job summary Bokeh subplot metric column names", () => {
+    expect(getDescriptionForVariable("cpu")).toMatch(/CPU cores in use/i);
+    expect(getDescriptionForVariable("nfs_iops")).toMatch(/NFS client read/i);
+    expect(getDescriptionForVariable("lustre_read_mb_s")).toMatch(/Lustre client read/i);
+    expect(getDescriptionForVariable("fabric_mb_per_gflops")).toMatch(/Fabric bandwidth/i);
+  });
+
   it("returns null for metrics with no doc text (sf evictrate)", () => {
     expect(VARIABLE_METADATA.avg_sf_evictrate).toBeUndefined();
     expect(getDescriptionForVariable("avg_sf_evictrate")).toMatch(/Telemetry variable/i);

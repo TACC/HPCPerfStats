@@ -3,6 +3,7 @@
 """
 import hpcperfstats.conf_parser as cfg
 
+import html
 import logging
 import math
 import time
@@ -41,6 +42,9 @@ from bokeh.transform import factor_cmap
 from hpcperfstats.analysis.plot import MSG_NO_METRIC_DATA
 from hpcperfstats.analysis.plot.hover_html import hover_tooltip_html_host_time_value
 from hpcperfstats.analysis.plot.job_window import job_window_bounds_local
+from hpcperfstats.analysis.plot.summary_metric_descriptions import (
+    description_for_summary_metric,
+)
 
 local_timezone = cfg.get_local_timezone()
 
@@ -740,6 +744,62 @@ def _summary_plot_order_key(metric_name):
   return priority.get(metric_name, 395)
 
 
+def _add_summary_variable_help_marker(plot, description):
+  """Draw a small '?' at the upper-right of the data area with a hover explanation."""
+  if not description or not str(description).strip():
+    return
+  desc_str = str(description).strip()
+  from pandas import Timedelta
+
+  xe, xs = plot.x_range.end, plot.x_range.start
+  ye, ys = plot.y_range.end, plot.y_range.start
+  span_x = xe - xs
+  span_y = ye - ys
+  if hasattr(span_x, "total_seconds"):
+    if span_x.total_seconds() == 0:
+      span_x = Timedelta(seconds=60)
+  else:
+    try:
+      if float(span_x) == 0.0:
+        span_x = 1.0
+    except (TypeError, ValueError):
+      span_x = Timedelta(seconds=60)
+  if span_y == 0.0:
+    span_y = 1.0
+  help_x = xe - 0.018 * span_x
+  help_y = ye - 0.065 * span_y
+
+  tip = (
+      '<div style="max-width:28em; white-space:normal; font-weight:400;">'
+      f"{html.escape(desc_str)}"
+      "</div>"
+  )
+  help_src = ColumnDataSource(data={"hx": [help_x], "hy": [help_y], "qm": ["?"]})
+  hit = plot.scatter(
+      x="hx",
+      y="hy",
+      source=help_src,
+      size=18,
+      fill_alpha=0,
+      line_alpha=0,
+      level="overlay",
+  )
+  plot.text(
+      x="hx",
+      y="hy",
+      text="qm",
+      source=help_src,
+      text_font_size="11px",
+      text_color="#0d6efd",
+      text_align="center",
+      text_baseline="middle",
+      level="overlay",
+  )
+  plot.add_tools(
+      HoverTool(renderers=[hit], tooltips=tip),
+  )
+
+
 class SummaryPlot():
   """Builds a grid of Bokeh step plots (one per metric) from jid_table aggregate DataFrames.
 
@@ -753,11 +813,19 @@ class SummaryPlot():
     self.jt = jt
     self.host_list = jt.host_list
 
-  def plot_metric(self, df, metric, label, y_range_end=None, x_range=None):
+  def plot_metric(
+      self,
+      df,
+      metric,
+      label,
+      y_range_end=None,
+      x_range=None,
+      variable_description=None,
+  ):
     """Create one Bokeh figure with step-shaped lines and scatter hits per host.
 
-        Uses one multi_line glyph plus one scatter (single HoverTool) so large host
-        counts avoid O(hosts) separate data sources while preserving hover fields.
+        Uses one multi_line glyph plus one scatter (HoverTool on data) and a separate
+        HoverTool on a small “?” marker for metric documentation.
         """
     s = time.time()
 
@@ -847,6 +915,12 @@ class SummaryPlot():
             renderers=[scatter],
         )
     )
+    doc_text = (
+        variable_description
+        if variable_description is not None
+        else description_for_summary_metric(metric)
+    )
+    _add_summary_variable_help_marker(plot, doc_text)
     log.debug("time to plot %s: %s", metric, time.time() - s)
     return plot
 
