@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useSearchParams, useParams, useLocation, Link, useNavigate } from "react-router-dom";
 import ReactPaginate from "react-paginate";
 import { api } from "../api";
@@ -43,6 +43,22 @@ export default function JobList() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [histogramReloadKey, setHistogramReloadKey] = useState(0);
+  const [listViewTab, setListViewTab] = useState("jobs");
+  const [isLgUp, setIsLgUp] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia("(min-width: 992px)").matches,
+  );
+  const tabJobsId = useId();
+  const tabChartsId = useId();
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 992px)");
+    function syncLg() {
+      setIsLgUp(mq.matches);
+    }
+    syncLg();
+    mq.addEventListener("change", syncLg);
+    return () => mq.removeEventListener("change", syncLg);
+  }, []);
 
   useEffect(() => {
     const params = buildJobListApiParams(searchParams, paramsFromRoute);
@@ -252,6 +268,24 @@ export default function JobList() {
 
   const pageSummary = jobListPageHumanSummary(paramsFromRoute);
 
+  function handleJumpToDistributions(event) {
+    if (isLgUp) return;
+    event.preventDefault();
+    setListViewTab("charts");
+    window.requestAnimationFrame(() => {
+      document.getElementById("job-list-distributions")?.scrollIntoView({ block: "start" });
+    });
+  }
+
+  function handleBackToJobTable(event) {
+    if (isLgUp) return;
+    event.preventDefault();
+    setListViewTab("jobs");
+    window.requestAnimationFrame(() => {
+      document.getElementById("job-list-table")?.scrollIntoView({ block: "start" });
+    });
+  }
+
   return (
     <>
       <h1 className="h2 mb-3">{qname}</h1>
@@ -265,6 +299,47 @@ export default function JobList() {
         </p>
       )}
 
+      {!isLgUp && (
+        <div className="job-list-view-tabs mb-2">
+          <ul className="nav nav-tabs" role="tablist" aria-label="Jobs list and charts">
+            <li className="nav-item" role="presentation">
+              <button
+                type="button"
+                id={tabJobsId}
+                role="tab"
+                className={`nav-link ${listViewTab === "jobs" ? "active" : ""}`}
+                aria-selected={listViewTab === "jobs"}
+                aria-controls="job-list-tabpanel-jobs"
+                tabIndex={listViewTab === "jobs" ? 0 : -1}
+                onClick={() => setListViewTab("jobs")}
+              >
+                Jobs
+              </button>
+            </li>
+            <li className="nav-item" role="presentation">
+              <button
+                type="button"
+                id={tabChartsId}
+                role="tab"
+                className={`nav-link ${listViewTab === "charts" ? "active" : ""}`}
+                aria-selected={listViewTab === "charts"}
+                aria-controls="job-list-tabpanel-charts"
+                tabIndex={listViewTab === "charts" ? 0 : -1}
+                onClick={() => setListViewTab("charts")}
+              >
+                Charts
+              </button>
+            </li>
+          </ul>
+        </div>
+      )}
+
+      <div
+        id="job-list-tabpanel-jobs"
+        role={isLgUp ? undefined : "tabpanel"}
+        aria-labelledby={isLgUp ? undefined : tabJobsId}
+        hidden={!isLgUp && listViewTab !== "jobs"}
+      >
       {num_pages > 1 && (
         <nav className="pagination-wrapper" aria-label="Job list pagination">
           {page > 1 ? (
@@ -397,13 +472,19 @@ export default function JobList() {
       </div>
 
       <p className="small mt-2 mb-0">
-        <a href="#job-list-distributions">Jump to distributions for this list</a>
+        <a href="#job-list-distributions" onClick={handleJumpToDistributions}>
+          Jump to distributions for this list
+        </a>
       </p>
+      </div>
 
       <section
         id="job-list-distributions"
+        role={isLgUp ? undefined : "tabpanel"}
+        aria-labelledby={isLgUp ? undefined : tabChartsId}
         className="job-list-distributions mt-4"
         aria-label="Distributions for this list"
+        hidden={!isLgUp && listViewTab !== "charts"}
       >
         <h2 className="h5 mb-2">Distributions for this list</h2>
         <div className="text-center">
@@ -449,7 +530,9 @@ export default function JobList() {
           <HistogramThumbnails histograms={histograms} />
         </div>
         <p className="small text-center mt-2 mb-0">
-          <a href="#job-list-table">Back to job table</a>
+          <a href="#job-list-table" onClick={handleBackToJobTable}>
+            Back to job table
+          </a>
         </p>
       </section>
     </>

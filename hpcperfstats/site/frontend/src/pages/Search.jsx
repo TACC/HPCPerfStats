@@ -151,66 +151,66 @@ export default function Search() {
   return (
     <div className="search-home">
       <h1 className="h2 mb-3">Browse jobs by time</h1>
-        <p className="text-muted small mb-3">
-          Open a year or calendar day to see job lists. If you already know a job ID, use{" "}
-          <strong>Find Job</strong> in the header; for richer filters, use{" "}
-          <strong>Extended search</strong>.
-        </p>
+      <p className="text-muted small mb-3">
+        Open a year or calendar day to see job lists. If you already know a job ID, use{" "}
+        <strong>Find Job</strong> in the header; for richer filters, use{" "}
+        <strong>Extended search</strong>.
+      </p>
 
-        <div className="search-browse-tabs mb-3">
-          <ul className="nav nav-tabs" role="tablist">
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${browseTab === "year" ? "active" : ""}`}
-                id={tabYearId}
-                role="tab"
-                aria-selected={browseTab === "year"}
-                aria-controls={panelYearId}
-                tabIndex={browseTab === "year" ? 0 : -1}
-                onClick={() => setBrowseTab("year")}
-              >
-                By year
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${browseTab === "calendar" ? "active" : ""}`}
-                id={tabCalendarId}
-                role="tab"
-                aria-selected={browseTab === "calendar"}
-                aria-controls={panelCalendarId}
-                tabIndex={browseTab === "calendar" ? 0 : -1}
-                onClick={() => setBrowseTab("calendar")}
-              >
-                By calendar
-              </button>
-            </li>
-          </ul>
-        </div>
+      <div className="search-browse-tabs mb-3">
+        <ul className="nav nav-tabs" role="tablist">
+          <li className="nav-item" role="presentation">
+            <button
+              type="button"
+              className={`nav-link ${browseTab === "year" ? "active" : ""}`}
+              id={tabYearId}
+              role="tab"
+              aria-selected={browseTab === "year"}
+              aria-controls={panelYearId}
+              tabIndex={browseTab === "year" ? 0 : -1}
+              onClick={() => setBrowseTab("year")}
+            >
+              By year
+            </button>
+          </li>
+          <li className="nav-item" role="presentation">
+            <button
+              type="button"
+              className={`nav-link ${browseTab === "calendar" ? "active" : ""}`}
+              id={tabCalendarId}
+              role="tab"
+              aria-selected={browseTab === "calendar"}
+              aria-controls={panelCalendarId}
+              tabIndex={browseTab === "calendar" ? 0 : -1}
+              onClick={() => setBrowseTab("calendar")}
+            >
+              By calendar
+            </button>
+          </li>
+        </ul>
+      </div>
 
-        <section
-          id={panelYearId}
-          role="tabpanel"
-          aria-labelledby={tabYearId}
-          className="search-home-section"
-          hidden={browseTab !== "year"}
-        >
-          <h2 className="visually-hidden">Browse by year</h2>
-          {yearBrowsePrimary}
-        </section>
+      <section
+        id={panelYearId}
+        role="tabpanel"
+        aria-labelledby={tabYearId}
+        className="search-home-section"
+        hidden={browseTab !== "year"}
+      >
+        <h2 className="visually-hidden">Browse by year</h2>
+        {yearBrowsePrimary}
+      </section>
 
-        <section
-          id={panelCalendarId}
-          role="tabpanel"
-          aria-labelledby={tabCalendarId}
-          className="search-home-section search-date-list-section"
-          hidden={browseTab !== "calendar"}
-        >
-          <h2 className="visually-hidden">Browse by calendar date</h2>
-          {calendarBrowsePrimary}
-        </section>
+      <section
+        id={panelCalendarId}
+        role="tabpanel"
+        aria-labelledby={tabCalendarId}
+        className="search-home-section search-date-list-section"
+        hidden={browseTab !== "calendar"}
+      >
+        <h2 className="visually-hidden">Browse by calendar date</h2>
+        {calendarBrowsePrimary}
+      </section>
     </div>
   );
 }

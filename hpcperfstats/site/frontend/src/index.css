@@ -373,6 +373,17 @@ body {
   text-decoration: underline;
 }
 
+@media (min-width: 992px) {
+  .job-detail-toc {
+    position: sticky;
+    top: 0.5rem;
+    z-index: 1020;
+    padding-top: 0.25rem;
+    margin-top: -0.25rem;
+    background-color: var(--bs-body-bg, #fff);
+  }
+}
+
 /* Job detail: host-level Bokeh grid (replaces layout table) */
 .job-detail-plots-intro {
   max-width: 36rem;

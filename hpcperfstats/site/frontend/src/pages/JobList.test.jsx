@@ -26,9 +26,9 @@ describe("JobList", () => {
   beforeEach(() => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
-      value: vi.fn().mockImplementation(() => ({
-        matches: false,
-        media: "",
+      value: vi.fn().mockImplementation((query) => ({
+        matches: true,
+        media: query,
         onchange: null,
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
@@ -94,6 +94,68 @@ describe("JobList", () => {
     expect(screen.getByRole("link", { name: "Performance Data" })).toBeInTheDocument();
     expect(screen.getByText("job1")).toBeInTheDocument();
     expect(screen.getByText("COMPLETED")).toBeInTheDocument();
+  });
+
+  it("on narrow viewports uses Jobs and Charts tabs and jump link opens Charts", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: query.includes("min-width: 992px") ? false : true,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+      job_list: [
+        {
+          jid: 1,
+          has_metrics: true,
+          username: "alice",
+          account: "acct",
+          start_time: "2024-01-01T00:00:00Z",
+          end_time: "2024-01-01T01:00:00Z",
+          runtime: 3600,
+          queue: "normal",
+          jobname: "job1",
+          state: "COMPLETED",
+          ncores: 32,
+          nhosts: 2,
+          node_hrs: 64,
+        },
+      ],
+      nj: 1,
+      aggregates: { total_node_hours: 64 },
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    });
+    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({ plots: [] });
+    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+
+    renderJobList();
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /^jobs$/i })).toBeInTheDocument();
+    });
+    expect(screen.getByRole("tab", { name: /^charts$/i })).toBeInTheDocument();
+
+    const distSection = document.getElementById("job-list-distributions");
+    expect(distSection).toBeTruthy();
+    expect(distSection).toHaveAttribute("hidden");
+
+    fireEvent.click(screen.getByRole("link", { name: /jump to distributions/i }));
+
+    await waitFor(() => {
+      expect(distSection).not.toHaveAttribute("hidden");
+    });
+    expect(screen.getByRole("tab", { name: /^charts$/i })).toHaveAttribute("aria-selected", "true");
   });
 
   it("shows human summary for year route", async () => {
