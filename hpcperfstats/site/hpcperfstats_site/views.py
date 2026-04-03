@@ -133,11 +133,15 @@ def api_key_page(request):
     .api-key-row {{ display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem; }}
     .api-key-copy-status {{ margin-top: 0.35rem; color: #444; font-size: 0.95rem; min-height: 1.25em; }}
     @media (max-width: 480px) {{ body {{ margin: 0.75rem; }} }}
+    :focus-visible {{ outline: 2px solid #0a58ca; outline-offset: 2px; }}
   </style>
 </head>
 <body>
+  <a href="#api-key-main" class="visually-hidden visually-hidden-focusable">Skip to main content</a>
+  <div id="api-key-page-announce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
   <div class="container" style="max-width: 640px;">
     <p class="mb-3"><a href="/machine/" class="link-primary">Back to HPCPerfStats</a></p>
+    <main id="api-key-main">
     <div class="card shadow-sm">
       <div class="card-body">
     <h1 class="h3 card-title">HPCPerfStats API key</h1>
@@ -146,14 +150,39 @@ def api_key_page(request):
     <p>Store this key securely. You can use it with the <code>hpcperfstats-jobstats</code>
     and <code>hpcperfstats-sacct-gen</code> tools (from the hpcperfstats-tools package)
     by passing <code>--api-key</code> or using the cached key in <code>~/.hpcperfstats-api</code>.</p>
-    <form method="post" class="mt-4">
+    <form method="post" class="mt-4" id="api-key-rotate-form" aria-describedby="api-key-rotate-help">
       <input type="hidden" name="csrfmiddlewaretoken" value="{csrf_token}" />
-      <button type="submit" class="btn btn-warning">Invalidate and Create New Key</button>
+      <p id="api-key-rotate-help" class="small text-muted mb-2">
+        This revokes your current key and creates a replacement. Confirm before submitting.
+      </p>
+      <button type="submit" class="btn btn-warning" id="api-key-rotate-submit">Invalidate and Create New Key</button>
     </form>
       </div>
     </div>
+    </main>
   </div>
   <script>
+    (function () {{
+      document.addEventListener("DOMContentLoaded", function () {{
+        const keyEl = document.getElementById("api-key-value");
+        const ann = document.getElementById("api-key-page-announce");
+        if (keyEl && ann) {{
+          ann.textContent =
+            "A new API key is displayed on this page. Copy it now; it will not be shown again.";
+          keyEl.scrollIntoView({{ block: "nearest", behavior: "smooth" }});
+        }}
+      }});
+      const rotateForm = document.getElementById("api-key-rotate-form");
+      if (rotateForm) {{
+        rotateForm.addEventListener("submit", function (e) {{
+          if (!window.confirm(
+            "Invalidate your current API key and create a new one? The old key will stop working immediately."
+          )) {{
+            e.preventDefault();
+          }}
+        }});
+      }}
+    }})();
     (function () {{
       const copyBtn = document.getElementById("copy-api-key");
       const apiKeyEl = document.getElementById("api-key-value");

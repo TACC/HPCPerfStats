@@ -153,7 +153,7 @@ describe("JobDetail", () => {
 
     renderJobDetail();
     expect(
-      screen.getByText("Loading job detail…")
+      screen.getByRole("status", { name: /loading job detail/i })
     ).toBeInTheDocument();
   });
 

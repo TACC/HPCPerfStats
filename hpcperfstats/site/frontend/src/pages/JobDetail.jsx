@@ -22,7 +22,10 @@ function CollapsibleSection({ title, children, defaultOpen = false, empty = fals
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
       >
-        <span className="flex-shrink-0" style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform 0.2s", display: "inline-block" }}>
+        <span
+          className={`collapsible-section-chevron flex-shrink-0${open ? " collapsible-section-chevron-open" : ""}`}
+          aria-hidden
+        >
           ▶
         </span>
         <strong>{title}{empty ? " (Data not available.)" : ""}</strong>
@@ -51,8 +54,13 @@ const PlotPanel = memo(function PlotPanel({
   isLoading,
   onEmbedReadyChange,
 }) {
+  const plotDescId = `${id}-plot-desc`;
   return (
     <div className="job-detail-plot-embed-host">
+      <p id={plotDescId} className="visually-hidden">
+        Interactive performance chart. Use Expand plot in this section for a larger view.
+        Numerical detail may not be read by assistive technology.
+      </p>
       <BokehEmbed
         item={item}
         id={id}
@@ -61,6 +69,7 @@ const PlotPanel = memo(function PlotPanel({
         isLoadingExternal={isLoading}
         onPlotReadyChange={(ready) => onEmbedReadyChange?.(panelKey, ready)}
         wrapperClassName="job-detail-plot-embed"
+        ariaDescribedBy={plotDescId}
       />
     </div>
   );
@@ -202,7 +211,17 @@ export default function JobDetail() {
 
   useFocusTrap(zoomDialogRef, Boolean(zoomPlotKey));
 
-  useDocumentTitle(pk ? `Job ${pk}` : "Job detail");
+  useDocumentTitle(
+    error
+      ? "Job detail"
+      : loading && pk
+        ? `Job ${pk}`
+        : data?.job_data?.jid
+          ? `Job ${data.job_data.jid}`
+          : pk
+            ? `Job ${pk}`
+            : "Job detail",
+  );
 
   useEffect(() => {
     if (!pk) return;
@@ -391,7 +410,31 @@ export default function JobDetail() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [zoomPlotKey, closeZoom]);
 
-  if (loading) return <LoadingMessage message="Loading job detail…" />;
+  if (loading) {
+    return (
+      <div className="job-detail-skeleton" aria-busy="true">
+        <span className="visually-hidden" role="status" aria-label="Loading job detail">
+          Loading job detail
+        </span>
+        <div className="placeholder-glow mb-3">
+          <span className="placeholder col-6" style={{ height: "2.5rem" }} />
+        </div>
+        <div className="job-detail-plots-grid mb-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="job-detail-plot-card border rounded p-2">
+              <div className="placeholder-glow">
+                <span className="placeholder col-8" />
+              </div>
+              <div
+                className="mt-2 placeholder-glow rounded"
+                style={{ minHeight: "280px", background: "#e9ecef" }}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
   if (error) return <BannerErrorMessage message={error} />;
   if (!data) return null;
 

@@ -14,7 +14,11 @@ export default function TypeDetail() {
   const [loading, setLoading] = useState(true);
 
   useDocumentTitle(
-    jid && typeName ? `Job ${jid} / ${typeName}` : "Type detail",
+    loading && jid && typeName
+      ? `Job ${jid} / ${typeName} (loading)`
+      : jid && typeName
+        ? `Job ${jid} / ${typeName}`
+        : "Type detail",
   );
 
   useEffect(() => {
@@ -62,22 +66,27 @@ export default function TypeDetail() {
           <h2 className="h5">Counts Aggregated over devices and hosts</h2>
           <div className="table-responsive">
             <table className="table table-sm table-bordered">
+              <caption className="visually-hidden">
+                Counts aggregated over devices and hosts for job {jobid}
+              </caption>
               <thead>
                 <tr>
-                  <th>record</th>
+                  <th scope="col">record</th>
                   {schema.map((key) => (
-                    <th key={key}>{key}</th>
+                    <th key={key} scope="col">
+                      {key}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {stats_data.map(([time, values], i) => (
                   <tr key={i}>
-                    <th>{time}</th>
+                    <th scope="row">{time}</th>
                     {values.map((v, j) => (
-                      <th key={j}>
+                      <td key={j}>
                         {typeof v === "number" ? formatDecimalStandard(v) : v}
-                      </th>
+                      </td>
                     ))}
                   </tr>
                 ))}

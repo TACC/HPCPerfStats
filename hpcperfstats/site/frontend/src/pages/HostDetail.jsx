@@ -14,7 +14,13 @@ export default function HostDetail() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useDocumentTitle(host ? `Host ${host}` : "Host plot");
+  useDocumentTitle(
+    loading && host
+      ? `Host ${host} (loading)`
+      : host
+        ? `Host ${host}`
+        : "Host plot",
+  );
 
   useEffect(() => {
     if (!host) return;

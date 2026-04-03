@@ -24,6 +24,23 @@ export default function ExtendedSearch({ onClose }) {
   const navigate = useNavigate();
   const { options, error, loading } = useHomeOptions();
 
+  const header =
+    onClose ? (
+      <div className="extended-search-header">
+        <span className="extended-search-title" id="extended-search-dialog-title">
+          Extended search
+        </span>
+        <button
+          type="button"
+          className="btn btn-outline-secondary btn-sm"
+          onClick={onClose}
+          aria-label="Close extended search"
+        >
+          Close
+        </button>
+      </div>
+    ) : null;
+
   const handleSubmit = (e) => {
     e.preventDefault();
     const form = e.target;
@@ -52,14 +69,24 @@ export default function ExtendedSearch({ onClose }) {
     navigate(`/jobs?${qs}`);
   };
 
-  if (loading) return <LoadingMessage message="Loading search options…" />;
+  if (loading) {
+    return (
+      <div className="extended-search-panel">
+        {header}
+        <LoadingMessage message="Loading search options…" />
+      </div>
+    );
+  }
   if (error) {
     return (
-      <BannerErrorMessage
-        message={error}
-        className="text-danger"
-        style={{ padding: "0.5rem 0" }}
-      />
+      <div className="extended-search-panel">
+        {header}
+        <BannerErrorMessage
+          message={error}
+          className="text-danger"
+          style={{ padding: "0.5rem 0" }}
+        />
+      </div>
     );
   }
 
@@ -67,19 +94,7 @@ export default function ExtendedSearch({ onClose }) {
 
   return (
     <div className="extended-search-panel">
-      {onClose && (
-        <div className="extended-search-header">
-          <span className="extended-search-title">Extended search</span>
-          <button
-            type="button"
-            className="btn btn-outline-secondary btn-sm"
-            onClick={onClose}
-            aria-label="Close extended search"
-          >
-            Close
-          </button>
-        </div>
-      )}
+      {header}
       <form id="extended-search-form" onSubmit={handleSubmit}>
         <p className="text-muted small">Search fields are combined.</p>
         <fieldset className="border-0 p-0 mb-3">

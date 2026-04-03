@@ -121,11 +121,42 @@ export default function JobList() {
     loadHistograms();
   }, [searchParams, paramsFromRoute]);
 
-  const documentTitleSegment =
-    loading || error || !data ? "Job list" : data.qname || "Job list";
+  const documentTitleSegment = error
+    ? "Job list"
+    : loading
+      ? "Loading job list"
+      : data?.qname || "Job list";
   useDocumentTitle(documentTitleSegment);
 
-  if (loading) return <LoadingMessage message="Loading job list…" />;
+  if (loading) {
+    return (
+      <div className="job-list-skeleton" aria-busy="true">
+        <span className="visually-hidden" role="status" aria-label="Loading job list">
+          Loading job list
+        </span>
+        <div className="placeholder-glow mb-3">
+          <span className="placeholder col-8 col-md-6" style={{ height: "2rem" }} />
+        </div>
+        <div className="placeholder-glow mb-3">
+          <span className="placeholder col-12" style={{ height: "4rem" }} />
+        </div>
+        <div className="table-responsive">
+          <table className="table table-sm table-bordered">
+            <caption className="visually-hidden">Loading</caption>
+            <tbody>
+              {[1, 2, 3, 4, 5].map((i) => (
+                <tr key={i}>
+                  <td colSpan={6}>
+                    <span className="placeholder col-12" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
   if (error) return <BannerErrorMessage message={error} />;
   if (!data) return null;
 
@@ -235,7 +266,7 @@ export default function JobList() {
       )}
 
       {num_pages > 1 && (
-        <div className="pagination-wrapper">
+        <nav className="pagination-wrapper" aria-label="Job list pagination">
           {page > 1 ? (
             <Link
               to={`${location.pathname}?${paginationQuery(1)}`}
@@ -244,7 +275,9 @@ export default function JobList() {
               First
             </Link>
           ) : (
-            <span className="pagination-first disabled">First</span>
+            <span className="pagination-first disabled" aria-hidden="true">
+              First
+            </span>
           )}
           <ResolvedReactPaginate
             forcePage={page - 1}
@@ -254,6 +287,8 @@ export default function JobList() {
             }
             previousLabel="«"
             nextLabel="»"
+            previousAriaLabel="Previous page"
+            nextAriaLabel="Next page"
             breakLabel="..."
             pageRangeDisplayed={5}
             marginPagesDisplayed={1}
@@ -269,6 +304,9 @@ export default function JobList() {
             activeClassName="active"
             disabledClassName="disabled"
             renderOnZeroPageCount={null}
+            ariaLabelBuilder={(pageNumber, selected) =>
+              selected ? `Current page, page ${pageNumber}` : `Go to page ${pageNumber}`
+            }
           />
           {page < num_pages ? (
             <Link
@@ -278,12 +316,14 @@ export default function JobList() {
               Last
             </Link>
           ) : (
-            <span className="pagination-last disabled">Last</span>
+            <span className="pagination-last disabled" aria-hidden="true">
+              Last
+            </span>
           )}
-        </div>
+        </nav>
       )}
 
-      <div className="table-responsive">
+      <div className="table-responsive job-list-table-wrapper">
         <table className="table table-sm table-bordered">
           <caption className="visually-hidden">
             Job list for {qname}. {nj} jobs.
@@ -291,7 +331,7 @@ export default function JobList() {
           <thead>
             <tr>
               {columns.map(({ label, field, sortable }) => (
-              <th key={field} aria-sort={ariaSortForField(field, sortable)}>
+              <th key={field} scope="col" aria-sort={ariaSortForField(field, sortable)}>
                 {sortable ? (
                   <Link to={sortLink(field)}>
                     {label}

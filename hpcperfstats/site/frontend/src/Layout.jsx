@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api";
 import ExtendedSearch from "./components/ExtendedSearch";
+import { useFocusTrap } from "./hooks/useFocusTrap";
+import { useRouteFocusMain } from "./utils/useRouteFocusMain";
 
 export default function Layout({ session, onSessionChange, children }) {
   const navigate = useNavigate();
   const location = useLocation();
+  useRouteFocusMain(location.pathname);
   const [extendedSearchOpen, setExtendedSearchOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [staffMessage, setStaffMessage] = useState("");
@@ -13,6 +16,16 @@ export default function Layout({ session, onSessionChange, children }) {
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
   const [staffMenuOpen, setStaffMenuOpen] = useState(false);
   const staffMenuRef = useRef(null);
+  const extendedSearchPanelRef = useRef(null);
+  const extendedSearchToggleRef = useRef(null);
+  useFocusTrap(extendedSearchPanelRef, extendedSearchOpen);
+
+  const closeExtendedSearch = useCallback(() => {
+    setExtendedSearchOpen(false);
+    window.requestAnimationFrame(() => {
+      extendedSearchToggleRef.current?.focus();
+    });
+  }, []);
 
   useEffect(() => {
     if (!staffMenuOpen) return;
@@ -24,6 +37,45 @@ export default function Layout({ session, onSessionChange, children }) {
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [staffMenuOpen]);
+
+  useEffect(() => {
+    if (!staffMenuOpen) return;
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        setStaffMenuOpen(false);
+        document.getElementById("staff-actions-menu-button")?.focus();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [staffMenuOpen]);
+
+  useEffect(() => {
+    if (!extendedSearchOpen) return;
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeExtendedSearch();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [extendedSearchOpen, closeExtendedSearch]);
+
+  useEffect(() => {
+    if (!extendedSearchOpen) return;
+    const id = window.requestAnimationFrame(() => {
+      const root = extendedSearchPanelRef.current;
+      if (!root) return;
+      const first = root.querySelector(
+        "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])",
+      );
+      if (first instanceof HTMLElement) {
+        first.focus();
+      }
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [extendedSearchOpen]);
 
   async function handleDropStaffForSession() {
     if (isDroppingStaff) return;
@@ -91,7 +143,10 @@ export default function Layout({ session, onSessionChange, children }) {
       <a href="#main-content" className="visually-hidden visually-hidden-focusable">
         Skip to main content
       </a>
-      <nav className="navbar navbar-expand-lg navbar-light bg-light" role="navigation">
+      <nav
+        className="navbar navbar-expand-lg navbar-light bg-light"
+        aria-label="Primary"
+      >
         <div className="container-fluid">
           <Link to="/" className="navbar-brand navbar-header-logo">
             <img
@@ -124,6 +179,54 @@ export default function Layout({ session, onSessionChange, children }) {
               )}
             </div>
             <div className="navbar-actions ms-auto">
+              <div className="navbar-actions-row navbar-actions-row-priority">
+                <button
+                  ref={extendedSearchToggleRef}
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm"
+                  onClick={() =>
+                    setExtendedSearchOpen((o) => {
+                      const next = !o;
+                      if (!next) {
+                        window.requestAnimationFrame(() => {
+                          extendedSearchToggleRef.current?.focus();
+                        });
+                      }
+                      return next;
+                    })
+                  }
+                  aria-expanded={extendedSearchOpen}
+                  aria-controls="extended-search-collapse"
+                >
+                  {extendedSearchOpen ? "Hide extended search" : "Extended search"}
+                </button>
+                <form
+                  role="search"
+                  aria-label="Find job by ID"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const jid = e.target.jid?.value?.trim();
+                    if (jid) navigate(`/job/${jid}`);
+                  }}
+                >
+                  <div className="form-group">
+                    <label htmlFor="navbar-jid-search" className="visually-hidden">
+                      Job ID search
+                    </label>
+                    <input
+                      id="navbar-jid-search"
+                      type="text"
+                      className="form-control form-control-sm"
+                      name="jid"
+                      placeholder="Job ID"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <button type="submit" className="btn btn-outline-secondary btn-sm">
+                    Find Job
+                  </button>
+                </form>
+              </div>
               <div className="navbar-actions-row">
                 {session?.is_staff && (
                   <div className="dropdown" ref={staffMenuRef}>
@@ -195,67 +298,39 @@ export default function Layout({ session, onSessionChange, children }) {
                     ) : null}
                   </div>
                 )}
-                <a href="/logout/" className="btn btn-outline-secondary btn-sm">Logout</a>
+                <a href="/api-key/" className="btn btn-outline-secondary btn-sm">
+                  API key
+                </a>
+                <a href="/logout/" className="btn btn-outline-secondary btn-sm">
+                  Logout
+                </a>
               </div>
               {staffMessage && (
                 <div
                   id="staff-message"
                   className="alert alert-info py-1 px-2 mb-0 navbar-staff-message"
-                  role="alert"
+                  role="status"
+                  aria-live="polite"
                 >
                   {staffMessage}
                 </div>
               )}
-              <div className="navbar-actions-row">
-                <button
-                  type="button"
-                  className="btn btn-outline-secondary btn-sm"
-                  onClick={() => setExtendedSearchOpen((o) => !o)}
-                  aria-expanded={extendedSearchOpen}
-                  aria-controls="extended-search-collapse"
-                >
-                  {extendedSearchOpen ? "Hide extended search" : "Extended search"}
-                </button>
-                <form
-                  role="search"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const jid = e.target.jid?.value?.trim();
-                    if (jid) navigate(`/job/${jid}`);
-                  }}
-                >
-                  <div className="form-group">
-                    <label htmlFor="navbar-jid-search" className="visually-hidden">
-                      Job ID search
-                    </label>
-                    <input
-                      id="navbar-jid-search"
-                      type="text"
-                      className="form-control form-control-sm"
-                      name="jid"
-                      placeholder="Job ID"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <button type="submit" className="btn btn-outline-secondary btn-sm">
-                    Find Job
-                  </button>
-                </form>
-              </div>
             </div>
           </div>
         </div>
       </nav>
-      {extendedSearchOpen && (
+      {extendedSearchOpen ? (
         <div
+          ref={extendedSearchPanelRef}
           id="extended-search-collapse"
           className="extended-search-collapse"
-          role="region"
-          aria-label="Extended search"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="extended-search-dialog-title"
         >
-          <ExtendedSearch onClose={() => setExtendedSearchOpen(false)} />
+          <ExtendedSearch onClose={closeExtendedSearch} />
         </div>
-      )}
+      ) : null}
       <main id="main-content" className="mt-4" tabIndex={-1}>
         {children}
       </main>

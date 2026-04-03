@@ -11,6 +11,26 @@ import {
 } from "../utils/job-monitor-gpu";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 
+function ariaSortValue(column, sortKey, sortDir) {
+  if (sortKey !== column) return undefined;
+  return sortDir === "asc" ? "ascending" : "descending";
+}
+
+function SortableTh({ column, sortKey, sortDir, onSort, children }) {
+  return (
+    <th scope="col" aria-sort={ariaSortValue(column, sortKey, sortDir)}>
+      <button
+        type="button"
+        className="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
+        onClick={() => onSort(column)}
+      >
+        {children}
+        {sortKey === column ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+      </button>
+    </th>
+  );
+}
+
 export default function JobMonitor() {
   useDocumentTitle("Job failure monitor");
 
@@ -175,71 +195,83 @@ export default function JobMonitor() {
       {!loading && !error && (
         <div className="table-responsive">
           <table className="table table-sm table-bordered">
+            <caption className="visually-hidden">
+              Job outcomes by user for the last {windowDays} days
+            </caption>
             <thead>
               <tr>
-                <th
-                  role="button"
-                  onClick={() => handleSort("username")}
+                <SortableTh
+                  column="username"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
                 >
                   User
-                  {sortKey === "username" && (sortDir === "asc" ? " ▲" : " ▼")}
-                </th>
-                <th
-                  role="button"
-                  onClick={() => handleSort("total_jobs")}
+                </SortableTh>
+                <SortableTh
+                  column="total_jobs"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
                 >
                   Number of jobs
-                  {sortKey === "total_jobs" && (sortDir === "asc" ? " ▲" : " ▼")}
-                </th>
-                <th
-                  role="button"
-                  onClick={() => handleSort("failed_jobs")}
+                </SortableTh>
+                <SortableTh
+                  column="failed_jobs"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
                 >
                   Number of failed jobs
-                  {sortKey === "failed_jobs" && (sortDir === "asc" ? " ▲" : " ▼")}
-                </th>
-                <th
-                  role="button"
-                  onClick={() => handleSort("failed_rate")}
+                </SortableTh>
+                <SortableTh
+                  column="failed_rate"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
                 >
                   % failed
-                  {sortKey === "failed_rate" && (sortDir === "asc" ? " ▲" : " ▼")}
-                </th>
-                <th
-                  role="button"
-                  onClick={() => handleSort("timedout_jobs")}
+                </SortableTh>
+                <SortableTh
+                  column="timedout_jobs"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
                 >
                   Number of timed out jobs
-                  {sortKey === "timedout_jobs" && (sortDir === "asc" ? " ▲" : " ▼")}
-                </th>
-                <th
-                  role="button"
-                  onClick={() => handleSort("timedout_rate")}
+                </SortableTh>
+                <SortableTh
+                  column="timedout_rate"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
                 >
                   % timed out
-                  {sortKey === "timedout_rate" && (sortDir === "asc" ? " ▲" : " ▼")}
-                </th>
-                <th
-                  role="button"
-                  onClick={() => handleSort("gpu_count_total")}
+                </SortableTh>
+                <SortableTh
+                  column="gpu_count_total"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
                 >
                   Total GPUs Allocated
-                  {sortKey === "gpu_count_total" && (sortDir === "asc" ? " ▲" : " ▼")}
-                </th>
-                <th
-                  role="button"
-                  onClick={() => handleSort("gpu_active_total")}
+                </SortableTh>
+                <SortableTh
+                  column="gpu_active_total"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
                 >
                   Number of GPUs Active
-                  {sortKey === "gpu_active_total" && (sortDir === "asc" ? " ▲" : " ▼")}
-                </th>
-                <th
-                  role="button"
-                  onClick={() => handleSort("gpu_active_percentage")}
+                </SortableTh>
+                <SortableTh
+                  column="gpu_active_percentage"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
                 >
                   Percentage of GPUs Active
-                  {sortKey === "gpu_active_percentage" && (sortDir === "asc" ? " ▲" : " ▼")}
-                </th>
+                </SortableTh>
               </tr>
             </thead>
             <tbody>

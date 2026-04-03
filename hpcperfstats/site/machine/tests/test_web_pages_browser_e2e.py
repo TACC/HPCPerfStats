@@ -191,6 +191,7 @@ def test_browser_flow_for_web_pages():
           page.goto(f"{base_url}/api-key/")
           assert "HPCPerfStats API key" in page.locator("body").inner_text()
           assert page.get_by_role("link", name="Back to HPCPerfStats").is_visible()
+          page.once("dialog", lambda d: d.accept())
           page.click("button[type='submit']")
           page.wait_for_load_state("domcontentloaded")
           assert "This key is shown only once." in page.locator("body").inner_text()

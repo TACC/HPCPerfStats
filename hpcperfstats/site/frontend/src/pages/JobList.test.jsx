@@ -48,9 +48,7 @@ describe("JobList", () => {
     vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
 
     renderJobList();
-    expect(
-      screen.getByText("Loading job list…")
-    ).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /loading job list/i })).toBeInTheDocument();
   });
 
   it("renders basic job list data", async () => {

@@ -77,6 +77,29 @@ Equivalent seed environment variable:
 E2E_SEED_CMD="python your_seed_script.py" tests/run_web_e2e_workflow.sh
 ```
 
+## Accessibility (WCAG 2.2 AA target)
+
+The SPA and standalone HTML pages aim for **WCAG 2.2 Level AA** for in-app flows (keyboard, screen readers, zoom, contrast). **Bokeh canvas plots** and the **OAuth provider** have inherent limits; the UI mitigates with text alternatives, landmarks, and documented manual checks.
+
+**Automated (frontend)**
+
+```bash
+cd hpcperfstats/site/frontend && npm test -- --run
+```
+
+Vitest includes a minimal **axe-core** smoke test (`src/accessibility.smoke.test.jsx`) with `color-contrast` disabled under jsdom (run full contrast checks in a real browser).
+
+**Manual spot-check (each release or major UI change)**
+
+- Keyboard only: Tab through navbar, **Extended search** dialog (Escape closes, focus returns), **Find Job**, tables, pagination, plot **Expand** / zoom close.
+- Screen reader: VoiceOver (Safari) or NVDA (Firefox)—**Search jobs** → job list → job detail; confirm **route focus** lands on the page heading after navigation.
+- Zoom: browser **200%** on job list and job detail; tables scroll inside `.table-responsive` where needed.
+
+**Standalone pages**
+
+- `/api-key/`: skip link, `<main>`, confirm before key rotation, live region when a new key is shown.
+- Django **admin**: branding includes a link back to `/machine/`.
+
 ## Requirements
 
 - **General**: Python 3.12+, `pip install -e ".[test]"`.

@@ -155,6 +155,8 @@ export default function BokehEmbed({
   maximizeInContainer = false,
   isLoadingExternal = false,
   wrapperClassName = "",
+  embedAriaLabel,
+  ariaDescribedBy,
 }) {
   const session = useSession();
   const canViewErrorDetails = !!session?.is_staff;
@@ -331,12 +333,23 @@ export default function BokehEmbed({
       ? `bokeh-embed-wrapper ${wrapperClassName.trim()}`
       : "bokeh-embed-wrapper";
 
+  const regionLabel =
+    embedAriaLabel ??
+    (plotName ? `Interactive chart: ${plotName}` : "Interactive chart");
+  const describedBy =
+    ariaDescribedBy && String(ariaDescribedBy).trim()
+      ? String(ariaDescribedBy).trim()
+      : undefined;
+
   if (item) {
     const overlayActive = hasData && showPlaceholder;
     return (
       <div
         ref={containerRef}
         className={wrapperClass}
+        role="region"
+        aria-label={regionLabel}
+        aria-describedby={describedBy}
         style={{
           position: "relative",
           height: fillHeight ? "100%" : undefined,
@@ -350,7 +363,13 @@ export default function BokehEmbed({
   }
 
   return (
-    <div ref={containerRef} className={wrapperClass}>
+    <div
+      ref={containerRef}
+      className={wrapperClass}
+      role="region"
+      aria-label={regionLabel}
+      aria-describedby={describedBy}
+    >
       {placeholder}
     </div>
   );
