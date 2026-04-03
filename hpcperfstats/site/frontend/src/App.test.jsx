@@ -67,7 +67,7 @@ describe("App", () => {
 
     renderApp();
 
-    await screen.findByRole("heading", { name: /search jobs/i });
+    await screen.findByRole("heading", { name: /browse jobs by time/i });
   });
 });
 

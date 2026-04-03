@@ -11,6 +11,7 @@ function renderJobList(initialEntries = ["/jobs"], session = { is_staff: false }
       <MemoryRouter initialEntries={initialEntries}>
         <Routes>
           <Route path="/jobs" element={<JobList />} />
+          <Route path="/year/:year" element={<JobList />} />
         </Routes>
       </MemoryRouter>
     </SessionContext.Provider>
@@ -87,9 +88,31 @@ describe("JobList", () => {
     await waitFor(() => {
       expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
     });
+    expect(screen.getByRole("heading", { name: /distributions for this list/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /jump to distributions/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /back to job table/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Performance Data" })).toBeInTheDocument();
     expect(screen.getByText("job1")).toBeInTheDocument();
     expect(screen.getByText("COMPLETED")).toBeInTheDocument();
+  });
+
+  it("shows human summary for year route", async () => {
+    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+      job_list: [],
+      nj: 0,
+      aggregates: {},
+      qname: "Jobs in year 2024",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    });
+    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({ plots: [] });
+    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+
+    renderJobList(["/year/2024"]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/calendar year 2024/i)).toBeInTheDocument();
+    });
   });
 
   it("renders pagination controls when multiple pages exist", async () => {

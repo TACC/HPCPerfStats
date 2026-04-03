@@ -18,3 +18,31 @@ export function jobListRouteTitleContext(routeParams, searchParams) {
   if (ob) parts.push(`sort ${ob}`);
   return parts.length ? parts.join(" · ") : "";
 }
+
+/**
+ * One-line human summary of the current job-list slice (for page orientation).
+ *
+ * @param {Record<string, string | undefined>} routeParams
+ * @returns {string|null}
+ */
+export function jobListPageHumanSummary(routeParams) {
+  if (routeParams.year) {
+    return `Jobs that ended during calendar year ${routeParams.year}.`;
+  }
+  if (routeParams.date) {
+    return `Jobs with end times matching filter ${routeParams.date}.`;
+  }
+  if (routeParams.username) {
+    return `Jobs for user ${routeParams.username}.`;
+  }
+  if (routeParams.account) {
+    return `Jobs charged to account ${routeParams.account}.`;
+  }
+  if (routeParams.queue) {
+    return `Jobs that ran in queue “${routeParams.queue}”.`;
+  }
+  if (routeParams.host) {
+    return `Jobs that ran on host ${routeParams.host}.`;
+  }
+  return null;
+}

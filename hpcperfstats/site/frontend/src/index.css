@@ -365,6 +365,14 @@ body {
   max-width: 280px;
 }
 
+/* Job detail: in-page section links */
+.job-detail-toc a {
+  text-decoration: none;
+}
+.job-detail-toc a:hover {
+  text-decoration: underline;
+}
+
 /* Job detail: host-level Bokeh grid (replaces layout table) */
 .job-detail-plots-intro {
   max-width: 36rem;

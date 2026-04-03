@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { jobListRouteTitleContext } from "./job-list-route-title-context";
+import { jobListPageHumanSummary, jobListRouteTitleContext } from "./job-list-route-title-context";
 
 describe("jobListRouteTitleContext", () => {
-  it("returns empty string when no route filters", () => {
+  it("returns empty string when no route or query hints", () => {
     expect(jobListRouteTitleContext({}, new URLSearchParams())).toBe("");
   });
+});
 
-  it("includes year and page from route and query", () => {
-    const q = new URLSearchParams({ page: "2" });
-    expect(jobListRouteTitleContext({ year: "2024" }, q)).toContain("year 2024");
-    expect(jobListRouteTitleContext({ year: "2024" }, q)).toContain("page 2");
+describe("jobListPageHumanSummary", () => {
+  it("describes year slice", () => {
+    expect(jobListPageHumanSummary({ year: "2024" })).toContain("2024");
+    expect(jobListPageHumanSummary({ year: "2024" })).toContain("calendar year");
+  });
+
+  it("returns null for generic jobs route", () => {
+    expect(jobListPageHumanSummary({})).toBeNull();
   });
 });

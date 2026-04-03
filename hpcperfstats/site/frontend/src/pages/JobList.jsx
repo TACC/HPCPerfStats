@@ -10,7 +10,10 @@ import { formatDecimalStandard } from "../utils/formatDecimal";
 import { buildJobListApiParams } from "../utils/build-job-list-api-params";
 import { normalizeJobListHistogramEntry } from "../utils/normalize-job-list-histogram-entry";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
-import { jobListRouteTitleContext } from "../utils/job-list-route-title-context";
+import {
+  jobListPageHumanSummary,
+  jobListRouteTitleContext,
+} from "../utils/job-list-route-title-context";
 
 const ResolvedReactPaginate = ReactPaginate?.default || ReactPaginate;
 
@@ -247,56 +250,18 @@ export default function JobList() {
     { label: "node hrs", field: "node_hrs", sortable: true },
   ];
 
+  const pageSummary = jobListPageHumanSummary(paramsFromRoute);
+
   return (
     <>
       <h1 className="h4">{qname}</h1>
-      <div className="text-center">
-        {queueHistStatus.loading && (
-          <LoadingMessage message="Loading queue histograms…" />
-        )}
-        {metricNames.map((metric) => {
-          const status = metricHistStatus[metric] || {
-            loading: false,
-            error: null,
-          };
-          const friendlyName = labelMap[metric] || metric;
-          return (
-            <div key={metric}>
-              {status.loading && (
-                <LoadingMessage
-                  message={`Loading ${friendlyName.toLowerCase()} histogram…`}
-                />
-              )}
-            </div>
-          );
-        })}
-        {histogramsFinishedLoading && failedHistogramLabels.length > 0 ? (
-          <div
-            className="alert alert-warning small mt-2 mx-auto text-start"
-            style={{ maxWidth: 520 }}
-            role="status"
-            aria-live="polite"
-          >
-            <p className="mb-2">
-              Some histograms could not be loaded ({failedHistogramLabels.join(", ")}).
-              The job table below is unchanged.
-            </p>
-            <button
-              type="button"
-              className="btn btn-outline-secondary btn-sm"
-              onClick={() => setHistogramReloadKey((k) => k + 1)}
-            >
-              Retry histograms
-            </button>
-          </div>
-        ) : null}
-        <HistogramThumbnails histograms={histograms} />
-      </div>
-      <hr />
-      <h2 className="h5">#Jobs = {nj}</h2>
+      {pageSummary ? (
+        <p className="text-muted small mb-2 job-list-page-summary">{pageSummary}</p>
+      ) : null}
+      <h2 className="h5 mb-1">#Jobs = {nj}</h2>
       {totalNodeHours != null && (
-        <p className="mb-0">
-          Total Node Hours (all matching jobs): {formatDecimalStandard(totalNodeHours)}
+        <p className="mb-3 text-muted small">
+          Total node hours (all matching jobs): {formatDecimalStandard(totalNodeHours)}
         </p>
       )}
 
@@ -358,7 +323,7 @@ export default function JobList() {
         </nav>
       )}
 
-      <div className="table-responsive job-list-table-wrapper">
+      <div className="table-responsive job-list-table-wrapper" id="job-list-table">
         <table className="table table-sm table-bordered">
           <caption className="visually-hidden">
             Job list for {qname}. {nj} jobs.
@@ -430,6 +395,63 @@ export default function JobList() {
         </tbody>
         </table>
       </div>
+
+      <p className="small mt-2 mb-0">
+        <a href="#job-list-distributions">Jump to distributions for this list</a>
+      </p>
+
+      <section
+        id="job-list-distributions"
+        className="job-list-distributions mt-4"
+        aria-label="Distributions for this list"
+      >
+        <h2 className="h5 mb-2">Distributions for this list</h2>
+        <div className="text-center">
+          {queueHistStatus.loading && (
+            <LoadingMessage message="Loading queue histograms…" />
+          )}
+          {metricNames.map((metric) => {
+            const status = metricHistStatus[metric] || {
+              loading: false,
+              error: null,
+            };
+            const friendlyName = labelMap[metric] || metric;
+            return (
+              <div key={metric}>
+                {status.loading && (
+                  <LoadingMessage
+                    message={`Loading ${friendlyName.toLowerCase()} histogram…`}
+                  />
+                )}
+              </div>
+            );
+          })}
+          {histogramsFinishedLoading && failedHistogramLabels.length > 0 ? (
+            <div
+              className="alert alert-warning small mt-2 mx-auto text-start"
+              style={{ maxWidth: 520 }}
+              role="status"
+              aria-live="polite"
+            >
+              <p className="mb-2">
+                Some histograms could not be loaded ({failedHistogramLabels.join(", ")}).
+                The job table above is unchanged.
+              </p>
+              <button
+                type="button"
+                className="btn btn-outline-secondary btn-sm"
+                onClick={() => setHistogramReloadKey((k) => k + 1)}
+              >
+                Retry histograms
+              </button>
+            </div>
+          ) : null}
+          <HistogramThumbnails histograms={histograms} />
+        </div>
+        <p className="small text-center mt-2 mb-0">
+          <a href="#job-list-table">Back to job table</a>
+        </p>
+      </section>
     </>
   );
 }

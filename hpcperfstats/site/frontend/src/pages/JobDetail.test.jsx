@@ -176,8 +176,8 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
-    expect(screen.getByText("12345", { selector: "a" })).toBeInTheDocument();
-    expect(screen.getByText("testjob")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "12345" }).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("testjob").length).toBeGreaterThanOrEqual(1);
 
     expect(getJobDetailLightSpy).toHaveBeenCalledWith("12345");
     expect(getJobPlotsSpy).toHaveBeenCalledWith("12345", null, false, true);
@@ -225,7 +225,7 @@ describe("JobDetail", () => {
     });
 
     expect(container.querySelector(".col-sm-20")).toBeNull();
-    expect(container.querySelector(".col-sm-12")).toBeTruthy();
+    expect(container.querySelector("#job-detail-resources")).toBeTruthy();
   });
 
   it("shows no_data_reason text for staff when a metric has no numeric value", async () => {
@@ -254,12 +254,11 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
-    await userEvent.click(
-      screen.getByRole("button", { name: /Job-level Metrics/i })
-    );
-    expect(
-      screen.getByText("No usable PMC telemetry for average CPU frequency")
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.getByText("No usable PMC telemetry for average CPU frequency"),
+      ).toBeInTheDocument();
+    });
   });
 
   it("shows generic no-data text for non-staff when metric value is missing", async () => {
@@ -288,10 +287,9 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
-    await userEvent.click(
-      screen.getByRole("button", { name: /Job-level Metrics/i })
-    );
-    expect(screen.getAllByText("Data not available.").length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(screen.getAllByText("Data not available.").length).toBeGreaterThan(0);
+    });
     expect(
       screen.queryByText("No usable PMC telemetry for average CPU frequency")
     ).not.toBeInTheDocument();
@@ -427,7 +425,9 @@ describe("JobDetail", () => {
 
     renderJobDetail("12345");
     await waitFor(() => {
-      expect(screen.getByText("Host-level Plots")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Performance", level: 2 }),
+      ).toBeInTheDocument();
     });
 
     expect(screen.getByRole("heading", { name: "Summary plot" })).toBeInTheDocument();
@@ -486,7 +486,9 @@ describe("JobDetail", () => {
     renderJobDetail("12345");
 
     await waitFor(() => {
-      expect(screen.getByText("Host-level Plots")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Performance", level: 2 }),
+      ).toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: "Expand Summary plot" })).toBeDisabled();
   });

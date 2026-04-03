@@ -12,10 +12,10 @@ import { scheduleJobPlotsRetry } from "../utils/job-plots-polling";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 
-function CollapsibleSection({ title, children, defaultOpen = false, empty = false }) {
+function CollapsibleSection({ title, children, defaultOpen = false, empty = false, fullWidth = false }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="col-md-3 mb-2">
+    <div className={fullWidth ? "col-12 mb-3" : "col-md-3 mb-2"}>
       <button
         type="button"
         className="btn btn-outline-secondary btn-sm d-flex align-items-center gap-2 w-100 text-start"
@@ -503,338 +503,210 @@ export default function JobDetail() {
 
   return (
     <>
-      <div>
-        <h1 className="h2">Job {job.jid}</h1>
-        <div className="table-responsive">
-          <table className="table table-sm table-bordered">
-          <thead>
-            <tr>
-              <th>
-                <VariableInfoLabel variableName="jid" labelText="Job ID" enableHelp />
-              </th>
-              <th>
-                <VariableInfoLabel variableName="username" labelText="user" enableHelp />
-              </th>
-              <th>
-                <VariableInfoLabel variableName="account" labelText="project" enableHelp />
-              </th>
-              <th>
-                <VariableInfoLabel variableName="start_time" labelText="start time" enableHelp />
-              </th>
-              <th>
-                <VariableInfoLabel variableName="end_time" labelText="end time" enableHelp />
-              </th>
-              <th>
-                <VariableInfoLabel variableName="runtime" labelText="run time (s)" enableHelp />
-              </th>
-              <th>
-                <VariableInfoLabel variableName="timelimit" labelText="requested time (s)" enableHelp />
-              </th>
-              <th>
-                <VariableInfoLabel variableName="queue" labelText="queue" enableHelp />
-              </th>
-              <th>
-                <VariableInfoLabel variableName="jobname" labelText="name" enableHelp />
-              </th>
-              <th>
-                <VariableInfoLabel variableName="state" labelText="status" enableHelp />
-              </th>
-              <th>
-                <VariableInfoLabel variableName="ncores" labelText="ncores" enableHelp />
-              </th>
-              <th>
-                <VariableInfoLabel variableName="nhosts" labelText="nnodes" enableHelp />
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr style={{ backgroundColor: job.color || "#fff" }}>
-              <td>
-                <Link to={`/job/${job.jid}`}>{job.jid}</Link>
-              </td>
-              <td>
-                {job.username ? (
-                  <Link to={`/username/${job.username}/`}>{job.username}</Link>
-                ) : (
-                  "Unknown"
-                )}
-              </td>
-              <td>
-                {job.account ? (
-                  <Link to={`/account/${job.account}/`}>{job.account}</Link>
-                ) : (
-                  "None"
-                )}
-              </td>
-              <td>{formatDateTime(job.start_time)}</td>
-              <td>{formatDateTime(job.end_time)}</td>
-              <td>{formatDecimalStandard(job.runtime)}</td>
-              <td>{formatDecimalStandard(job.timelimit)}</td>
-              <td>
-                {job.queue ? (
-                  <Link to={`/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</Link>
-                ) : (
-                  ""
-                )}
-              </td>
-              <td>{job.jobname}</td>
-              <td>{job.state}</td>
-              <td>{formatDecimalStandard(job.ncores)}</td>
-              <td>{formatDecimalStandard(job.nhosts)}</td>
-            </tr>
-          </tbody>
-          </table>
-        </div>
-      </div>
+      <h1 className="h2">Job {job.jid}</h1>
 
-      {isStaff ? (
-        <div className="table-responsive mb-2" style={{ maxWidth: 360 }}>
-          <table className="table table-sm table-bordered">
-            <thead>
-              <tr>
-                <th>
-                  <VariableInfoLabel
-                    variableName="metrics_distinct_time_count"
-                    labelText="Sample Count"
-                    enableHelp
-                  />
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>
-                  {staffMetricsDistinctTimeCount != null && staffMetricsDistinctTimeCount !== ""
-                    ? formatDecimalStandard(staffMetricsDistinctTimeCount)
-                    : "Not computed yet."}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      ) : null}
+      <nav className="job-detail-toc border-bottom pb-2 mb-3" aria-label="On this page">
+        <ul className="list-inline small mb-0">
+          <li className="list-inline-item me-2">
+            <a href="#job-detail-glance">Overview</a>
+          </li>
+          <li className="list-inline-item me-2">
+            <a href="#job-detail-scheduling">Scheduling</a>
+          </li>
+          <li className="list-inline-item me-2">
+            <a href="#job-detail-performance">Performance</a>
+          </li>
+          <li className="list-inline-item me-2">
+            <a href="#job-detail-metrics">Metrics</a>
+          </li>
+          <li className="list-inline-item me-2">
+            <a href="#job-detail-resources">Resources</a>
+          </li>
+          <li className="list-inline-item me-2">
+            <a href="#job-detail-device">Device data</a>
+          </li>
+          <li className="list-inline-item me-2">
+            <a href="#job-detail-advanced">Details</a>
+          </li>
+        </ul>
+      </nav>
 
-      <div className="row">
-        <div className="col-md-3">
-          <div className="table-responsive">
-            <table className="table table-sm table-bordered">
-            <thead>
-              <tr>
-                <th>Shared File System</th>
-                <th>MB Read</th>
-                <th>MB Written</th>
-              </tr>
-            </thead>
-            <tbody>
-              {detailsLoading ? (
-                <tr>
-                  <td colSpan={3} className="text-muted">
-                    Loading shared file system data…
-                  </td>
-                </tr>
-              ) : Object.keys(fsio).length === 0 ? (
-                <tr>
-                  <td colSpan={3} className="text-muted">
-                    Data not available.
-                  </td>
-                </tr>
-              ) : (
-                Object.entries(fsio).map(([key, val]) => (
-                  <tr key={key}>
-                    <td>{key}</td>
-                    <td>{formatDecimalStandard(val[0])}</td>
-                    <td>{formatDecimalStandard(val[1])}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-            </table>
+      <section id="job-detail-glance" className="mb-4" aria-labelledby="job-detail-glance-heading">
+        <h2 id="job-detail-glance-heading" className="h5">
+          Job overview
+        </h2>
+        <div className="card mb-0">
+          <div className="card-body">
+            <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-3 small">
+              <div>
+                <div className="text-muted">Job ID</div>
+                <div>
+                  <Link to={`/job/${job.jid}`}>{job.jid}</Link>
+                </div>
+              </div>
+              <div>
+                <div className="text-muted">Status</div>
+                <div>{job.state}</div>
+              </div>
+              <div>
+                <div className="text-muted">Run time (s)</div>
+                <div>{formatDecimalStandard(job.runtime)}</div>
+              </div>
+              <div>
+                <div className="text-muted">Queue</div>
+                <div>
+                  {job.queue ? (
+                    <Link to={`/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</Link>
+                  ) : (
+                    ""
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted">User</div>
+                <div>
+                  {job.username ? (
+                    <Link to={`/username/${job.username}/`}>{job.username}</Link>
+                  ) : (
+                    "Unknown"
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted">Project</div>
+                <div>
+                  {job.account ? (
+                    <Link to={`/account/${job.account}/`}>{job.account}</Link>
+                  ) : (
+                    "None"
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted">Cores / nodes</div>
+                <div>
+                  {formatDecimalStandard(job.ncores)} / {formatDecimalStandard(job.nhosts)}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted">Start</div>
+                <div>{formatDateTime(job.start_time)}</div>
+              </div>
+              <div>
+                <div className="text-muted">End</div>
+                <div>{formatDateTime(job.end_time)}</div>
+              </div>
+              <div className="col-12">
+                <div className="text-muted">Job name</div>
+                <div>{job.jobname}</div>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div
-        className="col-sm-12 col-md-auto"
-        style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}
-      >
-        {client_url && (
-          <a
-            href={client_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn btn-outline-secondary btn-sm"
-          >
-            Client Logs
-          </a>
-        )}
-        {server_url && (
-          <a
-            href={server_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn btn-outline-secondary btn-sm"
-          >
-            Server Logs
-          </a>
-        )}
-      </div>
-
-      {(detailsLoading || gpu_active != null || gpu_count != null) && (
-        <>
-          {detailsLoading && gpu_active == null && gpu_count == null ? (
-            <p className="text-muted" role="status" style={{ marginTop: "1rem" }}>
-              Loading GPU statistics…
-            </p>
-          ) : (
-            <table border="1" style={{ marginTop: "1rem" }}>
-              <tbody>
-                {gpuStatsRows.map((row) => (
-                  <tr key={row.key}>
-                    <td style={gpuStatsTableCellStyle.label}>
-                      <b>{row.label}</b>
-                    </td>
-                    <td style={gpuStatsTableCellStyle.value}>{row.value}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </>
-      )}
-
-      <div className="row" style={{ marginTop: "1rem" }}>
-        <CollapsibleSection
-          title="Processes"
-          empty={!detailsLoading && !(proc_list || []).length}
-        >
-          {detailsLoading ? (
-            <div className="text-muted">Loading processes…</div>
-          ) : (
+      <section id="job-detail-scheduling" className="mb-4" aria-labelledby="job-detail-scheduling-heading">
+        <h2 id="job-detail-scheduling-heading" className="visually-hidden">
+          Full scheduling record
+        </h2>
+        <details className="job-detail-scheduling-details border rounded px-3 py-2">
+          <summary className="fw-semibold">
+            Full scheduling record
+            <span className="text-muted small fw-normal"> — all accounting columns</span>
+          </summary>
+          <div className="table-responsive mt-2">
             <table className="table table-sm table-bordered">
-              <tbody>
-                {(proc_list || []).map((proc, i) => (
-                  <tr key={i}>
-                    <td>{proc}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </CollapsibleSection>
-        <CollapsibleSection
-          title="Job-level Metrics"
-          empty={!detailsLoading && !metrics_list.length}
-        >
-          {detailsLoading ? (
-            <div className="text-muted">Loading job-level metrics…</div>
-          ) : (
-            <table className="table table-sm table-bordered">
-              <tbody>
-                {(metrics_list || []).map((obj) => (
-                  <tr key={obj.metric}>
-                    <th>
-                      <VariableInfoLabel
-                        variableName={obj.metric}
-                        labelText={obj.metric}
-                        enableHelp
-                      />{" "}
-                      [{obj.units}]
-                    </th>
-                    <td className={obj.value != null && obj.value !== "" ? "" : "text-muted"}>
-                      {formatJobMetricCell(obj, isStaff)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </CollapsibleSection>
-        <CollapsibleSection
-          title="Execution Parameters"
-          empty={
-            !detailsLoading &&
-            !(xalt_data.exec_path || []).length &&
-            !(xalt_data.cwd || []).length &&
-            !(xalt_data.libset || []).length
-          }
-        >
-          {detailsLoading ? (
-            <div className="text-muted">Loading execution parameters…</div>
-          ) : (
-            <>
-              <table className="table table-sm table-bordered">
-                <tbody>
-                  <tr>
-                    <td>Executable Path</td>
-                    <td>
-                      {(xalt_data.exec_path || []).length === 0 ? (
-                        <span className="text-muted">Data not available.</span>
-                      ) : (
-                        (xalt_data.exec_path || []).map((item, i) => (
-                          <span key={`exec-${i}`}>{item}<br /></span>
-                        ))
-                      )}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td>Working Directory</td>
-                    <td>
-                      {(xalt_data.cwd || []).length === 0 ? (
-                        <span className="text-muted">Data not available.</span>
-                      ) : (
-                        (xalt_data.cwd || []).map((item, i) => (
-                          <span key={`cwd-${i}`}>{item}<br /></span>
-                        ))
-                      )}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-              <table className="table table-sm table-bordered">
-                <thead>
-                  <tr>
-                    <th>Module</th>
-                    <th>Library</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(xalt_data.libset || []).length === 0 ? (
-                    <tr>
-                      <td colSpan={2} className="text-muted">
-                        Data not available.
-                      </td>
-                    </tr>
-                  ) : (
-                    (xalt_data.libset || []).map((item, i) => (
-                      <tr key={i}>
-                        <td>{item[1] === "none" ? "system" : item[1]}</td>
-                        <td>{item[0]}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </>
-          )}
-        </CollapsibleSection>
-        <CollapsibleSection title="Hosts" empty={!host_list.length}>
-          <table className="table table-sm table-bordered">
-            <tbody>
-              {host_list.map((host, i) => (
-                <tr key={i}>
-                  <td>{host}</td>
+              <thead>
+                <tr>
+                  <th>
+                    <VariableInfoLabel variableName="jid" labelText="Job ID" enableHelp />
+                  </th>
+                  <th>
+                    <VariableInfoLabel variableName="username" labelText="user" enableHelp />
+                  </th>
+                  <th>
+                    <VariableInfoLabel variableName="account" labelText="project" enableHelp />
+                  </th>
+                  <th>
+                    <VariableInfoLabel variableName="start_time" labelText="start time" enableHelp />
+                  </th>
+                  <th>
+                    <VariableInfoLabel variableName="end_time" labelText="end time" enableHelp />
+                  </th>
+                  <th>
+                    <VariableInfoLabel variableName="runtime" labelText="run time (s)" enableHelp />
+                  </th>
+                  <th>
+                    <VariableInfoLabel variableName="timelimit" labelText="requested time (s)" enableHelp />
+                  </th>
+                  <th>
+                    <VariableInfoLabel variableName="queue" labelText="queue" enableHelp />
+                  </th>
+                  <th>
+                    <VariableInfoLabel variableName="jobname" labelText="name" enableHelp />
+                  </th>
+                  <th>
+                    <VariableInfoLabel variableName="state" labelText="status" enableHelp />
+                  </th>
+                  <th>
+                    <VariableInfoLabel variableName="ncores" labelText="ncores" enableHelp />
+                  </th>
+                  <th>
+                    <VariableInfoLabel variableName="nhosts" labelText="nnodes" enableHelp />
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </CollapsibleSection>
-      </div>
+              </thead>
+              <tbody>
+                <tr style={{ backgroundColor: job.color || "#fff" }}>
+                  <td>
+                    <Link to={`/job/${job.jid}`}>{job.jid}</Link>
+                  </td>
+                  <td>
+                    {job.username ? (
+                      <Link to={`/username/${job.username}/`}>{job.username}</Link>
+                    ) : (
+                      "Unknown"
+                    )}
+                  </td>
+                  <td>
+                    {job.account ? (
+                      <Link to={`/account/${job.account}/`}>{job.account}</Link>
+                    ) : (
+                      "None"
+                    )}
+                  </td>
+                  <td>{formatDateTime(job.start_time)}</td>
+                  <td>{formatDateTime(job.end_time)}</td>
+                  <td>{formatDecimalStandard(job.runtime)}</td>
+                  <td>{formatDecimalStandard(job.timelimit)}</td>
+                  <td>
+                    {job.queue ? (
+                      <Link to={`/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</Link>
+                    ) : (
+                      ""
+                    )}
+                  </td>
+                  <td>{job.jobname}</td>
+                  <td>{job.state}</td>
+                  <td>{formatDecimalStandard(job.ncores)}</td>
+                  <td>{formatDecimalStandard(job.nhosts)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+      </section>
 
-      <hr />
-      <div className="job-detail-plots text-center">
-        <h2 className="h3">Host-level Plots</h2>
+      <section
+        id="job-detail-performance"
+        className="job-detail-plots text-center mb-4"
+        aria-labelledby="job-detail-performance-heading"
+      >
+        <h2 id="job-detail-performance-heading" className="h3">
+          Performance
+        </h2>
         <p className="job-detail-plots-intro text-muted small">
-          Plots load progressively; use expand for a larger view.
+          Host-level plots for this job. Loads progressively; use Expand for a larger view.
         </p>
         {plotsLoading && (
           <LoadingMessage message="Loading job plots…" />
@@ -874,7 +746,7 @@ export default function JobDetail() {
             );
           })}
         </div>
-      </div>
+      </section>
 
       {zoomedPanel ? (
         <div
@@ -910,44 +782,30 @@ export default function JobDetail() {
         </div>
       ) : null}
 
-      <div className="text-center">
-        <h2 className="h4">Device Data and Plots</h2>
+      <section id="job-detail-metrics" className="mb-4" aria-labelledby="job-detail-metrics-heading">
+        <h2 id="job-detail-metrics-heading" className="h5">
+          Job-level metrics
+        </h2>
         {detailsLoading ? (
-          <p className="text-muted" role="status">
-            Loading device data and plots…
-          </p>
-        ) : !hasDeviceData ? (
-          <p className="text-muted" role="status">
-            Data not available.
-          </p>
+          <p className="text-muted">Loading job-level metrics…</p>
+        ) : !metrics_list.length ? (
+          <p className="text-muted">Data not available.</p>
         ) : (
           <div className="table-responsive">
             <table className="table table-sm table-bordered">
-              <thead>
-                <tr>
-                  <th>Type Name</th>
-                  <th>Recorded Performance Events</th>
-                </tr>
-              </thead>
               <tbody>
-                {Object.entries(schema).map(([type_name, event]) => (
-                  <tr key={type_name}>
-                    <td>
-                      <Link to={`/job/${job.jid}/${type_name}/`}>{type_name}</Link>
-                    </td>
-                    <td style={{ textAlign: "left" }}>
-                      {Array.isArray(event)
-                        ? event.map((ev, i) => (
-                            <span key={ev}>
-                              {i > 0 ? ", " : ""}
-                              <VariableInfoLabel
-                                variableName={ev}
-                                labelText={ev}
-                                enableHelp
-                              />
-                            </span>
-                          ))
-                        : event}
+                {(metrics_list || []).map((obj) => (
+                  <tr key={obj.metric}>
+                    <th scope="row">
+                      <VariableInfoLabel
+                        variableName={obj.metric}
+                        labelText={obj.metric}
+                        enableHelp
+                      />{" "}
+                      [{obj.units}]
+                    </th>
+                    <td className={obj.value != null && obj.value !== "" ? "" : "text-muted"}>
+                      {formatJobMetricCell(obj, isStaff)}
                     </td>
                   </tr>
                 ))}
@@ -955,7 +813,289 @@ export default function JobDetail() {
             </table>
           </div>
         )}
-      </div>
+      </section>
+
+      <section id="job-detail-resources" className="mb-4" aria-labelledby="job-detail-resources-heading">
+        <h2 id="job-detail-resources-heading" className="h5">
+          Resources
+        </h2>
+        <div className="row">
+          <div className="col-lg-8">
+            <div className="table-responsive">
+              <table className="table table-sm table-bordered">
+                <thead>
+                  <tr>
+                    <th>Shared File System</th>
+                    <th>MB Read</th>
+                    <th>MB Written</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detailsLoading ? (
+                    <tr>
+                      <td colSpan={3} className="text-muted">
+                        Loading shared file system data…
+                      </td>
+                    </tr>
+                  ) : Object.keys(fsio).length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="text-muted">
+                        Data not available.
+                      </td>
+                    </tr>
+                  ) : (
+                    Object.entries(fsio).map(([key, val]) => (
+                      <tr key={key}>
+                        <td>{key}</td>
+                        <td>{formatDecimalStandard(val[0])}</td>
+                        <td>{formatDecimalStandard(val[1])}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div className="d-flex flex-wrap gap-2 mt-2">
+          {client_url && (
+            <a
+              href={client_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-outline-secondary btn-sm"
+            >
+              Client Logs
+            </a>
+          )}
+          {server_url && (
+            <a
+              href={server_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-outline-secondary btn-sm"
+            >
+              Server Logs
+            </a>
+          )}
+        </div>
+        {(detailsLoading || gpu_active != null || gpu_count != null) && (
+          <div className="mt-3">
+            {detailsLoading && gpu_active == null && gpu_count == null ? (
+              <p className="text-muted mb-0" role="status">
+                Loading GPU statistics…
+              </p>
+            ) : (
+              <table border="1" className="mb-0">
+                <tbody>
+                  {gpuStatsRows.map((row) => (
+                    <tr key={row.key}>
+                      <td style={gpuStatsTableCellStyle.label}>
+                        <b>{row.label}</b>
+                      </td>
+                      <td style={gpuStatsTableCellStyle.value}>{row.value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section
+        id="job-detail-device"
+        className="mb-4"
+        aria-labelledby="job-detail-device-heading"
+      >
+        <h2 id="job-detail-device-heading" className="h5 text-md-start text-center">
+          Device data and type plots
+        </h2>
+        <div className="text-center text-md-start">
+          {detailsLoading ? (
+            <p className="text-muted" role="status">
+              Loading device data and plots…
+            </p>
+          ) : !hasDeviceData ? (
+            <p className="text-muted" role="status">
+              Data not available.
+            </p>
+          ) : (
+            <div className="table-responsive">
+              <table className="table table-sm table-bordered">
+                <thead>
+                  <tr>
+                    <th>Type Name</th>
+                    <th>Recorded Performance Events</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(schema).map(([type_name, event]) => (
+                    <tr key={type_name}>
+                      <td>
+                        <Link to={`/job/${job.jid}/${type_name}/`}>{type_name}</Link>
+                      </td>
+                      <td style={{ textAlign: "left" }}>
+                        {Array.isArray(event)
+                          ? event.map((ev, i) => (
+                              <span key={ev}>
+                                {i > 0 ? ", " : ""}
+                                <VariableInfoLabel
+                                  variableName={ev}
+                                  labelText={ev}
+                                  enableHelp
+                                />
+                              </span>
+                            ))
+                          : event}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section id="job-detail-advanced" className="mb-4" aria-labelledby="job-detail-advanced-heading">
+        <h2 id="job-detail-advanced-heading" className="h5">
+          Details
+        </h2>
+        {isStaff ? (
+          <div className="table-responsive mb-3" style={{ maxWidth: 360 }}>
+            <table className="table table-sm table-bordered">
+              <thead>
+                <tr>
+                  <th>
+                    <VariableInfoLabel
+                      variableName="metrics_distinct_time_count"
+                      labelText="Sample Count"
+                      enableHelp
+                    />
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    {staffMetricsDistinctTimeCount != null && staffMetricsDistinctTimeCount !== ""
+                      ? formatDecimalStandard(staffMetricsDistinctTimeCount)
+                      : "Not computed yet."}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+        <div className="row">
+          <CollapsibleSection
+            title="Processes"
+            fullWidth
+            empty={!detailsLoading && !(proc_list || []).length}
+          >
+            {detailsLoading ? (
+              <div className="text-muted">Loading processes…</div>
+            ) : (
+              <table className="table table-sm table-bordered">
+                <tbody>
+                  {(proc_list || []).map((proc, i) => (
+                    <tr key={i}>
+                      <td>{proc}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </CollapsibleSection>
+          <CollapsibleSection
+            title="Execution Parameters"
+            fullWidth
+            empty={
+              !detailsLoading &&
+              !(xalt_data.exec_path || []).length &&
+              !(xalt_data.cwd || []).length &&
+              !(xalt_data.libset || []).length
+            }
+          >
+            {detailsLoading ? (
+              <div className="text-muted">Loading execution parameters…</div>
+            ) : (
+              <>
+                <table className="table table-sm table-bordered">
+                  <tbody>
+                    <tr>
+                      <td>Executable Path</td>
+                      <td>
+                        {(xalt_data.exec_path || []).length === 0 ? (
+                          <span className="text-muted">Data not available.</span>
+                        ) : (
+                          (xalt_data.exec_path || []).map((item, i) => (
+                            <span key={`exec-${i}`}>
+                              {item}
+                              <br />
+                            </span>
+                          ))
+                        )}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Working Directory</td>
+                      <td>
+                        {(xalt_data.cwd || []).length === 0 ? (
+                          <span className="text-muted">Data not available.</span>
+                        ) : (
+                          (xalt_data.cwd || []).map((item, i) => (
+                            <span key={`cwd-${i}`}>
+                              {item}
+                              <br />
+                            </span>
+                          ))
+                        )}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <table className="table table-sm table-bordered">
+                  <thead>
+                    <tr>
+                      <th>Module</th>
+                      <th>Library</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(xalt_data.libset || []).length === 0 ? (
+                      <tr>
+                        <td colSpan={2} className="text-muted">
+                          Data not available.
+                        </td>
+                      </tr>
+                    ) : (
+                      (xalt_data.libset || []).map((item, i) => (
+                        <tr key={i}>
+                          <td>{item[1] === "none" ? "system" : item[1]}</td>
+                          <td>{item[0]}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </CollapsibleSection>
+          <CollapsibleSection title="Hosts" fullWidth empty={!host_list.length}>
+            <table className="table table-sm table-bordered">
+              <tbody>
+                {host_list.map((host, i) => (
+                  <tr key={i}>
+                    <td>{host}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CollapsibleSection>
+        </div>
+      </section>
     </>
   );
 }
