@@ -414,19 +414,22 @@ body {
   z-index: 1100;
   background-color: rgba(0, 0, 0, 0.72);
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
   justify-content: stretch;
   padding: 1rem;
   box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .job-detail-zoom-panel {
   position: relative;
   width: 100%;
-  height: 100%;
+  height: auto;
   background-color: #fff;
   border-radius: 6px;
   padding: 2.25rem 1rem 1rem 1rem;
-  overflow: auto;
+  overflow: visible;
   box-sizing: border-box;
 }
 .job-detail-zoom-close {
@@ -437,7 +440,7 @@ body {
 }
 .job-detail-zoom-plot {
   width: 100%;
-  height: 100%;
+  height: auto;
   min-height: 240px;
 }
 

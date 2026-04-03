@@ -291,7 +291,7 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout):
 
 
 def _apply_zoom_layout_to_bokeh_model(root_model):
-    """Best-effort layout expansion so a plot can fill fullscreen zoom overlays."""
+    """Best-effort layout so zoom plots stretch to overlay width with intrinsic height (scroll)."""
     try:
         candidates = [root_model]
         if hasattr(root_model, "select"):
@@ -301,13 +301,12 @@ def _apply_zoom_layout_to_bokeh_model(root_model):
                 pass
         for model in candidates:
             if hasattr(model, "sizing_mode"):
-                model.sizing_mode = "stretch_both"
+                model.sizing_mode = "stretch_width"
             if hasattr(model, "width_policy"):
                 model.width_policy = "max"
             if hasattr(model, "height_policy"):
-                model.height_policy = "max"
-            # Ensure zoom plots are generated with large dimensions so they
-            # genuinely fill fullscreen overlays after embed.
+                model.height_policy = "auto"
+            # Nominal size sets aspect ratio for stretch_width in the embedded view.
             if hasattr(model, "width"):
                 model.width = 1600
             if hasattr(model, "height"):
@@ -342,9 +341,9 @@ def _apply_zoom_layout_to_json_item(plot_item):
             return
         if not apply_layout_sizing:
             return
-        attrs["sizing_mode"] = "stretch_both"
+        attrs["sizing_mode"] = "stretch_width"
         attrs["width_policy"] = "max"
-        attrs["height_policy"] = "max"
+        attrs["height_policy"] = "auto"
         # Only reset fixed width/height on layout models. Applying this to all
         # model attrs can corrupt glyph geometry (for example heatmap rect width).
         if allow_dimension_reset:

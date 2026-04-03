@@ -902,8 +902,8 @@ export default function JobDetail() {
                 plotName={zoomedPanel.plotName}
                 unavailableReason={zoomPlotState.unavailableReason || zoomedPanel.unavailableReason}
                 isLoadingExternal={zoomPlotState.loading}
-                fillHeight
-                maximizeInContainer
+                fillHeight={false}
+                maximizeInContainer="width"
               />
             </div>
           </div>

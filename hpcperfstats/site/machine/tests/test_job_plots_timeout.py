@@ -593,6 +593,9 @@ def test_apply_zoom_layout_to_json_item_keeps_glyph_dimensions():
 
   assert fig_attrs["width"] is None
   assert fig_attrs["height"] is None
+  assert fig_attrs["sizing_mode"] == "stretch_width"
+  assert fig_attrs["width_policy"] == "max"
+  assert fig_attrs["height_policy"] == "auto"
   assert rect_attrs["width"] == {"type": "value", "value": 1}
   assert rect_attrs["height"] == {"type": "value", "value": 1}
 

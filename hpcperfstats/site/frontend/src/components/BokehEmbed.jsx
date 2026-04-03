@@ -52,9 +52,15 @@ function whenBokehReady(timeoutMs = 10000, options = {}) {
   });
 }
 
-function maximizeEmbeddedPlot(targetId) {
+/**
+ * @param {string} targetId
+ * @param {"stretch_both" | "stretch_width"} mode stretch_width: full width, intrinsic height (scrollable zoom)
+ */
+function maximizeEmbeddedPlot(targetId, mode = "stretch_both") {
   const targetEl = typeof document !== "undefined" ? document.getElementById(targetId) : null;
   if (!targetEl) return;
+
+  const widthOnly = mode === "stretch_width";
 
   const forceFillBokehDom = () => {
     const els = targetEl.querySelectorAll(
@@ -62,35 +68,39 @@ function maximizeEmbeddedPlot(targetId) {
     );
     els.forEach((el) => {
       el.style.setProperty("width", "100%", "important");
-      el.style.setProperty("height", "100%", "important");
+      if (widthOnly) {
+        el.style.removeProperty("height");
+      } else {
+        el.style.setProperty("height", "100%", "important");
+      }
       el.style.setProperty("max-width", "none", "important");
     });
   };
 
-  // Make the embedded root fill the available zoom container area.
   const rootEl = targetEl.querySelector(".bk-root");
   if (rootEl) {
     rootEl.style.width = "100%";
-    rootEl.style.height = "100%";
+    if (widthOnly) {
+      rootEl.style.height = "auto";
+    } else {
+      rootEl.style.height = "100%";
+    }
     rootEl.style.maxWidth = "none";
   }
 
-  // Ask Bokeh models in this target to use stretch sizing.
   try {
     const index = window.Bokeh?.index || {};
     Object.values(index).forEach((view) => {
       if (!view?.el || !targetEl.contains(view.el) || !view?.model) return;
-      view.model.sizing_mode = "stretch_both";
+      view.model.sizing_mode = widthOnly ? "stretch_width" : "stretch_both";
       view.model.width_policy = "max";
-      view.model.height_policy = "max";
+      view.model.height_policy = widthOnly ? "auto" : "max";
       if (typeof view.request_render === "function") view.request_render();
     });
   } catch {
     // Best-effort sizing only.
   }
 
-  // Bokeh may apply fixed inline sizes after the initial embed pass.
-  // Re-apply fill sizing over a few ticks so the zoom plot truly expands.
   let attempts = 0;
   const maxAttempts = 8;
   const repaint = () => {
@@ -103,7 +113,6 @@ function maximizeEmbeddedPlot(targetId) {
   forceFillBokehDom();
   window.setTimeout(repaint, 0);
 
-  // Trigger a layout pass after styles/model hints are applied.
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event("resize"));
   }
@@ -145,6 +154,7 @@ const PLACEHOLDER_OVERLAY_STYLE = {
  * Accepts only Bokeh `json_item` payloads to avoid executing untrusted HTML/JS.
  * Shows an explicit unavailable status plus "Data not available." when there is no data or
  * when the plot fails to load (text status, not color alone).
+ * @param {boolean | "width"} maximizeInContainer true = fill container; "width" = stretch width, natural height (zoom scroll)
  */
 export default function BokehEmbed({
   item,
@@ -171,6 +181,13 @@ export default function BokehEmbed({
 
   const hasData = !!item;
   const showPlaceholder = !hasData || !plotReady || loadFailed;
+
+  const maximizeMode =
+    maximizeInContainer === "width"
+      ? "stretch_width"
+      : maximizeInContainer === true
+        ? "stretch_both"
+        : null;
 
   useEffect(() => {
     setPlotReady(false);
@@ -205,7 +222,7 @@ export default function BokehEmbed({
           Promise.resolve(embedResult)
             .then(() => {
               if (cancelled) return;
-              if (maximizeInContainer) maximizeEmbeddedPlot(id);
+              if (maximizeMode) maximizeEmbeddedPlot(id, maximizeMode);
               setPlotReady(true);
               if (onPlotReadyChange) onPlotReadyChange(true);
             })
@@ -235,7 +252,7 @@ export default function BokehEmbed({
       cancelled = true;
       bokehWait.abort();
     };
-  }, [item, id, onPlotReadyChange, maximizeInContainer]);
+  }, [item, id, onPlotReadyChange, maximizeMode]);
 
   useEffect(() => {
     if (!errorDetailsOpen) return;
