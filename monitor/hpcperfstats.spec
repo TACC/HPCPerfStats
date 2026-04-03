@@ -119,6 +119,8 @@ install -m 0644 src/hpcperfstats.service %{buildroot}%{_unitdir}/hpcperfstats.se
 %dir %{_sysconfdir}/hpcperfstats
 
 %post
+# Pick up unit changes (new installs and upgrades) before preset/enable/start.
+/usr/bin/systemctl daemon-reload >/dev/null 2>&1 || :
 %systemd_post hpcperfstats.service
 /usr/bin/systemctl enable hpcperfstats.service >/dev/null 2>&1 || :
 if /usr/bin/systemctl --quiet is-active hpcperfstats.service; then
