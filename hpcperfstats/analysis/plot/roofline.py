@@ -19,6 +19,7 @@ from hpcperfstats.analysis.gen.utils import (
     INTEL_LEGACY_SSE_FLOP_EVENTS,
     new_plain_number_hover_formatter,
 )
+from hpcperfstats.analysis.bokeh_job_embed import figure_embed_kw
 from hpcperfstats.analysis.plot.roofline_peaks import infer_cpu_roofline_peak_flops_and_bw_gbps
 
 
@@ -321,16 +322,17 @@ def _build_roofline_figure(df, peak_flops_gf, peak_bw_gb, title):
         renderers=[],  # set after circle is added
     )
     p = figure(
-        width=500,
-        height=400,
-        x_axis_type="log",
-        y_axis_type="log",
-        x_range=(plot_ai_min, plot_ai_max),
-        y_range=(min(perf.min(), peak_bw_gb * plot_ai_min) * 0.5, peak_flops_gf * 1.2),
-        x_axis_label="Arithmetic intensity (FLOP/byte)",
-        y_axis_label="Performance (GFLOP/s)",
-        title=title,
-        tools=["pan", "wheel_zoom", "box_zoom", "reset", "save"],
+        **figure_embed_kw(
+            400,
+            x_axis_type="log",
+            y_axis_type="log",
+            x_range=(plot_ai_min, plot_ai_max),
+            y_range=(min(perf.min(), peak_bw_gb * plot_ai_min) * 0.5, peak_flops_gf * 1.2),
+            x_axis_label="Arithmetic intensity (FLOP/byte)",
+            y_axis_label="Performance (GFLOP/s)",
+            title=title,
+            tools=["pan", "wheel_zoom", "box_zoom", "reset", "save"],
+        ),
     )
     r_roof = p.line("ai", "perf", source=roof_source, line_width=2, color="navy")
     # Bokeh 3.4+: use scatter(size=...) instead of circle(size=...).

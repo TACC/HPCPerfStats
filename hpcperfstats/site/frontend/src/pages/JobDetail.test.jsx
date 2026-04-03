@@ -401,7 +401,7 @@ describe("JobDetail", () => {
     });
   });
 
-  it("shows zoom links for each host-level plot and closes zoom overlay with x", async () => {
+  it("shows expand controls for each host-level plot and closes zoom overlay", async () => {
     window.Bokeh = {
       embed: {
         embed_item: vi.fn(),
@@ -430,13 +430,25 @@ describe("JobDetail", () => {
       expect(screen.getByText("Host-level Plots")).toBeInTheDocument();
     });
 
-    await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: /^Zoom /i }).length).toBe(4);
-    });
-    const zoomLinks = screen.getAllByRole("button", { name: /^Zoom /i });
-    expect(zoomLinks.length).toBe(4);
+    expect(screen.getByRole("heading", { name: "Summary plot" })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Zoom Summary plot" }));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Expand Summary plot" }),
+      ).not.toBeDisabled();
+    });
+
+    const expandNames = [
+      "Expand Summary plot",
+      "Expand Heatmap",
+      "Expand CPU Roofline",
+      "Expand GPU Roofline (PCIe/NvLink)",
+    ];
+    expandNames.forEach((name) => {
+      expect(screen.getByRole("button", { name })).not.toBeDisabled();
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Expand Summary plot" }));
     expect(
       screen.getByRole("dialog", { name: "Summary plot zoom view" })
     ).toBeInTheDocument();
@@ -447,7 +459,12 @@ describe("JobDetail", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("does not show zoom links until plots finish rendering", async () => {
+  it("keeps expand disabled until Bokeh embed finishes", async () => {
+    window.Bokeh = {
+      embed: {
+        embed_item: vi.fn(() => new Promise(() => {})),
+      },
+    };
     vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
       minimalJobDetailResponse
     );
@@ -471,7 +488,7 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByText("Host-level Plots")).toBeInTheDocument();
     });
-    expect(screen.queryAllByRole("button", { name: /^Zoom /i })).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Expand Summary plot" })).toBeDisabled();
   });
 });
 

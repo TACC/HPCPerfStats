@@ -154,6 +154,7 @@ export default function BokehEmbed({
   fillHeight = false,
   maximizeInContainer = false,
   isLoadingExternal = false,
+  wrapperClassName = "",
 }) {
   const session = useSession();
   const canViewErrorDetails = !!session?.is_staff;
@@ -325,12 +326,17 @@ export default function BokehEmbed({
       }
     : {};
 
+  const wrapperClass =
+    wrapperClassName && String(wrapperClassName).trim()
+      ? `bokeh-embed-wrapper ${wrapperClassName.trim()}`
+      : "bokeh-embed-wrapper";
+
   if (item) {
     const overlayActive = hasData && showPlaceholder;
     return (
       <div
         ref={containerRef}
-        className="bokeh-embed-wrapper"
+        className={wrapperClass}
         style={{
           position: "relative",
           height: fillHeight ? "100%" : undefined,
@@ -344,7 +350,7 @@ export default function BokehEmbed({
   }
 
   return (
-    <div ref={containerRef} className="bokeh-embed-wrapper">
+    <div ref={containerRef} className={wrapperClass}>
       {placeholder}
     </div>
   );

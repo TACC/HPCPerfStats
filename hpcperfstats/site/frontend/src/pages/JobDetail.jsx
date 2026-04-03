@@ -10,6 +10,7 @@ import { useSession } from "../session-context";
 import { VariableInfoLabel } from "../components/VariableInfoLabel";
 import { scheduleJobPlotsRetry } from "../utils/job-plots-polling";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 function CollapsibleSection({ title, children, defaultOpen = false, empty = false }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -48,45 +49,19 @@ const PlotPanel = memo(function PlotPanel({
   plotName,
   unavailableReason,
   isLoading,
-  onZoom,
+  onEmbedReadyChange,
 }) {
-  const [isPlotRendered, setIsPlotRendered] = useState(false);
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-start",
-          alignSelf: "flex-start",
-          alignItems: "center",
-          flexShrink: 0,
-          minHeight: isPlotRendered ? "1.625rem" : 0,
-          marginBottom: isPlotRendered ? "0.15rem" : 0,
-        }}
-      >
-        {isPlotRendered ? (
-          <button
-            type="button"
-            className="btn btn-link btn-sm py-0 px-1"
-            onClick={() => onZoom(panelKey)}
-            aria-label={`Zoom ${plotName}`}
-            style={{ lineHeight: 1.35, textDecoration: "underline" }}
-          >
-            zoom
-          </button>
-        ) : null}
-      </div>
-      <div style={{ position: "relative", minWidth: 0, width: "100%" }}>
-        <BokehEmbed
-          item={item}
-          id={id}
-          plotName={plotName}
-          unavailableReason={unavailableReason}
-          isLoadingExternal={isLoading}
-          onPlotReadyChange={setIsPlotRendered}
-        />
-      </div>
+    <div className="job-detail-plot-embed-host">
+      <BokehEmbed
+        item={item}
+        id={id}
+        plotName={plotName}
+        unavailableReason={unavailableReason}
+        isLoadingExternal={isLoading}
+        onPlotReadyChange={(ready) => onEmbedReadyChange?.(panelKey, ready)}
+        wrapperClassName="job-detail-plot-embed"
+      />
     </div>
   );
 });
@@ -218,6 +193,14 @@ export default function JobDetail() {
   });
   const zoomFocusReturnRef = useRef(null);
   const zoomCloseButtonRef = useRef(null);
+  const zoomDialogRef = useRef(null);
+  const [plotEmbedReady, setPlotEmbedReady] = useState({});
+
+  const handlePlotEmbedReady = useCallback((panelKey, ready) => {
+    setPlotEmbedReady((prev) => ({ ...prev, [panelKey]: ready }));
+  }, []);
+
+  useFocusTrap(zoomDialogRef, Boolean(zoomPlotKey));
 
   useDocumentTitle(pk ? `Job ${pk}` : "Job detail");
 
@@ -229,6 +212,7 @@ export default function JobDetail() {
     setError(null);
     setData(null);
     setPlots(null);
+    setPlotEmbedReady({});
     setLoading(true);
     setPlotsLoading(true);
     setDetailsLoading(false);
@@ -804,73 +788,66 @@ export default function JobDetail() {
       <hr />
       <div className="job-detail-plots text-center">
         <h2 className="h3">Host-level Plots</h2>
+        <p className="job-detail-plots-intro text-muted small">
+          Plots load progressively; use expand for a larger view.
+        </p>
         {plotsLoading && (
           <LoadingMessage message="Loading job plots…" />
         )}
-        <table>
-          <tbody>
-            {[plotPanels.slice(0, 2), plotPanels.slice(2, 4)].map((row, rowIndex) => (
-              <tr key={`plot-row-${rowIndex}`}>
-                {row.map((panel) => (
-                  <td key={panel.key}>
-                    <PlotPanel
-                      panelKey={panel.key}
-                      item={panel.item}
-                      id={panel.id}
-                      plotName={panel.plotName}
-                      unavailableReason={panel.unavailableReason}
-                      isLoading={panel.isLoading}
-                      onZoom={handlePlotZoom}
-                    />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="job-detail-plots-grid">
+          {plotPanels.map((panel) => {
+            const canExpand =
+              Boolean(panel.item) &&
+              !panel.isLoading &&
+              plotEmbedReady[panel.key] === true;
+            return (
+              <div key={panel.key} className="job-detail-plot-card">
+                <div className="job-detail-plot-card-header">
+                  <h3 className="h6 mb-0 text-start">{panel.plotName}</h3>
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary btn-sm flex-shrink-0"
+                    disabled={!canExpand}
+                    onClick={() => handlePlotZoom(panel.key)}
+                    aria-label={`Expand ${panel.plotName}`}
+                  >
+                    Expand plot
+                  </button>
+                </div>
+                <div className="job-detail-plot-card-body">
+                  <PlotPanel
+                    panelKey={panel.key}
+                    item={panel.item}
+                    id={panel.id}
+                    plotName={panel.plotName}
+                    unavailableReason={panel.unavailableReason}
+                    isLoading={panel.isLoading}
+                    onEmbedReadyChange={handlePlotEmbedReady}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {zoomedPanel ? (
         <div
+          ref={zoomDialogRef}
           role="dialog"
           aria-modal="true"
           aria-label={`${zoomedPanel.plotName} zoom view`}
-          style={{
-            position: "fixed",
-            inset: 0,
-            width: "100vw",
-            height: "100vh",
-            zIndex: 1100,
-            backgroundColor: "rgba(0, 0, 0, 0.72)",
-            display: "flex",
-            alignItems: "stretch",
-            justifyContent: "stretch",
-            padding: "1rem",
-            boxSizing: "border-box",
-          }}
+          className="job-detail-zoom-backdrop"
         >
-          <div
-            style={{
-              position: "relative",
-              width: "100%",
-              height: "100%",
-              backgroundColor: "#fff",
-              borderRadius: 6,
-              padding: "2.25rem 1rem 1rem 1rem",
-              overflow: "auto",
-            }}
-          >
+          <div className="job-detail-zoom-panel">
             <button
               ref={zoomCloseButtonRef}
               type="button"
-              className="btn btn-link p-0"
+              className="btn btn-close job-detail-zoom-close"
               aria-label="Close zoom window"
               onClick={closeZoom}
-              style={{ position: "absolute", top: "0.5rem", right: "0.75rem" }}
-            >
-              x
-            </button>
-            <div style={{ width: "100%", height: "100%" }}>
+            />
+            <div className="job-detail-zoom-plot">
               {zoomPlotState.loading && (
                 <LoadingMessage message={`Loading ${zoomedPanel.plotName}…`} />
               )}

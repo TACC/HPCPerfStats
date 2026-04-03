@@ -40,6 +40,7 @@ from bokeh.plotting import figure
 from bokeh.transform import factor_cmap
 
 from hpcperfstats.analysis.plot import MSG_NO_METRIC_DATA
+from hpcperfstats.analysis.bokeh_job_embed import figure_embed_kw
 from hpcperfstats.analysis.plot.hover_html import hover_tooltip_html_host_time_value
 from hpcperfstats.analysis.plot.job_window import job_window_bounds_local
 from hpcperfstats.analysis.plot.summary_metric_descriptions import (
@@ -846,15 +847,14 @@ class SummaryPlot():
 
     label_text = (label or "").strip() or metric
 
-    plot_kwargs = {
-        "width": 400,
-        "height": 150,
-        "x_axis_type": "datetime",
-        "y_range": Range1d(y_range_start, y_range_end),
-        "x_axis_label": "Time",
-        "y_axis_label": label_text,
-        "title": label_text,
-    }
+    plot_kwargs = figure_embed_kw(
+        150,
+        x_axis_type="datetime",
+        y_range=Range1d(y_range_start, y_range_end),
+        x_axis_label="Time",
+        y_axis_label=label_text,
+        title=label_text,
+    )
     if x_range is not None:
       plot_kwargs["x_range"] = x_range
     plot = figure(

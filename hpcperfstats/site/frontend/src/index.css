@@ -308,6 +308,86 @@ body {
   justify-content: center;
 }
 
+/* Job detail: host-level Bokeh grid (replaces layout table) */
+.job-detail-plots-intro {
+  max-width: 36rem;
+  margin-left: auto;
+  margin-right: auto;
+  margin-bottom: 0.5rem;
+}
+.job-detail-plots-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 0.75rem;
+  text-align: left;
+}
+.job-detail-plot-card {
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.job-detail-plot-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
+}
+.job-detail-plot-card-body {
+  padding: 0.5rem;
+  flex: 1;
+  min-height: 0;
+}
+.job-detail-plot-embed-host {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+}
+.job-detail-plot-card .job-detail-plot-embed.bokeh-embed-wrapper {
+  min-height: 300px;
+}
+.job-detail-zoom-backdrop {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1100;
+  background-color: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+.job-detail-zoom-panel {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background-color: #fff;
+  border-radius: 6px;
+  padding: 2.25rem 1rem 1rem 1rem;
+  overflow: auto;
+  box-sizing: border-box;
+}
+.job-detail-zoom-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.75rem;
+  z-index: 2;
+}
+.job-detail-zoom-plot {
+  width: 100%;
+  height: 100%;
+  min-height: 240px;
+}
+
 /* Job list pagination: react-paginate + First/Last */
 .pagination-wrapper {
   display: flex;
@@ -470,20 +550,9 @@ body {
   .bokeh-embed canvas {
     max-width: 100% !important;
   }
-  /* Job detail: host-level plots stack vertically on mobile */
-  .job-detail-plots table,
-  .job-detail-plots table tbody,
-  .job-detail-plots table tr {
-    display: block;
-  }
-  .job-detail-plots table td {
-    display: block;
-    width: 100%;
-    max-width: 100%;
-    box-sizing: border-box;
-  }
-  .job-detail-plots table tr {
-    margin-bottom: 1rem;
+  /* Job detail: host-level plot grid single column on mobile */
+  .job-detail-plots-grid {
+    grid-template-columns: 1fr;
   }
   /* Histogram: on mobile we show full plot only (no popover), single column */
   .histogram-thumbnails-grid {

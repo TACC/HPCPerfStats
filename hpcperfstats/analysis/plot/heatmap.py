@@ -16,6 +16,7 @@ from hpcperfstats.analysis.gen.utils import (
     new_plain_linear_tick_formatter,
     new_plain_number_hover_formatter,
 )
+from hpcperfstats.analysis.bokeh_job_embed import figure_embed_kw
 from hpcperfstats.analysis.plot.job_window import job_window_label_strings
 
 
@@ -141,13 +142,16 @@ class HeatMap():
                          formatter=new_plain_linear_tick_formatter())
 
     hm = figure(
-        title="<Cycles/Instruction> = " + f"{float(host_cpi.mean()):.4f}",
-        x_range=times,
-        x_axis_label="Time",
-        y_axis_label="Host",
-        logo=None,
-        y_range=u.hostnames,
-        tools=[hover],
+        **figure_embed_kw(
+            320,
+            title="<Cycles/Instruction> = " + f"{float(host_cpi.mean()):.4f}",
+            x_range=times,
+            x_axis_label="Time",
+            y_axis_label="Host",
+            logo=None,
+            y_range=u.hostnames,
+            tools=[hover],
+        ),
     )
 
     hm.rect("times",
@@ -235,12 +239,15 @@ def plot_and_reason_from_jid_table(jt):
     )
     mean_cpi = numpy.nanmean(cpi_flat) if cpi_flat else 0
     hm = figure(
-        title="<Cycles/Instruction> = " + f"{float(mean_cpi):.4f}",
-        x_range=times,
-        y_range=hostnames,
-        x_axis_label="Time",
-        y_axis_label="Host",
-        tools=[hover],
+        **figure_embed_kw(
+            320,
+            title="<Cycles/Instruction> = " + f"{float(mean_cpi):.4f}",
+            x_range=times,
+            y_range=hostnames,
+            x_axis_label="Time",
+            y_axis_label="Host",
+            tools=[hover],
+        ),
     )
     hm.rect("times", "hostnames", source=source, width=1, height=1, line_color=None, fill_color={"field": "cpi", "transform": mapper})
     hm.add_layout(color_bar, "right")
