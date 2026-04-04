@@ -35,6 +35,10 @@ except ImportError:
 
 NUMEXPR_MIN_ARRAY_SIZE = 100_000
 
+# Skip time_imbalance slices where b/a is non-finite or absurd (near-zero "before"
+# integral blows up the ratio); values above this are not meaningful as %.
+_TIME_IMBALANCE_MAX_SLICE_RATIO = 1e9
+
 
 def _add_arrays(a, b):
   """Fast path for a+b on large arrays."""
@@ -392,7 +396,8 @@ class Metrics():
             "typename": "block",
             "events": ["rd_sectors", "wr_sectors"],
             "conv": 1.0 / (1024 * 1024),
-            "units": "GB/s"
+            "units": "GB/s",
+            "nonnegative_rate": True,
         },
         "avg_cpuusage": {
             "typename": "cpu",
@@ -1276,6 +1281,9 @@ class avg_ethbw():
       b = (
           stats[-1, rxi] - stats[0, rxi] + stats[-1, txi] - stats[0, txi]
       )
+      # Cumulative byte counters should not decrease; negative means reset or bad data.
+      if b < 0 or not np.isfinite(b):
+        continue
       per_host.append(b / denom)
     if not per_host:
       return None, typename, 'MB/s'
@@ -1943,7 +1951,9 @@ class time_imbalance():
     vals = []
     for hostname, stats in _stats.items():
       rate = _per_interval_rate(stats[:, user_i], u.t)
-      rate = np.nan_to_num(rate, nan=0.0)
+      rate = np.nan_to_num(rate, nan=0.0, posinf=0.0, neginf=0.0)
+      # Cumulative CPU jiffies are monotonic; negative dy/dt is reset/wrap/noise.
+      rate = np.maximum(rate, 0.0)
       # skip first and last two time slices
       for i in [x + 2 for x in range(len(u.t) - 4)]:
         r1 = range(i)
@@ -1954,14 +1964,19 @@ class time_imbalance():
           continue
         # integral before time slice
         a = trapz(rate[r1], tmid[r1]) / before_window
-        if a == 0 or not np.isfinite(a):
+        if not (a > 0) or not np.isfinite(a):
           continue
         # integral after time slice
         b = trapz(rate[r2], tmid[r2]) / after_window
         if not np.isfinite(b):
           continue
         # ratio of integral after time over before time
-        vals += [b / a]
+        ratio = b / a
+        if not np.isfinite(ratio) or ratio < 0:
+          continue
+        if ratio > _TIME_IMBALANCE_MAX_SLICE_RATIO:
+          continue
+        vals += [ratio]
     if vals:
       value = 100 * min(vals)
       return value, typename, '%'

@@ -592,6 +592,29 @@ def test_avg_ethbw_mean_across_hosts():
   assert units == "MB/s"
 
 
+def test_avg_ethbw_skips_hosts_with_negative_byte_delta():
+  """Hosts whose rx+tx counters net decrease (reset/bad data) are omitted from the mean."""
+  schema = _Schema(["rx_bytes", "tx_bytes"])
+  bad = np.array([[1000.0, 0.0], [400.0, 0.0]], dtype=np.float64)
+  good = np.array([[0.0, 0.0], [100.0, 0.0]], dtype=np.float64)
+  delta_t = 10.0
+  denom = delta_t * 1024 * 1024
+
+  class MockU:
+    dt = delta_t
+    nhosts = 2
+
+    def get_type(self, typename):
+      return schema, {"bad": bad, "good": good}
+
+  u = MockU()
+  value, typename, units = avg_ethbw().compute_metric(u)
+  expected = 100.0 / denom
+  assert abs(value - expected) < 1e-9
+  assert typename == "net"
+  assert units == "MB/s"
+
+
 def test_avg_gpuutil_returns_none_for_short_series_without_warning():
   """avg_gpuutil skips hosts with <3 samples (empty trimmed window) and returns None."""
   schema = _Schema(["gpu_util"])
