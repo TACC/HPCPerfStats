@@ -1,0 +1,26 @@
+---
+description: PostgreSQL in Docker — /dev/shm "No space left on device" and shm_size tuning
+globs:
+  - "**/docker-compose*.yaml"
+alwaysApply: false
+---
+
+# PostgreSQL Container Shared Memory (`/dev/shm`)
+
+## What the error means
+
+- Message like **`could not resize shared memory segment "/PostgreSQL.<digits>"`** with **`No space left on device`** refers to the **container’s tmpfs `/dev/shm`**, not necessarily host disk space on `/var/lib/postgresql/data`.
+- PostgreSQL uses shared memory segments backed by **`shm_size`** on the **db** service in Compose.
+
+## What to do
+
+- Increase **`shm_size`** on the Timescale/Postgres service (e.g. in `docker-compose.yaml` under `db:`) until heavy queries and parallel workers stop failing. The repo may already set a large value (e.g. **4gb**); raise it further if workloads or `max_parallel_workers` grow.
+- After changing **`shm_size`**, recreate the db container so the limit applies.
+
+## Code interaction
+
+- Django only surfaces the failure as **`django.db.utils.OperationalError`**; the root cause is **container runtime configuration**, not application Python logic.
+
+## Overlap
+
+- Composes with **`local-compose-db-lifecycle-for-web-tests.mdc`** / **`full-test-with-db-redis.mdc`** when validating DB health after compose edits.

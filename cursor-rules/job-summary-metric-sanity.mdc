@@ -1,0 +1,29 @@
+---
+description: Job summary bandwidth and percentage metrics must stay physically plausible (no huge negatives)
+globs:
+  - "**/hpcperfstats/analysis/**/*.py"
+  - "**/hpcperfstats/site/machine/**/*.py"
+alwaysApply: false
+---
+
+# Job Summary Metric Sanity (Rates And Percentages)
+
+## Problem
+
+- **Counter wraps, resets, missing samples, or bad time bases** can produce **negative or absurd** derived values (e.g. IB/Eth/Block **MB/s or GB/s**, **Time imbal [%]** orders of magnitude outside 0–100).
+- These show up on **job detail / summary** surfaces backed by aggregated metrics and `host_data`-derived logic.
+
+## Expectations
+
+- **Bandwidth-style rates** shown as throughput should be **non-negative** unless the product explicitly models signed flow *and* the UI labels that (default: treat as magnitude, clamp or fix upstream deltas).
+- **Percentages** meant as utilization or imbalance should stay in a **sensible bounded range** (typically **0–100** or documented alternative), not millions.
+
+## Implementation guidance
+
+- Prefer fixing **delta / aggregation** logic (correct ordering, monotonic counters, duration guards) over only clamping display.
+- If clamping for display, do it **consistently** with **`no-scientific-notation-web.mdc`** formatting and keep **one** definition of the metric (avoid divergent API vs table vs plot).
+- Add or extend **tests** under analysis or machine tests when changing formulas for summary columns.
+
+## Overlap
+
+- Complements **`runtime-resource-and-metrics-safety.mdc`** for regression tests on aggregation changes.

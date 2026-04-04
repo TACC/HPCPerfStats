@@ -1,0 +1,44 @@
+---
+description: How job-level Bokeh plots are cached (Redis + DB artifacts, metrics prewarm, invalidation)
+alwaysApply: true
+---
+
+# Job Plot Artifacts And Caching
+
+## User-facing contract
+
+- The SPA still receives Bokeh **`json_item`** payloads (`plot_item` in JSON). Do not change that shape unless the React embed path is updated in the same task.
+
+## Layers (read order)
+
+1. **Redis (L1)** — keys managed like `JOB_PLOTS_*` in `hpcperfstats/site/machine/api.py`. Very large payloads may be skipped or capped; see **`JOB_PLOT_REDIS_MAX_BYTES`** (default order of ~512 KiB in `job_plot_artifacts.get_job_plot_redis_max_bytes`).
+2. **PostgreSQL (L2, durable)** — model **`job_plot_artifact`**: one row per **`(jid, plot_kind, layout)`**. Payload is **gzip-compressed JSON** of the `json_item` dict; encoding constant **`gzip_json`** (`PAYLOAD_ENCODING_GZIP_JSON`).
+
+## Canonical modules
+
+| Concern | Location |
+|--------|----------|
+| Fingerprint, compress/decompress, upsert, prewarm orchestration | `hpcperfstats/site/machine/job_plot_artifacts.py` |
+| Plot kinds / builders | `JOB_PLOT_KINDS` → `hpcperfstats/analysis/plot` helpers |
+| Zoom layout on models / JSON | `hpcperfstats/site/machine/bokeh_plot_layout.py` |
+| HTTP assembly + Redis | `job_plots` in `hpcperfstats/site/machine/api.py` |
+| Prewarm after metrics | `hpcperfstats/analysis/metrics/update_metrics.py` → `persist_job_plot_artifacts_for_jid` |
+| Invalidate Redis **and** DB rows | `invalidate_job_plot_cache_keys_for_jids` in `cache_utils.py` (ingest / sync paths) |
+
+## Fingerprint and schema bumps
+
+- **`compute_plot_input_fingerprint`** hashes job window, host list, `metrics_distinct_time_count`, **live** distinct time count (`LiveDistinctHostTimeCount` on PostgreSQL), `bokeh.__version__`, and **`APP_PLOT_ARTIFACT_SCHEMA_VERSION`**.
+- When plot **semantics** change without a Bokeh upgrade, bump **`APP_PLOT_ARTIFACT_SCHEMA_VERSION`** in `job_plot_artifacts.py` so old rows are not reused.
+
+## Gaps and boundaries
+
+- **`type_detail`** and similar endpoints are **not** the same code path as `job_plots`; they do not automatically use `job_plot_artifact`. Extend caching there explicitly if those pages are hot.
+- Avoid **circular imports** between `api.py` and `update_metrics.py`; shared logic stays in **`job_plot_artifacts`** (and plot modules).
+
+## Tests
+
+- Extend `hpcperfstats/site/machine/tests/test_job_plot_artifacts.py` (and related API tests) when changing persist/load, fingerprint, or invalidation behavior.
+
+## Overlap
+
+- Complements **`runtime-resource-and-metrics-safety.mdc`** (metrics recompute) and **`monitor-analysis-architecture-sync.mdc`** (plot inputs from `host_data` / `jid_table`).
