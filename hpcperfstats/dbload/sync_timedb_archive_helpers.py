@@ -33,7 +33,7 @@ def get_tar_member_name(file_path):
 
 
 def _tar_list_executable():
-  """GNU/BSD ``tar`` for ``tar tf`` integrity checks (same family as ``tar uvf``)."""
+  """GNU/BSD ``tar`` for ``tar tf`` integrity checks (same family as append)."""
   return shutil.which("tar") or "/bin/tar"
 
 
@@ -149,7 +149,7 @@ def replace_corrupt_tar_from_gzip_backup(tar_path, gz_path, pigz_threads):
 
   Returns True if the filesystem is in a consistent state for the caller to
   append: either ``tar_path`` exists (restored from gzip) or both gzip and tar
-  are absent (cleared corrupt tar with no backup — next ``tar uvf`` creates a
+  are absent (cleared corrupt tar with no backup — next ``tar -r`` creates a
   new archive). Returns False only if gzip restore was attempted but
   ``tar_path`` is still missing afterward.
   """
@@ -172,7 +172,7 @@ def replace_corrupt_tar_from_gzip_backup(tar_path, gz_path, pigz_threads):
 def get_existing_archive_members(tar_path):
   """Read tar at tar_path and return dict of member name -> size for **file** members.
 
-  If the same path appears multiple times (e.g. repeated ``tar uvf``), the
+  If the same path appears multiple times (e.g. repeated append passes), the
   reported size is the **largest** among those entries so verification matches
   the preferred retained copy after deduplication.
   """

@@ -703,6 +703,27 @@ def test_filter_files_to_add_to_archive_mixed(tmp_path):
   assert set(to_add) == {str(f1), str(f3)}
 
 
+# --- sync_timedb._append_to_tar (tar -r --null -T) ---
+
+
+@pytest.mark.skipif(not shutil.which("tar"), reason="tar binary required")
+def test_append_to_tar_writes_members_via_files_from(tmp_path):
+  from hpcperfstats.dbload.sync_timedb import _append_to_tar
+
+  f1 = tmp_path / "segment1"
+  f1.write_text("segment-body")
+  tar_path = tmp_path / "2024-06-01.tar"
+  _append_to_tar(str(tar_path), [str(f1)])
+  assert tar_path.is_file()
+  with tarfile.open(tar_path, "r") as tf:
+    bodies = [
+        tf.extractfile(m).read()
+        for m in tf.getmembers()
+        if m.isfile() and tf.extractfile(m) is not None
+    ]
+  assert b"segment-body" in bodies
+
+
 # --- get_verified_files_to_remove ---
 
 

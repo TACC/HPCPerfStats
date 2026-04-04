@@ -9,7 +9,9 @@ DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers 
 import itertools
 import multiprocessing
 import os
+import shutil
 import signal
+import tempfile
 import subprocess
 import sys
 import time
@@ -86,7 +88,7 @@ days_to_process = 5
 
 # How many files to proccess and archive at once
 chunk_size = 100
-# Max paths per ``tar uvf`` (avoid ARG_MAX / exec failures with long FQDN paths).
+# Max paths per ``tar -T`` batch (limits list-file size; argv stays tiny).
 tar_append_batch_size = 32
 # Rescan stats directory after this many processed chunks
 rescan_every_chunks = 10
@@ -302,21 +304,52 @@ def _decompress_gz(gz_path):
 def _append_to_tar(tar_path, file_paths):
   """Append file_paths to tar at tar_path. Does nothing if file_paths is empty.
 
-  Runs ``tar uvf`` in batches of ``tar_append_batch_size`` so the argv list
-  stays below OS limits (long cluster paths × many files → exit status 2).
+  Uses GNU/BSD ``tar -r -f`` with ``--null -T`` so argv stays tiny, names may
+  contain spaces, and we do not rely on ``-u`` (mtime) vs. Python-side filters.
+  Skips paths that disappeared before append (race). Batches via
+  ``tar_append_batch_size``.
   """
   if not file_paths:
     return
   batch = max(1, int(tar_append_batch_size))
   for off in range(0, len(file_paths), batch):
     chunk = file_paths[off : off + batch]
-    with file_write_lock(tar_path):
-      result = subprocess.run(
-          ['/bin/tar', 'uvf', tar_path] + chunk,
-          capture_output=True,
-          text=True,
-          check=False,
+    present = [p for p in chunk if os.path.lexists(p)]
+    n_missing = len(chunk) - len(present)
+    if n_missing:
+      log_print(
+          "Archive append: skipped %d missing path(s) in batch %d-%d"
+          % (n_missing, off + 1, off + len(chunk)),
+          flush=True,
       )
+    if not present:
+      continue
+    fd, list_path = tempfile.mkstemp(prefix="hps_tar_append_", suffix=".lst")
+    try:
+      with os.fdopen(fd, "wb") as lf:
+        for p in present:
+          lf.write(os.fsencode(p) + b"\0")
+      tar_bin = shutil.which("tar") or "/bin/tar"
+      with file_write_lock(tar_path):
+        result = subprocess.run(
+            [
+                tar_bin,
+                "-r",
+                "-f",
+                tar_path,
+                "--null",
+                "-T",
+                list_path,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+      try:
+        os.remove(list_path)
+      except OSError:
+        pass
     if result.stdout:
       log_print(result.stdout, flush=True)
     if result.stderr:
@@ -330,7 +363,7 @@ def _append_to_tar(tar_path, file_paths):
       )
     log_print(
         "Archived batch %d-%d (%d file(s)) -> %s"
-        % (off + 1, off + len(chunk), len(chunk), tar_path),
+        % (off + 1, off + len(present), len(present), tar_path),
         flush=True,
     )
 
@@ -348,6 +381,26 @@ def archive_stats_files(archive_info):
     if os.path.exists(archive_fname):
       _decompress_gz(archive_fname)
   existing_members = get_existing_archive_members(archive_tar_fname)
+
+  # Corrupt/truncated .tar can make Python's tarfile reader return {} while GNU
+  # tar still refuses append (exit 2). Recover before append so we never raise
+  # without trying restore-from-.gz (same as post-append path).
+  if os.path.isfile(archive_tar_fname) and not verify_tar_archive_readable(
+      archive_tar_fname):
+    log_print(
+        "Daily tar unreadable before append; recovering from .tar.gz or "
+        "clearing: %s" % archive_tar_fname,
+        flush=True,
+    )
+    if not replace_corrupt_tar_from_gzip_backup(
+        archive_tar_fname, archive_fname, pigz_thread_count):
+      log_print(
+          "ERROR: could not restore daily tar before append; leaving raw stats "
+          "files in place: %s" % archive_fname,
+          flush=True,
+      )
+      return
+    existing_members = get_existing_archive_members(archive_tar_fname)
 
   stats_files_to_tar = filter_files_to_add_to_archive(
       stats_files, existing_members, debug=DEBUG)
