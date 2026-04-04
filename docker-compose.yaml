@@ -43,6 +43,9 @@ services:
   db:
     image: timescale/timescaledb:latest-pg15
     container_name: hpcperfstats_db_1
+    # Default container /dev/shm is 64MiB; Postgres dynamic shared memory exhausts it easily
+    # with max_connections=500.
+    shm_size: "4gb"
     command: -c 'max_connections=500'
     restart: always
     healthcheck:
