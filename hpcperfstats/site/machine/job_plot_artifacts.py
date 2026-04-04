@@ -40,6 +40,7 @@ JOB_PLOT_LAYOUT_ZOOM_V3 = "zoom_v3"
 PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 
 # Bump when plot artifact semantics change (independent of Bokeh version).
+# See cursor-rules/job-plot-artifacts-caching.mdc and machine/tests/test_job_plot_artifacts.py.
 APP_PLOT_ARTIFACT_SCHEMA_VERSION = 1
 
 _PLOT_PAIR_AND_FALLBACK = {

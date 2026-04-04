@@ -39,3 +39,11 @@ Key Conventions
   - Add only the specific origins required, scoped to the correct directive (`script-src`, `style-src`, `font-src`, `img-src`, `connect-src`, etc.).
   - Do **not** add broad allowlists like `*`, `https:`, or entire CDNs unless unavoidable; prefer self-hosting or nonces/hashes when feasible.
   - Prefer CSP **Report-Only** first, then enforce once reports are clean.
+
+## Incremental adoption (this repository)
+
+Some existing components use short names (for example `Layout.jsx`, `ExtendedSearch.jsx`) instead of `Page*` / `Button*` prefixes. When you touch a file, move it toward the naming and structure rules in the same change when that is practical without scope creep. A full-repo component rename is intentionally deferred.
+
+## CSP when adding network dependencies
+
+When introducing new third-party scripts or API hosts, extend CSP by the smallest directive necessary (`connect-src`, `script-src`, etc.); do not add `*` or bare `https:` allowlists. Update Django/CSP configuration under `hpcperfstats/site/` in the same task as the frontend change.

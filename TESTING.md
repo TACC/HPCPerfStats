@@ -29,11 +29,21 @@ PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 
 | Location | Description |
 |---------|-------------|
-| `hpcperfstats/tests/` | Non-Django unit/integration tests (config parsing, service startup/health, listend behavior, sync helpers, cache/date/print/file-locking helpers, XALT models, API key mobile checks, dbload `pigz`/row-builder helpers, Django `timezone.utc` shim). `test_sync_timedb_archive.py` includes deferred-archive / atomic-seal helpers, `tar tf` integrity checks, gzip restore, tar dedupe (largest wins per path), and helpers used for scheduled pigz + raw-file removal (`get_existing_archive_members_for_daily_archive`, `remove_verified_archived_raw_files`, `validate_sealed_daily_archive_for_raw_removal`); two tests call real `pigz` and skip when `pigz` is not on `PATH`. |
+| `hpcperfstats/tests/` | Non-Django unit/integration tests (config parsing, service startup/health, listend behavior, sync helpers, cache/date/print/file-locking helpers, XALT models, API key mobile checks, dbload `pigz`/row-builder helpers, Django `timezone.utc` shim). `test_sync_timedb_archive.py` includes deferred-archive / atomic-seal helpers, `tar tf` integrity checks, gzip restore, tar dedupe (largest wins per path), and helpers used for scheduled pigz + raw-file removal (`get_existing_archive_members_for_daily_archive`, `remove_verified_archived_raw_files`, `validate_sealed_daily_archive_for_raw_removal`); two tests call real `pigz` and skip when `pigz` is not on `PATH`. `test_monitor_analysis_typename_contract.py` asserts monitor `stats_type.st_name` values stay aligned with `INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, and `INTEL_CORE_PMC_TYPES_ORDERED` (skips if `monitor/src` is absent). |
 | `hpcperfstats/analysis/**/test*.py` | Analysis/plot/metrics-focused tests (summary/heatmap/roofline behavior, roofline peak inference from `host_data.type` schema keys, hover tooltips, shared job-window parsing, metrics helpers). `analysis/metrics/test_per_interval_rate.py` also covers node-imbalance variants (DRAM, LNET, GPU util/tensor) and GPU peak helpers. `analysis/test_bokeh_job_embed.py` is a pure-Python unit test for `bokeh_job_embed.figure_embed_kw` (no Django). |
 | `hpcperfstats/site/machine/tests/` | Django + web tests (ORM/query/update helpers, job detail file-system llite vs NFS fallback, security headers, API/misc endpoints, SPA rendering, page and browser E2E tests). Includes `test_type_detail_api.py`, which asserts type-detail `host_data` ORM SQL does not reference `jid` (job scope is start/end time + accounting hosts) with `django_db(databases=[])` so it does not need a live DB. `test_metrics.py` includes `test_job_metric_short_labels_cover_catalog`, which asserts every `job_metrics_catalog_entries()` metric has a matching entry in `job_metric_display_labels.JOB_METRIC_SHORT_LABELS` (parity with the frontend short-label map). `test_job_plot_artifacts.py` covers gzip-serialized Bokeh `json_item` persistence (`job_plot_artifact`), fingerprinting, and invalidation (requires Postgres like other `django_db` machine tests). |
 | `hpcperfstats/site/machine/tests/test_job_detail_staff_sample_count.py` | Staff-only `staff_metrics_distinct_time_count` on `job_detail` JSON (mocked ORM; no live DB required). |
-| `hpcperfstats/site/frontend` | React SPA unit tests (Vitest): `npm test` from that directory. Vitest picks up `*.test.jsx` / `*.test.js` under `src/` (pages, components, utils), including small pure helpers such as `normalize-job-list-histogram-entry.test.js`, `job-list-route-title-context.test.js`, `Search.test.jsx` (browse-by-time **Calendar** tab first and selected by default), `JobList.test.jsx` (includes narrow-viewport Jobs/Charts tab behavior), `JobDetail.test.jsx` (job detail **Job data** inner tabs—including per-plot tabs (Summary, Heatmap, rooflines) before Bokeh assertions—progressive plot loading, and metrics tab single- vs two-table layout), `jobMetricDisplayLabels.test.js` (short labels for job-level metrics table), and `useDocumentTitle.test.js`. `src/setupTests.js` stubs `HTMLElement.prototype.scrollIntoView` for jsdom. |
+| `hpcperfstats/site/frontend` | React SPA unit tests (Vitest): `npm test` from that directory. Vitest picks up `*.test.jsx` / `*.test.js` under `src/` (pages, components, utils), including small pure helpers such as `normalize-job-list-histogram-entry.test.js`, `job-list-route-title-context.test.js`, `Search.test.jsx` (browse-by-time **Calendar** tab first and selected by default), `JobList.test.jsx` (includes narrow-viewport Jobs/Charts tab behavior), `JobDetail.test.jsx` (job detail **Job data** inner tabs—including per-plot tabs (Summary, Heatmap, rooflines) before Bokeh assertions—progressive plot loading, and metrics tab single- vs two-table layout), `src/utils/jobMetricDisplayLabels.test.js` (short labels for job-level metrics table), and `useDocumentTitle.test.js`. `src/setupTests.js` stubs `HTMLElement.prototype.scrollIntoView` for jsdom. |
+
+### Monitor event metadata (frontend tooltips)
+
+When approved monitor changes add or rename `host_data.event` strings, regenerate the bundled catalog from the repo root:
+
+```bash
+python3 hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py
+```
+
+Then follow `.cursor/rules/variable-metadata-*.mdc` for merging into `variableMetadata.js` and operator docs (`docs/regenerate_monitor_variables_catalog.py`, etc.).
 
 ## Test runners
 
@@ -50,7 +60,7 @@ PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 Use this for web-page E2E modules:
 
 - `hpcperfstats/site/machine/tests/test_web_pages_e2e.py` (includes a module-level `test_job_detail_api_includes_staff_metrics_distinct_time_count_for_staff` that does not use the `django_db` class marker, so it can run without a reachable Postgres host)
-- `hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py` (uses a minimal static `index.html` stub for `/machine/*` that mirrors key SPA affordances—staff menu, plot-unavailable copy, keyboard-friendly plot error disclosure—rather than the full Vite bundle; when `axe-core` is available it also runs a WCAG-tagged **axe-core** scan on stub `/machine/`, `/machine/job/123/`, `/machine/admin_monitor/`, and `/api-key/`. The Docker image copies `axe-core.min.js` into `hpcperfstats/site/machine/tests/support/` from the frontend build stage; host-side pytest can use `hpcperfstats/site/frontend/node_modules/axe-core/axe.min.js` after `npm ci`.)
+- `hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py` (uses a minimal static `index.html` stub for `/machine/*` that mirrors key SPA affordances—staff menu, plot-unavailable copy, keyboard-friendly plot error disclosure—rather than the full Vite bundle; when `axe-core` is available it also runs a WCAG-tagged **axe-core** scan on stub `/machine/`, `/machine/job/123/`, `/machine/job/123/cpu/`, `/machine/year/2020/`, `/machine/admin_monitor/`, `/machine/job_monitor/`, and `/api-key/`. The Docker image copies `axe-core.min.js` into `hpcperfstats/site/machine/tests/support/` from the frontend build stage; host-side pytest can use `hpcperfstats/site/frontend/node_modules/axe-core/axe.min.js` after `npm ci`.)
 
 The workflow script handles Docker lifecycle and runs both files in one session:
 
@@ -87,9 +97,11 @@ The SPA and standalone HTML pages aim for **WCAG 2.2 Level AA** for in-app flows
 cd hpcperfstats/site/frontend && npm test -- --run
 ```
 
-Vitest includes a minimal **axe-core** smoke test (`src/accessibility.smoke.test.jsx`) with `color-contrast` disabled under jsdom. **Playwright** browser E2E (`test_web_pages_browser_e2e.py`) runs axe with WCAG 2.0/2.1 A/AA tags (including color contrast) on the stub `/machine/` shell (`/machine/`, `/machine/job/123/`, `/machine/admin_monitor/`) and on `/api-key/` when the axe bundle is present.
+Vitest includes a minimal **axe-core** smoke test (`src/accessibility.smoke.test.jsx`) with `color-contrast` disabled under jsdom. **Playwright** browser E2E (`test_web_pages_browser_e2e.py`) runs axe with WCAG 2.0/2.1 A/AA tags (including color contrast) on the stub `/machine/` shell (`/machine/`, `/machine/job/123/`, `/machine/job/123/cpu/`, `/machine/year/2020/`, `/machine/admin_monitor/`, `/machine/job_monitor/`) and on `/api-key/` when the axe bundle is present.
 
 **Manual spot-check (each release or major UI change)**
+
+Treat the following as a **release gate** alongside automated tests: run through the checklist below before tagging or deploying UI-heavy changes.
 
 - Keyboard only: Tab through navbar, **Extended search** dialog (Escape closes, focus returns), **Find Job**, tables, pagination, job detail **Job data** plot tabs.
 - Screen reader: VoiceOver (Safari) or NVDA (Firefox)—**Search jobs** → job list → job detail; confirm **route focus** lands on the page heading after navigation.

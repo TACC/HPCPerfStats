@@ -188,8 +188,11 @@ def test_browser_flow_for_web_pages():
               "/machine/home/",
               "/machine/jobs/",
               "/machine/job/123/",
+              "/machine/job/123/cpu/",
+              "/machine/year/2020/",
               "/machine/host/node1/plot/",
               "/machine/admin_monitor/",
+              "/machine/job_monitor/",
           ):
             page.goto(f"{base_url}{path}")
             assert "spa-shell" in page.locator("#root").inner_text()
@@ -232,7 +235,10 @@ def test_browser_flow_for_web_pages():
             for axe_url in (
                 f"{base_url}/machine/?staff=0",
                 f"{base_url}/machine/job/123/",
+                f"{base_url}/machine/job/123/cpu/",
+                f"{base_url}/machine/year/2020/",
                 f"{base_url}/machine/admin_monitor/",
+                f"{base_url}/machine/job_monitor/",
                 f"{base_url}/api-key/",
             ):
               page.goto(axe_url)

@@ -3,7 +3,16 @@ import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import { createAdminMonitorSectionLoader } from "../utils/create-admin-monitor-section-loader";
+import { formatDecimalStandard } from "../utils/formatDecimal";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
+
+function formatAdminMonitorNumericStatistic(value) {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return formatDecimalStandard(value);
+  }
+  return String(value);
+}
 
 const BADGE_MAP = {
   ok: { label: "OK (≤ 10 minutes)", class: "badge badge-freshness-ok" },
@@ -855,7 +864,11 @@ export default function AdminMonitor() {
                     .map(([key, label]) => (
                       <tr key={key}>
                         <th scope="row">{label}</th>
-                        <td>{String(timescaledbStats[key])}</td>
+                        <td>
+                          {typeof timescaledbStats[key] === "number"
+                            ? formatAdminMonitorNumericStatistic(timescaledbStats[key])
+                            : String(timescaledbStats[key])}
+                        </td>
                       </tr>
                     ));
                 })()}
@@ -931,8 +944,7 @@ export default function AdminMonitor() {
                       .filter(Boolean)
                       .join(", ");
                   } else {
-                    displayValue =
-                      value === null || value === undefined ? "—" : String(value);
+                    displayValue = formatAdminMonitorNumericStatistic(value);
                   }
                   return (
                     <tr key={key}>
@@ -1031,7 +1043,7 @@ export default function AdminMonitor() {
                       .map(([key, value]) => (
                         <tr key={key}>
                           <th scope="row">{LABELS[key]}</th>
-                          <td>{String(value)}</td>
+                          <td>{formatAdminMonitorNumericStatistic(value)}</td>
                         </tr>
                       ));
                   })()}

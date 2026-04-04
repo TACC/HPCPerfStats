@@ -34,8 +34,11 @@ class TestWebPagesEndToEnd:
           "/machine/home/",
           "/machine/jobs/",
           "/machine/job/123/",
+          "/machine/job/123/cpu/",
+          "/machine/year/2020/",
           "/machine/host/node1/plot/",
           "/machine/admin_monitor/",
+          "/machine/job_monitor/",
       ):
         response = client.get(path)
         assert response.status_code == 200
