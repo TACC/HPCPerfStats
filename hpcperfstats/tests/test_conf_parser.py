@@ -315,3 +315,97 @@ def test_missing_config_file_raises_helpful_error(monkeypatch, tmp_path):
 
   with pytest.raises(FileNotFoundError, match="Unable to locate HPCPerfStats"):
     cfg.get_machine_name()
+
+
+def test_parallel_db_prefetch_and_api_defaults(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_parallel_db_prefetch_max_workers() == 6
+  assert cfg.get_api_small_executor_max_workers() == 6
+
+
+def test_api_small_executor_override(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\napi_small_executor_max_workers = 3",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_api_small_executor_max_workers() == 3
+  assert cfg.get_parallel_db_prefetch_max_workers() == 6
+
+
+def test_db_conn_max_age_default(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_db_conn_max_age() == 90
+  monkeypatch.setenv("DJANGO_CONN_MAX_AGE", "30")
+  importlib.reload(cfg)
+  assert cfg.get_db_conn_max_age() == 30
+
+
+def test_build_postgres_options_statement_timeout(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  opts = cfg.build_postgres_connection_options()
+  assert "options" in opts
+  assert "statement_timeout=120000" in opts["options"]
+  assert "idle_in_transaction_session_timeout=300000" in opts["options"]
+
+
+def test_build_postgres_options_disabled_by_env(monkeypatch, temp_ini):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  monkeypatch.setenv("DJANGO_DB_STATEMENT_TIMEOUT_MS", "0")
+  monkeypatch.setenv("DJANGO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS", "0")
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.build_postgres_connection_options() == {}
+
+
+def test_sync_ingest_pool_respects_cap(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 64\nsync_pool_process_cap = 2",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
+  assert cfg.get_worker_thread_count(4) == 16
+  assert cfg.get_sync_ingest_pool_processes() == 2
+
+
+def test_sync_archive_pool_respects_cap(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 64\nsync_pool_process_cap = 8\narchive_pool_process_cap = 2",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
+  assert cfg.get_sync_ingest_pool_processes() == 8
+  assert cfg.get_sync_archive_pool_processes() == 2

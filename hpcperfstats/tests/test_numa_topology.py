@@ -72,3 +72,46 @@ def test_should_apply_explicit_nodes_bypasses_threshold():
       web_node=0,
       pipeline_node=1,
   )
+
+
+def test_select_node_pair_single_node_returns_same_twice():
+  nodes = [NumaNode(0, "0-31")]
+  w, p = select_node_pair(nodes)
+  assert w is p
+  assert w.node_id == 0 and w.cpulist == "0-31"
+  w2, p2 = select_node_pair(nodes, web_node=0, pipeline_node=0)
+  assert w2.node_id == 0 and p2.node_id == 0
+
+
+def test_select_node_pair_single_node_rejects_mismatched_explicit():
+  nodes = [NumaNode(0, "0-3")]
+  assert select_node_pair(nodes, web_node=0, pipeline_node=1) is None
+  assert select_node_pair(nodes, web_node=0, pipeline_node=None) is None
+
+
+def test_should_apply_numa_pinning_single_node_respects_thresholds():
+  one = [NumaNode(0, "0-15")]
+  assert not should_apply_numa_pinning(
+      effective_cores=16,
+      nodes=one,
+      pin_min_total=32,
+      pin_min_per_node=16,
+  )
+  assert should_apply_numa_pinning(
+      effective_cores=32,
+      nodes=one,
+      pin_min_total=32,
+      pin_min_per_node=16,
+  )
+
+
+def test_should_apply_numa_pinning_single_node_explicit_same_id():
+  one = [NumaNode(0, "0")]
+  assert should_apply_numa_pinning(
+      effective_cores=1,
+      nodes=one,
+      pin_min_total=999,
+      pin_min_per_node=999,
+      web_node=0,
+      pipeline_node=0,
+  )

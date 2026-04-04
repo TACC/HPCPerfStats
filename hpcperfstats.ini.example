@@ -35,7 +35,14 @@ total_cores = 40
 # Concurrency caps (optional; see docs/DEPLOY_CONCURRENCY_AND_NUMA.md)
 # max_gunicorn_workers = 32
 # metrics_pool_process_cap = 32
+# parallel_db_prefetch_max = 6
 # api_small_executor_max_workers = 8
+# sync_pool_process_cap =
+# archive_pool_process_cap =
+# Django DB: persistent connection lifetime (seconds) and PostgreSQL session timeouts (ms)
+# db_conn_max_age = 90
+# db_statement_timeout_ms = 120000
+# db_idle_in_transaction_session_timeout_ms = 300000
 # cpuset_pin_min_total_cores = 32
 # cpuset_pin_min_cores_per_node = 16
 # numa_pin_max_nodes_auto = 16

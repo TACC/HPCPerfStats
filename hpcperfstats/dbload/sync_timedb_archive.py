@@ -20,7 +20,7 @@ from hpcperfstats.shutdown_utils import (
     shutdown_requested,
 )
 
-thread_count = cfg.get_worker_thread_count(4)
+thread_count = cfg.get_sync_ingest_pool_processes()
 TAR_TASK_CHUNK_SIZE = 50
 
 

@@ -46,7 +46,15 @@ services:
     # Default container /dev/shm is 64MiB; Postgres dynamic shared memory exhausts it easily
     # with max_connections=500.
     shm_size: "4gb"
-    command: -c 'max_connections=500'
+    # statement_timeout / idle_in_transaction_session_timeout: align with Django OPTIONS in settings
+    # (defaults 120s / 300s in ms). Shed runaway queries; tune bulk jobs if needed.
+    command:
+      - -c
+      - max_connections=500
+      - -c
+      - statement_timeout=120000
+      - -c
+      - idle_in_transaction_session_timeout=300000
     restart: always
     healthcheck:
       test:

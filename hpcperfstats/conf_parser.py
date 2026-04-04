@@ -373,15 +373,125 @@ def get_numa_pin_max_nodes_auto():
   return int(cfg.get("DEFAULT", "numa_pin_max_nodes_auto", fallback="16"))
 
 
-def get_api_small_executor_max_workers():
-  """Max workers for shared ``ThreadPoolExecutor`` in ``site.machine.api``."""
+def get_parallel_db_prefetch_max_workers():
+  """Max threads for parallel ORM prefetch (summary plots) and default API executor size.
+
+  Override with ``[DEFAULT] parallel_db_prefetch_max`` or env ``PARALLEL_DB_PREFETCH_MAX``.
+  """
+  env = os.environ.get("PARALLEL_DB_PREFETCH_MAX", "").strip()
+  if env:
+    return max(1, int(env))
   _ensure_cfg_loaded()
-  return int(cfg.get("DEFAULT", "api_small_executor_max_workers", fallback="8"))
+  return max(1, int(cfg.get("DEFAULT", "parallel_db_prefetch_max", fallback="6")))
+
+
+def get_api_small_executor_max_workers():
+  """Max workers for shared ``ThreadPoolExecutor`` in ``site.machine.api``.
+
+  If ``[DEFAULT] api_small_executor_max_workers`` is set, it wins; otherwise
+  ``get_parallel_db_prefetch_max_workers()`` (default **6**).
+  """
+  _ensure_cfg_loaded()
+  if cfg.has_option("DEFAULT", "api_small_executor_max_workers"):
+    return max(1, int(cfg.get("DEFAULT", "api_small_executor_max_workers")))
+  return get_parallel_db_prefetch_max_workers()
+
+
+def get_db_conn_max_age():
+  """Django ``CONN_MAX_AGE`` in seconds (default **90**).
+
+  Env ``DJANGO_CONN_MAX_AGE`` overrides ``[DEFAULT] db_conn_max_age``.
+  """
+  env = os.environ.get("DJANGO_CONN_MAX_AGE", "").strip()
+  if env:
+    return int(env)
+  _ensure_cfg_loaded()
+  return int(cfg.get("DEFAULT", "db_conn_max_age", fallback="90"))
+
+
+def get_db_statement_timeout_ms():
+  """``statement_timeout`` in milliseconds for PostgreSQL session options.
+
+  ``0`` means do not set (omit from Django ``OPTIONS``). Default **120000** (2 minutes).
+  Env ``DJANGO_DB_STATEMENT_TIMEOUT_MS`` overrides ``[DEFAULT] db_statement_timeout_ms``.
+  """
+  env = os.environ.get("DJANGO_DB_STATEMENT_TIMEOUT_MS", "").strip()
+  if env:
+    return int(env)
+  _ensure_cfg_loaded()
+  return int(cfg.get("DEFAULT", "db_statement_timeout_ms", fallback="120000"))
+
+
+def get_db_idle_in_transaction_session_timeout_ms():
+  """``idle_in_transaction_session_timeout`` in ms; ``0`` = omit. Default **300000** (5 min)."""
+  env = os.environ.get("DJANGO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS", "").strip()
+  if env:
+    return int(env)
+  _ensure_cfg_loaded()
+  return int(
+      cfg.get("DEFAULT", "db_idle_in_transaction_session_timeout_ms", fallback="300000"))
+
+
+def build_postgres_connection_options():
+  """Return Django ``DATABASES`` ``OPTIONS`` for libpq ``-c`` settings, or ``{}``."""
+  parts = []
+  st = get_db_statement_timeout_ms()
+  if st > 0:
+    parts.append("-c statement_timeout=%d" % st)
+  it = get_db_idle_in_transaction_session_timeout_ms()
+  if it > 0:
+    parts.append("-c idle_in_transaction_session_timeout=%d" % it)
+  if not parts:
+    return {}
+  return {"options": " ".join(parts)}
 
 
 def get_worker_thread_count(divisor=4):
   """Return worker process count as ``effective_cores / divisor``, clamped to at least 1."""
   return max(1, get_effective_cores() // divisor)
+
+
+def _apply_sync_pool_cap(size, cap):
+  """Clamp *size* to *cap* when *cap* is set; result is at least 1."""
+  n = max(1, int(size))
+  if cap is None:
+    return n
+  return max(1, min(n, int(cap)))
+
+
+def get_sync_pool_process_cap():
+  """If set, caps ``sync_timedb`` main ingest pool. Env ``SYNC_POOL_PROCESS_CAP``."""
+  env = os.environ.get("SYNC_POOL_PROCESS_CAP", "").strip()
+  if env:
+    return int(env)
+  _ensure_cfg_loaded()
+  if cfg.has_option("DEFAULT", "sync_pool_process_cap"):
+    return cfg.getint("DEFAULT", "sync_pool_process_cap")
+  return None
+
+
+def get_archive_pool_process_cap():
+  """If set, caps archive-side pool in ``sync_timedb``. Env ``ARCHIVE_POOL_PROCESS_CAP``."""
+  env = os.environ.get("ARCHIVE_POOL_PROCESS_CAP", "").strip()
+  if env:
+    return int(env)
+  _ensure_cfg_loaded()
+  if cfg.has_option("DEFAULT", "archive_pool_process_cap"):
+    return cfg.getint("DEFAULT", "archive_pool_process_cap")
+  return None
+
+
+def get_sync_ingest_pool_processes():
+  """Worker count for ``sync_timedb`` / ``sync_timedb_archive`` after ``sync_pool_process_cap``."""
+  raw = get_worker_thread_count(4)
+  return _apply_sync_pool_cap(raw, get_sync_pool_process_cap())
+
+
+def get_sync_archive_pool_processes():
+  """Archive pool size in ``sync_timedb`` (half of ingest, capped by ``archive_pool_process_cap``)."""
+  ingest = get_sync_ingest_pool_processes()
+  raw = max(1, ingest // 2)
+  return _apply_sync_pool_cap(raw, get_archive_pool_process_cap())
 
 
 def get_redis_location():

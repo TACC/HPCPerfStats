@@ -58,7 +58,7 @@ def _build_overlay_yaml(
 
 def _inactive_overlay_yaml() -> str:
   return (
-      "# NUMA pinning inactive (single-node host, below threshold, or unsupported topology).\n"
+      "# NUMA pinning inactive (no sysfs nodes, below threshold, or unsupported topology).\n"
       "# Empty overlay for `docker compose -f ... -f docker-compose.numa-pinning.yaml`.\n"
       "services: {}\n"
   )

@@ -126,7 +126,7 @@ def _prefetch_single_spec_aggregates(jt, spec_rows):
   out = {}
   if not spec_rows:
     return out
-  max_workers = min(8, len(spec_rows))
+  max_workers = min(cfg.get_parallel_db_prefetch_max_workers(), len(spec_rows))
   with ThreadPoolExecutor(max_workers=max_workers) as pool:
     futures = [pool.submit(_one, row) for row in spec_rows]
     for fut in as_completed(futures):

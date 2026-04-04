@@ -63,20 +63,28 @@ CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SAMESITE = "Lax"
 
 # Give a name that is unique for the computing platform
-# CONN_MAX_AGE: persistent connections (connection pool per thread/worker).
-# Reuse connections across API requests; 600s (10 min) balances reuse with stale cleanup.
+# CONN_MAX_AGE: persistent connections per worker/thread (see conf_parser.get_db_conn_max_age).
+# Default 90s returns idle backends sooner under load; override via DJANGO_CONN_MAX_AGE or ini.
 # CONN_HEALTH_CHECKS: verify connection before reuse (Django 4.1+).
+# PostgreSQL OPTIONS: statement_timeout and idle_in_transaction_session_timeout (see conf_parser).
+_db_conn_max_age = cfg.get_db_conn_max_age()
+_default_engine = cfg.get_engine_name()
+_default_db = {
+    'ENGINE': _default_engine,
+    'NAME': '{0}'.format(cfg.get_db_name()),
+    'USER': cfg.get_username(),
+    'PASSWORD': cfg.get_password(),
+    'HOST': cfg.get_host(),
+    'PORT': cfg.get_port(),
+    'CONN_MAX_AGE': _db_conn_max_age,
+    'CONN_HEALTH_CHECKS': True,
+}
+if _default_engine == 'django.db.backends.postgresql':
+    _pg_opts = cfg.build_postgres_connection_options()
+    if _pg_opts:
+        _default_db['OPTIONS'] = _pg_opts
 DATABASES = {
-    'default': {
-        'ENGINE': cfg.get_engine_name(),
-        'NAME': '{0}'.format(cfg.get_db_name()),
-        'USER': cfg.get_username(),
-        'PASSWORD': cfg.get_password(),
-        'HOST': cfg.get_host(),
-        'PORT': cfg.get_port(),
-        'CONN_MAX_AGE': 600,
-        'CONN_HEALTH_CHECKS': True,
-    },
+    'default': _default_db,
     # Uncomment this portion if an xalt database exists
     'xalt': {
         #'ENGINE' : 'mysql.connector.django',
@@ -85,7 +93,7 @@ DATABASES = {
         'USER': cfg.get_xalt_user(),
         'PASSWORD': cfg.get_xalt_password(),
         'HOST': cfg.get_xalt_host(),
-        'CONN_MAX_AGE': 600,
+        'CONN_MAX_AGE': _db_conn_max_age,
         'CONN_HEALTH_CHECKS': True,
     }
 }

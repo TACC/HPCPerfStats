@@ -1,4 +1,8 @@
-"""Discover Linux NUMA topology from sysfs and pick a node pair for web vs pipeline.
+"""Discover Linux NUMA topology from sysfs and pick cpusets for web vs pipeline.
+
+With **two or more** nodes, web and pipeline use **different** node cpusets.
+With **one** node, both services share that node's ``cpulist`` (still useful for
+explicit compose ``cpuset`` on single-socket hosts that expose ``node0``).
 
 Used by ``scripts/apply_compose_numa_pinning.py`` and tests. Does not read ``/proc``.
 """
@@ -96,14 +100,25 @@ def select_node_pair(
     web_node: Optional[int] = None,
     pipeline_node: Optional[int] = None,
 ) -> Optional[Tuple[NumaNode, NumaNode]]:
-  """Return ``(web_node, pipeline_node)`` or None if not enough nodes.
+  """Return ``(web_node, pipeline_node)`` NumaNode tuple or None.
 
-  If ``web_node`` / ``pipeline_node`` are set, they must exist in ``nodes``.
-  Otherwise pick the two nodes with the largest CPU counts (tie: lower id first
-  for web).
+  **Single NUMA node:** returns ``(node0, node0)`` — web and pipeline share the
+  same ``cpulist`` (no cross-node isolation, but compose cpusets are explicit).
+
+  **Two or more nodes:** if ``web_node`` / ``pipeline_node`` are set, they must
+  exist and differ. Otherwise pick the two nodes with the largest CPU counts
+  (tie: lower id first for web).
   """
-  if len(nodes) < 2:
+  if not nodes:
     return None
+  if len(nodes) == 1:
+    only = nodes[0]
+    if web_node is not None or pipeline_node is not None:
+      if web_node is None or pipeline_node is None:
+        return None
+      if web_node != pipeline_node or web_node != only.node_id:
+        return None
+    return (only, only)
   by_id = {n.node_id: n for n in nodes}
   if web_node is not None and pipeline_node is not None:
     wn = by_id.get(web_node)
@@ -134,8 +149,22 @@ def should_apply_numa_pinning(
 ) -> bool:
   """Return True if compose CPU pinning should be emitted."""
   n = len(nodes)
-  if n < 2:
+  if n < 1:
     return False
+  if n == 1:
+    only = nodes[0]
+    counts = _node_cpu_counts(nodes)
+    if web_node is not None and pipeline_node is not None:
+      if web_node != pipeline_node or web_node != only.node_id:
+        return False
+      return True
+    if web_node is not None or pipeline_node is not None:
+      return False
+    if effective_cores < pin_min_total:
+      return False
+    if counts[only.node_id] < pin_min_per_node:
+      return False
+    return True
   if web_node is not None and pipeline_node is not None:
     return True
   if n > max_nodes_auto:

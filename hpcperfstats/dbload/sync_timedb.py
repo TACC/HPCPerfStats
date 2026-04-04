@@ -73,15 +73,12 @@ DEBUG = cfg.get_debug()
 
 local_timezone = cfg.get_local_timezone()
 
-# Thread count for database loading and archival
-thread_count = cfg.get_worker_thread_count(4)
-# pigz thread cap: one quarter of total cores, clamped to at least one.
+# Thread count for database loading and archival (optional ini caps; see conf_parser).
+thread_count = cfg.get_sync_ingest_pool_processes()
+# pigz thread cap: one quarter of total cores, clamped to at least one (CPU, not DB pool).
 pigz_thread_count = max(1, cfg.get_worker_thread_count(4))
 
-# amount of concurrent pigz using thread_count*2 cores
-archive_thread_count = int(thread_count / 2)
-if archive_thread_count < 1:
-  archive_thread_count = 1
+archive_thread_count = cfg.get_sync_archive_pool_processes()
 
 # How many days to process if run without any arguments
 days_to_process = 5
