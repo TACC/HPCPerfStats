@@ -20,6 +20,7 @@ The **hpcperfstats** package is split into two parts:
 | Document | What it is for |
 |----------|----------------|
 | [**MONITOR_VARIABLES.md**](docs/MONITOR_VARIABLES.md) | **Canonical reference** for monitor-reported variables: names, types, units, and semantics. Use this instead of any legacy “attributes definition” doc. |
+| [**DEPLOY_CONCURRENCY_AND_NUMA.md**](docs/DEPLOY_CONCURRENCY_AND_NUMA.md) | Thread/process limits vs PostgreSQL, **`effective_cores`**, optional NUMA **`cpuset`** overlay via `scripts/apply_compose_numa_pinning.py`. |
 | [**design-document.md**](docs/design-document.md) | As-built system design: architecture, data flow, components, contracts, and operations context. |
 | [**using-the-website-as-a-researcher.md**](docs/using-the-website-as-a-researcher.md) | How to read the Django/React job UI—plots, metrics, and diagnostic themes—for HPC users and researchers. |
 
@@ -234,7 +235,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    - `restricted_queue_keywords` - queues you want to filter out and prevent jobs in them from being displayed 
    - `staff_email_domain` - the email domain of the institution/organization so authorized staff can see all jobs
    - `timezone` - your machine's local timezone
-   - `total_cores` - the number of CPUs in your machine
+   - `total_cores` - CPU budget for app parallelism (omit to use code default **40**; see `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`)
    - `secret_key` - a random string
 
    You will only need to edit the `[DEFAULT]` section as detailed above. The `[RMQ]` and `[PORTAL]` sections have been configured to work for the docker installation, and we do not recommend changing any of the variables in these sections.

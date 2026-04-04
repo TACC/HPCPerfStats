@@ -29,8 +29,19 @@ staff_email_domain   = lab.hpcisgreat.edu
 # http://en.wikipedia.org/wiki/List_of_tz_zones_by_name
 timezone = America/Chicago
 
-# Total amount of cores that are available for this application
+# Total amount of cores that are available for this application (omit to default to 40).
 total_cores = 40
+
+# Concurrency caps (optional; see docs/DEPLOY_CONCURRENCY_AND_NUMA.md)
+# max_gunicorn_workers = 32
+# metrics_pool_process_cap = 32
+# api_small_executor_max_workers = 8
+# cpuset_pin_min_total_cores = 32
+# cpuset_pin_min_cores_per_node = 16
+# numa_pin_max_nodes_auto = 16
+# pin_proxy_in_compose = no
+# web_numa_node =
+# pipeline_numa_node =
 
 # Django SECRET_KEY (do not commit real keys; set in ini or env for production)
 secret_key = change-me-to-a-long-random-string

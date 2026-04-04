@@ -51,16 +51,104 @@ def test_get_db_connection_string(temp_ini, monkeypatch):
   assert "port=5432" in s
 
 
-def test_get_worker_thread_count(temp_ini, monkeypatch):
-  """get_worker_thread_count returns total_cores // divisor, clamped to at least 1."""
+def test_get_max_gunicorn_workers_cap_default(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
-  # temp_ini has total_cores = 4
+  assert cfg.get_max_gunicorn_workers_cap() == 32
+
+
+def test_get_worker_thread_count(temp_ini, monkeypatch):
+  """get_worker_thread_count uses effective_cores // divisor, clamped to at least 1."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
+  # temp_ini has total_cores = 4 -> effective 4
   assert cfg.get_worker_thread_count(4) == 1
   assert cfg.get_worker_thread_count(2) == 2
   assert cfg.get_worker_thread_count(8) == 1  # 4//8 = 0 -> clamped to 1
+
+
+def test_get_effective_cores_caps_by_host(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 2)
+  assert cfg.get_effective_cores() == 2
+
+
+def test_get_effective_cores_caps_by_ini(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
+  assert cfg.get_effective_cores() == 4
+
+
+def test_total_cores_defaults_to_40_when_missing(monkeypatch, tmp_path):
+  ini = tmp_path / "no-total.ini"
+  ini.write_text(
+      "[DEFAULT]\n"
+      "machine = test\n"
+      "server = test\n"
+      "data_dir = /tmp\n"
+      "staff_email_domain = local\n"
+      "timezone = UTC\n"
+      "debug = no\n"
+      "[PORTAL]\n"
+      "dbname = test\n"
+      "username = u\n"
+      "password = p\n"
+      "port = 5432\n"
+      "host = localhost\n"
+      "archive_dir = /tmp\n"
+      "acct_path = /tmp\n"
+      "daily_archive_dir = /tmp\n"
+      "engine_name = django.db.backends.postgresql\n"
+      "[RMQ]\n"
+      "rmq_server = localhost\n"
+      "rmq_queue = test\n"
+      "[XALT]\n"
+      "xalt_engine = django.db.backends.sqlite3\n"
+      "xalt_name = xalt\n"
+      "xalt_user = u\n"
+      "xalt_password = p\n"
+      "xalt_host = localhost\n"
+      "[OAUTH2]\n"
+      "client_id = id\n"
+      "client_key = key\n"
+      "authorize_url = http://localhost\n"
+      "oauth_base_url = http://localhost\n")
+  monkeypatch.setenv("HPCPERFSTATS_INI", str(ini))
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_total_cores() == "40"
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 4)
+  assert cfg.get_effective_cores() == 4
+
+
+def test_get_metrics_pool_process_count_respects_cap(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 128\nmetrics_pool_process_cap = 5",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 128)
+  assert cfg.get_metrics_pool_process_count() == 5
 
 
 def test_get_redis_location_default(temp_ini, monkeypatch):

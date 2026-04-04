@@ -1,0 +1,85 @@
+"""Smoke tests for scripts/apply_compose_numa_pinning.py."""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+_REPO = Path(__file__).resolve().parents[2]
+_SCRIPT = _REPO / "scripts" / "apply_compose_numa_pinning.py"
+
+
+@pytest.fixture
+def numa_sysfs(tmp_path):
+  root = tmp_path / "sys" / "devices" / "system" / "node"
+  for nid, cl in ((0, "0-15"), (1, "16-31")):
+    d = root / f"node{nid}"
+    d.mkdir(parents=True)
+    (d / "cpulist").write_text(cl, encoding="utf-8")
+  return root
+
+
+@pytest.fixture
+def minimal_ini(tmp_path):
+  p = tmp_path / "t.ini"
+  p.write_text(
+      "[DEFAULT]\n"
+      "machine = test\n"
+      "server = test\n"
+      "data_dir = /tmp\n"
+      "staff_email_domain = local\n"
+      "timezone = UTC\n"
+      "total_cores = 64\n"
+      "web_numa_node = 0\n"
+      "pipeline_numa_node = 1\n"
+      "debug = no\n"
+      "[PORTAL]\n"
+      "dbname = test\n"
+      "username = u\n"
+      "password = p\n"
+      "port = 5432\n"
+      "host = localhost\n"
+      "archive_dir = /tmp\n"
+      "acct_path = /tmp\n"
+      "daily_archive_dir = /tmp\n"
+      "engine_name = django.db.backends.postgresql\n"
+      "[RMQ]\n"
+      "rmq_server = localhost\n"
+      "rmq_queue = test\n"
+      "[XALT]\n"
+      "xalt_engine = django.db.backends.sqlite3\n"
+      "xalt_name = xalt\n"
+      "xalt_user = u\n"
+      "xalt_password = p\n"
+      "xalt_host = localhost\n"
+      "[OAUTH2]\n"
+      "client_id = id\n"
+      "client_key = key\n"
+      "authorize_url = http://localhost\n"
+      "oauth_base_url = http://localhost\n",
+      encoding="utf-8",
+  )
+  return p
+
+
+def test_apply_compose_numa_pinning_dry_run_writes_cpuset(numa_sysfs, minimal_ini):
+  proc = subprocess.run(
+      [
+          sys.executable,
+          str(_SCRIPT),
+          "--sysfs",
+          str(numa_sysfs),
+          "--dry-run",
+      ],
+      cwd=str(_REPO),
+      capture_output=True,
+      text=True,
+      check=False,
+      env={**os.environ, "HPCPERFSTATS_INI": str(minimal_ini), "PYTHONPATH": str(_REPO)},
+  )
+  assert proc.returncode == 0, proc.stderr
+  assert "cpuset:" in proc.stdout
+  assert "0-15" in proc.stdout
+  assert "16-31" in proc.stdout

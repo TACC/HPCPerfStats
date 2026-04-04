@@ -503,8 +503,7 @@ class Metrics():
       self._shared_pool = None
 
   def _worker_process_count(self):
-    threads = int(int(cfg.get_total_cores()) / 2)
-    return threads if threads > 0 else 1
+    return cfg.get_metrics_pool_process_count()
 
   def _imap_chunksize(self, job_count, threads):
     if job_count <= 0:

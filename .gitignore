@@ -10,6 +10,7 @@ patch
 .tools/
 node_modules/
 hpcperfstats.ini
+docker-compose.numa-pinning.yaml
 docker-compose.app.yaml
 services-conf/supervisord.conf
 services-conf/nginx.conf

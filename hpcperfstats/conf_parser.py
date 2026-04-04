@@ -5,6 +5,8 @@ import configparser
 import os
 from zoneinfo import ZoneInfo
 
+_DEFAULT_TOTAL_CORES = "40"
+
 cfg = None
 _ACTIVE_CONFIG_PATH = None
 
@@ -275,13 +277,111 @@ def get_local_timezone():
 
 
 def get_total_cores():
-  """Return the total cores count from DEFAULT config."""
-  return _get('DEFAULT', 'total_cores')
+  """Return the total cores count string from DEFAULT config.
+
+  If ``total_cores`` is omitted, returns ``\"40\"`` (default when not set in ini).
+  """
+  _ensure_cfg_loaded()
+  return cfg.get("DEFAULT", "total_cores", fallback=_DEFAULT_TOTAL_CORES).strip() or _DEFAULT_TOTAL_CORES
+
+
+def get_ini_total_cores_int():
+  """Return ``int(total_cores)`` from ini (or default 40 when missing)."""
+  return int(get_total_cores())
+
+
+def get_effective_cores():
+  """Return ``min(ini total_cores, os.cpu_count())`` for pool / worker sizing.
+
+  ``ini`` caps parallelism when the host has more CPUs; ``os.cpu_count()`` wins
+  when ini overshoots hardware or inside a limited cgroup/cpuset.
+  """
+  host = os.cpu_count()
+  if host is None or host < 1:
+    host = 1
+  ini_budget = get_ini_total_cores_int()
+  return min(ini_budget, host)
+
+
+def get_max_gunicorn_workers_cap():
+  """Upper bound for Gunicorn workers (see ``django_startup.sh``).
+
+  Default **32** pairs with a **40**-core ini budget: leaves headroom vs
+  ``max_connections`` alongside metrics/sync pools on one Postgres.
+  """
+  _ensure_cfg_loaded()
+  return int(cfg.get("DEFAULT", "max_gunicorn_workers", fallback="32"))
+
+
+def get_metrics_pool_process_cap():
+  """Upper bound for ``multiprocessing.Pool`` process count in metrics compute."""
+  _ensure_cfg_loaded()
+  return int(cfg.get("DEFAULT", "metrics_pool_process_cap", fallback="32"))
+
+
+def get_metrics_pool_process_count():
+  """Processes for metrics pool: ``min(max(1, effective//2), metrics_pool_process_cap)``."""
+  raw = max(1, get_effective_cores() // 2)
+  return min(raw, get_metrics_pool_process_cap())
+
+
+def get_cpuset_pin_min_total_cores():
+  _ensure_cfg_loaded()
+  return int(cfg.get("DEFAULT", "cpuset_pin_min_total_cores", fallback="32"))
+
+
+def get_cpuset_pin_min_cores_per_node():
+  _ensure_cfg_loaded()
+  return int(cfg.get("DEFAULT", "cpuset_pin_min_cores_per_node", fallback="16"))
+
+
+def get_web_numa_node():
+  """Optional explicit sysfs node id for web+proxy; None if unset."""
+  _ensure_cfg_loaded()
+  if not cfg.has_option("DEFAULT", "web_numa_node"):
+    return None
+  s = cfg.get("DEFAULT", "web_numa_node").strip()
+  if not s:
+    return None
+  return int(s)
+
+
+def get_pipeline_numa_node():
+  """Optional explicit sysfs node id for pipeline; None if unset."""
+  _ensure_cfg_loaded()
+  if not cfg.has_option("DEFAULT", "pipeline_numa_node"):
+    return None
+  s = cfg.get("DEFAULT", "pipeline_numa_node").strip()
+  if not s:
+    return None
+  return int(s)
+
+
+def get_pin_proxy_for_compose():
+  """If True, NUMA pinning script also sets ``cpuset`` on ``proxy`` (match web node)."""
+  _ensure_cfg_loaded()
+  return cfg.get("DEFAULT", "pin_proxy_in_compose", fallback="no").lower() in (
+      "yes",
+      "true",
+      "1",
+  )
+
+
+def get_numa_pin_max_nodes_auto():
+  """Auto compose pinning supports up to this many NUMA nodes without explicit ids."""
+  _ensure_cfg_loaded()
+  return int(cfg.get("DEFAULT", "numa_pin_max_nodes_auto", fallback="16"))
+
+
+def get_api_small_executor_max_workers():
+  """Max workers for shared ``ThreadPoolExecutor`` in ``site.machine.api``."""
+  _ensure_cfg_loaded()
+  return int(cfg.get("DEFAULT", "api_small_executor_max_workers", fallback="8"))
 
 
 def get_worker_thread_count(divisor=4):
-  """Return worker thread count as total_cores / divisor, clamped to at least 1."""
-  return max(1, int(_get('DEFAULT', 'total_cores')) // divisor)
+  """Return worker process count as ``effective_cores / divisor``, clamped to at least 1."""
+  return max(1, get_effective_cores() // divisor)
 
 
 def get_redis_location():

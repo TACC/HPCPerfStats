@@ -168,7 +168,9 @@ def _evict_stale_inflight_plot_tasks():
 def _get_small_executor():
     global _small_executor
     if _small_executor is None:
-        _small_executor = ThreadPoolExecutor(max_workers=8)
+        _small_executor = ThreadPoolExecutor(
+            max_workers=cfg.get_api_small_executor_max_workers()
+        )
     return _small_executor
 
 

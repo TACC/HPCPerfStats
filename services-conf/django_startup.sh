@@ -66,10 +66,22 @@ chown -R hpcperfstats:hpcperfstats /hpcperfstats/
 /usr/local/bin/python3 hpcperfstats/site/manage.py makemigrations
 /usr/local/bin/python3 hpcperfstats/site/manage.py migrate
 
-# Set gunicorn workers to the recommended number of workers
-# determine thread count from conf_parser and set gunicorn workers = thread_count*2+1
-THREAD_COUNT=$(/usr/local/bin/python3 -c "from hpcperfstats import conf_parser; print(conf_parser.get_total_cores())")
-WORKERS=$((THREAD_COUNT * 2 + 1))
+# Gunicorn workers: WEB_CONCURRENCY overrides; else min(2*base+1, max_gunicorn_workers)
+# where base = min(visible_cpus, effective_cores) so ini total_cores caps workers even
+# when the container sees more CPUs. Default max_gunicorn_workers in ini is 32.
+WORKERS=$(/usr/local/bin/python3 -c "
+import os
+from hpcperfstats import conf_parser as cfg
+override = os.environ.get('WEB_CONCURRENCY', '').strip()
+if override:
+    print(max(1, int(override)))
+else:
+    visible = os.cpu_count() or 1
+    eff = cfg.get_effective_cores()
+    base = min(visible, eff)
+    cap = cfg.get_max_gunicorn_workers_cap()
+    print(min(2 * base + 1, cap))
+")
 
 # gunicorn is the django web server
 /usr/local/bin/gunicorn hpcperfstats.site.hpcperfstats_site.wsgi --bind 0.0.0.0:8000  \
