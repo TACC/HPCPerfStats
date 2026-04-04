@@ -82,6 +82,7 @@ from .query_utils import (
     get_job_list_order_by,
     normalize_job_list_query_params,
 )
+from .job_list_performance import annotate_job_list_performance_fields
 from .serializers import JobListSerializer
 from .views import (
     job_hist,
@@ -1217,10 +1218,8 @@ def _build_histogram_queryset(request):
         order_by = get_job_list_order_by(fields) or "-end_time"
         job_list_qs = job_data.objects.filter(**acct_data)
         job_list_qs = _apply_non_staff_job_visibility(job_list_qs, request)
-        if order_by.lstrip("-") == "has_metrics":
-            job_list_qs = job_list_qs.annotate(
-                has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
-            )
+        if order_by.lstrip("-") == "performance_sort_rank":
+            job_list_qs = annotate_job_list_performance_fields(job_list_qs)
         job_list_qs = job_list_qs.order_by(order_by)
 
         cur_metrics = {
@@ -1573,8 +1572,8 @@ def job_list(request):
     }
     order_by = get_job_list_order_by(fields) or "-end_time"
     job_list_qs = job_data.objects.filter(**acct_data)
-    job_list_qs = _apply_non_staff_job_visibility(job_list_qs, request).annotate(
-        has_metrics=Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
+    job_list_qs = annotate_job_list_performance_fields(
+        _apply_non_staff_job_visibility(job_list_qs, request)
     )
     job_list_qs = job_list_qs.order_by(order_by)
 

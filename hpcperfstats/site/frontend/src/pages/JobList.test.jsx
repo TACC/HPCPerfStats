@@ -57,7 +57,12 @@ describe("JobList", () => {
       job_list: [
         {
           jid: 1,
-          has_metrics: true,
+          performance: {
+            label: "Summary available",
+            tone: "success",
+            aria_label: "Performance: Summary available",
+            sort_rank: 0,
+          },
           username: "alice",
           account: "acct",
           start_time: "2024-01-01T00:00:00Z",
@@ -94,6 +99,7 @@ describe("JobList", () => {
     expect(screen.getByRole("link", { name: "Performance Data" })).toBeInTheDocument();
     expect(screen.getByText("job1")).toBeInTheDocument();
     expect(screen.getByText("COMPLETED")).toBeInTheDocument();
+    expect(screen.getByText("Summary available")).toBeInTheDocument();
   });
 
   it("on narrow viewports uses Jobs and Charts tabs and jump link opens Charts", async () => {
@@ -116,7 +122,12 @@ describe("JobList", () => {
       job_list: [
         {
           jid: 1,
-          has_metrics: true,
+          performance: {
+            label: "Summary available",
+            tone: "success",
+            aria_label: "Performance: Summary available",
+            sort_rank: 0,
+          },
           username: "alice",
           account: "acct",
           start_time: "2024-01-01T00:00:00Z",
@@ -182,7 +193,12 @@ describe("JobList", () => {
       job_list: [
         {
           jid: 1,
-          has_metrics: true,
+          performance: {
+            label: "Summary available",
+            tone: "success",
+            aria_label: "Performance: Summary available",
+            sort_rank: 0,
+          },
           username: "alice",
           account: "acct",
           start_time: "2024-01-01T00:00:00Z",

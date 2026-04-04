@@ -2,6 +2,7 @@
 
 from hpcperfstats.site.machine.query_utils import (
     expand_month_date_to_range,
+    get_job_list_order_by,
     normalize_date_param,
     normalize_job_list_query_params,
 )
@@ -56,6 +57,18 @@ class TestNormalizeJobListQueryParams:
         out = normalize_job_list_query_params({"queue": "normal", "page": "1"})
         assert out["queue"] == "normal"
         assert out["page"] == "1"
+
+
+class TestGetJobListOrderBy:
+    """get_job_list_order_by maps allowed sort fields; unknown values return None."""
+
+    def test_performance_sort_rank_asc_and_desc(self):
+        assert get_job_list_order_by({"order_by": "performance_sort_rank"}) == "performance_sort_rank"
+        assert get_job_list_order_by({"order_by": "-performance_sort_rank"}) == "-performance_sort_rank"
+
+    def test_legacy_has_metrics_not_allowed(self):
+        assert get_job_list_order_by({"order_by": "has_metrics"}) is None
+        assert get_job_list_order_by({"order_by": "-has_metrics"}) is None
 
 
 class TestExpandMonthDateToRange:

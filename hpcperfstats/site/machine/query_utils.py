@@ -15,7 +15,7 @@ ORDER_BY_ALLOWED = frozenset({
     "ncores",
     "nhosts",
     "node_hrs",
-    "has_metrics",
+    "performance_sort_rank",
 })
 
 

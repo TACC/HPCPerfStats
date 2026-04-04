@@ -17,6 +17,13 @@ import {
 
 const ResolvedReactPaginate = ReactPaginate?.default || ReactPaginate;
 
+function performanceToneToBadgeClass(tone) {
+  if (tone === "success") return "badge text-bg-success";
+  if (tone === "warning") return "badge text-bg-warning";
+  if (tone === "info") return "badge text-bg-info";
+  return "badge text-bg-secondary";
+}
+
 export default function JobList() {
   const [searchParams] = useSearchParams();
   const paramsFromRoute = useParams();
@@ -252,7 +259,7 @@ export default function JobList() {
 
   const columns = [
     { label: "Job ID", field: "jid", sortable: true },
-    { label: "Performance Data", field: "has_metrics", sortable: true },
+    { label: "Performance Data", field: "performance_sort_rank", sortable: true },
     { label: "user", field: "username", sortable: true },
     { label: "Account", field: "account", sortable: true },
     { label: "start time", field: "start_time", sortable: true },
@@ -426,13 +433,18 @@ export default function JobList() {
                 <Link to={`/job/${job.jid}/`}>{job.jid}</Link>
               </td>
               <td>
-                {job.has_metrics ? (
-                  <span className="badge text-bg-success" aria-label="Performance data available">
-                    True
+                {job.performance ? (
+                  <span
+                    className={performanceToneToBadgeClass(job.performance.tone)}
+                    aria-label={
+                      job.performance.aria_label || job.performance.label || "Performance status"
+                    }
+                  >
+                    {job.performance.label}
                   </span>
                 ) : (
-                  <span className="badge text-bg-secondary" aria-label="No performance data">
-                    False
+                  <span className="badge text-bg-secondary" aria-label="Performance status unknown">
+                    —
                   </span>
                 )}
               </td>

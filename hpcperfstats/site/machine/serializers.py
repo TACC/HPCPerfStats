@@ -1,13 +1,14 @@
 """DRF serializers for machine app API. Job list/detail, HPCPerfStats Monitor, and form options."""
 from rest_framework import serializers
 
+from .job_list_performance import summarize_performance
 from .models import job_data, metrics_data
 
 
 class JobListSerializer(serializers.ModelSerializer):
     """Minimal job fields for list views."""
 
-    has_metrics = serializers.SerializerMethodField()
+    performance = serializers.SerializerMethodField()
     color = serializers.SerializerMethodField()
 
     class Meta:
@@ -29,21 +30,24 @@ class JobListSerializer(serializers.ModelSerializer):
             "QOS",
             "jobname",
             "host_list",
-            "has_metrics",
+            "performance",
             "color",
         ]
 
-    def get_has_metrics(self, obj):
-        """Return True if the job has any metrics_data.
-
-        Prefer annotated has_metrics (Exists subquery) when present to avoid N+1
-        queries; fall back to metrics_data_set.exists() for callers that do not
-        annotate.
-        """
-        annotated = getattr(obj, "has_metrics", None)
-        if annotated is not None:
-            return bool(annotated)
-        return obj.metrics_data_set.exists()
+    def get_performance(self, obj):
+        """Structured performance column: labels, tone, sort_rank (see job_list_performance)."""
+        has_row = getattr(obj, "has_metrics_data", None)
+        if has_row is None:
+            has_row = obj.metrics_data_set.exists()
+        mcount = getattr(obj, "metrics_value_count", None)
+        if mcount is None:
+            mcount = obj.metrics_data_set.filter(value__isnull=False).count()
+        return summarize_performance(
+            has_metrics_row=bool(has_row),
+            metrics_value_count=int(mcount),
+            distinct_time_count=obj.metrics_distinct_time_count,
+            runtime=obj.runtime,
+        )
 
     def get_color(self, obj):
         """Return hex color for the job's state (completed/failed/other)."""

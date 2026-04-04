@@ -30,7 +30,7 @@ If a panel says data is unavailable, the message is often literal (counter not e
 - **Search home**: Browse by **year** or **date** to reach filtered job lists.
 - **Job list table**: Typical columns include job ID, submit/start/end times, **runtime**, **requested time (timelimit)**, resource shape (**nodes**, **cores**), **user**, **project/account**, **queue**, **state**, and **job name**. Row **background color** reflects completion state (e.g. completed vs failed vs other).
 - **Histograms** (where configured): Distribution thumbnails for metrics such as **runtime**, **node count**, and **queue wait** help you see whether your job is typical for that filter.
-- `**has_metrics`**: Indicates whether any aggregated metrics exist for the job; absence does not always mean “bad run”—it can mean ingest or metric computation has not run yet, or the job had no monitor coverage.
+- **Performance Data** column: Short status labels (e.g. summary available, monitoring gaps, not summarized yet) reflect whether usable metric values exist, sample coverage, and pipeline state—a gray “not summarized” row does not always mean a bad run; it can mean ingest or metric computation has not finished, or the job had no monitor coverage.
 
 ---
 
