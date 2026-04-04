@@ -228,6 +228,64 @@ describe("JobDetail", () => {
     expect(container.querySelector("#job-detail-resources")).toBeTruthy();
   });
 
+  it("uses one metrics table when only one job-level metric exists", async () => {
+    const oneMetric = {
+      ...minimalJobDetailResponse,
+      metrics_list: [
+        {
+          metric: "avg_freq",
+          type: "pmc",
+          units: "GHz",
+          value: 2.5,
+          no_data_reason: null,
+        },
+      ],
+    };
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(oneMetric);
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(oneMetric);
+    mockAllPlotCallsReady();
+
+    const { container } = renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+    });
+    expect(container.querySelector(".job-detail-metrics-two-col")).toBeNull();
+    expect(container.querySelectorAll(".job-detail-metrics-table")).toHaveLength(1);
+  });
+
+  it("splits job-level metrics into two tables for wide layout when more than one metric", async () => {
+    const twoMetrics = {
+      ...minimalJobDetailResponse,
+      metrics_list: [
+        {
+          metric: "avg_freq",
+          type: "pmc",
+          units: "GHz",
+          value: 2.5,
+          no_data_reason: null,
+        },
+        {
+          metric: "avg_mbw",
+          type: "pmc",
+          units: "GB/s",
+          value: 100,
+          no_data_reason: null,
+        },
+      ],
+    };
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(twoMetrics);
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(twoMetrics);
+    mockAllPlotCallsReady();
+
+    const { container } = renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+    });
+    expect(
+      container.querySelectorAll(".job-detail-metrics-two-col .job-detail-metrics-table"),
+    ).toHaveLength(2);
+  });
+
   it("shows no_data_reason text for staff when a metric has no numeric value", async () => {
     const detailWithMetricMessage = {
       ...minimalJobDetailResponse,

@@ -375,16 +375,9 @@ body {
   max-width: 280px;
 }
 
-/* Job detail: page anchor tabs + Job data inner tabs (Bootstrap nav-tabs look) */
-.job-detail-page-nav .nav-tabs,
+/* Job detail: Job data inner tabs (Bootstrap nav-tabs look) */
 .job-detail-analysis-tabs {
   border-bottom: 1px solid var(--bs-border-color, #dee2e6);
-}
-.job-detail-page-nav .nav-link {
-  color: var(--bs-secondary-color, #6c757d);
-}
-.job-detail-page-nav .nav-link:hover {
-  color: var(--bs-body-color, #212529);
 }
 .job-detail-analysis-tabs .nav-link {
   border: 1px solid transparent;
@@ -403,15 +396,9 @@ body {
     transparent;
 }
 
-@media (min-width: 992px) {
-  .job-detail-page-nav {
-    position: sticky;
-    top: 0.5rem;
-    z-index: 1020;
-    padding-top: 0.25rem;
-    margin-top: -0.25rem;
-    background-color: var(--bs-body-bg, #fff);
-  }
+/* Job detail: metrics tab — two columns from lg breakpoint when multiple rows */
+.job-detail-metrics-two-col .job-detail-metrics-table {
+  width: 100%;
 }
 
 /* Job detail: host-level Bokeh (one plot per tab, width-stretched) */

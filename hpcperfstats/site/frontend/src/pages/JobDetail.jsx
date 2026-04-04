@@ -77,6 +77,10 @@ const JOB_PLOT_CONFIGS = [
   },
 ];
 
+/** Summary plot tab is shown first on the Job data bar; other plots follow non-plot tabs. */
+const SUMMARY_PLOT_TAB_CONFIG = JOB_PLOT_CONFIGS.find((c) => c.key === "summary_plot");
+const JOB_PLOT_TAB_CONFIGS_AFTER_SUMMARY = JOB_PLOT_CONFIGS.filter((c) => c.key !== "summary_plot");
+
 function createEmptyJobPlotsState(loading) {
   return JOB_PLOT_CONFIGS.reduce((acc, config) => {
     acc[config.key] = {
@@ -400,34 +404,65 @@ export default function JobDetail() {
     plotName: config.plotName,
     unavailableReason: plots?.[config.key]?.unavailableReason ?? null,
   }));
+
+  const metricsListFull = metrics_list || [];
+  const metricsSplitIdx = Math.ceil(metricsListFull.length / 2);
+  const metricsTableLeft = metricsListFull.slice(0, metricsSplitIdx);
+  const metricsTableRight = metricsListFull.slice(metricsSplitIdx);
+
+  function metricTableRows(list) {
+    return list.map((obj) => (
+      <tr key={obj.metric}>
+        <th scope="row">
+          <VariableInfoLabel
+            variableName={obj.metric}
+            labelText={getJobMetricShortLabel(obj.metric)}
+            enableHelp
+          />{" "}
+          [{obj.units}]
+        </th>
+        <td className={obj.value != null && obj.value !== "" ? "" : "text-muted"}>
+          {formatJobMetricCell(obj, isStaff)}
+        </td>
+      </tr>
+    ));
+  }
+
+  function renderJobPlotTabPanel(config) {
+    const panel = plotPanels.find((p) => p.key === config.panelKey);
+    if (!panel) return null;
+    const plotPanelDomId = `job-detail-panel-plot-${config.panelKey}`;
+    const plotTabActive = analysisTab === config.panelKey;
+    return (
+      <div
+        key={config.key}
+        id={plotPanelDomId}
+        role="tabpanel"
+        aria-labelledby={plotTabDomIds[config.panelKey]}
+        className="job-detail-single-plot-pane"
+        hidden={!plotTabActive}
+      >
+        <p className="job-detail-plots-intro text-muted small mb-2">
+          Host-level plot for this job. Loads progressively; chart width follows the panel below.
+        </p>
+        {plotTabActive ? (
+          <div className="job-detail-single-plot-host w-100">
+            <PlotPanel
+              item={panel.item}
+              id={panel.id}
+              plotName={panel.plotName}
+              unavailableReason={panel.unavailableReason}
+              isLoading={panel.isLoading}
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <>
       <h1 className="h2 mb-3">Job {job.jid}</h1>
-
-      <nav className="job-detail-page-nav mb-3" aria-label="On this page">
-        <ul className="nav nav-tabs flex-wrap job-detail-page-tabs">
-          <li className="nav-item">
-            <a className="nav-link" href="#job-detail-glance">
-              Overview
-            </a>
-          </li>
-          <li className="nav-item">
-            <a className="nav-link" href="#job-detail-scheduling">
-              Scheduling
-            </a>
-          </li>
-          <li className="nav-item">
-            <a className="nav-link" href="#job-detail-resources">
-              Resources
-            </a>
-          </li>
-          <li className="nav-item">
-            <a className="nav-link" href="#job-detail-analysis">
-              Job data
-            </a>
-          </li>
-        </ul>
-      </nav>
 
       <section id="job-detail-glance" className="mb-4" aria-labelledby="job-detail-glance-heading">
         <h2 id="job-detail-glance-heading" className="h5">
@@ -712,6 +747,22 @@ export default function JobDetail() {
           role="tablist"
           aria-label="Job data views"
         >
+          {SUMMARY_PLOT_TAB_CONFIG ? (
+            <li className="nav-item" role="presentation">
+              <button
+                type="button"
+                className={`nav-link ${analysisTab === SUMMARY_PLOT_TAB_CONFIG.panelKey ? "active" : ""}`}
+                id={plotTabDomIds[SUMMARY_PLOT_TAB_CONFIG.panelKey]}
+                role="tab"
+                aria-selected={analysisTab === SUMMARY_PLOT_TAB_CONFIG.panelKey}
+                aria-controls={`job-detail-panel-plot-${SUMMARY_PLOT_TAB_CONFIG.panelKey}`}
+                tabIndex={analysisTab === SUMMARY_PLOT_TAB_CONFIG.panelKey ? 0 : -1}
+                onClick={() => setAnalysisTab(SUMMARY_PLOT_TAB_CONFIG.panelKey)}
+              >
+                {SUMMARY_PLOT_TAB_CONFIG.plotName}
+              </button>
+            </li>
+          ) : null}
           <li className="nav-item" role="presentation">
             <button
               type="button"
@@ -768,7 +819,7 @@ export default function JobDetail() {
               Device data
             </button>
           </li>
-          {JOB_PLOT_CONFIGS.map((config) => {
+          {JOB_PLOT_TAB_CONFIGS_AFTER_SUMMARY.map((config) => {
             const plotTabActive = analysisTab === config.panelKey;
             const plotPanelDomId = `job-detail-panel-plot-${config.panelKey}`;
             return (
@@ -795,6 +846,7 @@ export default function JobDetail() {
               Loading job plots…
             </p>
           ) : null}
+          {SUMMARY_PLOT_TAB_CONFIG ? renderJobPlotTabPanel(SUMMARY_PLOT_TAB_CONFIG) : null}
           <div
             id="job-detail-panel-metrics"
             role="tabpanel"
@@ -805,27 +857,28 @@ export default function JobDetail() {
               <p className="text-muted mb-0">Loading job-level metrics…</p>
             ) : !metrics_list.length ? (
               <p className="text-muted mb-0">Data not available.</p>
-            ) : (
+            ) : metricsTableRight.length === 0 ? (
               <div className="table-responsive">
-                <table className="table table-sm table-bordered">
-                  <tbody>
-                    {(metrics_list || []).map((obj) => (
-                      <tr key={obj.metric}>
-                        <th scope="row">
-                          <VariableInfoLabel
-                            variableName={obj.metric}
-                            labelText={getJobMetricShortLabel(obj.metric)}
-                            enableHelp
-                          />{" "}
-                          [{obj.units}]
-                        </th>
-                        <td className={obj.value != null && obj.value !== "" ? "" : "text-muted"}>
-                          {formatJobMetricCell(obj, isStaff)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
+                <table className="table table-sm table-bordered job-detail-metrics-table mb-0">
+                  <tbody>{metricTableRows(metricsTableLeft)}</tbody>
                 </table>
+              </div>
+            ) : (
+              <div className="row g-3 job-detail-metrics-two-col">
+                <div className="col-12 col-lg-6">
+                  <div className="table-responsive">
+                    <table className="table table-sm table-bordered job-detail-metrics-table mb-0">
+                      <tbody>{metricTableRows(metricsTableLeft)}</tbody>
+                    </table>
+                  </div>
+                </div>
+                <div className="col-12 col-lg-6">
+                  <div className="table-responsive">
+                    <table className="table table-sm table-bordered job-detail-metrics-table mb-0">
+                      <tbody>{metricTableRows(metricsTableRight)}</tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -993,37 +1046,7 @@ export default function JobDetail() {
               )}
             </div>
           </div>
-          {JOB_PLOT_CONFIGS.map((config) => {
-            const panel = plotPanels.find((p) => p.key === config.panelKey);
-            if (!panel) return null;
-            const plotPanelDomId = `job-detail-panel-plot-${config.panelKey}`;
-            const plotTabActive = analysisTab === config.panelKey;
-            return (
-              <div
-                key={config.key}
-                id={plotPanelDomId}
-                role="tabpanel"
-                aria-labelledby={plotTabDomIds[config.panelKey]}
-                className="job-detail-single-plot-pane"
-                hidden={!plotTabActive}
-              >
-                <p className="job-detail-plots-intro text-muted small mb-2">
-                  Host-level plot for this job. Loads progressively; chart width follows the panel below.
-                </p>
-                {plotTabActive ? (
-                  <div className="job-detail-single-plot-host w-100">
-                    <PlotPanel
-                      item={panel.item}
-                      id={panel.id}
-                      plotName={panel.plotName}
-                      unavailableReason={panel.unavailableReason}
-                      isLoading={panel.isLoading}
-                    />
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
+          {JOB_PLOT_TAB_CONFIGS_AFTER_SUMMARY.map((config) => renderJobPlotTabPanel(config))}
         </div>
       </section>
     </>
