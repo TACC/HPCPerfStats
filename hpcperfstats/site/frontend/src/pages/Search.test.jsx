@@ -24,7 +24,7 @@ describe("Search", () => {
     expect(screen.getByRole("heading", { name: /browse jobs by time/i })).toBeInTheDocument();
     expect(screen.getByText(/Find Job/i)).toBeInTheDocument();
     expect(screen.getByText(/Extended search/i)).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /by year/i })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: /by calendar/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^calendar$/i })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /by year/i })).toBeInTheDocument();
   });
 });

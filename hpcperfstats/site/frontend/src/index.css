@@ -467,8 +467,7 @@ body {
   box-sizing: border-box;
 }
 
-.search-home .pagination .page-link,
-.search-date-list-nav .pagination .page-link {
+.search-home .pagination .page-link {
   min-width: 2.75rem;
   min-height: 2.75rem;
   display: inline-flex;
@@ -495,46 +494,93 @@ body {
 .search-home-section:last-child {
   margin-bottom: 0;
 }
-.search-date-list-section h4 {
+.search-calendar-section h4 {
   margin-bottom: 0.5rem;
 }
-.search-date-list-details {
-  border: 1px solid #dee2e6;
-  border-radius: 4px;
-  margin-top: 0.5rem;
+
+.search-month-jump-select {
+  max-width: min(100%, 20rem);
 }
-.search-date-list-summary {
-  padding: 0.5rem 0.75rem;
-  font-weight: 600;
-  cursor: pointer;
-  list-style: none;
-  background: #f8f9fa;
-  border-radius: 4px;
-  user-select: none;
+
+.search-calendar-months {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
-.search-date-list-summary::-webkit-details-marker {
-  display: none;
-}
-.search-date-list-summary::before {
-  content: "▾ ";
-  font-size: 0.75rem;
-  color: #6c757d;
-}
-.search-date-list-details[open] .search-date-list-summary {
-  border-radius: 4px 4px 0 0;
-}
-.search-date-list-details:not([open]) .search-date-list-summary::before {
-  content: "▸ ";
-}
-.search-date-list-nav {
+
+.search-calendar-month-card {
+  border: 1px solid var(--bs-border-color, #dee2e6);
+  border-radius: 0.375rem;
   padding: 0.75rem 1rem;
-  border-top: 1px solid #dee2e6;
+  background-color: var(--bs-body-bg, #fff);
 }
-.search-date-list-month {
-  margin-bottom: 0.75rem;
+
+.search-calendar-month-header {
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--bs-border-color, #dee2e6);
 }
-.search-date-list-month:last-child {
-  margin-bottom: 0;
+
+.search-calendar-month-title {
+  font-weight: 600;
+  font-size: 1.05rem;
+  color: var(--bs-body-color, #212529);
+  text-decoration: none;
+}
+
+.search-calendar-month-title:hover {
+  text-decoration: underline;
+}
+
+.search-calendar-day-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(2.65rem, 1fr));
+  gap: 0.4rem 0.45rem;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.search-calendar-day-cell {
+  min-width: 0;
+}
+
+.search-calendar-day-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  width: 100%;
+  padding: 0.25rem 0.35rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: center;
+  text-decoration: none;
+  color: var(--bs-body-color, #212529);
+  border: 1px solid var(--bs-border-color, #dee2e6);
+  border-radius: 0.25rem;
+  background-color: var(--bs-secondary-bg, #f8f9fa);
+  box-sizing: border-box;
+}
+
+.search-calendar-day-link:hover {
+  background-color: var(--bs-primary-bg-subtle, #cfe2ff);
+  border-color: var(--bs-primary, #0d6efd);
+  color: var(--bs-primary-text-emphasis, #052c65);
+}
+
+@media (min-width: 576px) {
+  .search-calendar-day-grid {
+    grid-template-columns: repeat(auto-fill, minmax(2.85rem, 1fr));
+    gap: 0.45rem 0.5rem;
+  }
+}
+
+@media (min-width: 992px) {
+  .search-calendar-day-grid {
+    grid-template-columns: repeat(auto-fill, minmax(3rem, 1fr));
+    max-width: 42rem;
+  }
 }
 
 /* ========== Mobile view (all browsable pages) ========== */
@@ -657,8 +703,16 @@ body {
   .search-home-section h4 {
     font-size: 1.1rem;
   }
-  .search-date-list-nav {
-    padding: 0.5rem 0.75rem;
+  .search-calendar-month-card {
+    padding: 0.65rem 0.75rem;
+  }
+  .search-calendar-day-grid {
+    grid-template-columns: repeat(auto-fill, minmax(2.4rem, 1fr));
+    gap: 0.35rem;
+  }
+  .search-calendar-day-link {
+    min-height: 2.35rem;
+    font-size: 0.85rem;
   }
 }
 

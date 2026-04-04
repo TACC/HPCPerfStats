@@ -8,7 +8,7 @@ import { useDocumentTitle } from "../utils/useDocumentTitle";
 export default function Search() {
   const navigate = useNavigate();
   const { options, error, loading } = useHomeOptions();
-  const [browseTab, setBrowseTab] = useState("year");
+  const [browseTab, setBrowseTab] = useState("calendar");
   const tabYearId = useId();
   const tabCalendarId = useId();
   const panelYearId = useId();
@@ -87,62 +87,67 @@ export default function Search() {
   const calendarBrowsePrimary =
     date_list.length > 0 ? (
       <>
-        <details className="search-quick-jump border rounded px-3 py-2 mb-3">
-          <summary className="fw-medium small">Quick jump — month on page</summary>
-          <div className="mt-2 pb-1">
-            <label htmlFor="search-month-jump-select" className="form-label small mb-1">
-              Jump to month
-            </label>
-            <select
-              id="search-month-jump-select"
-              className="form-select form-select-sm"
-              style={{ maxWidth: "16rem" }}
-              defaultValue=""
-              onChange={(e) => {
-                const month = e.target.value;
-                if (!month) return;
-                const el = document.getElementById(
-                  `search-month-${month.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
-                );
-                el?.scrollIntoView({ block: "start" });
-                e.target.selectedIndex = 0;
-              }}
-            >
-              <option value="" disabled>
-                Select month…
+        <div className="search-month-jump border rounded px-3 py-2 mb-3">
+          <label htmlFor="search-month-jump-select" className="form-label small mb-1">
+            Jump to month
+          </label>
+          <select
+            id="search-month-jump-select"
+            className="form-select form-select-sm search-month-jump-select"
+            defaultValue=""
+            onChange={(e) => {
+              const month = e.target.value;
+              if (!month) return;
+              const el = document.getElementById(
+                `search-month-${month.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+              );
+              el?.scrollIntoView({ block: "start" });
+              e.target.selectedIndex = 0;
+            }}
+          >
+            <option value="" disabled>
+              Select month…
+            </option>
+            {date_list.map(([month]) => (
+              <option key={month} value={month}>
+                {month}
               </option>
-              {date_list.map(([month]) => (
-                <option key={month} value={month}>
-                  {month}
-                </option>
-              ))}
-            </select>
-          </div>
-        </details>
-        <nav aria-label="Date list" className="search-date-list-nav">
+            ))}
+          </select>
+        </div>
+        <div className="search-calendar-months">
           {date_list.map(([month, dates]) => (
-            <div
-              className="search-date-list-month"
+            <section
+              className="search-calendar-month-card"
               key={month}
               id={`search-month-${month.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
+              aria-labelledby={`search-month-heading-${month.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
             >
-              <ul className="pagination pagination-sm flex-wrap">
-                <li className="page-item">
-                  <Link className="page-link" to={`/date/${month}`}>
-                    {month}
-                  </Link>
-                </li>
+              <div className="search-calendar-month-header">
+                <Link
+                  className="search-calendar-month-title"
+                  id={`search-month-heading-${month.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
+                  to={`/date/${month}`}
+                >
+                  {month}
+                </Link>
+              </div>
+              <ul className="search-calendar-day-grid" role="list">
                 {dates.map(([dateStr, day]) => (
-                  <li className="page-item" key={dateStr}>
-                    <Link className="page-link" to={`/date/${dateStr}`}>
+                  <li key={dateStr} className="search-calendar-day-cell" role="listitem">
+                    <Link
+                      className="search-calendar-day-link"
+                      to={`/date/${dateStr}`}
+                      aria-label={`Open jobs for ${month}, day ${day}`}
+                    >
                       {day}
                     </Link>
                   </li>
                 ))}
               </ul>
-            </div>
+            </section>
           ))}
-        </nav>
+        </div>
       </>
     ) : (
       <p className="text-muted">No job data available</p>
@@ -162,6 +167,20 @@ export default function Search() {
           <li className="nav-item" role="presentation">
             <button
               type="button"
+              className={`nav-link ${browseTab === "calendar" ? "active" : ""}`}
+              id={tabCalendarId}
+              role="tab"
+              aria-selected={browseTab === "calendar"}
+              aria-controls={panelCalendarId}
+              tabIndex={browseTab === "calendar" ? 0 : -1}
+              onClick={() => setBrowseTab("calendar")}
+            >
+              Calendar
+            </button>
+          </li>
+          <li className="nav-item" role="presentation">
+            <button
+              type="button"
               className={`nav-link ${browseTab === "year" ? "active" : ""}`}
               id={tabYearId}
               role="tab"
@@ -173,22 +192,19 @@ export default function Search() {
               By year
             </button>
           </li>
-          <li className="nav-item" role="presentation">
-            <button
-              type="button"
-              className={`nav-link ${browseTab === "calendar" ? "active" : ""}`}
-              id={tabCalendarId}
-              role="tab"
-              aria-selected={browseTab === "calendar"}
-              aria-controls={panelCalendarId}
-              tabIndex={browseTab === "calendar" ? 0 : -1}
-              onClick={() => setBrowseTab("calendar")}
-            >
-              By calendar
-            </button>
-          </li>
         </ul>
       </div>
+
+      <section
+        id={panelCalendarId}
+        role="tabpanel"
+        aria-labelledby={tabCalendarId}
+        className="search-home-section search-calendar-section"
+        hidden={browseTab !== "calendar"}
+      >
+        <h2 className="visually-hidden">Browse by calendar</h2>
+        {calendarBrowsePrimary}
+      </section>
 
       <section
         id={panelYearId}
@@ -199,17 +215,6 @@ export default function Search() {
       >
         <h2 className="visually-hidden">Browse by year</h2>
         {yearBrowsePrimary}
-      </section>
-
-      <section
-        id={panelCalendarId}
-        role="tabpanel"
-        aria-labelledby={tabCalendarId}
-        className="search-home-section search-date-list-section"
-        hidden={browseTab !== "calendar"}
-      >
-        <h2 className="visually-hidden">Browse by calendar date</h2>
-        {calendarBrowsePrimary}
       </section>
     </div>
   );
