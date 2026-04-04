@@ -399,6 +399,25 @@ def test_compute_deltas_and_arc_rollover():
   assert result.iloc[1]["delta"] == expected_delta
 
 
+def test_compute_deltas_and_arc_zero_deltat_yields_nan_arc():
+  """Same (host,type,event) time twice (different unit rows): Δt=0 → arc undefined."""
+  stats_df = pd.DataFrame([
+      {
+          "host": "h", "type": "cpu", "dev": "0", "event": "user",
+          "unit": "jiffies", "time": 100.0, "value": 1.0, "wid": 48, "mult": 1,
+      },
+      {
+          "host": "h", "type": "cpu", "dev": "0", "event": "user",
+          "unit": "ticks", "time": 100.0, "value": 2.0, "wid": 48, "mult": 1,
+      },
+  ])
+  result = compute_deltas_and_arc(stats_df)
+  assert len(result) == 2
+  arc_second = result.sort_values(
+      by=["host", "type", "event", "time", "unit"]).iloc[1]["arc"]
+  assert pd.isna(arc_second)
+
+
 def test_compute_deltas_and_arc_keeps_first_timestamp_value():
   """First timestamp per group has NaN delta/arc but value is kept for complex metrics."""
   stats_df = pd.DataFrame([

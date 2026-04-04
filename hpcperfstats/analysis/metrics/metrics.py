@@ -421,7 +421,8 @@ class Metrics():
             "typename": "ib_ext",
             "events": ["port_xmit_data", "port_rcv_data"],
             "conv": 1.0 / (1024 * 1024),
-            "units": "MB/s"
+            "units": "MB/s",
+            "nonnegative_rate": True,
         },
         "avg_fabric_mb_per_gflops": {
             "typename": "ib_ext",
@@ -574,12 +575,17 @@ class Metrics():
               events=None,
               conv=0,
               units=None,
-              cache=None):
+              cache=None,
+              nonnegative_rate=False):
     """Aggregate arc by host and 5m time bucket via Django ORM.
 
     For each host: mean of per-bucket summed arc (after dropping the first bucket
     per host). Returns the **arithmetic mean of those per-host values** across
     hosts (all ``avg_*`` simple metrics use this path).
+
+    When ``nonnegative_rate`` is True, negative ``arc`` samples are dropped (NaN)
+    before bucketing. Use for cumulative byte counters (fabric bandwidth) where
+    a negative rate indicates reset, wrong rollover width, or bad samples.
 
         """
     import pandas as pd
@@ -593,7 +599,7 @@ class Metrics():
       return None
     cache_key = None
     if cache is not None:
-      cache_key = (typename, tuple(events or ()), float(conv))
+      cache_key = (typename, tuple(events or ()), float(conv), bool(nonnegative_rate))
       if cache_key in cache:
         return cache[cache_key]
     # Fetch raw samples via ORM.
@@ -618,6 +624,8 @@ class Metrics():
       if cache is not None:
         cache[cache_key] = None
       return None
+    if nonnegative_rate:
+      df["arc"] = df["arc"].where(df["arc"] >= 0)
     # Floor timestamps to 5‑minute buckets.
     if not pd.api.types.is_datetime64_any_dtype(df["time"]):
       df["time"] = pd.to_datetime(df["time"])
@@ -911,6 +919,7 @@ class Metrics():
         conv=1.0 / (1024 * 1024),
         units="MB/s",
         cache=cache,
+        nonnegative_rate=True,
     )
     if v is not None:
       return v, "ib_ext"
@@ -921,6 +930,7 @@ class Metrics():
         conv=1.0 / 125000,
         units="MB/s",
         cache=cache,
+        nonnegative_rate=True,
     )
     if v is not None:
       return v, "opa"
@@ -931,6 +941,7 @@ class Metrics():
         conv=1.0 / (1024 * 1024),
         units="MB/s",
         cache=cache,
+        nonnegative_rate=True,
     )
     if v is not None:
       return v, "net"

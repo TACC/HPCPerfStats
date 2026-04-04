@@ -443,7 +443,14 @@ def compute_deltas_and_arc(stats_df):
 
   stats_df = stats_df.sort_values(by=["host", "type", "event", "time"])
   deltat = stats_df.groupby(["host", "type", "event"])["time"].diff()
-  stats_df["arc"] = stats_df["delta"] / deltat
+  # Rate is undefined for non-positive Δt (duplicate timestamps, clock skew). A
+  # negative Δt with positive Δ(counter) yields a spurious negative arc (e.g. IB MB/s).
+  _dy = stats_df["delta"].to_numpy(dtype=np.float64, copy=False)
+  _dt = deltat.to_numpy(dtype=np.float64, copy=False)
+  _arc = np.full(len(stats_df), np.nan, dtype=np.float64)
+  _ok = (_dt > 0) & np.isfinite(_dt)
+  np.divide(_dy, _dt, out=_arc, where=_ok)
+  stats_df["arc"] = _arc
   stats_df["time"] = to_datetime(stats_df["time"], unit='s').dt.tz_localize('UTC')
   stats_df = stats_df.dropna(subset=["host", "type", "event", "time", "value"])
   return stats_df
