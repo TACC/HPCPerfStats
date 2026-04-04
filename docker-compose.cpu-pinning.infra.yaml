@@ -1,5 +1,5 @@
 # Optional CPU pinning for infra services (db, redis, proxy, rabbitmq).
-# Default: unbound. On the Linux deployment host run:
+# Included from docker-compose.yaml (root). Default: unbound. On the Linux host run:
 #   python scripts/apply_compose_cpu_pinning.py
 # See docs/DEPLOY_CONCURRENCY_AND_NUMA.md.
 services: {}

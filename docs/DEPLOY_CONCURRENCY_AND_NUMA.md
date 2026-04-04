@@ -39,7 +39,9 @@ Keep this **below** `max_connections` minus headroom for admin, autovacuum, and 
 The stack **includes** two optional merge fragments (committed as **`services: {}`** so clones stay **unbound** by default):
 
 - [`docker-compose.cpu-pinning.infra.yaml`](../docker-compose.cpu-pinning.infra.yaml) — **`db`**, **`redis`**, **`proxy`**, **`rabbitmq`**
-- [`docker-compose.cpu-pinning.app.yaml`](../docker-compose.cpu-pinning.app.yaml) — **`web`**, **`pipeline`** (included from [`docker-compose.app.yaml`](../docker-compose.app.yaml))
+- [`docker-compose.cpu-pinning.app.yaml`](../docker-compose.cpu-pinning.app.yaml) — **`web`**, **`pipeline`**
+
+Both fragments are **`include`d from [`docker-compose.yaml`](../docker-compose.yaml)** (same directory as [`docker-compose.app.yaml`](../docker-compose.app.yaml)); use `docker compose -f docker-compose.yaml ...` from the repo root so merges apply.
 
 **Unbound (default):** empty fragments let the host scheduler place containers (often best on small or uneven hosts).
 

@@ -84,7 +84,7 @@ flowchart LR
 **Deployment split:**
 
 - **On nodes:** C monitor (`HPCPerfStats/monitor/`), typically via RPM/systemd (`hpcperfstats` service).
-- **Central stack:** Docker Compose (`docker-compose.yaml` includes `docker-compose.app.yaml`): `web`, `pipeline`, `db`, `redis`, `rabbitmq`, `proxy`.
+- **Central stack:** Docker Compose (`docker-compose.yaml` includes `docker-compose.app.yaml` plus optional `docker-compose.cpu-pinning.infra.yaml` and `docker-compose.cpu-pinning.app.yaml`): `web`, `pipeline`, `db`, `redis`, `rabbitmq`, `proxy`.
 
 ---
 
@@ -240,7 +240,7 @@ This section records **typical** tradeoffs implicit in the design—not a formal
 | Regenerate / augment `MONITOR_VARIABLES.md` | `docs/regenerate_monitor_variables_catalog.py`, `docs/augment_monitor_variables_diagnostics.py` |
 | Researcher-facing web UI guide | `docs/using-the-website-as-a-researcher.md` |
 | Architecture-agnostic analysis | `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md` |
-| Compose topology | `docker-compose.yaml`, `docker-compose.app.yaml` |
+| Compose topology | `docker-compose.yaml` (includes `docker-compose.app.yaml`, `docker-compose.cpu-pinning.*.yaml`) |
 | Supervisor programs (example) | `services-conf/supervisord.conf.example` |
 | Workspace guardrails (monitor/tools/nginx/redis) | `HPCPerfStats/cursor-rules/workspace-guardrails.mdc` |
 | Monitor message contract | `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc` |
