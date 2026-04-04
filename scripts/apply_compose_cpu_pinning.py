@@ -112,6 +112,16 @@ def _parse_args() -> argparse.Namespace:
       action="store_true",
       help="Exit 0 if both on-disk fragments match computed output; else 1.",
   )
+  p.add_argument(
+      "--total-cpus",
+      type=int,
+      default=None,
+      metavar="N",
+      help=(
+          "Use N for the linear layout instead of min(ini total_cores, os.cpu_count()). "
+          "Useful when cgroup-visible CPUs differ from the deployment budget."
+      ),
+  )
   return p.parse_args()
 
 
@@ -121,7 +131,13 @@ def main() -> int:
     infra_body = app_body = _inactive_yaml()
   else:
     host = os.cpu_count() or 1
-    total = min(cfg.get_effective_cores(), host)
+    if args.total_cpus is not None:
+      if args.total_cpus < 1:
+        print("--total-cpus must be >= 1", file=sys.stderr)
+        return 1
+      total = args.total_cpus
+    else:
+      total = min(cfg.get_effective_cores(), host)
     linear = partition_responsive_cpusets(total)
     cpus = dict(linear)
     nodes = parse_sysfs_numa(str(args.sysfs))
@@ -142,12 +158,16 @@ def main() -> int:
       pair = select_node_pair(nodes, web_node=web_n, pipeline_node=pipe_n)
       if pair is not None:
         wnode, pnode = pair
-        cpus["web"] = wnode.cpulist
-        cpus["pipeline"] = pnode.cpulist
-        if cfg.get_pin_proxy_for_compose():
-          cpus["proxy"] = wnode.cpulist
-        else:
-          cpus["proxy"] = linear["web"]
+        # Single NUMA node: web and pipeline share the same full-socket cpulist.
+        # Applying it would assign **all** host CPUs to web/pipeline and undo the
+        # linear db/web/pipeline split — keep the linear layout instead.
+        if wnode.node_id != pnode.node_id:
+          cpus["web"] = wnode.cpulist
+          cpus["pipeline"] = pnode.cpulist
+          if cfg.get_pin_proxy_for_compose():
+            cpus["proxy"] = wnode.cpulist
+          else:
+            cpus["proxy"] = linear["web"]
     infra_body = _build_infra_yaml(cpus)
     app_body = _build_app_yaml(cpus)
 

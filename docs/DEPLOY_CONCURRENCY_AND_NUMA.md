@@ -49,6 +49,8 @@ The stack **includes** two optional merge fragments (committed as **`services: {
 export HPCPERFSTATS_INI=/path/to/hpcperfstats.ini
 python scripts/apply_compose_cpu_pinning.py --dry-run   # prints infra + app YAML, separated by ---
 python scripts/apply_compose_cpu_pinning.py             # overwrites both fragment files
+# If the host reports fewer logical CPUs than your ini budget (e.g. cgroup), pin layout to 40:
+python scripts/apply_compose_cpu_pinning.py --total-cpus 40
 ```
 
 Then start the stack as usual (no extra `-f` flags):
@@ -63,7 +65,7 @@ docker compose -f docker-compose.yaml up -d
 
 Topology is read from **Linux sysfs**: `/sys/devices/system/node/node*/cpulist` (not hardcoded).
 
-When [`should_apply_numa_pinning`](../hpcperfstats/numa_topology.py) is true, the generator **replaces** the linear **`web`**, **`pipeline`**, and optionally **`proxy`** cpusets with **per-node** `cpulist` values (same rules as before: **1** node → web and pipeline share that node; **2–16** nodes with thresholds; explicit **`web_numa_node`** / **`pipeline_numa_node`** when needed). **`db`**, **Redis**, and **RabbitMQ** keep the **linear** layout in this phase — on multi-NUMA hosts their cpusets may **overlap** numerically with the web node’s CPUs; Docker allows overlapping `cpuset`s between containers. Tighter **Postgres-on-socket** placement is a possible future refinement.
+When [`should_apply_numa_pinning`](../hpcperfstats/numa_topology.py) is true **and** **two different** NUMA nodes are selected for web vs pipeline, the generator **replaces** the linear **`web`**, **`pipeline`**, and optionally **`proxy`** cpusets with those nodes’ sysfs **`cpulist`** values. On a **single** NUMA node, web and pipeline would otherwise each get the **full** socket and erase the db/web/pipeline split — the script **keeps** the **linear** layout from [`compose_cpu_layout.py`](../hpcperfstats/compose_cpu_layout.py) instead. **`db`**, **Redis**, and **RabbitMQ** always use the linear layout in this phase — on multi-NUMA hosts their cpusets may **overlap** numerically with the web node’s CPUs; Docker allows overlapping `cpuset`s between containers. Tighter **Postgres-on-socket** placement is a possible future refinement.
 
 ## Related files
 

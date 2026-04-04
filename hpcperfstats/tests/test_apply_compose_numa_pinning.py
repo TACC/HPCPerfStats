@@ -149,6 +149,8 @@ def test_apply_compose_cpu_pinning_dry_run_single_node(
           str(_CPU_SCRIPT),
           "--sysfs",
           str(numa_sysfs_single_node),
+          "--total-cpus",
+          "40",
           "--dry-run",
       ],
       cwd=str(_REPO),
@@ -162,9 +164,13 @@ def test_apply_compose_cpu_pinning_dry_run_single_node(
       },
   )
   assert proc.returncode == 0, proc.stderr
-  assert proc.stdout.count("0-39") >= 2
   assert "  web:" in proc.stdout
   assert "  pipeline:" in proc.stdout
+  # Single-node NUMA must not expand web/pipeline to the full socket (keeps linear split).
+  assert 'cpuset: "11-21"' in proc.stdout
+  assert 'cpuset: "26-39"' in proc.stdout
+  app_part = proc.stdout.split("---\n", 1)[1]
+  assert "cpuset: \"0-39\"" not in app_part
 
 
 def test_apply_compose_cpu_pinning_inactive_writes_empty_blocks(tmp_path, minimal_ini):
