@@ -48,4 +48,14 @@ describe("VariableInfoLabel", () => {
     expect(document.body.contains(panel)).toBe(true);
     expect(panel.classList.contains("variable-info-tooltip-portal")).toBe(true);
   });
+
+  it("renders a separator between definition and researcher guidance when both exist", () => {
+    render(
+      <VariableInfoLabel variableName="avg_cpuusage" labelText="avg_cpuusage" enableHelp />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /help: avg_cpuusage/i }));
+    const panel = screen.getByTestId("variable-info-tooltip");
+    expect(panel.querySelector("hr.variable-info-tooltip-sep")).toBeTruthy();
+    expect(panel).toHaveTextContent(/parallel efficiency|OpenMP|MPI/i);
+  });
 });

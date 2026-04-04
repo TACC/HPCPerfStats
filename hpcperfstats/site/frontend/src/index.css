@@ -84,6 +84,16 @@ body {
   z-index: 12050;
   margin: 0;
 }
+.variable-info-tooltip .variable-info-tooltip-sep {
+  margin: 0.5rem 0;
+  border: 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
+  opacity: 1;
+}
+.variable-info-tooltip-researcher-use {
+  display: block;
+  color: #333;
+}
 .navbar {
   position: relative;
 }

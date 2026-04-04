@@ -45,6 +45,7 @@ from hpcperfstats.analysis.plot.hover_html import hover_tooltip_html_host_time_v
 from hpcperfstats.analysis.plot.job_window import job_window_bounds_local
 from hpcperfstats.analysis.plot.summary_metric_descriptions import (
     description_for_summary_metric,
+    researcher_use_for_summary_metric,
 )
 
 local_timezone = cfg.get_local_timezone()
@@ -745,11 +746,16 @@ def _summary_plot_order_key(metric_name):
   return priority.get(metric_name, 395)
 
 
-def _add_summary_variable_help_marker(plot, description):
+def _add_summary_variable_help_marker(plot, description, researcher_use=None):
   """Draw a small '?' at the upper-right of the data area with a hover explanation."""
   if not description or not str(description).strip():
     return
   desc_str = str(description).strip()
+  ru_str = (
+      str(researcher_use).strip()
+      if researcher_use is not None and str(researcher_use).strip()
+      else ""
+  )
   from pandas import Timedelta
 
   xe, xs = plot.x_range.end, plot.x_range.start
@@ -770,9 +776,16 @@ def _add_summary_variable_help_marker(plot, description):
   help_x = xe - 0.018 * span_x
   help_y = ye - 0.065 * span_y
 
+  inner = html.escape(desc_str)
+  if ru_str:
+    inner += (
+        '<hr style="margin:0.5em 0;border:0;'
+        'border-top:1px solid rgba(0,0,0,0.12);"/>'
+        f'<span style="color:#333;">{html.escape(ru_str)}</span>'
+    )
   tip = (
       '<div style="max-width:28em; white-space:normal; font-weight:400;">'
-      f"{html.escape(desc_str)}"
+      f"{inner}"
       "</div>"
   )
   help_src = ColumnDataSource(data={"hx": [help_x], "hy": [help_y], "qm": ["?"]})
@@ -915,12 +928,13 @@ class SummaryPlot():
             renderers=[scatter],
         )
     )
-    doc_text = (
-        variable_description
-        if variable_description is not None
-        else description_for_summary_metric(metric)
-    )
-    _add_summary_variable_help_marker(plot, doc_text)
+    if variable_description is not None:
+      doc_text = variable_description
+      researcher_use = None
+    else:
+      doc_text = description_for_summary_metric(metric)
+      researcher_use = researcher_use_for_summary_metric(metric)
+    _add_summary_variable_help_marker(plot, doc_text, researcher_use)
     log.debug("time to plot %s: %s", metric, time.time() - s)
     return plot
 

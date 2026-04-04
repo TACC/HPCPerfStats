@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getDescriptionForVariable,
+  getVariableTooltipContent,
   normalizeVariableKey,
   VARIABLE_METADATA,
 } from "./variableMetadata";
@@ -15,7 +16,32 @@ describe("normalizeVariableKey", () => {
   });
 });
 
+describe("getVariableTooltipContent", () => {
+  it("returns researcherUse for metrics documented in the researcher guide", () => {
+    const cpu = getVariableTooltipContent("avg_cpuusage");
+    expect(cpu?.description).toMatch(/CPU cores busy/i);
+    expect(cpu?.researcherUse).toMatch(/parallel efficiency|OpenMP|MPI/i);
+    const jid = getVariableTooltipContent("jid");
+    expect(jid?.researcherUse).toEqual(
+      expect.stringMatching(/logs|tickets/i),
+    );
+  });
+
+  it("returns null researcherUse when only a technical definition exists", () => {
+    const ev = getVariableTooltipContent("CAS_READS");
+    expect(ev?.description).toBeTruthy();
+    expect(ev?.researcherUse).toBeNull();
+  });
+});
+
 describe("getDescriptionForVariable", () => {
+  it("appends researcher guidance after an em-dash separator when present", () => {
+    const text = getDescriptionForVariable("runtime");
+    expect(text).toMatch(/Elapsed runtime/);
+    expect(text).toMatch(/\n\n—\n\n/);
+    expect(text).toMatch(/requested time|timing out/i);
+  });
+
   it("returns a description for a documented metric", () => {
     expect(getDescriptionForVariable("avg_cpuusage")).toBeTruthy();
     expect(getDescriptionForVariable("mem_hwm")).toBeTruthy();

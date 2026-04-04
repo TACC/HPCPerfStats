@@ -1,7 +1,11 @@
 """User-facing descriptions for job summary (Bokeh) subplot metrics.
 
-Keep text aligned with ``SUMMARY_PLOT_METRIC_METADATA`` in
+Keep ``SUMMARY_METRIC_DESCRIPTIONS`` aligned with ``description`` strings in
+``SUMMARY_PLOT_METRIC_METADATA`` in
 ``hpcperfstats/site/frontend/src/utils/variableMetadata.js`` (same keys, same prose).
+
+Keep ``SUMMARY_METRIC_RESEARCHER_USE`` aligned with ``researcherUse`` in the same
+JS object (HPC / AI / diagnostic reasoning from ``docs/using-the-website-as-a-researcher.md``).
 """
 
 from __future__ import annotations
@@ -149,6 +153,121 @@ SUMMARY_METRIC_DESCRIPTIONS: dict[str, str] = {
     ),
 }
 
+SUMMARY_METRIC_RESEARCHER_USE: dict[str, str] = {
+    "cpu": (
+        "Shows whether the CPU is actually busy versus waiting; correlate with "
+        "I/O and network subplots."
+    ),
+    "mem": (
+        "Footprint and pressure versus node RAM; pairs with host OOM and mem_hwm reasoning."
+    ),
+    "numa_remote_refs": (
+        "High remote NUMA traffic hurts performance: check numactl, first-touch, "
+        "and MPI rank placement."
+    ),
+    "mbw": (
+        "Memory bandwidth limits for stencil, sparse, or streaming CPU codes; pairs "
+        "with the CPU roofline memory roof."
+    ),
+    "amd_mbw": "Socket DRAM bandwidth for CPU memory-bound kernels on AMD hosts.",
+    "amd_flops": (
+        "Computational intensity over time for AMD CPU paths; compare with fabric "
+        "and I/O subplots."
+    ),
+    "flops64b": (
+        "Computational intensity for FP64-heavy HPC codes versus memory and "
+        "interconnect limits."
+    ),
+    "flops32b": (
+        "Computational intensity for FP32-heavy regions versus memory and "
+        "interconnect limits."
+    ),
+    "instr": (
+        "Pairs with cycles and the CPI heatmap for instruction throughput and stall stories."
+    ),
+    "amd_instr": (
+        "Pairs with AMD cycle counters and the CPI heatmap for throughput and stall stories."
+    ),
+    "mcycles": "Reference cycle rate for CPI-style reasoning with retired instructions.",
+    "acycles": "Actual cycles for frequency-aware CPI and stall interpretation.",
+    "amd_mcycles": "Reference cycle rate for AMD CPI-style reasoning.",
+    "amd_acycles": "Actual AMD cycles for frequency-aware interpretation.",
+    "freq": (
+        "Thermal throttling, power caps, or turbo behavior under sustained load."
+    ),
+    "watts": (
+        "Package power trends versus frequency for power-limited or cooling-limited runs."
+    ),
+    "cha_counter_arc_sum": (
+        "Coarse uncore, LLC, and coherence pressure for multi-threaded or MPI+OpenMP codes."
+    ),
+    "nv_gpu_util": (
+        "Idle versus sustained GPU work; low util may mean a CPU preprocessing or "
+        "dataloader bottleneck."
+    ),
+    "nv_mem_used_mb": (
+        "Framebuffer headroom for GPU OOM diagnosis when correlated with failure time."
+    ),
+    "nv_mem_util_pct": (
+        "GPU OOM risk and fragmentation patterns when viewed over time."
+    ),
+    "nv_tensor_active": (
+        "Whether time sits in tensor-heavy paths when tuning precision or framework settings."
+    ),
+    "nv_sm_occupancy": (
+        "Occupancy-limited kernels versus other GPU bottlenecks."
+    ),
+    "nv_fp16_active": (
+        "FP16-dominated regions when changing mixed-precision training or inference."
+    ),
+    "nv_fp32_active": (
+        "FP32-dominated regions versus lower-precision paths."
+    ),
+    "nv_gpu_mem_bw_gbs": (
+        "Memory-bound versus compute-bound layers when HBM counters are present."
+    ),
+    "nv_power_w": "GPU power headroom, caps, and cooling stress.",
+    "node_power_est_w": (
+        "Blended node power for energy-to-solution comparisons when fragments allow "
+        "an estimate."
+    ),
+    "nv_gpu_link_gbs": (
+        "Host–device transfer and link saturation versus GPU compute; pairs with the "
+        "GPU roofline when present."
+    ),
+    "lustre_read_mb_s": (
+        "Read-heavy parallel I/O and checkpoint patterns; correlate with CPU idle regions."
+    ),
+    "lustre_write_mb_s": "Write-heavy I/O storms and checkpoint bursts.",
+    "liops": (
+        "Metadata-heavy I/O (small files, directory storms) versus bulk read/write."
+    ),
+    "nfs_read_mb_s": (
+        "NFS read load for workflows not on Lustre; compare with Lustre subplots "
+        "in mixed setups."
+    ),
+    "nfs_write_mb_s": "NFS write load alongside Lustre when both appear.",
+    "nfs_iops": "NFS operation-heavy phases versus byte-heavy streaming.",
+    "ibbw": (
+        "Fabric bytes for MPI and GPU-direct traffic; correlate with CPU FLOPs and "
+        "GPU util for comms-bound phases."
+    ),
+    "fabric_mb_per_gflops": (
+        "Communication intensity relative to CPU floating-point work for weak scaling "
+        "and MPI+GPU jobs."
+    ),
+    "fabric_mb_per_avg_tensor": (
+        "Heuristic communication intensity relative to tensor activity for distributed AI."
+    ),
+    "opa_wait_cong": (
+        "Congestion versus raw bandwidth on Omni-Path; pair with fabric bytes and "
+        "MPI behavior."
+    ),
+    "opa_ecn": (
+        "Explicit congestion signaling on Omni-Path for network-quality diagnosis."
+    ),
+}
+
 
 def description_for_summary_metric(metric: str) -> str:
   """Return tooltip copy for a summary subplot column name."""
@@ -157,3 +276,9 @@ def description_for_summary_metric(metric: str) -> str:
   if text:
     return text
   return f"Telemetry variable '{key}' collected by HPCPerfStats."
+
+
+def researcher_use_for_summary_metric(metric: str) -> str | None:
+  """Optional researcher-facing guidance (same keys as ``SUMMARY_METRIC_RESEARCHER_USE``)."""
+  key = (metric or "").strip()
+  return SUMMARY_METRIC_RESEARCHER_USE.get(key)

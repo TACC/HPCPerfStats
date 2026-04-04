@@ -1,6 +1,6 @@
 import { useId, useState, useEffect, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
-import { getDescriptionForVariable } from "../utils/variableMetadata";
+import { getVariableTooltipContent } from "../utils/variableMetadata";
 
 const VIEWPORT_MARGIN = 8;
 const GAP_PX = 6;
@@ -48,7 +48,7 @@ function placeTooltipNearButton(buttonEl, tooltipEl) {
  */
 export function VariableInfoLabel({ variableName, labelText, enableHelp = false }) {
   const text = labelText != null ? labelText : variableName;
-  const description = enableHelp ? getDescriptionForVariable(variableName) : null;
+  const tooltipBody = enableHelp ? getVariableTooltipContent(variableName) : null;
   const panelId = useId();
   const [open, setOpen] = useState(false);
   const buttonRef = useRef(null);
@@ -84,11 +84,13 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
       window.removeEventListener("scroll", updatePosition, true);
       window.removeEventListener("resize", updatePosition);
     };
-  }, [open, description]);
+  }, [open, variableName, enableHelp]);
 
-  if (!description) {
+  if (!tooltipBody) {
     return <>{text}</>;
   }
+
+  const { description, researcherUse } = tooltipBody;
 
   const tooltipNode = open ? (
     <span
@@ -99,7 +101,13 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
       data-testid="variable-info-tooltip"
       aria-label={`${variableName} description`}
     >
-      {description}
+      <span className="variable-info-tooltip-definition">{description}</span>
+      {researcherUse ? (
+        <>
+          <hr className="variable-info-tooltip-sep" role="separator" />
+          <span className="variable-info-tooltip-researcher-use">{researcherUse}</span>
+        </>
+      ) : null}
     </span>
   ) : null;
 
