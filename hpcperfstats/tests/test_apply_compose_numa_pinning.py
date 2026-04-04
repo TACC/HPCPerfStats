@@ -1,4 +1,4 @@
-"""Smoke tests for scripts/apply_compose_numa_pinning.py."""
+"""Smoke tests for scripts/apply_compose_cpu_pinning.py."""
 
 import os
 import subprocess
@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
-_SCRIPT = _REPO / "scripts" / "apply_compose_numa_pinning.py"
+_CPU_SCRIPT = _REPO / "scripts" / "apply_compose_cpu_pinning.py"
 
 
 @pytest.fixture
@@ -64,11 +64,11 @@ def minimal_ini(tmp_path):
   return p
 
 
-def test_apply_compose_numa_pinning_dry_run_writes_cpuset(numa_sysfs, minimal_ini):
+def test_apply_compose_cpu_pinning_dry_run_numa(numa_sysfs, minimal_ini):
   proc = subprocess.run(
       [
           sys.executable,
-          str(_SCRIPT),
+          str(_CPU_SCRIPT),
           "--sysfs",
           str(numa_sysfs),
           "--dry-run",
@@ -80,9 +80,11 @@ def test_apply_compose_numa_pinning_dry_run_writes_cpuset(numa_sysfs, minimal_in
       env={**os.environ, "HPCPERFSTATS_INI": str(minimal_ini), "PYTHONPATH": str(_REPO)},
   )
   assert proc.returncode == 0, proc.stderr
-  assert "cpuset:" in proc.stdout
-  assert "0-15" in proc.stdout
-  assert "16-31" in proc.stdout
+  assert "---\n" in proc.stdout
+  assert "  db:" in proc.stdout
+  assert "  web:" in proc.stdout
+  assert "cpuset: \"0-15\"" in proc.stdout
+  assert "cpuset: \"16-31\"" in proc.stdout
 
 
 @pytest.fixture
@@ -137,14 +139,14 @@ def minimal_ini_single_node(tmp_path):
   return p
 
 
-def test_apply_compose_numa_pinning_dry_run_single_node(
+def test_apply_compose_cpu_pinning_dry_run_single_node(
     numa_sysfs_single_node,
     minimal_ini_single_node,
 ):
   proc = subprocess.run(
       [
           sys.executable,
-          str(_SCRIPT),
+          str(_CPU_SCRIPT),
           "--sysfs",
           str(numa_sysfs_single_node),
           "--dry-run",
@@ -160,6 +162,30 @@ def test_apply_compose_numa_pinning_dry_run_single_node(
       },
   )
   assert proc.returncode == 0, proc.stderr
-  assert proc.stdout.count("0-39") == 2
+  assert proc.stdout.count("0-39") >= 2
   assert "  web:" in proc.stdout
   assert "  pipeline:" in proc.stdout
+
+
+def test_apply_compose_cpu_pinning_inactive_writes_empty_blocks(tmp_path, minimal_ini):
+  infra = tmp_path / "infra.yaml"
+  app = tmp_path / "app.yaml"
+  proc = subprocess.run(
+      [
+          sys.executable,
+          str(_CPU_SCRIPT),
+          "--inactive",
+          "--infra-out",
+          str(infra),
+          "--app-out",
+          str(app),
+      ],
+      cwd=str(_REPO),
+      capture_output=True,
+      text=True,
+      check=False,
+      env={**os.environ, "HPCPERFSTATS_INI": str(minimal_ini), "PYTHONPATH": str(_REPO)},
+  )
+  assert proc.returncode == 0, proc.stderr
+  assert "services: {}" in infra.read_text()
+  assert "services: {}" in app.read_text()

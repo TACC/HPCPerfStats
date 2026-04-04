@@ -74,7 +74,7 @@ script-files = [
   "hpcperfstats/dbload/sync_timedb.py",
   "hpcperfstats/dbload/sync_timedb_archive.py",
   "hpcperfstats/listend.py",
-  "scripts/apply_compose_numa_pinning.py",
+  "scripts/apply_compose_cpu_pinning.py",
 ]
 
 [tool.setuptools.packages.find]

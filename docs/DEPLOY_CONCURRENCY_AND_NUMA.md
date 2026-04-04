@@ -34,37 +34,43 @@ Keep this **below** `max_connections` minus headroom for admin, autovacuum, and 
 
 - Run **`python hpcperfstats/site/manage.py pg_connection_stats`** from the repo root (with **`HPCPERFSTATS_INI`** / config and DB reachable) to print **`pg_stat_activity`** totals for the current database (`machine` app management command).
 
-## NUMA topology and Compose pinning
+## Docker Compose CPU pinning (all services)
 
-Topology is read from **Linux sysfs**: `/sys/devices/system/node/node*/cpulist` (not hardcoded).
+The stack **includes** two optional merge fragments (committed as **`services: {}`** so clones stay **unbound** by default):
 
-- **Auto pinning** applies when there is **1** NUMA node and **`effective_cores` ≥ `cpuset_pin_min_total_cores`** (default 32) and that node has at least **`cpuset_pin_min_cores_per_node`** CPUs (default 16), **or** when there are **2–16** nodes with the same thresholds **per chosen node** (two-node case), unless you set **`web_numa_node`** and **`pipeline_numa_node`** explicitly (required when you have **>16** nodes and still want auto-generated cpusets). On a **single** node, web and pipeline both get the **same** `cpulist` (no NUMA isolation; explicit `cpuset` only).
-- **`web`** and **`pipeline`** each get **one full node `cpulist`**; **`proxy`** can match **`web`** if **`pin_proxy_in_compose = yes`**.
-- **`db`**, **Redis**, and **RabbitMQ** stay **unpinned** by default so they can use remaining nodes.
+- [`docker-compose.cpu-pinning.infra.yaml`](../docker-compose.cpu-pinning.infra.yaml) — **`db`**, **`redis`**, **`proxy`**, **`rabbitmq`**
+- [`docker-compose.cpu-pinning.app.yaml`](../docker-compose.cpu-pinning.app.yaml) — **`web`**, **`pipeline`** (included from [`docker-compose.app.yaml`](../docker-compose.app.yaml))
 
-### Script: `scripts/apply_compose_numa_pinning.py`
+**Unbound (default):** empty fragments let the host scheduler place containers (often best on small or uneven hosts).
 
-Run on the **deployment host** after provisioning (needs sysfs):
+**Pinned:** run [`scripts/apply_compose_cpu_pinning.py`](../scripts/apply_compose_cpu_pinning.py) on the **Linux deployment host**. It uses **`min([DEFAULT] total_cores, os.cpu_count())`** and [`hpcperfstats/compose_cpu_layout.py`](../hpcperfstats/compose_cpu_layout.py) to assign **contiguous** cpusets with **db** and **web** first, small slices for **Redis** / **RabbitMQ**, **pipeline** last. **`proxy`** uses the same cpuset string as **`web`** (allowed overlap). To force **unbound** fragments again: `python scripts/apply_compose_cpu_pinning.py --inactive`.
 
 ```bash
 export HPCPERFSTATS_INI=/path/to/hpcperfstats.ini
-python scripts/apply_compose_numa_pinning.py
-# or
-python scripts/apply_compose_numa_pinning.py --dry-run
+python scripts/apply_compose_cpu_pinning.py --dry-run   # prints infra + app YAML, separated by ---
+python scripts/apply_compose_cpu_pinning.py             # overwrites both fragment files
 ```
 
-This writes **`docker-compose.numa-pinning.yaml`** at the repo root (gitignored by default). Start the stack with:
+Then start the stack as usual (no extra `-f` flags):
 
 ```bash
-docker compose -f docker-compose.yaml -f docker-compose.numa-pinning.yaml up -d
+docker compose -f docker-compose.yaml up -d
 ```
 
-On hosts **without** sysfs NUMA (or **below** pinning thresholds, or unsupported explicit node ids), the script writes an **empty** `services: {}` overlay so the extra `-f` file is still safe to include.
+**Note:** The old **`docker-compose.numa-pinning.yaml`** overlay is obsolete; use the fragments above only.
+
+## NUMA overrides (web / pipeline / proxy)
+
+Topology is read from **Linux sysfs**: `/sys/devices/system/node/node*/cpulist` (not hardcoded).
+
+When [`should_apply_numa_pinning`](../hpcperfstats/numa_topology.py) is true, the generator **replaces** the linear **`web`**, **`pipeline`**, and optionally **`proxy`** cpusets with **per-node** `cpulist` values (same rules as before: **1** node → web and pipeline share that node; **2–16** nodes with thresholds; explicit **`web_numa_node`** / **`pipeline_numa_node`** when needed). **`db`**, **Redis**, and **RabbitMQ** keep the **linear** layout in this phase — on multi-NUMA hosts their cpusets may **overlap** numerically with the web node’s CPUs; Docker allows overlapping `cpuset`s between containers. Tighter **Postgres-on-socket** placement is a possible future refinement.
 
 ## Related files
 
 - [`hpcperfstats/conf_parser.py`](../hpcperfstats/conf_parser.py) — `get_effective_cores()`, caps, NUMA compose flags
+- [`hpcperfstats/compose_cpu_layout.py`](../hpcperfstats/compose_cpu_layout.py) — linear responsive `cpuset` partition
 - [`hpcperfstats/numa_topology.py`](../hpcperfstats/numa_topology.py) — sysfs parse and node-pair selection
+- [`scripts/apply_compose_cpu_pinning.py`](../scripts/apply_compose_cpu_pinning.py) — writes CPU pinning fragments
 - [`services-conf/django_startup.sh`](../services-conf/django_startup.sh) — Gunicorn worker count
 - [`hpcperfstats/site/hpcperfstats_site/settings.py`](../hpcperfstats/site/hpcperfstats_site/settings.py) — `CONN_MAX_AGE`, PostgreSQL `OPTIONS`
 - [`docker-compose.yaml`](../docker-compose.yaml) — Postgres `max_connections`, `statement_timeout`, `idle_in_transaction_session_timeout`

@@ -4,7 +4,7 @@ With **two or more** nodes, web and pipeline use **different** node cpusets.
 With **one** node, both services share that node's ``cpulist`` (still useful for
 explicit compose ``cpuset`` on single-socket hosts that expose ``node0``).
 
-Used by ``scripts/apply_compose_numa_pinning.py`` and tests. Does not read ``/proc``.
+Used by ``scripts/apply_compose_cpu_pinning.py`` and tests. Does not read ``/proc``.
 """
 from __future__ import annotations
 

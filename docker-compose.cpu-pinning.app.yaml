@@ -1,0 +1,5 @@
+# Optional CPU pinning for app services (web, pipeline).
+# Default: unbound. On the Linux deployment host run:
+#   python scripts/apply_compose_cpu_pinning.py
+# See docs/DEPLOY_CONCURRENCY_AND_NUMA.md.
+services: {}

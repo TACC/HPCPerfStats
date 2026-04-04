@@ -3,6 +3,7 @@
 
 include:
   - docker-compose.app.yaml
+  - docker-compose.cpu-pinning.infra.yaml
 
 services:
   redis:
