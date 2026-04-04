@@ -37,6 +37,7 @@ from hpcperfstats.shutdown_utils import (
     send_sigchld_to_parent,
     sleep_until_shutdown,
 )
+from hpcperfstats.site.machine.job_plot_artifacts import persist_job_plot_artifacts_for_jid
 from hpcperfstats.site.machine.models import host_data, job_data, metrics_data
 
 DEBUG = cfg.get_debug()
@@ -305,6 +306,20 @@ def update_metrics(date, rerun=False):
         "Streaming jobs needing metrics for date {0}".format(date_ymd)
     )
 
+    def _persist_plot_artifacts_best_effort(ready_jid_list):
+      for jid in ready_jid_list:
+        if shutdown_requested[0]:
+          break
+        try:
+          close_old_connections()
+          persist_job_plot_artifacts_for_jid(jid)
+        except Exception as exc_plot:
+          log_print(
+              "plot artifact prewarm failed for jid {0}: {1}".format(
+                  jid, exc_plot
+              )
+          )
+
     metrics_manager = metrics.Metrics()
     log_print(
         "Compute for following metrics for date {0}".format(date)
@@ -331,6 +346,7 @@ def update_metrics(date, rerun=False):
           jobs_chunk = _job_refs_from_jids(ready_jids)
           metrics_manager.run(jobs_chunk, pool=shared_pool)
           processed += len(jobs_chunk)
+          _persist_plot_artifacts_best_effort(ready_jids)
         except (OperationalError, DatabaseError) as exc:
           # Drop any broken/unsynchronised connection and retry this chunk once
           # with a fresh connection. If it still fails, let the exception bubble.
@@ -349,6 +365,7 @@ def update_metrics(date, rerun=False):
           jobs_chunk = _job_refs_from_jids(ready_jids)
           metrics_manager.run(jobs_chunk, pool=shared_pool)
           processed += len(jobs_chunk)
+          _persist_plot_artifacts_best_effort(ready_jids)
         finally:
           # Release references promptly; GC can then free memory before next chunk.
           jobs_chunk = None

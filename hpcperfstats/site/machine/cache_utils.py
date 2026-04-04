@@ -191,21 +191,26 @@ def invalidate_job_plot_cache_keys_for_jids(jids):
   if not jids:
     return
   client = _get_redis_py_client()
-  if client is None:
-    return
+  if client is not None:
+    try:
+      for jid in jids:
+        if not jid:
+          continue
+        for needle in (f":JOB_PLOTS_JSON:{jid}:", f":JOB_PLOTS_DATA:{jid}:"):
+          try:
+            for raw_key in client.scan_iter(match=f"*{needle}*", count=500):
+              try:
+                client.delete(raw_key)
+              except Exception:
+                pass
+          except Exception:
+            pass
+    except Exception:
+      pass
   try:
-    for jid in jids:
-      if not jid:
-        continue
-      for needle in (f":JOB_PLOTS_JSON:{jid}:", f":JOB_PLOTS_DATA:{jid}:"):
-        try:
-          for raw_key in client.scan_iter(match=f"*{needle}*", count=500):
-            try:
-              client.delete(raw_key)
-            except Exception:
-              pass
-        except Exception:
-          pass
+    from hpcperfstats.site.machine.models import job_plot_artifact
+
+    job_plot_artifact.objects.filter(jid_id__in=[j for j in jids if j]).delete()
   except Exception:
     pass
 

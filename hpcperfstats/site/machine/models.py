@@ -201,6 +201,40 @@ class proc_data(models.Model):
     return f"{self.jid}:{self.host}:{self.proc}"
 
 
+class job_plot_artifact(models.Model):
+  """Persisted Bokeh json_item payloads for job-level plots (gzip-compressed JSON).
+
+  One row per (job, plot_kind, layout). Invalidated when host_data changes for the job.
+  """
+
+  jid = models.ForeignKey(
+      job_data,
+      on_delete=models.CASCADE,
+      db_column="jid",
+      related_name="plot_artifacts",
+  )
+  plot_kind = models.CharField(max_length=32)
+  layout = models.CharField(max_length=16)
+  payload_compressed = models.BinaryField()
+  payload_encoding = models.CharField(max_length=32)
+  input_fingerprint = models.CharField(max_length=64)
+  created_at = models.DateTimeField(auto_now_add=True)
+  updated_at = models.DateTimeField(auto_now=True)
+
+  class Meta:
+    db_table = "job_plot_artifact"
+    managed = True
+    constraints = [
+        models.UniqueConstraint(
+            fields=["jid", "plot_kind", "layout"],
+            name="job_plot_artifact_jid_kind_layout_uniq",
+        ),
+    ]
+
+  def __str__(self):
+    return f"{self.jid_id}:{self.plot_kind}:{self.layout}"
+
+
 class ApiKey(models.Model):
   """API key for programmatic access, bound to an authenticated username.
 

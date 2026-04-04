@@ -36,6 +36,7 @@ class _JSONResponse(Response):
     def json(self):
         return self.data
 
+from .bokeh_plot_layout import _apply_zoom_layout_to_bokeh_model, _apply_zoom_layout_to_json_item
 from .cache_middleware import dynamic_cache_page
 from .cache_utils import (
     KEY_ADMIN_CACHE_STATS,
@@ -59,6 +60,14 @@ from .cache_utils import (
     get_site_content_cache_timeout,
     make_cache_key,
     TIMEOUT_ADMIN_STATS,
+)
+from .job_plot_artifacts import (
+    compute_plot_input_fingerprint,
+    get_job_plot_redis_max_bytes,
+    get_live_distinct_time_count_for_jid,
+    json_item_to_compressed_payload,
+    load_cached_job_plot_entry,
+    upsert_job_plot_artifact,
 )
 from hpcperfstats.analysis.gen.utils import (
     new_plain_number_hover_formatter,
@@ -290,94 +299,6 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout):
         close_old_connections()
 
 
-def _apply_zoom_layout_to_bokeh_model(root_model):
-    """Best-effort layout so zoom plots stretch to overlay width with intrinsic height (scroll)."""
-    try:
-        candidates = [root_model]
-        if hasattr(root_model, "select"):
-            try:
-                candidates.extend(list(root_model.select({})))
-            except Exception:
-                pass
-        for model in candidates:
-            if hasattr(model, "sizing_mode"):
-                model.sizing_mode = "stretch_width"
-            if hasattr(model, "width_policy"):
-                model.width_policy = "max"
-            if hasattr(model, "height_policy"):
-                model.height_policy = "auto"
-            # Nominal size sets aspect ratio for stretch_width in the embedded view.
-            if hasattr(model, "width"):
-                model.width = 1600
-            if hasattr(model, "height"):
-                model.height = 900
-    except Exception:
-        # Keep this strictly best-effort; never fail plot generation due to sizing.
-        pass
-
-
-def _apply_zoom_layout_to_json_item(plot_item):
-    """Return a zoom-sized json_item clone from cached plot data."""
-    if not isinstance(plot_item, dict):
-        return plot_item
-    try:
-        cloned = copy.deepcopy(plot_item)
-    except Exception:
-        return plot_item
-
-    layout_model_names = {
-        "Figure",
-        "Plot",
-        "GridPlot",
-        "Row",
-        "Column",
-        "ToolbarBox",
-        "Tabs",
-        "TabPanel",
-    }
-
-    def _apply_attrs(attrs, apply_layout_sizing=False, allow_dimension_reset=False):
-        if not isinstance(attrs, dict):
-            return
-        if not apply_layout_sizing:
-            return
-        attrs["sizing_mode"] = "stretch_width"
-        attrs["width_policy"] = "max"
-        attrs["height_policy"] = "auto"
-        # Only reset fixed width/height on layout models. Applying this to all
-        # model attrs can corrupt glyph geometry (for example heatmap rect width).
-        if allow_dimension_reset:
-            if "width" in attrs:
-                attrs["width"] = None
-            if "height" in attrs:
-                attrs["height"] = None
-        if "min_width" in attrs and attrs["min_width"] is None:
-            attrs["min_width"] = 600
-        if "min_height" in attrs and attrs["min_height"] is None:
-            attrs["min_height"] = 320
-
-    def _walk(node):
-        if isinstance(node, dict):
-            attrs = node.get("attributes")
-            if isinstance(attrs, dict):
-                model_name = node.get("name")
-                is_layout_model = model_name in layout_model_names
-                _apply_attrs(
-                    attrs,
-                    apply_layout_sizing=is_layout_model,
-                    allow_dimension_reset=is_layout_model,
-                )
-            for value in node.values():
-                _walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                _walk(value)
-
-    try:
-        _walk(cloned)
-    except Exception:
-        return plot_item
-    return cloned
 from django.db.models import (
     Case,
     Avg,

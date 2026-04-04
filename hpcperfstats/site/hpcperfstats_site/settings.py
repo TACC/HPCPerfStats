@@ -23,6 +23,9 @@ OPENBLAS_NUM_THREADS = 4
 SECRET_KEY = os.environ.get("SECRET_KEY") or cfg.get_secret_key()
 DEBUG = cfg.get_debug()
 
+# Skip Redis caching for job plot json_items when UTF-8 JSON exceeds this size (default 512 KiB).
+JOB_PLOT_REDIS_MAX_BYTES = int(os.environ.get("JOB_PLOT_REDIS_MAX_BYTES", "524288"))
+
 # Django 6+: ADMINS/MANAGERS are list of email strings (name in tuple deprecated).
 ADMINS = ["sharrell@tacc.utexas.edu"]
 MANAGERS = ["sharrell@tacc.utexas.edu"]
