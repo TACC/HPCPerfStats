@@ -313,6 +313,9 @@ def update_metrics(date, rerun=False):
         try:
           close_old_connections()
           persist_job_plot_artifacts_for_jid(jid)
+          log_print(
+              "jid {0}: plot artifacts prewarm completed (plots done).".format(jid)
+          )
         except Exception as exc_plot:
           log_print(
               "plot artifact prewarm failed for jid {0}: {1}".format(
