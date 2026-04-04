@@ -120,4 +120,25 @@ describe("BokehEmbed", () => {
     expect(embedItem).not.toHaveBeenCalled();
     expect(window.__injected).toBeUndefined();
   });
+
+  it("subscribes to window resize after a width-maximized embed becomes ready", async () => {
+    const addSpy = vi.spyOn(window, "addEventListener");
+    const embedItem = vi.fn(() => Promise.resolve());
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    renderBokehEmbed(
+      <BokehEmbed
+        item={{ doc: {}, root_ids: ["r1"] }}
+        id="bokeh-resize-test"
+        plotName="Test"
+        maximizeInContainer="width"
+      />
+    );
+
+    await waitFor(() => expect(embedItem).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(addSpy.mock.calls.some((call) => call[0] === "resize")).toBe(true);
+    });
+    addSpy.mockRestore();
+  });
 });

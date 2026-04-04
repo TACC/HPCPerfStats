@@ -255,6 +255,15 @@ export default function BokehEmbed({
   }, [item, id, onPlotReadyChange, maximizeMode]);
 
   useEffect(() => {
+    if (!plotReady || !maximizeMode) return;
+    function onResize() {
+      maximizeEmbeddedPlot(id, maximizeMode);
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [plotReady, maximizeMode, id]);
+
+  useEffect(() => {
     if (!errorDetailsOpen) return;
     function onKeyDown(e) {
       if (e.key === "Escape") {

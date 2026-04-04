@@ -1,4 +1,4 @@
-import { useCallback, useEffect, memo, useId, useRef, useState } from "react";
+import { useEffect, memo, useId, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
@@ -10,7 +10,6 @@ import { useSession } from "../session-context";
 import { VariableInfoLabel } from "../components/VariableInfoLabel";
 import { scheduleJobPlotsRetry } from "../utils/job-plots-polling";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
-import { useFocusTrap } from "../hooks/useFocusTrap";
 import { getJobMetricShortLabel } from "../utils/jobMetricDisplayLabels";
 
 function formatJobMetricCell(obj, isStaff) {
@@ -24,20 +23,18 @@ function formatJobMetricCell(obj, isStaff) {
 }
 
 const PlotPanel = memo(function PlotPanel({
-  panelKey,
   item,
   id,
   plotName,
   unavailableReason,
   isLoading,
-  onEmbedReadyChange,
 }) {
   const plotDescId = `${id}-plot-desc`;
   return (
     <div className="job-detail-plot-embed-host">
       <p id={plotDescId} className="visually-hidden">
-        Interactive performance chart. Use Expand plot in this section for a larger view.
-        Numerical detail may not be read by assistive technology.
+        Interactive performance chart. Scales to the available width. Numerical detail may not be read
+        by assistive technology.
       </p>
       <BokehEmbed
         item={item}
@@ -45,9 +42,9 @@ const PlotPanel = memo(function PlotPanel({
         plotName={plotName}
         unavailableReason={unavailableReason}
         isLoadingExternal={isLoading}
-        onPlotReadyChange={(ready) => onEmbedReadyChange?.(panelKey, ready)}
         wrapperClassName="job-detail-plot-embed"
         ariaDescribedBy={plotDescId}
+        maximizeInContainer="width"
       />
     </div>
   );
@@ -172,28 +169,22 @@ export default function JobDetail() {
   const [loading, setLoading] = useState(true);
   const [plotsLoading, setPlotsLoading] = useState(true);
   const [detailsLoading, setDetailsLoading] = useState(false);
-  const [zoomPlotKey, setZoomPlotKey] = useState(null);
-  const [zoomPlotState, setZoomPlotState] = useState({
-    loading: false,
-    item: null,
-    unavailableReason: null,
-  });
-  const zoomFocusReturnRef = useRef(null);
-  const zoomCloseButtonRef = useRef(null);
-  const zoomDialogRef = useRef(null);
-  const [plotEmbedReady, setPlotEmbedReady] = useState({});
   const [analysisTab, setAnalysisTab] = useState("metrics");
   const tabMetricsId = useId();
   const tabProcessesId = useId();
   const tabExecHostsId = useId();
   const tabDeviceId = useId();
-  const tabPlotsId = useId();
+  const tabPlotSummaryId = useId();
+  const tabPlotHeatmapId = useId();
+  const tabPlotCpuRooflineId = useId();
+  const tabPlotGpuRooflineId = useId();
 
-  const handlePlotEmbedReady = useCallback((panelKey, ready) => {
-    setPlotEmbedReady((prev) => ({ ...prev, [panelKey]: ready }));
-  }, []);
-
-  useFocusTrap(zoomDialogRef, Boolean(zoomPlotKey));
+  const plotTabDomIds = {
+    summary: tabPlotSummaryId,
+    heatmap: tabPlotHeatmapId,
+    "cpu-roofline": tabPlotCpuRooflineId,
+    "gpu-roofline": tabPlotGpuRooflineId,
+  };
 
   useDocumentTitle(
     error
@@ -217,7 +208,6 @@ export default function JobDetail() {
     setError(null);
     setData(null);
     setPlots(null);
-    setPlotEmbedReady({});
     setLoading(true);
     setPlotsLoading(true);
     setDetailsLoading(false);
@@ -324,78 +314,6 @@ export default function JobDetail() {
     if (anyPlotReady) setPlotsLoading(false);
   }, [plots]);
 
-  useEffect(() => {
-    if (!zoomPlotKey || !pk) {
-      setZoomPlotState({ loading: false, item: null, unavailableReason: null });
-      return;
-    }
-
-    const selectedConfig = JOB_PLOT_CONFIGS.find((config) => config.panelKey === zoomPlotKey);
-    if (!selectedConfig) return;
-
-    let cancelled = false;
-    setZoomPlotState({ loading: true, item: null, unavailableReason: null });
-
-    const fetchZoomPlot = async () => {
-      try {
-        const zoomResponse = await api.getJobPlots(pk, selectedConfig.key, true);
-        if (cancelled) return;
-        if (zoomResponse?.status === "loading") {
-          scheduleJobPlotsRetry(
-            fetchZoomPlot,
-            zoomResponse.retry_after_seconds,
-            () => cancelled
-          );
-          return;
-        }
-        setZoomPlotState({
-          loading: false,
-          item: zoomResponse?.plot_item ?? null,
-          unavailableReason: zoomResponse?.unavailable_reason ?? null,
-        });
-      } catch {
-        if (cancelled) return;
-        setZoomPlotState({ loading: false, item: null, unavailableReason: null });
-      }
-    };
-
-    fetchZoomPlot();
-    return () => {
-      cancelled = true;
-    };
-  }, [zoomPlotKey, pk]);
-
-  const closeZoom = useCallback(() => {
-    setZoomPlotKey(null);
-    const el = zoomFocusReturnRef.current;
-    zoomFocusReturnRef.current = null;
-    requestAnimationFrame(() => {
-      if (el && typeof el.focus === "function") {
-        el.focus();
-      }
-    });
-  }, []);
-
-  const handlePlotZoom = useCallback((panelKey) => {
-    const ae = document.activeElement;
-    zoomFocusReturnRef.current =
-      ae && typeof ae.focus === "function" ? ae : null;
-    setZoomPlotKey(panelKey);
-  }, []);
-
-  useEffect(() => {
-    if (!zoomPlotKey) return;
-    zoomCloseButtonRef.current?.focus();
-    function onKeyDown(e) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closeZoom();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [zoomPlotKey, closeZoom]);
-
   if (loading) {
     return (
       <div className="job-detail-skeleton" aria-busy="true">
@@ -405,18 +323,17 @@ export default function JobDetail() {
         <div className="placeholder-glow mb-3">
           <span className="placeholder col-6" style={{ height: "2.5rem" }} />
         </div>
-        <div className="job-detail-plots-grid mb-4">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="job-detail-plot-card border rounded p-2">
-              <div className="placeholder-glow">
-                <span className="placeholder col-8" />
-              </div>
-              <div
-                className="mt-2 placeholder-glow rounded"
-                style={{ minHeight: "280px", background: "#e9ecef" }}
-              />
-            </div>
-          ))}
+        <div
+          className="job-detail-skeleton-plot border rounded p-2 mb-4"
+          aria-hidden="true"
+        >
+          <div className="placeholder-glow">
+            <span className="placeholder col-8" />
+          </div>
+          <div
+            className="mt-2 placeholder-glow rounded w-100"
+            style={{ minHeight: "320px", background: "#e9ecef" }}
+          />
         </div>
       </div>
     );
@@ -483,8 +400,6 @@ export default function JobDetail() {
     plotName: config.plotName,
     unavailableReason: plots?.[config.key]?.unavailableReason ?? null,
   }));
-  const zoomedPanel = plotPanels.find((panel) => panel.key === zoomPlotKey) || null;
-
   return (
     <>
       <h1 className="h2 mb-3">Job {job.jid}</h1>
@@ -853,22 +768,33 @@ export default function JobDetail() {
               Device data
             </button>
           </li>
-          <li className="nav-item" role="presentation">
-            <button
-              type="button"
-              className={`nav-link ${analysisTab === "plots" ? "active" : ""}`}
-              id={tabPlotsId}
-              role="tab"
-              aria-selected={analysisTab === "plots"}
-              aria-controls="job-detail-panel-plots"
-              tabIndex={analysisTab === "plots" ? 0 : -1}
-              onClick={() => setAnalysisTab("plots")}
-            >
-              Plots
-            </button>
-          </li>
+          {JOB_PLOT_CONFIGS.map((config) => {
+            const plotTabActive = analysisTab === config.panelKey;
+            const plotPanelDomId = `job-detail-panel-plot-${config.panelKey}`;
+            return (
+              <li key={config.key} className="nav-item" role="presentation">
+                <button
+                  type="button"
+                  className={`nav-link ${plotTabActive ? "active" : ""}`}
+                  id={plotTabDomIds[config.panelKey]}
+                  role="tab"
+                  aria-selected={plotTabActive}
+                  aria-controls={plotPanelDomId}
+                  tabIndex={plotTabActive ? 0 : -1}
+                  onClick={() => setAnalysisTab(config.panelKey)}
+                >
+                  {config.plotName}
+                </button>
+              </li>
+            );
+          })}
         </ul>
         <div className="job-detail-analysis-panel border border-top-0 rounded-bottom p-3 bg-body">
+          {plotsLoading ? (
+            <p className="text-muted small mb-2" role="status">
+              Loading job plots…
+            </p>
+          ) : null}
           <div
             id="job-detail-panel-metrics"
             role="tabpanel"
@@ -1067,89 +993,39 @@ export default function JobDetail() {
               )}
             </div>
           </div>
-          <div
-            id="job-detail-panel-plots"
-            role="tabpanel"
-            aria-labelledby={tabPlotsId}
-            className="job-detail-plots text-center"
-            hidden={analysisTab !== "plots"}
-          >
-            <p className="job-detail-plots-intro text-muted small">
-              Host-level plots for this job. Loads progressively; use Expand for a larger view.
-            </p>
-            {plotsLoading && <LoadingMessage message="Loading job plots…" />}
-            <div className="job-detail-plots-grid">
-              {plotPanels.map((panel) => {
-                const canExpand =
-                  Boolean(panel.item) &&
-                  !panel.isLoading &&
-                  plotEmbedReady[panel.key] === true;
-                return (
-                  <div key={panel.key} className="job-detail-plot-card">
-                    <div className="job-detail-plot-card-header">
-                      <h3 className="h6 mb-0 text-start">{panel.plotName}</h3>
-                      <button
-                        type="button"
-                        className="btn btn-outline-secondary btn-sm flex-shrink-0"
-                        disabled={!canExpand}
-                        onClick={() => handlePlotZoom(panel.key)}
-                        aria-label={`Expand ${panel.plotName}`}
-                      >
-                        Expand plot
-                      </button>
-                    </div>
-                    <div className="job-detail-plot-card-body">
-                      <PlotPanel
-                        panelKey={panel.key}
-                        item={panel.item}
-                        id={panel.id}
-                        plotName={panel.plotName}
-                        unavailableReason={panel.unavailableReason}
-                        isLoading={panel.isLoading}
-                        onEmbedReadyChange={handlePlotEmbedReady}
-                      />
-                    </div>
+          {JOB_PLOT_CONFIGS.map((config) => {
+            const panel = plotPanels.find((p) => p.key === config.panelKey);
+            if (!panel) return null;
+            const plotPanelDomId = `job-detail-panel-plot-${config.panelKey}`;
+            const plotTabActive = analysisTab === config.panelKey;
+            return (
+              <div
+                key={config.key}
+                id={plotPanelDomId}
+                role="tabpanel"
+                aria-labelledby={plotTabDomIds[config.panelKey]}
+                className="job-detail-single-plot-pane"
+                hidden={!plotTabActive}
+              >
+                <p className="job-detail-plots-intro text-muted small mb-2">
+                  Host-level plot for this job. Loads progressively; chart width follows the panel below.
+                </p>
+                {plotTabActive ? (
+                  <div className="job-detail-single-plot-host w-100">
+                    <PlotPanel
+                      item={panel.item}
+                      id={panel.id}
+                      plotName={panel.plotName}
+                      unavailableReason={panel.unavailableReason}
+                      isLoading={panel.isLoading}
+                    />
                   </div>
-                );
-              })}
-            </div>
-          </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </section>
-
-      {zoomedPanel ? (
-        <div
-          ref={zoomDialogRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label={`${zoomedPanel.plotName} zoom view`}
-          className="job-detail-zoom-backdrop"
-        >
-          <div className="job-detail-zoom-panel">
-            <button
-              ref={zoomCloseButtonRef}
-              type="button"
-              className="btn btn-close job-detail-zoom-close"
-              aria-label="Close zoom window"
-              onClick={closeZoom}
-            />
-            <div className="job-detail-zoom-plot">
-              {zoomPlotState.loading && (
-                <LoadingMessage message={`Loading ${zoomedPanel.plotName}…`} />
-              )}
-              <BokehEmbed
-                item={zoomPlotState.item}
-                id={`${zoomedPanel.id}-zoom`}
-                plotName={zoomedPanel.plotName}
-                unavailableReason={zoomPlotState.unavailableReason || zoomedPanel.unavailableReason}
-                isLoadingExternal={zoomPlotState.loading}
-                fillHeight={false}
-                maximizeInContainer="width"
-              />
-            </div>
-          </div>
-        </div>
-      ) : null}
     </>
   );
 }

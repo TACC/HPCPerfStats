@@ -182,11 +182,11 @@ describe("JobDetail", () => {
     expect(getJobDetailLightSpy).toHaveBeenCalledWith("12345");
     expect(getJobPlotsSpy).toHaveBeenCalledWith("12345", null, false, true);
 
-    expect(screen.getByText("Loading job plots…", { hidden: true })).toBeInTheDocument();
+    expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
 
     await waitFor(
       () => {
-        expect(screen.queryByText("Loading job plots…", { hidden: true })).not.toBeInTheDocument();
+        expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
       },
       { timeout: 200 }
     );
@@ -315,13 +315,13 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
-    expect(screen.getByText("Loading job plots…", { hidden: true })).toBeInTheDocument();
+    expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(getJobPlotsSpy).toHaveBeenCalledTimes(2);
     });
     await waitFor(() => {
-      expect(screen.queryByText("Loading job plots…", { hidden: true })).not.toBeInTheDocument();
+      expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
     });
   });
 
@@ -355,7 +355,7 @@ describe("JobDetail", () => {
     });
     expect(getJobPlotsSpy).toHaveBeenLastCalledWith("12345", null, false, true);
     await waitFor(() => {
-      expect(screen.queryByText("Loading job plots…", { hidden: true })).not.toBeInTheDocument();
+      expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
     });
   });
 
@@ -384,7 +384,12 @@ describe("JobDetail", () => {
     expect(screen.getByText("4.00")).toBeInTheDocument();
   });
 
-  it("renders second GPU roofline panel in host-level plots", async () => {
+  it("renders one Bokeh embed when a host-level plot tab is selected", async () => {
+    window.Bokeh = {
+      embed: {
+        embed_item: vi.fn(() => Promise.resolve()),
+      },
+    };
     vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
       minimalJobDetailResponse
     );
@@ -395,14 +400,18 @@ describe("JobDetail", () => {
 
     renderJobDetail("12345");
     await waitFor(() => {
-      expect(document.querySelectorAll(".bokeh-embed-wrapper").length).toBe(4);
+      expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole("tab", { name: "Summary plot" }));
+    await waitFor(() => {
+      expect(document.querySelectorAll(".bokeh-embed-wrapper").length).toBe(1);
     });
   });
 
-  it("shows expand controls for each host-level plot and closes zoom overlay", async () => {
+  it("remounts a single embed when switching host-level plot tabs", async () => {
     window.Bokeh = {
       embed: {
-        embed_item: vi.fn(),
+        embed_item: vi.fn(() => Promise.resolve()),
       },
     };
     vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
@@ -411,54 +420,25 @@ describe("JobDetail", () => {
     vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
       minimalJobDetailResponse
     );
-    vi.spyOn(apiModule.api, "getJobPlots").mockImplementation(async (_pk, plot, zoom) => {
-      if (zoom) {
-        return {
-          status: "ready",
-          plot,
-          plot_item: { doc: {}, root_ids: [`${plot}-zoom`] },
-          unavailable_reason: null,
-        };
-      }
-      return batchPlotsResponseWithRoots();
-    });
+    mockAllPlotCallsReady();
 
     renderJobDetail("12345");
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
     });
-    await userEvent.click(screen.getByRole("tab", { name: "Plots" }));
-
-    expect(screen.getByRole("heading", { name: "Summary plot" })).toBeInTheDocument();
-
+    await userEvent.click(screen.getByRole("tab", { name: "Summary plot" }));
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: "Expand Summary plot" }),
-      ).not.toBeDisabled();
+      expect(document.querySelectorAll(".bokeh-embed-wrapper").length).toBe(1);
     });
-
-    const expandNames = [
-      "Expand Summary plot",
-      "Expand Heatmap",
-      "Expand CPU Roofline",
-      "Expand GPU Roofline (PCIe/NvLink)",
-    ];
-    expandNames.forEach((name) => {
-      expect(screen.getByRole("button", { name })).not.toBeDisabled();
+    await userEvent.click(
+      screen.getByRole("tab", { name: "GPU Roofline (PCIe/NvLink)" }),
+    );
+    await waitFor(() => {
+      expect(document.querySelectorAll(".bokeh-embed-wrapper").length).toBe(1);
     });
-
-    await userEvent.click(screen.getByRole("button", { name: "Expand Summary plot" }));
-    expect(
-      screen.getByRole("dialog", { name: "Summary plot zoom view" })
-    ).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "Close zoom window" }));
-    expect(
-      screen.queryByRole("dialog", { name: "Summary plot zoom view" })
-    ).not.toBeInTheDocument();
   });
 
-  it("keeps expand disabled until Bokeh embed finishes", async () => {
+  it("shows per-plot loading copy while Bokeh embed is pending on a plot tab", async () => {
     window.Bokeh = {
       embed: {
         embed_item: vi.fn(() => new Promise(() => {})),
@@ -470,25 +450,15 @@ describe("JobDetail", () => {
     vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
       minimalJobDetailResponse
     );
-    vi.spyOn(apiModule.api, "getJobPlots").mockImplementation(async (_pk, plot, zoom) => {
-      if (zoom) {
-        return {
-          status: "ready",
-          plot,
-          plot_item: { doc: {}, root_ids: [`${plot}-zoom`] },
-          unavailable_reason: null,
-        };
-      }
-      return batchPlotsResponseWithRoots();
-    });
+    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(batchPlotsResponseWithRoots());
 
     renderJobDetail("12345");
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
     });
-    await userEvent.click(screen.getByRole("tab", { name: "Plots" }));
-    expect(screen.getByRole("button", { name: "Expand Summary plot" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary plot" }));
+    expect(screen.getByText(/Loading Summary plot/i)).toBeInTheDocument();
   });
 });
 
