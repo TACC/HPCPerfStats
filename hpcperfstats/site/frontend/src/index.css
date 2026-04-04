@@ -375,8 +375,23 @@ body {
   max-width: 280px;
 }
 
+/* Browse home + job list (narrow): tab row sticks to viewport top while scrolling */
+.search-browse-tabs,
+.job-list-view-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1015;
+  background-color: var(--bs-body-bg, #fff);
+  padding-top: 0.25rem;
+}
+
 /* Job detail: Job data inner tabs (Bootstrap nav-tabs look) */
 .job-detail-analysis-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1015;
+  background-color: var(--bs-body-bg, #fff);
+  padding-top: 0.35rem;
   border-bottom: 1px solid var(--bs-border-color, #dee2e6);
 }
 .job-detail-analysis-tabs .nav-link {
@@ -615,6 +630,12 @@ body {
   main.mt-4 {
     padding-left: env(safe-area-inset-left, 0);
     padding-right: env(safe-area-inset-right, 0);
+  }
+
+  /* Sit below sticky Jobs/Charts tabs (tabs z-index 1015) */
+  .job-list-table-wrapper thead th {
+    top: 3.5rem;
+    z-index: 1010;
   }
 }
 
