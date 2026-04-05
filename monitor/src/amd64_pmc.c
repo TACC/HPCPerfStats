@@ -86,11 +86,18 @@ static int amd64_pmc_begin_cpu(char *cpu)
     }
   }
 
-  uint64_t inst_retired = 1 << 30;
-  if (pwrite(msr_fd, &inst_retired, sizeof(inst_retired),  MSR_HW_CONFIG) < 0) {
+  /* HWCR must be read-modify-write: a write of only (1<<30) clears other bits
+   * and is rejected on Zen (EIO / wrmsr "cannot set MSR"). */
+  uint64_t hwcr = 0;
+  if (pread(msr_fd, &hwcr, sizeof(hwcr), MSR_HW_CONFIG) != (ssize_t) sizeof(hwcr)) {
+    ERROR("cannot read HWCR before enabling instr retired ctr (MSR %08X) through `%s': %m\n",
+          (unsigned) MSR_HW_CONFIG, msr_path);
+    goto out;
+  }
+  hwcr |= (1ULL << 30);
+  if (pwrite(msr_fd, &hwcr, sizeof(hwcr), MSR_HW_CONFIG) < 0) {
     ERROR("cannot enable instr retired ctr at MSR %08X through `%s': %m\n",
-	  (unsigned) MSR_HW_CONFIG,
-	  msr_path);
+          (unsigned) MSR_HW_CONFIG, msr_path);
     goto out;
   }
   /*
