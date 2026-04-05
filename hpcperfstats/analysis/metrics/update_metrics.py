@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
-from django.db import close_old_connections, connections
+from django.db import close_old_connections, connections, transaction
 from django.db.models import Count, F, IntegerField, Max, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, DatabaseError
@@ -45,9 +45,9 @@ DEBUG = cfg.get_debug()
 # Process jobs in chunks to bound memory; full job rows are not all held at once.
 CHUNK_SIZE = 500
 
-# host_data "latest sample per host" probes use host__in=(...). Large IN lists
-# produce slow parallel aggregates and often hit statement_timeout; keep each
-# query bounded (PostgreSQL uses DISTINCT ON per batch; see _latest_sample_time_by_host).
+# host_data "latest sample per host" probes: keep each round-trip bounded.
+# PostgreSQL uses a per-host LATERAL + LIMIT 1 (index probe on (host, time))
+# inside a short transaction with parallel workers disabled for the probe.
 HOST_LAST_TIME_LOOKUP_BATCH = 64
 
 # Running a full GC every chunk is expensive on large backfills; amortize it.
@@ -249,16 +249,26 @@ def _latest_sample_time_by_host(hosts):
     tbl = ops.quote_name(host_data._meta.db_table)
     col_host = ops.quote_name("host")
     col_time = ops.quote_name("time")
+    # DISTINCT ON + ORDER BY over many hypertable chunks can still trigger huge
+    # parallel sorts. One backward index scan per host (LATERAL LIMIT 1) stays
+    # bounded when (host, time) is indexed.
     sql = (
-        "SELECT DISTINCT ON ({h}) {h}, {t} FROM {tbl} "
-        "WHERE {h} = ANY(%s) ORDER BY {h}, {t} DESC"
+        "SELECT h.host_val, m.{t} FROM unnest(%s::text[]) AS h(host_val) "
+        "LEFT JOIN LATERAL ("
+        " SELECT d.{t} FROM {tbl} d WHERE d.{h} = h.host_val "
+        " ORDER BY d.{t} DESC LIMIT 1"
+        ") AS m ON TRUE"
     ).format(h=col_host, t=col_time, tbl=tbl)
+    using = getattr(conn, "alias", None) or "default"
     for i in range(0, len(host_list), batch):
       chunk = host_list[i:i + batch]
-      with conn.cursor() as cursor:
-        cursor.execute(sql, [chunk])
-        for row_host, row_time in cursor.fetchall():
-          latest_by_host[row_host] = row_time
+      with transaction.atomic(using=using):
+        with conn.cursor() as cursor:
+          cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+          cursor.execute(sql, [chunk])
+          for row_host, row_time in cursor.fetchall():
+            if row_time is not None:
+              latest_by_host[row_host] = row_time
     return latest_by_host
 
   for i in range(0, len(host_list), batch):

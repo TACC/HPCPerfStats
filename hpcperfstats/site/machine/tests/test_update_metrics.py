@@ -1,6 +1,7 @@
 """Unit tests for analysis.metrics.update_metrics (_iter_chunked_pks).
 
 """
+import contextlib
 from datetime import datetime
 from unittest.mock import MagicMock
 
@@ -13,6 +14,7 @@ def _patch_connections_vendor(monkeypatch, vendor):
   """Make update_metrics see connections['default'].vendor == vendor."""
   fake_conn = MagicMock()
   fake_conn.vendor = vendor
+  fake_conn.alias = "default"
 
   def quote_name(name):
     return '"%s"' % str(name).replace('"', '""')
@@ -447,3 +449,59 @@ def test_ready_jids_batches_host_last_time_lookups(monkeypatch):
   ready = update_metrics._ready_jids_from_job_rows(jobs)
   assert ready == [1]
   assert filter_batches == [("n1", "n2"), ("n3",)]
+
+
+def test_latest_sample_time_by_host_postgresql_uses_lateral_unnest(monkeypatch):
+  """PostgreSQL path uses LATERAL LIMIT 1 per host (not DISTINCT ON) and batches."""
+  exec_log = []
+  monkeypatch.setattr(
+      update_metrics.transaction,
+      "atomic",
+      lambda using=None: contextlib.nullcontext(),
+  )
+  monkeypatch.setattr(update_metrics, "HOST_LAST_TIME_LOOKUP_BATCH", 2)
+
+  class FakeCursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args, **kwargs):
+      return False
+
+    def execute(self, sql, params=None):
+      exec_log.append((sql, params))
+      if "unnest" in sql.lower() and params and params[0]:
+        ts = datetime(2025, 1, 1, 12, 0, 5)
+        self._rows = [(h, ts) for h in params[0]]
+      else:
+        self._rows = []
+
+    def fetchall(self):
+      return getattr(self, "_rows", [])
+
+  fake_conn = MagicMock()
+  fake_conn.vendor = "postgresql"
+  fake_conn.alias = "default"
+
+  def quote_name(name):
+    return '"%s"' % str(name).replace('"', '""')
+
+  fake_ops = MagicMock()
+  fake_ops.quote_name = quote_name
+  fake_conn.ops = fake_ops
+  fake_conn.cursor = lambda: FakeCursor()
+
+  handler = MagicMock()
+  handler.__getitem__ = lambda self, name: fake_conn
+  monkeypatch.setattr(update_metrics, "connections", handler)
+
+  out = update_metrics._latest_sample_time_by_host(["z", "y", "x"])
+  assert sorted(out.keys()) == ["x", "y", "z"]
+  lateral_sql = [e for e in exec_log if e[0] and "unnest" in e[0].lower()]
+  assert len(lateral_sql) == 2
+  assert [e[1][0] for e in lateral_sql] == [["x", "y"], ["z"]]
+  assert all("LEFT JOIN LATERAL" in e[0] for e in lateral_sql)
+  assert all("LIMIT 1" in e[0] for e in lateral_sql)
+  set_local = [e for e in exec_log if e[0] and "SET LOCAL" in e[0]]
+  assert len(set_local) == 2
+  assert all("max_parallel_workers_per_gather = 0" in e[0] for e in set_local)
