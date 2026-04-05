@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
 # Remove any existing ./rpmbuild tree, then create ./rpmbuild/* under the monitor directory,
-# copy hpcperfstats.spec into SPECS,
-# and rebuild the source tarball (make dist) on every run — copied to rpmbuild/SOURCES.
+# copy hpcperfstats.spec into SPECS, build pinned static deps once into ./embedded-static-prefix/,
+# run configure + make dist with HPC_BUNDLE_EMBED_PREFIX=1 so the tarball includes that tree,
+# and copy the tarball to rpmbuild/SOURCES.
 #
-# Pinned static libev / rabbitmq-c / (x86) LIKWID under rpmbuild/static-prefix are built
-# only so ./configure can succeed for make dist; the RPM binary is still built in %%build
-# via build_static_bundle.sh inside the unpacked tarball (separate PREFIX under %%{_builddir}).
+# The spec build uses SKIP_DEPS=1 and PREFIX=.../embedded-static-prefix inside the unpacked
+# sources so only hpcperfstatsd is compiled (no second libev/rabbitmq-c/LIKWID build).
 #
 # Usage (from anywhere; paths are anchored to HPCPerfStats/monitor):
 #   ./scripts/prepare_rpmbuild_dirs.sh
 #
 # Environment:
 #   SKIP_DEPS  If 1, skip rebuilding static deps when PREFIX already has the .a files
-#              (passed through to build_static_bundle.sh --deps-only). Each run removes
-#              ./rpmbuild first, so static-prefix starts empty; leave unset unless you
-#              fill PREFIX yourself.
+#              (passed through to build_static_bundle.sh --deps-only). Prepare removes
+#              embedded-static-prefix/ each run; leave unset for normal use.
 #   HPC_BUNDLE_RELEASE_BUILD  Defaults to 1 so dependency builds match release tuning;
 #              set to 0 to override.
 #
@@ -22,6 +21,7 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly SPEC_SRC="${MONITOR_DIR}/hpcperfstats.spec"
+readonly EMBED_PREFIX="${MONITOR_DIR}/embedded-static-prefix"
 
 monitor_spec_field() {
   local field="$1"
@@ -86,8 +86,10 @@ tb="${tarbase}-${ver}.tar.gz"
 sources_dir="${MONITOR_DIR}/rpmbuild/SOURCES"
 specs_dir="${MONITOR_DIR}/rpmbuild/SPECS"
 topdir="${MONITOR_DIR}/rpmbuild"
-static_prefix="${topdir}/static-prefix"
 static_srcdir="${topdir}/static-src"
+
+echo "Removing any prior ${EMBED_PREFIX} ..."
+rm -rf "${EMBED_PREFIX}"
 
 if test -e "${topdir}"; then
   echo "Removing existing ${topdir} ..."
@@ -105,8 +107,8 @@ mkdir -p \
 cp -f "${SPEC_SRC}" "${specs_dir}/hpcperfstats.spec"
 echo "Spec installed: ${specs_dir}/hpcperfstats.spec"
 
-echo "Building pinned static deps into ${static_prefix} (build_static_bundle.sh --deps-only) ..."
-export PREFIX="${static_prefix}"
+echo "Building pinned static deps into ${EMBED_PREFIX} (build_static_bundle.sh --deps-only) ..."
+export PREFIX="${EMBED_PREFIX}"
 export SRCDIR="${static_srcdir}"
 export HPC_BUNDLE_RELEASE_BUILD="${HPC_BUNDLE_RELEASE_BUILD:-1}"
 mkdir -p "${PREFIX}/include" "${PREFIX}/lib" "${PREFIX}/lib64" "${PREFIX}/lib/pkgconfig"
@@ -161,7 +163,7 @@ EOF
   exit 1
 fi
 
-(cd "${MONITOR_DIR}" && make dist)
+(cd "${MONITOR_DIR}" && HPC_BUNDLE_EMBED_PREFIX=1 make dist)
 
 if test ! -f "${MONITOR_DIR}/${tb}"; then
   echo "make dist did not produce ${MONITOR_DIR}/${tb}" >&2

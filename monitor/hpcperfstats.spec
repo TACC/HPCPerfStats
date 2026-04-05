@@ -8,45 +8,29 @@
 Summary: Job-level Monitoring Client
 Name: hpcperfstatsd
 Version: 3.0
-Release: 1%{?dist}
+Release: 5%{?dist}
 License: GPL
 Vendor: Texas Advanced Computing Center
 Group: System Environment/Base
 Packager: TACC - sharrell@tacc.utexas.edu
 Source: %{srcname}-%{version}.tar.gz
 #
-# Local rpmbuild: scripts/prepare_rpmbuild_dirs.sh creates ./rpmbuild/*, copies this spec to
-# rpmbuild/SPECS/, runs build_static_bundle.sh --deps-only into rpmbuild/static-prefix so
-# make dist can configure, rebuilds hpcperfstats-%%{version}.tar.gz every run, and copies it
-# to SOURCES. The daemon and its static deps are still built in %%build (build_static_bundle.sh).
+# Local rpmbuild: scripts/prepare_rpmbuild_dirs.sh removes ./rpmbuild, recreates it, builds
+# pinned static deps once into ./embedded-static-prefix/, runs make dist with
+# HPC_BUNDLE_EMBED_PREFIX=1 so the tarball includes that tree, and copies the tarball to
+# SOURCES. %%build only links hpcperfstatsd against embedded-static-prefix (SKIP_DEPS=1).
 # The script prints the rpmbuild -ba command to run next.
 
-# Static bundle: monitor/scripts/build_static_bundle.sh builds pinned libev,
-# rabbitmq-c, and (on x86_64/i686) LIKWID as static archives, then configures
-# with --enable-all-static. It probes InfiniBand, NVIDIA DCGM, and AMD GPUPerfAPI
-# on the build host and passes --disable-* when devel stacks are missing; CPU
-# backend is --with-cpu-counter-backend=auto (LIKWID on x86, DCGM elsewhere).
-# Runtime does not require system libev, librabbitmq, or likwid packages.
+# Static third-party archives (libev, rabbitmq-c, LIKWID on x86) ship inside the source
+# tarball from prepare; %%build does not recompile them. build_static_bundle.sh still runs
+# host probes and configures with --enable-all-static for the daemon link only.
 
-# Toolchain and tools to compile vendored deps (libev: autotools; rabbitmq-c: cmake).
 BuildRequires: gcc
-BuildRequires: gcc-c++
 BuildRequires: make
-BuildRequires: autoconf
-BuildRequires: automake
-BuildRequires: libtool
-# NOTE: some HPC sites provide CMake via environment modules (Lmod) rather than
-# an installed RPM package, so we do not hard-require cmake/cmake3 RPM metadata.
-# %build still requires a working cmake command in PATH.
 BuildRequires: pkgconfig
 BuildRequires: systemd-rpm-macros
 BuildRequires: gzip
 BuildRequires: tar
-# Script downloads pinned source tarballs (override pins via env in %%build if needed).
-BuildRequires: curl
-# LIKWID static build (x86_64) uses the upstream Makefile; perl/gawk are commonly required.
-BuildRequires: perl
-BuildRequires: gawk
 # configure auto-detects NVIDIA/AMD GPUs via lspci during %%build.
 BuildRequires: pciutils
 # InfiniBand (libibmad + headers): omit on hosts where IB support is unwanted.
@@ -66,10 +50,11 @@ This package provides the hpcperfstatsd daemon, along with a systemd unit for
 control. The daemon publishes job-level host statistics (CPU, memory, optional
 InfiniBand, Lustre, NVIDIA DCGM GPU, AMD GPU, etc.).
 
-The binary is built with the monitor's static bundle: libev, rabbitmq-c, and
-(on x86) LIKWID are linked statically into hpcperfstatsd so the RPM does not
-depend on those libraries at runtime. Shared-only stacks (DCGM, optional IB,
-etc.) remain dynamic per configure flags.
+The binary is linked with pre-built static libev, rabbitmq-c, and (on x86)
+LIKWID archives that are included in the source tarball from
+prepare_rpmbuild_dirs.sh, so the RPM does not depend on those distro packages at
+runtime. Shared-only stacks (DCGM, optional IB, etc.) remain dynamic per
+configure flags.
 
 Optional features and branch highlights: LIKWID (x86) or DCGM (aarch64) CPU
 counters, shared DCGM attach (embedded or loopback nv-hostengine), bundled
@@ -81,24 +66,15 @@ robustness.
 
 %build
 cd "%{_builddir}/%{srcname}-%{version}"
-if ! command -v cmake >/dev/null 2>&1 && ! command -v cmake3 >/dev/null 2>&1; then
-  echo "ERROR: cmake (or cmake3) is required in PATH during %build." >&2
-  echo "If your site uses Lmod, load a cmake module before invoking rpmbuild." >&2
+export PREFIX="%{_builddir}/%{srcname}-%{version}/embedded-static-prefix"
+if test ! -d "${PREFIX}/include" || ! { test -d "${PREFIX}/lib" || test -d "${PREFIX}/lib64"; }; then
+  echo "ERROR: embedded-static-prefix/ missing from source tarball; rebuild with scripts/prepare_rpmbuild_dirs.sh" >&2
   exit 1
 fi
-if ! command -v cmake >/dev/null 2>&1 && command -v cmake3 >/dev/null 2>&1; then
-  mkdir -p .rpmbuild-tools
-  ln -sf "$(command -v cmake3)" .rpmbuild-tools/cmake
-  export PATH="$(pwd)/.rpmbuild-tools:${PATH}"
-fi
-export PREFIX="%{_builddir}/hpcperfstats-static-prefix"
-export SRCDIR="%{_builddir}/hpcperfstats-static-src"
+export SKIP_DEPS=1
 export JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
-# RPM builds must produce an optimized release daemon from the static bundle path.
 export HPC_BUNDLE_RELEASE_BUILD=1
-mkdir -p "${PREFIX}/include" "${PREFIX}/lib" "${PREFIX}/lib64" "${PREFIX}/lib/pkgconfig"
-# Network access is required on first build to fetch pinned dependency tarballs
-# unless you pre-populate ${SRCDIR} / ${PREFIX} and set SKIP_DEPS=1 below.
+# Third-party .a archives come from the tarball; only hpcperfstatsd is compiled here.
 ./scripts/build_static_bundle.sh
 sed -i 's/CONFIGFILE/\%{_sysconfdir}\/hpcperfstats\/hpcperfstats.conf/' src/hpcperfstats.service
 sed -i 's/localhost/stats.frontera.tacc.utexas.edu/' src/hpcperfstats.conf
@@ -136,6 +112,11 @@ fi
 %systemd_postun_with_restart hpcperfstats.service
 
 %changelog
+* Sun Apr 05 2026 sharrell@tacc.utexas.edu - 3.0-5
+- Ship embedded-static-prefix inside the source tarball from prepare_rpmbuild_dirs.sh;
+  %%build uses SKIP_DEPS=1 and only compiles hpcperfstatsd. Drop %%build-only dep tools
+  (curl, cmake, autotools chain for vendored sources, perl/gawk for LIKWID build).
+
 * Sat Mar 28 2026 sharrell@tacc.utexas.edu - 3.0-4
 - Rename package to hpcperfstatsd; source tarball prefix stays hpcperfstats (AC_INIT / make dist).
 

@@ -44,3 +44,4 @@ Makefile.in
 *.log
 /.build*
 /rpmbuild
+/embedded-static-prefix

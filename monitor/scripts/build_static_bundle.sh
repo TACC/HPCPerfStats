@@ -11,6 +11,10 @@
 #   ./scripts/build_static_bundle.sh              # deps + monitor (PREFIX default: <repo>/.build/prefix-static)
 #   ./scripts/build_static_bundle.sh --deps-only  # static .a deps only (no hpcperfstatsd)
 #   ./scripts/ensure_dotbuild_prefix_static.sh    # --deps-only with PREFIX=<repo>/.build/prefix
+#
+# RPM: prepare_rpmbuild_dirs.sh builds deps into ./embedded-static-prefix/ and make dist
+# bundles that tree into the source tarball. In %%build, set PREFIX to .../embedded-static-prefix
+# and SKIP_DEPS=1 so this script only configures and compiles hpcperfstatsd.
 # Environment:
 #   PREFIX          Install tree (default: <repo>/.build/prefix-static)
 #   SRCDIR          Download and build under this directory (default: <repo>/.build/src-static)
