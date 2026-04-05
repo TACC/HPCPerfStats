@@ -408,3 +408,40 @@ def test_filter_jids_with_samples_after_end_requires_all_hosts(monkeypatch):
 
   ready = update_metrics._filter_jids_with_samples_after_end([101, 102])
   assert ready == [102]
+
+
+def test_ready_jids_batches_host_last_time_lookups(monkeypatch):
+  """Large host unions should query host_data in bounded host__in batches."""
+  monkeypatch.setattr(update_metrics, "HOST_LAST_TIME_LOOKUP_BATCH", 2)
+  filter_batches = []
+
+  class _HostManager:
+    def filter(self, **kwargs):
+      filter_batches.append(tuple(sorted(kwargs["host__in"])))
+      class _Qs:
+        def values(self, *fields):
+          class _Annotate:
+            def annotate(self, **ann):
+              return [
+                  {
+                      "host": h,
+                      "last_time": datetime(2025, 4, 10, 13, 0, 0),
+                  }
+                  for h in kwargs["host__in"]
+              ]
+          return _Annotate()
+      return _Qs()
+
+  monkeypatch.setattr(update_metrics, "_host_name_suffix", lambda: "")
+  monkeypatch.setattr(update_metrics.host_data, "objects", _HostManager())
+
+  jobs = [
+      {
+          "jid": 1,
+          "end_time": datetime(2025, 4, 10, 12, 0, 0),
+          "host_list": ["n1", "n2", "n3"],
+      },
+  ]
+  ready = update_metrics._ready_jids_from_job_rows(jobs)
+  assert ready == [1]
+  assert filter_batches == [("n1", "n2"), ("n3",)]

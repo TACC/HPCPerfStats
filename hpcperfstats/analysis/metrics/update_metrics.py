@@ -45,6 +45,11 @@ DEBUG = cfg.get_debug()
 # Process jobs in chunks to bound memory; full job rows are not all held at once.
 CHUNK_SIZE = 500
 
+# host_data "latest sample per host" probes use host__in=(...). Thousands of hosts
+# in one IN list produce very slow parallel aggregates and often hit
+# statement_timeout; batch to keep each query bounded.
+HOST_LAST_TIME_LOOKUP_BATCH = 256
+
 # Running a full GC every chunk is expensive on large backfills; amortize it.
 GC_COLLECT_EVERY_N_CHUNKS = 20
 
@@ -231,6 +236,25 @@ def _fqdn_hosts_for_job(job_row):
   return hosts
 
 
+def _latest_sample_time_by_host(hosts):
+  """Map host -> max(host_data.time) for ``hosts``, using bounded IN batches."""
+  latest_by_host = {}
+  if not hosts:
+    return latest_by_host
+  host_list = sorted(hosts)
+  batch = max(1, int(HOST_LAST_TIME_LOOKUP_BATCH))
+  for i in range(0, len(host_list), batch):
+    chunk = host_list[i:i + batch]
+    qs = (
+        host_data.objects.filter(host__in=chunk)
+        .values("host")
+        .annotate(last_time=Max("time"))
+    )
+    for row in qs:
+      latest_by_host[row.get("host")] = row.get("last_time")
+  return latest_by_host
+
+
 def _ready_jids_from_job_rows(jobs):
   """Return ready jids from pre-fetched job rows (jid/end_time/host_list)."""
   if not jobs:
@@ -245,14 +269,7 @@ def _ready_jids_from_job_rows(jobs):
     job_hosts[row["jid"]] = hosts
     unique_hosts.update(hosts)
 
-  latest_by_host = {}
-  if unique_hosts:
-    for row in (
-        host_data.objects.filter(host__in=unique_hosts)
-        .values("host")
-        .annotate(last_time=Max("time"))
-    ):
-      latest_by_host[row.get("host")] = row.get("last_time")
+  latest_by_host = _latest_sample_time_by_host(unique_hosts)
 
   ready = []
   for row in jobs:
