@@ -54,12 +54,15 @@ rpmspec -q --queryformat '%{name}-%{version}-%{release}\n' hpcperfstats.spec | h
 
 ```bash
 ./scripts/prepare_rpmbuild_dirs.sh
-# then run the rpmbuild -ba line the script prints (make dist uses this checkout as sources)
+# If hpcperfstats-<version>.tar.gz is not already next to the script output, produce it
+# from the checkout (e.g. autoreconf -fi && ./configure --with-systemduserunitdir=no && make dist)
+# and copy it into rpmbuild/SOURCES/ (the prepare script copies an existing tarball automatically).
+# Then run the rpmbuild -ba line the script prints.
 ```
 
-Prepare runs **`build_static_bundle.sh --deps-only`** into **`rpmbuild/static-prefix`** before **`./configure`**, so **`make dist`** does not require system **librabbitmq** / **libev** / **likwid** devel packages.
+Prepare only creates **`rpmbuild/`** layout and installs the spec; it does **not** run **`build_static_bundle.sh`** or **`make dist`**.
 
-The spec **`%build`** runs **`./scripts/build_static_bundle.sh`**, so the first full build on a clean host needs **network** access to fetch pinned dependency tarballs (unless you pre-populate **`PREFIX`** / **`SRCDIR`** and adjust the spec to set **`SKIP_DEPS=1`**—not in the stock spec). Install all **`BuildRequires`** from the spec before **`rpmbuild`**.
+The spec **`%build`** runs **`./scripts/build_static_bundle.sh`**, which fetches/builds pinned deps and compiles the daemon, so the first full **`rpmbuild`** on a clean host needs **network** access for dependency tarballs (unless you pre-populate **`PREFIX`** / **`SRCDIR`** under **`%{_builddir}`** and set **`SKIP_DEPS=1`** in the environment—not in the stock spec). Install all **`BuildRequires`** from the spec before **`rpmbuild`**.
 
 If **`rpmlint`** is installed, run **`rpmlint hpcperfstats.spec`** on spec edits.
 

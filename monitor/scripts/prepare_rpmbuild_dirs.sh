@@ -1,20 +1,18 @@
 #!/usr/bin/env bash
-# Create ./rpmbuild/* under the monitor directory, copy hpcperfstats.spec into SPECS,
-# and build <AC_INIT>-<Version>.tar.gz from this checkout via make dist (no external
-# tarball download — the tree containing this script is the package source).
+# Create ./rpmbuild/* under the monitor directory and copy hpcperfstats.spec into SPECS.
 #
-# Before ./configure, runs scripts/build_static_bundle.sh --deps-only so pinned static
-# libev, rabbitmq-c, and (on x86) LIKWID exist under rpmbuild/static-prefix; configure
-# sees them via CPPFLAGS/LDFLAGS/PKG_CONFIG_PATH (same idea as the RPM %%build PREFIX).
+# This script does not download, build static dependencies, or run configure/make.
+# Pinned libev / rabbitmq-c / LIKWID fetch and build, plus the daemon link, run only
+# during rpmbuild inside hpcperfstats.spec (%%build: scripts/build_static_bundle.sh).
+#
+# Before rpmbuild -ba, place the source tarball in rpmbuild/SOURCES. It must match
+# Source: in the spec (hpcperfstats-<Version>.tar.gz from configure.ac AC_INIT). For
+# example, from this checkout:
+#   autoreconf -fi && ./configure --with-systemduserunitdir=no && make dist
+#   cp hpcperfstats-<version>.tar.gz rpmbuild/SOURCES/
 #
 # Usage (from anywhere; paths are anchored to HPCPerfStats/monitor):
 #   ./scripts/prepare_rpmbuild_dirs.sh
-#
-# Environment:
-#   SKIP_DEPS  If 1, skip rebuilding static deps when PREFIX already has the .a files
-#              (passed through to build_static_bundle.sh --deps-only).
-#   HPC_BUNDLE_RELEASE_BUILD  Defaults to 1 in this script so rpmbuild staging
-#              prefers optimized dependency builds; set to 0 to override.
 #
 set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,31 +25,6 @@ monitor_spec_field() {
   grep -E "^${field}:" "${file}" | head -1 | sed 's/^[^:]*:[[:space:]]*//;s/[[:space:]]*$//'
 }
 
-is_x86_build_host() {
-  case "$(uname -m)" in
-    x86_64|i?86) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-have_static_archive_basename() {
-  local name="$1"
-  test -f "${PREFIX}/lib/${name}" || test -f "${PREFIX}/lib64/${name}"
-}
-
-verify_likwid_static_link_probe() {
-  local tbase out rc
-  tbase="$(mktemp "${TMPDIR:-/tmp}/hps_likwid_probe.XXXXXX")"
-  out="${tbase}.out"
-  printf '%s\n' '#include <likwid.h>' 'int main(void){ return perfmon_init(0, (int*)0); }' > "${tbase}.c"
-  rc=0
-  if ! ${CC:-gcc} ${CPPFLAGS:-} ${LDFLAGS:-} "${tbase}.c" ${LIBS:-} -lpthread -ldl -o "${out}" >/dev/null 2>&1; then
-    rc=1
-  fi
-  rm -f "${tbase}.c" "${out}"
-  return "${rc}"
-}
-
 cd "${MONITOR_DIR}"
 
 if test ! -f "${SPEC_SRC}"; then
@@ -60,7 +33,6 @@ if test ! -f "${SPEC_SRC}"; then
 fi
 
 ver="$(monitor_spec_field Version "${SPEC_SRC}")"
-# Tarball name follows configure.ac AC_INIT (must match spec Source and %%global srcname there).
 tarbase="$(sed -n 's/^AC_INIT(\[\([^]]*\)\].*/\1/p' "${MONITOR_DIR}/configure.ac" | head -1)"
 if test -z "${ver}" || test -z "${tarbase}"; then
   echo "Could not read Version from ${SPEC_SRC} or package name from configure.ac AC_INIT" >&2
@@ -85,8 +57,6 @@ tb="${tarbase}-${ver}.tar.gz"
 sources_dir="${MONITOR_DIR}/rpmbuild/SOURCES"
 specs_dir="${MONITOR_DIR}/rpmbuild/SPECS"
 topdir="${MONITOR_DIR}/rpmbuild"
-static_prefix="${topdir}/static-prefix"
-static_srcdir="${topdir}/static-src"
 
 mkdir -p \
   "${sources_dir}" \
@@ -99,74 +69,14 @@ mkdir -p \
 cp -f "${SPEC_SRC}" "${specs_dir}/hpcperfstats.spec"
 echo "Spec installed: ${specs_dir}/hpcperfstats.spec"
 
-echo "Building pinned static deps into ${static_prefix} (build_static_bundle.sh --deps-only) ..."
-export PREFIX="${static_prefix}"
-export SRCDIR="${static_srcdir}"
-export HPC_BUNDLE_RELEASE_BUILD="${HPC_BUNDLE_RELEASE_BUILD:-1}"
-mkdir -p "${PREFIX}/include" "${PREFIX}/lib" "${PREFIX}/lib64" "${PREFIX}/lib/pkgconfig"
-(cd "${MONITOR_DIR}" && ./scripts/build_static_bundle.sh --deps-only)
-
-export CPPFLAGS="-I${PREFIX}/include ${CPPFLAGS:-}"
-export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
-export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
-
-if is_x86_build_host; then
-  if ! have_static_archive_basename "liblikwid.a" \
-     || ! have_static_archive_basename "liblikwid-hwloc.a" \
-     || ! have_static_archive_basename "liblikwid-lua.a"; then
-    cat <<EOF >&2
-LIKWID static archives were not found under ${PREFIX}/lib or ${PREFIX}/lib64.
-Expected: liblikwid.a, liblikwid-hwloc.a, liblikwid-lua.a
-Rebuild deps with SKIP_DEPS unset:
-  PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
-EOF
-    exit 1
-  fi
-
-  # Some toolchains need explicit static group ordering for LIKWID during configure probes.
-  export LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm -lrt ${LIBS:-}"
-  if ! verify_likwid_static_link_probe; then
-    cat <<EOF >&2
-Unable to link a trivial LIKWID program from PREFIX=${PREFIX}.
-Check that liblikwid*.a archives match this host/toolchain and that no stale build artifacts remain.
-Try:
-  rm -rf "${PREFIX}" "${SRCDIR}"
-  PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
-EOF
-    exit 1
-  fi
+if test -f "${MONITOR_DIR}/${tb}"; then
+  cp -f "${MONITOR_DIR}/${tb}" "${sources_dir}/${tb}"
+  echo "Source tarball copied: ${sources_dir}/${tb}"
+else
+  echo "Note: ${MONITOR_DIR}/${tb} not found — copy it to ${sources_dir}/ before rpmbuild -ba."
+  echo "  Example: (autoreconf -fi && ./configure --with-systemduserunitdir=no && make dist) && cp ${tb} ${sources_dir}/"
 fi
 
-echo "Building ${tb} from ${MONITOR_DIR} (make distclean; configure; make dist) ..."
-if test -f "${MONITOR_DIR}/Makefile"; then
-  echo "Running make distclean ..."
-  (cd "${MONITOR_DIR}" && make distclean)
-fi
-
-# Regenerate Makefile.in etc. from *.am even when configure exists. Otherwise
-# make dist can fail (e.g. stale tests/Makefile.in still listing
-# test_monitor_configure_help.sh while Makefile.am ships .sh.in only).
-echo "Running autoreconf -fi in ${MONITOR_DIR} ..."
-(cd "${MONITOR_DIR}" && autoreconf -fi)
-
-if ! (cd "${MONITOR_DIR}" && ./configure --with-systemduserunitdir=no); then
-  cat <<EOF >&2
-configure failed while running make dist for ${tb}.
-Static libraries were expected under ${PREFIX} (from build_static_bundle.sh --deps-only).
-Check the bundle script output, network access for pinned tarballs, and host toolchain.
-EOF
-  exit 1
-fi
-
-(cd "${MONITOR_DIR}" && make dist)
-
-if test ! -f "${MONITOR_DIR}/${tb}"; then
-  echo "make dist did not produce ${MONITOR_DIR}/${tb}" >&2
-  exit 1
-fi
-
-cp -f "${MONITOR_DIR}/${tb}" "${sources_dir}/${tb}"
-echo "Source tarball: ${sources_dir}/${tb}"
 echo "RPM tree ready under ${topdir}"
 echo ""
 echo "Build binary and source RPMs with:"

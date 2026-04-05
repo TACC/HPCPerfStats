@@ -15,10 +15,10 @@ Group: System Environment/Base
 Packager: TACC - sharrell@tacc.utexas.edu
 Source: %{srcname}-%{version}.tar.gz
 #
-# Local rpmbuild: scripts/prepare_rpmbuild_dirs.sh creates ./rpmbuild/*, copies this spec to
-# rpmbuild/SPECS/, builds pinned static deps into rpmbuild/static-prefix (same role as
-# %%build PREFIX), runs configure+make dist with CPPFLAGS/LDFLAGS/PKG_CONFIG_PATH, and
-# copies the tarball to SOURCES. The script prints the rpmbuild -ba command to run next.
+# Local rpmbuild: scripts/prepare_rpmbuild_dirs.sh creates ./rpmbuild/* and copies this spec
+# to rpmbuild/SPECS/. Put hpcperfstats-%%{version}.tar.gz in rpmbuild/SOURCES (make dist from
+# the checkout, or copy if present). Fetch/build of pinned deps and the daemon happens only
+# in %%build (build_static_bundle.sh). The script prints the rpmbuild -ba command to run next.
 
 # Static bundle: monitor/scripts/build_static_bundle.sh builds pinned libev,
 # rabbitmq-c, and (on x86_64/i686) LIKWID as static archives, then configures
