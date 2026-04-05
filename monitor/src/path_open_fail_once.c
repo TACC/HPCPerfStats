@@ -70,7 +70,11 @@ void path_open_record_failure_once(const char *path)
   }
 
   errno = err;
-  ERROR("cannot open `%s': %m\n", path);
+  /* Missing sysfs/proc trees (no Lustre, no IB, …) are normal on many hosts. */
+  if (err == ENOENT)
+    TRACE("cannot open `%s': %m\n", path);
+  else
+    ERROR("cannot open `%s': %m\n", path);
 
   errno = err;
   (void)failed_add(path);
