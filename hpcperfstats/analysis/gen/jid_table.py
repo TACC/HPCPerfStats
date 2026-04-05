@@ -25,6 +25,21 @@ from hpcperfstats.site.machine.cache_utils import (
 )
 from hpcperfstats.site.machine.models import host_data, job_data
 
+# Chunk host__in on host_data for large jobs; single queries with thousands of
+# hosts often hit PostgreSQL statement_timeout during metrics and plots.
+JID_TABLE_HOST_QUERY_BATCH = 64
+
+
+def _iter_acct_host_batches(acct_host_list, batch_size=None):
+  """Yield successive host__in subsets of acct_host_list (stable order)."""
+  if not acct_host_list:
+    return
+  bs = max(1, int(batch_size or JID_TABLE_HOST_QUERY_BATCH))
+  hosts = list(acct_host_list)
+  for i in range(0, len(hosts), bs):
+    yield hosts[i:i + bs]
+
+
 local_timezone = cfg.get_local_timezone()
 _logger = logging.getLogger(__name__)
 
@@ -118,9 +133,19 @@ class jid_table:
     qtime = time.time()
 
     def _host_list_fn():
-      host_qs = (host_data.objects.filter(**self._base_filter).values_list(
-          "host", flat=True).distinct())
-      return list(set(host_qs))
+      found = set()
+      for host_chunk in _iter_acct_host_batches(self.acct_host_list):
+        host_qs = (
+            host_data.objects.filter(
+                time__gte=self._base_filter["time__gte"],
+                time__lte=self._base_filter["time__lte"],
+                host__in=host_chunk,
+            )
+            .values_list("host", flat=True)
+            .distinct()
+        )
+        found.update(host_qs)
+      return list(found)
 
     _st = self.start_time.isoformat() if self.start_time else ""
     _et = self.end_time.isoformat() if self.end_time else ""
@@ -187,14 +212,55 @@ class jid_table:
         """
     return host_data.objects.filter(**self._base_filter, **extra_filters)
 
+  def _full_host_data_rows_batched(self, cols):
+    """values_list rows for the job window, chunking host__in for large node counts."""
+    rows = []
+    if not self.acct_host_list or not self._base_filter:
+      return rows
+    for host_chunk in _iter_acct_host_batches(self.acct_host_list):
+      qs = (
+          host_data.objects.filter(
+              time__gte=self._base_filter["time__gte"],
+              time__lte=self._base_filter["time__lte"],
+              host__in=host_chunk,
+          )
+          .values_list(*cols)
+          .order_by("host", "time")
+      )
+      for r in qs:
+        if not isinstance(r, (list, tuple)):
+          continue
+        if len(r) < len(cols):
+          continue
+        rows.append(tuple(r[:len(cols)]))
+    return rows
+
   def get_host_time_df(self):
     """DataFrame of (host, time) distinct, ordered by host, time (cached).
 
         """
     def _fn():
-      qs = (self._host_data_qs().values("host", "time").distinct().order_by(
-          "host", "time"))
-      return queryset_to_dataframe(qs)
+      import pandas as pd
+
+      if not self.acct_host_list:
+        return pd.DataFrame(columns=["host", "time"])
+      frames = []
+      for host_chunk in _iter_acct_host_batches(self.acct_host_list):
+        qs = (
+            host_data.objects.filter(
+                time__gte=self._base_filter["time__gte"],
+                time__lte=self._base_filter["time__lte"],
+                host__in=host_chunk,
+            )
+            .values("host", "time")
+            .distinct()
+            .order_by("host", "time")
+        )
+        frames.append(queryset_to_dataframe(qs))
+      if not frames:
+        return pd.DataFrame(columns=["host", "time"])
+      out = pd.concat(frames, ignore_index=True)
+      return out.sort_values(["host", "time"]).reset_index(drop=True)
 
     key = make_cache_key(KEY_HOST_TIME_DF, self.jid)
     result = cached_orm(key, get_site_content_cache_timeout(), _fn)
@@ -208,34 +274,44 @@ class jid_table:
 
     def _fn_pandas_groupby():
       hosts = [str(h) for h in self._base_filter.get("host__in") or []]
-      if not hosts:
-        import pandas as pd
-        return pd.DataFrame(columns=["host", "time", "sum_val"])
-
-      qs = host_data.objects.filter(
-          host__in=hosts,
-          time__gte=self._base_filter["time__gte"],
-          time__lte=self._base_filter["time__lte"],
-          type=typ,
-          event__in=list(events),
-      ).values("host", "time", val_col)
-
       import pandas as pd
 
-      df_raw = queryset_to_dataframe(qs)
-      if df_raw.empty or "host" not in df_raw.columns or "time" not in df_raw.columns:
+      if not hosts:
         return pd.DataFrame(columns=["host", "time", "sum_val"])
 
-      if val_col not in df_raw.columns:
+      frames = []
+      for host_chunk in _iter_acct_host_batches(hosts):
+        qs = host_data.objects.filter(
+            host__in=host_chunk,
+            time__gte=self._base_filter["time__gte"],
+            time__lte=self._base_filter["time__lte"],
+            type=typ,
+            event__in=list(events),
+        ).values("host", "time", val_col)
+        df_raw = queryset_to_dataframe(qs)
+        if (
+            df_raw.empty
+            or "host" not in df_raw.columns
+            or "time" not in df_raw.columns
+            or val_col not in df_raw.columns
+        ):
+          continue
+        df_grouped = (
+            df_raw.groupby(["host", "time"], as_index=False)[val_col]
+            .sum()
+            .rename(columns={val_col: "sum_val"})
+        )
+        frames.append(df_grouped)
+      if not frames:
         return pd.DataFrame(columns=["host", "time", "sum_val"])
-
-      df_grouped = (
-          df_raw.groupby(["host", "time"], as_index=False)[val_col].sum()
-          .rename(columns={val_col: "sum_val"})
+      df_all = pd.concat(frames, ignore_index=True)
+      df_all = (
+          df_all.groupby(["host", "time"], as_index=False)["sum_val"]
+          .sum()
           .sort_values(["host", "time"])
       )
-      df_grouped["sum_val"] = df_grouped["sum_val"] * conv
-      return df_grouped
+      df_all["sum_val"] = df_all["sum_val"] * conv
+      return df_all
 
     def _fn():
       import pandas as pd
@@ -252,21 +328,31 @@ class jid_table:
         from django.db.models import Sum, Value
         from django.db.models.functions import Coalesce
 
-        qs_sql = (
-            host_data.objects.filter(
-                host__in=hosts,
-                time__gte=self._base_filter["time__gte"],
-                time__lte=self._base_filter["time__lte"],
-                type=typ,
-                event__in=list(events),
-            )
-            .values("host", "time")
-            .annotate(sum_val=Coalesce(Sum(val_col), Value(0)))
-            .order_by("host", "time")
-        )
-        df_sql = queryset_to_dataframe(qs_sql)
+        frames = []
+        for host_chunk in _iter_acct_host_batches(hosts):
+          qs_sql = (
+              host_data.objects.filter(
+                  host__in=host_chunk,
+                  time__gte=self._base_filter["time__gte"],
+                  time__lte=self._base_filter["time__lte"],
+                  type=typ,
+                  event__in=list(events),
+              )
+              .values("host", "time")
+              .annotate(sum_val=Coalesce(Sum(val_col), Value(0)))
+              .order_by("host", "time")
+          )
+          frames.append(queryset_to_dataframe(qs_sql))
+        if not frames:
+          return pd.DataFrame(columns=["host", "time", "sum_val"])
+        df_sql = pd.concat(frames, ignore_index=True)
         if df_sql.empty or "sum_val" not in df_sql.columns:
           return pd.DataFrame(columns=["host", "time", "sum_val"])
+        df_sql = (
+            df_sql.groupby(["host", "time"], as_index=False)["sum_val"]
+            .sum()
+            .sort_values(["host", "time"])
+        )
         df_sql["sum_val"] = df_sql["sum_val"].astype("float64") * conv
         return df_sql
       except Exception:
@@ -297,38 +383,13 @@ class jid_table:
     if columns is not None:
       import pandas as pd
 
-      qs = (
-          self._host_data_qs()
-          .values_list(*cols)
-          .order_by("host", "time")
-      )
-      rows = []
-      for r in qs:
-        # Some backends or mismatched schemas can return scalar values or
-        # shorter tuples. Keep only rows that are sequences with at least
-        # len(cols) elements.
-        if not isinstance(r, (list, tuple)):
-          continue
-        if len(r) < len(cols):
-          continue
-        rows.append(tuple(r[:len(cols)]))
+      rows = self._full_host_data_rows_batched(cols)
       return pd.DataFrame(rows, columns=cols)
 
     def _fn():
       import pandas as pd
 
-      qs = (
-          self._host_data_qs()
-          .values_list(*cols)
-          .order_by("host", "time")
-      )
-      rows = []
-      for r in qs:
-        if not isinstance(r, (list, tuple)):
-          continue
-        if len(r) < len(cols):
-          continue
-        rows.append(tuple(r[:len(cols)]))
+      rows = self._full_host_data_rows_batched(cols)
       return pd.DataFrame(rows, columns=cols)
 
     key = make_cache_key(KEY_HOST_DATA_DF, self.jid)

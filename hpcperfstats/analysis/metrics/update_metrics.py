@@ -45,10 +45,10 @@ DEBUG = cfg.get_debug()
 # Process jobs in chunks to bound memory; full job rows are not all held at once.
 CHUNK_SIZE = 500
 
-# host_data "latest sample per host" probes use host__in=(...). Thousands of hosts
-# in one IN list produce very slow parallel aggregates and often hit
-# statement_timeout; batch to keep each query bounded.
-HOST_LAST_TIME_LOOKUP_BATCH = 256
+# host_data "latest sample per host" probes use host__in=(...). Large IN lists
+# produce slow parallel aggregates and often hit statement_timeout; keep each
+# query bounded (PostgreSQL uses DISTINCT ON per batch; see _latest_sample_time_by_host).
+HOST_LAST_TIME_LOOKUP_BATCH = 64
 
 # Running a full GC every chunk is expensive on large backfills; amortize it.
 GC_COLLECT_EVERY_N_CHUNKS = 20
@@ -237,12 +237,30 @@ def _fqdn_hosts_for_job(job_row):
 
 
 def _latest_sample_time_by_host(hosts):
-  """Map host -> max(host_data.time) for ``hosts``, using bounded IN batches."""
+  """Map host -> max(host_data.time) for ``hosts``, using bounded batches."""
   latest_by_host = {}
   if not hosts:
     return latest_by_host
   host_list = sorted(hosts)
   batch = max(1, int(HOST_LAST_TIME_LOOKUP_BATCH))
+  conn = connections["default"]
+  if conn.vendor == "postgresql":
+    ops = conn.ops
+    tbl = ops.quote_name(host_data._meta.db_table)
+    col_host = ops.quote_name("host")
+    col_time = ops.quote_name("time")
+    sql = (
+        "SELECT DISTINCT ON ({h}) {h}, {t} FROM {tbl} "
+        "WHERE {h} = ANY(%s) ORDER BY {h}, {t} DESC"
+    ).format(h=col_host, t=col_time, tbl=tbl)
+    for i in range(0, len(host_list), batch):
+      chunk = host_list[i:i + batch]
+      with conn.cursor() as cursor:
+        cursor.execute(sql, [chunk])
+        for row_host, row_time in cursor.fetchall():
+          latest_by_host[row_host] = row_time
+    return latest_by_host
+
   for i in range(0, len(host_list), batch):
     chunk = host_list[i:i + batch]
     qs = (

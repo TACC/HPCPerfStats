@@ -365,6 +365,7 @@ def test_update_metrics_reuses_shared_pool_per_date(monkeypatch):
 
 def test_filter_jids_with_samples_after_end_requires_all_hosts(monkeypatch):
   """A job is ready only when every host has latest sample strictly after end_time."""
+  _patch_connections_vendor(monkeypatch, "sqlite")
   end = datetime(2025, 4, 10, 12, 0, 0)
   jobs_rows = [
       {
@@ -412,6 +413,7 @@ def test_filter_jids_with_samples_after_end_requires_all_hosts(monkeypatch):
 
 def test_ready_jids_batches_host_last_time_lookups(monkeypatch):
   """Large host unions should query host_data in bounded host__in batches."""
+  _patch_connections_vendor(monkeypatch, "sqlite")
   monkeypatch.setattr(update_metrics, "HOST_LAST_TIME_LOOKUP_BATCH", 2)
   filter_batches = []
 
