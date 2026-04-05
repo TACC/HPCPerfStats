@@ -51,6 +51,18 @@ from hpcperfstats.analysis.plot.summary_metric_descriptions import (
 local_timezone = cfg.get_local_timezone()
 
 
+def _cycled_d3_category20_palette(n):
+  """Return ``n`` colors from d3 Category20, cycling every 20 hosts.
+
+  ``factor_cmap`` requires ``len(palette) == len(factors)``; jobs often exceed
+  20 nodes (Bokeh W-1008 otherwise maps extras to ``nan_color``).
+  """
+  base = d3["Category20"][20]
+  if n <= 0:
+    return []
+  return [base[i % len(base)] for i in range(n)]
+
+
 _CAS_BW_CONV = 64 / (1024 * 1024 * 1024)
 _BYTES_TO_MB = 1 / (1024 * 1024)
 _BYTES_TO_GB = 1 / (1024 * 1024 * 1024)
@@ -905,8 +917,8 @@ class SummaryPlot():
 
     scatter_df = df.dropna(subset=[metric]).sort_values(["host", "time"])
     scatter_source = ColumnDataSource(scatter_df)
-    palette = d3["Category20"][20]
     factors = [str(h) for h in self.host_list]
+    palette = _cycled_d3_category20_palette(len(factors))
     scatter = plot.scatter(
         x="time",
         y=metric,
@@ -942,10 +954,10 @@ class SummaryPlot():
     """Build host_time_df, merge all configured metrics (amd64_pmc, intel_8pmc3, llite, cpu, mem, etc.), and return a gridplot of step plots.
 
         """
-    self.hc = {}
-    colors = d3["Category20"][20]
-    for i, hostname in enumerate(self.host_list):
-      self.hc[hostname] = colors[i % 20]
+    palette = _cycled_d3_category20_palette(len(self.host_list))
+    self.hc = {
+        hostname: palette[i] for i, hostname in enumerate(self.host_list)
+    }
 
     log.debug("Host Count: %s", len(self.host_list))
 

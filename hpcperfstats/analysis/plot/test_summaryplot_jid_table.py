@@ -4,12 +4,15 @@ import threading
 import pandas as pd
 import pytest
 from unittest.mock import MagicMock
+from bokeh.models import CategoricalColorMapper
 from bokeh.models.plots import GridPlot
+from bokeh.palettes import d3
 from bokeh.plotting import figure
 
 from hpcperfstats.analysis.gen.utils import INTEL_FP_ARITH_DOUBLE_EVENTS
 from hpcperfstats.analysis.plot.summaryplot import (
     SummaryPlot,
+    _cycled_d3_category20_palette,
     plot_and_reason_summary_from_jid_table,
 )
 
@@ -410,6 +413,45 @@ def test_summaryplot_plot_metric_caps_time_tick_count_to_five():
 
   fig = summary.plot_metric(df, "cpu", "CPU Usage [#cores]")
   assert fig.xaxis[0].ticker.desired_num_ticks == 5
+
+
+def test_cycled_d3_category20_palette_length():
+  assert _cycled_d3_category20_palette(0) == []
+  assert len(_cycled_d3_category20_palette(5)) == 5
+  assert len(_cycled_d3_category20_palette(25)) == 25
+  base20 = _cycled_d3_category20_palette(20)
+  c25 = _cycled_d3_category20_palette(25)
+  assert c25[:20] == base20
+  assert c25[20:25] == base20[:5]
+
+
+def _scatter_categorical_color_mapper(plot):
+  for r in plot.renderers:
+    glyph = getattr(r, "glyph", None)
+    if glyph is None:
+      continue
+    fc = getattr(glyph, "fill_color", None)
+    tr = getattr(fc, "transform", None) if fc is not None else None
+    if isinstance(tr, CategoricalColorMapper):
+      return tr
+  raise AssertionError("expected scatter CategoricalColorMapper")
+
+
+def test_summaryplot_plot_metric_palette_matches_factor_count_for_many_hosts():
+  """Avoid Bokeh W-1008: factor_cmap palette length must match host factors."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  hosts = [f"h{i}.stampede3.tacc.utexas.edu" for i in range(40)]
+  rows = [(h, t0, float(i)) for i, h in enumerate(hosts)]
+  df = pd.DataFrame(rows, columns=["host", "time", "cpu"])
+  jt = MagicMock()
+  jt.host_list = hosts
+  summary = SummaryPlot(jt)
+  base = d3["Category20"][20]
+  summary.hc = {h: base[i % 20] for i, h in enumerate(hosts)}
+  fig = summary.plot_metric(df, "cpu", "CPU Usage [#cores]")
+  mapper = _scatter_categorical_color_mapper(fig)
+  assert len(mapper.factors) == 40
+  assert len(mapper.palette) == 40
 
 
 def test_summaryplot_uses_job_window_for_x_range():
