@@ -2484,7 +2484,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative CPU time in kernel mode.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests_test_job_for_metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/pages/JobDetail.jsx
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/metrics/test_job_for_metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/pages/JobDetail.jsx
 
 ### `temperature`
 
@@ -2664,7 +2664,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative CPU time in user mode (per-core counter; units per Linux /proc/stat, typically jiffies).
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests_test_job_for_metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/pages/JobDetail.jsx; hpcperfstats/site/frontend/src/pages/JobList.jsx
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/metrics/test_job_for_metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/pages/JobDetail.jsx; hpcperfstats/site/frontend/src/pages/JobList.jsx
 
 ### `user_sum`
 

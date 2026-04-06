@@ -120,3 +120,28 @@ docstring-code-format = true
 
 [tool.hpcperfstats.testing]
 web_e2e_runner = "tests/run_web_e2e_workflow.sh"
+
+[tool.coverage.run]
+branch = true
+source = ["hpcperfstats"]
+omit = [
+  "*/migrations/*",
+  "*/tests/*",
+  "*/test_*.py",
+  "*/conftest.py",
+]
+
+[tool.coverage.report]
+skip_empty = true
+show_missing = true
+precision = 1
+exclude_lines = [
+  "pragma: no cover",
+  "def __repr__",
+  "raise NotImplementedError",
+  "if TYPE_CHECKING:",
+  "@abstractmethod",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"

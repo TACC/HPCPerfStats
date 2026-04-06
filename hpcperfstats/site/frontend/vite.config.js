@@ -5,6 +5,22 @@ export default defineConfig({
   plugins: [react()],
   root: ".",
   base: "/static/frontend/",
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./src/setupTests.js"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html"],
+      reportsDirectory: "./coverage",
+      include: ["src/**/*.{js,jsx}"],
+      exclude: [
+        "src/**/*.test.{js,jsx}",
+        "src/**/setupTests.js",
+        "src/main.jsx",
+        "src/utils/generate-variable-metadata-monitor-events.py",
+      ],
+    },
+  },
   build: {
     outDir: "../hpcperfstats_site/static/frontend",
     emptyOutDir: true,

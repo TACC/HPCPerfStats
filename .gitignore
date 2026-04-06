@@ -4,6 +4,7 @@
 *.lock
 patch
 .coverage
+htmlcov/
 .env.dev
 .venv/
 .ruff*/

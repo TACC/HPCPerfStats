@@ -134,3 +134,4 @@ def check_for_tokens(request):
       return True
   except Exception:
     return False
+  return False
