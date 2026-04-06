@@ -51,6 +51,7 @@ test = [
 ]
 dev = [
   "yapf",  # Google style formatter
+  "pylint>=3.0",
 ]
 
 [tool.pytest.ini_options]

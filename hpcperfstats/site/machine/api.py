@@ -435,6 +435,19 @@ def _require_auth(request):
     )
 
 
+def _require_staff(request):
+    """Return 401/403 Response if not authenticated or not staff; else None."""
+    err = _require_auth(request)
+    if err is not None:
+        return err
+    if not request.session.get("is_staff", False):
+        return Response(
+            {"error": "Staff access required"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
 def _apply_non_staff_job_visibility(queryset, request):
     """Restrict non-staff visibility to own jobs and jobs in own-used accounts."""
     session = getattr(request, "session", None)
@@ -963,14 +976,9 @@ def session_info(request):
 @api_view(["POST"])
 def drop_staff_for_session(request):
     """Remove staff access for the current authenticated session only."""
-    err = _require_auth(request)
+    err = _require_staff(request)
     if err is not None:
         return err
-    if not request.session.get("is_staff", False):
-        return Response(
-            {"error": "Staff access required"},
-            status=status.HTTP_403_FORBIDDEN,
-        )
 
     request.session["is_staff"] = False
     if hasattr(request.session, "modified"):
@@ -990,14 +998,9 @@ def drop_staff_for_session(request):
 @api_view(["POST"])
 def invalidate_cache_for_page(request):
     """Invalidate Redis cache keys associated with the provided page path."""
-    err = _require_auth(request)
+    err = _require_staff(request)
     if err is not None:
         return err
-    if not request.session.get("is_staff", False):
-        return Response(
-            {"error": "Staff access required"},
-            status=status.HTTP_403_FORBIDDEN,
-        )
 
     page_path = (request.data.get("page_path") or "").strip()
     if not page_path:
@@ -2589,14 +2592,9 @@ def admin_monitor(request):
                               "cache_stats": {...}, "rabbitmq_stats": {...},
                               "timescaledb_stats": {...}, "xalt_stats": {...}}
     """
-    err = _require_auth(request)
+    err = _require_staff(request)
     if err is not None:
         return err
-    if not request.session.get("is_staff", False):
-        return Response(
-            {"error": "Staff access required"},
-            status=status.HTTP_403_FORBIDDEN,
-        )
 
     def _host_stats_fn():
         """Return per-host last_seen timestamps and age buckets for admin monitor.
@@ -2707,14 +2705,9 @@ def job_monitor(request):
     can render quickly; per-user GPU stats are fetched asynchronously from
     job_monitor_gpu_for_user.
     """
-    err = _require_auth(request)
+    err = _require_staff(request)
     if err is not None:
         return err
-    if not request.session.get("is_staff", False):
-        return Response(
-            {"error": "Staff access required"},
-            status=status.HTTP_403_FORBIDDEN,
-        )
 
     # Parse and clamp days window from query params.
     try:
@@ -2786,14 +2779,9 @@ def job_monitor(request):
 @api_view(["GET"])
 def job_monitor_gpu_for_user(request):
     """Staff-only per-user GPU rollup for Job Monitor async row updates."""
-    err = _require_auth(request)
+    err = _require_staff(request)
     if err is not None:
         return err
-    if not request.session.get("is_staff", False):
-        return Response(
-            {"error": "Staff access required"},
-            status=status.HTTP_403_FORBIDDEN,
-        )
 
     username = str((request.GET.get("username") or "").strip())
     if not username:
@@ -2864,14 +2852,9 @@ def sacct_ingest(request):
     param date=YYYY-MM-DD is required (the date of the data being ingested) to
     compute which jobs are already in the DB.
     """
-    err = _require_auth(request)
+    err = _require_staff(request)
     if err is not None:
         return err
-    if not request.session.get("is_staff", False):
-        return Response(
-            {"error": "Staff access required"},
-            status=status.HTTP_403_FORBIDDEN,
-        )
 
     try:
         body = request.body.decode("utf-8", errors="replace")

@@ -10,22 +10,18 @@ import {
   patchJobMonitorGpuRowByUsername,
 } from "../utils/job-monitor-gpu";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
-
-function ariaSortValue(column, sortKey, sortDir) {
-  if (sortKey !== column) return undefined;
-  return sortDir === "asc" ? "ascending" : "descending";
-}
+import { tableSortAriaSort, tableSortColumnArrow } from "../utils/table-sort-a11y";
 
 function SortableTh({ column, sortKey, sortDir, onSort, children }) {
   return (
-    <th scope="col" aria-sort={ariaSortValue(column, sortKey, sortDir)}>
+    <th scope="col" aria-sort={tableSortAriaSort(column, sortKey, sortDir)}>
       <button
         type="button"
         className="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
         onClick={() => onSort(column)}
       >
         {children}
-        {sortKey === column ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+        {tableSortColumnArrow(column, sortKey, sortDir)}
       </button>
     </th>
   );

@@ -4,6 +4,7 @@ import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import { createAdminMonitorSectionLoader } from "../utils/create-admin-monitor-section-loader";
 import { formatDecimalStandard } from "../utils/formatDecimal";
+import { tableSortAriaSort, tableSortColumnArrow } from "../utils/table-sort-a11y";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 
 function formatAdminMonitorNumericStatistic(value) {
@@ -54,16 +55,6 @@ function compareAdminMonitorHostRows(a, b, sort) {
     return (aBucket - bBucket) * dir;
   }
   return 0;
-}
-
-function sortAdminMonitorColumnArrow(sort, column) {
-  if (sort.column !== column) return "";
-  return sort.direction === "asc" ? "▲" : "▼";
-}
-
-function adminMonitorAriaSort(sort, column) {
-  if (sort.column !== column) return undefined;
-  return sort.direction === "asc" ? "ascending" : "descending";
 }
 
 function makeAdminMonitorSortHandler(setSort) {
@@ -434,18 +425,25 @@ export default function AdminMonitor() {
                 </caption>
                 <thead>
                   <tr>
-                    <th scope="col" aria-sort={adminMonitorAriaSort(hostSort, "host")}>
+                    <th scope="col" aria-sort={tableSortAriaSort("host", hostSort.column, hostSort.direction)}>
                       <button
                         type="button"
                         className="btn btn-link btn-sm p-0"
                         onClick={() => handleHostSort("host")}
                       >
-                        Host {sortAdminMonitorColumnArrow(hostSort, "host")}
+                        Host{" "}
+                        {tableSortColumnArrow("host", hostSort.column, hostSort.direction, {
+                          leadingSpace: false,
+                        })}
                       </button>
                     </th>
                     <th
                       scope="col"
-                      aria-sort={adminMonitorAriaSort(hostSort, "last_time")}
+                      aria-sort={tableSortAriaSort(
+                        "last_time",
+                        hostSort.column,
+                        hostSort.direction,
+                      )}
                     >
                       <button
                         type="button"
@@ -453,16 +451,27 @@ export default function AdminMonitor() {
                         onClick={() => handleHostSort("last_time")}
                       >
                         Last Timestamp{" "}
-                        {sortAdminMonitorColumnArrow(hostSort, "last_time")}
+                        {tableSortColumnArrow(
+                          "last_time",
+                          hostSort.column,
+                          hostSort.direction,
+                          { leadingSpace: false },
+                        )}
                       </button>
                     </th>
-                    <th scope="col" aria-sort={adminMonitorAriaSort(hostSort, "status")}>
+                    <th
+                      scope="col"
+                      aria-sort={tableSortAriaSort("status", hostSort.column, hostSort.direction)}
+                    >
                       <button
                         type="button"
                         className="btn btn-link btn-sm p-0"
                         onClick={() => handleHostSort("status")}
                       >
-                        Status {sortAdminMonitorColumnArrow(hostSort, "status")}
+                        Status{" "}
+                        {tableSortColumnArrow("status", hostSort.column, hostSort.direction, {
+                          leadingSpace: false,
+                        })}
                       </button>
                     </th>
                   </tr>
@@ -727,19 +736,33 @@ export default function AdminMonitor() {
                   <tr>
                     <th
                       scope="col"
-                      aria-sort={adminMonitorAriaSort(rabbitHostSort, "host")}
+                      aria-sort={tableSortAriaSort(
+                        "host",
+                        rabbitHostSort.column,
+                        rabbitHostSort.direction,
+                      )}
                     >
                       <button
                         type="button"
                         className="btn btn-link btn-sm p-0"
                         onClick={() => handleRabbitHostSort("host")}
                       >
-                        Host {sortAdminMonitorColumnArrow(rabbitHostSort, "host")}
+                        Host{" "}
+                        {tableSortColumnArrow(
+                          "host",
+                          rabbitHostSort.column,
+                          rabbitHostSort.direction,
+                          { leadingSpace: false },
+                        )}
                       </button>
                     </th>
                     <th
                       scope="col"
-                      aria-sort={adminMonitorAriaSort(rabbitHostSort, "last_time")}
+                      aria-sort={tableSortAriaSort(
+                        "last_time",
+                        rabbitHostSort.column,
+                        rabbitHostSort.direction,
+                      )}
                     >
                       <button
                         type="button"
@@ -747,12 +770,21 @@ export default function AdminMonitor() {
                         onClick={() => handleRabbitHostSort("last_time")}
                       >
                         Last Timestamp{" "}
-                        {sortAdminMonitorColumnArrow(rabbitHostSort, "last_time")}
+                        {tableSortColumnArrow(
+                          "last_time",
+                          rabbitHostSort.column,
+                          rabbitHostSort.direction,
+                          { leadingSpace: false },
+                        )}
                       </button>
                     </th>
                     <th
                       scope="col"
-                      aria-sort={adminMonitorAriaSort(rabbitHostSort, "status")}
+                      aria-sort={tableSortAriaSort(
+                        "status",
+                        rabbitHostSort.column,
+                        rabbitHostSort.direction,
+                      )}
                     >
                       <button
                         type="button"
@@ -760,7 +792,12 @@ export default function AdminMonitor() {
                         onClick={() => handleRabbitHostSort("status")}
                       >
                         Status{" "}
-                        {sortAdminMonitorColumnArrow(rabbitHostSort, "status")}
+                        {tableSortColumnArrow(
+                          "status",
+                          rabbitHostSort.column,
+                          rabbitHostSort.direction,
+                          { leadingSpace: false },
+                        )}
                       </button>
                     </th>
                   </tr>

@@ -9,6 +9,7 @@ import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { buildJobListApiParams } from "../utils/build-job-list-api-params";
 import { normalizeJobListHistogramEntry } from "../utils/normalize-job-list-histogram-entry";
+import { tableSortAriaSort } from "../utils/table-sort-a11y";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import {
   jobListPageHumanSummary,
@@ -218,25 +219,27 @@ export default function JobList() {
 
   // Sort: all columns except name. order_by from URL/response: e.g. "-end_time" (desc) or "username" (asc).
   const orderBy = searchParams.get("order_by") || responseOrderBy;
+  const sortColumn = orderBy.startsWith("-") ? orderBy.slice(1) : orderBy;
+  const sortDirection = orderBy.startsWith("-") ? "desc" : "asc";
   const sortQuery = (orderByValue) =>
     new URLSearchParams({ ...paginationParams, order_by: orderByValue, page: "1" }).toString();
   const sortLink = (field) => {
-    const isAsc = orderBy === field;
-    const isDesc = orderBy === `-${field}`;
-    const next = isDesc ? field : `-${field}`;
+    const next =
+      sortColumn === field
+        ? sortDirection === "desc"
+          ? field
+          : `-${field}`
+        : `-${field}`;
     return `${location.pathname}?${sortQuery(next)}`;
   };
   const sortIndicator = (field) => {
-    if (orderBy === field) return " \u2191";
-    if (orderBy === `-${field}`) return " \u2193";
-    return "";
+    if (sortColumn !== field) return "";
+    return sortDirection === "asc" ? " \u2191" : " \u2193";
   };
 
   const ariaSortForField = (field, sortable) => {
     if (!sortable) return undefined;
-    if (orderBy === field) return "ascending";
-    if (orderBy === `-${field}`) return "descending";
-    return "none";
+    return tableSortAriaSort(field, sortColumn, sortDirection) ?? "none";
   };
 
   const queueHistDone = !queueHistStatus.loading;
