@@ -25,6 +25,70 @@ PYTHONPATH=. pytest -q hpcperfstats/tests
 PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 ```
 
+## Testing on macOS (Docker + full suite)
+
+### 1. Install and start Docker
+
+- **Docker Desktop (Homebrew, Apple Silicon):** run in **Terminal.app** (or another interactive shell) so macOS can prompt for your password if needed:
+
+  ```bash
+  arch -arm64 brew update
+  arch -arm64 brew install --cask docker
+  ```
+
+  If the cask fails with `sudo: a terminal is required` (for example when creating `/usr/local/cli-plugins`), complete the install from an interactive terminal, or install [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/) manually.
+
+- Open **Docker** from **Applications** once so the Linux VM / engine starts (unless you use another supported backend such as Colima or OrbStack with the `docker` CLI).
+
+- **Verify:** `docker info` should complete without errors and show a running server.
+
+### 2. Python and frontend dependencies
+
+From the `HPCPerfStats/` directory that contains `pyproject.toml`:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[test]"
+```
+
+For Vitest:
+
+```bash
+cd hpcperfstats/site/frontend && npm ci
+```
+
+### 3. Full compose-backed gate (Django DB, Playwright browser E2E, live Redis)
+
+All commands below assume your current directory is **`HPCPerfStats/`** (the one with `docker-compose.yaml`).
+
+| Step | Command | What it covers |
+|------|---------|----------------|
+| 1 | `tests/run_db_pytest_workflow.sh` | Resets compose volumes, builds `web`, starts **db** + **redis**, migrates dev DB, installs **Playwright/Chromium** in the container, runs **`pytest -q hpcperfstats`** (entire tree, including **`test_web_pages_browser_e2e.py`** unless you pass `--skip-browser-e2e`). |
+| 2 | `tests/run_redis_cache_pytest_workflow.sh --skip-build` | Fresh compose session, **`test_redis_cache_live.py`** against real **Redis** (`HPCPERFSTATS_PYTEST_LIVE_REDIS=1`). |
+| 3 | `tests/run_web_e2e_workflow.sh --skip-build` | Dedicated **HTTP + Playwright** session for `test_web_pages_e2e.py` and `test_web_pages_browser_e2e.py` (run again after step 1 for an isolated E2E pass or CI parity). |
+
+Faster iteration after the first successful build:
+
+```bash
+tests/run_db_pytest_workflow.sh --skip-build
+tests/run_redis_cache_pytest_workflow.sh --skip-build
+tests/run_web_e2e_workflow.sh --skip-build
+```
+
+Each workflow tears down containers and **named volumes** on exit unless you pass **`--keep-env`** (see per-script help).
+
+If a follow-up script fails with **`failed to resolve host 'db'`** inside the container, Docker networking may still be cleaning up from a previous run. Run `docker-compose down --remove-orphans` from `HPCPerfStats/` and retry, or wait a few seconds between workflows.
+
+### 4. Sibling repo and SPA unit tests
+
+From `HPCPerfStats/` (inner project root, next to `hpcperfstats-tools/`):
+
+```bash
+cd ../hpcperfstats-tools && python -m pytest -q
+cd ../HPCPerfStats/hpcperfstats/site/frontend && npm test -- --run
+```
+
 ## Code coverage
 
 Coverage settings live in `pyproject.toml` (`[tool.coverage.*]`). Typical commands:
@@ -59,7 +123,7 @@ cd hpcperfstats-tools && python -m pytest --cov=hpcperfstats_tools --cov-report=
 |---------|-------------|
 | `hpcperfstats/tests/` | Non-Django unit/integration tests (config parsing, service startup/health, listend behavior, sync helpers, cache/date/print/file-locking helpers, XALT models, API key mobile checks, dbload `pigz`/row-builder helpers, Django `timezone.utc` shim). `test_conf_parser.py` covers `get_effective_cores()`, `get_metrics_pool_process_count()`, default `total_cores=40`, `get_parallel_db_prefetch_max_workers()` / `get_api_small_executor_max_workers()`, DB `CONN_MAX_AGE` and PostgreSQL `OPTIONS` builders, and `get_sync_ingest_pool_processes()` / `get_sync_archive_pool_processes()` caps. `test_pg_connection_stats_command.py` exercises the `pg_connection_stats` management command with a mocked DB connection (no live Postgres). `test_numa_topology.py`, `test_compose_cpu_layout.py`, and `test_apply_compose_numa_pinning.py` cover sysfs NUMA parsing, **single-node** topology, responsive linear CPU partitions, and `scripts/apply_compose_cpu_pinning.py --dry-run`. `test_sync_timedb_archive.py` includes deferred-archive / atomic-seal helpers, `tar tf` integrity checks, gzip restore, tar dedupe (largest wins per path), and helpers used for scheduled pigz + raw-file removal (`get_existing_archive_members_for_daily_archive`, `remove_verified_archived_raw_files`, `validate_sealed_daily_archive_for_raw_removal`); two tests call real `pigz` and skip when `pigz` is not on `PATH`. `test_monitor_analysis_typename_contract.py` asserts monitor `stats_type.st_name` values stay aligned with `INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, and `INTEL_CORE_PMC_TYPES_ORDERED` (skips if `monitor/src` is absent). |
 | `hpcperfstats/analysis/**/test*.py` | Analysis/plot/metrics-focused tests (summary/heatmap/roofline behavior, roofline peak inference from `host_data.type` schema keys, hover tooltips, shared job-window parsing, metrics helpers). `analysis/metrics/test_per_interval_rate.py` also covers node-imbalance variants (DRAM, LNET, GPU util/tensor) and GPU peak helpers. `analysis/metrics/test_job_for_metrics.py` and `analysis/plot/test_summaryplot_no_data.py` exercise metrics/summaryplot edge cases. `analysis/metrics/test_job_metric_display_labels.py` and `test_metrics_add_arrays.py` cover label maps and small `metrics.py` helpers. `analysis/test_bokeh_job_embed.py` is a pure-Python unit test for `bokeh_job_embed.figure_embed_kw` (no Django). |
-| `hpcperfstats/site/machine/tests/` | Django + web tests (ORM/query/update helpers, job detail file-system llite vs NFS fallback, security headers, API/misc endpoints, SPA rendering, page and browser E2E tests). Includes `test_type_detail_api.py`, which asserts type-detail `host_data` ORM SQL does not reference `jid` (job scope is start/end time + accounting hosts) with `django_db(databases=[])` so it does not need a live DB. `test_api_coverage_gaps.py` hits additional `api.py` branches (cache invalidation, `host_plot`, job monitor, `sacct_ingest`) with mocks and locmem cache—no Postgres host required. `test_oauth2.py`, `test_cache_middleware.py`, `test_renderers.py`, and `test_update_xalt.py` cover OAuth helpers, dynamic cache TTL middleware, JSON NaN sanitization, and the XALT log script loop. `test_metrics.py` includes `test_job_metric_short_labels_cover_catalog`, which asserts every `job_metrics_catalog_entries()` metric has a matching entry in `job_metric_display_labels.JOB_METRIC_SHORT_LABELS` (parity with the frontend short-label map). `test_job_plot_artifacts.py` covers gzip-serialized Bokeh `json_item` persistence (`job_plot_artifact`), fingerprinting, and invalidation (requires Postgres like other `django_db` machine tests). `test_job_list_performance_summary.py` covers job list `performance` labels / `sort_rank` and ORM `performance_sort_rank` ordering vs `summarize_performance()`. `test_query_utils.py` includes `get_job_list_order_by` allowlist (`performance_sort_rank`; legacy `has_metrics` is rejected). **API:** `/api/jobs/` list entries expose `performance` (not `has_metrics`); sort with `order_by=performance_sort_rank` or `-performance_sort_rank`. |
+| `hpcperfstats/site/machine/tests/` | Django + web tests (ORM/query/update helpers, job detail file-system llite vs NFS fallback, security headers, API/misc endpoints, SPA rendering, page and browser E2E tests). Includes `test_type_detail_api.py`, which asserts type-detail `host_data` ORM SQL does not reference `jid` (job scope is start/end time + accounting hosts) with `django_db(databases=[])` so it does not need a live DB. `test_api_coverage_gaps.py` hits additional `api.py` branches (cache invalidation, `host_plot`, job monitor, `sacct_ingest`) with mocks and locmem cache—no Postgres host required. `test_oauth2.py`, `test_cache_middleware.py`, `test_renderers.py`, and `test_update_xalt.py` cover OAuth helpers, dynamic cache TTL middleware, JSON NaN sanitization, and the XALT log script loop. `test_metrics.py` includes `test_job_metric_short_labels_cover_catalog`, which asserts every `job_metrics_catalog_entries()` metric has a matching entry in `job_metric_display_labels.JOB_METRIC_SHORT_LABELS` (parity with the frontend short-label map). `test_job_plot_artifacts.py` covers gzip-serialized Bokeh `json_item` persistence (`job_plot_artifact`), fingerprinting, and invalidation (requires Postgres like other `django_db` machine tests). `test_job_list_performance_summary.py` covers job list `performance` labels / `sort_rank` and ORM `performance_sort_rank` ordering vs `summarize_performance()`. `test_redis_cache_live.py` hits Django `RedisCache` against a live Redis when `HPCPERFSTATS_PYTEST_LIVE_REDIS=1` (`tests/run_redis_cache_pytest_workflow.sh`); otherwise those tests skip. `test_query_utils.py` includes `get_job_list_order_by` allowlist (`performance_sort_rank`; legacy `has_metrics` is rejected). **API:** `/api/jobs/` list entries expose `performance` (not `has_metrics`); sort with `order_by=performance_sort_rank` or `-performance_sort_rank`. |
 | `hpcperfstats/site/machine/tests/test_job_detail_staff_sample_count.py` | Staff-only `staff_metrics_distinct_time_count` on `job_detail` JSON (mocked ORM; no live DB required). |
 | `hpcperfstats/site/frontend` | React SPA unit tests (Vitest): `npm test` from that directory. Vitest picks up `*.test.jsx` / `*.test.js` under `src/` (pages, components, utils), including `api.test.js` (fetch/CSRF/401 paths), `components/ExtendedSearch.test.jsx`, `normalize-job-list-histogram-entry.test.js`, `table-sort-a11y.test.js`, `job-list-route-title-context.test.js`, `Search.test.jsx` (browse-by-time **Calendar** tab first and selected by default), `JobList.test.jsx` (includes narrow-viewport Jobs/Charts tab behavior), `JobDetail.test.jsx` (job detail **Job data** inner tabs—including per-plot tabs (Summary, Heatmap, rooflines) before Bokeh assertions—progressive plot loading, and metrics tab single- vs two-table layout), `src/utils/jobMetricDisplayLabels.test.js` (short labels for job-level metrics table), and `useDocumentTitle.test.js`. `src/setupTests.js` stubs `HTMLElement.prototype.scrollIntoView` for jsdom. |
 | `hpcperfstats-tools/tests/` | Client CLI/API helpers: `test_api_client.py`, `test_api_auth_headers.py`, `test_job_dataframe.py`, `test_sacct_gen_security.py`, plus `test_config.py` (INI `base_url`), `test_api_key_cache.py` (`~/.hpcperfstats-api` parsing), and `test_jobstats_cli.py` (`jobstats` formatting and `main()` exit codes). Run from the `hpcperfstats-tools` directory with `python -m pytest`. |
@@ -116,6 +180,55 @@ Equivalent seed environment variable:
 E2E_SEED_CMD="python your_seed_script.py" tests/run_web_e2e_workflow.sh
 ```
 
+### `tests/run_db_pytest_workflow.sh` (compose full Python suite, macOS / Linux)
+
+Use this when you need **Django / Postgres** tests with `host=db` on the Compose network (for example on macOS, where host-side pytest cannot resolve the `db` hostname from `hpcperfstats.ini.example`).
+
+From the `HPCPerfStats/` directory (where `docker-compose.yaml` lives):
+
+```bash
+tests/run_db_pytest_workflow.sh
+```
+
+The script copies `hpcperfstats.ini.example` to `hpcperfstats.ini` if the latter is missing (required for the Compose bind mount), resets compose volumes (unless `--keep-env`), starts **db** and **redis**, runs `manage.py migrate` on the dev database, installs Playwright in the container, and runs `pytest -q hpcperfstats`.
+
+Useful options:
+
+```bash
+# Faster iteration: skip browser E2E module and Playwright install
+tests/run_db_pytest_workflow.sh --skip-browser-e2e
+
+# Skip image rebuild
+tests/run_db_pytest_workflow.sh --skip-build
+
+# Keep db/redis volumes after the run
+tests/run_db_pytest_workflow.sh --keep-env
+
+# Optional seed inside the web container after migrate
+tests/run_db_pytest_workflow.sh --seed-cmd "python path/in/repo/seed.py"
+# or: DB_TEST_SEED_CMD="python ..." tests/run_db_pytest_workflow.sh
+
+# Skip migrate on the dev database (pytest still creates its own test_* DB)
+tests/run_db_pytest_workflow.sh --skip-migrate
+
+# Forward pytest arguments (use -- if an option starts with -)
+tests/run_db_pytest_workflow.sh -- -k job_plot
+```
+
+Implementation detail: `tests/run_db_pytest_inner.sh` runs inside the `web` container; the project directory is **bind-mounted** to `/home/hpcperfstats` so pytest uses your working tree (conftest, migrations, tests) without rebuilding the image. Extra pytest arguments are passed via a mounted temp file (`/tmp/hpcperfstats_pytest_extra_args`). The same mount is used by `run_redis_cache_pytest_workflow.sh` and `run_web_e2e_workflow.sh`.
+
+### `tests/run_redis_cache_pytest_workflow.sh` (live Redis cache integration)
+
+Runs `hpcperfstats/site/machine/tests/test_redis_cache_live.py` inside the `web` container with **`HPCPERFSTATS_PYTEST_LIVE_REDIS=1`**, so Django keeps **`RedisCache`** against the Compose **redis** service instead of switching to `LocMemCache` during pytest.
+
+```bash
+tests/run_redis_cache_pytest_workflow.sh
+```
+
+Without that env var, the live Redis tests are **skipped** so normal `python run_tests.py` on a laptop does not require Redis.
+
+Options: `--keep-env`, `--skip-build`. Forward pytest args the same way as the DB workflow (`-- -vv`).
+
 ## Accessibility (WCAG 2.2 AA target)
 
 The SPA and standalone HTML pages aim for **WCAG 2.2 Level AA** for in-app flows (keyboard, screen readers, zoom, contrast). **Bokeh canvas plots** and the **OAuth provider** have inherent limits; the UI mitigates with text alternatives, landmarks, and documented manual checks.
@@ -157,8 +270,9 @@ Unit tests: `PYTHONPATH=. pytest -q hpcperfstats/tests/test_numa_topology.py hpc
 ## Requirements
 
 - **General**: Python 3.12+, `pip install -e ".[test]"`.
-- **Django tests**: PostgreSQL/Redis availability and valid `HPCPERFSTATS_INI` with required sections (`[PORTAL]`, `[DEFAULT]`).
-- **Browser E2E tests**: Playwright/Chromium tooling (installed by the E2E workflow script unless skipped).
+- **Django tests**: For a full run matching production hostnames (`db`, `redis`), use `tests/run_db_pytest_workflow.sh`. Host-side `python run_tests.py` needs a reachable Postgres matching `HPCPERFSTATS_INI` `[PORTAL]` (and typically `host=localhost` with a published port, not `host=db`).
+- **Live Redis cache tests**: Optional; use `tests/run_redis_cache_pytest_workflow.sh` (sets `HPCPERFSTATS_PYTEST_LIVE_REDIS=1`).
+- **Browser E2E tests**: Playwright/Chromium tooling (installed by the DB workflow or E2E workflow script unless skipped).
 
 ## Optional memory profiling (development)
 
@@ -191,5 +305,5 @@ Use `ruff check hpcperfstats --select F401 --fix` only after reviewing the diff 
 
 ## Notes
 
-- `pyproject.toml` exposes the canonical web E2E runner path under `[tool.hpcperfstats.testing].web_e2e_runner`.
+- `pyproject.toml` exposes canonical runner paths under `[tool.hpcperfstats.testing]`: `web_e2e_runner`, `db_pytest_runner`, `redis_cache_pytest_runner`.
 - Prefer the compose E2E runner for page-level tests so DB/Redis/networking match expected service topology.

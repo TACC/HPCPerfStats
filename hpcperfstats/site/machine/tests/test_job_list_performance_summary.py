@@ -1,6 +1,5 @@
 """Tests for job list performance classification and ORM annotations."""
 import pytest
-from django.db import connection
 from django.utils import timezone
 
 from hpcperfstats.site.machine.job_list_performance import (
@@ -11,14 +10,6 @@ from hpcperfstats.site.machine.job_list_performance import (
 )
 from hpcperfstats.site.machine.models import job_data, metrics_data
 from hpcperfstats.site.machine.serializers import JobListSerializer
-
-
-def _skip_if_database_unreachable():
-    """Host pytest often uses INI with host 'db' (compose-only); skip ORM tests locally."""
-    try:
-        connection.ensure_connection()
-    except Exception as exc:
-        pytest.skip(f"Database not reachable: {exc}")
 
 
 class TestSummarizePerformance:
@@ -111,9 +102,6 @@ class TestSummarizePerformance:
 class TestAnnotateJobListPerformanceFields:
     """ORM annotation matches summarize_performance for representative rows."""
 
-    def setup_method(self):
-        _skip_if_database_unreachable()
-
     @staticmethod
     def _create_job(jid, *, dtc=None, runtime=500.0):
         now = timezone.now()
@@ -185,7 +173,6 @@ class TestAnnotateJobListPerformanceFields:
 
 @pytest.mark.django_db
 def test_job_list_serializer_exposes_performance_not_has_metrics():
-    _skip_if_database_unreachable()
     now = timezone.now()
     j = job_data.objects.create(
         jid="srlz1",

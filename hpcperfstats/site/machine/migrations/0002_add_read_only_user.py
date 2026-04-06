@@ -17,7 +17,13 @@ class Migration(migrations.Migration):
   ]
 
   operations = [
-      migrations.RunSQL("CREATE USER statsro WITH PASSWORD 'statsro';"),
+      # Cluster-wide role: second database on same Postgres (e.g. pytest test_*)
+      # must not fail. Original CREATE USER errors if statsro already exists.
+      migrations.RunSQL(
+          "DO $hps$ BEGIN "
+          "CREATE ROLE statsro LOGIN PASSWORD 'statsro'; "
+          "EXCEPTION WHEN duplicate_object THEN NULL; END $hps$;"
+      ),
       migrations.RunSQL("GRANT CONNECT ON DATABASE %s TO statsro;" % dbname),
       migrations.RunSQL("GRANT USAGE ON SCHEMA public TO statsro;"),
       migrations.RunSQL(

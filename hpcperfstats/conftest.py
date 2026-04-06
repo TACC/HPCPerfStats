@@ -54,11 +54,12 @@ def pytest_unconfigure(config):
 
 
 def pytest_collection_modifyitems(config, items):
-  """Mark tests under site.machine.tests as django tests.
+  """Mark tests under site/machine/tests as django tests.
 
     """
   for item in items:
-    if "site.machine.tests" in str(item.fspath):
+    path = str(item.fspath).replace("\\", "/")
+    if "/site/machine/tests/" in path:
       item.add_marker(pytest.mark.django_db)
 
 

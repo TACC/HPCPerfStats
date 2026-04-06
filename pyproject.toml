@@ -65,6 +65,7 @@ django_find_project = false
 filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
 markers = [
   "django: marks tests requiring Django (dbs, settings).",
+  "live_redis: live Redis cache integration; requires HPCPERFSTATS_PYTEST_LIVE_REDIS=1 and compose redis.",
 ]
 
 [tool.setuptools]
@@ -120,6 +121,8 @@ docstring-code-format = true
 
 [tool.hpcperfstats.testing]
 web_e2e_runner = "tests/run_web_e2e_workflow.sh"
+db_pytest_runner = "tests/run_db_pytest_workflow.sh"
+redis_cache_pytest_runner = "tests/run_redis_cache_pytest_workflow.sh"
 
 [tool.coverage.run]
 branch = true

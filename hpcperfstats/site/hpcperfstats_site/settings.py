@@ -236,7 +236,15 @@ warnings.filterwarnings(
 
 # During test runs, avoid requiring a real Redis instance by switching to the
 # in-memory cache backend. This keeps production configuration unchanged.
-if any(arg.endswith("pytest") or arg == "pytest" or arg == "test" for arg in sys.argv):
+# Set HPCPERFSTATS_PYTEST_LIVE_REDIS=1 (e.g. tests/run_redis_cache_pytest_workflow.sh)
+# to exercise Django's RedisCache against a real Redis on the compose network.
+_use_live_redis_cache = os.environ.get(
+    "HPCPERFSTATS_PYTEST_LIVE_REDIS", ""
+).strip().lower() in ("1", "yes", "true")
+if (
+    any(arg.endswith("pytest") or arg == "pytest" or arg == "test" for arg in sys.argv)
+    and not _use_live_redis_cache
+):
     CACHES["default"] = {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
         "LOCATION": "hpcperfstats-tests",
