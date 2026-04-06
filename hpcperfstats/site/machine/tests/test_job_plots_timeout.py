@@ -1,7 +1,11 @@
 from concurrent.futures import Future
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
 from django.test import RequestFactory
+
+pytestmark = pytest.mark.django_db(databases=[])
 
 
 def _patch_allow_job_visibility():

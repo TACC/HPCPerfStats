@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from hpcperfstats.site.machine.cache_utils import invalidate_job_plot_cache_keys_for_jids
 from hpcperfstats.site.machine.job_plot_artifacts import (
+    JOB_PLOT_LAYOUT_ZOOM_V3,
     PAYLOAD_ENCODING_GZIP_JSON,
     compute_plot_input_fingerprint,
     decompress_plot_item_dict,
@@ -120,3 +121,63 @@ def test_invalidate_job_plot_cache_keys_for_jids_deletes_rows():
   assert job_plot_artifact.objects.filter(jid_id="inv1").count() == 1
   invalidate_job_plot_cache_keys_for_jids(["inv1"])
   assert job_plot_artifact.objects.filter(jid_id="inv1").count() == 0
+
+
+@pytest.mark.django_db
+def test_load_cached_job_plot_entry_zoom_uses_normal_layout_fallback():
+  now = timezone.now()
+  j = job_data.objects.create(
+      jid="zoomfb1",
+      submit_time=now,
+      start_time=now,
+      end_time=now,
+      username="u1",
+      host_list=["n1"],
+      metrics_distinct_time_count=1,
+  )
+  fp = compute_plot_input_fingerprint(j, 1)
+  normal_item = {
+      "doc": {
+          "roots": [
+              {
+                  "type": "object",
+                  "name": "Figure",
+                  "id": "fig-1",
+                  "attributes": {"width": 300, "height": 120},
+              }
+          ]
+      }
+  }
+  upsert_job_plot_artifact("zoomfb1", "summary_plot", "normal", fp, normal_item)
+
+  entry = load_cached_job_plot_entry(
+      "zoomfb1",
+      "summary_plot",
+      JOB_PLOT_LAYOUT_ZOOM_V3,
+      fp,
+  )
+  assert entry is not None
+  assert entry["unavailable_reason"] is None
+  assert entry["plot_item"]["doc"]["roots"][0]["attributes"]["sizing_mode"] == "stretch_width"
+
+
+@pytest.mark.django_db
+def test_load_cached_job_plot_entry_returns_none_on_corrupt_payload():
+  now = timezone.now()
+  j = job_data.objects.create(
+      jid="corrupt1",
+      submit_time=now,
+      start_time=now,
+      end_time=now,
+      username="u1",
+      host_list=["n1"],
+      metrics_distinct_time_count=1,
+  )
+  fp = compute_plot_input_fingerprint(j, 1)
+  upsert_job_plot_artifact("corrupt1", "roofline", "normal", fp, {"ok": True})
+
+  row = job_plot_artifact.objects.get(jid_id="corrupt1", plot_kind="roofline", layout="normal")
+  row.payload_compressed = b"definitely-not-gzip"
+  row.save(update_fields=["payload_compressed"])
+
+  assert load_cached_job_plot_entry("corrupt1", "roofline", "normal", fp) is None

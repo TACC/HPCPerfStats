@@ -9,6 +9,11 @@ from django.test import RequestFactory
 
 from hpcperfstats.site.machine import api as api_module
 
+_COMPOSE = os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip().lower() in (
+    "1",
+    "yes",
+    "true",
+)
 _LIVE = os.environ.get("HPCPERFSTATS_PYTEST_LIVE_REDIS", "").strip().lower() in (
     "1",
     "yes",
@@ -16,10 +21,11 @@ _LIVE = os.environ.get("HPCPERFSTATS_PYTEST_LIVE_REDIS", "").strip().lower() in 
 )
 
 pytestmark = pytest.mark.skipif(
-    not _LIVE,
+    not (_COMPOSE and _LIVE),
     reason=(
-        "Set HPCPERFSTATS_PYTEST_LIVE_REDIS=1 "
-        "(see tests/run_redis_cache_pytest_workflow.sh)"
+        "Requires Docker Compose network and live Redis cache "
+        "(HPCPERFSTATS_COMPOSE_NETWORK=1 and HPCPERFSTATS_PYTEST_LIVE_REDIS=1). "
+        "Run: tests/run_redis_cache_pytest_workflow.sh"
     ),
 )
 

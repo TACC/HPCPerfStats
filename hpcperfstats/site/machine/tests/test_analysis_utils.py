@@ -7,8 +7,9 @@ import pytest
 from hpcperfstats.analysis.gen import utils as gen_utils
 from hpcperfstats.analysis.gen.utils import get_job_host_data_and_job_dict
 
+pytestmark = pytest.mark.django_db(databases=[])
 
-@pytest.mark.django_db
+
 def test_get_job_host_data_and_job_dict_no_job():
   """get_job_host_data_and_job_dict returns (empty DataFrame, None) when job not found."""
   with patch("hpcperfstats.analysis.gen.utils.job_data") as mock_job_data:
@@ -18,7 +19,6 @@ def test_get_job_host_data_and_job_dict_no_job():
   assert job_dict is None
 
 
-@pytest.mark.django_db
 def test_get_job_host_data_and_job_dict_with_job_and_host_data():
   """get_job_host_data_and_job_dict returns (host_df, job_dict) when job exists and jid_table has data."""
   job_row = {"jid": 999, "host_list": ["n1"], "start_time": None, "end_time": None}

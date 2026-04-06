@@ -12,6 +12,7 @@ from hpcperfstats.site.machine.models import job_data, metrics_data
 from hpcperfstats.site.machine.serializers import JobListSerializer
 
 
+@pytest.mark.django_db(databases=[])
 class TestSummarizePerformance:
     """Unit tests for summarize_performance (all sort_rank branches)."""
 

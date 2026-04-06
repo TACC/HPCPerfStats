@@ -135,6 +135,15 @@ def test_parse_first_timestamp_line_ignores_leading_spaces():
   assert host == "cn001"
 
 
+def test_parse_first_timestamp_line_keeps_placeholder_jid():
+  """jid '-' is valid input and should be returned as-is by the parser."""
+  lines = ["1709123456 - cn001\n"]
+  t, jid, host = parse_first_timestamp_line(lines)
+  assert t == "1709123456"
+  assert jid == "-"
+  assert host == "cn001"
+
+
 # --- find_processing_start_index ---
 
 

@@ -1,26 +1,33 @@
 """Targeted API view tests for branches under-covered by integration tests.
 
-These avoid ``django_db`` so they run without a compose ``db`` hostname (ORM is
-mocked where views would otherwise query). LocMem cache avoids Redis during
-``@dynamic_cache_page`` wrapping.
+Use ``django_db(databases=[])`` so they run on the host without compose ``db``.
+ORM is mocked where views would otherwise query. LocMem cache avoids Redis
+during ``@dynamic_cache_page`` wrapping.
 """
 
 from unittest.mock import MagicMock, patch
 
 import pytest
-from django.test import RequestFactory as DjangoRequestFactory
+from django.test import RequestFactory as DjangoRequestFactory, override_settings
 from rest_framework.test import APIRequestFactory
+
+pytestmark = pytest.mark.django_db(databases=[])
+
+_API_COVERAGE_GAP_SETTINGS = {
+    "ALLOWED_HOSTS": ["testserver", "example.com", "localhost", "127.0.0.1"],
+    "CACHES": {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "api-coverage-gap-tests",
+        }
+    },
+}
 
 
 @pytest.fixture(autouse=True)
-def _api_coverage_gap_settings(settings):
-  settings.ALLOWED_HOSTS = ["testserver", "example.com", "localhost", "127.0.0.1"]
-  settings.CACHES = {
-      "default": {
-          "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-          "LOCATION": "api-coverage-gap-tests",
-      }
-  }
+def _api_coverage_gap_settings():
+  with override_settings(**_API_COVERAGE_GAP_SETTINGS):
+    yield
 
 
 def _plain_post(path, body: bytes):

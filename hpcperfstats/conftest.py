@@ -53,14 +53,59 @@ def pytest_unconfigure(config):
       pass
 
 
-def pytest_collection_modifyitems(config, items):
-  """Mark tests under site/machine/tests as django tests.
+def _compose_network_enabled():
+  return os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip().lower() in (
+      "1",
+      "yes",
+      "true",
+  )
 
+
+def _django_db_needs_default_database(item):
+  """True if any django_db marker allows use of the default database."""
+  marks = list(item.iter_markers("django_db"))
+  if not marks:
+    return False
+  for m in marks:
+    if "databases" not in m.kwargs:
+      return True
+    dbs = m.kwargs.get("databases")
+    if dbs is None:
+      return True
+    if len(dbs) > 0:
+      return True
+  return False
+
+
+def pytest_collection_modifyitems(config, items):
+  """Mark site.machine.tests with django_db when missing; skip Postgres-backed tests off compose.
+
+    DB- and Redis-backed integration runs set HPCPERFSTATS_COMPOSE_NETWORK=1 (see
+    tests/run_db_pytest_workflow.sh and tests/run_redis_cache_pytest_workflow.sh).
+    Tests that only need Django settings + mocks use ``django_db(databases=[])``
+    so they still run on the host.
     """
   for item in items:
     path = str(item.fspath).replace("\\", "/")
-    if "/site/machine/tests/" in path:
+    if "/site/machine/tests/" in path and not list(item.iter_markers("django_db")):
       item.add_marker(pytest.mark.django_db)
+
+  if _compose_network_enabled():
+    return
+
+  skip_compose = pytest.mark.skip(
+      reason=(
+          "Requires Docker Compose network (PostgreSQL at host 'db'). "
+          "Run: tests/run_db_pytest_workflow.sh"
+      ),
+  )
+  for item in items:
+    path = str(item.fspath).replace("\\", "/")
+    if "/site/machine/tests/" not in path:
+      continue
+    if not _django_db_needs_default_database(item):
+      continue
+    item.add_marker(skip_compose)
 
 
 @pytest.fixture

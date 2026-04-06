@@ -241,10 +241,19 @@ warnings.filterwarnings(
 _use_live_redis_cache = os.environ.get(
     "HPCPERFSTATS_PYTEST_LIVE_REDIS", ""
 ).strip().lower() in ("1", "yes", "true")
-if (
-    any(arg.endswith("pytest") or arg == "pytest" or arg == "test" for arg in sys.argv)
-    and not _use_live_redis_cache
-):
+
+
+def _running_under_pytest():
+    """Detect pytest including ``python -m pytest`` (argv does not end with ``pytest``)."""
+    if "pytest" in sys.argv:
+        return True
+    prog = os.path.basename(str(sys.argv[0] or ""))
+    if prog == "pytest" or prog.startswith("pytest."):
+        return True
+    return "_pytest" in sys.modules
+
+
+if _running_under_pytest() and not _use_live_redis_cache:
     CACHES["default"] = {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
         "LOCATION": "hpcperfstats-tests",

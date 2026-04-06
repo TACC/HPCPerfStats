@@ -25,6 +25,8 @@ PYTHONPATH=. pytest -q hpcperfstats/tests
 PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 ```
 
+**`hpcperfstats/site/machine/tests` on the host:** tests that need the default PostgreSQL database are **skipped** unless the environment sets **`HPCPERFSTATS_COMPOSE_NETWORK=1`** (the compose workflows `tests/run_db_pytest_workflow.sh` and `tests/run_redis_cache_pytest_workflow.sh` export this inside the `web` container). Tests that only need Django settings and mocks use **`django_db(databases=[])`** and still run on the host. During pytest, Django switches the default cache to **LocMem** unless **`HPCPERFSTATS_PYTEST_LIVE_REDIS=1`** (live Redis workflow).
+
 ## Testing on macOS (Docker + full suite)
 
 ### 1. Install and start Docker

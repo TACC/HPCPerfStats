@@ -14,6 +14,7 @@ from django.test import RequestFactory
 from hpcperfstats.site.machine.models import ApiKey
 
 
+@pytest.mark.django_db(databases=[])
 class TestAdminMonitorRefresh:
   def test_admin_monitor_refresh_clears_cache_for_selected_section(self):
     from hpcperfstats.site.machine import api
@@ -49,8 +50,64 @@ class TestAdminMonitorRefresh:
     assert response.data == {"xalt_stats": {"ok": True}}
     mock_cache.delete.assert_called_with(api.KEY_ADMIN_XALT_STATS)
 
+  def test_admin_monitor_refresh_clears_rabbitmq_snapshot_and_stats(self):
+    from hpcperfstats.site.machine import api
 
-@pytest.mark.django_db
+    factory = RequestFactory()
+    request = factory.get("/api/admin_monitor/", {"section": "rabbitmq", "refresh": "1"})
+    request.session = {"is_staff": True}
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+      "hpcperfstats.site.machine.api._get_rabbitmq_stats",
+      return_value={"ok": True},
+    ), patch("hpcperfstats.site.machine.api.cache") as mock_cache:
+      response = api.admin_monitor(request)
+
+    assert response.status_code == 200
+    assert response.data == {"rabbitmq_stats": {"ok": True}}
+    deleted_keys = {call.args[0] for call in mock_cache.delete.call_args_list}
+    assert api.KEY_ADMIN_RMQ_STATS in deleted_keys
+    assert api.KEY_ADMIN_RMQ_SNAPSHOT in deleted_keys
+
+  def test_admin_monitor_refresh_without_section_clears_all_cached_sections(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/admin_monitor/", {"refresh": "1"})
+    request.session = {"is_staff": True}
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+      "hpcperfstats.site.machine.api.cached_orm",
+      return_value=[],
+    ), patch(
+      "hpcperfstats.site.machine.api._get_recent_rabbitmq_host_stats",
+      return_value=[],
+    ), patch(
+      "hpcperfstats.site.machine.api._get_cache_stats",
+      return_value={},
+    ), patch(
+      "hpcperfstats.site.machine.api._get_rabbitmq_stats",
+      return_value={},
+    ), patch(
+      "hpcperfstats.site.machine.api._get_timescaledb_stats",
+      return_value={},
+    ), patch(
+      "hpcperfstats.site.machine.api._get_xalt_jid_coverage",
+      return_value={},
+    ), patch("hpcperfstats.site.machine.api.cache") as mock_cache:
+      response = api.admin_monitor(request)
+
+    assert response.status_code == 200
+    deleted_keys = {call.args[0] for call in mock_cache.delete.call_args_list}
+    assert api.KEY_ADMIN_HOST_STATS in deleted_keys
+    assert api.KEY_ADMIN_CACHE_STATS in deleted_keys
+    assert api.KEY_ADMIN_RMQ_STATS in deleted_keys
+    assert api.KEY_ADMIN_RMQ_SNAPSHOT in deleted_keys
+    assert api.KEY_ADMIN_TIMESCALE_STATS in deleted_keys
+    assert api.KEY_ADMIN_XALT_STATS in deleted_keys
+
+
+@pytest.mark.django_db(databases=[])
 class TestSessionInfo:
   """Tests for the session_info endpoint."""
 
@@ -91,7 +148,7 @@ class TestSessionInfo:
     assert data["machine_name"] == "test-machine"
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=[])
 class TestDropStaffForSession:
   """Tests for the drop_staff_for_session endpoint."""
 
@@ -136,7 +193,7 @@ class TestDropStaffForSession:
     assert "Log out and log back in" in response.data["message"]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=[])
 class TestInvalidateCacheForPage:
   """Tests for the invalidate_cache_for_page endpoint."""
 
@@ -196,7 +253,7 @@ class TestInvalidateCacheForPage:
     assert b"custom:/machine/admin_monitor:cache_key" not in deleted_raw_keys
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=[])
 class TestHomeOptions:
   """Tests for the home_options endpoint."""
 
@@ -267,7 +324,7 @@ class TestHomeOptions:
     assert data["states"] == ["RUNNING"]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=[])
 class TestSearchDispatch:
   """Tests for the search_dispatch helper endpoint."""
 
@@ -341,6 +398,7 @@ class TestSearchDispatch:
     assert response.data["ok"] is True
 
 
+@pytest.mark.django_db(databases=[])
 class TestNonStaffJobVisibility:
   def test_apply_non_staff_visibility_includes_own_and_seen_accounts(self):
     from hpcperfstats.site.machine import api
@@ -375,6 +433,7 @@ class TestNonStaffJobVisibility:
     qs.none.assert_called_once()
 
 
+@pytest.mark.django_db(databases=[])
 class TestFormatLogTimestamp:
   def test_format_log_timestamp_naive_assumes_utc(self):
     from hpcperfstats.site.machine import api
@@ -399,6 +458,7 @@ class TestFormatLogTimestamp:
     assert out == "not-a-datetime"
 
 
+@pytest.mark.django_db(databases=[])
 class TestSiteContentCacheTimeout:
   """Site TTL is driven by cache_utils.get_site_content_cache_timeout (not per-job age)."""
 
@@ -429,6 +489,7 @@ class TestSiteContentCacheTimeout:
       assert cache_utils.get_site_content_cache_timeout() is None
 
 
+@pytest.mark.django_db(databases=[])
 class TestGetApiKeyFromRequest:
   def test_get_api_key_from_authorization_header(self):
     from hpcperfstats.site.machine import api
@@ -469,6 +530,7 @@ class TestGetApiKeyFromRequest:
     assert key is None
 
 
+@pytest.mark.django_db(databases=[])
 class TestCacheStats:
   def test_get_cache_stats_includes_total_cache_usable(self):
     from hpcperfstats.site.machine import api
@@ -506,6 +568,7 @@ class TestCacheStats:
     assert stats["total_cache_usable_human"] == "4K"
 
 
+@pytest.mark.django_db(databases=[])
 class TestAdminMonitor:
   def test_admin_monitor_rabbitmq_hosts_section(self):
     from hpcperfstats.site.machine import api
@@ -606,6 +669,7 @@ class TestAdminMonitor:
     assert hosts == ["node1.example.com", "node2.example.com"]
 
 
+@pytest.mark.django_db(databases=[])
 class TestAgeBucket:
   """_age_bucket matches Redis and DB-backed admin host stats labeling."""
 
@@ -631,6 +695,7 @@ class TestAgeBucket:
     assert api._age_bucket(timedelta(weeks=1)) == "gt_day"
 
 
+@pytest.mark.django_db(databases=[])
 class TestAdminMonitorHostStatDict:
   """_admin_monitor_host_stat_dict centralizes FQDN + age_bucket rows."""
 
@@ -654,6 +719,7 @@ class TestAdminMonitorHostStatDict:
     assert row["age_bucket"] == "ok"
 
 
+@pytest.mark.django_db(databases=[])
 class TestApiKeyValid:
   def test_api_key_valid_returns_none_for_unknown_key(self):
     from hpcperfstats.site.machine import api

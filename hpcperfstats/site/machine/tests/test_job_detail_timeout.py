@@ -13,7 +13,7 @@ def _set_future_result_later(future, value, delay_seconds):
   threading.Thread(target=_run, daemon=True).start()
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=[])
 def test_collect_future_results_with_deadline_returns_partial_results():
   from hpcperfstats.site.machine.api import _collect_future_results_with_deadline
 
@@ -37,7 +37,7 @@ def test_collect_future_results_with_deadline_returns_partial_results():
   assert elapsed < 0.15
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=[])
 def test_collect_future_results_with_deadline_omits_failed_tasks():
   from hpcperfstats.site.machine.api import _collect_future_results_with_deadline
 

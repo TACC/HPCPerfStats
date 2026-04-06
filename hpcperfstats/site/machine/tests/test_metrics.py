@@ -718,6 +718,24 @@ def test_build_job_metrics_display_list_puts_not_computed_yet_last():
   assert out[0]["value"] == 1.0
 
 
+def test_build_job_metrics_display_list_keeps_empty_reason_ahead_of_not_computed():
+  """Blank DB reason still counts as a present row and must not be sorted to the tail."""
+  first = job_metrics_catalog_entries()[0]
+  row = MagicMock()
+  row.metric = first["metric"]
+  row.type = first["type"]
+  row.units = first["units"]
+  row.value = None
+  row.no_data_reason = ""
+  job = MagicMock()
+  job.metrics_data_set.all.return_value = [row]
+
+  out = build_job_metrics_display_list(job)
+  assert out[0]["metric"] == first["metric"]
+  assert out[0]["no_data_reason"] == ""
+  assert out[1]["no_data_reason"] == METRIC_NOT_COMPUTED_YET
+
+
 def test_metrics_run_uses_supplied_pool(monkeypatch):
   """Metrics.run should use caller-supplied pool and not manage lifecycle."""
   m = Metrics()

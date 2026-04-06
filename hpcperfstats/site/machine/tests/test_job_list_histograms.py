@@ -10,8 +10,10 @@ import pandas as pd
 import pytest
 from django.test import RequestFactory, override_settings
 
+# Histogram view tests mock the ORM; job_list shape test below needs the default DB.
+pytestmark = pytest.mark.django_db(databases=[])
 
-@pytest.mark.django_db
+
 class TestJobListHistogramsView:
     """Tests for the job_list_histograms API view."""
 

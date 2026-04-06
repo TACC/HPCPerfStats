@@ -1146,3 +1146,17 @@ def test_build_archive_mapping_uses_real_sample_timestamp(monkeypatch, tmp_path)
   assert len(mapping) == 1
   assert expected_key in mapping
   assert mapping[expected_key] == [str(stats_file)]
+
+
+def test_build_archive_mapping_accepts_placeholder_jid(tmp_path):
+  """Files whose first timestamp line has jid '-' still map into daily archives."""
+  tgz_dir = tmp_path / "tgz"
+  tgz_dir.mkdir()
+  stats_file = tmp_path / "stats_missing_jid"
+  stats_file.write_text("1709123456 - cn001\n!cpu user\ncpu 0 10\n")
+
+  mapping = build_archive_mapping([str(stats_file)], str(tgz_dir))
+  assert len(mapping) == 1
+  only_key = next(iter(mapping.keys()))
+  assert only_key.endswith(".tar.gz")
+  assert mapping[only_key] == [str(stats_file)]

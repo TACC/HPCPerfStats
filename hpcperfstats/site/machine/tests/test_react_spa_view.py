@@ -8,7 +8,7 @@ from django.test import RequestFactory, override_settings
 from hpcperfstats.site.hpcperfstats_site.views import ReactSPAView
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=[])
 class TestReactSpaView:
   def test_replaces_bokeh_version_token_from_installed_python_package(self, tmp_path):
     """ReactSPAView injects bokeh.__version__ into the SPA shell."""
