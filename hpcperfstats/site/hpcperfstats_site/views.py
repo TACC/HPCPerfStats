@@ -43,7 +43,10 @@ class ReactSPAView(View):
         with open(index_path, "r", encoding="utf-8") as f:
             html = f.read()
             response = HttpResponse(html, content_type="text/html")
-            response["Cache-Control"] = "public, max-age=300"
+            # Never cache SPA shell HTML: it references hashed static asset names.
+            # Cached stale index.html causes 404s for removed hash files after deploy.
+            response["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            response["Pragma"] = "no-cache"
             return response
 
 

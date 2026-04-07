@@ -50,6 +50,8 @@ class TestReactSpaView:
     assert response.status_code == 200
     body = response.content.decode("utf-8")
     assert "<title>SPA</title>" in body
+    assert response["Cache-Control"] == "no-store, no-cache, must-revalidate"
+    assert response["Pragma"] == "no-cache"
     assert "cdn.pydata.org/bokeh" not in body
     assert "cdn.jsdelivr.net" not in body
 
