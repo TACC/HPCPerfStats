@@ -12,17 +12,29 @@ from django.views.decorators.http import require_POST
 class ReactSPAView(View):
     """Serve the built React app index.html so the SPA handles routing."""
 
+    @staticmethod
+    def _index_path_candidates():
+        """Return SPA index lookup order, preferring STATIC_ROOT artifact output."""
+        candidates = []
+        static_root = getattr(settings, "STATIC_ROOT", "")
+        if static_root:
+            candidates.append(os.path.join(static_root, "frontend", "index.html"))
+        static_dirs = getattr(settings, "STATICFILES_DIRS", ())
+        if static_dirs:
+            candidates.append(os.path.join(static_dirs[0], "frontend", "index.html"))
+        return candidates
+
     def get(self, request, *args, **kwargs):
         """Serve the frontend index.html with cache headers."""
-        static_dirs = getattr(settings, "STATICFILES_DIRS", ())
-        if not static_dirs:
+        candidates = self._index_path_candidates()
+        if not candidates:
             return HttpResponse(
-                "STATICFILES_DIRS not set.",
+                "Static paths are not set.",
                 status=503,
                 content_type="text/plain",
             )
-        index_path = os.path.join(static_dirs[0], "frontend", "index.html")
-        if not os.path.isfile(index_path):
+        index_path = next((p for p in candidates if os.path.isfile(p)), None)
+        if not index_path:
             return HttpResponse(
                 "Frontend not built. Run: cd frontend && npm run build",
                 status=503,

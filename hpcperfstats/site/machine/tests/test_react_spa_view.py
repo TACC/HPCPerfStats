@@ -8,6 +8,31 @@ from hpcperfstats.site.hpcperfstats_site.views import ReactSPAView
 
 @pytest.mark.django_db(databases=[])
 class TestReactSpaView:
+  def test_prefers_static_root_index_when_both_paths_exist(self, tmp_path):
+    """Serve index from STATIC_ROOT so HTML and /static assets stay in sync."""
+    static_root_frontend = tmp_path / "static_root" / "frontend"
+    static_root_frontend.mkdir(parents=True, exist_ok=True)
+    (static_root_frontend / "index.html").write_text(
+        "<html><head><title>From Static Root</title></head><body></body></html>",
+        encoding="utf-8",
+    )
+    static_dirs_frontend = tmp_path / "static_dirs" / "frontend"
+    static_dirs_frontend.mkdir(parents=True, exist_ok=True)
+    (static_dirs_frontend / "index.html").write_text(
+        "<html><head><title>From Static Dirs</title></head><body></body></html>",
+        encoding="utf-8",
+    )
+
+    request = RequestFactory().get("/machine/")
+    with override_settings(
+        STATIC_ROOT=str(tmp_path / "static_root"),
+        STATICFILES_DIRS=(str(tmp_path / "static_dirs"),),
+    ):
+      response = ReactSPAView.as_view()(request)
+
+    assert response.status_code == 200
+    assert "<title>From Static Root</title>" in response.content.decode("utf-8")
+
   def test_serves_frontend_index_unchanged(self, tmp_path):
     """ReactSPAView returns the built index.html as stored on disk."""
     frontend_dir = tmp_path / "frontend"
