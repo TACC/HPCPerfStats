@@ -2,6 +2,7 @@
 
 """
 import hashlib
+import json
 import logging
 import threading
 import time
@@ -255,6 +256,34 @@ def _unpack_cached_job_window_row(row):
   return None, None, None
 
 
+def _normalize_host_data_schema_label(value):
+  """Coerce ``host_data.type`` / ``event`` cell to a string safe for pandas ``.unique()``."""
+  if value is None:
+    return None
+  if isinstance(value, bytes):
+    return value.decode("utf-8", errors="replace")
+  if isinstance(value, str):
+    return value
+  if isinstance(value, (list, dict, tuple)):
+    try:
+      return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    except TypeError:
+      return str(value)
+  return str(value)
+
+
+def _coerce_jid_table_schema_dataframe(df):
+  """Normalize schema frame so ``type`` / ``event`` are hashable strings (no list cells)."""
+  if df is None or df.empty or "type" not in df.columns:
+    return df
+  out = df.copy()
+  out["type"] = out["type"].map(_normalize_host_data_schema_label)
+  if "event" in out.columns:
+    out["event"] = out["event"].map(_normalize_host_data_schema_label)
+  out = out[out["type"].notna()]
+  return out
+
+
 class jid_table:
   """Job-scoped view of job_data and host_data using Django ORM. No raw connection or temp tables; all data via ORM.
 
@@ -372,13 +401,15 @@ class jid_table:
       rows = [tuple(r[:2]) for r in raw_rows if len(r) >= 2]
       if not rows:
         return pd.DataFrame(columns=["type", "event"])
-      return pd.DataFrame(rows, columns=["type", "event"])
+      return _coerce_jid_table_schema_dataframe(
+          pd.DataFrame(rows, columns=["type", "event"]))
 
     schema_df = cached_orm(
         make_cache_key(KEY_JOB_SCHEMA, jid, self.host_list[0]),
         get_site_content_cache_timeout(),
         _schema_fn,
     )
+    schema_df = _coerce_jid_table_schema_dataframe(schema_df)
     if schema_df is None or schema_df.empty or "type" not in schema_df.columns:
       self.schema = {}
     else:

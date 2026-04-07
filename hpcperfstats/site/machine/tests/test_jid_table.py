@@ -8,7 +8,9 @@ import pytest
 
 pytestmark = pytest.mark.django_db(databases=[])
 
+from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_schema_dataframe
 from hpcperfstats.analysis.gen.jid_table import _ensure_tz
+from hpcperfstats.analysis.gen.jid_table import _normalize_host_data_schema_label
 from hpcperfstats.analysis.gen.jid_table import _normalize_job_accounting_host_list
 from hpcperfstats.analysis.gen.jid_table import _unpack_cached_job_window_row
 from hpcperfstats.analysis.gen.jid_table import TypeDetailDataProvider
@@ -81,6 +83,30 @@ def test_normalize_job_accounting_host_list_rejects_non_sequence():
   dt = datetime(2024, 1, 2, 3, 4, 5)
   assert _normalize_job_accounting_host_list(dt) == []
   assert _normalize_job_accounting_host_list(None) == []
+
+
+def test_normalize_host_data_schema_label_hashable_strings():
+  """Schema labels must stringify nested structures so pandas unique() works."""
+  assert _normalize_host_data_schema_label("cpu") == "cpu"
+  assert _normalize_host_data_schema_label(None) is None
+  assert _normalize_host_data_schema_label(["a", 1]) == '["a",1]'
+  assert _normalize_host_data_schema_label({"z": 1, "a": 2}) == '{"a":2,"z":1}'
+
+
+def test_coerce_jid_table_schema_dataframe_unique_on_list_types():
+  """DataFrame with list-valued type column must coerce before unique()."""
+  import pandas as pd
+
+  df = pd.DataFrame(
+      {
+          "type": [["nested"], "ok", ["nested"]],
+          "event": ["e1", "e2", "e1"],
+      }
+  )
+  out = _coerce_jid_table_schema_dataframe(df)
+  types = sorted(out["type"].unique().tolist())
+  assert types == ['["nested"]', "ok"]
+  assert len(out) == 3
 
 
 def test_unpack_cached_job_window_row_tuple_and_model():
