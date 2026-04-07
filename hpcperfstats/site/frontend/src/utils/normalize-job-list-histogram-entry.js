@@ -8,6 +8,10 @@
 function isValidBokehJsonItem(value) {
   if (!value || typeof value !== "object") return false;
   if (!value.doc || typeof value.doc !== "object") return false;
+  // Bokeh 2.x json_item used root_ids[]; Bokeh 3.x uses root_id (string).
+  if (typeof value.root_id === "string" && value.root_id.trim().length > 0) {
+    return true;
+  }
   if (!Array.isArray(value.root_ids) || value.root_ids.length === 0) return false;
   return value.root_ids.every((id) => typeof id === "string" && id.trim().length > 0);
 }

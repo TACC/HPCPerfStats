@@ -40,4 +40,17 @@ describe("normalizeJobListHistogramEntry", () => {
     expect(row.plot_item_full).toBeNull();
     expect(row.plot_unavailable_reason).toContain("invalid");
   });
+
+  it("accepts Bokeh 3 json_item shape with root_id", () => {
+    const bokeh3Thumb = { doc: { roots: [] }, root_id: "p1001", version: "3.9.0" };
+    const bokeh3Full = { doc: { roots: [] }, root_id: "p1002", version: "3.9.0" };
+    const row = normalizeJobListHistogramEntry({
+      title: "Jobs by queue",
+      plot_item_thumb: bokeh3Thumb,
+      plot_item_full: bokeh3Full,
+    });
+    expect(row.plot_item_thumb).toBe(bokeh3Thumb);
+    expect(row.plot_item_full).toBe(bokeh3Full);
+    expect(row.plot_unavailable_reason).toBeNull();
+  });
 });

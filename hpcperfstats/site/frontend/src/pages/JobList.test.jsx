@@ -94,8 +94,8 @@ describe("JobList", () => {
       expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
     });
     expect(screen.getByRole("heading", { name: /distributions for this list/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /jump to distributions/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /back to job table/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /jump to histograms/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /continue to job table/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Performance Data" })).toBeInTheDocument();
     expect(screen.getByText("job1")).toBeInTheDocument();
     expect(screen.getByText("COMPLETED")).toBeInTheDocument();
@@ -161,7 +161,7 @@ describe("JobList", () => {
     expect(distSection).toBeTruthy();
     expect(distSection).toHaveAttribute("hidden");
 
-    fireEvent.click(screen.getByRole("link", { name: /jump to distributions/i }));
+    fireEvent.click(screen.getByRole("link", { name: /jump to histograms/i }));
 
     await waitFor(() => {
       expect(distSection).not.toHaveAttribute("hidden");
