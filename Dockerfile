@@ -3,8 +3,9 @@ FROM node:22-bookworm-slim AS frontend-builder
 WORKDIR /home/hpcperfstats
 COPY --chown=node:node . .
 WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
-RUN /bin/bash -o pipefail -c "npm ci && npm run build \
-    && cp node_modules/axe-core/axe.min.js /tmp/axe-core.min.js"
+# Vite and @vitejs/plugin-react are devDependencies; they must be present to build.
+# After `npm run build`, drop dev packages with the same effect as `npm ci --omit=dev`.
+RUN /bin/bash -o pipefail -c "npm ci && npm run build && npm prune --omit=dev"
 WORKDIR /home/hpcperfstats
 RUN /bin/bash -o pipefail -c "\
     mkdir -p /tmp/frontend-static && \
@@ -38,9 +39,6 @@ COPY --chown=hpcperfstats:hpcperfstats . .
 COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
     /tmp/frontend-static \
     /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
-COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
-    /tmp/axe-core.min.js \
-    /home/hpcperfstats/hpcperfstats/site/machine/tests/support/axe-core.min.js
 
 # Set python install variables.
 ENV PYTHONDONTWRITEBYTECODE=1 \

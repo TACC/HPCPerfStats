@@ -81,6 +81,3 @@ hpcperfstats/site/hpcperfstats_site/static/frontend/.vite/
 hpcperfstats/site/hpcperfstats_site/static/frontend/assets/
 hpcperfstats/site/hpcperfstats_site/static/frontend/index.html
 hpcperfstats/site/hpcperfstats_site/static/frontend/manifest.json
-
-# Copied from frontend node_modules or Docker build for Playwright axe (do not commit binary)
-hpcperfstats/site/machine/tests/support/axe-core.min.js

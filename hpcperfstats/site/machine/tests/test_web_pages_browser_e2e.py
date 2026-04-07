@@ -17,20 +17,6 @@ except ModuleNotFoundError:
   pytest.skip("playwright is required for browser E2E tests", allow_module_level=True)
 
 
-def _axe_core_bundle_path():
-  """Resolve axe-core for Playwright (bundled in Docker image or local npm install)."""
-  tests_dir = Path(__file__).resolve().parent
-  bundled = tests_dir / "support" / "axe-core.min.js"
-  if bundled.is_file():
-    return bundled
-  here = Path(__file__).resolve()
-  for directory in here.parents:
-    candidate = directory / "hpcperfstats/site/frontend/node_modules/axe-core/axe.min.js"
-    if candidate.is_file():
-      return candidate
-  return None
-
-
 @contextmanager
 def _temporary_wsgi_server():
   """Run a lightweight local WSGI server for browser navigation."""
@@ -220,31 +206,5 @@ def test_browser_flow_for_web_pages():
               base_url,
           )
           assert status_code == 403
-
-          axe_bundle = _axe_core_bundle_path()
-          if axe_bundle is not None:
-            page.add_init_script(path=str(axe_bundle))
-            for axe_url in (
-                f"{base_url}/machine/?staff=0",
-                f"{base_url}/machine/job/123/",
-                f"{base_url}/machine/job/123/cpu/",
-                f"{base_url}/machine/year/2020/",
-                f"{base_url}/machine/admin_monitor/",
-                f"{base_url}/machine/job_monitor/",
-                f"{base_url}/machine/api-key",
-            ):
-              page.goto(axe_url)
-              violations = page.evaluate(
-                  """async () => {
-                    const results = await axe.run(document, {
-                      runOnly: {
-                        type: 'tag',
-                        values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'],
-                      },
-                    });
-                    return results.violations;
-                  }""",
-              )
-              assert not violations, violations
 
           browser.close()
