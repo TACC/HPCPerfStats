@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@bokeh/bokehjs": "3.9.0",
+    "bootswatch": "5.3.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-paginate": "^8.3.0",

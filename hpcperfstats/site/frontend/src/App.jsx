@@ -11,6 +11,7 @@ import TypeDetail from "./pages/TypeDetail";
 import HostDetail from "./pages/HostDetail";
 import AdminMonitor from "./pages/AdminMonitor";
 import JobMonitor from "./pages/JobMonitor";
+import PageApiKey from "./pages/PageApiKey";
 import { SessionContext } from "./session-context";
 
 function SessionGateLayout({ message, title }) {
@@ -79,6 +80,7 @@ export default function App() {
           <Route path="host/:host/plot" element={<HostDetail />} />
           <Route path="admin_monitor" element={<AdminMonitor />} />
           <Route path="job_monitor" element={<JobMonitor />} />
+          <Route path="api-key" element={<PageApiKey />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>

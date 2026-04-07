@@ -737,6 +737,31 @@ body {
   }
 }
 
+/* API key page (/machine/api-key) */
+.page-api-key-container {
+  max-width: 640px;
+}
+.api-key-code-block {
+  padding: 0.35rem 0.5rem;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+.api-key-copy-status {
+  min-height: 1.25em;
+}
+@media (prefers-color-scheme: dark) {
+  .api-key-code-block {
+    background: #2b3035 !important;
+    color: #e9ecef;
+  }
+}
+@media (max-width: 480px) {
+  .page-api-key-container {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+}
+
 /* Safe area for notched devices */
 @supports (padding: env(safe-area-inset-bottom)) {
   body {

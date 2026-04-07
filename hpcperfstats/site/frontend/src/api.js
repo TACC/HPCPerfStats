@@ -48,6 +48,8 @@ async function request(path, options = {}) {
 
 export const api = {
   getSession: () => request("/session/"),
+  getUserApiKey: () => request("/user-api-key/"),
+  rotateUserApiKey: () => request("/user-api-key/rotate/", { method: "POST" }),
   dropStaffForSession: () => request("/session/drop-staff/", { method: "POST" }),
   invalidateCacheForPage: (pagePath) =>
     request("/cache/invalidate-page/", {

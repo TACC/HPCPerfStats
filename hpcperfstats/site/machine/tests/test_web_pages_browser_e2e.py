@@ -4,7 +4,7 @@ import threading
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 from wsgiref.simple_server import make_server
 
 import pytest
@@ -75,6 +75,19 @@ def test_browser_flow_for_web_pages():
   <button id="copy-error-detail-btn" type="button" hidden>Copy error detail</button>
   <script>
     (function () {
+      if (location.pathname.indexOf("/machine/api-key") !== -1) {
+        document.getElementById("root").innerHTML = [
+          '<main id="api-key-main">',
+          "<h1>HPCPerfStats API key</h1>",
+          '<a href="/machine/" class="link-primary">Back to HPCPerfStats</a>',
+          "<p>Signed in as: <strong>stub-user</strong></p>",
+          "<p>This key is shown only once.</p>",
+          '<code id="api-key-value">raw-new-api-key</code>',
+          '<button type="button" id="copy-api-key">Copy</button>',
+          "</main>",
+        ].join("");
+        return;
+      }
       const params = new URLSearchParams(window.location.search);
       const isStaff = params.get("staff") === "1";
       const staffRoot = document.getElementById("staff-actions-root");
@@ -117,30 +130,11 @@ def test_browser_flow_for_web_pages():
 </html>""",
         encoding="utf-8",
     )
-    active_key = Mock()
-    active_key.key_prefix = "abc123"
-    list_queryset = Mock()
-    list_queryset.order_by.return_value.first.return_value = active_key
-    update_queryset = Mock()
-    update_queryset.update.return_value = 1
-    rotated_key = Mock()
-    rotated_key.key_prefix = "def456"
-
-    with patch(
-        "hpcperfstats.site.hpcperfstats_site.views.check_for_tokens",
-        return_value=True,
-    ), patch(
-        "hpcperfstats.site.hpcperfstats_site.views.ApiKey.objects.filter"
-    ) as mock_filter, patch(
-        "hpcperfstats.site.hpcperfstats_site.views.ApiKey.create_from_raw_key",
-        return_value=(rotated_key, "raw-new-api-key"),
-    ), patch.object(settings, "STATICFILES_DIRS", (tmpdir,)), patch.object(
+    with patch.object(settings, "STATICFILES_DIRS", (tmpdir,)), patch.object(
         settings,
         "ALLOWED_HOSTS",
         [*getattr(settings, "ALLOWED_HOSTS", []), "127.0.0.1", "localhost"],
     ):
-      mock_filter.side_effect = [list_queryset, update_queryset]
-
       with _temporary_wsgi_server() as base_url:
         with sync_playwright() as playwright:
           browser = playwright.chromium.launch(headless=True)
@@ -207,14 +201,12 @@ def test_browser_flow_for_web_pages():
           assert "User-agent: *" in robots_text
           assert "Disallow: /" in robots_text
 
-          page.goto(f"{base_url}/api-key/")
-          assert "HPCPerfStats API key" in page.locator("body").inner_text()
+          page.goto(f"{base_url}/machine/api-key")
+          body_text = page.locator("body").inner_text()
+          assert "HPCPerfStats API key" in body_text
+          assert "This key is shown only once." in body_text
+          assert "raw-new-api-key" in body_text
           assert page.get_by_role("link", name="Back to HPCPerfStats").is_visible()
-          page.once("dialog", lambda d: d.accept())
-          page.click("button[type='submit']")
-          page.wait_for_load_state("domcontentloaded")
-          assert "This key is shown only once." in page.locator("body").inner_text()
-          assert "raw-new-api-key" in page.locator("body").inner_text()
 
           status_code = page.evaluate(
               """async (baseUrl) => {
@@ -239,7 +231,7 @@ def test_browser_flow_for_web_pages():
                 f"{base_url}/machine/year/2020/",
                 f"{base_url}/machine/admin_monitor/",
                 f"{base_url}/machine/job_monitor/",
-                f"{base_url}/api-key/",
+                f"{base_url}/machine/api-key",
             ):
               page.goto(axe_url)
               violations = page.evaluate(

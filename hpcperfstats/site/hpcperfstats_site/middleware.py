@@ -34,7 +34,7 @@ DEFAULT_CSP = (
   "form-action 'self'; "
   "img-src 'self' data:; "
   "font-src 'self' data: https://fonts.gstatic.com; "
-  "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
   "connect-src 'self'; "
   "upgrade-insecure-requests; "

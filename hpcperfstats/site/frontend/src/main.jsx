@@ -3,6 +3,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import "bootswatch/dist/spacelab/bootstrap.min.css";
 import "./index.css";
 
 function init() {

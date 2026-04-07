@@ -4,6 +4,8 @@ from . import api
 
 urlpatterns = [
     path("session/", api.session_info),
+    path("user-api-key/", api.user_api_key_status),
+    path("user-api-key/rotate/", api.user_api_key_rotate),
     path("session/drop-staff/", api.drop_staff_for_session),
     path("cache/invalidate-page/", api.invalidate_cache_for_page),
     path("home/", api.home_options),

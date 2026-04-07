@@ -98,6 +98,6 @@ describe("Layout", () => {
 
   it("links to API key management page", () => {
     renderLayout({ logged_in: true, username: "alice", is_staff: false });
-    expect(screen.getByRole("link", { name: "API key" })).toHaveAttribute("href", "/api-key/");
+    expect(screen.getByRole("link", { name: "API key" })).toHaveAttribute("href", "/api-key");
   });
 });

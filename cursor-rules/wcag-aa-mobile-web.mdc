@@ -14,7 +14,7 @@ alwaysApply: false
 
 ## Target
 
-User-visible surfaces (React SPA under `/machine/`, standalone Django HTML such as `/api-key/`, and operator templates) must **maintain alignment with WCAG 2.2 Level AA** and **remain usable on mobile viewports** whenever those pages or their shared styles are changed.
+User-visible surfaces (React SPA under `/machine/` including `/machine/api-key`, and operator templates) must **maintain alignment with WCAG 2.2 Level AA** and **remain usable on mobile viewports** whenever those pages or their shared styles are changed.
 
 Documented limitations (e.g. Bokeh canvas for screen readers, OAuth IdP UI) do not relax requirements for everything the app controls.
 

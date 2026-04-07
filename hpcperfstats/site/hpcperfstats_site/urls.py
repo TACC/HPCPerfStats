@@ -4,6 +4,7 @@
 from django.contrib import admin
 from django.http import HttpResponseRedirect
 from django.urls import include, path
+from django.views.generic import RedirectView
 from django.views.static import serve
 
 from hpcperfstats.site.hpcperfstats_site import settings
@@ -15,7 +16,6 @@ from hpcperfstats.site.machine.oauth2 import (
 )
 from hpcperfstats.site.hpcperfstats_site.views import (
     ReactSPAView,
-    api_key_page,
     csp_report,
     robots_txt,
 )
@@ -32,7 +32,11 @@ urlpatterns = [
     path("", lambda r: HttpResponseRedirect("/machine/")),
     path("machine/", ReactSPAView.as_view()),
     path("machine/<path:path>", ReactSPAView.as_view()),
-    path("api-key/", api_key_page, name="api_key_page"),
+    path(
+        "api-key/",
+        RedirectView.as_view(url="/machine/api-key", permanent=False),
+        name="api_key_redirect",
+    ),
     path("admin_monitor/", lambda r: HttpResponseRedirect("/machine/admin_monitor/")),
     path("login/", login_oauth, name="login"),
     path("login_prompt", login_prompt, name="login_prompt"),

@@ -973,6 +973,58 @@ def session_info(request):
     })
 
 
+@api_view(["GET"])
+def user_api_key_status(request):
+    """Return API key visibility for the OAuth session (create key if none exists)."""
+    if not check_for_tokens(request):
+        return Response(
+            {"detail": "Authentication required", "login_url": "/login_prompt"},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+    username = request.session.get("username") or "unknown"
+    is_staff = bool(request.session.get("is_staff", False))
+    key_obj = (
+        ApiKey.objects.filter(username=username, is_active=True, is_staff=is_staff)
+        .order_by("-created_at")
+        .first()
+    )
+    raw_key = None
+    if key_obj is None:
+        key_obj, raw_key = ApiKey.create_from_raw_key(
+            username=username,
+            is_staff=is_staff,
+        )
+    return Response({
+        "username": username,
+        "raw_key": raw_key,
+        "key_prefix": key_obj.key_prefix if key_obj else "",
+    })
+
+
+@api_view(["POST"])
+def user_api_key_rotate(request):
+    """Revoke active keys for this user and return a newly minted raw key."""
+    if not check_for_tokens(request):
+        return Response(
+            {"detail": "Authentication required", "login_url": "/login_prompt"},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+    username = request.session.get("username") or "unknown"
+    is_staff = bool(request.session.get("is_staff", False))
+    ApiKey.objects.filter(username=username, is_active=True, is_staff=is_staff).update(
+        is_active=False
+    )
+    key_obj, raw_key = ApiKey.create_from_raw_key(
+        username=username,
+        is_staff=is_staff,
+    )
+    return Response({
+        "username": username,
+        "raw_key": raw_key,
+        "key_prefix": key_obj.key_prefix,
+    })
+
+
 @api_view(["POST"])
 def drop_staff_for_session(request):
     """Remove staff access for the current authenticated session only."""

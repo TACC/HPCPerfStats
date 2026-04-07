@@ -303,9 +303,9 @@ export default function Layout({ session, onSessionChange, children }) {
                     ) : null}
                   </div>
                 )}
-                <a href="/api-key/" className="btn btn-outline-secondary btn-sm">
+                <Link to="/api-key" className="btn btn-outline-secondary btn-sm">
                   API key
-                </a>
+                </Link>
                 <a href="/logout/" className="btn btn-outline-secondary btn-sm">
                   Logout
                 </a>
@@ -363,13 +363,13 @@ export default function Layout({ session, onSessionChange, children }) {
                         </button>
                       </>
                     ) : null}
-                    <a
-                      href="/api-key/"
+                    <Link
+                      to="/api-key"
                       className="btn btn-outline-secondary btn-sm"
                       onClick={() => setMoreMenuOpen(false)}
                     >
                       API key
-                    </a>
+                    </Link>
                     <a
                       href="/logout/"
                       className="btn btn-outline-secondary btn-sm"

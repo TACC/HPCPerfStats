@@ -56,13 +56,16 @@ class TestWebPagesEndToEnd:
       )
       assert csp_response.status_code == 204
 
-  def test_api_key_page_requires_login_then_supports_key_rotation(self):
-    """Validate API key page auth gate, render, and key rotation action."""
+  def test_api_key_legacy_path_redirects_to_spa_route(self):
+    """Bookmarks to /api-key/ continue to work via redirect to the React route."""
     client = Client()
     redirect_response = client.get("/api-key/")
     assert redirect_response.status_code == 302
-    assert "/login_prompt?next=/api-key/" in redirect_response["Location"]
+    assert "/machine/api-key" in redirect_response["Location"]
 
+  def test_user_api_key_json_flow_with_session(self):
+    """SPA-backed API key uses /api/user-api-key/ for status and rotation."""
+    client = Client()
     session = client.session
     session["access_token"] = "token"
     session["username"] = "webtest-user"
@@ -73,31 +76,28 @@ class TestWebPagesEndToEnd:
     active_key.key_prefix = "abc123"
     list_queryset = Mock()
     list_queryset.order_by.return_value.first.return_value = active_key
+    update_queryset = Mock()
+    update_queryset.update.return_value = 1
     rotated_key = Mock()
     rotated_key.key_prefix = "def456"
 
-    with patch("hpcperfstats.site.hpcperfstats_site.views.ApiKey.objects.filter") as mock_filter, patch(
-        "hpcperfstats.site.hpcperfstats_site.views.ApiKey.create_from_raw_key",
+    with patch("hpcperfstats.site.machine.api.ApiKey.objects.filter") as mock_filter, patch(
+        "hpcperfstats.site.machine.api.ApiKey.create_from_raw_key",
         return_value=(rotated_key, "raw-new-api-key"),
     ):
-      mock_filter.side_effect = [list_queryset, Mock()]
+      mock_filter.side_effect = [list_queryset, update_queryset]
 
-      first_response = client.get("/api-key/")
+      first_response = client.get("/api/user-api-key/")
       assert first_response.status_code == 200
-      first_html = first_response.content.decode("utf-8")
-      assert "HPCPerfStats API key" in first_html
-      assert 'href="/machine/"' in first_html
-      assert "Back to HPCPerfStats" in first_html
-      assert "Invalidate and Create New Key" in first_html
-      assert "Signed in as: <strong>webtest-user</strong>" in first_html
-      assert "Active key prefix:" in first_html
+      first_payload = first_response.json()
+      assert first_payload["username"] == "webtest-user"
+      assert first_payload["raw_key"] is None
+      assert first_payload["key_prefix"] == "abc123"
 
-      rotate_response = client.post("/api-key/")
+      rotate_response = client.post("/api/user-api-key/rotate/")
       assert rotate_response.status_code == 200
-      rotate_html = rotate_response.content.decode("utf-8")
-      assert "HPCPerfStats API key" in rotate_html
-      assert "This key is shown only once." in rotate_html
-      assert "raw-new-api-key" in rotate_html
+      rotate_payload = rotate_response.json()
+      assert rotate_payload["raw_key"] == "raw-new-api-key"
 
   def test_staff_can_disable_staff_for_current_session(self):
     """Validate staff-only session demotion endpoint and resulting session state."""

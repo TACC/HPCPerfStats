@@ -26,6 +26,7 @@ class TestReactSpaView:
     body = response.content.decode("utf-8")
     assert "<title>SPA</title>" in body
     assert "cdn.pydata.org/bokeh" not in body
+    assert "cdn.jsdelivr.net" not in body
 
   def test_returns_503_when_frontend_index_is_missing(self, tmp_path):
     """ReactSPAView returns actionable 503 when build output is absent."""

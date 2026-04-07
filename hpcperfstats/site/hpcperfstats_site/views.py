@@ -1,16 +1,12 @@
-"""Views for the main site: React SPA shell and API-key management page."""
+"""Views for the main site: React SPA shell and lightweight endpoints."""
 import json
 import os
 
 from django.conf import settings
-from django.http import HttpResponse, HttpResponseRedirect
-from django.middleware.csrf import get_token
+from django.http import HttpResponse
 from django.views.generic import View
 from django.views.decorators.http import require_GET
 from django.views.decorators.http import require_POST
-
-from hpcperfstats.site.machine.models import ApiKey
-from hpcperfstats.site.machine.oauth2 import check_for_tokens
 
 
 class ReactSPAView(View):
@@ -39,175 +35,6 @@ class ReactSPAView(View):
             return response
 
 
-def api_key_page(request):
-    """Simple HTML page to create or view an API key for the logged-in user.
-
-    Requires OAuth2 authentication; if not authenticated, redirects to
-    /login_prompt with next set to this page. On first visit a new API key is
-    created for the user (or reuses the most recent active key).
-    """
-    if not check_for_tokens(request):
-        return HttpResponseRedirect("/login_prompt?next=/api-key/")
-
-    username = request.session.get("username") or "unknown"
-    # Persist the user's staff status at key-creation time so API-key auth can
-    # reliably reproduce staff vs non-staff behavior without re-running the
-    # domain-based heuristic.
-    is_staff = bool(request.session.get("is_staff", False))
-
-    generated_api_key = None
-    if request.method == "POST":
-        # Invalidate all existing active keys for this (username, is_staff) pair
-        # and create a fresh one.
-        ApiKey.objects.filter(username=username, is_active=True, is_staff=is_staff).update(
-            is_active=False
-        )
-        key_obj, generated_api_key = ApiKey.create_from_raw_key(
-            username=username,
-            is_staff=is_staff,
-        )
-    else:
-        # Reuse the most recent active key if one exists; otherwise create a new one.
-        key_obj = (
-            ApiKey.objects.filter(username=username, is_active=True, is_staff=is_staff)
-            .order_by("-created_at")
-            .first()
-        )
-        if key_obj is None:
-            key_obj, generated_api_key = ApiKey.create_from_raw_key(
-                username=username,
-                is_staff=is_staff,
-            )
-
-    csrf_token = get_token(request)
-    if generated_api_key:
-        key_message = (
-            "<p>Your API key for programmatic access is:</p>"
-            '<div class="api-key-row">'
-            f'<code id="api-key-value" class="api-key-code-block">{generated_api_key}</code>'
-            '<button type="button" id="copy-api-key" class="btn btn-outline-secondary btn-sm" aria-label="Copy API key">'
-            "Copy"
-            "</button>"
-            "</div>"
-            '<div id="api-key-copy-status" class="api-key-copy-status" aria-live="polite"></div>'
-            "<p><strong>This key is shown only once.</strong> Store it securely now.</p>"
-        )
-    else:
-        key_message = (
-            "<p>You already have an active API key, and for security it cannot be shown again.</p>"
-            f"<p>Active key prefix: <code>{key_obj.key_prefix}</code></p>"
-            "<p>Use your saved copy, or rotate to generate a new key.</p>"
-        )
-
-    body = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HPCPerfStats API key</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.0/dist/spacelab/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous" />
-  <style>
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 2rem; }}
-    @media (prefers-color-scheme: dark) {{
-      .api-key-code-block {{
-        background: #2b3035 !important;
-        color: #e9ecef;
-      }}
-    }}
-    code {{
-      padding: 0.2rem 0.4rem;
-      background: #f5f5f5;
-      border-radius: 4px;
-      word-break: break-all;
-      overflow-wrap: anywhere;
-    }}
-    .api-key-code-block {{
-      padding: 0.35rem 0.5rem;
-    }}
-    .api-key-row {{ display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem; }}
-    .api-key-copy-status {{ margin-top: 0.35rem; color: #444; font-size: 0.95rem; min-height: 1.25em; }}
-    @media (max-width: 480px) {{ body {{ margin: 0.75rem; }} }}
-    :focus-visible {{ outline: 2px solid #0a58ca; outline-offset: 2px; }}
-  </style>
-</head>
-<body>
-  <a href="#api-key-main" class="visually-hidden visually-hidden-focusable">Skip to main content</a>
-  <div id="api-key-page-announce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
-  <div class="container" style="max-width: 640px;">
-    <p class="mb-3"><a href="/machine/" class="link-primary">Back to HPCPerfStats</a></p>
-    <main id="api-key-main">
-    <div class="card shadow-sm">
-      <div class="card-body">
-    <h1 class="h3 card-title">HPCPerfStats API key</h1>
-    <p>Signed in as: <strong>{username}</strong></p>
-    {key_message}
-    <p>Store this key securely. You can use it with the <code>hpcperfstats-jobstats</code>
-    and <code>hpcperfstats-sacct-gen</code> tools (from the hpcperfstats-tools package)
-    by passing <code>--api-key</code> or using the cached key in <code>~/.hpcperfstats-api</code>.</p>
-    <form method="post" class="mt-4" id="api-key-rotate-form" aria-describedby="api-key-rotate-help">
-      <input type="hidden" name="csrfmiddlewaretoken" value="{csrf_token}" />
-      <p id="api-key-rotate-help" class="small text-muted mb-2">
-        This revokes your current key and creates a replacement. Confirm before submitting.
-      </p>
-      <button type="submit" class="btn btn-warning" id="api-key-rotate-submit">Invalidate and Create New Key</button>
-    </form>
-      </div>
-    </div>
-    </main>
-  </div>
-  <script>
-    (function () {{
-      document.addEventListener("DOMContentLoaded", function () {{
-        const keyEl = document.getElementById("api-key-value");
-        const ann = document.getElementById("api-key-page-announce");
-        if (keyEl && ann) {{
-          ann.textContent =
-            "A new API key is displayed on this page. Copy it now; it will not be shown again.";
-          keyEl.scrollIntoView({{ block: "nearest", behavior: "smooth" }});
-        }}
-      }});
-      const rotateForm = document.getElementById("api-key-rotate-form");
-      if (rotateForm) {{
-        rotateForm.addEventListener("submit", function (e) {{
-          if (!window.confirm(
-            "Invalidate your current API key and create a new one? The old key will stop working immediately."
-          )) {{
-            e.preventDefault();
-          }}
-        }});
-      }}
-    }})();
-    (function () {{
-      const copyBtn = document.getElementById("copy-api-key");
-      const apiKeyEl = document.getElementById("api-key-value");
-      const statusEl = document.getElementById("api-key-copy-status");
-      if (!copyBtn || !apiKeyEl || !statusEl) return;
-
-      copyBtn.addEventListener("click", async function () {{
-        const key = (apiKeyEl.textContent || apiKeyEl.innerText || "").trim();
-        if (!key) return;
-
-        copyBtn.disabled = true;
-        statusEl.textContent = "";
-        try {{
-          await navigator.clipboard.writeText(key);
-          statusEl.textContent = "Copied";
-        }} catch (e) {{
-          console.error("Failed to copy API key", e);
-          statusEl.textContent = "Copy failed";
-        }} finally {{
-          copyBtn.disabled = false;
-        }}
-      }});
-    }})();
-  </script>
-</body>
-</html>
-"""
-    return HttpResponse(body, content_type="text/html")
-
-
 @require_GET
 def robots_txt(request):
     """Disallow all automated crawlers; this app is not meant to be indexed."""
@@ -231,4 +58,3 @@ def csp_report(request):
         # Ignore malformed reports; do not leak details.
         pass
     return HttpResponse(status=204)
-
