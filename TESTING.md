@@ -77,6 +77,8 @@ For Vitest:
 cd hpcperfstats/site/frontend && npm ci
 ```
 
+The SPA bundles Bokeh via **`@bokeh/bokehjs`** in `package.json`; keep its version aligned with the **`bokeh==…`** pin in `pyproject.toml` so `json_item` embeds stay compatible.
+
 ### 3. Full compose-backed gate (Django DB, Playwright browser E2E, live Redis)
 
 All commands below assume your current directory is **`HPCPerfStats/`** (the one with `docker-compose.yaml`).

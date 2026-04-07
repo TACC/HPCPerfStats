@@ -2,7 +2,6 @@
 import json
 import os
 
-import bokeh
 from django.conf import settings
 from django.http import HttpResponse, HttpResponseRedirect
 from django.middleware.csrf import get_token
@@ -16,8 +15,6 @@ from hpcperfstats.site.machine.oauth2 import check_for_tokens
 
 class ReactSPAView(View):
     """Serve the built React app index.html so the SPA handles routing."""
-
-    BOKEH_VERSION_TOKEN = "{{ BOKEH_VERSION }}"
 
     def get(self, request, *args, **kwargs):
         """Serve the frontend index.html with cache headers."""
@@ -37,8 +34,6 @@ class ReactSPAView(View):
             )
         with open(index_path, "r", encoding="utf-8") as f:
             html = f.read()
-            # Keep JS CDN links aligned with the backend Bokeh package version.
-            html = html.replace(self.BOKEH_VERSION_TOKEN, bokeh.__version__)
             response = HttpResponse(html, content_type="text/html")
             response["Cache-Control"] = "public, max-age=300"
             return response

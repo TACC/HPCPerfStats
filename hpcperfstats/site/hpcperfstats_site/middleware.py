@@ -35,7 +35,7 @@ DEFAULT_CSP = (
   "img-src 'self' data:; "
   "font-src 'self' data: https://fonts.gstatic.com; "
   "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.pydata.org; "
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
   "connect-src 'self'; "
   "upgrade-insecure-requests; "
   "report-uri /csp-report/;"
