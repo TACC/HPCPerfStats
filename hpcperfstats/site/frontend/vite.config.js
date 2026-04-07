@@ -64,17 +64,18 @@ export default defineConfig({
     outDir: "../hpcperfstats_site/static/frontend",
     emptyOutDir: true,
     manifest: true,
-    sourcemap: true,
+    sourcemap: false,
+    // Vite 8 defaults are already production-oriented: oxc JS minify, lightningcss CSS,
+    // Baseline Widely Available syntax target, code-split CSS, module preload.
+    reportCompressedSize: false,
     // Default Rolldown limit is 500 kB. The SPA entry stays ~0.4 MiB after lazy-loading
     // Bokeh; async chunks are @bokeh/bokehjs (~1.7 MiB) and mathjax-full (~1.8 MiB via Bokeh).
     chunkSizeWarningLimit: 1900,
     rolldownOptions: {
+      input: "index.html",
       output: {
         codeSplitting: true,
       },
-    },
-    rollupOptions: {
-      input: "index.html",
     },
   },
   server: {
