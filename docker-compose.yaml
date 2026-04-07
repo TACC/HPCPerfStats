@@ -104,6 +104,8 @@ services:
           - rabbitmq
 
 volumes:
+  staticfiles_data:
+  media_data:
   postgres_data:
   rabbitmq_messages:
 
