@@ -16,6 +16,7 @@ from hpcperfstats.analysis.metrics.metrics import (
     _EventIndex,
     _Host,
     _Schema,
+    _jid_table_host_data_time_kwargs,
     avg_ethbw,
     avg_freq,
     avg_gpuutil,
@@ -771,3 +772,40 @@ def test_metrics_run_uses_supplied_pool(monkeypatch):
   assert pool.chunksize == 1
   assert pool.closed is False
   assert pool.joined is False
+
+
+def test_jid_table_host_data_time_kwargs_full_and_sampled():
+  assert _jid_table_host_data_time_kwargs({}) is None
+  assert _jid_table_host_data_time_kwargs({"host__in": []}) is None
+  assert _jid_table_host_data_time_kwargs({
+      "time__in": [1, 2],
+      "host__in": ["x"],
+  }) == {"time__in": [1, 2]}
+  assert _jid_table_host_data_time_kwargs({
+      "time__gte": 1,
+      "time__lte": 2,
+      "host__in": ["x"],
+  }) == {"time__gte": 1, "time__lte": 2}
+
+
+def test_job_arc_uses_time__in_when_jid_table_large_job_sampled():
+  """Large-job jid_table uses time__in; job_arc must not require time__gte/time__lte."""
+  from types import SimpleNamespace
+
+  from django.utils import timezone as django_tz
+
+  t1 = django_tz.now()
+  jt = SimpleNamespace(
+      _base_filter={
+          "time__in": [t1],
+          "host__in": ["n.example.com"],
+      }
+  )
+  m = Metrics()
+  with patch("hpcperfstats.site.machine.models.host_data.objects") as mock_objects:
+    mock_objects.filter.return_value.values.return_value.order_by.return_value = []
+    m.job_arc(jt, typename="net", events=["rx_bytes"], conv=1.0)
+    kwargs = mock_objects.filter.call_args.kwargs
+    assert kwargs["time__in"] == [t1]
+    assert "time__gte" not in kwargs
+    assert "time__lte" not in kwargs

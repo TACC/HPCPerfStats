@@ -27,7 +27,7 @@ from django.db.utils import OperationalError, DatabaseError
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics import metrics
 from hpcperfstats.analysis.metrics.live_host_sample_count import (
-    LiveDistinctHostTimeCount,
+    live_distinct_host_time_count_expression,
 )
 from hpcperfstats.analysis.metrics.metrics import expected_job_metric_row_count
 from hpcperfstats.print_utils import log_print
@@ -157,7 +157,9 @@ def _jobs_queryset(date, min_time, rerun):
   # + FQDN host list as jid_table).
   if connections["default"].vendor == "postgresql":
     annotated = annotated.annotate(
-        live_distinct_time_count=LiveDistinctHostTimeCount(_host_name_suffix()),
+        live_distinct_time_count=live_distinct_host_time_count_expression(
+            _host_name_suffix(),
+        ),
     )
     need_metrics |= (
         Q(metrics_distinct_time_count__isnull=False)

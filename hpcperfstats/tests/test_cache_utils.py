@@ -140,3 +140,23 @@ def test_warm_job_cache_entries_sets_job_keys():
   assert args[0] == f"{cache_utils.KEY_JOB}:j1"
   assert args[1] is mock_job
   assert kwargs.get("timeout") == 3600
+
+
+def test_make_cache_key_bounded_short_parts_unchanged():
+  from hpcperfstats.site.machine.cache_utils import make_cache_key_bounded
+
+  k = make_cache_key_bounded("agg_df", "j1", "t", "arc", "lb2048")
+  assert k.count(":") == 4
+  assert "j1" in k
+  assert len(k) < 250
+
+
+def test_make_cache_key_bounded_hashes_long_event_list():
+  from hpcperfstats.site.machine.cache_utils import make_cache_key_bounded
+
+  long_ev = ":".join("e{}".format(i) for i in range(200))
+  k = make_cache_key_bounded(
+      "agg_df", "jid9", "typ1", "value", long_ev, "lb2048",
+  )
+  assert len(k) < 250
+  assert long_ev not in k

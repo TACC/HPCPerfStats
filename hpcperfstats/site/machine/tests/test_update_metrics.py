@@ -5,6 +5,7 @@ import contextlib
 from datetime import datetime
 from unittest.mock import MagicMock
 
+import pytest
 
 from hpcperfstats.analysis.metrics.update_metrics import _iter_chunked_pks
 from hpcperfstats.analysis.metrics import update_metrics
@@ -124,6 +125,7 @@ def test_default_metrics_date_range_seven_days(monkeypatch):
   assert start == datetime(2025, 3, 17, 0, 0, 0)
 
 
+@pytest.mark.django_db(databases=[])
 def test_jobs_queryset_orders_newest_job_first():
   """_jobs_queryset uses -end_time, -jid so streaming processes newest jobs first."""
   d = datetime(2025, 4, 10, 15, 30, 0)
@@ -135,21 +137,39 @@ def test_jobs_queryset_orders_newest_job_first():
     assert "jid" in sql and "desc" in sql
 
 
-def test_jobs_queryset_postgresql_sql_contains_unnest_for_live_samples(monkeypatch):
-  """Non-rerun + PostgreSQL: SQL sums per-host COUNT(DISTINCT time) via GROUP BY."""
+@pytest.mark.django_db(databases=[])
+def test_jobs_queryset_postgresql_sql_jid_scoped_live_samples(monkeypatch):
+  """Non-rerun + PostgreSQL: live sum uses jid + window (default path)."""
+  monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
   _patch_connections_vendor(monkeypatch, "postgresql")
   update_metrics._expected_job_metrics_row_count.cache_clear()
   d = datetime(2025, 4, 10, 15, 30, 0)
   qs = update_metrics._jobs_queryset(d, 300, rerun=False)
   sql = str(qs.query).lower()
-  assert "unnest" in sql
+  assert "unnest" not in sql
   assert "group by" in sql
   assert "sum(" in sql
   assert "metrics_distinct_time_count" in sql
 
 
+@pytest.mark.django_db(databases=[])
 def test_jobs_queryset_postgresql_live_subquery_correlates_outer_job_row(monkeypatch):
-  """RawSQL must reference outer job_data columns in SQL; OuterRef is not a bind param."""
+  """Scalar subquery references outer job_data columns; OuterRef is not a bind param."""
+  monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  d = datetime(2025, 4, 10, 15, 30, 0)
+  qs = update_metrics._jobs_queryset(d, 300, rerun=False)
+  sql = str(qs.query)
+  assert 'h."jid" = "job_data"."jid"' in sql
+  assert 'h.time >= "job_data"."start_time"' in sql
+  assert 'h.time <= "job_data"."end_time"' in sql
+
+
+@pytest.mark.django_db(databases=[])
+def test_jobs_queryset_postgresql_legacy_live_uses_unnest(monkeypatch):
+  """Optional legacy mode restores unnest(host_list) live SQL."""
+  monkeypatch.setenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", "1")
   _patch_connections_vendor(monkeypatch, "postgresql")
   update_metrics._expected_job_metrics_row_count.cache_clear()
   d = datetime(2025, 4, 10, 15, 30, 0)
@@ -160,6 +180,7 @@ def test_jobs_queryset_postgresql_live_subquery_correlates_outer_job_row(monkeyp
   assert 'h.time <= "job_data"."end_time"' in sql
 
 
+@pytest.mark.django_db(databases=[])
 def test_jobs_queryset_non_postgresql_omits_unnest_live_samples(monkeypatch):
   """Non-PostgreSQL: skip live sample annotation (no unnest)."""
   _patch_connections_vendor(monkeypatch, "sqlite")

@@ -1,11 +1,14 @@
-"""Tests for LiveDistinctHostTimeCount expression."""
+"""Tests for live host_data distinct-time expressions."""
 
 from unittest.mock import MagicMock
 
 import pytest
 
+from hpcperfstats.analysis.metrics import live_host_sample_count as lhsc
 from hpcperfstats.analysis.metrics.live_host_sample_count import (
     LiveDistinctHostTimeCount,
+    LiveJidScopedDistinctHostTimeCount,
+    live_distinct_host_time_count_expression,
 )
 
 
@@ -35,6 +38,14 @@ def test_live_distinct_host_time_count_as_sql_postgresql():
   assert 'from "host_data" h' in body.lower()
 
 
+def test_live_jid_scoped_distinct_host_time_count_as_sql_postgresql():
+  expr = LiveJidScopedDistinctHostTimeCount(".example.com")
+  sql, params = expr.as_sql(MagicMock(), _fake_pg_connection())
+  assert params == []
+  assert 'h."jid" = "job_data"."jid"' in sql
+  assert 'unnest' not in sql.lower()
+
+
 def test_live_distinct_host_time_count_as_sql_non_postgresql_raises():
   conn = MagicMock()
   conn.vendor = "sqlite"
@@ -42,3 +53,24 @@ def test_live_distinct_host_time_count_as_sql_non_postgresql_raises():
   with pytest.raises(NotImplementedError) as ei:
     expr.as_sql(MagicMock(), conn)
   assert "PostgreSQL" in str(ei.value)
+
+
+def test_live_distinct_factory_legacy(monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", "1")
+  expr = live_distinct_host_time_count_expression(".x")
+  assert type(expr) is LiveDistinctHostTimeCount
+
+
+def test_live_distinct_factory_default_jid_scoped(monkeypatch):
+  monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
+  expr = live_distinct_host_time_count_expression(".x")
+  assert type(expr) is LiveJidScopedDistinctHostTimeCount
+
+
+def test_live_distinct_factory_reloads_env_each_call(monkeypatch):
+  monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
+  assert type(live_distinct_host_time_count_expression(".x")) is (
+      LiveJidScopedDistinctHostTimeCount)
+  monkeypatch.setenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", "1")
+  assert type(live_distinct_host_time_count_expression(".x")) is (
+      LiveDistinctHostTimeCount)

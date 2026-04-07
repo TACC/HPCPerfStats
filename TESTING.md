@@ -27,6 +27,23 @@ PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 
 **`hpcperfstats/site/machine/tests` on the host:** tests that need the default PostgreSQL database are **skipped** unless the environment sets **`HPCPERFSTATS_COMPOSE_NETWORK=1`** (the compose workflows `tests/run_db_pytest_workflow.sh` and `tests/run_redis_cache_pytest_workflow.sh` export this inside the `web` container). Tests that only need Django settings and mocks use **`django_db(databases=[])`** and still run on the host. During pytest, Django switches the default cache to **LocMem** unless **`HPCPERFSTATS_PYTEST_LIVE_REDIS=1`** (live Redis workflow).
 
+### Opt-in stress tests (massive `host_data`)
+
+The directory **`tests/stress_host_data/`** is **outside** the default `pytest` `testpaths` (`hpcperfstats` only), so `python run_tests.py` and `pytest hpcperfstats` never collect it.
+
+**Default way to run (Docker Compose `db` + `redis`, migrate, pytest inside `web`):**
+
+```bash
+cd HPCPerfStats   # directory with docker-compose.yaml
+tests/run_stress_host_data_workflow.sh
+```
+
+The workflow sets **`HPCPERFSTATS_STRESS_HOST_DATA=1`** and **`HPCPERFSTATS_COMPOSE_NETWORK=1`** inside the container, and defaults **`HPCPERFSTATS_STRESS_HOST_DATA_ROWS`** to **400000** for a faster smoke (override for the full **34,560,000**-row case). The test drives the real **`update_metrics(..., rerun=True)`** path (readiness, pooled metrics, plot prewarm) and writes **`stress_report_<utc>.json`** under **`HPCPERFSTATS_STRESS_REPORT_DIR`** (default **`artifacts/stress/`** on the repo mount). The test passes **`timezone.localtime(job.end_time)`** into **`update_metrics`** so the job is selected under Django’s **`end_time__date`** semantics (large 1 Hz windows can otherwise miss the queryset). Row-count scaling notes: **`docs/plans/stress_row_sweep_scaling_plan.md`**. Inside the container, **`tests/run_stress_host_data_inner.sh`** falls back to **`PYTHONPATH=/home/hpcperfstats`** plus installing pytest extras only if **`pip install -e`** fails on the bind mount (e.g. cloud-sync **Errno 35**). Options: **`--skip-build`**, **`--keep-env`**; extra pytest args after `--`.
+
+**Scale / report env** (forwarded by `tests/run_stress_host_data_workflow.sh`; see `--help`): **`HPCPERFSTATS_STRESS_USE_TIME_SCALE`**, **`HPCPERFSTATS_STRESS_N_HOSTS`**, **`HPCPERFSTATS_STRESS_INTERVAL_SEC`**, **`HPCPERFSTATS_STRESS_DURATION_SEC`**, **`HPCPERFSTATS_STRESS_JID`**, **`HPCPERFSTATS_STRESS_REPORT_DIR`**, **`HPCPERFSTATS_STRESS_EXPLAIN`**, **`HPCPERFSTATS_STRESS_MANUAL_PLOT_SANITY`**, **`HPCPERFSTATS_STRESS_SAMPLE_PATH`**.
+
+Optional env: **`HPCPERFSTATS_STRESS_PLOT_SEC`** (with manual plot sanity), **`HPCPERFSTATS_LARGE_JOB_HOST_DATA_ROWS`**, **`HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS`**, **`HPCPERFSTATS_LARGE_JOB_WINDOW_ROW_COUNT_CACHE_TTL`** (seconds; `0` disables cached window `COUNT(*)` for large-job gating), **`HPCPERFSTATS_LARGE_JOB_TIME_SQL`** (`ntile` default vs `date_bin` for strided time sampling on PostgreSQL 14+), **`HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST`** (`1` restores `unnest(host_list)` live distinct SQL).
+
 ## Testing on macOS (Docker + full suite)
 
 ### 1. Install and start Docker
@@ -69,6 +86,7 @@ All commands below assume your current directory is **`HPCPerfStats/`** (the one
 | 1 | `tests/run_db_pytest_workflow.sh` | Resets compose volumes, builds `web`, starts **db** + **redis**, migrates dev DB, installs **Playwright/Chromium** in the container, runs **`pytest -q hpcperfstats`** (entire tree, including **`test_web_pages_browser_e2e.py`** unless you pass `--skip-browser-e2e`). |
 | 2 | `tests/run_redis_cache_pytest_workflow.sh --skip-build` | Fresh compose session, **`test_redis_cache_live.py`** against real **Redis** (`HPCPERFSTATS_PYTEST_LIVE_REDIS=1`). |
 | 3 | `tests/run_web_e2e_workflow.sh --skip-build` | Dedicated **HTTP + Playwright** session for `test_web_pages_e2e.py` and `test_web_pages_browser_e2e.py` (run again after step 1 for an isolated E2E pass or CI parity). |
+| 4 | `tests/run_stress_host_data_workflow.sh --skip-build` | Opt-in **`host_data`** stress (`tests/stress_host_data/`): seed + **`update_metrics`**, JSON report under **`artifacts/stress/`**, default **400000** rows (override row/time-scale env vars; see section above). |
 
 Faster iteration after the first successful build:
 
@@ -76,6 +94,7 @@ Faster iteration after the first successful build:
 tests/run_db_pytest_workflow.sh --skip-build
 tests/run_redis_cache_pytest_workflow.sh --skip-build
 tests/run_web_e2e_workflow.sh --skip-build
+tests/run_stress_host_data_workflow.sh --skip-build
 ```
 
 Each workflow tears down containers and **named volumes** on exit unless you pass **`--keep-env`** (see per-script help).

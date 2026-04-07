@@ -382,6 +382,19 @@ def _persist_metrics_batch(job_results, distinct_time_count):
       pass
 
 
+def _jid_table_host_data_time_kwargs(base):
+  """ORM time scope from ``jid_table._base_filter`` (full window or sampled ``time__in``)."""
+  if not base:
+    return None
+  if "time__in" in base:
+    return {"time__in": base["time__in"]}
+  time_gte = base.get("time__gte")
+  time_lte = base.get("time__lte")
+  if time_gte is None or time_lte is None:
+    return None
+  return {"time__gte": time_gte, "time__lte": time_lte}
+
+
 class Metrics():
   """Computes simple and complex metrics for a list of jobs in parallel and writes results to metrics_data.
 
@@ -606,11 +619,13 @@ class Metrics():
       cache_key = (typename, tuple(events or ()), float(conv), bool(nonnegative_rate))
       if cache_key in cache:
         return cache[cache_key]
+    tkw = _jid_table_host_data_time_kwargs(base)
+    if not tkw:
+      return None
     # Fetch raw samples via ORM.
     qs = (
         host_data.objects.filter(
-            time__gte=base["time__gte"],
-            time__lte=base["time__lte"],
+            **tkw,
             host__in=list(hosts),
             type=typename,
             event__in=list(events or []),
@@ -678,10 +693,12 @@ class Metrics():
       cache_key = ("vm", typename, tuple(events or ()), float(conv))
       if cache_key in cache:
         return cache[cache_key]
+    tkw = _jid_table_host_data_time_kwargs(base)
+    if not tkw:
+      return None
     qs = (
         host_data.objects.filter(
-            time__gte=base["time__gte"],
-            time__lte=base["time__lte"],
+            **tkw,
             host__in=list(hosts),
             type=typename,
             event__in=list(events or []),

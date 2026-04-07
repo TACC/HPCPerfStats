@@ -1,10 +1,14 @@
 """Job-scoped host_data access via Django ORM. Provides jid_table, TypeDetailDataProvider, and HostDataProvider for querying job/host metrics without raw SQL. Uses Redis caching for heavy queries.
 
 """
+import hashlib
 import logging
 import threading
 import time
 from datetime import timezone as dt_utc
+
+from django.core.cache import cache
+
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
 from hpcperfstats.site.machine.cache_utils import (
@@ -15,6 +19,7 @@ from hpcperfstats.site.machine.cache_utils import (
     KEY_HOST_DATA_DF,
     KEY_HOST_SCHEMA,
     KEY_HOST_TIME_DF,
+    KEY_JID_HOST_WINDOW_ROW_COUNT,
     KEY_LLITE_DELTA,
     KEY_NFS_FSIO,
     KEY_TYPE_DETAIL_AGG,
@@ -22,6 +27,7 @@ from hpcperfstats.site.machine.cache_utils import (
     cached_orm,
     get_site_content_cache_timeout,
     make_cache_key,
+    make_cache_key_bounded,
 )
 from hpcperfstats.site.machine.models import host_data, job_data
 
@@ -38,6 +44,141 @@ def _iter_acct_host_batches(acct_host_list, batch_size=None):
   hosts = list(acct_host_list)
   for i in range(0, len(hosts), bs):
     yield hosts[i:i + bs]
+
+
+def _count_host_data_rows_for_window(start, end, acct_hosts):
+  """Total host_data rows in [start, end] for accounting FQDNs (chunked on non-PostgreSQL)."""
+  if not acct_hosts or start is None or end is None:
+    return 0
+  from django.db import connections
+
+  conn = connections["default"]
+  if conn.vendor == "postgresql":
+    from django.db import connection
+
+    ops = connection.ops
+    tbl = ops.quote_name(host_data._meta.db_table)
+    ct = ops.quote_name("time")
+    ch = ops.quote_name("host")
+    sql = (
+        "SELECT COUNT(*) FROM {tbl} WHERE {ct} >= %s AND {ct} <= %s "
+        "AND {ch} = ANY(%s::text[])"
+    ).format(tbl=tbl, ct=ct, ch=ch)
+    with conn.cursor() as cursor:
+      cursor.execute(sql, [start, end, list(acct_hosts)])
+      row = cursor.fetchone()
+      return int(row[0]) if row and row[0] is not None else 0
+
+  total = 0
+  for host_chunk in _iter_acct_host_batches(acct_hosts):
+    total += host_data.objects.filter(
+        time__gte=start,
+        time__lte=end,
+        host__in=host_chunk,
+    ).count()
+  return total
+
+
+def _acct_hosts_cache_fingerprint(acct_hosts):
+  blob = "\n".join(sorted(str(h) for h in acct_hosts))
+  return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
+
+
+def _count_host_data_rows_for_window_cached(jid, start, end, acct_hosts):
+  """Exact window COUNT(*) with optional short Django-cache TTL (see conf_parser)."""
+  ttl = cfg.get_large_job_window_row_count_cache_ttl()
+  if ttl > 0 and jid and start is not None and end is not None:
+    key = make_cache_key(
+        KEY_JID_HOST_WINDOW_ROW_COUNT,
+        jid,
+        start.isoformat(),
+        end.isoformat(),
+        _acct_hosts_cache_fingerprint(acct_hosts),
+    )
+    try:
+      cached = cache.get(key)
+    except Exception:
+      cached = None
+    if cached is not None:
+      try:
+        return int(cached)
+      except (TypeError, ValueError):
+        pass
+    n = _count_host_data_rows_for_window(start, end, acct_hosts)
+    try:
+      cache.set(key, int(n), timeout=ttl)
+    except Exception:
+      pass
+    return n
+  return _count_host_data_rows_for_window(start, end, acct_hosts)
+
+
+def _strided_distinct_times_postgresql(start, end, acct_hosts, n_buckets):
+  """Up to n_buckets timestamps, one per NTILE bucket over DISTINCT time (ordered)."""
+  from django.db import connection
+
+  if not acct_hosts or start is None or end is None or n_buckets < 2:
+    return []
+  ops = connection.ops
+  tbl = ops.quote_name(host_data._meta.db_table)
+  ct = ops.quote_name("time")
+  ch = ops.quote_name("host")
+  sql = (
+      "WITH dt AS ("
+      " SELECT DISTINCT h.{ct} AS ts FROM {tbl} h"
+      " WHERE h.{ct} >= %s AND h.{ct} <= %s AND h.{ch} = ANY(%s::text[])"
+      "), bucketed AS ("
+      " SELECT ts, NTILE(%s) OVER (ORDER BY ts) AS b FROM dt"
+      ") SELECT MAX(ts) FROM bucketed GROUP BY b ORDER BY MAX(ts)"
+  ).format(tbl=tbl, ct=ct, ch=ch)
+  with connection.cursor() as cursor:
+    cursor.execute(sql, [start, end, list(acct_hosts), int(n_buckets)])
+    return [r[0] for r in cursor.fetchall() if r and r[0] is not None]
+
+
+def _strided_distinct_times_date_bin_postgresql(start, end, acct_hosts, n_buckets):
+  """Up to ~n_buckets timestamps via ``GROUP BY date_bin`` (PostgreSQL 14+)."""
+  from django.db import connection
+
+  if not acct_hosts or start is None or end is None or n_buckets < 2:
+    return []
+  span_sec = (end - start).total_seconds()
+  if span_sec <= 0:
+    return [start]
+  step_sec = max(span_sec / float(max(n_buckets - 1, 1)), 1e-9)
+  ops = connection.ops
+  tbl = ops.quote_name(host_data._meta.db_table)
+  ct = ops.quote_name("time")
+  ch = ops.quote_name("host")
+  sql = (
+      "SELECT MAX(h.{ct}) AS ts FROM {tbl} h"
+      " WHERE h.{ct} >= %s AND h.{ct} <= %s AND h.{ch} = ANY(%s::text[])"
+      " GROUP BY date_bin((%s::double precision * interval '1 second'), h.{ct}, %s)"
+      " ORDER BY ts"
+  ).format(tbl=tbl, ct=ct, ch=ch)
+  with connection.cursor() as cursor:
+    cursor.execute(
+        sql,
+        [start, end, list(acct_hosts), step_sec, start],
+    )
+    return [r[0] for r in cursor.fetchall() if r and r[0] is not None]
+
+
+def _strided_distinct_times_for_large_job(start, end, acct_hosts, n_buckets):
+  """Strided sample timestamps: ``date_bin`` when configured, else NTILE path."""
+  if cfg.get_large_job_time_sample_sql_mode() == "date_bin":
+    try:
+      out = _strided_distinct_times_date_bin_postgresql(
+          start, end, acct_hosts, n_buckets)
+      if out:
+        return out
+    except Exception:
+      logging.getLogger(__name__).warning(
+          "jid_table date_bin strided times failed; falling back to NTILE",
+          exc_info=True,
+      )
+  return _strided_distinct_times_postgresql(
+      start, end, acct_hosts, n_buckets)
 
 
 local_timezone = cfg.get_local_timezone()
@@ -98,6 +239,7 @@ class jid_table:
     _logger.debug("Initializing jid_table for job %s", jid)
 
     self.jid = jid
+    self._large_job_plot_cache_token = "full"
 
     try:
       job = cached_orm(
@@ -205,24 +347,86 @@ class jid_table:
         self.schema[t] = sorted(
             schema_df[schema_df["type"] == t]["event"].unique().tolist())
     _logger.debug("jid_table schema time: %.1fs", time.time() - etime)
+    self._apply_large_job_time_sampling_if_needed()
+
+  def _host_data_time_filter_kwargs(self):
+    """Time scope for host_data queries: full window or sampled ``time__in``."""
+    if not self._base_filter:
+      return {}
+    if "time__in" in self._base_filter:
+      return {"time__in": self._base_filter["time__in"]}
+    return {
+        "time__gte": self._base_filter["time__gte"],
+        "time__lte": self._base_filter["time__lte"],
+    }
+
+  def _apply_large_job_time_sampling_if_needed(self):
+    """If row count exceeds threshold, restrict queries to NTILE-strided timestamps."""
+    self._large_job_plot_cache_token = "full"
+    if not self.acct_host_list or not self.start_time or not self.end_time:
+      return
+    threshold = cfg.get_large_job_host_data_row_threshold()
+    try:
+      n = _count_host_data_rows_for_window_cached(
+          self.jid, self.start_time, self.end_time, self.acct_host_list)
+    except Exception as exc:
+      _logger.warning(
+          "jid_table large-job row count failed jid=%s: %s",
+          self.jid,
+          exc,
+      )
+      return
+    if n <= threshold:
+      return
+    n_buckets = cfg.get_large_job_time_buckets()
+    try:
+      sampled = _strided_distinct_times_for_large_job(
+          self.start_time, self.end_time, self.acct_host_list, n_buckets)
+    except Exception as exc:
+      _logger.warning(
+          "jid_table strided times failed jid=%s: %s",
+          self.jid,
+          exc,
+      )
+      return
+    if not sampled:
+      return
+    self._base_filter = {
+        "time__in": sampled,
+        "host__in": self.acct_host_list,
+    }
+    self._large_job_plot_cache_token = "lb{}".format(len(sampled))
+    _logger.info(
+        "jid_table large-job time sampling jid=%s rows~%s bucket_times=%s",
+        self.jid,
+        n,
+        len(sampled),
+    )
 
   def _host_data_qs(self, **extra_filters):
     """Base host_data queryset for this job (time range + hosts).
 
         """
-    return host_data.objects.filter(**self._base_filter, **extra_filters)
+    if not self._base_filter:
+      return host_data.objects.none()
+    tkw = self._host_data_time_filter_kwargs()
+    return host_data.objects.filter(
+        host__in=self._base_filter["host__in"],
+        **tkw,
+        **extra_filters,
+    )
 
   def _full_host_data_rows_batched(self, cols):
     """values_list rows for the job window, chunking host__in for large node counts."""
     rows = []
     if not self.acct_host_list or not self._base_filter:
       return rows
+    tkw = self._host_data_time_filter_kwargs()
     for host_chunk in _iter_acct_host_batches(self.acct_host_list):
       qs = (
           host_data.objects.filter(
-              time__gte=self._base_filter["time__gte"],
-              time__lte=self._base_filter["time__lte"],
               host__in=host_chunk,
+              **tkw,
           )
           .values_list(*cols)
           .order_by("host", "time")
@@ -244,13 +448,13 @@ class jid_table:
 
       if not self.acct_host_list:
         return pd.DataFrame(columns=["host", "time"])
+      tkw = self._host_data_time_filter_kwargs()
       frames = []
       for host_chunk in _iter_acct_host_batches(self.acct_host_list):
         qs = (
             host_data.objects.filter(
-                time__gte=self._base_filter["time__gte"],
-                time__lte=self._base_filter["time__lte"],
                 host__in=host_chunk,
+                **tkw,
             )
             .values("host", "time")
             .distinct()
@@ -262,7 +466,8 @@ class jid_table:
       out = pd.concat(frames, ignore_index=True)
       return out.sort_values(["host", "time"]).reset_index(drop=True)
 
-    key = make_cache_key(KEY_HOST_TIME_DF, self.jid)
+    key = make_cache_key(
+        KEY_HOST_TIME_DF, self.jid, self._large_job_plot_cache_token)
     result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     return result if result is not None else queryset_to_dataframe(None)
 
@@ -279,12 +484,12 @@ class jid_table:
       if not hosts:
         return pd.DataFrame(columns=["host", "time", "sum_val"])
 
+      tkw = self._host_data_time_filter_kwargs()
       frames = []
       for host_chunk in _iter_acct_host_batches(hosts):
         qs = host_data.objects.filter(
             host__in=host_chunk,
-            time__gte=self._base_filter["time__gte"],
-            time__lte=self._base_filter["time__lte"],
+            **tkw,
             type=typ,
             event__in=list(events),
         ).values("host", "time", val_col)
@@ -328,13 +533,13 @@ class jid_table:
         from django.db.models import Sum, Value
         from django.db.models.functions import Coalesce
 
+        tkw = self._host_data_time_filter_kwargs()
         frames = []
         for host_chunk in _iter_acct_host_batches(hosts):
           qs_sql = (
               host_data.objects.filter(
                   host__in=host_chunk,
-                  time__gte=self._base_filter["time__gte"],
-                  time__lte=self._base_filter["time__lte"],
+                  **tkw,
                   type=typ,
                   event__in=list(events),
               )
@@ -364,7 +569,10 @@ class jid_table:
         )
         return _fn_pandas_groupby()
 
-    key = make_cache_key(KEY_AGG_DF, self.jid, typ, val_col, events_key)
+    key = make_cache_key_bounded(
+        KEY_AGG_DF, self.jid, typ, val_col, events_key,
+        self._large_job_plot_cache_token,
+    )
     result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     if result is not None:
       return result
@@ -392,7 +600,8 @@ class jid_table:
       rows = self._full_host_data_rows_batched(cols)
       return pd.DataFrame(rows, columns=cols)
 
-    key = make_cache_key(KEY_HOST_DATA_DF, self.jid)
+    key = make_cache_key(
+        KEY_HOST_DATA_DF, self.jid, self._large_job_plot_cache_token)
     result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     return result if result is not None else queryset_to_dataframe(None)
 
@@ -409,7 +618,8 @@ class jid_table:
       ).values("event").annotate(delta_sum=Sum("delta")).order_by("event"))
       return queryset_to_dataframe(qs)
 
-    key = make_cache_key(KEY_LLITE_DELTA, self.jid)
+    key = make_cache_key(
+        KEY_LLITE_DELTA, self.jid, self._large_job_plot_cache_token)
     result = cached_orm(key, get_site_content_cache_timeout(), _llite_fn)
     return result if result is not None else queryset_to_dataframe(None)
 
@@ -448,7 +658,8 @@ class jid_table:
         return None
       return [read_total / (1024 * 1024), write_total / (1024 * 1024)]
 
-    key = make_cache_key(KEY_NFS_FSIO, self.jid)
+    key = make_cache_key(
+        KEY_NFS_FSIO, self.jid, self._large_job_plot_cache_token)
     result = cached_orm(key, get_site_content_cache_timeout(), _nfs_fn)
     return result
 

@@ -4,9 +4,14 @@
 from datetime import datetime
 
 import pandas as pd
+import pytest
+
+pytestmark = pytest.mark.django_db(databases=[])
 
 from hpcperfstats.analysis.gen.jid_table import _ensure_tz
 from hpcperfstats.analysis.gen.jid_table import TypeDetailDataProvider
+from hpcperfstats.analysis.gen.jid_table import jid_table
+from hpcperfstats.analysis.gen.utils import iter_queryset_values_dicts
 from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
 
 
@@ -131,3 +136,42 @@ def test_type_detail_provider_invalid_metric_defaults_to_arc():
 
   out = provider.get_aggregate_df("FLOPS", metric="not_a_metric")
   assert out["sum_val"].tolist() == [7.0]
+
+
+def test_jid_table_host_data_time_filter_kwargs_full_window():
+  """Unsampled jobs use time__gte/time__lte in ORM kwargs."""
+  inst = jid_table.__new__(jid_table)
+  inst._base_filter = {
+      "time__gte": 1,
+      "time__lte": 2,
+      "host__in": ["a.example.com"],
+  }
+  assert inst._host_data_time_filter_kwargs() == {"time__gte": 1, "time__lte": 2}
+
+
+def test_jid_table_host_data_time_filter_kwargs_sampled():
+  """Large-job sampling replaces the window with a finite time__in list."""
+  inst = jid_table.__new__(jid_table)
+  times = [10, 20, 30]
+  inst._base_filter = {"time__in": times, "host__in": ["a.example.com"]}
+  assert inst._host_data_time_filter_kwargs() == {"time__in": times}
+
+
+def test_iter_queryset_values_dicts_yields_rows():
+  """iter_queryset_values_dicts streams without list(qs)."""
+
+  class FakeQs:
+    def __init__(self):
+      self._rows = [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
+
+    def values(self, *fields):
+      self._fields = fields
+      return self
+
+    def iterator(self, chunk_size=2000):
+      for r in self._rows:
+        yield r
+
+  qs = FakeQs()
+  got = list(iter_queryset_values_dicts(qs, "a", "b", chunk_size=1))
+  assert got == [{"a": 1, "b": 2}, {"a": 3, "b": 4}]

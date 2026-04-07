@@ -1,0 +1,29 @@
+---
+description: Use Docker Compose workflows for integration, stress, E2E, and DB/Redis-backed tests.
+---
+
+# Docker Compose for Non-Unit Testing
+
+Host-side `pytest` often **cannot** resolve `db` / `redis`, match production DB settings, or provide Timescale behavior. **Do not** tell users to run integration-style tests with bare `pytest` on the Mac host unless the test is explicitly **unit-only** (mocks, `django_db(databases=[])`).
+
+## Default runners (from `HPCPerfStats/` containing `docker-compose.yaml`)
+
+| Goal | Script |
+|------|--------|
+| Full Python tree + DB + optional browser E2E | `tests/run_db_pytest_workflow.sh` |
+| Live Redis cache integration | `tests/run_redis_cache_pytest_workflow.sh` |
+| Web HTTP + Playwright E2E | `tests/run_web_e2e_workflow.sh` |
+| **Massive `host_data` stress** (`tests/stress_host_data/`) | **`tests/run_stress_host_data_workflow.sh`** |
+
+Stress tests are **opt-in** (`HPCPERFSTATS_STRESS_HOST_DATA=1`); the workflow script sets this **inside** the `web` container along with `HPCPERFSTATS_COMPOSE_NETWORK=1`.
+
+## When adding or changing non-unit tests
+
+- Prefer a **workflow shell script** under `tests/run_*_workflow.sh` that: resets or documents compose state, starts required services, waits for health, runs `docker-compose run … web` with the repo mounted, and tears down unless `--keep-env`.
+- Document the script in `TESTING.md` in the same change.
+- Keep `monitor/` read-only per workspace guardrails unless the user explicitly approves edits there.
+
+## Overlap
+
+- Complements `full-test-with-db-redis.mdc` and `local-compose-db-lifecycle-for-web-tests.mdc`.
+- Stress-specific: `job-plot-artifacts-caching.mdc` / `runtime-resource-and-metrics-safety.mdc` when touching plot persistence or metrics.

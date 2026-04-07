@@ -66,6 +66,7 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
 markers = [
   "django: marks tests requiring Django (dbs, settings).",
   "live_redis: live Redis cache integration; requires HPCPERFSTATS_PYTEST_LIVE_REDIS=1 and compose redis.",
+  "stress_host_data: optional Timescale stress in tests/stress_host_data; requires HPCPERFSTATS_STRESS_HOST_DATA=1.",
 ]
 
 [tool.setuptools]

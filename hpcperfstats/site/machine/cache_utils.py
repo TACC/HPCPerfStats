@@ -4,6 +4,7 @@ Use cached_orm() to wrap any callable that performs a read and returns
 a cacheable value (e.g. list of dicts, model instance, DataFrame-serializable).
 Cache keys should be unique per query; timeouts are in seconds.
 """
+import hashlib
 import logging
 import os
 import time
@@ -153,6 +154,7 @@ def invalidate_jid_derived_cache_keys(jids):
   """Remove per-job aggregate caches after host_data / proc_data ingest."""
   if not jids:
     return
+  invalidate_jid_host_window_row_count_cache(jids)
   try:
     for jid in jids:
       if not jid:
@@ -270,3 +272,47 @@ def make_cache_key(prefix: str, *parts) -> str:
   if not parts:
     return prefix
   return ":".join([prefix] + [str(p) for p in parts])
+
+
+def make_cache_key_bounded(
+    prefix: str,
+    *parts,
+    max_piece_len: int = 56,
+    digest_len: int = 40,
+) -> str:
+  """Like ``make_cache_key`` but replace overly long *parts* with a SHA-256 prefix.
+
+  Keeps keys under typical Memcached 250-byte limits when *parts* include long
+  event-name lists (e.g. aggregate DataFrame cache keys).
+  """
+  pieces = [prefix]
+  for p in parts:
+    s = str(p)
+    if len(s) > max_piece_len:
+      s = hashlib.sha256(s.encode("utf-8")).hexdigest()[:digest_len]
+    pieces.append(s)
+  return ":".join(pieces)
+
+
+KEY_JID_HOST_WINDOW_ROW_COUNT = "jid_hwrow"
+
+
+def invalidate_jid_host_window_row_count_cache(jids):
+  """Drop cached window row counts for ``jid_table`` large-job gating."""
+  if not jids:
+    return
+  client = _get_redis_py_client()
+  if client is None:
+    return
+  try:
+    for jid in jids:
+      if not jid:
+        continue
+      needle = "{}:{}:".format(KEY_JID_HOST_WINDOW_ROW_COUNT, jid)
+      for raw_key in client.scan_iter(match="*{}*".format(needle), count=500):
+        try:
+          client.delete(raw_key)
+        except Exception:
+          pass
+  except Exception:
+    pass

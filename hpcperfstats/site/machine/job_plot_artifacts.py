@@ -16,7 +16,7 @@ import hpcperfstats.analysis.gen.jid_table as jid_table
 import hpcperfstats.analysis.plot as plots
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.metrics.live_host_sample_count import (
-    LiveDistinctHostTimeCount,
+    live_distinct_host_time_count_expression,
 )
 
 from .bokeh_plot_layout import (
@@ -79,7 +79,9 @@ def get_live_distinct_time_count_for_jid(jid: str) -> int:
   suffix = "." + cfg.get_host_name_ext()
   row = (
       job_data.objects.filter(jid=jid)
-      .annotate(live_distinct_time_count=LiveDistinctHostTimeCount(suffix))
+      .annotate(
+          live_distinct_time_count=live_distinct_host_time_count_expression(suffix),
+      )
       .values("live_distinct_time_count")
       .first()
   )

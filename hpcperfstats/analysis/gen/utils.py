@@ -233,6 +233,18 @@ def get_job_host_data_and_job_dict(jid):
   return host_df, job_dict
 
 
+def iter_queryset_values_dicts(qs, *fields, chunk_size=2000):
+  """Yield dict rows from ``QuerySet.values(*fields)`` without ``list(qs)``.
+
+  Use for large querysets where callers process incrementally (see also
+  ``jid_table`` large-job time sampling for job-scoped bounds).
+  """
+  if qs is None or not fields:
+    return
+  for row in qs.values(*fields).iterator(chunk_size=max(1, int(chunk_size))):
+    yield row
+
+
 def queryset_to_dataframe(qs, columns=None):
   """Convert a Django QuerySet to a pandas DataFrame.
 

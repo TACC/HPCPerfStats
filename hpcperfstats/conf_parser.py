@@ -503,3 +503,65 @@ def get_redis_location():
   if cfg.has_section("CACHE") and cfg.has_option("CACHE", "redis_location"):
     return cfg.get("CACHE", "redis_location").strip() or "redis://127.0.0.1:6379/1"
   return "redis://127.0.0.1:6379/1"
+
+
+def get_large_job_host_data_row_threshold():
+  """When host_data row count for a job window exceeds this, sample times in jid_table.
+
+  Env ``HPCPERFSTATS_LARGE_JOB_HOST_DATA_ROWS`` overrides (minimum 1000). Default
+  1_500_000 keeps interactive metrics/plots bounded on huge jobs.
+  """
+  env = os.environ.get("HPCPERFSTATS_LARGE_JOB_HOST_DATA_ROWS", "").strip()
+  if env:
+    return max(1000, int(env))
+  return 1_500_000
+
+
+def get_large_job_time_buckets():
+  """Max distinct time buckets used when large-job sampling is active.
+
+  Env ``HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS`` overrides (minimum 32). Default 2048.
+  """
+  env = os.environ.get("HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS", "").strip()
+  if env:
+    return max(32, int(env))
+  return 2048
+
+
+def get_large_job_window_row_count_cache_ttl():
+  """TTL (seconds) for caching ``COUNT(*)`` over job window in ``jid_table``; 0 disables.
+
+  Reduces repeated full-window counts when the same job is opened multiple times
+  shortly after ingest. Invalidate via ``invalidate_jid_derived_cache_keys``.
+  """
+  env = os.environ.get(
+      "HPCPERFSTATS_LARGE_JOB_WINDOW_ROW_COUNT_CACHE_TTL", ""
+  ).strip()
+  if env:
+    return max(0, int(env))
+  return 300
+
+
+def get_large_job_time_sample_sql_mode():
+  """How to pick strided sample timestamps for large jobs: ``ntile`` or ``date_bin``.
+
+  ``date_bin`` (PostgreSQL 14+) uses one pass ``GROUP BY date_bin(...)`` instead of
+  ``DISTINCT`` + ``NTILE`` over all timestamps; falls back to ``ntile`` on failure.
+  Env: ``HPCPERFSTATS_LARGE_JOB_TIME_SQL`` = ``ntile`` | ``date_bin``.
+  """
+  env = os.environ.get("HPCPERFSTATS_LARGE_JOB_TIME_SQL", "").strip().lower()
+  if env in ("date_bin", "date-bin"):
+    return "date_bin"
+  return "ntile"
+
+
+def get_live_distinct_use_legacy_hostlist():
+  """If True, ``LiveDistinctHostTimeCount`` unnests ``host_list`` (legacy).
+
+  Default False: use ``LiveJidScopedDistinctHostTimeCount`` (``host_data.jid`` + window),
+  which matches indexed access and typical ingest. Env:
+  ``HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST`` = 1 to restore old SQL.
+  """
+  return os.environ.get(
+      "HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", ""
+  ).strip().lower() in ("1", "true", "yes")

@@ -1,0 +1,161 @@
+{
+  "counts": {
+    "expected_metrics_catalog_rows": 39,
+    "host_data_rows_jid": 160001,
+    "job_plot_artifact_rows": 3,
+    "metrics_data_rows": 39
+  },
+  "generated_at_utc": "2026-04-06T22:15:11.420104+00:00",
+  "metadata": {
+    "extrapolated_full_scale_rows_6000x8640": {
+      "using_r_max": 4717440000,
+      "using_r_median": 4717440000
+    },
+    "r_ref_from_sample": {
+      "by_type_top": [
+        {
+          "rows": 459,
+          "type": "vm"
+        },
+        {
+          "rows": 391,
+          "type": "net"
+        },
+        {
+          "rows": 289,
+          "type": "mem"
+        },
+        {
+          "rows": 187,
+          "type": "block"
+        },
+        {
+          "rows": 119,
+          "type": "cpu"
+        },
+        {
+          "rows": 102,
+          "type": "numa"
+        }
+      ],
+      "error": null,
+      "n_groups": 17,
+      "n_rows_collapsed": 1547,
+      "r_max": 91,
+      "r_mean": 91.0,
+      "r_median": 91,
+      "r_min": 91,
+      "sample_path": "/home/hpcperfstats/hpcperfstats/dbload/tests/HPCPerfStatsdDataSample"
+    },
+    "stress_seed_dimensions": {
+      "interval_sec": 1,
+      "n_hosts": 1,
+      "n_metrics": 40,
+      "n_rows": 160000,
+      "n_steps": 4000,
+      "use_time_scale": false
+    }
+  },
+  "pg_snapshots": [
+    {
+      "label": "pre_update_metrics",
+      "relation_sizes": {
+        "host_data": 40960,
+        "job_plot_artifact": 40960,
+        "metrics_data": 57344
+      },
+      "stat_user_tables": [
+        {
+          "last_autovacuum": null,
+          "last_vacuum": null,
+          "n_dead_tup": 0,
+          "n_live_tup": 0,
+          "relname": "host_data"
+        },
+        {
+          "last_autovacuum": null,
+          "last_vacuum": null,
+          "n_dead_tup": 0,
+          "n_live_tup": 0,
+          "relname": "metrics_data"
+        },
+        {
+          "last_autovacuum": null,
+          "last_vacuum": null,
+          "n_dead_tup": 0,
+          "n_live_tup": 0,
+          "relname": "job_plot_artifact"
+        }
+      ]
+    },
+    {
+      "label": "post_update_metrics",
+      "relation_sizes": {
+        "host_data": 40960,
+        "job_plot_artifact": 1056768,
+        "metrics_data": 114688
+      },
+      "stat_user_tables": [
+        {
+          "last_autovacuum": null,
+          "last_vacuum": null,
+          "n_dead_tup": 0,
+          "n_live_tup": 0,
+          "relname": "host_data"
+        },
+        {
+          "last_autovacuum": null,
+          "last_vacuum": null,
+          "n_dead_tup": 0,
+          "n_live_tup": 39,
+          "relname": "metrics_data"
+        },
+        {
+          "last_autovacuum": null,
+          "last_vacuum": null,
+          "n_dead_tup": 0,
+          "n_live_tup": 2,
+          "relname": "job_plot_artifact"
+        }
+      ]
+    }
+  ],
+  "phases": [
+    {
+      "name": "seed_bulk_insert_probes",
+      "seconds": 1.155688
+    },
+    {
+      "name": "seed_wall_including_profiler_overhead",
+      "seconds": 1.155699
+    },
+    {
+      "name": "orm_verification_host_data_count",
+      "seconds": 0.012263
+    },
+    {
+      "name": "live_distinct_host_time_count",
+      "seconds": 0.049506
+    },
+    {
+      "name": "latest_sample_time_by_host",
+      "seconds": 0.000719
+    },
+    {
+      "name": "pg_introspection_pre_update_metrics",
+      "seconds": 0.002223
+    },
+    {
+      "name": "jid_table_init",
+      "seconds": 0.101381
+    },
+    {
+      "name": "update_metrics_rerun_true",
+      "seconds": 6.702938
+    },
+    {
+      "name": "pg_introspection_post_update_metrics",
+      "seconds": 0.001342
+    }
+  ]
+}

@@ -45,8 +45,9 @@ class job_data(models.Model):
   QOS = models.CharField(max_length=64, blank=True, null=True)
   jobname = models.TextField(blank=True, null=True)
   host_list = ArrayField(models.TextField())
-  # Sum over job hosts of COUNT(DISTINCT time) in host_data between start_time and
-  # end_time on accounting host FQDNs (see LiveDistinctHostTimeCount); NULL until first persist.
+  # Sum over hosts of COUNT(DISTINCT time) in host_data for this job window
+  # (jid-scoped live check by default; legacy uses accounting FQDNs from host_list).
+  # NULL until first persist.
   metrics_distinct_time_count = models.IntegerField(blank=True, null=True)
 
   class Meta:
