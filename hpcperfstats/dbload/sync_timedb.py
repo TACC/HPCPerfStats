@@ -493,7 +493,11 @@ def run_sync_timedb_supervisor_loop(
 ):
   """Rescan archive, ingest pending files in chunks, run pigz/removal on interval; loop until shutdown."""
   pigz_interval = cfg.get_archive_pigz_interval_seconds()
-  last_archive_maint = time.time() - pigz_interval
+  # Start "last maintenance" at now so the first iteration does scheduled pigz/removal
+  # only after pigz_interval has elapsed — not before the first rescan/ingest wave.
+  # (Using time.time() - pigz_interval would fire maintenance immediately and could run
+  # remove_verified_archived_raw_files before any ingest.)
+  last_archive_maint = time.time()
   ingest_t0 = time.time()
 
   def _run_scheduled_archive_maintenance():
