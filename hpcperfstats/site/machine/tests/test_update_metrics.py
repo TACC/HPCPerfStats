@@ -6,6 +6,7 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
+from django.db.utils import OperationalError
 
 from hpcperfstats.analysis.metrics.update_metrics import _iter_chunked_pks
 from hpcperfstats.analysis.metrics import update_metrics
@@ -76,6 +77,19 @@ def test_iter_chunked_pks_multiple_chunks():
   assert chunks[0] == ([10, 20], 2)
   assert chunks[1] == ([30, 40], 4)
   assert chunks[2] == ([50], 5)
+
+
+def test_iter_chunked_pks_reraises_operational_error():
+  """Keyset pagination must not fall back to offset slicing on DB timeout/cancel."""
+  class BadQs:
+    def filter(self, *a, **k):
+      return self
+
+    def values_list(self, *a, **k):
+      raise OperationalError("canceling statement due to statement timeout")
+
+  with pytest.raises(OperationalError):
+    list(_iter_chunked_pks(BadQs(), 2))
 
 
 def test_iter_chunked_pks_uses_slice_windows_not_iterator():

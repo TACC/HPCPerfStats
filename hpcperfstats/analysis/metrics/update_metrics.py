@@ -10,6 +10,7 @@ Processing order: **newest calendar day first**, and within each day **newest jo
 first** (``end_time`` descending, then ``jid`` descending as a stable tiebreaker).
 
 """
+import contextlib
 import functools
 import gc
 import signal
@@ -55,6 +56,32 @@ GC_COLLECT_EVERY_N_CHUNKS = 20
 
 # When argv has no start/end dates, process this many calendar days ending today.
 DEFAULT_METRICS_RANGE_DAYS = 7
+
+
+@contextlib.contextmanager
+def _pg_session_statement_timeout_for_metrics_batch():
+  """Temporarily disable PostgreSQL ``statement_timeout`` for long metrics batch queries.
+
+  ``_jobs_queryset`` annotated scans (metrics subqueries + live distinct-time counts)
+  can exceed the default session ``statement_timeout`` (often 2 minutes). Keyset
+  pagination must not fall back to offset slicing on timeout — that repeats the
+  same expensive SQL. Restore the configured timeout when the block exits.
+  """
+  conn = connections["default"]
+  if conn.vendor != "postgresql":
+    yield
+    return
+  restore_ms = cfg.get_db_statement_timeout_ms()
+  with conn.cursor() as cursor:
+    cursor.execute("SET statement_timeout = 0")
+  try:
+    yield
+  finally:
+    with conn.cursor() as cursor:
+      if restore_ms > 0:
+        cursor.execute("SET statement_timeout = %s", [restore_ms])
+      else:
+        cursor.execute("SET statement_timeout = 0")
 
 
 def _today_datetime():
@@ -201,6 +228,9 @@ def _iter_chunked_pks(queryset, chunk_size):
       yield chunk, total
       last_jid, last_end_time = rows[-1]
     return
+  except (OperationalError, DatabaseError):
+    # Do not fall back to offset slicing: same expensive SQL and masks timeouts.
+    raise
   except Exception:
     # Fall back to bounded offset slicing for test doubles/non-ORM objects.
     pass
@@ -346,103 +376,104 @@ def update_metrics(date, rerun=False):
     ORM holding onto a cursor/connection that has just been closed, which can
     manifest as psycopg 'lost synchronization with server' errors.
     """
-    date_ymd = date.strftime("%Y-%m-%d")
-    qs = _jobs_queryset(date, min_time, rerun)
-    # Avoid a separate COUNT(*) that repeats the same filter work as the iterator below.
-    log_print(
-        "Streaming jobs needing metrics for date {0}".format(date_ymd)
-    )
+    with _pg_session_statement_timeout_for_metrics_batch():
+      date_ymd = date.strftime("%Y-%m-%d")
+      qs = _jobs_queryset(date, min_time, rerun)
+      # Avoid a separate COUNT(*) that repeats the same filter work as the iterator below.
+      log_print(
+          "Streaming jobs needing metrics for date {0}".format(date_ymd)
+      )
 
-    def _persist_plot_artifacts_best_effort(ready_jid_list):
-      for jid in ready_jid_list:
-        if shutdown_requested[0]:
-          break
-        try:
-          close_old_connections()
-          persist_job_plot_artifacts_for_jid(jid)
-          log_print(
-              "jid {0}: plot artifacts prewarm completed (plots done).".format(jid)
-          )
-        except Exception as exc_plot:
-          log_print(
-              "plot artifact prewarm failed for jid {0}: {1}".format(
-                  jid, exc_plot
-              )
-          )
+      def _persist_plot_artifacts_best_effort(ready_jid_list):
+        for jid in ready_jid_list:
+          if shutdown_requested[0]:
+            break
+          try:
+            close_old_connections()
+            persist_job_plot_artifacts_for_jid(jid)
+            log_print(
+                "jid {0}: plot artifacts prewarm completed (plots done).".format(jid)
+            )
+          except Exception as exc_plot:
+            log_print(
+                "plot artifact prewarm failed for jid {0}: {1}".format(
+                    jid, exc_plot
+                )
+            )
 
-    metrics_manager = metrics.Metrics()
-    log_print(
-        "Compute for following metrics for date {0}".format(date)
-    )
-    for name in metrics_manager.simple_metrics_list:
-      log_print(name)
-    for name in metrics_manager.complex_metrics_list:
-      log_print(name)
+      metrics_manager = metrics.Metrics()
+      log_print(
+          "Compute for following metrics for date {0}".format(date)
+      )
+      for name in metrics_manager.simple_metrics_list:
+        log_print(name)
+      for name in metrics_manager.complex_metrics_list:
+        log_print(name)
 
-    processed = 0
-    skipped_not_ready = 0
-    shared_pool = metrics_manager.ensure_pool()
-    try:
-      for chunk_number, (pk_chunk, _) in enumerate(_iter_chunked_pks(qs, CHUNK_SIZE), start=1):
-        if shutdown_requested[0]:
-          break
-        jobs_chunk = None
-        ready_jids = None
-        try:
-          ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
-          skipped_not_ready += (len(pk_chunk) - len(ready_jids))
-          if not ready_jids:
-            continue
-          jobs_chunk = _job_refs_from_jids(ready_jids)
-          metrics_manager.run(jobs_chunk, pool=shared_pool)
-          processed += len(jobs_chunk)
-          _persist_plot_artifacts_best_effort(ready_jids)
-        except (OperationalError, DatabaseError) as exc:
-          # Drop any broken/unsynchronised connection and retry this chunk once
-          # with a fresh connection. If it still fails, let the exception bubble.
-          log_print(
-              "Database error while processing metrics chunk (size {0}) "
-              "for date {1}: {2}".format(len(pk_chunk), date, exc)
-          )
-          close_old_connections()
-          # If DB failed after readiness filtering (e.g. during run/persist), reuse
-          # computed ready_jids to avoid extra query/CPU on retry.
-          if ready_jids is None:
-            ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
-            skipped_not_ready += (len(pk_chunk) - len(ready_jids))
-          if not ready_jids:
-            continue
-          jobs_chunk = _job_refs_from_jids(ready_jids)
-          metrics_manager.run(jobs_chunk, pool=shared_pool)
-          processed += len(jobs_chunk)
-          _persist_plot_artifacts_best_effort(ready_jids)
-        finally:
-          # Release references promptly; GC can then free memory before next chunk.
+      processed = 0
+      skipped_not_ready = 0
+      shared_pool = metrics_manager.ensure_pool()
+      try:
+        for chunk_number, (pk_chunk, _) in enumerate(_iter_chunked_pks(qs, CHUNK_SIZE), start=1):
+          if shutdown_requested[0]:
+            break
           jobs_chunk = None
           ready_jids = None
-          if (
-              GC_COLLECT_EVERY_N_CHUNKS > 0
-              and chunk_number % GC_COLLECT_EVERY_N_CHUNKS == 0
-              and gc.get_count()[0] > 10000
-          ):
-            gc.collect()
+          try:
+            ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+            skipped_not_ready += (len(pk_chunk) - len(ready_jids))
+            if not ready_jids:
+              continue
+            jobs_chunk = _job_refs_from_jids(ready_jids)
+            metrics_manager.run(jobs_chunk, pool=shared_pool)
+            processed += len(jobs_chunk)
+            _persist_plot_artifacts_best_effort(ready_jids)
+          except (OperationalError, DatabaseError) as exc:
+            # Drop any broken/unsynchronised connection and retry this chunk once
+            # with a fresh connection. If it still fails, let the exception bubble.
+            log_print(
+                "Database error while processing metrics chunk (size {0}) "
+                "for date {1}: {2}".format(len(pk_chunk), date, exc)
+            )
+            close_old_connections()
+            # If DB failed after readiness filtering (e.g. during run/persist), reuse
+            # computed ready_jids to avoid extra query/CPU on retry.
+            if ready_jids is None:
+              ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+              skipped_not_ready += (len(pk_chunk) - len(ready_jids))
+            if not ready_jids:
+              continue
+            jobs_chunk = _job_refs_from_jids(ready_jids)
+            metrics_manager.run(jobs_chunk, pool=shared_pool)
+            processed += len(jobs_chunk)
+            _persist_plot_artifacts_best_effort(ready_jids)
+          finally:
+            # Release references promptly; GC can then free memory before next chunk.
+            jobs_chunk = None
+            ready_jids = None
+            if (
+                GC_COLLECT_EVERY_N_CHUNKS > 0
+                and chunk_number % GC_COLLECT_EVERY_N_CHUNKS == 0
+                and gc.get_count()[0] > 10000
+            ):
+              gc.collect()
 
-        if shutdown_requested[0]:
-          break
-    finally:
-      metrics_manager.close_pool()
+          if shutdown_requested[0]:
+            break
+      finally:
+        metrics_manager.close_pool()
 
-    log_print(
-        "Finished metrics for date {0}: processed {1} jobs, skipped {2} not-ready jobs".format(
-            date_ymd, processed, skipped_not_ready
-        )
-    )
+      log_print(
+          "Finished metrics for date {0}: processed {1} jobs, skipped {2} not-ready jobs".format(
+              date_ymd, processed, skipped_not_ready
+          )
+      )
 
-    if DEBUG:
-      close_old_connections()
-      qs_after = _jobs_queryset(date, min_time, rerun=False)
-      remaining = qs_after.count()
-      log_print("jobs that don't have data after run (count): {0}".format(remaining))
+      if DEBUG:
+        close_old_connections()
+        qs_after = _jobs_queryset(date, min_time, rerun=False)
+        remaining = qs_after.count()
+        log_print("jobs that don't have data after run (count): {0}".format(remaining))
 
   try:
     _run()
