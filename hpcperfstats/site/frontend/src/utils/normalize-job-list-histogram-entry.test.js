@@ -10,8 +10,8 @@ describe("normalizeJobListHistogramEntry", () => {
   it("uses title from queue plot shape", () => {
     const row = normalizeJobListHistogramEntry({
       title: "Jobs by queue",
-      plot_item_thumb: { a: 1 },
-      plot_item_full: { b: 2 },
+      plot_item_thumb: { doc: {}, root_ids: ["thumb-root"] },
+      plot_item_full: { doc: {}, root_ids: ["full-root"] },
       plot_unavailable_reason: "x",
     });
     expect(row.title).toBe("Jobs by queue");
@@ -28,5 +28,16 @@ describe("normalizeJobListHistogramEntry", () => {
       "runtime",
     );
     expect(row.title).toBe("runtime");
+  });
+
+  it("treats invalid bokeh payload as unavailable instead of passing through", () => {
+    const row = normalizeJobListHistogramEntry({
+      title: "Jobs by queue",
+      plot_item_thumb: { doc: {}, root_ids: [null] },
+      plot_item_full: undefined,
+    });
+    expect(row.plot_item_thumb).toBeNull();
+    expect(row.plot_item_full).toBeNull();
+    expect(row.plot_unavailable_reason).toContain("invalid");
   });
 });
