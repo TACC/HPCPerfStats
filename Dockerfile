@@ -44,7 +44,8 @@ COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_ROOT_USER_ACTION=ignore \
-    HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
+    HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini \
+    STATIC_ROOT=/home/hpcperfstats/staticfiles
 
 # Install Python dependencies and the hpcperfstats package.
 RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --upgrade pip \

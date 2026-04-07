@@ -1,5 +1,6 @@
 #!/bin/sh
 set -e
+export STATIC_ROOT="${STATIC_ROOT:-/home/hpcperfstats/staticfiles}"
 
 echo "Waiting for Redis..."
 
