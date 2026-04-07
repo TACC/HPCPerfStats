@@ -25,6 +25,9 @@ services:
     image: nginx:1-alpine
     container_name: hpcperfstats_proxy_1
     restart: always
+    depends_on:
+      web:
+        condition: service_started
     healthcheck:
       # Only validate that nginx is accepting TCP connections.
       # TLS may not be ready yet (certs), and some routes may return 4xx.
@@ -37,7 +40,7 @@ services:
       - 443:443
     volumes:
       - ./services-conf/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./services-conf/nginx-static-files.conf:/etc/nginx/conf.d/nginx-static-files.conf:ro
+      - ./services-conf/nginx-static-files.conf:/etc/nginx/nginx-static-files.conf:ro
       - /etc/letsencrypt/:/etc/letsencrypt/:ro
       - staticfiles_data:/srv/static:ro
       - media_data:/srv/media:ro
