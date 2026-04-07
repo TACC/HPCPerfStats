@@ -8,6 +8,11 @@ include:
   - docker-compose.cpu-pinning.app.yaml
 
 services:
+  web:
+    volumes:
+      - staticfiles_data:/home/hpcperfstats/staticfiles
+      - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
+
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "no", "--maxmemory", "8gb", "--maxmemory-policy", "allkeys-lru"]
