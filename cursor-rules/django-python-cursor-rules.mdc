@@ -59,6 +59,7 @@ You are an expert in Python, Django, and scalable web application development.
   3. Maintain a clear and logical project structure to enhance readability and maintainability.
 
   Python Rules
-   - Always use .venv in the project root directory as the local python virtual environment for this workspace.
-  
+   - For **host-side** Python/pip/pytest, use **only** the virtualenv at the **Cursor workspace root**: `<workspace_root>/.venv/bin/python` (see **`workspace-layout-and-python-env.mdc`**). Do not create disposable venvs under `/tmp` or elsewhere unless the user explicitly requests it.
+   - **`pip install -e` / compose / pytest cwd** for the Django package: the inner git directory `HPCPerfStats/` (contains `pyproject.toml` and `docker-compose.yaml`), not the workspace root alone.
+
   Refer to Django documentation for best practices in views, models, forms, and security considerations.

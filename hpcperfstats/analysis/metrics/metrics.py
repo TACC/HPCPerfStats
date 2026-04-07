@@ -326,46 +326,38 @@ def _unwrap(args):
 
 
 def _persist_metrics_batch(job_results, distinct_time_count):
-  """Fetch existing metrics_data for jids in job_results, then bulk_create/bulk_update.
+  """Upsert metrics_data rows for job_results; set job_data.metrics_distinct_time_count.
 
-  Also sets job_data.metrics_distinct_time_count for the job(s) in this batch.
+  Uses bulk_create(..., update_conflicts=...) so we do not rely on INSERT RETURNING
+  row-count matching (Django asserts that for plain bulk_create on PostgreSQL;
+  some stacks violate it). Dedupes (jid, type, metric) within the batch so
+  ON CONFLICT does not hit the same row twice.
   Called in main process only.
   """
   with transaction.atomic():
     jids = list({item["jid"].jid for item in job_results})
-    existing = list(
-        metrics_data.objects.filter(jid_id__in=jids).only(
-            "id", "jid_id", "type", "metric", "units", "value", "no_data_reason"
-        )
-    )
-    existing_by_key = {(r.jid_id, r.type, r.metric): r for r in existing}
-    to_update_list = []
-    to_create = []
+    by_key = {}
     for item in job_results:
       key = (item["jid"].jid, item["type"], item["metric"])
-      if key in existing_by_key:
-        obj = existing_by_key[key]
-        obj.units = item["units"]
-        obj.value = item["value"]
-        obj.no_data_reason = item.get("no_data_reason")
-        to_update_list.append(obj)
-      else:
-        to_create.append(
-            metrics_data(
-                jid_id=item["jid"].jid,
-                type=item["type"],
-                metric=item["metric"],
-                units=item["units"],
-                value=item["value"],
-                no_data_reason=item.get("no_data_reason"),
-            )
+      by_key[key] = item
+    rows = [
+        metrics_data(
+            jid_id=item["jid"].jid,
+            type=item["type"],
+            metric=item["metric"],
+            units=item["units"],
+            value=item["value"],
+            no_data_reason=item.get("no_data_reason"),
         )
-    if to_create:
-      metrics_data.objects.bulk_create(to_create)
-    if to_update_list:
-      metrics_data.objects.bulk_update(
-          list({id(o): o for o in to_update_list}.values()),
-          ["units", "value", "no_data_reason"],
+        for item in by_key.values()
+    ]
+    wrote_metrics = bool(rows)
+    if rows:
+      metrics_data.objects.bulk_create(
+          rows,
+          update_conflicts=True,
+          update_fields=["units", "value", "no_data_reason"],
+          unique_fields=["jid", "type", "metric"],
       )
     if distinct_time_count is not None and jids:
       jobs_up = list(job_data.objects.filter(pk__in=jids))
@@ -373,7 +365,7 @@ def _persist_metrics_batch(job_results, distinct_time_count):
         jo.metrics_distinct_time_count = distinct_time_count
       job_data.objects.bulk_update(jobs_up, ["metrics_distinct_time_count"])
 
-  if to_create or to_update_list:
+  if wrote_metrics:
     try:
       from hpcperfstats.site.machine.cache_utils import invalidate_metrics_distinct_cache
 

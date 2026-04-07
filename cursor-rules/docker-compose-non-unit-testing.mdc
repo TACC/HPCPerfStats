@@ -27,3 +27,4 @@ Stress tests are **opt-in** (`HPCPERFSTATS_STRESS_HOST_DATA=1`); the workflow sc
 
 - Complements `full-test-with-db-redis.mdc` and `local-compose-db-lifecycle-for-web-tests.mdc`.
 - Stress-specific: `job-plot-artifacts-caching.mdc` / `runtime-resource-and-metrics-safety.mdc` when touching plot persistence or metrics.
+- Host Python location: **`workspace-layout-and-python-env.mdc`**.

@@ -1,0 +1,57 @@
+---
+description: Where workspace rules live, repo layout vs Cursor root, and the single canonical .venv for host Python
+alwaysApply: true
+---
+
+# Workspace layout, rules location, and Python environment
+
+## Cursor workspace root vs git checkout
+
+- **Cursor workspace root** is the directory that contains **both**:
+  - **`.venv/`** — the **only** local virtualenv agents must use for host-side Python on this machine.
+  - **`HPCPerfStats/`** — the **git checkout** (Django app, `docker-compose.yaml`, `pyproject.toml`, `hpcperfstats/` package).
+
+Example shape:
+
+```text
+<workspace_root>/
+  .venv/                 ← use THIS for python/pip on the host
+  .cursor/rules          ← symlink → HPCPerfStats/cursor-rules
+  HPCPerfStats/          ← cd here for compose, pip install -e, pytest paths in docs
+    cursor-rules/        ← authoritative rule *.mdc files (edit here)
+    pyproject.toml
+    docker-compose.yaml
+    hpcperfstats/
+```
+
+Do **not** treat `HPCPerfStats/HPCPerfStats/` alone as “project root” for `.venv`; the venv one level **above** that folder is canonical.
+
+## Where to edit Cursor rules
+
+- **Authoritative rules directory:** `HPCPerfStats/cursor-rules/*.mdc` (inside the git repo).
+- Workspace **`.cursor/rules`** should point at that directory (symlink), so Cursor loads the same files.
+- **Do not** maintain a second copy under `HPCPerfStats/.cursor/rules/` — that bypasses the symlink and splits the rule set.
+
+## Host Python and pip (agents)
+
+- **Interpreter:** `<workspace_root>/.venv/bin/python`
+- **Pip:** `<workspace_root>/.venv/bin/pip`
+- **Install editable app (from git checkout dir):**
+
+```bash
+cd "<workspace_root>/HPCPerfStats" && "<workspace_root>/.venv/bin/pip" install -e ".[test]"
+```
+
+- **Forbidden unless the user explicitly asks:** creating ad hoc envs under `/tmp`, `python -m venv` in random paths, `pip install --break-system-packages` on the system interpreter, or implying there is no usable venv when `<workspace_root>/.venv` exists.
+
+If `<workspace_root>/.venv` is missing, **ask** whether to create it at that path only; do not silently use another location.
+
+## Docker vs host venv
+
+- **Docker Compose** workflows (`docker-compose run … web`) use the image’s Python — that is separate from `.venv` and is required for DB hostname `db`, Redis `redis`, Timescale, and many integration tests.
+- **Host `.venv`** is for quick scripts, linters, and pytest **only when** tests do not need the compose network (see `docker-compose-non-unit-testing.mdc` and `full-test-with-db-redis.mdc`).
+
+## Overlap
+
+- Complements **`django-python-cursor-rules.mdc`** (Python/Django style — venv sentence there defers here for paths).
+- Complements **`docker-compose-non-unit-testing.mdc`** and **`full-test-with-db-redis.mdc`** for when to use compose instead of host pytest.
