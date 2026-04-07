@@ -35,6 +35,8 @@ from hpcperfstats.site.machine.models import host_data, job_data
 # Chunk host__in on host_data for large jobs; single queries with thousands of
 # hosts often hit PostgreSQL statement_timeout during metrics and plots.
 JID_TABLE_HOST_QUERY_BATCH = 64
+# Avoid very large ANY(text[]) binds for row-count probe; chunk these jobs.
+JID_TABLE_ROW_COUNT_POSTGRES_ARRAY_MAX_HOSTS = 512
 
 
 def _iter_acct_host_batches(acct_host_list, batch_size=None):
@@ -51,33 +53,50 @@ def _count_host_data_rows_for_window(start, end, acct_hosts):
   """Total host_data rows in [start, end] for accounting FQDNs (chunked on non-PostgreSQL)."""
   if not acct_hosts or start is None or end is None:
     return 0
+
+  def _count_chunked():
+    total = 0
+    for host_chunk in _iter_acct_host_batches(acct_hosts):
+      total += host_data.objects.filter(
+          time__gte=start,
+          time__lte=end,
+          host__in=host_chunk,
+      ).count()
+    return total
+
   from django.db import connections
 
   conn = connections["default"]
   if conn.vendor == "postgresql":
+    if len(acct_hosts) > JID_TABLE_ROW_COUNT_POSTGRES_ARRAY_MAX_HOSTS:
+      return _count_chunked()
     from django.db import connection
 
-    ops = connection.ops
-    tbl = ops.quote_name(host_data._meta.db_table)
-    ct = ops.quote_name("time")
-    ch = ops.quote_name("host")
-    sql = (
-        "SELECT COUNT(*) FROM {tbl} WHERE {ct} >= %s AND {ct} <= %s "
-        "AND {ch} = ANY(%s::text[])"
-    ).format(tbl=tbl, ct=ct, ch=ch)
-    with conn.cursor() as cursor:
-      cursor.execute(sql, [start, end, list(acct_hosts)])
-      row = cursor.fetchone()
-      return int(row[0]) if row and row[0] is not None else 0
+    try:
+      ops = connection.ops
+      tbl = ops.quote_name(host_data._meta.db_table)
+      ct = ops.quote_name("time")
+      ch = ops.quote_name("host")
+      sql = (
+          "SELECT COUNT(*) FROM {tbl} WHERE {ct} >= %s AND {ct} <= %s "
+          "AND {ch} = ANY(%s::text[])"
+      ).format(tbl=tbl, ct=ct, ch=ch)
+      with conn.cursor() as cursor:
+        cursor.execute(sql, [start, end, list(acct_hosts)])
+        row = cursor.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+    except Exception:
+      _logger.warning(
+          "jid_table row count PostgreSQL ANY() failed; retrying chunked ORM count",
+          exc_info=True,
+      )
+      try:
+        conn.close_if_unusable_or_obsolete()
+      except Exception:
+        pass
+      return _count_chunked()
 
-  total = 0
-  for host_chunk in _iter_acct_host_batches(acct_hosts):
-    total += host_data.objects.filter(
-        time__gte=start,
-        time__lte=end,
-        host__in=host_chunk,
-    ).count()
-  return total
+  return _count_chunked()
 
 
 def _acct_hosts_cache_fingerprint(acct_hosts):

@@ -9,9 +9,11 @@ import pytest
 pytestmark = pytest.mark.django_db(databases=[])
 
 from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_schema_dataframe
+from hpcperfstats.analysis.gen.jid_table import _count_host_data_rows_for_window
 from hpcperfstats.analysis.gen.jid_table import _ensure_tz
 from hpcperfstats.analysis.gen.jid_table import _normalize_host_data_schema_label
 from hpcperfstats.analysis.gen.jid_table import _normalize_job_accounting_host_list
+from hpcperfstats.analysis.gen.jid_table import JID_TABLE_ROW_COUNT_POSTGRES_ARRAY_MAX_HOSTS
 from hpcperfstats.analysis.gen.jid_table import _strided_distinct_times_for_large_job
 from hpcperfstats.analysis.gen.jid_table import _unpack_cached_job_window_row
 from hpcperfstats.analysis.gen.jid_table import TypeDetailDataProvider
@@ -276,3 +278,89 @@ def test_strided_distinct_times_for_large_job_degenerate_window_returns_start(mo
   sampled = _strided_distinct_times_for_large_job(
       start, start, ["n1.example.com"], 64)
   assert sampled == [start]
+
+
+def test_count_host_data_rows_for_window_postgres_error_falls_back_to_chunked(monkeypatch):
+  """PostgreSQL row-count probe retries via chunked ORM on cursor/SQL failures."""
+  hosts = ["n1.example.com", "n2.example.com", "n3.example.com"]
+
+  class FakeCursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc, tb):
+      return False
+
+    def execute(self, *_args, **_kwargs):
+      raise RuntimeError("lost synchronization")
+
+  class FakeConn:
+    vendor = "postgresql"
+
+    def __init__(self):
+      self.closed_checked = False
+
+    def cursor(self):
+      return FakeCursor()
+
+    def close_if_unusable_or_obsolete(self):
+      self.closed_checked = True
+
+  class FakeCountQS:
+    def __init__(self, n):
+      self._n = n
+
+    def count(self):
+      return self._n
+
+  class FakeManager:
+    def filter(self, **kwargs):
+      return FakeCountQS(len(kwargs["host__in"]))
+
+  fake_conn = FakeConn()
+  fake_db_conn = type(
+      "FakeDBConn",
+      (),
+      {"ops": type("FakeOps", (), {"quote_name": staticmethod(lambda s: s)})()},
+  )()
+  monkeypatch.setattr("django.db.connections", {"default": fake_conn}, raising=False)
+  monkeypatch.setattr("django.db.connection", fake_db_conn, raising=False)
+  monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.host_data.objects", FakeManager())
+
+  out = _count_host_data_rows_for_window(1, 2, hosts)
+  assert out == len(hosts)
+  assert fake_conn.closed_checked is True
+
+
+def test_count_host_data_rows_for_window_large_host_list_skips_postgres_any(monkeypatch):
+  """Very large host lists bypass ANY(text[]) probe and use chunked ORM path."""
+  hosts = [
+      f"n{i}.example.com"
+      for i in range(JID_TABLE_ROW_COUNT_POSTGRES_ARRAY_MAX_HOSTS + 1)
+  ]
+
+  class FakeConn:
+    vendor = "postgresql"
+
+    def cursor(self):
+      raise AssertionError("cursor path should be bypassed for large host lists")
+
+    def close_if_unusable_or_obsolete(self):
+      return None
+
+  class FakeCountQS:
+    def __init__(self, n):
+      self._n = n
+
+    def count(self):
+      return self._n
+
+  class FakeManager:
+    def filter(self, **kwargs):
+      return FakeCountQS(len(kwargs["host__in"]))
+
+  monkeypatch.setattr("django.db.connections", {"default": FakeConn()}, raising=False)
+  monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.host_data.objects", FakeManager())
+
+  out = _count_host_data_rows_for_window(1, 2, hosts)
+  assert out == len(hosts)
