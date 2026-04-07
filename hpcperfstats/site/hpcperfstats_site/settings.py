@@ -163,7 +163,7 @@ MEDIA_URL = '/media/'
 # Don't put anything in this directory yourself; store your static files
 # in apps' "static/" subdirectories and in STATICFILES_DIRS.
 # Example: "/var/www/example.com/static/"
-STATIC_ROOT = os.environ.get("STATIC_ROOT", "/home/hpcperfstats/staticfiles")
+STATIC_ROOT = os.environ.get("STATIC_ROOT") or "/home/hpcperfstats/staticfiles"
 
 # URL prefix for static files.
 # Example: "http://example.com/static/", "http://static.example.com/"

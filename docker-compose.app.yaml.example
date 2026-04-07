@@ -7,6 +7,8 @@ services:
     container_name: hpcperfstats_web_1
     restart: always
     command: /home/hpcperfstats/services-conf/django_startup.sh
+    environment:
+      - STATIC_ROOT=/home/hpcperfstats/staticfiles
     volumes:
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media

@@ -1,4 +1,5 @@
 #!/bin/sh
+set -e
 
 echo "Waiting for Redis..."
 
@@ -66,6 +67,20 @@ chown -R hpcperfstats:hpcperfstats /hpcperfstats/
 /usr/local/bin/python3 hpcperfstats/site/manage.py makemigrations
 /usr/local/bin/python3 hpcperfstats/site/manage.py migrate
 /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput
+/usr/local/bin/python3 - <<'PY'
+import os
+import sys
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings")
+import django
+django.setup()
+from django.conf import settings
+
+index_path = os.path.join(settings.STATIC_ROOT, "frontend", "index.html")
+if not os.path.isfile(index_path):
+  print(f"ERROR: collectstatic did not produce expected SPA shell: {index_path}", file=sys.stderr)
+  raise SystemExit(1)
+print(f"Verified SPA shell in STATIC_ROOT: {index_path}")
+PY
 
 # Gunicorn workers: WEB_CONCURRENCY overrides; else min(2*base+1, max_gunicorn_workers)
 # where base = min(visible_cpus, effective_cores) so ini total_cores caps workers even
