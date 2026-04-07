@@ -7,6 +7,9 @@ services:
     container_name: hpcperfstats_web_1
     restart: always
     command: /home/hpcperfstats/services-conf/django_startup.sh
+    volumes:
+      - staticfiles_data:/home/hpcperfstats/staticfiles
+      - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
     networks:
       hpcperfstats_net:
         aliases:
@@ -33,6 +36,8 @@ services:
           - pipeline
 
 volumes:
+  staticfiles_data:
+  media_data:
   hpcperfstatsdata:
     driver: local
     driver_opts:

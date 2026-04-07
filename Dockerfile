@@ -43,9 +43,11 @@ COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
 # Set python install variables.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_ROOT_USER_ACTION=ignore
+    PIP_ROOT_USER_ACTION=ignore \
+    HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
 
 # Install Python dependencies and the hpcperfstats package.
 RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir . \
+    && /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput \
     && pip cache purge"

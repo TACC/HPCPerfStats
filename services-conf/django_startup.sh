@@ -65,6 +65,7 @@ chown -R hpcperfstats:hpcperfstats /hpcperfstats/
 # detect if the tables are existing and create if not
 /usr/local/bin/python3 hpcperfstats/site/manage.py makemigrations
 /usr/local/bin/python3 hpcperfstats/site/manage.py migrate
+/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput
 
 # Gunicorn workers: WEB_CONCURRENCY overrides; else min(2*base+1, max_gunicorn_workers)
 # where base = min(visible_cpus, effective_cores) so ini total_cores caps workers even

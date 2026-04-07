@@ -259,6 +259,9 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    ```
 
    In `nginx.conf`, set `ssl_certificate` and `ssl_certificate_key`. Note: `/etc/letsencrypt` is mounted from the host via `docker-compose.yaml`; for another path, update the compose file to match.
+   Static/media routing is split into a reusable include mounted at
+   `services-conf/nginx-static-files.conf`; both SSL and non-SSL nginx configs
+   include this file so nginx serves `/static/` and `/media/` directly.
 
    **If you do not have SSL (testing only):**
 
@@ -278,7 +281,9 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo docker compose logs
    ```
 
-   On first startup (or after updating the code), the `web` container runs Django migrations (`manage.py makemigrations` and `manage.py migrate`) before serving the site.
+   On first startup (or after updating the code), the `web` container runs Django
+   migrations (`manage.py makemigrations` and `manage.py migrate`) and
+   `collectstatic` before serving the site.
 
    If you change the codebase, bring the containers down, make your changes, and then rebuild and start the stack again.
 
