@@ -137,7 +137,7 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 The example supervisor configuration (`services-conf/supervisord.conf.example`) defines long-running programs including:
 
 - **`listend.py`** — RabbitMQ listener (archive append/rotation).
-- **`sync_timedb.py all`** — Imports node-level data from the archive into the database.
+- **`sync_timedb.py all`** — Imports node-level data from the archive into the database; runs until stopped, rescans for new files after each wave, and sleeps when the queue is empty while periodic archive maintenance continues.
 - **`update_metrics.py`** — Builds/updates job-indexed and secondary metrics from DB state.
 
 It also includes **syslog-ng** and **logrotate** hooks for operational logging.

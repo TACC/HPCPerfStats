@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; ``pigz`` seal and raw-file removal on ``archive_pigz_interval_seconds``, default 4h). Runs in parallel with configurable chunk size. After ingest, idles until SIGTERM.
+"""Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; ``pigz`` seal and raw-file removal on ``archive_pigz_interval_seconds``, default 4h). Runs in parallel with configurable chunk size.
+
+After each ingest wave completes, rescans the archive directory for new files. When none are pending, sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 5 minutes) and scans again, until SIGTERM.
 
 CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini).
 
@@ -38,7 +40,6 @@ from hpcperfstats.shutdown_utils import (
 )
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
-    collect_stats_files_in_range,
     dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
@@ -91,6 +92,10 @@ tar_append_batch_size = 32
 rescan_every_chunks = 10
 # Bound processed-file tracking to avoid unbounded set growth in long runs.
 processed_files_max_size = 200000
+
+# When no pending files remain after a directory rescan, sleep this long (seconds)
+# before scanning again. Interruptible via shutdown_requested / SIGTERM path.
+EMPTY_QUEUE_RESCAN_SLEEP_SECONDS = 300
 
 # Rows per bulk_create batch to limit peak memory per worker
 bulk_create_batch_size = 10000
@@ -478,6 +483,180 @@ def database_startup():
       log_print("Reading Chunk Data")
 
 
+def run_sync_timedb_supervisor_loop(
+    directory,
+    startdate,
+    enddate,
+    host_name_ext,
+    manager_lock,
+    archive_pool,
+):
+  """Rescan archive, ingest pending files in chunks, run pigz/removal on interval; loop until shutdown."""
+  pigz_interval = cfg.get_archive_pigz_interval_seconds()
+  last_archive_maint = time.time() - pigz_interval
+  ingest_t0 = time.time()
+
+  def _run_scheduled_archive_maintenance():
+    seal_dirty_daily_archives(
+        tgz_archive_dir,
+        local_tz=local_timezone,
+        pigz_threads=pigz_thread_count,
+        compress_level=cfg.get_archive_pigz_level(),
+        keep_uncompressed_tar=cfg.get_archive_keep_uncompressed_tar(),
+        idle_seconds=cfg.get_archive_seal_idle_seconds(),
+        seal_immediately_if_dirty=True,
+        log_fn=log_print,
+    )
+    remove_verified_archived_raw_files(
+        directory,
+        host_name_ext,
+        tgz_archive_dir,
+        log_fn=log_print,
+    )
+
+  log_print(
+      "sync_timedb continuous mode: pigz interval %s s; idle rescan sleep %s s"
+      % (int(pigz_interval), int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)),
+      flush=True,
+  )
+
+  archive_job = None
+  processed_files = set()
+  processed_files_order = deque()
+  pending_stats_files = []
+  chunk_counter = 0
+
+  while not shutdown_requested[0]:
+    if time.time() - last_archive_maint >= pigz_interval:
+      if archive_job is not None:
+        if DEBUG:
+          log_print(
+              "Waiting for background archival before scheduled maintenance",
+              flush=True,
+          )
+        archive_job.get()
+        archive_job = None
+      log_print(
+          "Running scheduled daily-archive pigz and raw file removal",
+          flush=True,
+      )
+      _run_scheduled_archive_maintenance()
+      last_archive_maint = time.time()
+      close_old_connections()
+      connections.close_all()
+
+    if not pending_stats_files:
+      pending_stats_files = rescan_pending_stats_files(
+          directory, startdate, enddate, host_name_ext, processed_files)
+      if pending_stats_files:
+        log_print(
+            "Number of host stats files to process = ",
+            len(pending_stats_files),
+            flush=True,
+        )
+        chunk_counter = 0
+      else:
+        log_print(
+            "No pending stats files; sleeping %s s before next directory scan"
+            % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
+            flush=True,
+        )
+        sleep_until_shutdown(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)
+        continue
+
+    while pending_stats_files:
+      if shutdown_requested[0]:
+        log_print("Exiting due to SIGTERM")
+        break
+      if DEBUG:
+        log_print(
+            "Begining Chunk(%s) #%s Processing" % (chunk_size, chunk_counter))
+
+      stats_files_chunk = pending_stats_files[:chunk_size]
+      if not stats_files_chunk:
+        continue
+
+      ar_file_mapping = {}
+      files_to_be_archived = []
+      log_print("%s files per chunk" % chunk_size)
+
+      with multiprocessing.get_context('spawn').Pool(
+          processes=thread_count) as pool:
+        add_stats_file = partial(add_stats_file_to_db, manager_lock)
+        k = 0
+        for stats_fname, need_archival in pool.imap_unordered(
+            add_stats_file, stats_files_chunk):
+          k += 1
+          if should_archive and need_archival:
+            files_to_be_archived.append(stats_fname)
+          log_print(
+              "chunk %s: completed file %s out of %s\n" % (
+                  chunk_counter, k, chunk_size),
+              flush=True)
+
+      log_print("loading time", time.time() - ingest_t0)
+      log_print(
+          "Files marked for archival: %d" % len(files_to_be_archived))
+
+      ar_file_mapping = build_archive_mapping(
+          files_to_be_archived, tgz_archive_dir)
+      total_in_mapping = sum(len(v) for v in ar_file_mapping.values())
+      if ar_file_mapping:
+        log_print(
+            "Archive mapping: %d tar(s), %d file(s) to archive"
+            % (len(ar_file_mapping), total_in_mapping))
+      elif files_to_be_archived:
+        log_print(
+            "Archive mapping empty (all files skipped: no timestamp in head)")
+
+      if archive_job is not None:
+        if DEBUG:
+          log_print("Checking/waiting for background archival proccesses")
+
+        archive_job.get()
+
+      if DEBUG:
+        log_print("files to be archived: %s" % ar_file_mapping)
+
+      archive_job = archive_pool.map_async(
+          archive_stats_files, list(ar_file_mapping.items()))
+
+      log_print("Archival running in the background")
+      for stats_path in stats_files_chunk:
+        if stats_path in processed_files:
+          continue
+        processed_files.add(stats_path)
+        processed_files_order.append(stats_path)
+      while len(processed_files_order) > processed_files_max_size:
+        old_path = processed_files_order.popleft()
+        processed_files.discard(old_path)
+      pending_stats_files = pending_stats_files[chunk_size:]
+      chunk_counter += 1
+
+      if chunk_counter % rescan_every_chunks == 0:
+        if archive_job is not None:
+          if DEBUG:
+            log_print(
+                "Waiting for background archival proccesses before rescan")
+          archive_job.get()
+          archive_job = None
+        pending_stats_files = rescan_pending_stats_files(
+            directory, startdate, enddate, host_name_ext, processed_files)
+        log_print(
+            "Rescanned after %d chunks; pending files (newest first): %d"
+            % (rescan_every_chunks, len(pending_stats_files)))
+
+    if archive_job is not None:
+      archive_job.get()
+      archive_job = None
+
+    close_old_connections()
+    connections.close_all()
+
+  if archive_job is not None:
+    archive_job.get()
+
+
 if __name__ == '__main__':
   # Use a mutable container so the SIGTERM handler can update state without
   # relying on `nonlocal` (which is only valid for enclosing function scopes).
@@ -519,151 +698,21 @@ if __name__ == '__main__':
           "subdirectories whose names end with this suffix.")
       sys.exit(1)
 
-    start = time.time()
     directory = cfg.get_archive_dir_path()
-    stats_files = collect_stats_files_in_range(
-        directory, startdate, enddate, host_name_ext)
-    log_print("Number of host stats files to process = ", len(stats_files))
 
     manager = multiprocessing.Manager()
     try:
       manager_lock = manager.Lock()
       with multiprocessing.get_context('spawn').Pool(
           processes=archive_thread_count) as archive_pool:
-        archive_job = None
-        processed_files = set()
-        processed_files_order = deque()
-        pending_stats_files = list(stats_files)
-        chunk_counter = 0
-
-        # Process chunk_size files at a time; every rescan_every_chunks chunks,
-        # rescan and reprioritize by newest-first (including newly arrived files).
-        while pending_stats_files:
-          if shutdown_requested[0]:
-            log_print("Exiting due to SIGTERM")
-            break
-          if DEBUG:
-            log_print("Begining Chunk(%s) #%s Processing" % (chunk_size, chunk_counter))
-
-          stats_files_chunk = pending_stats_files[:chunk_size]
-          if not stats_files_chunk:
-            continue
-
-          ar_file_mapping = {}
-          files_to_be_archived = []
-          log_print("%s files per chunk" % chunk_size)
-
-          with multiprocessing.get_context('spawn').Pool(
-              processes=thread_count) as pool:
-            add_stats_file = partial(add_stats_file_to_db, manager_lock)
-            k = 0
-            for stats_fname, need_archival in pool.imap_unordered(
-                add_stats_file, stats_files_chunk):
-              k += 1
-              if should_archive and need_archival:
-                files_to_be_archived.append(stats_fname)
-              log_print(
-                  "chunk %s: completed file %s out of %s\n" % (
-                      chunk_counter, k, chunk_size),
-                  flush=True)
-
-          log_print("loading time", time.time() - start)
-          log_print(
-              "Files marked for archival: %d" % len(files_to_be_archived))
-
-          ar_file_mapping = build_archive_mapping(
-              files_to_be_archived, tgz_archive_dir)
-          total_in_mapping = sum(len(v) for v in ar_file_mapping.values())
-          if ar_file_mapping:
-            log_print(
-                "Archive mapping: %d tar(s), %d file(s) to archive"
-                % (len(ar_file_mapping), total_in_mapping))
-          elif files_to_be_archived:
-            log_print(
-                "Archive mapping empty (all files skipped: no timestamp in head)")
-
-          # skip first iteration, on first there will be no archive_job
-          if archive_job is not None:
-            if DEBUG:
-              log_print("Checking/waiting for background archival proccesses")
-
-            # Wait until last archive_job is complete before starting another one
-            archive_job.get()
-
-          if DEBUG:
-            log_print("files to be archived: %s" % ar_file_mapping)
-
-          archive_job = archive_pool.map_async(
-              archive_stats_files, list(ar_file_mapping.items()))
-
-          log_print("Archival running in the background")
-          for stats_path in stats_files_chunk:
-            if stats_path in processed_files:
-              continue
-            processed_files.add(stats_path)
-            processed_files_order.append(stats_path)
-          while len(processed_files_order) > processed_files_max_size:
-            old_path = processed_files_order.popleft()
-            processed_files.discard(old_path)
-          pending_stats_files = pending_stats_files[chunk_size:]
-          chunk_counter += 1
-
-          if chunk_counter % rescan_every_chunks == 0:
-            if archive_job is not None:
-              if DEBUG:
-                log_print(
-                    "Waiting for background archival proccesses before rescan")
-              archive_job.get()
-              archive_job = None
-            pending_stats_files = rescan_pending_stats_files(
-                directory, startdate, enddate, host_name_ext, processed_files)
-            log_print(
-                "Rescanned after %d chunks; pending files (newest first): %d"
-                % (rescan_every_chunks, len(pending_stats_files)))
-
-        if archive_job is not None:
-          archive_job.get()
-
-      pigz_interval = cfg.get_archive_pigz_interval_seconds()
-      last_archive_maint = time.time() - pigz_interval
-
-      def _run_scheduled_archive_maintenance():
-        seal_dirty_daily_archives(
-            tgz_archive_dir,
-            local_tz=local_timezone,
-            pigz_threads=pigz_thread_count,
-            compress_level=cfg.get_archive_pigz_level(),
-            keep_uncompressed_tar=cfg.get_archive_keep_uncompressed_tar(),
-            idle_seconds=cfg.get_archive_seal_idle_seconds(),
-            seal_immediately_if_dirty=True,
-            log_fn=log_print,
-        )
-        remove_verified_archived_raw_files(
+        run_sync_timedb_supervisor_loop(
             directory,
+            startdate,
+            enddate,
             host_name_ext,
-            tgz_archive_dir,
-            log_fn=log_print,
+            manager_lock,
+            archive_pool,
         )
-
-      log_print(
-          "sync_timedb ingest pass complete; idle until next pigz + removal "
-          "(every %s s, first run shortly)" % int(pigz_interval),
-          flush=True,
-      )
-
-      close_old_connections()
-      connections.close_all()
-      while not shutdown_requested[0]:
-        if time.time() - last_archive_maint >= pigz_interval:
-          log_print(
-              "Running scheduled daily-archive pigz and raw file removal",
-              flush=True,
-          )
-          _run_scheduled_archive_maintenance()
-          last_archive_maint = time.time()
-          close_old_connections()
-          connections.close_all()
-        sleep_until_shutdown(60)
 
       if DEBUG:
         log_print("sync_timedb finished")

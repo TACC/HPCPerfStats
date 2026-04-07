@@ -10,7 +10,7 @@ This document summarizes how **thread/process counts** and **Docker Compose CPU 
 | **web** | `api.py` | `ThreadPoolExecutor` size = **`api_small_executor_max_workers`**, or **`parallel_db_prefetch_max`** (default **6**) when the API key is unset | Extra concurrent ORM work per worker |
 | **web** | `summaryplot.py` | Parallel prefetch uses **`get_parallel_db_prefetch_max_workers()`** (same default **6**) | Same cap family as API executor |
 | **pipeline** | `update_metrics.py` | `multiprocessing.Pool` size = **`get_metrics_pool_process_count()`** (≤ **`metrics_pool_process_cap`**) | Many concurrent readers during metrics passes |
-| **pipeline** | `sync_timedb.py` / archive | Ingest pool = **`get_sync_ingest_pool_processes()`** (same base as `get_worker_thread_count(4)`, optional **`sync_pool_process_cap`**); archive pool = **`get_sync_archive_pool_processes()`** (half of ingest, optional **`archive_pool_process_cap`**) | Load spikes + pigz CPU |
+| **pipeline** | `sync_timedb.py` / archive | Ingest pool = **`get_sync_ingest_pool_processes()`** (same base as `get_worker_thread_count(4)`, optional **`sync_pool_process_cap`**); archive pool = **`get_sync_archive_pool_processes()`** (half of ingest, optional **`archive_pool_process_cap`**) | Load spikes + pigz CPU; `sync_timedb` is a long-lived loop (rescans archive after each wave; sleeps 5 minutes when no pending files) |
 | **pipeline** | `listend.py` | Pika + a few daemon threads; no Django DB in this module | Low |
 | **db** | PostgreSQL | `max_connections=500` in `docker-compose.yaml` | Hard ceiling for all clients |
 
