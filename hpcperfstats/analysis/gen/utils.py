@@ -257,9 +257,18 @@ def queryset_to_dataframe(qs, columns=None):
   if qs is None:
     return pd.DataFrame()
   if columns is not None and hasattr(qs, "values"):
-    return pd.DataFrame(list(qs.values(*columns)))
+    rows = list(qs.values(*columns))
+    if not rows:
+      return pd.DataFrame(columns=list(columns))
+    return pd.DataFrame(rows)
   data = list(qs)
   if not data:
+    # Empty .values() querysets must keep column names so callers can sort/concat
+    # (e.g. jid_table.get_host_time_df); plain .none() has no values_select.
+    q = getattr(qs, "query", None)
+    vs = getattr(q, "values_select", None) if q is not None else None
+    if vs:
+      return pd.DataFrame(columns=list(vs))
     return pd.DataFrame()
   if isinstance(data[0], dict):
     return pd.DataFrame(data)

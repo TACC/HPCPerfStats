@@ -52,6 +52,37 @@ def test_queryset_to_dataframe_mock_queryset():
   assert out["a"].tolist() == [1, 3]
 
 
+def test_queryset_to_dataframe_empty_values_with_columns_kwarg():
+  """Empty values(*columns) still exposes column names for concat/sort."""
+  from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
+
+  class QsEmpty:
+    def values(self, *cols):
+      return []
+
+  out = queryset_to_dataframe(QsEmpty(), columns=["host", "time"])
+  assert list(out.columns) == ["host", "time"]
+  assert len(out) == 0
+
+
+def test_queryset_to_dataframe_empty_iter_with_values_select():
+  """Empty .values() queryset: use query.values_select for DataFrame columns."""
+  from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
+
+  class QsEmptyValues:
+    class _Query:
+      values_select = ("host", "time")
+
+    query = _Query()
+
+    def __iter__(self):
+      return iter([])
+
+  out = queryset_to_dataframe(QsEmptyValues())
+  assert list(out.columns) == ["host", "time"]
+  assert len(out) == 0
+
+
 def test_tz_aware_bokeh_tick_formatter_returns_formatter():
   """tz_aware_bokeh_tick_formatter returns a Bokeh CustomJSTickFormatter with tz in args."""
   from hpcperfstats.analysis.gen.utils import tz_aware_bokeh_tick_formatter

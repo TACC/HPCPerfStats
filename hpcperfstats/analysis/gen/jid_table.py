@@ -464,6 +464,8 @@ class jid_table:
       if not frames:
         return pd.DataFrame(columns=["host", "time"])
       out = pd.concat(frames, ignore_index=True)
+      if out.empty or not {"host", "time"}.issubset(out.columns):
+        return pd.DataFrame(columns=["host", "time"])
       return out.sort_values(["host", "time"]).reset_index(drop=True)
 
     key = make_cache_key(
