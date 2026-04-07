@@ -44,7 +44,7 @@ extern double send_freq;
 #define RMQ_HANDSHAKE_TIMEOUT_SEC 15
 #define RMQ_RPC_TIMEOUT_SEC 30
 #define RMQ_SOCK_IO_TIMEOUT_SEC 30
-#define RMQ_AMQP_HEARTBEAT_SEC 30
+#define RMQ_AMQP_HEARTBEAT_MIN_SEC 30
 
 /* Reconnect pacing: sample/send cadence still uses send_freq elsewhere; TCP retry delay is capped. */
 #define RMQ_RECONNECT_BACKOFF_CAP_SEC 30
@@ -420,6 +420,7 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
   struct timeval hs_tv;
   struct timeval rpc_tv;
   int sock_rc;
+  int heartbeat_sec = RMQ_AMQP_HEARTBEAT_MIN_SEC;
 
   *channel_opened_out = 0;
   *socket_out = socket;
@@ -465,8 +466,15 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
     return -1;
   }
 
+  /* Keep negotiated heartbeat above idle send cadence to avoid broker-side heartbeat misses. */
+  if (send_freq > 0.0) {
+    double proposed = send_freq * 2.0;
+    if (proposed > (double)heartbeat_sec)
+      heartbeat_sec = (int)(proposed + 0.999999);
+  }
+
   {
-    amqp_rpc_reply_t ret = amqp_login(conn, RMQ_VHOST, 0, 131072, RMQ_AMQP_HEARTBEAT_SEC,
+    amqp_rpc_reply_t ret = amqp_login(conn, RMQ_VHOST, 0, 131072, heartbeat_sec,
 					AMQP_SASL_METHOD_PLAIN, sf->sf_user, sf->sf_password);
 
     if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
