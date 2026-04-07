@@ -9,8 +9,11 @@ import pytest
 pytestmark = pytest.mark.django_db(databases=[])
 
 from hpcperfstats.analysis.gen.jid_table import _ensure_tz
+from hpcperfstats.analysis.gen.jid_table import _normalize_job_accounting_host_list
+from hpcperfstats.analysis.gen.jid_table import _unpack_cached_job_window_row
 from hpcperfstats.analysis.gen.jid_table import TypeDetailDataProvider
 from hpcperfstats.analysis.gen.jid_table import jid_table
+from hpcperfstats.site.machine.models import job_data
 from hpcperfstats.analysis.gen.utils import iter_queryset_values_dicts
 from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
 
@@ -65,6 +68,37 @@ def test_queryset_to_dataframe_values_with_columns():
   out = queryset_to_dataframe(qs, columns=["host", "time"])
   assert isinstance(out, pd.DataFrame)
   assert list(out.columns) == ["host", "time"]
+
+
+def test_normalize_job_accounting_host_list_accepts_list_tuple():
+  """Accounting host_list is coerced from list/tuple."""
+  assert _normalize_job_accounting_host_list(["a", "b"]) == ["a", "b"]
+  assert _normalize_job_accounting_host_list(("x",)) == ["x"]
+
+
+def test_normalize_job_accounting_host_list_rejects_non_sequence():
+  """A lone datetime (corrupt cache/ORM) must not be iterated."""
+  dt = datetime(2024, 1, 2, 3, 4, 5)
+  assert _normalize_job_accounting_host_list(dt) == []
+  assert _normalize_job_accounting_host_list(None) == []
+
+
+def test_unpack_cached_job_window_row_tuple_and_model():
+  """Cached row may be a values_list tuple or a legacy job_data instance."""
+  st = datetime(2024, 1, 1, 0, 0, 0)
+  et = datetime(2024, 1, 1, 1, 0, 0)
+  assert _unpack_cached_job_window_row((["h1"], st, et)) == (["h1"], st, et)
+  j = job_data(
+      jid="z",
+      submit_time=st,
+      start_time=st,
+      end_time=et,
+      username="u",
+      host_list=["n1"],
+  )
+  assert _unpack_cached_job_window_row(j) == (["n1"], st, et)
+  assert _unpack_cached_job_window_row(None) == (None, None, None)
+  assert _unpack_cached_job_window_row("bad") == (None, None, None)
 
 
 def test_ensure_tz_none():

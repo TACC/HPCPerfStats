@@ -227,6 +227,34 @@ def _ensure_tz(dt):
   return dt.astimezone(local_timezone)
 
 
+def _normalize_job_accounting_host_list(raw):
+  """Coerce ``job_data.host_list`` (ArrayField) to a list of short hostnames.
+
+  Defensive: corrupted cache/ORM values can surface as a non-list (e.g. a lone
+  ``datetime``), which must not be iterated for FQDN construction.
+  """
+  if raw is None:
+    return []
+  if isinstance(raw, (list, tuple)):
+    return [str(h) for h in raw]
+  return []
+
+
+def _unpack_cached_job_window_row(row):
+  """Return ``(host_list, start_time, end_time)`` from a cached jid row.
+
+  Prefer a ``values_list`` tuple (pickle-safe). Older deployments may still
+  have a cached partial ``job_data`` instance.
+  """
+  if row is None:
+    return None, None, None
+  if isinstance(row, job_data):
+    return row.host_list, row.start_time, row.end_time
+  if isinstance(row, (tuple, list)) and len(row) == 3:
+    return row[0], row[1], row[2]
+  return None, None, None
+
+
 class jid_table:
   """Job-scoped view of job_data and host_data using Django ORM. No raw connection or temp tables; all data via ORM.
 
@@ -242,15 +270,27 @@ class jid_table:
     self._large_job_plot_cache_token = "full"
 
     try:
-      job = cached_orm(
+      row = cached_orm(
           make_cache_key(KEY_JOB, jid),
           get_site_content_cache_timeout(),
-          lambda: job_data.objects.filter(jid=jid).only("host_list", "start_time", "end_time").first(),
+          lambda: job_data.objects.filter(jid=jid).values_list(
+              "host_list", "start_time", "end_time"
+          ).first(),
       )
     except Exception:
-      job = None
+      row = None
 
-    if job is None:
+    if row is None:
+      self.acct_host_list = []
+      self.host_list = []
+      self.schema = {}
+      self.start_time = None
+      self.end_time = None
+      self._base_filter = {}
+      return
+
+    hl_raw, st, et = _unpack_cached_job_window_row(row)
+    if st is None and et is None:
       self.acct_host_list = []
       self.host_list = []
       self.schema = {}
@@ -261,10 +301,11 @@ class jid_table:
 
     # job_data host_list: use fqdn for host_data lookups (cast to str for varchar comparison)
     self.acct_host_list = [
-        str(h) + "." + cfg.get_host_name_ext() for h in (job.host_list or [])
+        str(h) + "." + cfg.get_host_name_ext()
+        for h in _normalize_job_accounting_host_list(hl_raw)
     ]
-    self.start_time = _ensure_tz(job.start_time)
-    self.end_time = _ensure_tz(job.end_time)
+    self.start_time = _ensure_tz(st)
+    self.end_time = _ensure_tz(et)
     self._base_filter = {
         "time__gte": self.start_time,
         "time__lte": self.end_time,
