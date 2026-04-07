@@ -65,6 +65,14 @@ export default defineConfig({
     emptyOutDir: true,
     manifest: true,
     sourcemap: true,
+    // Default Rolldown limit is 500 kB. The SPA entry stays ~0.4 MiB after lazy-loading
+    // Bokeh; async chunks are @bokeh/bokehjs (~1.7 MiB) and mathjax-full (~1.8 MiB via Bokeh).
+    chunkSizeWarningLimit: 1900,
+    rolldownOptions: {
+      output: {
+        codeSplitting: true,
+      },
+    },
     rollupOptions: {
       input: "index.html",
     },
