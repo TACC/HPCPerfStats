@@ -262,6 +262,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    Static/media routing is split into a reusable include mounted at
    `services-conf/nginx-static-files.conf`; both SSL and non-SSL nginx configs
    include this file so nginx serves `/static/` and `/media/` directly.
+   The proxy container is built from `services-conf/proxy.Dockerfile` and enables
+   Brotli + gzip compression.
 
    **If you do not have SSL (testing only):**
 

@@ -22,7 +22,10 @@ services:
           - redis
 
   proxy:
-    image: nginx:1-alpine
+    build:
+      context: ./
+      dockerfile: services-conf/proxy.Dockerfile
+    image: hpcperfstats-proxy
     container_name: hpcperfstats_proxy_1
     restart: always
     depends_on:
