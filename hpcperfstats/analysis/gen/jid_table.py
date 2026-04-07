@@ -178,8 +178,22 @@ def _strided_distinct_times_for_large_job(start, end, acct_hosts, n_buckets):
           "jid_table date_bin strided times failed; falling back to NTILE",
           exc_info=True,
       )
-  return _strided_distinct_times_postgresql(
-      start, end, acct_hosts, n_buckets)
+  try:
+    return _strided_distinct_times_postgresql(
+        start, end, acct_hosts, n_buckets)
+  except Exception:
+    logging.getLogger(__name__).warning(
+        "jid_table NTILE strided times failed; falling back to fixed window points",
+        exc_info=True,
+    )
+    # Keep sampling active even when DB striding paths fail (e.g. statement_timeout)
+    # so downstream queries avoid full-window scans for very large jobs.
+    if start is None or end is None:
+      return []
+    if end <= start:
+      return [start]
+    mid = start + ((end - start) / 2)
+    return [start, mid, end]
 
 
 local_timezone = cfg.get_local_timezone()

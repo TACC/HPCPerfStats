@@ -12,6 +12,7 @@ from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_schema_datafra
 from hpcperfstats.analysis.gen.jid_table import _ensure_tz
 from hpcperfstats.analysis.gen.jid_table import _normalize_host_data_schema_label
 from hpcperfstats.analysis.gen.jid_table import _normalize_job_accounting_host_list
+from hpcperfstats.analysis.gen.jid_table import _strided_distinct_times_for_large_job
 from hpcperfstats.analysis.gen.jid_table import _unpack_cached_job_window_row
 from hpcperfstats.analysis.gen.jid_table import TypeDetailDataProvider
 from hpcperfstats.analysis.gen.jid_table import jid_table
@@ -235,3 +236,43 @@ def test_iter_queryset_values_dicts_yields_rows():
   qs = FakeQs()
   got = list(iter_queryset_values_dicts(qs, "a", "b", chunk_size=1))
   assert got == [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
+
+
+def test_strided_distinct_times_for_large_job_falls_back_to_fixed_window_points(monkeypatch):
+  """When SQL striding paths fail, return deterministic start/mid/end samples."""
+  from datetime import timedelta
+  from django.utils import timezone as django_tz
+
+  start = django_tz.now()
+  end = start + timedelta(minutes=30)
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table._strided_distinct_times_postgresql",
+      lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("timeout")),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table.cfg.get_large_job_time_sample_sql_mode",
+      lambda: "ntile",
+  )
+  sampled = _strided_distinct_times_for_large_job(
+      start, end, ["n1.example.com"], 64)
+  assert sampled[0] == start
+  assert sampled[-1] == end
+  assert len(sampled) == 3
+
+
+def test_strided_distinct_times_for_large_job_degenerate_window_returns_start(monkeypatch):
+  """Fallback sample for zero-width windows is a single timestamp."""
+  from django.utils import timezone as django_tz
+
+  start = django_tz.now()
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table._strided_distinct_times_postgresql",
+      lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("timeout")),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table.cfg.get_large_job_time_sample_sql_mode",
+      lambda: "ntile",
+  )
+  sampled = _strided_distinct_times_for_large_job(
+      start, start, ["n1.example.com"], 64)
+  assert sampled == [start]
