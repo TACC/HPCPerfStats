@@ -57,7 +57,7 @@ describe("HistogramThumbnails", () => {
     expect(screen.getAllByText("Jobs by queue").length).toBeGreaterThanOrEqual(1);
     expect(
       screen.getByRole("button", {
-        name: "Jobs by queue: enlarge chart (click, Enter, or Space)",
+        name: "Jobs by queue: enlarge chart (click, Enter, or Space to open or close)",
       }),
     ).toBeInTheDocument();
   });

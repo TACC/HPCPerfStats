@@ -1382,26 +1382,30 @@ def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="job
             return None
         queue_names = [q if q else "(no queue)" for q, _ in rows]
         source = ColumnDataSource(dict(x=queue_names, top=tops))
+        # Toolbar needs a visible side so BokehJS layout gives tool panels a bbox
+        # (toolbar_location=None + categorical vbar + snap_to_data hover has caused
+        # "can't access property is_valid, e is undefined" in some Bokeh 3 builds).
         p = figure(
             x_range=queue_names,
             height=height,
             width=width,
             title=title,
-            toolbar_location=None,
+            toolbar_location="above",
             tools="pan,wheel_zoom,box_zoom,reset,save",
         )
         set_linear_axes_plain_numeric(p)
         num_hover = new_plain_number_hover_formatter()
+        bars = p.vbar(x="x", top="top", source=source, width=0.7)
         p.add_tools(
             HoverTool(
+                renderers=[bars],
                 tooltips=[("queue", "@x"), (hover_label, "@top{custom}")],
                 formatters={"@top": num_hover},
-                point_policy="snap_to_data",
+                point_policy="follow_mouse",
             )
         )
         p.xaxis.axis_label = "queue"
         p.yaxis.axis_label = y_label
-        p.vbar(x="x", top="top", source=source, width=0.7)
         p.xgrid.visible = False
         p.xaxis.major_label_orientation = "vertical" if len(queue_names) > 5 else "horizontal"
         return p

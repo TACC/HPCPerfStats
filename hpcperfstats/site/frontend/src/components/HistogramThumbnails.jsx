@@ -20,39 +20,24 @@ function useIsMobile() {
 }
 
 /**
- * One histogram: on desktop, thumbnail with full-size popover on hover/click.
- * On mobile, full histogram only, no popover, sized for viewport.
+ * One histogram: on desktop, thumbnail with full-size popover opened by click
+ * (or Enter/Space), not hover. On mobile, full histogram only, no popover.
  */
 function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavailableReason }) {
   const isMobile = useIsMobile();
-  const [hovered, setHovered] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
   const wrapperRef = useRef(null);
-  const leaveTimerRef = useRef(null);
   const thumbActivatorRef = useRef(null);
   const popoverRef = useRef(null);
   const closeButtonRef = useRef(null);
 
-  const showPopover = !isMobile && (hovered || expanded);
+  const showPopover = !isMobile && expanded;
   const trapPopoverFocus = !isMobile && expanded && showPopover;
   useFocusTrap(popoverRef, trapPopoverFocus);
 
   const thumbId = `hist-thumb-${index}`;
   const fullId = `hist-full-${index}`;
-
-  const handleMouseEnter = () => {
-    if (leaveTimerRef.current) {
-      clearTimeout(leaveTimerRef.current);
-      leaveTimerRef.current = null;
-    }
-    setHovered(true);
-    setHasOpened(true);
-  };
-
-  const handleMouseLeave = () => {
-    leaveTimerRef.current = setTimeout(() => setHovered(false), 150);
-  };
 
   const collapseExpanded = useCallback(() => {
     setExpanded(false);
@@ -61,28 +46,26 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
     });
   }, []);
 
-  const handleClick = () => {
+  const handleThumbActivate = () => {
     setExpanded((prev) => !prev);
     setHasOpened(true);
+  };
+
+  const handleClick = (e) => {
+    e.stopPropagation();
+    handleThumbActivate();
   };
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      setExpanded((prev) => !prev);
-      setHasOpened(true);
+      handleThumbActivate();
     }
     if (e.key === "Escape" && expanded) {
       e.preventDefault();
       collapseExpanded();
     }
   };
-
-  useEffect(() => {
-    return () => {
-      if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
-    };
-  }, []);
 
   useEffect(() => {
     if (!expanded || !showPopover || isMobile) return;
@@ -122,19 +105,13 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
   }
 
   return (
-    <div
-      ref={wrapperRef}
-      className="histogram-thumbnail-wrapper"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      style={{ position: "relative" }}
-    >
+    <div ref={wrapperRef} className="histogram-thumbnail-wrapper" style={{ position: "relative" }}>
       <div className="histogram-desktop-title">{title}</div>
       <div
         ref={thumbActivatorRef}
         role="button"
         tabIndex={0}
-        aria-label={`${title}: enlarge chart (click, Enter, or Space)`}
+        aria-label={`${title}: enlarge chart (click, Enter, or Space to open or close)`}
         aria-expanded={expanded}
         className="histogram-thumbnail"
         style={{
@@ -160,8 +137,6 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
         <div
           ref={popoverRef}
           className="histogram-thumbnail-popover"
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
           role="dialog"
           aria-modal={expanded ? "true" : undefined}
           aria-label={`Full size: ${title}`}
