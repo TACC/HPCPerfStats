@@ -2855,10 +2855,13 @@ def job_monitor_gpu_for_user(request):
     def _compute_user_gpu():
         gpu_count_total = None
         gpu_active_total = None
-        jobs_for_gpu = (
-            job_data.objects.filter(end_time__gte=start_time, username=username)
-            .only("jid", "username", "start_time", "end_time")
-            .iterator(chunk_size=200)
+        # Do not use .iterator() here: it holds a server-side cursor on the default
+        # connection while jid_table() runs nested queries, which breaks the cursor
+        # (OperationalError: the connection is closed). Evaluate the window first.
+        jobs_for_gpu = list(
+            job_data.objects.filter(end_time__gte=start_time, username=username).only(
+                "jid", "username", "start_time", "end_time"
+            )
         )
         for job in jobs_for_gpu:
             try:

@@ -13,6 +13,7 @@ from datetime import timezone as dt_timezone
 
 from django.conf import settings
 from django.core.cache import cache
+from django.db import close_old_connections
 from django.db.models import Max
 from django.utils import timezone
 
@@ -75,6 +76,8 @@ def cached_orm(cache_key, timeout, query_fn):
           cache_key,
           (time.time() - start) * 1000.0,
       )
+    # Drop stale connections before retry (e.g. OperationalError after idle timeout).
+    close_old_connections()
     return query_fn()
 
 
