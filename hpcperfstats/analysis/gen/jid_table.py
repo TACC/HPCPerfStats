@@ -289,6 +289,26 @@ def _unpack_cached_job_window_row(row):
   return None, None, None
 
 
+def gpu_acct_window_for_job_data(job):
+  """Return ``(start_time, end_time, acct_host_list)`` for GPU-style host_data queries.
+
+  Uses the same FQDN construction as :class:`jid_table` without distinct-host
+  discovery, schema scans, or large-job time sampling (those are expensive and
+  unnecessary for rolled-up GPU aggregates that only need accounting hosts and
+  the job window).
+  """
+  hl_raw = getattr(job, "host_list", None)
+  st = getattr(job, "start_time", None)
+  et = getattr(job, "end_time", None)
+  if st is None and et is None:
+    return _ensure_tz(st), _ensure_tz(et), []
+  acct_host_list = [
+      str(h) + "." + cfg.get_host_name_ext()
+      for h in _normalize_job_accounting_host_list(hl_raw)
+  ]
+  return _ensure_tz(st), _ensure_tz(et), acct_host_list
+
+
 def _normalize_host_data_schema_label(value):
   """Coerce ``host_data.type`` / ``event`` cell to a string safe for pandas ``.unique()``."""
   if value is None:

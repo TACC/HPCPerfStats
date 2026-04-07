@@ -51,34 +51,43 @@ def cached_orm(cache_key, timeout, query_fn):
   start = time.time() if log_debug else None
   try:
     wrapped = cache.get(cache_key, _CACHE_MISS)
-    if wrapped is not _CACHE_MISS:
-      if log_debug and start is not None:
-        logger.info(
-            "cached_orm hit key=%s elapsed_ms=%.1f",
-            cache_key,
-            (time.time() - start) * 1000.0,
-        )
-      return (wrapped[0]
-              if isinstance(wrapped, tuple) and len(wrapped) == 1 else wrapped)
-    value = query_fn()
-    cache.set(cache_key, (value,) if value is None else value, timeout=timeout)
-    if log_debug and start is not None:
-      logger.info(
-          "cached_orm miss key=%s elapsed_ms=%.1f",
-          cache_key,
-          (time.time() - start) * 1000.0,
-      )
-    return value
   except Exception:
     if log_debug and start is not None:
       logger.exception(
-          "cached_orm error key=%s elapsed_ms=%.1f (falling back to query_fn)",
+          "cached_orm cache.get error key=%s elapsed_ms=%.1f (falling back to query_fn)",
           cache_key,
           (time.time() - start) * 1000.0,
       )
-    # Drop stale connections before retry (e.g. OperationalError after idle timeout).
     close_old_connections()
     return query_fn()
+
+  if wrapped is not _CACHE_MISS:
+    if log_debug and start is not None:
+      logger.info(
+          "cached_orm hit key=%s elapsed_ms=%.1f",
+          cache_key,
+          (time.time() - start) * 1000.0,
+      )
+    return (wrapped[0]
+            if isinstance(wrapped, tuple) and len(wrapped) == 1 else wrapped)
+
+  value = query_fn()
+  try:
+    cache.set(cache_key, (value,) if value is None else value, timeout=timeout)
+  except Exception:
+    if log_debug and start is not None:
+      logger.exception(
+          "cached_orm cache.set error key=%s elapsed_ms=%.1f (returning uncached)",
+          cache_key,
+          (time.time() - start) * 1000.0,
+      )
+  if log_debug and start is not None:
+    logger.info(
+        "cached_orm miss key=%s elapsed_ms=%.1f",
+        cache_key,
+        (time.time() - start) * 1000.0,
+    )
+  return value
 
 
 def _unwrap_meta_value(wrapped):

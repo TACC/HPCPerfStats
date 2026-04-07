@@ -23,6 +23,7 @@ from django.db import connection, close_old_connections
 from django.utils.encoding import iri_to_uri
 
 import os
+from types import SimpleNamespace
 
 
 class _JSONResponse(Response):
@@ -2860,12 +2861,15 @@ def job_monitor_gpu_for_user(request):
         # (OperationalError: the connection is closed). Evaluate the window first.
         jobs_for_gpu = list(
             job_data.objects.filter(end_time__gte=start_time, username=username).only(
-                "jid", "username", "start_time", "end_time"
+                "jid", "username", "start_time", "end_time", "host_list"
             )
         )
         for job in jobs_for_gpu:
             try:
-                j = jid_table.jid_table(job.jid)
+                w_start, w_end, acct = jid_table.gpu_acct_window_for_job_data(job)
+                j = SimpleNamespace(
+                    start_time=w_start, end_time=w_end, acct_host_list=acct
+                )
                 gpu_active, _gpu_max, _gpu_mean, per_job_gpu_count = _compute_job_gpu_stats(
                     job, j, site_ttl
                 )

@@ -8,6 +8,8 @@ import pytest
 
 pytestmark = pytest.mark.django_db(databases=[])
 
+from unittest.mock import patch
+
 from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_schema_dataframe
 from hpcperfstats.analysis.gen.jid_table import _count_host_data_rows_for_window
 from hpcperfstats.analysis.gen.jid_table import _ensure_tz
@@ -17,6 +19,7 @@ from hpcperfstats.analysis.gen.jid_table import JID_TABLE_ROW_COUNT_POSTGRES_ARR
 from hpcperfstats.analysis.gen.jid_table import _strided_distinct_times_for_large_job
 from hpcperfstats.analysis.gen.jid_table import _unpack_cached_job_window_row
 from hpcperfstats.analysis.gen.jid_table import TypeDetailDataProvider
+from hpcperfstats.analysis.gen.jid_table import gpu_acct_window_for_job_data
 from hpcperfstats.analysis.gen.jid_table import jid_table
 from hpcperfstats.site.machine.models import job_data
 from hpcperfstats.analysis.gen.utils import iter_queryset_values_dicts
@@ -86,6 +89,35 @@ def test_normalize_job_accounting_host_list_rejects_non_sequence():
   dt = datetime(2024, 1, 2, 3, 4, 5)
   assert _normalize_job_accounting_host_list(dt) == []
   assert _normalize_job_accounting_host_list(None) == []
+
+
+def test_gpu_acct_window_for_job_data_builds_fqdns():
+  """gpu_acct_window_for_job_data mirrors jid_table FQDN rules without full init."""
+  from datetime import timezone as dt_utc
+
+  class _Job:
+    host_list = ["n1", "n2"]
+    start_time = datetime(2026, 1, 1, 0, 0, 0, tzinfo=dt_utc.utc)
+    end_time = datetime(2026, 1, 2, 0, 0, 0, tzinfo=dt_utc.utc)
+
+  with patch(
+      "hpcperfstats.analysis.gen.jid_table.cfg.get_host_name_ext",
+      return_value="cluster.example",
+  ):
+    _st, _et, acct = gpu_acct_window_for_job_data(_Job())
+  assert acct == ["n1.cluster.example", "n2.cluster.example"]
+
+
+def test_gpu_acct_window_for_job_data_empty_when_no_window_times():
+  """No start/end => empty accounting host list (same guard as jid_table)."""
+
+  class _Job:
+    host_list = ["n1"]
+    start_time = None
+    end_time = None
+
+  _st, _et, acct = gpu_acct_window_for_job_data(_Job())
+  assert acct == []
 
 
 def test_normalize_host_data_schema_label_hashable_strings():
