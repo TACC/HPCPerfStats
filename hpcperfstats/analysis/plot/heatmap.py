@@ -19,6 +19,11 @@ from hpcperfstats.analysis.gen.utils import (
 from hpcperfstats.analysis.bokeh_job_embed import figure_embed_kw
 from hpcperfstats.analysis.plot.job_window import job_window_label_strings
 
+# Viridis is colorblind-friendly; CPI scale used for both glyph and legend.
+_HEATMAP_PALETTE = Viridis[11]
+_HEATMAP_CPI_LOW = 0.25
+_HEATMAP_CPI_HIGH = 2.0
+
 
 def _build_heatmap_time_axis_labels(base_times, jt):
   """Ensure categorical heatmap x-axis always includes job start and end labels."""
@@ -131,12 +136,16 @@ class HeatMap():
         formatters={"@cpi": cpi_hover},
     )
 
-    # Viridis is colorblind-friendly; scale CPI 0.25–2
-    mapper = LinearColorMapper(palette=Viridis[11],
-                               low=0.25,
-                               high=2)
-    colors = {"field": "cpi", "transform": mapper}
-    color_bar = ColorBar(color_mapper=mapper,
+    # Use distinct LinearColorMapper instances for the rects vs the ColorBar.
+    # A single shared mapper in json_item can deserialize so ColorBarView wires
+    # metrics_change before the mapper is fully initialized (BokehJS error:
+    # "this.metrics_change is undefined" on embed).
+    mapper_fill = LinearColorMapper(
+        palette=_HEATMAP_PALETTE, low=_HEATMAP_CPI_LOW, high=_HEATMAP_CPI_HIGH)
+    mapper_bar = LinearColorMapper(
+        palette=_HEATMAP_PALETTE, low=_HEATMAP_CPI_LOW, high=_HEATMAP_CPI_HIGH)
+    colors = {"field": "cpi", "transform": mapper_fill}
+    color_bar = ColorBar(color_mapper=mapper_bar,
                          location=(0, 0),
                          ticker=BasicTicker(desired_num_ticks=10),
                          formatter=new_plain_linear_tick_formatter())
@@ -229,10 +238,12 @@ def plot_and_reason_from_jid_table(jt):
         tooltips=[("host", "@hostnames"), ("time", "@times"), ("cpi", "@cpi{custom}")],
         formatters={"@cpi": cpi_hover},
     )
-    # Viridis is colorblind-friendly; scale CPI 0.25–2
-    mapper = LinearColorMapper(palette=Viridis[11], low=0.25, high=2)
+    mapper_fill = LinearColorMapper(
+        palette=_HEATMAP_PALETTE, low=_HEATMAP_CPI_LOW, high=_HEATMAP_CPI_HIGH)
+    mapper_bar = LinearColorMapper(
+        palette=_HEATMAP_PALETTE, low=_HEATMAP_CPI_LOW, high=_HEATMAP_CPI_HIGH)
     color_bar = ColorBar(
-        color_mapper=mapper,
+        color_mapper=mapper_bar,
         location=(0, 0),
         ticker=BasicTicker(desired_num_ticks=10),
         formatter=new_plain_linear_tick_formatter(),
@@ -249,7 +260,15 @@ def plot_and_reason_from_jid_table(jt):
             tools=[hover],
         ),
     )
-    hm.rect("times", "hostnames", source=source, width=1, height=1, line_color=None, fill_color={"field": "cpi", "transform": mapper})
+    hm.rect(
+        "times",
+        "hostnames",
+        source=source,
+        width=1,
+        height=1,
+        line_color=None,
+        fill_color={"field": "cpi", "transform": mapper_fill},
+    )
     hm.add_layout(color_bar, "right")
     hm.axis.axis_line_color = None
     hm.axis.major_tick_line_color = None
