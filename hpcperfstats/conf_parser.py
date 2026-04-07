@@ -483,7 +483,7 @@ def get_archive_pool_process_cap():
 
 def get_sync_ingest_pool_processes():
   """Worker count for ``sync_timedb`` / ``sync_timedb_archive`` after ``sync_pool_process_cap``."""
-  raw = get_worker_thread_count(4)
+  raw = get_worker_thread_count(2)
   return _apply_sync_pool_cap(raw, get_sync_pool_process_cap())
 
 
