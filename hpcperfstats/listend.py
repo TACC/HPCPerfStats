@@ -184,6 +184,89 @@ def _recent_host_worker():
       _recent_host_queue.task_done()
 
 
+def append_monitor_payload_to_archive(message):
+  """Decode-safe: append one monitor payload string to the per-host archive (same as listend).
+
+  Used by the long-running daemon and by ``listend_drain`` integration tests.
+  Returns the FQDN host string parsed from the payload (for metrics / logging).
+  """
+  if not message:
+    raise ValueError("Empty message body")
+
+  # `$`-prefixed messages are *schema/header* dumps from `hpcperfstatsd`:
+  # they are emitted when `rotate_timer_cb()` runs (immediately at daemon
+  # start, then every 86400s). Regular sampling messages do not include
+  # these `$` lines; if sending fails during a rotate, the same `$` payload
+  # is later resent from the in-memory ring buffer or dumpfile.
+  if message[0] == "$":
+    parts = message.split("\n")
+    if len(parts) < 2:
+      raise ValueError("Malformed '$' message: missing host line")
+    host_parts = parts[1].split()
+    if len(host_parts) < 2:
+      raise ValueError("Malformed '$' message: host line missing field")
+    host = host_parts[1]
+  else:
+    msg_parts = message.split()
+    if len(msg_parts) < 3:
+      raise ValueError("Malformed message: not enough fields to get host")
+    host = msg_parts[2]
+
+  host_dir = os.path.join(cfg.get_archive_dir_path(), host)
+  if not os.path.exists(host_dir):
+    os.makedirs(host_dir)
+
+  current_path = os.path.join(host_dir, "current")
+  unlinked_current = False
+  if message[0] == "$":
+    # Use a single epoch timestamp for both the pre-unlink check and the
+    # post-unlink epoch hardlink to keep time.time() call counts stable.
+    epoch_ts = int(time.time())
+    with file_write_lock(current_path):
+      if os.path.exists(current_path):
+        if not _current_is_hardlinked_to_older_epoch(
+            host_dir, current_path, epoch_ts):
+          _ensure_current_hardlinked_to_timestamp(host_dir, current_path)
+          if not _current_is_hardlinked_to_older_epoch(
+              host_dir, current_path, epoch_ts):
+            raise RuntimeError(
+                "current is not linked to an older epoch before unlink")
+
+        os.unlink(current_path)
+        unlinked_current = True
+
+      with open(current_path, "w") as fd:
+        link_path = os.path.join(host_dir, str(epoch_ts))
+        if os.path.exists(link_path):
+          os.remove(link_path)
+        os.link(current_path, link_path)
+        # Epoch name and current share an inode until the next ``$`` rotation.
+        # sync_timedb skips epoch files same-inode-as-current to avoid read races.
+
+      with open(current_path, "a") as fd:
+        fd.write(message)
+  else:
+    with file_write_lock(current_path):
+      with open(current_path, "a") as fd:
+        fd.write(message)
+  _enqueue_recent_host_update(host)
+
+  now = time.time()
+  with _timestamps_lock:
+    global _last_message_time
+    _last_message_time = now
+    _message_timestamps.append(now)
+    if unlinked_current:
+      _unlink_timestamps.append(now)
+    cutoff_window = now - MESSAGE_WINDOW_SECONDS
+    while _message_timestamps and _message_timestamps[0] < cutoff_window:
+      _message_timestamps.popleft()
+    while _unlink_timestamps and _unlink_timestamps[0] < cutoff_window:
+      _unlink_timestamps.popleft()
+
+  return host
+
+
 def on_message(channel, method_frame, header_frame, body):
   """Callback for each message: decode body, determine host, write/append to host's current file and optionally rotate. Acknowledges the message.
 
@@ -193,80 +276,7 @@ def on_message(channel, method_frame, header_frame, body):
   delivery_tag = getattr(method_frame, "delivery_tag", None)
   try:
     message = body.decode(errors="replace")
-    if not message:
-      raise ValueError("Empty message body")
-
-    # `$`-prefixed messages are *schema/header* dumps from `hpcperfstatsd`:
-    # they are emitted when `rotate_timer_cb()` runs (immediately at daemon
-    # start, then every 86400s). Regular sampling messages do not include
-    # these `$` lines; if sending fails during a rotate, the same `$` payload
-    # is later resent from the in-memory ring buffer or dumpfile.
-    if message[0] == "$":
-      parts = message.split("\n")
-      if len(parts) < 2:
-        raise ValueError("Malformed '$' message: missing host line")
-      host_parts = parts[1].split()
-      if len(host_parts) < 2:
-        raise ValueError("Malformed '$' message: host line missing field")
-      host = host_parts[1]
-    else:
-      msg_parts = message.split()
-      if len(msg_parts) < 3:
-        raise ValueError("Malformed message: not enough fields to get host")
-      host = msg_parts[2]
-
-    host_dir = os.path.join(cfg.get_archive_dir_path(), host)
-    if not os.path.exists(host_dir):
-      os.makedirs(host_dir)
-
-    current_path = os.path.join(host_dir, "current")
-    unlinked_current = False
-    if message[0] == "$":
-      # Use a single epoch timestamp for both the pre-unlink check and the
-      # post-unlink epoch hardlink to keep time.time() call counts stable.
-      epoch_ts = int(time.time())
-      with file_write_lock(current_path):
-        if os.path.exists(current_path):
-          if not _current_is_hardlinked_to_older_epoch(
-              host_dir, current_path, epoch_ts):
-            _ensure_current_hardlinked_to_timestamp(host_dir, current_path)
-            if not _current_is_hardlinked_to_older_epoch(
-                host_dir, current_path, epoch_ts):
-              raise RuntimeError(
-                  "current is not linked to an older epoch before unlink")
-
-          os.unlink(current_path)
-          unlinked_current = True
-
-        with open(current_path, "w") as fd:
-          link_path = os.path.join(host_dir, str(epoch_ts))
-          if os.path.exists(link_path):
-            os.remove(link_path)
-          os.link(current_path, link_path)
-          # Epoch name and current share an inode until the next ``$`` rotation.
-          # sync_timedb skips epoch files same-inode-as-current to avoid read races.
-
-        with open(current_path, "a") as fd:
-          fd.write(message)
-    else:
-      with file_write_lock(current_path):
-        with open(current_path, "a") as fd:
-          fd.write(message)
-    _enqueue_recent_host_update(host)
-
-    now = time.time()
-    with _timestamps_lock:
-      global _last_message_time
-      _last_message_time = now
-      _message_timestamps.append(now)
-      if unlinked_current:
-        _unlink_timestamps.append(now)
-      cutoff_window = now - MESSAGE_WINDOW_SECONDS
-      while _message_timestamps and _message_timestamps[0] < cutoff_window:
-        _message_timestamps.popleft()
-      while _unlink_timestamps and _unlink_timestamps[0] < cutoff_window:
-        _unlink_timestamps.popleft()
-
+    append_monitor_payload_to_archive(message)
     channel.basic_ack(delivery_tag=delivery_tag)
   except Exception as e:
     # Critical behavior: do not acknowledge on failure.

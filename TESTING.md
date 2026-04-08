@@ -44,6 +44,23 @@ The workflow sets **`HPCPERFSTATS_STRESS_HOST_DATA=1`** and **`HPCPERFSTATS_COMP
 
 Optional env: **`HPCPERFSTATS_STRESS_PLOT_SEC`** (with manual plot sanity), **`HPCPERFSTATS_LARGE_JOB_HOST_DATA_ROWS`**, **`HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS`**, **`HPCPERFSTATS_LARGE_JOB_WINDOW_ROW_COUNT_CACHE_TTL`** (seconds; `0` disables cached window `COUNT(*)` for large-job gating), **`HPCPERFSTATS_LARGE_JOB_TIME_SQL`** (`date_bin` default; set `ntile` for legacy distinct-time + NTILE sampling on PostgreSQL 14+), **`HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST`** (`1` restores `unnest(host_list)` live distinct SQL).
 
+### Opt-in pipeline E2E (RabbitMQ → listend → sync_timedb → metrics → live web)
+
+The directory **`tests/pipeline_e2e/`** is outside default `pytest` `testpaths` (`hpcperfstats` only). Tests are skipped unless **`HPCPERFSTATS_PIPELINE_E2E=1`** (the workflow sets this inside the container).
+
+**Default entry point:**
+
+```bash
+cd HPCPerfStats   # directory with docker-compose.yaml
+tests/run_pipeline_e2e_workflow.sh
+```
+
+This uses **`docker-compose -f docker-compose.yaml -f docker-compose.pipeline-e2e.yaml`**: starts **db**, **redis**, **rabbitmq**, migrates, runs phase 1 pytest (**`test_full_ingest_pipeline.py`**: publish rich synthetic monitor payloads (CPU, Intel PMC/IMC, GPU, IB/OPA/LNET, llite, …), **`listend_drain`**, in-process **`run_ingest_entire_archive_once_for_tests()`** — equivalent to **`sync_timedb once all`** but uses pytest-django’s **test** database and inline ingest so spawn workers do not open **`PORTAL.dbname`** — then **`update_metrics`** and asserts a full **`metrics_data`** catalog with most metrics numeric), then brings up **web** and runs phase 2 Playwright tests (**`test_job_detail_browser.py`**, **`test_all_endpoints_browser.py`**). Phase 2 expects **`HPCPERFSTATS_COMPOSE_NETWORK=1`**, **`HPCPERFSTATS_PIPELINE_E2E_BASE_URL=http://web:8000`**, and Playwright Chromium (installed in-container unless **`--skip-playwright-install`**). Repo-root **`conftest.py`** sets a default **`HPCPERFSTATS_INI`** only when unset so Compose’s **`/home/hpcperfstats/hpcperfstats.ini`** is not replaced inside the container.
+
+**URL drift guard:** canonical template set lives in **`hpcperfstats/tests/urlconf_route_catalog.py`** as **`EXPECTED_ROUTE_TEMPLATES`**. **`hpcperfstats/tests/test_endpoint_route_snapshot.py`** asserts the live Django resolver matches that set. **`build_pipeline_http_endpoint_specs()`** in the same module expands every template to concrete paths; phase 2 drives each check via Playwright (**`page.goto`** for HTML/redirects, **`APIRequestContext`** for JSON APIs) with status and **`Content-Type`** checks. Adding a URL without updating the catalog + builder fails CI.
+
+Options: **`--skip-build`**, **`--keep-env`**, **`--skip-playwright-install`** (see script **`--help`**).
+
 ## Testing on macOS (Docker + full suite)
 
 ### 1. Install and start Docker
@@ -91,6 +108,7 @@ All commands below assume your current directory is **`HPCPerfStats/`** (the one
 | 2 | `tests/run_redis_cache_pytest_workflow.sh --skip-build` | Fresh compose session, **`test_redis_cache_live.py`** against real **Redis** (`HPCPERFSTATS_PYTEST_LIVE_REDIS=1`). |
 | 3 | `tests/run_web_e2e_workflow.sh --skip-build` | Dedicated **HTTP + Playwright** session for `test_web_pages_e2e.py` and `test_web_pages_browser_e2e.py` (run again after step 1 for an isolated E2E pass or CI parity). |
 | 4 | `tests/run_stress_host_data_workflow.sh --skip-build` | Opt-in **`host_data`** stress (`tests/stress_host_data/`): seed + **`update_metrics`**, JSON report under **`artifacts/stress/`**, default **400000** rows (override row/time-scale env vars; see section above). |
+| 5 | `tests/run_pipeline_e2e_workflow.sh --skip-build` | Opt-in **full pipeline + browser** (`tests/pipeline_e2e/`): RabbitMQ ingest, **`sync_timedb once`**, **`update_metrics`**, then live **web** + Playwright endpoint matrix (see **Opt-in pipeline E2E** above). |
 
 Faster iteration after the first successful build:
 
@@ -99,6 +117,7 @@ tests/run_db_pytest_workflow.sh --skip-build
 tests/run_redis_cache_pytest_workflow.sh --skip-build
 tests/run_web_e2e_workflow.sh --skip-build
 tests/run_stress_host_data_workflow.sh --skip-build
+tests/run_pipeline_e2e_workflow.sh --skip-build
 ```
 
 Each workflow tears down containers and **named volumes** on exit unless you pass **`--keep-env`** (see per-script help).

@@ -1,0 +1,10 @@
+# Optional overlay for pipeline E2E / integration tests (tests/run_pipeline_e2e_workflow.sh).
+# Mounts a named volume at /hpcperfstats so PORTAL archive_dir (data_dir/archive) is writable
+# without host bind paths from the production pipeline service.
+services:
+  web:
+    volumes:
+      - pipeline_e2e_hpcdata:/hpcperfstats
+
+volumes:
+  pipeline_e2e_hpcdata:

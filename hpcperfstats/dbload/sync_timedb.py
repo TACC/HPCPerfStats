@@ -3,7 +3,7 @@
 
 After each ingest wave completes, rescans the archive directory for new files. When none are pending, sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 5 minutes) and scans again, until SIGTERM.
 
-CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini).
+CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once all``.
 
 DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers and calls close_old_connections() at entry so each worker uses a fresh connection. Writes are serialized with a shared lock.
 
@@ -96,6 +96,16 @@ processed_files_max_size = 200000
 # When no pending files remain after a directory rescan, sleep this long (seconds)
 # before scanning again. Interruptible via shutdown_requested / SIGTERM path.
 EMPTY_QUEUE_RESCAN_SLEEP_SECONDS = 300
+
+# Set to 1/yes/true so ingest runs in the parent process (no spawn pool). Required
+# for pytest-django: pool workers would reconnect with default PORTAL.dbname instead
+# of the test database created for the session.
+_SYNC_TIMEDB_INGEST_INLINE_ENV = "HPCPERFSTATS_SYNC_TIMEDB_INGEST_INLINE"
+
+
+def _sync_timedb_ingest_inline_requested():
+  return os.environ.get(_SYNC_TIMEDB_INGEST_INLINE_ENV, "").strip().lower() in (
+      "1", "yes", "true")
 
 # Rows per bulk_create batch to limit peak memory per worker
 bulk_create_batch_size = 10000
@@ -490,8 +500,14 @@ def run_sync_timedb_supervisor_loop(
     host_name_ext,
     manager_lock,
     archive_pool,
+    run_once=False,
 ):
-  """Rescan archive, ingest pending files in chunks, run pigz/removal on interval; loop until shutdown."""
+  """Rescan archive, ingest pending files in chunks, run pigz/removal on interval; loop until shutdown.
+
+  If ``run_once`` is True, exit after the first rescan that finds no pending
+  files (no ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` idle wait). Used by pipeline
+  E2E tests.
+  """
   pigz_interval = cfg.get_archive_pigz_interval_seconds()
   # Start "last maintenance" at now so the first iteration does scheduled pigz/removal
   # only after pigz_interval has elapsed — not before the first rescan/ingest wave.
@@ -544,6 +560,11 @@ def run_sync_timedb_supervisor_loop(
           "Running scheduled daily-archive pigz and raw file removal",
           flush=True,
       )
+      try:
+        os.makedirs(tgz_archive_dir, exist_ok=True)
+      except OSError:
+        if not os.path.isdir(tgz_archive_dir):
+          raise
       _run_scheduled_archive_maintenance()
       last_archive_maint = time.time()
       close_old_connections()
@@ -565,6 +586,12 @@ def run_sync_timedb_supervisor_loop(
             % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
             flush=True,
         )
+        if run_once:
+          log_print(
+              "sync_timedb once mode: no pending files, exiting supervisor loop",
+              flush=True,
+          )
+          break
         sleep_until_shutdown(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)
         continue
 
@@ -584,23 +611,35 @@ def run_sync_timedb_supervisor_loop(
       files_to_be_archived = []
       log_print("%s files per chunk" % chunk_size)
 
-      with multiprocessing.get_context('spawn').Pool(
-          processes=thread_count) as pool:
-        add_stats_file = partial(add_stats_file_to_db, manager_lock)
-        k = 0
-        for stats_fname, need_archival in pool.imap_unordered(
-            add_stats_file, stats_files_chunk):
-          k += 1
-          if should_archive and need_archival:
-            files_to_be_archived.append(stats_fname)
-          log_print(
-              "chunk %s: completed file %s out of %s\n" % (
-                  chunk_counter, k, chunk_size),
-              flush=True)
+      add_stats_file = partial(add_stats_file_to_db, manager_lock)
+
+      def _iter_ingest_results():
+        if _sync_timedb_ingest_inline_requested():
+          for path in stats_files_chunk:
+            yield add_stats_file(path)
+          return
+        with multiprocessing.get_context('spawn').Pool(
+            processes=thread_count) as pool:
+          yield from pool.imap_unordered(add_stats_file, stats_files_chunk)
+
+      k = 0
+      for stats_fname, need_archival in _iter_ingest_results():
+        k += 1
+        if should_archive and need_archival:
+          files_to_be_archived.append(stats_fname)
+        log_print(
+            "chunk %s: completed file %s out of %s\n" % (
+                chunk_counter, k, chunk_size),
+            flush=True)
 
       log_print("loading time", time.time() - ingest_t0)
       log_print(
           "Files marked for archival: %d" % len(files_to_be_archived))
+
+      if files_to_be_archived:
+        # Fresh data volumes (e.g. empty named volume on /hpcperfstats) may omit
+        # this tree; tar append + lock files require the directory to exist.
+        os.makedirs(tgz_archive_dir, exist_ok=True)
 
       ar_file_mapping = build_archive_mapping(
           files_to_be_archived, tgz_archive_dir)
@@ -661,6 +700,85 @@ def run_sync_timedb_supervisor_loop(
     archive_job.get()
 
 
+def parse_sync_timedb_argv(argv):
+  """Parse CLI argv into ``(run_once, startdate, enddate)`` (same rules as ``sync_timedb``)."""
+  argv_for_dates = list(argv)
+  run_once = False
+  if len(argv_for_dates) > 1 and argv_for_dates[1] == "once":
+    run_once = True
+    argv_for_dates = [argv_for_dates[0]] + argv_for_dates[2:]
+
+  default_start = datetime.combine(
+      datetime.today(), datetime.min.time()) - timedelta(days=days_to_process)
+  default_end = default_start + timedelta(days=days_to_process)
+  startdate, enddate = parse_start_end_dates(
+      argv_for_dates, default_start, default_end)
+
+  if len(argv_for_dates) > 1 and argv_for_dates[1] == 'all':
+    startdate = 'all'
+    enddate = None
+
+  return run_once, startdate, enddate
+
+
+def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
+  """Run one supervisor session after ``database_startup()`` (CLI or in-process tests)."""
+  if startdate == 'all':
+    log_print(
+        "###Date Range of stats files to ingest: entire archive directory "
+        "(no date filter)####")
+  else:
+    log_date_range("stats files to ingest", startdate, enddate)
+
+  host_name_ext = cfg.get_host_name_ext().strip()
+  if not host_name_ext:
+    log_print(
+        "ERROR: DEFAULT.host_name_ext must be set; sync_timedb uses archive "
+        "subdirectories whose names end with this suffix.")
+    sys.exit(1)
+
+  directory = cfg.get_archive_dir_path()
+
+  manager = multiprocessing.Manager()
+  try:
+    manager_lock = manager.Lock()
+    with multiprocessing.get_context('spawn').Pool(
+        processes=archive_thread_count) as archive_pool:
+      run_sync_timedb_supervisor_loop(
+          directory,
+          startdate,
+          enddate,
+          host_name_ext,
+          manager_lock,
+          archive_pool,
+          run_once=run_once,
+      )
+
+    if DEBUG:
+      log_print("sync_timedb finished")
+  finally:
+    manager.shutdown()
+
+
+def run_ingest_entire_archive_once_for_tests():
+  """In-process equivalent of ``python sync_timedb.py once all``.
+
+  Uses the active Django database (e.g. pytest-django ``test_*``), unlike a
+  subprocess which would connect to ``PORTAL.dbname`` from ini only. Forces
+  single-process ingest so spawn workers do not open the non-test database.
+  """
+  old_inline = os.environ.get(_SYNC_TIMEDB_INGEST_INLINE_ENV)
+  os.environ[_SYNC_TIMEDB_INGEST_INLINE_ENV] = "1"
+  try:
+    database_startup()
+    run_sync_timedb_supervisor_from_parsed(True, "all", None)
+  finally:
+    if old_inline is None:
+      os.environ.pop(_SYNC_TIMEDB_INGEST_INLINE_ENV, None)
+    else:
+      os.environ[_SYNC_TIMEDB_INGEST_INLINE_ENV] = old_inline
+
+
 if __name__ == '__main__':
   # Use a mutable container so the SIGTERM handler can update state without
   # relying on `nonlocal` (which is only valid for enclosing function scopes).
@@ -675,53 +793,8 @@ if __name__ == '__main__':
   signal.signal(signal.SIGTERM, _sigterm_handler)
   try:
     database_startup()
-    #################################################################
-
-    default_start = datetime.combine(
-        datetime.today(), datetime.min.time()) - timedelta(days=days_to_process)
-    default_end = default_start + timedelta(days=days_to_process)
-    startdate, enddate = parse_start_end_dates(
-        sys.argv, default_start, default_end)
-
-    if len(sys.argv) > 1 and sys.argv[1] == 'all':
-      startdate = 'all'
-      enddate = None
-
-    if startdate == 'all':
-      log_print(
-          "###Date Range of stats files to ingest: entire archive directory "
-          "(no date filter)####")
-    else:
-      log_date_range("stats files to ingest", startdate, enddate)
-    #################################################################
-
-    host_name_ext = cfg.get_host_name_ext().strip()
-    if not host_name_ext:
-      log_print(
-          "ERROR: DEFAULT.host_name_ext must be set; sync_timedb uses archive "
-          "subdirectories whose names end with this suffix.")
-      sys.exit(1)
-
-    directory = cfg.get_archive_dir_path()
-
-    manager = multiprocessing.Manager()
-    try:
-      manager_lock = manager.Lock()
-      with multiprocessing.get_context('spawn').Pool(
-          processes=archive_thread_count) as archive_pool:
-        run_sync_timedb_supervisor_loop(
-            directory,
-            startdate,
-            enddate,
-            host_name_ext,
-            manager_lock,
-            archive_pool,
-        )
-
-      if DEBUG:
-        log_print("sync_timedb finished")
-    finally:
-      manager.shutdown()
+    run_once, startdate, enddate = parse_sync_timedb_argv(sys.argv)
+    run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate)
     if shutdown_requested[0]:
       sys.exit(143)
   finally:

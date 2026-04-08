@@ -12,5 +12,9 @@ def _default_ini_path():
 
 
 # Ensure Django settings import can always read required config keys during
-# pytest-django's early initialization phase.
-os.environ["HPCPERFSTATS_INI"] = _default_ini_path()
+# pytest-django's early initialization phase. Do not override an explicit
+# operator/env-provided path (e.g. Docker Compose sets
+# HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini); overwriting would
+# desynchronize conf_parser's cached config from the real archive/queue layout.
+if not os.environ.get("HPCPERFSTATS_INI", "").strip():
+  os.environ["HPCPERFSTATS_INI"] = _default_ini_path()

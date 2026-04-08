@@ -95,3 +95,42 @@ def test_supervisor_sleeps_when_empty_then_ingests_then_sleeps(monkeypatch):
     ]
   finally:
     shutdown_requested[0] = False
+
+
+def test_supervisor_run_once_exits_without_idle_sleep_when_empty(monkeypatch):
+  """``run_once=True`` must not call the 300s empty-queue sleep."""
+  shutdown_requested[0] = False
+  try:
+
+    def fake_rescan(*a, **k):
+      return []
+
+    sleeps = []
+
+    def fake_sleep(secs):
+      sleeps.append(secs)
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "sleep_until_shutdown", fake_sleep)
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+
+    archive_pool = _FakeArchivePool()
+    archive_pool.__enter__()
+    try:
+      st.run_sync_timedb_supervisor_loop(
+          "/tmp/archive",
+          "all",
+          None,
+          ".hpc",
+          object(),
+          archive_pool,
+          run_once=True,
+      )
+    finally:
+      archive_pool.__exit__(None, None, None)
+
+    assert sleeps == []
+  finally:
+    shutdown_requested[0] = False

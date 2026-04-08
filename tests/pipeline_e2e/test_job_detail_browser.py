@@ -1,0 +1,77 @@
+"""Phase 2: job detail SPA + plots API against live gunicorn."""
+from __future__ import annotations
+
+import os
+
+import pytest
+
+try:
+  from playwright.sync_api import sync_playwright
+except ModuleNotFoundError:
+  sync_playwright = None
+
+from .constants import PIPELINE_E2E_API_RAW_KEY, PIPELINE_E2E_JID
+
+
+def _base_url() -> str:
+  return os.environ.get(
+      "HPCPERFSTATS_PIPELINE_E2E_BASE_URL",
+      "http://127.0.0.1:8000",
+  ).rstrip("/")
+
+
+def _raw_key() -> str:
+  return os.environ.get(
+      "HPCPERFSTATS_PIPELINE_E2E_RAW_API_KEY",
+      PIPELINE_E2E_API_RAW_KEY,
+  )
+
+
+@pytest.mark.django_db(databases=[])
+def test_job_detail_renders_and_summary_plot_payload():
+  if os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip() != "1":
+    pytest.skip("Compose-only (live web).")
+  if sync_playwright is None:
+    pytest.skip("playwright is required")
+
+  base = _base_url()
+  raw = _raw_key()
+  jid = PIPELINE_E2E_JID
+
+  with sync_playwright() as p:
+    request = p.request.new_context(
+        base_url=base,
+        extra_http_headers={"X-API-Key": raw},
+    )
+    request.get("/api/session/")
+    plots_resp = request.get(
+        "/api/jobs/{}/plots/?plot=summary_plot".format(jid),
+    )
+    assert plots_resp.status == 200, plots_resp.text
+    payload = plots_resp.json()
+    summary = payload.get("summary_plot") or {}
+    assert summary.get("plot_item") is not None or summary.get(
+        "unavailable_reason",
+    ), payload
+    request.dispose()
+
+  with sync_playwright() as p:
+    browser = p.chromium.launch()
+    context = browser.new_context()
+    page = context.new_page()
+
+    def add_api_key(route):
+      h = dict(route.request.headers)
+      h["X-API-Key"] = raw
+      route.continue_(headers=h)
+
+    page.route("**/api/**", add_api_key)
+    page.goto(
+        "{}/machine/job/{}/".format(base, jid),
+        wait_until="domcontentloaded",
+        timeout=180000,
+    )
+    page.wait_for_selector("h1", timeout=120000)
+    assert jid in page.content()
+    context.close()
+    browser.close()
