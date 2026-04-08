@@ -4,7 +4,12 @@ from contextlib import ExitStack
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
 from django.test import RequestFactory
+
+from hpcperfstats.analysis.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
+
+pytestmark = pytest.mark.django_db(databases=[])
 
 from hpcperfstats.site.machine import cache_utils as cu
 
@@ -171,3 +176,35 @@ def test_compute_job_gpu_stats_helper_uses_host_device_aware_active_count():
   assert gpu_max == 160.0
   assert gpu_mean == 90.0
   assert gpu_count == 3
+
+
+def test_gpu_agg_rows_for_job_batches_host__in():
+  """GPU aggregate ORM path uses jid_table-sized host__in chunks."""
+  from hpcperfstats.site.machine import api
+
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  j = MagicMock()
+  j.start_time = t0
+  j.end_time = t0
+  n = JID_TABLE_HOST_QUERY_BATCH + 2
+  j.acct_host_list = ["h{0}.x".format(i) for i in range(n)]
+  chunk_sizes = []
+
+  class Qs:
+    def values(self, *args):
+      return self
+
+    def annotate(self, **kwargs):
+      return self
+
+    def __iter__(self):
+      return iter(())
+
+  class Mgr:
+    def filter(self, **kwargs):
+      chunk_sizes.append(len(kwargs.get("host__in") or []))
+      return Qs()
+
+  with patch("hpcperfstats.site.machine.api.host_data.objects", Mgr()):
+    api._gpu_agg_rows_for_job(j)
+  assert chunk_sizes == [JID_TABLE_HOST_QUERY_BATCH, 2]

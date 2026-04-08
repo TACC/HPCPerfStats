@@ -387,6 +387,32 @@ def _jid_table_host_data_time_kwargs(base):
   return {"time__gte": time_gte, "time__lte": time_lte}
 
 
+def _host_data_metric_rows_batched(tkw, hosts, typename, events, metric_column):
+  """Fetch host_data rows for metrics bucketing; chunk ``host__in`` like jid_table."""
+  from hpcperfstats.site.machine.models import host_data
+
+  host_list = list(hosts)
+  if not host_list:
+    return []
+  batch = max(1, int(jid_table.JID_TABLE_HOST_QUERY_BATCH))
+  ev = list(events or [])
+  rows = []
+  for i in range(0, len(host_list), batch):
+    chunk = host_list[i:i + batch]
+    qs = (
+        host_data.objects.filter(
+            **tkw,
+            host__in=chunk,
+            type=typename,
+            event__in=ev,
+        )
+        .values("host", "time", metric_column)
+        .order_by("host", "time")
+    )
+    rows.extend(list(qs))
+  return rows
+
+
 class Metrics():
   """Computes simple and complex metrics for a list of jobs in parallel and writes results to metrics_data.
 
@@ -598,7 +624,6 @@ class Metrics():
 
         """
     import pandas as pd
-    from hpcperfstats.site.machine.models import host_data
 
     if not getattr(jt, "_base_filter", None):
       return None
@@ -614,18 +639,8 @@ class Metrics():
     tkw = _jid_table_host_data_time_kwargs(base)
     if not tkw:
       return None
-    # Fetch raw samples via ORM.
-    qs = (
-        host_data.objects.filter(
-            **tkw,
-            host__in=list(hosts),
-            type=typename,
-            event__in=list(events or []),
-        )
-        .values("host", "time", "arc")
-        .order_by("host", "time")
-    )
-    rows = list(qs)
+    rows = _host_data_metric_rows_batched(
+        tkw, hosts, typename, events, "arc")
     if not rows:
       if cache is not None:
         cache[cache_key] = None
@@ -672,7 +687,6 @@ class Metrics():
                      cache=None):
     """Mean sampled ``value`` by host and 5m bucket (same bucketing as ``job_arc``)."""
     import pandas as pd
-    from hpcperfstats.site.machine.models import host_data
 
     if not getattr(jt, "_base_filter", None):
       return None
@@ -688,17 +702,8 @@ class Metrics():
     tkw = _jid_table_host_data_time_kwargs(base)
     if not tkw:
       return None
-    qs = (
-        host_data.objects.filter(
-            **tkw,
-            host__in=list(hosts),
-            type=typename,
-            event__in=list(events or []),
-        )
-        .values("host", "time", "value")
-        .order_by("host", "time")
-    )
-    rows = list(qs)
+    rows = _host_data_metric_rows_batched(
+        tkw, hosts, typename, events, "value")
     if not rows:
       if cache is not None:
         cache[cache_key] = None

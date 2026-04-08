@@ -127,57 +127,92 @@ def _count_host_data_rows_for_window_cached(jid, start, end, acct_hosts):
   return _count_host_data_rows_for_window(start, end, acct_hosts)
 
 
-def _strided_distinct_times_postgresql(start, end, acct_hosts, n_buckets):
-  """Up to n_buckets timestamps, one per NTILE bucket over DISTINCT time (ordered)."""
+def _distinct_times_in_window_batched(start, end, acct_hosts, batch_size=None):
+  """UNION of DISTINCT ``host_data.time`` in ``[start, end]`` across hosts.
+
+  Uses chunked ``host = ANY(%s::text[])`` queries (same batch size as row counts)
+  so statement size and planner input stay bounded for large node counts.
+  """
   from django.db import connection
 
-  if not acct_hosts or start is None or end is None or n_buckets < 2:
+  if not acct_hosts or start is None or end is None:
     return []
   ops = connection.ops
   tbl = ops.quote_name(host_data._meta.db_table)
   ct = ops.quote_name("time")
   ch = ops.quote_name("host")
   sql = (
-      "WITH dt AS ("
-      " SELECT DISTINCT h.{ct} AS ts FROM {tbl} h"
-      " WHERE h.{ct} >= %s AND h.{ct} <= %s AND h.{ch} = ANY(%s::text[])"
-      "), bucketed AS ("
-      " SELECT ts, NTILE(%s) OVER (ORDER BY ts) AS b FROM dt"
-      ") SELECT MAX(ts) FROM bucketed GROUP BY b ORDER BY MAX(ts)"
+      "SELECT DISTINCT h.{ct} AS ts FROM {tbl} h "
+      "WHERE h.{ct} >= %s AND h.{ct} <= %s AND h.{ch} = ANY(%s::text[])"
   ).format(tbl=tbl, ct=ct, ch=ch)
+  all_ts = set()
   with _pg_relax_statement_timeout_for_large_job_time_sql():
     with connection.cursor() as cursor:
-      cursor.execute(sql, [start, end, list(acct_hosts), int(n_buckets)])
-      return [r[0] for r in cursor.fetchall() if r and r[0] is not None]
+      for host_chunk in _iter_acct_host_batches(acct_hosts, batch_size):
+        cursor.execute(sql, [start, end, list(host_chunk)])
+        for row in cursor.fetchall():
+          if row and row[0] is not None:
+            all_ts.add(row[0])
+  return sorted(all_ts)
+
+
+def _ntile_bucket_max_timestamps(sorted_ts, n_buckets):
+  """Replicate ``NTILE(n_buckets) OVER (ORDER BY ts)`` then ``MAX(ts)`` per bucket."""
+  L = len(sorted_ts)
+  if L == 0:
+    return []
+  nb = int(n_buckets)
+  if nb < 2:
+    return [sorted_ts[-1]]
+  base = L // nb
+  rem = L % nb
+  out = []
+  idx = 0
+  for b in range(nb):
+    sz = base + (1 if b < rem else 0)
+    if sz == 0:
+      continue
+    out.append(sorted_ts[idx + sz - 1])
+    idx += sz
+  return out
+
+
+def _date_bin_bucket_maxima(sorted_ts, start, step_sec):
+  """``MAX(ts)`` per ``date_bin(step, ts, start)``-style bucket (sorted input)."""
+  if not sorted_ts:
+    return []
+  bins = {}
+  for ts in sorted_ts:
+    if step_sec <= 0:
+      k = 0
+    else:
+      k = int((ts - start).total_seconds() // step_sec)
+    bins[k] = ts
+  return [bins[k] for k in sorted(bins)]
+
+
+def _strided_distinct_times_postgresql(start, end, acct_hosts, n_buckets):
+  """Up to n_buckets timestamps, one per NTILE bucket over DISTINCT time (ordered)."""
+  if not acct_hosts or start is None or end is None or n_buckets < 2:
+    return []
+  distinct_sorted = _distinct_times_in_window_batched(start, end, acct_hosts)
+  if not distinct_sorted:
+    return []
+  return _ntile_bucket_max_timestamps(distinct_sorted, n_buckets)
 
 
 def _strided_distinct_times_date_bin_postgresql(start, end, acct_hosts, n_buckets):
-  """Up to ~n_buckets timestamps via ``GROUP BY date_bin`` (PostgreSQL 14+)."""
-  from django.db import connection
-
+  """Up to ~n_buckets timestamps via date-bin-style buckets (Python, same grid as PG)."""
   if not acct_hosts or start is None or end is None or n_buckets < 2:
     return []
   span_sec = (end - start).total_seconds()
   if span_sec <= 0:
     return [start]
+  distinct_sorted = _distinct_times_in_window_batched(start, end, acct_hosts)
+  if not distinct_sorted:
+    return []
   step_sec = max(span_sec / float(max(n_buckets - 1, 1)), 1e-9)
-  ops = connection.ops
-  tbl = ops.quote_name(host_data._meta.db_table)
-  ct = ops.quote_name("time")
-  ch = ops.quote_name("host")
-  sql = (
-      "SELECT MAX(h.{ct}) AS ts FROM {tbl} h"
-      " WHERE h.{ct} >= %s AND h.{ct} <= %s AND h.{ch} = ANY(%s::text[])"
-      " GROUP BY date_bin((%s::double precision * interval '1 second'), h.{ct}, %s)"
-      " ORDER BY ts"
-  ).format(tbl=tbl, ct=ct, ch=ch)
-  with _pg_relax_statement_timeout_for_large_job_time_sql():
-    with connection.cursor() as cursor:
-      cursor.execute(
-          sql,
-          [start, end, list(acct_hosts), step_sec, start],
-      )
-      return [r[0] for r in cursor.fetchall() if r and r[0] is not None]
+  return _date_bin_bucket_maxima(distinct_sorted, start, step_sec)
 
 
 def _strided_distinct_times_for_large_job(start, end, acct_hosts, n_buckets):
@@ -850,8 +885,40 @@ class TypeDetailDataProvider:
     )
 
     def _fn():
-      qs = (self._qs().values("host", "time").distinct().order_by("host", "time"))
-      return queryset_to_dataframe(qs)
+      import pandas as pd
+
+      if (
+          not self.host_list
+          or self.start_time is None
+          or self.end_time is None
+      ):
+        qs = (
+            self._qs()
+            .values("host", "time")
+            .distinct()
+            .order_by("host", "time")
+        )
+        return queryset_to_dataframe(qs)
+      frames = []
+      for host_chunk in _iter_acct_host_batches(self.host_list):
+        qs = (
+            host_data.objects.filter(
+                type=self.type_name,
+                time__gte=self.start_time,
+                time__lte=self.end_time,
+                host__in=host_chunk,
+            )
+            .values("host", "time")
+            .distinct()
+            .order_by("host", "time")
+        )
+        frames.append(queryset_to_dataframe(qs))
+      if not frames:
+        return pd.DataFrame(columns=["host", "time"])
+      out = pd.concat(frames, ignore_index=True)
+      if out.empty or not {"host", "time"}.issubset(out.columns):
+        return pd.DataFrame(columns=["host", "time"])
+      return out.sort_values(["host", "time"]).reset_index(drop=True)
 
     result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     return result if result is not None else queryset_to_dataframe(None)
@@ -892,10 +959,34 @@ class TypeDetailDataProvider:
     def _fn():
       # Avoid DB-level GROUP BY here because some deployments have reported
       # backend-specific grouping SQL errors for this query shape.
-      qs = self._qs(event=event).values("host", "time", metric)
       import pandas as pd
 
-      df_raw = queryset_to_dataframe(qs)
+      if (
+          not self.host_list
+          or self.start_time is None
+          or self.end_time is None
+      ):
+        qs = self._qs(event=event).values("host", "time", metric)
+        df_raw = queryset_to_dataframe(qs)
+      else:
+        frames = []
+        for host_chunk in _iter_acct_host_batches(self.host_list):
+          qs = (
+              host_data.objects.filter(
+                  type=self.type_name,
+                  time__gte=self.start_time,
+                  time__lte=self.end_time,
+                  host__in=host_chunk,
+                  event=event,
+              )
+              .values("host", "time", metric)
+          )
+          frames.append(queryset_to_dataframe(qs))
+        df_raw = (
+            pd.concat(frames, ignore_index=True)
+            if frames
+            else pd.DataFrame(columns=["host", "time", metric])
+        )
       if (
           df_raw.empty
           or "host" not in df_raw.columns

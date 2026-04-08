@@ -176,6 +176,33 @@ def _get_small_executor():
     return _small_executor
 
 
+def _gpu_agg_rows_for_job(j):
+    """host_data GPU util rows for job window; chunked host__in (Timescale-friendly)."""
+    from django.db.models import Avg, Count, Max
+
+    from hpcperfstats.analysis.gen import jid_table as _jid_table_mod
+
+    hosts = j.acct_host_list or []
+    out = []
+    for chunk in _jid_table_mod._iter_acct_host_batches(hosts):
+        out.extend(
+            host_data.objects.filter(
+                type="nvidia_gpu",
+                event__in=["gpu_util", "utilization"],
+                time__gte=j.start_time,
+                time__lte=j.end_time,
+                host__in=chunk,
+            )
+            .values("host", "dev", "event")
+            .annotate(
+                cnt=Count("time"),
+                vmax=Max("value"),
+                vmean=Avg("value"),
+            )
+        )
+    return out
+
+
 def _compute_job_gpu_stats(job, j, job_cache_timeout):
     """Compute per-job GPU stats using the same logic as job_detail."""
     gpu_active, gpu_max, gpu_mean, gpu_count_total = None, None, None, None
@@ -185,21 +212,7 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout):
             agg = cached_orm(
                 f"{KEY_GPU_AGG}:v3:{job.jid}",
                 job_cache_timeout,
-                lambda: list(
-                    host_data.objects.filter(
-                        type="nvidia_gpu",
-                        event__in=["gpu_util", "utilization"],
-                        time__gte=j.start_time,
-                        time__lte=j.end_time,
-                        host__in=j.acct_host_list or [],
-                    )
-                    .values("host", "dev", "event")
-                    .annotate(
-                        cnt=Count("time"),
-                        vmax=Max("value"),
-                        vmean=Avg("value"),
-                    )
-                ),
+                lambda: list(_gpu_agg_rows_for_job(j)),
             )
             # Backwards compatibility: cached_orm might return a single
             # aggregate dict (old shape) or a list of per-event rows.
@@ -259,21 +272,27 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout):
 
         def _gpu_count_fn():
             """Sum over job hosts of max(gpu_count) in window (nvidia_gpu or amd_gpu)."""
+            from hpcperfstats.analysis.gen import jid_table as _jid_table_mod
+
             hosts = j.acct_host_list or []
             if not hosts:
                 return None
             for gpu_typ in ("nvidia_gpu", "amd_gpu"):
-                rows = list(
-                    host_data.objects.filter(
-                        type=gpu_typ,
-                        event="gpu_count",
-                        time__gte=j.start_time,
-                        time__lte=j.end_time,
-                        host__in=hosts,
+                rows = []
+                for chunk in _jid_table_mod._iter_acct_host_batches(hosts):
+                    rows.extend(
+                        list(
+                            host_data.objects.filter(
+                                type=gpu_typ,
+                                event="gpu_count",
+                                time__gte=j.start_time,
+                                time__lte=j.end_time,
+                                host__in=chunk,
+                            )
+                            .values("host")
+                            .annotate(mv=Max("value"))
+                        )
                     )
-                    .values("host")
-                    .annotate(mv=Max("value"))
-                )
                 if not rows:
                     continue
                 total = 0
@@ -2349,16 +2368,19 @@ def type_detail(request, jid, type_name):
     )
 
     def _type_hosts_fn():
-        return list(
-            host_data.objects.filter(
-                type=type_name,
-                time__gte=start_time,
-                time__lte=end_time,
-                host__in=acct_host_list,
+        found = set()
+        for chunk in jid_table._iter_acct_host_batches(acct_host_list):
+            found.update(
+                host_data.objects.filter(
+                    type=type_name,
+                    time__gte=start_time,
+                    time__lte=end_time,
+                    host__in=chunk,
+                )
+                .values_list("host", flat=True)
+                .distinct()
             )
-            .values_list("host", flat=True)
-            .distinct()
-        )
+        return list(found)
 
     _st = start_time.isoformat() if start_time else ""
     _et = end_time.isoformat() if end_time else ""

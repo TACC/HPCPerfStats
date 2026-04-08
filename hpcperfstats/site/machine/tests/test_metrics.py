@@ -10,12 +10,14 @@ from pandas import Timestamp
 from unittest.mock import MagicMock, patch
 
 from hpcperfstats.analysis.metrics.job_metric_display_labels import JOB_METRIC_SHORT_LABELS
+from hpcperfstats.analysis.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
 from hpcperfstats.analysis.metrics.metrics import (
     METRIC_NOT_COMPUTED_YET,
     Metrics,
     _EventIndex,
     _Host,
     _Schema,
+    _host_data_metric_rows_batched,
     _jid_table_host_data_time_kwargs,
     avg_ethbw,
     avg_freq,
@@ -809,3 +811,74 @@ def test_job_arc_uses_time__in_when_jid_table_large_job_sampled():
     assert kwargs["time__in"] == [t1]
     assert "time__gte" not in kwargs
     assert "time__lte" not in kwargs
+
+
+@pytest.mark.django_db(databases=[])
+def test_host_data_metric_rows_batched_splits_host__in():
+  """Large host lists query host_data in jid_table-sized batches."""
+  from types import SimpleNamespace
+
+  n = JID_TABLE_HOST_QUERY_BATCH + 2
+  hosts = ["h{0}.x".format(i) for i in range(n)]
+  chunk_sizes = []
+
+  class Qs:
+    def values(self, *cols):
+      return self
+
+    def order_by(self, *args):
+      chunk_sizes.append(len(self._hosts))
+      return []
+
+  class Mgr:
+    def filter(self, **kwargs):
+      q = Qs()
+      q._hosts = list(kwargs.get("host__in") or [])
+      return q
+
+  tkw = {"time__gte": 1, "time__lte": 2}
+  with patch("hpcperfstats.site.machine.models.host_data.objects", Mgr()):
+    rows = _host_data_metric_rows_batched(
+        tkw, hosts, "net", ["rx_bytes"], "arc")
+  assert rows == []
+  assert chunk_sizes == [JID_TABLE_HOST_QUERY_BATCH, 2]
+
+
+@pytest.mark.django_db(databases=[])
+def test_job_arc_issues_multiple_queries_when_many_hosts(monkeypatch):
+  from types import SimpleNamespace
+
+  from django.utils import timezone as django_tz
+
+  n = JID_TABLE_HOST_QUERY_BATCH + 1
+  hosts = ["h{0}.x".format(i) for i in range(n)]
+  t0 = django_tz.now()
+  jt = SimpleNamespace(
+      _base_filter={
+          "time__gte": t0,
+          "time__lte": t0,
+          "host__in": hosts,
+      }
+  )
+  calls = []
+
+  class Qs:
+    def values(self, *cols):
+      return self
+
+    def order_by(self, *args):
+      calls.append(len(self._hosts))
+      return []
+
+  class Mgr:
+    def filter(self, **kwargs):
+      q = Qs()
+      q._hosts = list(kwargs.get("host__in") or [])
+      return q
+
+  monkeypatch.setattr("hpcperfstats.site.machine.models.host_data.objects", Mgr())
+  m = Metrics()
+  m.job_arc(jt, typename="net", events=["rx_bytes"], conv=1.0)
+  assert len(calls) == 2
+  assert calls[0] == JID_TABLE_HOST_QUERY_BATCH
+  assert calls[1] == 1

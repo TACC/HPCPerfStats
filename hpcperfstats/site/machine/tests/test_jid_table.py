@@ -8,13 +8,18 @@ import pytest
 
 pytestmark = pytest.mark.django_db(databases=[])
 
+from contextlib import nullcontext
 from unittest.mock import patch
+
+from django.db import connection as django_connection
 
 from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_schema_dataframe
 from hpcperfstats.analysis.gen.jid_table import _count_host_data_rows_for_window
+from hpcperfstats.analysis.gen.jid_table import _distinct_times_in_window_batched
 from hpcperfstats.analysis.gen.jid_table import _ensure_tz
 from hpcperfstats.analysis.gen.jid_table import _normalize_host_data_schema_label
 from hpcperfstats.analysis.gen.jid_table import _normalize_job_accounting_host_list
+from hpcperfstats.analysis.gen.jid_table import _ntile_bucket_max_timestamps
 from hpcperfstats.analysis.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
 from hpcperfstats.analysis.gen.jid_table import _strided_distinct_times_for_large_job
 from hpcperfstats.analysis.gen.jid_table import _unpack_cached_job_window_row
@@ -310,6 +315,50 @@ def test_strided_distinct_times_for_large_job_degenerate_window_returns_start(mo
   sampled = _strided_distinct_times_for_large_job(
       start, start, ["n1.example.com"], 64)
   assert sampled == [start]
+
+
+def test_ntile_bucket_max_timestamps_ten_into_three_buckets():
+  """NTILE(3) over 10 ordered rows uses bucket sizes 4,3,3; maxima at last of each."""
+  ts = list(range(10))
+  assert _ntile_bucket_max_timestamps(ts, 3) == [3, 6, 9]
+
+
+def test_distinct_times_in_window_batched_uses_host_chunks(monkeypatch):
+  """Strided-time prep runs one DISTINCT-time SQL per host__in batch (bounded ANY)."""
+  chunk_lens = []
+
+  class FakeCursor:
+    def execute(self, sql, params):
+      chunk_lens.append(len(params[2]))
+
+    def fetchall(self):
+      return []
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      return False
+
+  class FakeConnection:
+    vendor = "postgresql"
+    ops = django_connection.ops
+
+    def cursor(self):
+      return FakeCursor()
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table._pg_relax_statement_timeout_for_large_job_time_sql",
+      nullcontext,
+  )
+  monkeypatch.setattr("django.db.connection", FakeConnection())
+
+  n = JID_TABLE_HOST_QUERY_BATCH + 5
+  hosts = ["h{0}.x".format(i) for i in range(n)]
+  _distinct_times_in_window_batched(1, 2, hosts)
+  assert len(chunk_lens) == 2
+  assert chunk_lens[0] == JID_TABLE_HOST_QUERY_BATCH
+  assert chunk_lens[1] == 5
 
 
 def test_count_host_data_rows_for_window_chunked_single_batch(monkeypatch):
