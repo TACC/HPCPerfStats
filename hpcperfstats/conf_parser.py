@@ -545,14 +545,17 @@ def get_large_job_window_row_count_cache_ttl():
 def get_large_job_time_sample_sql_mode():
   """How to pick strided sample timestamps for large jobs: ``ntile`` or ``date_bin``.
 
-  ``date_bin`` (PostgreSQL 14+) uses one pass ``GROUP BY date_bin(...)`` instead of
-  ``DISTINCT`` + ``NTILE`` over all timestamps; falls back to ``ntile`` on failure.
-  Env: ``HPCPERFSTATS_LARGE_JOB_TIME_SQL`` = ``ntile`` | ``date_bin``.
+  Default ``date_bin`` (PostgreSQL 14+): ``GROUP BY date_bin(...)`` avoids building
+  a full ``DISTINCT`` time set + ``NTILE``, which often hits ``statement_timeout``
+  on large windows. Set env ``HPCPERFSTATS_LARGE_JOB_TIME_SQL=ntile`` for the
+  legacy index-space stride (distinct times, equal-count buckets).
   """
   env = os.environ.get("HPCPERFSTATS_LARGE_JOB_TIME_SQL", "").strip().lower()
+  if env in ("ntile",):
+    return "ntile"
   if env in ("date_bin", "date-bin"):
     return "date_bin"
-  return "ntile"
+  return "date_bin"
 
 
 def get_live_distinct_use_legacy_hostlist():

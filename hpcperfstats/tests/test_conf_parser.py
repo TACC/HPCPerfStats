@@ -409,3 +409,16 @@ def test_sync_archive_pool_respects_cap(temp_ini, monkeypatch):
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
   assert cfg.get_sync_ingest_pool_processes() == 8
   assert cfg.get_sync_archive_pool_processes() == 2
+
+
+def test_get_large_job_time_sample_sql_mode_defaults_and_env(temp_ini, monkeypatch):
+  """Default strided time SQL mode is date_bin; ntile is opt-in via env."""
+  monkeypatch.delenv("HPCPERFSTATS_LARGE_JOB_TIME_SQL", raising=False)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_large_job_time_sample_sql_mode() == "date_bin"
+  monkeypatch.setenv("HPCPERFSTATS_LARGE_JOB_TIME_SQL", "ntile")
+  assert cfg.get_large_job_time_sample_sql_mode() == "ntile"

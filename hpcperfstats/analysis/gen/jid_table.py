@@ -1,6 +1,7 @@
 """Job-scoped host_data access via Django ORM. Provides jid_table, TypeDetailDataProvider, and HostDataProvider for querying job/host metrics without raw SQL. Uses Redis caching for heavy queries.
 
 """
+import contextlib
 import hashlib
 import json
 import logging
@@ -9,6 +10,7 @@ import time
 from datetime import timezone as dt_utc
 
 from django.core.cache import cache
+from django.db import connections
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
@@ -35,6 +37,31 @@ from hpcperfstats.site.machine.models import host_data, job_data
 # Chunk host__in on host_data for large jobs; single queries with thousands of
 # hosts often hit PostgreSQL statement_timeout during metrics and plots.
 JID_TABLE_HOST_QUERY_BATCH = 64
+
+
+@contextlib.contextmanager
+def _pg_relax_statement_timeout_for_large_job_time_sql():
+  """Disable PostgreSQL ``statement_timeout`` for long strided-time sampling SQL.
+
+  ``DISTINCT`` + ``NTILE`` and wide-window ``date_bin`` aggregates can exceed the
+  default session limit; restore the configured timeout when the block exits
+  (same pattern as metrics batch queries in ``update_metrics``).
+  """
+  conn = connections["default"]
+  if conn.vendor != "postgresql":
+    yield
+    return
+  restore_ms = cfg.get_db_statement_timeout_ms()
+  with conn.cursor() as cursor:
+    cursor.execute("SET statement_timeout = 0")
+  try:
+    yield
+  finally:
+    with conn.cursor() as cursor:
+      if restore_ms > 0:
+        cursor.execute("SET statement_timeout = %s", [restore_ms])
+      else:
+        cursor.execute("SET statement_timeout = 0")
 
 
 def _iter_acct_host_batches(acct_host_list, batch_size=None):
@@ -118,9 +145,10 @@ def _strided_distinct_times_postgresql(start, end, acct_hosts, n_buckets):
       " SELECT ts, NTILE(%s) OVER (ORDER BY ts) AS b FROM dt"
       ") SELECT MAX(ts) FROM bucketed GROUP BY b ORDER BY MAX(ts)"
   ).format(tbl=tbl, ct=ct, ch=ch)
-  with connection.cursor() as cursor:
-    cursor.execute(sql, [start, end, list(acct_hosts), int(n_buckets)])
-    return [r[0] for r in cursor.fetchall() if r and r[0] is not None]
+  with _pg_relax_statement_timeout_for_large_job_time_sql():
+    with connection.cursor() as cursor:
+      cursor.execute(sql, [start, end, list(acct_hosts), int(n_buckets)])
+      return [r[0] for r in cursor.fetchall() if r and r[0] is not None]
 
 
 def _strided_distinct_times_date_bin_postgresql(start, end, acct_hosts, n_buckets):
@@ -143,12 +171,13 @@ def _strided_distinct_times_date_bin_postgresql(start, end, acct_hosts, n_bucket
       " GROUP BY date_bin((%s::double precision * interval '1 second'), h.{ct}, %s)"
       " ORDER BY ts"
   ).format(tbl=tbl, ct=ct, ch=ch)
-  with connection.cursor() as cursor:
-    cursor.execute(
-        sql,
-        [start, end, list(acct_hosts), step_sec, start],
-    )
-    return [r[0] for r in cursor.fetchall() if r and r[0] is not None]
+  with _pg_relax_statement_timeout_for_large_job_time_sql():
+    with connection.cursor() as cursor:
+      cursor.execute(
+          sql,
+          [start, end, list(acct_hosts), step_sec, start],
+      )
+      return [r[0] for r in cursor.fetchall() if r and r[0] is not None]
 
 
 def _strided_distinct_times_for_large_job(start, end, acct_hosts, n_buckets):
