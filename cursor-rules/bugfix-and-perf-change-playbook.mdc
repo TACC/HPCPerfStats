@@ -12,7 +12,7 @@ When the task is a traceback fix, timeout fix, memory/runtime reduction, or oper
 - Start from the concrete failure signature (traceback line, SQL timeout, or log message) and patch the smallest root-cause path first.
 - If the failure is not fixed after the first request, deep dive into the code and find the systemic failure. Don't patch the symptoms. Do root cause analysis first.
 - Preserve existing user-facing behavior unless the user asks for behavior changes.
-- Make resource/concurrency choices configuration-driven where practical (thread count, batch size, retry policy, timeout), not hidden magic constants.
+- Make resource/concurrency choices configuration-driven (thread count, batch size, retry policy, timeout), not hidden magic constants. If hardcoded fallback defaults are required, keep them centralized and documented.
 - Prefer deterministic fallback paths over silent failures (explicit no-data reason, explicit retry boundary, clear error branch).
 - Keep code paths composable and testable; avoid adding one-off branches that bypass canonical helpers.
 
