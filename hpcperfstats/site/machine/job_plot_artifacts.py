@@ -5,7 +5,7 @@ import gzip
 import hashlib
 import json
 import logging
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, NamedTuple, Optional, Sequence, Tuple
 
 import bokeh
 from bokeh.embed import json_item
@@ -27,12 +27,48 @@ from .models import job_data, job_plot_artifact
 
 logger = logging.getLogger(__name__)
 
-JOB_PLOT_KINDS: Tuple[str, ...] = (
-    "summary_plot",
-    "heatmap",
-    "roofline",
-    "gpu_roofline",
-)
+class JobPlotKindSpec(NamedTuple):
+  plot_fn: Any
+  empty_fallback: str
+  json_item_key: str
+  unavailable_reason_key: str
+  log_fail_action: str
+  wall_time: bool = False
+
+
+JOB_PLOT_KIND_SPECS: Dict[str, JobPlotKindSpec] = {
+    "summary_plot": JobPlotKindSpec(
+        plot_fn=plots.plot_and_reason_summary_from_jid_table,
+        empty_fallback=plots.MSG_NO_METRIC_DATA,
+        json_item_key="mplot_item",
+        unavailable_reason_key="mplot_unavailable_reason",
+        log_fail_action="generate summary plot",
+        wall_time=True,
+    ),
+    "heatmap": JobPlotKindSpec(
+        plot_fn=plots.plot_and_reason_from_jid_table,
+        empty_fallback=plots.MSG_NO_HOST_MSR_DATA,
+        json_item_key="hplot_item",
+        unavailable_reason_key="hplot_unavailable_reason",
+        log_fail_action="generate heatmap",
+    ),
+    "roofline": JobPlotKindSpec(
+        plot_fn=plots.plot_and_reason_roofline_from_jid_table,
+        empty_fallback=plots.MSG_NO_ROOFLINE_DATA,
+        json_item_key="rplot_item",
+        unavailable_reason_key="rplot_unavailable_reason",
+        log_fail_action="generate roofline",
+    ),
+    "gpu_roofline": JobPlotKindSpec(
+        plot_fn=plots.plot_and_reason_gpu_roofline_from_jid_table,
+        empty_fallback=plots.MSG_NO_ROOFLINE_DATA,
+        json_item_key="grplot_item",
+        unavailable_reason_key="grplot_unavailable_reason",
+        log_fail_action="generate gpu roofline",
+    ),
+}
+
+JOB_PLOT_KINDS: Tuple[str, ...] = tuple(JOB_PLOT_KIND_SPECS.keys())
 
 JOB_PLOT_LAYOUT_NORMAL = "normal"
 JOB_PLOT_LAYOUT_ZOOM_V3 = "zoom_v3"
@@ -43,23 +79,9 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 # See cursor-rules/job-plot-artifacts-caching.mdc and machine/tests/test_job_plot_artifacts.py.
 APP_PLOT_ARTIFACT_SCHEMA_VERSION = 3
 
-_PLOT_PAIR_AND_FALLBACK = {
-    "summary_plot": (
-        plots.plot_and_reason_summary_from_jid_table,
-        plots.MSG_NO_METRIC_DATA,
-    ),
-    "heatmap": (
-        plots.plot_and_reason_from_jid_table,
-        plots.MSG_NO_HOST_MSR_DATA,
-    ),
-    "roofline": (
-        plots.plot_and_reason_roofline_from_jid_table,
-        plots.MSG_NO_ROOFLINE_DATA,
-    ),
-    "gpu_roofline": (
-        plots.plot_and_reason_gpu_roofline_from_jid_table,
-        plots.MSG_NO_ROOFLINE_DATA,
-    ),
+JOB_PLOT_JSON_KEYS: Dict[str, Tuple[str, str]] = {
+    kind: (spec.json_item_key, spec.unavailable_reason_key)
+    for kind, spec in JOB_PLOT_KIND_SPECS.items()
 }
 
 
@@ -220,13 +242,12 @@ def compute_plot_item_for_kind(
     plot_kind: str,
     zoom_mode: bool,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-  pair = _PLOT_PAIR_AND_FALLBACK.get(plot_kind)
-  if not pair:
+  spec = JOB_PLOT_KIND_SPECS.get(plot_kind)
+  if not spec:
     return None, "Unknown plot kind"
-  plot_fn, empty_fallback = pair
-  plot_json, plot_reason = plot_fn(j)
+  plot_json, plot_reason = spec.plot_fn(j)
   if plot_json is None:
-    return None, plot_reason or empty_fallback
+    return None, plot_reason or spec.empty_fallback
   if zoom_mode:
     _apply_zoom_layout_to_bokeh_model(plot_json)
   return json_item(plot_json), None

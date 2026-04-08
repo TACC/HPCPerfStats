@@ -28,6 +28,7 @@ from hpcperfstats.analysis.gen.utils import (
     INTEL_FP_ARITH_DOUBLE_EVENTS,
     INTEL_FP_ARITH_SINGLE_EVENTS,
     INTEL_IMC_STATS_TYPES,
+    non_degenerate_y_range_for_series,
     new_plain_number_hover_formatter,
     set_linear_axes_plain_numeric,
     tz_aware_bokeh_tick_formatter,
@@ -858,17 +859,9 @@ class SummaryPlot():
     df = df[["time", "host", metric]].copy()
     df["host"] = df["host"].astype(str)
 
-    y_min_value = df[metric].min()
-    if y_range_end is None or pd_isna(y_range_end):
-      y_range_end = 1.1 * df[metric].max()
-    y_range_start = y_min_value if y_min_value < 0 else 0
-    if math.isnan(y_range_end):
-      y_range_end = 0
-    if math.isnan(y_range_start):
-      y_range_start = 0
-    if y_range_end <= y_range_start:
-      # Keep a non-degenerate y-range so all-zero/all-constant series still render.
-      y_range_end = y_range_start + 1
+    y_range_start, y_range_end = non_degenerate_y_range_for_series(
+        df[metric], y_range_end=y_range_end
+    )
 
     label_text = (label or "").strip() or metric
 

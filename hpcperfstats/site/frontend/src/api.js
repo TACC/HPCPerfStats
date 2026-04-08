@@ -3,6 +3,8 @@
  * All requests use credentials (cookies) for session auth.
  */
 
+import { API_PATHS, HISTOGRAM_EMBED_VERSION } from "./api-paths";
+
 const API_BASE = "/api";
 
 function getCookie(name) {
@@ -47,46 +49,30 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  getSession: () => request("/session/"),
-  getUserApiKey: () => request("/user-api-key/"),
-  rotateUserApiKey: () => request("/user-api-key/rotate/", { method: "POST" }),
-  dropStaffForSession: () => request("/session/drop-staff/", { method: "POST" }),
+  getSession: () => request(API_PATHS.session),
+  getUserApiKey: () => request(API_PATHS.userApiKey),
+  rotateUserApiKey: () => request(API_PATHS.rotateUserApiKey, { method: "POST" }),
+  dropStaffForSession: () => request(API_PATHS.dropStaffForSession, { method: "POST" }),
   invalidateCacheForPage: (pagePath) =>
-    request("/cache/invalidate-page/", {
+    request(API_PATHS.invalidateCacheForPage, {
       method: "POST",
       body: JSON.stringify({ page_path: pagePath }),
     }),
-  getHomeOptions: () => request("/home/"),
-  search: (params) => request("/search/?" + new URLSearchParams(params).toString()),
-  getJobList: (params) => request("/jobs/?" + new URLSearchParams(params).toString()),
+  getHomeOptions: () => request(API_PATHS.home),
+  search: (params) => request(`${API_PATHS.search}?${new URLSearchParams(params).toString()}`),
+  getJobList: (params) => request(`${API_PATHS.jobs}?${new URLSearchParams(params).toString()}`),
   /**
    * Queue-based histograms for a job list (jobs by queue, CPU hours by queue).
    * Uses the same filter params as getJobList, plus group=queue.
    */
   getJobQueueHistograms: (params) =>
-    request(
-      "/jobs/histograms/?" +
-        new URLSearchParams({
-          ...(params || {}),
-          group: "queue",
-          // Bust @dynamic_cache_page / CDN after server-side Bokeh embed changes.
-          _histogram_embed_v: "3",
-        }).toString()
-    ),
+    request(`${API_PATHS.jobsHistograms}?${buildJobHistogramSearchParams(params, { group: "queue" }).toString()}`),
   /**
    * Single metric histogram (thumb + full) for a job list.
    * Uses the same filter params as getJobList, plus group=metric&metric=<name>.
    */
   getJobMetricHistogram: (params, metric) =>
-    request(
-      "/jobs/histograms/?" +
-        new URLSearchParams({
-          ...(params || {}),
-          group: "metric",
-          metric,
-          _histogram_embed_v: "3",
-        }).toString()
-    ),
+    request(`${API_PATHS.jobsHistograms}?${buildJobHistogramSearchParams(params, { group: "metric", metric }).toString()}`),
   getJobDetail: (pk) => request(`/jobs/${encodeURIComponent(pk)}/`),
   getJobDetailLight: (pk) => request(`/jobs/${encodeURIComponent(pk)}/?light=1`),
   getJobPlots: (pk, plot = null, zoom = false, progressive = false) => {
@@ -101,23 +87,33 @@ export const api = {
   getTypeDetail: (jid, typeName) =>
     request(`/jobs/${encodeURIComponent(jid)}/${encodeURIComponent(typeName)}/`),
   getHostPlot: (params) =>
-    request("/host_plot/?" + new URLSearchParams(params).toString()),
+    request(`${API_PATHS.hostPlot}?${new URLSearchParams(params).toString()}`),
   getAdminMonitorSection: (section, options = {}) => {
     const params = { section };
     if (options.refresh) params.refresh = "1";
-    return request(`/admin_monitor/?${new URLSearchParams(params).toString()}`);
+    return request(`${API_PATHS.adminMonitor}?${new URLSearchParams(params).toString()}`);
   },
   getJobMonitor: (days) => {
     const search = days
       ? `?${new URLSearchParams({ days: String(days) }).toString()}`
       : "";
-    return request(`/job_monitor/${search}`);
+    return request(`${API_PATHS.jobMonitor}${search}`);
   },
   getJobMonitorGpuForUser: (username, days) => {
     const params = new URLSearchParams({ username: String(username || "") });
     if (days) params.set("days", String(days));
-    return request(`/job_monitor/gpu/?${params.toString()}`);
+    return request(`${API_PATHS.jobMonitorGpu}?${params.toString()}`);
   },
 };
+
+function buildJobHistogramSearchParams(params, { group, metric }) {
+  const query = {
+    ...(params || {}),
+    group,
+    _histogram_embed_v: HISTOGRAM_EMBED_VERSION,
+  };
+  if (metric) query.metric = metric;
+  return new URLSearchParams(query);
+}
 
 export default api;

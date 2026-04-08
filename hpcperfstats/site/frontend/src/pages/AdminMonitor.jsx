@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
+import { useTableSort } from "../hooks/useTableSort";
 import { createAdminMonitorSectionLoader } from "../utils/create-admin-monitor-section-loader";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { tableSortAriaSort, tableSortColumnArrow } from "../utils/table-sort-a11y";
@@ -57,20 +58,6 @@ function compareAdminMonitorHostRows(a, b, sort) {
   return 0;
 }
 
-function makeAdminMonitorSortHandler(setSort) {
-  return function handleSort(column) {
-    setSort((prev) => {
-      if (prev.column === column) {
-        return {
-          column,
-          direction: prev.direction === "asc" ? "desc" : "asc",
-        };
-      }
-      return { column, direction: "asc" };
-    });
-  };
-}
-
 export default function AdminMonitor() {
   useDocumentTitle("HPCPerfStats Monitor");
 
@@ -80,15 +67,15 @@ export default function AdminMonitor() {
   const [rabbitExpanded, setRabbitExpanded] = useState(false);
   const [timescaledbExpanded, setTimescaledbExpanded] = useState(false);
   const [hostStats, setHostStats] = useState([]);
-  const [hostSort, setHostSort] = useState({ column: "host", direction: "asc" });
+  const { sort: hostSort, onSort: handleHostSort } = useTableSort("host", "asc", "asc");
   const [hostLoading, setHostLoading] = useState(false);
   const [hostError, setHostError] = useState(null);
   const [hostRequested, setHostRequested] = useState(false);
   const [rabbitHostStats, setRabbitHostStats] = useState([]);
-  const [rabbitHostSort, setRabbitHostSort] = useState({
-    column: "host",
-    direction: "asc",
-  });
+  const {
+    sort: rabbitHostSort,
+    onSort: handleRabbitHostSort,
+  } = useTableSort("host", "asc", "asc");
   const [rabbitHostLoading, setRabbitHostLoading] = useState(false);
   const [rabbitHostError, setRabbitHostError] = useState(null);
   const [rabbitHostRequested, setRabbitHostRequested] = useState(false);
@@ -304,15 +291,6 @@ export default function AdminMonitor() {
           xaltStats.jids_with_xalt_data ?? 0
         } · Missing: ${xaltStats.jids_missing_xalt_data ?? 0}`
       : "";
-
-  const handleHostSort = useMemo(
-    () => makeAdminMonitorSortHandler(setHostSort),
-    [],
-  );
-  const handleRabbitHostSort = useMemo(
-    () => makeAdminMonitorSortHandler(setRabbitHostSort),
-    [],
-  );
 
   const sortedHostStats = useMemo(
     () =>

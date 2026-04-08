@@ -32,6 +32,7 @@ from hpcperfstats.analysis.metrics.job_detail_fsio import (
     compute_job_detail_fsio_metric_rows,
     fsio_job_detail_catalog,
 )
+from hpcperfstats.analysis.metrics.db_retry import run_with_db_retry
 
 try:
   from numpy import trapezoid as trapz
@@ -327,18 +328,14 @@ def _unwrap(args):
   # synchronization with server" DatabaseErrors. Retry once with a clean
   # connection; on repeated failure, log and skip this job rather than
   # crashing the entire pool.
-  for attempt in range(2):
-    try:
-      return metrics_obj.compute_metrics(job)
-    except (OperationalError, DatabaseError) as exc:
-      close_old_connections()
-      if attempt == 0:
-        continue
-      log_print(
-          "Skipping metrics for jid %s after DB error in worker: %s" %
-          (getattr(job, "jid", "?"), exc)
-      )
-      return None
+  try:
+    return run_with_db_retry(lambda: metrics_obj.compute_metrics(job), attempts=2)
+  except (OperationalError, DatabaseError) as exc:
+    log_print(
+        "Skipping metrics for jid %s after DB error in worker: %s" %
+        (getattr(job, "jid", "?"), exc)
+    )
+    return None
 
 
 def _persist_metrics_batch(job_results, distinct_time_count):
@@ -634,17 +631,10 @@ class Metrics():
           continue
         # Ensure main process uses a fresh DB connection (may have gone stale
         # while waiting on pool). Retry once on connection errors.
-        for attempt in range(2):
-          try:
-            close_old_connections()
-            _persist_metrics_batch(job_rows, distinct_n)
-            break
-          except OperationalError as e:
-            if "connection" in str(e).lower() or "closed" in str(e).lower():
-              close_old_connections()
-              if attempt == 0:
-                continue
-            raise
+        run_with_db_retry(
+            lambda: _persist_metrics_batch(job_rows, distinct_n),
+            attempts=2,
+        )
     finally:
       if own_pool:
         active_pool.close()

@@ -3,7 +3,6 @@
 
 """
 import logging
-import math
 import time
 
 log = logging.getLogger(__name__)
@@ -17,6 +16,7 @@ from bokeh.plotting import figure
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import (
     clean_dataframe,
+    non_degenerate_y_range_for_series,
     new_plain_number_hover_formatter,
     set_linear_axes_plain_numeric,
     tz_aware_bokeh_tick_formatter,
@@ -46,22 +46,7 @@ class DevPlot:
 
     df = df[["time", "host", event]]
 
-    y_min_value = df[event].min()
-    y_max_value = df[event].max()
-    if math.isnan(y_max_value):
-      y_max_value = 0
-
-    y_range_end = 1.1 * y_max_value
-    if math.isnan(y_range_end):
-      y_range_end = 0
-
-    if math.isnan(y_min_value):
-      y_min_value = 0
-
-    y_range_start = y_min_value if y_min_value < 0 else 0
-    if y_range_end <= y_range_start:
-      # Keep a non-degenerate y-range so all-zero/all-constant series still render.
-      y_range_end = y_range_start + 1
+    y_range_start, y_range_end = non_degenerate_y_range_for_series(df[event])
 
     ylabel = event + " (" + (unit or "") + ")"
 

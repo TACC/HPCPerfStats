@@ -10,7 +10,6 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 
 import hpcperfstats.conf_parser as cfg
 from bokeh.embed import components, json_item
-from bokeh.plotting import figure
 from django.utils import timezone
 from pandas import DataFrame, to_timedelta
 from rest_framework import status
@@ -38,6 +37,7 @@ class _JSONResponse(Response):
         return self.data
 
 from .bokeh_plot_layout import _apply_zoom_layout_to_bokeh_model, _apply_zoom_layout_to_json_item
+from .bokeh_embed import new_spa_embedded_figure
 from .cache_middleware import dynamic_cache_page
 from .cache_utils import (
     KEY_ADMIN_CACHE_STATS,
@@ -63,18 +63,18 @@ from .cache_utils import (
     TIMEOUT_ADMIN_STATS,
 )
 from .job_plot_artifacts import (
+    JOB_PLOT_JSON_KEYS,
+    JOB_PLOT_KIND_SPECS,
+    JOB_PLOT_KINDS,
     JOB_PLOT_LAYOUT_NORMAL,
     JOB_PLOT_LAYOUT_ZOOM_V3,
+    compute_plot_item_for_kind,
     compute_plot_input_fingerprint,
     get_job_plot_redis_max_bytes,
     get_live_distinct_time_count_for_jid,
     json_item_to_compressed_payload,
     load_cached_job_plot_entry,
     upsert_job_plot_artifact,
-)
-from hpcperfstats.analysis.gen.utils import (
-    new_plain_number_hover_formatter,
-    set_linear_axes_plain_numeric,
 )
 from hpcperfstats.analysis.metrics.metrics import build_job_metrics_display_list
 from hpcperfstats.dbload.sync_acct import sync_acct_from_content
@@ -106,13 +106,8 @@ def site_response_cache_timeout(request):
     """Per-request TTL for @dynamic_cache_page (site-aware)."""
     return get_site_content_cache_timeout()
 
-# job_plots JSON field names (plot=all): kind -> (json_item_key, unavailable_reason_key)
-_JOB_PLOT_JSON_KEYS = {
-    "summary_plot": ("mplot_item", "mplot_unavailable_reason"),
-    "heatmap": ("hplot_item", "hplot_unavailable_reason"),
-    "roofline": ("rplot_item", "rplot_unavailable_reason"),
-    "gpu_roofline": ("grplot_item", "grplot_unavailable_reason"),
-}
+_JOB_LIST_QUERY_FIELD_EXCLUDES_BASE = ("page", "order_by")
+_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM = ("group", "metric", "_histogram_embed_v")
 
 
 def _collect_future_results_with_deadline(future_to_key, max_wait_seconds):
@@ -449,6 +444,70 @@ def _apply_non_staff_job_visibility(queryset, request):
     if account_list:
         return queryset.filter(Q(username=username) | Q(account__in=account_list))
     return queryset.filter(username=username)
+
+
+def _get_visible_job_or_error_response(request, pk, queryset_builder):
+    """Return (job, None) if visible, else (None, Response)."""
+    site_ttl = get_site_content_cache_timeout()
+    job = cached_orm(
+        f"{KEY_JOB}:{pk}",
+        site_ttl,
+        queryset_builder,
+    )
+    if not job:
+        return None, Response(
+            {"error": "Job not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    if not _apply_non_staff_job_visibility(job_data.objects.filter(jid=pk), request).exists():
+        return None, Response(
+            {"error": "Not allowed to view this job"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return job, None
+
+
+def _job_times_as_local(start_time, end_time):
+    """Return start/end as timezone-aware datetimes in local timezone."""
+    if start_time.tzinfo is None:
+        start_time = timezone.make_aware(start_time, dt_timezone.utc)
+    if end_time.tzinfo is None:
+        end_time = timezone.make_aware(end_time, dt_timezone.utc)
+    return start_time.astimezone(local_timezone), end_time.astimezone(local_timezone)
+
+
+def _build_job_list_queryset_from_request(request, extra_excluded_fields=(), annotate_all=False):
+    """Build filtered ordered queryset and parsed filter maps for job list endpoints."""
+    fields = request.GET.dict()
+    fields = {k: v for k, v in fields.items() if v}
+    fields = normalize_job_list_query_params(fields)
+    fields = expand_month_date_to_range(fields)
+    excluded_fields = set(_JOB_LIST_QUERY_FIELD_EXCLUDES_BASE) | set(extra_excluded_fields)
+    acct_data = {
+        k: v
+        for k, v in fields.items()
+        if k.split("_", 1)[0] != "metrics" and k not in excluded_fields
+    }
+    order_by = get_job_list_order_by(fields) or "-end_time"
+    queryset = job_data.objects.filter(**acct_data)
+    queryset = _apply_non_staff_job_visibility(queryset, request)
+    if annotate_all or order_by.lstrip("-") == "performance_sort_rank":
+        queryset = annotate_job_list_performance_fields(queryset)
+    queryset = queryset.order_by(order_by)
+    cur_metrics = {
+        k.split("_", 1)[1]: v
+        for k, v in fields.items()
+        if k.split("_", 1)[0] == "metrics"
+    }
+    for key, val in cur_metrics.items():
+        name, op = key.split("__")
+        queryset = queryset.filter(
+            **{
+                "metrics_data__metric": name,
+                "metrics_data__value__" + op: val,
+            }
+        )
+    return queryset, fields, cur_metrics, order_by
 
 
 def _get_redis_cache_client():
@@ -1221,51 +1280,12 @@ def _build_histogram_queryset(request):
     - fields: normalized/expanded query params dict
     - cur_metrics: dict of metric_name__op -> value (from query params)
     """
-    from hpcperfstats.site.machine.models import job_data
-
     try:
-        fields = request.GET.dict()
-        fields = {k: v for k, v in fields.items() if v}
-        fields = normalize_job_list_query_params(fields)
-        fields = expand_month_date_to_range(fields)
-
-        acct_data = {
-            k: v
-            for k, v in fields.items()
-            if k.split("_", 1)[0] != "metrics"
-            and k
-            not in (
-                "page",
-                "order_by",
-                # Histogram grouping/query-only parameters, not model fields:
-                # - group: which histogram group to load ("queue" or "metric")
-                # - metric: metric name when group == "metric"
-                # - _histogram_embed_v: client cache-bust for Bokeh embed shape changes
-                "group",
-                "metric",
-                "_histogram_embed_v",
-            )
-        }
-        order_by = get_job_list_order_by(fields) or "-end_time"
-        job_list_qs = job_data.objects.filter(**acct_data)
-        job_list_qs = _apply_non_staff_job_visibility(job_list_qs, request)
-        if order_by.lstrip("-") == "performance_sort_rank":
-            job_list_qs = annotate_job_list_performance_fields(job_list_qs)
-        job_list_qs = job_list_qs.order_by(order_by)
-
-        cur_metrics = {
-            k.split("_", 1)[1]: v
-            for k, v in fields.items()
-            if k.split("_", 1)[0] == "metrics"
-        }
-        for key, val in cur_metrics.items():
-            name, op = key.split("__")
-            mquery = {
-                "metrics_data__metric": name,
-                "metrics_data__value__" + op: val,
-            }
-            job_list_qs = job_list_qs.filter(**mquery)
-
+        job_list_qs, fields, cur_metrics, _ = _build_job_list_queryset_from_request(
+            request,
+            extra_excluded_fields=_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM,
+            annotate_all=False,
+        )
         nj = job_list_qs.count()
         return job_list_qs, nj, fields, cur_metrics
     except Exception:
@@ -1358,15 +1378,12 @@ def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="job
         # No toolbar or HoverTool: Bokeh 3.x SPA embeds hit
         # "can't access property is_valid, e is undefined" when tool panels /
         # hover hit-testing run in tight layouts (see job_hist / queue charts).
-        p = figure(
+        p = new_spa_embedded_figure(
             x_range=queue_names,
             height=height,
             width=width,
             title=title,
-            toolbar_location=None,
-            tools=[],
         )
-        set_linear_axes_plain_numeric(p)
         p.vbar(x="x", top="top", source=source, width=0.7)
         p.xaxis.axis_label = "queue"
         p.yaxis.axis_label = y_label
@@ -1576,43 +1593,11 @@ def job_list(request):
     if err is not None:
         return err
 
-    fields = request.GET.dict()
-    fields = {k: v for k, v in fields.items() if v}
-    fields = normalize_job_list_query_params(fields)
-    fields = expand_month_date_to_range(fields)
-
-    acct_data = {
-        k: v
-        for k, v in fields.items()
-        if k.split("_", 1)[0] != "metrics"
-        and k
-        not in (
-            "page",
-            "order_by",
-            # Histogram grouping/query-only parameters, not model fields:
-            "group",
-            "metric",
-        )
-    }
-    order_by = get_job_list_order_by(fields) or "-end_time"
-    job_list_qs = job_data.objects.filter(**acct_data)
-    job_list_qs = annotate_job_list_performance_fields(
-        _apply_non_staff_job_visibility(job_list_qs, request)
+    job_list_qs, fields, _cur_metrics, order_by = _build_job_list_queryset_from_request(
+        request,
+        extra_excluded_fields=_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM,
+        annotate_all=True,
     )
-    job_list_qs = job_list_qs.order_by(order_by)
-
-    cur_metrics = {
-        k.split("_", 1)[1]: v
-        for k, v in fields.items()
-        if k.split("_", 1)[0] == "metrics"
-    }
-    for key, val in cur_metrics.items():
-        name, op = key.split("__")
-        mquery = {
-            "metrics_data__metric": name,
-            "metrics_data__value__" + op: val,
-        }
-        job_list_qs = job_list_qs.filter(**mquery)
 
     try:
         nj = job_list_qs.count()
@@ -1681,24 +1666,13 @@ def job_detail(request, pk):
         return err
 
     job_cache_timeout = get_site_content_cache_timeout()
-    job = cached_orm(
-        f"{KEY_JOB}:{pk}",
-        job_cache_timeout,
-        lambda: job_data.objects.filter(jid=pk)
-        .prefetch_related("metrics_data_set")
-        .first(),
+    job, err = _get_visible_job_or_error_response(
+        request,
+        pk,
+        lambda: job_data.objects.filter(jid=pk).prefetch_related("metrics_data_set").first(),
     )
-    if not job:
-        return Response(
-            {"error": "Job not found"},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-
-    if not _apply_non_staff_job_visibility(job_data.objects.filter(jid=pk), request).exists():
-        return Response(
-            {"error": "Not allowed to view this job"},
-            status=status.HTTP_403_FORBIDDEN,
-        )
+    if err is not None:
+        return err
 
     j = jid_table.jid_table(job.jid)
     host_list = j.acct_host_list
@@ -1901,14 +1875,7 @@ def job_detail(request, pk):
 
     # Build client/server log URLs with explicit timestamp format expected by Scribe.
     # Format: %Y-%m-%dT%H:%M:%S %Z%:z
-    start_time = job.start_time
-    end_time = job.end_time
-    if start_time.tzinfo is None:
-        start_time = timezone.make_aware(start_time, dt_timezone.utc)
-    if end_time.tzinfo is None:
-        end_time = timezone.make_aware(end_time, dt_timezone.utc)
-    start_time = start_time.astimezone(local_timezone)
-    end_time = end_time.astimezone(local_timezone)
+    start_time, end_time = _job_times_as_local(job.start_time, job.end_time)
     time_format = "%Y-%m-%dT%H:%M:%S%:z"
     earliest = start_time.strftime(time_format)
     latest = end_time.strftime(time_format)
@@ -1979,37 +1946,22 @@ def job_plots(request, pk):
         return err
 
     job_cache_timeout = get_site_content_cache_timeout()
-    job = cached_orm(
-        f"{KEY_JOB}:{pk}",
-        job_cache_timeout,
-        lambda: job_data.objects.filter(jid=pk)
-        .prefetch_related("metrics_data_set")
-        .first(),
+    job, err = _get_visible_job_or_error_response(
+        request,
+        pk,
+        lambda: job_data.objects.filter(jid=pk).prefetch_related("metrics_data_set").first(),
     )
-    if not job:
-        return Response(
-            {"error": "Job not found"},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    if not _apply_non_staff_job_visibility(job_data.objects.filter(jid=pk), request).exists():
-        return Response(
-            {"error": "Not allowed to view this job"},
-            status=status.HTTP_403_FORBIDDEN,
-        )
+    if err is not None:
+        return err
 
     plot_kind = (request.GET.get("plot") or "").strip().lower()
     zoom_mode = str(request.GET.get("zoom", "")).lower() in ("1", "true", "yes")
-    if plot_kind and plot_kind not in (
-        "summary_plot",
-        "heatmap",
-        "roofline",
-        "gpu_roofline",
-    ):
+    if plot_kind and plot_kind not in JOB_PLOT_KINDS:
         return Response(
             {
                 "error": (
                     "Invalid plot parameter. "
-                    "Use summary_plot, heatmap, roofline, or gpu_roofline."
+                    "Use {}.".format(", ".join(JOB_PLOT_KINDS))
                 )
             },
             status=status.HTTP_400_BAD_REQUEST,
@@ -2034,24 +1986,19 @@ def job_plots(request, pk):
             jt_holder["jt"] = jid_table.jid_table(job.jid)
         return jt_holder["jt"]
 
-    def _run_job_plot_fetch(plot_pair_fn, empty_reason_fallback, log_fail_action, wall_time=False):
-        """Build one (json_item, unavailable_reason) tuple from a plot_and_reason_* helper."""
+    def _run_job_plot_fetch(kind):
+        """Build one (json_item, unavailable_reason) tuple from shared plot-kind specs."""
+        spec = JOB_PLOT_KIND_SPECS[kind]
         plot_item, reason = None, None
         close_old_connections()
-        wall_t0 = time.monotonic() if wall_time else None
+        wall_t0 = time.monotonic() if spec.wall_time else None
         try:
             try:
-                plot_json, plot_reason = plot_pair_fn(_get_jt())
-                if plot_json is not None:
-                    if zoom_mode:
-                        _apply_zoom_layout_to_bokeh_model(plot_json)
-                    plot_item = json_item(plot_json)
-                else:
-                    reason = plot_reason or empty_reason_fallback
+                plot_item, reason = compute_plot_item_for_kind(_get_jt(), kind, zoom_mode)
             except Exception as e:
                 logging.getLogger(__name__).warning(
                     "Failed to %s for jid %s: %s",
-                    log_fail_action,
+                    spec.log_fail_action,
                     job.jid,
                     e,
                     exc_info=True,
@@ -2059,7 +2006,7 @@ def job_plots(request, pk):
                 reason = str(e)
             return (plot_item, reason)
         finally:
-            if wall_time:
+            if spec.wall_time:
                 logging.getLogger(__name__).debug(
                     "job_plots summary_plot jid=%s wall_s=%.3f",
                     job.jid,
@@ -2067,41 +2014,7 @@ def job_plots(request, pk):
                 )
             close_old_connections()
 
-    def _fetch_summary_plot():
-        return _run_job_plot_fetch(
-            plots.plot_and_reason_summary_from_jid_table,
-            plots.MSG_NO_METRIC_DATA,
-            "generate summary plot",
-            wall_time=True,
-        )
-
-    def _fetch_heatmap():
-        return _run_job_plot_fetch(
-            plots.plot_and_reason_from_jid_table,
-            plots.MSG_NO_HOST_MSR_DATA,
-            "generate heatmap",
-        )
-
-    def _fetch_roofline():
-        return _run_job_plot_fetch(
-            plots.plot_and_reason_roofline_from_jid_table,
-            plots.MSG_NO_ROOFLINE_DATA,
-            "generate roofline",
-        )
-
-    def _fetch_gpu_roofline():
-        return _run_job_plot_fetch(
-            plots.plot_and_reason_gpu_roofline_from_jid_table,
-            plots.MSG_NO_ROOFLINE_DATA,
-            "generate gpu roofline",
-        )
-
-    fetchers = {
-        "summary_plot": _fetch_summary_plot,
-        "heatmap": _fetch_heatmap,
-        "roofline": _fetch_roofline,
-        "gpu_roofline": _fetch_gpu_roofline,
-    }
+    fetchers = {kind: partial(_run_job_plot_fetch, kind) for kind in JOB_PLOT_KINDS}
     _job_plots_log = logging.getLogger(__name__)
 
     def _finalize_job_plot_future(key, inflight_key, future):
@@ -2143,7 +2056,7 @@ def job_plots(request, pk):
     requested_keys = (
         [plot_kind]
         if plot_kind != "all"
-        else ["summary_plot", "heatmap", "roofline", "gpu_roofline"]
+        else list(JOB_PLOT_KINDS)
     )
 
     # Cache each plot separately so clients can poll each plot independently.
@@ -2153,38 +2066,13 @@ def job_plots(request, pk):
         size_key = "zoom_v3" if zoom_mode else "normal"
         cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key, size_key)
         cached_entry = cache.get(cache_key)
-        # Back-compat refresh: older cached heatmap results used a generic
-        # unavailable reason. Recompute once to return precise diagnostics.
-        stale_generic_heatmap_reason = (
-            key == "heatmap"
-            and isinstance(cached_entry, dict)
+        spec = JOB_PLOT_KIND_SPECS[key]
+        stale_generic_reason = (
+            isinstance(cached_entry, dict)
             and cached_entry.get("plot_item") is None
-            and cached_entry.get("unavailable_reason") == plots.MSG_NO_HOST_MSR_DATA
+            and cached_entry.get("unavailable_reason") == spec.empty_fallback
         )
-        stale_generic_summary_reason = (
-            key == "summary_plot"
-            and isinstance(cached_entry, dict)
-            and cached_entry.get("plot_item") is None
-            and cached_entry.get("unavailable_reason") == plots.MSG_NO_METRIC_DATA
-        )
-        stale_generic_roofline_reason = (
-            key == "roofline"
-            and isinstance(cached_entry, dict)
-            and cached_entry.get("plot_item") is None
-            and cached_entry.get("unavailable_reason") == plots.MSG_NO_ROOFLINE_DATA
-        )
-        stale_generic_gpu_roofline_reason = (
-            key == "gpu_roofline"
-            and isinstance(cached_entry, dict)
-            and cached_entry.get("plot_item") is None
-            and cached_entry.get("unavailable_reason") == plots.MSG_NO_ROOFLINE_DATA
-        )
-        if (
-            stale_generic_summary_reason
-            or stale_generic_heatmap_reason
-            or stale_generic_roofline_reason
-            or stale_generic_gpu_roofline_reason
-        ):
+        if stale_generic_reason:
             missing_keys.append(key)
             continue
         if isinstance(cached_entry, dict):
@@ -2280,7 +2168,7 @@ def job_plots(request, pk):
             for key in requested_keys:
                 if key not in cached_results:
                     continue
-                item_key, reason_key = _JOB_PLOT_JSON_KEYS[key]
+                item_key, reason_key = JOB_PLOT_JSON_KEYS[key]
                 body[item_key] = cached_results[key]["plot_item"]
                 body[reason_key] = cached_results[key]["unavailable_reason"]
             return Response(body, status=status.HTTP_200_OK)
@@ -2339,26 +2227,16 @@ def type_detail(request, jid, type_name):
         return err
 
     site_ttl = get_site_content_cache_timeout()
-
-    job = cached_orm(
-        f"{KEY_JOB}:{jid}",
-        site_ttl,
-        lambda: job_data.objects.filter(jid=jid)
-        .only("host_list", "start_time", "end_time")
-        .first(),
+    job, err = _get_visible_job_or_error_response(
+        request,
+        jid,
+        lambda: job_data.objects.filter(jid=jid).only("host_list", "start_time", "end_time").first(),
     )
-    if not job:
-        return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
+    if err is not None:
+        return err
 
     acct_host_list = [h + "." + cfg.get_host_name_ext() for h in (job.host_list or [])]
-    start_time = job.start_time
-    end_time = job.end_time
-    if start_time.tzinfo is None:
-        start_time = timezone.make_aware(start_time, dt_timezone.utc)
-    if end_time.tzinfo is None:
-        end_time = timezone.make_aware(end_time, dt_timezone.utc)
-    start_time = start_time.astimezone(local_timezone)
-    end_time = end_time.astimezone(local_timezone)
+    start_time, end_time = _job_times_as_local(job.start_time, job.end_time)
 
     provider = jid_table.TypeDetailDataProvider(
         jid, type_name, start_time, end_time, acct_host_list

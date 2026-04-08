@@ -9,6 +9,7 @@ import {
   jobMonitorSortComparable,
   patchJobMonitorGpuRowByUsername,
 } from "../utils/job-monitor-gpu";
+import { useTableSort } from "../hooks/useTableSort";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import { tableSortAriaSort, tableSortColumnArrow } from "../utils/table-sort-a11y";
 
@@ -35,8 +36,9 @@ export default function JobMonitor() {
   const [inputDays, setInputDays] = useState("30");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [sortKey, setSortKey] = useState("failed_rate");
-  const [sortDir, setSortDir] = useState("desc"); // "asc" | "desc"
+  const { sort, onSort } = useTableSort("failed_rate", "desc", "desc");
+  const sortKey = sort.column;
+  const sortDir = sort.direction;
 
   const formatGpuValue = (value, loadingState) => {
     if (loadingState === "loading") return "Loading";
@@ -109,17 +111,6 @@ export default function JobMonitor() {
     loadData(undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleSort = (key) => {
-    setSortKey((currentKey) => {
-      if (currentKey === key) {
-        setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
-        return currentKey;
-      }
-      setSortDir("desc");
-      return key;
-    });
-  };
 
   const sortedRows = [...rows].sort((a, b) => {
     const av = jobMonitorSortComparable(a, sortKey);
@@ -200,7 +191,7 @@ export default function JobMonitor() {
                   column="username"
                   sortKey={sortKey}
                   sortDir={sortDir}
-                  onSort={handleSort}
+                  onSort={onSort}
                 >
                   User
                 </SortableTh>
@@ -208,7 +199,7 @@ export default function JobMonitor() {
                   column="total_jobs"
                   sortKey={sortKey}
                   sortDir={sortDir}
-                  onSort={handleSort}
+                  onSort={onSort}
                 >
                   Number of jobs
                 </SortableTh>
@@ -216,7 +207,7 @@ export default function JobMonitor() {
                   column="failed_jobs"
                   sortKey={sortKey}
                   sortDir={sortDir}
-                  onSort={handleSort}
+                  onSort={onSort}
                 >
                   Number of failed jobs
                 </SortableTh>
@@ -224,7 +215,7 @@ export default function JobMonitor() {
                   column="failed_rate"
                   sortKey={sortKey}
                   sortDir={sortDir}
-                  onSort={handleSort}
+                  onSort={onSort}
                 >
                   % failed
                 </SortableTh>
@@ -232,7 +223,7 @@ export default function JobMonitor() {
                   column="timedout_jobs"
                   sortKey={sortKey}
                   sortDir={sortDir}
-                  onSort={handleSort}
+                  onSort={onSort}
                 >
                   Number of timed out jobs
                 </SortableTh>
@@ -240,7 +231,7 @@ export default function JobMonitor() {
                   column="timedout_rate"
                   sortKey={sortKey}
                   sortDir={sortDir}
-                  onSort={handleSort}
+                  onSort={onSort}
                 >
                   % timed out
                 </SortableTh>
@@ -248,7 +239,7 @@ export default function JobMonitor() {
                   column="gpu_count_total"
                   sortKey={sortKey}
                   sortDir={sortDir}
-                  onSort={handleSort}
+                  onSort={onSort}
                 >
                   Total GPUs Allocated
                 </SortableTh>
@@ -256,7 +247,7 @@ export default function JobMonitor() {
                   column="gpu_active_total"
                   sortKey={sortKey}
                   sortDir={sortDir}
-                  onSort={handleSort}
+                  onSort={onSort}
                 >
                   Number of GPUs Active
                 </SortableTh>
@@ -264,7 +255,7 @@ export default function JobMonitor() {
                   column="gpu_active_percentage"
                   sortKey={sortKey}
                   sortDir={sortDir}
-                  onSort={handleSort}
+                  onSort={onSort}
                 >
                   Percentage of GPUs Active
                 </SortableTh>

@@ -3,10 +3,10 @@
 import hpcperfstats.conf_parser as cfg
 
 import numpy as np
-from hpcperfstats.analysis.gen.utils import set_linear_axes_plain_numeric
-from bokeh.plotting import figure
 from numpy import histogram, isfinite, log
 from pandas import to_numeric
+
+from .bokeh_embed import new_spa_embedded_figure
 
 local_timezone = cfg.get_local_timezone()
 
@@ -66,17 +66,14 @@ def job_hist(df, metric, label, width=600, height=400, title=None):
     if y_max < y_min:
         y_max = y_min
 
-    plot = figure(
+    plot = new_spa_embedded_figure(
         title=title if title is not None else metric,
-        toolbar_location=None,
         height=height,
         width=width,
         y_range=(y_min, y_max),
-        tools=[],
     )
     plot.xaxis.axis_label = label
     plot.yaxis.axis_label = "# jobs"
-    set_linear_axes_plain_numeric(plot)
     plot.quad(top=hist, bottom=1, left=edges[:-1], right=edges[1:])
 
     return plot

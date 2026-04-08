@@ -31,6 +31,7 @@ from hpcperfstats.analysis.metrics.live_host_sample_count import (
     live_distinct_host_time_count_expression,
 )
 from hpcperfstats.analysis.metrics.metrics import expected_job_metric_row_count
+from hpcperfstats.analysis.metrics.db_retry import run_with_db_retry
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
 from hpcperfstats.shutdown_utils import (
@@ -420,33 +421,28 @@ def update_metrics(date, rerun=False):
           jobs_chunk = None
           ready_jids = None
           try:
-            ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
-            skipped_not_ready += (len(pk_chunk) - len(ready_jids))
-            if not ready_jids:
-              continue
-            jobs_chunk = _job_refs_from_jids(ready_jids)
-            metrics_manager.run(jobs_chunk, pool=shared_pool)
-            processed += len(jobs_chunk)
-            _persist_plot_artifacts_best_effort(ready_jids)
-          except (OperationalError, DatabaseError) as exc:
-            # Drop any broken/unsynchronised connection and retry this chunk once
-            # with a fresh connection. If it still fails, let the exception bubble.
-            log_print(
-                "Database error while processing metrics chunk (size {0}) "
-                "for date {1}: {2}".format(len(pk_chunk), date, exc)
+            def _process_chunk():
+              nonlocal ready_jids, jobs_chunk, skipped_not_ready, processed
+              if ready_jids is None:
+                ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+                skipped_not_ready += (len(pk_chunk) - len(ready_jids))
+              if not ready_jids:
+                return
+              jobs_chunk = _job_refs_from_jids(ready_jids)
+              metrics_manager.run(jobs_chunk, pool=shared_pool)
+              processed += len(jobs_chunk)
+              _persist_plot_artifacts_best_effort(ready_jids)
+
+            run_with_db_retry(
+                _process_chunk,
+                attempts=2,
+                on_retry=lambda exc, _attempt: log_print(
+                    "Database error while processing metrics chunk (size {0}) "
+                    "for date {1}: {2}".format(len(pk_chunk), date, exc)
+                ),
             )
-            close_old_connections()
-            # If DB failed after readiness filtering (e.g. during run/persist), reuse
-            # computed ready_jids to avoid extra query/CPU on retry.
-            if ready_jids is None:
-              ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
-              skipped_not_ready += (len(pk_chunk) - len(ready_jids))
-            if not ready_jids:
-              continue
-            jobs_chunk = _job_refs_from_jids(ready_jids)
-            metrics_manager.run(jobs_chunk, pool=shared_pool)
-            processed += len(jobs_chunk)
-            _persist_plot_artifacts_best_effort(ready_jids)
+          except (OperationalError, DatabaseError):
+            raise
           finally:
             # Release references promptly; GC can then free memory before next chunk.
             jobs_chunk = None
@@ -475,18 +471,15 @@ def update_metrics(date, rerun=False):
         remaining = qs_after.count()
         log_print("jobs that don't have data after run (count): {0}".format(remaining))
 
-  try:
-    _run()
-  except (OperationalError, DatabaseError) as exc:
-    # Lost‑sync and similar errors require tearing down the connection and
-    # retrying the whole run once with a clean connection.
-    log_print(
-        "Database error while updating metrics for date {0}, retrying once: {1}".format(
-            date, exc
-        )
-    )
-    close_old_connections()
-    _run()
+  run_with_db_retry(
+      _run,
+      attempts=2,
+      on_retry=lambda exc, _attempt: log_print(
+          "Database error while updating metrics for date {0}, retrying once: {1}".format(
+              date, exc
+          )
+      ),
+  )
 
 
 def main(argv=None, sleep_after=True):

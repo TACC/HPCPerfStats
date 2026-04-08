@@ -278,6 +278,21 @@ def queryset_to_dataframe(qs, columns=None):
   return pd.DataFrame([model_to_dict(row) for row in data])
 
 
+def non_degenerate_y_range_for_series(series, y_range_end=None):
+  """Return (y_min, y_max) with NaN-safe non-degenerate bounds."""
+  y_min_value = series.min()
+  if y_range_end is None or pd.isna(y_range_end):
+    y_range_end = 1.1 * series.max()
+  y_range_start = y_min_value if y_min_value < 0 else 0
+  if pd.isna(y_range_end):
+    y_range_end = 0
+  if pd.isna(y_range_start):
+    y_range_start = 0
+  if y_range_end <= y_range_start:
+    y_range_end = y_range_start + 1
+  return float(y_range_start), float(y_range_end)
+
+
 def clean_dataframe(df):
   """Replace NaN and inf with empty string for display/serialization.
 

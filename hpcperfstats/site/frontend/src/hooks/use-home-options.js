@@ -1,19 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { api } from "../api";
+import { useAsyncFetch } from "./useAsyncFetch";
 
 /** Loads `/home/` JSON for search UIs (year/date lists, metrics, queues, states). */
 export function useHomeOptions() {
-  const [options, setOptions] = useState(null);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const {
+    data: options,
+    error,
+    loading,
+    run,
+  } = useAsyncFetch(() => api.getHomeOptions(), null);
 
   useEffect(() => {
-    api
-      .getHomeOptions()
-      .then(setOptions)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+    run().catch(() => null);
+  }, [run]);
 
   return { options, error, loading };
 }
