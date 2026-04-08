@@ -168,6 +168,14 @@ def invalidate_jid_derived_cache_keys(jids):
     return
   invalidate_jid_host_window_row_count_cache(jids)
   try:
+    from hpcperfstats.site.machine.models import job_data as _job_data_model
+
+    _job_data_model.objects.filter(
+        jid__in=[j for j in jids if j],
+    ).update(host_data_schema_json=None)
+  except Exception:
+    pass
+  try:
     for jid in jids:
       if not jid:
         continue

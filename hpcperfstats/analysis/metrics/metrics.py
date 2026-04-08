@@ -28,6 +28,11 @@ from hpcperfstats.analysis.gen.utils import (
 )
 from hpcperfstats.site.machine.models import job_data, metrics_data
 
+from hpcperfstats.analysis.metrics.job_detail_fsio import (
+    compute_job_detail_fsio_metric_rows,
+    fsio_job_detail_catalog,
+)
+
 try:
   from numpy import trapezoid as trapz
 except ImportError:
@@ -121,6 +126,17 @@ NO_SIMPLE_SAMPLES_MSG = (
     "No host_data samples for this metric in the job window"
 )
 METRIC_NOT_COMPUTED_YET = "Metric not computed"
+
+# Persisted with ``compute_metrics`` (ORM GPU aggregates; same definition as job_detail).
+_GPU_JOB_DETAIL_CATALOG = (
+    ("detail_gpu_active", "gpu", "count"),
+    ("detail_gpu_util_max", "gpu", "%"),
+    ("detail_gpu_util_mean", "gpu", "%"),
+    ("detail_gpu_count", "gpu", "count"),
+)
+
+NO_GPU_AGGREGATE_TELEMETRY = "No usable GPU aggregate telemetry for job detail"
+
 
 def _per_interval_rate(values, t):
   """Compute diff(values) / diff(t) without divide-by-zero.
@@ -387,13 +403,42 @@ def _jid_table_host_data_time_kwargs(base):
   return {"time__gte": time_gte, "time__lte": time_lte}
 
 
-def _host_data_metric_rows_batched(tkw, hosts, typename, events, metric_column):
+# Skip row memo when strided ``time__in`` is huge (avoid giant cache keys and RAM).
+_HOST_DATA_ROWS_MEMO_MAX_TIME_IN = 4096
+
+
+def _host_data_row_cache_key(tkw, typename, events, metric_column):
+  """Hashable key for one batched host_data fetch within a single ``compute_metrics`` pass."""
+  if not tkw:
+    return None
+  ti = tkw.get("time__in")
+  if ti is not None:
+    try:
+      n = len(ti)
+    except TypeError:
+      return None
+    if n > _HOST_DATA_ROWS_MEMO_MAX_TIME_IN:
+      return None
+    # Same ``tkw`` dict is reused across metric helpers; ``id`` ties arc vs value passes.
+    t_part = ("time__in", id(ti))
+  else:
+    t_part = ("range", tkw.get("time__gte"), tkw.get("time__lte"))
+  return (typename, metric_column, tuple(events or ()), t_part)
+
+
+def _host_data_metric_rows_batched(
+    tkw, hosts, typename, events, metric_column, rows_cache=None):
   """Fetch host_data rows for metrics bucketing; chunk ``host__in`` like jid_table."""
   from hpcperfstats.site.machine.models import host_data
 
   host_list = list(hosts)
   if not host_list:
     return []
+  cache_key = None
+  if rows_cache is not None:
+    cache_key = _host_data_row_cache_key(tkw, typename, events, metric_column)
+    if cache_key is not None and cache_key in rows_cache:
+      return rows_cache[cache_key]
   batch = max(1, int(jid_table.JID_TABLE_HOST_QUERY_BATCH))
   ev = list(events or [])
   rows = []
@@ -410,6 +455,8 @@ def _host_data_metric_rows_batched(tkw, hosts, typename, events, metric_column):
         .order_by("host", "time")
     )
     rows.extend(list(qs))
+  if rows_cache is not None and cache_key is not None:
+    rows_cache[cache_key] = rows
   return rows
 
 
@@ -508,7 +555,7 @@ class Metrics():
     }
 
     self.complex_metrics_list = [
-        'avg_freq', 'avg_ethbw', 'avg_gpuutil', 'avg_packetsize',
+        'avg_freq', 'avg_ethbw', 'avg_packetsize',
         'max_fabricbw', 'max_lnetbw', 'max_mds', 'max_packetrate',
         'max_opa_congestion_rate', 'max_numa_remote_rate',
         'max_gpu_power', 'max_node_power_est_w', 'avg_node_power_est_w',
@@ -611,6 +658,7 @@ class Metrics():
               conv=0,
               units=None,
               cache=None,
+              rows_cache=None,
               nonnegative_rate=False):
     """Aggregate arc by host and 5m time bucket via Django ORM.
 
@@ -640,7 +688,7 @@ class Metrics():
     if not tkw:
       return None
     rows = _host_data_metric_rows_batched(
-        tkw, hosts, typename, events, "arc")
+        tkw, hosts, typename, events, "arc", rows_cache=rows_cache)
     if not rows:
       if cache is not None:
         cache[cache_key] = None
@@ -684,7 +732,8 @@ class Metrics():
                      typename=None,
                      events=None,
                      conv=1.0,
-                     cache=None):
+                     cache=None,
+                     rows_cache=None):
     """Mean sampled ``value`` by host and 5m bucket (same bucketing as ``job_arc``)."""
     import pandas as pd
 
@@ -703,7 +752,7 @@ class Metrics():
     if not tkw:
       return None
     rows = _host_data_metric_rows_batched(
-        tkw, hosts, typename, events, "value")
+        tkw, hosts, typename, events, "value", rows_cache=rows_cache)
     if not rows:
       if cache is not None:
         cache[cache_key] = None
@@ -738,7 +787,7 @@ class Metrics():
       cache[cache_key] = value
     return value
 
-  def _job_arc_avg_flops(self, jt, cache=None):
+  def _job_arc_avg_flops(self, jt, cache=None, rows_cache=None):
     """GFLOP/s from amd64_pmc FLOPS, else FP_ARITH/SSE proxies on intel_*pmc3 or cpu_counter_metrics.
 
     Returns (mean_gf, typename_used) or (None, None).
@@ -750,6 +799,7 @@ class Metrics():
         conv=1e-9,
         units="GF",
         cache=cache,
+        rows_cache=rows_cache,
     )
     if v is not None:
       return v, "amd64_pmc"
@@ -761,6 +811,7 @@ class Metrics():
           conv=1e-9,
           units="GF",
           cache=cache,
+          rows_cache=rows_cache,
       )
       if v is not None:
         return v, core_typ
@@ -774,6 +825,7 @@ class Metrics():
             conv=1e-9 * weight,
             units="GF",
             cache=cache,
+            rows_cache=rows_cache,
         )
         if part is not None:
           total = part if total is None else total + part
@@ -787,12 +839,13 @@ class Metrics():
         conv=1e-9,
         units="GF",
         cache=cache,
+        rows_cache=rows_cache,
     )
     if v is not None:
       return v, "cpu_counter_metrics"
     return None, None
 
-  def _job_arc_avg_mbw(self, jt, cache=None):
+  def _job_arc_avg_mbw(self, jt, cache=None, rows_cache=None):
     """Memory bandwidth (GB/s): AMD DF MBW channels, else Intel IMC CAS sum.
 
     Returns (mean_gbw, typename_used) or (None, None).
@@ -813,6 +866,7 @@ class Metrics():
         conv=2 / (1024 ** 3),
         units="GB/s",
         cache=cache,
+        rows_cache=rows_cache,
     )
     if v is not None:
       return v, "amd64_df"
@@ -825,6 +879,7 @@ class Metrics():
           conv=cas_conv,
           units="GB/s",
           cache=cache,
+          rows_cache=rows_cache,
       )
       if v is not None:
         return v, imc_typ
@@ -836,6 +891,7 @@ class Metrics():
           conv=cas_conv,
           units="GB/s",
           cache=cache,
+          rows_cache=rows_cache,
       )
       if v is not None:
         return v, imc_typ
@@ -847,12 +903,13 @@ class Metrics():
         conv=1 / (1024 ** 3),
         units="GB/s",
         cache=cache,
+        rows_cache=rows_cache,
     )
     if v is not None:
       return v, "cpu_counter_metrics"
     return None, None
 
-  def _job_arc_avg_sharedfs_iops(self, jt, cache=None):
+  def _job_arc_avg_sharedfs_iops(self, jt, cache=None, rows_cache=None):
     """Shared filesystem IOPS from Lustre llite and NFS operation counters.
 
     Returns summed contribution from available sources and a representative type.
@@ -871,6 +928,7 @@ class Metrics():
         conv=1,
         units="iops",
         cache=cache,
+        rows_cache=rows_cache,
     )
     if llite is not None:
       total += llite
@@ -882,6 +940,7 @@ class Metrics():
         conv=1,
         units="iops",
         cache=cache,
+        rows_cache=rows_cache,
     )
     if nfs is not None:
       total += nfs
@@ -890,7 +949,7 @@ class Metrics():
       return None, None
     return total, used[0]
 
-  def _job_arc_avg_sharedfs_bw(self, jt, cache=None):
+  def _job_arc_avg_sharedfs_bw(self, jt, cache=None, rows_cache=None):
     """Shared filesystem bandwidth from Lustre llite and NFS byte counters.
 
     Returns summed contribution from available sources and a representative type.
@@ -905,6 +964,7 @@ class Metrics():
         conv=conv,
         units="MB/s",
         cache=cache,
+        rows_cache=rows_cache,
     )
     if llite is not None:
       total += llite
@@ -920,6 +980,7 @@ class Metrics():
         conv=conv,
         units="MB/s",
         cache=cache,
+        rows_cache=rows_cache,
     )
     if nfs is not None:
       total += nfs
@@ -928,7 +989,7 @@ class Metrics():
       return None, None
     return total, used[0]
 
-  def _job_arc_avg_ibbw(self, jt, cache=None):
+  def _job_arc_avg_ibbw(self, jt, cache=None, rows_cache=None):
     """Fabric bandwidth from IB/OPA, with Ethernet fallback when unavailable."""
     v = self.job_arc(
         jt,
@@ -937,6 +998,7 @@ class Metrics():
         conv=1.0 / (1024 * 1024),
         units="MB/s",
         cache=cache,
+        rows_cache=rows_cache,
         nonnegative_rate=True,
     )
     if v is not None:
@@ -948,6 +1010,7 @@ class Metrics():
         conv=1.0 / 125000,
         units="MB/s",
         cache=cache,
+        rows_cache=rows_cache,
         nonnegative_rate=True,
     )
     if v is not None:
@@ -959,6 +1022,7 @@ class Metrics():
         conv=1.0 / (1024 * 1024),
         units="MB/s",
         cache=cache,
+        rows_cache=rows_cache,
         nonnegative_rate=True,
     )
     if v is not None:
@@ -979,12 +1043,77 @@ class Metrics():
     # Job-scoped host_data via ORM (no temp table)
     with jid_table.jid_table(job.jid) as jt:
       simple_metric_cache = {}
+      host_data_rows_cache = {}
 
       job_view = _JobForMetrics(jt)
       distinct_time_count = job_view.per_host_distinct_time_sum
 
       if job_view.times.size == 0:
+        # Still persist schema + job-detail GPU/FSIO aggregates (ORM paths) for API.
+        try:
+          sch = getattr(jt, "schema", None) or {}
+          job.host_data_schema_json = dict(sch) if isinstance(sch, dict) else {}
+          job.save(update_fields=["host_data_schema_json"])
+        except Exception:
+          pass
+        from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
+            compute_job_gpu_summary_tuple,
+        )
+
+        gpu_active, gpu_max, gpu_mean, gpu_count = compute_job_gpu_summary_tuple(jt)
+        detail_values = (gpu_active, gpu_max, gpu_mean, gpu_count)
+        for i, (metric_name, row_type, units) in enumerate(_GPU_JOB_DETAIL_CATALOG):
+          val = detail_values[i]
+          if val is None:
+            results.append({
+                "jid": job,
+                "type": row_type,
+                "metric": metric_name,
+                "units": units,
+                "value": None,
+                "no_data_reason": NO_GPU_AGGREGATE_TELEMETRY,
+            })
+          else:
+            store_val = (
+                float(int(val)) if metric_name in (
+                    "detail_gpu_active", "detail_gpu_count") else float(val))
+            results.append({
+                "jid": job,
+                "type": row_type,
+                "metric": metric_name,
+                "units": units,
+                "value": store_val,
+                "no_data_reason": None,
+            })
+        avg_g_val = gpu_mean
+        if avg_g_val is None:
+          results.append({
+              "jid": job,
+              "type": "gpu",
+              "metric": "avg_gpuutil",
+              "units": "%",
+              "value": None,
+              "no_data_reason": _COMPLEX_NO_DATA_REASONS["avg_gpuutil"],
+          })
+        else:
+          results.append({
+              "jid": job,
+              "type": "gpu",
+              "metric": "avg_gpuutil",
+              "units": "%",
+              "value": float(avg_g_val),
+              "no_data_reason": None,
+          })
+        for row in compute_job_detail_fsio_metric_rows(jt):
+          results.append({"jid": job, **row})
+        done_metrics = (
+            {m for m, _, _ in _GPU_JOB_DETAIL_CATALOG}
+            | {"avg_gpuutil"}
+            | {m for m, _, _ in fsio_job_detail_catalog()}
+        )
         for entry in job_metrics_catalog_entries():
+          if entry["metric"] in done_metrics:
+            continue
           results.append({
               "jid": job,
               "type": entry["type"],
@@ -1003,29 +1132,29 @@ class Metrics():
       for metric_name, metric_obj in self.simple_metrics_list.items():
         if metric_name == "avg_flops":
           value, flops_typename = self._job_arc_avg_flops(
-              jt, cache=simple_metric_cache)
+              jt, cache=simple_metric_cache, rows_cache=host_data_rows_cache)
           row_type = flops_typename or metric_obj["typename"]
         elif metric_name == "avg_mbw":
           value, mbw_typename = self._job_arc_avg_mbw(
-              jt, cache=simple_metric_cache)
+              jt, cache=simple_metric_cache, rows_cache=host_data_rows_cache)
           row_type = mbw_typename or metric_obj["typename"]
         elif metric_name == "avg_sharedfs_iops":
           value, fs_typename = self._job_arc_avg_sharedfs_iops(
-              jt, cache=simple_metric_cache)
+              jt, cache=simple_metric_cache, rows_cache=host_data_rows_cache)
           row_type = fs_typename or metric_obj["typename"]
         elif metric_name == "avg_sharedfs_bw":
           value, fs_typename = self._job_arc_avg_sharedfs_bw(
-              jt, cache=simple_metric_cache)
+              jt, cache=simple_metric_cache, rows_cache=host_data_rows_cache)
           row_type = fs_typename or metric_obj["typename"]
         elif metric_name == "avg_ibbw":
           value, fabric_typename = self._job_arc_avg_ibbw(
-              jt, cache=simple_metric_cache)
+              jt, cache=simple_metric_cache, rows_cache=host_data_rows_cache)
           row_type = fabric_typename or metric_obj["typename"]
         elif metric_name == "avg_fabric_mb_per_gflops":
           gf, flops_typename = self._job_arc_avg_flops(
-              jt, cache=simple_metric_cache)
+              jt, cache=simple_metric_cache, rows_cache=host_data_rows_cache)
           fb, fabric_typename = self._job_arc_avg_ibbw(
-              jt, cache=simple_metric_cache)
+              jt, cache=simple_metric_cache, rows_cache=host_data_rows_cache)
           if (
               gf is not None and fb is not None
               and float(gf) > 0 and float(fb) >= 0
@@ -1048,6 +1177,7 @@ class Metrics():
                 events=["tensor_active"],
                 conv=1.0,
                 cache=simple_metric_cache,
+                rows_cache=host_data_rows_cache,
             )
             if v is not None and float(v) > 0:
               value = float(v)
@@ -1063,6 +1193,7 @@ class Metrics():
                 events=["gpu_mem_bw_bytes_rate"],
                 conv=1.0 / 1e9,
                 cache=simple_metric_cache,
+                rows_cache=host_data_rows_cache,
             )
             if v is not None and float(v) > 0:
               value = float(v)
@@ -1070,13 +1201,14 @@ class Metrics():
               break
         elif metric_name == "avg_fabric_mb_per_avg_tensor":
           fb, fabric_typename = self._job_arc_avg_ibbw(
-              jt, cache=simple_metric_cache)
+              jt, cache=simple_metric_cache, rows_cache=host_data_rows_cache)
           ts = self.job_value_mean(
               jt,
               typename="nvidia_gpu",
               events=["tensor_active"],
               conv=1.0,
               cache=simple_metric_cache,
+              rows_cache=host_data_rows_cache,
           )
           if ts is None:
             ts = self.job_value_mean(
@@ -1085,6 +1217,7 @@ class Metrics():
                 events=["tensor_active"],
                 conv=1.0,
                 cache=simple_metric_cache,
+                rows_cache=host_data_rows_cache,
             )
           if (
               fb is not None and ts is not None
@@ -1096,7 +1229,11 @@ class Metrics():
             value = None
             row_type = fabric_typename or metric_obj["typename"]
         else:
-          value = self.job_arc(jt, cache=simple_metric_cache, **metric_obj)
+          value = self.job_arc(
+              jt,
+              cache=simple_metric_cache,
+              rows_cache=host_data_rows_cache,
+              **metric_obj)
           row_type = metric_obj["typename"]
 
         if value is None:
@@ -1117,6 +1254,66 @@ class Metrics():
               "value": value,
               "no_data_reason": None,
           })
+
+      from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
+          compute_job_gpu_summary_tuple as _compute_job_gpu_summary_tuple,
+      )
+
+      gpu_active, gpu_max, gpu_mean, gpu_count = _compute_job_gpu_summary_tuple(jt)
+      detail_values = (gpu_active, gpu_max, gpu_mean, gpu_count)
+      for i, (metric_name, row_type, units) in enumerate(_GPU_JOB_DETAIL_CATALOG):
+        val = detail_values[i]
+        if val is None:
+          results.append({
+              "jid": job,
+              "type": row_type,
+              "metric": metric_name,
+              "units": units,
+              "value": None,
+              "no_data_reason": NO_GPU_AGGREGATE_TELEMETRY,
+          })
+        else:
+          if metric_name in ("detail_gpu_active", "detail_gpu_count"):
+            store_val = float(int(val))
+          else:
+            store_val = float(val)
+          results.append({
+              "jid": job,
+              "type": row_type,
+              "metric": metric_name,
+              "units": units,
+              "value": store_val,
+              "no_data_reason": None,
+          })
+      avg_g_val = gpu_mean
+      if avg_g_val is None:
+        results.append({
+            "jid": job,
+            "type": "gpu",
+            "metric": "avg_gpuutil",
+            "units": "%",
+            "value": None,
+            "no_data_reason": _COMPLEX_NO_DATA_REASONS["avg_gpuutil"],
+        })
+      else:
+        results.append({
+            "jid": job,
+            "type": "gpu",
+            "metric": "avg_gpuutil",
+            "units": "%",
+            "value": float(avg_g_val),
+            "no_data_reason": None,
+        })
+
+      for row in compute_job_detail_fsio_metric_rows(jt):
+        results.append({"jid": job, **row})
+
+      try:
+        sch = getattr(jt, "schema", None) or {}
+        job.host_data_schema_json = dict(sch) if isinstance(sch, dict) else {}
+        job.save(update_fields=["host_data_schema_json"])
+      except Exception:
+        pass
 
       u = utils(job_view)
 
@@ -1191,6 +1388,12 @@ def job_metrics_catalog_entries():
   for name in m.complex_metrics_list:
     t, u = _COMPLEX_PLACEHOLDER_TYPE_UNITS[name]
     out.append({"type": t, "metric": name, "units": u})
+  for metric, t, u in _GPU_JOB_DETAIL_CATALOG:
+    out.append({"type": t, "metric": metric, "units": u})
+  agt, agu = _COMPLEX_PLACEHOLDER_TYPE_UNITS["avg_gpuutil"]
+  out.append({"type": agt, "metric": "avg_gpuutil", "units": agu})
+  for metric, t, u in fsio_job_detail_catalog():
+    out.append({"type": t, "metric": metric, "units": u})
   return out
 
 

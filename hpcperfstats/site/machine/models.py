@@ -49,6 +49,9 @@ class job_data(models.Model):
   # (jid-scoped live check by default; legacy uses accounting FQDNs from host_list).
   # NULL until first persist.
   metrics_distinct_time_count = models.IntegerField(blank=True, null=True)
+  # Distinct host_data (type -> events) for the job window; written by update_metrics.
+  # API uses this before falling back to live jid_table.schema queries.
+  host_data_schema_json = models.JSONField(blank=True, null=True)
 
   class Meta:
     db_table = 'job_data'

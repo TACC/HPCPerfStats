@@ -29,6 +29,8 @@ def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
   job_mock.username = "u1"
   job_mock.start_time = t0
   job_mock.end_time = t0
+  # Empty metrics so job_detail falls back to host_data aggregate cache path.
+  job_mock.metrics_data_set.all.return_value = []
 
   def cached_se(key, timeout, fn):
     if key.startswith(f"{cu.KEY_JOB}:"):
@@ -205,6 +207,95 @@ def test_gpu_agg_rows_for_job_batches_host__in():
       chunk_sizes.append(len(kwargs.get("host__in") or []))
       return Qs()
 
-  with patch("hpcperfstats.site.machine.api.host_data.objects", Mgr()):
+  with patch(
+      "hpcperfstats.analysis.metrics.gpu_job_detail_summary.host_data.objects",
+      Mgr(),
+  ):
     api._gpu_agg_rows_for_job(j)
   assert chunk_sizes == [JID_TABLE_HOST_QUERY_BATCH, 2]
+
+
+def test_job_detail_gpu_from_metrics_data_skips_host_data_cache():
+  """When all four detail_gpu_* rows exist, do not call host_data GPU cache path."""
+  from hpcperfstats.site.machine import api
+
+  jid = "test-gpu-metrics-jid"
+  factory = RequestFactory()
+  request = factory.get(f"/api/jobs/{jid}/")
+  request.session = {"username": "u1", "is_staff": False}
+
+  class _MRow:
+    def __init__(self, metric, value):
+      self.metric = metric
+      self.value = value
+
+  gpu_rows = [
+      _MRow("detail_gpu_active", 2.0),
+      _MRow("detail_gpu_util_max", 99.5),
+      _MRow("detail_gpu_util_mean", 45.25),
+      _MRow("detail_gpu_count", 4.0),
+  ]
+
+  mock_j = MagicMock()
+  mock_j.acct_host_list = ["n1.example.com"]
+  mock_j.schema = {}
+  mock_j.get_llite_delta_by_event.return_value = MagicMock(empty=True)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  mock_j.start_time = t0
+  mock_j.end_time = t0
+
+  job_mock = MagicMock()
+  job_mock.jid = jid
+  job_mock.username = "u1"
+  job_mock.start_time = t0
+  job_mock.end_time = t0
+  job_mock.metrics_data_set.all.return_value = gpu_rows
+
+  gpu_cache_calls = []
+
+  def cached_se(key, timeout, fn):
+    if key.startswith(f"{cu.KEY_JOB}:"):
+      return job_mock
+    if key.startswith(f"{cu.KEY_GPU_AGG}:") or key.startswith(
+        f"{cu.KEY_GPU_COUNT}:"
+    ):
+      gpu_cache_calls.append(key)
+      return fn()
+    if key.startswith(f"{cu.KEY_PROC_LIST}:"):
+      return []
+    return fn()
+
+  vis = MagicMock()
+  vis.exists.return_value = True
+  ctx = (
+      patch.object(api, "_require_auth", return_value=None),
+      patch.object(
+          api, "_apply_non_staff_job_visibility", return_value=vis
+      ),
+      patch.object(api, "get_site_content_cache_timeout", return_value=3600),
+      patch.object(api.jid_table, "jid_table", return_value=mock_j),
+      patch.object(api, "build_job_metrics_display_list", return_value=[]),
+      patch.object(api.cfg, "get_xalt_user", return_value=""),
+      patch.object(api.cfg, "get_host_name_ext", return_value=""),
+      patch.object(api, "cached_orm", side_effect=cached_se),
+      patch.object(
+          api,
+          "JobListSerializer",
+          return_value=MagicMock(data={"jid": jid, "username": "u1"}),
+      ),
+      patch.object(api, "local_timezone", timezone.utc),
+  )
+
+  with ThreadPoolExecutor(max_workers=4) as executor:
+    with ExitStack() as stack:
+      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
+      for cm in ctx:
+        stack.enter_context(cm)
+      response = api.job_detail(request, jid)
+
+  assert response.status_code == 200
+  assert response.data["gpu_active"] == 2
+  assert response.data["gpu_utilization_max"] == 99.5
+  assert response.data["gpu_utilization_mean"] == 45.25
+  assert response.data["gpu_count"] == 4
+  assert gpu_cache_calls == []

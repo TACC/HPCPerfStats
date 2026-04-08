@@ -63,6 +63,8 @@ from .cache_utils import (
     TIMEOUT_ADMIN_STATS,
 )
 from .job_plot_artifacts import (
+    JOB_PLOT_LAYOUT_NORMAL,
+    JOB_PLOT_LAYOUT_ZOOM_V3,
     compute_plot_input_fingerprint,
     get_job_plot_redis_max_bytes,
     get_live_distinct_time_count_for_jid,
@@ -177,34 +179,76 @@ def _get_small_executor():
 
 
 def _gpu_agg_rows_for_job(j):
-    """host_data GPU util rows for job window; chunked host__in (Timescale-friendly)."""
-    from django.db.models import Avg, Count, Max
+    """host_data GPU util rows for job window; delegates to metrics GPU helper."""
+    from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
+        gpu_agg_rows_for_job_window,
+    )
 
-    from hpcperfstats.analysis.gen import jid_table as _jid_table_mod
+    return gpu_agg_rows_for_job_window(j)
 
-    hosts = j.acct_host_list or []
-    out = []
-    for chunk in _jid_table_mod._iter_acct_host_batches(hosts):
-        out.extend(
-            host_data.objects.filter(
-                type="nvidia_gpu",
-                event__in=["gpu_util", "utilization"],
-                time__gte=j.start_time,
-                time__lte=j.end_time,
-                host__in=chunk,
-            )
-            .values("host", "dev", "event")
-            .annotate(
-                cnt=Count("time"),
-                vmax=Max("value"),
-                vmean=Avg("value"),
-            )
+
+_DETAIL_GPU_METRIC_NAMES = (
+    "detail_gpu_active",
+    "detail_gpu_util_max",
+    "detail_gpu_util_mean",
+    "detail_gpu_count",
+)
+
+
+def _gpu_detail_tuple_from_metrics(job):
+    """Return (active, max%, mean%, count) from metrics_data if all four rows exist with values.
+
+    Jobs not yet processed by update_metrics fall back to host_data in _fetch_gpu.
+    """
+    by_m = {o.metric: o for o in job.metrics_data_set.all()}
+    rows = []
+    for name in _DETAIL_GPU_METRIC_NAMES:
+        r = by_m.get(name)
+        if r is None or r.value is None:
+            return None
+        rows.append(r)
+    try:
+        return (
+            int(round(float(rows[0].value))),
+            float(rows[1].value),
+            float(rows[2].value),
+            int(round(float(rows[3].value))),
         )
-    return out
+    except (TypeError, ValueError):
+        return None
+
+
+def _fsio_dict_from_metrics(job):
+    """Return job_detail-shaped fsio dict from metrics_data, or None if incomplete."""
+    by_m = {o.metric: o for o in job.metrics_data_set.all()}
+    lr = by_m.get("detail_fsio_llite_read_mb")
+    lw = by_m.get("detail_fsio_llite_write_mb")
+    if (
+        lr is not None
+        and lw is not None
+        and lr.value is not None
+        and lw.value is not None
+    ):
+        return {"llite": [float(lr.value), float(lw.value)]}
+    nr = by_m.get("detail_fsio_nfs_read_mb")
+    nw = by_m.get("detail_fsio_nfs_write_mb")
+    if (
+        nr is not None
+        and nw is not None
+        and nr.value is not None
+        and nw.value is not None
+    ):
+        return {"nfs": [float(nr.value), float(nw.value)]}
+    return None
 
 
 def _compute_job_gpu_stats(job, j, job_cache_timeout):
-    """Compute per-job GPU stats using the same logic as job_detail."""
+    """Compute per-job GPU stats (host_data); used when metrics_data rows are missing."""
+    from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
+        gpu_count_total_for_job_window,
+        reduce_gpu_agg_to_util_stats,
+    )
+
     gpu_active, gpu_max, gpu_mean, gpu_count_total = None, None, None, None
     close_old_connections()
     try:
@@ -214,105 +258,15 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout):
                 job_cache_timeout,
                 lambda: list(_gpu_agg_rows_for_job(j)),
             )
-            # Backwards compatibility: cached_orm might return a single
-            # aggregate dict (old shape) or a list of per-event rows.
-            if isinstance(agg, dict):
-                row = agg
-                cnt = int(row.get("cnt") or 0)
-                if cnt > 2:
-                    vmax = row.get("vmax")
-                    if vmax is not None:
-                        gpu_max = float(vmax)
-                        vmean = row.get("vmean")
-                        gpu_mean = float(vmean) if vmean is not None else None
-                        if not isnan(gpu_max):
-                            gpu_active = ceil(gpu_max / 100.0)
-            else:
-                rows = [r for r in (agg or []) if isinstance(r, dict)]
-                per_device = {}
-                for r in rows:
-                    device_key = (str(r.get("host") or ""), str(r.get("dev") or ""))
-                    event = str(r.get("event") or "")
-                    slot = per_device.setdefault(device_key, {})
-                    slot[event] = r
-
-                selected_rows = []
-                for slot in per_device.values():
-                    row = slot.get("gpu_util") or slot.get("utilization")
-                    if row:
-                        selected_rows.append(row)
-
-                valid_rows = []
-                for row in selected_rows:
-                    cnt = int(row.get("cnt") or 0)
-                    vmax = row.get("vmax")
-                    vmean = row.get("vmean")
-                    if cnt <= 2 or vmax is None:
-                        continue
-                    try:
-                        vmax_f = float(vmax)
-                        vmean_f = float(vmean) if vmean is not None else None
-                    except (TypeError, ValueError):
-                        continue
-                    valid_rows.append((cnt, vmax_f, vmean_f))
-
-                if valid_rows:
-                    # Host-aware sums across valid device rows.
-                    gpu_max = sum(vmax_f for _cnt, vmax_f, _vmean_f in valid_rows)
-                    mean_values = [
-                        vmean_f
-                        for _cnt, _vmax_f, vmean_f in valid_rows
-                        if vmean_f is not None
-                    ]
-                    if mean_values:
-                        gpu_mean = sum(mean_values)
-                    gpu_active = sum(1 for _cnt, vmax_f, _vmean_f in valid_rows if vmax_f > 0.0)
+            gpu_active, gpu_max, gpu_mean = reduce_gpu_agg_to_util_stats(agg)
         except Exception:
             pass
-
-        def _gpu_count_fn():
-            """Sum over job hosts of max(gpu_count) in window (nvidia_gpu or amd_gpu)."""
-            from hpcperfstats.analysis.gen import jid_table as _jid_table_mod
-
-            hosts = j.acct_host_list or []
-            if not hosts:
-                return None
-            for gpu_typ in ("nvidia_gpu", "amd_gpu"):
-                rows = []
-                for chunk in _jid_table_mod._iter_acct_host_batches(hosts):
-                    rows.extend(
-                        list(
-                            host_data.objects.filter(
-                                type=gpu_typ,
-                                event="gpu_count",
-                                time__gte=j.start_time,
-                                time__lte=j.end_time,
-                                host__in=chunk,
-                            )
-                            .values("host")
-                            .annotate(mv=Max("value"))
-                        )
-                    )
-                if not rows:
-                    continue
-                total = 0
-                for r in rows:
-                    v = r.get("mv")
-                    if v is None:
-                        continue
-                    try:
-                        total += int(round(float(v)))
-                    except (TypeError, ValueError):
-                        continue
-                if total > 0:
-                    return total
-            return None
 
         try:
             gpu_count_total = cached_orm(
                 f"{KEY_GPU_COUNT}:{job.jid}",
                 job_cache_timeout,
-                _gpu_count_fn,
+                lambda: gpu_count_total_for_job_window(j),
             )
         except Exception:
             gpu_count_total = None
@@ -1752,7 +1706,10 @@ def job_detail(request, pk):
     light_mode = str(request.GET.get("light", "")).lower() in ("1", "true", "yes")
 
     def _fetch_gpu():
-        # SQL Count/Max/Avg avoids loading every utilization row (was timing out).
+        tup = _gpu_detail_tuple_from_metrics(job)
+        if tup is not None:
+            return tup
+        # Backfill / fresh jobs: same ORM aggregates as metrics (cached per jid).
         return _compute_job_gpu_stats(job, j, job_cache_timeout)
 
     def _fetch_xalt():
@@ -1822,9 +1779,13 @@ def job_detail(request, pk):
             close_old_connections()
 
     def _fetch_fsio():
-        fsio = {}
+        """Prefer metrics_data detail_fsio_*; else host_data via jid_table (same as pre-metrics API)."""
         close_old_connections()
         try:
+            fsio_m = _fsio_dict_from_metrics(job)
+            if fsio_m is not None:
+                return fsio_m
+            fsio = {}
             try:
                 llite_df = j.get_llite_delta_by_event()
                 if not llite_df.empty and "delta_sum" in llite_df.columns:
@@ -1849,8 +1810,12 @@ def job_detail(request, pk):
             close_old_connections()
 
     def _fetch_schema():
+        """Prefer host_data_schema_json from update_metrics; else live jid_table.schema."""
         close_old_connections()
         try:
+            js = getattr(job, "host_data_schema_json", None)
+            if isinstance(js, dict) and js:
+                return js
             try:
                 return j.schema
             except Exception:
@@ -2058,7 +2023,16 @@ def job_plots(request, pk):
         and str(request.GET.get("progressive", "")).lower() in ("1", "true", "yes")
     )
 
-    j = jid_table.jid_table(job.jid)
+    live_dc = get_live_distinct_time_count_for_jid(job.jid)
+    plot_fingerprint = compute_plot_input_fingerprint(job, live_dc)
+    l2_layout = JOB_PLOT_LAYOUT_ZOOM_V3 if zoom_mode else JOB_PLOT_LAYOUT_NORMAL
+
+    jt_holder = {"jt": None}
+
+    def _get_jt():
+        if jt_holder["jt"] is None:
+            jt_holder["jt"] = jid_table.jid_table(job.jid)
+        return jt_holder["jt"]
 
     def _run_job_plot_fetch(plot_pair_fn, empty_reason_fallback, log_fail_action, wall_time=False):
         """Build one (json_item, unavailable_reason) tuple from a plot_and_reason_* helper."""
@@ -2067,7 +2041,7 @@ def job_plots(request, pk):
         wall_t0 = time.monotonic() if wall_time else None
         try:
             try:
-                plot_json, plot_reason = plot_pair_fn(j)
+                plot_json, plot_reason = plot_pair_fn(_get_jt())
                 if plot_json is not None:
                     if zoom_mode:
                         _apply_zoom_layout_to_bokeh_model(plot_json)
@@ -2215,8 +2189,31 @@ def job_plots(request, pk):
             continue
         if isinstance(cached_entry, dict):
             cached_results[key] = cached_entry
-        else:
-            missing_keys.append(key)
+            continue
+        l2_entry = load_cached_job_plot_entry(
+            job.jid, key, l2_layout, plot_fingerprint
+        )
+        if l2_entry is not None and isinstance(l2_entry.get("plot_item"), dict):
+            cached_results[key] = {
+                "plot_item": l2_entry["plot_item"],
+                "unavailable_reason": l2_entry.get("unavailable_reason"),
+            }
+            try:
+                cache.set(cache_key, cached_results[key], timeout=job_cache_timeout)
+            except Exception:
+                pass
+            if cached_results[key]["plot_item"] is not None:
+                try:
+                    data_cache_key = make_cache_key("JOB_PLOTS_DATA", job.jid, key)
+                    cache.set(
+                        data_cache_key,
+                        cached_results[key]["plot_item"],
+                        timeout=job_cache_timeout,
+                    )
+                except Exception:
+                    pass
+            continue
+        missing_keys.append(key)
 
     # Reuse cached plot data payload (size-independent) to build zoom plot JSON
     # without recomputing expensive aggregates.
@@ -2873,29 +2870,43 @@ def job_monitor_gpu_for_user(request):
     def _compute_user_gpu():
         gpu_count_total = None
         gpu_active_total = None
-        # Do not use .iterator() here: it holds a server-side cursor on the default
-        # connection while jid_table() runs nested queries, which breaks the cursor
-        # (OperationalError: the connection is closed). Evaluate the window first.
-        jobs_for_gpu = list(
-            job_data.objects.filter(end_time__gte=start_time, username=username).only(
-                "jid", "username", "start_time", "end_time", "host_list"
-            )
+        md_base = metrics_data.objects.filter(
+            jid__end_time__gte=start_time,
+            jid__username=username,
         )
-        for job in jobs_for_gpu:
-            try:
-                w_start, w_end, acct = jid_table.gpu_acct_window_for_job_data(job)
-                j = SimpleNamespace(
-                    start_time=w_start, end_time=w_end, acct_host_list=acct
+        if md_base.filter(metric="detail_gpu_count").exists():
+            ag_a = md_base.filter(
+                metric="detail_gpu_active", value__isnull=False
+            ).aggregate(s=Sum("value"))
+            ag_c = md_base.filter(
+                metric="detail_gpu_count", value__isnull=False
+            ).aggregate(s=Sum("value"))
+            if ag_a["s"] is not None:
+                gpu_active_total = int(ag_a["s"])
+            if ag_c["s"] is not None:
+                gpu_count_total = int(ag_c["s"])
+        else:
+            # Pre-backfill: no persisted GPU detail rows for this user/window.
+            jobs_for_gpu = list(
+                job_data.objects.filter(end_time__gte=start_time, username=username).only(
+                    "jid", "username", "start_time", "end_time", "host_list"
                 )
-                gpu_active, _gpu_max, _gpu_mean, per_job_gpu_count = _compute_job_gpu_stats(
-                    job, j, site_ttl
-                )
-            except Exception:
-                continue
-            if per_job_gpu_count is not None:
-                gpu_count_total = (gpu_count_total or 0) + int(per_job_gpu_count)
-            if gpu_active is not None:
-                gpu_active_total = (gpu_active_total or 0) + int(gpu_active)
+            )
+            for job in jobs_for_gpu:
+                try:
+                    w_start, w_end, acct = jid_table.gpu_acct_window_for_job_data(job)
+                    j = SimpleNamespace(
+                        start_time=w_start, end_time=w_end, acct_host_list=acct
+                    )
+                    gpu_active, _gpu_max, _gpu_mean, per_job_gpu_count = (
+                        _compute_job_gpu_stats(job, j, site_ttl)
+                    )
+                except Exception:
+                    continue
+                if per_job_gpu_count is not None:
+                    gpu_count_total = (gpu_count_total or 0) + int(per_job_gpu_count)
+                if gpu_active is not None:
+                    gpu_active_total = (gpu_active_total or 0) + int(gpu_active)
         gpu_active_percentage = None
         if (
             gpu_count_total is not None

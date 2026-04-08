@@ -845,6 +845,34 @@ def test_host_data_metric_rows_batched_splits_host__in():
 
 
 @pytest.mark.django_db(databases=[])
+def test_host_data_metric_rows_batched_rows_cache_reuses_fetch():
+  """Same (tkw, typename, events, column) in one compute_metrics pass hits cache."""
+  chunk_passes = []
+
+  class Qs:
+    def values(self, *cols):
+      return self
+
+    def order_by(self, *args):
+      chunk_passes.append(1)
+      return [{"host": "h1", "time": 1, "arc": 2.0}]
+
+  class Mgr:
+    def filter(self, **kwargs):
+      return Qs()
+
+  tkw = {"time__gte": 1, "time__lte": 2}
+  cache = {}
+  with patch("hpcperfstats.site.machine.models.host_data.objects", Mgr()):
+    r1 = _host_data_metric_rows_batched(
+        tkw, ["h1"], "net", ["rx_bytes"], "arc", rows_cache=cache)
+    r2 = _host_data_metric_rows_batched(
+        tkw, ["h1"], "net", ["rx_bytes"], "arc", rows_cache=cache)
+  assert r1 == r2
+  assert len(chunk_passes) == 1
+
+
+@pytest.mark.django_db(databases=[])
 def test_job_arc_issues_multiple_queries_when_many_hosts(monkeypatch):
   from types import SimpleNamespace
 

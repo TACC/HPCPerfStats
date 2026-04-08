@@ -231,6 +231,62 @@ class TestJobMonitorGpuForUserApi:
       response = api.job_monitor_gpu_for_user(request)
     assert response.status_code == 400
 
+  def test_sums_detail_gpu_metrics_when_rows_exist(self):
+    """Rollup uses metrics_data sums when any detail_gpu_count row exists in window."""
+    from hpcperfstats.site.machine import api
+
+    class R0:
+      def filter(self, **kw):
+        if kw.get("metric") == "detail_gpu_count" and "value__isnull" not in kw:
+
+          class R1:
+            def exists(self):
+              return True
+
+          return R1()
+        if (
+            kw.get("metric") == "detail_gpu_active"
+            and kw.get("value__isnull") is False
+        ):
+
+          class Ra:
+            def aggregate(self, **_):
+              return {"s": 3.0}
+
+          return Ra()
+        if (
+            kw.get("metric") == "detail_gpu_count"
+            and kw.get("value__isnull") is False
+        ):
+
+          class Rc:
+            def aggregate(self, **_):
+              return {"s": 12.0}
+
+          return Rc()
+        return R0()
+
+    class _MDObjects:
+      def filter(self, **_kwargs):
+        return R0()
+
+    class MD:
+      objects = _MDObjects()
+
+    factory = APIRequestFactory()
+    request = factory.get("/api/job_monitor/gpu/", {"username": "alice"})
+    with patch.object(api, "_require_staff", return_value=None), patch.object(
+        api, "get_site_content_cache_timeout", return_value=60
+    ), patch.object(
+        api, "cached_orm", side_effect=lambda _k, _t, fn: fn()
+    ), patch.object(api, "metrics_data", MD):
+      response = api.job_monitor_gpu_for_user(request)
+    assert response.status_code == 200
+    assert response.data["gpu_active_total"] == 3
+    assert response.data["gpu_count_total"] == 12
+    assert response.data["gpu_active_percentage"] == 25.0
+    assert response.data["has_data"] is True
+
 
 class TestSacctIngestApi:
   """sacct_ingest staff gate and body/date validation."""

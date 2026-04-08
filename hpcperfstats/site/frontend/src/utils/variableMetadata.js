@@ -150,11 +150,59 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
     researcherUse:
       "TCP/IP-heavy paths: object storage, HTTP, or distributed deep learning without RoCE.",
   },
+  detail_gpu_active: {
+    description:
+      "Count of GPU devices with utilization above zero in the job window (from SQL aggregates on nvidia_gpu gpu_util / utilization).",
+    researcherUse:
+      "Quick read on how many devices showed non-idle utilization during the job.",
+  },
+  detail_gpu_util_max: {
+    description:
+      "Sum of per-device peak GPU utilization (%) in the job window (same aggregate as job detail).",
+    researcherUse:
+      "Upper-bound style signal when comparing against device counts; not an average across devices.",
+  },
+  detail_gpu_util_mean: {
+    description:
+      "Sum of per-device average GPU utilization (%) in the job window (same aggregate as job detail).",
+    researcherUse:
+      "Matches the job-detail GPU mean % and the catalog metric GPU % (avg_gpuutil).",
+  },
+  detail_gpu_count: {
+    description:
+      "Total GPU count for the job from gpu_count telemetry (nvidia_gpu preferred, else amd_gpu).",
+    researcherUse:
+      "Hardware capacity context for utilization and activity counts.",
+  },
+  detail_fsio_llite_read_mb: {
+    description:
+      "Total Lustre llite read_bytes delta over the job window (MB), for job-detail FSIO (same path as live host_data when metrics are missing).",
+    researcherUse:
+      "Parallel file read volume on Lustre when llite telemetry is present.",
+  },
+  detail_fsio_llite_write_mb: {
+    description:
+      "Total Lustre llite write_bytes delta over the job window (MB), for job-detail FSIO.",
+    researcherUse:
+      "Parallel file write volume on Lustre when llite telemetry is present.",
+  },
+  detail_fsio_nfs_read_mb: {
+    description:
+      "Total NFS client read byte deltas (aggregated counter families) over the job window (MB), used when Lustre llite is absent.",
+    researcherUse:
+      "NFS-heavy workflows when Lustre llite is not available.",
+  },
+  detail_fsio_nfs_write_mb: {
+    description:
+      "Total NFS client write byte deltas over the job window (MB), used when Lustre llite is absent.",
+    researcherUse:
+      "NFS-heavy workflows when Lustre llite is not available.",
+  },
   avg_gpuutil: {
     description:
-      "Average GPU utilization percentage from sampled GPU utilization telemetry over the job.",
+      "GPU utilization % for the job: same value as detail GPU mean % (SQL aggregate over per-device averages, not a trimmed time-series mean).",
     researcherUse:
-      "Distinguish idle GPUs (launcher bugs, CPU preprocessing bottleneck) from sustained accelerator work.",
+      "Distinguish idle GPUs (launcher bugs, CPU preprocessing bottleneck) from sustained accelerator work; aligned with job-detail GPU mean.",
   },
   avg_packetsize: {
     description:

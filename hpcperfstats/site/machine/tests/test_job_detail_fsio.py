@@ -5,9 +5,12 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
 from django.test import RequestFactory
 
 from hpcperfstats.site.machine import cache_utils as cu
+
+pytestmark = pytest.mark.django_db(databases=[])
 
 
 def _patch_job_detail_fsio_context(api_module, jid, mock_j):
@@ -18,6 +21,8 @@ def _patch_job_detail_fsio_context(api_module, jid, mock_j):
   t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
   job_mock.start_time = t0
   job_mock.end_time = t0
+  job_mock.metrics_data_set.all.return_value = []
+  job_mock.host_data_schema_json = None
 
   def cached_se(key, timeout, fn):
     if key.startswith(f"{cu.KEY_JOB}:"):
@@ -120,3 +125,142 @@ def test_job_detail_fsio_prefers_llite_over_nfs():
   assert response.data["fsio"]["llite"][0] == 1.0
   assert response.data["fsio"]["llite"][1] == 2.0
   mock_j.get_nfs_delta_totals_mb.assert_not_called()
+
+
+def test_job_detail_fsio_from_metrics_skips_host_queries():
+  """When detail_fsio_* metrics rows exist, do not query llite/NFS from host_data."""
+  from hpcperfstats.site.machine import api
+
+  jid = "test-fsio-metrics-1"
+  factory = RequestFactory()
+  request = factory.get(f"/api/jobs/{jid}/")
+  request.session = {"username": "u1", "is_staff": False}
+
+  class _R:
+    def __init__(self, metric, value):
+      self.metric = metric
+      self.value = value
+
+  job_mock = MagicMock()
+  job_mock.jid = jid
+  job_mock.username = "u1"
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  job_mock.start_time = t0
+  job_mock.end_time = t0
+  job_mock.metrics_data_set.all.return_value = [
+      _R("detail_fsio_llite_read_mb", 9.0),
+      _R("detail_fsio_llite_write_mb", 1.0),
+  ]
+  job_mock.host_data_schema_json = None
+
+  mock_j = MagicMock()
+  mock_j.acct_host_list = ["n1.example.com"]
+  mock_j.schema = {}
+  mock_j.start_time = t0
+  mock_j.end_time = t0
+
+  def cached_se(key, timeout, fn):
+    if key.startswith(f"{cu.KEY_JOB}:"):
+      return job_mock
+    if key.startswith(f"{cu.KEY_GPU_AGG}:"):
+      return None
+    if key.startswith(f"{cu.KEY_GPU_COUNT}:"):
+      return None
+    if key.startswith(f"{cu.KEY_PROC_LIST}:"):
+      return []
+    return fn()
+
+  vis = MagicMock()
+  vis.exists.return_value = True
+  ctx = (
+      patch.object(api, "_require_auth", return_value=None),
+      patch.object(api, "_apply_non_staff_job_visibility", return_value=vis),
+      patch.object(api, "get_site_content_cache_timeout", return_value=3600),
+      patch.object(api.jid_table, "jid_table", return_value=mock_j),
+      patch.object(api, "build_job_metrics_display_list", return_value=[]),
+      patch.object(api.cfg, "get_xalt_user", return_value=""),
+      patch.object(api.cfg, "get_host_name_ext", return_value="example.com"),
+      patch.object(api, "cached_orm", side_effect=cached_se),
+      patch.object(
+          api,
+          "JobListSerializer",
+          return_value=MagicMock(data={"jid": jid, "username": "u1"}),
+      ),
+      patch.object(api, "local_timezone", timezone.utc),
+  )
+
+  with ThreadPoolExecutor(max_workers=4) as executor:
+    with ExitStack() as stack:
+      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
+      for cm in ctx:
+        stack.enter_context(cm)
+      response = api.job_detail(request, jid)
+
+  assert response.status_code == 200
+  assert response.data["fsio"] == {"llite": [9.0, 1.0]}
+  mock_j.get_llite_delta_by_event.assert_not_called()
+  mock_j.get_nfs_delta_totals_mb.assert_not_called()
+
+
+def test_job_detail_schema_prefers_host_data_schema_json():
+  from hpcperfstats.site.machine import api
+
+  jid = "test-schema-json-1"
+  factory = RequestFactory()
+  request = factory.get(f"/api/jobs/{jid}/")
+  request.session = {"username": "u1", "is_staff": False}
+
+  job_mock = MagicMock()
+  job_mock.jid = jid
+  job_mock.username = "u1"
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  job_mock.start_time = t0
+  job_mock.end_time = t0
+  job_mock.metrics_data_set.all.return_value = []
+  job_mock.host_data_schema_json = {"cpu": ["user", "system"]}
+
+  mock_j = MagicMock()
+  mock_j.acct_host_list = ["n1.example.com"]
+  mock_j.schema = {"amd64_pmc": ["FLOPS"]}
+  mock_j.start_time = t0
+  mock_j.end_time = t0
+
+  def cached_se(key, timeout, fn):
+    if key.startswith(f"{cu.KEY_JOB}:"):
+      return job_mock
+    if key.startswith(f"{cu.KEY_GPU_AGG}:"):
+      return None
+    if key.startswith(f"{cu.KEY_GPU_COUNT}:"):
+      return None
+    if key.startswith(f"{cu.KEY_PROC_LIST}:"):
+      return []
+    return fn()
+
+  vis = MagicMock()
+  vis.exists.return_value = True
+  ctx = (
+      patch.object(api, "_require_auth", return_value=None),
+      patch.object(api, "_apply_non_staff_job_visibility", return_value=vis),
+      patch.object(api, "get_site_content_cache_timeout", return_value=3600),
+      patch.object(api.jid_table, "jid_table", return_value=mock_j),
+      patch.object(api, "build_job_metrics_display_list", return_value=[]),
+      patch.object(api.cfg, "get_xalt_user", return_value=""),
+      patch.object(api.cfg, "get_host_name_ext", return_value="example.com"),
+      patch.object(api, "cached_orm", side_effect=cached_se),
+      patch.object(
+          api,
+          "JobListSerializer",
+          return_value=MagicMock(data={"jid": jid, "username": "u1"}),
+      ),
+      patch.object(api, "local_timezone", timezone.utc),
+  )
+
+  with ThreadPoolExecutor(max_workers=4) as executor:
+    with ExitStack() as stack:
+      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
+      for cm in ctx:
+        stack.enter_context(cm)
+      response = api.job_detail(request, jid)
+
+  assert response.status_code == 200
+  assert response.data["schema"] == {"cpu": ["user", "system"]}

@@ -62,6 +62,10 @@ describe("getDescriptionForVariable", () => {
     expect(getDescriptionForVariable("avg_sharedfs_iops")).toMatch(
       /Shared File System section/i,
     );
+    expect(getDescriptionForVariable("detail_fsio_llite_read_mb")).toMatch(
+      /Lustre llite/i,
+    );
+    expect(getDescriptionForVariable("detail_fsio_nfs_read_mb")).toMatch(/NFS/i);
   });
 
   it("documents metrics_distinct_time_count for staff Sample Count help", () => {
