@@ -1,0 +1,40 @@
+---
+description: Keep pipeline endpoint Playwright matrix synced with Django routes
+alwaysApply: true
+---
+
+# Pipeline Endpoint Matrix Drift Guard
+
+When changing Django URL routes, API endpoint behavior, or route-level auth/status
+contracts used by pipeline endpoint smoke tests, update:
+- `HPCPerfStats/hpcperfstats/tests/urlconf_route_catalog.py`
+- `HPCPerfStats/tests/pipeline_e2e/test_all_endpoints_browser.py`
+- `HPCPerfStats/hpcperfstats/tests/test_endpoint_route_snapshot.py`
+in the same task.
+
+## Trigger conditions
+- New/removed/renamed URL patterns in root URLconf or included API URLconfs.
+- Path converter changes (`<str:...>`, `<path:...>`, query parameter requirements).
+- Status-band or content-type contract changes for existing routes.
+- Route-level auth/session/CSRF changes that affect GET/POST behavior.
+
+## Required actions
+- Keep `EXPECTED_ROUTE_TEMPLATES` as the canonical route snapshot.
+- Keep concrete route expansion (`build_pipeline_http_endpoint_specs`) covering
+  every template with representative converter/query values.
+- Keep Playwright checks aligned:
+  - `page.goto` checks for HTML/redirect routes,
+  - `APIRequestContext` checks for JSON/API routes,
+  - explicit status-band assertions and content-type-band assertions.
+- Ensure mutating endpoints that need CSRF/session continue to be exercised with
+  proper request setup.
+
+## Verification
+- Run:
+  - `hpcperfstats/tests/test_endpoint_route_snapshot.py`
+  - `tests/pipeline_e2e/test_all_endpoints_browser.py` (compose workflow/gated env)
+- A route change is not complete until the snapshot and matrix tests both pass.
+
+## Documentation sync
+- If route-matrix workflow or prerequisites change, update `HPCPerfStats/TESTING.md`
+  in the same task.

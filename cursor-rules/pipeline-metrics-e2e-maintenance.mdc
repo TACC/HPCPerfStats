@@ -1,0 +1,40 @@
+---
+description: Keep pipeline metrics E2E aligned with metrics and ingest changes
+alwaysApply: true
+---
+
+# Pipeline Metrics E2E Maintenance
+
+When changing metrics behavior, metric catalog entries, or ingest payload/typing
+that can affect derived metrics, update:
+- `HPCPerfStats/tests/pipeline_e2e/test_full_ingest_pipeline.py`
+- `HPCPerfStats/tests/pipeline_e2e/monitor_payloads.py`
+in the same task.
+
+## Trigger conditions
+- Changes under `hpcperfstats/analysis/metrics/` (especially `metrics.py`, `update_metrics.py`, or catalog helpers).
+- Changes to metric names/units/types, no-data behavior, or metric row-count expectations.
+- Changes to ingest/parser contracts that impact `host_data` typing/event mapping
+  (for example `sync_timedb*`, hardware event maps, schema/event naming).
+- Changes to GPU/FSIO metric detail paths used in job detail and metrics persistence.
+
+## Required actions
+- Keep the pipeline test asserting:
+  - full metrics catalog coverage for the synthetic job,
+  - no half-populated rows (`value is None` with missing `no_data_reason`),
+  - expected minimum numeric-metric population for the synthetic payload.
+- Extend synthetic monitor payloads so newly required metrics receive usable
+  telemetry (rather than silently regressing to no-data).
+- Prefer monitor-shaped messages through RabbitMQ/listend paths over direct DB seeding.
+- Keep synthetic schema/event values realistic enough to exercise rate-based metrics
+  (multiple time samples, monotonic counters where required).
+
+## Verification
+- Run:
+  - `tests/pipeline_e2e/test_full_ingest_pipeline.py` (compose workflow/gated env)
+- If metric behavior changed materially, also run relevant unit tests under:
+  - `hpcperfstats/analysis/metrics/tests/` and/or `hpcperfstats/tests/`
+
+## Documentation sync
+- When this E2E workflow behavior/expectations change, update `HPCPerfStats/TESTING.md`
+  in the same task.
