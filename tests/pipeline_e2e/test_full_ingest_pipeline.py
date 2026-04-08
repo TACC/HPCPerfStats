@@ -32,6 +32,9 @@ from .monitor_payloads import pipeline_e2e_publish_bodies_multihost
 def test_full_rabbitmq_ingest_metrics_pipeline():
   if os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip() != "1":
     pytest.skip("Requires compose network (db, rabbitmq, redis); run workflow script.")
+  if os.environ.get("HPCPERFSTATS_PIPELINE_E2E", "").strip().lower() not in (
+      "1", "yes", "true"):
+    pytest.skip("Pipeline E2E gate is disabled (set HPCPERFSTATS_PIPELINE_E2E=1).")
 
   host_ext = cfg.get_host_name_ext().strip().lstrip(".")
   fqdn = "{}.{}".format(PIPELINE_E2E_HOST_SHORT, host_ext)
@@ -46,6 +49,10 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
       is_staff=True,
   )
 
+  # Keep this test restart-safe/idempotent across repeated workflow runs.
+  metrics_data.objects.filter(jid_id=PIPELINE_E2E_JID).delete()
+  job_plot_artifact.objects.filter(jid_id=PIPELINE_E2E_JID).delete()
+  host_data.objects.filter(host__in=[fqdn, fqdn2]).delete()
   job_data.objects.filter(jid=PIPELINE_E2E_JID).delete()
   now = django_timezone.now()
   if now.tzinfo is None:

@@ -35,8 +35,11 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     verify_tar_archive_readable,
 )
 from hpcperfstats.dbload.sync_timedb_archive import _iter_tar_tasks_chunked
+import hpcperfstats.dbload.sync_timedb_archive as sta
+from hpcperfstats.dbload.sync_timedb import archive_stats_files
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
 from hpcperfstats.file_locking import LOCK_SUFFIX
+from hpcperfstats.shutdown_utils import shutdown_requested
 
 
 # --- get_tar_member_name ---
@@ -1160,3 +1163,76 @@ def test_build_archive_mapping_accepts_placeholder_jid(tmp_path):
   only_key = next(iter(mapping.keys()))
   assert only_key.endswith(".tar.gz")
   assert mapping[only_key] == [str(stats_file)]
+
+
+def test_archive_stats_files_does_not_raise_on_append_failure(monkeypatch, tmp_path):
+  """Append failure keeps raw files in place and returns cleanly for retry."""
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-01.tar.gz")
+
+  import hpcperfstats.dbload.sync_timedb as st
+
+  monkeypatch.setattr(st, "_decompress_gz", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
+  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
+  monkeypatch.setattr(
+      st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
+
+  def _boom(*_a, **_k):
+    raise subprocess.CalledProcessError(2, ["tar", "-r"])
+
+  monkeypatch.setattr(st, "_append_to_tar", _boom)
+
+  archive_stats_files((archive_key, [str(raw_file)]))
+  assert raw_file.exists()
+
+
+def test_archive_stats_files_skips_dedupe_in_append_path(monkeypatch, tmp_path):
+  """Duplicate-member dedupe should run in maintenance, not per append."""
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-01.tar.gz")
+
+  import hpcperfstats.dbload.sync_timedb as st
+
+  monkeypatch.setattr(st, "_decompress_gz", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
+  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
+  monkeypatch.setattr(
+      st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
+  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "tar_has_duplicate_file_members", lambda *_a, **_k: True)
+
+  dedupe_calls = {"count": 0}
+  monkeypatch.setattr(
+      st,
+      "dedupe_tar_keep_largest_file_per_member",
+      lambda *_a, **_k: dedupe_calls.__setitem__("count", dedupe_calls["count"] + 1) or True,
+  )
+
+  archive_stats_files((archive_key, [str(raw_file)]))
+  assert dedupe_calls["count"] == 0
+
+
+def test_process_tar_chunk_stops_when_shutdown_requested():
+  """Chunk processing should stop early when shutdown flips true."""
+  class _FakePool:
+    def imap_unordered(self, _worker, _chunk, chunksize=1):
+      del chunksize
+      yield "first"
+      yield "second"
+
+  shutdown_requested[0] = False
+  try:
+    results = []
+
+    def _capture(item):
+      results.append(item)
+      shutdown_requested[0] = True
+
+    sta._process_tar_chunk_interruptibly(
+        _FakePool(), lambda x: x, [("a", "m1"), ("a", "m2")], _capture)
+    assert results == ["first"]
+  finally:
+    shutdown_requested[0] = False

@@ -27,6 +27,14 @@ def _is_lock_file_name(name):
   return name.endswith(LOCK_SUFFIX) or name.endswith(".lock")
 
 
+def _remove_read_lock_sidecar(target_path):
+  """Best-effort cleanup for helper read-lock sidecars."""
+  try:
+    os.remove("%s%s" % (target_path, LOCK_SUFFIX))
+  except OSError:
+    pass
+
+
 def get_tar_member_name(file_path):
   """Return the name used for a file inside a tar (path without leading slash)."""
   return file_path.lstrip("/")
@@ -188,6 +196,8 @@ def get_existing_archive_members(tar_path):
         return {name: max(sizes) for name, sizes in by_name.items()}
   except Exception:
     return {}
+  finally:
+    _remove_read_lock_sidecar(tar_path)
 
 
 def get_existing_archive_members_for_daily_archive(archive_gz_path):
@@ -761,6 +771,8 @@ def build_archive_mapping(
               break
     except OSError:
       continue
+    finally:
+      _remove_read_lock_sidecar(stats_fname)
     t, _jid, _host = parse_first_ts_fn(head)
     if t is None:
       log_print(

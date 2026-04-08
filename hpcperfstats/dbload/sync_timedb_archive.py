@@ -53,6 +53,14 @@ def _iter_tar_tasks_chunked(tar_files, chunk_size=TAR_TASK_CHUNK_SIZE):
     yield chunk
 
 
+def _process_tar_chunk_interruptibly(pool, worker, chunk, on_result):
+  """Process one task chunk while allowing shutdown checks between completions."""
+  for result in pool.imap_unordered(worker, chunk, chunksize=1):
+    on_result(result)
+    if shutdown_requested[0]:
+      break
+
+
 if __name__ == '__main__':
   sync_timedb.database_startup()
 
@@ -69,12 +77,22 @@ if __name__ == '__main__':
     with multiprocessing.get_context('spawn').Pool(
         processes=thread_count) as pool:
       worker = partial(_process_tar_member, manager_lock)
+      def _worker_task(task):
+        return worker(*task)
       # Process in chunks so SIGTERM can exit between chunks and memory stays bounded.
       for chunk in _iter_tar_tasks_chunked(tar_files, TAR_TASK_CHUNK_SIZE):
         if shutdown_requested[0]:
           log_print("Exiting due to SIGTERM")
           break
-        pool.starmap(worker, chunk)
+        _process_tar_chunk_interruptibly(
+            pool,
+            _worker_task,
+            chunk,
+            lambda _result: None,
+        )
+        if shutdown_requested[0]:
+          pool.terminate()
+          break
   finally:
     manager.shutdown()
   if shutdown_requested[0]:

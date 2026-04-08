@@ -9,6 +9,7 @@ DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers 
 
 """
 import itertools
+import json
 import multiprocessing
 import os
 import shutil
@@ -43,6 +44,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
+    iter_daily_tar_paths,
     remove_verified_archived_raw_files,
     replace_corrupt_tar_from_gzip_backup,
     rescan_pending_stats_files,
@@ -92,6 +94,8 @@ tar_append_batch_size = 32
 rescan_every_chunks = 10
 # Bound processed-file tracking to avoid unbounded set growth in long runs.
 processed_files_max_size = 200000
+SYNC_TIMEDB_CHECKPOINT_BASENAME = ".sync_timedb_state.json"
+SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES = 100
 
 # When no pending files remain after a directory rescan, sleep this long (seconds)
 # before scanning again. Interruptible via shutdown_requested / SIGTERM path.
@@ -122,50 +126,57 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   hostname, _ = parse_stats_file_path(stats_file)
   if hostname is None:
     log_print("Invalid stats file path: %s" % stats_file)
-    return (stats_file, False)
+    return (stats_file, False, False)
 
   if stats_file_is_active_segment(stats_file):
     if DEBUG:
       log_print("Skipping active segment (still linked to current): %s" % stats_file)
-    return (stats_file, False)
+    return (stats_file, False, False)
 
   lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)
   if load_err is not None:
     log_print(load_err)
-    return (stats_file, False)
+    return (stats_file, False, False)
 
   t, jid, host = parse_first_timestamp_line(lines)
   if t is None:
     log_print("initial timestamp not found")
-    return (stats_file, False)
+    return (stats_file, False, False)
 
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
-  ts_low = timestamp_utc - timedelta(hours=48)
-  ts_high = timestamp_utc + timedelta(hours=72)
-  # Use Django ORM to fetch distinct existing timestamps for this host in range.
-  itimes_set = set()
-  qs_times = (
-      host_data.objects.filter(
-          host=hostname,
-          time__gte=ts_low,
-          time__lt=ts_high,
-      )
-      .values_list("time", flat=True)
-      .distinct()
-  )
-  for dt in qs_times.iterator():
-    if dt is None:
-      continue
-    # Normalise to UTC then convert to integer epoch seconds.
-    if dt.tzinfo is None:
-      dt = dt.replace(tzinfo=timezone.utc)
-    epoch = int(dt.timestamp())
-    itimes_set.add(epoch)
+  # Fast path: if head timestamp is not present, process from file head.
+  head_present = host_data.objects.filter(
+      host=hostname,
+      time=timestamp_utc,
+  ).exists()
 
-  start_idx, need_archival = find_processing_start_index(lines, itimes_set)
+  if not head_present:
+    start_idx, need_archival = 0, False
+  else:
+    ts_low = timestamp_utc - timedelta(hours=48)
+    ts_high = timestamp_utc + timedelta(hours=72)
+    # Fallback: fetch distinct existing timestamps for deterministic resume.
+    itimes_set = set()
+    qs_times = (
+        host_data.objects.filter(
+            host=hostname,
+            time__gte=ts_low,
+            time__lt=ts_high,
+        )
+        .values_list("time", flat=True)
+        .distinct()
+    )
+    for dt in qs_times.iterator():
+      if dt is None:
+        continue
+      if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+      epoch = int(dt.timestamp())
+      itimes_set.add(epoch)
+    start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   if start_idx == -1:
     log_print("No missing timestamps found for %s" % stats_file)
-    return (stats_file, True)
+    return (stats_file, True, True)
 
   # Keep only lines from start_idx to avoid holding the full file in memory
   lines = lines[start_idx:]
@@ -180,7 +191,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   except Exception as e:
     log_print("error: process data failed: ", str(e))
     log_print("Possibly corrupt file: %s" % stats_file)
-    return (stats_file, False)
+    return (stats_file, False, False)
 
   stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
   del stats_list
@@ -188,7 +199,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   if stats.empty and proc_stats.empty:
     if DEBUG:
       log_print("Unable to process stats file %s" % stats_file)
-    return (stats_file, False)
+    return (stats_file, False, False)
 
   stats = compute_deltas_and_arc(stats)
   log_print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - start))
@@ -256,7 +267,79 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
 
   if DEBUG:
     log_print("File successfully added to DB")
-  return (stats_file, need_archival)
+  return (stats_file, need_archival, True)
+
+
+def _load_sync_checkpoint(state_path):
+  """Load checkpoint entries from JSON list, returning [] on invalid content."""
+  try:
+    with open(state_path, "r", encoding="utf-8") as fh:
+      raw = json.load(fh)
+  except (OSError, ValueError, TypeError):
+    return []
+  if not isinstance(raw, list):
+    return []
+  entries = []
+  for item in raw:
+    if not isinstance(item, dict):
+      continue
+    path = item.get("path")
+    size = item.get("size")
+    mtime = item.get("mtime")
+    if not isinstance(path, str):
+      continue
+    try:
+      size = int(size)
+      mtime = int(mtime)
+    except (TypeError, ValueError):
+      continue
+    entries.append({"path": path, "size": size, "mtime": mtime})
+  return entries
+
+
+def _save_sync_checkpoint(state_path, completed_entries):
+  """Atomically save checkpoint entries."""
+  parent = os.path.dirname(str(state_path))
+  if parent:
+    os.makedirs(parent, exist_ok=True)
+  tmp_path = "%s.tmp" % state_path
+  with open(tmp_path, "w", encoding="utf-8") as fh:
+    json.dump(list(completed_entries), fh)
+  os.replace(tmp_path, state_path)
+
+
+def _path_fingerprint(path):
+  """Return path fingerprint used for restart-safe processed tracking."""
+  try:
+    return {
+        "path": path,
+        "size": int(os.path.getsize(path)),
+        "mtime": int(os.path.getmtime(path)),
+    }
+  except OSError:
+    return None
+
+
+def _add_processed_path(
+    path,
+    processed_files,
+    processed_files_order,
+    checkpoint_entries,
+    checkpoint_path,
+):
+  """Record processed path in memory and checkpoint buffer."""
+  fp = _path_fingerprint(path)
+  if fp is None:
+    return False
+  processed_files.add(path)
+  processed_files_order.append(path)
+  checkpoint_entries.append(fp)
+  while len(processed_files_order) > processed_files_max_size:
+    old_path = processed_files_order.popleft()
+    processed_files.discard(old_path)
+  while len(checkpoint_entries) > processed_files_max_size:
+    checkpoint_entries.popleft()
+  return True
 
 
 def _insert_proc_data_individually(proc_stats_df):
@@ -416,7 +499,15 @@ def archive_stats_files(archive_info):
 
   stats_files_to_tar = filter_files_to_add_to_archive(
       stats_files, existing_members, debug=DEBUG)
-  _append_to_tar(archive_tar_fname, stats_files_to_tar)
+  try:
+    _append_to_tar(archive_tar_fname, stats_files_to_tar)
+  except subprocess.CalledProcessError as exc:
+    log_print(
+        "ERROR: tar append failed for %s (%s); leaving raw stats files in place"
+        % (archive_tar_fname, exc),
+        flush=True,
+    )
+    return
 
   if stats_files_to_tar:
     if not verify_tar_archive_readable(archive_tar_fname):
@@ -437,7 +528,15 @@ def archive_stats_files(archive_info):
       to_retry = filter_files_to_add_to_archive(
           stats_files_to_tar, existing_after, debug=DEBUG)
       if to_retry:
-        _append_to_tar(archive_tar_fname, to_retry)
+        try:
+          _append_to_tar(archive_tar_fname, to_retry)
+        except subprocess.CalledProcessError as exc:
+          log_print(
+              "ERROR: retry tar append failed for %s (%s); leaving raw stats "
+              "files in place" % (archive_tar_fname, exc),
+              flush=True,
+          )
+          return
       if not verify_tar_archive_readable(archive_tar_fname):
         log_print(
             "ERROR: daily tar still unreadable after recovery append; leaving "
@@ -445,23 +544,6 @@ def archive_stats_files(archive_info):
             flush=True,
         )
         return
-
-  if os.path.isfile(archive_tar_fname) and tar_has_duplicate_file_members(
-      archive_tar_fname):
-    log_print(
-        "Duplicate member paths in daily tar; rewriting (keep largest per path): "
-        "%s" % archive_tar_fname,
-        flush=True,
-    )
-    if not dedupe_tar_keep_largest_file_per_member(
-        archive_tar_fname, log_fn=log_print):
-      log_print(
-          "ERROR: tar dedupe failed; leaving raw stats files in place: %s"
-          % archive_tar_fname,
-          flush=True,
-      )
-      return
-
 
 def database_startup():
   """Print DB version, database size, and optionally chunk compression stats for host_data."""
@@ -509,14 +591,23 @@ def run_sync_timedb_supervisor_loop(
   E2E tests.
   """
   pigz_interval = cfg.get_archive_pigz_interval_seconds()
-  # Start "last maintenance" at now so the first iteration does scheduled pigz/removal
-  # only after pigz_interval has elapsed — not before the first rescan/ingest wave.
-  # (Using time.time() - pigz_interval would fire maintenance immediately and could run
-  # remove_verified_archived_raw_files before any ingest.)
   last_archive_maint = time.time()
   ingest_t0 = time.time()
 
   def _run_scheduled_archive_maintenance():
+    for tar_path in sorted(iter_daily_tar_paths(tgz_archive_dir)):
+      if not tar_has_duplicate_file_members(tar_path):
+        continue
+      log_print(
+          "Duplicate member paths in daily tar; rewriting (keep largest per path): "
+          "%s" % tar_path,
+          flush=True,
+      )
+      if not dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
+        log_print(
+            "ERROR: tar dedupe failed during scheduled maintenance: %s" % tar_path,
+            flush=True,
+        )
     seal_dirty_daily_archives(
         tgz_archive_dir,
         local_tz=local_timezone,
@@ -528,11 +619,38 @@ def run_sync_timedb_supervisor_loop(
         log_fn=log_print,
     )
     remove_verified_archived_raw_files(
-        directory,
-        host_name_ext,
-        tgz_archive_dir,
-        log_fn=log_print,
-    )
+        directory, host_name_ext, tgz_archive_dir, log_fn=log_print)
+
+  def _finalize_archive_job_if_needed():
+    nonlocal archive_job
+    nonlocal archive_job_deferred_paths
+    nonlocal checkpoint_dirty_count
+    if archive_job is None:
+      return
+    archive_job.get()
+    for p in archive_job_deferred_paths:
+      added = _add_processed_path(
+          p, processed_files, processed_files_order, checkpoint_entries,
+          checkpoint_path)
+      if added:
+        checkpoint_dirty_count += 1
+      inflight_archive_paths.discard(p)
+    _flush_checkpoint_if_needed()
+    archive_job = None
+    archive_job_deferred_paths = []
+
+  def _flush_checkpoint_if_needed(force=False):
+    nonlocal checkpoint_dirty_count
+    if checkpoint_dirty_count <= 0:
+      return
+    if (not force and
+        checkpoint_dirty_count < SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES):
+      return
+    try:
+      _save_sync_checkpoint(checkpoint_path, checkpoint_entries)
+      checkpoint_dirty_count = 0
+    except OSError:
+      pass
 
   log_print(
       "sync_timedb continuous mode: pigz interval %s s; idle rescan sleep %s s"
@@ -541,163 +659,196 @@ def run_sync_timedb_supervisor_loop(
   )
 
   archive_job = None
+  archive_job_deferred_paths = []
+  ingest_pool = None
   processed_files = set()
   processed_files_order = deque()
+  checkpoint_entries = deque()
+  checkpoint_dirty_count = 0
+  inflight_archive_paths = set()
   pending_stats_files = []
   chunk_counter = 0
+  checkpoint_path = os.path.join(directory, SYNC_TIMEDB_CHECKPOINT_BASENAME)
 
-  while not shutdown_requested[0]:
-    if time.time() - last_archive_maint >= pigz_interval:
-      if archive_job is not None:
-        if DEBUG:
+  for entry in _load_sync_checkpoint(checkpoint_path):
+    fp = _path_fingerprint(entry["path"])
+    if fp is None:
+      continue
+    if fp["size"] != entry["size"] or fp["mtime"] != entry["mtime"]:
+      continue
+    processed_files.add(entry["path"])
+    processed_files_order.append(entry["path"])
+    checkpoint_entries.append(entry)
+
+  if not _sync_timedb_ingest_inline_requested():
+    ingest_pool = multiprocessing.get_context('spawn').Pool(
+        processes=thread_count)
+
+  try:
+    while not shutdown_requested[0]:
+      if time.time() - last_archive_maint >= pigz_interval:
+        _finalize_archive_job_if_needed()
+        log_print(
+            "Running scheduled daily-archive pigz and raw file removal",
+            flush=True,
+        )
+        try:
+          os.makedirs(tgz_archive_dir, exist_ok=True)
+        except OSError:
+          if not os.path.isdir(tgz_archive_dir):
+            raise
+        _run_scheduled_archive_maintenance()
+        last_archive_maint = time.time()
+        close_old_connections()
+        connections.close_all()
+
+      if not pending_stats_files:
+        pending_stats_files = rescan_pending_stats_files(
+            directory,
+            startdate,
+            enddate,
+            host_name_ext,
+            processed_files | inflight_archive_paths,
+        )
+        if pending_stats_files:
           log_print(
-              "Waiting for background archival before scheduled maintenance",
+              "Number of host stats files to process = ",
+              len(pending_stats_files),
               flush=True,
           )
-        archive_job.get()
-        archive_job = None
-      log_print(
-          "Running scheduled daily-archive pigz and raw file removal",
-          flush=True,
-      )
-      try:
-        os.makedirs(tgz_archive_dir, exist_ok=True)
-      except OSError:
-        if not os.path.isdir(tgz_archive_dir):
-          raise
-      _run_scheduled_archive_maintenance()
-      last_archive_maint = time.time()
+          chunk_counter = 0
+        else:
+          log_print(
+              "No pending stats files; sleeping %s s before next directory scan"
+              % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
+              flush=True,
+          )
+          if run_once:
+            log_print(
+                "sync_timedb once mode: no pending files, exiting supervisor loop",
+                flush=True,
+            )
+            break
+          sleep_until_shutdown(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)
+          _flush_checkpoint_if_needed(force=True)
+          continue
+
+      while pending_stats_files:
+        if shutdown_requested[0]:
+          log_print("Exiting due to SIGTERM")
+          break
+        if DEBUG:
+          log_print(
+              "Begining Chunk(%s) #%s Processing" % (chunk_size, chunk_counter))
+
+        stats_files_chunk = pending_stats_files[:chunk_size]
+        if not stats_files_chunk:
+          continue
+
+        files_to_be_archived = []
+        successful_paths = []
+        log_print("%s files per chunk" % chunk_size)
+
+        add_stats_file = partial(add_stats_file_to_db, manager_lock)
+        if _sync_timedb_ingest_inline_requested():
+          results_iter = (add_stats_file(path) for path in stats_files_chunk)
+        else:
+          if ingest_pool is None:
+            results_iter = iter(())
+          else:
+            results_iter = ingest_pool.imap_unordered(
+                add_stats_file, stats_files_chunk)
+
+        k = 0
+        for result in results_iter:
+          ingest_ok = True
+          if len(result) >= 3:
+            stats_fname, need_archival, ingest_ok = result
+          else:
+            stats_fname, need_archival = result
+          k += 1
+          if ingest_ok:
+            successful_paths.append(stats_fname)
+          if ingest_ok and should_archive and need_archival:
+            files_to_be_archived.append(stats_fname)
+          log_print(
+              "chunk %s: completed file %s out of %s\n" % (
+                  chunk_counter, k, chunk_size),
+              flush=True)
+
+        log_print("loading time", time.time() - ingest_t0)
+        log_print("Files marked for archival: %d" % len(files_to_be_archived))
+
+        if files_to_be_archived:
+          os.makedirs(tgz_archive_dir, exist_ok=True)
+        ar_file_mapping = build_archive_mapping(
+            files_to_be_archived, tgz_archive_dir)
+        total_in_mapping = sum(len(v) for v in ar_file_mapping.values())
+        if ar_file_mapping:
+          log_print(
+              "Archive mapping: %d tar(s), %d file(s) to archive"
+              % (len(ar_file_mapping), total_in_mapping))
+        elif files_to_be_archived:
+          log_print(
+              "Archive mapping empty (all files skipped: no timestamp in head)")
+
+        _finalize_archive_job_if_needed()
+
+        archived_candidates = set(files_to_be_archived)
+        immediate_paths = [
+            p for p in successful_paths if p not in archived_candidates
+        ]
+        deferred_paths = [p for p in successful_paths if p in archived_candidates]
+        for p in immediate_paths:
+          added = _add_processed_path(
+              p, processed_files, processed_files_order, checkpoint_entries,
+              checkpoint_path)
+          if added:
+            checkpoint_dirty_count += 1
+        _flush_checkpoint_if_needed()
+
+        if ar_file_mapping:
+          archive_job = archive_pool.map_async(
+              archive_stats_files, list(ar_file_mapping.items()))
+          archive_job_deferred_paths = deferred_paths
+          inflight_archive_paths.update(deferred_paths)
+          log_print("Archival running in the background")
+        elif deferred_paths:
+          log_print(
+              "Deferring processed marker for %d file(s): archival mapping missing"
+              % len(deferred_paths),
+              flush=True,
+          )
+
+        pending_stats_files = pending_stats_files[chunk_size:]
+        chunk_counter += 1
+
+        if chunk_counter % rescan_every_chunks == 0:
+          _finalize_archive_job_if_needed()
+          pending_stats_files = rescan_pending_stats_files(
+              directory,
+              startdate,
+              enddate,
+              host_name_ext,
+              processed_files | inflight_archive_paths,
+          )
+          log_print(
+              "Rescanned after %d chunks; pending files (newest first): %d"
+              % (rescan_every_chunks, len(pending_stats_files)))
+
+      _finalize_archive_job_if_needed()
+      _flush_checkpoint_if_needed(force=True)
       close_old_connections()
       connections.close_all()
-
-    if not pending_stats_files:
-      pending_stats_files = rescan_pending_stats_files(
-          directory, startdate, enddate, host_name_ext, processed_files)
-      if pending_stats_files:
-        log_print(
-            "Number of host stats files to process = ",
-            len(pending_stats_files),
-            flush=True,
-        )
-        chunk_counter = 0
-      else:
-        log_print(
-            "No pending stats files; sleeping %s s before next directory scan"
-            % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
-            flush=True,
-        )
-        if run_once:
-          log_print(
-              "sync_timedb once mode: no pending files, exiting supervisor loop",
-              flush=True,
-          )
-          break
-        sleep_until_shutdown(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)
-        continue
-
-    while pending_stats_files:
-      if shutdown_requested[0]:
-        log_print("Exiting due to SIGTERM")
-        break
-      if DEBUG:
-        log_print(
-            "Begining Chunk(%s) #%s Processing" % (chunk_size, chunk_counter))
-
-      stats_files_chunk = pending_stats_files[:chunk_size]
-      if not stats_files_chunk:
-        continue
-
-      ar_file_mapping = {}
-      files_to_be_archived = []
-      log_print("%s files per chunk" % chunk_size)
-
-      add_stats_file = partial(add_stats_file_to_db, manager_lock)
-
-      def _iter_ingest_results():
-        if _sync_timedb_ingest_inline_requested():
-          for path in stats_files_chunk:
-            yield add_stats_file(path)
-          return
-        with multiprocessing.get_context('spawn').Pool(
-            processes=thread_count) as pool:
-          yield from pool.imap_unordered(add_stats_file, stats_files_chunk)
-
-      k = 0
-      for stats_fname, need_archival in _iter_ingest_results():
-        k += 1
-        if should_archive and need_archival:
-          files_to_be_archived.append(stats_fname)
-        log_print(
-            "chunk %s: completed file %s out of %s\n" % (
-                chunk_counter, k, chunk_size),
-            flush=True)
-
-      log_print("loading time", time.time() - ingest_t0)
-      log_print(
-          "Files marked for archival: %d" % len(files_to_be_archived))
-
-      if files_to_be_archived:
-        # Fresh data volumes (e.g. empty named volume on /hpcperfstats) may omit
-        # this tree; tar append + lock files require the directory to exist.
-        os.makedirs(tgz_archive_dir, exist_ok=True)
-
-      ar_file_mapping = build_archive_mapping(
-          files_to_be_archived, tgz_archive_dir)
-      total_in_mapping = sum(len(v) for v in ar_file_mapping.values())
-      if ar_file_mapping:
-        log_print(
-            "Archive mapping: %d tar(s), %d file(s) to archive"
-            % (len(ar_file_mapping), total_in_mapping))
-      elif files_to_be_archived:
-        log_print(
-            "Archive mapping empty (all files skipped: no timestamp in head)")
-
-      if archive_job is not None:
-        if DEBUG:
-          log_print("Checking/waiting for background archival proccesses")
-
-        archive_job.get()
-
-      if DEBUG:
-        log_print("files to be archived: %s" % ar_file_mapping)
-
-      archive_job = archive_pool.map_async(
-          archive_stats_files, list(ar_file_mapping.items()))
-
-      log_print("Archival running in the background")
-      for stats_path in stats_files_chunk:
-        if stats_path in processed_files:
-          continue
-        processed_files.add(stats_path)
-        processed_files_order.append(stats_path)
-      while len(processed_files_order) > processed_files_max_size:
-        old_path = processed_files_order.popleft()
-        processed_files.discard(old_path)
-      pending_stats_files = pending_stats_files[chunk_size:]
-      chunk_counter += 1
-
-      if chunk_counter % rescan_every_chunks == 0:
-        if archive_job is not None:
-          if DEBUG:
-            log_print(
-                "Waiting for background archival proccesses before rescan")
-          archive_job.get()
-          archive_job = None
-        pending_stats_files = rescan_pending_stats_files(
-            directory, startdate, enddate, host_name_ext, processed_files)
-        log_print(
-            "Rescanned after %d chunks; pending files (newest first): %d"
-            % (rescan_every_chunks, len(pending_stats_files)))
-
+  finally:
     if archive_job is not None:
       archive_job.get()
-      archive_job = None
-
-    close_old_connections()
-    connections.close_all()
-
-  if archive_job is not None:
-    archive_job.get()
+    _flush_checkpoint_if_needed(force=True)
+    if ingest_pool is not None:
+      if hasattr(ingest_pool, "close"):
+        ingest_pool.close()
+      if hasattr(ingest_pool, "join"):
+        ingest_pool.join()
 
 
 def parse_sync_timedb_argv(argv):
