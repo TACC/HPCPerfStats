@@ -1267,8 +1267,10 @@ def _build_histogram_queryset(request):
                 # Histogram grouping/query-only parameters, not model fields:
                 # - group: which histogram group to load ("queue" or "metric")
                 # - metric: metric name when group == "metric"
+                # - _histogram_embed_v: client cache-bust for Bokeh embed shape changes
                 "group",
                 "metric",
+                "_histogram_embed_v",
             )
         }
         order_by = get_job_list_order_by(fields) or "-end_time"
@@ -1352,7 +1354,7 @@ def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="job
 
     metric: ``"jobs"`` — Count(jid) per queue; ``"node_hours"`` — Sum(node_hrs) per queue.
     """
-    from bokeh.models import ColumnDataSource, HoverTool
+    from bokeh.models import ColumnDataSource
 
     close_old_connections()
     try:
@@ -1365,7 +1367,6 @@ def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="job
             )
             title = "Jobs by queue"
             y_label = "# jobs"
-            hover_label = "jobs"
             tops = [c for _, c in rows]
         else:
             rows = list(
@@ -1376,34 +1377,24 @@ def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="job
             )
             title = "Node hours by queue"
             y_label = "node hours"
-            hover_label = "node hours"
             tops = [(v or 0.0) for _, v in rows]
         if not rows:
             return None
         queue_names = [q if q else "(no queue)" for q, _ in rows]
         source = ColumnDataSource(dict(x=queue_names, top=tops))
-        # Toolbar needs a visible side so BokehJS layout gives tool panels a bbox
-        # (toolbar_location=None + categorical vbar + snap_to_data hover has caused
-        # "can't access property is_valid, e is undefined" in some Bokeh 3 builds).
+        # No toolbar or HoverTool: Bokeh 3.x SPA embeds hit
+        # "can't access property is_valid, e is undefined" when tool panels /
+        # hover hit-testing run in tight layouts (see job_hist / queue charts).
         p = figure(
             x_range=queue_names,
             height=height,
             width=width,
             title=title,
-            toolbar_location="above",
-            tools="pan,wheel_zoom,box_zoom,reset,save",
+            toolbar_location=None,
+            tools=[],
         )
         set_linear_axes_plain_numeric(p)
-        num_hover = new_plain_number_hover_formatter()
-        bars = p.vbar(x="x", top="top", source=source, width=0.7)
-        p.add_tools(
-            HoverTool(
-                renderers=[bars],
-                tooltips=[("queue", "@x"), (hover_label, "@top{custom}")],
-                formatters={"@top": num_hover},
-                point_policy="follow_mouse",
-            )
-        )
+        p.vbar(x="x", top="top", source=source, width=0.7)
         p.xaxis.axis_label = "queue"
         p.yaxis.axis_label = y_label
         p.xgrid.visible = False

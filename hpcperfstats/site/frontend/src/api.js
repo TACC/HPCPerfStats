@@ -66,7 +66,12 @@ export const api = {
   getJobQueueHistograms: (params) =>
     request(
       "/jobs/histograms/?" +
-        new URLSearchParams({ ...(params || {}), group: "queue" }).toString()
+        new URLSearchParams({
+          ...(params || {}),
+          group: "queue",
+          // Bust @dynamic_cache_page / CDN after server-side Bokeh embed changes.
+          _histogram_embed_v: "3",
+        }).toString()
     ),
   /**
    * Single metric histogram (thumb + full) for a job list.
@@ -79,6 +84,7 @@ export const api = {
           ...(params || {}),
           group: "metric",
           metric,
+          _histogram_embed_v: "3",
         }).toString()
     ),
   getJobDetail: (pk) => request(`/jobs/${encodeURIComponent(pk)}/`),

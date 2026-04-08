@@ -3,12 +3,7 @@
 import hpcperfstats.conf_parser as cfg
 
 import numpy as np
-from bokeh.models import HoverTool
-
-from hpcperfstats.analysis.gen.utils import (
-    new_plain_number_hover_formatter,
-    set_linear_axes_plain_numeric,
-)
+from hpcperfstats.analysis.gen.utils import set_linear_axes_plain_numeric
 from bokeh.plotting import figure
 from numpy import histogram, isfinite, log
 from pandas import to_numeric
@@ -39,19 +34,13 @@ def job_hist(df, metric, label, width=600, height=400, title=None):
     Optional width/height allow thumbnail (e.g. 280x200) vs full (600x400) sizes.
     Optional title overrides the figure title (defaults to metric column name).
     Uses only finite values; handles empty, constant, and all-zero data safely.
+
+    Job-list embeds omit toolbar and HoverTool: Bokeh 3.x can throw
+    ``can't access property "is_valid", e is undefined`` when hit-testing /
+    tool panels interact with small embedded figures (see queue vbar path).
     """
     if metric not in df.columns:
         return None
-    num_hover = new_plain_number_hover_formatter()
-    hover = HoverTool(
-        tooltips=[
-            ("jobs", "@top{custom}"),
-            ("bin", "[@left{custom}, @right{custom}]"),
-        ],
-        formatters={"@top": num_hover, "@left": num_hover, "@right": num_hover},
-        point_policy="snap_to_data",
-    )
-    TOOLS = ["pan,wheel_zoom,box_zoom,reset,save,box_select", hover]
 
     raw = to_numeric(df[metric], errors="coerce")
     values = np.asarray(raw, dtype=np.float64)
@@ -83,7 +72,7 @@ def job_hist(df, metric, label, width=600, height=400, title=None):
         height=height,
         width=width,
         y_range=(y_min, y_max),
-        tools=TOOLS,
+        tools=[],
     )
     plot.xaxis.axis_label = label
     plot.yaxis.axis_label = "# jobs"
