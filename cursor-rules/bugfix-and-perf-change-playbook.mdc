@@ -1,0 +1,32 @@
+---
+description: Implementation defaults for traceback fixes and runtime/performance changes
+alwaysApply: true
+---
+
+# Bugfix And Perf Change Playbook
+
+When the task is a traceback fix, timeout fix, memory/runtime reduction, or operational reliability issue, follow this implementation playbook.
+
+## Implementation defaults
+
+- Start from the concrete failure signature (traceback line, SQL timeout, or log message) and patch the smallest root-cause path first.
+- If the failure is not fixed after the first request, deep dive into the code and find the systemic failure. Don't patch the symptoms. Do root cause analysis first.
+- Preserve existing user-facing behavior unless the user asks for behavior changes.
+- Make resource/concurrency choices configuration-driven where practical (thread count, batch size, retry policy, timeout), not hidden magic constants.
+- Prefer deterministic fallback paths over silent failures (explicit no-data reason, explicit retry boundary, clear error branch).
+- Keep code paths composable and testable; avoid adding one-off branches that bypass canonical helpers.
+
+## Verification defaults
+
+- Add or extend targeted regression tests for the specific failure mode.
+- For DB/Redis/networked behavior, validate in compose-network workflows, not host-only assumptions.
+- When fix scope changes test commands or runner prerequisites, update `TESTING.md` in the same task.
+
+## Guardrails
+
+- Do not introduce destructive cleanup behavior (deleting live data, force resets) unless explicitly requested.
+- When changing cache/perf behavior, verify invalidation and stale-data boundaries, not just raw speed.
+
+## Overlap
+
+- Complements `runtime-resource-and-metrics-safety.mdc`, `docker-compose-non-unit-testing.mdc`, `full-test-with-db-redis.mdc`, and `testing-doc-sync.mdc`.
