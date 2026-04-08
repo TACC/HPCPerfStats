@@ -80,12 +80,10 @@ Options: **`--skip-build`**, **`--keep-env`**, **`--skip-playwright-install`** (
 
 ### 2. Python and frontend dependencies
 
-From the `HPCPerfStats/` directory that contains `pyproject.toml`:
+From the `HPCPerfStats/` directory that contains `pyproject.toml`, use the canonical workspace virtualenv one level up:
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[test]"
+../.venv/bin/pip install -e ".[test]"
 ```
 
 For Vitest:
@@ -180,7 +178,7 @@ When approved monitor changes add or rename `host_data.event` strings, regenerat
 python3 hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py
 ```
 
-Then follow `.cursor/rules/variable-metadata-*.mdc` for merging into `variableMetadata.js` and operator docs (`docs/regenerate_monitor_variables_catalog.py`, etc.).
+Then follow `HPCPerfStats/cursor-rules/variable-metadata-*.mdc` for merging into `variableMetadata.js` and operator docs (`docs/regenerate_monitor_variables_catalog.py`, etc.).
 
 ## Test runners
 

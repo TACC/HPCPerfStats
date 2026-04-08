@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 
@@ -44,15 +45,20 @@ def test_job_detail_renders_and_summary_plot_payload():
         extra_http_headers={"X-API-Key": raw},
     )
     request.get("/api/session/")
-    plots_resp = request.get(
-        "/api/jobs/{}/plots/?plot=summary_plot".format(jid),
-    )
-    assert plots_resp.status == 200, plots_resp.text
-    payload = plots_resp.json()
-    summary = payload.get("summary_plot") or {}
-    assert summary.get("plot_item") is not None or summary.get(
-        "unavailable_reason",
-    ), payload
+    for plot_kind in ("summary_plot", "heatmap", "roofline", "gpu_roofline"):
+      plots_resp = request.get(
+          "/api/jobs/{}/plots/?plot={}".format(jid, plot_kind),
+      )
+      assert plots_resp.status == 200, plots_resp.text
+      assert not re.search(r"\b\d+(?:\.\d+)?[eE][+-]?\d+\b", plots_resp.text())
+      payload = plots_resp.json()
+      section = payload.get(plot_kind) or {}
+      assert section.get("plot_item") is not None or section.get(
+          "unavailable_reason",
+      ), payload
+    detail_resp = request.get("/api/jobs/{}/".format(jid))
+    assert detail_resp.status == 200, detail_resp.text
+    assert not re.search(r"\b\d+(?:\.\d+)?[eE][+-]?\d+\b", detail_resp.text())
     request.dispose()
 
   with sync_playwright() as p:

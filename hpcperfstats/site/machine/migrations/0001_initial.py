@@ -142,15 +142,15 @@ class Migration(migrations.Migration):
       ),
 
       # TIMESCALEDB Timeseries and compression setup
-      migrations.RunSQL("ALTER TABLE host_data DROP CONSTRAINT host_data_pkey;"
+      migrations.RunSQL("ALTER TABLE host_data DROP CONSTRAINT IF EXISTS host_data_pkey;"
                         ),
       migrations.RunSQL(
-          "SELECT create_hypertable('host_data', 'time', chunk_time_interval => INTERVAL '1 days');"
+          "SELECT create_hypertable('host_data', 'time', chunk_time_interval => INTERVAL '1 days', if_not_exists => TRUE);"
       ),
       migrations.RunSQL(
           "ALTER TABLE host_data SET (timescaledb.compress, timescaledb.compress_orderby = 'time', timescaledb.compress_segmentby = 'host,jid,type,event');"
       ),
       migrations.RunSQL(
-          "SELECT add_compression_policy('host_data', compress_after => INTERVAL '60d');"
+          "SELECT add_compression_policy('host_data', compress_after => INTERVAL '60d', if_not_exists => TRUE);"
       ),
   ]

@@ -1,0 +1,29 @@
+---
+description: Enforce immutable-image policy for hpcperfstats.ini (no runtime bind mounts)
+alwaysApply: true
+---
+
+# Immutable Image INI Policy
+
+This repository uses an immutable-image deployment policy for `hpcperfstats.ini`.
+
+## Required behavior
+
+- Do not add or keep runtime bind mounts of `hpcperfstats.ini` in compose files.
+- Build images so `/home/hpcperfstats/hpcperfstats.ini` is present at image build time.
+- Keep `HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini` as the runtime path unless explicitly changed project-wide.
+- If compose/examples currently mount `./hpcperfstats.ini`, remove those mounts and update docs/tests in the same task.
+
+## Why
+
+- Runtime behavior should be deterministic from the built image.
+- Deployments should not rely on host-local mutable config files for required startup config.
+
+## Validation
+
+- Verify startup scripts and Django settings resolve config successfully without host bind mounts.
+- After policy changes, run compose startup/health checks and relevant tests that assert compose config contracts.
+
+## Overlap
+
+- Complements `workspace-guardrails.mdc`, `runtime-resource-and-metrics-safety.mdc`, and `testing-doc-sync.mdc`.

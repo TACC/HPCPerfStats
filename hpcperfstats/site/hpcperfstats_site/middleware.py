@@ -23,9 +23,7 @@ DEFAULT_PERMISSIONS_POLICY = (
 
 DEFAULT_COOP = "same-origin"
 
-# Enforced CSP. This policy is intentionally conservative (permits inline
-# script/style and unsafe-eval) because some pages render inline assets and
-# some dependencies use eval. Tighten over time using CSP reports.
+# Enforced CSP for runtime safety. Keep allowlist narrow and explicit.
 DEFAULT_CSP = (
   "default-src 'self'; "
   "base-uri 'self'; "
@@ -35,15 +33,27 @@ DEFAULT_CSP = (
   "img-src 'self' data:; "
   "font-src 'self' data: https://fonts.gstatic.com; "
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+  "script-src 'self' 'unsafe-inline'; "
   "connect-src 'self'; "
   "upgrade-insecure-requests; "
   "report-uri /csp-report/;"
 )
 
-# Keep a report-only header in addition to enforcement, so violations still
-# generate reports during rollout/tightening.
-DEFAULT_CSP_REPORT_ONLY = DEFAULT_CSP
+# Stricter report-only policy used to stage future tightening.
+DEFAULT_CSP_REPORT_ONLY = (
+  "default-src 'self'; "
+  "base-uri 'self'; "
+  "object-src 'none'; "
+  "frame-ancestors 'self'; "
+  "form-action 'self'; "
+  "img-src 'self' data:; "
+  "font-src 'self' data: https://fonts.gstatic.com; "
+  "style-src 'self' https://fonts.googleapis.com; "
+  "script-src 'self'; "
+  "connect-src 'self'; "
+  "upgrade-insecure-requests; "
+  "report-uri /csp-report/;"
+)
 
 
 class ProfileMiddleware:

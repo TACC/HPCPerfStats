@@ -2017,6 +2017,10 @@ def job_plots(request, pk):
     fetchers = {kind: partial(_run_job_plot_fetch, kind) for kind in JOB_PLOT_KINDS}
     _job_plots_log = logging.getLogger(__name__)
 
+    def _plot_data_cache_key(kind):
+        # Include plot fingerprint so zoom-mode reuse cannot serve stale payloads.
+        return make_cache_key("JOB_PLOTS_DATA", job.jid, kind, plot_fingerprint)
+
     def _finalize_job_plot_future(key, inflight_key, future):
         """If *future* is done, store its result in *cached_results* and caches; clear inflight."""
         if not future.done():
@@ -2032,14 +2036,26 @@ def job_plots(request, pk):
                 cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key, size_key)
                 try:
                     cache.set(cache_key, cached_results[key], timeout=job_cache_timeout)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _job_plots_log.warning(
+                        "job_plots L1 set failed jid=%s key=%s: %s",
+                        job.jid,
+                        key,
+                        e,
+                        exc_info=True,
+                    )
                 if plot_item is not None:
                     try:
-                        data_cache_key = make_cache_key("JOB_PLOTS_DATA", job.jid, key)
+                        data_cache_key = _plot_data_cache_key(key)
                         cache.set(data_cache_key, plot_item, timeout=job_cache_timeout)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _job_plots_log.warning(
+                            "job_plots L1 data set failed jid=%s key=%s: %s",
+                            job.jid,
+                            key,
+                            e,
+                            exc_info=True,
+                        )
             except Exception as e:
                 _job_plots_log.warning(
                     "job_plots task failed for jid=%s key=%s: %s",
@@ -2088,18 +2104,30 @@ def job_plots(request, pk):
             }
             try:
                 cache.set(cache_key, cached_results[key], timeout=job_cache_timeout)
-            except Exception:
-                pass
+            except Exception as e:
+                _job_plots_log.warning(
+                    "job_plots L1 set from L2 failed jid=%s key=%s: %s",
+                    job.jid,
+                    key,
+                    e,
+                    exc_info=True,
+                )
             if cached_results[key]["plot_item"] is not None:
                 try:
-                    data_cache_key = make_cache_key("JOB_PLOTS_DATA", job.jid, key)
+                    data_cache_key = _plot_data_cache_key(key)
                     cache.set(
                         data_cache_key,
                         cached_results[key]["plot_item"],
                         timeout=job_cache_timeout,
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    _job_plots_log.warning(
+                        "job_plots L1 data set from L2 failed jid=%s key=%s: %s",
+                        job.jid,
+                        key,
+                        e,
+                        exc_info=True,
+                    )
             continue
         missing_keys.append(key)
 
@@ -2108,7 +2136,7 @@ def job_plots(request, pk):
     if zoom_mode and missing_keys:
         still_missing = []
         for key in missing_keys:
-            data_cache_key = make_cache_key("JOB_PLOTS_DATA", job.jid, key)
+            data_cache_key = _plot_data_cache_key(key)
             cached_plot_data = cache.get(data_cache_key)
             if isinstance(cached_plot_data, dict):
                 cached_results[key] = {

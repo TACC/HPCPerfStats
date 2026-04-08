@@ -115,24 +115,24 @@ def build_pipeline_http_endpoint_specs(
   add(PipelineHttpEndpointSpec(
       "csp-report/", "GET", "/csp-report/", 405, 405, None, True))
   add(PipelineHttpEndpointSpec(
-      "login/", "GET", "/login/", 200, 499, None, True))
+      "login/", "GET", "/login/", 200, 399, None, True))
   add(PipelineHttpEndpointSpec(
-      "login_prompt", "GET", "/login_prompt", 200, 499, None, True))
+      "login_prompt", "GET", "/login_prompt", 200, 399, None, True))
   add(PipelineHttpEndpointSpec(
-      "logout/", "GET", "/logout/", 200, 499, None, True))
+      "logout/", "GET", "/logout/", 200, 399, None, True))
   add(PipelineHttpEndpointSpec(
-      "machine/", "GET", "/machine/", 200, 499, "text/html", True))
+      "machine/", "GET", "/machine/", 200, 399, "text/html", True))
   add(PipelineHttpEndpointSpec(
       "machine/<path:path>", "GET", "/machine/job/{}/".format(jid),
-      200, 499, "text/html", True))
+      200, 399, "text/html", True))
   add(PipelineHttpEndpointSpec(
       "machine/<path:path>", "GET", "/machine/api-key",
-      200, 499, "text/html", True))
+      200, 399, "text/html", True))
   add(PipelineHttpEndpointSpec(
       "machine/<path:path>", "GET", "/machine/admin_monitor/",
-      200, 499, "text/html", True))
+      200, 399, "text/html", True))
   add(PipelineHttpEndpointSpec(
-      "oauth_callback/", "GET", "/oauth_callback/", 200, 499, None, True))
+      "oauth_callback/", "GET", "/oauth_callback/", 200, 399, None, True))
   add(PipelineHttpEndpointSpec(
       "robots.txt", "GET", "/robots.txt", 200, 299, "text/plain", True))
 

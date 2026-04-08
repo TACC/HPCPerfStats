@@ -8,6 +8,7 @@ import pytest
 from django.test import RequestFactory
 
 from hpcperfstats.analysis.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
+from hpcperfstats.analysis.metrics.gpu_job_detail_summary import gpu_count_total_for_job_window
 
 pytestmark = pytest.mark.django_db(databases=[])
 
@@ -299,3 +300,54 @@ def test_job_detail_gpu_from_metrics_data_skips_host_data_cache():
   assert response.data["gpu_utilization_mean"] == 45.25
   assert response.data["gpu_count"] == 4
   assert gpu_cache_calls == []
+
+
+def test_gpu_count_total_prefers_nvidia_gpu_over_amd_gpu():
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  j = MagicMock()
+  j.start_time = t0
+  j.end_time = t0
+  j.acct_host_list = ["n1.example.com"]
+
+  class _Query:
+    def __init__(self, rows):
+      self._rows = rows
+
+    def values(self, *args):
+      return self
+
+    def annotate(self, **kwargs):
+      return self._rows
+
+  class _Mgr:
+    def filter(self, **kwargs):
+      if kwargs.get("type") == "nvidia_gpu":
+        return _Query([{"host": "n1.example.com", "mv": 8.0}])
+      if kwargs.get("type") == "amd_gpu":
+        return _Query([{"host": "n1.example.com", "mv": 2.0}])
+      return _Query([])
+
+  with patch("hpcperfstats.analysis.metrics.gpu_job_detail_summary.host_data.objects", _Mgr()):
+    assert gpu_count_total_for_job_window(j) == 8
+
+
+def test_gpu_count_total_returns_none_when_no_gpu_rows_exist():
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  j = MagicMock()
+  j.start_time = t0
+  j.end_time = t0
+  j.acct_host_list = ["n1.example.com"]
+
+  class _Query:
+    def values(self, *args):
+      return self
+
+    def annotate(self, **kwargs):
+      return []
+
+  class _Mgr:
+    def filter(self, **kwargs):
+      return _Query()
+
+  with patch("hpcperfstats.analysis.metrics.gpu_job_detail_summary.host_data.objects", _Mgr()):
+    assert gpu_count_total_for_job_window(j) is None

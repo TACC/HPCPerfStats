@@ -65,3 +65,11 @@ def test_intel_imc_stats_types_match_monitor_or_documented_ingest_alias():
         f"{typename!r} in INTEL_IMC_STATS_TYPES must match monitor .st_name "
         f"(or be documented ingest alias of a monitor type)."
     )
+
+
+def test_monitor_st_names_cover_amd_roofline_prerequisites():
+  monitor = _monitor_st_names_from_sources()
+  for typename in ("amd64_pmc", "amd64_df"):
+    assert typename in monitor, (
+        f"{typename!r} must be emitted by monitor for AMD roofline prerequisites."
+    )

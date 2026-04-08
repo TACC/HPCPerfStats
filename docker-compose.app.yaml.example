@@ -8,6 +8,7 @@ services:
     restart: always
     command: /home/hpcperfstats/services-conf/django_startup.sh
     environment:
+      - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
       - STATIC_ROOT=/home/hpcperfstats/staticfiles
     volumes:
       - staticfiles_data:/home/hpcperfstats/staticfiles
@@ -24,6 +25,8 @@ services:
     depends_on:
       - web
     command: /home/hpcperfstats/services-conf/supervisor_startup.sh
+    environment:
+      - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
     ports:
       - 514:514/udp
       - 514:514/tcp

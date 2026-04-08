@@ -48,15 +48,28 @@ def _open_lock_file(target_path):
 
 def _maybe_reset_stale_lock_file(target_path, now, expiry_seconds):
   lock_path = _lock_path(target_path)
+  lock_fd = None
   try:
     if not os.path.exists(lock_path):
       return
     age_seconds = now - os.path.getmtime(lock_path)
     if age_seconds > expiry_seconds:
+      # Only remove stale lock files when we can prove no active holder exists.
+      lock_fd = open(lock_path, "a+")
+      flock(lock_fd, LOCK_EX | LOCK_NB)
+      flock(lock_fd, LOCK_UN)
+      lock_fd.close()
+      lock_fd = None
       os.remove(lock_path)
   except OSError:
     # Best effort only; lock acquisition still provides correctness.
     return
+  finally:
+    if lock_fd is not None:
+      try:
+        lock_fd.close()
+      except OSError:
+        pass
 
 
 @contextmanager
@@ -147,18 +160,10 @@ def file_read_lock_wait(target_path,
   try:
     yield
   finally:
-    lock_path = _lock_path(target_path)
     try:
       flock(lock_fd, LOCK_UN)
     finally:
       try:
         lock_fd.close()
-      finally:
-        try:
-          os.remove(lock_path)
-        except FileNotFoundError:
-          pass
-        except OSError:
-          # Best-effort cleanup; failure to remove the lock file should not
-          # break callers once the advisory lock itself is released.
-          pass
+      except OSError:
+        pass

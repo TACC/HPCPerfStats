@@ -18,7 +18,8 @@ alwaysApply: true
 - When changing an API endpoint in Django, update `@hpcperfstats-tools` accordingly and add/adjust tests that cover the client-server contract.
 
 ## Service configurations
-- web (gunicorn) has an ssl-enabled proxy using nginx. This proxy is defined in HPCPerfStats/services-conf/nginx-withssl.conf
+- web (gunicorn) has an ssl-enabled proxy using nginx. The compose-mounted production config path is `HPCPerfStats/services-conf/nginx.conf`.
+- `HPCPerfStats/services-conf/nginx-withssl.conf` and `HPCPerfStats/services-conf/nginx-nossl.conf` are template source files for generating `nginx.conf`.
 - db (postgres) and redis (redis) are configured using the "command" directive in docker-compose.yaml
 - all name resolution comes from the docker-compose files.
 

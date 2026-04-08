@@ -53,8 +53,12 @@ $uptime 1
 !opa PortXmitData,E PortRcvData,E PortXmitPkts,E PortRcvPkts,E PortXmitWait,E SwPortCongestion,E PortRcvFECN,E PortRcvBECN,E
 !nfs READ_ops,E WRITE_ops,E
 !nvidia_gpu gpu_util,E tensor_active,E gpu_mem_bw_bytes_rate,E power_usage,E gpu_io_link_total_bytes,E clocks_event_reasons,E module_power_usage,E gpu_count,E
+!amd_gpu gpu_util,E tensor_active,E gpu_mem_bw_bytes_rate,E power_usage,E gpu_count,E
 !intel_8pmc3 {intel_pmc_schema}
 !intel_skx_imc CTL0 CTR0 CTL1 CTR1
+!amd64_pmc FLOPS,E MERGE,E INST_RETIRED,E APERF,E MPERF,E
+!amd64_df MBW_CHANNEL_0,E MBW_CHANNEL_1,E MBW_CHANNEL_2,E MBW_CHANNEL_3,E MBW_CHANNEL_4,E MBW_CHANNEL_5,E MBW_CHANNEL_6,E MBW_CHANNEL_7,E
+!arm_imc CAS_READS,E CAS_WRITES,E
 !intel_rapl MSR_PKG_ENERGY_STATUS,E,U=J
 """.format(
       fqdn=fqdn,
@@ -140,6 +144,18 @@ def _nvidia_line(scale: int) -> str:
   )
 
 
+def _amd_gpu_line(scale: int) -> str:
+  return (
+      "amd_gpu 0 %.1f %.1f %.2f %.1f 1\n"
+      % (
+          45.0 + (scale % 25),
+          8.0 + (scale % 6),
+          50.0 + scale * 0.08,
+          120.0 + scale,
+      )
+  )
+
+
 def _intel_pmc_line(scale: int) -> str:
   base = 100000 + scale * 20000
   pairs = []
@@ -165,6 +181,26 @@ def _intel_rapl_line(scale: int) -> str:
   return "intel_rapl pkg %d\n" % (8_000_000 + scale * 50_000)
 
 
+def _amd64_pmc_line(scale: int) -> str:
+  flops = 900000 + scale * 15000
+  merge = 10000 + scale * 100
+  inst = 2_000_000 + scale * 25_000
+  aperf = 3_000_000 + scale * 20_000
+  mperf = 2_500_000 + scale * 18_000
+  return "amd64_pmc cpu %d %d %d %d %d\n" % (flops, merge, inst, aperf, mperf)
+
+
+def _amd64_df_line(scale: int) -> str:
+  vals = [str(200000 + scale * 4000 + i * 1500) for i in range(8)]
+  return "amd64_df df0 %s\n" % " ".join(vals)
+
+
+def _arm_imc_line(scale: int) -> str:
+  reads = 700000 + scale * 12000
+  writes = 650000 + scale * 10000
+  return "arm_imc imc %d %d\n" % (reads, writes)
+
+
 def full_stats_snapshot(epoch: float, jid: str, fqdn: str, scale: int) -> str:
   """One timestamp block with rows for every schema type we declare."""
   parts = [
@@ -180,8 +216,12 @@ def full_stats_snapshot(epoch: float, jid: str, fqdn: str, scale: int) -> str:
       _opa_line(scale),
       _nfs_line(scale),
       _nvidia_line(scale),
+      _amd_gpu_line(scale),
       _intel_pmc_line(scale),
       _intel_imc_line(scale),
+      _amd64_pmc_line(scale),
+      _amd64_df_line(scale),
+      _arm_imc_line(scale),
       _intel_rapl_line(scale),
   ]
   return "".join(parts)
@@ -203,4 +243,22 @@ def pipeline_e2e_publish_bodies(
   for i, ep in enumerate(epoch_samples):
     bodies.append(full_stats_snapshot(ep, jid, fqdn, i * 800))
   bodies.append(rotation_dollar_schema(fqdn))
+  return bodies
+
+
+def pipeline_e2e_publish_bodies_multihost(
+    *,
+    fqdns: list[str],
+    jid: str,
+    epoch_samples: list[float],
+) -> list[str]:
+  """Emit schema/stats/rotate bodies for multiple hosts in one synthetic job."""
+  bodies = []
+  for fqdn in fqdns:
+    bodies.append(monitor_schema_header(fqdn))
+  for i, ep in enumerate(epoch_samples):
+    for hidx, fqdn in enumerate(fqdns):
+      bodies.append(full_stats_snapshot(ep, jid, fqdn, i * 800 + hidx * 50))
+  for fqdn in fqdns:
+    bodies.append(rotation_dollar_schema(fqdn))
   return bodies

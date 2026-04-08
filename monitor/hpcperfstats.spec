@@ -131,7 +131,7 @@ fi
 
 * Sat Mar 28 2026 sharrell@tacc.utexas.edu - 3.0-1
 - Bump upstream version to 3.0 (sync with monitor/configure.ac AC_INIT).
-- See .cursor/rules/monitor-version-and-packaging.mdc for version/spec maintenance.
+- See monitor/cursor-rules/monitor-version-and-packaging.mdc for version/spec maintenance.
 
 * Sat Mar 28 2026 sharrell@tacc.utexas.edu - 2.4-3
 - Build via scripts/build_static_bundle.sh (--enable-all-static): pinned static

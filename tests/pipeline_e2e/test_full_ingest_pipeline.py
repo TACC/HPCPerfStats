@@ -25,7 +25,7 @@ from .constants import (
     PIPELINE_E2E_JID,
     PIPELINE_E2E_USERNAME,
 )
-from .monitor_payloads import pipeline_e2e_publish_bodies
+from .monitor_payloads import pipeline_e2e_publish_bodies_multihost
 
 
 @pytest.mark.django_db(transaction=True)
@@ -35,6 +35,7 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
 
   host_ext = cfg.get_host_name_ext().strip().lstrip(".")
   fqdn = "{}.{}".format(PIPELINE_E2E_HOST_SHORT, host_ext)
+  fqdn2 = "{}.{}".format(PIPELINE_E2E_HOST_SHORT + "b", host_ext)
 
   kh = ApiKey.hash_raw_key(PIPELINE_E2E_API_RAW_KEY)
   ApiKey.objects.filter(key=kh).delete()
@@ -58,10 +59,10 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
       start_time=start_job,
       end_time=end_job,
       username=PIPELINE_E2E_USERNAME,
-      host_list=[PIPELINE_E2E_HOST_SHORT],
+      host_list=[PIPELINE_E2E_HOST_SHORT, PIPELINE_E2E_HOST_SHORT + "b"],
       state="COMPLETED",
       runtime=7200.0,
-      nhosts=1,
+      nhosts=2,
       ncores=4,
   )
 
@@ -74,8 +75,8 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
       (end_job + margin).timestamp(),
   ]
 
-  bodies = pipeline_e2e_publish_bodies(
-      fqdn=fqdn,
+  bodies = pipeline_e2e_publish_bodies_multihost(
+      fqdns=[fqdn, fqdn2],
       jid=PIPELINE_E2E_JID,
       epoch_samples=epoch_samples,
   )
@@ -109,6 +110,11 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
   )
 
   assert host_data.objects.filter(host=fqdn).exists()
+  assert host_data.objects.filter(host=fqdn2).exists()
+  assert host_data.objects.filter(type="amd64_pmc").exists()
+  assert host_data.objects.filter(type="amd64_df").exists()
+  assert host_data.objects.filter(type="arm_imc").exists()
+  assert host_data.objects.filter(type="amd_gpu").exists()
   assert job_plot_artifact.objects.filter(jid_id=PIPELINE_E2E_JID).count() >= 1
 
   catalog_metrics = {e["metric"] for e in job_metrics_catalog_entries()}

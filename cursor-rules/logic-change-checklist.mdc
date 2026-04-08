@@ -1,0 +1,42 @@
+---
+description: Checklist for correctness and completeness changes that affect runtime logic
+alwaysApply: true
+---
+
+# Logic Change Checklist
+
+Use this checklist for every correctness/completeness change that affects runtime logic.
+
+## Inputs and Contracts
+
+- Identify the upstream contract being changed (`host_data.type/event`, API payload, migration SQL, cache key, or plot schema).
+- Document the canonical source for that contract (monitor schema, analysis catalog, serializer, or compose config).
+- Verify cross-layer name/priority consistency (analysis -> API -> frontend -> tests).
+
+## Invariants
+
+- Define expected invariants before and after change (idempotence, monotonic counters, bounded percentages, cache freshness).
+- Verify non-staff/staff behavior and no-data fallbacks remain deterministic.
+- Verify runtime config assumptions (`db`, `redis`, compose network aliases, required env vars).
+
+## Failure Modes
+
+- List at least one transient failure scenario (DB/Redis/network/cache write failure) and expected fallback.
+- Confirm exceptions are logged with actionable context and do not silently corrupt behavior.
+- Confirm retry and timeout behavior is bounded and configurable.
+
+## Regression Tests
+
+- Add or update targeted unit tests for changed logic.
+- Add or update integration/E2E tests when route/UI/output behavior changes.
+- For ingestion/metrics/caching changes, include stale-data and invalidation boundary tests.
+
+## Validation Runbook
+
+- Run smallest targeted test modules first.
+- Run compose-backed validation for DB/Redis dependent paths.
+- Record what passed, what was skipped, and residual risks.
+
+## Overlap
+
+- Complements `runtime-resource-and-metrics-safety.mdc`, `bugfix-and-perf-change-playbook.mdc`, and test-maintenance rules.

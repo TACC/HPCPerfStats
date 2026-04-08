@@ -36,3 +36,10 @@ class TestORMHelpers(SimpleTestCase):
     self.assertEqual(jt.acct_host_list, [])
     self.assertEqual(jt.host_list, [])
     self.assertEqual(jt.schema, {})
+
+  def test_host_data_primary_key_contract(self):
+    """host_data identity stays anchored on time in Django ORM."""
+    from hpcperfstats.site.machine.models import host_data
+
+    self.assertEqual(host_data._meta.pk.name, "time")
+    self.assertIn(("time", "host", "type", "event"), host_data._meta.unique_together)

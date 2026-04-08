@@ -131,7 +131,7 @@ Use these steps on a **representative host** (same kernel, privilege level, and 
 
    Do not rely on **`make check` only inside `build-tree/src/`**; the Automake `tests/` subdir runs from the top of the build mirror.
 
-See **monitor-static-build-verification** and **global-testing-discipline** in `.cursor/rules/` (or `cursor-rules/` under this package) for project expectations.
+See **monitor-static-build-verification** and **global-testing-discipline** in `monitor/cursor-rules/` for project expectations.
 
 ## Adding code and tests
 

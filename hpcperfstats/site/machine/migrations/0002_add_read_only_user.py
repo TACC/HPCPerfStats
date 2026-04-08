@@ -3,9 +3,6 @@
 
 """
 from django.db import migrations
-import hpcperfstats.conf_parser as cfg
-
-dbname = cfg.get_db_name()
 
 
 class Migration(migrations.Migration):
@@ -24,7 +21,11 @@ class Migration(migrations.Migration):
           "CREATE ROLE statsro LOGIN PASSWORD 'statsro'; "
           "EXCEPTION WHEN duplicate_object THEN NULL; END $hps$;"
       ),
-      migrations.RunSQL("GRANT CONNECT ON DATABASE %s TO statsro;" % dbname),
+      migrations.RunSQL(
+          "DO $hps$ BEGIN "
+          "EXECUTE format('GRANT CONNECT ON DATABASE %I TO statsro', current_database()); "
+          "END $hps$;"
+      ),
       migrations.RunSQL("GRANT USAGE ON SCHEMA public TO statsro;"),
       migrations.RunSQL(
           "GRANT SELECT ON ALL TABLES IN SCHEMA public TO statsro;"),
