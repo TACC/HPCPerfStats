@@ -15,8 +15,8 @@ alwaysApply: false
 
 ## Expectations
 
-- **Bandwidth-style rates** shown as throughput should be **non-negative** unless the product explicitly models signed flow *and* the UI labels that (default: treat as magnitude, clamp or fix upstream deltas).
-- **Percentages** meant as utilization or imbalance should stay in a **sensible bounded range** (typically **0–100** or documented alternative), not millions.
+- **Bandwidth-style rates** shown as throughput must be **non-negative** unless the product explicitly models signed flow *and* the UI labels that (default: treat as magnitude, clamp or fix upstream deltas).
+- **Percentages** meant as utilization or imbalance must stay in a **documented bounded range** (default **0–100** unless a different range is explicitly documented in code and UI labels), not millions.
 
 ## Implementation guidance
 

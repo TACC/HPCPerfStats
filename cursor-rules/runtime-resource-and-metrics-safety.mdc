@@ -7,7 +7,7 @@ alwaysApply: true
 # Runtime Resource And Metrics Safety
 
 - For concurrency/resource failures (threads, worker pools, BLAS/OpenMP), centralize tunables in configuration and apply them consistently across runtime entry points.
-- For metrics and plotting logic, prefer deterministic, database-backed aggregation and invalidation checks over ad-hoc in-memory recomputation.
+- For metrics and plotting logic, use deterministic, database-backed aggregation and invalidation checks; do not rely on ad-hoc in-memory recomputation for persisted/user-visible results.
 - When changing service/runtime configs (docker compose, nginx, gunicorn, redis, postgres), preserve secure defaults and keep compose hostname/service-name resolution correct.
 - After service config changes, verify startup and basic health behavior end-to-end.
 - At minimum, verify config syntax/parsing and confirm services reach a healthy/running state before considering the change complete.

@@ -11,7 +11,7 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py` an
 
 - Lock path generation must be **idempotent**. Re-wrapping an already-locked target must not append repeated lock suffixes (for example avoid `.fnctl.lock.fnctl.lock...` growth).
 - Lock files must be removed on normal release and on error/exception paths.
-- Any cleanup path that can skip unlock due to early return/exception should be treated as a bug and fixed in the same change.
+- Any cleanup path that can skip unlock due to early return/exception is a defect and must be fixed in the same change.
 
 ## Archival recovery and compression behavior
 

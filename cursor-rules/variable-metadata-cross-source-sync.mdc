@@ -62,7 +62,7 @@ After changing **`augment_monitor_variables_diagnostics.py`** only (diagnostic w
 ## Display policy
 
 - No scientific notation in user-visible description strings (project-wide rule).  
-- Prefer one clear sentence per tooltip; units may be omitted when the UI already shows units.
+- Use one clear sentence per tooltip by default; add a second sentence only when needed for disambiguation. Units may be omitted only when the UI already renders units on the same surface.
 
 ## Overlap
 

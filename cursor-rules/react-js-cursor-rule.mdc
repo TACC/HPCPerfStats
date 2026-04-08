@@ -16,7 +16,7 @@ Naming Conventions
 - Use kebab-case for directories.
 - Use camelCase for variables and functions.
 - Use PascalCase for components.
-- File names for components should be in PascalCase. Rest of the files in kebab-case.
+- File names for components must be in PascalCase. Non-component frontend files must use kebab-case.
 - Prefix component names with their type (e.g. ButtonAccount.jsx and ButtonSignin.jsx, CardAnalyticsMain.jsx and CardAnalyticsData.jsx, etc.)
 
 Syntax and Formatting
@@ -27,7 +27,7 @@ Syntax and Formatting
 UI and Styling
 - Use bootstrap CSS components and styling.
 - Implement responsive design with React
-- All pages should have a mobile view.
+- All pages must have a mobile view.
 
 Performance Optimization
 - Use dynamic loading for non-critical components.
@@ -42,7 +42,7 @@ Key Conventions
 
 ## Incremental adoption (this repository)
 
-Some existing components use short names (for example `Layout.jsx`, `ExtendedSearch.jsx`) instead of `Page*` / `Button*` prefixes. When you touch a file, move it toward the naming and structure rules in the same change when that is practical without scope creep. A full-repo component rename is intentionally deferred.
+Some existing components use short names (for example `Layout.jsx`, `ExtendedSearch.jsx`) instead of `Page*` / `Button*` prefixes. When touching a file, align it with naming and structure rules if the rename/update stays local to the task scope (component + imports + tests). Do not perform broad repo-wide renames unless explicitly requested.
 
 ## CSP when adding network dependencies
 

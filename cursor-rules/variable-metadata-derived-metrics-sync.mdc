@@ -21,7 +21,7 @@ Job-level metrics shown in the UI are computed in **`hpcperfstats/analysis/metri
 When adding, renaming, or removing a derived metric in `metrics.py` (simple or complex lists, or catalog helpers):
 
 1. Add or update the matching key in `JOB_ACCOUNTING_AND_DERIVED_METADATA` in `variableMetadata.js` with a clear, user-facing description (units may be omitted from text if the UI already shows units).
-2. Extend **`hpcperfstats/site/frontend/src/utils/variableMetadata.test.js`** if new behavior or wording should be asserted (optional but preferred for high-visibility metrics).
+2. Extend **`hpcperfstats/site/frontend/src/utils/variableMetadata.test.js`** whenever keys are added/renamed/removed in metadata mappings; wording-only edits may skip test changes only if existing assertions still fully cover the behavior.
 3. Do **not** rely on the generic fallback string for catalog metrics; reviewers should treat missing entries as a defect.
 
 ## Overlap

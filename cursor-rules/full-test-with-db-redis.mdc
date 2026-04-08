@@ -21,7 +21,7 @@ When asked to run "full tests" for this workspace, use the Docker Compose networ
 5. Recreate/seed any data required by tests before executing pytest.
 6. Run the full suite inside the compose network (not host Python):
  - `docker-compose run --rm --entrypoint "sh -lc 'pip install \".[test]\" && python -m playwright install --with-deps chromium && python -m pytest -q'" web`
- - for web/browser E2E workflow specifically, prefer: `tests/run_web_e2e_workflow.sh`
+ - for web/browser E2E workflow specifically, use: `tests/run_web_e2e_workflow.sh`
 7. Always clean up containers and volumes after the test run (pass or fail):
    - `docker-compose down -v`
 

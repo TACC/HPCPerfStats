@@ -16,13 +16,16 @@ For any new metric, counter, summary field, route behavior, or user-visible plot
  - unit tests for transformation/priority logic,
  - API tests for response shape and fallback behavior,
  - required E2E suites when web behavior changes.
-- Update docs when behavior or test workflow changes (`TESTING.md`, user docs, design docs as applicable).
+- Update docs when behavior or test workflow changes:
+ - `TESTING.md` for test workflow/scope/dependency changes,
+ - user docs when user-visible behavior changes,
+ - design docs when architecture/contract decisions change.
 
 ## Consistency checks
 
 - Keep naming and precedence consistent across layers (do not use one typename/field name in analysis and a different implicit alias in API/UI unless explicitly mapped and tested).
 - Reuse existing constants/maps for ordering and priority before introducing new ad-hoc conditionals.
-- Prefer extending canonical registries (metric catalogs, metadata maps, route catalogs) over hardcoding isolated special cases.
+- Extend canonical registries (metric catalogs, metadata maps, route catalogs) instead of hardcoding isolated special cases, unless an explicit exception is documented in-code and covered by tests.
 
 ## Completion bar
 
