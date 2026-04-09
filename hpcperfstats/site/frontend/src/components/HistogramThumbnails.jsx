@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useId } from "react";
 import BokehEmbed from "./BokehEmbed";
 import LoadingMessage from "./LoadingMessage";
 import { useFocusTrap } from "../hooks/useFocusTrap";
@@ -31,13 +31,14 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
   const thumbActivatorRef = useRef(null);
   const popoverRef = useRef(null);
   const closeButtonRef = useRef(null);
+  const domSuffix = useId().replace(/:/g, "");
 
   const showPopover = !isMobile && expanded;
   const trapPopoverFocus = !isMobile && expanded && showPopover;
   useFocusTrap(popoverRef, trapPopoverFocus);
 
-  const thumbId = `hist-thumb-${index}`;
-  const fullId = `hist-full-${index}`;
+  const thumbId = `hist-thumb-${index}-${domSuffix}`;
+  const fullId = `hist-full-${index}-${domSuffix}`;
 
   const collapseExpanded = useCallback(() => {
     setExpanded(false);
@@ -223,7 +224,7 @@ export default function HistogramThumbnails({ histograms }) {
     >
       {histograms.map((h, i) => (
         <HistogramThumbnail
-          key={h.title}
+          key={`job-list-hist-${i}`}
           index={i}
           title={h.title}
           plotItemThumb={h.plot_item_thumb}

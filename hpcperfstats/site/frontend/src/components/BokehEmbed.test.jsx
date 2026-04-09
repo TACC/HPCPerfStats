@@ -94,15 +94,20 @@ describe("BokehEmbed", () => {
     const clearIntervalSpy = vi.spyOn(global, "clearInterval");
     delete window.Bokeh;
 
-    const { unmount } = renderBokehEmbed(
-      <BokehEmbed item={{ doc: {}, root_ids: ["r1"] }} id="bokeh-timer-test" />
-    );
+    try {
+      const { unmount } = renderBokehEmbed(
+        <BokehEmbed item={{ doc: {}, root_ids: ["r1"] }} id="bokeh-timer-test" />,
+      );
 
-    unmount();
-    await vi.runOnlyPendingTimersAsync();
-    expect(clearIntervalSpy).toHaveBeenCalled();
-    clearIntervalSpy.mockRestore();
-    vi.useRealTimers();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      unmount();
+      await vi.runOnlyPendingTimersAsync();
+      expect(clearIntervalSpy).toHaveBeenCalled();
+    } finally {
+      clearIntervalSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("does not execute legacy script/div payloads", () => {
@@ -140,5 +145,30 @@ describe("BokehEmbed", () => {
       expect(addSpy.mock.calls.some((call) => call[0] === "resize")).toBe(true);
     });
     addSpy.mockRestore();
+  });
+
+  it("serializes embed_item so concurrent mounts never overlap", async () => {
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const embedItem = vi.fn(async () => {
+      concurrent += 1;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      await new Promise((r) => {
+        setTimeout(r, 8);
+      });
+      concurrent -= 1;
+    });
+    window.Bokeh = { embed: { embed_item: embedItem } };
+    const item = { doc: {}, root_ids: ["r1"] };
+
+    renderBokehEmbed(
+      <>
+        <BokehEmbed item={item} id="slot-a" plotName="A" />
+        <BokehEmbed item={item} id="slot-b" plotName="B" />
+      </>,
+    );
+
+    await waitFor(() => expect(embedItem).toHaveBeenCalledTimes(2));
+    expect(maxConcurrent).toBe(1);
   });
 });

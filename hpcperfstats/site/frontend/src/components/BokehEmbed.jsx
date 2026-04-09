@@ -53,6 +53,28 @@ function whenBokehReady(timeoutMs = 10000, options = {}) {
 }
 
 /**
+ * Run one Bokeh embed pipeline after any in-flight pipeline finishes.
+ *
+ * BokehJS can throw (e.g. ``CanvasPanelView`` reads ``bbox.is_valid`` while
+ * ``bbox`` is still undefined) when ``embed_item`` runs concurrently for
+ * multiple targets. The job list mounts several thumbnails at once; serialize
+ * embeds so each completes before the next starts.
+ */
+let bokehEmbedChain = Promise.resolve();
+
+function withBokehEmbedLock(run) {
+  const next = bokehEmbedChain.then(
+    () => Promise.resolve().then(run),
+    () => Promise.resolve().then(run),
+  );
+  bokehEmbedChain = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+/**
  * @param {string} targetId
  * @param {"stretch_both" | "stretch_width"} mode stretch_width: full width, intrinsic height (scrollable zoom)
  */
@@ -203,50 +225,52 @@ export default function BokehEmbed({
 
     let cancelled = false;
     const bokehWait = new AbortController();
-    whenBokehReady(10000, { signal: bokehWait.signal })
-      .then(() => {
-        if (cancelled || !containerRef.current) return;
-        const el = document.getElementById(id);
-        if (!el || !window.Bokeh?.embed?.embed_item) {
-          if (!cancelled) {
-            setFailureReason("Bokeh embed target or embed_item not available");
-            setLoadFailed(true);
+    withBokehEmbedLock(() =>
+      whenBokehReady(10000, { signal: bokehWait.signal })
+        .then(() => {
+          if (cancelled || !containerRef.current) return;
+          const el = document.getElementById(id);
+          if (!el || !window.Bokeh?.embed?.embed_item) {
+            if (!cancelled) {
+              setFailureReason("Bokeh embed target or embed_item not available");
+              setLoadFailed(true);
+            }
+            return;
           }
-          return;
-        }
-        try {
-          // Re-embedding into the same target (e.g., normal -> zoom item swap)
-          // can otherwise leave duplicate Bokeh roots in the container.
-          el.innerHTML = "";
-          const embedResult = window.Bokeh.embed.embed_item(item, id);
-          Promise.resolve(embedResult)
-            .then(() => {
-              if (cancelled) return;
-              if (maximizeMode) maximizeEmbeddedPlot(id, maximizeMode);
-              setPlotReady(true);
-              if (onPlotReadyChange) onPlotReadyChange(true);
-            })
-            .catch((err) => {
-              if (cancelled) return;
+          try {
+            // Re-embedding into the same target (e.g., normal -> zoom item swap)
+            // can otherwise leave duplicate Bokeh roots in the container.
+            el.innerHTML = "";
+            const embedResult = window.Bokeh.embed.embed_item(item, id);
+            return Promise.resolve(embedResult)
+              .then(() => {
+                if (cancelled) return;
+                if (maximizeMode) maximizeEmbeddedPlot(id, maximizeMode);
+                setPlotReady(true);
+                if (onPlotReadyChange) onPlotReadyChange(true);
+              })
+              .catch((err) => {
+                if (cancelled) return;
+                setFailureReason(err?.message || "Embed failed");
+                setLoadFailed(true);
+                if (onPlotReadyChange) onPlotReadyChange(false);
+              });
+          } catch (err) {
+            console.warn("Bokeh embed_item failed:", err);
+            if (!cancelled) {
               setFailureReason(err?.message || "Embed failed");
               setLoadFailed(true);
               if (onPlotReadyChange) onPlotReadyChange(false);
-            });
-        } catch (err) {
-          console.warn("Bokeh embed_item failed:", err);
-          if (!cancelled) {
-            setFailureReason(err?.message || "Embed failed");
-            setLoadFailed(true);
-            if (onPlotReadyChange) onPlotReadyChange(false);
+            }
           }
-        }
-      })
-      .catch((err) => {
-        if (cancelled || err?.name === "AbortError") return;
-        setFailureReason(err?.message || "Bokeh JS did not load in time");
-        setLoadFailed(true);
-        if (onPlotReadyChange) onPlotReadyChange(false);
-      });
+        })
+        .catch((err) => {
+          if (cancelled || err?.name === "AbortError") return;
+          setFailureReason(err?.message || "Bokeh JS did not load in time");
+          setLoadFailed(true);
+          if (onPlotReadyChange) onPlotReadyChange(false);
+        }),
+    );
 
     return () => {
       cancelled = true;
