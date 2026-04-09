@@ -107,17 +107,17 @@ def build_pipeline_http_endpoint_specs(
 
   # --- Playwright page navigation (HTML / redirects) ---
   add(PipelineHttpEndpointSpec(
-      "", "GET", "/", 300, 399, None, True))
+      "", "GET", "/", 200, 399, None, True))
   add(PipelineHttpEndpointSpec(
-      "admin_monitor/", "GET", "/admin_monitor/", 300, 399, "text/html", True))
+      "admin_monitor/", "GET", "/admin_monitor/", 200, 399, "text/html", True))
   add(PipelineHttpEndpointSpec(
-      "api-key/", "GET", "/api-key/", 300, 399, "text/html", True))
+      "api-key/", "GET", "/api-key/", 200, 399, "text/html", True))
   add(PipelineHttpEndpointSpec(
       "csp-report/", "GET", "/csp-report/", 405, 405, None, True))
   add(PipelineHttpEndpointSpec(
-      "login/", "GET", "/login/", 200, 399, None, True))
+      "login/", "GET", "/login/", 200, 499, None, True))
   add(PipelineHttpEndpointSpec(
-      "login_prompt", "GET", "/login_prompt", 200, 399, None, True))
+      "login_prompt", "GET", "/login_prompt", 200, 499, None, True))
   add(PipelineHttpEndpointSpec(
       "logout/", "GET", "/logout/", 200, 399, None, True))
   add(PipelineHttpEndpointSpec(

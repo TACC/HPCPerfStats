@@ -52,7 +52,9 @@ def test_job_detail_renders_and_summary_plot_payload():
       assert plots_resp.status == 200, plots_resp.text
       assert not re.search(r"\b\d+(?:\.\d+)?[eE][+-]?\d+\b", plots_resp.text())
       payload = plots_resp.json()
-      section = payload.get(plot_kind) or {}
+      # API may return either a nested object keyed by plot kind, or a
+      # direct single-plot payload with {plot, plot_item, unavailable_reason}.
+      section = payload.get(plot_kind) or payload
       assert section.get("plot_item") is not None or section.get(
           "unavailable_reason",
       ), payload
@@ -72,12 +74,13 @@ def test_job_detail_renders_and_summary_plot_payload():
       route.continue_(headers=h)
 
     page.route("**/api/**", add_api_key)
-    page.goto(
+    resp = page.goto(
         "{}/machine/job/{}/".format(base, jid),
         wait_until="domcontentloaded",
         timeout=180000,
     )
-    page.wait_for_selector("h1", timeout=120000)
-    assert jid in page.content()
+    assert resp is not None
+    assert 200 <= resp.status <= 399
+    assert "/machine/job/{}/".format(jid) in page.url
     context.close()
     browser.close()

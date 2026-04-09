@@ -52,6 +52,24 @@ def _assert_content_type_band(resp, spec: PipelineHttpEndpointSpec):
   assert spec.content_type_substring.lower() in ct, (spec.path, ct, spec)
 
 
+def _assert_job_list_histograms_payload(resp, spec: PipelineHttpEndpointSpec):
+  if spec.path != "/api/jobs/histograms/":
+    return
+  payload = resp.json()
+  assert payload.get("group") == "queue", payload
+  plots = payload.get("plots")
+  assert isinstance(plots, list), payload
+  expected_keys = {"jobs_by_queue", "cpu_hours_by_queue"}
+  actual_keys = {plot.get("key") for plot in plots}
+  assert expected_keys.issubset(actual_keys), payload
+  for plot in plots:
+    if plot.get("key") not in expected_keys:
+      continue
+    assert plot.get("plot_item_thumb") is not None, payload
+    assert plot.get("plot_item_full") is not None, payload
+    assert plot.get("plot_unavailable_reason") is None, payload
+
+
 @pytest.mark.django_db(databases=[])
 def test_every_configured_http_endpoint_smoke():
   if os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip() != "1":
@@ -155,5 +173,6 @@ def test_every_configured_http_endpoint_smoke():
           resp.text()[:500] if hasattr(resp, "text") else "",
       )
       _assert_content_type_band(resp, spec)
+      _assert_job_list_histograms_payload(resp, spec)
 
     request.dispose()
