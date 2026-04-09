@@ -1,0 +1,58 @@
+---
+description: Bokeh JS/Python version sync, patch-package vendor patch lifecycle, and mandatory re-diff on @bokeh/bokehjs changes
+alwaysApply: false
+globs:
+  - "**/hpcperfstats/site/frontend/package.json"
+  - "**/hpcperfstats/site/frontend/patches/**"
+  - "**/pyproject.toml"
+  - "**/test_bokeh*.py"
+  - "**/cursor-rules/bokeh*.mdc"
+---
+
+# Bokeh version sync and vendor patch (`patch-package`)
+
+The SPA vendors **`@bokeh/bokehjs`** with a **local `patch-package` patch** (under `hpcperfstats/site/frontend/patches/`) that null-guards **`AxisView.is_renderable`** when axis **`ranges`** are not yet wired—avoiding `is_valid` on `undefined` during early layout / `ResizeObserver` timing. Treat this as a **vendor workaround** until Bokeh ships an upstream fix; consider filing or linking a Bokeh issue when touching the patch.
+
+## Vendor patch re-diff law (mandatory)
+
+On **every** change to **`@bokeh/bokehjs`** in `package.json` (any semver, including patch bumps):
+
+1. Run **`npm ci`** (or install) so `postinstall` runs **`patch-package`**.
+2. **Re-locate** the patched symbols in fresh `node_modules/@bokeh/bokehjs` (compiled paths can move between releases).
+3. Either:
+   - **Re-apply** the guard in the new file(s), then run **`npx patch-package @bokeh/bokehjs`**, **remove** the old `patches/@bokeh+bokehjs+*.patch`, and commit the **new** patch file; or
+   - **Delete** the patch file and remove **`postinstall`** / **`patch-package`** only if upstream fixed the bug and the guard is no longer needed.
+4. **Never** ship stale hunks: an outdated patch that fails to apply breaks installs; a silently wrong context match is worse.
+
+## Single-version sync (one table)
+
+| Location | What to sync |
+|----------|----------------|
+| `hpcperfstats/site/frontend/package.json` | `@bokeh/bokehjs` exact version |
+| `pyproject.toml` | `bokeh==X.Y.Z` (Python `json_item` / figures must match JS embed major.minor.patch policy) |
+| `hpcperfstats/site/machine/job_plot_artifacts.py` | Fingerprint includes `bokeh.__version__` — expect artifact churn / cache behavior on bump |
+| `hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` | `_BOKEH_CDN_JS` jsDelivr pin for `@bokeh/bokehjs@X.Y.Z` |
+| `hpcperfstats/site/frontend/src/test-fixtures/bokeh-*.json` | Regenerate if serialized `json_item` / doc schema changes (per `web-pages-e2e-test-maintenance.mdc`) |
+| `patches/@bokeh+bokehjs+*.patch` | Re-diff on every version change; regenerate with `patch-package`; remove previous patch file |
+| `hpcperfstats/site/frontend/src/bokehInit.js` / `patch-resize-observer-for-bokeh.js` | Re-validate embed + ResizeObserver behavior after Bokeh upgrades |
+
+## Workflow (bump checklist)
+
+1. Bump **`@bokeh/bokehjs`** and **`bokeh==…`** together per the table above.
+2. `cd hpcperfstats/site/frontend && npm ci` → confirm **`patch-package`** applies (or follow re-diff law).
+3. `npm run build` → fix bundle/import breaks.
+4. `npm test -- --run` (Vitest), including Bokeh embed tests as needed.
+5. `pytest hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + CDN Bokeh; see below).
+6. Regenerate **`test-fixtures`** if schema changes; update **`TESTING.md`** if workflow or commands change (`testing-doc-sync.mdc`).
+
+## Playwright vs production bundle
+
+`test_bokeh_job_list_embed_browser_e2e.py` loads Bokeh from **jsDelivr (unpatched)**. That test guards **`json_item` / range / embed harness** regressions; it does **not** prove the **vendored, patched** `@bokeh/bokehjs` bundle. After vendor patch or Bokeh bumps, validate production-style embeds (e.g. staging) for console cleanliness.
+
+## Overlap
+
+- **`job-plot-artifacts-caching.mdc`** — fingerprints and artifact invalidation on Bokeh version changes.
+- **`no-cdn-in-production.mdc`** — CDN only where explicitly test-only; production uses the bundled library.
+- **`web-pages-e2e-test-maintenance.mdc`** — fixtures, `_BOKEH_CDN_JS`, and regeneration steps.
+- **`bokeh-layout-surface-split.mdc`** — embed layout, `BokehEmbed`, ResizeObserver patch.
+- **`testing-doc-sync.mdc`** — keep `TESTING.md` aligned with npm/postinstall and test commands.

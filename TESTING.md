@@ -111,6 +111,8 @@ For Vitest:
 cd hpcperfstats/site/frontend && npm ci
 ```
 
+`npm ci` / `npm install` run **`postinstall` → `patch-package`**, which applies vendor patches from **`hpcperfstats/site/frontend/patches/`** (currently **`@bokeh/bokehjs`** — guards early axis layout when ranges are not ready). On any **`@bokeh/bokehjs`** version change, follow **`cursor-rules/bokeh-version-and-vendor-patch-upgrade.mdc`** (re-diff or drop the patch; never ship stale hunks).
+
 The SPA bundles Bokeh via **`@bokeh/bokehjs`** in `package.json`; keep its version aligned with the **`bokeh==…`** pin in `pyproject.toml` so `json_item` embeds stay compatible.
 
 **Bootswatch** (Spacelab) is imported from **`bootswatch`** in the Vite bundle (same CSS stack as the rest of `/machine/`).

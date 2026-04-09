@@ -1,0 +1,20 @@
+diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/axis.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/axis.js
+index 47d4358..e210a94 100644
+--- a/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/axis.js
++++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/axis.js
+@@ -108,7 +108,14 @@ export class AxisView extends GuideRendererView {
+         }
+     }
+     get is_renderable() {
+-        const [range, cross_range] = this.ranges;
++        const ranges = this.ranges;
++        if (ranges == null) {
++            return false;
++        }
++        const [range, cross_range] = ranges;
++        if (range == null || cross_range == null) {
++            return false;
++        }
+         return super.is_renderable && range.is_valid && cross_range.is_valid && range.span > 0 && cross_range.span > 0;
+     }
+     interactive_hit(sx, sy) {
