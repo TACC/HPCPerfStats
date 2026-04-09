@@ -50,9 +50,9 @@ DEFAULT_CSP_REPORT_ONLY = (
   "form-action 'self'; "
   "img-src 'self' data:; "
   "font-src 'self' data: https://fonts.gstatic.com; "
-  "style-src 'self' https://fonts.googleapis.com; "
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
   # Match enforced policy for Bokeh-embedded plots (avoids report-only noise).
-  "script-src 'self' 'unsafe-eval'; "
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
   "connect-src 'self'; "
   "upgrade-insecure-requests; "
   "report-uri /csp-report/;"

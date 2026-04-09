@@ -1406,6 +1406,65 @@ _JOB_LIST_QUEUE_HIST_SPECS = (
 )
 
 
+def _extract_bokeh_doc_root_ids(doc):
+    """Return a set of root ids declared in a Bokeh json_item doc payload."""
+    ids = set()
+    if not isinstance(doc, dict):
+        return ids
+    roots = doc.get("roots")
+    if isinstance(roots, list):
+        for root in roots:
+            if isinstance(root, dict):
+                rid = root.get("id")
+                if isinstance(rid, str) and rid.strip():
+                    ids.add(rid.strip())
+        return ids
+    if not isinstance(roots, dict):
+        return ids
+    for rid in roots.get("root_ids", []) or []:
+        if isinstance(rid, str) and rid.strip():
+            ids.add(rid.strip())
+    for ref in roots.get("references", []) or []:
+        if isinstance(ref, dict):
+            rid = ref.get("id")
+            if isinstance(rid, str) and rid.strip():
+                ids.add(rid.strip())
+    return ids
+
+
+def _is_valid_bokeh_json_item_payload(payload):
+    """True when json_item has declared root ids and doc/root consistency."""
+    if not isinstance(payload, dict):
+        return False
+    doc = payload.get("doc")
+    if not isinstance(doc, dict):
+        return False
+    doc_root_ids = _extract_bokeh_doc_root_ids(doc)
+    if not doc_root_ids:
+        return False
+    root_id = payload.get("root_id")
+    if isinstance(root_id, str) and root_id.strip():
+        return root_id.strip() in doc_root_ids
+    root_ids = payload.get("root_ids")
+    if not isinstance(root_ids, list) or not root_ids:
+        return False
+    for rid in root_ids:
+        if not isinstance(rid, str) or not rid.strip() or rid.strip() not in doc_root_ids:
+            return False
+    return True
+
+
+def _sanitize_hist_plot_item(plot):
+    """Convert Bokeh plot to json_item and drop invalid payloads."""
+    if plot is None:
+        return None
+    try:
+        payload = json_item(plot)
+    except Exception:
+        return None
+    return payload if _is_valid_bokeh_json_item_payload(payload) else None
+
+
 def _job_list_metric_hist_pair(df, metric_name, label, display_title, thumb_wh, full_wh):
     """Return (thumb_figure, full_figure) for one metric via ``job_hist``."""
     tw, th = thumb_wh
@@ -1507,14 +1566,16 @@ def job_list_histograms(request):
         for plot_key, title, unavail_msg, f_thumb, f_full in pending:
             thumb_plot = f_thumb.result()
             full_plot = f_full.result()
+            thumb_item = _sanitize_hist_plot_item(thumb_plot)
+            full_item = _sanitize_hist_plot_item(full_plot)
             plots.append(
                 {
                     "key": plot_key,
                     "title": title,
-                    "plot_item_thumb": json_item(thumb_plot) if thumb_plot is not None else None,
-                    "plot_item_full": json_item(full_plot) if full_plot is not None else None,
+                    "plot_item_thumb": thumb_item,
+                    "plot_item_full": full_item,
                     "plot_unavailable_reason": None
-                    if (thumb_plot is not None and full_plot is not None)
+                    if (thumb_item is not None and full_item is not None)
                     else unavail_msg,
                 }
             )
@@ -1561,6 +1622,8 @@ def job_list_histograms(request):
             (THUMB_WIDTH, THUMB_HEIGHT),
             (FULL_WIDTH, FULL_HEIGHT),
         )
+        thumb_item = _sanitize_hist_plot_item(p_thumb)
+        full_item = _sanitize_hist_plot_item(p_full)
 
         return _JSONResponse(
             {
@@ -1568,10 +1631,10 @@ def job_list_histograms(request):
                 "metric": metric_name,
                 "nj": nj,
                 "title": display_title,
-                "plot_item_thumb": json_item(p_thumb) if p_thumb is not None else None,
-                "plot_item_full": json_item(p_full) if p_full is not None else None,
+                "plot_item_thumb": thumb_item,
+                "plot_item_full": full_item,
                 "plot_unavailable_reason": None
-                if (p_thumb is not None and p_full is not None)
+                if (thumb_item is not None and full_item is not None)
                 else f"No histogram data available for metric '{metric_name}' in this query.",
             }
         )

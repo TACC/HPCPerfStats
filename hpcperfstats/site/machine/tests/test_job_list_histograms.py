@@ -113,8 +113,8 @@ def test_queue_group_plots_payload_shape_and_order():
         "hpcperfstats.site.machine.api._job_list_queue_bar_chart",
         return_value=MagicMock(),
     ) as mock_bar, patch(
-        "hpcperfstats.site.machine.api.json_item",
-        return_value={"stub": True},
+        "hpcperfstats.site.machine.api._sanitize_hist_plot_item",
+        return_value={"doc": {"roots": [{"id": "r1"}]}, "root_id": "r1"},
     ):
         response = job_list_histograms(request)
 
@@ -197,8 +197,8 @@ def test_queue_group_with_jobs_does_not_call_build_histogram_dataframe():
         "hpcperfstats.site.machine.api._job_list_queue_bar_chart",
         return_value=MagicMock(),
     ), patch(
-        "hpcperfstats.site.machine.api.json_item",
-        return_value={"stub": True},
+        "hpcperfstats.site.machine.api._sanitize_hist_plot_item",
+        return_value={"doc": {"roots": [{"id": "r1"}]}, "root_id": "r1"},
     ):
         job_list_histograms(request)
 
@@ -237,13 +237,50 @@ def test_metric_group_calls_build_histogram_dataframe_when_jobs_present():
         "hpcperfstats.site.machine.api._job_list_metric_hist_pair",
         return_value=(MagicMock(), MagicMock()),
     ), patch(
-        "hpcperfstats.site.machine.api.json_item",
-        return_value={"stub": True},
+        "hpcperfstats.site.machine.api._sanitize_hist_plot_item",
+        return_value={"doc": {"roots": [{"id": "r1"}]}, "root_id": "r1"},
     ):
         job_list_histograms(request)
 
     mock_qs_build.assert_called_once_with(ANY)
     mock_df_build.assert_called_once()
+
+
+def test_queue_group_invalid_json_payload_is_replaced_with_unavailable_reason():
+    """Malformed Bokeh json_item payloads are nulled out instead of returned to SPA."""
+    from hpcperfstats.site.machine.api import job_list_histograms
+
+    factory = RequestFactory()
+    request = factory.get("/api/jobs/histograms/", {"group": "queue"})
+
+    with override_settings(
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                "LOCATION": "job-list-hist-invalid-json-test",
+            }
+        }
+    ), patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True), patch(
+        "hpcperfstats.site.machine.api._build_histogram_queryset",
+        return_value=(MagicMock(), 2, {}, {}),
+    ), patch(
+        "hpcperfstats.site.machine.api._get_small_executor",
+        return_value=_SyncExecutor(),
+    ), patch(
+        "hpcperfstats.site.machine.api._job_list_queue_bar_chart",
+        return_value=MagicMock(),
+    ), patch(
+        "hpcperfstats.site.machine.api._sanitize_hist_plot_item",
+        side_effect=[None, None, {"doc": {"roots": [{"id": "r1"}]}, "root_id": "r1"}, {"doc": {"roots": [{"id": "r1"}]}, "root_id": "r1"}],
+    ):
+        response = job_list_histograms(request)
+
+    assert response.status_code == 200
+    data = response.json()
+    first_plot = data["plots"][0]
+    assert first_plot["plot_item_thumb"] is None
+    assert first_plot["plot_item_full"] is None
+    assert first_plot["plot_unavailable_reason"] == "No queue histogram data available for this query."
 
 
 @pytest.mark.django_db

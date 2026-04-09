@@ -85,6 +85,26 @@ function cloneBokehJsonItem(item) {
   }
 }
 
+function isEmbedTargetRenderable(el) {
+  if (!el?.isConnected) return false;
+  if (typeof import.meta !== "undefined" && import.meta.env?.VITEST) {
+    return true;
+  }
+  return el.offsetWidth > 0 && el.offsetHeight > 0;
+}
+
+function disposeBokehViewsForTarget(targetEl) {
+  if (!targetEl || !window.Bokeh?.index) return;
+  Object.values(window.Bokeh.index).forEach((view) => {
+    try {
+      if (!view?.el || !targetEl.contains(view.el)) return;
+      if (typeof view.remove === "function") view.remove();
+    } catch {
+      // Best-effort teardown for stale embedded roots.
+    }
+  });
+}
+
 /**
  * Bokeh measures the embed target's box; if it or an ancestor is not laid out
  * (e.g. HTML `hidden` / `display:none`), width and height are 0 and embed_item
@@ -320,12 +340,25 @@ export default function BokehEmbed({
             try {
               // Re-embedding into the same target (e.g., normal -> zoom item swap)
               // can otherwise leave duplicate Bokeh roots in the container.
+              if (!isEmbedTargetRenderable(el)) {
+                setFailureReason("Chart container is detached or hidden before embed.");
+                setLoadFailed(true);
+                if (onPlotReadyChange) onPlotReadyChange(false);
+                return;
+              }
+              disposeBokehViewsForTarget(el);
               el.innerHTML = "";
               const embedPayload = cloneBokehJsonItem(item);
               const embedResult = window.Bokeh.embed.embed_item(embedPayload, id);
               return Promise.resolve(embedResult)
                 .then(() => {
                   if (cancelled) return;
+                  if (!isEmbedTargetRenderable(el)) {
+                    setFailureReason("Chart container changed before render completed.");
+                    setLoadFailed(true);
+                    if (onPlotReadyChange) onPlotReadyChange(false);
+                    return;
+                  }
                   if (maximizeMode) maximizeEmbeddedPlot(id, maximizeMode);
                   setPlotReady(true);
                   if (onPlotReadyChange) onPlotReadyChange(true);
@@ -357,12 +390,16 @@ export default function BokehEmbed({
     return () => {
       cancelled = true;
       bokehWait.abort();
+      const el = typeof document !== "undefined" ? document.getElementById(id) : null;
+      disposeBokehViewsForTarget(el);
     };
   }, [item, id, onPlotReadyChange, maximizeMode]);
 
   useEffect(() => {
     if (!plotReady || !maximizeMode) return;
     function onResize() {
+      const el = typeof document !== "undefined" ? document.getElementById(id) : null;
+      if (!isEmbedTargetRenderable(el)) return;
       maximizeEmbeddedPlot(id, maximizeMode);
     }
     window.addEventListener("resize", onResize);

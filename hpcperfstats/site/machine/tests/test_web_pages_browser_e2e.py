@@ -129,6 +129,15 @@ def test_browser_flow_for_web_pages():
           page.goto(f"{base_url}/")
           assert "/machine/" in page.url
           assert "spa-shell" in page.locator("#root").inner_text()
+          root_response = page.goto(f"{base_url}/machine/")
+          assert root_response is not None
+          response_headers = root_response.headers
+          csp = response_headers.get("content-security-policy", "")
+          csp_report_only = response_headers.get("content-security-policy-report-only", "")
+          assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;" in csp
+          assert "script-src 'self' 'unsafe-inline' 'unsafe-eval';" in csp
+          assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;" in csp_report_only
+          assert "script-src 'self' 'unsafe-inline' 'unsafe-eval';" in csp_report_only
 
           # Staff-only controls appear for staff sessions (mirrors SPA staff menu).
           page.goto(f"{base_url}/machine/?staff=1")

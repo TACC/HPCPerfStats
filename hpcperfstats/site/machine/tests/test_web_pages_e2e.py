@@ -28,6 +28,12 @@ class TestWebPagesEndToEnd:
       assert machine_response.status_code == 200
       machine_html = machine_response.content.decode("utf-8")
       assert "spa-shell" in machine_html
+      csp = machine_response["Content-Security-Policy"]
+      csp_report_only = machine_response["Content-Security-Policy-Report-Only"]
+      assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;" in csp
+      assert "script-src 'self' 'unsafe-inline' 'unsafe-eval';" in csp
+      assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;" in csp_report_only
+      assert "script-src 'self' 'unsafe-inline' 'unsafe-eval';" in csp_report_only
 
       # React router deep-link pages should still return the SPA shell.
       for path in (
