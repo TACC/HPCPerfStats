@@ -18,3 +18,27 @@ index 47d4358..e210a94 100644
          return super.is_renderable && range.is_valid && cross_range.is_valid && range.span > 0 && cross_range.span > 0;
      }
      interactive_hit(sx, sy) {
+diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/grids/grid.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/grids/grid.js
+index c946ebe..53de93d 100644
+--- a/node_modules/@bokeh/bokehjs/build/js/lib/models/grids/grid.js
++++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/grids/grid.js
+@@ -68,6 +68,9 @@ export class GridView extends GuideRendererView {
+     }
+     computed_bounds() {
+         const [range] = this.ranges();
++        if (range == null) {
++            return [0, 1];
++        }
+         const user_bounds = this.model.bounds;
+         const range_bounds = [range.min, range.max];
+         let start;
+@@ -104,6 +107,9 @@ export class GridView extends GuideRendererView {
+         const i = this.model.dimension;
+         const j = 1 - i;
+         const [range, cross_range] = this.ranges();
++        if (range == null || cross_range == null) {
++            return [[], []];
++        }
+         const [start, end] = (() => {
+             const [start, end] = this.computed_bounds();
+             return [Math.min(start, end), Math.max(start, end)];

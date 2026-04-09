@@ -11,7 +11,7 @@ globs:
 
 # Bokeh version sync and vendor patch (`patch-package`)
 
-The SPA vendors **`@bokeh/bokehjs`** with a **local `patch-package` patch** (under `hpcperfstats/site/frontend/patches/`) that null-guards **`AxisView.is_renderable`** when axis **`ranges`** are not yet wired—avoiding `is_valid` on `undefined` during early layout / `ResizeObserver` timing. Treat this as a **vendor workaround** until Bokeh ships an upstream fix; consider filing or linking a Bokeh issue when touching the patch.
+The SPA vendors **`@bokeh/bokehjs`** with a **local `patch-package` patch** (under `hpcperfstats/site/frontend/patches/`) that (1) null-guards **`AxisView.is_renderable`** when axis **`ranges`** are not yet wired—avoiding `is_valid` on `undefined` during early layout / `ResizeObserver` timing—and (2) null-guards **`GridView`** `computed_bounds` / **`grid_coords`** when **`range`** or **`cross_range`** is missing—avoiding **`min` on `undefined`** while grids paint before coordinates finish wiring (e.g. job-list queue vbar with **y** grid still enabled). Treat this as a **vendor workaround** until Bokeh ships an upstream fix; consider filing or linking a Bokeh issue when touching the patch.
 
 ## Vendor patch re-diff law (mandatory)
 
