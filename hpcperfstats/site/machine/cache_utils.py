@@ -8,6 +8,7 @@ import hashlib
 import logging
 import os
 import time
+from datetime import datetime
 from datetime import timedelta
 from datetime import timezone as dt_timezone
 
@@ -27,6 +28,36 @@ SITE_CACHE_TTL_FRESH_SECONDS = 3600
 SITE_NEWEST_END_META_TTL_SECONDS = 60
 
 KEY_SITE_NEWEST_JOB_END = "site_newest_job_end_v1"
+
+# Sentinel: cached probe value could not be interpreted as a datetime (corrupt / legacy key).
+_INVALID_SITE_NEWEST_END_PROBE = object()
+
+
+def _coerce_site_newest_job_end_time(m):
+  """Normalize DB or cache probe to timezone-aware datetime, or None. _INVALID_* if unusable."""
+  if m is None:
+    return None
+  if isinstance(m, datetime):
+    if m.tzinfo is None:
+      return timezone.make_aware(m, dt_timezone.utc)
+    return m
+  if isinstance(m, (int, float)):
+    ts = float(m)
+    if ts > 1e12:
+      ts /= 1000.0
+    return datetime.fromtimestamp(ts, tz=dt_timezone.utc)
+  if isinstance(m, str):
+    s = m.strip()
+    if s.endswith("Z"):
+      s = s[:-1] + "+00:00"
+    try:
+      parsed = datetime.fromisoformat(s)
+    except ValueError:
+      return _INVALID_SITE_NEWEST_END_PROBE
+    if parsed.tzinfo is None:
+      return timezone.make_aware(parsed, dt_timezone.utc)
+    return parsed
+  return _INVALID_SITE_NEWEST_END_PROBE
 
 
 def _cache_debug_enabled() -> bool:
@@ -97,25 +128,46 @@ def _unwrap_meta_value(wrapped):
 
 
 def get_site_newest_job_end_time():
-  """Return max(job_data.end_time) with a short-lived cache; None if no jobs."""
+  """Return max(job_data.end_time) with a short-lived cache; None if no jobs.
+
+  Values are normalized to timezone-aware datetimes. Cache entries may be legacy
+  ints (Unix epoch) or ISO strings depending on serializer — those are accepted.
+  """
   try:
-    wrapped = cache.get(KEY_SITE_NEWEST_JOB_END, _CACHE_MISS)
-    if wrapped is not _CACHE_MISS:
-      return _unwrap_meta_value(wrapped)
     from .models import job_data
 
-    m = job_data.objects.aggregate(x=Max("end_time"))["x"]
-    cache.set(
-        KEY_SITE_NEWEST_JOB_END,
-        (m,) if m is None else m,
-        timeout=SITE_NEWEST_END_META_TTL_SECONDS,
-    )
-    return m
+    def from_db():
+      return job_data.objects.aggregate(x=Max("end_time"))["x"]
+
+    wrapped = cache.get(KEY_SITE_NEWEST_JOB_END, _CACHE_MISS)
+    if wrapped is not _CACHE_MISS:
+      raw = _unwrap_meta_value(wrapped)
+      coerced = _coerce_site_newest_job_end_time(raw)
+      if coerced is not _INVALID_SITE_NEWEST_END_PROBE:
+        return coerced
+      try:
+        cache.delete(KEY_SITE_NEWEST_JOB_END)
+      except Exception:
+        pass
+
+    m = from_db()
+    try:
+      cache.set(
+          KEY_SITE_NEWEST_JOB_END,
+          (m,) if m is None else m,
+          timeout=SITE_NEWEST_END_META_TTL_SECONDS,
+      )
+    except Exception:
+      pass
+    coerced = _coerce_site_newest_job_end_time(m)
+    return None if coerced is _INVALID_SITE_NEWEST_END_PROBE else coerced
   except Exception:
     try:
       from .models import job_data
 
-      return job_data.objects.aggregate(x=Max("end_time"))["x"]
+      raw = job_data.objects.aggregate(x=Max("end_time"))["x"]
+      coerced = _coerce_site_newest_job_end_time(raw)
+      return None if coerced is _INVALID_SITE_NEWEST_END_PROBE else coerced
     except Exception:
       return None
 

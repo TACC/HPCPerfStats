@@ -109,6 +109,51 @@ def test_get_site_content_cache_timeout_none_when_newest_stale():
     assert cache_utils.get_site_content_cache_timeout() is None
 
 
+def test_get_site_newest_job_end_time_coerces_unix_int_from_cache():
+  """Redis/serializer may return epoch seconds as int; still drives TTL logic."""
+  from datetime import datetime, timedelta, timezone as dt_tz
+
+  from hpcperfstats.site.machine import cache_utils
+
+  epoch = int(datetime(2026, 4, 1, 0, 0, 0, tzinfo=dt_tz.utc).timestamp())
+  stored = {cache_utils.KEY_SITE_NEWEST_JOB_END: epoch}
+  mock_cache = MagicMock()
+  mock_cache.get.side_effect = lambda key, default=None: stored.get(key, default)
+  mock_cache.set.side_effect = lambda key, value, timeout=None: stored.update({key: value})
+  mock_cache.delete.side_effect = lambda key: stored.pop(key, None)
+
+  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
+    m = cache_utils.get_site_newest_job_end_time()
+  assert isinstance(m, datetime)
+  assert m.tzinfo is not None
+  assert abs(m.timestamp() - epoch) < 1.0
+
+
+def test_get_site_newest_job_end_time_deletes_cache_on_corrupt_value():
+  """Unparseable cached probe is dropped and DB path is used."""
+  from datetime import datetime, timezone as dt_tz
+
+  from hpcperfstats.site.machine import cache_utils
+
+  db_dt = datetime(2026, 4, 1, 0, 0, 0, tzinfo=dt_tz.utc)
+  stored = {cache_utils.KEY_SITE_NEWEST_JOB_END: "not-a-date"}
+  mock_cache = MagicMock()
+  mock_cache.get.side_effect = lambda key, default=None: stored.get(key, default)
+  mock_cache.set.side_effect = lambda key, value, timeout=None: stored.update({key: value})
+  mock_cache.delete.side_effect = lambda key: stored.pop(key, None)
+
+  mock_job_data = MagicMock()
+  mock_job_data.objects.aggregate.return_value = {"x": db_dt}
+
+  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
+    with patch("hpcperfstats.site.machine.models.job_data", mock_job_data):
+      m = cache_utils.get_site_newest_job_end_time()
+
+  mock_cache.delete.assert_called_with(cache_utils.KEY_SITE_NEWEST_JOB_END)
+  assert m == db_dt
+  mock_job_data.objects.aggregate.assert_called()
+
+
 def test_invalidate_after_job_data_ingest_noop_when_zero():
   mock_cache = MagicMock()
   with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
