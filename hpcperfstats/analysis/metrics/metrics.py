@@ -1112,8 +1112,9 @@ class Metrics():
               "value": None,
               "no_data_reason": NO_TIME_SERIES_MSG,
           })
-        log_print("compute metrics time: {0:.1f}".format(time.time() -
-                                                     metric_compute_start))
+        log_print(
+            "compute metrics time jid={}: {:.1f}".format(
+                job.jid, time.time() - metric_compute_start))
         return {
             "rows": results,
             "distinct_time_count": distinct_time_count,
@@ -1345,8 +1346,9 @@ class Metrics():
               "no_data_reason": None,
           })
 
-    log_print("compute metrics time: {0:.1f}".format(time.time() -
-                                                 metric_compute_start))
+    log_print(
+        "compute metrics time jid={}: {:.1f}".format(
+            job.jid, time.time() - metric_compute_start))
     return {
         "rows": results,
         "distinct_time_count": distinct_time_count,
