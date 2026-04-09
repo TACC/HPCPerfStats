@@ -13,7 +13,7 @@ describe("applyBokehResizeObserverDeferral", () => {
     resetBokehResizeObserverPatchForTests();
   });
 
-  it("defers ResizeObserver via two requestAnimationFrame hops", () => {
+  it("defers ResizeObserver via three rAF hops then setTimeout(0)", async () => {
     const rafQueue = [];
     vi.stubGlobal("requestAnimationFrame", (fn) => {
       rafQueue.push(fn);
@@ -46,6 +46,12 @@ describe("applyBokehResizeObserverDeferral", () => {
     expect(rafQueue.length).toBe(1);
 
     rafQueue.shift()(0);
+    expect(order).toEqual(["before-observe", "after-observe"]);
+    expect(rafQueue.length).toBe(1);
+
+    rafQueue.shift()(0);
+    expect(order).toEqual(["before-observe", "after-observe"]);
+    await new Promise((r) => setTimeout(r, 0));
     expect(order).toEqual(["before-observe", "after-observe", "resize"]);
   });
 
@@ -85,7 +91,7 @@ describe("applyBokehResizeObserverDeferral", () => {
 });
 
 describe("scheduleBokehSafeResizeObserverCallback", () => {
-  it("runs user callback after two rAF ticks", () => {
+  it("runs user callback after three rAF ticks and setTimeout(0)", async () => {
     const rafQueue = [];
     vi.stubGlobal("requestAnimationFrame", (fn) => {
       rafQueue.push(fn);
@@ -102,6 +108,10 @@ describe("scheduleBokehSafeResizeObserverCallback", () => {
     rafQueue.shift()(0);
     expect(order).toEqual([]);
     rafQueue.shift()(0);
+    expect(order).toEqual([]);
+    rafQueue.shift()(0);
+    expect(order).toEqual([]);
+    await new Promise((r) => setTimeout(r, 0));
     expect(order).toEqual(["cb"]);
   });
 });

@@ -22,6 +22,7 @@ alwaysApply: false
 - **Defaults (Vitest):** viewport deferral is off unless `deferEmbedUntilVisible` is explicitly set (so unit tests do not need IO); settle delay is **0**. See `hpcperfstats/site/frontend/src/utils/bokeh-embed-defaults.js`.
 - **Opt-out:** pass `deferEmbedUntilVisible={false}` only for exceptional cases (e.g. hidden iframe / print).
 - **Popover / dialog plots:** `HistogramThumbnails` gates the full-size embed until the popover plot container has layout (see same component). Do not mount `BokehEmbed` into a zero-size dialog subtree.
+- **Global `ResizeObserver` patch:** `patch-resize-observer-for-bokeh.js` (applied from `main.jsx` / `bokehInit.js` before loading Bokeh) defers **all** browser resize callbacks used by Bokeh 3.9 with **three** `requestAnimationFrame` hops plus `setTimeout(0)`, so `after_resize` does not run while axis `ranges` are still undefined. If production still logs `is_valid` / “wasn't built properly”, consider a BokehJS vendor null-check on `AxisView.is_renderable` as a last resort.
 
 ## When changing job detail plots
 

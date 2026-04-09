@@ -5,12 +5,13 @@
  * runs before `ranges` exist → `can't access property "is_valid", e is undefined`
  * and "FigureView wasn't built properly".
  *
- * One macrotask (setTimeout(0)) is often *still* too soon: Bokeh's view tree finishes
- * ``lazy_initialize`` across multiple frames, so ``AxisView.ranges`` can remain
- * undefined when our deferred callback runs (stack shows app bundle ``t`` → Bokeh
- * ``after_resize`` → crash). Use **two** ``requestAnimationFrame`` hops so the
- * callback runs after layout/paint work for the current embed; fall back to
- * ``setTimeout`` only when rAF is missing.
+ * Two ``requestAnimationFrame`` hops are still too soon on some deployments
+ * (e.g. Vista): Bokeh 3.9 finishes ``lazy_initialize`` / promise-linked view work
+ * across more than two frames, so ``AxisView`` can read ``range.is_valid`` before
+ * ``ranges`` exist (stack: patched RO → ``after_resize`` → ``is_renderable``).
+ * Defer with **three** ``requestAnimationFrame`` hops, then **setTimeout(0)** so
+ * the callback runs in a fresh macrotask after embed microtasks settle. When rAF
+ * is missing, use ``setTimeout`` only.
  *
  * Applied once before dynamic import of @bokeh/bokehjs (see bokehInit.js).
  */
@@ -20,17 +21,20 @@ const PATCH_FLAG = "__hpcperfstatsResizeObserverDeferred";
 let nativeResizeObserver = null;
 
 export function scheduleBokehSafeResizeObserverCallback(callback, entries, observer) {
+  function runCallback() {
+    callback(entries, observer);
+  }
   if (typeof requestAnimationFrame === "function") {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        callback(entries, observer);
+        requestAnimationFrame(() => {
+          setTimeout(runCallback, 0);
+        });
       });
     });
     return;
   }
-  setTimeout(() => {
-    callback(entries, observer);
-  }, 0);
+  setTimeout(runCallback, 0);
 }
 
 export function applyBokehResizeObserverDeferral() {
