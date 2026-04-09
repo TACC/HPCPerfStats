@@ -505,7 +505,7 @@ def process_job(job):
   format_knl(job, 'intel_knl_edc')
   format_knl(job, 'intel_knl_mc')
 
-  # Backwards compatibility
+  # Legacy monitor typenames still found in archived stats (same counter maps as WTM).
   if 'intel_pmc3' in job.schemas:
     wtm = reformat_counters(job, 'intel_pmc3', wtm_event_map)
     for host in job.hosts.values():

@@ -1,9 +1,11 @@
 """Regression tests for type_detail host_data scoping (time + hosts only; jid not in filters)."""
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from django.test import RequestFactory
 
 from hpcperfstats.analysis.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
 
@@ -72,3 +74,36 @@ def test_type_detail_get_aggregate_df_batches_large_host_list():
   assert len(chunk_sizes) == 2
   assert chunk_sizes[0] == JID_TABLE_HOST_QUERY_BATCH
   assert chunk_sizes[1] == 1
+
+
+@pytest.mark.django_db(databases=[])
+def test_type_detail_response_omits_legacy_tscript_tdiv():
+  """Type detail uses Bokeh json_item (tplot_item) only; legacy script/div fields are removed."""
+  from hpcperfstats.site.machine import api
+
+  job = SimpleNamespace(
+      host_list=["n1"],
+      start_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+      end_time=datetime(2024, 1, 2, tzinfo=timezone.utc),
+  )
+  factory = RequestFactory()
+  request = factory.get("/api/jobs/j1/cpu/")
+  request.session = {"username": "u"}
+
+  with patch.object(api, "_require_auth", return_value=None), patch.object(
+      api,
+      "_get_visible_job_or_error_response",
+      return_value=(job, None),
+  ), patch.object(api, "cached_orm", return_value=[]), patch(
+      "hpcperfstats.site.machine.api.cfg.get_host_name_ext",
+      return_value="example.com",
+  ):
+    response = api.type_detail(request, "j1", "cpu")
+
+  assert response.status_code == 200
+  body = response.data
+  assert "tscript" not in body
+  assert "tdiv" not in body
+  assert body["tplot_item"] is None
+  assert body["type_name"] == "cpu"
+  assert body["jobid"] == "j1"

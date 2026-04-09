@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from datetime import timedelta
+from datetime import timedelta, timezone as dt_timezone
 
 import pytest
 from django.utils import timezone as django_timezone
@@ -83,7 +83,7 @@ def test_every_configured_http_endpoint_smoke():
   fqdn = _fqdn()
   now = django_timezone.now()
   if now.tzinfo is None:
-    now = now.replace(tzinfo=django_timezone.utc)
+    now = now.replace(tzinfo=dt_timezone.utc)
   gte = (now - timedelta(days=1)).isoformat()
   lte = (now + timedelta(hours=1)).isoformat()
 

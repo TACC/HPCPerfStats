@@ -111,7 +111,7 @@ def test_get_site_content_cache_timeout_none_when_newest_stale():
 
 def test_get_site_newest_job_end_time_coerces_unix_int_from_cache():
   """Redis/serializer may return epoch seconds as int; still drives TTL logic."""
-  from datetime import datetime, timedelta, timezone as dt_tz
+  from datetime import datetime, timezone as dt_tz
 
   from hpcperfstats.site.machine import cache_utils
 

@@ -816,7 +816,6 @@ def test_job_arc_uses_time__in_when_jid_table_large_job_sampled():
 @pytest.mark.django_db(databases=[])
 def test_host_data_metric_rows_batched_splits_host__in():
   """Large host lists query host_data in jid_table-sized batches."""
-  from types import SimpleNamespace
 
   n = JID_TABLE_HOST_QUERY_BATCH + 2
   hosts = ["h{0}.x".format(i) for i in range(n)]

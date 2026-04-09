@@ -6,20 +6,10 @@ from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
 )
 
 
-def test_reduce_legacy_dict_shape():
-  agg = {"cnt": 4, "vmax": 250.0, "vmean": 80.0}
-  active, mx, mean = reduce_gpu_agg_to_util_stats(agg)
-  assert active == 3
-  assert mx == 250.0
-  assert mean == 80.0
-
-
-def test_reduce_dict_insufficient_samples():
-  agg = {"cnt": 2, "vmax": 60.0, "vmean": 55.0}
-  active, mx, mean = reduce_gpu_agg_to_util_stats(agg)
-  assert active is None
-  assert mx is None
-  assert mean is None
+def test_reduce_non_list_agg_yields_no_stats():
+  """Only list/tuple aggregate rows are supported (matches ORM + cache path)."""
+  active, mx, mean = reduce_gpu_agg_to_util_stats({"cnt": 4, "vmax": 1.0})
+  assert active is None and mx is None and mean is None
 
 
 def test_reduce_list_per_device_host_aware():

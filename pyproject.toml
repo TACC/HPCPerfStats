@@ -50,8 +50,9 @@ test = [
   "playwright>=1.54.0",
 ]
 dev = [
-  "yapf",  # Google style formatter
-  "pylint>=3.0",
+  "ruff>=0.8.0",
+  "yapf",  # optional legacy formatter
+  "pylint>=3.0",  # optional; Ruff is the primary linter (see TESTING.md)
 ]
 
 [tool.pytest.ini_options]

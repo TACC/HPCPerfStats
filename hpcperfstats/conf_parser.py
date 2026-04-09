@@ -935,6 +935,9 @@ def get_live_distinct_use_legacy_hostlist():
   Default False: use ``LiveJidScopedDistinctHostTimeCount`` (``host_data.jid`` + window),
   which matches indexed access and typical ingest. Env:
   ``HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST`` = 1 to restore old SQL.
+
+  **Sunset:** keep only for emergency rollback on sites that cannot use jid-scoped
+  live distinct SQL; remove this flag and branch once no deployment depends on it.
   """
   return os.environ.get(
       "HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", ""

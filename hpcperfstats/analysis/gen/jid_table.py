@@ -385,13 +385,10 @@ def _normalize_job_accounting_host_list(raw):
 def _unpack_cached_job_window_row(row):
   """Return ``(host_list, start_time, end_time)`` from a cached jid row.
 
-  Prefer a ``values_list`` tuple (pickle-safe). Older deployments may still
-  have a cached partial ``job_data`` instance.
+  Expects a ``values_list`` tuple of ``(host_list, start_time, end_time)`` (pickle-safe).
   """
   if row is None:
     return None, None, None
-  if isinstance(row, job_data):
-    return row.host_list, row.start_time, row.end_time
   if isinstance(row, (tuple, list)) and len(row) == 3:
     return row[0], row[1], row[2]
   return None, None, None

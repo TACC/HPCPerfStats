@@ -28,6 +28,8 @@ The **hpcperfstats** package is split into two parts:
 
 For test commands, CI, and compose-backed workflows, see [**TESTING.md**](TESTING.md) (repo root, next to this README).
 
+**REST API note:** `GET /api/jobs/{jid}/{type_name}/` (type detail) returns a Bokeh **`tplot_item`** (`json_item` payload) plus `stats_data` / `schema`. Legacy **`tscript`** / **`tdiv`** fields were removed; clients should embed only `tplot_item` via Bokeh `embed_item`.
+
 Building and installing the `hpcperfstatsd-3.0-1.el9.x86_64.rpm` package (via `monitor/hpcperfstats.spec`) installs a **systemd** service `hpcperfstats`. This service runs a daemon with ~3% overhead on a single core at 1 Hz sampling; it is typically configured for **5-minute** intervals, with samples at job start and end. The daemon **hpcperfstatsd** sends data to a **RabbitMQ** server over the administrative network. RabbitMQ must be installed and running on the server to receive data.
 
 The **hpcperfstats** container orchestration sets up a Django/PostgreSQL ingest and archival stack plus a RabbitMQ server to receive data from the monitor on the nodes.

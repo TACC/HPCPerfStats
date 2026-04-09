@@ -105,7 +105,7 @@ Then start the stack as usual (no extra `-f` flags):
 docker compose -f docker-compose.yaml up -d
 ```
 
-**Note:** The old **`docker-compose.numa-pinning.yaml`** overlay is obsolete; use the fragments above only.
+**Note:** The old **`docker-compose.numa-pinning.yaml`** overlay is obsolete; use the fragments above only. The filename remains in **`.gitignore`** so local experiments do not get committed; no workflow scripts reference that compose file.
 
 ## NUMA overrides (web / pipeline / proxy)
 

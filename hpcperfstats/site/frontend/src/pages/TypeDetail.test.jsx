@@ -26,8 +26,6 @@ describe("TypeDetail", () => {
     vi.spyOn(apiModule.api, "getTypeDetail").mockResolvedValue({
       type_name: "cpu",
       jobid: "12345",
-      tscript: "",
-      tdiv: "",
       tplot_item: null,
       tplot_unavailable_reason:
         "No device-level samples found for this job/type in host_data.",

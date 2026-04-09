@@ -153,8 +153,8 @@ def test_coerce_jid_table_schema_dataframe_unique_on_list_types():
   assert len(out) == 3
 
 
-def test_unpack_cached_job_window_row_tuple_and_model():
-  """Cached row may be a values_list tuple or a legacy job_data instance."""
+def test_unpack_cached_job_window_row_three_tuple():
+  """Jid cache stores values_list(host_list, start_time, end_time)."""
   st = datetime(2024, 1, 1, 0, 0, 0)
   et = datetime(2024, 1, 1, 1, 0, 0)
   assert _unpack_cached_job_window_row((["h1"], st, et)) == (["h1"], st, et)
@@ -166,7 +166,7 @@ def test_unpack_cached_job_window_row_tuple_and_model():
       username="u",
       host_list=["n1"],
   )
-  assert _unpack_cached_job_window_row(j) == (["n1"], st, et)
+  assert _unpack_cached_job_window_row(j) == (None, None, None)
   assert _unpack_cached_job_window_row(None) == (None, None, None)
   assert _unpack_cached_job_window_row("bad") == (None, None, None)
 

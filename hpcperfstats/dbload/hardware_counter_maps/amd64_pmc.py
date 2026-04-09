@@ -120,8 +120,8 @@ def process_job(job):
     # XXX
     return
 
-  core_schema = job.get_schema('amd64_core', core_schema_desc)
-  sock_schema = job.get_schema('amd64_sock', sock_schema_desc)
+  job.get_schema('amd64_core', core_schema_desc)
+  job.get_schema('amd64_sock', sock_schema_desc)
   for host in job.hosts.itervalues():
     if 'amd64_pmc' not in host.stats:
       del job.schemas['amd64_pmc']

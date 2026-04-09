@@ -2,14 +2,13 @@
 import hashlib
 import logging
 import threading
-import copy
 import time
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timedelta, timezone as dt_timezone
 
 import hpcperfstats.conf_parser as cfg
-from bokeh.embed import components, json_item
+from bokeh.embed import json_item
 from django.utils import timezone
 from pandas import DataFrame, to_timedelta
 from rest_framework import status
@@ -36,7 +35,7 @@ class _JSONResponse(Response):
     def json(self):
         return self.data
 
-from .bokeh_plot_layout import _apply_zoom_layout_to_bokeh_model, _apply_zoom_layout_to_json_item
+from .bokeh_plot_layout import _apply_zoom_layout_to_json_item
 from .bokeh_embed import new_spa_embedded_figure
 from .cache_middleware import dynamic_cache_page
 from .cache_utils import (
@@ -70,11 +69,8 @@ from .job_plot_artifacts import (
     JOB_PLOT_LAYOUT_ZOOM_V3,
     compute_plot_item_for_kind,
     compute_plot_input_fingerprint,
-    get_job_plot_redis_max_bytes,
     get_live_distinct_time_count_for_jid,
-    json_item_to_compressed_payload,
     load_cached_job_plot_entry,
-    upsert_job_plot_artifact,
 )
 from hpcperfstats.analysis.metrics.metrics import build_job_metrics_display_list
 from hpcperfstats.dbload.sync_acct import sync_acct_from_content
@@ -273,11 +269,8 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout):
 
 from django.db.models import (
     Case,
-    Avg,
     Count,
-    Exists,
     IntegerField,
-    OuterRef,
     Sum,
     Q,
     F,
@@ -287,8 +280,6 @@ from django.db.models import (
     Max,
 )
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
-from numpy import isnan
-from math import ceil
 
 import hpcperfstats.analysis.gen.jid_table as jid_table
 from hpcperfstats.analysis.gen.jid_table import HostDataProvider
@@ -1945,8 +1936,8 @@ def job_detail(request, pk):
     # Format: %Y-%m-%dT%H:%M:%S %Z%:z
     start_time, end_time = _job_times_as_local(job.start_time, job.end_time)
     time_format = "%Y-%m-%dT%H:%M:%S%:z"
-    earliest = start_time.strftime(time_format)
-    latest = end_time.strftime(time_format)
+    start_time.strftime(time_format)
+    end_time.strftime(time_format)
 
     urlstring = "https://scribe.tacc.utexas.edu/en-US/app/search/search?q=search%20"
     hoststring = urlstring + "%20host%3D" + host_list[0] + cfg.get_host_name_ext()
@@ -2317,7 +2308,7 @@ def job_plots(request, pk):
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 def type_detail(request, jid, type_name):
-    """Type detail: Bokeh tscript/tdiv, stats_data, schema."""
+    """Type detail: Bokeh json_item (tplot_item), stats_data, schema."""
     err = _require_auth(request)
     if err is not None:
         return err
@@ -2364,8 +2355,6 @@ def type_detail(request, jid, type_name):
         return Response({
             "type_name": type_name,
             "jobid": jid,
-            "tscript": "",
-            "tdiv": "",
             "tplot_item": None,
             "tplot_unavailable_reason": "No device-level samples found for this job/type in host_data.",
             "stats_data": [],
@@ -2374,7 +2363,6 @@ def type_detail(request, jid, type_name):
 
     sp = plots.DevPlot(provider, data_host_list)
     df, plot_comp = sp.plot()
-    tscript, tdiv = components(plot_comp)
     tplot_item = json_item(plot_comp)
     schema = [
         c for c in df.columns
@@ -2394,8 +2382,6 @@ def type_detail(request, jid, type_name):
     return Response({
         "type_name": type_name,
         "jobid": jid,
-        "tscript": tscript,
-        "tdiv": tdiv,
         "tplot_item": tplot_item,
         "tplot_unavailable_reason": None if tplot_item is not None else "Type detail plot generation returned no data.",
         "stats_data": stats_data,

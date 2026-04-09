@@ -369,10 +369,8 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
       # Some deployments may not emit a job id and instead use '-' as a
       # placeholder. Keep '-' as-is so pandas groupby/dropna does not discard
       # these rows before DB insertion.
-      jid_val = jid
       insert = True
-      tags = {"time": float(t), "host": host}
-      tags2 = {"jid": jid_val, "host": host}
+      {"time": float(t), "host": host}
     elif s[0] == '!':
       label, events = s.split(maxsplit=1)
       typ, events = label[1:], events.split()

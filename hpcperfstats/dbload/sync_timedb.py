@@ -28,8 +28,6 @@ from functools import partial
 from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
-import hpcperfstats.dbload.django_timezone_utc_shim  # noqa: F401
-
 from django.db import IntegrityError, close_old_connections, connections
 
 import hpcperfstats.conf_parser as cfg
@@ -459,33 +457,6 @@ def _db_writer_worker(lock, db_task):
   return _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archival)
 
 
-def _rescan_pending_files_with_optional_hints(
-    directory,
-    startdate,
-    enddate,
-    host_name_ext,
-    processed_files,
-    host_scan_hints,
-):
-  """Call rescan helper with hint args when supported; fallback for legacy tests/mocks."""
-  try:
-    return rescan_pending_stats_files(
-        directory,
-        startdate,
-        enddate,
-        host_name_ext,
-        processed_files,
-        host_scan_hints=host_scan_hints,
-    )
-  except TypeError:
-    return rescan_pending_stats_files(
-        directory,
-        startdate,
-        enddate,
-        host_name_ext,
-        processed_files,
-    )
-
 # This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
 def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   """Parse a stats file, map hardware counters, compute deltas/arc, and bulk-insert into host_data and proc_data. Returns (stats_file, need_archival). Uses lock for DB writes.
@@ -838,7 +809,7 @@ def run_sync_timedb_supervisor_loop(
   ingest_queue_high = ingest_queue_max
   ingest_queue_low = max(1, int(ingest_queue_max * 0.5))
   archive_queue_high = archive_queue_max
-  archive_queue_low = max(1, int(archive_queue_max * 0.5))
+  max(1, int(archive_queue_max * 0.5))
   archive_retry_max_attempts = max(1, int(cfg.get_sync_archive_retry_max_attempts()))
   archive_retry_backoff_base = max(0.0, float(cfg.get_sync_archive_retry_backoff_base_seconds()))
   archive_retry_backoff_max = max(0.0, float(cfg.get_sync_archive_retry_backoff_max_seconds()))
@@ -1055,13 +1026,13 @@ def run_sync_timedb_supervisor_loop(
               % (len(pending_archive_tasks), archive_queue_high),
               flush=True,
           )
-        pending_stats_files = _rescan_pending_files_with_optional_hints(
+        pending_stats_files = rescan_pending_stats_files(
             directory,
             startdate,
             enddate,
             host_name_ext,
             processed_files | inflight_archive_paths,
-            host_scan_hints,
+            host_scan_hints=host_scan_hints,
         )
         if pending_stats_files:
           for p in pending_stats_files:
@@ -1323,13 +1294,13 @@ def run_sync_timedb_supervisor_loop(
 
         if chunk_counter % rescan_every_chunks == 0:
           _finalize_archive_job_if_needed()
-          pending_stats_files = _rescan_pending_files_with_optional_hints(
+          pending_stats_files = rescan_pending_stats_files(
               directory,
               startdate,
               enddate,
               host_name_ext,
               processed_files | inflight_archive_paths,
-              host_scan_hints,
+              host_scan_hints=host_scan_hints,
           )
           log_print(
               "Rescanned after %d chunks; pending files (newest first): %d"

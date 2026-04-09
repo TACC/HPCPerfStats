@@ -13,6 +13,7 @@ first** (``end_time`` descending, then ``jid`` descending as a stable tiebreaker
 import contextlib
 import functools
 import gc
+import os
 import signal
 import sys
 from types import SimpleNamespace
@@ -482,18 +483,27 @@ def update_metrics(date, rerun=False):
   )
 
 
-def main(argv=None, sleep_after=True):
+def main(argv=None, sleep_after=None):
   """Entry point for updating metrics_data for a date or date range.
 
   When invoked as a script, argv defaults to sys.argv. Management commands
-  can pass a custom argv list (e.g. parsed from options). If sleep_after is
-  True, the function sleeps 3600s at the end (to match legacy usage).
+  can pass a custom argv list (e.g. parsed from options).
+
+  If ``sleep_after`` is true, the function sleeps 3600s at the end (legacy
+  supervisor loop). Default is false. Opt in explicitly or set environment
+  variable ``HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER`` to ``1``/``true``
+  /``yes`` when ``sleep_after`` is omitted.
 
   Dates in the parsed range are processed **newest day first**; see module
   docstring for per-day job order.
   """
   if argv is None:
     argv = sys.argv
+
+  if sleep_after is None:
+    sleep_after = os.environ.get(
+        "HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER", ""
+    ).strip().lower() in ("1", "yes", "true")
 
   #################################################################
   default_start, default_end = _default_metrics_date_range()

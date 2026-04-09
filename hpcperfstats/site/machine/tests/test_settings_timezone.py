@@ -17,6 +17,14 @@ def test_time_zone_from_ini():
   assert settings.TIME_ZONE == cfg.get_timezone()
 
 
+def test_django_utils_timezone_utc_alias_from_settings():
+  """Django 5+ removed timezone.utc; settings bind datetime.timezone.utc for compatibility."""
+  from datetime import timezone as dt_timezone
+  from django.utils import timezone as dj_timezone
+
+  assert dj_timezone.utc is dt_timezone.utc
+
+
 def test_cache_key_warning_is_suppressed_globally():
   """Settings include an explicit CacheKeyWarning suppression rule."""
   settings_source = inspect.getsource(site_settings)

@@ -297,11 +297,6 @@ def invalidate_metrics_distinct_cache():
     pass
 
 
-# Default timeouts (seconds) — legacy; content paths should use get_site_content_cache_timeout().
-TIMEOUT_SHORT = 60  # Job-specific, host-specific (1 min)
-TIMEOUT_MEDIUM = 300  # Reference data: queues, states, date list (5 min)
-TIMEOUT_LONG = 600  # Rarely changing: distinct metrics list (10 min)
-
 # Key prefixes for namespacing
 KEY_JOB = "job"
 KEY_JOB_HOST_LIST = "job_host_list"
@@ -312,8 +307,7 @@ KEY_QUEUES = "queues"
 KEY_STATES = "states"
 KEY_LLITE_DELTA = "llite_delta"
 KEY_NFS_FSIO = "nfs_fsio"
-KEY_GPU_QS = "gpu_qs"
-# Aggregate stats (Count/Max/Avg) — distinct cache namespace from legacy row-list KEY_GPU_QS.
+# Aggregate GPU stats (Count/Max/Avg) cache namespace.
 KEY_GPU_AGG = "gpu_agg"
 # Per-job sum of per-host max(nvidia_gpu/amd_gpu gpu_count) in the accounting window.
 KEY_GPU_COUNT = "gpu_count"

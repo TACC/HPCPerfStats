@@ -7,6 +7,7 @@ from datetime import timedelta
 
 import pika
 import pytest
+from datetime import timezone as dt_timezone
 from django.utils import timezone as django_timezone
 
 import hpcperfstats.conf_parser as cfg
@@ -56,7 +57,7 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
   job_data.objects.filter(jid=PIPELINE_E2E_JID).delete()
   now = django_timezone.now()
   if now.tzinfo is None:
-    now = now.replace(tzinfo=django_timezone.utc)
+    now = now.replace(tzinfo=dt_timezone.utc)
   start_job = now - timedelta(hours=4)
   end_job = now - timedelta(hours=2)
   margin = timedelta(minutes=10)

@@ -3,8 +3,15 @@
 import os
 import sys
 import warnings
+from datetime import timezone as _datetime_timezone
+
+import django.utils.timezone as _django_utils_timezone
 
 import hpcperfstats.conf_parser as cfg
+
+# Django 5+ removed django.utils.timezone.utc; keep alias for code/tests that still reference it.
+if not hasattr(_django_utils_timezone, "utc"):
+  _django_utils_timezone.utc = _datetime_timezone.utc
 from django.core.cache.backends.base import CacheKeyWarning
 
 DIR = os.path.dirname(os.path.abspath(__file__))

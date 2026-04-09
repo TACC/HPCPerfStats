@@ -5,7 +5,6 @@ chunked ``host__in``, nvidia util aggregates, then ``gpu_count`` per vendor.
 """
 from __future__ import annotations
 
-import math
 from typing import Any, List, Optional, Tuple
 
 from django.db.models import Avg, Count, Max
@@ -77,25 +76,14 @@ def gpu_count_total_for_job_window(j) -> Optional[int]:
 def reduce_gpu_agg_to_util_stats(
     agg: Any,
 ) -> Tuple[Optional[int], Optional[float], Optional[float]]:
-  """From cached ORM shape (legacy dict or list of dict rows) to active/max/mean."""
+  """From cached ORM aggregate rows (list of dict) to active/max/mean."""
   gpu_active: Optional[int] = None
   gpu_max: Optional[float] = None
   gpu_mean: Optional[float] = None
 
-  if isinstance(agg, dict):
-    row = agg
-    cnt = int(row.get("cnt") or 0)
-    if cnt > 2:
-      vmax = row.get("vmax")
-      if vmax is not None:
-        gpu_max = float(vmax)
-        vmean = row.get("vmean")
-        gpu_mean = float(vmean) if vmean is not None else None
-        if not math.isnan(gpu_max):
-          gpu_active = int(math.ceil(gpu_max / 100.0))
-    return gpu_active, gpu_max, gpu_mean
-
-  rows = [r for r in (agg or []) if isinstance(r, dict)]
+  if not isinstance(agg, (list, tuple)):
+    agg = []
+  rows = [r for r in agg if isinstance(r, dict)]
   per_device: dict = {}
   for r in rows:
     device_key = (str(r.get("host") or ""), str(r.get("dev") or ""))

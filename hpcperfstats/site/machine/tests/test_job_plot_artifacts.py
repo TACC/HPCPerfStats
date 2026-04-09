@@ -1,6 +1,4 @@
 """Tests for persisted job plot artifacts (gzip json_item + fingerprint)."""
-import gzip
-import json
 
 import pytest
 from django.utils import timezone

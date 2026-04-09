@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from hpcperfstats.analysis.metrics import live_host_sample_count as lhsc
 from hpcperfstats.analysis.metrics.live_host_sample_count import (
     LiveDistinctHostTimeCount,
     LiveJidScopedDistinctHostTimeCount,

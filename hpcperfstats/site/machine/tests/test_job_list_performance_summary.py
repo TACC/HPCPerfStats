@@ -132,7 +132,7 @@ class TestAnnotateJobListPerformanceFields:
         j3 = self._create_job("perf3", dtc=0)
         metrics_data.objects.create(jid=j3, type="t", metric="m3", units="u", value=None)
 
-        j4 = self._create_job("perf4", dtc=None, runtime=300.0)
+        self._create_job("perf4", dtc=None, runtime=300.0)
 
         qs = job_data.objects.filter(
             jid__in=["perf0", "perf1", "perf2", "perf3", "perf4"]
@@ -152,7 +152,7 @@ class TestAnnotateJobListPerformanceFields:
     def test_order_by_performance_sort_rank_ascending(self):
         j0 = self._create_job("ord0", dtc=10)
         metrics_data.objects.create(jid=j0, type="t", metric="m", units="u", value=1.0)
-        j4a = self._create_job("ord4a", dtc=None, runtime=500.0)
+        self._create_job("ord4a", dtc=None, runtime=500.0)
         j1 = self._create_job("ord1", dtc=MONITORING_GAPS_MIN_DISTINCT_TIMES)
         metrics_data.objects.create(jid=j1, type="t", metric="m1", units="u", value=None)
 
@@ -164,7 +164,7 @@ class TestAnnotateJobListPerformanceFields:
     def test_order_by_performance_sort_rank_descending(self):
         j0 = self._create_job("des0", dtc=10)
         metrics_data.objects.create(jid=j0, type="t", metric="m", units="u", value=1.0)
-        j4a = self._create_job("des4a", dtc=None, runtime=500.0)
+        self._create_job("des4a", dtc=None, runtime=500.0)
 
         qs = annotate_job_list_performance_fields(
             job_data.objects.filter(jid__in=["des0", "des4a"])

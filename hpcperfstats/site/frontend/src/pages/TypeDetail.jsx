@@ -38,8 +38,6 @@ export default function TypeDetail() {
   const {
     type_name,
     jobid,
-    tscript,
-    tdiv,
     tplot_item,
     tplot_unavailable_reason,
     stats_data = [],
@@ -55,8 +53,6 @@ export default function TypeDetail() {
       <div className="graphs">
         <BokehEmbed
           item={tplot_item}
-          script={tscript}
-          div={tdiv}
           id="type-bokeh"
           plotName="Type detail"
           unavailableReason={tplot_unavailable_reason}
