@@ -1,1 +1,6 @@
 coverage/
+
+# Default Vite outDir is ../hpcperfstats_site/static/frontend (see vite.config.js);
+# that tree is ignored from the repo root. These cover alternate local output paths.
+dist/
+.vite/

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "../session-context";
+import { prepareBokehJsonItemForEmbed } from "../utils/remap-bokeh-json-item-ids";
 
 /**
  * Poll until window.Bokeh is defined (Bokeh JS loaded), then resolve.
@@ -73,16 +74,6 @@ function withBokehEmbedLock(run) {
     () => undefined,
   );
   return next;
-}
-
-function cloneBokehJsonItem(item) {
-  if (!item || typeof item !== "object") return item;
-  try {
-    if (typeof structuredClone === "function") return structuredClone(item);
-    return JSON.parse(JSON.stringify(item));
-  } catch {
-    return item;
-  }
 }
 
 function isEmbedTargetRenderable(el) {
@@ -348,7 +339,7 @@ export default function BokehEmbed({
               }
               disposeBokehViewsForTarget(el);
               el.innerHTML = "";
-              const embedPayload = cloneBokehJsonItem(item);
+              const embedPayload = prepareBokehJsonItemForEmbed(item);
               const embedResult = window.Bokeh.embed.embed_item(embedPayload, id);
               return Promise.resolve(embedResult)
                 .then(() => {
@@ -359,9 +350,23 @@ export default function BokehEmbed({
                     if (onPlotReadyChange) onPlotReadyChange(false);
                     return;
                   }
-                  if (maximizeMode) maximizeEmbeddedPlot(id, maximizeMode);
-                  setPlotReady(true);
-                  if (onPlotReadyChange) onPlotReadyChange(true);
+                  function markPlotReady() {
+                    if (cancelled) return;
+                    if (!isEmbedTargetRenderable(el)) {
+                      setFailureReason("Chart container changed before render completed.");
+                      setLoadFailed(true);
+                      if (onPlotReadyChange) onPlotReadyChange(false);
+                      return;
+                    }
+                    if (maximizeMode) maximizeEmbeddedPlot(id, maximizeMode);
+                    setPlotReady(true);
+                    if (onPlotReadyChange) onPlotReadyChange(true);
+                  }
+                  if (typeof requestAnimationFrame === "function") {
+                    requestAnimationFrame(() => requestAnimationFrame(markPlotReady));
+                  } else {
+                    markPlotReady();
+                  }
                 })
                 .catch((err) => {
                   if (cancelled) return;

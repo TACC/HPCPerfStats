@@ -76,8 +76,9 @@ Makefile.in
 /texinfo.tex
 tacc_stats/pickler/*lock
 
-# React/Vite compilation outputs (generated static frontend build)
-hpcperfstats/site/hpcperfstats_site/static/frontend/.vite/
-hpcperfstats/site/hpcperfstats_site/static/frontend/assets/
-hpcperfstats/site/hpcperfstats_site/static/frontend/index.html
-hpcperfstats/site/hpcperfstats_site/static/frontend/manifest.json
+# -----------------------------------------------------------------------------
+# Frontend build output (Vite → ../hpcperfstats_site/static/frontend). Never commit.
+# Produce locally: cd hpcperfstats/site/frontend && npm ci && npm run build
+# Docker: Dockerfile frontend-builder runs npm run build and copies this tree into the image.
+# -----------------------------------------------------------------------------
+hpcperfstats/site/hpcperfstats_site/static/frontend/
