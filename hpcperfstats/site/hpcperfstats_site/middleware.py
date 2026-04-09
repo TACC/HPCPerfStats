@@ -31,8 +31,8 @@ DEFAULT_CSP = (
   "frame-ancestors 'self'; "
   "form-action 'self'; "
   "img-src 'self' data:; "
-  "font-src 'self' data: https://fonts.gstatic.com; "
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+  "font-src 'self' data:; "
+  "style-src 'self' 'unsafe-inline'; "
   # Bokeh CustomJS (e.g. CustomJSTickFormatter, CustomJSHover) compiles snippets
   # with the Function constructor during embed; summary and other plots need this.
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
@@ -49,8 +49,8 @@ DEFAULT_CSP_REPORT_ONLY = (
   "frame-ancestors 'self'; "
   "form-action 'self'; "
   "img-src 'self' data:; "
-  "font-src 'self' data: https://fonts.gstatic.com; "
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+  "font-src 'self' data:; "
+  "style-src 'self' 'unsafe-inline'; "
   # Match enforced policy for Bokeh-embedded plots (avoids report-only noise).
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
   "connect-src 'self'; "

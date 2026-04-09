@@ -7,7 +7,7 @@ alwaysApply: true
 
 ## Policy
 
-- **Production** (anything shipped to browsers or enforced at runtime for user-facing responses) must **not** load **executable or author-controlled layout assets** from public third-party CDNs: scripts, ES modules, stylesheets, or webfonts, except where an **existing** legacy path is explicitly documented below and scheduled for removal.
+- **Production** (anything shipped to browsers or enforced at runtime for user-facing responses) must **not** load **executable or author-controlled layout assets** from public third-party CDNs: scripts, ES modules, stylesheets, or webfonts.
 - **Preferred pattern:** `npm` dependencies built into the Vite bundle / Django `staticfiles` (`'self'`), same as Bokeh loaded from `@bokeh/bokehjs` in the SPA bundle.
 - **Tests and tooling** may use CDNs when necessary (e.g. Playwright loading Bokeh from jsDelivr because jsdom lacks canvas). Restrict those URLs to **`**/tests/**`**, **`test_*.py`**, **`*.test.js`**, **`*.test.jsx`**, and similar—never to templates, middleware, SPA app source, or service configs that define what end users load.
 
@@ -27,15 +27,17 @@ alwaysApply: true
 
 | Location | CDN / third-party host | Role |
 |----------|-------------------------|------|
-| `hpcperfstats/site/frontend/src/main.jsx` → Bootswatch `bootstrap.min.css` | **`https://fonts.googleapis.com`** (and **`fonts.gstatic.com`** for font files) | The Spacelab theme CSS contains **`@import url(https://fonts.googleapis.com/...Open+Sans...)`**. Browsers fetch Google Fonts at runtime in production. CSP in `hpcperfstats/site/hpcperfstats_site/middleware.py` allows these hosts for that reason. |
+| `hpcperfstats/site/frontend/src/fonts/open-sans.css` | **None** | Imports **`@fontsource/open-sans`** subsets (**latin** + **latin-ext**, 400/700 + italics). Vite copies **woff2/woff** into **`hpcperfstats_site/static/frontend/assets/`** with hashed names; `@font-face` URLs use **`/static/frontend/assets/...`** (same origin as the SPA, served like other built static files). |
+| `hpcperfstats/site/frontend/src/bootswatch-spacelab.scss` | **None** | Spacelab SCSS with **`$web-font-path: false`** so Bootswatch does not emit a Google Fonts **`@import`**. **`$font-family-sans-serif`** still leads with **Open Sans**, satisfied by the Fontsource bundle above. |
+| `hpcperfstats/site/hpcperfstats_site/middleware.py` | **None** for fonts | CSP uses **`font-src 'self' data:`** and **`style-src 'self' 'unsafe-inline'`** without `fonts.googleapis.com` / `fonts.gstatic.com`. |
 | `hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` | **`cdn.jsdelivr.net`** (`@bokeh/bokehjs`) | **Test-only** Playwright embed regression; allowed. |
 | `test_react_spa_view.py` | (assertions) | Asserts served SPA HTML does **not** contain `cdn.pydata.org` or `cdn.jsdelivr.net`. |
 
-No other production source files were found that embed jsDelivr, unpkg, cdnjs, or Bokeh `cdn.pydata.org` scripts. External **API** URLs in Python (e.g. documentation/search links) are not “asset CDNs” for this rule.
+No production app source should embed jsDelivr, unpkg, cdnjs, or Bokeh `cdn.pydata.org` scripts. External **API** URLs in Python (e.g. documentation/search links) are not “asset CDNs” for this rule.
 
-## Remediation direction (Bootswatch + Google Fonts)
+## Bootswatch note
 
-To fully align with “no CDN in production,” remove the Bootswatch **`@import`** of Google Fonts by one of: vendoring Open Sans (or a subset) under static and referencing local `@font-face`, using a Bootswatch build variable / forked CSS without the web font path, or post-processing the built CSS in the frontend pipeline. Do that in a dedicated change that also **narrows** `font-src` / `style-src` in `middleware.py` if those hosts become unused, and re-run CSP-related tests.
+Prebuilt **`bootswatch/dist/*/bootstrap.min.css`** files include a Google Fonts `@import`. **Do not** switch back to those CSS entrypoints for the SPA. Keep **`$web-font-path: false`** and **`src/fonts/open-sans.css`** (or another self-hosted path bundled by Vite). If you add weights/subsets, extend the Fontsource imports and re-run **`npm run build`** so CSP stays **`font-src 'self'`**-only.
 
 ## Overlap
 

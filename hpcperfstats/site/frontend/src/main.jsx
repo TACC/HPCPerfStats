@@ -3,7 +3,8 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
-import "bootswatch/dist/spacelab/bootstrap.min.css";
+import "./fonts/open-sans.css";
+import "./bootswatch-spacelab.scss";
 import "./index.css";
 
 ensureBokehLoaded().catch((err) => {

@@ -136,9 +136,14 @@ def test_browser_flow_for_web_pages():
           response_headers = root_response.headers
           csp = response_headers.get("content-security-policy", "")
           csp_report_only = response_headers.get("content-security-policy-report-only", "")
-          assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;" in csp
+          assert "font-src 'self' data:;" in csp
+          assert "style-src 'self' 'unsafe-inline';" in csp
+          assert "fonts.googleapis.com" not in csp
+          assert "fonts.gstatic.com" not in csp
           assert "script-src 'self' 'unsafe-inline' 'unsafe-eval';" in csp
-          assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;" in csp_report_only
+          assert "font-src 'self' data:;" in csp_report_only
+          assert "style-src 'self' 'unsafe-inline';" in csp_report_only
+          assert "fonts.googleapis.com" not in csp_report_only
           assert "script-src 'self' 'unsafe-inline' 'unsafe-eval';" in csp_report_only
 
           assert_no_serious_axe_violations(page)
