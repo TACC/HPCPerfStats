@@ -294,13 +294,26 @@ Options: `--keep-env`, `--skip-build`. Forward pytest args the same way as the D
 
 The SPA and standalone HTML pages aim for **WCAG 2.2 Level AA** for in-app flows (keyboard, screen readers, zoom, contrast). **Bokeh canvas plots** and the **OAuth provider** have inherent limits; the UI mitigates with text alternatives, landmarks, and documented manual checks.
 
-**Automated (frontend)**
+**Automated (frontend — Vitest + jest-axe)**
+
+`jest-axe` and `axe-core` are **devDependencies** only. They are imported from `*.test.{js,jsx}`, [`src/setupTests.js`](hpcperfstats/site/frontend/src/setupTests.js), and [`src/axe-test-utils.js`](hpcperfstats/site/frontend/src/axe-test-utils.js); they are **not** part of the Vite production bundle. The Docker **runtime** image does not run `npm install` for the app and excludes `node_modules/` from the build context; the frontend builder runs `npm prune --omit=dev` after `vite build`, so axe is not shipped with production static assets.
+
+Selected component tests call `axeSeriousViolations()` (WCAG 2.x / 2.1 AA tag scope, asserting **no serious or critical** violations) alongside existing RTL checks.
 
 ```bash
 cd hpcperfstats/site/frontend && npm test -- --run
 ```
 
-Accessibility regressions are caught primarily by component/page tests and the Playwright flows above; full automated axe scans are not part of this repo (use browser extensions or an external audit pipeline if needed).
+**Automated (Playwright — Python E2E)**
+
+A **vendored** [`axe.min.js`](hpcperfstats/tests/fixtures/axe-core/axe.min.js) (pinned version in that folder’s `README.md`) is injected at test time by [`hpcperfstats/tests/playwright_axe.py`](hpcperfstats/tests/playwright_axe.py). This avoids relying on `node_modules` inside the `web` container, where Node dev dependencies are not installed.
+
+- Stub server browser flow: [`hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py`](hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py) runs axe after key navigations.
+- Compose pipeline browser phase (`tests/run_pipeline_e2e_workflow.sh --with-browser`): [`tests/pipeline_e2e/test_a11y_axe_browser.py`](tests/pipeline_e2e/test_a11y_axe_browser.py) scans a **small curated route list** (extend `_AXE_SMOKE_PATHS` there as needed); [`tests/pipeline_e2e/test_job_detail_browser.py`](tests/pipeline_e2e/test_job_detail_browser.py) runs axe on the live job detail SPA.
+
+**Manual / optional**
+
+Browser extensions or an external audit pipeline remain useful for full-page audits beyond what CI runs.
 
 **Manual spot-check (each release or major UI change)**
 

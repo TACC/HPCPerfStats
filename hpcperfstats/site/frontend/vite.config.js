@@ -55,6 +55,7 @@ export default defineConfig({
       exclude: [
         "src/**/*.test.{js,jsx}",
         "src/**/setupTests.js",
+        "src/axe-test-utils.js",
         "src/main.jsx",
         "src/utils/generate-variable-metadata-monitor-events.py",
       ],

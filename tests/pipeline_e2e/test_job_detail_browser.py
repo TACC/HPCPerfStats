@@ -11,6 +11,8 @@ try:
 except ModuleNotFoundError:
   sync_playwright = None
 
+from hpcperfstats.tests.playwright_axe import assert_no_serious_axe_violations
+
 from .constants import PIPELINE_E2E_API_RAW_KEY, PIPELINE_E2E_JID
 
 
@@ -82,5 +84,7 @@ def test_job_detail_renders_and_summary_plot_payload():
     assert resp is not None
     assert 200 <= resp.status <= 399
     assert "/machine/job/{}/".format(jid) in page.url
+    # Async plot embed; WCAG-tagged axe rules (playwright_axe).
+    assert_no_serious_axe_violations(page, wait_ms=750)
     context.close()
     browser.close()

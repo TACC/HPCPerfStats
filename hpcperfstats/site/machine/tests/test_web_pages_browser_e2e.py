@@ -1,7 +1,7 @@
 """Browser-driven end-to-end tests for web page flows."""
 
-import threading
 import tempfile
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
@@ -10,6 +10,8 @@ from wsgiref.simple_server import make_server
 import pytest
 from django.conf import settings
 from django.core.wsgi import get_wsgi_application
+
+from hpcperfstats.tests.playwright_axe import assert_no_serious_axe_violations
 
 try:
   from playwright.sync_api import sync_playwright
@@ -139,6 +141,8 @@ def test_browser_flow_for_web_pages():
           assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;" in csp_report_only
           assert "script-src 'self' 'unsafe-inline' 'unsafe-eval';" in csp_report_only
 
+          assert_no_serious_axe_violations(page)
+
           # Staff-only controls appear for staff sessions (mirrors SPA staff menu).
           page.goto(f"{base_url}/machine/?staff=1")
           assert page.locator("#staff-actions-root").is_visible()
@@ -156,6 +160,8 @@ def test_browser_flow_for_web_pages():
           assert page.get_by_text("Plot not available").is_visible()
           assert page.get_by_role("button", name="Show plot error details").is_visible()
           assert page.get_by_role("button", name="Copy error detail").is_visible()
+
+          assert_no_serious_axe_violations(page)
 
           # Staff-only controls are absent for non-staff sessions.
           page.goto(f"{base_url}/machine/?staff=0")
@@ -202,6 +208,8 @@ def test_browser_flow_for_web_pages():
           assert "This key is shown only once." in body_text
           assert "raw-new-api-key" in body_text
           assert page.get_by_role("link", name="Back to HPCPerfStats").is_visible()
+
+          assert_no_serious_axe_violations(page)
 
           status_code = page.evaluate(
               """async (baseUrl) => {

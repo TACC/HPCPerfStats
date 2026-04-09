@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
+import { axeSeriousViolations } from "../axe-test-utils";
 import JobList from "./JobList";
 import * as apiModule from "../api";
 import { SessionContext } from "../session-context";
@@ -88,11 +89,12 @@ describe("JobList", () => {
     });
     vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
 
-    renderJobList();
+    const view = renderJobList();
 
     await waitFor(() => {
       expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
     });
+    expect(await axeSeriousViolations(view.container)).toEqual([]);
     expect(screen.getByRole("heading", { name: /distributions for this list/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /jump to histograms/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /continue to job table/i })).toBeInTheDocument();

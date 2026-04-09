@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { axeSeriousViolations } from "../axe-test-utils";
 import PageApiKey from "./PageApiKey";
 import { SessionContext } from "../session-context";
 
@@ -34,12 +35,13 @@ describe("PageApiKey", () => {
       key_prefix: "abc123def456",
     });
 
-    renderPage();
+    const view = renderPage();
 
     expect(await screen.findByText(/HPCPerfStats API key/i)).toBeInTheDocument();
     expect(screen.getByText(/Signed in as:/)).toBeInTheDocument();
     expect(screen.getByText("abc123def456")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy API key" })).not.toBeInTheDocument();
+    expect(await axeSeriousViolations(view.container)).toEqual([]);
   });
 
   it("shows copy control when a raw key is returned", async () => {

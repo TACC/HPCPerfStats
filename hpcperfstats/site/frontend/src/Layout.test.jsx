@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
+import { axeSeriousViolations } from "./axe-test-utils";
 import Layout from "./Layout";
 import { api } from "./api";
 
@@ -88,12 +89,13 @@ describe("Layout", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("exposes skip link to main content", () => {
-    renderLayout({ logged_in: true, username: "alice", is_staff: false });
+  it("exposes skip link to main content", async () => {
+    const view = renderLayout({ logged_in: true, username: "alice", is_staff: false });
     expect(screen.getByRole("link", { name: "Skip to main content" })).toHaveAttribute(
       "href",
       "#main-content",
     );
+    expect(await axeSeriousViolations(view.container)).toEqual([]);
   });
 
   it("links to API key management page", () => {

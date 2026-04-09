@@ -86,7 +86,11 @@ script-files = [
 include = ["hpcperfstats*"]
 
 [tool.setuptools.package-data]
-hpcperfstats = ["cfg.py"]
+hpcperfstats = [
+  "cfg.py",
+  "tests/fixtures/axe-core/axe.min.js",
+  "tests/fixtures/axe-core/README.md",
+]
 
 [tool.ruff]
 target-version = "py312"
