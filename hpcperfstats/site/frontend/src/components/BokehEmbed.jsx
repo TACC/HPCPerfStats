@@ -75,6 +75,16 @@ function withBokehEmbedLock(run) {
   return next;
 }
 
+function cloneBokehJsonItem(item) {
+  if (!item || typeof item !== "object") return item;
+  try {
+    if (typeof structuredClone === "function") return structuredClone(item);
+    return JSON.parse(JSON.stringify(item));
+  } catch {
+    return item;
+  }
+}
+
 /**
  * Bokeh measures the embed target's box; if it or an ancestor is not laid out
  * (e.g. HTML `hidden` / `display:none`), width and height are 0 and embed_item
@@ -311,7 +321,8 @@ export default function BokehEmbed({
               // Re-embedding into the same target (e.g., normal -> zoom item swap)
               // can otherwise leave duplicate Bokeh roots in the container.
               el.innerHTML = "";
-              const embedResult = window.Bokeh.embed.embed_item(item, id);
+              const embedPayload = cloneBokehJsonItem(item);
+              const embedResult = window.Bokeh.embed.embed_item(embedPayload, id);
               return Promise.resolve(embedResult)
                 .then(() => {
                   if (cancelled) return;

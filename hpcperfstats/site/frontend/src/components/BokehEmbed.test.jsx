@@ -28,8 +28,12 @@ describe("BokehEmbed", () => {
     expect(slot.style.display).not.toBe("none");
 
     await waitFor(() => {
-      expect(embedItem).toHaveBeenCalledWith(item, "bokeh-test-slot");
+      expect(embedItem).toHaveBeenCalledTimes(1);
     });
+    const [payload, targetId] = embedItem.mock.calls[0];
+    expect(targetId).toBe("bokeh-test-slot");
+    expect(payload).toEqual(item);
+    expect(payload).not.toBe(item);
   });
 
   it("shows default unavailable text and reveals/copies API error for staff", async () => {
