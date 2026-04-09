@@ -512,9 +512,12 @@ def get_large_job_host_data_row_threshold():
   1_500_000 keeps interactive metrics/plots bounded on huge jobs.
   """
   env = os.environ.get("HPCPERFSTATS_LARGE_JOB_HOST_DATA_ROWS", "").strip()
-  if env:
+  if not env:
+    return 1_500_000
+  try:
     return max(1000, int(env))
-  return 1_500_000
+  except (TypeError, ValueError):
+    return 1_500_000
 
 
 def get_large_job_time_buckets():
@@ -523,9 +526,12 @@ def get_large_job_time_buckets():
   Env ``HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS`` overrides (minimum 32). Default 2048.
   """
   env = os.environ.get("HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS", "").strip()
-  if env:
+  if not env:
+    return 2048
+  try:
     return max(32, int(env))
-  return 2048
+  except (TypeError, ValueError):
+    return 2048
 
 
 def get_large_job_window_row_count_cache_ttl():
@@ -537,9 +543,12 @@ def get_large_job_window_row_count_cache_ttl():
   env = os.environ.get(
       "HPCPERFSTATS_LARGE_JOB_WINDOW_ROW_COUNT_CACHE_TTL", ""
   ).strip()
-  if env:
+  if not env:
+    return 300
+  try:
     return max(0, int(env))
-  return 300
+  except (TypeError, ValueError):
+    return 300
 
 
 def get_large_job_time_sample_sql_mode():

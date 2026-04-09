@@ -422,3 +422,19 @@ def test_get_large_job_time_sample_sql_mode_defaults_and_env(temp_ini, monkeypat
   assert cfg.get_large_job_time_sample_sql_mode() == "date_bin"
   monkeypatch.setenv("HPCPERFSTATS_LARGE_JOB_TIME_SQL", "ntile")
   assert cfg.get_large_job_time_sample_sql_mode() == "ntile"
+
+
+def test_large_job_numeric_env_invalid_falls_back_to_defaults(temp_ini, monkeypatch):
+  """Non-numeric large-job env (e.g. mistaken hostname export) must not raise."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  bogus = "c636-041.vista.tacc.utexas.edu"
+  monkeypatch.setenv("HPCPERFSTATS_LARGE_JOB_HOST_DATA_ROWS", bogus)
+  monkeypatch.setenv("HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS", bogus)
+  monkeypatch.setenv("HPCPERFSTATS_LARGE_JOB_WINDOW_ROW_COUNT_CACHE_TTL", bogus)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_large_job_host_data_row_threshold() == 1_500_000
+  assert cfg.get_large_job_time_buckets() == 2048
+  assert cfg.get_large_job_window_row_count_cache_ttl() == 300
