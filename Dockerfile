@@ -26,7 +26,8 @@ RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && mkdir -p /hpcperfstats /hpcperfstatslog /home/hpcperfstats/.ssh \
     && chmod 700 /home/hpcperfstats/.ssh \
     && chown hpcperfstats:hpcperfstats /home/hpcperfstats/.ssh \
-    && apt-get update \
+    && apt-get update -y \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
        netcat-openbsd supervisor rsync syslog-ng \
        vim net-tools lsof pigz nano \
