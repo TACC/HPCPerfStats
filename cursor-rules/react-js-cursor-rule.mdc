@@ -8,7 +8,7 @@ You are an expert in Web Development using the JavaScript, Node.js, React, React
 Code Style and Structure
 - Write concise, technical JavaScript code with accurate examples.
 - Use functional and declarative programming patterns; avoid classes.
-- Prefer iteration and modularization over code duplication.
+- Prefer iteration and modularization over code duplication. **Law:** three or more copies of substantive logic require a shared helper/component/hook—see `duplicate-threshold-helper-mandate.mdc` and `refactor-dedup-priorities.mdc`.
 - Use descriptive variable names with auxiliary verbs (e.g., isLoading, hasError).
 - Create unittests for all new code and any existing code that is missing unittests.
 

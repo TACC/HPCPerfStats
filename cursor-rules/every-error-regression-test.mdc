@@ -1,0 +1,36 @@
+---
+description: Mandatory regression test for every discovered defect or failure (non-negotiable)
+alwaysApply: true
+---
+
+# Every Error Requires a Regression Test
+
+This is **non-negotiable project law** for the whole codebase: **no fix or behavior change that responds to a discovered failure is complete until a test exists that would have caught it** (or that explicitly locks the corrected contract).
+
+## What counts as an “error” here
+
+- Any **traceback**, **uncaught exception**, or **assertion failure** in application code, tests, or tooling that reflects incorrect or fragile behavior you are fixing.
+- Any **failing automated test** (pytest, Vitest, Playwright, pipeline E2E, etc.) that you address by changing product code or shared test fixtures—**extend or add tests** so the original gap is covered unless the failure was purely a broken test assertion with no product bug (still keep the test honest).
+- **User-reported bugs**, **wrong results**, **wrong API/UI behavior**, or **regressions**—always add a test that fails on the old behavior and passes after the fix.
+- **CI failures** caused by flaky or missing coverage for a real contract: stabilize with a deterministic test; do not “fix green” without locking the intended behavior in tests.
+
+## Required outcome before closing the task
+
+1. **Identify the failure signature** (stack line, failing assertion, bad output).
+2. **Add or update the smallest test** that reproduces it or asserts the corrected contract (prefer failing first when feasible).
+3. **Apply the fix**; keep the test green.
+4. **Run** the relevant test scope (host unit vs compose-backed per `docker-compose-non-unit-testing.mdc` / `full-test-with-db-redis.mdc`).
+
+## Narrow exceptions (not excuses to skip tests)
+
+- **Pure documentation**, **comments only**, or **non-executable config samples** with no behavior change: no new test required.
+- **External dependency or environment outage** with no code defect: no product regression test; if you add **retry/timeout/guard code**, that code **does** need tests.
+
+## If blocked (fixtures, compose, secrets)
+
+Document the blocker in the task, then add the regression test **in the same PR/task** as soon as the blocker is cleared—**do not** treat the fix as finished without the test.
+
+## Overlap
+
+- Strengthens `test-first-discipline.mdc` and `bugfix-and-perf-change-playbook.mdc`; when they conflict on wording, **this rule wins** on the requirement that **every addressed error has a regression test**.
+- Follow `testing-doc-sync.mdc` if test commands or prerequisites change.

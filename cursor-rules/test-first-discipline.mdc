@@ -7,6 +7,8 @@ alwaysApply: true
 
 Treat every non-trivial change as test-first work.
 
+**Hard requirement:** Any work that fixes a discovered defect or failure must also add or extend a regression test per `every-error-regression-test.mdc` (that rule takes precedence on “no test, no done”).
+
 ## Required workflow
 - Before changing behavior, add or update the smallest relevant test that captures the intended behavior or reproduces the bug.
 - Prefer seeing that test fail first for bug fixes and behavior changes; then implement code changes and make it pass.

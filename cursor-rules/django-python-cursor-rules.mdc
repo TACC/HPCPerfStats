@@ -57,6 +57,7 @@ You are an expert in Python, Django, and scalable web application development.
   1. Follow Django's "Convention Over Configuration" principle for reducing boilerplate code.
   2. Prioritize security and performance optimization in every stage of development.
   3. Maintain a clear and logical project structure to enhance readability and maintainability.
+  4. **Deduplication law:** substantive logic repeated in three or more places must use a shared helper—see `duplicate-threshold-helper-mandate.mdc` and `refactor-dedup-priorities.mdc`.
 
   Python Rules
    - For **host-side** Python/pip/pytest, use **only** the virtualenv at the **Cursor workspace root**: `<workspace_root>/.venv/bin/python` (see **`workspace-layout-and-python-env.mdc`**). Do not create disposable venvs under `/tmp` or elsewhere unless the user explicitly requests it.

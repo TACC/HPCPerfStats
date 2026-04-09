@@ -1,0 +1,32 @@
+---
+description: LAW — three or more copies of the same logic require a shared helper in the same task
+alwaysApply: true
+---
+
+# Duplicate Threshold: Helper Is Mandatory
+
+**Project law:** If the **same substantive logic** appears in **more than two places** (i.e. **three or more** call sites, files, or blocks), you **must** introduce a **shared helper** (function, method, small module, React component/hook, constant map, or other single canonical implementation) **in the same task** that introduces or discovers the third copy. Leaving four-plus scattered copies is not acceptable.
+
+## What counts as “the same logic”
+
+- Repeated **multi-step** or **non-trivial** code: validation, parsing, serialization glue, query assembly, error handling branches, JSX sections, repeated API client patterns, etc.
+- **Near-duplicates** that differ only by literals or simple parameters → one parameterized helper unless splitting would harm clarity (per `refactor-dedup-priorities.mdc`).
+
+## What does not trigger this rule
+
+- **Incidental one-liners** (e.g. identical `logger.debug`, trivial getters) with no maintenance risk—use judgment; do not force a helper for noise.
+- **Generated or vendored** code paths.
+- Code under `HPCPerfStats/monitor/` remains read-only per `workspace-guardrails.mdc` unless the user explicitly approves edits there.
+
+## How to extract
+
+Follow **`refactor-dedup-priorities.mdc`** for **how** to dedupe (less code first, avoid pointless abstraction). This rule only mandates **that** you dedupe at the threshold; it does not relax tests, security, or layer-specific rules.
+
+## Tests
+
+- If extraction could change behavior, add or extend tests per `test-first-discipline.mdc` and `every-error-regression-test.mdc` before/while refactoring; keep existing coverage green.
+
+## Overlap
+
+- **`refactor-dedup-priorities.mdc`** is the playbook for *quality* of refactors; when its “avoid new modules” heuristic conflicts with this rule, **this rule wins** for the **3+ copy** case—you still pick the *smallest* sufficient helper.
+- Complements `react-js-cursor-rule.mdc` and `django-python-cursor-rules.mdc` for naming and structure of the new helper.

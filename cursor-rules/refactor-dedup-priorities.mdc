@@ -5,9 +5,13 @@ alwaysApply: true
 
 # Refactor And Deduplication Priorities
 
+## Mandatory deduplication threshold
+
+If **substantive** logic exists in **three or more** places, you **must** extract a shared helper in the same task—see **`duplicate-threshold-helper-mandate.mdc`** (non-negotiable). The priorities below govern *how* to extract, not whether to extract at that threshold.
+
 When refactoring or removing duplication (Python under `hpcperfstats/`, React/JS under `hpcperfstats/site/frontend/src/`, excluding `monitor/` unless the user explicitly allows it), **choose approaches in this strict order**:
 
-1. **Less code** — Net fewer lines and fewer moving parts; delete the second copy. Do **not** add new modules, hooks, or layers unless they **clearly** reduce total code and ongoing duplication.
+1. **Less code** — Net fewer lines and fewer moving parts; delete the second copy. Do **not** add new modules, hooks, or layers unless they **clearly** reduce total code and ongoing duplication—**except** when `duplicate-threshold-helper-mandate.mdc` applies (3+ copies), where a helper is **required**; still pick the smallest net win.
 2. **Simplicity** — Shallow nesting, obvious data flow, names that match behavior. **Do not** replace readable code with a dense one-liner that saves lines but hurts comprehension.
 3. **Execution branch reduction** — Fewer `if` / `elif` chains and symmetric duplicate branches; prefer one parameterized path or a small data-driven loop (e.g. threshold table, `SECTIONS.map`, shared loader factory) when it **reduces** branches **and** fits 1–2.
 4. **Merge surface reduction** — One canonical place for shared logic so fewer files need parallel edits. Treat as a **bonus** after 1–3, unless it coincides with deleting a duplicate.
@@ -26,4 +30,4 @@ When refactoring or removing duplication (Python under `hpcperfstats/`, React/JS
 
 ## Overlap
 
-- Complements `react-js-cursor-rule.mdc` (React style and tests on touch) and `django-python-cursor-rules.mdc` (Django patterns). This rule is the **decision order** for refactors; those rules still govern style, security, and framework usage.
+- Complements `duplicate-threshold-helper-mandate.mdc` (when extraction is mandatory), `react-js-cursor-rule.mdc` (React style and tests on touch), and `django-python-cursor-rules.mdc` (Django patterns). This rule is the **decision order** for refactors; those rules still govern style, security, and framework usage.
