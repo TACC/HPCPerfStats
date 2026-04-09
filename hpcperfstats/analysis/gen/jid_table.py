@@ -115,6 +115,28 @@ def _acct_hosts_cache_fingerprint(acct_hosts):
   return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
 
 
+def _coerce_nonnegative_window_row_count(value):
+  """Parse a cached or computed window row count as a non-negative int.
+
+  Some cache serializers (JSON, or upstream bugs) surface a scalar count as a
+  one-element sequence (e.g. ``[1_500_000]``). Unwrap shallowly, then ``int()``;
+  return ``None`` if the value is not a usable count.
+  """
+  if value is None:
+    return None
+  cur = value
+  for _ in range(16):
+    if isinstance(cur, (list, tuple)) and len(cur) == 1:
+      cur = cur[0]
+      continue
+    break
+  try:
+    n = int(cur)
+  except (TypeError, ValueError, OverflowError):
+    return None
+  return n if n >= 0 else None
+
+
 def _count_host_data_rows_for_window_cached(jid, start, end, acct_hosts):
   """Exact window COUNT(*) with optional short Django-cache TTL (see conf_parser)."""
   ttl = cfg.get_large_job_window_row_count_cache_ttl()
@@ -131,16 +153,23 @@ def _count_host_data_rows_for_window_cached(jid, start, end, acct_hosts):
     except Exception:
       cached = None
     if cached is not None:
-      try:
-        return int(cached)
-      except (TypeError, ValueError):
-        pass
+      coerced = _coerce_nonnegative_window_row_count(cached)
+      if coerced is not None:
+        return coerced
     n = _count_host_data_rows_for_window(start, end, acct_hosts)
+    coerced_n = _coerce_nonnegative_window_row_count(n)
+    if coerced_n is None:
+      _logger.warning(
+          "jid_table window row count not coercible jid=%s raw=%r",
+          jid,
+          n,
+      )
+      return 0
     try:
-      cache.set(key, int(n), timeout=ttl)
+      cache.set(key, coerced_n, timeout=ttl)
     except Exception:
       pass
-    return n
+    return coerced_n
   return _count_host_data_rows_for_window(start, end, acct_hosts)
 
 

@@ -14,7 +14,9 @@ from unittest.mock import patch
 from django.db import OperationalError
 
 from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_schema_dataframe
+from hpcperfstats.analysis.gen.jid_table import _coerce_nonnegative_window_row_count
 from hpcperfstats.analysis.gen.jid_table import _count_host_data_rows_for_window
+from hpcperfstats.analysis.gen.jid_table import _count_host_data_rows_for_window_cached
 from hpcperfstats.analysis.gen.jid_table import _distinct_times_in_window_batched
 from hpcperfstats.analysis.gen.jid_table import _ensure_tz
 from hpcperfstats.analysis.gen.jid_table import _normalize_host_data_schema_label
@@ -165,6 +167,74 @@ def test_unpack_cached_job_window_row_tuple_and_model():
   assert _unpack_cached_job_window_row(j) == (["n1"], st, et)
   assert _unpack_cached_job_window_row(None) == (None, None, None)
   assert _unpack_cached_job_window_row("bad") == (None, None, None)
+
+
+def test_coerce_nonnegative_window_row_count_scalar_and_wrapped():
+  """Cache serializers may return a count as int, str, or one-element list/tuple."""
+  assert _coerce_nonnegative_window_row_count(None) is None
+  assert _coerce_nonnegative_window_row_count(42) == 42
+  assert _coerce_nonnegative_window_row_count("99") == 99
+  assert _coerce_nonnegative_window_row_count([1_500_001]) == 1_500_001
+  assert _coerce_nonnegative_window_row_count([[9_000_000]]) == 9_000_000
+  assert _coerce_nonnegative_window_row_count(([3],)) == 3
+  assert _coerce_nonnegative_window_row_count([1, 2]) is None
+  assert _coerce_nonnegative_window_row_count([]) is None
+  assert _coerce_nonnegative_window_row_count(-5) is None
+
+
+def test_count_host_data_rows_for_window_cached_accepts_list_wrapped_scalar(monkeypatch):
+  """Large-job row-count cache hit must accept JSON-style single-element list values."""
+  from datetime import timezone as dt_utc
+
+  st = datetime(2026, 1, 1, 12, 0, 0, tzinfo=dt_utc.utc)
+  et = datetime(2026, 1, 1, 13, 0, 0, tzinfo=dt_utc.utc)
+  calls = {"count": 0}
+
+  def _count_stub(*_a, **_k):
+    calls["count"] += 1
+    raise AssertionError("ORM count must not run when cache parses")
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
+      lambda: 60,
+  )
+  monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.cache.get", lambda _k: [9_000_000])
+  monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.cache.set", lambda *a, **k: None)
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table._count_host_data_rows_for_window",
+      _count_stub,
+  )
+  n = _count_host_data_rows_for_window_cached("j656931", st, et, ["n1.cluster.example"])
+  assert n == 9_000_000
+  assert calls["count"] == 0
+
+
+def test_count_host_data_rows_for_window_cached_multi_element_list_recomputes(monkeypatch):
+  """Malformed cache list must fall back to live COUNT and store a plain int."""
+  from datetime import timezone as dt_utc
+
+  st = datetime(2026, 2, 1, 12, 0, 0, tzinfo=dt_utc.utc)
+  et = datetime(2026, 2, 1, 13, 0, 0, tzinfo=dt_utc.utc)
+  set_calls = []
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
+      lambda: 120,
+  )
+  monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.cache.get", lambda _k: [1, 2, 3])
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table.cache.set",
+      lambda key, val, timeout=None: set_calls.append((key, val, timeout)),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table._count_host_data_rows_for_window",
+      lambda *_a, **_k: 555,
+  )
+  n = _count_host_data_rows_for_window_cached("j2", st, et, ["h.x"])
+  assert n == 555
+  assert len(set_calls) == 1
+  assert set_calls[0][1] == 555
+  assert set_calls[0][2] == 120
 
 
 def test_ensure_tz_none():
