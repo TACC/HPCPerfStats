@@ -30,7 +30,6 @@ _unlink_timestamps = deque()
 _timestamps_lock = Lock()
 _last_message_time = None
 _last_idle_report_time = None
-_channel_ref = None
 _idle_thread_started = False
 _idle_monitor_stop_event = Event()
 _recent_host_worker_thread_started = False
@@ -267,6 +266,40 @@ def append_monitor_payload_to_archive(message):
   return host
 
 
+def _get_rmq_queue_depth_for_monitor():
+  """Return ``message_count`` for the configured queue.
+
+  Uses a **separate** short-lived connection. Pika ``BlockingConnection`` and
+  its channels are not thread-safe; the idle monitor runs in a background
+  thread and must not touch the channel used by ``start_consuming()`` in the
+  main thread (that sharing caused ``Channel is closed``, transport state
+  errors, and ``IndexError: pop from an empty deque`` in pika).
+  """
+  parameters = pika.ConnectionParameters(cfg.get_rmq_server())
+  connection = None
+  try:
+    connection = pika.BlockingConnection(parameters)
+    channel = connection.channel()
+    try:
+      q = channel.queue_declare(
+          queue=cfg.get_rmq_queue(), durable=True, passive=True)
+    except Exception:
+      q = channel.queue_declare(
+          queue=cfg.get_rmq_queue(), durable=True, passive=False)
+    return q.method.message_count
+  except Exception as e:
+    if DEBUG:
+      log_print("Failed to get queue depth in monitor: %s" % e)
+    return 0
+  finally:
+    if connection is not None:
+      try:
+        if not connection.is_closed:
+          connection.close()
+      except Exception:
+        pass
+
+
 def on_message(channel, method_frame, header_frame, body):
   """Callback for each message: decode body, determine host, write/append to host's current file and optionally rotate. Acknowledges the message.
 
@@ -314,28 +347,8 @@ def _idle_monitor():
           1 for ts in _unlink_timestamps if ts >= cutoff_10
       )
 
-    # Also report how many messages are currently waiting in the queue.
-    queue_depth = 0
-    try:
-      # Use the shared channel reference if available; otherwise skip depth.
-      channel = _channel_ref
-      if channel is not None:
-        try:
-          # passive=True avoids modifying the queue, but can fail if the queue
-          # doesn't exist yet during reconnect windows.
-          q = channel.queue_declare(
-              queue=cfg.get_rmq_queue(), durable=True, passive=True)
-          queue_depth = q.method.message_count
-        except Exception:
-          # Fall back to a non-passive declare so we can still read the
-          # queue depth without logging "unknown".
-          q = channel.queue_declare(
-              queue=cfg.get_rmq_queue(), durable=True, passive=False)
-          queue_depth = q.method.message_count
-    except Exception as e:
-      if DEBUG:
-        log_print("Failed to get queue depth in monitor: %s" % e)
-      # Keep default 0 so logs always include a number.
+    # Queue depth via a dedicated connection (see _get_rmq_queue_depth_for_monitor).
+    queue_depth = _get_rmq_queue_depth_for_monitor()
 
     log_print(
         "Messages consumed in the last 10 minutes: %d; "
@@ -347,7 +360,6 @@ def _idle_monitor():
 
 
 def main():
-  global _channel_ref
   global _idle_thread_started
   global _recent_host_worker_thread_started
   # Use a mutable container so the SIGTERM handler can update state without
@@ -394,7 +406,6 @@ def main():
           connection = pika.BlockingConnection(parameters)
 
           channel = connection.channel()
-          _channel_ref = channel
           channel.queue_declare(queue=cfg.get_rmq_queue(), durable=True)
           # Report how many messages are waiting to be consumed at startup.
           try:
