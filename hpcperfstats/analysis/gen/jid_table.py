@@ -10,7 +10,7 @@ import time
 from datetime import timezone as dt_utc
 
 from django.core.cache import cache
-from django.db import connections
+from django.db import InterfaceError, OperationalError, close_old_connections, connections
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
@@ -74,23 +74,40 @@ def _iter_acct_host_batches(acct_host_list, batch_size=None):
     yield hosts[i:i + bs]
 
 
+def _is_psycopg_connection_desync(exc):
+  """True for errors that warrant a fresh DB connection and one retry."""
+  if isinstance(exc, (InterfaceError, OperationalError)):
+    return True
+  return "lost synchronization" in str(exc).lower()
+
+
 def _count_host_data_rows_for_window(start, end, acct_hosts):
   """Total host_data rows in [start, end] for accounting FQDNs.
 
   Always uses chunked ``host__in`` queries. A previous PostgreSQL fast path
   used ``ANY(%s::text[])`` on a shared Django connection and could corrupt the
   psycopg wire protocol (``lost synchronization with server``).
+
+  Retries once after :func:`close_old_connections` when the connection is
+  desynchronized (same class of errors as raw-SQL / concurrent use).
   """
   if not acct_hosts or start is None or end is None:
     return 0
-  total = 0
-  for host_chunk in _iter_acct_host_batches(acct_hosts):
-    total += host_data.objects.filter(
-        time__gte=start,
-        time__lte=end,
-        host__in=host_chunk,
-    ).count()
-  return total
+  for attempt in range(2):
+    try:
+      close_old_connections()
+      total = 0
+      for host_chunk in _iter_acct_host_batches(acct_hosts):
+        total += host_data.objects.filter(
+            time__gte=start,
+            time__lte=end,
+            host__in=host_chunk,
+        ).count()
+      return total
+    except Exception as exc:
+      if attempt == 0 and _is_psycopg_connection_desync(exc):
+        continue
+      raise
 
 
 def _acct_hosts_cache_fingerprint(acct_hosts):
@@ -130,30 +147,37 @@ def _count_host_data_rows_for_window_cached(jid, start, end, acct_hosts):
 def _distinct_times_in_window_batched(start, end, acct_hosts, batch_size=None):
   """UNION of DISTINCT ``host_data.time`` in ``[start, end]`` across hosts.
 
-  Uses chunked ``host = ANY(%s::text[])`` queries (same batch size as row counts)
-  so statement size and planner input stay bounded for large node counts.
-  """
-  from django.db import connection
+  Uses chunked ``host__in`` ORM queries (same batch size as row counts). Raw SQL
+  with ``ANY(%s::text[])`` on Django's shared connection previously corrupted the
+  psycopg wire protocol (``lost synchronization with server``).
 
+  Retries once after :func:`close_old_connections` on connection desync.
+  """
   if not acct_hosts or start is None or end is None:
     return []
-  ops = connection.ops
-  tbl = ops.quote_name(host_data._meta.db_table)
-  ct = ops.quote_name("time")
-  ch = ops.quote_name("host")
-  sql = (
-      "SELECT DISTINCT h.{ct} AS ts FROM {tbl} h "
-      "WHERE h.{ct} >= %s AND h.{ct} <= %s AND h.{ch} = ANY(%s::text[])"
-  ).format(tbl=tbl, ct=ct, ch=ch)
-  all_ts = set()
-  with _pg_relax_statement_timeout_for_large_job_time_sql():
-    with connection.cursor() as cursor:
-      for host_chunk in _iter_acct_host_batches(acct_hosts, batch_size):
-        cursor.execute(sql, [start, end, list(host_chunk)])
-        for row in cursor.fetchall():
-          if row and row[0] is not None:
-            all_ts.add(row[0])
-  return sorted(all_ts)
+  for attempt in range(2):
+    try:
+      close_old_connections()
+      all_ts = set()
+      with _pg_relax_statement_timeout_for_large_job_time_sql():
+        for host_chunk in _iter_acct_host_batches(acct_hosts, batch_size):
+          qs = (
+              host_data.objects.filter(
+                  time__gte=start,
+                  time__lte=end,
+                  host__in=list(host_chunk),
+              )
+              .values_list("time", flat=True)
+              .distinct()
+          )
+          for ts in qs:
+            if ts is not None:
+              all_ts.add(ts)
+      return sorted(all_ts)
+    except Exception as exc:
+      if attempt == 0 and _is_psycopg_connection_desync(exc):
+        continue
+      raise
 
 
 def _ntile_bucket_max_timestamps(sorted_ts, n_buckets):

@@ -11,7 +11,7 @@ pytestmark = pytest.mark.django_db(databases=[])
 from contextlib import nullcontext
 from unittest.mock import patch
 
-from django.db import connection as django_connection
+from django.db import OperationalError
 
 from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_schema_dataframe
 from hpcperfstats.analysis.gen.jid_table import _count_host_data_rows_for_window
@@ -324,34 +324,32 @@ def test_ntile_bucket_max_timestamps_ten_into_three_buckets():
 
 
 def test_distinct_times_in_window_batched_uses_host_chunks(monkeypatch):
-  """Strided-time prep runs one DISTINCT-time SQL per host__in batch (bounded ANY)."""
+  """Strided-time prep runs one DISTINCT-time ORM query per host__in batch."""
   chunk_lens = []
 
-  class FakeCursor:
-    def execute(self, sql, params):
-      chunk_lens.append(len(params[2]))
+  class FakeQS:
+    def __init__(self, n_hosts):
+      self._n_hosts = n_hosts
 
-    def fetchall(self):
-      return []
-
-    def __enter__(self):
+    def values_list(self, *_a, **_k):
       return self
 
-    def __exit__(self, *args):
-      return False
+    def distinct(self):
+      chunk_lens.append(self._n_hosts)
+      return self
 
-  class FakeConnection:
-    vendor = "postgresql"
-    ops = django_connection.ops
+    def __iter__(self):
+      return iter(())
 
-    def cursor(self):
-      return FakeCursor()
+  class FakeManager:
+    def filter(self, **kwargs):
+      return FakeQS(len(kwargs["host__in"]))
 
   monkeypatch.setattr(
       "hpcperfstats.analysis.gen.jid_table._pg_relax_statement_timeout_for_large_job_time_sql",
       nullcontext,
   )
-  monkeypatch.setattr("django.db.connection", FakeConnection())
+  monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.host_data.objects", FakeManager())
 
   n = JID_TABLE_HOST_QUERY_BATCH + 5
   hosts = ["h{0}.x".format(i) for i in range(n)]
@@ -402,3 +400,33 @@ def test_count_host_data_rows_for_window_chunked_multiple_batches(monkeypatch):
 
   out = _count_host_data_rows_for_window(1, 2, hosts)
   assert out == n
+
+
+def test_count_host_data_rows_retries_after_lost_sync(monkeypatch):
+  """One retry with close_old_connections after psycopg desynchronization."""
+  calls = {"n": 0}
+
+  class FakeCountQS:
+    def count(self):
+      calls["n"] += 1
+      if calls["n"] == 1:
+        raise OperationalError(
+            'lost synchronization with server: got message type "1", length 942485560'
+        )
+      return 7
+
+  class FakeManager:
+    def filter(self, **_kwargs):
+      return FakeCountQS()
+
+  monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.host_data.objects", FakeManager())
+  closed = []
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table.close_old_connections",
+      lambda: closed.append(1),
+  )
+  out = _count_host_data_rows_for_window(1, 2, ["h1.example.com"])
+  assert out == 7
+  assert calls["n"] == 2
+  assert len(closed) == 2
