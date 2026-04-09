@@ -39,6 +39,30 @@ from hpcperfstats.site.machine.models import host_data, job_data
 JID_TABLE_HOST_QUERY_BATCH = 64
 
 
+def _coerce_jid_table_host_query_batch_size(batch_size):
+  """Parse optional per-chunk size for ``host__in`` batching; never raise on bad input.
+
+  Mis-wired call sites or mistaken env/config can pass a hostname string where a
+  batch size is expected; ``int("c641-092.vista.tacc.utexas.edu")`` would break
+  large-job row counting.
+  """
+  default = JID_TABLE_HOST_QUERY_BATCH
+  if batch_size is None:
+    return default
+  try:
+    n = int(batch_size)
+  except (TypeError, ValueError, OverflowError):
+    logging.getLogger(__name__).warning(
+        "jid_table invalid host query batch_size %r; using default %s",
+        batch_size,
+        default,
+    )
+    return default
+  if n < 1:
+    return default
+  return n
+
+
 @contextlib.contextmanager
 def _pg_relax_statement_timeout_for_large_job_time_sql():
   """Disable PostgreSQL ``statement_timeout`` for long strided-time sampling SQL.
@@ -68,7 +92,7 @@ def _iter_acct_host_batches(acct_host_list, batch_size=None):
   """Yield successive host__in subsets of acct_host_list (stable order)."""
   if not acct_host_list:
     return
-  bs = max(1, int(batch_size or JID_TABLE_HOST_QUERY_BATCH))
+  bs = _coerce_jid_table_host_query_batch_size(batch_size)
   hosts = list(acct_host_list)
   for i in range(0, len(hosts), bs):
     yield hosts[i:i + bs]

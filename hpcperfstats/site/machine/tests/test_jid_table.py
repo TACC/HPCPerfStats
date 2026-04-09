@@ -13,12 +13,14 @@ from unittest.mock import patch
 
 from django.db import OperationalError
 
+from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_host_query_batch_size
 from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_schema_dataframe
 from hpcperfstats.analysis.gen.jid_table import _coerce_nonnegative_window_row_count
 from hpcperfstats.analysis.gen.jid_table import _count_host_data_rows_for_window
 from hpcperfstats.analysis.gen.jid_table import _count_host_data_rows_for_window_cached
 from hpcperfstats.analysis.gen.jid_table import _distinct_times_in_window_batched
 from hpcperfstats.analysis.gen.jid_table import _ensure_tz
+from hpcperfstats.analysis.gen.jid_table import _iter_acct_host_batches
 from hpcperfstats.analysis.gen.jid_table import _normalize_host_data_schema_label
 from hpcperfstats.analysis.gen.jid_table import _normalize_job_accounting_host_list
 from hpcperfstats.analysis.gen.jid_table import _ntile_bucket_max_timestamps
@@ -391,6 +393,27 @@ def test_ntile_bucket_max_timestamps_ten_into_three_buckets():
   """NTILE(3) over 10 ordered rows uses bucket sizes 4,3,3; maxima at last of each."""
   ts = list(range(10))
   assert _ntile_bucket_max_timestamps(ts, 3) == [3, 6, 9]
+
+
+def test_coerce_jid_table_host_query_batch_size_rejects_non_numeric_strings():
+  """Hostnames mistaken for batch sizes must fall back (large-job row count must not raise)."""
+  assert _coerce_jid_table_host_query_batch_size(
+      "c641-092.vista.tacc.utexas.edu") == JID_TABLE_HOST_QUERY_BATCH
+  assert _coerce_jid_table_host_query_batch_size(None) == JID_TABLE_HOST_QUERY_BATCH
+  assert _coerce_jid_table_host_query_batch_size(128) == 128
+  assert _coerce_jid_table_host_query_batch_size("32") == 32
+  assert _coerce_jid_table_host_query_batch_size(0) == JID_TABLE_HOST_QUERY_BATCH
+
+
+def test_iter_acct_host_batches_non_numeric_batch_size_uses_default_chunking():
+  """Invalid batch_size must not raise; chunk like default JID_TABLE_HOST_QUERY_BATCH."""
+  n = JID_TABLE_HOST_QUERY_BATCH + 5
+  hosts = [f"n{i}.example.com" for i in range(n)]
+  chunks = list(
+      _iter_acct_host_batches(hosts, "c641-092.vista.tacc.utexas.edu"))
+  assert len(chunks) == 2
+  assert len(chunks[0]) == JID_TABLE_HOST_QUERY_BATCH
+  assert len(chunks[1]) == 5
 
 
 def test_distinct_times_in_window_batched_uses_host_chunks(monkeypatch):
