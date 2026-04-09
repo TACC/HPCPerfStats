@@ -436,7 +436,8 @@ def _host_data_metric_rows_batched(
     cache_key = _host_data_row_cache_key(tkw, typename, events, metric_column)
     if cache_key is not None and cache_key in rows_cache:
       return rows_cache[cache_key]
-  batch = max(1, int(jid_table.JID_TABLE_HOST_QUERY_BATCH))
+  batch = jid_table._coerce_jid_table_host_query_batch_size(
+      jid_table.JID_TABLE_HOST_QUERY_BATCH)
   ev = list(events or [])
   rows = []
   for i in range(0, len(host_list), batch):

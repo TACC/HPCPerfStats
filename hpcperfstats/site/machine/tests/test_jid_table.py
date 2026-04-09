@@ -14,6 +14,7 @@ from unittest.mock import patch
 from django.db import OperationalError
 
 from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_host_query_batch_size
+from hpcperfstats.analysis.gen.jid_table import _listify_acct_hosts
 from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_schema_dataframe
 from hpcperfstats.analysis.gen.jid_table import _coerce_nonnegative_window_row_count
 from hpcperfstats.analysis.gen.jid_table import _count_host_data_rows_for_window
@@ -403,6 +404,28 @@ def test_coerce_jid_table_host_query_batch_size_rejects_non_numeric_strings():
   assert _coerce_jid_table_host_query_batch_size(128) == 128
   assert _coerce_jid_table_host_query_batch_size("32") == 32
   assert _coerce_jid_table_host_query_batch_size(0) == JID_TABLE_HOST_QUERY_BATCH
+
+
+def test_listify_acct_hosts_wraps_fqdn_string_without_splitting_chars():
+  """A lone FQDN string must not become one character per pseudo-host."""
+  fqdn = "c608-081.vista.tacc.utexas.edu"
+  assert _listify_acct_hosts(fqdn) == [fqdn]
+  assert _listify_acct_hosts("  " + fqdn + "  ") == [fqdn]
+
+
+def test_listify_acct_hosts_comma_separated_short_names():
+  assert _listify_acct_hosts("a,b, c") == ["a", "b", "c"]
+
+
+def test_iter_acct_host_batches_accepts_single_fqdn_string():
+  fqdn = "c608-081.vista.tacc.utexas.edu"
+  chunks = list(_iter_acct_host_batches(fqdn))
+  assert chunks == [[fqdn]]
+
+
+def test_normalize_job_accounting_host_list_accepts_plain_string():
+  fqdn = "c608-081.vista.tacc.utexas.edu"
+  assert _normalize_job_accounting_host_list(fqdn) == [fqdn]
 
 
 def test_iter_acct_host_batches_non_numeric_batch_size_uses_default_chunking():

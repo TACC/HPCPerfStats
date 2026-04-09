@@ -63,6 +63,36 @@ def _coerce_jid_table_host_query_batch_size(batch_size):
   return n
 
 
+def _listify_acct_hosts(acct_hosts):
+  """Coerce accounting host input to a list of hostname strings.
+
+  ``job_data.host_list`` is normally a list of short names. A buggy import or
+  serializer may store a **single FQDN string** (or comma-separated names) in the
+  column. Using ``list("host.example.com")`` splits into characters, which
+  breaks ``host__in`` chunking and can trigger obscure driver errors (including
+  ``invalid literal for int()`` on fragments).
+  """
+  if acct_hosts is None:
+    return []
+  if isinstance(acct_hosts, (str, bytes)):
+    s = (
+        acct_hosts.decode("utf-8", errors="replace")
+        if isinstance(acct_hosts, bytes)
+        else acct_hosts
+    ).strip()
+    if not s:
+      return []
+    if "," in s:
+      return [p.strip() for p in s.split(",") if p.strip()]
+    return [s]
+  if isinstance(acct_hosts, (list, tuple)):
+    return [str(h) for h in acct_hosts]
+  try:
+    return [str(h) for h in acct_hosts]
+  except TypeError:
+    return [str(acct_hosts)]
+
+
 @contextlib.contextmanager
 def _pg_relax_statement_timeout_for_large_job_time_sql():
   """Disable PostgreSQL ``statement_timeout`` for long strided-time sampling SQL.
@@ -90,10 +120,10 @@ def _pg_relax_statement_timeout_for_large_job_time_sql():
 
 def _iter_acct_host_batches(acct_host_list, batch_size=None):
   """Yield successive host__in subsets of acct_host_list (stable order)."""
-  if not acct_host_list:
+  hosts = _listify_acct_hosts(acct_host_list)
+  if not hosts:
     return
   bs = _coerce_jid_table_host_query_batch_size(batch_size)
-  hosts = list(acct_host_list)
   for i in range(0, len(hosts), bs):
     yield hosts[i:i + bs]
 
@@ -115,13 +145,16 @@ def _count_host_data_rows_for_window(start, end, acct_hosts):
   Retries once after :func:`close_old_connections` when the connection is
   desynchronized (same class of errors as raw-SQL / concurrent use).
   """
-  if not acct_hosts or start is None or end is None:
+  if start is None or end is None:
+    return 0
+  hosts = _listify_acct_hosts(acct_hosts)
+  if not hosts:
     return 0
   for attempt in range(2):
     try:
       close_old_connections()
       total = 0
-      for host_chunk in _iter_acct_host_batches(acct_hosts):
+      for host_chunk in _iter_acct_host_batches(hosts):
         total += host_data.objects.filter(
             time__gte=start,
             time__lte=end,
@@ -135,7 +168,8 @@ def _count_host_data_rows_for_window(start, end, acct_hosts):
 
 
 def _acct_hosts_cache_fingerprint(acct_hosts):
-  blob = "\n".join(sorted(str(h) for h in acct_hosts))
+  hosts = _listify_acct_hosts(acct_hosts)
+  blob = "\n".join(sorted(hosts))
   return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
 
 
@@ -206,14 +240,17 @@ def _distinct_times_in_window_batched(start, end, acct_hosts, batch_size=None):
 
   Retries once after :func:`close_old_connections` on connection desync.
   """
-  if not acct_hosts or start is None or end is None:
+  if start is None or end is None:
+    return []
+  hosts = _listify_acct_hosts(acct_hosts)
+  if not hosts:
     return []
   for attempt in range(2):
     try:
       close_old_connections()
       all_ts = set()
       with _pg_relax_statement_timeout_for_large_job_time_sql():
-        for host_chunk in _iter_acct_host_batches(acct_hosts, batch_size):
+        for host_chunk in _iter_acct_host_batches(hosts, batch_size):
           qs = (
               host_data.objects.filter(
                   time__gte=start,
@@ -238,7 +275,10 @@ def _ntile_bucket_max_timestamps(sorted_ts, n_buckets):
   L = len(sorted_ts)
   if L == 0:
     return []
-  nb = int(n_buckets)
+  try:
+    nb = int(n_buckets)
+  except (TypeError, ValueError, OverflowError):
+    nb = 2048
   if nb < 2:
     return [sorted_ts[-1]]
   base = L // nb
@@ -373,12 +413,15 @@ def _normalize_job_accounting_host_list(raw):
   """Coerce ``job_data.host_list`` (ArrayField) to a list of short hostnames.
 
   Defensive: corrupted cache/ORM values can surface as a non-list (e.g. a lone
-  ``datetime``), which must not be iterated for FQDN construction.
+  ``datetime``), which must not be iterated for FQDN construction. A single FQDN
+  string (or comma-separated short names) is accepted like :func:`_listify_acct_hosts`.
   """
   if raw is None:
     return []
   if isinstance(raw, (list, tuple)):
     return [str(h) for h in raw]
+  if isinstance(raw, (str, bytes)):
+    return _listify_acct_hosts(raw)
   return []
 
 
