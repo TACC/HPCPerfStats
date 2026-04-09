@@ -3,12 +3,15 @@
  * Dynamic import keeps @bokeh/bokehjs in its own async chunk (large library).
  * Keep window.Bokeh for BokehEmbed and tests that stub the global.
  */
+import { applyBokehResizeObserverDeferral } from "./patch-resize-observer-for-bokeh.js";
+
 let bokehLoadPromise = null;
 
 export function ensureBokehLoaded() {
   if (typeof window === "undefined") {
     return Promise.resolve(null);
   }
+  applyBokehResizeObserverDeferral();
   if (window.Bokeh) {
     return Promise.resolve(window.Bokeh);
   }
