@@ -15,6 +15,14 @@ alwaysApply: false
 1. **SPA + Django-side embed helpers** — Responsive sizing, zoom layout transforms, focus/keyboard behavior around the embed, and job-detail chrome live in **`hpcperfstats/site/machine/bokeh_plot_layout.py`** and the **React** job detail components / CSS. Accessibility for controls **around** plots follows **`wcag-aa-mobile-web.mdc`**.
 2. **Figure construction** — `sizing_mode`, dimensions, themes, glyphs, and data downsampling inside Bokeh **`figure()`** calls live under **`hpcperfstats/analysis/plot/`**. Changing those affects **all** consumers of that plot builder (API, possible admin or batch renders) and is a **larger visual contract** change.
 
+## SPA `BokehEmbed` (viewport + stagger)
+
+- **Canonical component:** `hpcperfstats/site/frontend/src/components/BokehEmbed.jsx` — all pages must embed Bokeh `json_item` payloads through this component (not ad hoc `embed_item` calls elsewhere).
+- **Defaults (production):** defer starting embed until the wrapper **intersects the viewport** (`IntersectionObserver`, configurable `rootMargin` / `threshold`); after Bokeh `Document.idle`, apply a short **settle delay** before the global embed lock releases, to reduce overlapping `ResizeObserver` work across multiple plots.
+- **Defaults (Vitest):** viewport deferral is off unless `deferEmbedUntilVisible` is explicitly set (so unit tests do not need IO); settle delay is **0**. See `hpcperfstats/site/frontend/src/utils/bokeh-embed-defaults.js`.
+- **Opt-out:** pass `deferEmbedUntilVisible={false}` only for exceptional cases (e.g. hidden iframe / print).
+- **Popover / dialog plots:** `HistogramThumbnails` gates the full-size embed until the popover plot container has layout (see same component). Do not mount `BokehEmbed` into a zero-size dialog subtree.
+
 ## When changing job detail plots
 
 - Prefer **`bokeh_plot_layout.py`** + frontend for **container and zoom UX** without altering core plot semantics.

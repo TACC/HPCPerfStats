@@ -206,6 +206,40 @@ describe("BokehEmbed", () => {
     addSpy.mockRestore();
   });
 
+  it("defers embed until IntersectionObserver reports intersecting when deferEmbedUntilVisible is true", async () => {
+    let intersectionCallback = null;
+    class MockIntersectionObserver {
+      constructor(callback, _options) {
+        intersectionCallback = callback;
+      }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    const embedItem = vi.fn(() => Promise.resolve());
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    try {
+      renderBokehEmbed(
+        <BokehEmbed
+          deferEmbedUntilVisible
+          item={{ doc: {}, root_ids: ["r1"] }}
+          id="bokeh-io-defer-test"
+          plotName="Deferred"
+        />,
+      );
+
+      await Promise.resolve();
+      expect(embedItem).not.toHaveBeenCalled();
+      expect(intersectionCallback).toBeTypeOf("function");
+      intersectionCallback([{ isIntersecting: true }]);
+      await waitFor(() => expect(embedItem).toHaveBeenCalledTimes(1));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("serializes embed_item so concurrent mounts never overlap", async () => {
     let concurrent = 0;
     let maxConcurrent = 0;

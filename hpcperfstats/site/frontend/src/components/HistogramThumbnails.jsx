@@ -1,9 +1,11 @@
-import { useState, useRef, useEffect, useCallback, useId } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useId } from "react";
 import BokehEmbed from "./BokehEmbed";
 import LoadingMessage from "./LoadingMessage";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 
 const THUMB_SIZE = { width: 280, height: 200 };
+/** Slightly larger prefetch margin than BokehEmbed default so off-screen thumbs start loading sooner. */
+const HISTOGRAM_INTERSECTION_ROOT_MARGIN = "120px 0px";
 const MOBILE_BREAKPOINT = 768;
 
 function useIsMobile() {
@@ -27,9 +29,11 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
   const isMobile = useIsMobile();
   const [expanded, setExpanded] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
+  const [popoverLayoutReady, setPopoverLayoutReady] = useState(false);
   const wrapperRef = useRef(null);
   const thumbActivatorRef = useRef(null);
   const popoverRef = useRef(null);
+  const popoverPlotRef = useRef(null);
   const closeButtonRef = useRef(null);
   const domSuffix = useId().replace(/:/g, "");
 
@@ -88,6 +92,39 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [expanded, collapseExpanded]);
 
+  useLayoutEffect(() => {
+    if (!expanded || !showPopover || isMobile) {
+      setPopoverLayoutReady(false);
+      return;
+    }
+    function measure() {
+      const node = popoverPlotRef.current;
+      return !!(node && node.offsetWidth > 0 && node.offsetHeight > 0);
+    }
+    if (measure()) {
+      setPopoverLayoutReady(true);
+      return;
+    }
+    setPopoverLayoutReady(false);
+    let cancelled = false;
+    let raf2 = null;
+    const raf1 = window.requestAnimationFrame(() => {
+      if (cancelled) return;
+      if (measure()) {
+        setPopoverLayoutReady(true);
+        return;
+      }
+      raf2 = window.requestAnimationFrame(() => {
+        if (!cancelled) setPopoverLayoutReady(true);
+      });
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(raf1);
+      if (raf2 != null) window.cancelAnimationFrame(raf2);
+    };
+  }, [expanded, showPopover, isMobile]);
+
   /* Mobile: full histogram only, no popover, container sized for viewport */
   if (isMobile) {
     return (
@@ -99,6 +136,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
             id={fullId}
             plotName={title}
             unavailableReason={unavailableReason}
+            intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
           />
         </div>
       </div>
@@ -133,6 +171,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
           plotName={title}
           unavailableReason={unavailableReason}
           embedMinHeightPx={THUMB_SIZE.height}
+          intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
         />
       </div>
       {showPopover && (
@@ -163,6 +202,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
             )}
           </div>
           <div
+            ref={popoverPlotRef}
             className="histogram-thumbnail-popover-plot"
             style={{
               width: 600,
@@ -172,12 +212,13 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
               borderRadius: 4,
             }}
           >
-            {hasOpened && (
+            {hasOpened && popoverLayoutReady && (
               <BokehEmbed
                 item={plotItemFull}
                 id={fullId}
                 plotName={`${title} (full)`}
                 unavailableReason={unavailableReason}
+                intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
               />
             )}
           </div>

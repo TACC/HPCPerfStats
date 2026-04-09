@@ -44,6 +44,11 @@ Key Conventions
 
 Some existing components use short names (for example `Layout.jsx`, `ExtendedSearch.jsx`) instead of `Page*` / `Button*` prefixes. When touching a file, align it with naming and structure rules if the rename/update stays local to the task scope (component + imports + tests). Do not perform broad repo-wide renames unless explicitly requested.
 
+## Bokeh plots in the SPA
+
+- Use **`BokehEmbed`** (`hpcperfstats/site/frontend/src/components/BokehEmbed.jsx`) for every Bokeh `json_item` from the API; do not call `Bokeh.embed.embed_item` directly from page components unless there is a documented exception.
+- Respect viewport deferral and post-idle settle defaults documented in **`bokeh-layout-surface-split.mdc`**. Override `deferEmbedUntilVisible` / `intersectionRootMargin` / `embedSettleAfterIdleMs` only when necessary.
+
 ## CSP when adding network dependencies
 
 When introducing new third-party scripts or API hosts, extend CSP by the smallest directive necessary (`connect-src`, `script-src`, etc.); do not add `*` or bare `https:` allowlists. Update Django/CSP configuration under `hpcperfstats/site/` in the same task as the frontend change.

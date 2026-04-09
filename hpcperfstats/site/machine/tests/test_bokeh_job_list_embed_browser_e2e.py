@@ -56,6 +56,35 @@ def _html_page_for_item(payload_json: str) -> str:
 </html>"""
 
 
+def _html_page_two_items_sequential_scroll(payload_a_json: str, payload_b_json: str) -> str:
+    """Two plot targets: embed first, scroll second into view, embed second (layout stress)."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <script src="{_BOKEH_CDN_JS}"></script>
+</head>
+<body>
+  <div id="plot-a" style="width:280px;height:200px"></div>
+  <div id="spacer" style="height:2400px;width:1px"></div>
+  <div id="plot-b" style="width:280px;height:200px"></div>
+  <script type="application/json" id="payload-a">{payload_a_json}</script>
+  <script type="application/json" id="payload-b">{payload_b_json}</script>
+  <script>
+    const itemA = JSON.parse(document.getElementById("payload-a").textContent);
+    const itemB = JSON.parse(document.getElementById("payload-b").textContent);
+    Bokeh.embed.embed_item(itemA, "plot-a");
+    requestAnimationFrame(() => {{
+      document.getElementById("plot-b").scrollIntoView({{ block: "end" }});
+      requestAnimationFrame(() => {{
+        Bokeh.embed.embed_item(itemB, "plot-b");
+      }});
+    }});
+  </script>
+</body>
+</html>"""
+
+
 @pytest.mark.django_db(databases=[])
 def test_bokeh_embed_job_list_fixtures_no_histogram_failure_console_messages():
     """Embed each fixture; fail if Bokeh logs the same substrings as production."""
@@ -101,5 +130,49 @@ def test_bokeh_embed_job_list_fixtures_no_histogram_failure_console_messages():
                 assert not violations, (
                     f"Bokeh console/pageerror while embedding {path.name}: {violations!r}"
                 )
+        finally:
+            browser.close()
+
+
+@pytest.mark.django_db(databases=[])
+def test_bokeh_embed_two_job_list_fixtures_sequential_scroll_no_console_failures():
+    """Two different json_items after scroll: catches regressions in multi-embed + viewport layout."""
+    hist = _FIXTURE_DIR / "bokeh-job-hist-single-value.json"
+    queue = _FIXTURE_DIR / "bokeh-queue-bars-all-zero.json"
+    missing = [p for p in (hist, queue) if not p.is_file()]
+    if missing:
+        pytest.skip(
+            "Missing json fixtures under site/frontend/src/test-fixtures/. Missing: "
+            + ", ".join(str(p) for p in missing)
+        )
+
+    payload_a = json.dumps(json.loads(hist.read_text(encoding="utf-8")), separators=(",", ":"))
+    payload_b = json.dumps(json.loads(queue.read_text(encoding="utf-8")), separators=(",", ":"))
+    html = _html_page_two_items_sequential_scroll(payload_a, payload_b)
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        violations: list[tuple[str, str]] = []
+
+        def on_console(msg) -> None:
+            text = msg.text
+            for sub in _FAILURE_SUBSTRINGS:
+                if sub in text:
+                    violations.append((sub, text))
+
+        def on_page_error(exc) -> None:
+            msg = str(exc)
+            for sub in _FAILURE_SUBSTRINGS:
+                if sub in msg:
+                    violations.append((sub, msg))
+
+        page.on("console", on_console)
+        page.on("pageerror", on_page_error)
+
+        try:
+            page.set_content(html, wait_until="load")
+            time.sleep(1.2)
+            assert not violations, f"Bokeh console/pageerror (two-plot scroll page): {violations!r}"
         finally:
             browser.close()

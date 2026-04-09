@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSession } from "../session-context";
+import {
+  DEFAULT_INTERSECTION_ROOT_MARGIN,
+  DEFAULT_INTERSECTION_THRESHOLD,
+  defaultDeferEmbedUntilVisible,
+  defaultEmbedSettleAfterIdleMs,
+  delayMs,
+  isVitestLike,
+} from "../utils/bokeh-embed-defaults";
 import { prepareBokehJsonItemForEmbed } from "../utils/remap-bokeh-json-item-ids";
 import { waitForBokehEmbedDocumentIdle } from "../utils/bokeh-when-document-idle";
 
@@ -262,6 +270,10 @@ const PLACEHOLDER_OVERLAY_STYLE = {
  * when the plot fails to load (text status, not color alone).
  * @param {boolean | "width"} maximizeInContainer true = fill container; "width" = stretch width, natural height (zoom scroll)
  * @param {number} [embedMinHeightPx=280] Min height for the plot slot while loading; use the thumbnail box height for job-list thumbs (e.g. 200) so Bokeh measures a box that matches the visible clip.
+ * @param {boolean} [deferEmbedUntilVisible] When true (default in production), wait for the wrapper to intersect the viewport before starting embed. Vitest omits this unless explicitly set to true (for IO mocks).
+ * @param {string} [intersectionRootMargin] Passed to IntersectionObserver (default `100px 0px`).
+ * @param {number} [intersectionThreshold] Passed to IntersectionObserver (default 0.01).
+ * @param {number} [embedSettleAfterIdleMs] After Bokeh document idle, delay this many ms before releasing the global embed lock (default 24 in production, 0 in Vitest).
  */
 export default function BokehEmbed({
   item,
@@ -276,10 +288,23 @@ export default function BokehEmbed({
   embedAriaLabel,
   ariaDescribedBy,
   embedMinHeightPx = BOKEH_EMBED_MIN_HEIGHT_PX,
+  deferEmbedUntilVisible,
+  intersectionRootMargin = DEFAULT_INTERSECTION_ROOT_MARGIN,
+  intersectionThreshold = DEFAULT_INTERSECTION_THRESHOLD,
+  embedSettleAfterIdleMs,
 }) {
   const session = useSession();
   const canViewErrorDetails = !!session?.is_staff;
   const containerRef = useRef(null);
+  const userSetDefer = deferEmbedUntilVisible !== undefined;
+  const effectiveDefer =
+    deferEmbedUntilVisible !== undefined ? deferEmbedUntilVisible : defaultDeferEmbedUntilVisible();
+  const useViewportGate = effectiveDefer && !(isVitestLike() && !userSetDefer);
+  const effectiveSettleMs =
+    embedSettleAfterIdleMs !== undefined
+      ? embedSettleAfterIdleMs
+      : defaultEmbedSettleAfterIdleMs();
+  const [viewportAllowsEmbed, setViewportAllowsEmbed] = useState(false);
   const [plotReady, setPlotReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [failureReason, setFailureReason] = useState(null);
@@ -306,8 +331,36 @@ export default function BokehEmbed({
     if (onPlotReadyChange) onPlotReadyChange(false);
   }, [item, id, onPlotReadyChange]);
 
+  useLayoutEffect(() => {
+    if (!item) {
+      setViewportAllowsEmbed(false);
+      return;
+    }
+    if (!useViewportGate) {
+      setViewportAllowsEmbed(true);
+      return;
+    }
+    setViewportAllowsEmbed(false);
+    const el = containerRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") {
+      setViewportAllowsEmbed(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting) {
+          setViewportAllowsEmbed(true);
+        }
+      },
+      { root: null, rootMargin: intersectionRootMargin, threshold: intersectionThreshold },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [item, id, useViewportGate, intersectionRootMargin, intersectionThreshold]);
+
   useEffect(() => {
-    if (!item) return;
+    if (!item || !viewportAllowsEmbed) return;
 
     let cancelled = false;
     const bokehWait = new AbortController();
@@ -354,6 +407,7 @@ export default function BokehEmbed({
               const embedResult = window.Bokeh.embed.embed_item(embedPayload, id);
               return Promise.resolve(embedResult)
                 .then((views) => waitForBokehEmbedDocumentIdle(views))
+                .then(() => delayMs(effectiveSettleMs))
                 .then(() => {
                   if (cancelled) return;
                   if (!isEmbedTargetRenderable(el)) {
@@ -410,7 +464,7 @@ export default function BokehEmbed({
       const el = typeof document !== "undefined" ? document.getElementById(id) : null;
       disposeBokehViewsForTarget(el);
     };
-  }, [item, id, onPlotReadyChange, maximizeMode]);
+  }, [item, id, onPlotReadyChange, maximizeMode, viewportAllowsEmbed, effectiveSettleMs]);
 
   useEffect(() => {
     if (!plotReady || !maximizeMode) return;

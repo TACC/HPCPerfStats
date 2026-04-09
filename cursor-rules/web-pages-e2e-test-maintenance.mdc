@@ -52,6 +52,8 @@ JSON files live under:
 
 `HPCPerfStats/hpcperfstats/site/frontend/src/test-fixtures/`
 
+The module includes **two** tests: one embeds each fixture alone; a second loads **both** fixtures on one page, **scrolls** the second plot into view, then embeds it—guarding multi-embed + viewport layout without Bokeh console/pageerror failure substrings.
+
 Current files (keep names stable unless the test is updated):
 
 - `bokeh-job-hist-single-value.json` — from `job_hist(...)` (single finite metric value; exercises histogram y-range / quad path).
