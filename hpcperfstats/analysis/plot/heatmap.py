@@ -136,19 +136,19 @@ class HeatMap():
         formatters={"@cpi": cpi_hover},
     )
 
-    # Use distinct LinearColorMapper instances for the rects vs the ColorBar.
-    # A single shared mapper in json_item can deserialize so ColorBarView wires
-    # metrics_change before the mapper is fully initialized (BokehJS error:
-    # "this.metrics_change is undefined" on embed).
-    mapper_fill = LinearColorMapper(
+    # One LinearColorMapper for both rect fill_color and ColorBar. Bokeh 3.x
+    # ColorBarView subscribes to ``color_mapper.metrics_change``; using two
+    # separate mappers in a json_item embed can leave the bar's mapper without a
+    # fully initialized signal (browser: "this.metrics_change is undefined").
+    mapper = LinearColorMapper(
         palette=_HEATMAP_PALETTE, low=_HEATMAP_CPI_LOW, high=_HEATMAP_CPI_HIGH)
-    mapper_bar = LinearColorMapper(
-        palette=_HEATMAP_PALETTE, low=_HEATMAP_CPI_LOW, high=_HEATMAP_CPI_HIGH)
-    colors = {"field": "cpi", "transform": mapper_fill}
-    color_bar = ColorBar(color_mapper=mapper_bar,
-                         location=(0, 0),
-                         ticker=BasicTicker(desired_num_ticks=10),
-                         formatter=new_plain_linear_tick_formatter())
+    colors = {"field": "cpi", "transform": mapper}
+    color_bar = ColorBar(
+        color_mapper=mapper,
+        location=(0, 0),
+        ticker=BasicTicker(desired_num_ticks=10),
+        formatter=new_plain_linear_tick_formatter(),
+    )
 
     hm = figure(
         **figure_embed_kw(
@@ -238,12 +238,10 @@ def plot_and_reason_from_jid_table(jt):
         tooltips=[("host", "@hostnames"), ("time", "@times"), ("cpi", "@cpi{custom}")],
         formatters={"@cpi": cpi_hover},
     )
-    mapper_fill = LinearColorMapper(
-        palette=_HEATMAP_PALETTE, low=_HEATMAP_CPI_LOW, high=_HEATMAP_CPI_HIGH)
-    mapper_bar = LinearColorMapper(
+    mapper = LinearColorMapper(
         palette=_HEATMAP_PALETTE, low=_HEATMAP_CPI_LOW, high=_HEATMAP_CPI_HIGH)
     color_bar = ColorBar(
-        color_mapper=mapper_bar,
+        color_mapper=mapper,
         location=(0, 0),
         ticker=BasicTicker(desired_num_ticks=10),
         formatter=new_plain_linear_tick_formatter(),
@@ -267,7 +265,7 @@ def plot_and_reason_from_jid_table(jt):
         width=1,
         height=1,
         line_color=None,
-        fill_color={"field": "cpi", "transform": mapper_fill},
+        fill_color={"field": "cpi", "transform": mapper},
     )
     hm.add_layout(color_bar, "right")
     hm.axis.axis_line_color = None
