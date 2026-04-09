@@ -36,6 +36,42 @@ describe("BokehEmbed", () => {
     expect(payload).not.toBe(item);
   });
 
+  it("waits for Bokeh document idle after embed_item before signaling plot ready", async () => {
+    const doc = {
+      _done: false,
+      get is_idle() {
+        return doc._done;
+      },
+      idle: {
+        connect(fn) {
+          queueMicrotask(() => {
+            doc._done = true;
+            fn();
+          });
+          return true;
+        },
+        disconnect: vi.fn(),
+      },
+    };
+    const fakeViews = { roots: [{ model: { document: doc } }] };
+    const embedItem = vi.fn(() => Promise.resolve(fakeViews));
+    window.Bokeh = { embed: { embed_item: embedItem } };
+    const onReady = vi.fn();
+
+    renderBokehEmbed(
+      <BokehEmbed
+        item={{ doc: {}, root_ids: ["r1"] }}
+        id="bokeh-idle-chain-test"
+        plotName="Idle chain"
+        onPlotReadyChange={onReady}
+      />,
+    );
+
+    await waitFor(() => expect(embedItem).toHaveBeenCalled());
+    await waitFor(() => expect(onReady).toHaveBeenCalledWith(true));
+    expect(doc.idle.disconnect).toHaveBeenCalled();
+  });
+
   it("uses embedMinHeightPx for plot slot minHeight while placeholder is shown", async () => {
     const embedItem = vi.fn(() => Promise.resolve());
     window.Bokeh = { embed: { embed_item: embedItem } };

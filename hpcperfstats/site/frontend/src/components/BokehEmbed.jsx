@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "../session-context";
 import { prepareBokehJsonItemForEmbed } from "../utils/remap-bokeh-json-item-ids";
+import { waitForBokehEmbedDocumentIdle } from "../utils/bokeh-when-document-idle";
 
 /**
  * Poll until window.Bokeh is defined (Bokeh JS loaded), then resolve.
@@ -56,11 +57,13 @@ function whenBokehReady(timeoutMs = 10000, options = {}) {
 /**
  * Run one Bokeh embed pipeline after any in-flight pipeline finishes.
  *
- * BokehJS can throw (e.g. ``CanvasPanelView`` reads ``bbox.is_valid`` while
- * ``bbox`` is still undefined) when ``embed_item`` runs concurrently for
- * multiple targets, or when the target has no layout size (e.g. a ``hidden``
- * panel). The job list mounts several thumbnails at once; serialize embeds
- * so each completes before the next starts, and wait for a non-zero layout box first.
+ * BokehJS can throw when layout runs too early—for example ``CanvasPanelView``
+ * reading ``bbox.is_valid`` before ``bbox`` exists, or Bokeh 3.9 ``AxisView``
+ * reading ``range.is_valid`` when ``ranges`` are not wired yet after a forced
+ * ``resize``. Mitigations: serialize ``embed_item`` across targets, wait for a
+ * non-zero layout box before embed, wait for ``Document`` idle after
+ * ``embed_item`` resolves, and defer synthetic ``resize`` (see
+ * ``maximizeEmbeddedPlot``).
  */
 let bokehEmbedChain = Promise.resolve();
 
@@ -211,7 +214,13 @@ function maximizeEmbeddedPlot(targetId, mode = "stretch_both") {
   window.setTimeout(repaint, 0);
 
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new Event("resize"));
+    // Defer past layout: an immediate resize can run Bokeh measure before nested
+    // Figure/Axis views finish building (Bokeh 3.9 → `is_valid` on undefined ranges).
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+    });
   }
 }
 
@@ -344,6 +353,7 @@ export default function BokehEmbed({
               const embedPayload = prepareBokehJsonItemForEmbed(item);
               const embedResult = window.Bokeh.embed.embed_item(embedPayload, id);
               return Promise.resolve(embedResult)
+                .then((views) => waitForBokehEmbedDocumentIdle(views))
                 .then(() => {
                   if (cancelled) return;
                   if (!isEmbedTargetRenderable(el)) {
