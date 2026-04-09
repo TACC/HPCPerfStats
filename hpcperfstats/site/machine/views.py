@@ -61,10 +61,14 @@ def job_hist(df, metric, label, width=600, height=400, title=None):
 
     hist, edges = histogram(values, bins=bins)
 
-    y_min = 1
-    y_max = float(np.max(hist)) if len(hist) > 0 else 1
+    y_min = 1.0
+    y_max = float(np.max(hist)) if len(hist) > 0 else 1.0
     if y_max < y_min:
         y_max = y_min
+    # Bokeh 3.9: zero-span Range1d (e.g. max count 1 with y_min==1) triggers
+    # "could not set initial ranges" and broken FigureView layout in the SPA.
+    if y_max <= y_min:
+        y_max = y_min + 1.0
 
     plot = new_spa_embedded_figure(
         title=title if title is not None else metric,

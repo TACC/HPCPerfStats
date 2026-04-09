@@ -1375,11 +1375,16 @@ def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="job
             return None
         queue_names = [q if q else "(no queue)" for q, _ in rows]
         source = ColumnDataSource(dict(x=queue_names, top=tops))
+        max_top = max(tops) if tops else 0.0
+        # Explicit y_range: auto-ranging yields NaN / zero span for all-zero or
+        # flat tops and breaks BokehJS 3.9 embed ("could not set initial ranges").
+        y_high = max(1.0, float(max_top) * 1.05) if max_top > 0 else 1.0
         # No toolbar or HoverTool: Bokeh 3.x SPA embeds hit
         # "can't access property is_valid, e is undefined" when tool panels /
         # hover hit-testing run in tight layouts (see job_hist / queue charts).
         p = new_spa_embedded_figure(
             x_range=queue_names,
+            y_range=(0.0, y_high),
             height=height,
             width=width,
             title=title,

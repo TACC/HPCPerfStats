@@ -33,3 +33,6 @@ alwaysApply: true
  - When reviewing config, use the `.example` as the intended shape/defaults, but **do not assume** the non-`.example` file exists in the workspace.
  - Avoid editing `*.example` unless you are intentionally changing the recommended defaults/documentation.
  - See `README.md` for instructions on how to copy/rename and edit these files for a production setup.
+
+## Production asset delivery
+- Do not load scripts, styles, or fonts from public CDNs in user-facing code paths. Follow **`no-cdn-in-production.mdc`** (bundle via `npm`/Vite/staticfiles; tests may use CDNs where documented).

@@ -1,0 +1,43 @@
+---
+description: No third-party asset CDNs in production; CDNs allowed only in tests
+alwaysApply: true
+---
+
+# No CDN For Production Assets
+
+## Policy
+
+- **Production** (anything shipped to browsers or enforced at runtime for user-facing responses) must **not** load **executable or author-controlled layout assets** from public third-party CDNs: scripts, ES modules, stylesheets, or webfonts, except where an **existing** legacy path is explicitly documented below and scheduled for removal.
+- **Preferred pattern:** `npm` dependencies built into the Vite bundle / Django `staticfiles` (`'self'`), same as Bokeh loaded from `@bokeh/bokehjs` in the SPA bundle.
+- **Tests and tooling** may use CDNs when necessary (e.g. Playwright loading Bokeh from jsDelivr because jsdom lacks canvas). Restrict those URLs to **`**/tests/**`**, **`test_*.py`**, **`*.test.js`**, **`*.test.jsx`**, and similar—never to templates, middleware, SPA app source, or service configs that define what end users load.
+
+## What counts as production
+
+- Django **middleware** (CSP headers), views, and templates served to users.
+- React/Vite **application source** under `hpcperfstats/site/frontend/src/` and production **`index.html`** (built output under `static/frontend/`).
+- Nginx/site configs that inject or proxy **external** script/style/font URLs to clients.
+- **Not** production: unit/integration E2E tests, Cursor rules, `TESTING.md` examples, pipeline fixtures.
+
+## CSP relationship
+
+- Do **not** add new `script-src`, `style-src`, or `font-src` entries for arbitrary CDNs to ship a feature. If an API needs a new host, use **`connect-src`** (or document server-side-only calls) per `react-js-cursor-rule.mdc`, not asset CDNs.
+- Tightening CSP by removing unused CDN origins is encouraged when the underlying `@import` / `<link>` is removed.
+
+## Repository scan (inventory)
+
+| Location | CDN / third-party host | Role |
+|----------|-------------------------|------|
+| `hpcperfstats/site/frontend/src/main.jsx` → Bootswatch `bootstrap.min.css` | **`https://fonts.googleapis.com`** (and **`fonts.gstatic.com`** for font files) | The Spacelab theme CSS contains **`@import url(https://fonts.googleapis.com/...Open+Sans...)`**. Browsers fetch Google Fonts at runtime in production. CSP in `hpcperfstats/site/hpcperfstats_site/middleware.py` allows these hosts for that reason. |
+| `hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` | **`cdn.jsdelivr.net`** (`@bokeh/bokehjs`) | **Test-only** Playwright embed regression; allowed. |
+| `test_react_spa_view.py` | (assertions) | Asserts served SPA HTML does **not** contain `cdn.pydata.org` or `cdn.jsdelivr.net`. |
+
+No other production source files were found that embed jsDelivr, unpkg, cdnjs, or Bokeh `cdn.pydata.org` scripts. External **API** URLs in Python (e.g. documentation/search links) are not “asset CDNs” for this rule.
+
+## Remediation direction (Bootswatch + Google Fonts)
+
+To fully align with “no CDN in production,” remove the Bootswatch **`@import`** of Google Fonts by one of: vendoring Open Sans (or a subset) under static and referencing local `@font-face`, using a Bootswatch build variable / forked CSS without the web font path, or post-processing the built CSS in the frontend pipeline. Do that in a dedicated change that also **narrows** `font-src` / `style-src` in `middleware.py` if those hosts become unused, and re-run CSP-related tests.
+
+## Overlap
+
+- Complements **`react-js-cursor-rule.mdc`** (CSP and third-party network use): asset loads from CDNs are **disallowed** in production; API `connect-src` changes remain minimal and explicit.
+- Complements **`web-pages-e2e-test-maintenance.mdc`** (Bokeh fixtures may use jsDelivr **only** in the Playwright test module).

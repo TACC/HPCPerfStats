@@ -43,3 +43,42 @@ in the same task.
 ## Browser E2E runtime notes
 - `test_web_pages_browser_e2e.py` uses Playwright and requires browser binaries.
 - If Playwright is unavailable, the browser E2E module may be skipped; this is acceptable only in environments where browser tooling cannot be installed.
+
+## Bokeh job-list `json_item` fixtures (Playwright embed regression)
+
+`HPCPerfStats/hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py`
+embeds **committed** Bokeh `json_item` payloads with real BokehJS in Chromium. The
+JSON files live under:
+
+`HPCPerfStats/hpcperfstats/site/frontend/src/test-fixtures/`
+
+Current files (keep names stable unless the test is updated):
+
+- `bokeh-job-hist-single-value.json` — from `job_hist(...)` (single finite metric value; exercises histogram y-range / quad path).
+- `bokeh-queue-bars-all-zero.json` — from `_job_list_queue_bar_chart(...)` with mocked queryset rows whose bar tops are all zero (exercises explicit queue `y_range`).
+
+### When to regenerate
+
+Regenerate and **commit** updated JSON in the **same task** as you change any of:
+
+- `hpcperfstats/site/machine/views.py` → `job_hist` (figure shape, ranges, glyphs).
+- `hpcperfstats/site/machine/api.py` → `_job_list_queue_bar_chart` (ranges, data source, dimensions).
+- Bokeh major/minor used by the SPA (`package.json` `@bokeh/bokehjs`) if the serialized `json_item` schema or the Playwright test’s CDN pin (`test_bokeh_job_list_embed_browser_e2e.py`) changes.
+
+Also regenerate if the Playwright test’s **failure substrings** or embed harness change in a way that assumes a specific payload shape.
+
+### How to regenerate (canonical)
+
+1. Run from the **Django project root** (directory containing `pyproject.toml`), with test extras installed (`pip install -e ".[test]"`).
+2. Set `DJANGO_SETTINGS_MODULE=hpcperfstats.site.hpcperfstats_site.settings`, call `django.setup()`, then build figures and `json_item(plot)` as the test module describes.
+3. Write **pretty or compact JSON** consistently; avoid embedding the literal substring `</script>` inside the serialized JSON body (the HTML harness wraps the payload in `<script type="application/json">`).
+4. Run `pytest hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (requires `python -m playwright install chromium` and network for the Bokeh CDN).
+5. Keep **Python contract tests** in `test_job_hist_bokeh_ranges.py` green in the same change.
+
+Copy-paste commands and a full generator snippet are maintained in `HPCPerfStats/TESTING.md` (web E2E section); update that doc when regeneration steps or paths change (`testing-doc-sync.mdc`).
+
+### Overlap
+
+- Complements `testing-doc-sync.mdc` (document workflow in `TESTING.md`).
+- Complements `test-first-discipline.mdc` and `test_job_hist_bokeh_ranges.py` (server-side range invariants).
+- The Playwright harness’s **jsDelivr** Bokeh script URL is **test-only**; do not copy this pattern into production UI. See **`no-cdn-in-production.mdc`**.

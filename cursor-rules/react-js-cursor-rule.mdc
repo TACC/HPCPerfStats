@@ -47,3 +47,5 @@ Some existing components use short names (for example `Layout.jsx`, `ExtendedSea
 ## CSP when adding network dependencies
 
 When introducing new third-party scripts or API hosts, extend CSP by the smallest directive necessary (`connect-src`, `script-src`, etc.); do not add `*` or bare `https:` allowlists. Update Django/CSP configuration under `hpcperfstats/site/` in the same task as the frontend change.
+
+**Asset CDNs (scripts, bundled stylesheets that pull fonts from a vendor URL, webfonts):** do **not** add new CDN origins in production. Self-host or bundle from `npm` per **`no-cdn-in-production.mdc`**. Use `connect-src` only for intentional API hosts, not for loading JS/CSS/fonts from `cdn.*`, `jsdelivr`, `unpkg`, etc., in user-facing pages.

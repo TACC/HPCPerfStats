@@ -132,6 +132,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
           id={thumbId}
           plotName={title}
           unavailableReason={unavailableReason}
+          embedMinHeightPx={THUMB_SIZE.height}
         />
       </div>
       {showPopover && (

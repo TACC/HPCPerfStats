@@ -36,6 +36,25 @@ describe("BokehEmbed", () => {
     expect(payload).not.toBe(item);
   });
 
+  it("uses embedMinHeightPx for plot slot minHeight while placeholder is shown", async () => {
+    const embedItem = vi.fn(() => Promise.resolve());
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    const item = { doc: {}, root_ids: ["r1"] };
+    const { container, unmount } = renderBokehEmbed(
+      <BokehEmbed item={item} id="bokeh-minh-test" plotName="Thumb" embedMinHeightPx={200} />,
+    );
+
+    const slot = container.querySelector("#bokeh-minh-test");
+    expect(slot).toBeTruthy();
+    expect(slot.style.minHeight).toBe("200px");
+
+    await waitFor(() => {
+      expect(embedItem).toHaveBeenCalled();
+    });
+    unmount();
+  });
+
   it("shows default unavailable text and reveals/copies API error for staff", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(window.navigator, "clipboard", {

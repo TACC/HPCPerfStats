@@ -215,6 +215,7 @@ Use this for web-page E2E modules:
 
 - `hpcperfstats/site/machine/tests/test_web_pages_e2e.py` (includes a module-level `test_job_detail_api_includes_staff_metrics_distinct_time_count_for_staff` that does not use the `django_db` class marker, so it can run without a reachable Postgres host)
 - `hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py` (uses a minimal static `index.html` stub for `/machine/*` that mirrors key SPA affordances—staff menu, plot-unavailable copy, keyboard-friendly plot error disclosure—rather than the full Vite bundle)
+- `hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + Bokeh 3.9 CDN: embeds committed `json_item` fixtures under `hpcperfstats/site/frontend/src/test-fixtures/` and fails if the browser console reports job-list histogram failure substrings). Requires **`pip install -e ".[test]"`** (includes **`playwright`**) and **`python -m playwright install chromium`** on the host running pytest. To refresh fixtures after changing `job_hist` / `_job_list_queue_bar_chart`, run Django with `DJANGO_SETTINGS_MODULE` set and dump `json_item(...)` for the target figures into those JSON files (see the module docstring in the test file).
 
 The workflow script handles Docker lifecycle and runs both files in one session:
 

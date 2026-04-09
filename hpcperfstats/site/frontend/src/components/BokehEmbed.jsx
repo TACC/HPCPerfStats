@@ -252,6 +252,7 @@ const PLACEHOLDER_OVERLAY_STYLE = {
  * Shows an explicit unavailable status plus "Data not available." when there is no data or
  * when the plot fails to load (text status, not color alone).
  * @param {boolean | "width"} maximizeInContainer true = fill container; "width" = stretch width, natural height (zoom scroll)
+ * @param {number} [embedMinHeightPx=280] Min height for the plot slot while loading; use the thumbnail box height for job-list thumbs (e.g. 200) so Bokeh measures a box that matches the visible clip.
  */
 export default function BokehEmbed({
   item,
@@ -265,6 +266,7 @@ export default function BokehEmbed({
   wrapperClassName = "",
   embedAriaLabel,
   ariaDescribedBy,
+  embedMinHeightPx = BOKEH_EMBED_MIN_HEIGHT_PX,
 }) {
   const session = useSession();
   const canViewErrorDetails = !!session?.is_staff;
@@ -509,7 +511,7 @@ export default function BokehEmbed({
         display: "block",
         width: "100%",
         height: fillHeight ? "100%" : undefined,
-        minHeight: showPlaceholder ? BOKEH_EMBED_MIN_HEIGHT_PX : undefined,
+        minHeight: showPlaceholder ? embedMinHeightPx : undefined,
       }
     : {};
 
@@ -538,7 +540,7 @@ export default function BokehEmbed({
         style={{
           position: "relative",
           height: fillHeight ? "100%" : undefined,
-          minHeight: overlayActive ? BOKEH_EMBED_MIN_HEIGHT_PX : undefined,
+          minHeight: overlayActive ? embedMinHeightPx : undefined,
         }}
       >
         {overlayActive ? placeholderOverlay : null}

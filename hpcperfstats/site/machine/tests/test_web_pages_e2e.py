@@ -1,4 +1,8 @@
-"""End-to-end style web-access tests for all site pages."""
+"""End-to-end style web-access tests for all site pages.
+
+Bokeh job-list embed regressions (real BokehJS + Playwright) live in
+``test_bokeh_job_list_embed_browser_e2e.py``.
+"""
 
 import pytest
 from django.test import Client
