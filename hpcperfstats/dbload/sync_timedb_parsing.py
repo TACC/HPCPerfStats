@@ -366,11 +366,13 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
 
     elif i >= start_idx and s[0].isdigit():
       t, jid, host = s.split()
-      # Some deployments may not emit a job id and instead use '-' as a
-      # placeholder. Keep '-' as-is so pandas groupby/dropna does not discard
-      # these rows before DB insertion.
+      # host_data stats are time/host scoped (ORM has no jid on host_data).
+      # Do not put jid on stats rows so compute_deltas_and_arc groupby stays
+      # stable and '-' placeholders are not carried into host_data paths.
+      # proc_stats lines still need jid (including '-').
       insert = True
-      {"time": float(t), "host": host}
+      tags = {"time": float(t), "host": host}
+      tags2 = {"time": float(t), "host": host, "jid": jid}
     elif s[0] == '!':
       label, events = s.split(maxsplit=1)
       typ, events = label[1:], events.split()
