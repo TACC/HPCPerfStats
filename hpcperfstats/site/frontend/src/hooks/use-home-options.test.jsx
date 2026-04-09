@@ -19,6 +19,8 @@ describe("useHomeOptions", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.error).toBe(null);
     expect(result.current.options).toEqual({ metrics: [1] });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(api.getHomeOptions.mock.calls.length).toBeLessThan(5);
   });
 
   it("records error on failure", async () => {
@@ -29,5 +31,7 @@ describe("useHomeOptions", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.options).toBe(null);
     expect(result.current.error).toBe("boom");
+    await new Promise((r) => setTimeout(r, 40));
+    expect(api.getHomeOptions.mock.calls.length).toBeLessThan(5);
   });
 });
