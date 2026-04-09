@@ -1,3 +1,4 @@
+import { applyBokehResizeObserverDeferral } from "./patch-resize-observer-for-bokeh.js";
 import { ensureBokehLoaded } from "./bokehInit";
 import React from "react";
 import ReactDOM from "react-dom/client";
@@ -6,6 +7,9 @@ import App from "./App";
 import "./fonts/open-sans.css";
 import "./bootswatch-spacelab.scss";
 import "./index.css";
+
+// Before any chunk can load @bokeh/bokehjs, patch global ResizeObserver (idempotent).
+applyBokehResizeObserverDeferral();
 
 ensureBokehLoaded().catch((err) => {
   console.warn("Bokeh failed to load:", err);
