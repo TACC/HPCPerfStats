@@ -147,7 +147,17 @@ describe("JobList", () => {
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
     });
-    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({ plots: [] });
+    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({
+      plots: [
+        {
+          key: "jobs_by_queue",
+          title: "Jobs by queue",
+          plot_item_thumb: { doc: {}, root_ids: ["thumb-root"] },
+          plot_item_full: { doc: {}, root_ids: ["full-root"] },
+          plot_unavailable_reason: null,
+        },
+      ],
+    });
     vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
 
     renderJobList();
@@ -161,12 +171,19 @@ describe("JobList", () => {
     expect(distSection).toBeTruthy();
     expect(distSection).toHaveAttribute("hidden");
 
+    await waitFor(() => {
+      expect(document.querySelector(".histogram-thumbnails-grid")).toBeNull();
+    });
+
     fireEvent.click(screen.getByRole("link", { name: /jump to histograms/i }));
 
     await waitFor(() => {
       expect(distSection).not.toHaveAttribute("hidden");
     });
     expect(screen.getByRole("tab", { name: /^charts$/i })).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => {
+      expect(document.querySelector(".histogram-thumbnails-grid")).toBeTruthy();
+    });
   });
 
   it("shows human summary for year route", async () => {

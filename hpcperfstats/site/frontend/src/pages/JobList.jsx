@@ -296,6 +296,10 @@ export default function JobList() {
     });
   }
 
+  // Narrow viewports hide this section with the HTML `hidden` attribute while the
+  // Jobs tab is active; Bokeh must not embed into a zero-size subtree (see BokehEmbed).
+  const distributionPlotsVisible = isLgUp || listViewTab === "charts";
+
   return (
     <>
       <h1 className="h2 mb-3">{qname}</h1>
@@ -358,7 +362,9 @@ export default function JobList() {
               </button>
             </div>
           ) : null}
-          <HistogramThumbnails histograms={histograms} />
+          {distributionPlotsVisible ? (
+            <HistogramThumbnails histograms={histograms} />
+          ) : null}
         </div>
         <p className="small text-center mt-2 mb-0">
           <a href="#job-list-table" onClick={handleBackToJobTable}>

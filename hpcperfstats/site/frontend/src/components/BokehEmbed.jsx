@@ -57,8 +57,9 @@ function whenBokehReady(timeoutMs = 10000, options = {}) {
  *
  * BokehJS can throw (e.g. ``CanvasPanelView`` reads ``bbox.is_valid`` while
  * ``bbox`` is still undefined) when ``embed_item`` runs concurrently for
- * multiple targets. The job list mounts several thumbnails at once; serialize
- * embeds so each completes before the next starts.
+ * multiple targets, or when the target has no layout size (e.g. a ``hidden``
+ * panel). The job list mounts several thumbnails at once; serialize embeds
+ * so each completes before the next starts, and wait for a non-zero layout box first.
  */
 let bokehEmbedChain = Promise.resolve();
 
@@ -72,6 +73,59 @@ function withBokehEmbedLock(run) {
     () => undefined,
   );
   return next;
+}
+
+/**
+ * Bokeh measures the embed target's box; if it or an ancestor is not laid out
+ * (e.g. HTML `hidden` / `display:none`), width and height are 0 and embed_item
+ * can throw inside CanvasPanelView (`bbox` undefined → `is_valid` access).
+ *
+ * @returns {Promise<{ ok: boolean, reason?: "abort"|"timeout"|"no-el" }>}
+ */
+function waitForNonZeroLayout(el, options = {}) {
+  const { timeoutMs = 15000, signal } = options;
+  if (!el) {
+    return Promise.resolve({ ok: false, reason: "no-el" });
+  }
+  // Vitest/jsdom: unstyled nodes keep offsetWidth/offsetHeight at 0; embed is mocked.
+  if (typeof import.meta !== "undefined" && import.meta.env?.VITEST) {
+    return Promise.resolve({ ok: true });
+  }
+
+  const hasSize = () => el.offsetWidth > 0 && el.offsetHeight > 0;
+  if (hasSize()) {
+    return Promise.resolve({ ok: true });
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (out) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(tid);
+      ro.disconnect();
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      resolve(out);
+    };
+
+    const onAbort = () => finish({ ok: false, reason: "abort" });
+    if (signal) {
+      if (signal.aborted) {
+        finish({ ok: false, reason: "abort" });
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    const ro = new ResizeObserver(() => {
+      if (hasSize()) finish({ ok: true });
+    });
+    ro.observe(el);
+
+    const tid = setTimeout(() => finish({ ok: false, reason: "timeout" }), timeoutMs);
+  });
 }
 
 /**
@@ -237,32 +291,49 @@ export default function BokehEmbed({
             }
             return;
           }
-          try {
-            // Re-embedding into the same target (e.g., normal -> zoom item swap)
-            // can otherwise leave duplicate Bokeh roots in the container.
-            el.innerHTML = "";
-            const embedResult = window.Bokeh.embed.embed_item(item, id);
-            return Promise.resolve(embedResult)
-              .then(() => {
-                if (cancelled) return;
-                if (maximizeMode) maximizeEmbeddedPlot(id, maximizeMode);
-                setPlotReady(true);
-                if (onPlotReadyChange) onPlotReadyChange(true);
-              })
-              .catch((err) => {
-                if (cancelled) return;
+          return waitForNonZeroLayout(el, {
+            timeoutMs: 15000,
+            signal: bokehWait.signal,
+          }).then((layout) => {
+            if (cancelled || !containerRef.current) return;
+            if (!layout.ok) {
+              if (layout.reason === "abort") return;
+              setFailureReason(
+                layout.reason === "timeout"
+                  ? "Chart container stayed at zero size (try showing the charts panel)."
+                  : "Chart embed target is missing from the page.",
+              );
+              setLoadFailed(true);
+              if (onPlotReadyChange) onPlotReadyChange(false);
+              return;
+            }
+            try {
+              // Re-embedding into the same target (e.g., normal -> zoom item swap)
+              // can otherwise leave duplicate Bokeh roots in the container.
+              el.innerHTML = "";
+              const embedResult = window.Bokeh.embed.embed_item(item, id);
+              return Promise.resolve(embedResult)
+                .then(() => {
+                  if (cancelled) return;
+                  if (maximizeMode) maximizeEmbeddedPlot(id, maximizeMode);
+                  setPlotReady(true);
+                  if (onPlotReadyChange) onPlotReadyChange(true);
+                })
+                .catch((err) => {
+                  if (cancelled) return;
+                  setFailureReason(err?.message || "Embed failed");
+                  setLoadFailed(true);
+                  if (onPlotReadyChange) onPlotReadyChange(false);
+                });
+            } catch (err) {
+              console.warn("Bokeh embed_item failed:", err);
+              if (!cancelled) {
                 setFailureReason(err?.message || "Embed failed");
                 setLoadFailed(true);
                 if (onPlotReadyChange) onPlotReadyChange(false);
-              });
-          } catch (err) {
-            console.warn("Bokeh embed_item failed:", err);
-            if (!cancelled) {
-              setFailureReason(err?.message || "Embed failed");
-              setLoadFailed(true);
-              if (onPlotReadyChange) onPlotReadyChange(false);
+              }
             }
-          }
+          });
         })
         .catch((err) => {
           if (cancelled || err?.name === "AbortError") return;
