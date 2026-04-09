@@ -2,6 +2,7 @@
 
 """
 import configparser
+import math
 import os
 from zoneinfo import ZoneInfo
 
@@ -322,7 +323,20 @@ def get_metrics_pool_process_cap():
 def get_metrics_pool_process_count():
   """Processes for metrics pool: ``min(max(1, effective//2), metrics_pool_process_cap)``."""
   raw = max(1, get_effective_cores() // 2)
-  return min(raw, get_metrics_pool_process_cap())
+  base = min(raw, get_metrics_pool_process_cap())
+  if not get_sync_enable_cpuset_priority_budget():
+    mode = get_pipeline_overlap_mode()
+    if mode == "ingest_priority":
+      scale = get_metrics_ingest_priority_scale()
+      return max(get_metrics_min_processes(), int(math.floor(base * scale)))
+    return base
+  budget = derive_pipeline_cpuset_priority_budget()
+  capped = max(1, min(base, budget["metrics_cap"]))
+  mode = get_pipeline_overlap_mode()
+  if mode == "ingest_priority":
+    scale = get_metrics_ingest_priority_scale()
+    return max(get_metrics_min_processes(), int(math.floor(capped * scale)))
+  return capped
 
 
 def get_cpuset_pin_min_total_cores():
@@ -483,15 +497,363 @@ def get_archive_pool_process_cap():
 
 def get_sync_ingest_pool_processes():
   """Worker count for ``sync_timedb`` / ``sync_timedb_archive`` after ``sync_pool_process_cap``."""
-  raw = get_worker_thread_count(2)
+  if get_sync_enable_cpuset_priority_budget():
+    raw = derive_pipeline_cpuset_priority_budget()["sync_ingest_cap"]
+  else:
+    raw = get_worker_thread_count(2)
   return _apply_sync_pool_cap(raw, get_sync_pool_process_cap())
 
 
 def get_sync_archive_pool_processes():
   """Archive pool size in ``sync_timedb`` (half of ingest, capped by ``archive_pool_process_cap``)."""
-  ingest = get_sync_ingest_pool_processes()
-  raw = max(1, ingest // 2)
+  if get_sync_enable_cpuset_priority_budget():
+    raw = derive_pipeline_cpuset_priority_budget()["sync_archive_cap"]
+  else:
+    ingest = get_sync_ingest_pool_processes()
+    raw = max(1, ingest // 2)
   return _apply_sync_pool_cap(raw, get_archive_pool_process_cap())
+
+
+def _budget_ratio(name, fallback):
+  _ensure_cfg_loaded()
+  return float(cfg.get("DEFAULT", name, fallback=str(fallback)))
+
+
+def _budget_floor_percent(name, fallback):
+  _ensure_cfg_loaded()
+  return int(cfg.get("DEFAULT", name, fallback=str(fallback)))
+
+
+def get_pipeline_overlap_mode():
+  """Pipeline overlap mode: balanced or ingest_priority."""
+  env = os.environ.get("HPCPERFSTATS_PIPELINE_OVERLAP_MODE", "").strip().lower()
+  if env in ("balanced", "ingest_priority"):
+    return env
+  _ensure_cfg_loaded()
+  mode = cfg.get("DEFAULT", "pipeline_overlap_mode", fallback="balanced").strip().lower()
+  return mode if mode in ("balanced", "ingest_priority") else "balanced"
+
+
+def get_metrics_ingest_priority_scale():
+  """Metrics pool downscale factor during ingest_priority overlap mode."""
+  _ensure_cfg_loaded()
+  return max(
+      0.10,
+      min(1.00, float(cfg.get("DEFAULT", "metrics_ingest_priority_scale", fallback="0.75"))),
+  )
+
+
+def get_metrics_min_processes():
+  """Minimum metrics worker count under ingest-priority overlap mode."""
+  _ensure_cfg_loaded()
+  return max(1, int(cfg.get("DEFAULT", "metrics_min_processes", fallback="1")))
+
+
+def get_sync_enable_cpuset_priority_budget():
+  """Enable cpuset-aware S/A/M budgeting for sync + metrics pools (default yes)."""
+  env = os.environ.get("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "").strip().lower()
+  if env:
+    return env in ("1", "yes", "true")
+  _ensure_cfg_loaded()
+  return cfg.get(
+      "DEFAULT", "sync_enable_cpuset_priority_budget", fallback="yes"
+  ).strip().lower() in ("1", "yes", "true")
+
+
+def derive_pipeline_cpuset_priority_budget():
+  """Return cpuset-aware thread budget dict for sync/metrics with reserve.
+
+  Buckets:
+  - real_time: sync ingest workers + listener/feed path
+  - normal: sync archive workers + metrics pool
+  - best_effort: maintenance and optional test/browser load
+  """
+  c = max(1, int(get_effective_cores()))
+  ingest_ratio = _budget_ratio("sync_budget_ingest_ratio", 0.60)
+  archive_ratio = _budget_ratio("sync_budget_archive_ratio", 0.15)
+  metrics_ratio = _budget_ratio("sync_budget_metrics_ratio", 0.20)
+  reserve_ratio = _budget_ratio("sync_budget_reserve_ratio", 0.05)
+
+  s = max(1, int(math.floor(ingest_ratio * c)))
+  a = max(1, int(math.floor(archive_ratio * c)))
+  m = max(1, int(math.floor(metrics_ratio * c)))
+  r = max(1, int(math.floor(reserve_ratio * c)))
+
+  if get_sync_enable_overprovision_mode():
+    s = max(1, int(math.floor(s * get_sync_overprovision_ingest_multiplier())))
+    a = max(1, int(math.floor(a * get_sync_overprovision_archive_multiplier())))
+    m = max(1, int(math.floor(m * get_sync_overprovision_metrics_multiplier())))
+
+  total = s + a + m + r
+  cap = max(1, int(math.floor(c * get_sync_budget_overcommit_factor())))
+  while total > cap:
+    if m > 1:
+      m -= 1
+    elif a > 1:
+      a -= 1
+    elif s > 1:
+      s -= 1
+    else:
+      break
+    total = s + a + m + r
+
+  min_metrics = _budget_floor_percent("sync_budget_min_metrics_percent", 10)
+  min_archive = _budget_floor_percent("sync_budget_min_archive_percent", 10)
+  m_min = max(1, int(math.floor((min_metrics / 100.0) * c)))
+  a_min = max(1, int(math.floor((min_archive / 100.0) * c)))
+  if m < m_min:
+    take = min(s - 1, m_min - m)
+    if take > 0:
+      s -= take
+      m += take
+  if a < a_min:
+    take = min(s - 1, a_min - a)
+    if take > 0:
+      s -= take
+      a += take
+
+  return {
+      "effective_cores": c,
+      "sync_ingest_cap": max(1, s),
+      "sync_archive_cap": max(1, a),
+      "metrics_cap": max(1, m),
+      "reserve_cap": max(1, r),
+      "headroom_cap": cap,
+  }
+
+
+def get_sync_enable_overprovision_mode():
+  """Enable bounded overprovision mode for S/A/M derivation (default disabled)."""
+  env = os.environ.get("SYNC_ENABLE_OVERPROVISION_MODE", "").strip().lower()
+  if env:
+    return env in ("1", "yes", "true")
+  _ensure_cfg_loaded()
+  return cfg.get(
+      "DEFAULT", "sync_enable_overprovision_mode", fallback="no"
+  ).strip().lower() in ("1", "yes", "true")
+
+
+def get_sync_overprovision_ingest_multiplier():
+  env = os.environ.get("SYNC_OVERPROVISION_INGEST_MULTIPLIER", "").strip()
+  if env:
+    return max(1.00, min(2.50, float(env)))
+  _ensure_cfg_loaded()
+  return max(
+      1.00,
+      min(2.50, float(cfg.get("DEFAULT", "sync_overprovision_ingest_multiplier", fallback="1.00"))),
+  )
+
+
+def get_sync_overprovision_archive_multiplier():
+  env = os.environ.get("SYNC_OVERPROVISION_ARCHIVE_MULTIPLIER", "").strip()
+  if env:
+    return max(1.00, min(2.50, float(env)))
+  _ensure_cfg_loaded()
+  return max(
+      1.00,
+      min(2.50, float(cfg.get("DEFAULT", "sync_overprovision_archive_multiplier", fallback="1.00"))),
+  )
+
+
+def get_sync_overprovision_metrics_multiplier():
+  env = os.environ.get("SYNC_OVERPROVISION_METRICS_MULTIPLIER", "").strip()
+  if env:
+    return max(0.10, min(2.50, float(env)))
+  _ensure_cfg_loaded()
+  return max(
+      0.10,
+      min(2.50, float(cfg.get("DEFAULT", "sync_overprovision_metrics_multiplier", fallback="1.00"))),
+  )
+
+
+def get_sync_budget_overcommit_factor():
+  env = os.environ.get("SYNC_BUDGET_OVERCOMMIT_FACTOR", "").strip()
+  if env:
+    return max(1.00, min(2.00, float(env)))
+  _ensure_cfg_loaded()
+  return max(
+      1.00,
+      min(2.00, float(cfg.get("DEFAULT", "sync_budget_overcommit_factor", fallback="1.00"))),
+  )
+
+
+def pipeline_cpu_process_buckets(include_browser_phase=False, include_rsync=False):
+  """Return process inventory grouped by priority bucket for pipeline accounting."""
+  best_effort = ["syslog-ng", "logrotate.sh"]
+  if include_rsync:
+    best_effort.append("rsync_data (optional)")
+  if include_browser_phase:
+    best_effort.append("browser/api phase test generator (optional)")
+  return {
+      "real_time": [
+          "hpcperfstats-rabbitmq-listener",
+          "sync_timedb ingest workers",
+          "sync_timedb db-writer workers (feature-gated)",
+      ],
+      "normal": [
+          "sync_timedb archive workers/retries",
+          "update_metrics workers",
+          "pipeline startup migrations/bootstrap",
+      ],
+      "best_effort": best_effort,
+  }
+
+
+def get_sync_ingest_queue_max_size():
+  """Bound for in-memory ingest work queue (default 2000)."""
+  _ensure_cfg_loaded()
+  return max(1, int(cfg.get("DEFAULT", "sync_ingest_queue_max_size", fallback="2000")))
+
+
+def get_sync_archive_queue_max_size():
+  """Bound for in-memory archive work queue (default 1000)."""
+  _ensure_cfg_loaded()
+  return max(1, int(cfg.get("DEFAULT", "sync_archive_queue_max_size", fallback="1000")))
+
+
+def get_sync_archive_retry_max_attempts():
+  """Maximum archive retries before dead-letter behavior (default 5)."""
+  _ensure_cfg_loaded()
+  return max(1, int(cfg.get("DEFAULT", "sync_archive_retry_max_attempts", fallback="5")))
+
+
+def get_sync_archive_retry_backoff_base_seconds():
+  """Base archive retry backoff in seconds (default 1)."""
+  _ensure_cfg_loaded()
+  return max(0.0, float(cfg.get("DEFAULT", "sync_archive_retry_backoff_base_seconds", fallback="1")))
+
+
+def get_sync_archive_retry_backoff_max_seconds():
+  """Ceiling archive retry backoff in seconds (default 60)."""
+  _ensure_cfg_loaded()
+  return max(0.0, float(cfg.get("DEFAULT", "sync_archive_retry_backoff_max_seconds", fallback="60")))
+
+
+def get_sync_checkpoint_flush_batch_size():
+  """Number of processed-file state transitions between checkpoint writes (default 100)."""
+  _ensure_cfg_loaded()
+  return max(1, int(cfg.get("DEFAULT", "sync_checkpoint_flush_batch_size", fallback="100")))
+
+
+def get_sync_write_lock_shards():
+  """Number of write-lock shards for sync_timedb ingest writes."""
+  env = os.environ.get("SYNC_WRITE_LOCK_SHARDS", "").strip()
+  if env:
+    return max(1, int(env))
+  _ensure_cfg_loaded()
+  if cfg.has_option("DEFAULT", "sync_write_lock_shards"):
+    return max(1, int(cfg.get("DEFAULT", "sync_write_lock_shards")))
+  # Default scales modestly with cores to reduce write serialization without
+  # exploding contention on smaller systems.
+  return max(1, min(8, get_effective_cores() // 8))
+
+
+def get_sync_enable_db_writer_pipeline():
+  """Feature flag for optional parse-worker -> DB-writer queue pipeline (default disabled)."""
+  _ensure_cfg_loaded()
+  return cfg.get(
+      "DEFAULT", "sync_enable_db_writer_pipeline", fallback="no"
+  ).strip().lower() in ("1", "yes", "true")
+
+
+def get_sync_db_writer_pool_multiplier():
+  """DB-writer pool size multiplier relative to ingest pool."""
+  _ensure_cfg_loaded()
+  return max(
+      0.10,
+      min(2.00, float(cfg.get("DEFAULT", "sync_db_writer_pool_multiplier", fallback="0.50"))),
+  )
+
+
+def get_sync_db_writer_pool_cap():
+  env = os.environ.get("SYNC_DB_WRITER_POOL_CAP", "").strip()
+  if env:
+    return max(1, int(env))
+  _ensure_cfg_loaded()
+  if cfg.has_option("DEFAULT", "sync_db_writer_pool_cap"):
+    return max(1, int(cfg.get("DEFAULT", "sync_db_writer_pool_cap")))
+  return None
+
+
+def get_sync_db_writer_pool_processes(ingest_processes=None):
+  base = max(1, int(ingest_processes if ingest_processes is not None else get_sync_ingest_pool_processes()))
+  n = max(1, int(math.floor(base * get_sync_db_writer_pool_multiplier())))
+  cap = get_sync_db_writer_pool_cap()
+  if cap is not None:
+    n = min(n, cap)
+  return max(1, n)
+
+
+def get_sync_adaptive_dispatch_enabled():
+  _ensure_cfg_loaded()
+  return cfg.get(
+      "DEFAULT", "sync_adaptive_dispatch_enabled", fallback="yes"
+  ).strip().lower() in ("1", "yes", "true")
+
+
+def get_sync_dispatch_burst_factor():
+  _ensure_cfg_loaded()
+  return max(
+      1.0,
+      min(4.0, float(cfg.get("DEFAULT", "sync_dispatch_burst_factor", fallback="2.0"))),
+  )
+
+
+def get_sync_dispatch_archive_backoff_ratio():
+  _ensure_cfg_loaded()
+  return max(
+      0.1,
+      min(1.0, float(cfg.get("DEFAULT", "sync_dispatch_archive_backoff_ratio", fallback="0.50"))),
+  )
+
+
+def get_sync_dispatch_step_size():
+  _ensure_cfg_loaded()
+  return max(1, int(cfg.get("DEFAULT", "sync_dispatch_step_size", fallback="8")))
+
+
+def get_conf_parser_defaults_audit_snapshot():
+  """Return categorized defaults/fallbacks for tuning/audit workflows."""
+  return {
+      "platform_constraints": {
+          "total_cores_default": _DEFAULT_TOTAL_CORES,
+          "cpuset_pin_min_total_cores": 32,
+          "cpuset_pin_min_cores_per_node": 16,
+          "numa_pin_max_nodes_auto": 16,
+      },
+      "sync_throughput": {
+          "sync_enable_cpuset_priority_budget": "yes",
+          "sync_budget_ingest_ratio": 0.60,
+          "sync_budget_archive_ratio": 0.15,
+          "sync_budget_metrics_ratio": 0.20,
+          "sync_budget_reserve_ratio": 0.05,
+          "sync_write_lock_shards_auto_rule": "max(1,min(8,effective_cores//8))",
+          "sync_ingest_queue_max_size": 2000,
+          "sync_archive_queue_max_size": 1000,
+      },
+      "overlap_contention": {
+          "pipeline_overlap_mode": "balanced",
+          "metrics_ingest_priority_scale": 0.75,
+          "metrics_min_processes": 1,
+      },
+      "stability": {
+          "sync_archive_retry_max_attempts": 5,
+          "sync_archive_retry_backoff_base_seconds": 1.0,
+          "sync_archive_retry_backoff_max_seconds": 60.0,
+          "sync_checkpoint_flush_batch_size": 100,
+          "db_conn_max_age": 90,
+          "db_statement_timeout_ms": 120000,
+          "db_idle_in_transaction_session_timeout_ms": 300000,
+      },
+  }
+
+
+def get_sync_enable_ingest_first_durability_mode():
+  """Feature flag for ingest-first durability semantics (default disabled)."""
+  _ensure_cfg_loaded()
+  return cfg.get(
+      "DEFAULT", "sync_enable_ingest_first_durability_mode", fallback="no"
+  ).strip().lower() in ("1", "yes", "true")
 
 
 def get_redis_location():

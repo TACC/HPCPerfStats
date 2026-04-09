@@ -68,6 +68,25 @@ class _FakeArchivePoolPending:
     return _R()
 
 
+class _FakeArchivePoolRetry:
+  def __init__(self):
+    self.calls = 0
+
+  def map_async(self, fn, items):
+    del fn, items
+    self.calls += 1
+    result = [False] if self.calls == 1 else [True]
+
+    class _R:
+      def __init__(self, value):
+        self.value = value
+
+      def get(self):
+        return self.value
+
+    return _R(result)
+
+
 def test_supervisor_sleeps_when_empty_then_ingests_then_sleeps(monkeypatch):
   shutdown_requested[0] = False
   try:
@@ -371,5 +390,208 @@ def test_rescan_excludes_inflight_archive_paths(monkeypatch):
     )
 
     assert target in seen_processed[1]
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_pick_write_lock_for_path_uses_stable_sharding():
+  locks = [object(), object(), object()]
+  selected_a = st._pick_write_lock_for_path(locks, "/tmp/a")
+  selected_a_again = st._pick_write_lock_for_path(locks, "/tmp/a")
+  selected_b = st._pick_write_lock_for_path(locks, "/tmp/b")
+  assert selected_a is selected_a_again
+  assert selected_a in locks
+  assert selected_b in locks
+
+
+def test_head_timestamp_cache_reuses_recent_lookup(monkeypatch):
+  calls = {"n": 0}
+
+  class _QS:
+    def exists(self):
+      calls["n"] += 1
+      return True
+
+  class _Mgr:
+    def filter(self, **_kwargs):
+      return _QS()
+
+  monkeypatch.setattr(st.host_data, "objects", _Mgr())
+  monkeypatch.setattr(st, "_HEAD_TIMESTAMP_CACHE", {})
+  ts = st.datetime.now(st.timezone.utc)
+  assert st._head_timestamp_present_cached("h1", ts)
+  assert st._head_timestamp_present_cached("h1", ts)
+  assert calls["n"] == 1
+
+
+def test_db_writer_pipeline_flag_uses_separate_parse_and_write(monkeypatch):
+  shutdown_requested[0] = False
+  try:
+    target = "/fake/stats-db-writer"
+
+    def fake_rescan(*_a, **_k):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return [target]
+      return []
+    fake_rescan.calls = 0
+
+    parse_calls = {"n": 0}
+    write_calls = {"n": 0}
+
+    def fake_parse(path, stats_file_contents=None):
+      del stats_file_contents
+      parse_calls["n"] += 1
+      assert path == target
+      return (path, ("stats_df", "proc_df"), True, True)
+
+    def fake_write(_lock, task):
+      write_calls["n"] += 1
+      stats_file, payload, need_archival = task
+      assert stats_file == target
+      assert payload == ("stats_df", "proc_df")
+      assert need_archival is True
+      return (stats_file, True, True)
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "_parse_stats_file_payload", fake_parse)
+    monkeypatch.setattr(st, "_db_writer_worker", fake_write)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: True)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(st, "collect_first_timestamps_by_path", lambda *_a, **_k: {})
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(
+        st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(
+        st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+
+    archive_pool = _FakeArchivePool()
+    archive_pool.__enter__()
+    try:
+      st.run_sync_timedb_supervisor_loop(
+          "/tmp/archive",
+          "all",
+          None,
+          ".hpc",
+          object(),
+          archive_pool,
+          run_once=True,
+      )
+    finally:
+      archive_pool.__exit__(None, None, None)
+
+    assert parse_calls["n"] == 1
+    assert write_calls["n"] == 1
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_archive_retry_backoff_requeues_failed_archive(monkeypatch):
+  shutdown_requested[0] = False
+  try:
+    target = "/fake/stats-retry"
+
+    def fake_rescan(*_a, **_k):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return [target]
+      shutdown_requested[0] = True
+      return []
+    fake_rescan.calls = 0
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True))
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st, "collect_first_timestamps_by_path", lambda *_a, **_k: {target: "1709123456"})
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {"/tmp/day.tar.gz": [target]})
+    monkeypatch.setattr(st.cfg, "get_sync_archive_retry_max_attempts", lambda: 2)
+    monkeypatch.setattr(st.cfg, "get_sync_archive_retry_backoff_base_seconds", lambda: 0.0)
+    monkeypatch.setattr(st.cfg, "get_sync_archive_retry_backoff_max_seconds", lambda: 0.0)
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+
+    archive_pool = _FakeArchivePoolRetry()
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive",
+        "all",
+        None,
+        ".hpc",
+        object(),
+        archive_pool,
+        run_once=True,
+    )
+    assert archive_pool.calls >= 2
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_transition_file_state_rejects_invalid_transition():
+  file_states = {}
+  assert st._transition_file_state(
+      file_states, "/tmp/x", st.SyncFileState.DISCOVERED)
+  assert not st._transition_file_state(
+      file_states, "/tmp/x", st.SyncFileState.ARCHIVED)
+
+
+def test_dead_letter_round_trip(tmp_path):
+  dead_letter = tmp_path / ".sync_timedb_dead_letter.json"
+  entries = [{
+      "task": st.ArchiveTask(archive_info=("/tmp/day.tar.gz", ["/tmp/a"]), attempt=3),
+      "paths": ["/tmp/a"],
+      "retry_at": 0.0,
+  }]
+  st._save_dead_letter_entries(str(dead_letter), entries)
+  loaded = st._load_dead_letter_entries(str(dead_letter))
+  assert len(loaded) == 1
+  assert loaded[0]["task"].archive_info[0].endswith(".tar.gz")
+  assert loaded[0]["paths"] == ["/tmp/a"]
+
+
+def test_dead_letter_replay_runs_before_idle_sleep(monkeypatch):
+  shutdown_requested[0] = False
+  try:
+    monkeypatch.setattr(st, "_load_dead_letter_entries", lambda *_a, **_k: [{
+        "task": st.ArchiveTask(archive_info=("/tmp/day.tar.gz", ["/tmp/a"]), attempt=3),
+        "paths": ["/tmp/a"],
+        "retry_at": 0.0,
+    }])
+    monkeypatch.setattr(st, "_save_dead_letter_entries", lambda *_a, **_k: None)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", lambda *_a, **_k: [])
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+
+    class _ArchivePoolReplay:
+      def __init__(self):
+        self.calls = 0
+
+      def map_async(self, _fn, _items):
+        self.calls += 1
+
+        class _R:
+          def get(self):
+            return [True]
+        return _R()
+
+    ap = _ArchivePoolReplay()
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive",
+        "all",
+        None,
+        ".hpc",
+        object(),
+        ap,
+        run_once=True,
+    )
+    assert ap.calls >= 1
   finally:
     shutdown_requested[0] = False

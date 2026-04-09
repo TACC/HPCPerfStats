@@ -30,6 +30,50 @@ Keep this **below** `max_connections` minus headroom for admin, autovacuum, and 
 - **`statement_timeout` / `idle_in_transaction_session_timeout`:** Defaults **120000 ms** and **300000 ms** for PostgreSQL sessions via Django **`OPTIONS`** (`conf_parser.build_postgres_connection_options()`). The **`db`** service in **`docker-compose.yaml`** sets the same server parameters so non-Django clients inherit them. Disable per-session timeouts by setting **`DJANGO_DB_STATEMENT_TIMEOUT_MS=0`** and **`DJANGO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS=0`** (and adjust compose if you remove server defaults). Tune upward only if legitimate bulk jobs hit the limit.
 - **Staggered supervisord jobs:** [`services-conf/supervisord.conf.example`](../services-conf/supervisord.conf.example) starts **`listend`** first (higher priority), then **`sync_timedb`** after **20s**, then **`update_metrics`** after **90s**, so restarts do not open every DB pool at the same instant. Adjust sleeps and **`priority`** for your site.
 
+## Pipeline cpuset priority budgeting (full workflow scope)
+
+`sync_timedb` and `update_metrics` now support a cpuset-aware priority budget from `conf_parser.derive_pipeline_cpuset_priority_budget()`:
+
+- `S` (sync ingest cap): default `floor(0.60 * C)`
+- `A` (sync archive cap): default `floor(0.15 * C)`
+- `M` (metrics cap): default `floor(0.20 * C)`
+- `R` (reserve for maintenance/jitter): default `floor(0.05 * C)`
+
+Where `C = min(total_cores, os.cpu_count())` for the pipeline container cpuset. If `S + A + M + R` exceeds `C`, the reducer lowers `M` first, then `A`, then `S` (sync-first policy). Minimum floors for `M` and `A` are configurable to keep bounded forward progress in normal-class work.
+
+Priority buckets used for accounting and deprioritization:
+
+- `real_time`: listener feed path + sync ingest (+ db-writer path when enabled)
+- `normal`: sync archive/retries + update_metrics + startup migrations/bootstrap
+- `best_effort`: `syslog-ng`, `logrotate.sh`, optional `rsync_data`, optional browser/API test traffic
+
+Relevant ini keys:
+
+- `sync_enable_cpuset_priority_budget`
+- `sync_budget_ingest_ratio`
+- `sync_budget_archive_ratio`
+- `sync_budget_metrics_ratio`
+- `sync_budget_reserve_ratio`
+- `sync_budget_min_metrics_percent`
+- `sync_budget_min_archive_percent`
+- `pipeline_overlap_mode` (`balanced` or `ingest_priority`)
+- `metrics_ingest_priority_scale`
+- `metrics_min_processes`
+- `sync_enable_overprovision_mode`
+- `sync_budget_overcommit_factor`
+- `sync_overprovision_ingest_multiplier`
+- `sync_overprovision_archive_multiplier`
+- `sync_overprovision_metrics_multiplier`
+- `sync_db_writer_pool_multiplier`
+- `sync_db_writer_pool_cap`
+- `sync_adaptive_dispatch_enabled`
+- `sync_dispatch_burst_factor`
+- `sync_dispatch_archive_backoff_ratio`
+- `sync_dispatch_step_size`
+
+Default alignment note:
+- `conf_parser` now exposes `get_conf_parser_defaults_audit_snapshot()` to provide a categorized default/fallback accounting for platform constraints, sync throughput, overlap contention, and stability guardrails.
+
 ## Observability
 
 - Run **`python hpcperfstats/site/manage.py pg_connection_stats`** from the repo root (with **`HPCPERFSTATS_INI`** / config and DB reachable) to print **`pg_stat_activity`** totals for the current database (`machine` app management command).

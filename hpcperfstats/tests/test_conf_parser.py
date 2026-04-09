@@ -411,6 +411,101 @@ def test_sync_archive_pool_respects_cap(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_pool_processes() == 2
 
 
+def test_cpuset_priority_budget_derivation_defaults(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 16)
+  budget = cfg.derive_pipeline_cpuset_priority_budget()
+  assert budget["effective_cores"] == 4
+  assert budget["sync_ingest_cap"] >= 1
+  assert budget["sync_archive_cap"] >= 1
+  assert budget["metrics_cap"] >= 1
+  assert budget["reserve_cap"] >= 1
+  assert (
+      budget["sync_ingest_cap"]
+      + budget["sync_archive_cap"]
+      + budget["metrics_cap"]
+      + budget["reserve_cap"]
+  ) <= budget["headroom_cap"]
+
+
+def test_metrics_pool_respects_cpuset_priority_budget(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 40\nmetrics_pool_process_cap = 32\nsync_enable_cpuset_priority_budget = yes",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 20)
+  assert cfg.get_metrics_pool_process_count() == 4
+
+
+def test_metrics_pool_ingest_priority_overlap_mode(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 40\nmetrics_pool_process_cap = 32\nsync_enable_cpuset_priority_budget = yes\npipeline_overlap_mode = ingest_priority\nmetrics_ingest_priority_scale = 0.5\nmetrics_min_processes = 2",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 20)
+  assert cfg.get_metrics_pool_process_count() == 2
+
+
+def test_cpuset_priority_budget_overprovision_mode(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 40\n"
+      "sync_enable_cpuset_priority_budget = yes\n"
+      "sync_enable_overprovision_mode = yes\n"
+      "sync_budget_overcommit_factor = 1.25\n"
+      "sync_overprovision_ingest_multiplier = 1.20\n"
+      "sync_overprovision_archive_multiplier = 1.10\n"
+      "sync_overprovision_metrics_multiplier = 0.90",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 20)
+  budget = cfg.derive_pipeline_cpuset_priority_budget()
+  assert budget["effective_cores"] == 20
+  assert budget["headroom_cap"] == 25
+  assert budget["sync_ingest_cap"] >= 12
+
+
+def test_pipeline_cpu_process_buckets_flags(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  buckets = cfg.pipeline_cpu_process_buckets(
+      include_browser_phase=True,
+      include_rsync=True,
+  )
+  assert "hpcperfstats-rabbitmq-listener" in buckets["real_time"]
+  assert "update_metrics workers" in buckets["normal"]
+  assert "rsync_data (optional)" in buckets["best_effort"]
+  assert any("browser/api" in item for item in buckets["best_effort"])
+
+
 def test_get_large_job_time_sample_sql_mode_defaults_and_env(temp_ini, monkeypatch):
   """Default strided time SQL mode is date_bin; ntile is opt-in via env."""
   monkeypatch.delenv("HPCPERFSTATS_LARGE_JOB_TIME_SQL", raising=False)
@@ -438,3 +533,100 @@ def test_large_job_numeric_env_invalid_falls_back_to_defaults(temp_ini, monkeypa
   assert cfg.get_large_job_host_data_row_threshold() == 1_500_000
   assert cfg.get_large_job_time_buckets() == 2048
   assert cfg.get_large_job_window_row_count_cache_ttl() == 300
+
+
+def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_sync_ingest_queue_max_size() == 2000
+  assert cfg.get_sync_archive_queue_max_size() == 1000
+  assert cfg.get_sync_archive_retry_max_attempts() == 5
+  assert cfg.get_sync_archive_retry_backoff_base_seconds() == 1.0
+  assert cfg.get_sync_archive_retry_backoff_max_seconds() == 60.0
+  assert cfg.get_sync_checkpoint_flush_batch_size() == 100
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\n"
+      "sync_ingest_queue_max_size = 111\n"
+      "sync_archive_queue_max_size = 222\n"
+      "sync_archive_retry_max_attempts = 7\n"
+      "sync_archive_retry_backoff_base_seconds = 2.5\n"
+      "sync_archive_retry_backoff_max_seconds = 12.5\n"
+      "sync_checkpoint_flush_batch_size = 42",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+
+  importlib.reload(cfg)
+  assert cfg.get_sync_ingest_queue_max_size() == 111
+  assert cfg.get_sync_archive_queue_max_size() == 222
+  assert cfg.get_sync_archive_retry_max_attempts() == 7
+  assert cfg.get_sync_archive_retry_backoff_base_seconds() == 2.5
+  assert cfg.get_sync_archive_retry_backoff_max_seconds() == 12.5
+  assert cfg.get_sync_checkpoint_flush_batch_size() == 42
+
+
+def test_sync_phase2_feature_flags_and_shards(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 16)
+  assert cfg.get_sync_write_lock_shards() == 1
+  assert cfg.get_sync_enable_db_writer_pipeline() is False
+  assert cfg.get_sync_enable_ingest_first_durability_mode() is False
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\n"
+      "sync_write_lock_shards = 4\n"
+      "sync_enable_db_writer_pipeline = yes\n"
+      "sync_enable_ingest_first_durability_mode = true",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_sync_write_lock_shards() == 4
+  assert cfg.get_sync_enable_db_writer_pipeline() is True
+  assert cfg.get_sync_enable_ingest_first_durability_mode() is True
+
+
+def test_sync_db_writer_pool_defaults_and_cap(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_sync_db_writer_pool_processes(ingest_processes=8) == 4
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\nsync_db_writer_pool_multiplier = 0.75\nsync_db_writer_pool_cap = 3",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_sync_db_writer_pool_processes(ingest_processes=8) == 3
+
+
+def test_conf_parser_defaults_audit_snapshot(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  snapshot = cfg.get_conf_parser_defaults_audit_snapshot()
+  assert "platform_constraints" in snapshot
+  assert "sync_throughput" in snapshot
+  assert "overlap_contention" in snapshot
+  assert "stability" in snapshot
+  assert snapshot["sync_throughput"]["sync_budget_ingest_ratio"] == 0.60

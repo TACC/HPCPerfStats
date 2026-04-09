@@ -661,7 +661,14 @@ def stats_file_is_active_segment(stats_path):
     return False
 
 
-def collect_stats_files_in_range(directory, startdate, enddate, host_name_ext):
+def collect_stats_files_in_range(
+    directory,
+    startdate,
+    enddate,
+    host_name_ext,
+    host_scan_hints=None,
+    force_full_scan=False,
+):
   """Scan ``archive_dir`` for stats files in immediate subdirs whose names end
   with ``host_name_ext`` (same value as ``DEFAULT.host_name_ext`` in ini).
 
@@ -683,6 +690,15 @@ def collect_stats_files_in_range(directory, startdate, enddate, host_name_ext):
       continue
     if not entry.name.endswith(suffix):
       continue
+    if isinstance(host_scan_hints, dict) and not force_full_scan:
+      try:
+        dir_mtime = int(entry.stat().st_mtime)
+      except OSError:
+        dir_mtime = -1
+      prev_mtime = host_scan_hints.get(entry.path)
+      host_scan_hints[entry.path] = dir_mtime
+      if prev_mtime is not None and prev_mtime == dir_mtime:
+        continue
     for stats_file in os.scandir(entry.path):
       if not stats_file.is_file() or stats_file.name.startswith("."):
         continue
@@ -693,9 +709,9 @@ def collect_stats_files_in_range(directory, startdate, enddate, host_name_ext):
       if stats_file_is_active_segment(stats_file.path):
         continue
       try:
-        fdate_mtime = datetime.fromtimestamp(
-            int(os.path.getmtime(stats_file.path))
-        )
+        st_info = stats_file.stat()
+        st_mtime = int(st_info.st_mtime)
+        fdate_mtime = datetime.fromtimestamp(st_mtime)
       except Exception as e:
         log_print("error in obtaining timestamp of raw data files: ", str(e))
         continue
@@ -711,10 +727,7 @@ def collect_stats_files_in_range(directory, startdate, enddate, host_name_ext):
       if fdate_name is not None:
         sort_epoch = int(os.path.basename(stats_file.path))
       else:
-        try:
-          sort_epoch = int(os.path.getmtime(stats_file.path))
-        except Exception:
-          sort_epoch = None
+        sort_epoch = st_mtime
 
       if startdate == "all":
         stats_files.append((stats_file.path, sort_epoch))
@@ -738,17 +751,40 @@ def collect_stats_files_in_range(directory, startdate, enddate, host_name_ext):
 
 
 def rescan_pending_stats_files(
-    directory, startdate, enddate, host_name_ext, processed_files
+    directory,
+    startdate,
+    enddate,
+    host_name_ext,
+    processed_files,
+    host_scan_hints=None,
+    full_rescan_every=10,
 ):
   """Return newest-first files still pending after excluding processed files."""
+  should_force_full = True
+  if isinstance(host_scan_hints, dict):
+    should_force_full = (
+        int(host_scan_hints.get("__rescan_count__", 0)) % max(1, int(full_rescan_every)) == 0
+    )
+    host_scan_hints["__rescan_count__"] = int(
+        host_scan_hints.get("__rescan_count__", 0)
+    ) + 1
   discovered_files = collect_stats_files_in_range(
-      directory, startdate, enddate, host_name_ext)
+      directory,
+      startdate,
+      enddate,
+      host_name_ext,
+      host_scan_hints=host_scan_hints,
+      force_full_scan=should_force_full,
+  )
   processed_set = set(processed_files or [])
   return [path for path in discovered_files if path not in processed_set]
 
 
 def build_archive_mapping(
-    files_to_be_archived, tgz_archive_dir, parse_first_ts_fn=None
+    files_to_be_archived,
+    tgz_archive_dir,
+    parse_first_ts_fn=None,
+    first_timestamp_by_path=None,
 ):
   """Group stats file paths by daily archive path (YYYY-MM-DD.tar.gz).
 
@@ -761,19 +797,26 @@ def build_archive_mapping(
   ar_file_mapping = {}
   skipped_no_ts = 0
   for stats_fname in files_to_be_archived:
-    try:
-      with file_read_lock_wait(stats_fname):
-        with open(stats_fname, "r") as f:
-          head = []
-          for line in f:
-            head.append(line)
-            if head and head[-1] and head[-1][0].isdigit():
-              break
-    except OSError:
-      continue
-    finally:
-      _remove_read_lock_sidecar(stats_fname)
-    t, _jid, _host = parse_first_ts_fn(head)
+    precomputed_ts = None
+    if first_timestamp_by_path:
+      precomputed_ts = first_timestamp_by_path.get(stats_fname)
+    if precomputed_ts is not None:
+      t = precomputed_ts
+      _jid = _host = None
+    else:
+      try:
+        with file_read_lock_wait(stats_fname):
+          with open(stats_fname, "r") as f:
+            head = []
+            for line in f:
+              head.append(line)
+              if head and head[-1] and head[-1][0].isdigit():
+                break
+      except OSError:
+        continue
+      finally:
+        _remove_read_lock_sidecar(stats_fname)
+      t, _jid, _host = parse_first_ts_fn(head)
     if t is None:
       log_print(
           "Unable to find first timestamp in %s, skipping archiving"
@@ -794,3 +837,27 @@ def build_archive_mapping(
         % skipped_no_ts
     )
   return ar_file_mapping
+
+
+def collect_first_timestamps_by_path(files_to_be_archived, parse_first_ts_fn=None):
+  """Return {path: first_timestamp_str} for files with parseable first timestamp."""
+  if parse_first_ts_fn is None:
+    parse_first_ts_fn = parse_first_timestamp_line
+  timestamps = {}
+  for stats_fname in files_to_be_archived:
+    try:
+      with file_read_lock_wait(stats_fname):
+        with open(stats_fname, "r") as f:
+          head = []
+          for line in f:
+            head.append(line)
+            if head and head[-1] and head[-1][0].isdigit():
+              break
+    except OSError:
+      continue
+    finally:
+      _remove_read_lock_sidecar(stats_fname)
+    t, _jid, _host = parse_first_ts_fn(head)
+    if t is not None:
+      timestamps[stats_fname] = t
+  return timestamps

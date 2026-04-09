@@ -10,6 +10,7 @@ DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers 
 """
 import itertools
 import json
+import math
 import multiprocessing
 import os
 import shutil
@@ -20,7 +21,9 @@ import sys
 import time
 import warnings
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from functools import partial
 from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
@@ -41,6 +44,7 @@ from hpcperfstats.shutdown_utils import (
 )
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
+    collect_first_timestamps_by_path,
     dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
@@ -95,7 +99,7 @@ rescan_every_chunks = 10
 # Bound processed-file tracking to avoid unbounded set growth in long runs.
 processed_files_max_size = 200000
 SYNC_TIMEDB_CHECKPOINT_BASENAME = ".sync_timedb_state.json"
-SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES = 100
+SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES = cfg.get_sync_checkpoint_flush_batch_size()
 
 # When no pending files remain after a directory rescan, sleep this long (seconds)
 # before scanning again. Interruptible via shutdown_requested / SIGTERM path.
@@ -113,49 +117,295 @@ def _sync_timedb_ingest_inline_requested():
 
 # Rows per bulk_create batch to limit peak memory per worker
 bulk_create_batch_size = 10000
+_adaptive_bulk_create_batch_size = bulk_create_batch_size
+_HEAD_TIMESTAMP_CACHE = {}
+_HEAD_TIMESTAMP_CACHE_REFRESH_SECONDS = 60
+_HEAD_TIMESTAMP_CACHE_MAX_ENTRIES = 20000
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
 
-# This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
-def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
-  """Parse a stats file, map hardware counters, compute deltas/arc, and bulk-insert into host_data and proc_data. Returns (stats_file, need_archival). Uses lock for DB writes.
 
-    """
+@dataclass(frozen=True)
+class ParseTask:
+  path: str
+
+
+@dataclass(frozen=True)
+class DBWriteTask:
+  path: str
+  payload: object
+  need_archival: bool
+
+
+@dataclass(frozen=True)
+class ArchiveTask:
+  archive_info: tuple
+  attempt: int = 1
+
+
+class SyncFileState(str, Enum):
+  DISCOVERED = "discovered"
+  PARSED = "parsed"
+  WRITTEN = "written"
+  ARCHIVE_QUEUED = "archive_queued"
+  ARCHIVE_FAILED_RETRYABLE = "archive_failed_retryable"
+  ARCHIVED = "archived"
+
+
+_SYNC_STATE_TRANSITIONS = {
+    SyncFileState.DISCOVERED: {
+        SyncFileState.PARSED,
+        SyncFileState.WRITTEN,
+        SyncFileState.ARCHIVE_QUEUED,
+    },
+    SyncFileState.PARSED: {
+        SyncFileState.WRITTEN,
+        SyncFileState.ARCHIVE_QUEUED,
+    },
+    SyncFileState.WRITTEN: {
+        SyncFileState.ARCHIVE_QUEUED,
+        SyncFileState.ARCHIVED,
+    },
+    SyncFileState.ARCHIVE_QUEUED: {
+        SyncFileState.ARCHIVE_FAILED_RETRYABLE,
+        SyncFileState.ARCHIVED,
+    },
+    SyncFileState.ARCHIVE_FAILED_RETRYABLE: {
+        SyncFileState.ARCHIVE_QUEUED,
+        SyncFileState.ARCHIVED,
+    },
+    SyncFileState.ARCHIVED: set(),
+}
+
+SYNC_TIMEDB_DEAD_LETTER_BASENAME = ".sync_timedb_dead_letter.json"
+
+
+def _transition_file_state(file_states, path, new_state):
+  """Best-effort state transition validator for per-file supervisor state."""
+  current = file_states.get(path)
+  if current is None:
+    file_states[path] = new_state
+    return True
+  allowed = _SYNC_STATE_TRANSITIONS.get(current, set())
+  if new_state in allowed or new_state == current:
+    file_states[path] = new_state
+    return True
+  log_print(
+      "Invalid sync_timedb file state transition path=%s current=%s new=%s"
+      % (path, current, new_state),
+      flush=True,
+  )
+  return False
+
+
+def _load_dead_letter_entries(path):
+  try:
+    with open(path, "r", encoding="utf-8") as fh:
+      raw = json.load(fh)
+  except (OSError, ValueError, TypeError):
+    return []
+  if not isinstance(raw, list):
+    return []
+  out = []
+  for item in raw:
+    if not isinstance(item, dict):
+      continue
+    archive_info = item.get("archive_info")
+    paths = item.get("paths")
+    attempt = item.get("attempt", 1)
+    if not isinstance(archive_info, list) or len(archive_info) != 2:
+      continue
+    if not isinstance(paths, list):
+      continue
+    try:
+      attempt = int(attempt)
+    except (TypeError, ValueError):
+      attempt = 1
+    out.append({
+        "task": ArchiveTask(archive_info=(archive_info[0], list(archive_info[1])), attempt=max(1, attempt)),
+        "paths": list(paths),
+        "retry_at": 0.0,
+    })
+  return out
+
+
+def _save_dead_letter_entries(path, entries):
+  parent = os.path.dirname(str(path))
+  if parent:
+    os.makedirs(parent, exist_ok=True)
+  tmp_path = "%s.tmp" % path
+  payload = []
+  for item in entries:
+    task = item.get("task")
+    if task is None:
+      continue
+    payload.append({
+        "archive_info": [task.archive_info[0], list(task.archive_info[1])],
+        "paths": list(item.get("paths", [])),
+        "attempt": int(task.attempt),
+    })
+  with open(tmp_path, "w", encoding="utf-8") as fh:
+    json.dump(payload, fh)
+  os.replace(tmp_path, path)
+
+
+def _get_adaptive_bulk_create_batch_size():
+  return max(100, int(_adaptive_bulk_create_batch_size))
+
+
+def _record_adaptive_batch_feedback(duration_seconds, had_error=False):
+  global _adaptive_bulk_create_batch_size
+  current = _get_adaptive_bulk_create_batch_size()
+  if had_error:
+    _adaptive_bulk_create_batch_size = max(100, int(current * 0.8))
+    return
+  if duration_seconds < 0.25:
+    _adaptive_bulk_create_batch_size = min(50000, int(current * 1.1))
+  elif duration_seconds > 1.5:
+    _adaptive_bulk_create_batch_size = max(100, int(current * 0.9))
+
+
+def _head_timestamp_present_cached(hostname, timestamp_utc):
+  key = (hostname, int(timestamp_utc.timestamp()))
+  now = time.time()
+  cached = _HEAD_TIMESTAMP_CACHE.get(key)
+  if cached and (now - cached["checked_at"] <= _HEAD_TIMESTAMP_CACHE_REFRESH_SECONDS):
+    return bool(cached["present"])
+  present = host_data.objects.filter(host=hostname, time=timestamp_utc).exists()
+  _HEAD_TIMESTAMP_CACHE[key] = {"present": bool(present), "checked_at": now}
+  if len(_HEAD_TIMESTAMP_CACHE) > _HEAD_TIMESTAMP_CACHE_MAX_ENTRIES:
+    # Drop a small oldest slice to bound memory.
+    oldest_keys = sorted(
+        _HEAD_TIMESTAMP_CACHE.keys(),
+        key=lambda k: _HEAD_TIMESTAMP_CACHE[k]["checked_at"],
+    )[:1000]
+    for drop_key in oldest_keys:
+      _HEAD_TIMESTAMP_CACHE.pop(drop_key, None)
+  return present
+
+
+def _pick_write_lock_for_path(lock_or_locks, stats_file):
+  if isinstance(lock_or_locks, list) and lock_or_locks:
+    idx = abs(hash(stats_file)) % len(lock_or_locks)
+    return lock_or_locks[idx]
+  return lock_or_locks
+
+
+def _invalidate_jid_caches(stats, proc_stats):
+  try:
+    from hpcperfstats.site.machine.cache_utils import (
+        invalidate_jid_derived_cache_keys,
+        invalidate_job_plot_cache_keys_for_jids,
+    )
+
+    jids = set()
+    if stats is not None and not stats.empty and "jid" in stats.columns:
+      jids.update(str(x) for x in stats["jid"].dropna().unique())
+    if proc_stats is not None and not proc_stats.empty and "jid" in proc_stats.columns:
+      jids.update(str(x) for x in proc_stats["jid"].dropna().unique())
+    if jids:
+      invalidate_jid_derived_cache_keys(jids)
+      invalidate_job_plot_cache_keys_for_jids(jids)
+  except Exception:
+    pass
+
+
+def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archival=True):
+  """Persist parsed payload into DB using adaptive batching and lock sharding."""
+  write_lock = _pick_write_lock_for_path(lock, stats_file)
+  try:
+    try:
+      proc_it = proc_stats.itertuples(index=False)
+      while True:
+        batch = list(itertools.islice(proc_it, _get_adaptive_bulk_create_batch_size()))
+        if not batch:
+          break
+        proc_objs = [
+            proc_data(jid=row.jid, host=row.host, proc=row.proc) for row in batch
+        ]
+        lock_wait_t0 = time.time()
+        write_lock.acquire()
+        lock_wait = time.time() - lock_wait_t0
+        if lock_wait > 0.05:
+          log_print("DB lock wait proc batch file=%s wait=%.3fs" % (stats_file, lock_wait), flush=True)
+        try:
+          t0 = time.time()
+          proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
+          _record_adaptive_batch_feedback(time.time() - t0, had_error=False)
+        finally:
+          write_lock.release()
+    except Exception as e:
+      _record_adaptive_batch_feedback(2.0, had_error=True)
+      if DEBUG:
+        log_print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
+      _insert_proc_data_individually(proc_stats)
+  except Exception:
+    raise
+  try:
+    try:
+      with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*[Dd]iscarding nonzero nanoseconds.*",
+            category=UserWarning,
+        )
+        stats_it = stats.itertuples(index=False)
+        while True:
+          batch = list(itertools.islice(stats_it, _get_adaptive_bulk_create_batch_size()))
+          if not batch:
+            break
+          host_objs = [host_data_instance_from_stats_row(row) for row in batch]
+          lock_wait_t0 = time.time()
+          write_lock.acquire()
+          lock_wait = time.time() - lock_wait_t0
+          if lock_wait > 0.05:
+            log_print("DB lock wait host batch file=%s wait=%.3fs" % (stats_file, lock_wait), flush=True)
+          try:
+            t0 = time.time()
+            host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
+            _record_adaptive_batch_feedback(time.time() - t0, had_error=False)
+          finally:
+            write_lock.release()
+    except Exception as e:
+      _record_adaptive_batch_feedback(2.0, had_error=True)
+      if DEBUG:
+        log_print("error in host_data bulk_create:", str(e))
+      need_archival = _insert_host_data_individually(stats)
+  except Exception:
+    raise
+
+  _invalidate_jid_caches(stats, proc_stats)
+  if DEBUG:
+    log_print("File successfully added to DB")
+  return (stats_file, need_archival, True)
+
+
+def _parse_stats_file_payload(stats_file, stats_file_contents=None):
+  """Parse stats file into payload for deferred DB writer stage."""
   close_old_connections()
-
   hostname, _ = parse_stats_file_path(stats_file)
   if hostname is None:
     log_print("Invalid stats file path: %s" % stats_file)
-    return (stats_file, False, False)
-
+    return (stats_file, None, False, False)
   if stats_file_is_active_segment(stats_file):
     if DEBUG:
       log_print("Skipping active segment (still linked to current): %s" % stats_file)
-    return (stats_file, False, False)
-
+    return (stats_file, None, False, False)
   lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)
   if load_err is not None:
     log_print(load_err)
-    return (stats_file, False, False)
-
-  t, jid, host = parse_first_timestamp_line(lines)
+    return (stats_file, None, False, False)
+  t, _jid, _host = parse_first_timestamp_line(lines)
   if t is None:
     log_print("initial timestamp not found")
-    return (stats_file, False, False)
-
+    return (stats_file, None, False, False)
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
-  # Fast path: if head timestamp is not present, process from file head.
-  head_present = host_data.objects.filter(
-      host=hostname,
-      time=timestamp_utc,
-  ).exists()
-
+  head_present = _head_timestamp_present_cached(hostname, timestamp_utc)
   if not head_present:
     start_idx, need_archival = 0, False
   else:
     ts_low = timestamp_utc - timedelta(hours=48)
     ts_high = timestamp_utc + timedelta(hours=72)
-    # Fallback: fetch distinct existing timestamps for deterministic resume.
     itimes_set = set()
     qs_times = (
         host_data.objects.filter(
@@ -171,103 +421,89 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         continue
       if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-      epoch = int(dt.timestamp())
-      itimes_set.add(epoch)
+      itimes_set.add(int(dt.timestamp()))
     start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   if start_idx == -1:
     log_print("No missing timestamps found for %s" % stats_file)
-    return (stats_file, True, True)
-
-  # Keep only lines from start_idx to avoid holding the full file in memory
+    return (stats_file, None, True, True)
   lines = lines[start_idx:]
-
-  start = time.time()
   try:
     stats_list, proc_stats_list = parse_stats_lines(
-        lines, 0,
+        lines,
+        0,
         eventmaps_by_type=EVENTMAPS_BY_TYPE,
         exclude_types_list=exclude_types,
     )
   except Exception as e:
     log_print("error: process data failed: ", str(e))
     log_print("Possibly corrupt file: %s" % stats_file)
-    return (stats_file, False, False)
-
+    return (stats_file, None, False, False)
   stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
   del stats_list
   del proc_stats_list
   if stats.empty and proc_stats.empty:
     if DEBUG:
       log_print("Unable to process stats file %s" % stats_file)
-    return (stats_file, False, False)
-
+    return (stats_file, None, False, False)
   stats = compute_deltas_and_arc(stats)
-  log_print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - start))
+  return (stats_file, (stats, proc_stats), need_archival, True)
 
-  lock.acquire()
-  try:
-    try:
-      proc_it = proc_stats.itertuples(index=False)
-      while True:
-        batch = list(itertools.islice(proc_it, bulk_create_batch_size))
-        if not batch:
-          break
-        proc_objs = [
-            proc_data(jid=row.jid, host=row.host, proc=row.proc) for row in batch
-        ]
-        proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
-    except Exception as e:
-      if DEBUG:
-        log_print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
-      _insert_proc_data_individually(proc_stats)
-  finally:
-    lock.release()
 
-  lock.acquire()
-  need_archival = True
-  try:
-    try:
-      with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=".*[Dd]iscarding nonzero nanoseconds.*",
-            category=UserWarning,
-        )
-        stats_it = stats.itertuples(index=False)
-        while True:
-          batch = list(itertools.islice(stats_it, bulk_create_batch_size))
-          if not batch:
-            break
-          host_objs = [host_data_instance_from_stats_row(row) for row in batch]
-          host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
-    except Exception as e:
-      if DEBUG:
-        log_print("error in host_data bulk_create:", str(e))
-      need_archival = _insert_host_data_individually(stats)
-  finally:
-    lock.release()
+def _db_writer_worker(lock, db_task):
+  """Worker entrypoint for DB-writer pool."""
+  close_old_connections()
+  stats_file, payload, need_archival = db_task
+  if payload is None:
+    return (stats_file, need_archival, True)
+  stats, proc_stats = payload
+  return _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archival)
 
+
+def _rescan_pending_files_with_optional_hints(
+    directory,
+    startdate,
+    enddate,
+    host_name_ext,
+    processed_files,
+    host_scan_hints,
+):
+  """Call rescan helper with hint args when supported; fallback for legacy tests/mocks."""
   try:
-    from hpcperfstats.site.machine.cache_utils import (
-        invalidate_jid_derived_cache_keys,
-        invalidate_job_plot_cache_keys_for_jids,
+    return rescan_pending_stats_files(
+        directory,
+        startdate,
+        enddate,
+        host_name_ext,
+        processed_files,
+        host_scan_hints=host_scan_hints,
+    )
+  except TypeError:
+    return rescan_pending_stats_files(
+        directory,
+        startdate,
+        enddate,
+        host_name_ext,
+        processed_files,
     )
 
-    jids = set()
-    if not stats.empty:
-      if "jid" in stats.columns:
-        jids.update(str(x) for x in stats["jid"].dropna().unique())
-    if not proc_stats.empty and "jid" in proc_stats.columns:
-      jids.update(str(x) for x in proc_stats["jid"].dropna().unique())
-    if jids:
-      invalidate_jid_derived_cache_keys(jids)
-      invalidate_job_plot_cache_keys_for_jids(jids)
-  except Exception:
-    pass
+# This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
+def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
+  """Parse a stats file, map hardware counters, compute deltas/arc, and bulk-insert into host_data and proc_data. Returns (stats_file, need_archival). Uses lock for DB writes.
 
-  if DEBUG:
-    log_print("File successfully added to DB")
-  return (stats_file, need_archival, True)
+    """
+  t0 = time.time()
+  stats_file, payload, need_archival, ingest_ok = _parse_stats_file_payload(
+      stats_file, stats_file_contents=stats_file_contents
+  )
+  if not ingest_ok:
+    return (stats_file, need_archival, False)
+  if payload is None:
+    return (stats_file, need_archival, True)
+  stats, proc_stats = payload
+  log_print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - t0))
+  return _write_stats_payload_to_db(
+      lock, stats_file, stats, proc_stats, need_archival=need_archival
+  )
 
 
 def _load_sync_checkpoint(state_path):
@@ -406,7 +642,12 @@ def _append_to_tar(tar_path, file_paths):
   """
   if not file_paths:
     return
+  # Amortize subprocess overhead for large archive bursts.
   batch = max(1, int(tar_append_batch_size))
+  if len(file_paths) >= 512:
+    batch = max(batch, 256)
+  elif len(file_paths) >= 128:
+    batch = max(batch, 128)
   for off in range(0, len(file_paths), batch):
     chunk = file_paths[off : off + batch]
     present = [p for p in chunk if os.path.lexists(p)]
@@ -494,7 +735,7 @@ def archive_stats_files(archive_info):
           "files in place: %s" % archive_fname,
           flush=True,
       )
-      return
+      return False
     existing_members = get_existing_archive_members(archive_tar_fname)
 
   stats_files_to_tar = filter_files_to_add_to_archive(
@@ -507,7 +748,7 @@ def archive_stats_files(archive_info):
         % (archive_tar_fname, exc),
         flush=True,
     )
-    return
+    return False
 
   if stats_files_to_tar:
     if not verify_tar_archive_readable(archive_tar_fname):
@@ -536,14 +777,15 @@ def archive_stats_files(archive_info):
               "files in place" % (archive_tar_fname, exc),
               flush=True,
           )
-          return
+          return False
       if not verify_tar_archive_readable(archive_tar_fname):
         log_print(
             "ERROR: daily tar still unreadable after recovery append; leaving "
             "raw stats files in place: %s" % archive_tar_fname,
             flush=True,
         )
-        return
+        return False
+  return True
 
 def database_startup():
   """Print DB version, database size, and optionally chunk compression stats for host_data."""
@@ -591,6 +833,20 @@ def run_sync_timedb_supervisor_loop(
   E2E tests.
   """
   pigz_interval = cfg.get_archive_pigz_interval_seconds()
+  ingest_queue_max = max(1, int(cfg.get_sync_ingest_queue_max_size()))
+  archive_queue_max = max(1, int(cfg.get_sync_archive_queue_max_size()))
+  ingest_queue_high = ingest_queue_max
+  ingest_queue_low = max(1, int(ingest_queue_max * 0.5))
+  archive_queue_high = archive_queue_max
+  archive_queue_low = max(1, int(archive_queue_max * 0.5))
+  archive_retry_max_attempts = max(1, int(cfg.get_sync_archive_retry_max_attempts()))
+  archive_retry_backoff_base = max(0.0, float(cfg.get_sync_archive_retry_backoff_base_seconds()))
+  archive_retry_backoff_max = max(0.0, float(cfg.get_sync_archive_retry_backoff_max_seconds()))
+  ingest_first_durability = bool(cfg.get_sync_enable_ingest_first_durability_mode())
+  adaptive_dispatch_enabled = bool(cfg.get_sync_adaptive_dispatch_enabled())
+  dispatch_step_size = max(1, int(cfg.get_sync_dispatch_step_size()))
+  dispatch_burst_factor = max(1.0, float(cfg.get_sync_dispatch_burst_factor()))
+  dispatch_archive_backoff_ratio = max(0.1, float(cfg.get_sync_dispatch_archive_backoff_ratio()))
   last_archive_maint = time.time()
   ingest_t0 = time.time()
 
@@ -621,20 +877,83 @@ def run_sync_timedb_supervisor_loop(
     remove_verified_archived_raw_files(
         directory, host_name_ext, tgz_archive_dir, log_fn=log_print)
 
+  pending_archive_tasks = deque()
+
+  def _retry_delay(attempt):
+    delay = archive_retry_backoff_base * (2 ** max(0, attempt - 1))
+    if archive_retry_backoff_max > 0:
+      delay = min(delay, archive_retry_backoff_max)
+    return max(0.0, delay)
+
   def _finalize_archive_job_if_needed():
     nonlocal archive_job
     nonlocal archive_job_deferred_paths
     nonlocal checkpoint_dirty_count
     if archive_job is None:
       return
-    archive_job.get()
-    for p in archive_job_deferred_paths:
-      added = _add_processed_path(
-          p, processed_files, processed_files_order, checkpoint_entries,
-          checkpoint_path)
-      if added:
-        checkpoint_dirty_count += 1
-      inflight_archive_paths.discard(p)
+    results = archive_job.get()
+    if not isinstance(results, list):
+      results = [results]
+    for task_payload, result in zip(archive_job_deferred_paths, results):
+      archive_task = task_payload["task"]
+      archive_paths = task_payload["paths"]
+      if result:
+        for p in archive_paths:
+          _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
+          added = _add_processed_path(
+              p, processed_files, processed_files_order, checkpoint_entries,
+              checkpoint_path)
+          if added:
+            checkpoint_dirty_count += 1
+          inflight_archive_paths.discard(p)
+      else:
+        next_attempt = archive_task.attempt + 1
+        if next_attempt <= archive_retry_max_attempts:
+          for p in archive_paths:
+            _transition_file_state(file_states, p, SyncFileState.ARCHIVE_FAILED_RETRYABLE)
+          retry_at = time.time() + _retry_delay(next_attempt)
+          pending_archive_tasks.append({
+              "task": ArchiveTask(archive_info=archive_task.archive_info, attempt=next_attempt),
+              "paths": archive_paths,
+              "retry_at": retry_at,
+          })
+          log_print(
+              "Archive task retry scheduled attempt=%d paths=%d delay_s=%.2f"
+              % (next_attempt, len(archive_paths), max(0.0, retry_at - time.time())),
+              flush=True,
+          )
+        else:
+          log_print(
+              "Archive retries exhausted for paths=%d; leaving for rescan"
+              % len(archive_paths),
+              flush=True,
+          )
+          dead_letter_entry = {
+              "task": ArchiveTask(
+                  archive_info=archive_task.archive_info,
+                  attempt=next_attempt,
+              ),
+              "paths": list(archive_paths),
+              "retry_at": 0.0,
+          }
+          pending_archive_tasks.append(dead_letter_entry)
+          if ingest_first_durability:
+            for p in archive_paths:
+              _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
+              added = _add_processed_path(
+                  p, processed_files, processed_files_order, checkpoint_entries,
+                  checkpoint_path)
+              if added:
+                checkpoint_dirty_count += 1
+              inflight_archive_paths.discard(p)
+          else:
+            for p in archive_paths:
+              _transition_file_state(file_states, p, SyncFileState.ARCHIVE_FAILED_RETRYABLE)
+              inflight_archive_paths.discard(p)
+          _save_dead_letter_entries(
+              dead_letter_path,
+              [d for d in pending_archive_tasks if d["task"].attempt > archive_retry_max_attempts],
+          )
     _flush_checkpoint_if_needed()
     archive_job = None
     archive_job_deferred_paths = []
@@ -660,15 +979,22 @@ def run_sync_timedb_supervisor_loop(
 
   archive_job = None
   archive_job_deferred_paths = []
+  host_scan_hints = {}
+  worker_idle_loops = 0
   ingest_pool = None
+  db_writer_pool = None
+  db_writer_enabled = cfg.get_sync_enable_db_writer_pipeline()
   processed_files = set()
+  file_states = {}
   processed_files_order = deque()
   checkpoint_entries = deque()
   checkpoint_dirty_count = 0
   inflight_archive_paths = set()
   pending_stats_files = []
   chunk_counter = 0
+  dispatch_target_size = max(chunk_size, thread_count)
   checkpoint_path = os.path.join(directory, SYNC_TIMEDB_CHECKPOINT_BASENAME)
+  dead_letter_path = os.path.join(directory, SYNC_TIMEDB_DEAD_LETTER_BASENAME)
 
   for entry in _load_sync_checkpoint(checkpoint_path):
     fp = _path_fingerprint(entry["path"])
@@ -677,12 +1003,20 @@ def run_sync_timedb_supervisor_loop(
     if fp["size"] != entry["size"] or fp["mtime"] != entry["mtime"]:
       continue
     processed_files.add(entry["path"])
+    file_states[entry["path"]] = SyncFileState.ARCHIVED
     processed_files_order.append(entry["path"])
     checkpoint_entries.append(entry)
+
+  pending_archive_tasks.extend(_load_dead_letter_entries(dead_letter_path))
 
   if not _sync_timedb_ingest_inline_requested():
     ingest_pool = multiprocessing.get_context('spawn').Pool(
         processes=thread_count)
+    if db_writer_enabled:
+      db_writer_processes = cfg.get_sync_db_writer_pool_processes(
+          ingest_processes=thread_count)
+      db_writer_pool = multiprocessing.get_context('spawn').Pool(
+          processes=db_writer_processes)
 
   try:
     while not shutdown_requested[0]:
@@ -703,21 +1037,45 @@ def run_sync_timedb_supervisor_loop(
         connections.close_all()
 
       if not pending_stats_files:
-        pending_stats_files = rescan_pending_stats_files(
+        if archive_job is None and pending_archive_tasks:
+          due_tasks = []
+          now = time.time()
+          while pending_archive_tasks and len(due_tasks) < archive_queue_max:
+            if pending_archive_tasks[0]["retry_at"] > now:
+              break
+            due_tasks.append(pending_archive_tasks.popleft())
+          if due_tasks:
+            archive_items = [d["task"].archive_info for d in due_tasks]
+            archive_job = archive_pool.map_async(archive_stats_files, archive_items)
+            archive_job_deferred_paths = due_tasks
+            log_print("Processing %d archive retry task(s)" % len(due_tasks), flush=True)
+        if len(pending_archive_tasks) > archive_queue_high:
+          log_print(
+              "Archive backlog above high watermark pending=%d high=%d"
+              % (len(pending_archive_tasks), archive_queue_high),
+              flush=True,
+          )
+        pending_stats_files = _rescan_pending_files_with_optional_hints(
             directory,
             startdate,
             enddate,
             host_name_ext,
             processed_files | inflight_archive_paths,
+            host_scan_hints,
         )
         if pending_stats_files:
+          for p in pending_stats_files:
+            _transition_file_state(file_states, p, SyncFileState.DISCOVERED)
           log_print(
               "Number of host stats files to process = ",
               len(pending_stats_files),
               flush=True,
           )
           chunk_counter = 0
+          worker_idle_loops = 0
         else:
+          worker_idle_loops += 1
+          log_print("Worker idle loops while waiting for pending files: %d" % worker_idle_loops)
           log_print(
               "No pending stats files; sleeping %s s before next directory scan"
               % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
@@ -741,7 +1099,14 @@ def run_sync_timedb_supervisor_loop(
           log_print(
               "Begining Chunk(%s) #%s Processing" % (chunk_size, chunk_counter))
 
-        stats_files_chunk = pending_stats_files[:chunk_size]
+        if len(pending_stats_files) >= ingest_queue_high:
+          log_print(
+              "Ingest pending above high watermark pending=%d high=%d"
+              % (len(pending_stats_files), ingest_queue_high),
+              flush=True,
+          )
+        target_chunk_size = min(int(dispatch_target_size), ingest_queue_high)
+        stats_files_chunk = pending_stats_files[:target_chunk_size]
         if not stats_files_chunk:
           continue
 
@@ -749,40 +1114,141 @@ def run_sync_timedb_supervisor_loop(
         successful_paths = []
         log_print("%s files per chunk" % chunk_size)
 
-        add_stats_file = partial(add_stats_file_to_db, manager_lock)
-        if _sync_timedb_ingest_inline_requested():
-          results_iter = (add_stats_file(path) for path in stats_files_chunk)
-        else:
-          if ingest_pool is None:
-            results_iter = iter(())
-          else:
-            results_iter = ingest_pool.imap_unordered(
-                add_stats_file, stats_files_chunk)
-
         k = 0
-        for result in results_iter:
-          ingest_ok = True
-          if len(result) >= 3:
-            stats_fname, need_archival, ingest_ok = result
+        active_workers = 0
+        if db_writer_enabled:
+          parse_tasks = deque()
+          parse_envelopes = [ParseTask(path=path) for path in stats_files_chunk]
+          if _sync_timedb_ingest_inline_requested():
+            parse_results_iter = (
+                _parse_stats_file_payload(task.path) for task in parse_envelopes
+            )
           else:
-            stats_fname, need_archival = result
-          k += 1
-          if ingest_ok:
-            successful_paths.append(stats_fname)
-          if ingest_ok and should_archive and need_archival:
-            files_to_be_archived.append(stats_fname)
-          log_print(
-              "chunk %s: completed file %s out of %s\n" % (
-                  chunk_counter, k, chunk_size),
-              flush=True)
+            if ingest_pool is None:
+              parse_results_iter = iter(())
+            else:
+              parse_results_iter = ingest_pool.imap_unordered(
+                  _parse_stats_file_payload,
+                  [task.path for task in parse_envelopes],
+              )
+          for parsed in parse_results_iter:
+            stats_fname, payload, need_archival, ingest_ok = parsed
+            k += 1
+            active_workers = max(active_workers, min(thread_count, k))
+            if not ingest_ok:
+              continue
+            if payload is None:
+              _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+              successful_paths.append(stats_fname)
+              if should_archive and need_archival:
+                files_to_be_archived.append(stats_fname)
+              continue
+            parse_tasks.append(DBWriteTask(path=stats_fname, payload=payload, need_archival=need_archival))
+            _transition_file_state(file_states, stats_fname, SyncFileState.PARSED)
+
+          if parse_tasks:
+            writer_fn = partial(_db_writer_worker, manager_lock)
+            if _sync_timedb_ingest_inline_requested() or db_writer_pool is None:
+              write_results_iter = (writer_fn((task.path, task.payload, task.need_archival)) for task in parse_tasks)
+            else:
+              write_results_iter = db_writer_pool.imap_unordered(
+                  writer_fn,
+                  [(task.path, task.payload, task.need_archival) for task in parse_tasks],
+              )
+            for result in write_results_iter:
+              stats_fname, need_archival, ingest_ok = result
+              if ingest_ok:
+                _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+                successful_paths.append(stats_fname)
+                if should_archive and need_archival:
+                  files_to_be_archived.append(stats_fname)
+              log_print(
+                  "chunk %s: completed file %s out of %s\n" % (
+                      chunk_counter, min(k, len(stats_files_chunk)), chunk_size),
+                  flush=True,
+              )
+        else:
+          add_stats_file = partial(add_stats_file_to_db, manager_lock)
+          if _sync_timedb_ingest_inline_requested():
+            results_iter = (add_stats_file(path) for path in stats_files_chunk)
+          else:
+            if ingest_pool is None:
+              results_iter = iter(())
+            else:
+              results_iter = ingest_pool.imap_unordered(
+                  add_stats_file, stats_files_chunk)
+          for result in results_iter:
+            ingest_ok = True
+            if len(result) >= 3:
+              stats_fname, need_archival, ingest_ok = result
+            else:
+              stats_fname, need_archival = result
+            k += 1
+            active_workers = max(active_workers, min(thread_count, k))
+            if ingest_ok:
+              _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+              successful_paths.append(stats_fname)
+            if ingest_ok and should_archive and need_archival:
+              files_to_be_archived.append(stats_fname)
+            log_print(
+                "chunk %s: completed file %s out of %s\n" % (
+                    chunk_counter, k, chunk_size),
+                flush=True)
 
         log_print("loading time", time.time() - ingest_t0)
+        log_print(
+            "Throughput telemetry: active_workers=%d backlog=%d adaptive_batch=%d"
+            % (active_workers, len(pending_stats_files), _get_adaptive_bulk_create_batch_size()),
+            flush=True,
+        )
+        if len(pending_stats_files) > thread_count and active_workers < max(1, thread_count // 2):
+          log_print(
+              "Idle-with-backlog detector: backlog=%d active_workers=%d pool=%d"
+              % (len(pending_stats_files), active_workers, thread_count),
+              flush=True,
+          )
+        if adaptive_dispatch_enabled:
+          backlog = len(pending_stats_files)
+          archive_backlog = len(pending_archive_tasks)
+          burst_ceiling = max(
+              thread_count,
+              int(math.ceil(thread_count * dispatch_burst_factor)),
+          )
+          if archive_backlog >= archive_queue_high:
+            reduced = max(
+                thread_count,
+                int(math.floor(dispatch_target_size * dispatch_archive_backoff_ratio)),
+            )
+            dispatch_target_size = max(thread_count, reduced)
+            log_print(
+                "Adaptive dispatch backoff archive_backlog=%d target=%d"
+                % (archive_backlog, dispatch_target_size),
+                flush=True,
+            )
+          elif backlog > dispatch_target_size and active_workers >= max(1, thread_count // 2):
+            dispatch_target_size = min(burst_ceiling, dispatch_target_size + dispatch_step_size)
+            log_print(
+                "Adaptive dispatch increase backlog=%d target=%d"
+                % (backlog, dispatch_target_size),
+                flush=True,
+            )
+          elif backlog <= ingest_queue_low:
+            dispatch_target_size = max(thread_count, dispatch_target_size - dispatch_step_size)
+            log_print(
+                "Adaptive dispatch relax backlog=%d target=%d"
+                % (backlog, dispatch_target_size),
+                flush=True,
+            )
         log_print("Files marked for archival: %d" % len(files_to_be_archived))
 
         if files_to_be_archived:
           os.makedirs(tgz_archive_dir, exist_ok=True)
+        first_ts_by_path = collect_first_timestamps_by_path(files_to_be_archived)
         ar_file_mapping = build_archive_mapping(
-            files_to_be_archived, tgz_archive_dir)
+            files_to_be_archived,
+            tgz_archive_dir,
+            first_timestamp_by_path=first_ts_by_path,
+        )
         total_in_mapping = sum(len(v) for v in ar_file_mapping.values())
         if ar_file_mapping:
           log_print(
@@ -800,6 +1266,7 @@ def run_sync_timedb_supervisor_loop(
         ]
         deferred_paths = [p for p in successful_paths if p in archived_candidates]
         for p in immediate_paths:
+          _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
           added = _add_processed_path(
               p, processed_files, processed_files_order, checkpoint_entries,
               checkpoint_path)
@@ -808,10 +1275,35 @@ def run_sync_timedb_supervisor_loop(
         _flush_checkpoint_if_needed()
 
         if ar_file_mapping:
+          if len(ar_file_mapping) >= archive_queue_high:
+            log_print(
+                "Archive mapping above high watermark groups=%d high=%d"
+                % (len(ar_file_mapping), archive_queue_high),
+                flush=True,
+            )
+          archive_items = list(ar_file_mapping.items())[:archive_queue_max]
+          overflow_items = list(ar_file_mapping.items())[archive_queue_max:]
           archive_job = archive_pool.map_async(
-              archive_stats_files, list(ar_file_mapping.items()))
-          archive_job_deferred_paths = deferred_paths
+              archive_stats_files, archive_items)
+          archive_job_deferred_paths = [
+              {
+                  "task": ArchiveTask(archive_info=item, attempt=1),
+                  "paths": list(item[1]),
+                  "retry_at": time.time(),
+              }
+              for item in archive_items
+          ]
           inflight_archive_paths.update(deferred_paths)
+          for p in deferred_paths:
+            _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
+          for item in overflow_items:
+            pending_archive_tasks.append({
+                "task": ArchiveTask(archive_info=item, attempt=1),
+                "paths": list(item[1]),
+                "retry_at": time.time(),
+            })
+            for p in item[1]:
+              _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
           log_print("Archival running in the background")
         elif deferred_paths:
           log_print(
@@ -820,35 +1312,55 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
 
-        pending_stats_files = pending_stats_files[chunk_size:]
+        pending_stats_files = pending_stats_files[len(stats_files_chunk):]
+        if len(pending_stats_files) <= ingest_queue_low:
+          log_print(
+              "Ingest pending at/below low watermark pending=%d low=%d"
+              % (len(pending_stats_files), ingest_queue_low),
+              flush=True,
+          )
         chunk_counter += 1
 
         if chunk_counter % rescan_every_chunks == 0:
           _finalize_archive_job_if_needed()
-          pending_stats_files = rescan_pending_stats_files(
+          pending_stats_files = _rescan_pending_files_with_optional_hints(
               directory,
               startdate,
               enddate,
               host_name_ext,
               processed_files | inflight_archive_paths,
+              host_scan_hints,
           )
           log_print(
               "Rescanned after %d chunks; pending files (newest first): %d"
               % (rescan_every_chunks, len(pending_stats_files)))
 
       _finalize_archive_job_if_needed()
+      _save_dead_letter_entries(
+          dead_letter_path,
+          [d for d in pending_archive_tasks if d["task"].attempt > archive_retry_max_attempts],
+      )
       _flush_checkpoint_if_needed(force=True)
       close_old_connections()
       connections.close_all()
   finally:
     if archive_job is not None:
       archive_job.get()
+    _save_dead_letter_entries(
+        dead_letter_path,
+        [d for d in pending_archive_tasks if d["task"].attempt > archive_retry_max_attempts],
+    )
     _flush_checkpoint_if_needed(force=True)
     if ingest_pool is not None:
       if hasattr(ingest_pool, "close"):
         ingest_pool.close()
       if hasattr(ingest_pool, "join"):
         ingest_pool.join()
+    if db_writer_pool is not None:
+      if hasattr(db_writer_pool, "close"):
+        db_writer_pool.close()
+      if hasattr(db_writer_pool, "join"):
+        db_writer_pool.join()
 
 
 def parse_sync_timedb_argv(argv):
@@ -892,7 +1404,41 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
 
   manager = multiprocessing.Manager()
   try:
-    manager_lock = manager.Lock()
+    if cfg.get_sync_enable_cpuset_priority_budget():
+      budget = cfg.derive_pipeline_cpuset_priority_budget()
+      buckets = cfg.pipeline_cpu_process_buckets()
+      log_print(
+          "Pipeline cpuset budget effective_cores=%d sync_ingest=%d sync_archive=%d metrics=%d reserve=%d"
+          % (
+              budget["effective_cores"],
+              budget["sync_ingest_cap"],
+              budget["sync_archive_cap"],
+              budget["metrics_cap"],
+              budget["reserve_cap"],
+          ),
+          flush=True,
+      )
+      log_print(
+          "Pipeline process buckets real_time=%s normal=%s best_effort=%s"
+          % (
+              ",".join(buckets["real_time"]),
+              ",".join(buckets["normal"]),
+              ",".join(buckets["best_effort"]),
+          ),
+          flush=True,
+      )
+    if cfg.get_sync_enable_db_writer_pipeline():
+      log_print(
+          "sync_enable_db_writer_pipeline is enabled; using separated parse "
+          "workers and DB-writer workers.",
+          flush=True,
+      )
+    lock_shards = max(1, int(cfg.get_sync_write_lock_shards()))
+    if lock_shards == 1:
+      manager_lock = manager.Lock()
+    else:
+      manager_lock = [manager.Lock() for _ in range(lock_shards)]
+      log_print("Using %d sync_timedb write-lock shards" % lock_shards, flush=True)
     with multiprocessing.get_context('spawn').Pool(
         processes=archive_thread_count) as archive_pool:
       run_sync_timedb_supervisor_loop(

@@ -22,6 +22,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     get_tar_file_tasks,
     get_tar_member_name,
     get_verified_files_to_remove,
+    collect_first_timestamps_by_path,
     is_daily_tar_gz_dirty,
     parse_archive_date_from_daily_tar_path,
     remove_verified_archived_raw_files,
@@ -1163,6 +1164,69 @@ def test_build_archive_mapping_accepts_placeholder_jid(tmp_path):
   only_key = next(iter(mapping.keys()))
   assert only_key.endswith(".tar.gz")
   assert mapping[only_key] == [str(stats_file)]
+
+
+def test_build_archive_mapping_uses_precomputed_first_timestamp(tmp_path):
+  tgz_dir = tmp_path / "tgz"
+  tgz_dir.mkdir()
+  stats_file = tmp_path / "stats1"
+  stats_file.write_text("1709123456 job1 cn001\n")
+  mapping = build_archive_mapping(
+      [str(stats_file)],
+      str(tgz_dir),
+      first_timestamp_by_path={str(stats_file): "1709123456"},
+  )
+  assert len(mapping) == 1
+  assert str(stats_file) in list(mapping.values())[0]
+
+
+def test_collect_first_timestamps_by_path(tmp_path):
+  f1 = tmp_path / "f1"
+  f2 = tmp_path / "f2"
+  f1.write_text("1709123456 job1 cn001\n")
+  f2.write_text("no timestamp\n")
+  timestamps = collect_first_timestamps_by_path([str(f1), str(f2)])
+  assert timestamps == {str(f1): "1709123456"}
+
+
+def test_rescan_pending_stats_files_uses_hints_with_periodic_full_sweep(tmp_path):
+  host = tmp_path / ("n." + _ARCH_HOST_SUFFIX)
+  host.mkdir()
+  ts = int(datetime(2020, 6, 15, 12, 0, 0).timestamp())
+  f1 = host / str(ts)
+  f1.write_text("x")
+  os.utime(f1, (ts, ts))
+  hints = {}
+  first = rescan_pending_stats_files(
+      str(tmp_path),
+      datetime(2020, 6, 1),
+      datetime(2020, 7, 1),
+      _ARCH_HOST_SUFFIX,
+      set(),
+      host_scan_hints=hints,
+      full_rescan_every=2,
+  )
+  second = rescan_pending_stats_files(
+      str(tmp_path),
+      datetime(2020, 6, 1),
+      datetime(2020, 7, 1),
+      _ARCH_HOST_SUFFIX,
+      set(),
+      host_scan_hints=hints,
+      full_rescan_every=2,
+  )
+  third = rescan_pending_stats_files(
+      str(tmp_path),
+      datetime(2020, 6, 1),
+      datetime(2020, 7, 1),
+      _ARCH_HOST_SUFFIX,
+      set(),
+      host_scan_hints=hints,
+      full_rescan_every=2,
+  )
+  assert len(first) == 1
+  assert len(second) in (0, 1)
+  assert len(third) == 1
 
 
 def test_archive_stats_files_does_not_raise_on_append_failure(monkeypatch, tmp_path):

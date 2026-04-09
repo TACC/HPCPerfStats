@@ -61,6 +61,25 @@ This uses **`docker-compose -f docker-compose.yaml -f docker-compose.pipeline-e2
 
 Options: **`--skip-build`**, **`--keep-env`**, **`--skip-playwright-install`** (see script **`--help`**).
 
+### Cpuset thread-budget benchmark workflow (sync_timedb priority)
+
+Use the helper below to print process bucket accounting (`real_time`, `normal`, `best_effort`), derive cpuset-aware `S/A/M/R`, and generate a reduced tuning matrix around the derived budget:
+
+```bash
+cd HPCPerfStats
+../.venv/bin/python tests/pipeline_e2e/cpuset_budget_bench.py
+```
+
+To execute extended profiles (derived, nearby tuning, ingest-priority, and sync-overprovision) against the full pipeline workflow:
+
+```bash
+cd HPCPerfStats
+../.venv/bin/python tests/pipeline_e2e/cpuset_budget_bench.py --run --skip-build
+```
+
+The runner applies per-profile overrides with `SYNC_POOL_PROCESS_CAP`, `ARCHIVE_POOL_PROCESS_CAP`, and `METRICS_POOL_PROCESS_CAP`, plus overlap/overprovision env settings (`HPCPERFSTATS_PIPELINE_OVERLAP_MODE`, `SYNC_ENABLE_OVERPROVISION_MODE`, `SYNC_BUDGET_OVERCOMMIT_FACTOR`, and sync overprovision multipliers), then calls `tests/run_pipeline_e2e_workflow.sh` for each point.
+If editable install on the bind mount fails with macOS cloud-sync locking (`Errno 35`), the workflow automatically falls back to `PYTHONPATH=/home/hpcperfstats` plus minimal pytest dependencies so benchmark phases can continue.
+
 ## Testing on macOS (Docker + full suite)
 
 ### 1. Install and start Docker

@@ -499,6 +499,14 @@ def main(argv=None, sleep_after=True):
   default_start, default_end = _default_metrics_date_range()
   startdate, enddate = parse_start_end_dates(argv, default_start, default_end)
 
+  if cfg.get_sync_enable_cpuset_priority_budget():
+    budget = cfg.derive_pipeline_cpuset_priority_budget()
+    overlap_mode = cfg.get_pipeline_overlap_mode()
+    log_print(
+        "Metrics cpuset budget effective_cores=%d metrics_cap=%d overlap_mode=%s"
+        % (budget["effective_cores"], budget["metrics_cap"], overlap_mode)
+    )
+
   log_date_range("metrics to update", startdate, enddate)
   #################################################################
 
