@@ -1,21 +1,12 @@
 """Heatmap plot: CPI (cycles/instruction) per host per time for a job using utils and Bokeh rects."""
 
 import numpy
-from bokeh.models import (
-    BasicTicker,
-    ColorBar,
-    ColumnDataSource,
-    HoverTool,
-    LinearColorMapper,
-)
+from bokeh.models import ColumnDataSource, HoverTool, LinearColorMapper
 from bokeh.palettes import Viridis
 from bokeh.plotting import figure
 
 from hpcperfstats.analysis.gen import utils
-from hpcperfstats.analysis.gen.utils import (
-    new_plain_linear_tick_formatter,
-    new_plain_number_hover_formatter,
-)
+from hpcperfstats.analysis.gen.utils import new_plain_number_hover_formatter
 from hpcperfstats.analysis.bokeh_job_embed import figure_embed_kw
 from hpcperfstats.analysis.plot.job_window import job_window_label_strings
 
@@ -23,6 +14,17 @@ from hpcperfstats.analysis.plot.job_window import job_window_label_strings
 _HEATMAP_PALETTE = Viridis[11]
 _HEATMAP_CPI_LOW = 0.25
 _HEATMAP_CPI_HIGH = 2.0
+
+
+def _heatmap_figure_title(mean_cpi):
+  """Title line including numeric CPI and fixed color-scale bounds (no ColorBar).
+
+  Bokeh ``ColorBar`` + ``json_item`` embed can throw ``metrics_change`` errors in
+  the browser; the scale is documented in the title instead.
+  """
+  return (
+      "<Cycles/Instruction> = {:.4f}  ·  CPI colors {:.2f}–{:.2f} (Viridis)"
+  ).format(float(mean_cpi), _HEATMAP_CPI_LOW, _HEATMAP_CPI_HIGH)
 
 
 def _build_heatmap_time_axis_labels(base_times, jt):
@@ -136,24 +138,14 @@ class HeatMap():
         formatters={"@cpi": cpi_hover},
     )
 
-    # One LinearColorMapper for both rect fill_color and ColorBar. Bokeh 3.x
-    # ColorBarView subscribes to ``color_mapper.metrics_change``; using two
-    # separate mappers in a json_item embed can leave the bar's mapper without a
-    # fully initialized signal (browser: "this.metrics_change is undefined").
     mapper = LinearColorMapper(
         palette=_HEATMAP_PALETTE, low=_HEATMAP_CPI_LOW, high=_HEATMAP_CPI_HIGH)
     colors = {"field": "cpi", "transform": mapper}
-    color_bar = ColorBar(
-        color_mapper=mapper,
-        location=(0, 0),
-        ticker=BasicTicker(desired_num_ticks=10),
-        formatter=new_plain_linear_tick_formatter(),
-    )
 
     hm = figure(
         **figure_embed_kw(
             320,
-            title="<Cycles/Instruction> = " + f"{float(host_cpi.mean()):.4f}",
+            title=_heatmap_figure_title(host_cpi.mean()),
             x_range=times,
             x_axis_label="Time",
             y_axis_label="Host",
@@ -170,8 +162,6 @@ class HeatMap():
             height=1,
             line_color=None,
             fill_color=colors)
-
-    hm.add_layout(color_bar, "right")
 
     hm.axis.axis_line_color = None
     hm.axis.major_tick_line_color = None
@@ -240,17 +230,11 @@ def plot_and_reason_from_jid_table(jt):
     )
     mapper = LinearColorMapper(
         palette=_HEATMAP_PALETTE, low=_HEATMAP_CPI_LOW, high=_HEATMAP_CPI_HIGH)
-    color_bar = ColorBar(
-        color_mapper=mapper,
-        location=(0, 0),
-        ticker=BasicTicker(desired_num_ticks=10),
-        formatter=new_plain_linear_tick_formatter(),
-    )
     mean_cpi = numpy.nanmean(cpi_flat) if cpi_flat else 0
     hm = figure(
         **figure_embed_kw(
             320,
-            title="<Cycles/Instruction> = " + f"{float(mean_cpi):.4f}",
+            title=_heatmap_figure_title(mean_cpi),
             x_range=times,
             y_range=hostnames,
             x_axis_label="Time",
@@ -267,7 +251,6 @@ def plot_and_reason_from_jid_table(jt):
         line_color=None,
         fill_color={"field": "cpi", "transform": mapper},
     )
-    hm.add_layout(color_bar, "right")
     hm.axis.axis_line_color = None
     hm.axis.major_tick_line_color = None
     hm.axis.major_label_text_font_size = "5pt"

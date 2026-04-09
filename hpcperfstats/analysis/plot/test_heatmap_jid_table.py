@@ -39,6 +39,8 @@ def test_plot_from_jid_table_uses_aperf_inst_retired():
   fig = plot_from_jid_table(jt)
   assert fig is not None
   assert fig.title.text is not None
+  assert "Viridis" in fig.title.text
+  assert "0.25" in fig.title.text and "2.00" in fig.title.text
 
 
 def test_plot_from_jid_table_falls_back_to_mperf_when_aperf_missing():
