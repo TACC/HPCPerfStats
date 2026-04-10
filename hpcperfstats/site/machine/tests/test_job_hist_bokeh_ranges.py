@@ -83,3 +83,46 @@ def test_job_list_queue_bar_chart_node_hours_all_zero():
     plot = _job_list_queue_bar_chart(mock_qs, width=280, height=200, metric="node_hours")
     assert plot is not None
     _assert_positive_y_span(plot)
+
+
+def test_job_list_queue_bar_chart_merges_null_and_empty_queue_for_unique_factors():
+    """NULL vs '' are separate SQL groups but both label as '(no queue)'; Bokeh forbids duplicate factors."""
+    from hpcperfstats.site.machine.api import _job_list_queue_bar_chart
+
+    mock_qs = MagicMock()
+    values_chain = mock_qs.values.return_value
+    annotate_chain = values_chain.annotate.return_value
+    order_chain = annotate_chain.order_by.return_value
+    order_chain.values_list.return_value = [(None, 2), ("", 3), ("normal", 5)]
+
+    plot = _job_list_queue_bar_chart(mock_qs, width=280, height=200, metric="jobs")
+    assert plot is not None
+    factors = list(plot.x_range.factors)
+    assert len(factors) == len(set(factors))
+    data = plot.renderers[0].data_source.data
+    by_x = dict(zip(data["x"], data["top"]))
+    assert by_x["(no queue)"] == 5
+    assert by_x["normal"] == 5
+
+
+def test_job_list_queue_bar_chart_merges_whitespace_queue_labels_for_node_hours():
+    from hpcperfstats.site.machine.api import _job_list_queue_bar_chart
+
+    mock_qs = MagicMock()
+    values_chain = mock_qs.values.return_value
+    annotate_chain = values_chain.annotate.return_value
+    order_chain = annotate_chain.order_by.return_value
+    order_chain.values_list.return_value = [
+        (None, 1.0),
+        ("  ", 2.0),
+        ("batch", 10.0),
+    ]
+
+    plot = _job_list_queue_bar_chart(mock_qs, width=280, height=200, metric="node_hours")
+    assert plot is not None
+    factors = list(plot.x_range.factors)
+    assert len(factors) == len(set(factors))
+    data = plot.renderers[0].data_source.data
+    by_x = dict(zip(data["x"], data["top"]))
+    assert by_x["(no queue)"] == 3.0
+    assert by_x["batch"] == 10.0

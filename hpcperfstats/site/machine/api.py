@@ -3,6 +3,7 @@ import hashlib
 import logging
 import threading
 import time
+from collections import defaultdict
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timedelta, timezone as dt_timezone
@@ -1333,6 +1334,27 @@ def _build_histogram_dataframe(job_list_qs, cur_metrics):
     return df, hist_metrics, jids_ordered
 
 
+def _queue_histogram_display_label(raw_queue):
+    """Stable label for one queue bucket (Bokeh FactorRange factors must be unique)."""
+    s = (raw_queue or "").strip()
+    return s if s else "(no queue)"
+
+
+def _merge_queue_bar_rows(rows, *, metric):
+    """Merge ORM rows that map to the same display label (e.g. NULL vs '' → '(no queue)')."""
+    if metric == "jobs":
+        acc = defaultdict(int)
+        for q, c in rows:
+            acc[_queue_histogram_display_label(q)] += int(c)
+    elif metric == "node_hours":
+        acc = defaultdict(float)
+        for q, v in rows:
+            acc[_queue_histogram_display_label(q)] += float(v or 0.0)
+    else:
+        raise ValueError(f"unknown queue bar metric: {metric!r}")
+    return sorted(acc.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
 def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="jobs"):
     """Bokeh vbar of per-queue job count or summed node hours (full filtered job list, non-paginated).
 
@@ -1351,7 +1373,6 @@ def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="job
             )
             title = "Jobs by queue"
             y_label = "# jobs"
-            tops = [c for _, c in rows]
         else:
             rows = list(
                 job_list_qs.values("queue")
@@ -1361,10 +1382,11 @@ def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="job
             )
             title = "Node hours by queue"
             y_label = "node hours"
-            tops = [(v or 0.0) for _, v in rows]
         if not rows:
             return None
-        queue_names = [q if q else "(no queue)" for q, _ in rows]
+        merged = _merge_queue_bar_rows(rows, metric=metric)
+        queue_names = [q for q, _ in merged]
+        tops = [v for _, v in merged]
         source = ColumnDataSource(dict(x=queue_names, top=tops))
         max_top = max(tops) if tops else 0.0
         # Explicit y_range: auto-ranging yields NaN / zero span for all-zero or
