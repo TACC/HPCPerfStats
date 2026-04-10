@@ -11,6 +11,7 @@
 #include "daemonize.h"
 #include "monitor_cli.h"
 #include "monitor_daemon.h"
+#include "stats_buffer.h"
 #include "string1.h"
 #include "stats.h"
 #include "trace.h"
@@ -45,9 +46,18 @@ static void monitor_install_ev_handlers(struct sf_ring_buffer *rb)
   ev_signal_start(EV_DEFAULT, &sigterm);
 }
 
+static void monitor_rmq_io_tick_cb(struct ev_loop *loop, ev_timer *w, int revents)
+{
+  (void)loop;
+  (void)w;
+  (void)revents;
+  stats_buffer_rmq_service_io();
+}
+
 static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
 {
   ev_stat fd_watcher;
+  static ev_timer rmq_io_timer;
 
   /* Full `$` schema header (`stats_wr_hdr`): periodic refresh and on job end (see `monitor_daemon_fd_cb`). */
   enum { schema_hdr_rotate_sec = 6 * 3600 };
@@ -70,6 +80,11 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   ev_timer_init(&send_timer, monitor_daemon_send_timer_cb, send_freq, send_freq);
   ev_timer_start(EV_DEFAULT, &send_timer);
   fprintf(log_stream, "Setting hpcperfstatsd send frequency to %.1fs\n", send_freq);
+  /* rabbitmq-c sends AMQP heartbeats from wait_frame_inner; long send_freq with a broker-capped
+   * heartbeat (e.g. 60s) otherwise yields "missed heartbeats from client" disconnects. */
+  ev_timer_init(&rmq_io_timer, monitor_rmq_io_tick_cb, 10.0, 10.0);
+  ev_timer_start(EV_DEFAULT, &rmq_io_timer);
+  fprintf(log_stream, "RMQ connection I/O service interval 10.0s (AMQP heartbeats)\n");
   fprintf(log_stream, "Setting hpcperfstatsd buffer capacity to %d samples (%.2fh)\n",
           max_buffer_size, buffer_hours);
 

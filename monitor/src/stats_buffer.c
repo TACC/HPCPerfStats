@@ -327,6 +327,35 @@ void stats_buffer_rmq_shutdown(void)
   rmq_clear_connect_backoff();
 }
 
+void stats_buffer_rmq_service_io(void)
+{
+  amqp_frame_t frame;
+  struct timeval tv0;
+  int st;
+  unsigned int n;
+
+  if (rmq_conn == NULL || !rmq_channel_open)
+    return;
+
+  tv0.tv_sec = 0;
+  tv0.tv_usec = 0;
+
+  /* Heartbeats are driven inside wait_frame_inner(); publish-only workloads need periodic calls. */
+  for (n = 0; n < 64; n++) {
+    st = amqp_simple_wait_frame_noblock(rmq_conn, &frame, &tv0);
+    if (st == AMQP_STATUS_TIMEOUT)
+      break;
+    if (st != AMQP_STATUS_OK) {
+#ifdef DEBUG
+      rmq_debug_log_amqp_status("RMQ service_io", st);
+#endif
+      rmq_soft_disconnect();
+      rmq_arm_connect_backoff();
+      return;
+    }
+  }
+}
+
 void stats_buffer_runtime_caches_reset(void)
 {
   stats_buffer_rmq_shutdown();

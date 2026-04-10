@@ -64,6 +64,8 @@ int ring_buffer_load_file(
 
 void stats_buffer_rmq_shutdown(void);
 void stats_buffer_runtime_caches_reset(void);
+/* Non-blocking AMQP I/O so rabbitmq-c can emit heartbeats between publishes (see amqp_login heartbeat note). */
+void stats_buffer_rmq_service_io(void);
 
 #ifdef STATS_BUFFER_TEST_SEND_HOOK
 /* Unit tests provide this to exercise ring_buffer_resend without a live broker. */
