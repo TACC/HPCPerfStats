@@ -5,7 +5,7 @@ alwaysApply: true
 
 # sync_timedb lock and archive contract
 
-When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py` and shared lock helpers (`hpcperfstats/file_locking.py`), preserve these behavior contracts.
+When changing ingest/archive paths under `hpcperfstats/dbload/archive_monitor_data.py`, `hpcperfstats/dbload/timedb_ingest.py`, the compatibility shim `hpcperfstats/dbload/sync_timedb.py`, and shared lock helpers (`hpcperfstats/file_locking.py`), preserve these behavior contracts.
 
 ## Lock path and lifecycle
 
