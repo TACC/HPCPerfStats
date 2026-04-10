@@ -50,7 +50,7 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   ev_stat fd_watcher;
 
   /* Full `$` schema header (`stats_wr_hdr`): periodic refresh and on job end (see `monitor_daemon_fd_cb`). */
-  enum { schema_hdr_rotate_sec = 4 * 3600 };
+  enum { schema_hdr_rotate_sec = 6 * 3600 };
   rotate_timer.data = (void *)rb;
   ev_timer_init(&rotate_timer, monitor_daemon_rotate_timer_cb, 0.0, (double)schema_hdr_rotate_sec);
   ev_timer_start(EV_DEFAULT, &rotate_timer);
