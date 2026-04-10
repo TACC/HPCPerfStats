@@ -264,3 +264,37 @@ def test_job_detail_schema_prefers_host_data_schema_json():
 
   assert response.status_code == 200
   assert response.data["schema"] == {"cpu": ["user", "system"]}
+
+
+def test_job_detail_with_empty_host_list_does_not_error():
+  """Empty jid_table host list should still return a successful response."""
+  from hpcperfstats.site.machine import api
+
+  jid = "test-empty-host-list-1"
+  factory = RequestFactory()
+  request = factory.get(f"/api/jobs/{jid}/")
+  request.session = {"username": "u1", "is_staff": False}
+
+  mock_j = MagicMock()
+  mock_j.acct_host_list = []
+  mock_j.schema = {}
+  mock_j.get_llite_delta_by_event.return_value = MagicMock(empty=True)
+  mock_j.get_nfs_delta_totals_mb.return_value = None
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  mock_j.start_time = t0
+  mock_j.end_time = t0
+
+  ctx = _patch_job_detail_fsio_context(api, jid, mock_j)
+
+  with ThreadPoolExecutor(max_workers=4) as executor:
+    with ExitStack() as stack:
+      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
+      for cm in ctx:
+        stack.enter_context(cm)
+      response = api.job_detail(request, jid)
+
+  assert response.status_code == 200
+  assert response.data["host_list"] == []
+  assert response.data["client_url"].startswith(
+      "https://scribe.tacc.utexas.edu/en-US/app/search/search?q=search%20"
+  )

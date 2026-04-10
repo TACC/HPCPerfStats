@@ -1940,10 +1940,13 @@ def job_detail(request, pk):
     end_time.strftime(time_format)
 
     urlstring = "https://scribe.tacc.utexas.edu/en-US/app/search/search?q=search%20"
-    hoststring = urlstring + "%20host%3D" + host_list[0] + cfg.get_host_name_ext()
+    if host_list:
+        hoststring = urlstring + "%20host%3D" + host_list[0] + cfg.get_host_name_ext()
+        for host in host_list[1:]:
+            hoststring += "%20OR%20%20host%3D" + host + "*"
+    else:
+        hoststring = urlstring
     serverstring = urlstring + "%20mds*%20OR%20%20oss*"
-    for host in host_list[1:]:
-        hoststring += "%20OR%20%20host%3D" + host + "*"
 
     earliest_ts = _format_log_timestamp(j.start_time)
     latest_ts = _format_log_timestamp(j.end_time)
