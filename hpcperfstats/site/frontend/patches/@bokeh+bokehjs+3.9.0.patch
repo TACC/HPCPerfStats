@@ -1,5 +1,45 @@
+diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/annotations/box_annotation.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/annotations/box_annotation.js
+index 7fe9622..5185c45 100644
+--- a/node_modules/@bokeh/bokehjs/build/js/lib/models/annotations/box_annotation.js
++++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/annotations/box_annotation.js
+@@ -170,7 +170,7 @@ export class BoxAnnotationView extends AnnotationView {
+         return {
+             left: (() => {
+                 if (left_units == "data" && !(left instanceof Coordinate)) {
+-                    if (x_factor) {
++                    if (x_factor && x_source != null && typeof x_source.synthetic === "function") {
+                         return x_source.synthetic(left);
+                     }
+                     else if (isNumber(left)) {
+@@ -181,7 +181,7 @@ export class BoxAnnotationView extends AnnotationView {
+             })(),
+             right: (() => {
+                 if (right_units == "data" && !(right instanceof Coordinate)) {
+-                    if (x_factor) {
++                    if (x_factor && x_source != null && typeof x_source.synthetic === "function") {
+                         return x_source.synthetic(right);
+                     }
+                     else if (isNumber(right)) {
+@@ -192,7 +192,7 @@ export class BoxAnnotationView extends AnnotationView {
+             })(),
+             top: (() => {
+                 if (top_units == "data" && !(top instanceof Coordinate)) {
+-                    if (y_factor) {
++                    if (y_factor && y_source != null && typeof y_source.synthetic === "function") {
+                         return y_source.synthetic(top);
+                     }
+                     else if (isNumber(top)) {
+@@ -203,7 +203,7 @@ export class BoxAnnotationView extends AnnotationView {
+             })(),
+             bottom: (() => {
+                 if (bottom_units == "data" && !(bottom instanceof Coordinate)) {
+-                    if (y_factor) {
++                    if (y_factor && y_source != null && typeof y_source.synthetic === "function") {
+                         return y_source.synthetic(bottom);
+                     }
+                     else if (isNumber(bottom)) {
 diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/axis.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/axis.js
-index 47d4358..e210a94 100644
+index 47d4358..346f062 100644
 --- a/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/axis.js
 +++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/axis.js
 @@ -108,7 +108,14 @@ export class AxisView extends GuideRendererView {
@@ -18,6 +58,225 @@ index 47d4358..e210a94 100644
          return super.is_renderable && range.is_valid && cross_range.is_valid && range.span > 0 && cross_range.span > 0;
      }
      interactive_hit(sx, sy) {
+@@ -217,6 +224,9 @@ export class AxisView extends GuideRendererView {
+         if (this._axis_label_view == null) {
+             return;
+         }
++        if (this.ranges?.[0] == null) {
++            return;
++        }
+         const [sx, sy /* TODO, x_anchor, y_anchor*/] = (() => {
+             const { bbox } = this;
+             const { side, face } = this.panel;
+@@ -326,8 +336,9 @@ export class AxisView extends GuideRendererView {
+         const { items } = labels;
+         const bboxes = items.map((l) => l.bbox());
+         const dist = (() => {
+-            const [range] = this.ranges;
+-            if (!range.is_reversed) {
++            const range = this.ranges?.[0];
++            const reversed = range != null && range.is_reversed;
++            if (!reversed) {
+                 return this.dimension == 0 ? (i, j) => bboxes[j].left - bboxes[i].right
+                     : (i, j) => bboxes[i].top - bboxes[j].bottom;
+             }
+@@ -475,6 +486,9 @@ export class AxisView extends GuideRendererView {
+     }
+     get computed_bounds() {
+         const [range] = this.ranges;
++        if (range == null) {
++            return [0, 1];
++        }
+         const user_bounds = this.model.bounds;
+         const range_bounds = [range.min, range.max];
+         if (user_bounds == "auto") {
+@@ -500,7 +514,15 @@ export class AxisView extends GuideRendererView {
+     get rule_coords() {
+         const i = this.dimension;
+         const j = 1 - i;
+-        const [range] = this.ranges;
++        const [range, cross_range] = this.ranges;
++        if (range == null || cross_range == null) {
++            const xs = new Array(2);
++            const ys = new Array(2);
++            const coords = [xs, ys];
++            coords[i][0] = coords[i][1] = Number.NaN;
++            coords[j][0] = coords[j][1] = Number.NaN;
++            return coords;
++        }
+         const [start, end] = this.computed_bounds;
+         const xs = new Array(2);
+         const ys = new Array(2);
+@@ -526,7 +548,13 @@ export class AxisView extends GuideRendererView {
+     get tick_coords() {
+         const i = this.dimension;
+         const j = 1 - i;
+-        const [range] = this.ranges;
++        const [range, cross_range] = this.ranges;
++        if (range == null || cross_range == null) {
++            return {
++                major: [[], []],
++                minor: [[], []],
++            };
++        }
+         const [start, end] = this.computed_bounds;
+         const ticks = this.model.ticker.get_ticks(start, end, range, this.loc);
+         const majors = ticks.major;
+@@ -564,12 +592,18 @@ export class AxisView extends GuideRendererView {
+                 return fixed_location;
+             }
+             const [, cross_range] = this.ranges;
++            if (cross_range == null) {
++                return Number.NaN;
++            }
+             if (cross_range instanceof FactorRange) {
+                 return cross_range.synthetic(fixed_location);
+             }
+             unreachable();
+         }
+         const [, cross_range] = this.ranges;
++        if (cross_range == null) {
++            return Number.NaN;
++        }
+         switch (this.panel.side) {
+             case "left":
+             case "below":
+diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/categorical_axis.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/categorical_axis.js
+index 92397f3..919d602 100644
+--- a/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/categorical_axis.js
++++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/categorical_axis.js
+@@ -9,6 +9,9 @@ export class CategoricalAxisView extends AxisView {
+     static __name__ = "CategoricalAxisView";
+     _hit_value(sx, sy) {
+         const [range] = this.ranges;
++        if (range == null) {
++            return null;
++        }
+         const { start, end, span } = range;
+         switch (this.dimension) {
+             case 0: {
+@@ -28,6 +31,9 @@ export class CategoricalAxisView extends AxisView {
+     }
+     _draw_group_separators(ctx, _extents, _tick_coords) {
+         const [range] = this.ranges;
++        if (range == null || typeof range.synthetic !== "function") {
++            return;
++        }
+         const [start, end] = this.computed_bounds;
+         const { factors } = range;
+         const { tops } = range.mapper;
+@@ -76,6 +82,9 @@ export class CategoricalAxisView extends AxisView {
+     }
+     _get_factor_info() {
+         const [range] = this.ranges;
++        if (range == null) {
++            return [];
++        }
+         const [start, end] = this.computed_bounds;
+         const loc = this.loc;
+         const ticks = this.model.ticker.get_ticks(start, end, range, loc);
+@@ -117,6 +126,14 @@ export class CategoricalAxisView extends AxisView {
+         const i = this.dimension;
+         const j = 1 - i;
+         const [range] = this.ranges;
++        if (range == null) {
++            return {
++                major: [[], []],
++                mids: [[], []],
++                tops: [[], []],
++                minor: [[], []],
++            };
++        }
+         const [start, end] = this.computed_bounds;
+         const ticks = this.model.ticker.get_ticks(start, end, range, this.loc);
+         const coords = {
+diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/continuous_axis.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/continuous_axis.js
+index e4bc7eb..5aead8e 100644
+--- a/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/continuous_axis.js
++++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/continuous_axis.js
+@@ -3,6 +3,9 @@ export class ContinuousAxisView extends AxisView {
+     static __name__ = "ContinuousAxisView";
+     _hit_value(sx, sy) {
+         const [range] = this.ranges;
++        if (range == null) {
++            return null;
++        }
+         const { start, end, span } = range;
+         switch (this.dimension) {
+             case 0: {
+diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/log_axis.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/log_axis.js
+index 4536295..a94ce6a 100644
+--- a/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/log_axis.js
++++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/axes/log_axis.js
+@@ -5,6 +5,9 @@ export class LogAxisView extends ContinuousAxisView {
+     static __name__ = "LogAxisView";
+     _hit_value(sx, sy) {
+         const [range] = this.ranges;
++        if (range == null) {
++            return null;
++        }
+         const { start, end } = range;
+         const { log10 } = Math;
+         switch (this.dimension) {
+diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/coordinates/coordinate_mapping.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/coordinates/coordinate_mapping.js
+index a04c734..b0a93d4 100644
+--- a/node_modules/@bokeh/bokehjs/build/js/lib/models/coordinates/coordinate_mapping.js
++++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/coordinates/coordinate_mapping.js
+@@ -1,4 +1,5 @@
+ import { Model } from "../../model";
++import { ScreenArray } from "../../core/types";
+ import { Scale } from "../scales/scale";
+ import { LinearScale } from "../scales/linear_scale";
+ import { LogScale } from "../scales/log_scale";
+@@ -24,14 +25,42 @@ export class CoordinateTransform {
+         this.scales = [this.x_scale, this.y_scale];
+     }
+     map_to_screen(xs, ys) {
+-        const sxs = this.x_scale.v_compute(xs);
+-        const sys = this.y_scale.v_compute(ys);
+-        return [sxs, sys];
++        const nx = xs.length;
++        const ny = ys.length;
++        try {
++            if (this.x_scale == null || this.y_scale == null) {
++                throw new Error("missing scale");
++            }
++            const sxs = this.x_scale.v_compute(xs);
++            const sys = this.y_scale.v_compute(ys);
++            return [sxs, sys];
++        }
++        catch {
++            const sxs = new ScreenArray(nx);
++            sxs.fill(Number.NaN);
++            const sys = new ScreenArray(ny);
++            sys.fill(Number.NaN);
++            return [sxs, sys];
++        }
+     }
+     map_from_screen(sxs, sys) {
+-        const xs = this.x_scale.v_invert(sxs);
+-        const ys = this.y_scale.v_invert(sys);
+-        return [xs, ys];
++        const nx = sxs.length;
++        const ny = sys.length;
++        try {
++            if (this.x_scale == null || this.y_scale == null) {
++                throw new Error("missing scale");
++            }
++            const xs = this.x_scale.v_invert(sxs);
++            const ys = this.y_scale.v_invert(sys);
++            return [xs, ys];
++        }
++        catch {
++            const xs = new Float64Array(nx);
++            xs.fill(Number.NaN);
++            const ys = new Float64Array(ny);
++            ys.fill(Number.NaN);
++            return [xs, ys];
++        }
+     }
+ }
+ export class CoordinateMapping extends Model {
 diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/grids/grid.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/grids/grid.js
 index c946ebe..53de93d 100644
 --- a/node_modules/@bokeh/bokehjs/build/js/lib/models/grids/grid.js
@@ -42,6 +301,96 @@ index c946ebe..53de93d 100644
          const [start, end] = (() => {
              const [start, end] = this.computed_bounds();
              return [Math.min(start, end), Math.max(start, end)];
+diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/categorical_scale.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/categorical_scale.js
+index 4dcd1f2..12b9f6d 100644
+--- a/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/categorical_scale.js
++++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/categorical_scale.js
+@@ -10,10 +10,16 @@ export class CategoricalScale extends Scale {
+     get s_compute() {
+         const [factor, offset] = _linear_compute_state.call(this);
+         const range = this.source_range;
++        if (range == null || typeof range.synthetic !== "function") {
++            return () => Number.NaN;
++        }
+         return (x) => factor * range.synthetic(x) + offset;
+     }
+     get s_invert() {
+         const [factor, offset] = _linear_compute_state.call(this);
++        if (!Number.isFinite(factor) || factor === 0 || this.source_range == null) {
++            return () => Number.NaN;
++        }
+         return (sx) => (sx - offset) / factor;
+     }
+ }
+diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/composite_scale.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/composite_scale.js
+index f7bcfbd..2355ebb 100644
+--- a/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/composite_scale.js
++++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/composite_scale.js
+@@ -1,4 +1,5 @@
+ import { Scale } from "../scales/scale";
++import { ScreenArray } from "../../core/types";
+ import { map } from "../../core/util/arrayable";
+ export class CompositeScale extends Scale {
+     static __name__ = "CompositeScale";
+@@ -12,26 +13,54 @@ export class CompositeScale extends Scale {
+         }));
+     }
+     get s_compute() {
+-        const source_compute = this.source_scale.s_compute;
+-        const target_compute = this.target_scale.s_compute;
++        const ss = this.source_scale;
++        const ts = this.target_scale;
++        if (ss == null || ts == null) {
++            return () => Number.NaN;
++        }
++        const source_compute = ss.s_compute;
++        const target_compute = ts.s_compute;
+         return (x) => target_compute(source_compute(x));
+     }
+     get s_invert() {
+-        const source_invert = this.source_scale.s_invert;
+-        const target_invert = this.target_scale.s_invert;
++        const ss = this.source_scale;
++        const ts = this.target_scale;
++        if (ss == null || ts == null) {
++            return () => Number.NaN;
++        }
++        const source_invert = ss.s_invert;
++        const target_invert = ts.s_invert;
+         return (sx) => source_invert(target_invert(sx));
+     }
+     compute(x) {
++        if (this.source_scale == null || this.target_scale == null) {
++            return Number.NaN;
++        }
+         return this.s_compute(x);
+     }
+     v_compute(xs) {
++        if (this.source_scale == null || this.target_scale == null) {
++            const n = xs.length;
++            const result = new ScreenArray(n);
++            result.fill(Number.NaN);
++            return result;
++        }
+         const { s_compute } = this;
+         return map(xs, s_compute); // XXX
+     }
+     invert(sx) {
++        if (this.source_scale == null || this.target_scale == null) {
++            return Number.NaN;
++        }
+         return this.s_invert(sx);
+     }
+     v_invert(sxs) {
++        if (this.source_scale == null || this.target_scale == null) {
++            const n = sxs.length;
++            const result = new Float64Array(n);
++            result.fill(Number.NaN);
++            return result;
++        }
+         const { s_invert } = this;
+         return map(sxs, s_invert); // XXX
+     }
 diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/linear_scale.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/linear_scale.js
 index afcfbd9..3c9c86e 100644
 --- a/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/linear_scale.js
@@ -91,10 +440,48 @@ index 30406db..42428cd 100644
          const [start, end] = this._get_safe_factor(source_start, source_end);
          let inter_factor;
 diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/scale.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/scale.js
-index aa4ed59..6f327d3 100644
+index aa4ed59..d6754b8 100644
 --- a/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/scale.js
 +++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/scales/scale.js
-@@ -39,6 +39,9 @@ export class Scale extends Transform {
+@@ -14,11 +14,18 @@ export class Scale extends Transform {
+         }));
+     }
+     compute(x) {
++        if (this.source_range == null || this.target_range == null) {
++            return Number.NaN;
++        }
+         return this.s_compute(x);
+     }
+     v_compute(xs) {
+         const n = xs.length;
+         const result = new ScreenArray(n);
++        if (this.source_range == null || this.target_range == null) {
++            result.fill(Number.NaN);
++            return result;
++        }
+         const { s_compute } = this;
+         for (let i = 0; i < n; i++) {
+             result[i] = s_compute(xs[i]);
+@@ -26,11 +33,18 @@ export class Scale extends Transform {
+         return result;
+     }
+     invert(sx) {
++        if (this.source_range == null || this.target_range == null) {
++            return Number.NaN;
++        }
+         return this.s_invert(sx);
+     }
+     v_invert(sxs) {
+         const n = sxs.length;
+         const result = new Float64Array(n);
++        if (this.source_range == null || this.target_range == null) {
++            result.fill(Number.NaN);
++            return result;
++        }
+         const { s_invert } = this;
+         for (let i = 0; i < n; i++) {
+             result[i] = s_invert(sxs[i]);
+@@ -39,6 +53,9 @@ export class Scale extends Transform {
      }
      r_compute(x0, x1) {
          const { s_compute } = this;
@@ -104,7 +491,7 @@ index aa4ed59..6f327d3 100644
          if (this.target_range.is_reversed) {
              return [s_compute(x1), s_compute(x0)];
          }
-@@ -48,6 +51,9 @@ export class Scale extends Transform {
+@@ -48,6 +65,9 @@ export class Scale extends Transform {
      }
      r_invert(sx0, sx1) {
          const { s_invert } = this;
@@ -113,4 +500,54 @@ index aa4ed59..6f327d3 100644
 +        }
          if (this.target_range.is_reversed) {
              return [s_invert(sx1), s_invert(sx0)];
+         }
+diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/tickers/categorical_ticker.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/tickers/categorical_ticker.js
+index 1e1307b..0cc46d6 100644
+--- a/node_modules/@bokeh/bokehjs/build/js/lib/models/tickers/categorical_ticker.js
++++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/tickers/categorical_ticker.js
+@@ -5,12 +5,18 @@ export class CategoricalTicker extends Ticker {
+         super(attrs);
+     }
+     get_ticks(start, end, range, _cross_loc) {
++        if (range == null) {
++            return { major: [], minor: [], tops: [], mids: [] };
++        }
+         const majors = this._collect(range.factors, range, start, end);
+         const tops = this._collect(range.mapper.tops ?? [], range, start, end);
+         const mids = this._collect(range.mapper.mids ?? [], range, start, end);
+         return { major: majors, minor: [], tops, mids };
+     }
+     _collect(factors, range, start, end) {
++        if (range == null || typeof range.synthetic !== "function") {
++            return [];
++        }
+         const result = [];
+         for (const factor of factors) {
+             const coord = range.synthetic(factor);
+diff --git a/node_modules/@bokeh/bokehjs/build/js/lib/models/transforms/range_transform.js b/node_modules/@bokeh/bokehjs/build/js/lib/models/transforms/range_transform.js
+index 1620abc..b7d40dc 100644
+--- a/node_modules/@bokeh/bokehjs/build/js/lib/models/transforms/range_transform.js
++++ b/node_modules/@bokeh/bokehjs/build/js/lib/models/transforms/range_transform.js
+@@ -15,6 +15,12 @@ export class RangeTransform extends Transform {
+         }));
+     }
+     v_compute(xs0) {
++        if (this.range == null) {
++            const n = xs0.length;
++            const result = new (infer_type(xs0))(n);
++            result.fill(Number.NaN);
++            return result;
++        }
+         let xs;
+         if (this.range instanceof FactorRange) {
+             xs = this.range.v_synthetic(xs0);
+@@ -33,6 +39,9 @@ export class RangeTransform extends Transform {
+         return result;
+     }
+     compute(x) {
++        if (this.range == null) {
++            return Number.NaN;
++        }
+         if (this.range instanceof FactorRange) {
+             return this._compute(this.range.synthetic(x));
          }

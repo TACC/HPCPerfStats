@@ -11,7 +11,28 @@ globs:
 
 # Bokeh version sync and vendor patch (`patch-package`)
 
-The SPA vendors **`@bokeh/bokehjs`** with a **local `patch-package` patch** (under `hpcperfstats/site/frontend/patches/`) that (1) null-guards **`AxisView.is_renderable`** when axis **`ranges`** are not yet wired—avoiding `is_valid` on `undefined` during early layout / `ResizeObserver` timing—and (2) null-guards **`GridView`** `computed_bounds` / **`grid_coords`** when **`range`** or **`cross_range`** is missing—avoiding **`min` on `undefined`** while grids paint before coordinates finish wiring (e.g. job-list queue vbar with **y** grid still enabled)—and (3) null-guards **`LinearScale`** / **`LogScale`** / base **`Scale`** `r_*` when **`source_range`** or **`target_range`** is missing—avoiding **`start` on `undefined`** during early **`map_to_screen`**. Treat this as a **vendor workaround** until Bokeh ships an upstream fix; consider filing or linking a Bokeh issue when touching the patch.
+The SPA vendors **`@bokeh/bokehjs`** with a **local `patch-package` patch** (under `hpcperfstats/site/frontend/patches/`) that adds **layered null guards** for deferred embed/layout frames: scales (`compute` / `v_*` / `r_*`, categorical `synthetic` closures, composite scales), axes (renderability, bounds, ticks, `loc`, label drawing), grids, coordinate transforms, tickers, and a few transform/annotation call sites. Treat this as a **vendor workaround** until Bokeh ships an upstream fix; consider filing or linking a Bokeh issue when touching the patch.
+
+## Patch inventory (`build/js/lib/models/…`)
+
+Re-diff these paths on every `@bokeh/bokehjs` bump; names are relative to `node_modules/@bokeh/bokehjs/build/js/lib/models/`.
+
+| File | Responsibility |
+|------|----------------|
+| `scales/scale.js` | If `source_range` / `target_range` missing: `compute` / `invert` → `NaN`; `v_compute` → `ScreenArray` of `NaN`; `v_invert` → `Float64Array` of `NaN`; `r_compute` / `r_invert` unchanged guards |
+| `scales/linear_scale.js` | `_linear_compute_state`: missing ranges → `[NaN, NaN]` |
+| `scales/log_scale.js` | `_compute_state`: missing ranges → degenerate tuple |
+| `scales/categorical_scale.js` | `s_compute` / `s_invert`: no `source_range` or no `synthetic` / bad factor → safe closures returning `NaN` |
+| `scales/composite_scale.js` | Missing `source_scale` / `target_scale`: safe getters and `compute` / `v_compute` / `invert` / `v_invert` |
+| `coordinates/coordinate_mapping.js` | `CoordinateTransform.map_to_screen` / `map_from_screen`: try/catch + missing scales → NaN-filled arrays |
+| `axes/axis.js` | `is_renderable`; `computed_bounds` / `rule_coords` / `tick_coords`; `loc` (`cross_range` + `FactorRange.synthetic`); `_draw_axis_label`; `_draw_oriented_labels` (`is_reversed`) |
+| `axes/categorical_axis.js` | `_hit_value`, `_draw_group_separators`, `_get_factor_info`, `tick_coords` when `range` missing |
+| `axes/continuous_axis.js` | `_hit_value` when `range` missing |
+| `axes/log_axis.js` | `_hit_value` when `range` missing |
+| `tickers/categorical_ticker.js` | `get_ticks` / `_collect` when `range` or `synthetic` missing |
+| `grids/grid.js` | `computed_bounds` / `grid_coords` when `range` / `cross_range` missing |
+| `transforms/range_transform.js` | `compute` / `v_compute` when `range` is null |
+| `annotations/box_annotation.js` | `_synthetic_lrtb`: only call `synthetic` when source has a function |
 
 ## Vendor patch re-diff law (mandatory)
 
