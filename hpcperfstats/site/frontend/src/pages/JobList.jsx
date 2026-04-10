@@ -269,11 +269,11 @@ export default function JobList() {
     { label: "end time", field: "end_time", sortable: true },
     { label: "run time (s)", field: "runtime", sortable: true },
     { label: "queue", field: "queue", sortable: true },
-    { label: "name", field: "jobname", sortable: false },
     { label: "status", field: "state", sortable: true },
     { label: "cores", field: "ncores", sortable: true },
     { label: "nodes", field: "nhosts", sortable: true },
     { label: "node hrs", field: "node_hrs", sortable: true },
+    { label: "name", field: "jobname", sortable: false },
   ];
 
   const pageSummary = jobListPageHumanSummary(paramsFromRoute);
@@ -539,11 +539,11 @@ export default function JobList() {
                   ""
                 )}
               </td>
-              <td>{job.jobname}</td>
               <td>{job.state}</td>
               <td>{formatDecimalStandard(job.ncores)}</td>
               <td>{formatDecimalStandard(job.nhosts)}</td>
               <td>{formatDecimalStandard(job.node_hrs)}</td>
+              <td>{job.jobname}</td>
             </tr>
           ))}
         </tbody>

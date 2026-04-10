@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import { axeSeriousViolations } from "../axe-test-utils";
@@ -99,6 +99,8 @@ describe("JobList", () => {
     expect(screen.getByRole("link", { name: /jump to histograms/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /continue to job table/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Performance Data" })).toBeInTheDocument();
+    const tableHeaders = within(screen.getByRole("table")).getAllByRole("columnheader");
+    expect(tableHeaders[tableHeaders.length - 1].textContent.trim()).toBe("name");
     expect(screen.getByText("job1")).toBeInTheDocument();
     expect(screen.getByText("COMPLETED")).toBeInTheDocument();
     expect(screen.getByText("Summary available")).toBeInTheDocument();
