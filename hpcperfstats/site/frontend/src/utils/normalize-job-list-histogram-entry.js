@@ -5,24 +5,34 @@
  * @param {string} [fallbackTitle] - metric name when API omits title (metric group)
  * @returns {{ title: string, plot_item_thumb: unknown, plot_item_full: unknown, plot_unavailable_reason: string|null }|null}
  */
+function addRootId(ids, raw) {
+  if (typeof raw === "string" && raw.trim().length > 0) {
+    ids.add(raw.trim());
+    return;
+  }
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    ids.add(String(raw));
+  }
+}
+
 function collectBokehDocRootIds(doc) {
   const ids = new Set();
   const roots = doc?.roots;
   if (Array.isArray(roots)) {
     roots.forEach((root) => {
-      const id = root?.id;
-      if (typeof id === "string" && id.trim().length > 0) ids.add(id.trim());
+      if (typeof root === "string") {
+        addRootId(ids, root);
+        return;
+      }
+      addRootId(ids, root?.id);
     });
   } else if (roots && typeof roots === "object") {
     if (Array.isArray(roots.root_ids)) {
-      roots.root_ids.forEach((id) => {
-        if (typeof id === "string" && id.trim().length > 0) ids.add(id.trim());
-      });
+      roots.root_ids.forEach((id) => addRootId(ids, id));
     }
     if (Array.isArray(roots.references)) {
       roots.references.forEach((ref) => {
-        const id = ref?.id;
-        if (typeof id === "string" && id.trim().length > 0) ids.add(id.trim());
+        addRootId(ids, ref?.id);
       });
     }
   }
@@ -32,13 +42,23 @@ function collectBokehDocRootIds(doc) {
 function hasDeclaredRootInDoc(value) {
   const docRootIds = collectBokehDocRootIds(value.doc);
   if (docRootIds.size === 0) return false;
-  if (typeof value.root_id === "string" && value.root_id.trim().length > 0) {
-    return docRootIds.has(value.root_id.trim());
+  const rid = value.root_id;
+  if (typeof rid === "string" && rid.trim().length > 0) {
+    return docRootIds.has(rid.trim());
+  }
+  if (typeof rid === "number" && Number.isFinite(rid)) {
+    return docRootIds.has(String(rid));
   }
   if (!Array.isArray(value.root_ids) || value.root_ids.length === 0) return false;
-  return value.root_ids.every(
-    (id) => typeof id === "string" && id.trim().length > 0 && docRootIds.has(id.trim()),
-  );
+  return value.root_ids.every((id) => {
+    const key =
+      typeof id === "string"
+        ? id.trim()
+        : typeof id === "number" && Number.isFinite(id)
+          ? String(id)
+          : "";
+    return key.length > 0 && docRootIds.has(key);
+  });
 }
 
 function isValidBokehJsonItem(value) {

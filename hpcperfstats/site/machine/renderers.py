@@ -16,6 +16,10 @@ def sanitize_for_json(obj):
         return {k: sanitize_for_json(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [sanitize_for_json(item) for item in obj]
+    if isinstance(obj, tuple):
+        # Bokeh ColumnDataSource map ``entries`` are often list-of-tuples; some
+        # encoders mishandle tuples vs lists. Normalize to lists for JSON output.
+        return [sanitize_for_json(item) for item in obj]
     if isinstance(obj, float):
         return _sanitize_float(obj)
     return obj

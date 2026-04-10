@@ -169,6 +169,25 @@ def test_metric_group_null_plot_items_when_job_hist_returns_none():
     )
 
 
+def test_build_histogram_queryset_matches_job_list_annotate_all():
+    """Histograms must use the same queryset annotations as job_list (visibility + performance)."""
+    from hpcperfstats.site.machine import api as api_module
+    from hpcperfstats.site.machine.api import _build_histogram_queryset
+
+    factory = RequestFactory()
+    request = factory.get("/api/jobs/histograms/", {"group": "queue"})
+
+    with patch.object(
+        api_module,
+        "_build_job_list_queryset_from_request",
+        return_value=(MagicMock(), {}, {}, "-end_time"),
+    ) as mock_build:
+        _build_histogram_queryset(request)
+
+    _args, kwargs = mock_build.call_args
+    assert kwargs.get("annotate_all") is True
+
+
 def test_queue_group_with_jobs_does_not_call_build_histogram_dataframe():
     """group=queue only needs the job queryset, not the histogram dataframe."""
     from hpcperfstats.site.machine import api as api_module

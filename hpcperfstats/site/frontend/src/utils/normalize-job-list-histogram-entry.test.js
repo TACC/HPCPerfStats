@@ -47,6 +47,20 @@ describe("normalizeJobListHistogramEntry", () => {
     expect(row.plot_unavailable_reason).toContain("invalid");
   });
 
+  it("accepts doc.roots as list of root id strings (alternate Bokeh wire shape)", () => {
+    const thumb = {
+      doc: { roots: ["p2001"] },
+      root_id: "p2001",
+    };
+    const row = normalizeJobListHistogramEntry({
+      title: "Jobs by queue",
+      plot_item_thumb: thumb,
+      plot_item_full: thumb,
+    });
+    expect(row.plot_item_thumb).toBe(thumb);
+    expect(row.plot_unavailable_reason).toBeNull();
+  });
+
   it("accepts Bokeh 3 json_item shape with root_id", () => {
     const bokeh3Thumb = {
       doc: { roots: [{ id: "p1001" }] },

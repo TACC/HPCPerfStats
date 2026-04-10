@@ -1276,7 +1276,7 @@ def _build_histogram_queryset(request):
         job_list_qs, fields, cur_metrics, _ = _build_job_list_queryset_from_request(
             request,
             extra_excluded_fields=_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM,
-            annotate_all=False,
+            annotate_all=True,
         )
         nj = job_list_qs.count()
         return job_list_qs, nj, fields, cur_metrics
@@ -1367,7 +1367,7 @@ def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="job
         if metric == "jobs":
             rows = list(
                 job_list_qs.values("queue")
-                .annotate(_bar_top=Count("jid"))
+                .annotate(_bar_top=Count("jid", distinct=True))
                 .order_by("-_bar_top")
                 .values_list("queue", "_bar_top")
             )
@@ -1441,21 +1441,30 @@ def _extract_bokeh_doc_root_ids(doc):
     roots = doc.get("roots")
     if isinstance(roots, list):
         for root in roots:
+            if isinstance(root, str) and root.strip():
+                ids.add(root.strip())
+                continue
             if isinstance(root, dict):
                 rid = root.get("id")
                 if isinstance(rid, str) and rid.strip():
                     ids.add(rid.strip())
+                elif isinstance(rid, int):
+                    ids.add(str(rid))
         return ids
     if not isinstance(roots, dict):
         return ids
     for rid in roots.get("root_ids", []) or []:
         if isinstance(rid, str) and rid.strip():
             ids.add(rid.strip())
+        elif isinstance(rid, int):
+            ids.add(str(rid))
     for ref in roots.get("references", []) or []:
         if isinstance(ref, dict):
             rid = ref.get("id")
             if isinstance(rid, str) and rid.strip():
                 ids.add(rid.strip())
+            elif isinstance(rid, int):
+                ids.add(str(rid))
     return ids
 
 
@@ -1472,11 +1481,14 @@ def _is_valid_bokeh_json_item_payload(payload):
     root_id = payload.get("root_id")
     if isinstance(root_id, str) and root_id.strip():
         return root_id.strip() in doc_root_ids
+    if isinstance(root_id, int):
+        return str(root_id) in doc_root_ids
     root_ids = payload.get("root_ids")
     if not isinstance(root_ids, list) or not root_ids:
         return False
     for rid in root_ids:
-        if not isinstance(rid, str) or not rid.strip() or rid.strip() not in doc_root_ids:
+        key = rid.strip() if isinstance(rid, str) else (str(rid) if isinstance(rid, int) else "")
+        if not key or key not in doc_root_ids:
             return False
     return True
 
