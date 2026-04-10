@@ -1345,7 +1345,7 @@ def _merge_queue_bar_rows(rows, *, metric):
     if metric == "jobs":
         acc = defaultdict(int)
         for q, c in rows:
-            acc[_queue_histogram_display_label(q)] += int(c)
+            acc[_queue_histogram_display_label(q)] += int(c or 0)
     elif metric == "node_hours":
         acc = defaultdict(float)
         for q, v in rows:
@@ -1385,8 +1385,9 @@ def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="job
         if not rows:
             return None
         merged = _merge_queue_bar_rows(rows, metric=metric)
-        queue_names = [q for q, _ in merged]
-        tops = [v for _, v in merged]
+        # BokehJS categorical coords must be strings; tops must be plain floats for JSON/embed.
+        queue_names = [str(q) for q, _ in merged]
+        tops = [float(v) for _, v in merged]
         source = ColumnDataSource(dict(x=queue_names, top=tops))
         max_top = max(tops) if tops else 0.0
         # Explicit y_range: auto-ranging yields NaN / zero span for all-zero or
@@ -1402,7 +1403,15 @@ def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="job
             width=width,
             title=title,
         )
-        p.vbar(x="x", top="top", source=source, width=0.7)
+        p.vbar(
+            x="x",
+            top="top",
+            bottom=0,
+            width=0.7,
+            source=source,
+            fill_color="#3182bd",
+            line_color="#225ea8",
+        )
         p.xaxis.axis_label = "queue"
         p.yaxis.axis_label = y_label
         p.xgrid.visible = False

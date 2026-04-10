@@ -16,4 +16,4 @@ export const API_PATHS = {
 
 // Bump when histogram embed safety behavior changes so cached API responses
 // with older Bokeh json_item payloads are bypassed.
-export const HISTOGRAM_EMBED_VERSION = "5";
+export const HISTOGRAM_EMBED_VERSION = "6";

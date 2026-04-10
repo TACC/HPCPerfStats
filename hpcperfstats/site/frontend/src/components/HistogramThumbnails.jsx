@@ -136,6 +136,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
             id={fullId}
             plotName={title}
             unavailableReason={unavailableReason}
+            deferEmbedUntilVisible={false}
             intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
           />
         </div>
@@ -152,7 +153,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
         tabIndex={0}
         aria-label={`${title}: enlarge chart (click, Enter, or Space to open or close)`}
         aria-expanded={expanded}
-        className="histogram-thumbnail"
+        className="histogram-thumbnail histogram-thumbnail-shell"
         style={{
           width: THUMB_SIZE.width,
           height: THUMB_SIZE.height,
@@ -171,6 +172,8 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
           plotName={title}
           unavailableReason={unavailableReason}
           embedMinHeightPx={THUMB_SIZE.height}
+          deferEmbedUntilVisible={false}
+          wrapperClassName="histogram-thumbnail-bokeh"
           intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
         />
       </div>
@@ -218,6 +221,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
                 id={fullId}
                 plotName={`${title} (full)`}
                 unavailableReason={unavailableReason}
+                deferEmbedUntilVisible={false}
                 intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
               />
             )}

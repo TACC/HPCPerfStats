@@ -96,12 +96,12 @@ describe("api client", () => {
     const queueUrl = fetch.mock.calls[0][0];
     expect(queueUrl).toContain("/api/jobs/histograms/");
     expect(queueUrl).toContain("group=queue");
-    expect(queueUrl).toContain("_histogram_embed_v=5");
+    expect(queueUrl).toContain("_histogram_embed_v=6");
 
     await api.getJobMetricHistogram({ queue: "normal" }, "runtime");
     const metricUrl = fetch.mock.calls[1][0];
     expect(metricUrl).toContain("group=metric");
     expect(metricUrl).toContain("metric=runtime");
-    expect(metricUrl).toContain("_histogram_embed_v=5");
+    expect(metricUrl).toContain("_histogram_embed_v=6");
   });
 });

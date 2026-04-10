@@ -375,6 +375,17 @@ body {
   max-width: 280px;
 }
 
+/* Job list thumb: fill fixed-height box so Bokeh measures a non-zero slot (flex + IO defer off). */
+.histogram-thumbnail-shell {
+  display: flex;
+  flex-direction: column;
+}
+.histogram-thumbnail-shell .histogram-thumbnail-bokeh {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
 /* Browse home + job list (narrow): tab row sticks to viewport top while scrolling */
 .search-browse-tabs,
 .job-list-view-tabs {
