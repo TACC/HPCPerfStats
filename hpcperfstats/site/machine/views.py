@@ -61,14 +61,14 @@ def job_hist(df, metric, label, width=600, height=400, title=None):
 
     hist, edges = histogram(values, bins=bins)
 
-    y_min = 1.0
-    y_max = float(np.max(hist)) if len(hist) > 0 else 1.0
-    if y_max < y_min:
-        y_max = y_min
-    # Bokeh 3.9: zero-span Range1d (e.g. max count 1 with y_min==1) triggers
-    # "could not set initial ranges" and broken FigureView layout in the SPA.
+    # y starts at 0 so bins with count 0 are degenerate quads (height 0), not
+    # inverted quads (top < bottom). bottom=1 with top=0 broke BokehJS 3.9 embed:
+    # blank canvas, often no console error.
+    hist_max = float(np.max(hist)) if len(hist) > 0 else 0.0
+    y_min = 0.0
+    y_max = (hist_max * 1.05) if hist_max > 0 else 1.0
     if y_max <= y_min:
-        y_max = y_min + 1.0
+        y_max = 1.0
 
     plot = new_spa_embedded_figure(
         title=title if title is not None else metric,
@@ -78,6 +78,6 @@ def job_hist(df, metric, label, width=600, height=400, title=None):
     )
     plot.xaxis.axis_label = label
     plot.yaxis.axis_label = "# jobs"
-    plot.quad(top=hist, bottom=1, left=edges[:-1], right=edges[1:])
+    plot.quad(top=hist, bottom=0, left=edges[:-1], right=edges[1:])
 
     return plot

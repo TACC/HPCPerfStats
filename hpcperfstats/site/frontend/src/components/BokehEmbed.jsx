@@ -87,6 +87,17 @@ function withBokehEmbedLock(run) {
   return next;
 }
 
+/** Bokeh 3.9 sometimes leaves categorical/linear figures unpainted until a resize/layout pass. */
+function scheduleBokehLayoutReflow() {
+  if (typeof window === "undefined") return;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      window.dispatchEvent(new Event("resize"));
+      window.setTimeout(() => window.dispatchEvent(new Event("resize")), 72);
+    });
+  });
+}
+
 function isEmbedTargetRenderable(el) {
   if (!el?.isConnected) return false;
   if (typeof import.meta !== "undefined" && import.meta.env?.VITEST) {
@@ -424,6 +435,7 @@ export default function BokehEmbed({
                       if (onPlotReadyChange) onPlotReadyChange(false);
                       return;
                     }
+                    scheduleBokehLayoutReflow();
                     if (maximizeMode) maximizeEmbeddedPlot(id, maximizeMode);
                     setPlotReady(true);
                     if (onPlotReadyChange) onPlotReadyChange(true);

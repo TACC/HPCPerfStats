@@ -13,6 +13,7 @@ def new_spa_embedded_figure(*, width, height, title=None, **kwargs):
         title=title,
         toolbar_location=None,
         tools=[],
+        output_backend="canvas",
         **kwargs,
     )
     set_linear_axes_plain_numeric(plot)

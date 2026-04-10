@@ -20,6 +20,19 @@ def _assert_positive_y_span(plot):
     assert end > start, f"degenerate y_range: ({start}, {end})"
 
 
+def test_job_hist_empty_bins_do_not_use_inverted_quads():
+    """Bins with count 0 must not use top < bottom (Bokeh 3.9 blank embed)."""
+    from hpcperfstats.site.machine.views import job_hist
+
+    df = pd.DataFrame({"runtime": [0.0, 0.0, 0.0, 100.0, 100.0, 100.0]})
+    plot = job_hist(df, "runtime", "hours", width=280, height=200)
+    assert plot is not None
+    tops = plot.renderers[0].data_source.data["top"]
+    assert min(float(x) for x in tops) == 0.0
+    assert max(float(x) for x in tops) >= 1.0
+    assert float(plot.renderers[0].glyph.bottom) == 0.0
+
+
 def test_job_hist_y_range_strictly_positive_when_max_bin_count_is_one():
     """Single finite value → max histogram count 1; y_range must not be (1, 1)."""
     from hpcperfstats.site.machine.views import job_hist

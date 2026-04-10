@@ -381,9 +381,17 @@ body {
   flex-direction: column;
 }
 .histogram-thumbnail-shell .histogram-thumbnail-bokeh {
-  flex: 1;
-  min-height: 0;
+  /* Avoid flex min-height:0 shrinking the plot slot to an unpaintable box */
+  flex: 1 1 auto;
+  align-self: stretch;
   width: 100%;
+  min-height: 1px;
+}
+.histogram-thumbnail-shell .bokeh-embed {
+  flex: 1 1 auto;
+  min-height: 180px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* Browse home + job list (narrow): tab row sticks to viewport top while scrolling */

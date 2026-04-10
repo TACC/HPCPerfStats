@@ -7,6 +7,15 @@ function renderBokehEmbed(ui, session = null) {
   return render(<SessionContext.Provider value={session}>{ui}</SessionContext.Provider>);
 }
 
+/** Minimal embed_item return value so document-idle / fallback timing matches production Bokeh. */
+function embedViewsWithIdleDoc() {
+  const doc = {
+    is_idle: true,
+    idle: { connect: vi.fn(), disconnect: vi.fn() },
+  };
+  return { roots: [{ model: { document: doc } }] };
+}
+
 describe("BokehEmbed", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -73,7 +82,7 @@ describe("BokehEmbed", () => {
   });
 
   it("uses embedMinHeightPx for plot slot minHeight while placeholder is shown", async () => {
-    const embedItem = vi.fn(() => Promise.resolve());
+    const embedItem = vi.fn(() => Promise.resolve(embedViewsWithIdleDoc()));
     window.Bokeh = { embed: { embed_item: embedItem } };
 
     const item = { doc: {}, root_ids: ["r1"] };
@@ -187,7 +196,7 @@ describe("BokehEmbed", () => {
 
   it("subscribes to window resize after a width-maximized embed becomes ready", async () => {
     const addSpy = vi.spyOn(window, "addEventListener");
-    const embedItem = vi.fn(() => Promise.resolve());
+    const embedItem = vi.fn(() => Promise.resolve(embedViewsWithIdleDoc()));
     window.Bokeh = { embed: { embed_item: embedItem } };
 
     renderBokehEmbed(
@@ -217,7 +226,7 @@ describe("BokehEmbed", () => {
     }
     vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
-    const embedItem = vi.fn(() => Promise.resolve());
+    const embedItem = vi.fn(() => Promise.resolve(embedViewsWithIdleDoc()));
     window.Bokeh = { embed: { embed_item: embedItem } };
 
     try {
@@ -250,6 +259,7 @@ describe("BokehEmbed", () => {
         setTimeout(r, 8);
       });
       concurrent -= 1;
+      return embedViewsWithIdleDoc();
     });
     window.Bokeh = { embed: { embed_item: embedItem } };
     const item = { doc: {}, root_ids: ["r1"] };
