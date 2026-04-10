@@ -28,74 +28,74 @@ class TestSummarizePerformance:
         assert out["label"] == "Summary available"
         assert "Summary available" in out["aria_label"]
 
-    def test_rank_1_monitoring_gaps(self):
+    def test_rank_2_monitoring_gaps(self):
         out = summarize_performance(
             has_metrics_row=True,
             metrics_value_count=0,
             distinct_time_count=MONITORING_GAPS_MIN_DISTINCT_TIMES,
             runtime=3600.0,
         )
-        assert out["sort_rank"] == 1
+        assert out["sort_rank"] == 2
         assert out["tone"] == "info"
         assert out["label"] == "Monitoring gaps"
 
-    def test_rank_2_few_distinct_times(self):
+    def test_rank_3_few_distinct_times(self):
         out = summarize_performance(
             has_metrics_row=True,
             metrics_value_count=0,
             distinct_time_count=MONITORING_GAPS_MIN_DISTINCT_TIMES - 1,
             runtime=3600.0,
         )
-        assert out["sort_rank"] == 2
+        assert out["sort_rank"] == 3
         assert out["tone"] == "warning"
 
-    def test_rank_3_zero_distinct_times(self):
+    def test_rank_4_zero_distinct_times(self):
         out = summarize_performance(
             has_metrics_row=True,
             metrics_value_count=0,
             distinct_time_count=0,
             runtime=3600.0,
         )
-        assert out["sort_rank"] == 3
+        assert out["sort_rank"] == 4
 
-    def test_rank_3_null_distinct_times(self):
+    def test_rank_4_null_distinct_times(self):
         out = summarize_performance(
             has_metrics_row=True,
             metrics_value_count=0,
             distinct_time_count=None,
             runtime=3600.0,
         )
-        assert out["sort_rank"] == 3
+        assert out["sort_rank"] == 4
         assert out["label"] == "Not enough samples to summarize"
 
-    def test_rank_4_no_rows_short_runtime_label(self):
+    def test_rank_5_no_rows_short_runtime_label(self):
         out = summarize_performance(
             has_metrics_row=False,
             metrics_value_count=0,
             distinct_time_count=None,
             runtime=SHORT_RUNTIME_NO_METRICS_SECONDS - 1,
         )
-        assert out["sort_rank"] == 4
+        assert out["sort_rank"] == 5
         assert out["label"] == "Too short to measure"
 
-    def test_rank_4_no_rows_default_label(self):
+    def test_rank_1_no_rows_default_label(self):
         out = summarize_performance(
             has_metrics_row=False,
             metrics_value_count=0,
             distinct_time_count=None,
             runtime=SHORT_RUNTIME_NO_METRICS_SECONDS,
         )
-        assert out["sort_rank"] == 4
+        assert out["sort_rank"] == 1
         assert out["label"] == "Not summarized yet"
 
-    def test_rank_4_no_rows_null_runtime(self):
+    def test_rank_1_no_rows_null_runtime(self):
         out = summarize_performance(
             has_metrics_row=False,
             metrics_value_count=0,
             distinct_time_count=None,
             runtime=None,
         )
-        assert out["sort_rank"] == 4
+        assert out["sort_rank"] == 1
         assert out["label"] == "Not summarized yet"
 
 
@@ -159,7 +159,7 @@ class TestAnnotateJobListPerformanceFields:
         qs = annotate_job_list_performance_fields(
             job_data.objects.filter(jid__in=["ord0", "ord4a", "ord1"])
         ).order_by("performance_sort_rank", "jid")
-        assert [j.jid for j in qs] == ["ord0", "ord1", "ord4a"]
+        assert [j.jid for j in qs] == ["ord0", "ord4a", "ord1"]
 
     def test_order_by_performance_sort_rank_descending(self):
         j0 = self._create_job("des0", dtc=10)
@@ -170,6 +170,33 @@ class TestAnnotateJobListPerformanceFields:
             job_data.objects.filter(jid__in=["des0", "des4a"])
         ).order_by("-performance_sort_rank", "jid")
         assert [j.jid for j in qs] == ["des4a", "des0"]
+
+    def test_order_by_performance_sort_rank_full_product_sequence(self):
+        """Ascending rank matches: summary, not summarized, gaps, few samples, not enough, too short."""
+        j0 = self._create_job("full0", dtc=1)
+        metrics_data.objects.create(jid=j0, type="t", metric="m0", units="u", value=1.0)
+        self._create_job("full1", dtc=None, runtime=500.0)
+        j2 = self._create_job("full2", dtc=MONITORING_GAPS_MIN_DISTINCT_TIMES)
+        metrics_data.objects.create(jid=j2, type="t", metric="m2", units="u", value=None)
+        j3 = self._create_job("full3", dtc=2)
+        metrics_data.objects.create(jid=j3, type="t", metric="m3", units="u", value=None)
+        j4 = self._create_job("full4", dtc=0)
+        metrics_data.objects.create(jid=j4, type="t", metric="m4", units="u", value=None)
+        self._create_job("full5", dtc=None, runtime=SHORT_RUNTIME_NO_METRICS_SECONDS - 1)
+
+        qs = annotate_job_list_performance_fields(
+            job_data.objects.filter(
+                jid__in=["full0", "full1", "full2", "full3", "full4", "full5"]
+            )
+        ).order_by("performance_sort_rank", "jid")
+        assert [j.jid for j in qs] == [
+            "full0",
+            "full1",
+            "full2",
+            "full3",
+            "full4",
+            "full5",
+        ]
 
 
 @pytest.mark.django_db

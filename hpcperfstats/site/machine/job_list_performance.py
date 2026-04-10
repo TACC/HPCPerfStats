@@ -1,11 +1,12 @@
 """Job list performance column: classify metrics coverage for display and sort order.
 
-sort_rank semantics (ascending order_by = best first, then increasing severity):
-  0 — At least one metrics_data row with non-null value.
-  1 — Rows exist, all values null, metrics_distinct_time_count >= 5 (monitoring gaps).
-  2 — Rows exist, all values null, 0 < metrics_distinct_time_count < 5.
-  3 — Rows exist, all values null, metrics_distinct_time_count is NULL or <= 0.
-  4 — No metrics_data rows (optionally labeled for very short runtime).
+sort_rank semantics (ascending ``order_by("performance_sort_rank")`` matches product sort):
+  0 — Summary available (at least one metrics_data row with non-null value).
+  1 — Not summarized yet (no metrics_data rows; runtime null or >= SHORT threshold).
+  2 — Monitoring gaps (rows exist, all values null, distinct_time_count >= 5).
+  3 — Job too short or too few samples (rows, all null, 0 < distinct_time_count < 5).
+  4 — Not enough samples to summarize (rows, all null, distinct_time_count null or <= 0).
+  5 — Too short to measure (no metrics_data rows; runtime < SHORT threshold).
 """
 from __future__ import annotations
 
@@ -50,7 +51,7 @@ def summarize_performance(
                 "label": label,
                 "tone": "info",
                 "aria_label": aria_label_for(label),
-                "sort_rank": 1,
+                "sort_rank": 2,
             }
         if dtc is not None and 0 < dtc < MONITORING_GAPS_MIN_DISTINCT_TIMES:
             label = "Job too short or too few samples"
@@ -58,14 +59,14 @@ def summarize_performance(
                 "label": label,
                 "tone": "warning",
                 "aria_label": aria_label_for(label),
-                "sort_rank": 2,
+                "sort_rank": 3,
             }
         label = "Not enough samples to summarize"
         return {
             "label": label,
             "tone": "warning",
             "aria_label": aria_label_for(label),
-            "sort_rank": 3,
+            "sort_rank": 4,
         }
     if runtime is not None and runtime < SHORT_RUNTIME_NO_METRICS_SECONDS:
         label = "Too short to measure"
@@ -73,14 +74,14 @@ def summarize_performance(
             "label": label,
             "tone": "secondary",
             "aria_label": aria_label_for(label),
-            "sort_rank": 4,
+            "sort_rank": 5,
         }
     label = "Not summarized yet"
     return {
         "label": label,
         "tone": "secondary",
         "aria_label": aria_label_for(label),
-        "sort_rank": 4,
+        "sort_rank": 1,
     }
 
 
@@ -99,15 +100,23 @@ def annotate_job_list_performance_fields(queryset):
         performance_sort_rank=Case(
             When(metrics_value_count__gt=0, then=Value(0)),
             When(
+                Q(has_metrics_data=False)
+                & (
+                    Q(runtime__isnull=True)
+                    | Q(runtime__gte=SHORT_RUNTIME_NO_METRICS_SECONDS)
+                ),
+                then=Value(1),
+            ),
+            When(
                 Q(has_metrics_data=True)
                 & Q(metrics_distinct_time_count__gte=MONITORING_GAPS_MIN_DISTINCT_TIMES),
-                then=Value(1),
+                then=Value(2),
             ),
             When(
                 Q(has_metrics_data=True)
                 & Q(metrics_distinct_time_count__gt=0)
                 & Q(metrics_distinct_time_count__lt=MONITORING_GAPS_MIN_DISTINCT_TIMES),
-                then=Value(2),
+                then=Value(3),
             ),
             When(
                 Q(has_metrics_data=True)
@@ -115,9 +124,9 @@ def annotate_job_list_performance_fields(queryset):
                     Q(metrics_distinct_time_count__isnull=True)
                     | Q(metrics_distinct_time_count__lte=0)
                 ),
-                then=Value(3),
+                then=Value(4),
             ),
-            default=Value(4),
+            default=Value(5),
             output_field=IntegerField(),
         ),
     )
