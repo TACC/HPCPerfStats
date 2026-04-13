@@ -270,6 +270,17 @@ def invalidate_job_plot_cache_keys_for_jids(jids):
       for jid in jids:
         if not jid:
           continue
+        keyset_name = f"{KEY_JOB_PLOT_KEYSET}:{jid}"
+        try:
+          raw_members = client.smembers(keyset_name) or set()
+          for raw_key in raw_members:
+            try:
+              client.delete(raw_key)
+            except Exception:
+              pass
+          client.delete(keyset_name)
+        except Exception:
+          pass
         for needle in (f":JOB_PLOTS_JSON:{jid}:", f":JOB_PLOTS_DATA:{jid}:"):
           try:
             for raw_key in client.scan_iter(match=f"*{needle}*", count=500):
@@ -328,6 +339,7 @@ KEY_ADMIN_RMQ_SNAPSHOT = "admin_monitor_rmq_snapshot"
 KEY_ADMIN_TIMESCALE_STATS = "admin_monitor_timescaledb_stats"
 KEY_ADMIN_HOST_STATS = "admin_monitor_host_stats"
 KEY_ADMIN_XALT_STATS = "admin_monitor_xalt_stats"
+KEY_JOB_PLOT_KEYSET = "job_plot_keyset"
 
 # HPCPerfStats Monitor Redis/RabbitMQ stats: short TTL to avoid hammering backends
 TIMEOUT_ADMIN_STATS = 10
@@ -358,6 +370,19 @@ def make_cache_key_bounded(
       s = hashlib.sha256(s.encode("utf-8")).hexdigest()[:digest_len]
     pieces.append(s)
   return ":".join(pieces)
+
+
+def register_job_plot_cache_key(jid, cache_key):
+  """Track per-jid plot cache keys to avoid expensive wildcard scans."""
+  if not jid or not cache_key:
+    return
+  client = _get_redis_py_client()
+  if client is None:
+    return
+  try:
+    client.sadd(f"{KEY_JOB_PLOT_KEYSET}:{jid}", cache_key)
+  except Exception:
+    pass
 
 
 KEY_JID_HOST_WINDOW_ROW_COUNT = "jid_hwrow"

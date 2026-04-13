@@ -549,6 +549,58 @@ def get_metrics_min_processes():
   return max(1, int(cfg.get("DEFAULT", "metrics_min_processes", fallback="1")))
 
 
+def get_metrics_scheduler_mode():
+  """Metrics scheduler mode: strict_date, global_fifo, or global_priority."""
+  env = os.environ.get("HPCPERFSTATS_METRICS_SCHEDULER_MODE", "").strip().lower()
+  if env in ("strict_date", "global_fifo", "global_priority"):
+    return env
+  _ensure_cfg_loaded()
+  mode = cfg.get(
+      "DEFAULT", "metrics_scheduler_mode", fallback="global_priority"
+  ).strip().lower()
+  if mode in ("strict_date", "global_fifo", "global_priority"):
+    return mode
+  return "global_priority"
+
+
+def get_metrics_scheduler_prefetch_chunks():
+  """Max chunk descriptors prefetched ahead for global scheduler."""
+  _ensure_cfg_loaded()
+  return max(1, int(cfg.get("DEFAULT", "metrics_scheduler_prefetch_chunks", fallback="8")))
+
+
+def get_metrics_scheduler_ready_queue_target():
+  """Target ready-jid queue depth before compute dispatch."""
+  _ensure_cfg_loaded()
+  return max(1, int(cfg.get("DEFAULT", "metrics_scheduler_ready_queue_target", fallback="2000")))
+
+
+def get_metrics_plot_prewarm_mode():
+  """Prewarm mode for metrics pipeline: inline or pipeline_required."""
+  env = os.environ.get("HPCPERFSTATS_METRICS_PLOT_PREWARM_MODE", "").strip().lower()
+  if env in ("inline", "pipeline_required"):
+    return env
+  _ensure_cfg_loaded()
+  mode = cfg.get(
+      "DEFAULT", "metrics_plot_prewarm_mode", fallback="pipeline_required"
+  ).strip().lower()
+  if mode in ("inline", "pipeline_required"):
+    return mode
+  return "pipeline_required"
+
+
+def get_metrics_prewarm_workers():
+  """Thread workers for required plot prewarm stage."""
+  _ensure_cfg_loaded()
+  return max(1, int(cfg.get("DEFAULT", "metrics_prewarm_workers", fallback="4")))
+
+
+def get_metrics_prewarm_retry_attempts():
+  """Retry attempts for plot artifact prewarm tasks."""
+  _ensure_cfg_loaded()
+  return max(1, int(cfg.get("DEFAULT", "metrics_prewarm_retry_attempts", fallback="2")))
+
+
 def get_sync_enable_cpuset_priority_budget():
   """Enable cpuset-aware S/A/M budgeting for sync + metrics pools (default yes)."""
   env = os.environ.get("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "").strip().lower()
@@ -835,6 +887,12 @@ def get_conf_parser_defaults_audit_snapshot():
           "pipeline_overlap_mode": "balanced",
           "metrics_ingest_priority_scale": 0.75,
           "metrics_min_processes": 1,
+          "metrics_scheduler_mode": "global_priority",
+          "metrics_scheduler_prefetch_chunks": 8,
+          "metrics_scheduler_ready_queue_target": 2000,
+          "metrics_plot_prewarm_mode": "pipeline_required",
+          "metrics_prewarm_workers": 4,
+          "metrics_prewarm_retry_attempts": 2,
       },
       "stability": {
           "sync_archive_retry_max_attempts": 5,

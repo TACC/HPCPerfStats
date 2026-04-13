@@ -156,15 +156,45 @@ def upsert_job_plot_artifact(
     plot_item: Dict[str, Any],
 ) -> None:
   _raw_utf8, compressed, enc = json_item_to_compressed_payload(plot_item)
-  job_plot_artifact.objects.update_or_create(
-      jid_id=jid,
-      plot_kind=plot_kind,
-      layout=layout,
-      defaults={
-          "payload_compressed": compressed,
-          "payload_encoding": enc,
-          "input_fingerprint": input_fingerprint,
-      },
+  job_plot_artifact.objects.bulk_create(
+      [job_plot_artifact(
+          jid_id=jid,
+          plot_kind=plot_kind,
+          layout=layout,
+          payload_compressed=compressed,
+          payload_encoding=enc,
+          input_fingerprint=input_fingerprint,
+      )],
+      update_conflicts=True,
+      update_fields=["payload_compressed", "payload_encoding", "input_fingerprint"],
+      unique_fields=["jid", "plot_kind", "layout"],
+  )
+
+
+def upsert_job_plot_artifact_batch(
+    rows: Sequence[Tuple[str, str, str, str, Dict[str, Any]]],
+) -> None:
+  """Bulk upsert multiple plot artifacts in one DB round-trip."""
+  if not rows:
+    return
+  objs = []
+  for jid, plot_kind, layout, input_fingerprint, plot_item in rows:
+    _raw_utf8, compressed, enc = json_item_to_compressed_payload(plot_item)
+    objs.append(
+        job_plot_artifact(
+            jid_id=jid,
+            plot_kind=plot_kind,
+            layout=layout,
+            payload_compressed=compressed,
+            payload_encoding=enc,
+            input_fingerprint=input_fingerprint,
+        )
+    )
+  job_plot_artifact.objects.bulk_create(
+      objs,
+      update_conflicts=True,
+      update_fields=["payload_compressed", "payload_encoding", "input_fingerprint"],
+      unique_fields=["jid", "plot_kind", "layout"],
   )
 
 
@@ -266,6 +296,7 @@ def persist_job_plot_artifacts_for_jid(
   live = get_live_distinct_time_count_for_jid(jid)
   fp = compute_plot_input_fingerprint(job, live)
   jt = jid_table.jid_table(jid)
+  write_rows = []
   for kind in JOB_PLOT_KINDS:
     for layout in layouts:
       zoom_mode = layout == JOB_PLOT_LAYOUT_ZOOM_V3
@@ -289,13 +320,15 @@ def persist_job_plot_artifacts_for_jid(
         continue
       if plot_item is None:
         continue
-      try:
-        upsert_job_plot_artifact(jid, kind, layout, fp, plot_item)
-      except Exception:
-        logger.warning(
-            "plot artifact upsert failed jid=%s kind=%s layout=%s",
-            jid,
-            kind,
-            layout,
-            exc_info=True,
-        )
+      write_rows.append((jid, kind, layout, fp, plot_item))
+  if not write_rows:
+    return
+  try:
+    upsert_job_plot_artifact_batch(write_rows)
+  except Exception:
+    logger.warning(
+        "plot artifact batch upsert failed jid=%s rows=%s",
+        jid,
+        len(write_rows),
+        exc_info=True,
+    )

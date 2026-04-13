@@ -16,8 +16,11 @@ import gc
 import os
 import signal
 import sys
+import time
 from types import SimpleNamespace
 from datetime import datetime, timedelta
+from collections import deque
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
@@ -58,6 +61,113 @@ GC_COLLECT_EVERY_N_CHUNKS = 20
 
 # When argv has no start/end dates, process this many calendar days ending today.
 DEFAULT_METRICS_RANGE_DAYS = 7
+GLOBAL_SCHEDULER_BATCH_SIZE = 256
+
+
+class _PhaseTimer:
+  """Collect per-phase wall-clock timings for pipeline reporting."""
+
+  def __init__(self):
+    self._totals = {
+        "candidate_sql_s": 0.0,
+        "readiness_s": 0.0,
+        "metrics_compute_s": 0.0,
+        "prewarm_s": 0.0,
+    }
+
+  @contextlib.contextmanager
+  def phase(self, key):
+    t0 = time.monotonic()
+    try:
+      yield
+    finally:
+      self._totals[key] = self._totals.get(key, 0.0) + (
+          time.monotonic() - t0
+      )
+
+  def totals(self):
+    return dict(self._totals)
+
+
+class _PrewarmPipeline:
+  """Required prewarm stage with bounded backlog and retries."""
+
+  def __init__(self):
+    self._mode = cfg.get_metrics_plot_prewarm_mode()
+    self._workers = cfg.get_metrics_prewarm_workers()
+    self._attempts = cfg.get_metrics_prewarm_retry_attempts()
+    self._executor = None
+    self._pending = set()
+    self._done = 0
+    self._failed = 0
+    self._lag_samples = []
+    self._created_at = {}
+    if self._mode == "pipeline_required":
+      self._executor = ThreadPoolExecutor(max_workers=self._workers)
+
+  def _run_one(self, jid):
+    last_exc = None
+    for _ in range(max(1, self._attempts)):
+      try:
+        close_old_connections()
+        persist_job_plot_artifacts_for_jid(jid)
+        return
+      except Exception as exc:
+        last_exc = exc
+    raise last_exc
+
+  def submit(self, jid):
+    if self._mode == "inline":
+      self._run_one(jid)
+      self._done += 1
+      return
+    fut = self._executor.submit(self._run_one, jid)
+    self._created_at[fut] = time.monotonic()
+    self._pending.add(fut)
+
+  def drain_some(self, force=False):
+    if self._mode == "inline" or not self._pending:
+      return
+    done, pending = wait(
+        self._pending,
+        timeout=0 if not force else None,
+        return_when=FIRST_COMPLETED if not force else None,
+    )
+    if force:
+      done = set(self._pending)
+      pending = set()
+    self._pending = pending
+    for fut in done:
+      start = self._created_at.pop(fut, None)
+      if start is not None:
+        self._lag_samples.append(time.monotonic() - start)
+      try:
+        fut.result()
+        self._done += 1
+      except Exception as exc:
+        self._failed += 1
+        log_print("plot artifact prewarm failed: {0}".format(exc))
+
+  def finish(self):
+    if self._mode == "inline":
+      return
+    while self._pending:
+      self.drain_some(force=True)
+    self._executor.shutdown(wait=True)
+
+  def stats(self):
+    total = self._done + self._failed
+    p95_lag = 0.0
+    if self._lag_samples:
+      vals = sorted(self._lag_samples)
+      p95_lag = vals[max(0, int(len(vals) * 0.95) - 1)]
+    return {
+        "prewarm_backlog_jobs": len(self._pending),
+        "prewarm_lag_seconds_p95": round(p95_lag, 3),
+        "prewarm_success_ratio": (float(self._done) / float(total)) if total else 1.0,
+        "prewarm_done_jobs": self._done,
+        "prewarm_failed_jobs": self._failed,
+    }
 
 
 @contextlib.contextmanager
@@ -353,6 +463,47 @@ def _filter_jids_with_samples_after_end(jids):
   if not jids:
     return []
 
+  conn = connections["default"]
+  if conn.vendor == "postgresql":
+    ops = conn.ops
+    job_tbl = ops.quote_name(job_data._meta.db_table)
+    host_tbl = ops.quote_name(host_data._meta.db_table)
+    sql = """
+      WITH jobs AS (
+        SELECT j.jid, j.end_time, j.host_list
+        FROM {job_tbl} j
+        WHERE j.jid = ANY(%s::text[])
+      ),
+      exploded_hosts AS (
+        SELECT jobs.jid, jobs.end_time, unnest(jobs.host_list) AS host_raw
+        FROM jobs
+      ),
+      fqdn_hosts AS (
+        SELECT
+          eh.jid,
+          eh.end_time,
+          CASE
+            WHEN position('.' in eh.host_raw) > 0 THEN eh.host_raw
+            ELSE eh.host_raw || %s
+          END AS host_name
+        FROM exploded_hosts eh
+      ),
+      latest AS (
+        SELECT fh.jid, fh.host_name, max(h.time) AS last_time, max(fh.end_time) AS end_time
+        FROM fqdn_hosts fh
+        LEFT JOIN {host_tbl} h ON h.host = fh.host_name
+        GROUP BY fh.jid, fh.host_name
+      )
+      SELECT jid
+      FROM latest
+      GROUP BY jid
+      HAVING bool_and(last_time IS NOT NULL AND last_time > max(end_time))
+      ORDER BY jid
+    """.format(job_tbl=job_tbl, host_tbl=host_tbl)
+    with conn.cursor() as cursor:
+      cursor.execute(sql, [list(jids), _host_name_suffix()])
+      return [row[0] for row in cursor.fetchall()]
+
   jobs = list(
       job_data.objects.filter(jid__in=jids).values("jid", "end_time", "host_list")
   )
@@ -367,117 +518,150 @@ def update_metrics(date, rerun=False):
 
   Memory-optimized: filters in DB, processes in chunks, no full-list cache.
   """
+  return update_metrics_for_dates([date], rerun=rerun)
+
+
+def _build_date_chunk_iterators(dates, min_time, rerun, phase_timer):
+  date_states = []
+  for d in dates:
+    with phase_timer.phase("candidate_sql_s"):
+      qs = _jobs_queryset(d, min_time, rerun)
+    date_states.append({
+        "date": d,
+        "iter": _iter_chunked_pks(qs, CHUNK_SIZE),
+        "done": False,
+    })
+  return date_states
+
+
+def _fill_ready_queue(date_states, ready_queue, mode, prefetch_chunks, phase_timer, stats):
+  if mode == "strict_date":
+    active = [s for s in date_states if not s["done"]]
+    if not active:
+      return
+    state = active[0]
+    while len(ready_queue) < prefetch_chunks:
+      try:
+        pk_chunk, _ = next(state["iter"])
+      except StopIteration:
+        state["done"] = True
+        break
+      with phase_timer.phase("readiness_s"):
+        ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+      stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
+      if ready_jids:
+        ready_queue.extend(ready_jids)
+    return
+
+  for state in [s for s in date_states if not s["done"]]:
+    if len(ready_queue) >= prefetch_chunks:
+      break
+    try:
+      pk_chunk, _ = next(state["iter"])
+    except StopIteration:
+      state["done"] = True
+      continue
+    with phase_timer.phase("readiness_s"):
+      ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+    stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
+    if ready_jids:
+      ready_queue.extend(ready_jids)
+
+
+def update_metrics_for_dates(dates, rerun=False):
+  """Global scheduler across dates to keep workers saturated."""
   close_old_connections()
   min_time = 300
+  phase_timer = _PhaseTimer()
+  scheduler_mode = cfg.get_metrics_scheduler_mode()
+  prefetch_target = cfg.get_metrics_scheduler_ready_queue_target()
+  prefetch_chunks = cfg.get_metrics_scheduler_prefetch_chunks()
+  stats = {"processed": 0, "skipped_not_ready": 0}
 
   def _run():
-    """
-    Inner function so we can cleanly retry the whole operation if the database
-    connection is dropped or becomes unsynchronised. We deliberately avoid
-    closing connections inside the per‑chunk loop to prevent leaving Django's
-    ORM holding onto a cursor/connection that has just been closed, which can
-    manifest as psycopg 'lost synchronization with server' errors.
-    """
     with _pg_session_statement_timeout_for_metrics_batch():
-      date_ymd = date.strftime("%Y-%m-%d")
-      qs = _jobs_queryset(date, min_time, rerun)
-      # Avoid a separate COUNT(*) that repeats the same filter work as the iterator below.
-      log_print(
-          "Streaming jobs needing metrics for date {0}".format(date_ymd)
-      )
-
-      def _persist_plot_artifacts_best_effort(ready_jid_list):
-        for jid in ready_jid_list:
-          if shutdown_requested[0]:
-            break
-          try:
-            close_old_connections()
-            persist_job_plot_artifacts_for_jid(jid)
-            log_print(
-                "jid {0}: plot artifacts prewarm completed (plots done).".format(jid)
-            )
-          except Exception as exc_plot:
-            log_print(
-                "plot artifact prewarm failed for jid {0}: {1}".format(
-                    jid, exc_plot
-                )
-            )
-
       metrics_manager = metrics.Metrics()
-      log_print(
-          "Compute for following metrics for date {0}".format(date)
+      prewarm_pipeline = _PrewarmPipeline()
+      ready_queue = deque()
+      date_states = _build_date_chunk_iterators(
+          dates, min_time, rerun, phase_timer
       )
-      for name in metrics_manager.simple_metrics_list:
-        log_print(name)
-      for name in metrics_manager.complex_metrics_list:
-        log_print(name)
-
-      processed = 0
-      skipped_not_ready = 0
       shared_pool = metrics_manager.ensure_pool()
+      t0 = time.monotonic()
+      compute_batches = 0
       try:
-        for chunk_number, (pk_chunk, _) in enumerate(_iter_chunked_pks(qs, CHUNK_SIZE), start=1):
-          if shutdown_requested[0]:
-            break
-          jobs_chunk = None
-          ready_jids = None
-          try:
-            def _process_chunk():
-              nonlocal ready_jids, jobs_chunk, skipped_not_ready, processed
-              if ready_jids is None:
-                ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
-                skipped_not_ready += (len(pk_chunk) - len(ready_jids))
-              if not ready_jids:
-                return
-              jobs_chunk = _job_refs_from_jids(ready_jids)
-              metrics_manager.run(jobs_chunk, pool=shared_pool)
-              processed += len(jobs_chunk)
-              _persist_plot_artifacts_best_effort(ready_jids)
-
-            run_with_db_retry(
-                _process_chunk,
-                attempts=2,
-                on_retry=lambda exc, _attempt: log_print(
-                    "Database error while processing metrics chunk (size {0}) "
-                    "for date {1}: {2}".format(len(pk_chunk), date, exc)
-                ),
-            )
-          except (OperationalError, DatabaseError):
-            raise
-          finally:
-            # Release references promptly; GC can then free memory before next chunk.
-            jobs_chunk = None
-            ready_jids = None
-            if (
-                GC_COLLECT_EVERY_N_CHUNKS > 0
-                and chunk_number % GC_COLLECT_EVERY_N_CHUNKS == 0
-                and gc.get_count()[0] > 10000
-            ):
-              gc.collect()
-
-          if shutdown_requested[0]:
-            break
+        while not shutdown_requested[0]:
+          _fill_ready_queue(
+              date_states,
+              ready_queue,
+              scheduler_mode,
+              prefetch_chunks=max(1, min(prefetch_target, prefetch_chunks * CHUNK_SIZE)),
+              phase_timer=phase_timer,
+              stats=stats,
+          )
+          if not ready_queue:
+            if all(s["done"] for s in date_states):
+              break
+            continue
+          jobs_this_round = []
+          while ready_queue and len(jobs_this_round) < min(prefetch_target, GLOBAL_SCHEDULER_BATCH_SIZE):
+            jobs_this_round.append(ready_queue.popleft())
+          job_refs = _job_refs_from_jids(jobs_this_round)
+          with phase_timer.phase("metrics_compute_s"):
+            metrics_manager.run(job_refs, pool=shared_pool)
+          stats["processed"] += len(job_refs)
+          compute_batches += 1
+          with phase_timer.phase("prewarm_s"):
+            for jid in jobs_this_round:
+              prewarm_pipeline.submit(jid)
+            prewarm_pipeline.drain_some(force=False)
+          if (
+              GC_COLLECT_EVERY_N_CHUNKS > 0
+              and compute_batches % GC_COLLECT_EVERY_N_CHUNKS == 0
+              and gc.get_count()[0] > 10000
+          ):
+            gc.collect()
       finally:
+        with phase_timer.phase("prewarm_s"):
+          prewarm_pipeline.finish()
         metrics_manager.close_pool()
 
+      elapsed = max(0.001, time.monotonic() - t0)
+      totals = phase_timer.totals()
+      prewarm_stats = prewarm_pipeline.stats()
+      worker_busy_ratio = (
+          totals["metrics_compute_s"] / elapsed if elapsed > 0 else 0.0
+      )
       log_print(
-          "Finished metrics for date {0}: processed {1} jobs, skipped {2} not-ready jobs".format(
-              date_ymd, processed, skipped_not_ready
+          "Finished metrics scheduler mode={0}: processed={1} skipped_not_ready={2} "
+          "elapsed_s={3:.2f} jobs_per_min={4:.2f} worker_busy_ratio={5:.3f} "
+          "phase_candidate_s={6:.2f} phase_readiness_s={7:.2f} "
+          "phase_compute_s={8:.2f} phase_prewarm_s={9:.2f} "
+          "prewarm_backlog_jobs={10} prewarm_lag_seconds_p95={11:.3f} "
+          "prewarm_success_ratio={12:.3f}".format(
+              scheduler_mode,
+              stats["processed"],
+              stats["skipped_not_ready"],
+              elapsed,
+              (stats["processed"] * 60.0) / elapsed,
+              worker_busy_ratio,
+              totals["candidate_sql_s"],
+              totals["readiness_s"],
+              totals["metrics_compute_s"],
+              totals["prewarm_s"],
+              prewarm_stats["prewarm_backlog_jobs"],
+              prewarm_stats["prewarm_lag_seconds_p95"],
+              prewarm_stats["prewarm_success_ratio"],
           )
       )
-
-      if DEBUG:
-        close_old_connections()
-        qs_after = _jobs_queryset(date, min_time, rerun=False)
-        remaining = qs_after.count()
-        log_print("jobs that don't have data after run (count): {0}".format(remaining))
 
   run_with_db_retry(
       _run,
       attempts=2,
       on_retry=lambda exc, _attempt: log_print(
-          "Database error while updating metrics for date {0}, retrying once: {1}".format(
-              date, exc
+          "Database error while updating metrics for dates {0}, retrying once: {1}".format(
+              ",".join(d.strftime("%Y-%m-%d") for d in dates),
+              exc,
           )
       ),
   )
@@ -489,7 +673,7 @@ def main(argv=None, sleep_after=None):
   When invoked as a script, argv defaults to sys.argv. Management commands
   can pass a custom argv list (e.g. parsed from options).
 
-  If ``sleep_after`` is true, the function sleeps 3600s at the end (legacy
+  If ``sleep_after`` is true, the function sleeps 300s at the end (legacy
   supervisor loop). Default is false. Opt in explicitly or set environment
   variable ``HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER`` to ``1``/``true``
   /``yes`` when ``sleep_after`` is omitted.
@@ -524,17 +708,22 @@ def main(argv=None, sleep_after=None):
   # Newest calendar day first (end of range / today before older days).
   all_dates = [enddate - timedelta(days=i) for i in range(day_count)]
   log_print(all_dates)
-  for d in all_dates:
-    if shutdown_requested[0]:
-      break
-    result = update_metrics(d)
+  scheduler_mode = cfg.get_metrics_scheduler_mode()
+  if scheduler_mode == "strict_date":
+    for d in all_dates:
+      if shutdown_requested[0]:
+        break
+      result = update_metrics(d)
+      log_print(result)
+  else:
+    result = update_metrics_for_dates(all_dates)
     log_print(result)
 
   if sleep_after and not shutdown_requested[0]:
     # Close DB connections before long sleep to avoid idle connections.
     close_old_connections()
     connections.close_all()
-    sleep_until_shutdown(3600)
+    sleep_until_shutdown(300)
 
 
 if __name__ == "__main__":

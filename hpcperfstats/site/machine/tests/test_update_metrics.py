@@ -12,6 +12,16 @@ from hpcperfstats.analysis.metrics.update_metrics import _iter_chunked_pks
 from hpcperfstats.analysis.metrics import update_metrics
 
 
+@pytest.fixture(autouse=True)
+def _patch_scheduler_defaults(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "strict_date")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 2)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
+
+
 def _patch_connections_vendor(monkeypatch, vendor):
   """Make update_metrics see connections['default'].vendor == vendor."""
   fake_conn = MagicMock()
@@ -540,3 +550,55 @@ def test_latest_sample_time_by_host_postgresql_uses_lateral_unnest(monkeypatch):
   set_local = [e for e in exec_log if e[0] and "SET LOCAL" in e[0]]
   assert len(set_local) == 2
   assert all("max_parallel_workers_per_gather = 0" in e[0] for e in set_local)
+
+
+def test_update_metrics_for_dates_global_scheduler_interleaves_dates(monkeypatch):
+  """Global scheduler should dispatch cross-date jobs instead of waiting per date."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 10)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 8)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  by_day = {
+      10: [([1001, 1002], 2), ([1003], 3)],
+      9: [([901], 1), ([902], 2)],
+  }
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs(list(by_day[d.day])),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+
+  seen_batches = []
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      seen_batches.append([j.jid for j in jobs])
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+  d1 = datetime(2025, 4, 10)
+  d2 = datetime(2025, 4, 9)
+  update_metrics.update_metrics_for_dates([d1, d2], rerun=False)
+  flat = [jid for batch in seen_batches for jid in batch]
+  assert 901 in flat and 1001 in flat
+  assert min(flat) == 901

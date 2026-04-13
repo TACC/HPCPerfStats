@@ -12,6 +12,7 @@ from hpcperfstats.site.machine.job_plot_artifacts import (
     get_live_distinct_time_count_for_jid,
     json_item_to_compressed_payload,
     load_cached_job_plot_entry,
+    upsert_job_plot_artifact_batch,
     upsert_job_plot_artifact,
 )
 from hpcperfstats.site.machine.models import job_data, job_plot_artifact
@@ -179,3 +180,30 @@ def test_load_cached_job_plot_entry_returns_none_on_corrupt_payload():
   row.save(update_fields=["payload_compressed"])
 
   assert load_cached_job_plot_entry("corrupt1", "roofline", "normal", fp) is None
+
+
+@pytest.mark.django_db
+def test_upsert_job_plot_artifact_batch_updates_existing_row():
+  now = timezone.now()
+  j = job_data.objects.create(
+      jid="batch1",
+      submit_time=now,
+      start_time=now,
+      end_time=now,
+      username="u1",
+      host_list=["n1"],
+      metrics_distinct_time_count=1,
+  )
+  fp = compute_plot_input_fingerprint(j, 1)
+  upsert_job_plot_artifact_batch([
+      ("batch1", "summary_plot", "normal", fp, {"v": 1}),
+      ("batch1", "heatmap", "normal", fp, {"h": 1}),
+  ])
+  assert job_plot_artifact.objects.filter(jid_id="batch1").count() == 2
+  upsert_job_plot_artifact_batch([
+      ("batch1", "summary_plot", "normal", fp, {"v": 2}),
+  ])
+  row = job_plot_artifact.objects.get(
+      jid_id="batch1", plot_kind="summary_plot", layout="normal")
+  out = decompress_plot_item_dict(bytes(row.payload_compressed), row.payload_encoding)
+  assert out == {"v": 2}

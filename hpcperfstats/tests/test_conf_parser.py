@@ -465,6 +465,46 @@ def test_metrics_pool_ingest_priority_overlap_mode(temp_ini, monkeypatch):
   assert cfg.get_metrics_pool_process_count() == 2
 
 
+def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_metrics_scheduler_mode() == "global_priority"
+  assert cfg.get_metrics_scheduler_prefetch_chunks() == 8
+  assert cfg.get_metrics_scheduler_ready_queue_target() == 2000
+  assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
+  assert cfg.get_metrics_prewarm_workers() == 4
+  assert cfg.get_metrics_prewarm_retry_attempts() == 2
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\n"
+      "metrics_scheduler_mode = global_fifo\n"
+      "metrics_scheduler_prefetch_chunks = 3\n"
+      "metrics_scheduler_ready_queue_target = 111\n"
+      "metrics_plot_prewarm_mode = inline\n"
+      "metrics_prewarm_workers = 7\n"
+      "metrics_prewarm_retry_attempts = 5",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_metrics_scheduler_mode() == "global_fifo"
+  assert cfg.get_metrics_scheduler_prefetch_chunks() == 3
+  assert cfg.get_metrics_scheduler_ready_queue_target() == 111
+  assert cfg.get_metrics_plot_prewarm_mode() == "inline"
+  assert cfg.get_metrics_prewarm_workers() == 7
+  assert cfg.get_metrics_prewarm_retry_attempts() == 5
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", "strict_date")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_PLOT_PREWARM_MODE", "pipeline_required")
+  assert cfg.get_metrics_scheduler_mode() == "strict_date"
+  assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
+
+
 def test_cpuset_priority_budget_overprovision_mode(temp_ini, monkeypatch):
   with open(temp_ini) as f:
     content = f.read()

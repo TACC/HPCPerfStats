@@ -60,6 +60,7 @@ from .cache_utils import (
     cached_orm,
     get_site_content_cache_timeout,
     make_cache_key,
+    register_job_plot_cache_key,
     TIMEOUT_ADMIN_STATS,
 )
 from .job_plot_artifacts import (
@@ -2138,9 +2139,16 @@ def job_plots(request, pk):
                     "unavailable_reason": unavailable_reason,
                 }
                 size_key = "zoom_v3" if zoom_mode else "normal"
-                cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key, size_key)
+                cache_key = make_cache_key(
+                    "JOB_PLOTS_JSON",
+                    job.jid,
+                    key,
+                    size_key,
+                    plot_fingerprint,
+                )
                 try:
                     cache.set(cache_key, cached_results[key], timeout=job_cache_timeout)
+                    register_job_plot_cache_key(job.jid, cache_key)
                 except Exception as e:
                     _job_plots_log.warning(
                         "job_plots L1 set failed jid=%s key=%s: %s",
@@ -2153,6 +2161,7 @@ def job_plots(request, pk):
                     try:
                         data_cache_key = _plot_data_cache_key(key)
                         cache.set(data_cache_key, plot_item, timeout=job_cache_timeout)
+                        register_job_plot_cache_key(job.jid, data_cache_key)
                     except Exception as e:
                         _job_plots_log.warning(
                             "job_plots L1 data set failed jid=%s key=%s: %s",
@@ -2185,7 +2194,13 @@ def job_plots(request, pk):
     missing_keys = []
     for key in requested_keys:
         size_key = "zoom_v3" if zoom_mode else "normal"
-        cache_key = make_cache_key("JOB_PLOTS_JSON", job.jid, key, size_key)
+        cache_key = make_cache_key(
+            "JOB_PLOTS_JSON",
+            job.jid,
+            key,
+            size_key,
+            plot_fingerprint,
+        )
         cached_entry = cache.get(cache_key)
         spec = JOB_PLOT_KIND_SPECS[key]
         stale_generic_reason = (
@@ -2209,6 +2224,7 @@ def job_plots(request, pk):
             }
             try:
                 cache.set(cache_key, cached_results[key], timeout=job_cache_timeout)
+                register_job_plot_cache_key(job.jid, cache_key)
             except Exception as e:
                 _job_plots_log.warning(
                     "job_plots L1 set from L2 failed jid=%s key=%s: %s",
@@ -2225,6 +2241,7 @@ def job_plots(request, pk):
                         cached_results[key]["plot_item"],
                         timeout=job_cache_timeout,
                     )
+                    register_job_plot_cache_key(job.jid, data_cache_key)
                 except Exception as e:
                     _job_plots_log.warning(
                         "job_plots L1 data set from L2 failed jid=%s key=%s: %s",
