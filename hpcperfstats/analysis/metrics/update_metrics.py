@@ -583,34 +583,80 @@ def update_metrics_for_dates(dates, rerun=False):
       metrics_manager = metrics.Metrics()
       prewarm_pipeline = _PrewarmPipeline()
       ready_queue = deque()
+      prefetch_ready_cap = max(
+          1, min(prefetch_target, prefetch_chunks * CHUNK_SIZE)
+      )
+      batch_cap = min(prefetch_target, GLOBAL_SCHEDULER_BATCH_SIZE)
+      log_print(
+          "Starting metrics scheduler days={0} mode={1} prefetch_ready_cap={2} "
+          "compute_batch_cap={3} prewarm_mode={4}".format(
+              len(dates),
+              scheduler_mode,
+              prefetch_ready_cap,
+              batch_cap,
+              cfg.get_metrics_plot_prewarm_mode(),
+          ),
+          flush=True,
+      )
       date_states = _build_date_chunk_iterators(
           dates, min_time, rerun, phase_timer
       )
+      log_print(
+          "Candidate iterators ready for {0} day(s); first keyset/readiness "
+          "queries may be slow on large databases.".format(len(date_states)),
+          flush=True,
+      )
       shared_pool = metrics_manager.ensure_pool()
+      log_print("Metrics worker pool ready.", flush=True)
       t0 = time.monotonic()
       compute_batches = 0
+      stall_iters = 0
       try:
         while not shutdown_requested[0]:
           _fill_ready_queue(
               date_states,
               ready_queue,
               scheduler_mode,
-              prefetch_chunks=max(1, min(prefetch_target, prefetch_chunks * CHUNK_SIZE)),
+              prefetch_chunks=prefetch_ready_cap,
               phase_timer=phase_timer,
               stats=stats,
           )
           if not ready_queue:
             if all(s["done"] for s in date_states):
               break
+            stall_iters += 1
+            if stall_iters == 1 or stall_iters % 200 == 0:
+              pending_days = sum(1 for s in date_states if not s["done"])
+              log_print(
+                  "metrics scheduler: no ready jobs yet "
+                  "(pending_days={0} skipped_not_ready={1} stall_pass={2}); "
+                  "still scanning candidates.".format(
+                      pending_days,
+                      stats["skipped_not_ready"],
+                      stall_iters,
+                  ),
+                  flush=True,
+              )
             continue
+          stall_iters = 0
           jobs_this_round = []
-          while ready_queue and len(jobs_this_round) < min(prefetch_target, GLOBAL_SCHEDULER_BATCH_SIZE):
+          while ready_queue and len(jobs_this_round) < batch_cap:
             jobs_this_round.append(ready_queue.popleft())
           job_refs = _job_refs_from_jids(jobs_this_round)
           with phase_timer.phase("metrics_compute_s"):
             metrics_manager.run(job_refs, pool=shared_pool)
           stats["processed"] += len(job_refs)
           compute_batches += 1
+          if compute_batches == 1 or compute_batches % 25 == 0:
+            log_print(
+                "metrics scheduler: compute batch {0} size={1} "
+                "processed_total={2}".format(
+                    compute_batches,
+                    len(job_refs),
+                    stats["processed"],
+                ),
+                flush=True,
+            )
           with phase_timer.phase("prewarm_s"):
             for jid in jobs_this_round:
               prewarm_pipeline.submit(jid)
@@ -652,7 +698,8 @@ def update_metrics_for_dates(dates, rerun=False):
               prewarm_stats["prewarm_backlog_jobs"],
               prewarm_stats["prewarm_lag_seconds_p95"],
               prewarm_stats["prewarm_success_ratio"],
-          )
+          ),
+          flush=True,
       )
 
   run_with_db_retry(
@@ -707,7 +754,12 @@ def main(argv=None, sleep_after=None):
   day_count = (enddate - startdate).days + 1
   # Newest calendar day first (end of range / today before older days).
   all_dates = [enddate - timedelta(days=i) for i in range(day_count)]
-  log_print(all_dates)
+  log_print(
+      "Date order (newest first): {0}".format(
+          ", ".join(d.strftime("%Y-%m-%d") for d in all_dates)
+      ),
+      flush=True,
+  )
   scheduler_mode = cfg.get_metrics_scheduler_mode()
   if scheduler_mode == "strict_date":
     for d in all_dates:

@@ -594,6 +594,7 @@ def test_filter_jids_postgresql_readiness_sql_avoids_nested_aggregates(monkeypat
   assert "bool_and(last_time" not in sql
 
 
+@pytest.mark.django_db(databases=[])
 def test_update_metrics_for_dates_global_scheduler_interleaves_dates(monkeypatch):
   """Global scheduler should dispatch cross-date jobs instead of waiting per date."""
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
@@ -644,3 +645,74 @@ def test_update_metrics_for_dates_global_scheduler_interleaves_dates(monkeypatch
   flat = [jid for batch in seen_batches for jid in batch]
   assert 901 in flat and 1001 in flat
   assert min(flat) == 901
+
+
+@pytest.mark.django_db(databases=[])
+def test_update_metrics_for_dates_exhausts_when_readiness_filters_all(monkeypatch):
+  """Readiness may drop every jid in a chunk; iterators must still advance and exit."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 2)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 8)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: [])
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  by_day = {
+      10: [([1001], 1), ([1002], 2)],
+      9: [([901], 1)],
+  }
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs(list(by_day[d.day])),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      raise AssertionError("metrics run should not run when readiness filters all jids")
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+  d1 = datetime(2025, 4, 10)
+  d2 = datetime(2025, 4, 9)
+  update_metrics.update_metrics_for_dates([d1, d2], rerun=False)
+
+
+@pytest.mark.django_db(databases=[])
+def test_update_metrics_for_dates_empty_date_list_returns(monkeypatch):
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = {}
+
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      raise AssertionError("no work for zero days")
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  update_metrics.update_metrics_for_dates([], rerun=False)
