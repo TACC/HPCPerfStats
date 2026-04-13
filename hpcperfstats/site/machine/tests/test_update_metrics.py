@@ -552,6 +552,48 @@ def test_latest_sample_time_by_host_postgresql_uses_lateral_unnest(monkeypatch):
   assert all("max_parallel_workers_per_gather = 0" in e[0] for e in set_local)
 
 
+@pytest.mark.django_db(databases=[])
+def test_filter_jids_postgresql_readiness_sql_avoids_nested_aggregates(monkeypatch):
+  """Readiness CTE must not nest aggregates (PostgreSQL: GroupingError)."""
+  exec_log = []
+
+  class FakeCursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args, **kwargs):
+      return False
+
+    def execute(self, sql, params=None):
+      exec_log.append(sql)
+
+    def fetchall(self):
+      return []
+
+  fake_conn = MagicMock()
+  fake_conn.vendor = "postgresql"
+  fake_conn.alias = "default"
+
+  def quote_name(name):
+    return '"%s"' % str(name).replace('"', '""')
+
+  fake_ops = MagicMock()
+  fake_ops.quote_name = quote_name
+  fake_conn.ops = fake_ops
+  fake_conn.cursor = lambda: FakeCursor()
+
+  handler = MagicMock()
+  handler.__getitem__ = lambda self, name: fake_conn
+  monkeypatch.setattr(update_metrics, "connections", handler)
+  monkeypatch.setattr(update_metrics, "_host_name_suffix", lambda: ".example.org")
+
+  update_metrics._filter_jids_with_samples_after_end(["j1", "j2"])
+  assert len(exec_log) == 1
+  sql = exec_log[0].lower()
+  assert "having count(*) filter (where last_time is null or last_time <= end_time) = 0" in sql
+  assert "bool_and(last_time" not in sql
+
+
 def test_update_metrics_for_dates_global_scheduler_interleaves_dates(monkeypatch):
   """Global scheduler should dispatch cross-date jobs instead of waiting per date."""
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")

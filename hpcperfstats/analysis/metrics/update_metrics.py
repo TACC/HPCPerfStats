@@ -497,7 +497,7 @@ def _filter_jids_with_samples_after_end(jids):
       SELECT jid
       FROM latest
       GROUP BY jid
-      HAVING bool_and(last_time IS NOT NULL AND last_time > max(end_time))
+      HAVING count(*) FILTER (WHERE last_time IS NULL OR last_time <= end_time) = 0
       ORDER BY jid
     """.format(job_tbl=job_tbl, host_tbl=host_tbl)
     with conn.cursor() as cursor:
