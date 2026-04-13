@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; ``pigz`` seal and raw-file removal on ``archive_pigz_interval_seconds``, default 4h). Runs in parallel with configurable chunk size.
 
-After each ingest wave completes, rescans the archive directory for new files. When none are pending, sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 5 minutes) and scans again, until SIGTERM.
+After each ingest wave completes, rescans the archive directory for new files. When none are pending, it seals all dirty daily archives, removes verified raw files, sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 5 minutes), and exits.
 
 CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once all``.
 
@@ -797,7 +797,7 @@ def run_sync_timedb_supervisor_loop(
     archive_pool,
     run_once=False,
 ):
-  """Rescan archive, ingest pending files in chunks, run pigz/removal on interval; loop until shutdown.
+  """Rescan archive, ingest pending files in chunks, run pigz/removal on interval.
 
   If ``run_once`` is True, exit after the first rescan that finds no pending
   files (no ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` idle wait). Used by pipeline
@@ -1047,8 +1047,20 @@ def run_sync_timedb_supervisor_loop(
         else:
           worker_idle_loops += 1
           log_print("Worker idle loops while waiting for pending files: %d" % worker_idle_loops)
+          log_print("No pending stats files after full rescan", flush=True)
+          _finalize_archive_job_if_needed()
           log_print(
-              "No pending stats files; sleeping %s s before next directory scan"
+              "Running final archive sealing and verified raw-file cleanup before exit",
+              flush=True,
+          )
+          try:
+            os.makedirs(tgz_archive_dir, exist_ok=True)
+          except OSError:
+            if not os.path.isdir(tgz_archive_dir):
+              raise
+          _run_scheduled_archive_maintenance()
+          log_print(
+              "Sleeping %s s before exiting sync_timedb"
               % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
               flush=True,
           )
@@ -1060,7 +1072,7 @@ def run_sync_timedb_supervisor_loop(
             break
           sleep_until_shutdown(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)
           _flush_checkpoint_if_needed(force=True)
-          continue
+          break
 
       while pending_stats_files:
         if shutdown_requested[0]:

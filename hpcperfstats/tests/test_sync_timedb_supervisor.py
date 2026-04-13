@@ -87,10 +87,10 @@ class _FakeArchivePoolRetry:
     return _R(result)
 
 
-def test_supervisor_sleeps_when_empty_then_ingests_then_sleeps(monkeypatch):
+def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
   shutdown_requested[0] = False
   try:
-    rescans = deque([[], ["/fake/stats0"], []])
+    rescans = deque([["/fake/stats0"], []])
 
     def fake_rescan(*a, **k):
       if rescans:
@@ -98,11 +98,10 @@ def test_supervisor_sleeps_when_empty_then_ingests_then_sleeps(monkeypatch):
       return []
 
     sleeps = []
+    final_maintenance = {"calls": 0}
 
     def fake_sleep(secs):
       sleeps.append(secs)
-      if len(sleeps) >= 2:
-        shutdown_requested[0] = True
 
     def fake_get_context(name):
       assert name == "spawn"
@@ -117,9 +116,15 @@ def test_supervisor_sleeps_when_empty_then_ingests_then_sleeps(monkeypatch):
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", fake_sleep)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
-    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(
+        st,
+        "seal_dirty_daily_archives",
+        lambda *a, **k: final_maintenance.__setitem__(
+            "calls", final_maintenance["calls"] + 1),
+    )
     monkeypatch.setattr(
         st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st.multiprocessing, "get_context", fake_get_context)
     monkeypatch.setattr(
         st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
@@ -140,10 +145,8 @@ def test_supervisor_sleeps_when_empty_then_ingests_then_sleeps(monkeypatch):
     finally:
       archive_pool.__exit__(None, None, None)
 
-    assert sleeps == [
-        st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
-        st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
-    ]
+    assert sleeps == [st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS]
+    assert final_maintenance["calls"] == 1
   finally:
     shutdown_requested[0] = False
 
@@ -164,6 +167,10 @@ def test_supervisor_run_once_exits_without_idle_sleep_when_empty(monkeypatch):
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", fake_sleep)
     monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(
+        st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
 
@@ -218,7 +225,7 @@ def test_failed_ingest_is_not_marked_processed(monkeypatch):
     seen_processed = []
     call_count = {"n": 0}
 
-    def fake_rescan(_directory, _start, _end, _ext, processed_files):
+    def fake_rescan(_directory, _start, _end, _ext, processed_files, **_kwargs):
       call_count["n"] += 1
       seen_processed.append(set(processed_files))
       if call_count["n"] <= 2:
@@ -250,6 +257,7 @@ def test_failed_ingest_is_not_marked_processed(monkeypatch):
     monkeypatch.setattr(st.multiprocessing, "get_context", fake_get_context)
     monkeypatch.setattr(
         st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
 
@@ -309,6 +317,7 @@ def test_checkpoint_flush_is_coalesced(monkeypatch, tmp_path):
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(
         st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st.multiprocessing, "get_context", fake_get_context)
     monkeypatch.setattr(
         st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
@@ -343,7 +352,7 @@ def test_rescan_excludes_inflight_archive_paths(monkeypatch):
     seen_processed = []
     call_count = {"n": 0}
 
-    def fake_rescan(_directory, _start, _end, _ext, processed_files):
+    def fake_rescan(_directory, _start, _end, _ext, processed_files, **_kwargs):
       call_count["n"] += 1
       seen_processed.append(set(processed_files))
       if call_count["n"] == 1:
@@ -569,6 +578,10 @@ def test_dead_letter_replay_runs_before_idle_sleep(monkeypatch):
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(
+        st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
 
     class _ArchivePoolReplay:
       def __init__(self):
