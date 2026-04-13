@@ -425,6 +425,36 @@ def _normalize_job_accounting_host_list(raw):
   return []
 
 
+def _host_data_suffix():
+  """Normalized host_data domain suffix with one leading dot (or empty)."""
+  ext = str(cfg.get_host_name_ext() or "").strip()
+  ext = ext.lstrip(".")
+  return "." + ext if ext else ""
+
+
+def _as_host_data_fqdn(host):
+  """Return host in host_data FQDN form, avoiding duplicate suffix append."""
+  host_s = str(host or "").strip()
+  if not host_s:
+    return ""
+  suffix = _host_data_suffix()
+  if not suffix:
+    return host_s
+  if host_s.lower().endswith(suffix.lower()):
+    return host_s
+  return host_s + suffix
+
+
+def _build_acct_host_fqdns(raw_host_list):
+  """Coerce job_data.host_list to host_data lookup FQDNs."""
+  return [
+      fqdn for fqdn in (
+          _as_host_data_fqdn(h) for h in _normalize_job_accounting_host_list(raw_host_list)
+      )
+      if fqdn
+  ]
+
+
 def _unpack_cached_job_window_row(row):
   """Return ``(host_list, start_time, end_time)`` from a cached jid row.
 
@@ -451,8 +481,8 @@ def gpu_acct_window_for_job_data(job):
   if st is None and et is None:
     return _ensure_tz(st), _ensure_tz(et), []
   acct_host_list = [
-      str(h) + "." + cfg.get_host_name_ext()
-      for h in _normalize_job_accounting_host_list(hl_raw)
+      h
+      for h in _build_acct_host_fqdns(hl_raw)
   ]
   return _ensure_tz(st), _ensure_tz(et), acct_host_list
 
@@ -530,10 +560,7 @@ class jid_table:
       return
 
     # job_data host_list: use fqdn for host_data lookups (cast to str for varchar comparison)
-    self.acct_host_list = [
-        str(h) + "." + cfg.get_host_name_ext()
-        for h in _normalize_job_accounting_host_list(hl_raw)
-    ]
+    self.acct_host_list = _build_acct_host_fqdns(hl_raw)
     self.start_time = _ensure_tz(st)
     self.end_time = _ensure_tz(et)
     self._base_filter = {

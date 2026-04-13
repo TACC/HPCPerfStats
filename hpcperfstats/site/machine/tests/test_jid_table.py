@@ -14,6 +14,7 @@ from unittest.mock import patch
 from django.db import OperationalError
 
 from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_host_query_batch_size
+from hpcperfstats.analysis.gen.jid_table import _build_acct_host_fqdns
 from hpcperfstats.analysis.gen.jid_table import _listify_acct_hosts
 from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_schema_dataframe
 from hpcperfstats.analysis.gen.jid_table import _coerce_nonnegative_window_row_count
@@ -107,6 +108,23 @@ def test_gpu_acct_window_for_job_data_builds_fqdns():
 
   class _Job:
     host_list = ["n1", "n2"]
+    start_time = datetime(2026, 1, 1, 0, 0, 0, tzinfo=dt_utc.utc)
+    end_time = datetime(2026, 1, 2, 0, 0, 0, tzinfo=dt_utc.utc)
+
+  with patch(
+      "hpcperfstats.analysis.gen.jid_table.cfg.get_host_name_ext",
+      return_value="cluster.example",
+  ):
+    _st, _et, acct = gpu_acct_window_for_job_data(_Job())
+  assert acct == ["n1.cluster.example", "n2.cluster.example"]
+
+
+def test_gpu_acct_window_for_job_data_keeps_existing_fqdns():
+  """FQDN host_list values must not get a duplicate host suffix appended."""
+  from datetime import timezone as dt_utc
+
+  class _Job:
+    host_list = ["n1.cluster.example", "n2.cluster.example"]
     start_time = datetime(2026, 1, 1, 0, 0, 0, tzinfo=dt_utc.utc)
     end_time = datetime(2026, 1, 2, 0, 0, 0, tzinfo=dt_utc.utc)
 
@@ -426,6 +444,16 @@ def test_iter_acct_host_batches_accepts_single_fqdn_string():
 def test_normalize_job_accounting_host_list_accepts_plain_string():
   fqdn = "c608-081.vista.tacc.utexas.edu"
   assert _normalize_job_accounting_host_list(fqdn) == [fqdn]
+
+
+def test_build_acct_host_fqdns_normalizes_suffix_and_avoids_double_append():
+  """host_name_ext with leading dot should still generate one correct suffix."""
+  with patch(
+      "hpcperfstats.analysis.gen.jid_table.cfg.get_host_name_ext",
+      return_value=".cluster.example",
+  ):
+    out = _build_acct_host_fqdns(["n1", "n2.cluster.example", ""])
+  assert out == ["n1.cluster.example", "n2.cluster.example"]
 
 
 def test_iter_acct_host_batches_non_numeric_batch_size_uses_default_chunking():

@@ -2368,7 +2368,7 @@ def type_detail(request, jid, type_name):
     if err is not None:
         return err
 
-    acct_host_list = [h + "." + cfg.get_host_name_ext() for h in (job.host_list or [])]
+    acct_host_list = jid_table._build_acct_host_fqdns(job.host_list or [])
     start_time, end_time = _job_times_as_local(job.start_time, job.end_time)
 
     provider = jid_table.TypeDetailDataProvider(
