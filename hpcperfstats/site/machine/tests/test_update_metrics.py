@@ -716,3 +716,81 @@ def test_update_metrics_for_dates_empty_date_list_returns(monkeypatch):
 
   monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
   update_metrics.update_metrics_for_dates([], rerun=False)
+
+
+@pytest.mark.django_db(databases=[])
+def test_update_metrics_for_dates_batch_failure_falls_back_and_continues(monkeypatch):
+  """One failing jid should not stop progress for the rest of the batch."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 2)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 8)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  by_day = {
+      10: [([1001, 1002], 2)],
+      9: [([901], 1)],
+  }
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs(list(by_day[d.day])),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+
+  class FakeReporter:
+    def __init__(self):
+      self.completed = 0
+
+    def start(self):
+      return None
+
+    def stop(self):
+      return None
+
+    def record_completed(self, count):
+      self.completed += int(count)
+
+    def completed_in_window(self):
+      return self.completed
+
+  reporter = FakeReporter()
+  monkeypatch.setattr(update_metrics, "_CompletionReporter", lambda: reporter)
+
+  successful = []
+  prewarmed = []
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      jids = [j.jid for j in jobs]
+      if len(jids) > 1:
+        raise RuntimeError("synthetic batched failure")
+      if jids[0] == 1002:
+        raise RuntimeError("single-job failure")
+      successful.append(jids[0])
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: prewarmed.append(jid))
+  d1 = datetime(2025, 4, 10)
+  d2 = datetime(2025, 4, 9)
+  update_metrics.update_metrics_for_dates([d1, d2], rerun=False)
+
+  assert sorted(successful) == [901, 1001]
+  assert sorted(prewarmed) == [901, 1001]
+  assert reporter.completed == 2

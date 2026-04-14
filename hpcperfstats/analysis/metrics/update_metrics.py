@@ -16,6 +16,7 @@ import gc
 import os
 import signal
 import sys
+import threading
 import time
 from types import SimpleNamespace
 from datetime import datetime, timedelta
@@ -168,6 +169,61 @@ class _PrewarmPipeline:
         "prewarm_done_jobs": self._done,
         "prewarm_failed_jobs": self._failed,
     }
+
+
+class _CompletionReporter:
+  """Background heartbeat reporter for recent completion throughput."""
+
+  def __init__(self, report_interval_s=3600, window_s=3600):
+    self._report_interval_s = max(5, int(report_interval_s))
+    self._window_s = max(60, int(window_s))
+    self._lock = threading.Lock()
+    self._completed_events = deque()
+    self._stop = threading.Event()
+    self._thread = None
+
+  def start(self):
+    if self._thread is not None:
+      return
+    self._thread = threading.Thread(
+        target=self._run,
+        name="metrics-completion-reporter",
+        daemon=True,
+    )
+    self._thread.start()
+
+  def stop(self):
+    self._stop.set()
+    if self._thread is not None:
+      self._thread.join(timeout=self._report_interval_s + 1)
+
+  def _prune_locked(self, now):
+    cutoff = now - self._window_s
+    while self._completed_events and self._completed_events[0][0] < cutoff:
+      self._completed_events.popleft()
+
+  def record_completed(self, count):
+    if count <= 0:
+      return
+    now = time.monotonic()
+    with self._lock:
+      self._completed_events.append((now, int(count)))
+      self._prune_locked(now)
+
+  def completed_in_window(self):
+    now = time.monotonic()
+    with self._lock:
+      self._prune_locked(now)
+      return sum(c for _, c in self._completed_events)
+
+  def _run(self):
+    while not self._stop.wait(self._report_interval_s):
+      log_print(
+          "metrics progress: completed_last_hour={0}".format(
+              self.completed_in_window()
+          ),
+          flush=True,
+      )
 
 
 @contextlib.contextmanager
@@ -568,6 +624,40 @@ def _fill_ready_queue(date_states, ready_queue, mode, prefetch_chunks, phase_tim
       ready_queue.extend(ready_jids)
 
 
+def _compute_metrics_batch(metrics_manager, job_refs, shared_pool):
+  """Run a batch; if it fails, isolate bad jobs and continue."""
+  if not job_refs:
+    return [], 0
+  try:
+    metrics_manager.run(job_refs, pool=shared_pool)
+    return [j.jid for j in job_refs], 0
+  except Exception as exc:
+    log_print(
+        "metrics scheduler: batch failed (size={0}), retrying jobs one-by-one: {1}".format(
+            len(job_refs), exc
+        ),
+        flush=True,
+    )
+
+  succeeded = []
+  failed = 0
+  for job_ref in job_refs:
+    if shutdown_requested[0]:
+      break
+    try:
+      metrics_manager.run([job_ref], pool=shared_pool)
+      succeeded.append(job_ref.jid)
+    except Exception as job_exc:
+      failed += 1
+      log_print(
+          "metrics scheduler: failed jid={0}; skipping and continuing: {1}".format(
+              job_ref.jid, job_exc
+          ),
+          flush=True,
+      )
+  return succeeded, failed
+
+
 def update_metrics_for_dates(dates, rerun=False):
   """Global scheduler across dates to keep workers saturated."""
   close_old_connections()
@@ -576,12 +666,14 @@ def update_metrics_for_dates(dates, rerun=False):
   scheduler_mode = cfg.get_metrics_scheduler_mode()
   prefetch_target = cfg.get_metrics_scheduler_ready_queue_target()
   prefetch_chunks = cfg.get_metrics_scheduler_prefetch_chunks()
-  stats = {"processed": 0, "skipped_not_ready": 0}
+  stats = {"processed": 0, "failed": 0, "skipped_not_ready": 0}
 
   def _run():
     with _pg_session_statement_timeout_for_metrics_batch():
       metrics_manager = metrics.Metrics()
       prewarm_pipeline = _PrewarmPipeline()
+      completion_reporter = _CompletionReporter()
+      completion_reporter.start()
       ready_queue = deque()
       prefetch_ready_cap = max(
           1, min(prefetch_target, prefetch_chunks * CHUNK_SIZE)
@@ -644,21 +736,26 @@ def update_metrics_for_dates(dates, rerun=False):
             jobs_this_round.append(ready_queue.popleft())
           job_refs = _job_refs_from_jids(jobs_this_round)
           with phase_timer.phase("metrics_compute_s"):
-            metrics_manager.run(job_refs, pool=shared_pool)
-          stats["processed"] += len(job_refs)
+            succeeded_jids, failed_count = _compute_metrics_batch(
+                metrics_manager, job_refs, shared_pool
+            )
+          stats["processed"] += len(succeeded_jids)
+          stats["failed"] += failed_count
+          completion_reporter.record_completed(len(succeeded_jids))
           compute_batches += 1
           if compute_batches == 1 or compute_batches % 25 == 0:
             log_print(
                 "metrics scheduler: compute batch {0} size={1} "
-                "processed_total={2}".format(
+                "processed_total={2} failed_total={3}".format(
                     compute_batches,
                     len(job_refs),
                     stats["processed"],
+                    stats["failed"],
                 ),
                 flush=True,
             )
           with phase_timer.phase("prewarm_s"):
-            for jid in jobs_this_round:
+            for jid in succeeded_jids:
               prewarm_pipeline.submit(jid)
             prewarm_pipeline.drain_some(force=False)
           if (
@@ -670,6 +767,7 @@ def update_metrics_for_dates(dates, rerun=False):
       finally:
         with phase_timer.phase("prewarm_s"):
           prewarm_pipeline.finish()
+        completion_reporter.stop()
         metrics_manager.close_pool()
 
       elapsed = max(0.001, time.monotonic() - t0)
@@ -679,15 +777,18 @@ def update_metrics_for_dates(dates, rerun=False):
           totals["metrics_compute_s"] / elapsed if elapsed > 0 else 0.0
       )
       log_print(
-          "Finished metrics scheduler mode={0}: processed={1} skipped_not_ready={2} "
-          "elapsed_s={3:.2f} jobs_per_min={4:.2f} worker_busy_ratio={5:.3f} "
-          "phase_candidate_s={6:.2f} phase_readiness_s={7:.2f} "
-          "phase_compute_s={8:.2f} phase_prewarm_s={9:.2f} "
-          "prewarm_backlog_jobs={10} prewarm_lag_seconds_p95={11:.3f} "
-          "prewarm_success_ratio={12:.3f}".format(
+          "Finished metrics scheduler mode={0}: processed={1} failed={2} "
+          "skipped_not_ready={3} completed_last_hour={4} elapsed_s={5:.2f} "
+          "jobs_per_min={6:.2f} worker_busy_ratio={7:.3f} "
+          "phase_candidate_s={8:.2f} phase_readiness_s={9:.2f} "
+          "phase_compute_s={10:.2f} phase_prewarm_s={11:.2f} "
+          "prewarm_backlog_jobs={12} prewarm_lag_seconds_p95={13:.3f} "
+          "prewarm_success_ratio={14:.3f}".format(
               scheduler_mode,
               stats["processed"],
+              stats["failed"],
               stats["skipped_not_ready"],
+              completion_reporter.completed_in_window(),
               elapsed,
               (stats["processed"] * 60.0) / elapsed,
               worker_busy_ratio,
