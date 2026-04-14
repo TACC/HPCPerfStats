@@ -585,13 +585,61 @@ def test_filter_jids_postgresql_readiness_sql_avoids_nested_aggregates(monkeypat
   handler = MagicMock()
   handler.__getitem__ = lambda self, name: fake_conn
   monkeypatch.setattr(update_metrics, "connections", handler)
+  monkeypatch.setattr(update_metrics.transaction, "atomic", lambda using=None: contextlib.nullcontext())
   monkeypatch.setattr(update_metrics, "_host_name_suffix", lambda: ".example.org")
 
   update_metrics._filter_jids_with_samples_after_end(["j1", "j2"])
-  assert len(exec_log) == 1
-  sql = exec_log[0].lower()
+  assert len(exec_log) >= 2
+  assert exec_log[0].lower().startswith("set local statement_timeout")
+  sql = exec_log[1].lower()
   assert "having count(*) filter (where last_time is null or last_time <= end_time) = 0" in sql
   assert "bool_and(last_time" not in sql
+
+
+@pytest.mark.django_db(databases=[])
+def test_filter_jids_postgresql_readiness_sql_timeout_falls_back(monkeypatch):
+  class BadCursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args, **kwargs):
+      return False
+
+    def execute(self, _sql, _params=None):
+      raise OperationalError("statement timeout")
+
+  fake_conn = MagicMock()
+  fake_conn.vendor = "postgresql"
+  fake_conn.alias = "default"
+
+  def quote_name(name):
+    return '"%s"' % str(name).replace('"', '""')
+
+  fake_ops = MagicMock()
+  fake_ops.quote_name = quote_name
+  fake_conn.ops = fake_ops
+  fake_conn.cursor = lambda: BadCursor()
+
+  handler = MagicMock()
+  handler.__getitem__ = lambda self, name: fake_conn
+  monkeypatch.setattr(update_metrics, "connections", handler)
+  monkeypatch.setattr(update_metrics.transaction, "atomic", lambda using=None: contextlib.nullcontext())
+  monkeypatch.setattr(update_metrics, "_host_name_suffix", lambda: ".example.org")
+
+  fallback_called = []
+  monkeypatch.setattr(
+      update_metrics.job_data.objects,
+      "filter",
+      lambda **_kwargs: MagicMock(values=lambda *_a, **_k: [{"jid": "j1", "end_time": None, "host_list": []}]),
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_ready_jids_from_job_rows",
+      lambda rows: fallback_called.append(rows) or ["j1"],
+  )
+
+  assert update_metrics._filter_jids_with_samples_after_end(["j1"]) == ["j1"]
+  assert len(fallback_called) == 1
 
 
 @pytest.mark.django_db(databases=[])

@@ -56,6 +56,7 @@ CHUNK_SIZE = 500
 # PostgreSQL uses a per-host LATERAL + LIMIT 1 (index probe on (host, time))
 # inside a short transaction with parallel workers disabled for the probe.
 HOST_LAST_TIME_LOOKUP_BATCH = 64
+READINESS_QUERY_TIMEOUT_MS = 120000
 
 # Running a full GC every chunk is expensive on large backfills; amortize it.
 GC_COLLECT_EVERY_N_CHUNKS = 20
@@ -556,9 +557,24 @@ def _filter_jids_with_samples_after_end(jids):
       HAVING count(*) FILTER (WHERE last_time IS NULL OR last_time <= end_time) = 0
       ORDER BY jid
     """.format(job_tbl=job_tbl, host_tbl=host_tbl)
-    with conn.cursor() as cursor:
-      cursor.execute(sql, [list(jids), _host_name_suffix()])
-      return [row[0] for row in cursor.fetchall()]
+    using = getattr(conn, "alias", None) or "default"
+    try:
+      with transaction.atomic(using=using):
+        with conn.cursor() as cursor:
+          cursor.execute("SET LOCAL statement_timeout = %s", [READINESS_QUERY_TIMEOUT_MS])
+          cursor.execute(sql, [list(jids), _host_name_suffix()])
+          return [row[0] for row in cursor.fetchall()]
+    except (OperationalError, DatabaseError) as exc:
+      log_print(
+          "readiness SQL timed out/failed for {0} jids; falling back to ORM readiness path: {1}".format(
+              len(jids), exc
+          ),
+          flush=True,
+      )
+      jobs = list(
+          job_data.objects.filter(jid__in=jids).values("jid", "end_time", "host_list")
+      )
+      return _ready_jids_from_job_rows(jobs)
 
   jobs = list(
       job_data.objects.filter(jid__in=jids).values("jid", "end_time", "host_list")
@@ -604,6 +620,7 @@ def _fill_ready_queue(date_states, ready_queue, mode, prefetch_chunks, phase_tim
         break
       with phase_timer.phase("readiness_s"):
         ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+      stats["candidate_jids"] += len(pk_chunk)
       stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
       if ready_jids:
         ready_queue.extend(ready_jids)
@@ -619,6 +636,7 @@ def _fill_ready_queue(date_states, ready_queue, mode, prefetch_chunks, phase_tim
       continue
     with phase_timer.phase("readiness_s"):
       ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+    stats["candidate_jids"] += len(pk_chunk)
     stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
     if ready_jids:
       ready_queue.extend(ready_jids)
@@ -666,7 +684,7 @@ def update_metrics_for_dates(dates, rerun=False):
   scheduler_mode = cfg.get_metrics_scheduler_mode()
   prefetch_target = cfg.get_metrics_scheduler_ready_queue_target()
   prefetch_chunks = cfg.get_metrics_scheduler_prefetch_chunks()
-  stats = {"processed": 0, "failed": 0, "skipped_not_ready": 0}
+  stats = {"processed": 0, "failed": 0, "skipped_not_ready": 0, "candidate_jids": 0}
 
   def _run():
     with _pg_session_statement_timeout_for_metrics_batch():
@@ -721,9 +739,10 @@ def update_metrics_for_dates(dates, rerun=False):
               pending_days = sum(1 for s in date_states if not s["done"])
               log_print(
                   "metrics scheduler: no ready jobs yet "
-                  "(pending_days={0} skipped_not_ready={1} stall_pass={2}); "
+                  "(pending_days={0} candidate_jids={1} skipped_not_ready={2} stall_pass={3}); "
                   "still scanning candidates.".format(
                       pending_days,
+                      stats["candidate_jids"],
                       stats["skipped_not_ready"],
                       stall_iters,
                   ),
@@ -778,15 +797,16 @@ def update_metrics_for_dates(dates, rerun=False):
       )
       log_print(
           "Finished metrics scheduler mode={0}: processed={1} failed={2} "
-          "skipped_not_ready={3} completed_last_hour={4} elapsed_s={5:.2f} "
-          "jobs_per_min={6:.2f} worker_busy_ratio={7:.3f} "
-          "phase_candidate_s={8:.2f} phase_readiness_s={9:.2f} "
-          "phase_compute_s={10:.2f} phase_prewarm_s={11:.2f} "
-          "prewarm_backlog_jobs={12} prewarm_lag_seconds_p95={13:.3f} "
-          "prewarm_success_ratio={14:.3f}".format(
+          "candidate_jids={3} skipped_not_ready={4} completed_last_hour={5} elapsed_s={6:.2f} "
+          "jobs_per_min={7:.2f} worker_busy_ratio={8:.3f} "
+          "phase_candidate_s={9:.2f} phase_readiness_s={10:.2f} "
+          "phase_compute_s={11:.2f} phase_prewarm_s={12:.2f} "
+          "prewarm_backlog_jobs={13} prewarm_lag_seconds_p95={14:.3f} "
+          "prewarm_success_ratio={15:.3f}".format(
               scheduler_mode,
               stats["processed"],
               stats["failed"],
+              stats["candidate_jids"],
               stats["skipped_not_ready"],
               completion_reporter.completed_in_window(),
               elapsed,
