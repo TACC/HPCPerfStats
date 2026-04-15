@@ -14,9 +14,9 @@ import contextlib
 import functools
 import gc
 import os
+import threading
 import signal
 import sys
-import threading
 import time
 from types import SimpleNamespace
 from datetime import datetime, timedelta
@@ -130,14 +130,15 @@ class _PrewarmPipeline:
   def drain_some(self, force=False):
     if self._mode == "inline" or not self._pending:
       return
-    done, pending = wait(
-        self._pending,
-        timeout=0 if not force else None,
-        return_when=FIRST_COMPLETED if not force else None,
-    )
     if force:
       done = set(self._pending)
       pending = set()
+    else:
+      done, pending = wait(
+          self._pending,
+          timeout=0,
+          return_when=FIRST_COMPLETED,
+      )
     self._pending = pending
     for fut in done:
       start = self._created_at.pop(fut, None)
@@ -180,6 +181,9 @@ class _CompletionReporter:
     self._window_s = max(60, int(window_s))
     self._lock = threading.Lock()
     self._completed_events = deque()
+    self._readiness_error_events = deque()
+    self._completed_total = 0
+    self._readiness_error_total = 0
     self._stop = threading.Event()
     self._thread = None
 
@@ -202,6 +206,11 @@ class _CompletionReporter:
     cutoff = now - self._window_s
     while self._completed_events and self._completed_events[0][0] < cutoff:
       self._completed_events.popleft()
+    while (
+        self._readiness_error_events
+        and self._readiness_error_events[0][0] < cutoff
+    ):
+      self._readiness_error_events.popleft()
 
   def record_completed(self, count):
     if count <= 0:
@@ -209,6 +218,7 @@ class _CompletionReporter:
     now = time.monotonic()
     with self._lock:
       self._completed_events.append((now, int(count)))
+      self._completed_total += int(count)
       self._prune_locked(now)
 
   def completed_in_window(self):
@@ -217,11 +227,38 @@ class _CompletionReporter:
       self._prune_locked(now)
       return sum(c for _, c in self._completed_events)
 
+  def record_readiness_error_chunk(self, count=1):
+    if count <= 0:
+      return
+    now = time.monotonic()
+    with self._lock:
+      self._readiness_error_events.append((now, int(count)))
+      self._readiness_error_total += int(count)
+      self._prune_locked(now)
+
+  def readiness_errors_in_window(self):
+    now = time.monotonic()
+    with self._lock:
+      self._prune_locked(now)
+      return sum(c for _, c in self._readiness_error_events)
+
+  def completed_total(self):
+    with self._lock:
+      return self._completed_total
+
+  def readiness_errors_total(self):
+    with self._lock:
+      return self._readiness_error_total
+
   def _run(self):
     while not self._stop.wait(self._report_interval_s):
       log_print(
-          "metrics progress: completed_last_hour={0}".format(
-              self.completed_in_window()
+          "metrics progress: completed_last_hour={0} processed_total={1} "
+          "readiness_error_chunks_last_hour={2} readiness_error_chunks_total={3}".format(
+              self.completed_in_window(),
+              self.completed_total(),
+              self.readiness_errors_in_window(),
+              self.readiness_errors_total(),
           ),
           flush=True,
       )
@@ -618,8 +655,18 @@ def _fill_ready_queue(date_states, ready_queue, mode, prefetch_chunks, phase_tim
       except StopIteration:
         state["done"] = True
         break
-      with phase_timer.phase("readiness_s"):
-        ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+      try:
+        with phase_timer.phase("readiness_s"):
+          ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+      except (OperationalError, DatabaseError) as exc:
+        log_print(
+            "readiness check failed for strict-date chunk size={0}; skipping chunk: {1}".format(
+                len(pk_chunk), exc
+            ),
+            flush=True,
+        )
+        stats["readiness_error_chunks"] += 1
+        ready_jids = []
       stats["candidate_jids"] += len(pk_chunk)
       stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
       if ready_jids:
@@ -634,12 +681,77 @@ def _fill_ready_queue(date_states, ready_queue, mode, prefetch_chunks, phase_tim
     except StopIteration:
       state["done"] = True
       continue
-    with phase_timer.phase("readiness_s"):
-      ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+    try:
+      with phase_timer.phase("readiness_s"):
+        ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+    except (OperationalError, DatabaseError) as exc:
+      log_print(
+          "readiness check failed for global chunk size={0}; skipping chunk: {1}".format(
+              len(pk_chunk), exc
+          ),
+          flush=True,
+      )
+      stats["readiness_error_chunks"] += 1
+      ready_jids = []
     stats["candidate_jids"] += len(pk_chunk)
     stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
     if ready_jids:
       ready_queue.extend(ready_jids)
+
+
+def _start_readiness_producer(
+    *,
+    date_states,
+    ready_queue,
+    ready_queue_lock,
+    producer_done,
+    scheduler_mode,
+    prefetch_ready_cap,
+    phase_timer,
+    stats,
+    completion_reporter,
+):
+  """Start background producer that fills ready_queue from readiness checks."""
+  def _producer_loop():
+    close_old_connections()
+    try:
+      while not shutdown_requested[0]:
+        with ready_queue_lock:
+          current_depth = len(ready_queue)
+        if current_depth >= prefetch_ready_cap:
+          time.sleep(0.05)
+          continue
+        local_ready = deque()
+        _fill_ready_queue(
+            date_states,
+            local_ready,
+            scheduler_mode,
+            prefetch_chunks=max(1, prefetch_ready_cap - current_depth),
+            phase_timer=phase_timer,
+            stats=stats,
+        )
+        if stats["readiness_error_chunks"] > completion_reporter.readiness_errors_total():
+          completion_reporter.record_readiness_error_chunk(
+              stats["readiness_error_chunks"] - completion_reporter.readiness_errors_total()
+          )
+        if local_ready:
+          with ready_queue_lock:
+            ready_queue.extend(local_ready)
+          continue
+        if all(s["done"] for s in date_states):
+          break
+        time.sleep(0.05)
+    finally:
+      producer_done.set()
+      close_old_connections()
+
+  producer = threading.Thread(
+      target=_producer_loop,
+      name="metrics-readiness-producer",
+      daemon=True,
+  )
+  producer.start()
+  return producer
 
 
 def _compute_metrics_batch(metrics_manager, job_refs, shared_pool):
@@ -684,7 +796,13 @@ def update_metrics_for_dates(dates, rerun=False):
   scheduler_mode = cfg.get_metrics_scheduler_mode()
   prefetch_target = cfg.get_metrics_scheduler_ready_queue_target()
   prefetch_chunks = cfg.get_metrics_scheduler_prefetch_chunks()
-  stats = {"processed": 0, "failed": 0, "skipped_not_ready": 0, "candidate_jids": 0}
+  stats = {
+      "processed": 0,
+      "failed": 0,
+      "skipped_not_ready": 0,
+      "candidate_jids": 0,
+      "readiness_error_chunks": 0,
+  }
 
   def _run():
     with _pg_session_statement_timeout_for_metrics_batch():
@@ -718,25 +836,37 @@ def update_metrics_for_dates(dates, rerun=False):
       )
       shared_pool = metrics_manager.ensure_pool()
       log_print("Metrics worker pool ready.", flush=True)
+      ready_queue_lock = threading.Lock()
+      producer_done = threading.Event()
+      producer = _start_readiness_producer(
+          date_states=date_states,
+          ready_queue=ready_queue,
+          ready_queue_lock=ready_queue_lock,
+          producer_done=producer_done,
+          scheduler_mode=scheduler_mode,
+          prefetch_ready_cap=prefetch_ready_cap,
+          phase_timer=phase_timer,
+          stats=stats,
+          completion_reporter=completion_reporter,
+      )
       t0 = time.monotonic()
       compute_batches = 0
       stall_iters = 0
       try:
         while not shutdown_requested[0]:
-          _fill_ready_queue(
-              date_states,
-              ready_queue,
-              scheduler_mode,
-              prefetch_chunks=prefetch_ready_cap,
-              phase_timer=phase_timer,
-              stats=stats,
-          )
-          if not ready_queue:
-            if all(s["done"] for s in date_states):
+          with ready_queue_lock:
+            if ready_queue:
+              jobs_this_round = []
+              while ready_queue and len(jobs_this_round) < batch_cap:
+                jobs_this_round.append(ready_queue.popleft())
+            else:
+              jobs_this_round = []
+          if not jobs_this_round:
+            if producer_done.is_set():
               break
             stall_iters += 1
             if stall_iters == 1 or stall_iters % 200 == 0:
-              pending_days = sum(1 for s in date_states if not s["done"])
+              pending_days = sum(1 for s in date_states if not s["done"]) if not producer_done.is_set() else 0
               log_print(
                   "metrics scheduler: no ready jobs yet "
                   "(pending_days={0} candidate_jids={1} skipped_not_ready={2} stall_pass={3}); "
@@ -748,11 +878,9 @@ def update_metrics_for_dates(dates, rerun=False):
                   ),
                   flush=True,
               )
+            time.sleep(0.05)
             continue
           stall_iters = 0
-          jobs_this_round = []
-          while ready_queue and len(jobs_this_round) < batch_cap:
-            jobs_this_round.append(ready_queue.popleft())
           job_refs = _job_refs_from_jids(jobs_this_round)
           with phase_timer.phase("metrics_compute_s"):
             succeeded_jids, failed_count = _compute_metrics_batch(
@@ -784,6 +912,8 @@ def update_metrics_for_dates(dates, rerun=False):
           ):
             gc.collect()
       finally:
+        producer_done.set()
+        producer.join(timeout=2.0)
         with phase_timer.phase("prewarm_s"):
           prewarm_pipeline.finish()
         completion_reporter.stop()
@@ -797,17 +927,18 @@ def update_metrics_for_dates(dates, rerun=False):
       )
       log_print(
           "Finished metrics scheduler mode={0}: processed={1} failed={2} "
-          "candidate_jids={3} skipped_not_ready={4} completed_last_hour={5} elapsed_s={6:.2f} "
-          "jobs_per_min={7:.2f} worker_busy_ratio={8:.3f} "
-          "phase_candidate_s={9:.2f} phase_readiness_s={10:.2f} "
-          "phase_compute_s={11:.2f} phase_prewarm_s={12:.2f} "
-          "prewarm_backlog_jobs={13} prewarm_lag_seconds_p95={14:.3f} "
-          "prewarm_success_ratio={15:.3f}".format(
+          "candidate_jids={3} skipped_not_ready={4} readiness_error_chunks={5} "
+          "completed_last_hour={6} elapsed_s={7:.2f} jobs_per_min={8:.2f} "
+          "worker_busy_ratio={9:.3f} phase_candidate_s={10:.2f} "
+          "phase_readiness_s={11:.2f} phase_compute_s={12:.2f} phase_prewarm_s={13:.2f} "
+          "prewarm_backlog_jobs={14} prewarm_lag_seconds_p95={15:.3f} "
+          "prewarm_success_ratio={16:.3f}".format(
               scheduler_mode,
               stats["processed"],
               stats["failed"],
               stats["candidate_jids"],
               stats["skipped_not_ready"],
+              stats["readiness_error_chunks"],
               completion_reporter.completed_in_window(),
               elapsed,
               (stats["processed"] * 60.0) / elapsed,

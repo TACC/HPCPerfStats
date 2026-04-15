@@ -2,6 +2,7 @@
 
 """
 import contextlib
+from concurrent.futures import Future
 from datetime import datetime
 from unittest.mock import MagicMock
 
@@ -842,3 +843,21 @@ def test_update_metrics_for_dates_batch_failure_falls_back_and_continues(monkeyp
   assert sorted(successful) == [901, 1001]
   assert sorted(prewarmed) == [901, 1001]
   assert reporter.completed == 2
+
+
+def test_prewarm_pipeline_drain_some_force_does_not_use_invalid_wait_condition(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
+
+  pipeline = update_metrics._PrewarmPipeline()
+  fut = Future()
+  fut.set_result(None)
+  pipeline._pending.add(fut)
+  pipeline._created_at[fut] = update_metrics.time.monotonic()
+
+  pipeline.drain_some(force=True)
+
+  assert pipeline._done == 1
+  assert len(pipeline._pending) == 0
+  pipeline._executor.shutdown(wait=True)
