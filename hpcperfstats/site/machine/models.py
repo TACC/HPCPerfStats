@@ -7,6 +7,7 @@ import hmac
 import secrets
 
 from django.db import models
+from django.db.models import Q
 
 
 class RealField(models.FloatField):
@@ -111,6 +112,12 @@ class metrics_data(models.Model):
     indexes = [
         models.Index(fields=["metric"], name="metrics_data_metric_idx"),
         models.Index(fields=["jid", "metric"], name="metrics_data_jid_metric_idx"),
+        models.Index(
+            fields=["jid"],
+            name="metrics_data_stale_jid_idx",
+            condition=Q(value__isnull=True)
+            & (Q(no_data_reason__isnull=True) | Q(no_data_reason="")),
+        ),
     ]
 
   def __str__(self):
@@ -179,6 +186,8 @@ class host_data(models.Model):
     indexes = [
         models.Index(fields=["host", "time"]),
         models.Index(fields=["jid", "time"]),
+        models.Index(fields=["host", "-time"], name="host_data_host_time_desc_idx"),
+        models.Index(fields=["jid", "-time"], name="host_data_jid_time_desc_idx"),
         models.Index(fields=["jid", "type", "event", "time"],
                      name="host_data_jid_type_ev_time_idx"),
     ]

@@ -26,7 +26,7 @@ from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
 from django.db import close_old_connections, connections, transaction
-from django.db.models import Count, F, IntegerField, Max, OuterRef, Q, Subquery, Value
+from django.db.models import BooleanField, Case, Count, Exists, F, IntegerField, Max, OuterRef, Q, Subquery, Value, When
 from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, DatabaseError
 
@@ -64,6 +64,9 @@ GC_COLLECT_EVERY_N_CHUNKS = 20
 # When argv has no start/end dates, process this many calendar days ending today.
 DEFAULT_METRICS_RANGE_DAYS = 7
 GLOBAL_SCHEDULER_BATCH_SIZE = 256
+READINESS_PROBE_TARGET_MIN = 64
+READINESS_PROBE_TARGET_STEP = 64
+READINESS_PROBE_TARGET_FAST_SUCCESS_S = 0.35
 
 
 class _PhaseTimer:
@@ -385,6 +388,7 @@ def _jobs_queryset(date, min_time, rerun):
       stale_null=Coalesce(stale_count_sq, int0),
   )
   need_metrics = Q(md_count__lt=expected) | Q(stale_null__gt=0)
+  maybe_live_distinct = Q(md_count__gte=expected) & Q(stale_null=0)
   # PostgreSQL only: re-run when host_data has more per-host sample times (sum
   # of COUNT(DISTINCT time) per host) than at last metrics persist (same window
   # + FQDN host list as jid_table).
@@ -394,10 +398,12 @@ def _jobs_queryset(date, min_time, rerun):
             _host_name_suffix(),
         ),
     )
-    need_metrics |= (
-        Q(metrics_distinct_time_count__isnull=False)
+    live_distinct_needs_refresh = (
+        maybe_live_distinct
+        & Q(metrics_distinct_time_count__isnull=False)
         & Q(live_distinct_time_count__gt=F("metrics_distinct_time_count"))
     )
+    need_metrics |= live_distinct_needs_refresh
   return annotated.filter(need_metrics).order_by("-end_time", "-jid")
 
 
@@ -619,6 +625,44 @@ def _filter_jids_with_samples_after_end(jids):
   return _ready_jids_from_job_rows(jobs)
 
 
+def _proxy_reject_not_ready_jids(jids):
+  """Cheap jid-level prefilter: reject jids with no post-end sample at all."""
+  if not jids:
+    return set(), []
+  if connections["default"].vendor != "postgresql":
+    return set(), list(jids)
+  has_post_end_sample = Exists(
+      host_data.objects.filter(
+          jid=OuterRef("jid"),
+          time__gt=OuterRef("end_time"),
+      )
+  )
+  rows = list(
+      job_data.objects.filter(jid__in=jids)
+      .annotate(
+          has_post_end=Case(
+              When(end_time__isnull=True, then=Value(False)),
+              default=has_post_end_sample,
+              output_field=BooleanField(),
+          )
+      )
+      .values_list("jid", "has_post_end")
+  )
+  reject = {jid for jid, has_post_end in rows if not has_post_end}
+  unknown = [jid for jid, has_post_end in rows if has_post_end]
+  return reject, unknown
+
+
+def _adjust_readiness_probe_target(current_target, had_error, elapsed_s, produced_ready, max_target):
+  """Adaptive target size for per-pass readiness probes."""
+  target = max(READINESS_PROBE_TARGET_MIN, int(current_target))
+  if had_error:
+    return max(READINESS_PROBE_TARGET_MIN, target // 2)
+  if produced_ready and elapsed_s <= READINESS_PROBE_TARGET_FAST_SUCCESS_S:
+    return min(int(max_target), target + READINESS_PROBE_TARGET_STEP)
+  return target
+
+
 def update_metrics(date, rerun=False):
   """Compute and persist metrics for all jobs ending on date (runtime >= min_time).
 
@@ -655,13 +699,16 @@ def _fill_ready_queue(date_states, ready_queue, mode, prefetch_chunks, phase_tim
       except StopIteration:
         state["done"] = True
         break
+      proxy_reject, proxy_unknown = _proxy_reject_not_ready_jids(pk_chunk)
+      stats["proxy_checked_chunks"] += 1
+      stats["proxy_rejected_jids"] += len(proxy_reject)
       try:
         with phase_timer.phase("readiness_s"):
-          ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+          ready_jids = _filter_jids_with_samples_after_end(proxy_unknown)
       except (OperationalError, DatabaseError) as exc:
         log_print(
             "readiness check failed for strict-date chunk size={0}; skipping chunk: {1}".format(
-                len(pk_chunk), exc
+                len(proxy_unknown), exc
             ),
             flush=True,
         )
@@ -681,13 +728,16 @@ def _fill_ready_queue(date_states, ready_queue, mode, prefetch_chunks, phase_tim
     except StopIteration:
       state["done"] = True
       continue
+    proxy_reject, proxy_unknown = _proxy_reject_not_ready_jids(pk_chunk)
+    stats["proxy_checked_chunks"] += 1
+    stats["proxy_rejected_jids"] += len(proxy_reject)
     try:
       with phase_timer.phase("readiness_s"):
-        ready_jids = _filter_jids_with_samples_after_end(pk_chunk)
+        ready_jids = _filter_jids_with_samples_after_end(proxy_unknown)
     except (OperationalError, DatabaseError) as exc:
       log_print(
           "readiness check failed for global chunk size={0}; skipping chunk: {1}".format(
-              len(pk_chunk), exc
+              len(proxy_unknown), exc
           ),
           flush=True,
       )
@@ -707,6 +757,7 @@ def _start_readiness_producer(
     producer_done,
     scheduler_mode,
     prefetch_ready_cap,
+    readiness_probe_target,
     phase_timer,
     stats,
     completion_reporter,
@@ -721,14 +772,27 @@ def _start_readiness_producer(
         if current_depth >= prefetch_ready_cap:
           time.sleep(0.05)
           continue
+        started = time.monotonic()
+        prev_errors = stats["readiness_error_chunks"]
         local_ready = deque()
+        probe_target = max(
+            READINESS_PROBE_TARGET_MIN,
+            min(readiness_probe_target["value"], prefetch_ready_cap - current_depth),
+        )
         _fill_ready_queue(
             date_states,
             local_ready,
             scheduler_mode,
-            prefetch_chunks=max(1, prefetch_ready_cap - current_depth),
+            prefetch_chunks=max(1, probe_target),
             phase_timer=phase_timer,
             stats=stats,
+        )
+        readiness_probe_target["value"] = _adjust_readiness_probe_target(
+            current_target=readiness_probe_target["value"],
+            had_error=(stats["readiness_error_chunks"] > prev_errors),
+            elapsed_s=(time.monotonic() - started),
+            produced_ready=bool(local_ready),
+            max_target=prefetch_ready_cap,
         )
         if stats["readiness_error_chunks"] > completion_reporter.readiness_errors_total():
           completion_reporter.record_readiness_error_chunk(
@@ -802,6 +866,8 @@ def update_metrics_for_dates(dates, rerun=False):
       "skipped_not_ready": 0,
       "candidate_jids": 0,
       "readiness_error_chunks": 0,
+      "proxy_checked_chunks": 0,
+      "proxy_rejected_jids": 0,
   }
 
   def _run():
@@ -814,6 +880,9 @@ def update_metrics_for_dates(dates, rerun=False):
       prefetch_ready_cap = max(
           1, min(prefetch_target, prefetch_chunks * CHUNK_SIZE)
       )
+      readiness_probe_target = {
+          "value": max(READINESS_PROBE_TARGET_MIN, min(prefetch_ready_cap, CHUNK_SIZE))
+      }
       batch_cap = min(prefetch_target, GLOBAL_SCHEDULER_BATCH_SIZE)
       log_print(
           "Starting metrics scheduler days={0} mode={1} prefetch_ready_cap={2} "
@@ -845,6 +914,7 @@ def update_metrics_for_dates(dates, rerun=False):
           producer_done=producer_done,
           scheduler_mode=scheduler_mode,
           prefetch_ready_cap=prefetch_ready_cap,
+          readiness_probe_target=readiness_probe_target,
           phase_timer=phase_timer,
           stats=stats,
           completion_reporter=completion_reporter,
@@ -928,17 +998,21 @@ def update_metrics_for_dates(dates, rerun=False):
       log_print(
           "Finished metrics scheduler mode={0}: processed={1} failed={2} "
           "candidate_jids={3} skipped_not_ready={4} readiness_error_chunks={5} "
-          "completed_last_hour={6} elapsed_s={7:.2f} jobs_per_min={8:.2f} "
-          "worker_busy_ratio={9:.3f} phase_candidate_s={10:.2f} "
-          "phase_readiness_s={11:.2f} phase_compute_s={12:.2f} phase_prewarm_s={13:.2f} "
-          "prewarm_backlog_jobs={14} prewarm_lag_seconds_p95={15:.3f} "
-          "prewarm_success_ratio={16:.3f}".format(
+          "proxy_checked_chunks={6} proxy_rejected_jids={7} readiness_probe_target={8} "
+          "completed_last_hour={9} elapsed_s={10:.2f} jobs_per_min={11:.2f} "
+          "worker_busy_ratio={12:.3f} phase_candidate_s={13:.2f} "
+          "phase_readiness_s={14:.2f} phase_compute_s={15:.2f} phase_prewarm_s={16:.2f} "
+          "prewarm_backlog_jobs={17} prewarm_lag_seconds_p95={18:.3f} "
+          "prewarm_success_ratio={19:.3f}".format(
               scheduler_mode,
               stats["processed"],
               stats["failed"],
               stats["candidate_jids"],
               stats["skipped_not_ready"],
               stats["readiness_error_chunks"],
+              stats["proxy_checked_chunks"],
+              stats["proxy_rejected_jids"],
+              readiness_probe_target["value"],
               completion_reporter.completed_in_window(),
               elapsed,
               (stats["processed"] * 60.0) / elapsed,

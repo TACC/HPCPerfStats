@@ -643,6 +643,56 @@ def test_filter_jids_postgresql_readiness_sql_timeout_falls_back(monkeypatch):
   assert len(fallback_called) == 1
 
 
+def test_proxy_reject_not_ready_jids_partitions(monkeypatch):
+  _patch_connections_vendor(monkeypatch, "postgresql")
+
+  class FakeJobsQuery:
+    def annotate(self, **_kwargs):
+      return self
+
+    def values_list(self, *_args, **_kwargs):
+      return [("j1", True), ("j2", False), ("j3", True)]
+
+  monkeypatch.setattr(
+      update_metrics.job_data,
+      "objects",
+      MagicMock(filter=lambda **_kwargs: FakeJobsQuery()),
+  )
+
+  reject, unknown = update_metrics._proxy_reject_not_ready_jids(["j1", "j2", "j3"])
+  assert reject == {"j2"}
+  assert unknown == ["j1", "j3"]
+
+
+def test_adjust_readiness_probe_target_backoff_and_growth():
+  cur = update_metrics._adjust_readiness_probe_target(
+      current_target=512,
+      had_error=True,
+      elapsed_s=1.0,
+      produced_ready=False,
+      max_target=2000,
+  )
+  assert cur == 256
+
+  grown = update_metrics._adjust_readiness_probe_target(
+      current_target=256,
+      had_error=False,
+      elapsed_s=0.1,
+      produced_ready=True,
+      max_target=300,
+  )
+  assert grown == 300
+
+  same = update_metrics._adjust_readiness_probe_target(
+      current_target=256,
+      had_error=False,
+      elapsed_s=2.0,
+      produced_ready=False,
+      max_target=2000,
+  )
+  assert same == 256
+
+
 @pytest.mark.django_db(databases=[])
 def test_update_metrics_for_dates_global_scheduler_interleaves_dates(monkeypatch):
   """Global scheduler should dispatch cross-date jobs instead of waiting per date."""
