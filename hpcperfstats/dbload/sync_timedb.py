@@ -42,6 +42,7 @@ from hpcperfstats.shutdown_utils import (
 )
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
+    collect_lock_sidecar_stats,
     collect_first_timestamps_by_path,
     dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
@@ -809,7 +810,7 @@ def run_sync_timedb_supervisor_loop(
   ingest_queue_high = ingest_queue_max
   ingest_queue_low = max(1, int(ingest_queue_max * 0.5))
   archive_queue_high = archive_queue_max
-  max(1, int(archive_queue_max * 0.5))
+  archive_queue_low = max(1, int(archive_queue_max * 0.5))
   archive_retry_max_attempts = max(1, int(cfg.get_sync_archive_retry_max_attempts()))
   archive_retry_backoff_base = max(0.0, float(cfg.get_sync_archive_retry_backoff_base_seconds()))
   archive_retry_backoff_max = max(0.0, float(cfg.get_sync_archive_retry_backoff_max_seconds()))
@@ -822,6 +823,21 @@ def run_sync_timedb_supervisor_loop(
   ingest_t0 = time.time()
 
   def _run_scheduled_archive_maintenance():
+    lock_stats_raw = collect_lock_sidecar_stats(directory)
+    lock_stats_archive = collect_lock_sidecar_stats(tgz_archive_dir)
+    log_print(
+        "Lock sidecar diagnostics raw=(count=%d stale=%d oldest_age_s=%.1f) "
+        "archive=(count=%d stale=%d oldest_age_s=%.1f)"
+        % (
+            lock_stats_raw["lock_files"],
+            lock_stats_raw["stale_lock_files"],
+            lock_stats_raw["oldest_lock_age_seconds"],
+            lock_stats_archive["lock_files"],
+            lock_stats_archive["stale_lock_files"],
+            lock_stats_archive["oldest_lock_age_seconds"],
+        ),
+        flush=True,
+    )
     for tar_path in sorted(iter_daily_tar_paths(tgz_archive_dir)):
       if not tar_has_duplicate_file_members(tar_path):
         continue
@@ -945,6 +961,11 @@ def run_sync_timedb_supervisor_loop(
   log_print(
       "sync_timedb continuous mode: pigz interval %s s; idle rescan sleep %s s"
       % (int(pigz_interval), int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)),
+      flush=True,
+  )
+  log_print(
+      "Queue watermarks ingest=(low=%d high=%d) archive=(low=%d high=%d)"
+      % (ingest_queue_low, ingest_queue_high, archive_queue_low, archive_queue_high),
       flush=True,
   )
 
@@ -1354,9 +1375,10 @@ def parse_sync_timedb_argv(argv):
     run_once = True
     argv_for_dates = [argv_for_dates[0]] + argv_for_dates[2:]
 
+  now_local = datetime.today()
   default_start = datetime.combine(
-      datetime.today(), datetime.min.time()) - timedelta(days=days_to_process)
-  default_end = default_start + timedelta(days=days_to_process)
+      now_local.date(), datetime.min.time()) - timedelta(days=days_to_process)
+  default_end = now_local
   startdate, enddate = parse_start_end_dates(
       argv_for_dates, default_start, default_end)
 

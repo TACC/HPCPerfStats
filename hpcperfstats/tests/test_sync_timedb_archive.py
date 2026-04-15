@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tarfile
+import time
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -12,6 +13,7 @@ from hpcperfstats.dbload.pigz_cli import pigz_executable
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     atomic_seal_tar_to_gz,
     build_archive_mapping,
+    collect_lock_sidecar_stats,
     collect_stats_files_in_range,
     dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
@@ -943,6 +945,37 @@ def test_collect_stats_files_in_range_date_filter(tmp_path):
   assert result[0].endswith("2")
 
 
+def test_collect_stats_files_in_range_includes_same_day_when_end_has_time(tmp_path):
+  """End datetime with time should include same-day files after midnight."""
+  cn = tmp_path / ("cn001." + _ARCH_HOST_SUFFIX)
+  cn.mkdir()
+  same_day = cn / "same-day"
+  same_day.write_text("x")
+  same_day_ts = datetime(2020, 6, 15, 12, 0, 0).timestamp()
+  os.utime(same_day, (same_day_ts, same_day_ts))
+  result = collect_stats_files_in_range(
+      str(tmp_path),
+      datetime(2020, 6, 8, 0, 0, 0),
+      datetime(2020, 6, 15, 13, 0, 0),
+      _ARCH_HOST_SUFFIX,
+  )
+  assert str(same_day) in result
+
+
+def test_collect_lock_sidecar_stats_counts_stale_and_age(tmp_path):
+  fresh = tmp_path / "fresh.fnctl.lock"
+  stale = tmp_path / "stale.fnctl.lock"
+  fresh.write_text("")
+  stale.write_text("")
+  now = time.time()
+  os.utime(fresh, (now - 5, now - 5))
+  os.utime(stale, (now - 100, now - 100))
+  stats = collect_lock_sidecar_stats(str(tmp_path), stale_after_seconds=60)
+  assert stats["lock_files"] == 2
+  assert stats["stale_lock_files"] == 1
+  assert stats["oldest_lock_age_seconds"] >= 100
+
+
 def test_collect_stats_files_in_range_sorted_newest_first(tmp_path):
   """Results are sorted by effective timestamp, newest first."""
   cn = tmp_path / ("cn001." + _ARCH_HOST_SUFFIX)
@@ -1026,6 +1059,26 @@ def test_collect_stats_files_in_range_all_no_date_filter(tmp_path):
       str(tmp_path), "all", None, _ARCH_HOST_SUFFIX)
   basenames = sorted(os.path.basename(p) for p in result)
   assert basenames == [str(old_epoch), str(new_epoch)]
+
+
+@pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")
+def test_atomic_seal_tar_to_gz_logs_retention_mode(tmp_path):
+  tar_path = tmp_path / "2021-03-03.tar"
+  gz_path = tmp_path / "2021-03-03.tar.gz"
+  member = tmp_path / "c.txt"
+  member.write_text("x")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="c.txt")
+  logs = []
+  atomic_seal_tar_to_gz(
+      str(tar_path),
+      str(gz_path),
+      num_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      log_fn=lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+  )
+  assert any("retaining uncompressed tar" in line for line in logs)
 
 
 def test_collect_stats_files_in_range_includes_non_compute_prefix(tmp_path):

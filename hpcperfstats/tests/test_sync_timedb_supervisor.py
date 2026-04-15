@@ -1,6 +1,7 @@
 """Unit tests for sync_timedb supervisor loop (no real multiprocessing or DB)."""
 
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 import json
 
@@ -85,6 +86,35 @@ class _FakeArchivePoolRetry:
         return self.value
 
     return _R(result)
+
+
+def test_parse_sync_timedb_argv_defaults_include_current_day(monkeypatch):
+  """Default end date should include current day time, not midnight-only."""
+  class _FakeDateTime(datetime):
+    @classmethod
+    def today(cls):
+      return cls(2026, 4, 14, 10, 30, 45)
+
+  monkeypatch.setattr(st, "datetime", _FakeDateTime)
+  run_once, startdate, enddate = st.parse_sync_timedb_argv(["sync_timedb.py"])
+  assert run_once is False
+  assert startdate == datetime(2026, 4, 14, 0, 0, 0) - st.timedelta(days=st.days_to_process)
+  assert enddate == datetime(2026, 4, 14, 10, 30, 45)
+
+
+def test_parse_sync_timedb_argv_once_and_all(monkeypatch):
+  class _FakeDateTime(datetime):
+    @classmethod
+    def today(cls):
+      return cls(2026, 4, 14, 10, 30, 45)
+
+  monkeypatch.setattr(st, "datetime", _FakeDateTime)
+  run_once, startdate, enddate = st.parse_sync_timedb_argv(
+      ["sync_timedb.py", "once", "all"]
+  )
+  assert run_once is True
+  assert startdate == "all"
+  assert enddate is None
 
 
 def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
@@ -192,6 +222,46 @@ def test_supervisor_run_once_exits_without_idle_sleep_when_empty(monkeypatch):
     assert sleeps == []
   finally:
     shutdown_requested[0] = False
+
+
+def test_supervisor_logs_queue_watermarks(monkeypatch):
+  shutdown_requested[0] = False
+  try:
+    logs = []
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", lambda *a, **k: [])
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_queue_max_size", lambda: 10)
+    monkeypatch.setattr(st.cfg, "get_sync_archive_queue_max_size", lambda: 8)
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(
+        st,
+        "log_print",
+        lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+    )
+
+    archive_pool = _FakeArchivePool()
+    archive_pool.__enter__()
+    try:
+      st.run_sync_timedb_supervisor_loop(
+          "/tmp/archive",
+          "all",
+          None,
+          ".hpc",
+          object(),
+          archive_pool,
+          run_once=True,
+      )
+    finally:
+      archive_pool.__exit__(None, None, None)
+  finally:
+    shutdown_requested[0] = False
+
+  assert any("Queue watermarks ingest" in line for line in logs)
 
 
 def test_checkpoint_round_trip_persists_completed_entries(tmp_path):

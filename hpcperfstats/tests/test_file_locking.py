@@ -163,3 +163,21 @@ def test_file_locking_repeated_read_write_cycles(tmp_path):
     with file_read_lock_wait(str(target), timeout_seconds=1):
       with open(target, "r", encoding="utf-8") as fd:
         assert fd.read() == "ok"
+
+
+def test_file_write_lock_logs_sidecar_cleanup_failures(monkeypatch, tmp_path, capsys):
+  target = tmp_path / "data.txt"
+  target.write_text("ok")
+  real_remove = os.remove
+
+  def _remove(path):
+    if str(path).endswith(".fnctl.lock"):
+      raise OSError("simulated unlink failure")
+    return real_remove(path)
+
+  monkeypatch.setattr(os, "remove", _remove)
+  with file_write_lock(str(target), timeout_seconds=1):
+    pass
+
+  captured = capsys.readouterr()
+  assert "WARNING: failed to remove lock sidecar" in captured.out

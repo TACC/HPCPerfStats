@@ -121,7 +121,7 @@ def file_write_lock(target_path,
         except OSError:
           # Best-effort cleanup; failure to remove the lock file should not
           # break callers once the advisory lock itself is released.
-          pass
+          print("WARNING: failed to remove lock sidecar: %s" % lock_path)
 
 
 @contextmanager

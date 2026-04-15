@@ -11,7 +11,12 @@ from datetime import datetime, timedelta
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.pigz_cli import pigz_decompress_verbose, pigz_executable
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
-from hpcperfstats.file_locking import LOCK_SUFFIX, file_read_lock_wait, file_write_lock
+from hpcperfstats.file_locking import (
+    LOCK_EXPIRY_SECONDS,
+    LOCK_SUFFIX,
+    file_read_lock_wait,
+    file_write_lock,
+)
 from hpcperfstats.print_utils import log_print
 
 pigz_thread_count = max(1, cfg.get_worker_thread_count(4))
@@ -33,6 +38,38 @@ def _remove_read_lock_sidecar(target_path):
     os.remove("%s%s" % (target_path, LOCK_SUFFIX))
   except OSError:
     pass
+
+
+def collect_lock_sidecar_stats(directory, stale_after_seconds=LOCK_EXPIRY_SECONDS):
+  """Return lock sidecar diagnostics for a directory tree."""
+  if not directory or not os.path.isdir(directory):
+    return {
+        "lock_files": 0,
+        "stale_lock_files": 0,
+        "oldest_lock_age_seconds": 0.0,
+    }
+  now = time.time()
+  lock_count = 0
+  stale_count = 0
+  oldest_age = 0.0
+  for root, _dirs, files in os.walk(directory):
+    for name in files:
+      if not _is_lock_file_name(name):
+        continue
+      lock_count += 1
+      path = os.path.join(root, name)
+      try:
+        age = max(0.0, now - os.path.getmtime(path))
+      except OSError:
+        continue
+      oldest_age = max(oldest_age, age)
+      if age > stale_after_seconds:
+        stale_count += 1
+  return {
+      "lock_files": lock_count,
+      "stale_lock_files": stale_count,
+      "oldest_lock_age_seconds": oldest_age,
+  }
 
 
 def get_tar_member_name(file_path):
@@ -554,10 +591,15 @@ def atomic_seal_tar_to_gz(
     raise
   if log_fn:
     log_fn("Sealed archive %s -> %s" % (tar_path, gz_path), flush=True)
-  if not keep_uncompressed_tar:
+  if keep_uncompressed_tar:
+    if log_fn:
+      log_fn("Sealed archive retaining uncompressed tar: %s" % tar_path, flush=True)
+  else:
     try:
       with file_write_lock(tar_path):
         os.remove(tar_path)
+      if log_fn:
+        log_fn("Sealed archive removed uncompressed tar: %s" % tar_path, flush=True)
     except OSError:
       pass
 
