@@ -620,6 +620,7 @@ def _append_to_tar(tar_path, file_paths):
     batch = max(batch, 256)
   elif len(file_paths) >= 128:
     batch = max(batch, 128)
+  tar_exists = os.path.exists(tar_path)
   for off in range(0, len(file_paths), batch):
     chunk = file_paths[off : off + batch]
     present = [p for p in chunk if os.path.lexists(p)]
@@ -639,16 +640,17 @@ def _append_to_tar(tar_path, file_paths):
           lf.write(os.fsencode(p) + b"\0")
       tar_bin = shutil.which("tar") or "/bin/tar"
       with file_write_lock(tar_path):
+        tar_args = [
+            tar_bin,
+            "-r" if tar_exists else "-c",
+            "-f",
+            tar_path,
+            "--null",
+            "-T",
+            list_path,
+        ]
         result = subprocess.run(
-            [
-                tar_bin,
-                "-r",
-                "-f",
-                tar_path,
-                "--null",
-                "-T",
-                list_path,
-            ],
+            tar_args,
             capture_output=True,
             text=True,
             check=False,
@@ -674,6 +676,7 @@ def _append_to_tar(tar_path, file_paths):
         % (off + 1, off + len(present), len(present), tar_path),
         flush=True,
     )
+    tar_exists = True
 
 
 def archive_stats_files(archive_info):

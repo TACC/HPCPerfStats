@@ -1337,6 +1337,22 @@ def test_archive_stats_files_does_not_raise_on_append_failure(monkeypatch, tmp_p
   assert raw_file.exists()
 
 
+@pytest.mark.skipif(not shutil.which("tar"), reason="tar binary required")
+def test_archive_stats_files_creates_new_tar_when_missing(tmp_path):
+  """Missing daily archive should be bootstrapped as a new .tar."""
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-01.tar.gz")
+  archive_tar = archive_key[:-3]
+  assert not os.path.exists(archive_key)
+  assert not os.path.exists(archive_tar)
+
+  assert archive_stats_files((archive_key, [str(raw_file)])) is True
+  assert os.path.exists(archive_tar)
+  members = get_existing_archive_members(archive_tar)
+  assert get_tar_member_name(str(raw_file)) in members
+
+
 def test_archive_stats_files_skips_dedupe_in_append_path(monkeypatch, tmp_path):
   """Duplicate-member dedupe should run in maintenance, not per append."""
   raw_file = tmp_path / "1000"
