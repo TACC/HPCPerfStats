@@ -590,6 +590,38 @@ def test_validate_sealed_daily_archive_gzip_only_ok(tmp_path):
   assert members["one.txt"] == 2
 
 
+def test_validate_sealed_daily_archive_seals_from_valid_tar_when_gz_missing(tmp_path, monkeypatch):
+  gz = tmp_path / "2022-01-03.tar.gz"
+  tar_p = tmp_path / "2022-01-03.tar"
+  f = tmp_path / "raw.txt"
+  f.write_text("seal-me")
+  with tarfile.open(tar_p, "w") as tf:
+    tf.add(str(f), arcname="raw.txt")
+
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  seal_calls = {"count": 0}
+
+  def _fake_atomic_seal(
+      _tar_path,
+      _gz_path,
+      num_threads,
+      compress_level,
+      keep_uncompressed_tar,
+      log_fn=None,
+  ):
+    del num_threads, compress_level, keep_uncompressed_tar, log_fn
+    seal_calls["count"] += 1
+    with tarfile.open(_gz_path, "w:gz") as tf:
+      tf.add(str(f), arcname="raw.txt")
+
+  monkeypatch.setattr(helpers, "atomic_seal_tar_to_gz", _fake_atomic_seal)
+  ok, members = validate_sealed_daily_archive_for_raw_removal(str(gz), log_fn=None)
+  assert ok
+  assert seal_calls["count"] == 1
+  assert members["raw.txt"] == len("seal-me")
+
+
 def test_get_file_member_sizes_from_gzip_archive_reads_gz_only(tmp_path):
   gz = tmp_path / "x.tar.gz"
   tar_p = tmp_path / "x.tar"

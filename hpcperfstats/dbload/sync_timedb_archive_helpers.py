@@ -149,11 +149,6 @@ def validate_sealed_daily_archive_for_raw_removal(archive_gz_path, log_fn=log_pr
     return False, None
   gz_path = archive_gz_path
   tar_path = gz_path[:-len(".gz")]
-  if not os.path.isfile(gz_path):
-    if log_fn:
-      log_fn("Skipping removal: sealed gzip missing: %s" % gz_path, flush=True)
-    return False, None
-
   members_tar = None
   if os.path.isfile(tar_path):
     if not verify_tar_archive_readable(tar_path):
@@ -164,6 +159,42 @@ def validate_sealed_daily_archive_for_raw_removal(archive_gz_path, log_fn=log_pr
         )
       return False, None
     members_tar = get_existing_archive_members(tar_path)
+    if not members_tar:
+      if log_fn:
+        log_fn(
+            "Skipping removal: uncompressed tar has no file members: %s" % tar_path,
+            flush=True,
+        )
+      return False, None
+
+  if not os.path.isfile(gz_path):
+    if members_tar is None:
+      if log_fn:
+        log_fn("Skipping removal: sealed gzip missing: %s" % gz_path, flush=True)
+      return False, None
+    if log_fn:
+      log_fn(
+          "Sealed gzip missing; creating from valid uncompressed tar: %s"
+          % tar_path,
+          flush=True,
+      )
+    try:
+      atomic_seal_tar_to_gz(
+          tar_path,
+          gz_path,
+          num_threads=pigz_thread_count,
+          compress_level=cfg.get_archive_pigz_level(),
+          keep_uncompressed_tar=cfg.get_archive_keep_uncompressed_tar(),
+          log_fn=log_fn,
+      )
+    except (OSError, subprocess.CalledProcessError) as exc:
+      if log_fn:
+        log_fn(
+            "Skipping removal: failed to seal tar into gzip for %s (%s)"
+            % (tar_path, exc),
+            flush=True,
+        )
+      return False, None
 
   if not verify_tar_archive_readable(gz_path):
     if log_fn:
