@@ -19,6 +19,15 @@ def test_docker_compose_has_healthchecks_for_core_services():
   assert "rabbitmq-diagnostics" in content
 
 
+def test_docker_compose_rabbitmq_defaults_to_guest_credentials():
+  repo_root = Path(__file__).resolve().parents[2]
+  compose_path = repo_root / "docker-compose.yaml"
+  content = compose_path.read_text()
+
+  assert "RABBITMQ_DEFAULT_USER=guest" in content
+  assert "RABBITMQ_DEFAULT_PASS=guest" in content
+
+
 def test_docker_compose_proxy_mounts_existing_nginx_config():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"

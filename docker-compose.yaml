@@ -100,6 +100,9 @@ services:
     image: rabbitmq:4-alpine
     container_name: hpcperfstats_rabbitmq_1
     restart: always
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
     healthcheck:
       # `rabbitmq-diagnostics ping` returns non-zero if the node is not ready.
       test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping || exit 1"]
