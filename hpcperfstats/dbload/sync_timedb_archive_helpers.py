@@ -299,6 +299,7 @@ def remove_verified_archived_raw_files(
     tgz_archive_dir,
     *,
     log_fn=log_print,
+    archive_stats_files_fn=None,
 ):
   """Remove raw stats files only after tar + tar.gz validation and matching member maps.
 
@@ -310,13 +311,40 @@ def remove_verified_archived_raw_files(
   Scans all closed segments under ``archive_data_dir`` (same rules as ingest).
   Run after ``seal_dirty_daily_archives``. If only ``.tar.gz`` exists (no sibling
   ``.tar``), gzip alone is validated and its map is used.
+
+  If raw files map to a day but neither ``.tar`` nor ``.tar.gz`` exists yet
+  (e.g. ingest already finished and archival was never run for those paths),
+  this routine bootstraps the daily archive via ``archive_stats_files`` before
+  validation and removal.
   """
   paths = collect_stats_files_in_range(
       archive_data_dir, "all", None, host_name_ext)
   if not paths:
     return
   mapping = build_archive_mapping(paths, tgz_archive_dir)
+  if archive_stats_files_fn is None:
+    import hpcperfstats.dbload.sync_timedb as _sync_timedb_mod
+
+    archive_stats_files_fn = _sync_timedb_mod.archive_stats_files
   for gz_path, stats_paths in mapping.items():
+    if gz_path.endswith(".tar.gz"):
+      tar_path = gz_path[:-3]
+      if (not os.path.isfile(gz_path) and not os.path.isfile(tar_path)
+          and stats_paths):
+        if log_fn:
+          log_fn(
+              "Bootstrapping missing daily archive from %d raw stats file(s): %s"
+              % (len(stats_paths), gz_path),
+              flush=True,
+          )
+        if not archive_stats_files_fn((gz_path, list(stats_paths))):
+          if log_fn:
+            log_fn(
+                "Skipping removal: could not bootstrap daily archive: %s"
+                % gz_path,
+                flush=True,
+            )
+          continue
     ok, members = validate_sealed_daily_archive_for_raw_removal(
         gz_path, log_fn=log_fn)
     if not ok or members is None:

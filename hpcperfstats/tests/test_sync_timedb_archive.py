@@ -563,6 +563,54 @@ def test_remove_verified_archived_raw_files_removes_when_verified(tmp_path):
   assert not seg.is_file()
 
 
+def test_remove_verified_archived_raw_files_bootstraps_missing_daily_archive(
+    tmp_path, monkeypatch,
+):
+  """When neither .tar nor .tar.gz exists, removal pass must call archive before validate."""
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  arch_suffix = "cluster.integration.test"
+  host = tmp_path / ("n." + arch_suffix)
+  host.mkdir()
+  ts = int(datetime(2026, 4, 15, 12, 0, 0).timestamp())
+  seg = host / str(ts)
+  seg.write_text("%d job1 cn001\nline\n" % ts)
+  os.utime(seg, (ts, ts))
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  gz_key = str(tgz_dir / "2026-04-15.tar.gz")
+  assert not os.path.isfile(gz_key)
+  assert not os.path.isfile(gz_key[:-3])
+
+  archive_calls = []
+
+  def fake_archive(info):
+    archive_calls.append(info)
+    return True
+
+  member_name = get_tar_member_name(str(seg))
+
+  def fake_validate(gz_path, log_fn=None):
+    assert gz_path == gz_key
+    return True, {member_name: os.path.getsize(seg)}
+
+  monkeypatch.setattr(
+      helpers,
+      "validate_sealed_daily_archive_for_raw_removal",
+      fake_validate,
+  )
+
+  remove_verified_archived_raw_files(
+      str(tmp_path),
+      arch_suffix,
+      str(tgz_dir),
+      log_fn=None,
+      archive_stats_files_fn=fake_archive,
+  )
+  assert archive_calls == [(gz_key, [str(seg)])]
+  assert not seg.is_file()
+
+
 def test_validate_sealed_daily_archive_fails_on_tar_gz_mismatch(tmp_path):
   gz = tmp_path / "2022-01-01.tar.gz"
   tar_p = tmp_path / "2022-01-01.tar"

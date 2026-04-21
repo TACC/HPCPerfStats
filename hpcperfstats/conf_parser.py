@@ -110,7 +110,8 @@ def get_secret_key():
 
 def get_archive_dir_path():
   """Return the archive directory path from PORTAL config."""
-  return _get('PORTAL', 'archive_dir')
+  raw = _get('PORTAL', 'archive_dir').strip()
+  return os.path.normpath(raw) if raw else raw
 
 
 def get_host_name_ext():
@@ -130,7 +131,8 @@ def get_accounting_path():
 
 def get_daily_archive_dir_path():
   """Return the daily archive directory path from PORTAL config."""
-  return _get('PORTAL', 'daily_archive_dir')
+  raw = _get('PORTAL', 'daily_archive_dir').strip()
+  return os.path.normpath(raw) if raw else raw
 
 
 def get_archive_keep_uncompressed_tar():
