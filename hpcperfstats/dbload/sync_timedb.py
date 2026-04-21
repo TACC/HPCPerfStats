@@ -100,9 +100,9 @@ processed_files_max_size = 200000
 SYNC_TIMEDB_CHECKPOINT_BASENAME = ".sync_timedb_state.json"
 SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES = cfg.get_sync_checkpoint_flush_batch_size()
 
-# When no pending files remain after a directory rescan, sleep this long (seconds)
-# before scanning again. Interruptible via shutdown_requested / SIGTERM path.
-EMPTY_QUEUE_RESCAN_SLEEP_SECONDS = 300
+# When no pending files remain after final sealing, sleep this long (seconds)
+# before exiting sync_timedb. Interruptible via shutdown_requested / SIGTERM path.
+EMPTY_QUEUE_RESCAN_SLEEP_SECONDS = 30
 
 # Set to 1/yes/true so ingest runs in the parent process (no spawn pool). Required
 # for pytest-django: pool workers would reconnect with default PORTAL.dbname instead
