@@ -56,7 +56,10 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     tar_has_duplicate_file_members,
     verify_tar_archive_readable,
 )
-from hpcperfstats.file_locking import file_write_lock
+from hpcperfstats.file_locking import (
+    cleanup_stale_fnctl_lock_sidecars,
+    file_write_lock,
+)
 from hpcperfstats.dbload.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
     build_stats_dataframes,

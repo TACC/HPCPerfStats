@@ -12,6 +12,7 @@ When changing ingest/archive paths under `hpcperfstats/dbload/archive_monitor_da
 - Lock path generation must be **idempotent**. Re-wrapping an already-locked target must not append repeated lock suffixes (for example avoid `.fnctl.lock.fnctl.lock...` growth).
 - Lock files must be removed on normal release and on error/exception paths.
 - Any cleanup path that can skip unlock due to early return/exception is a defect and must be fixed in the same change.
+- **Stale sidecars:** read-lock paths do not unlink `*.fnctl.lock`. `cleanup_stale_fnctl_lock_sidecars` walks the raw archive dir and daily archive dir during scheduled `sync_timedb` maintenance and removes sidecars older than `LOCK_EXPIRY_SECONDS` only after the same non-blocking exclusive flock probe as `_maybe_reset_stale_lock_file` (no removal if contended).
 
 ## Archival recovery and compression behavior
 
@@ -24,6 +25,7 @@ When changing ingest/archive paths under `hpcperfstats/dbload/archive_monitor_da
 - Extend/add focused tests around:
  - lock path normalization/idempotence
  - lock file cleanup after success and exceptions
+ - bulk stale `*.fnctl.lock` cleanup (safe removal vs active holder)
  - archive recovery/fallback paths
  - pigz thread-count selection for both gzip and gunzip operations
 

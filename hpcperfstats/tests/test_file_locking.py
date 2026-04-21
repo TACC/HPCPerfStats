@@ -4,7 +4,11 @@ import time
 
 import pytest
 
-from hpcperfstats.file_locking import file_read_lock_wait, file_write_lock
+from hpcperfstats.file_locking import (
+    cleanup_stale_fnctl_lock_sidecars,
+    file_read_lock_wait,
+    file_write_lock,
+)
 
 
 def test_file_write_lock_creates_corresponding_lock_file(tmp_path):
@@ -107,6 +111,50 @@ def test_stale_lock_file_is_expired_before_acquire(tmp_path):
 
   with file_write_lock(str(target), timeout_seconds=1):
     assert lock_path.exists()
+
+
+def test_cleanup_stale_fnctl_lock_sidecars_removes_old_orphan_sidecar(tmp_path):
+  """Read paths leave sidecars; bulk cleanup removes stale uncontended ones."""
+  target = tmp_path / "2026-04-02.tar"
+  target.write_text("x")
+  lock_path = tmp_path / "2026-04-02.tar.fnctl.lock"
+  lock_path.write_text("")
+  stale_ts = time.time() - (4 * 60 * 60 + 30)
+  os.utime(lock_path, (stale_ts, stale_ts))
+  assert cleanup_stale_fnctl_lock_sidecars(str(tmp_path)) == 1
+  assert not lock_path.exists()
+
+
+def test_cleanup_stale_fnctl_lock_sidecars_skips_recent_mtime(tmp_path):
+  target = tmp_path / "recent.tar"
+  target.write_text("x")
+  lock_path = tmp_path / "recent.tar.fnctl.lock"
+  lock_path.write_text("")
+  assert cleanup_stale_fnctl_lock_sidecars(str(tmp_path)) == 0
+  assert lock_path.exists()
+
+
+def test_cleanup_stale_fnctl_lock_sidecars_does_not_remove_active_lock(tmp_path):
+  target = tmp_path / "held.tar"
+  target.write_text("x")
+  lock_path = tmp_path / "held.tar.fnctl.lock"
+  held = threading.Event()
+  release = threading.Event()
+
+  def _hold_writer():
+    with file_write_lock(str(target), timeout_seconds=1):
+      held.set()
+      release.wait(timeout=2)
+
+  t = threading.Thread(target=_hold_writer, daemon=True)
+  t.start()
+  assert held.wait(timeout=1)
+  stale_ts = time.time() - (4 * 60 * 60 + 30)
+  os.utime(lock_path, (stale_ts, stale_ts))
+  assert cleanup_stale_fnctl_lock_sidecars(str(tmp_path)) == 0
+  assert lock_path.exists()
+  release.set()
+  t.join(timeout=1)
 
 
 def test_file_read_lock_does_not_delete_lock_file_on_release(tmp_path):

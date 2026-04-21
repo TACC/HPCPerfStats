@@ -51,7 +51,7 @@ def _maybe_reset_stale_lock_file(target_path, now, expiry_seconds):
   lock_fd = None
   try:
     if not os.path.exists(lock_path):
-      return
+      return False
     age_seconds = now - os.path.getmtime(lock_path)
     if age_seconds > expiry_seconds:
       # Only remove stale lock files when we can prove no active holder exists.
@@ -61,15 +61,58 @@ def _maybe_reset_stale_lock_file(target_path, now, expiry_seconds):
       lock_fd.close()
       lock_fd = None
       os.remove(lock_path)
+      return True
   except OSError:
     # Best effort only; lock acquisition still provides correctness.
-    return
+    return False
   finally:
     if lock_fd is not None:
       try:
         lock_fd.close()
       except OSError:
         pass
+  return False
+
+
+def _target_path_from_lock_sidecar(lock_path):
+  """Map a lock sidecar path back to the locked target (collapse repeated suffixes)."""
+  base = lock_path
+  while base.endswith(LOCK_SUFFIX):
+    base = base[: -len(LOCK_SUFFIX)]
+  return base
+
+
+def cleanup_stale_fnctl_lock_sidecars(
+    directory,
+    *,
+    expiry_seconds=LOCK_EXPIRY_SECONDS,
+    now=None,
+):
+  """Remove stale ``*.fnctl.lock`` sidecars under ``directory`` when safe.
+
+  Read paths do not unlink the sidecar file, so empty lock files can linger.
+  This walks the tree and, for each ``*.fnctl.lock`` older than ``expiry_seconds``,
+  reuses the same safety check as :func:`_maybe_reset_stale_lock_file`: attempt a
+  non-blocking exclusive flock on the sidecar; remove only if uncontended.
+
+  Returns the number of sidecar files removed.
+  """
+  if not directory or not os.path.isdir(directory):
+    return 0
+  if now is None:
+    now = time.time()
+  removed = 0
+  for root, _dirs, files in os.walk(directory):
+    for name in files:
+      if not name.endswith(LOCK_SUFFIX):
+        continue
+      lock_path = os.path.join(root, name)
+      target_path = _target_path_from_lock_sidecar(lock_path)
+      if not target_path or target_path == lock_path:
+        continue
+      if _maybe_reset_stale_lock_file(target_path, now, expiry_seconds):
+        removed += 1
+  return removed
 
 
 @contextmanager
