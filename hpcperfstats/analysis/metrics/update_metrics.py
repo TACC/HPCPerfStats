@@ -45,6 +45,7 @@ from hpcperfstats.shutdown_utils import (
     sleep_until_shutdown,
 )
 from hpcperfstats.site.machine.job_plot_artifacts import persist_job_plot_artifacts_for_jid
+from hpcperfstats.site.machine.job_detail_artifacts import persist_job_detail_artifacts_for_jid
 from hpcperfstats.site.machine.models import host_data, job_data, metrics_data
 
 DEBUG = cfg.get_debug()
@@ -115,6 +116,7 @@ class _PrewarmPipeline:
     for _ in range(max(1, self._attempts)):
       try:
         close_old_connections()
+        persist_job_detail_artifacts_for_jid(jid)
         persist_job_plot_artifacts_for_jid(jid)
         return
       except Exception as exc:

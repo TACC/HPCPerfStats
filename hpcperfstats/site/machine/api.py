@@ -74,6 +74,12 @@ from .job_plot_artifacts import (
     get_live_distinct_time_count_for_jid,
     load_cached_job_plot_entry,
 )
+from .job_detail_artifacts import (
+    ARTIFACT_KIND_JOB_DETAIL,
+    ARTIFACT_KIND_TYPE_DETAIL,
+    compute_detail_input_fingerprint,
+    load_job_detail_artifact,
+)
 from hpcperfstats.analysis.metrics.metrics import build_job_metrics_display_list
 from hpcperfstats.dbload.sync_acct import sync_acct_from_content
 from .models import ApiKey, host_data, job_data, metrics_data
@@ -251,6 +257,8 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout):
                 job_cache_timeout,
                 lambda: list(_gpu_agg_rows_for_job(j)),
             )
+            if isinstance(agg, dict):
+                agg = [agg]
             gpu_active, gpu_max, gpu_mean = reduce_gpu_agg_to_util_stats(agg)
         except Exception:
             pass
@@ -1779,15 +1787,7 @@ def job_detail(request, pk):
 
     j = jid_table.jid_table(job.jid)
     host_list = j.acct_host_list
-    JOB_DETAIL_MAX_WAIT_SECONDS = 25  # Keep job_detail responsive vs proxy timeouts.
     light_mode = str(request.GET.get("light", "")).lower() in ("1", "true", "yes")
-
-    def _fetch_gpu():
-        tup = _gpu_detail_tuple_from_metrics(job)
-        if tup is not None:
-            return tup
-        # Backfill / fresh jobs: same ORM aggregates as metrics (cached per jid).
-        return _compute_job_gpu_stats(job, j, job_cache_timeout)
 
     def _fetch_xalt():
         close_old_connections()
@@ -1855,50 +1855,12 @@ def job_detail(request, pk):
         finally:
             close_old_connections()
 
-    def _fetch_fsio():
-        """Prefer metrics_data detail_fsio_*; else host_data via jid_table (same as pre-metrics API)."""
-        close_old_connections()
-        try:
-            fsio_m = _fsio_dict_from_metrics(job)
-            if fsio_m is not None:
-                return fsio_m
-            fsio = {}
-            try:
-                llite_df = j.get_llite_delta_by_event()
-                if not llite_df.empty and "delta_sum" in llite_df.columns:
-                    llite_df = llite_df.copy()
-                    llite_df["delta_mb"] = llite_df["delta_sum"].fillna(0) / (1024 * 1024)
-                    read_row = llite_df[llite_df["event"] == "read_bytes"]
-                    write_row = llite_df[llite_df["event"] == "write_bytes"]
-                    read_val = float(read_row["delta_mb"].iloc[0]) if len(read_row) else 0.0
-                    write_val = float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0
-                    fsio["llite"] = [read_val, write_val]
-            except Exception:
-                pass
-            if "llite" not in fsio:
-                try:
-                    nfs_totals = j.get_nfs_delta_totals_mb()
-                    if nfs_totals is not None:
-                        fsio["nfs"] = nfs_totals
-                except Exception:
-                    pass
-            return fsio
-        finally:
-            close_old_connections()
-
-    def _fetch_schema():
-        """Prefer host_data_schema_json from update_metrics; else live jid_table.schema."""
-        close_old_connections()
-        try:
-            js = getattr(job, "host_data_schema_json", None)
-            if isinstance(js, dict) and js:
-                return js
-            try:
-                return j.schema
-            except Exception:
-                return {}
-        finally:
-            close_old_connections()
+    detail_payload = load_job_detail_artifact(
+        job.jid,
+        ARTIFACT_KIND_JOB_DETAIL,
+        "",
+        compute_detail_input_fingerprint(job),
+    ) or {}
 
     def _fetch_proc_list():
         from .models import proc_data
@@ -1917,22 +1879,21 @@ def job_detail(request, pk):
         finally:
             close_old_connections()
 
-    gpu_active = gpu_utilization_max = gpu_utilization_mean = gpu_count = None
+    gpu_active = detail_payload.get("gpu_active")
+    gpu_utilization_max = detail_payload.get("gpu_utilization_max")
+    gpu_utilization_mean = detail_payload.get("gpu_utilization_mean")
+    gpu_count = detail_payload.get("gpu_count")
     xalt_payload = None
-    fsio = {}
-    schema = {}
+    fsio = detail_payload.get("fsio") or {}
+    schema = detail_payload.get("schema") or {}
     proc_list = []
 
-    tasks = [
-        ("gpu", _fetch_gpu),
-        ("fsio", _fetch_fsio),
-        ("schema", _fetch_schema),
-        ("proc_list", _fetch_proc_list),
-    ]
+    tasks = [("proc_list", _fetch_proc_list)]
     if (not light_mode) and cfg.get_xalt_user() != "":
         tasks.append(("xalt", _fetch_xalt))
 
-    if not light_mode:
+    if not light_mode and tasks:
+        JOB_DETAIL_MAX_WAIT_SECONDS = 25  # Keep job_detail responsive vs proxy timeouts.
         executor = _get_small_executor()
         future_to_key = {executor.submit(fn): key for key, fn in tasks}
         results_by_key, remaining_keys = _collect_future_results_with_deadline(
@@ -1949,14 +1910,8 @@ def job_detail(request, pk):
 
         for key, result in results_by_key.items():
             try:
-                if key == "gpu":
-                    gpu_active, gpu_utilization_max, gpu_utilization_mean, gpu_count = result
-                elif key == "xalt":
+                if key == "xalt":
                     xalt_payload = result
-                elif key == "fsio":
-                    fsio = result
-                elif key == "schema":
-                    schema = result
                 elif key == "proc_list":
                     proc_list = result or []
             except Exception:
@@ -2022,6 +1977,7 @@ def job_detail(request, pk):
         "gpu_count": gpu_count,
         "metrics_list": metrics_list,
         "proc_list": proc_list,
+        "derived_data_status": "ready" if detail_payload else "loading",
     }
     if request.session.get("is_staff", False):
         payload["staff_metrics_distinct_time_count"] = job.metrics_distinct_time_count
@@ -2376,7 +2332,6 @@ def type_detail(request, jid, type_name):
     if err is not None:
         return err
 
-    site_ttl = get_site_content_cache_timeout()
     job, err = _get_visible_job_or_error_response(
         request,
         jid,
@@ -2385,71 +2340,24 @@ def type_detail(request, jid, type_name):
     if err is not None:
         return err
 
-    acct_host_list = jid_table._build_acct_host_fqdns(job.host_list or [])
-    start_time, end_time = _job_times_as_local(job.start_time, job.end_time)
-
-    provider = jid_table.TypeDetailDataProvider(
-        jid, type_name, start_time, end_time, acct_host_list
+    detail_payload = load_job_detail_artifact(
+        jid,
+        ARTIFACT_KIND_TYPE_DETAIL,
+        type_name,
+        compute_detail_input_fingerprint(job),
     )
-
-    def _type_hosts_fn():
-        found = set()
-        for chunk in jid_table._iter_acct_host_batches(acct_host_list):
-            found.update(
-                host_data.objects.filter(
-                    type=type_name,
-                    time__gte=start_time,
-                    time__lte=end_time,
-                    host__in=chunk,
-                )
-                .values_list("host", flat=True)
-                .distinct()
-            )
-        return list(found)
-
-    _st = start_time.isoformat() if start_time else ""
-    _et = end_time.isoformat() if end_time else ""
-    data_host_list = cached_orm(
-        f"{KEY_TYPE_DETAIL_HOSTS}:{jid}:{type_name}:{_st}:{_et}",
-        site_ttl,
-        _type_hosts_fn,
-    )
-    if len(data_host_list) == 0:
+    if not detail_payload:
         return Response({
             "type_name": type_name,
             "jobid": jid,
             "tplot_item": None,
-            "tplot_unavailable_reason": "No device-level samples found for this job/type in host_data.",
+            "tplot_unavailable_reason": "Type detail artifact not ready yet. Run update_metrics and retry.",
             "stats_data": [],
             "schema": [],
+            "status": "loading",
         })
-
-    sp = plots.DevPlot(provider, data_host_list)
-    df, plot_comp = sp.plot()
-    tplot_item = json_item(plot_comp)
-    schema = [
-        c for c in df.columns
-        if c not in ("host", "time", "index")
-    ] if not df.empty else []
-
-    stats_data = []
-    if not df.empty and "time" in df.columns and len(df) > 0 and schema:
-        df = df.copy()
-        df["dt"] = df["time"].sub(df["time"].iloc[0]).astype("timedelta64[s]")
-        df1 = df.groupby("dt")[schema].mean().reset_index()
-        for t in range(len(df1)):
-            vals = df1.loc[df1.index[t], schema].values.flatten().tolist()
-            vals = [float(x) if hasattr(x, "__float__") else x for x in vals]
-            stats_data.append([str(df1["dt"].iloc[t]), vals])
-
-    return Response({
-        "type_name": type_name,
-        "jobid": jid,
-        "tplot_item": tplot_item,
-        "tplot_unavailable_reason": None if tplot_item is not None else "Type detail plot generation returned no data.",
-        "stats_data": stats_data,
-        "schema": schema,
-    })
+    detail_payload["status"] = "ready"
+    return Response(detail_payload)
 
 
 @dynamic_cache_page(site_response_cache_timeout)
@@ -2459,6 +2367,11 @@ def host_plot(request):
     err = _require_auth(request)
     if err is not None:
         return err
+    if not request.session.get("is_staff", False):
+        return Response(
+            {"error": "host_plot is restricted to admin-only access."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     site_ttl = get_site_content_cache_timeout()
 

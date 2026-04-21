@@ -94,7 +94,7 @@ def test_type_detail_response_omits_legacy_tscript_tdiv():
       api,
       "_get_visible_job_or_error_response",
       return_value=(job, None),
-  ), patch.object(api, "cached_orm", return_value=[]), patch(
+  ), patch.object(api, "load_job_detail_artifact", return_value=None), patch(
       "hpcperfstats.site.machine.api.cfg.get_host_name_ext",
       return_value="example.com",
   ):
@@ -105,5 +105,20 @@ def test_type_detail_response_omits_legacy_tscript_tdiv():
   assert "tscript" not in body
   assert "tdiv" not in body
   assert body["tplot_item"] is None
+  assert body["status"] == "loading"
   assert body["type_name"] == "cpu"
   assert body["jobid"] == "j1"
+
+
+@pytest.mark.django_db(databases=[])
+def test_host_plot_forbidden_for_non_staff():
+  from hpcperfstats.site.machine import api
+
+  factory = RequestFactory()
+  request = factory.get("/api/host_plot/?host=h1&end_time__gte=2025-01-01T00:00:00Z")
+  request.session = {"username": "u1", "is_staff": False}
+
+  with patch.object(api, "_require_auth", return_value=None):
+    response = api.host_plot(request)
+
+  assert response.status_code == 403

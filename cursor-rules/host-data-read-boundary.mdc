@@ -1,0 +1,35 @@
+# host_data Read Boundary
+
+`host_data` is a raw telemetry source. Treat it as a script/monitor/admin data source, not a user-facing request-time source.
+
+## Policy
+
+- User-facing API handlers and frontend-serving assembly code must not query `host_data` directly.
+- User-facing routes must read from derived cached artifacts produced by metrics/update pipelines (`metrics_data`, `job_plot_artifact`, `job_detail_artifact`, and related cache entries).
+- Direct `host_data` reads are allowed only for:
+ - ingest/sync scripts and metrics/update pipelines,
+ - monitor paths (`job monitor`, `admin monitor`, and related monitor diagnostics),
+ - explicitly admin-only endpoints/pages.
+
+## Required implementation behavior
+
+1. If a user-facing endpoint needs data currently coming from `host_data`, add/update an artifact prewarm path in `update_metrics` first.
+2. Invalidate both Redis and DB-backed derived artifacts from ingest/sync invalidation hooks when raw telemetry changes.
+3. User-facing endpoints must return deterministic `loading/not ready` responses when artifacts are missing; do not query `host_data` as runtime fallback.
+4. Keep monitor/admin-only direct read paths explicit (auth-gated and documented in code).
+
+## Required tests
+
+- Add or update API regression tests proving non-admin user-facing endpoints do not directly read `host_data`.
+- Add/update pipeline tests showing `update_metrics` prewarms required artifacts.
+- Add/update invalidation tests proving ingest/sync removes stale derived artifacts.
+- Update web E2E tests when user-visible page behavior changes.
+
+## Canonical files
+
+- `hpcperfstats/site/machine/api.py`
+- `hpcperfstats/site/machine/cache_utils.py`
+- `hpcperfstats/site/machine/job_plot_artifacts.py`
+- `hpcperfstats/site/machine/job_detail_artifacts.py`
+- `hpcperfstats/analysis/metrics/update_metrics.py`
+- `hpcperfstats/dbload/sync_timedb.py`

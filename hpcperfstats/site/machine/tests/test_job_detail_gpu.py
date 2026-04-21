@@ -46,6 +46,19 @@ def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
 
   vis = MagicMock()
   vis.exists.return_value = True
+  detail_payload = {
+      "host_list": mock_j.acct_host_list,
+      "schema": {},
+      "fsio": {},
+      "gpu_active": None,
+      "gpu_utilization_max": None,
+      "gpu_utilization_mean": None,
+      "gpu_count": gpu_count_cached,
+  }
+  if gpu_agg and gpu_agg.get("cnt", 0) > 2:
+    detail_payload["gpu_active"] = 3 if float(gpu_agg.get("vmax", 0.0) or 0.0) > 0.0 else 0
+    detail_payload["gpu_utilization_max"] = float(gpu_agg.get("vmax", 0.0) or 0.0)
+    detail_payload["gpu_utilization_mean"] = float(gpu_agg.get("vmean", 0.0) or 0.0)
   return (
       patch.object(api_module, "_require_auth", return_value=None),
       patch.object(
@@ -57,6 +70,7 @@ def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
       patch.object(api_module.cfg, "get_xalt_user", return_value=""),
       patch.object(api_module.cfg, "get_host_name_ext", return_value=""),
       patch.object(api_module, "cached_orm", side_effect=cached_se),
+      patch.object(api_module, "load_job_detail_artifact", return_value=detail_payload),
       patch.object(
           api_module,
           "JobListSerializer",
@@ -134,7 +148,9 @@ def test_compute_job_gpu_stats_helper_matches_job_detail_gpu_logic():
   def cached_se(key, timeout, fn):
     del timeout, fn
     if key.startswith(f"{cu.KEY_GPU_AGG}:"):
-      return {"cnt": 4, "vmax": 250.0, "vmean": 80.0}
+      return [
+          {"host": "n1.example.com", "dev": "0", "event": "gpu_util", "cnt": 4, "vmax": 250.0, "vmean": 80.0},
+      ]
     if key.startswith(f"{cu.KEY_GPU_COUNT}:"):
       return 8
     return None
@@ -143,7 +159,7 @@ def test_compute_job_gpu_stats_helper_matches_job_detail_gpu_logic():
     gpu_active, gpu_max, gpu_mean, gpu_count = api._compute_job_gpu_stats(job, j, 3600)
 
   assert gpu_max == 250.0
-  assert gpu_active == 3
+  assert gpu_active == 1
   assert gpu_mean == 80.0
   assert gpu_count == 8
 
@@ -279,6 +295,19 @@ def test_job_detail_gpu_from_metrics_data_skips_host_data_cache():
       patch.object(api.cfg, "get_xalt_user", return_value=""),
       patch.object(api.cfg, "get_host_name_ext", return_value=""),
       patch.object(api, "cached_orm", side_effect=cached_se),
+      patch.object(
+          api,
+          "load_job_detail_artifact",
+          return_value={
+              "host_list": mock_j.acct_host_list,
+              "schema": {},
+              "fsio": {},
+              "gpu_active": 2,
+              "gpu_utilization_max": 99.5,
+              "gpu_utilization_mean": 45.25,
+              "gpu_count": 4,
+          },
+      ),
       patch.object(
           api,
           "JobListSerializer",

@@ -248,6 +248,37 @@ class job_plot_artifact(models.Model):
     return f"{self.jid_id}:{self.plot_kind}:{self.layout}"
 
 
+class job_detail_artifact(models.Model):
+  """Persisted derived job detail/type-detail payloads (gzip-compressed JSON)."""
+
+  jid = models.ForeignKey(
+      job_data,
+      on_delete=models.CASCADE,
+      db_column="jid",
+      related_name="detail_artifacts",
+  )
+  artifact_kind = models.CharField(max_length=32)
+  artifact_scope = models.CharField(max_length=128, default="")
+  payload_compressed = models.BinaryField()
+  payload_encoding = models.CharField(max_length=32)
+  input_fingerprint = models.CharField(max_length=64)
+  created_at = models.DateTimeField(auto_now_add=True)
+  updated_at = models.DateTimeField(auto_now=True)
+
+  class Meta:
+    db_table = "job_detail_artifact"
+    managed = True
+    constraints = [
+        models.UniqueConstraint(
+            fields=["jid", "artifact_kind", "artifact_scope"],
+            name="job_detail_artifact_jid_kind_scope_uniq",
+        ),
+    ]
+
+  def __str__(self):
+    return f"{self.jid_id}:{self.artifact_kind}:{self.artifact_scope}"
+
+
 class ApiKey(models.Model):
   """API key for programmatic access, bound to an authenticated username.
 

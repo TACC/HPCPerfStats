@@ -293,9 +293,10 @@ def invalidate_job_plot_cache_keys_for_jids(jids):
     except Exception:
       pass
   try:
-    from hpcperfstats.site.machine.models import job_plot_artifact
+    from hpcperfstats.site.machine.models import job_detail_artifact, job_plot_artifact
 
     job_plot_artifact.objects.filter(jid_id__in=[j for j in jids if j]).delete()
+    job_detail_artifact.objects.filter(jid_id__in=[j for j in jids if j]).delete()
   except Exception:
     pass
 

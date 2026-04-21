@@ -21,6 +21,7 @@ def _patch_scheduler_defaults(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
+  monkeypatch.setattr(update_metrics, "persist_job_detail_artifacts_for_jid", lambda jid: None)
 
 
 def _patch_connections_vendor(monkeypatch, vendor):
@@ -702,6 +703,7 @@ def test_update_metrics_for_dates_global_scheduler_interleaves_dates(monkeypatch
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
   monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
 
@@ -826,6 +828,7 @@ def test_update_metrics_for_dates_batch_failure_falls_back_and_continues(monkeyp
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
   monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
 
@@ -860,11 +863,18 @@ def test_update_metrics_for_dates_batch_failure_falls_back_and_continues(monkeyp
     def completed_in_window(self):
       return self.completed
 
+    def readiness_errors_total(self):
+      return 0
+
+    def record_readiness_error_chunk(self, count=1):
+      del count
+
   reporter = FakeReporter()
   monkeypatch.setattr(update_metrics, "_CompletionReporter", lambda: reporter)
 
   successful = []
   prewarmed = []
+  detail_prewarmed = []
 
   class FakeMetrics:
     simple_metrics_list = {}
@@ -886,12 +896,14 @@ def test_update_metrics_for_dates_batch_failure_falls_back_and_continues(monkeyp
 
   monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: prewarmed.append(jid))
+  monkeypatch.setattr(update_metrics, "persist_job_detail_artifacts_for_jid", lambda jid: detail_prewarmed.append(jid))
   d1 = datetime(2025, 4, 10)
   d2 = datetime(2025, 4, 9)
   update_metrics.update_metrics_for_dates([d1, d2], rerun=False)
 
   assert sorted(successful) == [901, 1001]
   assert sorted(prewarmed) == [901, 1001]
+  assert sorted(detail_prewarmed) == [901, 1001]
   assert reporter.completed == 2
 
 

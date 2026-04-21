@@ -15,7 +15,11 @@ from hpcperfstats.site.machine.job_plot_artifacts import (
     upsert_job_plot_artifact_batch,
     upsert_job_plot_artifact,
 )
-from hpcperfstats.site.machine.models import job_data, job_plot_artifact
+from hpcperfstats.site.machine.job_detail_artifacts import (
+    ARTIFACT_KIND_JOB_DETAIL,
+    upsert_job_detail_artifact,
+)
+from hpcperfstats.site.machine.models import job_data, job_detail_artifact, job_plot_artifact
 
 
 @pytest.mark.django_db
@@ -117,9 +121,12 @@ def test_invalidate_job_plot_cache_keys_for_jids_deletes_rows():
   )
   fp = compute_plot_input_fingerprint(j, 0)
   upsert_job_plot_artifact("inv1", "roofline", "normal", fp, {"x": 1})
+  upsert_job_detail_artifact("inv1", ARTIFACT_KIND_JOB_DETAIL, "", "fp", {"x": 1})
   assert job_plot_artifact.objects.filter(jid_id="inv1").count() == 1
+  assert job_detail_artifact.objects.filter(jid_id="inv1").count() == 1
   invalidate_job_plot_cache_keys_for_jids(["inv1"])
   assert job_plot_artifact.objects.filter(jid_id="inv1").count() == 0
+  assert job_detail_artifact.objects.filter(jid_id="inv1").count() == 0
 
 
 @pytest.mark.django_db

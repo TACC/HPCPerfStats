@@ -13,7 +13,7 @@ from hpcperfstats.site.machine import cache_utils as cu
 pytestmark = pytest.mark.django_db(databases=[])
 
 
-def _patch_job_detail_fsio_context(api_module, jid, mock_j):
+def _patch_job_detail_fsio_context(api_module, jid, mock_j, fsio_payload):
   """Stub job_detail with a custom jid_table mock (no ORM)."""
   job_mock = MagicMock()
   job_mock.jid = jid
@@ -50,6 +50,19 @@ def _patch_job_detail_fsio_context(api_module, jid, mock_j):
       patch.object(api_module, "cached_orm", side_effect=cached_se),
       patch.object(
           api_module,
+          "load_job_detail_artifact",
+          return_value={
+              "host_list": mock_j.acct_host_list,
+              "schema": {},
+              "fsio": fsio_payload,
+              "gpu_active": None,
+              "gpu_utilization_max": None,
+              "gpu_utilization_mean": None,
+              "gpu_count": None,
+          },
+      ),
+      patch.object(
+          api_module,
           "JobListSerializer",
           return_value=MagicMock(data={"jid": jid, "username": "u1"}),
       ),
@@ -58,7 +71,7 @@ def _patch_job_detail_fsio_context(api_module, jid, mock_j):
 
 
 def test_job_detail_fsio_uses_nfs_when_no_llite():
-  """When llite is empty, populate fsio from NFS byte aggregates."""
+  """job_detail returns precomputed fsio artifact without runtime host_data reads."""
   from hpcperfstats.site.machine import api
 
   jid = "test-fsio-nfs-1"
@@ -75,7 +88,7 @@ def test_job_detail_fsio_uses_nfs_when_no_llite():
   mock_j.start_time = t0
   mock_j.end_time = t0
 
-  ctx = _patch_job_detail_fsio_context(api, jid, mock_j)
+  ctx = _patch_job_detail_fsio_context(api, jid, mock_j, {"nfs": [12.5, 3.25]})
 
   with ThreadPoolExecutor(max_workers=4) as executor:
     with ExitStack() as stack:
@@ -86,7 +99,7 @@ def test_job_detail_fsio_uses_nfs_when_no_llite():
 
   assert response.status_code == 200
   assert response.data["fsio"] == {"nfs": [12.5, 3.25]}
-  mock_j.get_nfs_delta_totals_mb.assert_called_once()
+  mock_j.get_nfs_delta_totals_mb.assert_not_called()
 
 
 def test_job_detail_fsio_prefers_llite_over_nfs():
@@ -112,7 +125,7 @@ def test_job_detail_fsio_prefers_llite_over_nfs():
   mock_j.start_time = t0
   mock_j.end_time = t0
 
-  ctx = _patch_job_detail_fsio_context(api, jid, mock_j)
+  ctx = _patch_job_detail_fsio_context(api, jid, mock_j, {"llite": [1.0, 2.0]})
 
   with ThreadPoolExecutor(max_workers=4) as executor:
     with ExitStack() as stack:
@@ -183,6 +196,19 @@ def test_job_detail_fsio_from_metrics_skips_host_queries():
       patch.object(api, "cached_orm", side_effect=cached_se),
       patch.object(
           api,
+          "load_job_detail_artifact",
+          return_value={
+              "host_list": mock_j.acct_host_list,
+              "schema": {},
+              "fsio": {"llite": [9.0, 1.0]},
+              "gpu_active": None,
+              "gpu_utilization_max": None,
+              "gpu_utilization_mean": None,
+              "gpu_count": None,
+          },
+      ),
+      patch.object(
+          api,
           "JobListSerializer",
           return_value=MagicMock(data={"jid": jid, "username": "u1"}),
       ),
@@ -249,6 +275,19 @@ def test_job_detail_schema_prefers_host_data_schema_json():
       patch.object(api, "cached_orm", side_effect=cached_se),
       patch.object(
           api,
+          "load_job_detail_artifact",
+          return_value={
+              "host_list": mock_j.acct_host_list,
+              "schema": {"cpu": ["user", "system"]},
+              "fsio": {},
+              "gpu_active": None,
+              "gpu_utilization_max": None,
+              "gpu_utilization_mean": None,
+              "gpu_count": None,
+          },
+      ),
+      patch.object(
+          api,
           "JobListSerializer",
           return_value=MagicMock(data={"jid": jid, "username": "u1"}),
       ),
@@ -284,7 +323,7 @@ def test_job_detail_with_empty_host_list_does_not_error():
   mock_j.start_time = t0
   mock_j.end_time = t0
 
-  ctx = _patch_job_detail_fsio_context(api, jid, mock_j)
+  ctx = _patch_job_detail_fsio_context(api, jid, mock_j, {})
 
   with ThreadPoolExecutor(max_workers=4) as executor:
     with ExitStack() as stack:
