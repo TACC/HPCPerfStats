@@ -5,6 +5,7 @@ ORM is mocked where views would otherwise query. LocMem cache avoids Redis
 during ``@dynamic_cache_page`` wrapping.
 """
 
+from datetime import datetime, timezone as dt_timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -286,6 +287,76 @@ class TestJobMonitorGpuForUserApi:
     assert response.data["gpu_count_total"] == 12
     assert response.data["gpu_active_percentage"] == 25.0
     assert response.data["has_data"] is True
+
+  def test_fallback_skips_gpu_count_query_for_job_monitor_gpu(self):
+    """Fallback path must not run per-job gpu_count host_data query."""
+    from hpcperfstats.site.machine import api
+
+    class _EmptyMetricChain:
+      def filter(self, **_kwargs):
+        return self
+
+      def exists(self):
+        return False
+
+      def aggregate(self, **_kwargs):
+        return {"s": None}
+
+    class _MDObjects:
+      def filter(self, **_kwargs):
+        return _EmptyMetricChain()
+
+    class _MD:
+      objects = _MDObjects()
+
+    class _JobObjects:
+      def filter(self, **_kwargs):
+        class _Qs:
+          def only(self, *_fields):
+            return [
+                MagicMock(
+                    jid="j1",
+                    start_time=datetime(2026, 1, 1, tzinfo=dt_timezone.utc),
+                    end_time=datetime(2026, 1, 1, 1, tzinfo=dt_timezone.utc),
+                    host_list=["n1"],
+                )
+            ]
+
+        return _Qs()
+
+    class _JD:
+      objects = _JobObjects()
+
+    factory = APIRequestFactory()
+    request = factory.get("/api/job_monitor/gpu/", {"username": "alice"})
+
+    with patch.object(api, "_require_staff", return_value=None), patch.object(
+        api, "get_site_content_cache_timeout", return_value=60
+    ), patch.object(
+        api, "cached_orm", side_effect=lambda _k, _t, fn: fn()
+    ), patch.object(api, "metrics_data", _MD), patch.object(
+        api, "job_data", _JD
+    ), patch.object(
+        api.jid_table,
+        "gpu_acct_window_for_job_data",
+        return_value=(
+            datetime(2026, 1, 1, tzinfo=dt_timezone.utc),
+            datetime(2026, 1, 1, 1, tzinfo=dt_timezone.utc),
+            ["n1.example.com"],
+        ),
+    ), patch.object(
+        api,
+        "_compute_job_gpu_stats",
+        return_value=(1, None, None, None),
+    ) as mock_compute:
+      response = api.job_monitor_gpu_for_user(request)
+
+    assert response.status_code == 200
+    assert response.data["gpu_active_total"] == 1
+    assert response.data["gpu_count_total"] is None
+    assert response.data["has_data"] is True
+    mock_compute.assert_called_once()
+    assert mock_compute.call_args.kwargs.get("include_gpu_count") is False
 
 
 class TestSacctIngestApi:

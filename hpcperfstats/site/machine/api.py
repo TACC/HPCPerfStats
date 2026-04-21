@@ -241,7 +241,7 @@ def _fsio_dict_from_metrics(job):
     return None
 
 
-def _compute_job_gpu_stats(job, j, job_cache_timeout):
+def _compute_job_gpu_stats(job, j, job_cache_timeout, include_gpu_count=True):
     """Compute per-job GPU stats (host_data); used when metrics_data rows are missing."""
     from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
         gpu_count_total_for_job_window,
@@ -263,14 +263,15 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout):
         except Exception:
             pass
 
-        try:
-            gpu_count_total = cached_orm(
-                f"{KEY_GPU_COUNT}:{job.jid}",
-                job_cache_timeout,
-                lambda: gpu_count_total_for_job_window(j),
-            )
-        except Exception:
-            gpu_count_total = None
+        if include_gpu_count:
+            try:
+                gpu_count_total = cached_orm(
+                    f"{KEY_GPU_COUNT}:{job.jid}",
+                    job_cache_timeout,
+                    lambda: gpu_count_total_for_job_window(j),
+                )
+            except Exception:
+                gpu_count_total = None
 
         return (gpu_active, gpu_max, gpu_mean, gpu_count_total)
     finally:
@@ -2835,7 +2836,12 @@ def job_monitor_gpu_for_user(request):
                         start_time=w_start, end_time=w_end, acct_host_list=acct
                     )
                     gpu_active, _gpu_max, _gpu_mean, per_job_gpu_count = (
-                        _compute_job_gpu_stats(job, j, site_ttl)
+                        _compute_job_gpu_stats(
+                            job,
+                            j,
+                            site_ttl,
+                            include_gpu_count=False,
+                        )
                     )
                 except Exception:
                     continue
