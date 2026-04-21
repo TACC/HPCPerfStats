@@ -829,6 +829,14 @@ def run_sync_timedb_supervisor_loop(
   ingest_t0 = time.time()
 
   def _run_scheduled_archive_maintenance():
+    removed_raw = cleanup_stale_fnctl_lock_sidecars(directory)
+    removed_arch = cleanup_stale_fnctl_lock_sidecars(tgz_archive_dir)
+    if removed_raw or removed_arch:
+      log_print(
+          "Removed stale advisory lock sidecars: raw_dir=%d daily_archive=%d"
+          % (removed_raw, removed_arch),
+          flush=True,
+      )
     lock_stats_raw = collect_lock_sidecar_stats(directory)
     lock_stats_archive = collect_lock_sidecar_stats(tgz_archive_dir)
     log_print(
