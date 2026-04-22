@@ -335,7 +335,7 @@ def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
   monkeypatch.setattr(update_metrics, "DEBUG", False)
 
   update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
-  assert seen == [[101, 102], [103]]
+  assert seen == [[101], [102], [103]]
 
 
 def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
@@ -373,11 +373,11 @@ def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
   monkeypatch.setattr(update_metrics, "DEBUG", False)
 
   update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
-  assert seen == [[101, 103]]
+  assert seen == [[101], [103]]
 
 
 def test_update_metrics_reuses_shared_pool_per_date(monkeypatch):
-  """update_metrics should initialize one shared pool and reuse it per chunk."""
+  """update_metrics should initialize one shared pool and reuse it per jid run."""
   monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
   monkeypatch.setattr(
       update_metrics,
@@ -409,7 +409,7 @@ def test_update_metrics_reuses_shared_pool_per_date(monkeypatch):
   monkeypatch.setattr(update_metrics, "DEBUG", False)
 
   update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
-  assert pool_calls == ["ensure", pool_token, pool_token, "close"]
+  assert pool_calls == ["ensure", pool_token, pool_token, pool_token, "close"]
 
 
 def test_filter_jids_with_samples_after_end_requires_all_hosts(monkeypatch):
@@ -901,9 +901,8 @@ def test_update_metrics_for_dates_empty_date_list_returns(monkeypatch):
   update_metrics.update_metrics_for_dates([], rerun=False)
 
 
-@pytest.mark.django_db(databases=[])
-def test_update_metrics_for_dates_batch_failure_falls_back_and_continues(monkeypatch):
-  """One failing jid should not stop progress for the rest of the batch."""
+def test_update_metrics_for_dates_per_jid_failure_does_not_stop_progress(monkeypatch):
+  """One failing jid should not stop progress for the rest of the queue."""
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 2)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 8)
@@ -970,8 +969,7 @@ def test_update_metrics_for_dates_batch_failure_falls_back_and_continues(monkeyp
 
     def run(self, jobs, pool=None):
       jids = [j.jid for j in jobs]
-      if len(jids) > 1:
-        raise RuntimeError("synthetic batched failure")
+      assert len(jids) == 1
       if jids[0] == 1002:
         raise RuntimeError("single-job failure")
       successful.append(jids[0])

@@ -18,6 +18,7 @@ import threading
 import signal
 import sys
 import time
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from datetime import datetime, timedelta
 from collections import deque
@@ -120,12 +121,29 @@ class _PrewarmPipeline:
     for _ in range(max(1, self._attempts)):
       try:
         close_old_connections()
-        persist_job_detail_artifacts_for_jid(jid)
-        persist_job_plot_artifacts_for_jid(jid)
+        shared_context = {}
+        persist_job_detail_artifacts_for_jid(jid, context=shared_context)
+        persist_job_plot_artifacts_for_jid(jid, context=shared_context)
         return
       except Exception as exc:
         last_exc = exc
     raise last_exc
+
+  def run_for_jid(self, jid, shared_context=None):
+    """Run detail+plot prewarm synchronously for one jid."""
+    if isinstance(shared_context, dict):
+      close_old_connections()
+      try:
+        persist_job_detail_artifacts_for_jid(jid, context=shared_context)
+      except TypeError:
+        persist_job_detail_artifacts_for_jid(jid)
+      try:
+        persist_job_plot_artifacts_for_jid(jid, context=shared_context)
+      except TypeError:
+        persist_job_plot_artifacts_for_jid(jid)
+    else:
+      self._run_one(jid)
+    self._done += 1
 
   def submit(self, jid):
     if self._mode == "inline":
@@ -932,20 +950,9 @@ def _start_readiness_producer(
 
 
 def _compute_metrics_batch(metrics_manager, job_refs, shared_pool):
-  """Run a batch; if it fails, isolate bad jobs and continue."""
+  """Run metrics per-jid and return (succeeded_jids, failed_count)."""
   if not job_refs:
     return [], 0
-  try:
-    metrics_manager.run(job_refs, pool=shared_pool)
-    return [j.jid for j in job_refs], 0
-  except Exception as exc:
-    log_print(
-        "metrics scheduler: batch failed (size={0}), retrying jobs one-by-one: {1}".format(
-            len(job_refs), exc
-        ),
-        flush=True,
-    )
-
   succeeded = []
   failed = 0
   for job_ref in job_refs:
@@ -963,6 +970,38 @@ def _compute_metrics_batch(metrics_manager, job_refs, shared_pool):
           flush=True,
       )
   return succeeded, failed
+
+
+@dataclass
+class PerJidComputeContext:
+  """Shared per-jid context for the compute + artifact pipeline."""
+  jid: str
+  artifact_context: dict = field(default_factory=dict)
+
+
+def _compute_and_prewarm_jid(metrics_manager, prewarm_pipeline, job_ref, shared_pool):
+  """Compute metrics and immediately prewarm detail/plot artifacts for one jid."""
+  context = PerJidComputeContext(jid=job_ref.jid)
+  try:
+    metrics_manager.run([job_ref], pool=shared_pool)
+  except Exception as exc:
+    log_print(
+        "metrics scheduler: failed jid={0}; skipping and continuing: {1}".format(
+            context.jid, exc
+        ),
+        flush=True,
+    )
+    return False
+  try:
+    prewarm_pipeline.run_for_jid(context.jid, shared_context=context.artifact_context)
+  except Exception as exc:
+    log_print(
+        "metrics scheduler: prewarm failed jid={0}; continuing: {1}".format(
+            context.jid, exc
+        ),
+        flush=True,
+    )
+  return True
 
 
 def update_metrics_for_dates(dates, rerun=False):
@@ -1085,9 +1124,20 @@ def update_metrics_for_dates(dates, rerun=False):
           stall_iters = 0
           job_refs = _job_refs_from_jids(jobs_this_round)
           with phase_timer.phase("metrics_compute_s"):
-            succeeded_jids, failed_count = _compute_metrics_batch(
-                metrics_manager, job_refs, shared_pool
-            )
+            succeeded_jids = []
+            failed_count = 0
+            for job_ref in job_refs:
+              if shutdown_requested[0]:
+                break
+              if _compute_and_prewarm_jid(
+                  metrics_manager,
+                  prewarm_pipeline,
+                  job_ref,
+                  shared_pool,
+              ):
+                succeeded_jids.append(job_ref.jid)
+              else:
+                failed_count += 1
           stats["processed"] += len(succeeded_jids)
           stats["failed"] += failed_count
           completion_reporter.record_completed(len(succeeded_jids))
@@ -1104,9 +1154,7 @@ def update_metrics_for_dates(dates, rerun=False):
                 flush=True,
             )
           with phase_timer.phase("prewarm_s"):
-            for jid in succeeded_jids:
-              prewarm_pipeline.submit(jid)
-            prewarm_pipeline.drain_some(force=False)
+            pass
           if (
               GC_COLLECT_EVERY_N_CHUNKS > 0
               and compute_batches % GC_COLLECT_EVERY_N_CHUNKS == 0

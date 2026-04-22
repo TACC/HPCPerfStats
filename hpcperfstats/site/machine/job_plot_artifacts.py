@@ -214,6 +214,41 @@ def _load_row(jid: str, plot_kind: str, layout: str) -> Optional[job_plot_artifa
   )
 
 
+def _load_rows_map(jid: str, layouts: Sequence[str]) -> Dict[Tuple[str, str], job_plot_artifact]:
+  rows = (
+      job_plot_artifact.objects.filter(
+          jid_id=jid,
+          plot_kind__in=JOB_PLOT_KINDS,
+          layout__in=list(layouts),
+      )
+      .only("plot_kind", "layout", "payload_compressed", "payload_encoding", "input_fingerprint")
+  )
+  return {(row.plot_kind, row.layout): row for row in rows}
+
+
+class _JtMemoProxy:
+  """Per-call memo wrapper for jid_table aggregate/dataframe reads."""
+
+  def __init__(self, jt: Any):
+    self._jt = jt
+    self._host_time_df = None
+    self._aggregate_cache: Dict[Tuple[str, str, Tuple[str, ...], float], Any] = {}
+
+  def __getattr__(self, name):
+    return getattr(self._jt, name)
+
+  def get_host_time_df(self):
+    if self._host_time_df is None:
+      self._host_time_df = self._jt.get_host_time_df()
+    return self._host_time_df.copy()
+
+  def get_aggregate_df(self, typ, metric_column, events, conv):
+    key = (str(typ), str(metric_column), tuple(events or ()), float(conv))
+    if key not in self._aggregate_cache:
+      self._aggregate_cache[key] = self._jt.get_aggregate_df(typ, metric_column, events, conv)
+    return self._aggregate_cache[key].copy()
+
+
 def load_cached_job_plot_entry(
     jid: str,
     plot_kind: str,
@@ -286,21 +321,40 @@ def compute_plot_item_for_kind(
 def persist_job_plot_artifacts_for_jid(
     jid: str,
     layouts: Optional[Sequence[str]] = None,
+    context: Optional[Dict[str, Any]] = None,
 ) -> None:
   """Build and store artifacts for each plot kind (used by update_metrics prewarm)."""
   if layouts is None:
     layouts = (JOB_PLOT_LAYOUT_NORMAL,)
-  job = job_data.objects.filter(jid=jid).first()
+  shared = context if isinstance(context, dict) else {}
+  job = shared.get("job")
+  if job is None:
+    job = job_data.objects.filter(jid=jid).first()
+    shared["job"] = job
   if not job:
     return
-  live = get_live_distinct_time_count_for_jid(jid)
-  fp = compute_plot_input_fingerprint(job, live)
-  jt = jid_table.jid_table(jid)
+  fp = shared.get("plot_fingerprint")
+  if fp is None:
+    live = get_live_distinct_time_count_for_jid(jid)
+    fp = compute_plot_input_fingerprint(job, live)
+    shared["plot_fingerprint"] = fp
+  jt = shared.get("jt")
+  if jt is None:
+    jt = jid_table.jid_table(jid)
+    shared["jt"] = jt
+  plot_jt = shared.get("plot_jt")
+  if plot_jt is None:
+    plot_jt = _JtMemoProxy(jt)
+    shared["plot_jt"] = plot_jt
+  existing = shared.get("existing_plot_rows")
+  if existing is None:
+    existing = _load_rows_map(jid, layouts)
+    shared["existing_plot_rows"] = existing
   write_rows = []
   for kind in JOB_PLOT_KINDS:
     for layout in layouts:
       zoom_mode = layout == JOB_PLOT_LAYOUT_ZOOM_V3
-      row = _load_row(jid, kind, layout)
+      row = existing.get((kind, layout))
       if (
           row
           and row.input_fingerprint == fp
@@ -308,7 +362,7 @@ def persist_job_plot_artifacts_for_jid(
       ):
         continue
       try:
-        plot_item, reason = compute_plot_item_for_kind(jt, kind, zoom_mode)
+        plot_item, reason = compute_plot_item_for_kind(plot_jt, kind, zoom_mode)
       except Exception:
         logger.warning(
             "plot prewarm failed jid=%s kind=%s layout=%s",

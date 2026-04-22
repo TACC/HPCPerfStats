@@ -12,6 +12,7 @@ from bokeh.embed import json_item
 
 import hpcperfstats.analysis.gen.jid_table as jid_table
 import hpcperfstats.analysis.plot as plots
+from hpcperfstats.analysis.metrics.job_detail_fsio import fsio_job_detail_catalog
 from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
     gpu_agg_rows_for_job_window,
     gpu_count_total_for_job_window,
@@ -144,30 +145,90 @@ def _gpu_detail_from_jid_table(jt: Any) -> Dict[str, Any]:
   }
 
 
-def persist_job_detail_artifacts_for_jid(jid: str) -> None:
+def _metric_value_map(job: job_data) -> Dict[str, Optional[float]]:
+  out: Dict[str, Optional[float]] = {}
+  for row in getattr(job, "metrics_data_set").all():
+    out[row.metric] = None if row.value is None else float(row.value)
+  return out
+
+
+def _gpu_detail_from_metric_values(metric_values: Dict[str, Optional[float]]) -> Optional[Dict[str, Any]]:
+  required = (
+      "detail_gpu_active",
+      "detail_gpu_util_max",
+      "detail_gpu_util_mean",
+      "detail_gpu_count",
+  )
+  if not all(k in metric_values for k in required):
+    return None
+  active = metric_values.get("detail_gpu_active")
+  util_max = metric_values.get("detail_gpu_util_max")
+  util_mean = metric_values.get("detail_gpu_util_mean")
+  count = metric_values.get("detail_gpu_count")
+  return {
+      "gpu_active": None if active is None else int(active),
+      "gpu_utilization_max": util_max,
+      "gpu_utilization_mean": util_mean,
+      "gpu_count": None if count is None else int(count),
+  }
+
+
+def _fsio_from_metric_values(metric_values: Dict[str, Optional[float]]) -> Optional[Dict[str, Any]]:
+  fsio_metrics = {name for name, _t, _u in fsio_job_detail_catalog()}
+  if not fsio_metrics.intersection(metric_values.keys()):
+    return None
+  out = {}
+  llite_read = metric_values.get("detail_fsio_llite_read_mb")
+  llite_write = metric_values.get("detail_fsio_llite_write_mb")
+  nfs_read = metric_values.get("detail_fsio_nfs_read_mb")
+  nfs_write = metric_values.get("detail_fsio_nfs_write_mb")
+  if llite_read is not None or llite_write is not None:
+    out["llite"] = [float(llite_read or 0.0), float(llite_write or 0.0)]
+    return out
+  if nfs_read is not None or nfs_write is not None:
+    out["nfs"] = [float(nfs_read or 0.0), float(nfs_write or 0.0)]
+    return out
+  return out
+
+
+def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, Any]] = None) -> None:
   """Prewarm derived payloads for user-facing API paths."""
-  job = job_data.objects.filter(jid=jid).prefetch_related("metrics_data_set").first()
+  shared = context if isinstance(context, dict) else {}
+  job = shared.get("job")
+  if job is None:
+    job = job_data.objects.filter(jid=jid).prefetch_related("metrics_data_set").first()
+    shared["job"] = job
   if not job:
     return
-  jt = jid_table.jid_table(jid)
-  fingerprint = compute_detail_input_fingerprint(job)
+  jt = shared.get("jt")
+  if jt is None:
+    jt = jid_table.jid_table(jid)
+    shared["jt"] = jt
+  fingerprint = shared.get("detail_fingerprint")
+  if fingerprint is None:
+    fingerprint = compute_detail_input_fingerprint(job)
+    shared["detail_fingerprint"] = fingerprint
 
   schema = getattr(job, "host_data_schema_json", None)
   if not isinstance(schema, dict) or not schema:
     schema = jt.schema or {}
 
-  fsio = {}
+  metric_values = _metric_value_map(job)
+  fsio = _fsio_from_metric_values(metric_values)
+  if fsio is None:
+    fsio = {}
   try:
-    llite_df = jt.get_llite_delta_by_event()
-    if not llite_df.empty and "delta_sum" in llite_df.columns:
-      llite_df = llite_df.copy()
-      llite_df["delta_mb"] = llite_df["delta_sum"].fillna(0) / (1024 * 1024)
-      read_row = llite_df[llite_df["event"] == "read_bytes"]
-      write_row = llite_df[llite_df["event"] == "write_bytes"]
-      fsio["llite"] = [
-          float(read_row["delta_mb"].iloc[0]) if len(read_row) else 0.0,
-          float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0,
-      ]
+    if not fsio:
+      llite_df = jt.get_llite_delta_by_event()
+      if not llite_df.empty and "delta_sum" in llite_df.columns:
+        llite_df = llite_df.copy()
+        llite_df["delta_mb"] = llite_df["delta_sum"].fillna(0) / (1024 * 1024)
+        read_row = llite_df[llite_df["event"] == "read_bytes"]
+        write_row = llite_df[llite_df["event"] == "write_bytes"]
+        fsio["llite"] = [
+            float(read_row["delta_mb"].iloc[0]) if len(read_row) else 0.0,
+            float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0,
+        ]
   except Exception:
     fsio = {}
 
@@ -179,6 +240,7 @@ def persist_job_detail_artifacts_for_jid(jid: str) -> None:
     except Exception:
       pass
 
+  gpu_detail = _gpu_detail_from_metric_values(metric_values) or _gpu_detail_from_jid_table(jt)
   upsert_job_detail_artifact(
       jid=jid,
       artifact_kind=ARTIFACT_KIND_JOB_DETAIL,
@@ -188,7 +250,7 @@ def persist_job_detail_artifacts_for_jid(jid: str) -> None:
           "host_list": jt.acct_host_list,
           "schema": schema,
           "fsio": fsio,
-          **_gpu_detail_from_jid_table(jt),
+          **gpu_detail,
       },
   )
 
