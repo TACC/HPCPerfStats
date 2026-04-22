@@ -263,7 +263,7 @@ def test_atomic_seal_tar_to_gz_creates_valid_gzip(tmp_path):
       log_fn=None,
   )
   assert gz_path.is_file()
-  subprocess.run([pigz_executable(), "-t", str(gz_path)], check=True)
+  subprocess.run([pigz_executable(), "-t", "-p", "1", str(gz_path)], check=True)
   assert tar_path.is_file()
   assert not (tmp_path / "2021-03-01.tar.gz.tmp").exists()
 

@@ -19,7 +19,7 @@ from hpcperfstats.file_locking import (
 )
 from hpcperfstats.print_utils import log_print
 
-pigz_thread_count = max(1, cfg.get_worker_thread_count(4))
+pigz_thread_count = cfg.get_archive_pigz_threads()
 
 _DAILY_TAR_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar$")
 
@@ -661,7 +661,7 @@ def atomic_seal_tar_to_gz(
             stderr=result.stderr,
         )
       test = subprocess.run(
-          [pigz_executable(), "-t", tmp_gz],
+          [pigz_executable(), "-t", "-p", str(num_threads), tmp_gz],
           capture_output=True,
           text=True,
           check=False,
