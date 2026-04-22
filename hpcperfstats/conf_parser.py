@@ -161,6 +161,13 @@ def get_archive_pigz_level():
   return int(cfg.get('PORTAL', 'archive_pigz_level', fallback='8'))
 
 
+def get_archive_pigz_threads():
+  """pigz worker thread count (``-p``) for archive compress/decompress. Default 8."""
+  _ensure_cfg_loaded()
+  n = int(cfg.get('PORTAL', 'archive_pigz_threads', fallback='8'))
+  return max(1, n)
+
+
 def get_archive_pigz_interval_seconds():
   """Seconds between ``pigz`` seal runs and removal of verified raw stats (default 4h)."""
   _ensure_cfg_loaded()
