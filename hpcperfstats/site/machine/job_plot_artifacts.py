@@ -229,10 +229,11 @@ def _load_rows_map(jid: str, layouts: Sequence[str]) -> Dict[Tuple[str, str], jo
 class _JtMemoProxy:
   """Per-call memo wrapper for jid_table aggregate/dataframe reads."""
 
-  def __init__(self, jt: Any):
+  def __init__(self, jt: Any, telemetry: Optional[Dict[str, int]] = None):
     self._jt = jt
     self._host_time_df = None
     self._aggregate_cache: Dict[Tuple[str, str, Tuple[str, ...], float], Any] = {}
+    self._telemetry = telemetry if isinstance(telemetry, dict) else None
 
   def __getattr__(self, name):
     return getattr(self._jt, name)
@@ -240,12 +241,24 @@ class _JtMemoProxy:
   def get_host_time_df(self):
     if self._host_time_df is None:
       self._host_time_df = self._jt.get_host_time_df()
+    elif self._telemetry is not None:
+      self._telemetry["plot_jt_memo_host_time_hits"] = int(
+          self._telemetry.get("plot_jt_memo_host_time_hits", 0)
+      ) + 1
     return self._host_time_df.copy()
 
   def get_aggregate_df(self, typ, metric_column, events, conv):
     key = (str(typ), str(metric_column), tuple(events or ()), float(conv))
     if key not in self._aggregate_cache:
       self._aggregate_cache[key] = self._jt.get_aggregate_df(typ, metric_column, events, conv)
+      if self._telemetry is not None:
+        self._telemetry["plot_jt_memo_aggregate_misses"] = int(
+            self._telemetry.get("plot_jt_memo_aggregate_misses", 0)
+        ) + 1
+    elif self._telemetry is not None:
+      self._telemetry["plot_jt_memo_aggregate_hits"] = int(
+          self._telemetry.get("plot_jt_memo_aggregate_hits", 0)
+      ) + 1
     return self._aggregate_cache[key].copy()
 
 
@@ -327,6 +340,7 @@ def persist_job_plot_artifacts_for_jid(
   if layouts is None:
     layouts = (JOB_PLOT_LAYOUT_NORMAL,)
   shared = context if isinstance(context, dict) else {}
+  telemetry = shared.get("_telemetry") if isinstance(shared.get("_telemetry"), dict) else None
   job = shared.get("job")
   if job is None:
     job = job_data.objects.filter(jid=jid).first()
@@ -344,11 +358,19 @@ def persist_job_plot_artifacts_for_jid(
     shared["jt"] = jt
   plot_jt = shared.get("plot_jt")
   if plot_jt is None:
-    plot_jt = _JtMemoProxy(jt)
+    plot_jt = _JtMemoProxy(jt, telemetry=telemetry)
     shared["plot_jt"] = plot_jt
   existing = shared.get("existing_plot_rows")
   if existing is None:
+    if telemetry is not None:
+      telemetry["plot_row_lookup_queries"] = int(
+          telemetry.get("plot_row_lookup_queries", 0)
+      ) + 1
     existing = _load_rows_map(jid, layouts)
+    if telemetry is not None:
+      telemetry["plot_row_lookup_hits"] = int(
+          telemetry.get("plot_row_lookup_hits", 0)
+      ) + len(existing)
     shared["existing_plot_rows"] = existing
   write_rows = []
   for kind in JOB_PLOT_KINDS:

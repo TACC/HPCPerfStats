@@ -73,6 +73,7 @@ STRICT_CHECK_BATCH_MIN = 32
 STRICT_CHECK_BATCH_STEP = 32
 STRICT_CHECK_FAST_SUCCESS_S = 0.25
 STRICT_CHECK_COOLDOWN_SECONDS = 30
+TELEMETRY_SAMPLE_LIMIT = 2048
 
 
 class _PhaseTimer:
@@ -340,6 +341,12 @@ def _pg_session_statement_timeout_for_metrics_batch():
 def _today_datetime():
   """Local now for default date-range bounds (monkeypatch in tests)."""
   return datetime.today()
+
+
+def _metrics_telemetry_enabled():
+  """Opt-in per-jid telemetry for compose-backed tuning runs."""
+  v = os.environ.get("HPCPERFSTATS_METRICS_TELEMETRY", "").strip().lower()
+  return v in ("1", "true", "yes", "on")
 
 
 def _default_metrics_date_range():
@@ -982,6 +989,19 @@ class PerJidComputeContext:
 def _compute_and_prewarm_jid(metrics_manager, prewarm_pipeline, job_ref, shared_pool):
   """Compute metrics and immediately prewarm detail/plot artifacts for one jid."""
   context = PerJidComputeContext(jid=job_ref.jid)
+  telemetry = {
+      "detail_gpu_metrics_reused": 0,
+      "detail_fsio_metrics_reused": 0,
+      "detail_fsio_fallback_queries": 0,
+      "detail_gpu_fallback_queries": 0,
+      "plot_row_lookup_queries": 0,
+      "plot_row_lookup_hits": 0,
+      "plot_jt_memo_host_time_hits": 0,
+      "plot_jt_memo_aggregate_hits": 0,
+      "plot_jt_memo_aggregate_misses": 0,
+  }
+  context.artifact_context["_telemetry"] = telemetry
+  t_metrics_start = time.monotonic()
   try:
     metrics_manager.run([job_ref], pool=shared_pool)
   except Exception as exc:
@@ -991,7 +1011,15 @@ def _compute_and_prewarm_jid(metrics_manager, prewarm_pipeline, job_ref, shared_
         ),
         flush=True,
     )
-    return False
+    return {
+        "ok": False,
+        "jid": context.jid,
+        "metrics_s": time.monotonic() - t_metrics_start,
+        "prewarm_s": 0.0,
+        "telemetry": telemetry,
+    }
+  metrics_elapsed = time.monotonic() - t_metrics_start
+  t_prewarm_start = time.monotonic()
   try:
     prewarm_pipeline.run_for_jid(context.jid, shared_context=context.artifact_context)
   except Exception as exc:
@@ -1001,7 +1029,14 @@ def _compute_and_prewarm_jid(metrics_manager, prewarm_pipeline, job_ref, shared_
         ),
         flush=True,
     )
-  return True
+  prewarm_elapsed = time.monotonic() - t_prewarm_start
+  return {
+      "ok": True,
+      "jid": context.jid,
+      "metrics_s": metrics_elapsed,
+      "prewarm_s": prewarm_elapsed,
+      "telemetry": telemetry,
+  }
 
 
 def update_metrics_for_dates(dates, rerun=False):
@@ -1093,6 +1128,19 @@ def update_metrics_for_dates(dates, rerun=False):
       t0 = time.monotonic()
       compute_batches = 0
       stall_iters = 0
+      telemetry_enabled = _metrics_telemetry_enabled()
+      telemetry_metrics_samples = []
+      telemetry_prewarm_samples = []
+      telemetry_first_jid_s = None
+      telemetry_plot_row_lookup_queries = 0
+      telemetry_plot_row_lookup_hits = 0
+      telemetry_plot_jt_memo_host_time_hits = 0
+      telemetry_plot_jt_memo_aggregate_hits = 0
+      telemetry_plot_jt_memo_aggregate_misses = 0
+      telemetry_detail_fsio_metrics_reused = 0
+      telemetry_detail_gpu_metrics_reused = 0
+      telemetry_detail_fsio_fallback_queries = 0
+      telemetry_detail_gpu_fallback_queries = 0
       try:
         while not shutdown_requested[0]:
           with ready_queue_lock:
@@ -1129,13 +1177,49 @@ def update_metrics_for_dates(dates, rerun=False):
             for job_ref in job_refs:
               if shutdown_requested[0]:
                 break
-              if _compute_and_prewarm_jid(
+              jid_outcome = _compute_and_prewarm_jid(
                   metrics_manager,
                   prewarm_pipeline,
                   job_ref,
                   shared_pool,
-              ):
+              )
+              if jid_outcome["ok"]:
                 succeeded_jids.append(job_ref.jid)
+                if telemetry_enabled:
+                  if len(telemetry_metrics_samples) < TELEMETRY_SAMPLE_LIMIT:
+                    telemetry_metrics_samples.append(float(jid_outcome["metrics_s"]))
+                  if len(telemetry_prewarm_samples) < TELEMETRY_SAMPLE_LIMIT:
+                    telemetry_prewarm_samples.append(float(jid_outcome["prewarm_s"]))
+                  if telemetry_first_jid_s is None:
+                    telemetry_first_jid_s = max(0.0, time.monotonic() - t0)
+                  tmap = jid_outcome.get("telemetry", {})
+                  telemetry_plot_row_lookup_queries += int(
+                      tmap.get("plot_row_lookup_queries", 0)
+                  )
+                  telemetry_plot_row_lookup_hits += int(
+                      tmap.get("plot_row_lookup_hits", 0)
+                  )
+                  telemetry_plot_jt_memo_host_time_hits += int(
+                      tmap.get("plot_jt_memo_host_time_hits", 0)
+                  )
+                  telemetry_plot_jt_memo_aggregate_hits += int(
+                      tmap.get("plot_jt_memo_aggregate_hits", 0)
+                  )
+                  telemetry_plot_jt_memo_aggregate_misses += int(
+                      tmap.get("plot_jt_memo_aggregate_misses", 0)
+                  )
+                  telemetry_detail_fsio_metrics_reused += int(
+                      tmap.get("detail_fsio_metrics_reused", 0)
+                  )
+                  telemetry_detail_gpu_metrics_reused += int(
+                      tmap.get("detail_gpu_metrics_reused", 0)
+                  )
+                  telemetry_detail_fsio_fallback_queries += int(
+                      tmap.get("detail_fsio_fallback_queries", 0)
+                  )
+                  telemetry_detail_gpu_fallback_queries += int(
+                      tmap.get("detail_gpu_fallback_queries", 0)
+                  )
               else:
                 failed_count += 1
           stats["processed"] += len(succeeded_jids)
@@ -1175,6 +1259,39 @@ def update_metrics_for_dates(dates, rerun=False):
       worker_busy_ratio = (
           totals["metrics_compute_s"] / elapsed if elapsed > 0 else 0.0
       )
+      telemetry_suffix = ""
+      if telemetry_enabled and telemetry_metrics_samples:
+        sm = sorted(telemetry_metrics_samples)
+        sp = sorted(telemetry_prewarm_samples) if telemetry_prewarm_samples else [0.0]
+        p50m = sm[len(sm) // 2]
+        p95m = sm[max(0, int(len(sm) * 0.95) - 1)]
+        p50p = sp[len(sp) // 2]
+        p95p = sp[max(0, int(len(sp) * 0.95) - 1)]
+        telemetry_suffix = (
+            " telemetry_enabled=1 telemetry_first_jid_s={0:.3f} "
+            "telemetry_metrics_p50_s={1:.3f} telemetry_metrics_p95_s={2:.3f} "
+            "telemetry_prewarm_p50_s={3:.3f} telemetry_prewarm_p95_s={4:.3f} "
+            "telemetry_plot_row_lookup_queries={5} telemetry_plot_row_lookup_hits={6} "
+            "telemetry_plot_jt_host_time_hits={7} telemetry_plot_jt_aggregate_hits={8} "
+            "telemetry_plot_jt_aggregate_misses={9} telemetry_detail_fsio_metrics_reused={10} "
+            "telemetry_detail_gpu_metrics_reused={11} telemetry_detail_fsio_fallback_queries={12} "
+            "telemetry_detail_gpu_fallback_queries={13}".format(
+                float(telemetry_first_jid_s or 0.0),
+                float(p50m),
+                float(p95m),
+                float(p50p),
+                float(p95p),
+                int(telemetry_plot_row_lookup_queries),
+                int(telemetry_plot_row_lookup_hits),
+                int(telemetry_plot_jt_memo_host_time_hits),
+                int(telemetry_plot_jt_memo_aggregate_hits),
+                int(telemetry_plot_jt_memo_aggregate_misses),
+                int(telemetry_detail_fsio_metrics_reused),
+                int(telemetry_detail_gpu_metrics_reused),
+                int(telemetry_detail_fsio_fallback_queries),
+                int(telemetry_detail_gpu_fallback_queries),
+            )
+        )
       log_print(
           "Finished metrics scheduler mode={0}: processed={1} failed={2} "
           "candidate_jids={3} skipped_not_ready={4} readiness_error_chunks={5} "
@@ -1184,7 +1301,7 @@ def update_metrics_for_dates(dates, rerun=False):
           "worker_busy_ratio={16:.3f} phase_candidate_s={17:.2f} "
           "phase_readiness_s={18:.2f} phase_compute_s={19:.2f} phase_prewarm_s={20:.2f} "
           "prewarm_backlog_jobs={21} prewarm_lag_seconds_p95={22:.3f} "
-          "prewarm_success_ratio={23:.3f}".format(
+          "prewarm_success_ratio={23:.3f}{24}".format(
               scheduler_mode,
               stats["processed"],
               stats["failed"],
@@ -1209,6 +1326,7 @@ def update_metrics_for_dates(dates, rerun=False):
               prewarm_stats["prewarm_backlog_jobs"],
               prewarm_stats["prewarm_lag_seconds_p95"],
               prewarm_stats["prewarm_success_ratio"],
+              telemetry_suffix,
           ),
           flush=True,
       )

@@ -1005,6 +1005,33 @@ def test_prewarm_pipeline_drain_some_force_does_not_use_invalid_wait_condition(m
   pipeline._executor.shutdown(wait=True)
 
 
+def test_prewarm_pipeline_run_for_jid_shares_context(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  calls = []
+
+  def _detail(jid, context=None):
+    calls.append(("detail", jid, context))
+    context["detail_seen"] = True
+
+  def _plot(jid, context=None):
+    calls.append(("plot", jid, context))
+    assert context.get("detail_seen") is True
+
+  monkeypatch.setattr(update_metrics, "persist_job_detail_artifacts_for_jid", _detail)
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", _plot)
+
+  pipeline = update_metrics._PrewarmPipeline()
+  shared = {"_telemetry": {}}
+  pipeline.run_for_jid("j42", shared_context=shared)
+  assert calls[0][0] == "detail"
+  assert calls[1][0] == "plot"
+  assert calls[0][2] is shared
+  assert calls[1][2] is shared
+
+
 def test_main_sleep_after_waits_60_seconds(monkeypatch):
   """sleep_after mode should wait exactly 60s after metrics completion."""
   monkeypatch.setattr(update_metrics, "_default_metrics_date_range", lambda: (

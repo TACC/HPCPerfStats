@@ -14,6 +14,7 @@ from hpcperfstats.site.machine.job_plot_artifacts import (
     load_cached_job_plot_entry,
     upsert_job_plot_artifact_batch,
     upsert_job_plot_artifact,
+    persist_job_plot_artifacts_for_jid,
 )
 from hpcperfstats.site.machine.job_detail_artifacts import (
     ARTIFACT_KIND_JOB_DETAIL,
@@ -214,3 +215,87 @@ def test_upsert_job_plot_artifact_batch_updates_existing_row():
       jid_id="batch1", plot_kind="summary_plot", layout="normal")
   out = decompress_plot_item_dict(bytes(row.payload_compressed), row.payload_encoding)
   assert out == {"v": 2}
+
+
+@pytest.mark.django_db
+def test_persist_job_plot_artifacts_reuses_context_rows_map(monkeypatch):
+  now = timezone.now()
+  job_data.objects.create(
+      jid="ctxrows1",
+      submit_time=now,
+      start_time=now,
+      end_time=now,
+      username="u1",
+      host_list=["n1"],
+      metrics_distinct_time_count=1,
+  )
+  calls = {"rows": 0}
+  shared = {"_telemetry": {}}
+
+  class _FakeJt:
+    host_list = ["n1"]
+    acct_host_list = ["n1"]
+
+    def get_host_time_df(self):
+      import pandas as pd
+      return pd.DataFrame({"host": ["n1"], "time": [now]})
+
+    def get_aggregate_df(self, _typ, _metric_column, _events, _conv):
+      import pandas as pd
+      return pd.DataFrame({"host": ["n1"], "time": [now], "sum_val": [1.0]})
+
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_plot_artifacts.get_live_distinct_time_count_for_jid",
+      lambda jid: 1,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_plot_artifacts.jid_table.jid_table",
+      lambda jid: _FakeJt(),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_plot_artifacts._load_rows_map",
+      lambda jid, layouts: calls.__setitem__("rows", calls["rows"] + 1) or {},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_plot_artifacts.compute_plot_item_for_kind",
+      lambda j, kind, zoom_mode: ({"k": kind, "z": zoom_mode}, None),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_plot_artifacts.upsert_job_plot_artifact_batch",
+      lambda rows: None,
+  )
+
+  persist_job_plot_artifacts_for_jid("ctxrows1", context=shared)
+  persist_job_plot_artifacts_for_jid("ctxrows1", context=shared)
+
+  assert calls["rows"] == 1
+  assert int(shared["_telemetry"].get("plot_row_lookup_queries", 0)) == 1
+
+
+@pytest.mark.django_db
+def test_jt_memo_proxy_telemetry_counts_hits():
+  from hpcperfstats.site.machine.job_plot_artifacts import _JtMemoProxy
+  import pandas as pd
+
+  class _FakeJt:
+    def __init__(self):
+      self.host_calls = 0
+      self.agg_calls = 0
+
+    def get_host_time_df(self):
+      self.host_calls += 1
+      return pd.DataFrame({"host": ["n1"], "time": [timezone.now()]})
+
+    def get_aggregate_df(self, _typ, _metric_column, _events, _conv):
+      self.agg_calls += 1
+      return pd.DataFrame({"host": ["n1"], "time": [timezone.now()], "sum_val": [1.0]})
+
+  telemetry = {}
+  proxy = _JtMemoProxy(_FakeJt(), telemetry=telemetry)
+  proxy.get_host_time_df()
+  proxy.get_host_time_df()
+  proxy.get_aggregate_df("t", "arc", ["a"], 1.0)
+  proxy.get_aggregate_df("t", "arc", ["a"], 1.0)
+  assert telemetry["plot_jt_memo_host_time_hits"] == 1
+  assert telemetry["plot_jt_memo_aggregate_misses"] == 1
+  assert telemetry["plot_jt_memo_aggregate_hits"] == 1

@@ -194,6 +194,7 @@ def _fsio_from_metric_values(metric_values: Dict[str, Optional[float]]) -> Optio
 def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, Any]] = None) -> None:
   """Prewarm derived payloads for user-facing API paths."""
   shared = context if isinstance(context, dict) else {}
+  telemetry = shared.get("_telemetry") if isinstance(shared.get("_telemetry"), dict) else None
   job = shared.get("job")
   if job is None:
     job = job_data.objects.filter(jid=jid).prefetch_related("metrics_data_set").first()
@@ -217,8 +218,16 @@ def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, A
   fsio = _fsio_from_metric_values(metric_values)
   if fsio is None:
     fsio = {}
+  elif telemetry is not None and fsio:
+    telemetry["detail_fsio_metrics_reused"] = int(
+        telemetry.get("detail_fsio_metrics_reused", 0)
+    ) + 1
   try:
     if not fsio:
+      if telemetry is not None:
+        telemetry["detail_fsio_fallback_queries"] = int(
+            telemetry.get("detail_fsio_fallback_queries", 0)
+        ) + 1
       llite_df = jt.get_llite_delta_by_event()
       if not llite_df.empty and "delta_sum" in llite_df.columns:
         llite_df = llite_df.copy()
@@ -240,7 +249,17 @@ def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, A
     except Exception:
       pass
 
-  gpu_detail = _gpu_detail_from_metric_values(metric_values) or _gpu_detail_from_jid_table(jt)
+  gpu_detail_from_metrics = _gpu_detail_from_metric_values(metric_values)
+  gpu_detail = gpu_detail_from_metrics or _gpu_detail_from_jid_table(jt)
+  if telemetry is not None:
+    if gpu_detail_from_metrics is not None:
+      telemetry["detail_gpu_metrics_reused"] = int(
+          telemetry.get("detail_gpu_metrics_reused", 0)
+      ) + 1
+    else:
+      telemetry["detail_gpu_fallback_queries"] = int(
+          telemetry.get("detail_gpu_fallback_queries", 0)
+      ) + 1
   upsert_job_detail_artifact(
       jid=jid,
       artifact_kind=ARTIFACT_KIND_JOB_DETAIL,
