@@ -95,18 +95,18 @@ class PlotArtifactInputFingerprintHex(Expression):
         f"FROM unnest({jt}.{hl}) AS t(elem)), '[]')"
     )
     inner = (
-        "'{\"artifact_schema\":' || %s::text || "
-        "',\"bokeh\":' || to_json(%s::text)::text || "
-        "',\"et\":' || (CASE WHEN {jt}.{et} IS NULL THEN to_json(''::text)::text "
-        "ELSE to_json({jt}.{et})::text END) || "
-        "',\"hosts\":' || {hosts} || "
-        "',\"jid\":' || to_json(trim(both from {jt}.{jcol}::text))::text || "
-        "',\"live_distinct\":' || ({live})::text || "
-        "',\"mdc\":' || (CASE WHEN {jt}.{mdc} IS NULL THEN 'null' "
-        "ELSE {jt}.{mdc}::text END) || "
-        "',\"st\":' || (CASE WHEN {jt}.{st} IS NULL THEN to_json(''::text)::text "
-        "ELSE to_json({jt}.{st})::text END) || '}'"
-    ).format(jt=jt, st=st, et=et, jcol=jcol, mdc=mdc, hosts=hosts_json, live=live_sql)
+        f"'{{\"artifact_schema\":' || %s::text || "
+        f"',\"bokeh\":' || to_json(%s::text)::text || "
+        f"',\"et\":' || (CASE WHEN {jt}.{et} IS NULL THEN to_json(''::text)::text "
+        f"ELSE to_json({jt}.{et})::text END) || "
+        f"',\"hosts\":' || {hosts_json} || "
+        f"',\"jid\":' || to_json(trim(both from {jt}.{jcol}::text))::text || "
+        f"',\"live_distinct\":' || ({live_sql})::text || "
+        f"',\"mdc\":' || (CASE WHEN {jt}.{mdc} IS NULL THEN 'null' "
+        f"ELSE {jt}.{mdc}::text END) || "
+        f"',\"st\":' || (CASE WHEN {jt}.{st} IS NULL THEN to_json(''::text)::text "
+        f"ELSE to_json({jt}.{st})::text END) || '}}'"
+    )
     sql = "encode(sha256(convert_to(({})::text, 'UTF8')), 'hex')".format(inner)
     params = [plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION, bokeh.__version__]
     params.extend(live_params)

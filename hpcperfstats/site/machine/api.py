@@ -53,7 +53,6 @@ from .cache_utils import (
     KEY_GPU_AGG,
     KEY_GPU_COUNT,
     KEY_XALT,
-    KEY_TYPE_DETAIL_HOSTS,
     KEY_JOB,
     KEY_PROC_LIST,
     KEY_HOST_PLOT,

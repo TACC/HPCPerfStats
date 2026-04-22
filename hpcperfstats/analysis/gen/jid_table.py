@@ -875,6 +875,8 @@ class jid_table:
         KEY_AGG_DF, self.jid, typ, val_col, events_key,
         self._large_job_plot_cache_token,
     )
+    import pandas as pd
+
     result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     if result is not None:
       return result
@@ -1099,12 +1101,11 @@ class TypeDetailDataProvider:
     key = make_cache_key(
         KEY_TYPE_DETAIL_AGG, self.jid, self.type_name, event, metric, _st, _et
     )
+    import pandas as pd
 
     def _fn():
       # Avoid DB-level GROUP BY here because some deployments have reported
       # backend-specific grouping SQL errors for this query shape.
-      import pandas as pd
-
       if (
           not self.host_list
           or self.start_time is None

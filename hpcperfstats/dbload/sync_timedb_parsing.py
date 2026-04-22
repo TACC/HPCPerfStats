@@ -314,6 +314,9 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
   stats = []
   proc_stats = []
   insert = False
+  # Digit lines set tags for the following alpha lines; same-iteration F841
+  # false positives if plain locals are used across loop iterations.
+  line_ctx = {"tags": None, "tags2": None}
 
   for i, line in enumerate(lines):
     if not line:
@@ -337,7 +340,7 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
         vals = map_hardware_counter_vals(typ, schema[typ], vals, eventmap)
       elif typ == "proc":
         proc_name = (s.split()[1]).split('/')[0]
-        proc_stats.append({**tags2, "proc": proc_name})
+        proc_stats.append({**line_ctx["tags2"], "proc": proc_name})
         continue
       else:
         if typ in schema:
@@ -345,7 +348,7 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
         else:
           continue
 
-      rec = {**tags, "type": typ, "dev": dev}
+      rec = {**line_ctx["tags"], "type": typ, "dev": dev}
       for eve, val in vals.items():
         eve_parts = eve.split(',')
         width = 64
@@ -379,8 +382,8 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
       # stable and '-' placeholders are not carried into host_data paths.
       # proc_stats lines still need jid (including '-').
       insert = True
-      tags = {"time": float(t), "host": host}
-      tags2 = {"time": float(t), "host": host, "jid": jid}
+      line_ctx["tags"] = {"time": float(t), "host": host}
+      line_ctx["tags2"] = {"time": float(t), "host": host, "jid": jid}
     elif s[0] == '!':
       label, events = s.split(maxsplit=1)
       typ, events = label[1:], events.split()
