@@ -45,6 +45,19 @@ def test_0012_timescaledb_compression_policy_sql_and_reverse_are_defined():
   assert "compress_after => INTERVAL '60d'" in op.reverse_sql
 
 
+def test_0023_host_data_compression_policy_reduced_to_8_days():
+  mod = importlib.import_module(
+      "hpcperfstats.site.machine.migrations.0023_reduce_host_data_compression_to_8_days"
+  )
+  assert mod.Migration.dependencies == [("machine", "0022_job_detail_artifact")]
+  assert len(mod.Migration.operations) == 1
+  op = mod.Migration.operations[0]
+  assert isinstance(op, migrations.RunSQL)
+  assert "remove_compression_policy('host_data')" in op.sql
+  assert "compress_after => INTERVAL '8d'" in op.sql
+  assert "compress_after => INTERVAL '30d'" in op.reverse_sql
+
+
 def test_0001_timescaledb_sql_uses_idempotent_forms():
   mod = importlib.import_module("hpcperfstats.site.machine.migrations.0001_initial")
   run_sql_ops = [op for op in mod.Migration.operations if isinstance(op, migrations.RunSQL)]
