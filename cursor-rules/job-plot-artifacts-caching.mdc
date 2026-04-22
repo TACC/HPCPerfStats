@@ -44,3 +44,4 @@ alwaysApply: true
 
 - Complements **`runtime-resource-and-metrics-safety.mdc`** (metrics recompute) and **`monitor-analysis-architecture-sync.mdc`** (plot inputs from `host_data` / `jid_table`).
 - Complements **`bokeh-version-and-vendor-patch-upgrade.mdc`** when upgrading Bokeh or changing **`patches/@bokeh+bokehjs+*.patch`**.
+- Complements **`update-metrics-job-listing-new-data-type.mdc`** when plot artifacts imply new or changed **`_jobs_queryset`** candidacy.

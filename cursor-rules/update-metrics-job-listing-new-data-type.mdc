@@ -1,0 +1,29 @@
+---
+description: New update_metrics-derived data types must gate the starting job candidate list
+alwaysApply: true
+---
+
+# Update Metrics Job Listing And New Data Types
+
+## When this applies
+
+Whenever you add **extra persisted or prewarmed computation** for a job that runs in the **`update_metrics` pipeline** (or a sibling batch scheduler with the same “which jobs to process?” contract)—for example a new **artifact model**, **fingerprinted cache row**, **post-metrics prewarm stage**, or **second-tier store** beyond `metrics_data`—not only the compute/persist path.
+
+## Required behavior
+
+- Extend the **starting job listing** (candidate selection) in the same task so jobs that need that work are **not skipped** when metrics alone look complete.
+- Canonical entrypoint today: **`hpcperfstats/analysis/metrics/update_metrics.py`** → **`_jobs_queryset`** (and any shared helpers it calls). Selection must OR in a condition equivalent to “this job is missing or stale for the new type,” using the **same staleness contract** as persist/load (typically **input fingerprint**, row counts, or live vs persisted counters—match `persist_*` / `compute_*_fingerprint` semantics).
+- If selection logic is **PostgreSQL-specific** (raw SQL, `jsonb`, digest expressions), document that and keep **non-PostgreSQL** behavior explicit (skip, degrade, or alternate predicate) so tests that monkeypatch `connections` stay honest.
+
+## Tests
+
+- Add or extend **regression tests** in the same task: at minimum **compiled queryset** coverage (e.g. `hpcperfstats/site/machine/tests/test_update_metrics.py`) asserting the new table/SQL/fingerprint appears where appropriate, and—when on PostgreSQL—**fingerprint parity** or integration checks so SQL selection cannot drift from Python helpers.
+
+## Completion bar
+
+- A new `update_metrics`-driven data type is **not complete** if only the writer/prewarm path exists; the **job listing** must include jobs that still need that artifact or derived payload.
+
+## Overlap
+
+- Complements **`end-to-end-feature-wiring-contract.mdc`** (multi-layer wiring) and **`job-plot-artifacts-caching.mdc`** / **`runtime-resource-and-metrics-safety.mdc`** (artifacts, invalidation, metrics safety).
+- Complements **`every-error-regression-test.mdc`** and **`test-first-discipline.mdc`** for selector + fingerprint tests.

@@ -35,3 +35,4 @@ For any new metric, counter, summary field, route behavior, or user-visible plot
 ## Overlap
 
 - Complements `monitor-analysis-architecture-sync.mdc`, `variable-metadata-*.mdc`, `job-plot-artifacts-caching.mdc`, `web-pages-e2e-test-maintenance.mdc`, and pipeline E2E maintenance rules.
+- Complements **`update-metrics-job-listing-new-data-type.mdc`** when the feature adds `update_metrics`-driven work that must also update job candidate selection.

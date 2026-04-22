@@ -176,6 +176,9 @@ def test_jobs_queryset_postgresql_sql_jid_scoped_live_samples(monkeypatch):
   assert "group by" in sql
   assert "sum(" in sql
   assert "metrics_distinct_time_count" in sql
+  assert "encode(sha256" in sql
+  assert "job_plot_artifact" in sql
+  assert "job_detail_artifact" in sql
 
 
 @pytest.mark.django_db(databases=[])
