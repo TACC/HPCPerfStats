@@ -156,7 +156,7 @@ def test_find_processing_start_index_all_missing():
   itimes_set = set()
   start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   assert start_idx == 0
-  assert need_archival is False
+  assert need_archival is True
 
 
 def test_find_processing_start_index_all_present():
@@ -181,7 +181,7 @@ def test_find_processing_start_index_one_missing():
   itimes_set = {1709123456, 1709123460}
   start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   assert start_idx == 1
-  assert need_archival is False
+  assert need_archival is True
 
 
 def test_find_processing_start_index_with_leading_spaces():
@@ -193,7 +193,7 @@ def test_find_processing_start_index_with_leading_spaces():
   itimes_set = set()
   start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   assert start_idx == 0
-  assert need_archival is False
+  assert need_archival is True
 
 
 def test_find_processing_start_index_includes_job_missing():
@@ -205,7 +205,7 @@ def test_find_processing_start_index_includes_job_missing():
   itimes_set = set()
   start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   assert start_idx == 0
-  assert need_archival is False
+  assert need_archival is True
 
 
 # --- map_hardware_counter_vals ---
@@ -586,7 +586,7 @@ def test_sync_timedb_parsing_with_real_sample_produces_deltas_and_arc():
 
   start_idx, need_archival = find_processing_start_index(lines, set())
   assert start_idx >= 0
-  assert need_archival is False
+  assert need_archival is True
 
   sliced_lines = lines[start_idx:]
   stats_list, proc_stats_list = parse_stats_lines(

@@ -21,6 +21,7 @@ import sys
 import time
 import warnings
 from collections import deque
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -404,7 +405,8 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
   head_present = _head_timestamp_present_cached(hostname, timestamp_utc)
   if not head_present:
-    start_idx, need_archival = 0, False
+    # New file head is not in DB yet; it still needs archival post-ingest.
+    start_idx, need_archival = 0, True
   else:
     ts_low = timestamp_utc - timedelta(hours=48)
     ts_high = timestamp_utc + timedelta(hours=72)
@@ -765,6 +767,23 @@ def archive_stats_files(archive_info):
         return False
   return True
 
+
+def _build_fallback_archive_mapping_by_mtime(files_to_be_archived, tgz_dir):
+  """Best-effort fallback mapping when timestamp-head parsing fails.
+
+  Buckets by local file mtime date so archival can still progress and raw files
+  are not stranded indefinitely.
+  """
+  fallback = defaultdict(list)
+  for path in files_to_be_archived:
+    try:
+      file_date = datetime.fromtimestamp(os.path.getmtime(path))
+    except OSError:
+      continue
+    archive_fname = os.path.join(tgz_dir, file_date.strftime("%Y-%m-%d.tar.gz"))
+    fallback[archive_fname].append(path)
+  return dict(fallback)
+
 def database_startup():
   """Print DB version, database size, and optionally chunk compression stats for host_data."""
   from django.db import connection
@@ -895,6 +914,13 @@ def run_sync_timedb_supervisor_loop(
     results = archive_job.get()
     if not isinstance(results, list):
       results = [results]
+    if len(results) != len(archive_job_deferred_paths):
+      log_print(
+          "Archive result cardinality mismatch: deferred=%d results=%d; "
+          "unmatched paths will be retried"
+          % (len(archive_job_deferred_paths), len(results)),
+          flush=True,
+      )
     for task_payload, result in zip(archive_job_deferred_paths, results):
       archive_task = task_payload["task"]
       archive_paths = task_payload["paths"]
@@ -955,6 +981,30 @@ def run_sync_timedb_supervisor_loop(
               dead_letter_path,
               [d for d in pending_archive_tasks if d["task"].attempt > archive_retry_max_attempts],
           )
+    if len(archive_job_deferred_paths) > len(results):
+      for task_payload in archive_job_deferred_paths[len(results):]:
+        archive_task = task_payload["task"]
+        archive_paths = task_payload["paths"]
+        next_attempt = archive_task.attempt + 1
+        if next_attempt <= archive_retry_max_attempts:
+          retry_at = time.time() + _retry_delay(next_attempt)
+          pending_archive_tasks.append({
+              "task": ArchiveTask(archive_info=archive_task.archive_info, attempt=next_attempt),
+              "paths": archive_paths,
+              "retry_at": retry_at,
+          })
+          for p in archive_paths:
+            _transition_file_state(file_states, p, SyncFileState.ARCHIVE_FAILED_RETRYABLE)
+            inflight_archive_paths.discard(p)
+        else:
+          pending_archive_tasks.append({
+              "task": ArchiveTask(archive_info=archive_task.archive_info, attempt=next_attempt),
+              "paths": list(archive_paths),
+              "retry_at": 0.0,
+          })
+          for p in archive_paths:
+            _transition_file_state(file_states, p, SyncFileState.ARCHIVE_FAILED_RETRYABLE)
+            inflight_archive_paths.discard(p)
     _flush_checkpoint_if_needed()
     archive_job = None
     archive_job_deferred_paths = []
@@ -1275,6 +1325,19 @@ def run_sync_timedb_supervisor_loop(
         elif files_to_be_archived:
           log_print(
               "Archive mapping empty (all files skipped: no timestamp in head)")
+          ar_file_mapping = _build_fallback_archive_mapping_by_mtime(
+              files_to_be_archived,
+              tgz_archive_dir,
+          )
+          if ar_file_mapping:
+            log_print(
+                "Fallback archive mapping by mtime: %d tar(s), %d file(s)"
+                % (
+                    len(ar_file_mapping),
+                    sum(len(v) for v in ar_file_mapping.values()),
+                ),
+                flush=True,
+            )
 
         _finalize_archive_job_if_needed()
 
@@ -1363,7 +1426,7 @@ def run_sync_timedb_supervisor_loop(
       connections.close_all()
   finally:
     if archive_job is not None:
-      archive_job.get()
+      _finalize_archive_job_if_needed()
     _save_dead_letter_entries(
         dead_letter_path,
         [d for d in pending_archive_tasks if d["task"].attempt > archive_retry_max_attempts],

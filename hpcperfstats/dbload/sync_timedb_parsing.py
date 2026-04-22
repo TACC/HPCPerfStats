@@ -252,7 +252,15 @@ def parse_first_timestamp_line(lines):
 
 
 def find_processing_start_index(lines, itimes_set):
-  """Find index in lines where we should start processing (first timestamp not in itimes_set). itimes_set is a set of int (Unix seconds already in DB). Returns (start_idx, need_archival). start_idx is -1 if all timestamps already present."""
+  """Find index where processing should start and whether raw file still needs archival.
+
+  ``itimes_set`` contains Unix-second timestamps already present in DB.
+  Returns ``(start_idx, need_archival)`` where:
+  - ``start_idx`` is ``-1`` when all timestamps are already in DB.
+  - ``need_archival`` is ``True`` whenever the file should still be archived
+    after this ingest pass (including partially-new files and fully-duplicate
+    files that still exist on disk).
+  """
   start_idx = -1
   last_idx = 0
   need_archival = True
@@ -266,7 +274,7 @@ def find_processing_start_index(lines, itimes_set):
       t, _jid, _host = s.split()
       if int(float(t)) not in itimes_set:
         start_idx = last_idx
-        need_archival = False
+        need_archival = True
         break
       last_idx = i
   return start_idx, need_archival

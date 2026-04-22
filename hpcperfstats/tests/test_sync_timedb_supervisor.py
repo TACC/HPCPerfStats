@@ -6,6 +6,8 @@ from pathlib import Path
 import json
 
 import hpcperfstats.dbload.sync_timedb as st
+import pandas as pd
+import pytest
 from hpcperfstats.shutdown_utils import shutdown_requested
 
 
@@ -676,5 +678,224 @@ def test_dead_letter_replay_runs_before_idle_sleep(monkeypatch):
         run_once=True,
     )
     assert ap.calls >= 1
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_parse_payload_marks_new_head_as_archival(monkeypatch):
+  target = "/tmp/stats-new-head"
+  monkeypatch.setattr(st, "parse_stats_file_path", lambda _p: ("h1", "123"))
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "load_stats_file_lines", lambda *_a, **_k: (["100 job1 h1\n"], None))
+  monkeypatch.setattr(st, "parse_first_timestamp_line", lambda _lines: ("100", "job1", "h1"))
+  monkeypatch.setattr(st, "_head_timestamp_present_cached", lambda *_a, **_k: False)
+  monkeypatch.setattr(st, "parse_stats_lines", lambda *_a, **_k: ([{"k": 1}], []))
+  stats_df = pd.DataFrame([{
+      "host": "h1",
+      "type": "cpu",
+      "dev": "0",
+      "event": "user",
+      "unit": "#",
+      "time": 100.0,
+      "value": 1.0,
+      "wid": 48,
+      "mult": 1,
+  }])
+  proc_df = pd.DataFrame(columns=["jid", "host", "proc"])
+  monkeypatch.setattr(st, "build_stats_dataframes", lambda *_a, **_k: (stats_df, proc_df))
+  monkeypatch.setattr(st, "compute_deltas_and_arc", lambda s: s)
+  stats_file, payload, need_archival, ingest_ok = st._parse_stats_file_payload(target)
+  assert stats_file == target
+  assert payload[0] is stats_df
+  assert payload[1] is proc_df
+  assert need_archival is True
+  assert ingest_ok is True
+
+
+def test_parse_payload_marks_fully_duplicate_file_for_archival(monkeypatch):
+  target = "/tmp/stats-dup"
+  monkeypatch.setattr(st, "parse_stats_file_path", lambda _p: ("h1", "123"))
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "load_stats_file_lines", lambda *_a, **_k: (["100 job1 h1\n"], None))
+  monkeypatch.setattr(st, "parse_first_timestamp_line", lambda _lines: ("100", "job1", "h1"))
+  monkeypatch.setattr(st, "_head_timestamp_present_cached", lambda *_a, **_k: True)
+  monkeypatch.setattr(st.host_data, "objects", type("_Mgr", (), {
+      "filter": staticmethod(lambda **_k: type("_QS", (), {
+          "values_list": staticmethod(lambda *a, **k: type("_V", (), {"distinct": staticmethod(lambda: type("_I", (), {"iterator": staticmethod(lambda: iter([]))})())})())
+      })())
+  })())
+  monkeypatch.setattr(st, "find_processing_start_index", lambda *_a, **_k: (-1, True))
+  stats_file, payload, need_archival, ingest_ok = st._parse_stats_file_payload(target)
+  assert stats_file == target
+  assert payload is None
+  assert need_archival is True
+  assert ingest_ok is True
+
+
+def test_empty_primary_mapping_falls_back_to_mtime_archive(monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  try:
+    target = str(tmp_path / "stats0")
+    Path(target).write_text("dummy")
+    archive_calls = {"n": 0, "items": []}
+
+    def fake_rescan(*_a, **_k):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return [target]
+      return []
+    fake_rescan.calls = 0
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True))
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st, "collect_first_timestamps_by_path", lambda *_a, **_k: {})
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(tmp_path / "daily"))
+
+    class _ArchivePoolCapture:
+      def map_async(self, _fn, items):
+        archive_calls["n"] += 1
+        archive_calls["items"].append(items)
+
+        class _R:
+          def get(self):
+            return [True for _ in items]
+        return _R()
+
+    st.run_sync_timedb_supervisor_loop(
+        str(tmp_path),
+        "all",
+        None,
+        "",
+        object(),
+        _ArchivePoolCapture(),
+        run_once=True,
+    )
+    assert archive_calls["n"] >= 1
+    assert archive_calls["items"][0]
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_finally_path_finalizes_inflight_archive(monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  try:
+    target = str(tmp_path / "stats-finalize")
+    Path(target).write_text("dummy")
+    processed = {"n": 0}
+
+    def fake_rescan(*_a, **_k):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return [target]
+      raise RuntimeError("forced-exit")
+    fake_rescan.calls = 0
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True))
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st, "collect_first_timestamps_by_path", lambda *_a, **_k: {target: "1709123456"})
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {str(tmp_path / "day.tar.gz"): [target]})
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+    monkeypatch.setattr(st, "tgz_archive_dir", str(tmp_path / "daily"))
+
+    real_add_processed = st._add_processed_path
+
+    def wrapped_add(*args, **kwargs):
+      processed["n"] += 1
+      return real_add_processed(*args, **kwargs)
+
+    monkeypatch.setattr(st, "_add_processed_path", wrapped_add)
+
+    class _ArchivePoolDone:
+      def map_async(self, _fn, _items):
+        class _R:
+          def get(self):
+            return [True]
+        return _R()
+
+    with pytest.raises(RuntimeError):
+      st.run_sync_timedb_supervisor_loop(
+          str(tmp_path),
+          "all",
+          None,
+          "",
+          object(),
+          _ArchivePoolDone(),
+          run_once=True,
+      )
+    assert processed["n"] >= 1
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_archive_result_mismatch_retries_unmatched(monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  try:
+    target = str(tmp_path / "stats-mismatch")
+    Path(target).write_text("dummy")
+
+    def fake_rescan(*_a, **_k):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return [target]
+      shutdown_requested[0] = True
+      return []
+    fake_rescan.calls = 0
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True))
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st, "collect_first_timestamps_by_path", lambda *_a, **_k: {target: "1709123456"})
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {str(tmp_path / "day.tar.gz"): [target]})
+    monkeypatch.setattr(st.cfg, "get_sync_archive_retry_max_attempts", lambda: 2)
+    monkeypatch.setattr(st.cfg, "get_sync_archive_retry_backoff_base_seconds", lambda: 0.0)
+    monkeypatch.setattr(st.cfg, "get_sync_archive_retry_backoff_max_seconds", lambda: 0.0)
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(tmp_path / "daily"))
+
+    class _ArchivePoolMismatch:
+      def __init__(self):
+        self.calls = 0
+
+      def map_async(self, _fn, _items):
+        self.calls += 1
+
+        class _R:
+          def __init__(self, call_no):
+            self.call_no = call_no
+
+          def get(self):
+            if self.call_no == 1:
+              return []
+            return [True]
+        return _R(self.calls)
+
+    ap = _ArchivePoolMismatch()
+    st.run_sync_timedb_supervisor_loop(
+        str(tmp_path),
+        "all",
+        None,
+        "",
+        object(),
+        ap,
+        run_once=True,
+    )
+    assert ap.calls >= 2
   finally:
     shutdown_requested[0] = False
