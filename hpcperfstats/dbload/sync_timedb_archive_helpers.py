@@ -1,4 +1,5 @@
 """Pure helpers for sync_timedb archiving, tar utilities, and file discovery (no Django). Used by sync_timedb and by unit tests."""
+import contextlib
 import os
 import re
 import shutil
@@ -9,7 +10,11 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload.pigz_cli import pigz_decompress_verbose, pigz_executable
+from hpcperfstats.dbload.pigz_cli import (
+    pigz_decompress_stdout,
+    pigz_decompress_verbose,
+    pigz_executable,
+)
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
 from hpcperfstats.file_locking import (
     LOCK_EXPIRY_SECONDS,
@@ -82,17 +87,69 @@ def _tar_list_executable():
   return shutil.which("tar") or "/bin/tar"
 
 
+def _tar_gz_readable_via_pigz_tar_pipe(gz_path, tar_bin, num_threads):
+  """Full list scan: ``pigz -d -c -p N | tar tf -`` (both must exit 0)."""
+  p_pigz = subprocess.Popen(
+      [
+          pigz_executable(),
+          "-d",
+          "-c",
+          "-p",
+          str(num_threads),
+          gz_path,
+      ],
+      stdout=subprocess.PIPE,
+      stderr=subprocess.DEVNULL,
+  )
+  try:
+    p_tar = subprocess.Popen(
+        [tar_bin, "tf", "-"],
+        stdin=p_pigz.stdout,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+  except Exception:
+    p_pigz.kill()
+    try:
+      p_pigz.wait(timeout=30)
+    except (OSError, subprocess.SubprocessError):
+      pass
+    raise
+  if p_pigz.stdout is not None:
+    p_pigz.stdout.close()
+  p_tar.communicate()
+  pigz_rc = p_pigz.wait()
+  return p_tar.returncode == 0 and pigz_rc == 0
+
+
+@contextlib.contextmanager
+def _open_tarfile_for_read(path, num_threads):
+  """Open a tar (or ``.tar.gz`` with pigz-decompressed stream) for sequential reads."""
+  if path.endswith(".tar.gz") and shutil.which("pigz"):
+    with pigz_decompress_stdout(path, num_threads) as stdout:
+      with tarfile.open(fileobj=stdout, mode="r|") as tf:
+        yield tf
+  else:
+    with tarfile.open(path, "r") as tf:
+      yield tf
+
+
 def verify_tar_archive_readable(tar_path):
   """Return True if ``tar_path`` is a readable archive (full scan via ``tar tf``).
 
-  Works for uncompressed ``.tar`` and ``.tar.gz`` (``tar tf`` detects compression).
-  Falls back to :mod:`tarfile` header scan only if the ``tar`` binary is missing.
+  For ``.tar.gz``, uses ``pigz -d -c -p N | tar tf -`` when ``pigz`` is on
+  ``PATH``; otherwise ``tar tf`` on the file (or :mod:`tarfile` if ``tar`` is
+  missing).
   """
   if not os.path.isfile(tar_path):
     return False
   tar_bin = _tar_list_executable()
   try:
     with file_read_lock_wait(tar_path):
+      if tar_path.endswith(".tar.gz") and shutil.which("pigz"):
+        return _tar_gz_readable_via_pigz_tar_pipe(
+            tar_path, tar_bin, pigz_thread_count)
       result = subprocess.run(
           [tar_bin, "tf", tar_path],
           capture_output=True,
@@ -122,7 +179,7 @@ def get_file_member_sizes_from_gzip_archive(gz_path):
     return {}
   try:
     with file_read_lock_wait(gz_path):
-      with tarfile.open(gz_path, "r") as tf:
+      with _open_tarfile_for_read(gz_path, pigz_thread_count) as tf:
         by_name = defaultdict(list)
         for m in tf.getmembers():
           if m.isfile():
@@ -256,7 +313,7 @@ def get_existing_archive_members(tar_path):
     return {}
   try:
     with file_read_lock_wait(tar_path):
-      with tarfile.open(tar_path, "r") as tf:
+      with _open_tarfile_for_read(tar_path, pigz_thread_count) as tf:
         by_name = defaultdict(list)
         for m in tf.getmembers():
           if m.isfile():
@@ -283,7 +340,7 @@ def get_existing_archive_members_for_daily_archive(archive_gz_path):
     return {}
   try:
     with file_read_lock_wait(archive_gz_path):
-      with tarfile.open(archive_gz_path, "r") as tf:
+      with _open_tarfile_for_read(archive_gz_path, pigz_thread_count) as tf:
         by_name = defaultdict(list)
         for m in tf.getmembers():
           if m.isfile():
@@ -516,7 +573,7 @@ def get_tar_file_tasks(tar_path):
   def _read_members():
     members = []
     with file_read_lock_wait(open_path):
-      with tarfile.open(open_path, "r") as archive_tar:
+      with _open_tarfile_for_read(open_path, pigz_thread_count) as archive_tar:
         for member_info in archive_tar.getmembers():
           if not member_info.isfile():
             continue

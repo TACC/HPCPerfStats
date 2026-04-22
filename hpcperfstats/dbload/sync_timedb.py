@@ -86,8 +86,8 @@ local_timezone = cfg.get_local_timezone()
 
 # Thread count for database loading and archival (optional ini caps; see conf_parser).
 thread_count = cfg.get_sync_ingest_pool_processes()
-# pigz thread cap: one quarter of total cores, clamped to at least one (CPU, not DB pool).
-pigz_thread_count = max(1, cfg.get_worker_thread_count(4))
+# pigz ``-p`` for archive decompress/seal (``PORTAL`` / ``archive_pigz_threads``).
+pigz_thread_count = cfg.get_archive_pigz_threads()
 
 archive_thread_count = cfg.get_sync_archive_pool_processes()
 

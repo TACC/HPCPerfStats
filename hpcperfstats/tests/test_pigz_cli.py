@@ -1,12 +1,13 @@
 """Tests for hpcperfstats.dbload.pigz_cli (no Django)."""
 from __future__ import annotations
 
+import shutil
 import subprocess
 from unittest.mock import patch
 
 import pytest
 
-from hpcperfstats.dbload.pigz_cli import pigz_decompress_verbose
+from hpcperfstats.dbload.pigz_cli import pigz_decompress_stdout, pigz_decompress_verbose
 
 
 def test_pigz_decompress_verbose_invokes_pigz_and_logs(monkeypatch):
@@ -36,3 +37,23 @@ def test_pigz_decompress_verbose_raises_on_nonzero():
       )
       with pytest.raises(subprocess.CalledProcessError):
         pigz_decompress_verbose("/a.gz", 2)
+
+
+@pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")
+def test_pigz_decompress_stdout_streams_gzip_payload(tmp_path):
+  import gzip
+
+  gz = tmp_path / "payload.gz"
+  with gzip.open(gz, "wb") as f:
+    f.write(b"hello-pigz-stream")
+  with pigz_decompress_stdout(str(gz), 2) as out:
+    assert out.read() == b"hello-pigz-stream"
+
+
+@pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")
+def test_pigz_decompress_stdout_raises_on_bad_gzip(tmp_path):
+  bad = tmp_path / "bad.gz"
+  bad.write_bytes(b"not gzip")
+  with pytest.raises(subprocess.CalledProcessError):
+    with pigz_decompress_stdout(str(bad), 1) as out:
+      out.read()

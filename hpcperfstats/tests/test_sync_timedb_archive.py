@@ -122,6 +122,74 @@ def test_verify_tar_archive_readable_false_for_missing(tmp_path):
   assert not verify_tar_archive_readable(str(tmp_path / "nope.tar"))
 
 
+@pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")
+@pytest.mark.skipif(not shutil.which("tar"), reason="tar not on PATH")
+def test_verify_tar_archive_readable_accepts_valid_tgz_via_pigz_pipe(tmp_path):
+  gz = tmp_path / "ok.tar.gz"
+  inner = tmp_path / "inner.txt"
+  inner.write_text("hello")
+  with tarfile.open(gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="inner.txt")
+  assert verify_tar_archive_readable(str(gz))
+
+
+def test_verify_tar_gz_pigz_pipe_uses_helpers_pigz_thread_count(monkeypatch, tmp_path):
+  """Regression: pigz -p matches ``sync_timedb_archive_helpers.pigz_thread_count``."""
+  if not shutil.which("pigz") or not shutil.which("tar"):
+    pytest.skip("need pigz and tar on PATH")
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz = tmp_path / "probe.tar.gz"
+  inner = tmp_path / "x.txt"
+  inner.write_text("z")
+  with tarfile.open(gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="m")
+
+  recorded = []
+  orig_popen = subprocess.Popen
+
+  def _wrap_popen(*args, **kwargs):
+    cmd = list(args[0]) if args else list(kwargs.get("args", []))
+    recorded.append(cmd)
+    return orig_popen(*args, **kwargs)
+
+  monkeypatch.setattr(helpers.subprocess, "Popen", _wrap_popen)
+  monkeypatch.setattr(helpers, "pigz_thread_count", 13)
+  assert verify_tar_archive_readable(str(gz))
+  pigz_cmds = [c for c in recorded if len(c) >= 4 and c[1] == "-d" and c[2] == "-c"]
+  assert pigz_cmds, "expected pigz -d -c subprocess"
+  assert "-p" in pigz_cmds[0]
+  assert pigz_cmds[0][pigz_cmds[0].index("-p") + 1] == "13"
+
+
+def test_get_file_member_sizes_from_gzip_uses_pigz_pipe_when_pigz_present(
+    monkeypatch, tmp_path,
+):
+  if not shutil.which("pigz"):
+    pytest.skip("pigz not on PATH")
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz = tmp_path / "sizes.tar.gz"
+  inner = tmp_path / "body.txt"
+  inner.write_text("zzz")
+  with tarfile.open(gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="only")
+
+  recorded = []
+  orig_popen = subprocess.Popen
+
+  def _wrap_popen(*args, **kwargs):
+    cmd = list(args[0]) if args else list(kwargs.get("args", []))
+    recorded.append(cmd)
+    return orig_popen(*args, **kwargs)
+
+  monkeypatch.setattr(helpers.subprocess, "Popen", _wrap_popen)
+  monkeypatch.setattr(helpers, "pigz_thread_count", 5)
+  assert get_file_member_sizes_from_gzip_archive(str(gz)) == {"only": 3}
+  pigz_cmds = [c for c in recorded if len(c) >= 4 and c[1] == "-d" and c[2] == "-c"]
+  assert pigz_cmds[0][pigz_cmds[0].index("-p") + 1] == "5"
+
+
 def test_replace_corrupt_tar_from_gzip_backup_without_gz_removes_tar(tmp_path):
   tar_path = tmp_path / "2020-01-01.tar"
   tar_path.write_text("corrupt")
