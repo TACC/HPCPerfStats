@@ -68,6 +68,10 @@ GLOBAL_SCHEDULER_BATCH_SIZE = 256
 READINESS_PROBE_TARGET_MIN = 64
 READINESS_PROBE_TARGET_STEP = 64
 READINESS_PROBE_TARGET_FAST_SUCCESS_S = 0.35
+STRICT_CHECK_BATCH_MIN = 32
+STRICT_CHECK_BATCH_STEP = 32
+STRICT_CHECK_FAST_SUCCESS_S = 0.25
+STRICT_CHECK_COOLDOWN_SECONDS = 30
 
 
 class _PhaseTimer:
@@ -191,6 +195,7 @@ class _CompletionReporter:
     self._readiness_error_total = 0
     self._stop = threading.Event()
     self._thread = None
+    self._extra_stats_getter = None
 
   def start(self):
     if self._thread is not None:
@@ -257,16 +262,35 @@ class _CompletionReporter:
 
   def _run(self):
     while not self._stop.wait(self._report_interval_s):
+      extra = ""
+      if callable(self._extra_stats_getter):
+        try:
+          extra_map = self._extra_stats_getter() or {}
+          extra = (
+              " strict_batch_size_current={0} strict_check_calls={1} "
+              "strict_check_timeouts={2} strict_check_avg_latency_ms={3:.2f}".format(
+                  int(extra_map.get("strict_batch_size_current", 0)),
+                  int(extra_map.get("strict_check_calls", 0)),
+                  int(extra_map.get("strict_check_timeouts", 0)),
+                  float(extra_map.get("strict_check_avg_latency_ms", 0.0)),
+              )
+          )
+        except Exception:
+          extra = ""
       log_print(
           "metrics progress: completed_last_hour={0} processed_total={1} "
-          "readiness_error_chunks_last_hour={2} readiness_error_chunks_total={3}".format(
+          "readiness_error_chunks_last_hour={2} readiness_error_chunks_total={3}{4}".format(
               self.completed_in_window(),
               self.completed_total(),
               self.readiness_errors_in_window(),
               self.readiness_errors_total(),
+              extra,
           ),
           flush=True,
       )
+
+  def set_extra_stats_getter(self, getter):
+    self._extra_stats_getter = getter
 
 
 @contextlib.contextmanager
@@ -684,6 +708,21 @@ def _adjust_readiness_probe_target(current_target, had_error, elapsed_s, produce
   return target
 
 
+def _adjust_strict_check_batch_size(current_size, had_timeout, latency_s, max_size):
+  size = max(STRICT_CHECK_BATCH_MIN, int(current_size))
+  if had_timeout:
+    return max(STRICT_CHECK_BATCH_MIN, size // 2)
+  if latency_s <= STRICT_CHECK_FAST_SUCCESS_S:
+    return min(int(max_size), size + STRICT_CHECK_BATCH_STEP)
+  return size
+
+
+def _iter_subbatches(values, batch_size):
+  step = max(1, int(batch_size))
+  for i in range(0, len(values), step):
+    yield values[i:i + step]
+
+
 def update_metrics(date, rerun=False):
   """Compute and persist metrics for all jobs ending on date (runtime >= min_time).
 
@@ -708,7 +747,70 @@ def _build_date_chunk_iterators(dates, min_time, rerun, phase_timer):
   return date_states
 
 
-def _fill_ready_queue(date_states, ready_queue, mode, prefetch_chunks, phase_timer, stats):
+def _fill_ready_queue(
+    date_states,
+    ready_queue,
+    mode,
+    prefetch_chunks,
+    phase_timer,
+    stats,
+    strict_check_state,
+    strict_check_cooldown_until,
+    rr_cursor,
+):
+  now = time.monotonic()
+
+  def _run_strict(proxy_unknown):
+    if not proxy_unknown:
+      return []
+    eligible = [
+        jid for jid in proxy_unknown
+        if strict_check_cooldown_until.get(jid, 0.0) <= now
+    ]
+    if not eligible:
+      return []
+    ready_jids = []
+    for sub in _iter_subbatches(eligible, strict_check_state["batch_size"]):
+      t0 = time.monotonic()
+      stats["strict_check_calls"] += 1
+      try:
+        with phase_timer.phase("readiness_s"):
+          strict_ready = _filter_jids_with_samples_after_end(sub)
+      except (OperationalError, DatabaseError) as exc:
+        stats["strict_check_timeouts"] += 1
+        stats["readiness_error_chunks"] += 1
+        strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
+            current_size=strict_check_state["batch_size"],
+            had_timeout=True,
+            latency_s=(time.monotonic() - t0),
+            max_size=strict_check_state["max_batch_size"],
+        )
+        for jid in sub:
+          strict_check_cooldown_until[jid] = now + STRICT_CHECK_COOLDOWN_SECONDS
+        log_print(
+            "strict readiness sub-batch timed out size={0}; new_strict_batch_size={1}: {2}".format(
+                len(sub), strict_check_state["batch_size"], exc
+            ),
+            flush=True,
+        )
+        continue
+      latency = time.monotonic() - t0
+      prev = stats["strict_check_avg_latency_ms"]
+      current_ms = latency * 1000.0
+      if stats["strict_check_calls"] <= 1:
+        stats["strict_check_avg_latency_ms"] = current_ms
+      else:
+        stats["strict_check_avg_latency_ms"] = (prev * 0.85) + (current_ms * 0.15)
+      strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
+          current_size=strict_check_state["batch_size"],
+          had_timeout=False,
+          latency_s=latency,
+          max_size=strict_check_state["max_batch_size"],
+      )
+      ready_jids.extend(strict_ready)
+    stats["strict_batch_size_current"] = strict_check_state["batch_size"]
+    return ready_jids
+
   if mode == "strict_date":
     active = [s for s in date_states if not s["done"]]
     if not active:
@@ -723,25 +825,20 @@ def _fill_ready_queue(date_states, ready_queue, mode, prefetch_chunks, phase_tim
       proxy_reject, proxy_unknown = _proxy_reject_not_ready_jids(pk_chunk)
       stats["proxy_checked_chunks"] += 1
       stats["proxy_rejected_jids"] += len(proxy_reject)
-      try:
-        with phase_timer.phase("readiness_s"):
-          ready_jids = _filter_jids_with_samples_after_end(proxy_unknown)
-      except (OperationalError, DatabaseError) as exc:
-        log_print(
-            "readiness check failed for strict-date chunk size={0}; skipping chunk: {1}".format(
-                len(proxy_unknown), exc
-            ),
-            flush=True,
-        )
-        stats["readiness_error_chunks"] += 1
-        ready_jids = []
+      ready_jids = _run_strict(proxy_unknown)
       stats["candidate_jids"] += len(pk_chunk)
       stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
       if ready_jids:
         ready_queue.extend(ready_jids)
     return
 
-  for state in [s for s in date_states if not s["done"]]:
+  active = [s for s in date_states if not s["done"]]
+  if not active:
+    return
+  start = int(rr_cursor.get("idx", 0)) % len(active)
+  ordered = active[start:] + active[:start]
+  rr_cursor["idx"] = (start + 1) % len(active)
+  for state in ordered:
     if len(ready_queue) >= prefetch_chunks:
       break
     try:
@@ -752,18 +849,7 @@ def _fill_ready_queue(date_states, ready_queue, mode, prefetch_chunks, phase_tim
     proxy_reject, proxy_unknown = _proxy_reject_not_ready_jids(pk_chunk)
     stats["proxy_checked_chunks"] += 1
     stats["proxy_rejected_jids"] += len(proxy_reject)
-    try:
-      with phase_timer.phase("readiness_s"):
-        ready_jids = _filter_jids_with_samples_after_end(proxy_unknown)
-    except (OperationalError, DatabaseError) as exc:
-      log_print(
-          "readiness check failed for global chunk size={0}; skipping chunk: {1}".format(
-              len(proxy_unknown), exc
-          ),
-          flush=True,
-      )
-      stats["readiness_error_chunks"] += 1
-      ready_jids = []
+    ready_jids = _run_strict(proxy_unknown)
     stats["candidate_jids"] += len(pk_chunk)
     stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
     if ready_jids:
@@ -779,6 +865,8 @@ def _start_readiness_producer(
     scheduler_mode,
     prefetch_ready_cap,
     readiness_probe_target,
+    strict_check_state,
+    strict_check_cooldown_until,
     phase_timer,
     stats,
     completion_reporter,
@@ -786,6 +874,7 @@ def _start_readiness_producer(
   """Start background producer that fills ready_queue from readiness checks."""
   def _producer_loop():
     close_old_connections()
+    rr_cursor = {"idx": 0}
     try:
       while not shutdown_requested[0]:
         with ready_queue_lock:
@@ -807,6 +896,9 @@ def _start_readiness_producer(
             prefetch_chunks=max(1, probe_target),
             phase_timer=phase_timer,
             stats=stats,
+            strict_check_state=strict_check_state,
+            strict_check_cooldown_until=strict_check_cooldown_until,
+            rr_cursor=rr_cursor,
         )
         readiness_probe_target["value"] = _adjust_readiness_probe_target(
             current_target=readiness_probe_target["value"],
@@ -889,6 +981,10 @@ def update_metrics_for_dates(dates, rerun=False):
       "readiness_error_chunks": 0,
       "proxy_checked_chunks": 0,
       "proxy_rejected_jids": 0,
+      "strict_check_calls": 0,
+      "strict_check_timeouts": 0,
+      "strict_check_avg_latency_ms": 0.0,
+      "strict_batch_size_current": STRICT_CHECK_BATCH_MIN,
   }
 
   def _run():
@@ -896,6 +992,14 @@ def update_metrics_for_dates(dates, rerun=False):
       metrics_manager = metrics.Metrics()
       prewarm_pipeline = _PrewarmPipeline()
       completion_reporter = _CompletionReporter()
+      completion_reporter.set_extra_stats_getter(
+          lambda: {
+              "strict_batch_size_current": stats["strict_batch_size_current"],
+              "strict_check_calls": stats["strict_check_calls"],
+              "strict_check_timeouts": stats["strict_check_timeouts"],
+              "strict_check_avg_latency_ms": stats["strict_check_avg_latency_ms"],
+          }
+      )
       completion_reporter.start()
       ready_queue = deque()
       prefetch_ready_cap = max(
@@ -904,6 +1008,11 @@ def update_metrics_for_dates(dates, rerun=False):
       readiness_probe_target = {
           "value": max(READINESS_PROBE_TARGET_MIN, min(prefetch_ready_cap, CHUNK_SIZE))
       }
+      strict_check_state = {
+          "batch_size": STRICT_CHECK_BATCH_MIN,
+          "max_batch_size": max(STRICT_CHECK_BATCH_MIN, min(prefetch_ready_cap, CHUNK_SIZE)),
+      }
+      strict_check_cooldown_until = {}
       batch_cap = min(prefetch_target, GLOBAL_SCHEDULER_BATCH_SIZE)
       log_print(
           "Starting metrics scheduler days={0} mode={1} prefetch_ready_cap={2} "
@@ -936,6 +1045,8 @@ def update_metrics_for_dates(dates, rerun=False):
           scheduler_mode=scheduler_mode,
           prefetch_ready_cap=prefetch_ready_cap,
           readiness_probe_target=readiness_probe_target,
+          strict_check_state=strict_check_state,
+          strict_check_cooldown_until=strict_check_cooldown_until,
           phase_timer=phase_timer,
           stats=stats,
           completion_reporter=completion_reporter,
@@ -1020,11 +1131,12 @@ def update_metrics_for_dates(dates, rerun=False):
           "Finished metrics scheduler mode={0}: processed={1} failed={2} "
           "candidate_jids={3} skipped_not_ready={4} readiness_error_chunks={5} "
           "proxy_checked_chunks={6} proxy_rejected_jids={7} readiness_probe_target={8} "
-          "completed_last_hour={9} elapsed_s={10:.2f} jobs_per_min={11:.2f} "
-          "worker_busy_ratio={12:.3f} phase_candidate_s={13:.2f} "
-          "phase_readiness_s={14:.2f} phase_compute_s={15:.2f} phase_prewarm_s={16:.2f} "
-          "prewarm_backlog_jobs={17} prewarm_lag_seconds_p95={18:.3f} "
-          "prewarm_success_ratio={19:.3f}".format(
+          "strict_batch_size_current={9} strict_check_calls={10} strict_check_timeouts={11} "
+          "strict_check_avg_latency_ms={12:.2f} completed_last_hour={13} elapsed_s={14:.2f} jobs_per_min={15:.2f} "
+          "worker_busy_ratio={16:.3f} phase_candidate_s={17:.2f} "
+          "phase_readiness_s={18:.2f} phase_compute_s={19:.2f} phase_prewarm_s={20:.2f} "
+          "prewarm_backlog_jobs={21} prewarm_lag_seconds_p95={22:.3f} "
+          "prewarm_success_ratio={23:.3f}".format(
               scheduler_mode,
               stats["processed"],
               stats["failed"],
@@ -1034,6 +1146,10 @@ def update_metrics_for_dates(dates, rerun=False):
               stats["proxy_checked_chunks"],
               stats["proxy_rejected_jids"],
               readiness_probe_target["value"],
+              stats["strict_batch_size_current"],
+              stats["strict_check_calls"],
+              stats["strict_check_timeouts"],
+              stats["strict_check_avg_latency_ms"],
               completion_reporter.completed_in_window(),
               elapsed,
               (stats["processed"] * 60.0) / elapsed,

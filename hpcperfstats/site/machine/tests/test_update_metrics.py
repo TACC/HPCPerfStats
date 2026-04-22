@@ -701,6 +701,81 @@ def test_adjust_readiness_probe_target_backoff_and_growth():
   assert same == 256
 
 
+def test_adjust_strict_check_batch_size_backoff_and_growth():
+  cur = update_metrics._adjust_strict_check_batch_size(
+      current_size=128,
+      had_timeout=True,
+      latency_s=1.0,
+      max_size=512,
+  )
+  assert cur == 64
+
+  grown = update_metrics._adjust_strict_check_batch_size(
+      current_size=64,
+      had_timeout=False,
+      latency_s=0.01,
+      max_size=80,
+  )
+  assert grown == 80
+
+  same = update_metrics._adjust_strict_check_batch_size(
+      current_size=64,
+      had_timeout=False,
+      latency_s=2.0,
+      max_size=512,
+  )
+  assert same == 64
+
+
+@pytest.mark.django_db(databases=[])
+def test_fill_ready_queue_strict_subbatch_timeout_does_not_abort(monkeypatch):
+  """Timeout in one strict sub-batch should not prevent later sub-batch success."""
+  states = [{"date": datetime(2025, 4, 10), "iter": iter([(["j1", "j2", "j3"], 3)]), "done": False}]
+  ready = []
+  timer = update_metrics._PhaseTimer()
+  stats = {
+      "candidate_jids": 0,
+      "skipped_not_ready": 0,
+      "readiness_error_chunks": 0,
+      "proxy_checked_chunks": 0,
+      "proxy_rejected_jids": 0,
+      "strict_check_calls": 0,
+      "strict_check_timeouts": 0,
+      "strict_check_avg_latency_ms": 0.0,
+      "strict_batch_size_current": update_metrics.STRICT_CHECK_BATCH_MIN,
+  }
+  strict_state = {"batch_size": 2, "max_batch_size": 4}
+  cooldown = {}
+  rr = {"idx": 0}
+
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+
+  def _strict(jids):
+    if jids == ["j1", "j2"]:
+      raise OperationalError("timeout")
+    return ["j3"]
+
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", _strict)
+  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 100.0)
+
+  update_metrics._fill_ready_queue(
+      states,
+      ready,
+      mode="strict_date",
+      prefetch_chunks=10,
+      phase_timer=timer,
+      stats=stats,
+      strict_check_state=strict_state,
+      strict_check_cooldown_until=cooldown,
+      rr_cursor=rr,
+  )
+
+  assert "j3" in ready
+  assert stats["readiness_error_chunks"] == 1
+  assert stats["strict_check_timeouts"] == 1
+  assert strict_state["batch_size"] == 1
+
+
 @pytest.mark.django_db(databases=[])
 def test_update_metrics_for_dates_global_scheduler_interleaves_dates(monkeypatch):
   """Global scheduler should dispatch cross-date jobs instead of waiting per date."""
