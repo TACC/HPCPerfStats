@@ -1048,10 +1048,11 @@ def main(argv=None, sleep_after=None):
   When invoked as a script, argv defaults to sys.argv. Management commands
   can pass a custom argv list (e.g. parsed from options).
 
-  If ``sleep_after`` is true, the function sleeps 300s at the end (legacy
-  supervisor loop). Default is false. Opt in explicitly or set environment
-  variable ``HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER`` to ``1``/``true``
-  /``yes`` when ``sleep_after`` is omitted.
+  If ``sleep_after`` is true, the function sleeps 60s at the end (legacy
+  supervisor loop). Default is true when ``sleep_after`` is omitted.
+  Environment variable ``HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER`` can
+  override the default: ``0``/``no``/``false`` disable sleep and
+  ``1``/``yes``/``true`` enable it.
 
   Dates in the parsed range are processed **newest day first**; see module
   docstring for per-day job order.
@@ -1060,9 +1061,15 @@ def main(argv=None, sleep_after=None):
     argv = sys.argv
 
   if sleep_after is None:
-    sleep_after = os.environ.get(
+    env_sleep_after = os.environ.get(
         "HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER", ""
-    ).strip().lower() in ("1", "yes", "true")
+    ).strip().lower()
+    if env_sleep_after in ("0", "no", "false"):
+      sleep_after = False
+    elif env_sleep_after in ("1", "yes", "true"):
+      sleep_after = True
+    else:
+      sleep_after = True
 
   #################################################################
   default_start, default_end = _default_metrics_date_range()
@@ -1103,7 +1110,7 @@ def main(argv=None, sleep_after=None):
     # Close DB connections before long sleep to avoid idle connections.
     close_old_connections()
     connections.close_all()
-    sleep_until_shutdown(300)
+    sleep_until_shutdown(600)
 
 
 if __name__ == "__main__":

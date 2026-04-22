@@ -923,3 +923,86 @@ def test_prewarm_pipeline_drain_some_force_does_not_use_invalid_wait_condition(m
   assert pipeline._done == 1
   assert len(pipeline._pending) == 0
   pipeline._executor.shutdown(wait=True)
+
+
+def test_main_sleep_after_waits_60_seconds(monkeypatch):
+  """sleep_after mode should wait exactly 60s after metrics completion."""
+  monkeypatch.setattr(update_metrics, "_default_metrics_date_range", lambda: (
+      datetime(2025, 4, 1), datetime(2025, 4, 1)))
+  monkeypatch.setattr(
+      update_metrics,
+      "parse_start_end_dates",
+      lambda argv, default_start, default_end: (default_start, default_end),
+  )
+  monkeypatch.setattr(update_metrics, "log_date_range", lambda *args, **kwargs: None)
+  monkeypatch.setattr(update_metrics, "log_print", lambda *args, **kwargs: None)
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_sync_enable_cpuset_priority_budget", lambda: False
+  )
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics, "update_metrics_for_dates", lambda dates: None)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics.connections, "close_all", lambda: None)
+  update_metrics.shutdown_requested[0] = False
+  sleeps = []
+  monkeypatch.setattr(update_metrics, "sleep_until_shutdown", lambda secs: sleeps.append(secs))
+
+  update_metrics.main(argv=["update_metrics.py"], sleep_after=True)
+
+  assert sleeps == [60]
+
+
+def test_main_default_sleep_after_waits_60_seconds(monkeypatch):
+  """Default behavior should sleep after completion when not overridden."""
+  monkeypatch.delenv("HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER", raising=False)
+  monkeypatch.setattr(update_metrics, "_default_metrics_date_range", lambda: (
+      datetime(2025, 4, 1), datetime(2025, 4, 1)))
+  monkeypatch.setattr(
+      update_metrics,
+      "parse_start_end_dates",
+      lambda argv, default_start, default_end: (default_start, default_end),
+  )
+  monkeypatch.setattr(update_metrics, "log_date_range", lambda *args, **kwargs: None)
+  monkeypatch.setattr(update_metrics, "log_print", lambda *args, **kwargs: None)
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_sync_enable_cpuset_priority_budget", lambda: False
+  )
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics, "update_metrics_for_dates", lambda dates: None)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics.connections, "close_all", lambda: None)
+  update_metrics.shutdown_requested[0] = False
+  sleeps = []
+  monkeypatch.setattr(update_metrics, "sleep_until_shutdown", lambda secs: sleeps.append(secs))
+
+  update_metrics.main(argv=["update_metrics.py"])
+
+  assert sleeps == [60]
+
+
+def test_main_env_false_disables_default_sleep(monkeypatch):
+  """Env override should disable sleep when set to false-like values."""
+  monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER", "false")
+  monkeypatch.setattr(update_metrics, "_default_metrics_date_range", lambda: (
+      datetime(2025, 4, 1), datetime(2025, 4, 1)))
+  monkeypatch.setattr(
+      update_metrics,
+      "parse_start_end_dates",
+      lambda argv, default_start, default_end: (default_start, default_end),
+  )
+  monkeypatch.setattr(update_metrics, "log_date_range", lambda *args, **kwargs: None)
+  monkeypatch.setattr(update_metrics, "log_print", lambda *args, **kwargs: None)
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_sync_enable_cpuset_priority_budget", lambda: False
+  )
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics, "update_metrics_for_dates", lambda dates: None)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics.connections, "close_all", lambda: None)
+  update_metrics.shutdown_requested[0] = False
+  sleeps = []
+  monkeypatch.setattr(update_metrics, "sleep_until_shutdown", lambda secs: sleeps.append(secs))
+
+  update_metrics.main(argv=["update_metrics.py"])
+
+  assert sleeps == []
