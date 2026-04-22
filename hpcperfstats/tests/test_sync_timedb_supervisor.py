@@ -226,8 +226,50 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
       archive_pool.__exit__(None, None, None)
 
     assert sleeps == [st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS]
-    assert final_maintenance["calls"] == 1
+    assert final_maintenance["calls"] == 2
     assert final_maintenance["remove_verified_tars_calls"] == 1
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_runs_startup_maintenance_before_first_rescan(monkeypatch):
+  shutdown_requested[0] = False
+  try:
+    events = []
+
+    def fake_rescan(*_a, **_k):
+      events.append("rescan")
+      return []
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: events.append("maintenance"))
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+
+    archive_pool = _FakeArchivePool()
+    archive_pool.__enter__()
+    try:
+      st.run_sync_timedb_supervisor_loop(
+          "/tmp/archive",
+          "all",
+          None,
+          ".hpc",
+          object(),
+          archive_pool,
+          run_once=True,
+      )
+    finally:
+      archive_pool.__exit__(None, None, None)
+
+    assert len(events) >= 3
+    assert events[0] == "maintenance"
+    assert events[1] == "rescan"
   finally:
     shutdown_requested[0] = False
 

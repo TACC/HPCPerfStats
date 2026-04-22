@@ -1191,6 +1191,20 @@ def run_sync_timedb_supervisor_loop(
           processes=db_writer_processes)
 
   try:
+    log_print(
+        "Running startup archive sealing and verified raw-file cleanup before initial scan",
+        flush=True,
+    )
+    try:
+      os.makedirs(tgz_archive_dir, exist_ok=True)
+    except OSError:
+      if not os.path.isdir(tgz_archive_dir):
+        raise
+    _run_scheduled_archive_maintenance()
+    last_archive_maint = time.time()
+    close_old_connections()
+    connections.close_all()
+
     while not shutdown_requested[0]:
       if time.time() - last_archive_maint >= pigz_interval:
         _finalize_archive_job_if_needed(force=True)
