@@ -294,7 +294,7 @@ class TypeDetailFreshFingerprintRowCount(Expression):
     kind_c = ops.quote_name("artifact_kind")
     fp_c = ops.quote_name("input_fingerprint")
     scope_c = ops.quote_name("artifact_scope")
-    jid_c = ops.quote_name("jid_id")
+    jid_c = ops.quote_name(job_detail_artifact._meta.get_field("jid").column)
     detail_fp = DetailArtifactInputFingerprintHex(outer_model=self.outer_model)
     fp_sql, fp_params = detail_fp.as_sql(compiler, connection)
     sql = (

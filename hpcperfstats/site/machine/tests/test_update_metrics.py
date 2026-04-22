@@ -175,13 +175,19 @@ def test_jobs_queryset_postgresql_sql_jid_scoped_live_samples(monkeypatch):
   d = datetime(2025, 4, 10, 15, 30, 0)
   qs = update_metrics._jobs_queryset(d, 300, rerun=False)
   sql = str(qs.query).lower()
-  assert "unnest" not in sql
+  full_sql = str(qs.query)
+  # Default live path is jid-scoped (not host_list unnest in live subquery);
+  # unrelated unnest() may appear in plot fingerprint host ordering.
+  assert 'h."jid" = "job_data"."jid"' in full_sql
   assert "group by" in sql
   assert "sum(" in sql
   assert "metrics_distinct_time_count" in sql
   assert "encode(sha256" in sql
   assert "job_plot_artifact" in sql
   assert "job_detail_artifact" in sql
+  # TypeDetailFreshFingerprintRowCount raw SQL must use the real FK column
+  # (db_column="jid"), not Django's jid_id ORM suffix.
+  assert 't."jid" = "job_data"."jid"' in str(qs.query)
 
 
 @pytest.mark.django_db(databases=[])
