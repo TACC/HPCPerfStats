@@ -495,6 +495,7 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_scheduler_ready_queue_target() == 2000
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
   assert cfg.get_metrics_prewarm_workers() == 4
+  assert cfg.get_metrics_scheduler_compute_threads() == 4
   assert cfg.get_metrics_prewarm_retry_attempts() == 2
 
   with open(temp_ini) as f:
@@ -507,6 +508,7 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
       "metrics_scheduler_ready_queue_target = 111\n"
       "metrics_plot_prewarm_mode = inline\n"
       "metrics_prewarm_workers = 7\n"
+      "metrics_scheduler_compute_threads = 6\n"
       "metrics_prewarm_retry_attempts = 5",
   )
   with open(temp_ini, "w") as f:
@@ -517,6 +519,7 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_scheduler_ready_queue_target() == 111
   assert cfg.get_metrics_plot_prewarm_mode() == "inline"
   assert cfg.get_metrics_prewarm_workers() == 7
+  assert cfg.get_metrics_scheduler_compute_threads() == 6
   assert cfg.get_metrics_prewarm_retry_attempts() == 5
   monkeypatch.setenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", "strict_date")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_PLOT_PREWARM_MODE", "pipeline_required")

@@ -66,6 +66,7 @@ django_find_project = false
 filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
 markers = [
   "django: marks tests requiring Django (dbs, settings).",
+  "machine_unit_mock: site.machine.tests mocks only; no DB (see hpcperfstats/conftest.py).",
   "live_redis: live Redis cache integration; requires HPCPERFSTATS_PYTEST_LIVE_REDIS=1 and compose redis.",
     "stress_host_data: optional Timescale stress in tests/stress_host_data; requires HPCPERFSTATS_STRESS_HOST_DATA=1.",
     "pipeline_e2e: optional full-stack pipeline tests in tests/pipeline_e2e; requires HPCPERFSTATS_PIPELINE_E2E=1 and compose.",

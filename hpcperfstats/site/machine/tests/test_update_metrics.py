@@ -2,8 +2,10 @@
 
 """
 import contextlib
+import threading
 from concurrent.futures import Future
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,6 +23,7 @@ def _patch_scheduler_defaults(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_compute_threads", lambda: 1)
   monkeypatch.setattr(update_metrics, "persist_job_detail_artifacts_for_jid", lambda jid: None)
 
 
@@ -415,6 +418,7 @@ def test_update_metrics_reuses_shared_pool_per_date(monkeypatch):
   assert pool_calls == ["ensure", pool_token, pool_token, pool_token, "close"]
 
 
+@pytest.mark.machine_unit_mock
 def test_filter_jids_with_samples_after_end_requires_all_hosts(monkeypatch):
   """A job is ready only when every host has latest sample strictly after end_time."""
   _patch_connections_vendor(monkeypatch, "sqlite")
@@ -442,6 +446,9 @@ def test_filter_jids_with_samples_after_end_requires_all_hosts(monkeypatch):
   class _JobManager:
     def filter(self, **kwargs):
       class _Qs:
+        def order_by(self, *args):
+          return self
+
         def values(self, *fields):
           return jobs_rows
       return _Qs()
@@ -463,6 +470,7 @@ def test_filter_jids_with_samples_after_end_requires_all_hosts(monkeypatch):
   assert ready == [102]
 
 
+@pytest.mark.machine_unit_mock
 def test_ready_jids_batches_host_last_time_lookups(monkeypatch):
   """Large host unions should query host_data in bounded host__in batches."""
   _patch_connections_vendor(monkeypatch, "sqlite")
@@ -501,6 +509,7 @@ def test_ready_jids_batches_host_last_time_lookups(monkeypatch):
   assert filter_batches == [("n1", "n2"), ("n3",)]
 
 
+@pytest.mark.machine_unit_mock
 def test_latest_sample_time_by_host_postgresql_uses_lateral_unnest(monkeypatch):
   """PostgreSQL path uses LATERAL LIMIT 1 per host (not DISTINCT ON) and batches."""
   exec_log = []
@@ -557,10 +566,10 @@ def test_latest_sample_time_by_host_postgresql_uses_lateral_unnest(monkeypatch):
   assert all("max_parallel_workers_per_gather = 0" in e[0] for e in set_local)
 
 
-@pytest.mark.django_db(databases=[])
-def test_filter_jids_postgresql_readiness_sql_avoids_nested_aggregates(monkeypatch):
-  """Readiness CTE must not nest aggregates (PostgreSQL: GroupingError)."""
-  exec_log = []
+@pytest.mark.machine_unit_mock
+def test_filter_jids_postgresql_readiness_uses_orm_no_monolithic_sql(monkeypatch):
+  """PostgreSQL strict readiness uses ORM + host probes, not the old parallel CTE."""
+  exec_calls = []
 
   class FakeCursor:
     def __enter__(self):
@@ -570,7 +579,7 @@ def test_filter_jids_postgresql_readiness_sql_avoids_nested_aggregates(monkeypat
       return False
 
     def execute(self, sql, params=None):
-      exec_log.append(sql)
+      exec_calls.append(sql)
 
     def fetchall(self):
       return []
@@ -584,67 +593,121 @@ def test_filter_jids_postgresql_readiness_sql_avoids_nested_aggregates(monkeypat
 
   fake_ops = MagicMock()
   fake_ops.quote_name = quote_name
-  fake_conn.ops = fake_ops
   fake_conn.cursor = lambda: FakeCursor()
 
   handler = MagicMock()
   handler.__getitem__ = lambda self, name: fake_conn
   monkeypatch.setattr(update_metrics, "connections", handler)
-  monkeypatch.setattr(update_metrics.transaction, "atomic", lambda using=None: contextlib.nullcontext())
-  monkeypatch.setattr(update_metrics, "_host_name_suffix", lambda: ".example.org")
 
-  update_metrics._filter_jids_with_samples_after_end(["j1", "j2"])
-  assert len(exec_log) >= 2
-  assert exec_log[0].lower().startswith("set local statement_timeout")
-  sql = exec_log[1].lower()
-  assert "having count(*) filter (where last_time is null or last_time <= end_time) = 0" in sql
-  assert "bool_and(last_time" not in sql
-
-
-@pytest.mark.django_db(databases=[])
-def test_filter_jids_postgresql_readiness_sql_timeout_falls_back(monkeypatch):
-  class BadCursor:
-    def __enter__(self):
+  class FakeJobQuery:
+    def filter(self, **kwargs):
       return self
 
-    def __exit__(self, *args, **kwargs):
-      return False
+    def order_by(self, *args):
+      return self
 
-    def execute(self, _sql, _params=None):
-      raise OperationalError("statement timeout")
+    def values(self, *fields):
+      return [{"jid": "j1", "end_time": None, "host_list": []}]
 
-  fake_conn = MagicMock()
-  fake_conn.vendor = "postgresql"
-  fake_conn.alias = "default"
+  monkeypatch.setattr(update_metrics.job_data, "objects", FakeJobQuery())
+  monkeypatch.setattr(update_metrics, "_ready_jids_from_job_rows", lambda rows: [])
 
-  def quote_name(name):
-    return '"%s"' % str(name).replace('"', '""')
+  update_metrics._filter_jids_with_samples_after_end(["j1"])
+  assert exec_calls == []
 
-  fake_ops = MagicMock()
-  fake_ops.quote_name = quote_name
-  fake_conn.ops = fake_ops
-  fake_conn.cursor = lambda: BadCursor()
 
-  handler = MagicMock()
-  handler.__getitem__ = lambda self, name: fake_conn
-  monkeypatch.setattr(update_metrics, "connections", handler)
-  monkeypatch.setattr(update_metrics.transaction, "atomic", lambda using=None: contextlib.nullcontext())
-  monkeypatch.setattr(update_metrics, "_host_name_suffix", lambda: ".example.org")
+@pytest.mark.machine_unit_mock
+def test_update_metrics_for_dates_exported():
+  """Regression: scheduler entrypoint must exist at module scope (not nested dead code)."""
+  assert callable(update_metrics.update_metrics_for_dates)
 
-  fallback_called = []
-  monkeypatch.setattr(
-      update_metrics.job_data.objects,
-      "filter",
-      lambda **_kwargs: MagicMock(values=lambda *_a, **_k: [{"jid": "j1", "end_time": None, "host_list": []}]),
+
+@pytest.mark.machine_unit_mock
+def test_filter_jids_readiness_query_orders_by_jid(monkeypatch):
+  """Strict readiness job fetch uses order_by('jid') for stable ordering."""
+  order_calls = []
+
+  class FakeJobQuery:
+    def filter(self, **kwargs):
+      return self
+
+    def order_by(self, *args):
+      order_calls.append(args)
+      return self
+
+    def values(self, *fields):
+      return []
+
+  monkeypatch.setattr(update_metrics.job_data, "objects", FakeJobQuery())
+  monkeypatch.setattr(update_metrics, "_ready_jids_from_job_rows", lambda rows: [])
+
+  update_metrics._filter_jids_with_samples_after_end(["b"])
+  assert order_calls == [("jid",)]
+
+
+@pytest.mark.machine_unit_mock
+def test_compute_jid_outcomes_batch_parallel_uses_multiple_threads(monkeypatch):
+  """With compute_threads>1, batch work runs on >1 thread and passes a metrics lock."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_compute_threads", lambda: 4)
+  barrier = threading.Barrier(3)
+  threads_seen = []
+  lock_passes = []
+
+  def shim(metrics_manager, prewarm_pipeline, job_ref, shared_pool, metrics_run_lock=None):
+    threads_seen.append(threading.current_thread().ident)
+    if metrics_run_lock is not None:
+      lock_passes.append(1)
+    barrier.wait(timeout=10)
+    return {
+        "ok": True,
+        "jid": job_ref.jid,
+        "metrics_s": 0.01,
+        "prewarm_s": 0.01,
+        "telemetry": {},
+    }
+
+  monkeypatch.setattr(update_metrics, "_compute_and_prewarm_jid", shim)
+
+  job_refs = [
+      SimpleNamespace(jid="j3"),
+      SimpleNamespace(jid="j1"),
+      SimpleNamespace(jid="j2"),
+  ]
+  out = update_metrics._compute_jid_outcomes_batch(
+      job_refs,
+      MagicMock(),
+      MagicMock(),
+      None,
   )
-  monkeypatch.setattr(
-      update_metrics,
-      "_ready_jids_from_job_rows",
-      lambda rows: fallback_called.append(rows) or ["j1"],
-  )
+  assert len(set(threads_seen)) == 3
+  assert lock_passes == [1, 1, 1]
+  assert [d["jid"] for d in out] == ["j1", "j2", "j3"]
 
-  assert update_metrics._filter_jids_with_samples_after_end(["j1"]) == ["j1"]
-  assert len(fallback_called) == 1
+
+@pytest.mark.machine_unit_mock
+def test_compute_jid_outcomes_batch_single_thread_no_metrics_lock(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_compute_threads", lambda: 4)
+  lock_args = []
+
+  def shim(metrics_manager, prewarm_pipeline, job_ref, shared_pool, metrics_run_lock=None):
+    lock_args.append(metrics_run_lock)
+    return {
+        "ok": True,
+        "jid": job_ref.jid,
+        "metrics_s": 0.01,
+        "prewarm_s": 0.01,
+        "telemetry": {},
+    }
+
+  monkeypatch.setattr(update_metrics, "_compute_and_prewarm_jid", shim)
+  out = update_metrics._compute_jid_outcomes_batch(
+      [SimpleNamespace(jid="only")],
+      MagicMock(),
+      MagicMock(),
+      None,
+  )
+  assert lock_args == [None]
+  assert [d["jid"] for d in out] == ["only"]
 
 
 def test_proxy_reject_not_ready_jids_partitions(monkeypatch):
@@ -771,6 +834,7 @@ def test_fill_ready_queue_strict_subbatch_timeout_does_not_abort(monkeypatch):
       strict_check_state=strict_state,
       strict_check_cooldown_until=cooldown,
       rr_cursor=rr,
+      scheduler_shared_lock=threading.Lock(),
   )
 
   assert "j3" in ready

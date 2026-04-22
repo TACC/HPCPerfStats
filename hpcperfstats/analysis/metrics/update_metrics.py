@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from datetime import datetime, timedelta
 from collections import deque
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
@@ -79,7 +79,6 @@ CHUNK_SIZE = 500
 # PostgreSQL uses a per-host LATERAL + LIMIT 1 (index probe on (host, time))
 # inside a short transaction with parallel workers disabled for the probe.
 HOST_LAST_TIME_LOOKUP_BATCH = 64
-READINESS_QUERY_TIMEOUT_MS = 120000
 
 # Running a full GC every chunk is expensive on large backfills; amortize it.
 GC_COLLECT_EVERY_N_CHUNKS = 20
@@ -101,6 +100,7 @@ class _PhaseTimer:
   """Collect per-phase wall-clock timings for pipeline reporting."""
 
   def __init__(self):
+    self._lock = threading.Lock()
     self._totals = {
         "candidate_sql_s": 0.0,
         "readiness_s": 0.0,
@@ -114,21 +114,30 @@ class _PhaseTimer:
     try:
       yield
     finally:
-      self._totals[key] = self._totals.get(key, 0.0) + (
-          time.monotonic() - t0
-      )
+      elapsed = time.monotonic() - t0
+      with self._lock:
+        self._totals[key] = self._totals.get(key, 0.0) + elapsed
 
   def totals(self):
-    return dict(self._totals)
+    with self._lock:
+      return dict(self._totals)
 
 
 class _PrewarmPipeline:
-  """Required prewarm stage with bounded backlog and retries."""
+  """Required prewarm stage with bounded backlog and retries.
+
+  ``submit`` / ``drain_some`` mutate ``_pending`` and ``_created_at``; call only
+  from the owning thread (metrics scheduler main thread) unless guarded.
+  ``run_for_jid`` is safe from concurrent scheduler compute threads (counters
+  under ``_counters_lock``).
+  """
 
   def __init__(self):
     self._mode = cfg.get_metrics_plot_prewarm_mode()
     self._workers = cfg.get_metrics_prewarm_workers()
     self._attempts = cfg.get_metrics_prewarm_retry_attempts()
+    self._counters_lock = threading.Lock()
+    self._pending_lock = threading.Lock()
     self._executor = None
     self._pending = set()
     self._done = 0
@@ -165,39 +174,47 @@ class _PrewarmPipeline:
         persist_job_plot_artifacts_for_jid(jid)
     else:
       self._run_one(jid)
-    self._done += 1
+    with self._counters_lock:
+      self._done += 1
 
   def submit(self, jid):
     if self._mode == "inline":
       self._run_one(jid)
-      self._done += 1
+      with self._counters_lock:
+        self._done += 1
       return
-    fut = self._executor.submit(self._run_one, jid)
-    self._created_at[fut] = time.monotonic()
-    self._pending.add(fut)
+    with self._pending_lock:
+      fut = self._executor.submit(self._run_one, jid)
+      self._created_at[fut] = time.monotonic()
+      self._pending.add(fut)
 
   def drain_some(self, force=False):
     if self._mode == "inline" or not self._pending:
       return
-    if force:
-      done = set(self._pending)
-      pending = set()
-    else:
-      done, pending = wait(
-          self._pending,
-          timeout=0,
-          return_when=FIRST_COMPLETED,
-      )
-    self._pending = pending
+    with self._pending_lock:
+      if not self._pending:
+        return
+      if force:
+        done = set(self._pending)
+        pending = set()
+      else:
+        done, pending = wait(
+            self._pending,
+            timeout=0,
+            return_when=FIRST_COMPLETED,
+        )
+      self._pending = pending
     for fut in done:
       start = self._created_at.pop(fut, None)
       if start is not None:
         self._lag_samples.append(time.monotonic() - start)
       try:
         fut.result()
-        self._done += 1
+        with self._counters_lock:
+          self._done += 1
       except Exception as exc:
-        self._failed += 1
+        with self._counters_lock:
+          self._failed += 1
         log_print("plot artifact prewarm failed: {0}".format(exc))
 
   def finish(self):
@@ -677,64 +694,10 @@ def _filter_jids_with_samples_after_end(jids):
   if not jids:
     return []
 
-  conn = connections["default"]
-  if conn.vendor == "postgresql":
-    ops = conn.ops
-    job_tbl = ops.quote_name(job_data._meta.db_table)
-    host_tbl = ops.quote_name(host_data._meta.db_table)
-    sql = """
-      WITH jobs AS (
-        SELECT j.jid, j.end_time, j.host_list
-        FROM {job_tbl} j
-        WHERE j.jid = ANY(%s::text[])
-      ),
-      exploded_hosts AS (
-        SELECT jobs.jid, jobs.end_time, unnest(jobs.host_list) AS host_raw
-        FROM jobs
-      ),
-      fqdn_hosts AS (
-        SELECT
-          eh.jid,
-          eh.end_time,
-          CASE
-            WHEN position('.' in eh.host_raw) > 0 THEN eh.host_raw
-            ELSE eh.host_raw || %s
-          END AS host_name
-        FROM exploded_hosts eh
-      ),
-      latest AS (
-        SELECT fh.jid, fh.host_name, max(h.time) AS last_time, max(fh.end_time) AS end_time
-        FROM fqdn_hosts fh
-        LEFT JOIN {host_tbl} h ON h.host = fh.host_name
-        GROUP BY fh.jid, fh.host_name
-      )
-      SELECT jid
-      FROM latest
-      GROUP BY jid
-      HAVING count(*) FILTER (WHERE last_time IS NULL OR last_time <= end_time) = 0
-      ORDER BY jid
-    """.format(job_tbl=job_tbl, host_tbl=host_tbl)
-    using = getattr(conn, "alias", None) or "default"
-    try:
-      with transaction.atomic(using=using):
-        with conn.cursor() as cursor:
-          cursor.execute("SET LOCAL statement_timeout = %s", [READINESS_QUERY_TIMEOUT_MS])
-          cursor.execute(sql, [list(jids), _host_name_suffix()])
-          return [row[0] for row in cursor.fetchall()]
-    except (OperationalError, DatabaseError) as exc:
-      log_print(
-          "readiness SQL timed out/failed for {0} jids; falling back to ORM readiness path: {1}".format(
-              len(jids), exc
-          ),
-          flush=True,
-      )
-      jobs = list(
-          job_data.objects.filter(jid__in=jids).values("jid", "end_time", "host_list")
-      )
-      return _ready_jids_from_job_rows(jobs)
-
   jobs = list(
-      job_data.objects.filter(jid__in=jids).values("jid", "end_time", "host_list")
+      job_data.objects.filter(jid__in=jids)
+      .order_by("jid")
+      .values("jid", "end_time", "host_list")
   )
   return _ready_jids_from_job_rows(jobs)
 
@@ -845,58 +808,65 @@ def _fill_ready_queue(
     strict_check_state,
     strict_check_cooldown_until,
     rr_cursor,
+    scheduler_shared_lock,
 ):
   now = time.monotonic()
 
   def _run_strict(proxy_unknown):
     if not proxy_unknown:
       return []
-    eligible = [
-        jid for jid in proxy_unknown
-        if strict_check_cooldown_until.get(jid, 0.0) <= now
-    ]
+    with scheduler_shared_lock:
+      eligible = [
+          jid for jid in proxy_unknown
+          if strict_check_cooldown_until.get(jid, 0.0) <= now
+      ]
     if not eligible:
       return []
     ready_jids = []
     for sub in _iter_subbatches(eligible, strict_check_state["batch_size"]):
       t0 = time.monotonic()
-      stats["strict_check_calls"] += 1
+      with scheduler_shared_lock:
+        stats["strict_check_calls"] += 1
       try:
         with phase_timer.phase("readiness_s"):
           strict_ready = _filter_jids_with_samples_after_end(sub)
       except (OperationalError, DatabaseError) as exc:
-        stats["strict_check_timeouts"] += 1
-        stats["readiness_error_chunks"] += 1
-        strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
-            current_size=strict_check_state["batch_size"],
-            had_timeout=True,
-            latency_s=(time.monotonic() - t0),
-            max_size=strict_check_state["max_batch_size"],
-        )
-        for jid in sub:
-          strict_check_cooldown_until[jid] = now + STRICT_CHECK_COOLDOWN_SECONDS
+        with scheduler_shared_lock:
+          stats["strict_check_timeouts"] += 1
+          stats["readiness_error_chunks"] += 1
+          strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
+              current_size=strict_check_state["batch_size"],
+              had_timeout=True,
+              latency_s=(time.monotonic() - t0),
+              max_size=strict_check_state["max_batch_size"],
+          )
+          batch_sz = strict_check_state["batch_size"]
+          for jid in sub:
+            strict_check_cooldown_until[jid] = now + STRICT_CHECK_COOLDOWN_SECONDS
         log_print(
             "strict readiness sub-batch timed out size={0}; new_strict_batch_size={1}: {2}".format(
-                len(sub), strict_check_state["batch_size"], exc
+                len(sub), batch_sz, exc
             ),
             flush=True,
         )
         continue
       latency = time.monotonic() - t0
-      prev = stats["strict_check_avg_latency_ms"]
-      current_ms = latency * 1000.0
-      if stats["strict_check_calls"] <= 1:
-        stats["strict_check_avg_latency_ms"] = current_ms
-      else:
-        stats["strict_check_avg_latency_ms"] = (prev * 0.85) + (current_ms * 0.15)
-      strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
-          current_size=strict_check_state["batch_size"],
-          had_timeout=False,
-          latency_s=latency,
-          max_size=strict_check_state["max_batch_size"],
-      )
+      with scheduler_shared_lock:
+        prev = stats["strict_check_avg_latency_ms"]
+        current_ms = latency * 1000.0
+        if stats["strict_check_calls"] <= 1:
+          stats["strict_check_avg_latency_ms"] = current_ms
+        else:
+          stats["strict_check_avg_latency_ms"] = (prev * 0.85) + (current_ms * 0.15)
+        strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
+            current_size=strict_check_state["batch_size"],
+            had_timeout=False,
+            latency_s=latency,
+            max_size=strict_check_state["max_batch_size"],
+        )
       ready_jids.extend(strict_ready)
-    stats["strict_batch_size_current"] = strict_check_state["batch_size"]
+    with scheduler_shared_lock:
+      stats["strict_batch_size_current"] = strict_check_state["batch_size"]
     return ready_jids
 
   if mode == "strict_date":
@@ -911,11 +881,13 @@ def _fill_ready_queue(
         state["done"] = True
         break
       proxy_reject, proxy_unknown = _proxy_reject_not_ready_jids(pk_chunk)
-      stats["proxy_checked_chunks"] += 1
-      stats["proxy_rejected_jids"] += len(proxy_reject)
+      with scheduler_shared_lock:
+        stats["proxy_checked_chunks"] += 1
+        stats["proxy_rejected_jids"] += len(proxy_reject)
       ready_jids = _run_strict(proxy_unknown)
-      stats["candidate_jids"] += len(pk_chunk)
-      stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
+      with scheduler_shared_lock:
+        stats["candidate_jids"] += len(pk_chunk)
+        stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
       if ready_jids:
         ready_queue.extend(ready_jids)
     return
@@ -935,11 +907,13 @@ def _fill_ready_queue(
       state["done"] = True
       continue
     proxy_reject, proxy_unknown = _proxy_reject_not_ready_jids(pk_chunk)
-    stats["proxy_checked_chunks"] += 1
-    stats["proxy_rejected_jids"] += len(proxy_reject)
+    with scheduler_shared_lock:
+      stats["proxy_checked_chunks"] += 1
+      stats["proxy_rejected_jids"] += len(proxy_reject)
     ready_jids = _run_strict(proxy_unknown)
-    stats["candidate_jids"] += len(pk_chunk)
-    stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
+    with scheduler_shared_lock:
+      stats["candidate_jids"] += len(pk_chunk)
+      stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
     if ready_jids:
       ready_queue.extend(ready_jids)
 
@@ -958,6 +932,7 @@ def _start_readiness_producer(
     phase_timer,
     stats,
     completion_reporter,
+    scheduler_shared_lock,
 ):
   """Start background producer that fills ready_queue from readiness checks."""
   def _producer_loop():
@@ -971,11 +946,13 @@ def _start_readiness_producer(
           time.sleep(0.05)
           continue
         started = time.monotonic()
-        prev_errors = stats["readiness_error_chunks"]
+        with scheduler_shared_lock:
+          prev_errors = stats["readiness_error_chunks"]
+          probe_cap = readiness_probe_target["value"]
         local_ready = deque()
         probe_target = max(
             READINESS_PROBE_TARGET_MIN,
-            min(readiness_probe_target["value"], prefetch_ready_cap - current_depth),
+            min(probe_cap, prefetch_ready_cap - current_depth),
         )
         _fill_ready_queue(
             date_states,
@@ -987,17 +964,20 @@ def _start_readiness_producer(
             strict_check_state=strict_check_state,
             strict_check_cooldown_until=strict_check_cooldown_until,
             rr_cursor=rr_cursor,
+            scheduler_shared_lock=scheduler_shared_lock,
         )
-        readiness_probe_target["value"] = _adjust_readiness_probe_target(
-            current_target=readiness_probe_target["value"],
-            had_error=(stats["readiness_error_chunks"] > prev_errors),
-            elapsed_s=(time.monotonic() - started),
-            produced_ready=bool(local_ready),
-            max_target=prefetch_ready_cap,
-        )
-        if stats["readiness_error_chunks"] > completion_reporter.readiness_errors_total():
+        with scheduler_shared_lock:
+          readiness_probe_target["value"] = _adjust_readiness_probe_target(
+              current_target=readiness_probe_target["value"],
+              had_error=(stats["readiness_error_chunks"] > prev_errors),
+              elapsed_s=(time.monotonic() - started),
+              produced_ready=bool(local_ready),
+              max_target=prefetch_ready_cap,
+          )
+          err_chunks = stats["readiness_error_chunks"]
+        if err_chunks > completion_reporter.readiness_errors_total():
           completion_reporter.record_readiness_error_chunk(
-              stats["readiness_error_chunks"] - completion_reporter.readiness_errors_total()
+              err_chunks - completion_reporter.readiness_errors_total()
           )
         if local_ready:
           with ready_queue_lock:
@@ -1049,8 +1029,20 @@ class PerJidComputeContext:
   artifact_context: dict = field(default_factory=dict)
 
 
-def _compute_and_prewarm_jid(metrics_manager, prewarm_pipeline, job_ref, shared_pool):
-  """Compute metrics and immediately prewarm detail/plot artifacts for one jid."""
+def _compute_and_prewarm_jid(
+    metrics_manager,
+    prewarm_pipeline,
+    job_ref,
+    shared_pool,
+    metrics_run_lock=None,
+):
+  """Compute metrics and immediately prewarm detail/plot artifacts for one jid.
+
+  When ``metrics_run_lock`` is set (concurrent scheduler threads), only
+  ``metrics_manager.run`` is taken under the lock: ``multiprocessing.Pool.imap``
+  from multiple threads on one pool is unsafe; ``prewarm_pipeline.run_for_jid``
+  runs outside the lock so prewarm can overlap other jobs' metrics phases.
+  """
   context = PerJidComputeContext(jid=job_ref.jid)
   telemetry = {
       "detail_gpu_metrics_reused": 0,
@@ -1066,7 +1058,11 @@ def _compute_and_prewarm_jid(metrics_manager, prewarm_pipeline, job_ref, shared_
   context.artifact_context["_telemetry"] = telemetry
   t_metrics_start = time.monotonic()
   try:
-    metrics_manager.run([job_ref], pool=shared_pool)
+    if metrics_run_lock is not None:
+      with metrics_run_lock:
+        metrics_manager.run([job_ref], pool=shared_pool)
+    else:
+      metrics_manager.run([job_ref], pool=shared_pool)
   except Exception as exc:
     log_print(
         "metrics scheduler: failed jid={0}; skipping and continuing: {1}".format(
@@ -1102,6 +1098,99 @@ def _compute_and_prewarm_jid(metrics_manager, prewarm_pipeline, job_ref, shared_
   }
 
 
+def _compute_jid_worker_entry(
+    metrics_manager,
+    prewarm_pipeline,
+    job_ref,
+    shared_pool,
+    metrics_run_lock,
+):
+  close_old_connections()
+  return _compute_and_prewarm_jid(
+      metrics_manager,
+      prewarm_pipeline,
+      job_ref,
+      shared_pool,
+      metrics_run_lock=metrics_run_lock,
+  )
+
+
+def _compute_jid_outcomes_batch(
+    job_refs,
+    metrics_manager,
+    prewarm_pipeline,
+    shared_pool,
+):
+  """Run per-jid metrics+prewarm; parallel threads overlap prewarm with metrics.
+
+  Returns outcome dicts sorted by ``jid`` for stable counters/telemetry.
+
+  ``Metrics.run`` uses a process pool; concurrent ``imap_unordered`` iterators
+  on the same pool are unsafe, so ``metrics_run_lock`` serializes only the
+  ``run()`` call when using more than one scheduler thread.
+  """
+  if not job_refs:
+    return []
+  max_workers = max(
+      1,
+      min(int(cfg.get_metrics_scheduler_compute_threads()), len(job_refs)),
+  )
+  metrics_run_lock = threading.Lock() if max_workers > 1 else None
+
+  if max_workers == 1:
+    outcomes = []
+    for job_ref in job_refs:
+      if shutdown_requested[0]:
+        break
+      close_old_connections()
+      outcomes.append(
+          _compute_and_prewarm_jid(
+              metrics_manager,
+              prewarm_pipeline,
+              job_ref,
+              shared_pool,
+              metrics_run_lock=None,
+          )
+      )
+    return outcomes
+
+  by_jid = {}
+  with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    future_to_jid = {}
+    for job_ref in job_refs:
+      if shutdown_requested[0]:
+        break
+      fut = executor.submit(
+          _compute_jid_worker_entry,
+          metrics_manager,
+          prewarm_pipeline,
+          job_ref,
+          shared_pool,
+          metrics_run_lock,
+      )
+      future_to_jid[fut] = job_ref.jid
+    for fut in as_completed(future_to_jid):
+      jid = future_to_jid[fut]
+      try:
+        by_jid[jid] = fut.result()
+      except Exception as exc:
+        log_print(
+            "metrics scheduler: worker failed jid={0}; skipping: {1}".format(
+                jid, exc
+            ),
+            flush=True,
+        )
+        by_jid[jid] = {
+            "ok": False,
+            "jid": jid,
+            "metrics_s": 0.0,
+            "prewarm_s": 0.0,
+            "telemetry": {},
+        }
+  ordered = sorted(job_refs, key=lambda r: r.jid)
+  return [by_jid[r.jid] for r in ordered if r.jid in by_jid]
+
+
 def update_metrics_for_dates(dates, rerun=False):
   """Global scheduler across dates to keep workers saturated."""
   close_old_connections()
@@ -1128,16 +1217,6 @@ def update_metrics_for_dates(dates, rerun=False):
     with _pg_session_statement_timeout_for_metrics_batch():
       metrics_manager = metrics.Metrics()
       prewarm_pipeline = _PrewarmPipeline()
-      completion_reporter = _CompletionReporter()
-      completion_reporter.set_extra_stats_getter(
-          lambda: {
-              "strict_batch_size_current": stats["strict_batch_size_current"],
-              "strict_check_calls": stats["strict_check_calls"],
-              "strict_check_timeouts": stats["strict_check_timeouts"],
-              "strict_check_avg_latency_ms": stats["strict_check_avg_latency_ms"],
-          }
-      )
-      completion_reporter.start()
       ready_queue = deque()
       prefetch_ready_cap = max(
           1, min(prefetch_target, prefetch_chunks * CHUNK_SIZE)
@@ -1150,6 +1229,20 @@ def update_metrics_for_dates(dates, rerun=False):
           "max_batch_size": max(STRICT_CHECK_BATCH_MIN, min(prefetch_ready_cap, CHUNK_SIZE)),
       }
       strict_check_cooldown_until = {}
+      scheduler_shared_lock = threading.Lock()
+      completion_reporter = _CompletionReporter()
+
+      def _extra_stats_snapshot():
+        with scheduler_shared_lock:
+          return {
+              "strict_batch_size_current": stats["strict_batch_size_current"],
+              "strict_check_calls": stats["strict_check_calls"],
+              "strict_check_timeouts": stats["strict_check_timeouts"],
+              "strict_check_avg_latency_ms": stats["strict_check_avg_latency_ms"],
+          }
+
+      completion_reporter.set_extra_stats_getter(_extra_stats_snapshot)
+      completion_reporter.start()
       batch_cap = min(prefetch_target, GLOBAL_SCHEDULER_BATCH_SIZE)
       log_print(
           "Starting metrics scheduler days={0} mode={1} prefetch_ready_cap={2} "
@@ -1187,6 +1280,7 @@ def update_metrics_for_dates(dates, rerun=False):
           phase_timer=phase_timer,
           stats=stats,
           completion_reporter=completion_reporter,
+          scheduler_shared_lock=scheduler_shared_lock,
       )
       t0 = time.monotonic()
       compute_batches = 0
@@ -1219,13 +1313,16 @@ def update_metrics_for_dates(dates, rerun=False):
             stall_iters += 1
             if stall_iters == 1 or stall_iters % 200 == 0:
               pending_days = sum(1 for s in date_states if not s["done"]) if not producer_done.is_set() else 0
+              with scheduler_shared_lock:
+                cand = stats["candidate_jids"]
+                skipped = stats["skipped_not_ready"]
               log_print(
                   "metrics scheduler: no ready jobs yet "
                   "(pending_days={0} candidate_jids={1} skipped_not_ready={2} stall_pass={3}); "
                   "still scanning candidates.".format(
                       pending_days,
-                      stats["candidate_jids"],
-                      stats["skipped_not_ready"],
+                      cand,
+                      skipped,
                       stall_iters,
                   ),
                   flush=True,
@@ -1237,17 +1334,15 @@ def update_metrics_for_dates(dates, rerun=False):
           with phase_timer.phase("metrics_compute_s"):
             succeeded_jids = []
             failed_count = 0
-            for job_ref in job_refs:
-              if shutdown_requested[0]:
-                break
-              jid_outcome = _compute_and_prewarm_jid(
-                  metrics_manager,
-                  prewarm_pipeline,
-                  job_ref,
-                  shared_pool,
-              )
+            jid_outcomes = _compute_jid_outcomes_batch(
+                job_refs,
+                metrics_manager,
+                prewarm_pipeline,
+                shared_pool,
+            )
+            for jid_outcome in jid_outcomes:
               if jid_outcome["ok"]:
-                succeeded_jids.append(job_ref.jid)
+                succeeded_jids.append(jid_outcome["jid"])
                 if telemetry_enabled:
                   if len(telemetry_metrics_samples) < TELEMETRY_SAMPLE_LIMIT:
                     telemetry_metrics_samples.append(float(jid_outcome["metrics_s"]))
@@ -1285,8 +1380,11 @@ def update_metrics_for_dates(dates, rerun=False):
                   )
               else:
                 failed_count += 1
-          stats["processed"] += len(succeeded_jids)
-          stats["failed"] += failed_count
+          with scheduler_shared_lock:
+            stats["processed"] += len(succeeded_jids)
+            stats["failed"] += failed_count
+            proc_total = stats["processed"]
+            fail_total = stats["failed"]
           completion_reporter.record_completed(len(succeeded_jids))
           compute_batches += 1
           if compute_batches == 1 or compute_batches % 25 == 0:
@@ -1295,8 +1393,8 @@ def update_metrics_for_dates(dates, rerun=False):
                 "processed_total={2} failed_total={3}".format(
                     compute_batches,
                     len(job_refs),
-                    stats["processed"],
-                    stats["failed"],
+                    proc_total,
+                    fail_total,
                 ),
                 flush=True,
             )
@@ -1355,6 +1453,21 @@ def update_metrics_for_dates(dates, rerun=False):
                 int(telemetry_detail_gpu_fallback_queries),
             )
         )
+      with scheduler_shared_lock:
+        snap = {
+            "processed": stats["processed"],
+            "failed": stats["failed"],
+            "candidate_jids": stats["candidate_jids"],
+            "skipped_not_ready": stats["skipped_not_ready"],
+            "readiness_error_chunks": stats["readiness_error_chunks"],
+            "proxy_checked_chunks": stats["proxy_checked_chunks"],
+            "proxy_rejected_jids": stats["proxy_rejected_jids"],
+            "readiness_probe_value": readiness_probe_target["value"],
+            "strict_batch_size_current": stats["strict_batch_size_current"],
+            "strict_check_calls": stats["strict_check_calls"],
+            "strict_check_timeouts": stats["strict_check_timeouts"],
+            "strict_check_avg_latency_ms": stats["strict_check_avg_latency_ms"],
+        }
       log_print(
           "Finished metrics scheduler mode={0}: processed={1} failed={2} "
           "candidate_jids={3} skipped_not_ready={4} readiness_error_chunks={5} "
@@ -1366,21 +1479,21 @@ def update_metrics_for_dates(dates, rerun=False):
           "prewarm_backlog_jobs={21} prewarm_lag_seconds_p95={22:.3f} "
           "prewarm_success_ratio={23:.3f}{24}".format(
               scheduler_mode,
-              stats["processed"],
-              stats["failed"],
-              stats["candidate_jids"],
-              stats["skipped_not_ready"],
-              stats["readiness_error_chunks"],
-              stats["proxy_checked_chunks"],
-              stats["proxy_rejected_jids"],
-              readiness_probe_target["value"],
-              stats["strict_batch_size_current"],
-              stats["strict_check_calls"],
-              stats["strict_check_timeouts"],
-              stats["strict_check_avg_latency_ms"],
+              snap["processed"],
+              snap["failed"],
+              snap["candidate_jids"],
+              snap["skipped_not_ready"],
+              snap["readiness_error_chunks"],
+              snap["proxy_checked_chunks"],
+              snap["proxy_rejected_jids"],
+              snap["readiness_probe_value"],
+              snap["strict_batch_size_current"],
+              snap["strict_check_calls"],
+              snap["strict_check_timeouts"],
+              snap["strict_check_avg_latency_ms"],
               completion_reporter.completed_in_window(),
               elapsed,
-              (stats["processed"] * 60.0) / elapsed,
+              (snap["processed"] * 60.0) / elapsed,
               worker_busy_ratio,
               totals["candidate_sql_s"],
               totals["readiness_s"],

@@ -604,6 +604,15 @@ def get_metrics_prewarm_workers():
   return max(1, int(cfg.get("DEFAULT", "metrics_prewarm_workers", fallback="4")))
 
 
+def get_metrics_scheduler_compute_threads():
+  """Thread workers for concurrent per-jid metrics+prewarm in update_metrics scheduler."""
+  _ensure_cfg_loaded()
+  return max(
+      1,
+      int(cfg.get("DEFAULT", "metrics_scheduler_compute_threads", fallback="4")),
+  )
+
+
 def get_metrics_prewarm_retry_attempts():
   """Retry attempts for plot artifact prewarm tasks."""
   _ensure_cfg_loaded()
@@ -901,6 +910,7 @@ def get_conf_parser_defaults_audit_snapshot():
           "metrics_scheduler_ready_queue_target": 2000,
           "metrics_plot_prewarm_mode": "pipeline_required",
           "metrics_prewarm_workers": 4,
+          "metrics_scheduler_compute_threads": 4,
           "metrics_prewarm_retry_attempts": 2,
       },
       "stability": {

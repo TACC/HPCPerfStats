@@ -88,6 +88,8 @@ def pytest_collection_modifyitems(config, items):
   for item in items:
     path = str(item.fspath).replace("\\", "/")
     if "/site/machine/tests/" in path and not list(item.iter_markers("django_db")):
+      if item.get_closest_marker("machine_unit_mock"):
+        continue
       item.add_marker(pytest.mark.django_db)
 
   if _compose_network_enabled():
@@ -102,6 +104,8 @@ def pytest_collection_modifyitems(config, items):
   for item in items:
     path = str(item.fspath).replace("\\", "/")
     if "/site/machine/tests/" not in path:
+      continue
+    if item.get_closest_marker("machine_unit_mock"):
       continue
     if not _django_db_needs_default_database(item):
       continue
