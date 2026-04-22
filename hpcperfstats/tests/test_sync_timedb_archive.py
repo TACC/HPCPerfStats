@@ -288,6 +288,42 @@ def test_atomic_seal_tar_to_gz_can_drop_uncompressed(tmp_path):
   assert not tar_path.exists()
 
 
+def test_atomic_seal_tar_to_gz_passes_thread_count_to_test_and_compress(monkeypatch, tmp_path):
+  """Both pigz compression and pigz -t validation should use the requested -p count."""
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2021-03-04.tar"
+  gz_path = tmp_path / "2021-03-04.tar.gz"
+  member = tmp_path / "d.txt"
+  member.write_text("x")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="d.txt")
+
+  calls = []
+
+  def _fake_run(cmd, stdout=None, stderr=None, text=None, check=False, capture_output=False):
+    calls.append(list(cmd))
+    if "-c" in cmd and stdout is not None:
+      stdout.write(b"fake-gzip-bytes")
+      stdout.flush()
+    return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+  monkeypatch.setattr(helpers.subprocess, "run", _fake_run)
+  monkeypatch.setattr(helpers, "pigz_executable", lambda: "/usr/bin/pigz")
+
+  atomic_seal_tar_to_gz(
+      str(tar_path),
+      str(gz_path),
+      num_threads=3,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+
+  assert ["/usr/bin/pigz", "-c", "-6", "-p", "3", str(tar_path)] in calls
+  assert ["/usr/bin/pigz", "-t", "-p", "3", str(gz_path) + ".tmp"] in calls
+
+
 # --- get_tar_file_tasks ---
 
 

@@ -152,6 +152,25 @@ def _metric_value_map(job: job_data) -> Dict[str, Optional[float]]:
   return out
 
 
+def _load_existing_type_detail_scope_set(
+    jid: str,
+    input_fingerprint: str,
+    type_names: list[str],
+) -> set[str]:
+  if not type_names:
+    return set()
+  rows = (
+      job_detail_artifact.objects.filter(
+          jid_id=jid,
+          artifact_kind=ARTIFACT_KIND_TYPE_DETAIL,
+          artifact_scope__in=type_names,
+          input_fingerprint=input_fingerprint,
+      )
+      .values_list("artifact_scope", "payload_compressed")
+  )
+  return {scope for scope, payload in rows if payload}
+
+
 def _gpu_detail_from_metric_values(metric_values: Dict[str, Optional[float]]) -> Optional[Dict[str, Any]]:
   required = (
       "detail_gpu_active",
@@ -173,10 +192,12 @@ def _gpu_detail_from_metric_values(metric_values: Dict[str, Optional[float]]) ->
   }
 
 
-def _fsio_from_metric_values(metric_values: Dict[str, Optional[float]]) -> Optional[Dict[str, Any]]:
+def _fsio_from_metric_values(
+    metric_values: Dict[str, Optional[float]]
+) -> tuple[Optional[Dict[str, Any]], bool]:
   fsio_metrics = {name for name, _t, _u in fsio_job_detail_catalog()}
   if not fsio_metrics.intersection(metric_values.keys()):
-    return None
+    return None, False
   out = {}
   llite_read = metric_values.get("detail_fsio_llite_read_mb")
   llite_write = metric_values.get("detail_fsio_llite_write_mb")
@@ -184,11 +205,11 @@ def _fsio_from_metric_values(metric_values: Dict[str, Optional[float]]) -> Optio
   nfs_write = metric_values.get("detail_fsio_nfs_write_mb")
   if llite_read is not None or llite_write is not None:
     out["llite"] = [float(llite_read or 0.0), float(llite_write or 0.0)]
-    return out
+    return out, True
   if nfs_read is not None or nfs_write is not None:
     out["nfs"] = [float(nfs_read or 0.0), float(nfs_write or 0.0)]
-    return out
-  return out
+    return out, True
+  return out, True
 
 
 def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, Any]] = None) -> None:
@@ -215,15 +236,15 @@ def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, A
     schema = jt.schema or {}
 
   metric_values = _metric_value_map(job)
-  fsio = _fsio_from_metric_values(metric_values)
+  fsio, fsio_from_metrics = _fsio_from_metric_values(metric_values)
   if fsio is None:
     fsio = {}
-  elif telemetry is not None and fsio:
+  elif telemetry is not None and fsio_from_metrics:
     telemetry["detail_fsio_metrics_reused"] = int(
         telemetry.get("detail_fsio_metrics_reused", 0)
     ) + 1
   try:
-    if not fsio:
+    if (not fsio) and (not fsio_from_metrics):
       if telemetry is not None:
         telemetry["detail_fsio_fallback_queries"] = int(
             telemetry.get("detail_fsio_fallback_queries", 0)
@@ -241,7 +262,7 @@ def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, A
   except Exception:
     fsio = {}
 
-  if "llite" not in fsio:
+  if ("llite" not in fsio) and (not fsio_from_metrics):
     try:
       nfs = jt.get_nfs_delta_totals_mb()
       if nfs is not None:

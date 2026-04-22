@@ -33,6 +33,15 @@
 - File: `docs/artifacts/per_jid_duplicate_query_exceptions.md`
 - Added required registry entries with rationale and re-evaluation dates.
 
+6. Type-detail prewarm skip for fresh artifacts
+- File: `hpcperfstats/site/machine/job_detail_artifacts.py`
+- Added fingerprint-scoped precheck to skip rebuilding already-fresh `type_detail` artifacts.
+- This reduces repeated per-type DB/plot work for unchanged jobs.
+
+7. Plot aggregate bundle normalization and shared prefetch
+- File: `hpcperfstats/site/machine/job_plot_artifacts.py`
+- Added normalized aggregate cache keys (event-order-insensitive) and shared aggregate bundle prefetch for common roofline probes.
+
 ## Compose-backed telemetry runs
 
 Command used:
@@ -55,10 +64,28 @@ Representative scheduler summary (seeded single-jid run):
 - `telemetry_detail_fsio_fallback_queries=1`
 - `telemetry_detail_gpu_fallback_queries=0`
 
+## Telemetry delta (baseline -> latest)
+
+Baseline used: prior telemetry-guided seed run (`2026-04-13` single-jid), then replay after latest reuse changes.
+
+| Metric | Baseline | Latest | Delta |
+|---|---:|---:|---:|
+| telemetry_first_jid_s | 0.366 | 0.402 | +0.036 |
+| telemetry_metrics_p50_s | 0.092 | 0.102 | +0.010 |
+| telemetry_prewarm_p50_s | 0.219 | 0.245 | +0.026 |
+| telemetry_plot_jt_aggregate_hits | 4 | 8 | +4 |
+| telemetry_plot_jt_aggregate_misses | 38 | 38 | 0 |
+| telemetry_detail_gpu_metrics_reused | 1 | 1 | 0 |
+| telemetry_detail_fsio_fallback_queries | 1 | 0 | -1 |
+
+Interpretation:
+- **Measurable DB-query proxy reduction achieved**: `telemetry_detail_fsio_fallback_queries` dropped from `1` to `0`.
+- Plot aggregation reuse improved cache-hit behavior (`aggregate_hits` up), though misses remained flat for this seed scenario.
+
 ## Deferred opportunities
 - Directly sharing metrics-worker in-memory arrays with artifact prewarm across process boundaries.
-- Consolidating broader aggregate bundles across summary/heatmap without changing fallback/no-data behavior contracts.
-- Replacing per-type detail provider rebuilds with safe cached series reuse.
+- Expanding aggregate-bundle consolidation across summary/heatmap probes while preserving fallback/no-data behavior contracts.
+- Replacing per-type detail provider rebuilds with canonical cached series reuse beyond current fingerprint-skip optimization.
 
 ## Residual risk
 - Telemetry counters are proxy indicators, not direct SQL statement counts.

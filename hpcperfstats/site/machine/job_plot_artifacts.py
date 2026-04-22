@@ -84,6 +84,29 @@ JOB_PLOT_JSON_KEYS: Dict[str, Tuple[str, str]] = {
     for kind, spec in JOB_PLOT_KIND_SPECS.items()
 }
 
+# Shared aggregate bundle for common roofline probes to reduce repeated
+# per-kind aggregate misses while preserving plot-specific fallback behavior.
+COMMON_PLOT_AGGREGATE_BUNDLE: Tuple[Tuple[str, str, Tuple[str, ...], float], ...] = (
+    ("amd64_pmc", "arc", ("FLOPS",), 1e-9),
+    (
+        "amd64_df",
+        "arc",
+        (
+            "MBW_CHANNEL_0",
+            "MBW_CHANNEL_1",
+            "MBW_CHANNEL_2",
+            "MBW_CHANNEL_3",
+            "MBW_CHANNEL_4",
+            "MBW_CHANNEL_5",
+            "MBW_CHANNEL_6",
+            "MBW_CHANNEL_7",
+        ),
+        2 / (1024 ** 3),
+    ),
+    ("nvidia_gpu", "arc", ("gpu_flops",), 1e-9),
+    ("nvidia_gpu", "arc", ("gpu_io_link_total_bytes",), 1 / (1024 ** 3)),
+)
+
 
 def get_job_plot_redis_max_bytes() -> int:
   return int(getattr(settings, "JOB_PLOT_REDIS_MAX_BYTES", 512 * 1024))
@@ -238,6 +261,15 @@ class _JtMemoProxy:
   def __getattr__(self, name):
     return getattr(self._jt, name)
 
+  def _normalize_events(self, events):
+    return tuple(sorted(str(e) for e in (events or ())))
+
+  def _normalize_conv(self, conv):
+    try:
+      return round(float(conv), 12)
+    except Exception:
+      return conv
+
   def get_host_time_df(self):
     if self._host_time_df is None:
       self._host_time_df = self._jt.get_host_time_df()
@@ -248,7 +280,12 @@ class _JtMemoProxy:
     return self._host_time_df.copy()
 
   def get_aggregate_df(self, typ, metric_column, events, conv):
-    key = (str(typ), str(metric_column), tuple(events or ()), float(conv))
+    key = (
+        str(typ),
+        str(metric_column),
+        self._normalize_events(events),
+        self._normalize_conv(conv),
+    )
     if key not in self._aggregate_cache:
       self._aggregate_cache[key] = self._jt.get_aggregate_df(typ, metric_column, events, conv)
       if self._telemetry is not None:
@@ -260,6 +297,13 @@ class _JtMemoProxy:
           self._telemetry.get("plot_jt_memo_aggregate_hits", 0)
       ) + 1
     return self._aggregate_cache[key].copy()
+
+  def prefetch_aggregate_bundle(
+      self,
+      specs: Sequence[Tuple[str, str, Sequence[str], float]],
+  ) -> None:
+    for typ, metric_column, events, conv in specs:
+      self.get_aggregate_df(typ, metric_column, events, conv)
 
 
 def load_cached_job_plot_entry(
@@ -359,6 +403,11 @@ def persist_job_plot_artifacts_for_jid(
   plot_jt = shared.get("plot_jt")
   if plot_jt is None:
     plot_jt = _JtMemoProxy(jt, telemetry=telemetry)
+    try:
+      plot_jt.prefetch_aggregate_bundle(COMMON_PLOT_AGGREGATE_BUNDLE)
+    except Exception:
+      # Plot builders still probe independently; bundle prefetch is best-effort.
+      pass
     shared["plot_jt"] = plot_jt
   existing = shared.get("existing_plot_rows")
   if existing is None:

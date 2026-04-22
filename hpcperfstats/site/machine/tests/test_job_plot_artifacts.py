@@ -296,6 +296,8 @@ def test_jt_memo_proxy_telemetry_counts_hits():
   proxy.get_host_time_df()
   proxy.get_aggregate_df("t", "arc", ["a"], 1.0)
   proxy.get_aggregate_df("t", "arc", ["a"], 1.0)
+  proxy.get_aggregate_df("t", "arc", ["b", "a"], 1.0)
+  proxy.get_aggregate_df("t", "arc", ["a", "b"], 1.0)
   assert telemetry["plot_jt_memo_host_time_hits"] == 1
-  assert telemetry["plot_jt_memo_aggregate_misses"] == 1
-  assert telemetry["plot_jt_memo_aggregate_hits"] == 1
+  assert telemetry["plot_jt_memo_aggregate_misses"] == 2
+  assert telemetry["plot_jt_memo_aggregate_hits"] == 2
