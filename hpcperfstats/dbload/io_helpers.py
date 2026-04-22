@@ -9,9 +9,15 @@ from hpcperfstats.site.machine.models import host_data, job_data
 
 def host_data_instance_from_stats_row(row) -> host_data:
   """Build an unsaved ``host_data`` from a stats DataFrame row (namedtuple)."""
+  jid_val = getattr(row, "jid", None)
+  if pd.notna(jid_val) and str(jid_val) != "-":
+    jid_str = str(jid_val)
+  else:
+    jid_str = None
   return host_data(
       time=row.time.to_pydatetime(),
       host=row.host,
+      jid=jid_str,
       type=row.type,
       dev=None,
       event=row.event,

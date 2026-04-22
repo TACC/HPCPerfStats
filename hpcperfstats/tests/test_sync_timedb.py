@@ -1,7 +1,9 @@
 """Unit tests for sync_timedb parsing and helper functions (no DB; uses sync_timedb_parsing to avoid Django)."""
 import os
+from collections import namedtuple
 import pandas as pd
 
+from hpcperfstats.dbload.io_helpers import host_data_instance_from_stats_row
 from hpcperfstats.dbload.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
     build_stats_dataframes,
@@ -555,6 +557,46 @@ def test_compute_deltas_and_arc_nvidia_clocks_event_reasons_bitwise_or():
   result = compute_deltas_and_arc(stats_df)
   assert len(result) == 1
   assert int(result.iloc[0]["value"]) == 7
+
+
+def test_host_data_instance_from_stats_row_sets_jid_when_present():
+  row_type = namedtuple(
+      "Row",
+      ["time", "host", "jid", "type", "event", "unit", "value", "delta", "arc"],
+  )
+  row = row_type(
+      time=pd.Timestamp("2026-04-22T12:00:00Z"),
+      host="node001.demo.cluster.local",
+      jid="pipeline_e2e_j01",
+      type="cpu",
+      event="user",
+      unit="cs",
+      value=10.0,
+      delta=1.0,
+      arc=0.5,
+  )
+  obj = host_data_instance_from_stats_row(row)
+  assert obj.jid == "pipeline_e2e_j01"
+
+
+def test_host_data_instance_from_stats_row_omits_placeholder_jid():
+  row_type = namedtuple(
+      "Row",
+      ["time", "host", "jid", "type", "event", "unit", "value", "delta", "arc"],
+  )
+  row = row_type(
+      time=pd.Timestamp("2026-04-22T12:00:00Z"),
+      host="node001.demo.cluster.local",
+      jid="-",
+      type="cpu",
+      event="user",
+      unit="cs",
+      value=10.0,
+      delta=1.0,
+      arc=0.5,
+  )
+  obj = host_data_instance_from_stats_row(row)
+  assert obj.jid is None
 
 
 def test_sync_timedb_parsing_with_real_sample_produces_deltas_and_arc():

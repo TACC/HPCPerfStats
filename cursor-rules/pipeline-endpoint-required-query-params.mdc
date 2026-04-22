@@ -1,0 +1,41 @@
+# Pipeline Endpoint Required Query Params Contract
+
+When an API route in the pipeline endpoint matrix requires one or more query
+parameters for a valid request, the concrete pipeline endpoint spec must include
+those parameters.
+
+## Trigger conditions
+
+- Any change to endpoint behavior that makes a previously optional query
+  parameter required.
+- Any change to parameter validation/error handling for endpoints included in:
+  - `hpcperfstats/tests/urlconf_route_catalog.py`
+  - `tests/pipeline_e2e/test_all_endpoints_browser.py`
+  - `hpcperfstats/tests/test_endpoint_route_snapshot.py`
+- Any route contract update under Django URL/API files that affects status-band
+  expectations in the pipeline endpoint smoke tests.
+
+## Required actions
+
+- Update `build_pipeline_http_endpoint_specs(...)` so each affected route uses a
+  valid parameterized `path` (for example include `?group=...` when required).
+- Keep `PipelineHttpEndpointSpec.route_template` unchanged for template
+  coverage; only adjust concrete `path` and status/content expectations.
+- Update endpoint-specific assertions in
+  `tests/pipeline_e2e/test_all_endpoints_browser.py` to support parameterized
+  paths (for example use prefix matching rather than strict equality when
+  asserting a route family).
+- Re-run:
+  - `hpcperfstats/tests/test_endpoint_route_snapshot.py`
+  - `tests/pipeline_e2e/test_all_endpoints_browser.py` (compose workflow)
+
+## Why
+
+- The pipeline browser/API matrix should assert real, contract-valid requests.
+- Bare route probes that omit required query parameters create false failures and
+  hide genuine regressions.
+
+## Overlap
+
+- Complements `pipeline-endpoint-matrix-drift-guard.mdc`.
+- Complements `web-pages-e2e-test-maintenance.mdc` for browser-E2E expectations.

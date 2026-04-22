@@ -628,11 +628,21 @@ def _filter_jids_with_samples_after_end(jids):
 
 
 def _proxy_reject_not_ready_jids(jids):
-  """Cheap jid-level prefilter: reject jids with no post-end sample at all."""
+  """Cheap jid-level prefilter: reject only when jid-keyed host_data proves not-ready.
+
+  Some ingest paths may not populate ``host_data.jid`` for every row. In that
+  case, keep the jid in the ``unknown`` set and let the full readiness probe
+  decide using host_list/time-window logic.
+  """
   if not jids:
     return set(), []
   if connections["default"].vendor != "postgresql":
     return set(), list(jids)
+  has_any_jid_sample = Exists(
+      host_data.objects.filter(
+          jid=OuterRef("jid"),
+      )
+  )
   has_post_end_sample = Exists(
       host_data.objects.filter(
           jid=OuterRef("jid"),
@@ -642,16 +652,25 @@ def _proxy_reject_not_ready_jids(jids):
   rows = list(
       job_data.objects.filter(jid__in=jids)
       .annotate(
+          has_any_jid=has_any_jid_sample,
           has_post_end=Case(
               When(end_time__isnull=True, then=Value(False)),
               default=has_post_end_sample,
               output_field=BooleanField(),
           )
       )
-      .values_list("jid", "has_post_end")
+      .values_list("jid", "has_any_jid", "has_post_end")
   )
-  reject = {jid for jid, has_post_end in rows if not has_post_end}
-  unknown = [jid for jid, has_post_end in rows if has_post_end]
+  reject = {
+      jid
+      for jid, has_any_jid, has_post_end in rows
+      if has_any_jid and (not has_post_end)
+  }
+  unknown = [
+      jid
+      for jid, has_any_jid, has_post_end in rows
+      if (not has_any_jid) or has_post_end
+  ]
   return reject, unknown
 
 

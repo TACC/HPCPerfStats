@@ -652,7 +652,12 @@ def test_proxy_reject_not_ready_jids_partitions(monkeypatch):
       return self
 
     def values_list(self, *_args, **_kwargs):
-      return [("j1", True), ("j2", False), ("j3", True)]
+      return [
+          ("j1", True, True),
+          ("j2", True, False),
+          ("j3", True, True),
+          ("j4", False, False),
+      ]
 
   monkeypatch.setattr(
       update_metrics.job_data,
@@ -660,9 +665,11 @@ def test_proxy_reject_not_ready_jids_partitions(monkeypatch):
       MagicMock(filter=lambda **_kwargs: FakeJobsQuery()),
   )
 
-  reject, unknown = update_metrics._proxy_reject_not_ready_jids(["j1", "j2", "j3"])
+  reject, unknown = update_metrics._proxy_reject_not_ready_jids(
+      ["j1", "j2", "j3", "j4"]
+  )
   assert reject == {"j2"}
-  assert unknown == ["j1", "j3"]
+  assert unknown == ["j1", "j3", "j4"]
 
 
 def test_adjust_readiness_probe_target_backoff_and_growth():

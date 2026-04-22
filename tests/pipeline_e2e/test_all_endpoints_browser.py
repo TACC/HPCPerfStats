@@ -53,7 +53,7 @@ def _assert_content_type_band(resp, spec: PipelineHttpEndpointSpec):
 
 
 def _assert_job_list_histograms_payload(resp, spec: PipelineHttpEndpointSpec):
-  if spec.path != "/api/jobs/histograms/":
+  if not spec.path.startswith("/api/jobs/histograms/"):
     return
   payload = resp.json()
   assert payload.get("group") == "queue", payload

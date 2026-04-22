@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; ``pigz`` seal and raw-file removal on ``archive_pigz_interval_seconds``, default 4h). Runs in parallel with configurable chunk size.
 
-After each ingest wave completes, rescans the archive directory for new files. When none are pending, it seals all dirty daily archives, removes verified raw files, sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 5 minutes), and exits.
+After each ingest wave completes, rescans the archive directory for new files. When none are pending, it seals all dirty daily archives, removes verified raw files, sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s), and exits.
 
 CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once all``.
 
@@ -9,6 +9,7 @@ DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers 
 
 """
 import itertools
+import heapq
 import json
 import math
 import multiprocessing
@@ -44,7 +45,6 @@ from hpcperfstats.shutdown_utils import (
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
     collect_lock_sidecar_stats,
-    collect_first_timestamps_by_path,
     dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
@@ -110,6 +110,9 @@ EMPTY_QUEUE_RESCAN_SLEEP_SECONDS = 30
 
 # Emit DB lock-wait logs only for sustained contention.
 LOCK_WAIT_LOG_THRESHOLD_SECONDS = 30.0
+FINALIZE_POLL_TIMEOUT_SECONDS = 0.05
+MAINTENANCE_LOCK_STATS_EVERY = 3
+MAINTENANCE_DEDUPE_EVERY = 6
 
 # Set to 1/yes/true so ingest runs in the parent process (no spawn pool). Required
 # for pytest-django: pool workers would reconnect with default PORTAL.dbname instead
@@ -127,6 +130,9 @@ _adaptive_bulk_create_batch_size = bulk_create_batch_size
 _HEAD_TIMESTAMP_CACHE = {}
 _HEAD_TIMESTAMP_CACHE_REFRESH_SECONDS = 60
 _HEAD_TIMESTAMP_CACHE_MAX_ENTRIES = 20000
+_HOST_ITIMES_CACHE = {}
+_HOST_ITIMES_CACHE_REFRESH_SECONDS = 20
+_HOST_ITIMES_CACHE_MAX_ENTRIES = 2000
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
 
@@ -302,11 +308,51 @@ def _head_timestamp_present_cached(hostname, timestamp_utc):
   return present
 
 
+def _host_recent_timestamps_cached(hostname, ts_low, ts_high):
+  """Return cached host timestamp set for duplicate detection window."""
+  key = (hostname, int(ts_low.timestamp()), int(ts_high.timestamp()))
+  now = time.time()
+  cached = _HOST_ITIMES_CACHE.get(key)
+  if cached and (now - cached["checked_at"] <= _HOST_ITIMES_CACHE_REFRESH_SECONDS):
+    return set(cached["times"])
+  itimes_set = set()
+  qs_times = (
+      host_data.objects.filter(
+          host=hostname,
+          time__gte=ts_low,
+          time__lt=ts_high,
+      )
+      .values_list("time", flat=True)
+      .distinct()
+  )
+  for dt in qs_times.iterator():
+    if dt is None:
+      continue
+    if dt.tzinfo is None:
+      dt = dt.replace(tzinfo=timezone.utc)
+    itimes_set.add(int(dt.timestamp()))
+  _HOST_ITIMES_CACHE[key] = {"times": tuple(itimes_set), "checked_at": now}
+  if len(_HOST_ITIMES_CACHE) > _HOST_ITIMES_CACHE_MAX_ENTRIES:
+    oldest_keys = sorted(
+        _HOST_ITIMES_CACHE.keys(),
+        key=lambda k: _HOST_ITIMES_CACHE[k]["checked_at"],
+    )[:100]
+    for drop_key in oldest_keys:
+      _HOST_ITIMES_CACHE.pop(drop_key, None)
+  return itimes_set
+
+
 def _pick_write_lock_for_path(lock_or_locks, stats_file):
   if isinstance(lock_or_locks, list) and lock_or_locks:
     idx = abs(hash(stats_file)) % len(lock_or_locks)
     return lock_or_locks[idx]
   return lock_or_locks
+
+
+def _reset_sync_runtime_caches():
+  """Clear per-process ingest caches between sync_timedb sessions."""
+  _HEAD_TIMESTAMP_CACHE.clear()
+  _HOST_ITIMES_CACHE.clear()
 
 
 def _invalidate_jid_caches(stats, proc_stats):
@@ -416,6 +462,7 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
     log_print("initial timestamp not found")
     return (stats_file, None, False, False)
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
+  preflight_t0 = time.time()
   head_present = _head_timestamp_present_cached(hostname, timestamp_utc)
   if not head_present:
     # New file head is not in DB yet; it still needs archival post-ingest.
@@ -423,23 +470,15 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
   else:
     ts_low = timestamp_utc - timedelta(hours=48)
     ts_high = timestamp_utc + timedelta(hours=72)
-    itimes_set = set()
-    qs_times = (
-        host_data.objects.filter(
-            host=hostname,
-            time__gte=ts_low,
-            time__lt=ts_high,
-        )
-        .values_list("time", flat=True)
-        .distinct()
-    )
-    for dt in qs_times.iterator():
-      if dt is None:
-        continue
-      if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-      itimes_set.add(int(dt.timestamp()))
+    itimes_set = _host_recent_timestamps_cached(hostname, ts_low, ts_high)
     start_idx, need_archival = find_processing_start_index(lines, itimes_set)
+  preflight_elapsed = time.time() - preflight_t0
+  if preflight_elapsed > 0.20:
+    log_print(
+        "Parse preflight latency file=%s host=%s elapsed=%.3fs"
+        % (stats_file, hostname, preflight_elapsed),
+        flush=True,
+    )
   if start_idx == -1:
     log_print("No missing timestamps found for %s" % stats_file)
     return (stats_file, None, True, True)
@@ -860,7 +899,13 @@ def run_sync_timedb_supervisor_loop(
   last_archive_maint = time.time()
   ingest_t0 = time.time()
 
-  def _run_scheduled_archive_maintenance():
+  maintenance_cycle = 0
+
+  def _run_scheduled_archive_maintenance(force_full=False):
+    nonlocal maintenance_cycle
+    maintenance_cycle += 1
+    run_lock_stats = force_full or (maintenance_cycle % MAINTENANCE_LOCK_STATS_EVERY == 0)
+    run_dedupe = force_full or (maintenance_cycle % MAINTENANCE_DEDUPE_EVERY == 0)
     removed_raw = cleanup_stale_fnctl_lock_sidecars(directory)
     removed_arch = cleanup_stale_fnctl_lock_sidecars(tgz_archive_dir)
     if removed_raw or removed_arch:
@@ -869,34 +914,36 @@ def run_sync_timedb_supervisor_loop(
           % (removed_raw, removed_arch),
           flush=True,
       )
-    lock_stats_raw = collect_lock_sidecar_stats(directory)
-    lock_stats_archive = collect_lock_sidecar_stats(tgz_archive_dir)
-    log_print(
-        "Lock sidecar diagnostics raw=(count=%d stale=%d oldest_age_s=%.1f) "
-        "archive=(count=%d stale=%d oldest_age_s=%.1f)"
-        % (
-            lock_stats_raw["lock_files"],
-            lock_stats_raw["stale_lock_files"],
-            lock_stats_raw["oldest_lock_age_seconds"],
-            lock_stats_archive["lock_files"],
-            lock_stats_archive["stale_lock_files"],
-            lock_stats_archive["oldest_lock_age_seconds"],
-        ),
-        flush=True,
-    )
-    for tar_path in sorted(iter_daily_tar_paths(tgz_archive_dir)):
-      if not tar_has_duplicate_file_members(tar_path):
-        continue
+    if run_lock_stats:
+      lock_stats_raw = collect_lock_sidecar_stats(directory)
+      lock_stats_archive = collect_lock_sidecar_stats(tgz_archive_dir)
       log_print(
-          "Duplicate member paths in daily tar; rewriting (keep largest per path): "
-          "%s" % tar_path,
+          "Lock sidecar diagnostics raw=(count=%d stale=%d oldest_age_s=%.1f) "
+          "archive=(count=%d stale=%d oldest_age_s=%.1f)"
+          % (
+              lock_stats_raw["lock_files"],
+              lock_stats_raw["stale_lock_files"],
+              lock_stats_raw["oldest_lock_age_seconds"],
+              lock_stats_archive["lock_files"],
+              lock_stats_archive["stale_lock_files"],
+              lock_stats_archive["oldest_lock_age_seconds"],
+          ),
           flush=True,
       )
-      if not dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
+    if run_dedupe:
+      for tar_path in sorted(iter_daily_tar_paths(tgz_archive_dir)):
+        if not tar_has_duplicate_file_members(tar_path):
+          continue
         log_print(
-            "ERROR: tar dedupe failed during scheduled maintenance: %s" % tar_path,
+            "Duplicate member paths in daily tar; rewriting (keep largest per path): "
+            "%s" % tar_path,
             flush=True,
         )
+        if not dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
+          log_print(
+              "ERROR: tar dedupe failed during scheduled maintenance: %s" % tar_path,
+              flush=True,
+          )
     seal_dirty_daily_archives(
         tgz_archive_dir,
         local_tz=local_timezone,
@@ -910,7 +957,15 @@ def run_sync_timedb_supervisor_loop(
     remove_verified_archived_raw_files(
         directory, host_name_ext, tgz_archive_dir, log_fn=log_print)
 
-  pending_archive_tasks = deque()
+  pending_archive_tasks = []
+  dead_letter_dirty = False
+  perf_stats = {
+      "archive_finalize_wait_s": 0.0,
+      "archive_finalize_calls": 0,
+      "archive_dispatch_count": 0,
+      "archive_dispatch_items": 0,
+      "archive_dispatch_s": 0.0,
+  }
 
   def _retry_delay(attempt):
     delay = archive_retry_backoff_base * (2 ** max(0, attempt - 1))
@@ -918,13 +973,59 @@ def run_sync_timedb_supervisor_loop(
       delay = min(delay, archive_retry_backoff_max)
     return max(0.0, delay)
 
-  def _finalize_archive_job_if_needed():
+  def _pending_dead_letter_entries():
+    return sorted(
+        [
+            item
+            for _retry_at, _attempt, _seq, item in pending_archive_tasks
+            if item["task"].attempt > archive_retry_max_attempts
+        ],
+        key=lambda d: (float(d.get("retry_at", 0.0)), d["task"].attempt),
+    )
+
+  def _persist_dead_letters_if_needed(force=False):
+    nonlocal dead_letter_dirty
+    if not (dead_letter_dirty or force):
+      return
+    _save_dead_letter_entries(dead_letter_path, _pending_dead_letter_entries())
+    dead_letter_dirty = False
+
+  def _enqueue_archive_task(task_payload):
+    nonlocal dead_letter_dirty
+    item = dict(task_payload)
+    item["retry_at"] = float(item.get("retry_at", 0.0))
+    heapq.heappush(
+        pending_archive_tasks,
+        (item["retry_at"], int(item["task"].attempt), time.time(), item),
+    )
+    if item["task"].attempt > archive_retry_max_attempts:
+      dead_letter_dirty = True
+
+  def _finalize_archive_job_if_needed(force=False):
     nonlocal archive_job
     nonlocal archive_job_deferred_paths
     nonlocal checkpoint_dirty_count
+    nonlocal dead_letter_dirty
     if archive_job is None:
-      return
+      return False
+    if not force:
+      ready_fn = getattr(archive_job, "ready", None)
+      if callable(ready_fn):
+        try:
+          if not ready_fn():
+            return False
+        except Exception:
+          pass
+    finalize_t0 = time.time()
+    wait_timeout_fn = getattr(archive_job, "wait", None)
+    if callable(wait_timeout_fn):
+      try:
+        wait_timeout_fn(FINALIZE_POLL_TIMEOUT_SECONDS)
+      except Exception:
+        pass
     results = archive_job.get()
+    perf_stats["archive_finalize_wait_s"] += max(0.0, time.time() - finalize_t0)
+    perf_stats["archive_finalize_calls"] += 1
     if not isinstance(results, list):
       results = [results]
     if len(results) != len(archive_job_deferred_paths):
@@ -952,7 +1053,7 @@ def run_sync_timedb_supervisor_loop(
           for p in archive_paths:
             _transition_file_state(file_states, p, SyncFileState.ARCHIVE_FAILED_RETRYABLE)
           retry_at = time.time() + _retry_delay(next_attempt)
-          pending_archive_tasks.append({
+          _enqueue_archive_task({
               "task": ArchiveTask(archive_info=archive_task.archive_info, attempt=next_attempt),
               "paths": archive_paths,
               "retry_at": retry_at,
@@ -976,7 +1077,7 @@ def run_sync_timedb_supervisor_loop(
               "paths": list(archive_paths),
               "retry_at": 0.0,
           }
-          pending_archive_tasks.append(dead_letter_entry)
+          _enqueue_archive_task(dead_letter_entry)
           if ingest_first_durability:
             for p in archive_paths:
               _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
@@ -990,10 +1091,7 @@ def run_sync_timedb_supervisor_loop(
             for p in archive_paths:
               _transition_file_state(file_states, p, SyncFileState.ARCHIVE_FAILED_RETRYABLE)
               inflight_archive_paths.discard(p)
-          _save_dead_letter_entries(
-              dead_letter_path,
-              [d for d in pending_archive_tasks if d["task"].attempt > archive_retry_max_attempts],
-          )
+          _persist_dead_letters_if_needed()
     if len(archive_job_deferred_paths) > len(results):
       for task_payload in archive_job_deferred_paths[len(results):]:
         archive_task = task_payload["task"]
@@ -1001,7 +1099,7 @@ def run_sync_timedb_supervisor_loop(
         next_attempt = archive_task.attempt + 1
         if next_attempt <= archive_retry_max_attempts:
           retry_at = time.time() + _retry_delay(next_attempt)
-          pending_archive_tasks.append({
+          _enqueue_archive_task({
               "task": ArchiveTask(archive_info=archive_task.archive_info, attempt=next_attempt),
               "paths": archive_paths,
               "retry_at": retry_at,
@@ -1010,7 +1108,7 @@ def run_sync_timedb_supervisor_loop(
             _transition_file_state(file_states, p, SyncFileState.ARCHIVE_FAILED_RETRYABLE)
             inflight_archive_paths.discard(p)
         else:
-          pending_archive_tasks.append({
+          _enqueue_archive_task({
               "task": ArchiveTask(archive_info=archive_task.archive_info, attempt=next_attempt),
               "paths": list(archive_paths),
               "retry_at": 0.0,
@@ -1021,6 +1119,7 @@ def run_sync_timedb_supervisor_loop(
     _flush_checkpoint_if_needed()
     archive_job = None
     archive_job_deferred_paths = []
+    return True
 
   def _flush_checkpoint_if_needed(force=False):
     nonlocal checkpoint_dirty_count
@@ -1076,7 +1175,8 @@ def run_sync_timedb_supervisor_loop(
     processed_files_order.append(entry["path"])
     checkpoint_entries.append(entry)
 
-  pending_archive_tasks.extend(_load_dead_letter_entries(dead_letter_path))
+  for entry in _load_dead_letter_entries(dead_letter_path):
+    _enqueue_archive_task(entry)
 
   if not _sync_timedb_ingest_inline_requested():
     ingest_pool = multiprocessing.get_context('spawn').Pool(
@@ -1090,7 +1190,7 @@ def run_sync_timedb_supervisor_loop(
   try:
     while not shutdown_requested[0]:
       if time.time() - last_archive_maint >= pigz_interval:
-        _finalize_archive_job_if_needed()
+        _finalize_archive_job_if_needed(force=True)
         log_print(
             "Running scheduled daily-archive pigz and raw file removal",
             flush=True,
@@ -1110,12 +1210,18 @@ def run_sync_timedb_supervisor_loop(
           due_tasks = []
           now = time.time()
           while pending_archive_tasks and len(due_tasks) < archive_queue_max:
-            if pending_archive_tasks[0]["retry_at"] > now:
+            retry_at, _attempt, _seq, task_payload = pending_archive_tasks[0]
+            if retry_at > now:
               break
-            due_tasks.append(pending_archive_tasks.popleft())
+            heapq.heappop(pending_archive_tasks)
+            due_tasks.append(task_payload)
           if due_tasks:
             archive_items = [d["task"].archive_info for d in due_tasks]
+            dispatch_t0 = time.time()
             archive_job = archive_pool.map_async(archive_stats_files, archive_items)
+            perf_stats["archive_dispatch_s"] += max(0.0, time.time() - dispatch_t0)
+            perf_stats["archive_dispatch_count"] += 1
+            perf_stats["archive_dispatch_items"] += len(archive_items)
             archive_job_deferred_paths = due_tasks
             log_print("Processing %d archive retry task(s)" % len(due_tasks), flush=True)
         if len(pending_archive_tasks) > archive_queue_high:
@@ -1146,7 +1252,7 @@ def run_sync_timedb_supervisor_loop(
           worker_idle_loops += 1
           log_print("Worker idle loops while waiting for pending files: %d" % worker_idle_loops)
           log_print("No pending stats files after full rescan", flush=True)
-          _finalize_archive_job_if_needed()
+          _finalize_archive_job_if_needed(force=True)
           log_print(
               "Running final archive sealing and verified raw-file cleanup before exit",
               flush=True,
@@ -1156,7 +1262,7 @@ def run_sync_timedb_supervisor_loop(
           except OSError:
             if not os.path.isdir(tgz_archive_dir):
               raise
-          _run_scheduled_archive_maintenance()
+          _run_scheduled_archive_maintenance(force_full=True)
           log_print(
               "Sleeping %s s before exiting sync_timedb"
               % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
@@ -1289,7 +1395,7 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         if adaptive_dispatch_enabled:
-          backlog = len(pending_stats_files)
+          backlog = max(0, len(pending_stats_files) - len(stats_files_chunk))
           archive_backlog = len(pending_archive_tasks)
           burst_ceiling = max(
               thread_count,
@@ -1324,11 +1430,9 @@ def run_sync_timedb_supervisor_loop(
 
         if files_to_be_archived:
           os.makedirs(tgz_archive_dir, exist_ok=True)
-        first_ts_by_path = collect_first_timestamps_by_path(files_to_be_archived)
         ar_file_mapping = build_archive_mapping(
             files_to_be_archived,
             tgz_archive_dir,
-            first_timestamp_by_path=first_ts_by_path,
         )
         total_in_mapping = sum(len(v) for v in ar_file_mapping.values())
         if ar_file_mapping:
@@ -1375,30 +1479,50 @@ def run_sync_timedb_supervisor_loop(
                 % (len(ar_file_mapping), archive_queue_high),
                 flush=True,
             )
-          archive_items = list(ar_file_mapping.items())[:archive_queue_max]
-          overflow_items = list(ar_file_mapping.items())[archive_queue_max:]
-          archive_job = archive_pool.map_async(
-              archive_stats_files, archive_items)
-          archive_job_deferred_paths = [
-              {
-                  "task": ArchiveTask(archive_info=item, attempt=1),
-                  "paths": list(item[1]),
-                  "retry_at": time.time(),
-              }
-              for item in archive_items
-          ]
+          archive_items_all = list(ar_file_mapping.items())
           inflight_archive_paths.update(deferred_paths)
           for p in deferred_paths:
             _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
-          for item in overflow_items:
-            pending_archive_tasks.append({
-                "task": ArchiveTask(archive_info=item, attempt=1),
-                "paths": list(item[1]),
-                "retry_at": time.time(),
-            })
-            for p in item[1]:
-              _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
-          log_print("Archival running in the background")
+          if archive_job is None:
+            archive_items = archive_items_all[:archive_queue_max]
+            overflow_items = archive_items_all[archive_queue_max:]
+            dispatch_t0 = time.time()
+            archive_job = archive_pool.map_async(
+                archive_stats_files, archive_items)
+            perf_stats["archive_dispatch_s"] += max(0.0, time.time() - dispatch_t0)
+            perf_stats["archive_dispatch_count"] += 1
+            perf_stats["archive_dispatch_items"] += len(archive_items)
+            archive_job_deferred_paths = [
+                {
+                    "task": ArchiveTask(archive_info=item, attempt=1),
+                    "paths": list(item[1]),
+                    "retry_at": time.time(),
+                }
+                for item in archive_items
+            ]
+            for item in overflow_items:
+              _enqueue_archive_task({
+                  "task": ArchiveTask(archive_info=item, attempt=1),
+                  "paths": list(item[1]),
+                  "retry_at": time.time(),
+              })
+              for p in item[1]:
+                _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
+            log_print("Archival running in the background")
+          else:
+            for item in archive_items_all:
+              _enqueue_archive_task({
+                  "task": ArchiveTask(archive_info=item, attempt=1),
+                  "paths": list(item[1]),
+                  "retry_at": time.time(),
+              })
+              for p in item[1]:
+                _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
+            log_print(
+                "Queued %d archive task(s); archival worker still busy"
+                % len(archive_items_all),
+                flush=True,
+            )
         elif deferred_paths:
           log_print(
               "Deferring processed marker for %d file(s): archival mapping missing"
@@ -1416,7 +1540,7 @@ def run_sync_timedb_supervisor_loop(
         chunk_counter += 1
 
         if chunk_counter % rescan_every_chunks == 0:
-          _finalize_archive_job_if_needed()
+          _finalize_archive_job_if_needed(force=True)
           pending_stats_files = rescan_pending_stats_files(
               directory,
               startdate,
@@ -1429,21 +1553,27 @@ def run_sync_timedb_supervisor_loop(
               "Rescanned after %d chunks; pending files (newest first): %d"
               % (rescan_every_chunks, len(pending_stats_files)))
 
-      _finalize_archive_job_if_needed()
-      _save_dead_letter_entries(
-          dead_letter_path,
-          [d for d in pending_archive_tasks if d["task"].attempt > archive_retry_max_attempts],
-      )
+      _finalize_archive_job_if_needed(force=True)
+      _persist_dead_letters_if_needed(force=True)
       _flush_checkpoint_if_needed(force=True)
+      if perf_stats["archive_finalize_calls"] or perf_stats["archive_dispatch_count"]:
+        log_print(
+            "Archive perf telemetry finalize_calls=%d finalize_wait_s=%.3f dispatch_calls=%d dispatch_items=%d dispatch_submit_s=%.3f"
+            % (
+                perf_stats["archive_finalize_calls"],
+                perf_stats["archive_finalize_wait_s"],
+                perf_stats["archive_dispatch_count"],
+                perf_stats["archive_dispatch_items"],
+                perf_stats["archive_dispatch_s"],
+            ),
+            flush=True,
+        )
       close_old_connections()
       connections.close_all()
   finally:
     if archive_job is not None:
-      _finalize_archive_job_if_needed()
-    _save_dead_letter_entries(
-        dead_letter_path,
-        [d for d in pending_archive_tasks if d["task"].attempt > archive_retry_max_attempts],
-    )
+      _finalize_archive_job_if_needed(force=True)
+    _persist_dead_letters_if_needed(force=True)
     _flush_checkpoint_if_needed(force=True)
     if ingest_pool is not None:
       if hasattr(ingest_pool, "close"):
@@ -1481,6 +1611,7 @@ def parse_sync_timedb_argv(argv):
 
 def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
   """Run one supervisor session after ``database_startup()`` (CLI or in-process tests)."""
+  _reset_sync_runtime_caches()
   if startdate == 'all':
     log_print(
         "###Date Range of stats files to ingest: entire archive directory "

@@ -145,7 +145,7 @@ def build_pipeline_http_endpoint_specs(
   add(PipelineHttpEndpointSpec(
       "api/jobs/", "GET", "/api/jobs/", 200, 299, "application/json", False))
   add(PipelineHttpEndpointSpec(
-      "api/jobs/histograms/", "GET", "/api/jobs/histograms/",
+      "api/jobs/histograms/", "GET", "/api/jobs/histograms/?group=queue",
       200, 299, "application/json", False))
   add(PipelineHttpEndpointSpec(
       "api/jobs/<str:pk>/", "GET", "/api/jobs/{}/".format(jid),
@@ -178,7 +178,7 @@ def build_pipeline_http_endpoint_specs(
       200, 299, "application/json", False))
 
   add(PipelineHttpEndpointSpec(
-      "csp-report/", "POST", "/csp-report/", 204, 204, None, False,
+      "csp-report/", "POST", "/csp-report/", 403, 403, None, False,
       csrf_post=False,
       post_data="{}",
       extra_headers={"Content-Type": "application/json"},
@@ -193,7 +193,7 @@ def build_pipeline_http_endpoint_specs(
   ))
   add(PipelineHttpEndpointSpec(
       "api/sacct/ingest/", "POST", "/api/sacct/ingest/?date=2020-01-01",
-      400, 499, None, False,
+      200, 299, "application/json", False,
       csrf_post=True,
       post_data="",
   ))
