@@ -364,6 +364,40 @@ def remove_verified_archived_raw_files(
             log_fn("Could not remove %s: %s" % (path, exc), flush=True)
 
 
+def remove_verified_uncompressed_daily_tars(
+    daily_archive_dir,
+    *,
+    log_fn=log_print,
+):
+  """Remove ``YYYY-MM-DD.tar`` only after tar/tar.gz verification succeeds.
+
+  This is intended for final/exit maintenance to reclaim disk space while
+  keeping periodic maintenance behavior configurable.
+  """
+  if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
+    return
+  for tar_path in sorted(iter_daily_tar_paths(daily_archive_dir)):
+    gz_path = "%s.gz" % tar_path
+    if not os.path.isfile(tar_path):
+      continue
+    ok, members = validate_sealed_daily_archive_for_raw_removal(
+        gz_path, log_fn=log_fn)
+    if not ok or members is None:
+      continue
+    try:
+      with file_write_lock(tar_path):
+        if os.path.isfile(tar_path):
+          os.remove(tar_path)
+      if log_fn:
+        log_fn(
+            "Final/exit maintenance removed verified uncompressed tar: %s" % tar_path,
+            flush=True,
+        )
+    except OSError as exc:
+      if log_fn:
+        log_fn("Could not remove verified tar %s: %s" % (tar_path, exc), flush=True)
+
+
 def tar_has_duplicate_file_members(tar_path):
   """Return True if any file member path appears more than once in archive order."""
   if not os.path.isfile(tar_path):

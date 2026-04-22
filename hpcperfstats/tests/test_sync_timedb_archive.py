@@ -28,6 +28,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     is_daily_tar_gz_dirty,
     parse_archive_date_from_daily_tar_path,
     remove_verified_archived_raw_files,
+    remove_verified_uncompressed_daily_tars,
     replace_corrupt_tar_from_gzip_backup,
     rescan_pending_stats_files,
     resolve_preferred_archive_path_for_read,
@@ -609,6 +610,22 @@ def test_remove_verified_archived_raw_files_bootstraps_missing_daily_archive(
   )
   assert archive_calls == [(gz_key, [str(seg)])]
   assert not seg.is_file()
+
+
+def test_remove_verified_uncompressed_daily_tars_removes_when_tar_matches_gz(tmp_path):
+  day_tar = tmp_path / "2026-04-22.tar"
+  day_gz = tmp_path / "2026-04-22.tar.gz"
+  member = tmp_path / "member.txt"
+  member.write_text("same-content")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(member), arcname="member.txt")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(member), arcname="member.txt")
+
+  remove_verified_uncompressed_daily_tars(str(tmp_path), log_fn=None)
+
+  assert not day_tar.exists()
+  assert day_gz.is_file()
 
 
 def test_validate_sealed_daily_archive_fails_on_tar_gz_mismatch(tmp_path):

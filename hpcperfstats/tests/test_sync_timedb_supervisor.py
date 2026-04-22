@@ -170,7 +170,7 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
       return []
 
     sleeps = []
-    final_maintenance = {"calls": 0}
+    final_maintenance = {"calls": 0, "remove_verified_tars_calls": 0}
 
     def fake_sleep(secs):
       sleeps.append(secs)
@@ -196,6 +196,14 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
     )
     monkeypatch.setattr(
         st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(
+        st,
+        "remove_verified_uncompressed_daily_tars",
+        lambda *a, **k: final_maintenance.__setitem__(
+            "remove_verified_tars_calls",
+            final_maintenance["remove_verified_tars_calls"] + 1,
+        ),
+    )
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st.multiprocessing, "get_context", fake_get_context)
     monkeypatch.setattr(
@@ -219,6 +227,7 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
 
     assert sleeps == [st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS]
     assert final_maintenance["calls"] == 1
+    assert final_maintenance["remove_verified_tars_calls"] == 1
   finally:
     shutdown_requested[0] = False
 

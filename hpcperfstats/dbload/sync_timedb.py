@@ -50,6 +50,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     get_existing_archive_members,
     iter_daily_tar_paths,
     remove_verified_archived_raw_files,
+    remove_verified_uncompressed_daily_tars,
     replace_corrupt_tar_from_gzip_backup,
     rescan_pending_stats_files,
     seal_dirty_daily_archives,
@@ -956,6 +957,8 @@ def run_sync_timedb_supervisor_loop(
     )
     remove_verified_archived_raw_files(
         directory, host_name_ext, tgz_archive_dir, log_fn=log_print)
+    if force_full:
+      remove_verified_uncompressed_daily_tars(tgz_archive_dir, log_fn=log_print)
 
   pending_archive_tasks = []
   dead_letter_dirty = False
