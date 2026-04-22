@@ -108,6 +108,9 @@ SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES = cfg.get_sync_checkpoint_flush_batch_s
 # before exiting sync_timedb. Interruptible via shutdown_requested / SIGTERM path.
 EMPTY_QUEUE_RESCAN_SLEEP_SECONDS = 30
 
+# Emit DB lock-wait logs only for sustained contention.
+LOCK_WAIT_LOG_THRESHOLD_SECONDS = 30.0
+
 # Set to 1/yes/true so ingest runs in the parent process (no spawn pool). Required
 # for pytest-django: pool workers would reconnect with default PORTAL.dbname instead
 # of the test database created for the session.
@@ -126,6 +129,18 @@ _HEAD_TIMESTAMP_CACHE_REFRESH_SECONDS = 60
 _HEAD_TIMESTAMP_CACHE_MAX_ENTRIES = 20000
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
+
+
+def _log_db_lock_wait(batch_kind, stats_file, lock_wait):
+  """Log DB lock contention only when wait exceeds threshold."""
+  if lock_wait <= LOCK_WAIT_LOG_THRESHOLD_SECONDS:
+    return
+  log_print(
+      "DB lock wait %s batch file=%s wait=%.3fs" % (
+          batch_kind, stats_file, lock_wait
+      ),
+      flush=True,
+  )
 
 
 @dataclass(frozen=True)
@@ -329,8 +344,7 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
         lock_wait_t0 = time.time()
         write_lock.acquire()
         lock_wait = time.time() - lock_wait_t0
-        if lock_wait > 0.05:
-          log_print("DB lock wait proc batch file=%s wait=%.3fs" % (stats_file, lock_wait), flush=True)
+        _log_db_lock_wait("proc", stats_file, lock_wait)
         try:
           t0 = time.time()
           proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
@@ -361,8 +375,7 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
           lock_wait_t0 = time.time()
           write_lock.acquire()
           lock_wait = time.time() - lock_wait_t0
-          if lock_wait > 0.05:
-            log_print("DB lock wait host batch file=%s wait=%.3fs" % (stats_file, lock_wait), flush=True)
+          _log_db_lock_wait("host", stats_file, lock_wait)
           try:
             t0 = time.time()
             host_data.objects.bulk_create(host_objs, ignore_conflicts=True)

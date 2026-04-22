@@ -899,3 +899,22 @@ def test_archive_result_mismatch_retries_unmatched(monkeypatch, tmp_path):
     assert ap.calls >= 2
   finally:
     shutdown_requested[0] = False
+
+
+def test_log_db_lock_wait_suppressed_under_30_seconds(monkeypatch):
+  messages = []
+  monkeypatch.setattr(st, "log_print", lambda msg, flush=True: messages.append(msg))
+
+  st._log_db_lock_wait("proc", "/tmp/stats0", 29.999)
+
+  assert messages == []
+
+
+def test_log_db_lock_wait_emits_over_30_seconds(monkeypatch):
+  messages = []
+  monkeypatch.setattr(st, "log_print", lambda msg, flush=True: messages.append(msg))
+
+  st._log_db_lock_wait("host", "/tmp/stats0", 30.001)
+
+  assert len(messages) == 1
+  assert "DB lock wait host batch file=/tmp/stats0" in messages[0]
