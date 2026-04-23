@@ -68,6 +68,8 @@ total_cores = 40
 # cpuset_pin_min_cores_per_node = 16
 # numa_pin_max_nodes_auto = 16
 # pin_proxy_in_compose = no
+# update_metrics readiness: max jids per proxy host_data aggregate (default 48, min 8)
+# metrics_proxy_reject_jid_batch_size = 48
 # web_numa_node =
 # pipeline_numa_node =
 

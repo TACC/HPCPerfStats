@@ -619,6 +619,12 @@ def get_metrics_prewarm_retry_attempts():
   return max(1, int(cfg.get("DEFAULT", "metrics_prewarm_retry_attempts", fallback="2")))
 
 
+def get_metrics_proxy_reject_jid_batch_size():
+  """Max jids per DB round-trip in ``update_metrics`` proxy readiness (PostgreSQL)."""
+  _ensure_cfg_loaded()
+  return max(8, int(cfg.get("DEFAULT", "metrics_proxy_reject_jid_batch_size", fallback="48")))
+
+
 def get_sync_enable_cpuset_priority_budget():
   """Enable cpuset-aware S/A/M budgeting for sync + metrics pools (default yes)."""
   env = os.environ.get("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "").strip().lower()

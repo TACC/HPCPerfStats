@@ -497,6 +497,7 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_prewarm_workers() == 4
   assert cfg.get_metrics_scheduler_compute_threads() == 4
   assert cfg.get_metrics_prewarm_retry_attempts() == 2
+  assert cfg.get_metrics_proxy_reject_jid_batch_size() == 48
 
   with open(temp_ini) as f:
     content = f.read()
@@ -509,7 +510,8 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
       "metrics_plot_prewarm_mode = inline\n"
       "metrics_prewarm_workers = 7\n"
       "metrics_scheduler_compute_threads = 6\n"
-      "metrics_prewarm_retry_attempts = 5",
+      "metrics_prewarm_retry_attempts = 5\n"
+      "metrics_proxy_reject_jid_batch_size = 32",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
@@ -521,10 +523,27 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_prewarm_workers() == 7
   assert cfg.get_metrics_scheduler_compute_threads() == 6
   assert cfg.get_metrics_prewarm_retry_attempts() == 5
+  assert cfg.get_metrics_proxy_reject_jid_batch_size() == 32
   monkeypatch.setenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", "strict_date")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_PLOT_PREWARM_MODE", "pipeline_required")
   assert cfg.get_metrics_scheduler_mode() == "strict_date"
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
+
+
+def test_metrics_proxy_reject_jid_batch_size_clamps_minimum(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\nmetrics_proxy_reject_jid_batch_size = 3",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_metrics_proxy_reject_jid_batch_size() == 8
 
 
 def test_cpuset_priority_budget_overprovision_mode(temp_ini, monkeypatch):

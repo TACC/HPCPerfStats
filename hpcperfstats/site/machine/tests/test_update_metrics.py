@@ -10,8 +10,12 @@ from unittest.mock import MagicMock
 
 import pytest
 from django.db.utils import OperationalError
+from django.utils import timezone
 
-from hpcperfstats.analysis.metrics.update_metrics import _iter_chunked_pks
+from hpcperfstats.analysis.metrics.update_metrics import (
+    _iter_chunked_pks,
+    _proxy_readiness_has_any_and_post_end,
+)
 from hpcperfstats.analysis.metrics import update_metrics
 
 
@@ -716,26 +720,100 @@ def test_compute_jid_outcomes_batch_single_thread_no_metrics_lock(monkeypatch):
   assert [d["jid"] for d in out] == ["only"]
 
 
-def test_proxy_reject_not_ready_jids_partitions(monkeypatch):
+@pytest.mark.machine_unit_mock
+def test_proxy_readiness_has_any_and_post_end_semantics():
+  """Matches legacy Exists: any row, and strictly-after-end sample."""
+  t0 = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+  t1 = datetime(2025, 4, 1, 13, 0, 0, tzinfo=timezone.utc)
+  assert _proxy_readiness_has_any_and_post_end(t0, None) == (False, False)
+  assert _proxy_readiness_has_any_and_post_end(None, t1) == (True, False)
+  assert _proxy_readiness_has_any_and_post_end(t0, t0) == (True, False)
+  assert _proxy_readiness_has_any_and_post_end(t0, t1) == (True, True)
+
+
+@pytest.mark.machine_unit_mock
+def test_proxy_reject_not_ready_jids_batches_host_aggregates(monkeypatch):
+  """Each jid sub-batch issues its own host_data aggregate (bounded queries)."""
   _patch_connections_vendor(monkeypatch, "postgresql")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_proxy_reject_jid_batch_size", lambda: 2)
+  host_batches = []
 
-  class FakeJobsQuery:
-    def annotate(self, **_kwargs):
-      return self
+  def host_filter(*_a, jid__in=None, **_k):
+    host_batches.append(tuple(jid__in))
 
-    def values_list(self, *_args, **_kwargs):
-      return [
-          ("j1", True, True),
-          ("j2", True, False),
-          ("j3", True, True),
-          ("j4", False, False),
-      ]
+    class _HostAgg:
+      def values(self, *_names, **_kw):
+        return self
 
-  monkeypatch.setattr(
-      update_metrics.job_data,
-      "objects",
-      MagicMock(filter=lambda **_kwargs: FakeJobsQuery()),
-  )
+      def annotate(self, **_kw):
+        return self
+
+      def __iter__(self):
+        t_end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+        t_after = datetime(2025, 4, 1, 14, 0, 0, tzinfo=timezone.utc)
+        for j in jid__in:
+          yield {"jid": j, "max_time": t_after if j != "mid" else t_end}
+
+    return _HostAgg()
+
+  def job_filter(*_a, jid__in=None, **_k):
+    class _JobVals:
+      def values(self, *_names, **_kw):
+        t_end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+        for j in jid__in:
+          yield {"jid": j, "end_time": t_end}
+
+    return _JobVals()
+
+  monkeypatch.setattr(update_metrics.host_data.objects, "filter", host_filter)
+  monkeypatch.setattr(update_metrics.job_data.objects, "filter", job_filter)
+
+  jids = ["a", "mid", "c", "d", "e"]
+  reject, unknown = update_metrics._proxy_reject_not_ready_jids(jids)
+  assert host_batches == [("a", "mid"), ("c", "d"), ("e",)]
+  assert reject == {"mid"}
+  assert unknown == ["a", "c", "d", "e"]
+
+
+@pytest.mark.machine_unit_mock
+def test_proxy_reject_not_ready_jids_partitions(monkeypatch):
+  """Reject vs unknown split matches legacy four-corner classification."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_proxy_reject_jid_batch_size", lambda: 99)
+  t_end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+  t_after = datetime(2025, 4, 1, 14, 0, 0, tzinfo=timezone.utc)
+
+  def host_filter(*_a, jid__in=None, **_k):
+    class _HostAgg:
+      def values(self, *_names, **_kw):
+        return self
+
+      def annotate(self, **_kw):
+        return self
+
+      def __iter__(self):
+        for j in jid__in:
+          if j == "j1":
+            yield {"jid": j, "max_time": t_after}
+          elif j == "j2":
+            yield {"jid": j, "max_time": t_end}
+          elif j == "j3":
+            yield {"jid": j, "max_time": t_after}
+          elif j == "j4":
+            pass
+
+    return _HostAgg()
+
+  def job_filter(*_a, jid__in=None, **_k):
+    class _JobVals:
+      def values(self, *_names, **_kw):
+        for j in jid__in:
+          yield {"jid": j, "end_time": t_end}
+
+    return _JobVals()
+
+  monkeypatch.setattr(update_metrics.host_data.objects, "filter", host_filter)
+  monkeypatch.setattr(update_metrics.job_data.objects, "filter", job_filter)
 
   reject, unknown = update_metrics._proxy_reject_not_ready_jids(
       ["j1", "j2", "j3", "j4"]

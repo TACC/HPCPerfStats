@@ -29,7 +29,7 @@ from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
 from django.db import close_old_connections, connections, transaction
-from django.db.models import BooleanField, Case, Count, Exists, F, IntegerField, Max, OuterRef, Q, Subquery, Value, When
+from django.db.models import Count, Exists, F, IntegerField, Max, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, DatabaseError
 
@@ -702,50 +702,58 @@ def _filter_jids_with_samples_after_end(jids):
   return _ready_jids_from_job_rows(jobs)
 
 
+def _proxy_readiness_has_any_and_post_end(end_time, max_time):
+  """Return ``(has_any_jid, has_post_end)`` matching legacy ``Exists`` semantics.
+
+  ``has_any_jid``: any ``host_data`` row for the jid exists.
+  ``has_post_end``: ``end_time`` is set and some row has ``time > end_time``.
+  """
+  has_any = max_time is not None
+  has_post = (
+      end_time is not None
+      and max_time is not None
+      and max_time > end_time
+  )
+  return has_any, has_post
+
+
 def _proxy_reject_not_ready_jids(jids):
   """Cheap jid-level prefilter: reject only when jid-keyed host_data proves not-ready.
 
   Some ingest paths may not populate ``host_data.jid`` for every row. In that
   case, keep the jid in the ``unknown`` set and let the full readiness probe
   decide using host_list/time-window logic.
+
+  Uses bounded ``jid__in`` batches and ``Max(time)`` aggregates (no correlated
+  ``Exists`` per row) to avoid PostgreSQL ``statement_timeout`` on large chunks.
   """
   if not jids:
     return set(), []
   if connections["default"].vendor != "postgresql":
     return set(), list(jids)
-  has_any_jid_sample = Exists(
-      host_data.objects.filter(
-          jid=OuterRef("jid"),
+  batch = max(1, int(cfg.get_metrics_proxy_reject_jid_batch_size()))
+  reject = set()
+  unknown = []
+  for sub in _iter_subbatches(jids, batch):
+    end_rows = job_data.objects.filter(jid__in=sub).values("jid", "end_time")
+    end_by_jid = {r["jid"]: r["end_time"] for r in end_rows}
+    max_rows = (
+        host_data.objects.filter(jid__in=sub)
+        .values("jid")
+        .annotate(max_time=Max("time"))
+        .values("jid", "max_time")
+    )
+    max_by_jid = {r["jid"]: r["max_time"] for r in max_rows}
+    for jid in sub:
+      end_time = end_by_jid.get(jid)
+      max_time = max_by_jid.get(jid)
+      has_any_jid, has_post_end = _proxy_readiness_has_any_and_post_end(
+          end_time, max_time
       )
-  )
-  has_post_end_sample = Exists(
-      host_data.objects.filter(
-          jid=OuterRef("jid"),
-          time__gt=OuterRef("end_time"),
-      )
-  )
-  rows = list(
-      job_data.objects.filter(jid__in=jids)
-      .annotate(
-          has_any_jid=has_any_jid_sample,
-          has_post_end=Case(
-              When(end_time__isnull=True, then=Value(False)),
-              default=has_post_end_sample,
-              output_field=BooleanField(),
-          )
-      )
-      .values_list("jid", "has_any_jid", "has_post_end")
-  )
-  reject = {
-      jid
-      for jid, has_any_jid, has_post_end in rows
-      if has_any_jid and (not has_post_end)
-  }
-  unknown = [
-      jid
-      for jid, has_any_jid, has_post_end in rows
-      if (not has_any_jid) or has_post_end
-  ]
+      if has_any_jid and (not has_post_end):
+        reject.add(jid)
+      if (not has_any_jid) or has_post_end:
+        unknown.append(jid)
   return reject, unknown
 
 
