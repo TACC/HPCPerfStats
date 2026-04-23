@@ -1311,11 +1311,42 @@ def test_prewarm_pipeline_run_for_jid_shares_context(monkeypatch):
 
   pipeline = update_metrics._PrewarmPipeline()
   shared = {"_telemetry": {}}
-  pipeline.run_for_jid("j42", shared_context=shared)
+  timing = pipeline.run_for_jid("j42", shared_context=shared)
   assert calls[0][0] == "detail"
   assert calls[1][0] == "plot"
   assert calls[0][2] is shared
   assert calls[1][2] is shared
+  assert timing["undivided"] is False
+  assert timing["prewarm_total_s"] == timing["detail_s"] + timing["plots_s"]
+
+
+@pytest.mark.machine_unit_mock
+def test_compute_and_prewarm_jid_logs_when_full_pipeline_succeeds(monkeypatch):
+  """After metrics + job detail + plots, emit one compute-complete timing line."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "persist_job_detail_artifacts_for_jid", lambda *a, **k: None)
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda *a, **k: None)
+  recorded = []
+
+  def _capture(*args, **kwargs):
+    recorded.append(args)
+
+  monkeypatch.setattr(update_metrics, "log_print", _capture)
+
+  class _M:
+    def run(self, job_list, pool=None):
+      return None
+
+  ref = SimpleNamespace(jid="jid-x")
+  pipe = update_metrics._PrewarmPipeline()
+  out = update_metrics._compute_and_prewarm_jid(_M(), pipe, ref, None)
+  assert out["ok"] is True
+  joined = " ".join(" ".join(str(x) for x in tup) for tup in recorded)
+  assert "jid-x" in joined and "compute complete" in joined
+  assert "metrics=" in joined and "job_detail=" in joined and "job_plots=" in joined
 
 
 def test_main_sleep_after_waits_60_seconds(monkeypatch):

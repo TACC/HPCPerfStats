@@ -1027,8 +1027,6 @@ class Metrics():
         distinct_time_count is the sum over hosts of COUNT(DISTINCT time) in
         jid_table._host_data_qs() for this job (not the global distinct time count).
         """
-    metric_compute_start = time.time()
-
     results = []
 
     # Job-scoped host_data via ORM (no temp table)
@@ -1113,9 +1111,6 @@ class Metrics():
               "value": None,
               "no_data_reason": NO_TIME_SERIES_MSG,
           })
-        log_print(
-            "compute metrics time jid={}: {:.1f}".format(
-                job.jid, time.time() - metric_compute_start))
         return {
             "rows": results,
             "distinct_time_count": distinct_time_count,
@@ -1347,9 +1342,6 @@ class Metrics():
               "no_data_reason": None,
           })
 
-    log_print(
-        "compute metrics time jid={}: {:.1f}".format(
-            job.jid, time.time() - metric_compute_start))
     return {
         "rows": results,
         "distinct_time_count": distinct_time_count,

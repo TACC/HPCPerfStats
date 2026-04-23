@@ -147,35 +147,61 @@ class _PrewarmPipeline:
     if self._mode == "pipeline_required":
       self._executor = ThreadPoolExecutor(max_workers=self._workers)
 
+  def _persist_detail_plot_elapsed(self, jid, shared_context):
+    """Run job-detail then job-plot persistence; return wall times ``(detail_s, plots_s)``."""
+    close_old_connections()
+    t0 = time.monotonic()
+    try:
+      persist_job_detail_artifacts_for_jid(jid, context=shared_context)
+    except TypeError:
+      persist_job_detail_artifacts_for_jid(jid)
+    detail_s = time.monotonic() - t0
+    t1 = time.monotonic()
+    try:
+      persist_job_plot_artifacts_for_jid(jid, context=shared_context)
+    except TypeError:
+      persist_job_plot_artifacts_for_jid(jid)
+    plots_s = time.monotonic() - t1
+    return detail_s, plots_s
+
   def _run_one(self, jid):
     last_exc = None
     for _ in range(max(1, self._attempts)):
       try:
-        close_old_connections()
-        shared_context = {}
-        persist_job_detail_artifacts_for_jid(jid, context=shared_context)
-        persist_job_plot_artifacts_for_jid(jid, context=shared_context)
+        self._persist_detail_plot_elapsed(jid, {})
         return
       except Exception as exc:
         last_exc = exc
     raise last_exc
 
   def run_for_jid(self, jid, shared_context=None):
-    """Run detail+plot prewarm synchronously for one jid."""
+    """Run detail+plot prewarm synchronously for one jid.
+
+    Returns a dict with wall-clock seconds: ``detail_s``, ``plots_s`` (when the
+    dict ``shared_context`` path is used), ``prewarm_total_s`` (detail+plots or
+    the whole ``_run_one`` wall time when ``shared_context`` is not a dict), and
+    ``undivided`` (True when only ``prewarm_total_s`` is meaningful).
+    """
     if isinstance(shared_context, dict):
-      close_old_connections()
-      try:
-        persist_job_detail_artifacts_for_jid(jid, context=shared_context)
-      except TypeError:
-        persist_job_detail_artifacts_for_jid(jid)
-      try:
-        persist_job_plot_artifacts_for_jid(jid, context=shared_context)
-      except TypeError:
-        persist_job_plot_artifacts_for_jid(jid)
+      detail_s, plots_s = self._persist_detail_plot_elapsed(jid, shared_context)
+      timing = {
+          "detail_s": detail_s,
+          "plots_s": plots_s,
+          "prewarm_total_s": detail_s + plots_s,
+          "undivided": False,
+      }
     else:
+      t0 = time.monotonic()
       self._run_one(jid)
+      timing = {
+          "detail_s": None,
+          "plots_s": None,
+          "prewarm_total_s": time.monotonic() - t0,
+          "undivided": True,
+      }
     with self._counters_lock:
       self._done += 1
+    return timing
 
   def submit(self, jid):
     if self._mode == "inline":
@@ -1139,7 +1165,9 @@ def _compute_and_prewarm_jid(
   metrics_elapsed = time.monotonic() - t_metrics_start
   t_prewarm_start = time.monotonic()
   try:
-    prewarm_pipeline.run_for_jid(context.jid, shared_context=context.artifact_context)
+    prewarm_timing = prewarm_pipeline.run_for_jid(
+        context.jid, shared_context=context.artifact_context
+    )
   except Exception as exc:
     log_print(
         "metrics scheduler: prewarm failed jid={0}; continuing: {1}".format(
@@ -1147,7 +1175,33 @@ def _compute_and_prewarm_jid(
         ),
         flush=True,
     )
+    prewarm_timing = None
   prewarm_elapsed = time.monotonic() - t_prewarm_start
+  if prewarm_timing is not None:
+    total_s = metrics_elapsed + float(prewarm_timing["prewarm_total_s"])
+    if prewarm_timing.get("undivided"):
+      log_print(
+          "jid={0} compute complete total={1:.1f}s metrics={2:.1f}s "
+          "prewarm_job_detail+plots={3:.1f}s".format(
+              context.jid,
+              total_s,
+              metrics_elapsed,
+              float(prewarm_timing["prewarm_total_s"]),
+          ),
+          flush=True,
+      )
+    else:
+      log_print(
+          "jid={0} compute complete total={1:.1f}s metrics={2:.1f}s "
+          "job_detail={3:.1f}s job_plots={4:.1f}s".format(
+              context.jid,
+              total_s,
+              metrics_elapsed,
+              float(prewarm_timing["detail_s"]),
+              float(prewarm_timing["plots_s"]),
+          ),
+          flush=True,
+      )
   return {
       "ok": True,
       "jid": context.jid,
