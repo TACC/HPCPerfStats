@@ -171,9 +171,19 @@ def get_archive_pigz_threads():
 def get_archive_pigz_interval_seconds():
   """Seconds between ``pigz`` seal runs and removal of verified raw stats (default 4h)."""
   _ensure_cfg_loaded()
-  return float(
-      cfg.get('PORTAL', 'archive_pigz_interval_seconds', fallback=str(4 * 3600))
+  default_interval = float(4 * 3600)
+  raw_value = cfg.get(
+      'PORTAL',
+      'archive_pigz_interval_seconds',
+      fallback=str(default_interval),
   )
+  try:
+    interval = float(raw_value)
+  except (TypeError, ValueError):
+    return default_interval
+  if (not math.isfinite(interval)) or interval <= 0:
+    return default_interval
+  return interval
 
 
 def get_rmq_server():

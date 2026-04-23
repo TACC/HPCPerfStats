@@ -91,6 +91,38 @@ def test_get_archive_pigz_threads_default_and_override(temp_ini, monkeypatch):
   assert cfg.get_archive_pigz_threads() == 12
 
 
+def test_get_archive_pigz_interval_seconds_rejects_nonfinite_and_nonpositive(
+    temp_ini, monkeypatch
+):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_archive_pigz_interval_seconds() == 4 * 3600
+
+  with open(temp_ini) as f:
+    base = f.read()
+
+  for raw in ("nan", "inf", "0", "-5", "not-a-number"):
+    content = base.replace(
+        "daily_archive_dir = /tmp",
+        "daily_archive_dir = /tmp\narchive_pigz_interval_seconds = %s" % raw,
+    )
+    with open(temp_ini, "w") as f:
+      f.write(content)
+    importlib.reload(cfg)
+    assert cfg.get_archive_pigz_interval_seconds() == 4 * 3600
+
+  content = base.replace(
+      "daily_archive_dir = /tmp",
+      "daily_archive_dir = /tmp\narchive_pigz_interval_seconds = 120",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_archive_pigz_interval_seconds() == 120.0
+
+
 def test_get_effective_cores_caps_by_host(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib

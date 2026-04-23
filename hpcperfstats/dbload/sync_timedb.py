@@ -114,6 +114,8 @@ LOCK_WAIT_LOG_THRESHOLD_SECONDS = 30.0
 FINALIZE_POLL_TIMEOUT_SECONDS = 0.05
 MAINTENANCE_LOCK_STATS_EVERY = 3
 MAINTENANCE_DEDUPE_EVERY = 6
+MAINTENANCE_OVERDUE_WARN_MULTIPLIER = 1.5
+MAINTENANCE_OVERDUE_WARN_MIN_SECONDS = 300.0
 
 # Set to 1/yes/true so ingest runs in the parent process (no spawn pool). Required
 # for pytest-django: pool workers would reconnect with default PORTAL.dbname instead
@@ -911,6 +913,18 @@ def _should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
   return bool(force_full) or bool(run_verified_uncompressed_tar_removal)
 
 
+def _resolve_archive_pigz_interval_seconds(raw_value):
+  """Normalize archive maintenance interval to a safe finite positive float."""
+  default_interval = float(4 * 3600)
+  try:
+    interval = float(raw_value)
+  except (TypeError, ValueError):
+    return default_interval, "invalid"
+  if (not math.isfinite(interval)) or interval <= 0:
+    return default_interval, "non_finite_or_non_positive"
+  return interval, None
+
+
 def run_sync_timedb_supervisor_loop(
     directory,
     startdate,
@@ -926,7 +940,10 @@ def run_sync_timedb_supervisor_loop(
   files (no ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` idle wait). Used by pipeline
   E2E tests.
   """
-  pigz_interval = cfg.get_archive_pigz_interval_seconds()
+  pigz_interval_raw = cfg.get_archive_pigz_interval_seconds()
+  pigz_interval, pigz_interval_warning = _resolve_archive_pigz_interval_seconds(
+      pigz_interval_raw
+  )
   ingest_queue_max = max(1, int(cfg.get_sync_ingest_queue_max_size()))
   archive_queue_max = max(1, int(cfg.get_sync_archive_queue_max_size()))
   ingest_queue_high = ingest_queue_max
@@ -945,14 +962,25 @@ def run_sync_timedb_supervisor_loop(
   ingest_t0 = time.time()
 
   maintenance_cycle = 0
+  maintenance_overdue_warned = False
+  maintenance_last_reason = "init"
 
   def _run_scheduled_archive_maintenance(
       force_full=False,
       *,
       run_verified_uncompressed_tar_removal=False,
+      reason="scheduled",
+      elapsed_since_last_s=0.0,
   ):
     nonlocal maintenance_cycle
+    nonlocal maintenance_last_reason
     maintenance_cycle += 1
+    cycle_start = time.time()
+    log_print(
+        "Archive maintenance start reason=%s cycle=%d elapsed_since_last_s=%.1f interval_s=%.1f"
+        % (reason, maintenance_cycle, float(elapsed_since_last_s), float(pigz_interval)),
+        flush=True,
+    )
     run_lock_stats = force_full or (maintenance_cycle % MAINTENANCE_LOCK_STATS_EVERY == 0)
     run_dedupe = force_full or (maintenance_cycle % MAINTENANCE_DEDUPE_EVERY == 0)
     removed_raw = cleanup_stale_fnctl_lock_sidecars(directory)
@@ -1010,6 +1038,12 @@ def run_sync_timedb_supervisor_loop(
         run_verified_uncompressed_tar_removal,
     ):
       remove_verified_uncompressed_daily_tars(tgz_archive_dir, log_fn=log_print)
+    maintenance_last_reason = reason
+    log_print(
+        "Archive maintenance done reason=%s cycle=%d duration_s=%.3f"
+        % (reason, maintenance_cycle, max(0.0, time.time() - cycle_start)),
+        flush=True,
+    )
 
   pending_archive_tasks = []
   dead_letter_dirty = False
@@ -1055,21 +1089,28 @@ def run_sync_timedb_supervisor_loop(
     if item["task"].attempt > archive_retry_max_attempts:
       dead_letter_dirty = True
 
-  def _finalize_archive_job_if_needed(force=False):
+  def _finalize_archive_job_if_needed(force=False, allow_defer=False, context=""):
     nonlocal archive_job
     nonlocal archive_job_deferred_paths
     nonlocal checkpoint_dirty_count
     nonlocal dead_letter_dirty
     if archive_job is None:
       return False
-    if not force:
-      ready_fn = getattr(archive_job, "ready", None)
-      if callable(ready_fn):
-        try:
-          if not ready_fn():
+    ready_fn = getattr(archive_job, "ready", None)
+    if callable(ready_fn):
+      try:
+        if not ready_fn():
+          if allow_defer:
+            log_print(
+                "Archive finalize deferred context=%s reason=not_ready"
+                % (context or "unknown"),
+                flush=True,
+            )
             return False
-        except Exception:
-          pass
+          if not force:
+            return False
+      except Exception:
+        pass
     finalize_t0 = time.time()
     wait_timeout_fn = getattr(archive_job, "wait", None)
     if callable(wait_timeout_fn):
@@ -1188,9 +1229,15 @@ def run_sync_timedb_supervisor_loop(
     except OSError:
       pass
 
+  if pigz_interval_warning is not None:
+    log_print(
+        "Invalid archive_pigz_interval_seconds=%r reason=%s; using default %.1fs"
+        % (pigz_interval_raw, pigz_interval_warning, float(pigz_interval)),
+        flush=True,
+    )
   log_print(
-      "sync_timedb continuous mode: pigz interval %s s; idle rescan sleep %s s"
-      % (int(pigz_interval), int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)),
+      "sync_timedb continuous mode: pigz interval %.1f s; idle rescan sleep %s s"
+      % (float(pigz_interval), int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)),
       flush=True,
   )
   log_print(
@@ -1255,27 +1302,73 @@ def run_sync_timedb_supervisor_loop(
         raise
     _run_scheduled_archive_maintenance(
         run_verified_uncompressed_tar_removal=True,
+        reason="startup",
+        elapsed_since_last_s=0.0,
     )
     last_archive_maint = time.time()
     close_old_connections()
     connections.close_all()
 
-    while not shutdown_requested[0]:
-      if time.time() - last_archive_maint >= pigz_interval:
-        _finalize_archive_job_if_needed(force=True)
+    def _maintenance_elapsed_s():
+      return max(0.0, time.time() - last_archive_maint)
+
+    def _maintenance_overdue_warn_threshold():
+      return max(
+          MAINTENANCE_OVERDUE_WARN_MIN_SECONDS,
+          float(pigz_interval) * MAINTENANCE_OVERDUE_WARN_MULTIPLIER,
+      )
+
+    def _is_maintenance_due():
+      return _maintenance_elapsed_s() >= pigz_interval
+
+    def _run_periodic_maintenance_if_due(reason_label):
+      nonlocal last_archive_maint
+      nonlocal maintenance_overdue_warned
+      elapsed = _maintenance_elapsed_s()
+      overdue_threshold = _maintenance_overdue_warn_threshold()
+      if elapsed >= overdue_threshold and not maintenance_overdue_warned:
         log_print(
-            "Running scheduled daily-archive pigz and raw file removal",
+            "Archive maintenance overdue elapsed_s=%.1f threshold_s=%.1f last_reason=%s"
+            % (elapsed, overdue_threshold, maintenance_last_reason),
             flush=True,
         )
-        try:
-          os.makedirs(tgz_archive_dir, exist_ok=True)
-        except OSError:
-          if not os.path.isdir(tgz_archive_dir):
-            raise
-        _run_scheduled_archive_maintenance()
-        last_archive_maint = time.time()
-        close_old_connections()
-        connections.close_all()
+        maintenance_overdue_warned = True
+      if not _is_maintenance_due():
+        return False
+      finalized = _finalize_archive_job_if_needed(
+          force=True,
+          allow_defer=True,
+          context=reason_label,
+      )
+      if not finalized and archive_job is not None:
+        log_print(
+            "Archive maintenance due but deferred reason=archive_finalize_pending elapsed_s=%.1f context=%s"
+            % (elapsed, reason_label),
+            flush=True,
+        )
+        return False
+      log_print(
+          "Running scheduled daily-archive pigz and raw file removal context=%s elapsed_since_last_s=%.1f"
+          % (reason_label, elapsed),
+          flush=True,
+      )
+      try:
+        os.makedirs(tgz_archive_dir, exist_ok=True)
+      except OSError:
+        if not os.path.isdir(tgz_archive_dir):
+          raise
+      _run_scheduled_archive_maintenance(
+          reason="scheduled",
+          elapsed_since_last_s=elapsed,
+      )
+      last_archive_maint = time.time()
+      maintenance_overdue_warned = False
+      close_old_connections()
+      connections.close_all()
+      return True
+
+    while not shutdown_requested[0]:
+      _run_periodic_maintenance_if_due("outer_loop")
 
       if not pending_stats_files:
         if archive_job is None and pending_archive_tasks:
@@ -1334,7 +1427,11 @@ def run_sync_timedb_supervisor_loop(
           except OSError:
             if not os.path.isdir(tgz_archive_dir):
               raise
-          _run_scheduled_archive_maintenance(force_full=True)
+          _run_scheduled_archive_maintenance(
+              force_full=True,
+              reason="final_idle",
+              elapsed_since_last_s=_maintenance_elapsed_s(),
+          )
           log_print(
               "Sleeping %s s before exiting sync_timedb"
               % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
@@ -1351,6 +1448,7 @@ def run_sync_timedb_supervisor_loop(
           break
 
       while pending_stats_files:
+        _run_periodic_maintenance_if_due("chunk_boundary")
         if shutdown_requested[0]:
           log_print("Exiting due to SIGTERM")
           break
@@ -1632,7 +1730,11 @@ def run_sync_timedb_supervisor_loop(
         chunk_counter += 1
 
         if chunk_counter % rescan_every_chunks == 0:
-          _finalize_archive_job_if_needed(force=True)
+          _finalize_archive_job_if_needed(
+              force=True,
+              allow_defer=True,
+              context="rescan_every_chunks",
+          )
           pending_stats_files = rescan_pending_stats_files(
               directory,
               startdate,
