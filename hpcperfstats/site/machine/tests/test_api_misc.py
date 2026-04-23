@@ -7,6 +7,7 @@ Covers:
 """
 
 from datetime import date, datetime, timedelta, timezone
+import contextlib
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -105,6 +106,50 @@ class TestAdminMonitorRefresh:
     assert api.KEY_ADMIN_RMQ_SNAPSHOT in deleted_keys
     assert api.KEY_ADMIN_TIMESCALE_STATS in deleted_keys
     assert api.KEY_ADMIN_XALT_STATS in deleted_keys
+
+
+@pytest.mark.django_db(databases=[])
+class TestAdminMonitorHostStatsTimeout:
+  def test_admin_monitor_hosts_sets_longer_statement_timeout_for_host_query(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/admin_monitor/", {"section": "hosts"})
+    request.session = {"is_staff": True}
+
+    cursor = MagicMock()
+    cursor_cm = MagicMock()
+    cursor_cm.__enter__.return_value = cursor
+    cursor_cm.__exit__.return_value = None
+
+    fake_qs = [{"host": "n1.example", "last_time": datetime.now(timezone.utc)}]
+    filter_qs = MagicMock()
+    filter_qs.values.return_value.annotate.return_value = fake_qs
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+      "hpcperfstats.site.machine.api.cached_orm",
+      side_effect=lambda _key, _timeout, query_fn: query_fn(),
+    ), patch(
+      "hpcperfstats.site.machine.api.host_data.objects.filter",
+      return_value=filter_qs,
+    ), patch(
+      "hpcperfstats.site.machine.api.connection.vendor",
+      "postgresql",
+    ), patch(
+      "hpcperfstats.site.machine.api.transaction.atomic",
+      return_value=contextlib.nullcontext(),
+    ), patch(
+      "hpcperfstats.site.machine.api.connection.cursor",
+      return_value=cursor_cm,
+    ), patch(
+      "hpcperfstats.site.machine.api._get_admin_host_stats_statement_timeout_ms",
+      return_value=987654,
+    ):
+      response = api.admin_monitor(request)
+
+    assert response.status_code == 200
+    assert response.data["host_stats"][0]["host"] == "n1.example"
+    cursor.execute.assert_called_once_with("SET LOCAL statement_timeout = %s", [987654])
 
 
 @pytest.mark.django_db(databases=[])

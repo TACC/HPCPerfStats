@@ -4,6 +4,7 @@ import logging
 import threading
 import time
 from collections import defaultdict
+from contextlib import contextmanager
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timedelta, timezone as dt_timezone
@@ -18,7 +19,7 @@ from rest_framework.response import Response
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db import connection, close_old_connections
+from django.db import connection, close_old_connections, transaction
 from django.utils.encoding import iri_to_uri
 
 import os
@@ -111,6 +112,29 @@ def site_response_cache_timeout(request):
 
 _JOB_LIST_QUERY_FIELD_EXCLUDES_BASE = ("page", "order_by")
 _JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM = ("group", "metric", "_histogram_embed_v")
+
+
+def _get_admin_host_stats_statement_timeout_ms():
+    """Statement timeout for heavy admin host-stats query only."""
+    try:
+        default_ms = int(cfg.get_db_statement_timeout_ms())
+    except Exception:
+        default_ms = 120000
+    return max(default_ms, 600000)
+
+
+@contextmanager
+def _pg_session_statement_timeout_for_admin_host_stats_query():
+    """Increase statement timeout only while evaluating admin host stats query."""
+    if connection.vendor != "postgresql":
+        yield
+        return
+
+    timeout_ms = _get_admin_host_stats_statement_timeout_ms()
+    with transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute("SET LOCAL statement_timeout = %s", [timeout_ms])
+        yield
 
 
 def _collect_future_results_with_deadline(future_to_key, max_wait_seconds):
@@ -2609,12 +2633,20 @@ def admin_monitor(request):
         now = timezone.now()
         time_bounds = now - timedelta(days=8)
 
+        host_stats_local = []
         try:
             latest_qs = (
                 host_data.objects.filter(time__gte=time_bounds)
                 .values("host")
                 .annotate(last_time=Max("time"))
             )
+            with _pg_session_statement_timeout_for_admin_host_stats_query():
+                for row in latest_qs:
+                    host = row.get("host") or ""
+                    last_time = row.get("last_time")
+                    entry = _admin_monitor_host_stat_dict(host, last_time, now)
+                    if entry is not None:
+                        host_stats_local.append(entry)
         except Exception as exc:
             logging.getLogger(__name__).warning(
                 "Failed to load latest host timestamps for admin_monitor: %s",
@@ -2622,14 +2654,6 @@ def admin_monitor(request):
                 exc_info=True,
             )
             return []
-
-        host_stats_local = []
-        for row in latest_qs:
-            host = row.get("host") or ""
-            last_time = row.get("last_time")
-            entry = _admin_monitor_host_stat_dict(host, last_time, now)
-            if entry is not None:
-                host_stats_local.append(entry)
         return host_stats_local
 
     section = (request.GET.get("section") or "").strip().lower()
