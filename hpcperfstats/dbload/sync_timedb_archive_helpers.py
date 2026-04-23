@@ -428,8 +428,14 @@ def remove_verified_uncompressed_daily_tars(
 ):
   """Remove ``YYYY-MM-DD.tar`` only after tar/tar.gz verification succeeds.
 
-  This is intended for final/exit maintenance to reclaim disk space while
-  keeping periodic maintenance behavior configurable.
+  ``sync_timedb`` calls this only from **startup** maintenance and from
+  **idle / full** maintenance (after ``remove_verified_archived_raw_files``),
+  not from pigz-interval maintenance, so verified sibling removal stays tied to
+  those two passes.
+
+  When ``archive_keep_uncompressed_tar`` is false, ``atomic_seal_tar_to_gz`` may
+  remove the uncompressed ``.tar`` right after sealing; that path is separate
+  from this function.
   """
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
     return

@@ -893,6 +893,24 @@ def database_startup():
       log_print("Reading Chunk Data")
 
 
+def _should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
+    force_full,
+    run_verified_uncompressed_tar_removal,
+):
+  """Whether ``remove_verified_uncompressed_daily_tars`` should run for this pass.
+
+  ``sync_timedb`` enables it only for **startup** maintenance
+  (``run_verified_uncompressed_tar_removal=True``) or **idle / full** maintenance
+  (``force_full=True``). Pigz-interval maintenance passes both false so verified
+  daily ``.tar`` removal does not run on that cadence.
+
+  Note: when ``archive_keep_uncompressed_tar`` is disabled, ``atomic_seal_tar_to_gz``
+  may still unlink the daily ``.tar`` immediately after a successful seal; that
+  is independent of this helper.
+  """
+  return bool(force_full) or bool(run_verified_uncompressed_tar_removal)
+
+
 def run_sync_timedb_supervisor_loop(
     directory,
     startdate,
@@ -928,7 +946,11 @@ def run_sync_timedb_supervisor_loop(
 
   maintenance_cycle = 0
 
-  def _run_scheduled_archive_maintenance(force_full=False):
+  def _run_scheduled_archive_maintenance(
+      force_full=False,
+      *,
+      run_verified_uncompressed_tar_removal=False,
+  ):
     nonlocal maintenance_cycle
     maintenance_cycle += 1
     run_lock_stats = force_full or (maintenance_cycle % MAINTENANCE_LOCK_STATS_EVERY == 0)
@@ -983,7 +1005,10 @@ def run_sync_timedb_supervisor_loop(
     )
     remove_verified_archived_raw_files(
         directory, host_name_ext, tgz_archive_dir, log_fn=log_print)
-    if force_full:
+    if _should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
+        force_full,
+        run_verified_uncompressed_tar_removal,
+    ):
       remove_verified_uncompressed_daily_tars(tgz_archive_dir, log_fn=log_print)
 
   pending_archive_tasks = []
@@ -1218,7 +1243,9 @@ def run_sync_timedb_supervisor_loop(
 
   try:
     log_print(
-        "Running startup archive sealing and verified raw-file cleanup before initial scan",
+        "Running startup archive sealing, verified raw-file cleanup, and "
+        "verified removal of uncompressed daily .tar files (when paired "
+        ".tar.gz matches) before initial scan",
         flush=True,
     )
     try:
@@ -1226,7 +1253,9 @@ def run_sync_timedb_supervisor_loop(
     except OSError:
       if not os.path.isdir(tgz_archive_dir):
         raise
-    _run_scheduled_archive_maintenance()
+    _run_scheduled_archive_maintenance(
+        run_verified_uncompressed_tar_removal=True,
+    )
     last_archive_maint = time.time()
     close_old_connections()
     connections.close_all()

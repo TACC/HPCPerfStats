@@ -90,6 +90,26 @@ class _FakeArchivePoolRetry:
     return _R(result)
 
 
+def test_verified_daily_tar_removal_gate_matches_startup_and_full_only():
+  """Pigz-interval maintenance must not run remove_verified_uncompressed_daily_tars."""
+  assert not st._should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
+      False,
+      False,
+  )
+  assert st._should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
+      True,
+      False,
+  )
+  assert st._should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
+      False,
+      True,
+  )
+  assert st._should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
+      True,
+      True,
+  )
+
+
 def test_parse_sync_timedb_argv_defaults_include_current_day(monkeypatch):
   """Default end date should include current day time, not midnight-only."""
   class _FakeDateTime(datetime):
@@ -227,7 +247,7 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
 
     assert sleeps == [st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS]
     assert final_maintenance["calls"] == 2
-    assert final_maintenance["remove_verified_tars_calls"] == 1
+    assert final_maintenance["remove_verified_tars_calls"] == 2
   finally:
     shutdown_requested[0] = False
 
@@ -246,7 +266,11 @@ def test_supervisor_runs_startup_maintenance_before_first_rescan(monkeypatch):
     monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: events.append("maintenance"))
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
-    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
+    monkeypatch.setattr(
+        st,
+        "remove_verified_uncompressed_daily_tars",
+        lambda *a, **k: events.append("tar_removal"),
+    )
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
@@ -267,9 +291,10 @@ def test_supervisor_runs_startup_maintenance_before_first_rescan(monkeypatch):
     finally:
       archive_pool.__exit__(None, None, None)
 
-    assert len(events) >= 3
+    assert len(events) >= 4
     assert events[0] == "maintenance"
-    assert events[1] == "rescan"
+    assert events[1] == "tar_removal"
+    assert events[2] == "rescan"
   finally:
     shutdown_requested[0] = False
 
