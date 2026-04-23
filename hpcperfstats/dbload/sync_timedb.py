@@ -160,6 +160,7 @@ class DBWriteTask:
   path: str
   payload: object
   need_archival: bool
+  parse_elapsed_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -443,27 +444,42 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
   return (stats_file, need_archival, True)
 
 
+def _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining):
+  log_print(
+      "Completed file %s - processed in %.1fs - %d remaining to process."
+      % (stats_fname, float(elapsed_s), remaining),
+      flush=True,
+  )
+
+
 def _parse_stats_file_payload(stats_file, stats_file_contents=None):
-  """Parse stats file into payload for deferred DB writer stage."""
+  """Parse stats file into payload for deferred DB writer stage.
+
+  Returns (stats_file, payload, need_archival, ingest_ok, parse_elapsed_s).
+  """
   close_old_connections()
+  parse_t0 = time.time()
+
+  def _parse_elapsed():
+    return time.time() - parse_t0
+
   hostname, _ = parse_stats_file_path(stats_file)
   if hostname is None:
     log_print("Invalid stats file path: %s" % stats_file)
-    return (stats_file, None, False, False)
+    return (stats_file, None, False, False, _parse_elapsed())
   if stats_file_is_active_segment(stats_file):
     if DEBUG:
       log_print("Skipping active segment (still linked to current): %s" % stats_file)
-    return (stats_file, None, False, False)
+    return (stats_file, None, False, False, _parse_elapsed())
   lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)
   if load_err is not None:
     log_print(load_err)
-    return (stats_file, None, False, False)
+    return (stats_file, None, False, False, _parse_elapsed())
   t, _jid, _host = parse_first_timestamp_line(lines)
   if t is None:
     log_print("initial timestamp not found")
-    return (stats_file, None, False, False)
+    return (stats_file, None, False, False, _parse_elapsed())
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
-  preflight_t0 = time.time()
   head_present = _head_timestamp_present_cached(hostname, timestamp_utc)
   if not head_present:
     # New file head is not in DB yet; it still needs archival post-ingest.
@@ -473,16 +489,9 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
     ts_high = timestamp_utc + timedelta(hours=72)
     itimes_set = _host_recent_timestamps_cached(hostname, ts_low, ts_high)
     start_idx, need_archival = find_processing_start_index(lines, itimes_set)
-  preflight_elapsed = time.time() - preflight_t0
-  if preflight_elapsed > 0.20:
-    log_print(
-        "Parse preflight latency file=%s host=%s elapsed=%.3fs"
-        % (stats_file, hostname, preflight_elapsed),
-        flush=True,
-    )
   if start_idx == -1:
     log_print("No missing timestamps found for %s" % stats_file)
-    return (stats_file, None, True, True)
+    return (stats_file, None, True, True, _parse_elapsed())
   lines = lines[start_idx:]
   try:
     stats_list, proc_stats_list = parse_stats_lines(
@@ -494,46 +503,63 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
   except Exception as e:
     log_print("error: process data failed: ", str(e))
     log_print("Possibly corrupt file: %s" % stats_file)
-    return (stats_file, None, False, False)
+    return (stats_file, None, False, False, _parse_elapsed())
   stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
   del stats_list
   del proc_stats_list
   if stats.empty and proc_stats.empty:
     if DEBUG:
       log_print("Unable to process stats file %s" % stats_file)
-    return (stats_file, None, False, False)
+    return (stats_file, None, False, False, _parse_elapsed())
   stats = compute_deltas_and_arc(stats)
-  return (stats_file, (stats, proc_stats), need_archival, True)
+  return (stats_file, (stats, proc_stats), need_archival, True, _parse_elapsed())
 
 
 def _db_writer_worker(lock, db_task):
-  """Worker entrypoint for DB-writer pool."""
+  """Worker entrypoint for DB-writer pool.
+
+  db_task is (stats_file, payload, need_archival, parse_elapsed_s).
+  Returns (stats_file, need_archival, ingest_ok, total_elapsed_s).
+  """
   close_old_connections()
-  stats_file, payload, need_archival = db_task
+  stats_file, payload, need_archival, parse_elapsed_s = db_task
   if payload is None:
-    return (stats_file, need_archival, True)
+    return (stats_file, need_archival, True, float(parse_elapsed_s))
   stats, proc_stats = payload
-  return _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archival)
+  write_t0 = time.time()
+  stats_file, need_archival, ingest_ok = _write_stats_payload_to_db(
+      lock, stats_file, stats, proc_stats, need_archival
+  )
+  write_elapsed = time.time() - write_t0
+  return (
+      stats_file,
+      need_archival,
+      ingest_ok,
+      float(parse_elapsed_s) + write_elapsed,
+  )
 
 
 # This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
 def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
-  """Parse a stats file, map hardware counters, compute deltas/arc, and bulk-insert into host_data and proc_data. Returns (stats_file, need_archival). Uses lock for DB writes.
+  """Parse a stats file, map hardware counters, compute deltas/arc, and bulk-insert into host_data and proc_data.
+
+  Returns (stats_file, need_archival, ingest_ok, elapsed_s) where elapsed_s is wall
+  seconds for the attempted ingest path. Uses lock for DB writes.
 
     """
   t0 = time.time()
-  stats_file, payload, need_archival, ingest_ok = _parse_stats_file_payload(
+  stats_file, payload, need_archival, ingest_ok, _parse_elapsed = _parse_stats_file_payload(
       stats_file, stats_file_contents=stats_file_contents
   )
   if not ingest_ok:
-    return (stats_file, need_archival, False)
+    return (stats_file, need_archival, False, time.time() - t0)
   if payload is None:
-    return (stats_file, need_archival, True)
+    return (stats_file, need_archival, True, time.time() - t0)
   stats, proc_stats = payload
-  log_print("processing time for {0} {1:.1f}s".format(stats_file, time.time() - t0))
-  return _write_stats_payload_to_db(
+  stats_file, need_archival, ingest_ok = _write_stats_payload_to_db(
       lock, stats_file, stats, proc_stats, need_archival=need_archival
   )
+  return (stats_file, need_archival, ingest_ok, time.time() - t0)
 
 
 def _load_sync_checkpoint(state_path):
@@ -1316,7 +1342,7 @@ def run_sync_timedb_supervisor_loop(
 
         files_to_be_archived = []
         successful_paths = []
-        log_print("%s files per chunk" % chunk_size)
+        chunk_ingest_finished = 0
 
         k = 0
         active_workers = 0
@@ -1336,7 +1362,7 @@ def run_sync_timedb_supervisor_loop(
                   [task.path for task in parse_envelopes],
               )
           for parsed in parse_results_iter:
-            stats_fname, payload, need_archival, ingest_ok = parsed
+            stats_fname, payload, need_archival, ingest_ok, parse_elapsed_s = parsed
             k += 1
             active_workers = max(active_workers, min(thread_count, k))
             if not ingest_ok:
@@ -1346,31 +1372,49 @@ def run_sync_timedb_supervisor_loop(
               successful_paths.append(stats_fname)
               if should_archive and need_archival:
                 files_to_be_archived.append(stats_fname)
+              remaining = len(pending_stats_files) - chunk_ingest_finished - 1
+              chunk_ingest_finished += 1
+              _log_sync_timedb_ingest_completed(stats_fname, parse_elapsed_s, remaining)
               continue
-            parse_tasks.append(DBWriteTask(path=stats_fname, payload=payload, need_archival=need_archival))
+            parse_tasks.append(
+                DBWriteTask(
+                    path=stats_fname,
+                    payload=payload,
+                    need_archival=need_archival,
+                    parse_elapsed_s=parse_elapsed_s,
+                ))
             _transition_file_state(file_states, stats_fname, SyncFileState.PARSED)
 
           if parse_tasks:
             writer_fn = partial(_db_writer_worker, manager_lock)
+
+            def _db_write_task_tuple(task):
+              return (
+                  task.path,
+                  task.payload,
+                  task.need_archival,
+                  task.parse_elapsed_s,
+              )
+
             if _sync_timedb_ingest_inline_requested() or db_writer_pool is None:
-              write_results_iter = (writer_fn((task.path, task.payload, task.need_archival)) for task in parse_tasks)
+              write_results_iter = (
+                  writer_fn(_db_write_task_tuple(task)) for task in parse_tasks
+              )
             else:
               write_results_iter = db_writer_pool.imap_unordered(
                   writer_fn,
-                  [(task.path, task.payload, task.need_archival) for task in parse_tasks],
+                  [_db_write_task_tuple(task) for task in parse_tasks],
               )
             for result in write_results_iter:
-              stats_fname, need_archival, ingest_ok = result
+              stats_fname, need_archival, ingest_ok, elapsed_s = result
               if ingest_ok:
                 _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
                 successful_paths.append(stats_fname)
                 if should_archive and need_archival:
                   files_to_be_archived.append(stats_fname)
-              log_print(
-                  "chunk %s: completed file %s out of %s\n" % (
-                      chunk_counter, min(k, len(stats_files_chunk)), chunk_size),
-                  flush=True,
-              )
+                remaining = len(pending_stats_files) - chunk_ingest_finished - 1
+                chunk_ingest_finished += 1
+                _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
         else:
           add_stats_file = partial(add_stats_file_to_db, manager_lock)
           if _sync_timedb_ingest_inline_requested():
@@ -1383,8 +1427,11 @@ def run_sync_timedb_supervisor_loop(
                   add_stats_file, stats_files_chunk)
           for result in results_iter:
             ingest_ok = True
-            if len(result) >= 3:
-              stats_fname, need_archival, ingest_ok = result
+            elapsed_s = 0.0
+            if len(result) >= 4:
+              stats_fname, need_archival, ingest_ok, elapsed_s = result[:4]
+            elif len(result) >= 3:
+              stats_fname, need_archival, ingest_ok = result[:3]
             else:
               stats_fname, need_archival = result
             k += 1
@@ -1392,12 +1439,11 @@ def run_sync_timedb_supervisor_loop(
             if ingest_ok:
               _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
               successful_paths.append(stats_fname)
-            if ingest_ok and should_archive and need_archival:
-              files_to_be_archived.append(stats_fname)
-            log_print(
-                "chunk %s: completed file %s out of %s\n" % (
-                    chunk_counter, k, chunk_size),
-                flush=True)
+              if should_archive and need_archival:
+                files_to_be_archived.append(stats_fname)
+              remaining = len(pending_stats_files) - chunk_ingest_finished - 1
+              chunk_ingest_finished += 1
+              _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
 
         log_print("loading time", time.time() - ingest_t0)
         log_print(

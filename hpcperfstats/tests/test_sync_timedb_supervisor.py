@@ -357,6 +357,68 @@ def test_supervisor_logs_queue_watermarks(monkeypatch):
   assert any("Queue watermarks ingest" in line for line in logs)
 
 
+def test_supervisor_logs_completed_file_with_global_remaining(monkeypatch):
+  """Successful ingest logs path, elapsed, and backlog remaining (not chunk index)."""
+  shutdown_requested[0] = False
+  try:
+    paths = ["/tmp/sync-a", "/tmp/sync-b"]
+    calls = {"n": 0}
+    logs = []
+
+    def fake_rescan(*_a, **_k):
+      if calls["n"] == 0:
+        calls["n"] += 1
+        return list(paths)
+      return []
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(
+        st,
+        "add_stats_file_to_db",
+        lambda _lock, p, _c=None: (p, True, True, 0.05),
+    )
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(
+        st,
+        "log_print",
+        lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+    )
+
+    archive_pool = _FakeArchivePool()
+    archive_pool.__enter__()
+    try:
+      st.run_sync_timedb_supervisor_loop(
+          "/tmp/archive",
+          "all",
+          None,
+          ".hpc",
+          object(),
+          archive_pool,
+          run_once=True,
+      )
+    finally:
+      archive_pool.__exit__(None, None, None)
+
+    completed_lines = [ln for ln in logs if ln.startswith("Completed file ")]
+    assert len(completed_lines) == 2
+    for ln in completed_lines:
+      assert " - processed in " in ln
+      assert " remaining to process." in ln
+    assert any(" - 1 remaining to process." in ln for ln in completed_lines)
+    assert any(" - 0 remaining to process." in ln for ln in completed_lines)
+    assert not any("chunk " in ln and "completed file" in ln for ln in logs)
+  finally:
+    shutdown_requested[0] = False
+
+
 def test_checkpoint_round_trip_persists_completed_entries(tmp_path):
   """Completed file metadata should survive restart round-trip."""
   state_path = Path(tmp_path) / "sync_timedb_state.json"
@@ -524,7 +586,7 @@ def test_rescan_excludes_inflight_archive_paths(monkeypatch):
       return []
 
     def fake_add(_lock, path, _contents=None):
-      return (path, True, True)
+      return (path, True, True, 0.0)
 
     class _NeverDone:
       def get(self):
@@ -615,15 +677,16 @@ def test_db_writer_pipeline_flag_uses_separate_parse_and_write(monkeypatch):
       del stats_file_contents
       parse_calls["n"] += 1
       assert path == target
-      return (path, ("stats_df", "proc_df"), True, True)
+      return (path, ("stats_df", "proc_df"), True, True, 0.001)
 
     def fake_write(_lock, task):
       write_calls["n"] += 1
-      stats_file, payload, need_archival = task
+      stats_file, payload, need_archival, parse_elapsed_s = task
       assert stats_file == target
       assert payload == ("stats_df", "proc_df")
       assert need_archival is True
-      return (stats_file, True, True)
+      assert parse_elapsed_s == 0.001
+      return (stats_file, True, True, 0.002)
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "_parse_stats_file_payload", fake_parse)
@@ -675,7 +738,7 @@ def test_archive_retry_backoff_requeues_failed_archive(monkeypatch):
     fake_rescan.calls = 0
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
-    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True))
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {"/tmp/day.tar.gz": [target]})
     monkeypatch.setattr(st.cfg, "get_sync_archive_retry_max_attempts", lambda: 2)
@@ -770,7 +833,7 @@ def test_nonblocking_finalize_queues_new_archive_work_when_busy(monkeypatch):
     fake_rescan.calls = 0
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
-    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (_a[1], True, True))
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (_a[1], True, True, 0.0))
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st, "chunk_size", 1)
     monkeypatch.setattr(st, "build_archive_mapping", lambda files, *_a, **_k: {
@@ -917,12 +980,13 @@ def test_parse_payload_marks_new_head_as_archival(monkeypatch):
   proc_df = pd.DataFrame(columns=["jid", "host", "proc"])
   monkeypatch.setattr(st, "build_stats_dataframes", lambda *_a, **_k: (stats_df, proc_df))
   monkeypatch.setattr(st, "compute_deltas_and_arc", lambda s: s)
-  stats_file, payload, need_archival, ingest_ok = st._parse_stats_file_payload(target)
+  stats_file, payload, need_archival, ingest_ok, parse_elapsed_s = st._parse_stats_file_payload(target)
   assert stats_file == target
   assert payload[0] is stats_df
   assert payload[1] is proc_df
   assert need_archival is True
   assert ingest_ok is True
+  assert parse_elapsed_s >= 0.0
 
 
 def test_parse_payload_marks_fully_duplicate_file_for_archival(monkeypatch):
@@ -938,11 +1002,12 @@ def test_parse_payload_marks_fully_duplicate_file_for_archival(monkeypatch):
       })())
   })())
   monkeypatch.setattr(st, "find_processing_start_index", lambda *_a, **_k: (-1, True))
-  stats_file, payload, need_archival, ingest_ok = st._parse_stats_file_payload(target)
+  stats_file, payload, need_archival, ingest_ok, parse_elapsed_s = st._parse_stats_file_payload(target)
   assert stats_file == target
   assert payload is None
   assert need_archival is True
   assert ingest_ok is True
+  assert parse_elapsed_s >= 0.0
 
 
 def test_empty_primary_mapping_falls_back_to_mtime_archive(monkeypatch, tmp_path):
@@ -960,7 +1025,7 @@ def test_empty_primary_mapping_falls_back_to_mtime_archive(monkeypatch, tmp_path
     fake_rescan.calls = 0
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
-    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True))
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
     monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
@@ -1010,7 +1075,7 @@ def test_finally_path_finalizes_inflight_archive(monkeypatch, tmp_path):
     fake_rescan.calls = 0
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
-    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True))
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {str(tmp_path / "day.tar.gz"): [target]})
     monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
@@ -1066,7 +1131,7 @@ def test_archive_result_mismatch_retries_unmatched(monkeypatch, tmp_path):
     fake_rescan.calls = 0
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
-    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True))
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {str(tmp_path / "day.tar.gz"): [target]})
     monkeypatch.setattr(st.cfg, "get_sync_archive_retry_max_attempts", lambda: 2)
