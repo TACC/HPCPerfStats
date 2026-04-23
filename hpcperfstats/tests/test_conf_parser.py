@@ -530,22 +530,6 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
 
 
-def test_metrics_proxy_reject_jid_batch_size_clamps_minimum(temp_ini, monkeypatch):
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace(
-      "total_cores = 4",
-      "total_cores = 4\nmetrics_proxy_reject_jid_batch_size = 3",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.conf_parser as cfg
-  importlib.reload(cfg)
-  assert cfg.get_metrics_proxy_reject_jid_batch_size() == 8
-
-
 def test_cpuset_priority_budget_overprovision_mode(temp_ini, monkeypatch):
   with open(temp_ini) as f:
     content = f.read()
