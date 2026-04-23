@@ -187,6 +187,19 @@ def test_warm_job_cache_entries_sets_job_keys():
   assert kwargs.get("timeout") == 3600
 
 
+def test_job_instance_cache_key_distinct_from_jid_table_window_key():
+  """``jid_table`` caches a values_list tuple; API caches ``job_data`` — keys must not collide."""
+  from hpcperfstats.site.machine.cache_utils import (
+      KEY_JOB,
+      KEY_JOB_JID_TABLE_WINDOW,
+      make_cache_key,
+  )
+
+  assert make_cache_key(KEY_JOB, "676388") != make_cache_key(
+      KEY_JOB_JID_TABLE_WINDOW, "676388"
+  )
+
+
 def test_make_cache_key_bounded_short_parts_unchanged():
   from hpcperfstats.site.machine.cache_utils import make_cache_key_bounded
 

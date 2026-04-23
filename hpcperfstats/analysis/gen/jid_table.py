@@ -16,8 +16,8 @@ import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
 from hpcperfstats.site.machine.cache_utils import (
     KEY_AGG_DF,
-    KEY_JOB,
     KEY_JOB_HOST_LIST,
+    KEY_JOB_JID_TABLE_WINDOW,
     KEY_JOB_SCHEMA,
     KEY_HOST_DATA_DF,
     KEY_HOST_SCHEMA,
@@ -531,7 +531,7 @@ class jid_table:
 
     try:
       row = cached_orm(
-          make_cache_key(KEY_JOB, jid),
+          make_cache_key(KEY_JOB_JID_TABLE_WINDOW, jid),
           get_site_content_cache_timeout(),
           lambda: job_data.objects.filter(jid=jid).values_list(
               "host_list", "start_time", "end_time"

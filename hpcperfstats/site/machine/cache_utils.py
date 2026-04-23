@@ -231,6 +231,7 @@ def invalidate_jid_derived_cache_keys(jids):
     for jid in jids:
       if not jid:
         continue
+      cache.delete(make_cache_key(KEY_JOB_JID_TABLE_WINDOW, jid))
       cache.delete(f"{KEY_GPU_AGG}:v3:{jid}")
       cache.delete(f"{KEY_GPU_COUNT}:{jid}")
       cache.delete(f"{KEY_XALT}:{jid}")
@@ -311,6 +312,10 @@ def invalidate_metrics_distinct_cache():
 
 # Key prefixes for namespacing
 KEY_JOB = "job"
+# Pickle-safe (host_list, start_time, end_time) row for :class:`jid_table` only;
+# do not reuse ``KEY_JOB`` for this — that key holds full ``job_data`` instances
+# for the job detail API and ingest warmers.
+KEY_JOB_JID_TABLE_WINDOW = "job_jid_table_win"
 KEY_JOB_HOST_LIST = "job_host_list"
 KEY_JOB_SCHEMA = "job_schema"
 KEY_METRICS_DISTINCT = "metrics_distinct"
