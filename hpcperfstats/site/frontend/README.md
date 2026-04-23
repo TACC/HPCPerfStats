@@ -18,6 +18,8 @@ npm run dev
 
 Open http://localhost:5173/machine/ (or use Django’s URL with proxy). Ensure Django is running on port 8000.
 
+**Note:** On this port, **Vite** serves `/static/frontend/` (dev bundles only). In production and in Docker Compose with **`proxy`**, **`/static/*`** is served by **nginx** from collected static files, not by Django or Gunicorn.
+
 ## Production build
 
 Build outputs into Django static files:
@@ -26,7 +28,7 @@ Build outputs into Django static files:
 npm run build
 ```
 
-Output: `../hpcperfstats_site/static/frontend/`. Django serves the SPA for `/machine/` and `/machine/<path>`.
+Output: `../hpcperfstats_site/static/frontend/`. After `collectstatic`, nginx serves hashed files under `/static/`; Django’s **`ReactSPAView`** serves only the **`index.html`** shell for `/machine/` and `/machine/<path>`.
 
 ## Stack
 

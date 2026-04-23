@@ -49,6 +49,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     STATIC_ROOT=/home/hpcperfstats/staticfiles
 
 # Install Python dependencies and the hpcperfstats package.
+# collectstatic here: fail-fast at image build (and supports runs without a
+# compose volume over STATIC_ROOT). Compose still runs collectstatic on web
+# startup because staticfiles_data masks the image layer at /home/hpcperfstats/staticfiles.
 RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir . \
     && /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput \

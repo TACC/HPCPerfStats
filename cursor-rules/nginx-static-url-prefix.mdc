@@ -1,0 +1,29 @@
+---
+description: Production /static/ is served only by nginx; Django must not serve STATIC_URL
+alwaysApply: true
+---
+
+# Nginx-Only `/static/` URL Prefix
+
+## Production contract
+
+- **Browsers load `/static/*` only through nginx**, not through Gunicorn/Django WSGI.
+- Canonical wiring:
+  - [`services-conf/nginx-static-files.conf`](services-conf/nginx-static-files.conf) — `location /static/` → `alias /srv/static/;`
+  - [`docker-compose.yaml`](docker-compose.yaml) — shared volume `staticfiles_data` mounted at `STATIC_ROOT` on `web` (`/home/hpcperfstats/staticfiles`) and read-only on `proxy` as `/srv/static`.
+- **Do not** add Django URL patterns (`django.conf.urls.static.static` for `STATIC_URL`), **WhiteNoise**, or other middleware/views to answer **`STATIC_URL`** (`/static/`). That would duplicate nginx and violate the deployment contract.
+
+## Django’s role (files on disk, not the `/static/` HTTP path)
+
+- **`collectstatic`** (see [`services-conf/django_startup.sh`](services-conf/django_startup.sh)) populates **`STATIC_ROOT`** so the volume nginx reads stays complete (admin assets, app static, built SPA hashed files).
+- Built frontend output lives under `hpcperfstats/site/hpcperfstats_site/static/frontend/` before collection.
+- **[`ReactSPAView`](hpcperfstats/site/hpcperfstats_site/views.py)** may read **`index.html`** from `STATIC_ROOT` / `STATICFILES_DIRS` for `/machine/` — that is **HTML shell delivery**, not serving arbitrary `/static/...` URLs from Django.
+
+## Local development
+
+- **`manage.py runserver`** with `DEBUG=True` normally injects static file handling for `STATIC_URL`; use **`runserver --nostatic`** when you want parity with production (no Django-served `/static/`).
+- **`npm run dev`** (Vite) serves `/static/frontend/` on the dev port — **development only**; production and compose-with-`proxy` use nginx.
+
+## Overlap
+
+- Asset bundling and CSP for **self-hosted** scripts/styles remain under **`no-cdn-in-production.mdc`** and **`react-js-cursor-rule.mdc`**. This rule governs **which process answers the `/static/` URL**, not how assets are built.

@@ -27,6 +27,8 @@ PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 
 **`hpcperfstats/site/machine/tests` on the host:** tests that need the default PostgreSQL database are **skipped** unless the environment sets **`HPCPERFSTATS_COMPOSE_NETWORK=1`** (the compose workflows `tests/run_db_pytest_workflow.sh` and `tests/run_redis_cache_pytest_workflow.sh` export this inside the `web` container). Tests that only need Django settings and mocks use **`django_db(databases=[])`** and still run on the host. Pure mocks with **no** Django DB fixture use **`@pytest.mark.machine_unit_mock`** (see **`hpcperfstats/conftest.py`**) so pytest does not auto-attach **`django_db`** or skip them for missing Compose. During pytest, Django switches the default cache to **LocMem** unless **`HPCPERFSTATS_PYTEST_LIVE_REDIS=1`** (live Redis workflow).
 
+**Static URL contract (WSGI):** Production **`/static/*`** is served by **nginx** from the compose volume, not by Gunicorn. Host pytest includes **`hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py`**, which asserts the Django **`Client`** (WSGI) does not resolve arbitrary **`STATIC_URL`** paths. For **local dev** matching that split, prefer compose with **`proxy`** or **`manage.py runserver --nostatic`** plus nginx for **`/static/`** (see **`README.md`** and **`cursor-rules/nginx-static-url-prefix.mdc`**).
+
 ### Opt-in stress tests (massive `host_data`)
 
 The directory **`tests/stress_host_data/`** is **outside** the default `pytest` `testpaths` (`hpcperfstats` only), so `python run_tests.py` and `pytest hpcperfstats` never collect it.

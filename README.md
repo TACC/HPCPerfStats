@@ -264,6 +264,13 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    Static/media routing is split into a reusable include mounted at
    `services-conf/nginx-static-files.conf`; both SSL and non-SSL nginx configs
    include this file so nginx serves `/static/` and `/media/` directly.
+   **Production:** browsers must load **`/static/*` through the `proxy` service**
+   (ports 80/443); nginx reads the same `staticfiles_data` volume mounted at
+   `STATIC_ROOT` on `web`. Hitting **`web:8000` directly** is not a supported way
+   to load hashed SPA assets (Gunicorn does not implement `/static/` URL
+   serving). For **local parity** with that layout, use full compose including
+   `proxy`, or run `manage.py runserver --nostatic` and still obtain `/static/`
+   via nginx rather than Django’s dev static handler.
    The proxy container is built from `services-conf/proxy.Dockerfile` and enables
    Brotli + gzip compression.
 
@@ -287,7 +294,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    On first startup (or after updating the code), the `web` container runs Django
    migrations (`manage.py makemigrations` and `manage.py migrate`) and
-   `collectstatic` before serving the site.
+   `collectstatic` so **`STATIC_ROOT`** (the volume nginx serves as `/static/`)
+   is populated before Gunicorn starts.
 
    If you change the codebase, bring the containers down, make your changes, and then rebuild and start the stack again.
 

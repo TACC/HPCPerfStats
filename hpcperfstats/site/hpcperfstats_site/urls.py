@@ -1,6 +1,13 @@
-"""Root URL config: admin_monitor, machine app, login/logout/oauth_callback, media, static.
+"""Root URL config: API, SPA shell, auth, and lightweight site endpoints.
 
+Do **not** add ``django.conf.urls.static.static(..., document_root=..., )`` for
+``settings.STATIC_URL`` or introduce **WhiteNoise** (or any middleware/view) to
+answer ``/static/*`` in production: **nginx** serves that prefix from the
+shared static volume (see ``services-conf/nginx-static-files.conf`` and
+``docker-compose.yaml``). Django still runs ``collectstatic`` to populate
+``STATIC_ROOT`` on disk; Gunicorn must not duplicate HTTP static serving.
 """
+
 from django.contrib import admin
 from django.http import HttpResponseRedirect
 from django.urls import include, path

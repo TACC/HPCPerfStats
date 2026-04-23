@@ -70,30 +70,6 @@ chown -R hpcperfstats:hpcperfstats /hpcperfstats/
 /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput
 /usr/local/bin/python3 - <<'PY'
 import os
-import shutil
-import sys
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings")
-import django
-django.setup()
-from django.conf import settings
-
-src = os.path.join("/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static", "frontend")
-dst = os.path.join(settings.STATIC_ROOT, "frontend")
-if os.path.isdir(src):
-  os.makedirs(dst, exist_ok=True)
-  for name in os.listdir(src):
-    s = os.path.join(src, name)
-    d = os.path.join(dst, name)
-    if os.path.isdir(s):
-      shutil.copytree(s, d, dirs_exist_ok=True)
-    else:
-      shutil.copy2(s, d)
-  print(f"Synced frontend bundle into STATIC_ROOT: {src} -> {dst}")
-else:
-  print(f"WARNING: frontend source bundle missing at {src}", file=sys.stderr)
-PY
-/usr/local/bin/python3 - <<'PY'
-import os
 import sys
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings")
 import django
