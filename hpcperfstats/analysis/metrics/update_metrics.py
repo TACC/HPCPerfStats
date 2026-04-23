@@ -717,6 +717,37 @@ def _proxy_readiness_has_any_and_post_end(end_time, max_time):
   return has_any, has_post
 
 
+def _proxy_readiness_bucket(end_time, max_time):
+  """Return ``'reject'`` or ``'unknown'`` for one jid's proxy inputs.
+
+  Matches the per-jid branch of :func:`_proxy_reject_not_ready_jids` using
+  ``end_time`` and ``Max(time)`` for that jid.
+  """
+  has_any_jid, has_post_end = _proxy_readiness_has_any_and_post_end(end_time, max_time)
+  if has_any_jid and (not has_post_end):
+    return "reject"
+  return "unknown"
+
+
+def _proxy_readiness_for_jid(jid):
+  """ORM proxy for one jid: same semantics as bulk :func:`_proxy_reject_not_ready_jids`.
+
+  Returns ``'reject'`` when jid-keyed ``host_data`` proves not-ready, or
+  ``'unknown'`` when the strict host_list probe must decide (including
+  non-PostgreSQL, where bulk code treats every jid as unknown).
+  """
+  if connections["default"].vendor != "postgresql":
+    return "unknown"
+  end_row = job_data.objects.filter(jid=jid).values("jid", "end_time").first()
+  end_time = None if not end_row else end_row["end_time"]
+  max_time = (
+      host_data.objects.filter(jid=jid)
+      .aggregate(max_time=Max("time"))
+      .get("max_time")
+  )
+  return _proxy_readiness_bucket(end_time, max_time)
+
+
 def _proxy_reject_not_ready_jids(jids):
   """Cheap jid-level prefilter: reject only when jid-keyed host_data proves not-ready.
 
@@ -745,14 +776,12 @@ def _proxy_reject_not_ready_jids(jids):
     )
     max_by_jid = {r["jid"]: r["max_time"] for r in max_rows}
     for jid in sub:
-      end_time = end_by_jid.get(jid)
-      max_time = max_by_jid.get(jid)
-      has_any_jid, has_post_end = _proxy_readiness_has_any_and_post_end(
-          end_time, max_time
+      bucket = _proxy_readiness_bucket(
+          end_by_jid.get(jid), max_by_jid.get(jid)
       )
-      if has_any_jid and (not has_post_end):
+      if bucket == "reject":
         reject.add(jid)
-      if (not has_any_jid) or has_post_end:
+      else:
         unknown.append(jid)
   return reject, unknown
 
@@ -802,6 +831,7 @@ def _build_date_chunk_iterators(dates, min_time, rerun, phase_timer):
         "date": d,
         "iter": _iter_chunked_pks(qs, CHUNK_SIZE),
         "done": False,
+        "pending_tail": None,
     })
   return date_states
 
@@ -820,62 +850,94 @@ def _fill_ready_queue(
 ):
   now = time.monotonic()
 
-  def _run_strict(proxy_unknown):
-    if not proxy_unknown:
-      return []
+  def _resume_or_next_pk_chunk(state):
+    """Return ``(pk_list_or_none, is_new_iter_chunk)``."""
+    tail = state.get("pending_tail")
+    if tail:
+      state["pending_tail"] = None
+      return tail, False
+    try:
+      pk_chunk, _ = next(state["iter"])
+      return pk_chunk, True
+    except StopIteration:
+      return None, True
+
+  def _strict_ready_single_jid(jid):
+    """Strict readiness for one jid; ``None`` if not ready, on cooldown, or DB error."""
     with scheduler_shared_lock:
-      eligible = [
-          jid for jid in proxy_unknown
-          if strict_check_cooldown_until.get(jid, 0.0) <= now
-      ]
-    if not eligible:
-      return []
-    ready_jids = []
-    for sub in _iter_subbatches(eligible, strict_check_state["batch_size"]):
-      t0 = time.monotonic()
+      if strict_check_cooldown_until.get(jid, 0.0) > now:
+        return None
+    t0 = time.monotonic()
+    with scheduler_shared_lock:
+      stats["strict_check_calls"] += 1
+    try:
+      with phase_timer.phase("readiness_s"):
+        strict_ready = _filter_jids_with_samples_after_end([jid])
+    except (OperationalError, DatabaseError) as exc:
       with scheduler_shared_lock:
-        stats["strict_check_calls"] += 1
-      try:
-        with phase_timer.phase("readiness_s"):
-          strict_ready = _filter_jids_with_samples_after_end(sub)
-      except (OperationalError, DatabaseError) as exc:
-        with scheduler_shared_lock:
-          stats["strict_check_timeouts"] += 1
-          stats["readiness_error_chunks"] += 1
-          strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
-              current_size=strict_check_state["batch_size"],
-              had_timeout=True,
-              latency_s=(time.monotonic() - t0),
-              max_size=strict_check_state["max_batch_size"],
-          )
-          batch_sz = strict_check_state["batch_size"]
-          for jid in sub:
-            strict_check_cooldown_until[jid] = now + STRICT_CHECK_COOLDOWN_SECONDS
-        log_print(
-            "strict readiness sub-batch timed out size={0}; new_strict_batch_size={1}: {2}".format(
-                len(sub), batch_sz, exc
-            ),
-            flush=True,
-        )
-        continue
-      latency = time.monotonic() - t0
-      with scheduler_shared_lock:
-        prev = stats["strict_check_avg_latency_ms"]
-        current_ms = latency * 1000.0
-        if stats["strict_check_calls"] <= 1:
-          stats["strict_check_avg_latency_ms"] = current_ms
-        else:
-          stats["strict_check_avg_latency_ms"] = (prev * 0.85) + (current_ms * 0.15)
+        stats["strict_check_timeouts"] += 1
+        stats["readiness_error_chunks"] += 1
         strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
             current_size=strict_check_state["batch_size"],
-            had_timeout=False,
-            latency_s=latency,
+            had_timeout=True,
+            latency_s=(time.monotonic() - t0),
             max_size=strict_check_state["max_batch_size"],
         )
-      ready_jids.extend(strict_ready)
+        batch_sz = strict_check_state["batch_size"]
+        strict_check_cooldown_until[jid] = now + STRICT_CHECK_COOLDOWN_SECONDS
+        stats["strict_batch_size_current"] = strict_check_state["batch_size"]
+      log_print(
+          "strict readiness sub-batch timed out size={0}; new_strict_batch_size={1}: {2}".format(
+              1, batch_sz, exc
+          ),
+          flush=True,
+      )
+      return None
+    latency = time.monotonic() - t0
     with scheduler_shared_lock:
+      prev = stats["strict_check_avg_latency_ms"]
+      current_ms = latency * 1000.0
+      if stats["strict_check_calls"] <= 1:
+        stats["strict_check_avg_latency_ms"] = current_ms
+      else:
+        stats["strict_check_avg_latency_ms"] = (prev * 0.85) + (current_ms * 0.15)
+      strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
+          current_size=strict_check_state["batch_size"],
+          had_timeout=False,
+          latency_s=latency,
+          max_size=strict_check_state["max_batch_size"],
+      )
       stats["strict_batch_size_current"] = strict_check_state["batch_size"]
-    return ready_jids
+    if not strict_ready:
+      return None
+    return strict_ready[0]
+
+  def _process_pk_chunk(state, pk_chunk):
+    """Process ``pk_chunk`` in order; set ``pending_tail`` if prefetch fills mid-chunk.
+
+    Returns ``True`` when ``len(ready_queue) >= prefetch_chunks`` and the caller
+    should stop scheduling more readiness work in this invocation.
+    """
+    for idx, jid in enumerate(pk_chunk):
+      with scheduler_shared_lock:
+        stats["candidate_jids"] += 1
+      if _proxy_readiness_for_jid(jid) == "reject":
+        with scheduler_shared_lock:
+          stats["proxy_rejected_jids"] += 1
+          stats["skipped_not_ready"] += 1
+      else:
+        ready_jid = _strict_ready_single_jid(jid)
+        if ready_jid is None:
+          with scheduler_shared_lock:
+            stats["skipped_not_ready"] += 1
+        else:
+          ready_queue.append(ready_jid)
+      if len(ready_queue) >= prefetch_chunks:
+        rest = pk_chunk[idx + 1:]
+        if rest:
+          state["pending_tail"] = rest
+        return True
+    return False
 
   if mode == "strict_date":
     active = [s for s in date_states if not s["done"]]
@@ -883,21 +945,16 @@ def _fill_ready_queue(
       return
     state = active[0]
     while len(ready_queue) < prefetch_chunks:
-      try:
-        pk_chunk, _ = next(state["iter"])
-      except StopIteration:
+      pk_chunk, is_new = _resume_or_next_pk_chunk(state)
+      if pk_chunk is None:
         state["done"] = True
         break
-      proxy_reject, proxy_unknown = _proxy_reject_not_ready_jids(pk_chunk)
-      with scheduler_shared_lock:
-        stats["proxy_checked_chunks"] += 1
-        stats["proxy_rejected_jids"] += len(proxy_reject)
-      ready_jids = _run_strict(proxy_unknown)
-      with scheduler_shared_lock:
-        stats["candidate_jids"] += len(pk_chunk)
-        stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
-      if ready_jids:
-        ready_queue.extend(ready_jids)
+      # Count new keyset pages only (not ``pending_tail`` resumes after mid-chunk prefetch).
+      if is_new:
+        with scheduler_shared_lock:
+          stats["proxy_checked_chunks"] += 1
+      if _process_pk_chunk(state, pk_chunk):
+        return
     return
 
   active = [s for s in date_states if not s["done"]]
@@ -909,21 +966,15 @@ def _fill_ready_queue(
   for state in ordered:
     if len(ready_queue) >= prefetch_chunks:
       break
-    try:
-      pk_chunk, _ = next(state["iter"])
-    except StopIteration:
+    pk_chunk, is_new = _resume_or_next_pk_chunk(state)
+    if pk_chunk is None:
       state["done"] = True
       continue
-    proxy_reject, proxy_unknown = _proxy_reject_not_ready_jids(pk_chunk)
-    with scheduler_shared_lock:
-      stats["proxy_checked_chunks"] += 1
-      stats["proxy_rejected_jids"] += len(proxy_reject)
-    ready_jids = _run_strict(proxy_unknown)
-    with scheduler_shared_lock:
-      stats["candidate_jids"] += len(pk_chunk)
-      stats["skipped_not_ready"] += (len(pk_chunk) - len(ready_jids))
-    if ready_jids:
-      ready_queue.extend(ready_jids)
+    if is_new:
+      with scheduler_shared_lock:
+        stats["proxy_checked_chunks"] += 1
+    if _process_pk_chunk(state, pk_chunk):
+      break
 
 
 def _start_readiness_producer(

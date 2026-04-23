@@ -822,6 +822,130 @@ def test_proxy_reject_not_ready_jids_partitions(monkeypatch):
   assert unknown == ["j1", "j3", "j4"]
 
 
+@pytest.mark.machine_unit_mock
+def test_proxy_readiness_for_jid_matches_bulk_singletons(monkeypatch):
+  """Single-jid proxy helper matches one-element bulk classification."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  t_end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+  t_after = datetime(2025, 4, 1, 14, 0, 0, tzinfo=timezone.utc)
+
+  def host_filter(*_a, jid=None, jid__in=None, **_k):
+    if jid is not None:
+
+      class _HostSingle:
+        def aggregate(self, **_kw):
+          if jid == "j1":
+            return {"max_time": t_after}
+          if jid == "j2":
+            return {"max_time": t_end}
+          if jid == "j3":
+            return {"max_time": t_after}
+          return {"max_time": None}
+
+      return _HostSingle()
+
+    class _HostAgg:
+      def values(self, *_names, **_kw):
+        return self
+
+      def annotate(self, **_kw):
+        return self
+
+      def __iter__(self):
+        for j in jid__in:
+          if j == "j1":
+            yield {"jid": j, "max_time": t_after}
+          elif j == "j2":
+            yield {"jid": j, "max_time": t_end}
+          elif j == "j3":
+            yield {"jid": j, "max_time": t_after}
+          elif j == "j4":
+            pass
+
+    return _HostAgg()
+
+  def job_filter(*_a, jid=None, jid__in=None, **_k):
+    targets = [jid] if jid is not None else list(jid__in or ())
+
+    class _JobVals:
+      def values(self, *_names, **_kw):
+        return self
+
+      def first(self):
+        if len(targets) == 1:
+          return {"jid": targets[0], "end_time": t_end}
+        return None
+
+      def __iter__(self):
+        for j in targets:
+          yield {"jid": j, "end_time": t_end}
+
+    return _JobVals()
+
+  monkeypatch.setattr(update_metrics.host_data.objects, "filter", host_filter)
+  monkeypatch.setattr(update_metrics.job_data.objects, "filter", job_filter)
+
+  for jid in ["j1", "j2", "j3", "j4"]:
+    rset, unk = update_metrics._proxy_reject_not_ready_jids([jid])
+    bucket = update_metrics._proxy_readiness_for_jid(jid)
+    assert (bucket == "reject") == (jid in rset)
+    assert (bucket == "unknown") == (jid in unk)
+
+
+@pytest.mark.django_db(databases=[])
+def test_fill_ready_queue_prefetch_one_leaves_pending_tail(monkeypatch):
+  """When prefetch is satisfied, remaining jids in the chunk are deferred via pending_tail."""
+  strict_calls = []
+
+  def _strict(jids):
+    strict_calls.append(list(jids))
+    if jids == ["j1"]:
+      return ["j1"]
+    return []
+
+  monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", _strict)
+  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 0.0)
+
+  states = [{
+      "date": datetime(2025, 4, 10),
+      "iter": iter([(["j1", "j2", "j3"], 3)]),
+      "done": False,
+      "pending_tail": None,
+  }]
+  ready = []
+  stats = {
+      "candidate_jids": 0,
+      "skipped_not_ready": 0,
+      "readiness_error_chunks": 0,
+      "proxy_checked_chunks": 0,
+      "proxy_rejected_jids": 0,
+      "strict_check_calls": 0,
+      "strict_check_timeouts": 0,
+      "strict_check_avg_latency_ms": 0.0,
+      "strict_batch_size_current": update_metrics.STRICT_CHECK_BATCH_MIN,
+  }
+  update_metrics._fill_ready_queue(
+      states,
+      ready,
+      mode="strict_date",
+      prefetch_chunks=1,
+      phase_timer=update_metrics._PhaseTimer(),
+      stats=stats,
+      strict_check_state={
+          "batch_size": update_metrics.STRICT_CHECK_BATCH_MIN,
+          "max_batch_size": update_metrics.STRICT_CHECK_BATCH_MIN,
+      },
+      strict_check_cooldown_until={},
+      rr_cursor={"idx": 0},
+      scheduler_shared_lock=threading.Lock(),
+  )
+  assert ready == ["j1"]
+  assert strict_calls == [["j1"]]
+  assert states[0]["pending_tail"] == ["j2", "j3"]
+  assert stats["candidate_jids"] == 1
+
+
 def test_adjust_readiness_probe_target_backoff_and_growth():
   cur = update_metrics._adjust_readiness_probe_target(
       current_target=512,
@@ -879,8 +1003,13 @@ def test_adjust_strict_check_batch_size_backoff_and_growth():
 
 @pytest.mark.django_db(databases=[])
 def test_fill_ready_queue_strict_subbatch_timeout_does_not_abort(monkeypatch):
-  """Timeout in one strict sub-batch should not prevent later sub-batch success."""
-  states = [{"date": datetime(2025, 4, 10), "iter": iter([(["j1", "j2", "j3"], 3)]), "done": False}]
+  """Per-jid strict timeouts should not prevent a later jid in the same chunk."""
+  states = [{
+      "date": datetime(2025, 4, 10),
+      "iter": iter([(["j1", "j2", "j3"], 3)]),
+      "done": False,
+      "pending_tail": None,
+  }]
   ready = []
   timer = update_metrics._PhaseTimer()
   stats = {
@@ -898,12 +1027,15 @@ def test_fill_ready_queue_strict_subbatch_timeout_does_not_abort(monkeypatch):
   cooldown = {}
   rr = {"idx": 0}
 
-  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
 
   def _strict(jids):
-    if jids == ["j1", "j2"]:
+    assert len(jids) == 1
+    if jids[0] in ("j1", "j2"):
       raise OperationalError("timeout")
-    return ["j3"]
+    if jids[0] == "j3":
+      return ["j3"]
+    return []
 
   monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", _strict)
   monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 100.0)
@@ -922,9 +1054,12 @@ def test_fill_ready_queue_strict_subbatch_timeout_does_not_abort(monkeypatch):
   )
 
   assert "j3" in ready
-  assert stats["readiness_error_chunks"] == 1
-  assert stats["strict_check_timeouts"] == 1
-  assert strict_state["batch_size"] == 1
+  assert stats["readiness_error_chunks"] == 2
+  assert stats["strict_check_timeouts"] == 2
+  assert stats["strict_check_calls"] == 3
+  # Two timeouts clamp to STRICT_CHECK_BATCH_MIN, then the j3 success path grows
+  # toward max_batch_size under STRICT_CHECK_FAST_SUCCESS_S.
+  assert strict_state["batch_size"] == strict_state["max_batch_size"]
 
 
 @pytest.mark.django_db(databases=[])
@@ -936,7 +1071,7 @@ def test_update_metrics_for_dates_global_scheduler_interleaves_dates(monkeypatch
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
   monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
-  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
 
@@ -1060,7 +1195,7 @@ def test_update_metrics_for_dates_per_jid_failure_does_not_stop_progress(monkeyp
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
   monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
-  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
 
