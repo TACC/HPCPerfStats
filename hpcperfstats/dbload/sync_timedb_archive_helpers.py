@@ -177,6 +177,31 @@ def get_file_member_sizes_from_gzip_archive(gz_path):
   """
   if not gz_path.endswith(".tar.gz") or not os.path.isfile(gz_path):
     return {}
+  _readable, members = _scan_gzip_archive_members_and_readable(gz_path)
+  return members
+
+
+def _archive_file_identity(path):
+  """Return ``(mtime_ns, size)`` for cache keying, or ``None`` if missing."""
+  if not os.path.isfile(path):
+    return None
+  st = os.stat(path)
+  return (int(st.st_mtime_ns), int(st.st_size))
+
+
+def _build_archive_validation_cache_key(gz_path):
+  tar_path = gz_path[:-len(".gz")] if gz_path.endswith(".tar.gz") else None
+  return (
+      gz_path,
+      _archive_file_identity(gz_path),
+      _archive_file_identity(tar_path) if tar_path is not None else None,
+  )
+
+
+def _scan_gzip_archive_members_and_readable(gz_path):
+  """Return ``(readable, members)`` from one streamed gzip pass."""
+  if not gz_path.endswith(".tar.gz") or not os.path.isfile(gz_path):
+    return False, {}
   try:
     with file_read_lock_wait(gz_path):
       with _open_tarfile_for_read(gz_path, pigz_thread_count) as tf:
@@ -184,12 +209,17 @@ def get_file_member_sizes_from_gzip_archive(gz_path):
         for m in tf.getmembers():
           if m.isfile():
             by_name[m.name].append(m.size)
-        return {name: max(sizes) for name, sizes in by_name.items()}
+        return True, {name: max(sizes) for name, sizes in by_name.items()}
   except Exception:
-    return {}
+    return False, {}
 
 
-def validate_sealed_daily_archive_for_raw_removal(archive_gz_path, log_fn=log_print):
+def validate_sealed_daily_archive_for_raw_removal(
+    archive_gz_path,
+    log_fn=log_print,
+    *,
+    validation_cache=None,
+):
   """Validate uncompressed tar (if present) then ``.tar.gz``; member lists must match.
 
   Order: (1) readable ``YYYY-MM-DD.tar`` and member sizes if it exists;
@@ -206,6 +236,15 @@ def validate_sealed_daily_archive_for_raw_removal(archive_gz_path, log_fn=log_pr
     return False, None
   gz_path = archive_gz_path
   tar_path = gz_path[:-len(".gz")]
+  cache_key = None
+  if validation_cache is not None:
+    cache_key = _build_archive_validation_cache_key(gz_path)
+    cached = validation_cache.get(cache_key)
+    if cached is not None:
+      validation_cache["hits"] = int(validation_cache.get("hits", 0)) + 1
+      cached_members = dict(cached["members"]) if cached["members"] is not None else None
+      return bool(cached["ok"]), cached_members
+    validation_cache["misses"] = int(validation_cache.get("misses", 0)) + 1
   members_tar = None
   if os.path.isfile(tar_path):
     if not verify_tar_archive_readable(tar_path):
@@ -253,14 +292,17 @@ def validate_sealed_daily_archive_for_raw_removal(archive_gz_path, log_fn=log_pr
         )
       return False, None
 
-  if not verify_tar_archive_readable(gz_path):
+  gz_readable, members_gz = _scan_gzip_archive_members_and_readable(gz_path)
+  if not gz_readable:
     if log_fn:
       log_fn(
           "Skipping removal: tar.gz failed integrity check: %s" % gz_path,
           flush=True,
       )
-    return False, None
-  members_gz = get_file_member_sizes_from_gzip_archive(gz_path)
+    result = (False, None)
+    if validation_cache is not None:
+      validation_cache[cache_key] = {"ok": result[0], "members": result[1]}
+    return result
 
   if members_tar is not None:
     if members_tar != members_gz:
@@ -271,10 +313,19 @@ def validate_sealed_daily_archive_for_raw_removal(archive_gz_path, log_fn=log_pr
             % (gz_path, len(members_tar), len(members_gz)),
             flush=True,
         )
-      return False, None
-    return True, members_tar
+      result = (False, None)
+      if validation_cache is not None:
+        validation_cache[cache_key] = {"ok": result[0], "members": result[1]}
+      return result
+    result = (True, members_tar)
+    if validation_cache is not None:
+      validation_cache[cache_key] = {"ok": result[0], "members": dict(result[1])}
+    return result
 
-  return True, members_gz
+  result = (True, members_gz)
+  if validation_cache is not None:
+    validation_cache[cache_key] = {"ok": result[0], "members": dict(result[1])}
+  return result
 
 
 def replace_corrupt_tar_from_gzip_backup(tar_path, gz_path, pigz_threads):
@@ -383,6 +434,7 @@ def remove_verified_archived_raw_files(
     import hpcperfstats.dbload.sync_timedb as _sync_timedb_mod
 
     archive_stats_files_fn = _sync_timedb_mod.archive_stats_files
+  validation_cache = {"hits": 0, "misses": 0}
   for gz_path, stats_paths in mapping.items():
     if gz_path.endswith(".tar.gz"):
       tar_path = gz_path[:-3]
@@ -403,7 +455,7 @@ def remove_verified_archived_raw_files(
             )
           continue
     ok, members = validate_sealed_daily_archive_for_raw_removal(
-        gz_path, log_fn=log_fn)
+        gz_path, log_fn=log_fn, validation_cache=validation_cache)
     if not ok or members is None:
       continue
     for stats_path in stats_paths:
@@ -419,6 +471,12 @@ def remove_verified_archived_raw_files(
         except OSError as exc:
           if log_fn:
             log_fn("Could not remove %s: %s" % (path, exc), flush=True)
+  if log_fn:
+    log_fn(
+        "Archive validation cache summary hits=%d misses=%d"
+        % (int(validation_cache["hits"]), int(validation_cache["misses"])),
+        flush=True,
+    )
 
 
 def remove_verified_uncompressed_daily_tars(
@@ -439,12 +497,13 @@ def remove_verified_uncompressed_daily_tars(
   """
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
     return
+  validation_cache = {"hits": 0, "misses": 0}
   for tar_path in sorted(iter_daily_tar_paths(daily_archive_dir)):
     gz_path = "%s.gz" % tar_path
     if not os.path.isfile(tar_path):
       continue
     ok, members = validate_sealed_daily_archive_for_raw_removal(
-        gz_path, log_fn=log_fn)
+        gz_path, log_fn=log_fn, validation_cache=validation_cache)
     if not ok or members is None:
       continue
     try:
@@ -459,6 +518,12 @@ def remove_verified_uncompressed_daily_tars(
     except OSError as exc:
       if log_fn:
         log_fn("Could not remove verified tar %s: %s" % (tar_path, exc), flush=True)
+  if log_fn:
+    log_fn(
+        "Archive validation cache summary hits=%d misses=%d"
+        % (int(validation_cache["hits"]), int(validation_cache["misses"])),
+        flush=True,
+    )
 
 
 def tar_has_duplicate_file_members(tar_path):

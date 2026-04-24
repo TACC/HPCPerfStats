@@ -695,7 +695,8 @@ def test_remove_verified_archived_raw_files_bootstraps_missing_daily_archive(
 
   member_name = get_tar_member_name(str(seg))
 
-  def fake_validate(gz_path, log_fn=None):
+  def fake_validate(gz_path, log_fn=None, validation_cache=None):
+    del validation_cache
     assert gz_path == gz_key
     return True, {member_name: os.path.getsize(seg)}
 
@@ -791,6 +792,77 @@ def test_validate_sealed_daily_archive_seals_from_valid_tar_when_gz_missing(tmp_
   assert members["raw.txt"] == len("seal-me")
 
 
+def test_validate_sealed_daily_archive_validation_cache_hits(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz = tmp_path / "2022-02-01.tar.gz"
+  f = tmp_path / "cache.txt"
+  f.write_text("cache")
+  with tarfile.open(gz, "w:gz") as tf:
+    tf.add(str(f), arcname="cache.txt")
+
+  calls = {"n": 0}
+  real_scan = helpers._scan_gzip_archive_members_and_readable
+
+  def wrapped_scan(path):
+    calls["n"] += 1
+    return real_scan(path)
+
+  monkeypatch.setattr(helpers, "_scan_gzip_archive_members_and_readable", wrapped_scan)
+  cache = {"hits": 0, "misses": 0}
+  first_ok, first_members = validate_sealed_daily_archive_for_raw_removal(
+      str(gz), log_fn=None, validation_cache=cache
+  )
+  second_ok, second_members = validate_sealed_daily_archive_for_raw_removal(
+      str(gz), log_fn=None, validation_cache=cache
+  )
+
+  assert first_ok and second_ok
+  assert first_members == second_members
+  assert calls["n"] == 1
+  assert cache["misses"] == 1
+  assert cache["hits"] == 1
+
+
+def test_validate_sealed_daily_archive_validation_cache_invalidates_on_mtime_change(
+    monkeypatch, tmp_path
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz = tmp_path / "2022-02-02.tar.gz"
+  f = tmp_path / "stale.txt"
+  f.write_text("v1")
+  with tarfile.open(gz, "w:gz") as tf:
+    tf.add(str(f), arcname="stale.txt")
+
+  calls = {"n": 0}
+  real_scan = helpers._scan_gzip_archive_members_and_readable
+
+  def wrapped_scan(path):
+    calls["n"] += 1
+    return real_scan(path)
+
+  monkeypatch.setattr(helpers, "_scan_gzip_archive_members_and_readable", wrapped_scan)
+  cache = {"hits": 0, "misses": 0}
+  ok1, _members1 = validate_sealed_daily_archive_for_raw_removal(
+      str(gz), log_fn=None, validation_cache=cache
+  )
+  assert ok1
+
+  # Rewrite gzip so key identity changes (mtime/size).
+  f.write_text("v2-updated")
+  with tarfile.open(gz, "w:gz") as tf:
+    tf.add(str(f), arcname="stale.txt")
+
+  ok2, members2 = validate_sealed_daily_archive_for_raw_removal(
+      str(gz), log_fn=None, validation_cache=cache
+  )
+  assert ok2
+  assert members2["stale.txt"] == len("v2-updated")
+  assert calls["n"] == 2
+  assert cache["misses"] == 2
+
+
 def test_get_file_member_sizes_from_gzip_archive_reads_gz_only(tmp_path):
   gz = tmp_path / "x.tar.gz"
   tar_p = tmp_path / "x.tar"
@@ -801,6 +873,34 @@ def test_get_file_member_sizes_from_gzip_archive_reads_gz_only(tmp_path):
   with tarfile.open(gz, "w:gz") as tf:
     tf.add(str(f), arcname="only")
   assert get_file_member_sizes_from_gzip_archive(str(gz)) == {"only": 3}
+
+
+def test_remove_verified_archived_raw_files_logs_cache_summary(tmp_path):
+  arch_suffix = "cluster.integration.test"
+  host = tmp_path / ("n." + arch_suffix)
+  host.mkdir()
+  ts = int(datetime(2022, 5, 4, 15, 30, 0).timestamp())
+  seg = host / str(ts)
+  seg.write_text("%d job1 cn001\nline\n" % ts)
+  os.utime(seg, (ts, ts))
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  gz_key = str(tgz_dir / "2022-05-04.tar.gz")
+  tar_path = gz_key[:-len(".gz")]
+  arcname = get_tar_member_name(str(seg))
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(seg), arcname=arcname)
+  with tarfile.open(gz_key, "w:gz") as tf:
+    tf.add(str(seg), arcname=arcname)
+
+  logs = []
+  remove_verified_archived_raw_files(
+      str(tmp_path),
+      arch_suffix,
+      str(tgz_dir),
+      log_fn=lambda msg, flush=True: logs.append(msg),
+  )
+  assert any("Archive validation cache summary hits=" in ln for ln in logs)
 
 
 def _tar_add_bytes(tf, name, data):

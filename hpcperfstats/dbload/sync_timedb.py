@@ -773,11 +773,13 @@ def archive_stats_files(archive_info):
   """
   archive_fname, stats_files = archive_info
   archive_tar_fname = archive_fname[:-3]
+  existing_members = {}
 
   if not os.path.exists(archive_tar_fname):
     if os.path.exists(archive_fname):
       _decompress_gz(archive_fname)
-  existing_members = get_existing_archive_members(archive_tar_fname)
+  if os.path.exists(archive_tar_fname):
+    existing_members = get_existing_archive_members(archive_tar_fname)
 
   # Corrupt/truncated .tar can make Python's tarfile reader return {} while GNU
   # tar still refuses append (exit 2). Recover before append so we never raise
@@ -797,7 +799,10 @@ def archive_stats_files(archive_info):
           flush=True,
       )
       return False
-    existing_members = get_existing_archive_members(archive_tar_fname)
+    if os.path.exists(archive_tar_fname):
+      existing_members = get_existing_archive_members(archive_tar_fname)
+    else:
+      existing_members = {}
 
   stats_files_to_tar = filter_files_to_add_to_archive(
       stats_files, existing_members, debug=DEBUG)
@@ -826,7 +831,11 @@ def archive_stats_files(archive_info):
             flush=True,
         )
         return
-      existing_after = get_existing_archive_members(archive_tar_fname)
+      existing_after = (
+          get_existing_archive_members(archive_tar_fname)
+          if os.path.exists(archive_tar_fname)
+          else {}
+      )
       to_retry = filter_files_to_add_to_archive(
           stats_files_to_tar, existing_after, debug=DEBUG)
       if to_retry:
