@@ -110,21 +110,35 @@ def test_verified_daily_tar_removal_gate_matches_startup_and_full_only():
   )
 
 
+def test_normalize_archive_groups_by_tgz_sorts_and_copies_paths():
+  mapping = {
+      "/tmp/2026-03-02.tar.gz": ["/tmp/p2", "/tmp/p1"],
+      "/tmp/2026-03-01.tar.gz": ["/tmp/a"],
+  }
+  tasks = st._normalize_archive_groups_by_tgz(mapping)
+  assert tasks == [
+      ("/tmp/2026-03-01.tar.gz", ["/tmp/a"]),
+      ("/tmp/2026-03-02.tar.gz", ["/tmp/p2", "/tmp/p1"]),
+  ]
+  tasks[0][1].append("/tmp/mut")
+  assert mapping["/tmp/2026-03-01.tar.gz"] == ["/tmp/a"]
+
+
 def test_resolve_archive_pigz_interval_seconds_rejects_nonfinite_and_nonpositive():
   interval, warning = st._resolve_archive_pigz_interval_seconds(float("nan"))
-  assert interval == 4 * 3600
+  assert interval == 8 * 3600
   assert warning == "non_finite_or_non_positive"
 
   interval, warning = st._resolve_archive_pigz_interval_seconds(float("inf"))
-  assert interval == 4 * 3600
+  assert interval == 8 * 3600
   assert warning == "non_finite_or_non_positive"
 
   interval, warning = st._resolve_archive_pigz_interval_seconds(0)
-  assert interval == 4 * 3600
+  assert interval == 8 * 3600
   assert warning == "non_finite_or_non_positive"
 
   interval, warning = st._resolve_archive_pigz_interval_seconds("bad")
-  assert interval == 4 * 3600
+  assert interval == 8 * 3600
   assert warning == "invalid"
 
 
@@ -1004,6 +1018,74 @@ def test_nonblocking_finalize_queues_new_archive_work_when_busy(monkeypatch):
     assert len(dispatched) == 2
     assert dispatched[0][0][0].endswith("a.tar.gz")
     assert dispatched[1][0][0].endswith("b.tar.gz")
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_archive_dispatch_by_tgz_groups_respects_archive_queue_max(monkeypatch):
+  shutdown_requested[0] = False
+  try:
+    target = "/tmp/stats-q"
+
+    def fake_rescan(*_a, **_k):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return [target]
+      return []
+    fake_rescan.calls = 0
+
+    dispatched = []
+    logs = []
+
+    class _ArchivePoolCapture:
+      def map_async(self, _fn, items):
+        dispatched.append(list(items))
+
+        class _R:
+          def get(self):
+            return [True for _ in items]
+        return _R()
+
+    mapping = {
+        "/tmp/2026-03-03.tar.gz": ["/tmp/c"],
+        "/tmp/2026-03-01.tar.gz": ["/tmp/a"],
+        "/tmp/2026-03-02.tar.gz": ["/tmp/b"],
+    }
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_sync_archive_queue_max_size", lambda: 2)
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: mapping)
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(
+        st,
+        "log_print",
+        lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+    )
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive",
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _ArchivePoolCapture(),
+        run_once=True,
+    )
+
+    assert dispatched
+    first_batch = dispatched[0]
+    assert len(first_batch) == 2
+    assert first_batch[0][0] == "/tmp/2026-03-01.tar.gz"
+    assert first_batch[1][0] == "/tmp/2026-03-02.tar.gz"
+    assert any("Archive dispatch by tgz groups submitted=2 deferred_groups=1" in ln for ln in logs)
   finally:
     shutdown_requested[0] = False
 

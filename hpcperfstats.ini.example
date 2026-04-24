@@ -114,13 +114,13 @@ dbname             = hpcperfstats
 daily_archive_dir  = %(data_dir)s/daily_archive
 
 # Deferred compression: sync_timedb appends to YYYY-MM-DD.tar; pigz seal + removal
-# of verified raw stats run on archive_pigz_interval_seconds (default 4 hours).
+# of verified raw stats run on archive_pigz_interval_seconds (default 8 hours).
 # Keep yes unless you accept re-decompressing on every append for that day.
 # archive_keep_uncompressed_tar = yes
 # archive_seal_idle_seconds = 60
 # archive_pigz_threads = 8
 # archive_pigz_level = 8
-# archive_pigz_interval_seconds = 14400
+# archive_pigz_interval_seconds = 28800
 
 # Django engine backend (pre-configured for container installation)
 engine_name        = django.db.backends.postgresql 

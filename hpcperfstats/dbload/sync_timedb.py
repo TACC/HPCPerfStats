@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; ``pigz`` seal and raw-file removal on ``archive_pigz_interval_seconds``, default 4h). Runs in parallel with configurable chunk size.
+"""Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; ``pigz`` seal and raw-file removal on ``archive_pigz_interval_seconds``, default 8h). Runs in parallel with configurable chunk size.
 
 After each ingest wave completes, rescans the archive directory for new files. When none are pending, it seals all dirty daily archives, removes verified raw files, sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s), and exits.
 
@@ -874,6 +874,21 @@ def _build_fallback_archive_mapping_by_mtime(files_to_be_archived, tgz_dir):
     fallback[archive_fname].append(path)
   return dict(fallback)
 
+
+def _normalize_archive_groups_by_tgz(archive_mapping):
+  """Return stable per-tgz archive tasks as ``[(tgz_path, [paths...]), ...]``.
+
+  The archival pipeline is intentionally threaded by tgz group (one task per
+  ``YYYY-MM-DD.tar.gz`` path) so each worker handles a complete archive group
+  rather than interleaving members across unrelated tgz files.
+  """
+  if not archive_mapping:
+    return []
+  tasks = []
+  for tgz_path in sorted(archive_mapping):
+    tasks.append((tgz_path, list(archive_mapping[tgz_path])))
+  return tasks
+
 def database_startup():
   """Print DB version, database size, and optionally chunk compression stats for host_data."""
   from django.db import connection
@@ -924,7 +939,7 @@ def _should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
 
 def _resolve_archive_pigz_interval_seconds(raw_value):
   """Normalize archive maintenance interval to a safe finite positive float."""
-  default_interval = float(4 * 3600)
+  default_interval = float(8 * 3600)
   try:
     interval = float(raw_value)
   except (TypeError, ValueError):
@@ -1397,7 +1412,10 @@ def run_sync_timedb_supervisor_loop(
             perf_stats["archive_dispatch_count"] += 1
             perf_stats["archive_dispatch_items"] += len(archive_items)
             archive_job_deferred_paths = due_tasks
-            log_print("Processing %d archive retry task(s)" % len(due_tasks), flush=True)
+            log_print(
+                "Processing %d tgz archive retry task(s)" % len(due_tasks),
+                flush=True,
+            )
         if len(pending_archive_tasks) > archive_queue_high:
           log_print(
               "Archive backlog above high watermark pending=%d high=%d"
@@ -1678,7 +1696,7 @@ def run_sync_timedb_supervisor_loop(
                 % (len(ar_file_mapping), archive_queue_high),
                 flush=True,
             )
-          archive_items_all = list(ar_file_mapping.items())
+          archive_items_all = _normalize_archive_groups_by_tgz(ar_file_mapping)
           inflight_archive_paths.update(deferred_paths)
           for p in deferred_paths:
             _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
@@ -1699,6 +1717,11 @@ def run_sync_timedb_supervisor_loop(
                 }
                 for item in archive_items
             ]
+            log_print(
+                "Archive dispatch by tgz groups submitted=%d deferred_groups=%d"
+                % (len(archive_items), len(overflow_items)),
+                flush=True,
+            )
             for item in overflow_items:
               _enqueue_archive_task({
                   "task": ArchiveTask(archive_info=item, attempt=1),
@@ -1707,7 +1730,10 @@ def run_sync_timedb_supervisor_loop(
               })
               for p in item[1]:
                 _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
-            log_print("Archival running in the background")
+            log_print(
+                "Archival running in the background (threaded by tgz groups)",
+                flush=True,
+            )
           else:
             for item in archive_items_all:
               _enqueue_archive_task({
@@ -1718,7 +1744,7 @@ def run_sync_timedb_supervisor_loop(
               for p in item[1]:
                 _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
             log_print(
-                "Queued %d archive task(s); archival worker still busy"
+                "Queued %d tgz archive task(s); archival worker still busy"
                 % len(archive_items_all),
                 flush=True,
             )

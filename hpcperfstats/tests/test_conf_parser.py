@@ -30,6 +30,9 @@ def test_get_debug_true(temp_ini, monkeypatch):
   content = content.replace("debug = no", "debug = yes")
   with open(temp_ini, "w") as f:
     f.write(content)
+  monkeypatch.setenv("ARCHIVE_POOL_PROCESS_CAP", "64")
+  monkeypatch.delenv("SYNC_POOL_PROCESS_CAP", raising=False)
+  monkeypatch.setenv("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "0")
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.conf_parser as cfg
@@ -98,7 +101,7 @@ def test_get_archive_pigz_interval_seconds_rejects_nonfinite_and_nonpositive(
   import importlib
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_archive_pigz_interval_seconds() == 4 * 3600
+  assert cfg.get_archive_pigz_interval_seconds() == 8 * 3600
 
   with open(temp_ini) as f:
     base = f.read()
@@ -111,7 +114,7 @@ def test_get_archive_pigz_interval_seconds_rejects_nonfinite_and_nonpositive(
     with open(temp_ini, "w") as f:
       f.write(content)
     importlib.reload(cfg)
-    assert cfg.get_archive_pigz_interval_seconds() == 4 * 3600
+    assert cfg.get_archive_pigz_interval_seconds() == 8 * 3600
 
   content = base.replace(
       "daily_archive_dir = /tmp",
@@ -460,6 +463,26 @@ def test_sync_archive_pool_respects_cap(temp_ini, monkeypatch):
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
   assert cfg.get_sync_ingest_pool_processes() == 8
   assert cfg.get_sync_archive_pool_processes() == 2
+
+
+def test_sync_archive_pool_default_is_four_without_cpuset(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\narchive_pool_process_cap = 64",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("ARCHIVE_POOL_PROCESS_CAP", "64")
+  monkeypatch.delenv("SYNC_POOL_PROCESS_CAP", raising=False)
+  monkeypatch.setenv("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "0")
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
+  assert cfg.get_sync_archive_pool_processes() == 4
 
 
 def test_cpuset_priority_budget_derivation_defaults(temp_ini, monkeypatch):

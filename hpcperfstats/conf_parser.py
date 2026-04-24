@@ -169,9 +169,9 @@ def get_archive_pigz_threads():
 
 
 def get_archive_pigz_interval_seconds():
-  """Seconds between ``pigz`` seal runs and removal of verified raw stats (default 4h)."""
+  """Seconds between ``pigz`` seal runs and removal of verified raw stats (default 8h)."""
   _ensure_cfg_loaded()
-  default_interval = float(4 * 3600)
+  default_interval = float(8 * 3600)
   raw_value = cfg.get(
       'PORTAL',
       'archive_pigz_interval_seconds',
@@ -524,12 +524,11 @@ def get_sync_ingest_pool_processes():
 
 
 def get_sync_archive_pool_processes():
-  """Archive pool size in ``sync_timedb`` (half of ingest, capped by ``archive_pool_process_cap``)."""
+  """Archive pool size in ``sync_timedb`` (default 4, capped by ``archive_pool_process_cap``)."""
   if get_sync_enable_cpuset_priority_budget():
     raw = derive_pipeline_cpuset_priority_budget()["sync_archive_cap"]
   else:
-    ingest = get_sync_ingest_pool_processes()
-    raw = max(1, ingest // 2)
+    raw = 4
   return _apply_sync_pool_cap(raw, get_archive_pool_process_cap())
 
 
