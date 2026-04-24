@@ -875,6 +875,96 @@ def test_get_file_member_sizes_from_gzip_archive_reads_gz_only(tmp_path):
   assert get_file_member_sizes_from_gzip_archive(str(gz)) == {"only": 3}
 
 
+def test_get_archive_validation_worker_count_bounds(monkeypatch):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  monkeypatch.setattr(helpers.cfg, "get_sync_archive_pool_processes", lambda: 6)
+  monkeypatch.delenv("SYNC_ARCHIVE_VALIDATION_WORKERS", raising=False)
+  assert helpers._get_archive_validation_worker_count(0) == 1
+  assert helpers._get_archive_validation_worker_count(3) == 3
+  assert helpers._get_archive_validation_worker_count(20) == 6
+
+  monkeypatch.setenv("SYNC_ARCHIVE_VALIDATION_WORKERS", "2")
+  assert helpers._get_archive_validation_worker_count(20) == 2
+
+
+def test_remove_verified_archived_raw_files_streaming_apply_follows_completion_order(
+    tmp_path, monkeypatch
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  seg_a = tmp_path / "seg_a"
+  seg_b = tmp_path / "seg_b"
+  seg_a.write_text("a")
+  seg_b.write_text("bbb")
+  gz_a = str(tmp_path / "2026-04-21.tar.gz")
+  gz_b = str(tmp_path / "2026-04-22.tar.gz")
+
+  monkeypatch.setattr(
+      helpers,
+      "collect_stats_files_in_range",
+      lambda *_a, **_k: [str(seg_a), str(seg_b)],
+  )
+  monkeypatch.setattr(
+      helpers,
+      "build_archive_mapping",
+      lambda *_a, **_k: {gz_a: [str(seg_a)], gz_b: [str(seg_b)]},
+  )
+
+  def fake_stream(_gz_paths, *, log_fn=None, validation_cache=None):
+    del log_fn, validation_cache
+    members_b = {helpers.get_tar_member_name(str(seg_b)): seg_b.stat().st_size}
+    members_a = {helpers.get_tar_member_name(str(seg_a)): seg_a.stat().st_size}
+    yield gz_b, True, members_b
+    yield gz_a, True, members_a
+
+  monkeypatch.setattr(helpers, "_iter_archive_validation_results_stream", fake_stream)
+  logs = []
+  helpers.remove_verified_archived_raw_files(
+      str(tmp_path),
+      "unused.suffix",
+      str(tmp_path / "daily"),
+      log_fn=lambda msg, flush=True: logs.append(msg),
+      archive_stats_files_fn=lambda *_a, **_k: True,
+  )
+  assert not seg_a.exists()
+  assert not seg_b.exists()
+  removal_logs = [l for l in logs if "removing stats file (scheduled pigz/removal):" in l]
+  assert removal_logs
+  assert str(seg_b) in removal_logs[0]
+
+
+def test_remove_verified_uncompressed_daily_tars_streaming_apply_order(
+    tmp_path, monkeypatch
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_a = tmp_path / "2026-04-21.tar"
+  tar_b = tmp_path / "2026-04-22.tar"
+  tar_a.write_text("a")
+  tar_b.write_text("b")
+  gz_a = "%s.gz" % tar_a
+  gz_b = "%s.gz" % tar_b
+  monkeypatch.setattr(helpers, "iter_daily_tar_paths", lambda _d: [str(tar_a), str(tar_b)])
+
+  def fake_stream(_gz_paths, *, log_fn=None, validation_cache=None):
+    del log_fn, validation_cache
+    yield gz_b, True, {"x": 1}
+    yield gz_a, True, {"x": 1}
+
+  monkeypatch.setattr(helpers, "_iter_archive_validation_results_stream", fake_stream)
+  logs = []
+  helpers.remove_verified_uncompressed_daily_tars(
+      str(tmp_path),
+      log_fn=lambda msg, flush=True: logs.append(msg),
+  )
+  assert not tar_a.exists()
+  assert not tar_b.exists()
+  removed_logs = [l for l in logs if "Final/exit maintenance removed verified uncompressed tar:" in l]
+  assert removed_logs
+  assert str(tar_b) in removed_logs[0]
+
+
 def test_remove_verified_archived_raw_files_logs_cache_summary(tmp_path):
   arch_suffix = "cluster.integration.test"
   host = tmp_path / ("n." + arch_suffix)

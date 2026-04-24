@@ -1,5 +1,6 @@
 """Pure helpers for sync_timedb archiving, tar utilities, and file discovery (no Django). Used by sync_timedb and by unit tests."""
 import contextlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import re
 import shutil
@@ -27,6 +28,71 @@ from hpcperfstats.print_utils import log_print
 pigz_thread_count = cfg.get_archive_pigz_threads()
 
 _DAILY_TAR_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar$")
+
+
+def _get_archive_validation_worker_count(total_items):
+  """Bounded worker count for archive read/validation fanout."""
+  if total_items <= 0:
+    return 1
+  env = os.environ.get("SYNC_ARCHIVE_VALIDATION_WORKERS", "").strip()
+  if env:
+    try:
+      configured = max(1, int(env))
+    except ValueError:
+      configured = max(1, int(cfg.get_sync_archive_pool_processes()))
+  else:
+    configured = max(1, int(cfg.get_sync_archive_pool_processes()))
+  return max(1, min(total_items, configured))
+
+
+def _iter_archive_validation_results_stream(
+    gz_paths,
+    *,
+    log_fn=log_print,
+    validation_cache=None,
+):
+  """Yield ``(gz_path, ok, members)`` as validations complete.
+
+  - Keeps apply stage serial by yielding one completed result at a time.
+  - Uses bounded thread fanout for read/validation only.
+  - Uses shared validation_cache only on serial path (thread-safe by design).
+  """
+  gz_paths = list(gz_paths)
+  if not gz_paths:
+    return
+  workers = _get_archive_validation_worker_count(len(gz_paths))
+  if workers <= 1:
+    for gz_path in gz_paths:
+      ok, members = validate_sealed_daily_archive_for_raw_removal(
+          gz_path,
+          log_fn=log_fn,
+          validation_cache=validation_cache,
+      )
+      yield gz_path, ok, members
+    return
+
+  def _validate_one(gz_path):
+    # Avoid shared mutable cache updates across threads.
+    return validate_sealed_daily_archive_for_raw_removal(
+        gz_path,
+        log_fn=log_fn,
+        validation_cache=None,
+    )
+
+  with ThreadPoolExecutor(max_workers=workers) as executor:
+    future_to_gz = {executor.submit(_validate_one, gz_path): gz_path for gz_path in gz_paths}
+    for future in as_completed(future_to_gz):
+      gz_path = future_to_gz[future]
+      try:
+        ok, members = future.result()
+      except Exception as exc:
+        if log_fn:
+          log_fn(
+              "Skipping removal: validation worker error for %s (%s)" % (gz_path, exc),
+              flush=True,
+          )
+        ok, members = False, None
+      yield gz_path, ok, members
 
 
 def _is_lock_file_name(name):
@@ -435,6 +501,7 @@ def remove_verified_archived_raw_files(
 
     archive_stats_files_fn = _sync_timedb_mod.archive_stats_files
   validation_cache = {"hits": 0, "misses": 0}
+  validation_targets = []
   for gz_path, stats_paths in mapping.items():
     if gz_path.endswith(".tar.gz"):
       tar_path = gz_path[:-3]
@@ -454,11 +521,32 @@ def remove_verified_archived_raw_files(
                 flush=True,
             )
           continue
-    ok, members = validate_sealed_daily_archive_for_raw_removal(
-        gz_path, log_fn=log_fn, validation_cache=validation_cache)
+    validation_targets.append((gz_path, list(stats_paths)))
+
+  if validation_targets:
+    workers = _get_archive_validation_worker_count(len(validation_targets))
+    validation_cache["misses"] += len(validation_targets)
+    validation_started = time.time()
+    success_count = 0
+    failed_count = 0
+    stats_paths_by_gz = {gz_path: stats_paths for gz_path, stats_paths in validation_targets}
+  else:
+    workers = 1
+    validation_started = time.time()
+    success_count = 0
+    failed_count = 0
+    stats_paths_by_gz = {}
+
+  for gz_path, ok, members in _iter_archive_validation_results_stream(
+      [gz_path for gz_path, _stats_paths in validation_targets],
+      log_fn=log_fn,
+      validation_cache=validation_cache if workers <= 1 else None,
+  ):
     if not ok or members is None:
+      failed_count += 1
       continue
-    for stats_path in stats_paths:
+    success_count += 1
+    for stats_path in stats_paths_by_gz.get(gz_path, []):
       for path in get_verified_files_to_remove([stats_path], members):
         if log_fn:
           log_fn(
@@ -471,6 +559,18 @@ def remove_verified_archived_raw_files(
         except OSError as exc:
           if log_fn:
             log_fn("Could not remove %s: %s" % (path, exc), flush=True)
+  if log_fn:
+    log_fn(
+        "Archive validation parallel summary archives=%d workers=%d success=%d failed=%d elapsed_s=%.3f"
+        % (
+            len(validation_targets),
+            workers,
+            success_count,
+            failed_count,
+            max(0.0, time.time() - validation_started),
+        ),
+        flush=True,
+    )
   if log_fn:
     log_fn(
         "Archive validation cache summary hits=%d misses=%d"
@@ -498,14 +598,37 @@ def remove_verified_uncompressed_daily_tars(
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
     return
   validation_cache = {"hits": 0, "misses": 0}
+  validation_targets = []
+  tar_by_gz = {}
   for tar_path in sorted(iter_daily_tar_paths(daily_archive_dir)):
     gz_path = "%s.gz" % tar_path
     if not os.path.isfile(tar_path):
       continue
-    ok, members = validate_sealed_daily_archive_for_raw_removal(
-        gz_path, log_fn=log_fn, validation_cache=validation_cache)
+    validation_targets.append(gz_path)
+    tar_by_gz[gz_path] = tar_path
+
+  if validation_targets:
+    workers = _get_archive_validation_worker_count(len(validation_targets))
+    validation_cache["misses"] += len(validation_targets)
+    validation_started = time.time()
+    success_count = 0
+    failed_count = 0
+  else:
+    workers = 1
+    validation_started = time.time()
+    success_count = 0
+    failed_count = 0
+
+  for gz_path, ok, members in _iter_archive_validation_results_stream(
+      validation_targets,
+      log_fn=log_fn,
+      validation_cache=validation_cache if workers <= 1 else None,
+  ):
     if not ok or members is None:
+      failed_count += 1
       continue
+    success_count += 1
+    tar_path = tar_by_gz[gz_path]
     try:
       with file_write_lock(tar_path):
         if os.path.isfile(tar_path):
@@ -518,6 +641,18 @@ def remove_verified_uncompressed_daily_tars(
     except OSError as exc:
       if log_fn:
         log_fn("Could not remove verified tar %s: %s" % (tar_path, exc), flush=True)
+  if log_fn:
+    log_fn(
+        "Archive validation parallel summary archives=%d workers=%d success=%d failed=%d elapsed_s=%.3f"
+        % (
+            len(validation_targets),
+            workers,
+            success_count,
+            failed_count,
+            max(0.0, time.time() - validation_started),
+        ),
+        flush=True,
+    )
   if log_fn:
     log_fn(
         "Archive validation cache summary hits=%d misses=%d"
