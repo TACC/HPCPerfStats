@@ -93,6 +93,9 @@ STRICT_CHECK_BATCH_MIN = 32
 STRICT_CHECK_BATCH_STEP = 32
 STRICT_CHECK_FAST_SUCCESS_S = 0.25
 STRICT_CHECK_COOLDOWN_SECONDS = 30
+RESCAN_INTERVAL_SECONDS = 5.0
+DEFERRED_NOT_READY_RETRY_SECONDS = 10.0
+RESCAN_FETCH_LIMIT = CHUNK_SIZE
 TELEMETRY_SAMPLE_LIMIT = 2048
 
 
@@ -873,6 +876,8 @@ def _fill_ready_queue(
     strict_check_cooldown_until,
     rr_cursor,
     scheduler_shared_lock,
+    on_not_ready_jid=None,
+    on_candidate_jid=None,
 ):
   now = time.monotonic()
 
@@ -945,15 +950,21 @@ def _fill_ready_queue(
     should stop scheduling more readiness work in this invocation.
     """
     for idx, jid in enumerate(pk_chunk):
+      if on_candidate_jid is not None:
+        on_candidate_jid(jid)
       with scheduler_shared_lock:
         stats["candidate_jids"] += 1
       if _proxy_readiness_for_jid(jid) == "reject":
+        if on_not_ready_jid is not None:
+          on_not_ready_jid(jid)
         with scheduler_shared_lock:
           stats["proxy_rejected_jids"] += 1
           stats["skipped_not_ready"] += 1
       else:
         ready_jid = _strict_ready_single_jid(jid)
         if ready_jid is None:
+          if on_not_ready_jid is not None:
+            on_not_ready_jid(jid)
           with scheduler_shared_lock:
             stats["skipped_not_ready"] += 1
         else:
@@ -1003,6 +1014,53 @@ def _fill_ready_queue(
       break
 
 
+def _start_candidate_rescan_thread(
+    *,
+    dates,
+    min_time,
+    rerun,
+    rescan_candidate_jids,
+    rescan_seen_jids,
+    rescan_lock,
+    stop_event,
+):
+  """Start background thread that periodically discovers newly eligible jobs."""
+  if not dates:
+    return None
+
+  def _rescan_loop():
+    close_old_connections()
+    try:
+      while not shutdown_requested[0] and not stop_event.is_set():
+        for d in dates:
+          if shutdown_requested[0] or stop_event.is_set():
+            break
+          try:
+            qs = _jobs_queryset(d, min_time, rerun)
+            candidates = list(qs.values_list("jid", flat=True)[:RESCAN_FETCH_LIMIT])
+          except Exception:
+            continue
+          if not candidates:
+            continue
+          with rescan_lock:
+            for jid in candidates:
+              if jid in rescan_seen_jids:
+                continue
+              rescan_seen_jids.add(jid)
+              rescan_candidate_jids.append(jid)
+        stop_event.wait(RESCAN_INTERVAL_SECONDS)
+    finally:
+      close_old_connections()
+
+  thread = threading.Thread(
+      target=_rescan_loop,
+      name="metrics-candidate-rescan",
+      daemon=True,
+  )
+  thread.start()
+  return thread
+
+
 def _start_readiness_producer(
     *,
     date_states,
@@ -1018,11 +1076,20 @@ def _start_readiness_producer(
     stats,
     completion_reporter,
     scheduler_shared_lock,
+    rescan_candidate_jids,
+    rescan_seen_jids,
+    rescan_lock,
 ):
   """Start background producer that fills ready_queue from readiness checks."""
   def _producer_loop():
     close_old_connections()
     rr_cursor = {"idx": 0}
+    deferred_not_ready = {}
+
+    def _remember_candidate(jid):
+      with rescan_lock:
+        rescan_seen_jids.add(jid)
+
     try:
       while not shutdown_requested[0]:
         with ready_queue_lock:
@@ -1035,10 +1102,65 @@ def _start_readiness_producer(
           prev_errors = stats["readiness_error_chunks"]
           probe_cap = readiness_probe_target["value"]
         local_ready = deque()
+        deferred_hits = []
+        now = time.monotonic()
+        deferred_due = [
+            jid for jid, retry_at in deferred_not_ready.items()
+            if retry_at <= now
+        ]
+        for jid in deferred_due:
+          deferred_not_ready.pop(jid, None)
+        with rescan_lock:
+          rescan_due = list(rescan_candidate_jids)
+          rescan_candidate_jids.clear()
+        extra_candidates = []
+        seen_extra = set()
+        for jid in deferred_due + rescan_due:
+          if jid in seen_extra:
+            continue
+          seen_extra.add(jid)
+          extra_candidates.append(jid)
         probe_target = max(
             READINESS_PROBE_TARGET_MIN,
             min(probe_cap, prefetch_ready_cap - current_depth),
         )
+        if extra_candidates and len(local_ready) < probe_target:
+          extra_state = [{
+              "date": None,
+              "iter": iter([(extra_candidates, len(extra_candidates))]),
+              "done": False,
+              "pending_tail": None,
+          }]
+          _fill_ready_queue(
+              extra_state,
+              local_ready,
+              "strict_date",
+              prefetch_chunks=max(1, probe_target),
+              phase_timer=phase_timer,
+              stats=stats,
+              strict_check_state=strict_check_state,
+              strict_check_cooldown_until=strict_check_cooldown_until,
+              rr_cursor={"idx": 0},
+              scheduler_shared_lock=scheduler_shared_lock,
+              on_not_ready_jid=deferred_hits.append,
+              on_candidate_jid=_remember_candidate,
+          )
+          for jid in deferred_hits:
+            deferred_not_ready[jid] = (
+                time.monotonic() + DEFERRED_NOT_READY_RETRY_SECONDS
+            )
+          if len(local_ready) >= probe_target:
+            with scheduler_shared_lock:
+              readiness_probe_target["value"] = _adjust_readiness_probe_target(
+                  current_target=readiness_probe_target["value"],
+                  had_error=(stats["readiness_error_chunks"] > prev_errors),
+                  elapsed_s=(time.monotonic() - started),
+                  produced_ready=bool(local_ready),
+                  max_target=prefetch_ready_cap,
+              )
+            with ready_queue_lock:
+              ready_queue.extend(local_ready)
+            continue
         _fill_ready_queue(
             date_states,
             local_ready,
@@ -1050,7 +1172,13 @@ def _start_readiness_producer(
             strict_check_cooldown_until=strict_check_cooldown_until,
             rr_cursor=rr_cursor,
             scheduler_shared_lock=scheduler_shared_lock,
+            on_not_ready_jid=deferred_hits.append,
+            on_candidate_jid=_remember_candidate,
         )
+        for jid in deferred_hits:
+          deferred_not_ready[jid] = (
+              time.monotonic() + DEFERRED_NOT_READY_RETRY_SECONDS
+          )
         with scheduler_shared_lock:
           readiness_probe_target["value"] = _adjust_readiness_probe_target(
               current_target=readiness_probe_target["value"],
@@ -1068,7 +1196,9 @@ def _start_readiness_producer(
           with ready_queue_lock:
             ready_queue.extend(local_ready)
           continue
-        if all(s["done"] for s in date_states):
+        with rescan_lock:
+          has_rescan_backlog = bool(rescan_candidate_jids)
+        if all(s["done"] for s in date_states) and (not deferred_not_ready) and (not has_rescan_backlog):
           break
         time.sleep(0.05)
     finally:
@@ -1331,6 +1461,10 @@ def update_metrics_for_dates(dates, rerun=False):
       metrics_manager = metrics.Metrics()
       prewarm_pipeline = _PrewarmPipeline()
       ready_queue = deque()
+      rescan_lock = threading.Lock()
+      rescan_candidate_jids = deque()
+      rescan_seen_jids = set()
+      rescan_stop_event = threading.Event()
       prefetch_ready_cap = max(
           1, min(prefetch_target, prefetch_chunks * CHUNK_SIZE)
       )
@@ -1394,6 +1528,18 @@ def update_metrics_for_dates(dates, rerun=False):
           stats=stats,
           completion_reporter=completion_reporter,
           scheduler_shared_lock=scheduler_shared_lock,
+          rescan_candidate_jids=rescan_candidate_jids,
+          rescan_seen_jids=rescan_seen_jids,
+          rescan_lock=rescan_lock,
+      )
+      rescan_thread = _start_candidate_rescan_thread(
+          dates=dates,
+          min_time=min_time,
+          rerun=rerun,
+          rescan_candidate_jids=rescan_candidate_jids,
+          rescan_seen_jids=rescan_seen_jids,
+          rescan_lock=rescan_lock,
+          stop_event=rescan_stop_event,
       )
       t0 = time.monotonic()
       compute_batches = 0
@@ -1520,8 +1666,11 @@ def update_metrics_for_dates(dates, rerun=False):
           ):
             gc.collect()
       finally:
+        rescan_stop_event.set()
         producer_done.set()
         producer.join(timeout=2.0)
+        if rescan_thread is not None:
+          rescan_thread.join(timeout=2.0)
         with phase_timer.phase("prewarm_s"):
           prewarm_pipeline.finish()
         completion_reporter.stop()

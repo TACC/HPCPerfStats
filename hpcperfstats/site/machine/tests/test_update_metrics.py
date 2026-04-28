@@ -3,6 +3,7 @@
 """
 import contextlib
 import threading
+import time
 from concurrent.futures import Future
 from datetime import datetime
 from types import SimpleNamespace
@@ -1162,6 +1163,150 @@ def test_update_metrics_for_dates_exhausts_when_readiness_filters_all(monkeypatc
   d1 = datetime(2025, 4, 10)
   d2 = datetime(2025, 4, 9)
   update_metrics.update_metrics_for_dates([d1, d2], rerun=False)
+
+
+@pytest.mark.django_db(databases=[])
+def test_update_metrics_for_dates_rescan_picks_up_new_mid_run_jid(monkeypatch):
+  """Background rescan candidates should be merged without interrupting ready work."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 2)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 8)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
+  strict_calls = {"n": 0}
+
+  def _strict(jids):
+    # Keep producer alive briefly so background rescan can inject work.
+    strict_calls["n"] += 1
+    if strict_calls["n"] <= 2:
+      return []
+    return list(jids)
+
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", _strict)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics, "DEFERRED_NOT_READY_RETRY_SECONDS", 0.0)
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  by_day = {
+      10: [([1001], 1)],
+  }
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs(list(by_day[d.day])),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+
+  def _injecting_rescan_thread(**kwargs):
+    lock = kwargs["rescan_lock"]
+    pending = kwargs["rescan_candidate_jids"]
+    seen = kwargs["rescan_seen_jids"]
+    stop_event = kwargs["stop_event"]
+
+    def _worker():
+      time.sleep(0.05)
+      if stop_event.is_set():
+        return
+      with lock:
+        seen.add(2002)
+        pending.append(2002)
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    return thread
+
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", _injecting_rescan_thread)
+
+  seen_batches = []
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      del pool
+      seen_batches.append([j.jid for j in jobs])
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+  d1 = datetime(2025, 4, 10)
+  update_metrics.update_metrics_for_dates([d1], rerun=False)
+  flat = [jid for batch in seen_batches for jid in batch]
+  assert 1001 in flat
+  assert 2002 in flat
+
+
+@pytest.mark.django_db(databases=[])
+def test_update_metrics_for_dates_rechecks_deferred_not_ready_jid_until_ready(monkeypatch):
+  """A jid skipped as not-ready should be retried later and processed once ready."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics, "DEFERRED_NOT_READY_RETRY_SECONDS", 0.0)
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  by_day = {
+      10: [([1001], 1)],
+  }
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs(list(by_day[d.day])),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+
+  readiness_calls = {"count": 0}
+
+  def _strict(jids):
+    readiness_calls["count"] += 1
+    if readiness_calls["count"] == 1:
+      return []
+    return list(jids)
+
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", _strict)
+
+  seen = []
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      del pool
+      seen.extend([j.jid for j in jobs])
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+  d1 = datetime(2025, 4, 10)
+  update_metrics.update_metrics_for_dates([d1], rerun=False)
+  assert seen == [1001]
+  assert readiness_calls["count"] >= 2
 
 
 @pytest.mark.django_db(databases=[])
