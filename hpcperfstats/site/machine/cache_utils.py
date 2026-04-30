@@ -188,17 +188,23 @@ def get_site_content_cache_timeout():
   return None
 
 
-def invalidate_after_job_data_ingest(inserted_count):
-  """Drop site freshness probe and home_options reference keys after new job_data rows."""
-  if inserted_count <= 0:
-    return
+def invalidate_home_options_query_cache():
+  """Drop cached_orm keys and site newest probe used by GET /api/home/ (home_options)."""
   try:
     cache.delete(KEY_SITE_NEWEST_JOB_END)
     cache.delete(KEY_DATES)
+    cache.delete(KEY_METRICS_DISTINCT)
     cache.delete(KEY_QUEUES)
     cache.delete(KEY_STATES)
   except Exception:
     pass
+
+
+def invalidate_after_job_data_ingest(inserted_count):
+  """Drop site freshness probe and home_options reference keys after new job_data rows."""
+  if inserted_count <= 0:
+    return
+  invalidate_home_options_query_cache()
 
 
 def warm_job_cache_entries(job_instances, timeout):

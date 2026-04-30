@@ -61,6 +61,7 @@ from .cache_utils import (
     KEY_HOST_PLOT,
     cached_orm,
     get_site_content_cache_timeout,
+    invalidate_home_options_query_cache,
     make_cache_key,
     register_job_plot_cache_key,
     TIMEOUT_ADMIN_STATS,
@@ -1119,7 +1120,12 @@ def drop_staff_for_session(request):
 
 @api_view(["POST"])
 def invalidate_cache_for_page(request):
-    """Invalidate Redis cache keys associated with the provided page path."""
+    """Invalidate Redis cache keys associated with the provided page path.
+
+    For any ``/machine`` or ``/machine/...`` path, also purges ``GET /api/home/``
+    page-cache entries (same URL-hash scan) and drops ``home_options`` ORM cache
+    keys (dates, metrics list, queues, states, site newest job end).
+    """
     err = _require_staff(request)
     if err is not None:
         return err
@@ -1137,6 +1143,15 @@ def invalidate_cache_for_page(request):
     path_variants = {normalized_path}
     if normalized_path != "/":
         path_variants.add(f"{normalized_path}/")
+
+    # Machine SPA browse pages load calendar/year options from GET /api/home/, which
+    # uses its own @dynamic_cache_page entry plus cached_orm keys (dates, queues, …).
+    # Invalidate those whenever any /machine path is purged so staff "invalidate this
+    # page" refreshes the calendar data contract for the whole SPA shell.
+    if normalized_path == "/machine" or normalized_path.startswith("/machine/"):
+        path_variants.add("/api/home")
+        path_variants.add("/api/home/")
+        invalidate_home_options_query_cache()
 
     host = request.get_host() or "localhost"
     url_hashes = set()

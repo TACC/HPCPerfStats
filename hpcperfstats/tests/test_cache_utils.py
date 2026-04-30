@@ -163,13 +163,22 @@ def test_invalidate_after_job_data_ingest_noop_when_zero():
   mock_cache.delete.assert_not_called()
 
 
+def test_invalidate_home_options_query_cache_deletes_keys():
+  mock_cache = MagicMock()
+  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
+    from hpcperfstats.site.machine import cache_utils
+
+    cache_utils.invalidate_home_options_query_cache()
+  assert mock_cache.delete.call_count == 5
+
+
 def test_invalidate_after_job_data_ingest_deletes_keys():
   mock_cache = MagicMock()
   with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
     from hpcperfstats.site.machine import cache_utils
 
     cache_utils.invalidate_after_job_data_ingest(3)
-  assert mock_cache.delete.call_count == 4
+  assert mock_cache.delete.call_count == 5
 
 
 def test_warm_job_cache_entries_sets_job_keys():

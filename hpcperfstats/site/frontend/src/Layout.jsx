@@ -112,9 +112,13 @@ export default function Layout({ session, onSessionChange, children }) {
 
   async function handleInvalidateCacheForPage() {
     if (isInvalidatingCache) return;
+    const pagePathForCache =
+      typeof window !== "undefined" && window.location.pathname
+        ? window.location.pathname
+        : location.pathname;
     if (
       !window.confirm(
-        `Invalidate cached data for the current page path (${location.pathname})?`,
+        `Invalidate cached data for the current page path (${pagePathForCache})?`,
       )
     ) {
       return;
@@ -122,10 +126,10 @@ export default function Layout({ session, onSessionChange, children }) {
     setIsInvalidatingCache(true);
     setStaffMessage("");
     try {
-      const response = await api.invalidateCacheForPage(location.pathname);
+      const response = await api.invalidateCacheForPage(pagePathForCache);
       const deletedCount = Number(response?.deleted_keys || 0);
       setStaffMessage(
-        `Invalidated ${deletedCount} cache key${deletedCount === 1 ? "" : "s"} for ${location.pathname}.`,
+        `Invalidated ${deletedCount} cache key${deletedCount === 1 ? "" : "s"} for ${pagePathForCache}.`,
       );
     } catch (error) {
       setStaffMessage(error?.message || "Unable to invalidate cache for this page.");

@@ -297,6 +297,59 @@ class TestInvalidateCacheForPage:
     assert b"custom:/machine/jobs:cache_key" in deleted_raw_keys
     assert b"custom:/machine/admin_monitor:cache_key" not in deleted_raw_keys
 
+  def test_invalidate_machine_path_also_clears_home_options_query_cache(self):
+    """Staff purge of any /machine URL must drop /api/home/ ORM cache keys."""
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.post(
+        "/api/cache/invalidate-page/",
+        {"page_path": "/machine/"},
+        content_type="application/json",
+    )
+    request.session = {"username": "alice", "is_staff": True}
+    request.META["HTTP_HOST"] = "testserver"
+
+    mock_client = MagicMock()
+    mock_client.scan_iter.return_value = iter([])
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+        "hpcperfstats.site.machine.api._get_redis_cache_client",
+        return_value=mock_client,
+    ), patch(
+        "hpcperfstats.site.machine.api.invalidate_home_options_query_cache",
+    ) as mock_home:
+      response = api.invalidate_cache_for_page(request)
+
+    assert response.status_code == 200
+    mock_home.assert_called_once()
+
+  def test_invalidate_non_machine_path_does_not_clear_home_options_query_cache(self):
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.post(
+        "/api/cache/invalidate-page/",
+        {"page_path": "/other/page"},
+        content_type="application/json",
+    )
+    request.session = {"username": "alice", "is_staff": True}
+    request.META["HTTP_HOST"] = "testserver"
+
+    mock_client = MagicMock()
+    mock_client.scan_iter.return_value = iter([])
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+        "hpcperfstats.site.machine.api._get_redis_cache_client",
+        return_value=mock_client,
+    ), patch(
+        "hpcperfstats.site.machine.api.invalidate_home_options_query_cache",
+    ) as mock_home:
+      response = api.invalidate_cache_for_page(request)
+
+    assert response.status_code == 200
+    mock_home.assert_not_called()
+
 
 @pytest.mark.django_db(databases=[])
 class TestHomeOptions:
