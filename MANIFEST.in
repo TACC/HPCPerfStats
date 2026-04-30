@@ -1,3 +1,4 @@
 recursive-include hpcperfstats/site/machine/templates *.html
 recursive-include hpcperfstats/site/hpcperfstats_site/templates *html
 recursive-include hpcperfstats/site/hpcperfstats_site/media *png
+recursive-include hpcperfstats/site/hpcperfstats_site/static *

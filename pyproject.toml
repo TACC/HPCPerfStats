@@ -93,6 +93,9 @@ hpcperfstats = [
   "tests/fixtures/axe-core/axe.min.js",
   "tests/fixtures/axe-core/README.md",
 ]
+"hpcperfstats.site.hpcperfstats_site" = [
+  "static/**/*",
+]
 
 [tool.ruff]
 target-version = "py312"
