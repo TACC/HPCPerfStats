@@ -1,49 +1,18 @@
 ---
-description: Bokeh JS/Python version sync, patch-package vendor patch lifecycle, and mandatory re-diff on @bokeh/bokehjs changes
+description: Bokeh JS/Python version sync and bump checklist for @bokeh/bokehjs (no patch-package)
 alwaysApply: false
 globs:
   - "**/hpcperfstats/site/frontend/package.json"
-  - "**/hpcperfstats/site/frontend/patches/**"
   - "**/pyproject.toml"
   - "**/test_bokeh*.py"
   - "**/cursor-rules/bokeh*.mdc"
 ---
 
-# Bokeh version sync and vendor patch (`patch-package`)
+# Bokeh JS/Python version sync
 
-The SPA vendors **`@bokeh/bokehjs`** with a **local `patch-package` patch** (under `hpcperfstats/site/frontend/patches/`) that adds **layered null guards** for deferred embed/layout frames: scales (`compute` / `v_*` / `r_*`, categorical `synthetic` closures, composite scales), axes (renderability, bounds, ticks, `loc`, label drawing), grids, coordinate transforms, tickers, and a few transform/annotation call sites. Treat this as a **vendor workaround** until Bokeh ships an upstream fix; consider filing or linking a Bokeh issue when touching the patch.
+The SPA bundles **stock** **`@bokeh/bokehjs`** from npm (no `patch-package` vendor overrides). Embed timing mitigations live in app code: **`patch-resize-observer-for-bokeh.js`**, **`BokehEmbed`** viewport gating, and post-`Document.idle` settle (see **`bokeh-layout-surface-split.mdc`**).
 
-## Patch inventory (`build/js/lib/models/…`)
-
-Re-diff these paths on every `@bokeh/bokehjs` bump; names are relative to `node_modules/@bokeh/bokehjs/build/js/lib/models/`.
-
-| File | Responsibility |
-|------|----------------|
-| `scales/scale.js` | If `source_range` / `target_range` missing: `compute` / `invert` → `NaN`; `v_compute` → `ScreenArray` of `NaN`; `v_invert` → `Float64Array` of `NaN`; `r_compute` / `r_invert` unchanged guards |
-| `scales/linear_scale.js` | `_linear_compute_state`: missing ranges → `[NaN, NaN]` |
-| `scales/log_scale.js` | `_compute_state`: missing ranges → degenerate tuple |
-| `scales/categorical_scale.js` | `s_compute` / `s_invert`: no `source_range` or no `synthetic` / bad factor → safe closures returning `NaN` |
-| `scales/composite_scale.js` | Missing `source_scale` / `target_scale`: safe getters and `compute` / `v_compute` / `invert` / `v_invert` |
-| `coordinates/coordinate_mapping.js` | `CoordinateTransform.map_to_screen` / `map_from_screen`: try/catch + missing scales → NaN-filled arrays |
-| `axes/axis.js` | `is_renderable`; `computed_bounds` / `rule_coords` / `tick_coords`; `loc` (`cross_range` + `FactorRange.synthetic`); `_draw_axis_label`; `_draw_oriented_labels` (`is_reversed`) |
-| `axes/categorical_axis.js` | `_hit_value`, `_draw_group_separators`, `_get_factor_info`, `tick_coords` when `range` missing |
-| `axes/continuous_axis.js` | `_hit_value` when `range` missing |
-| `axes/log_axis.js` | `_hit_value` when `range` missing |
-| `tickers/categorical_ticker.js` | `get_ticks` / `_collect` when `range` or `synthetic` missing |
-| `grids/grid.js` | `computed_bounds` / `grid_coords` when `range` / `cross_range` missing |
-| `transforms/range_transform.js` | `compute` / `v_compute` when `range` is null |
-| `annotations/box_annotation.js` | `_synthetic_lrtb`: only call `synthetic` when source has a function |
-
-## Vendor patch re-diff law (mandatory)
-
-On **every** change to **`@bokeh/bokehjs`** in `package.json` (any semver, including patch bumps):
-
-1. Run **`npm ci`** (or install) so `postinstall` runs **`patch-package`**.
-2. **Re-locate** the patched symbols in fresh `node_modules/@bokeh/bokehjs` (compiled paths can move between releases).
-3. Either:
-   - **Re-apply** the guard in the new file(s), then run **`npx patch-package @bokeh/bokehjs`**, **remove** the old `patches/@bokeh+bokehjs+*.patch`, and commit the **new** patch file; or
-   - **Delete** the patch file and remove **`postinstall`** / **`patch-package`** only if upstream fixed the bug and the guard is no longer needed.
-4. **Never** ship stale hunks: an outdated patch that fails to apply breaks installs; a silently wrong context match is worse.
+If Bokeh regressions reappear in the browser console after upgrades, prefer fixing **`json_item`** contracts / React embed timing first; reintroducing a **`patch-package`** patch is a last resort (document why and keep **`postinstall`** + `patches/` in sync).
 
 ## Single-version sync (one table)
 
@@ -54,13 +23,12 @@ On **every** change to **`@bokeh/bokehjs`** in `package.json` (any semver, inclu
 | `hpcperfstats/site/machine/job_plot_artifacts.py` | Fingerprint includes `bokeh.__version__` — expect artifact churn / cache behavior on bump |
 | `hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` | `_BOKEH_CDN_JS` jsDelivr pin for `@bokeh/bokehjs@X.Y.Z` |
 | `hpcperfstats/site/frontend/src/test-fixtures/bokeh-*.json` | Regenerate if serialized `json_item` / doc schema changes (per `web-pages-e2e-test-maintenance.mdc`) |
-| `patches/@bokeh+bokehjs+*.patch` | Re-diff on every version change; regenerate with `patch-package`; remove previous patch file |
 | `hpcperfstats/site/frontend/src/bokehInit.js` / `patch-resize-observer-for-bokeh.js` | Re-validate embed + ResizeObserver behavior after Bokeh upgrades |
 
 ## Workflow (bump checklist)
 
 1. Bump **`@bokeh/bokehjs`** and **`bokeh==…`** together per the table above.
-2. `cd hpcperfstats/site/frontend && npm ci` → confirm **`patch-package`** applies (or follow re-diff law).
+2. `cd hpcperfstats/site/frontend && npm ci` (or `npm install`).
 3. `npm run build` → fix bundle/import breaks.
 4. `npm test -- --run` (Vitest), including Bokeh embed tests as needed.
 5. `pytest hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + CDN Bokeh; see below).
@@ -68,7 +36,7 @@ On **every** change to **`@bokeh/bokehjs`** in `package.json` (any semver, inclu
 
 ## Playwright vs production bundle
 
-`test_bokeh_job_list_embed_browser_e2e.py` loads Bokeh from **jsDelivr (unpatched)**. That test guards **`json_item` / range / embed harness** regressions; it does **not** prove the **vendored, patched** `@bokeh/bokehjs` bundle. After vendor patch or Bokeh bumps, validate production-style embeds (e.g. staging) for console cleanliness.
+`test_bokeh_job_list_embed_browser_e2e.py` loads Bokeh from **jsDelivr** at the same **version** as `package.json` for two tests, and a third starts **`vite preview`** against the built tree so **`bokeh-playwright-smoke.html`** exercises the **same Vite chunk graph** as production (requires **`npm run build`** in `hpcperfstats/site/frontend` or the third test skips). After Bokeh bumps, spot-check real pages (job list distributions, job detail plots) for console cleanliness if Vitest/Playwright are green.
 
 ## Overlap
 
@@ -76,4 +44,4 @@ On **every** change to **`@bokeh/bokehjs`** in `package.json` (any semver, inclu
 - **`no-cdn-in-production.mdc`** — CDN only where explicitly test-only; production uses the bundled library.
 - **`web-pages-e2e-test-maintenance.mdc`** — fixtures, `_BOKEH_CDN_JS`, and regeneration steps.
 - **`bokeh-layout-surface-split.mdc`** — embed layout, `BokehEmbed`, ResizeObserver patch.
-- **`testing-doc-sync.mdc`** — keep `TESTING.md` aligned with npm/postinstall and test commands.
+- **`testing-doc-sync.mdc`** — keep `TESTING.md` aligned with npm commands.

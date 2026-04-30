@@ -113,7 +113,7 @@ For Vitest:
 cd hpcperfstats/site/frontend && npm ci
 ```
 
-`npm ci` / `npm install` run **`postinstall` → `patch-package`**, which applies vendor patches from **`hpcperfstats/site/frontend/patches/`** (currently **`@bokeh/bokehjs`** — guards early axis layout when ranges are not ready). On any **`@bokeh/bokehjs`** version change, follow **`cursor-rules/bokeh-version-and-vendor-patch-upgrade.mdc`** (re-diff or drop the patch; never ship stale hunks).
+`npm ci` / `npm install` install dependencies only (no `patch-package`); Bokeh is the stock **`@bokeh/bokehjs`** package. On any **`@bokeh/bokehjs`** version change, follow **`cursor-rules/bokeh-version-and-vendor-patch-upgrade.mdc`** (JS/Python pin sync, Vitest, Playwright Bokeh embed test).
 
 The SPA bundles Bokeh via **`@bokeh/bokehjs`** in `package.json`; keep its version aligned with the **`bokeh==…`** pin in `pyproject.toml` so `json_item` embeds stay compatible.
 
@@ -225,7 +225,7 @@ Use this for web-page E2E modules:
 
 - `hpcperfstats/site/machine/tests/test_web_pages_e2e.py` (includes a module-level `test_job_detail_api_includes_staff_metrics_distinct_time_count_for_staff` that does not use the `django_db` class marker, so it can run without a reachable Postgres host)
 - `hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py` (uses a minimal static `index.html` stub for `/machine/*` that mirrors key SPA affordances—staff menu, plot-unavailable copy, keyboard-friendly plot error disclosure—rather than the full Vite bundle)
-- `hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + Bokeh 3.9 CDN: embeds committed `json_item` fixtures under `hpcperfstats/site/frontend/src/test-fixtures/` and fails if the browser console reports job-list histogram failure substrings). Includes a **two-plot** scenario (scroll + second `embed_item`). Requires **`pip install -e ".[test]"`** (includes **`playwright`**) and **`python -m playwright install chromium`** on the host running pytest. To refresh fixtures after changing `job_hist` / `_job_list_queue_bar_chart`, run Django with `DJANGO_SETTINGS_MODULE` set and dump `json_item(...)` for the target figures into those JSON files (see the module docstring in the test file).
+- `hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + Bokeh 3.9 CDN: embeds committed `json_item` fixtures under `hpcperfstats/site/frontend/src/test-fixtures/` and fails if the browser console reports job-list histogram failure substrings). Includes a **two-plot** scenario (scroll + second `embed_item`). A third test serves the **Vite production build** with **`vite preview`**, loads **`bokeh-playwright-smoke.html`** (bundled `@bokeh/bokehjs` + ResizeObserver patch), and embeds the same fixtures—**skip** if `hpcperfstats/site/hpcperfstats_site/static/frontend/bokeh-playwright-smoke.html` is missing (**run `npm run build`** in `hpcperfstats/site/frontend` first). Requires **`pip install -e ".[test]"`** (includes **`playwright`**) and **`python -m playwright install chromium`** on the host running pytest. To refresh fixtures after changing `job_hist` / `_job_list_queue_bar_chart`, run Django with `DJANGO_SETTINGS_MODULE` set and dump `json_item(...)` for the target figures into those JSON files (see the module docstring in the test file).
 
 The workflow script handles Docker lifecycle and runs both files in one session:
 

@@ -22,11 +22,11 @@ alwaysApply: false
 - **Defaults (Vitest):** viewport deferral is off unless `deferEmbedUntilVisible` is explicitly set (so unit tests do not need IO); settle delay is **0**. See `hpcperfstats/site/frontend/src/utils/bokeh-embed-defaults.js`.
 - **Opt-out:** pass `deferEmbedUntilVisible={false}` only for exceptional cases (e.g. hidden iframe / print).
 - **Popover / dialog plots:** `HistogramThumbnails` gates the full-size embed until the popover plot container has layout (see same component). Do not mount `BokehEmbed` into a zero-size dialog subtree.
-- **Global `ResizeObserver` patch:** `patch-resize-observer-for-bokeh.js` (applied from `main.jsx` / `bokehInit.js` before loading Bokeh) defers **all** browser resize callbacks used by Bokeh 3.9 with **three** `requestAnimationFrame` hops plus `setTimeout(0)`, so `after_resize` does not run while axis `ranges` are still undefined. Production also applies a **`patch-package`** vendor guard on **`AxisView.is_renderable`** (see **`bokeh-version-and-vendor-patch-upgrade.mdc`**) for the remaining undefined-range window.
+- **Global `ResizeObserver` patch:** `patch-resize-observer-for-bokeh.js` (applied from `main.jsx` / `bokehInit.js` before loading Bokeh) defers **all** browser resize callbacks used by Bokeh 3.9 with **three** `requestAnimationFrame` hops plus `setTimeout(0)`, so `after_resize` does not run while axis `ranges` are still undefined.
 
 ## Bokeh version bumps
 
-- Follow **`bokeh-version-and-vendor-patch-upgrade.mdc`**: keep JS (`@bokeh/bokehjs`), Python (`bokeh==…`), Playwright CDN pin, and **`patches/@bokeh+bokehjs+*.patch`** in sync; **re-diff** the vendor patch on every `@bokeh/bokehjs` change.
+- Follow **`bokeh-version-and-vendor-patch-upgrade.mdc`**: keep JS (`@bokeh/bokehjs`), Python (`bokeh==…`), and the Playwright CDN pin in sync; run Vitest + the Playwright Bokeh embed module after bumps.
 
 ## When changing job detail plots
 
@@ -37,4 +37,4 @@ alwaysApply: false
 
 - **`no-scientific-notation-web.mdc`** for axes, hovers, and tables.
 - **`job-plot-artifacts-caching.mdc`** when serialized `json_item` output changes.
-- **`bokeh-version-and-vendor-patch-upgrade.mdc`** when changing Bokeh library versions or the vendor patch.
+- **`bokeh-version-and-vendor-patch-upgrade.mdc`** when changing Bokeh library versions.

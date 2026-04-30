@@ -4,6 +4,11 @@ Loads committed fixtures from ``site/frontend/src/test-fixtures/`` (generated fr
 Django ``json_item`` after range fixes). Uses the public Bokeh 3.9.0 CDN so
 Chromium has a real canvas (jsdom/Vitest cannot run ``embed_item``).
 
+A second test serves the **Vite production build** via ``vite preview`` and embeds
+the same fixtures through ``bokeh-playwright-smoke.html`` (bundled
+``@bokeh/bokehjs`` + ``patch-resize-observer-for-bokeh``), matching production chunk
+graph without jsDelivr.
+
 See also: ``test_job_hist_bokeh_ranges.py`` (Python y-range contracts).
 
 Requires network for the CDN on the first load. If Playwright is missing, the
@@ -13,7 +18,11 @@ module is skipped (same pattern as ``test_web_pages_browser_e2e.py``).
 from __future__ import annotations
 
 import json
+import socket
+import subprocess
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -35,6 +44,30 @@ _FAILURE_SUBSTRINGS = (
 # hpcperfstats/site/machine/tests -> site
 _SITE_DIR = Path(__file__).resolve().parent.parent.parent
 _FIXTURE_DIR = _SITE_DIR / "frontend" / "src" / "test-fixtures"
+_STATIC_FRONTEND_DIR = _SITE_DIR / "hpcperfstats_site" / "static" / "frontend"
+_FRONTEND_DIR = _SITE_DIR / "frontend"
+_VITE_CLI = _FRONTEND_DIR / "node_modules" / "vite" / "bin" / "vite.js"
+
+
+def _pick_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        _host, port = sock.getsockname()
+        return int(port)
+
+
+def _wait_http_ok(url: str, *, timeout_s: float = 45.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    last_err: BaseException | None = None
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as resp:
+                resp.read(16)
+            return
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            last_err = exc
+            time.sleep(0.12)
+    raise TimeoutError(f"URL did not become reachable within {timeout_s}s: {url!r} ({last_err!r})")
 
 
 def _html_page_for_item(payload_json: str) -> str:
@@ -132,6 +165,110 @@ def test_bokeh_embed_job_list_fixtures_no_histogram_failure_console_messages():
                 )
         finally:
             browser.close()
+
+
+@pytest.mark.django_db(databases=[])
+def test_bokeh_embed_job_list_fixtures_vite_built_bundle_no_histogram_failure_console_messages():
+    """Same fixtures as CDN test, but Bokeh loads from the Vite-built smoke entry (no jsDelivr)."""
+    smoke_html = _STATIC_FRONTEND_DIR / "bokeh-playwright-smoke.html"
+    if not smoke_html.is_file():
+        pytest.skip(
+            "Built frontend missing bokeh-playwright-smoke.html; run "
+            "`npm run build` from hpcperfstats/site/frontend (see TESTING.md)."
+        )
+    if not _VITE_CLI.is_file():
+        pytest.skip(
+            "Vite CLI missing under node_modules; run `npm ci` in hpcperfstats/site/frontend."
+        )
+
+    paths = [
+        _FIXTURE_DIR / "bokeh-job-hist-single-value.json",
+        _FIXTURE_DIR / "bokeh-queue-bars-all-zero.json",
+    ]
+    missing = [p for p in paths if not p.is_file()]
+    if missing:
+        pytest.skip(
+            "Missing json fixtures under site/frontend/src/test-fixtures/. Missing: "
+            + ", ".join(str(p) for p in missing)
+        )
+
+    port = _pick_free_port()
+    proc = subprocess.Popen(
+        [
+            "node",
+            str(_VITE_CLI),
+            "preview",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--strictPort",
+        ],
+        cwd=str(_FRONTEND_DIR),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    base = f"http://127.0.0.1:{port}/static/frontend/bokeh-playwright-smoke.html"
+    try:
+        try:
+            _wait_http_ok(base)
+        except TimeoutError:
+            pytest.fail(
+                "vite preview did not start in time for Bokeh bundle smoke test "
+                f"(port {port}). Check that `npm run build` was run in "
+                "hpcperfstats/site/frontend and retry."
+            )
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            violations: list[tuple[str, str]] = []
+
+            def on_console(msg) -> None:
+                text = msg.text
+                for sub in _FAILURE_SUBSTRINGS:
+                    if sub in text:
+                        violations.append((sub, text))
+
+            def on_page_error(exc) -> None:
+                msg = str(exc)
+                for sub in _FAILURE_SUBSTRINGS:
+                    if sub in msg:
+                        violations.append((sub, msg))
+
+            page.on("console", on_console)
+            page.on("pageerror", on_page_error)
+
+            try:
+                for path in paths:
+                    violations.clear()
+                    item = json.loads(path.read_text(encoding="utf-8"))
+                    page.goto(base, wait_until="load", timeout=60_000)
+                    page.wait_for_function(
+                        "() => window.__HPCPERFSTATS_BOKEH_SMOKE_READY__ === true",
+                        timeout=60_000,
+                    )
+                    page.evaluate(
+                        """(plotItem) => {
+                          window.__HPCPERFSTATS_VITE_BOKEH__.embed.embed_item(plotItem, "plot");
+                        }""",
+                        item,
+                    )
+                    time.sleep(0.8)
+                    assert not violations, (
+                        f"Bokeh console/pageerror (Vite bundle) while embedding {path.name}: "
+                        f"{violations!r}"
+                    )
+            finally:
+                browser.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+        try:
+            proc.wait(timeout=12)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
 
 
 @pytest.mark.django_db(databases=[])

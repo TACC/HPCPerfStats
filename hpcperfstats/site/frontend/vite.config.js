@@ -1,5 +1,9 @@
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 /**
  * Rolldown warns on direct `eval`; indirect `(0, eval)(...)` keeps semantics but satisfies the checker.
@@ -57,6 +61,7 @@ export default defineConfig({
         "src/**/setupTests.js",
         "src/axe-test-utils.js",
         "src/main.jsx",
+        "src/playwright-bokeh-bundle-smoke.js",
         "src/utils/generate-variable-metadata-monitor-events.py",
       ],
     },
@@ -73,7 +78,10 @@ export default defineConfig({
     // Bokeh; async chunks are @bokeh/bokehjs (~1.7 MiB) and mathjax-full (~1.8 MiB via Bokeh).
     chunkSizeWarningLimit: 1900,
     rolldownOptions: {
-      input: "index.html",
+      input: {
+        main: resolve(__dirname, "index.html"),
+        bokehPlaywrightSmoke: resolve(__dirname, "bokeh-playwright-smoke.html"),
+      },
       output: {
         codeSplitting: true,
       },

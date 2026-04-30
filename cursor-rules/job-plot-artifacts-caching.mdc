@@ -28,7 +28,7 @@ alwaysApply: true
 ## Fingerprint and schema bumps
 
 - **`compute_plot_input_fingerprint`** hashes job window, host list, `metrics_distinct_time_count`, **live** distinct time count (`LiveDistinctHostTimeCount` on PostgreSQL), `bokeh.__version__`, and **`APP_PLOT_ARTIFACT_SCHEMA_VERSION`**.
-- Full Bokeh bump / vendor-patch steps (JS + Python pins, **`patch-package`**, CDN test pin, fixtures) live in **`bokeh-version-and-vendor-patch-upgrade.mdc`**.
+- Full Bokeh bump steps (JS + Python pins, CDN test pin, fixtures) live in **`bokeh-version-and-vendor-patch-upgrade.mdc`**.
 - When plot **semantics** change without a Bokeh upgrade, bump **`APP_PLOT_ARTIFACT_SCHEMA_VERSION`** in `job_plot_artifacts.py` so old rows are not reused.
 
 ## Gaps and boundaries
@@ -43,5 +43,5 @@ alwaysApply: true
 ## Overlap
 
 - Complements **`runtime-resource-and-metrics-safety.mdc`** (metrics recompute) and **`monitor-analysis-architecture-sync.mdc`** (plot inputs from `host_data` / `jid_table`).
-- Complements **`bokeh-version-and-vendor-patch-upgrade.mdc`** when upgrading Bokeh or changing **`patches/@bokeh+bokehjs+*.patch`**.
+- Complements **`bokeh-version-and-vendor-patch-upgrade.mdc`** when upgrading Bokeh.
 - Complements **`update-metrics-job-listing-new-data-type.mdc`** when plot artifacts imply new or changed **`_jobs_queryset`** candidacy.
