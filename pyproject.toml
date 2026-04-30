@@ -51,7 +51,6 @@ test = [
 ]
 dev = [
   "ruff>=0.8.0",
-  "yapf",  # optional legacy formatter
   "pylint>=3.0",  # optional; Ruff is the primary linter (see TESTING.md)
 ]
 
