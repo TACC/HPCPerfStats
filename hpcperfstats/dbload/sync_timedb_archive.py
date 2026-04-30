@@ -9,7 +9,6 @@ import multiprocessing
 import sys
 import tarfile
 import time
-from functools import partial
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload import sync_timedb
@@ -39,6 +38,16 @@ def _process_tar_member(lock, tar_path, member_name):
       content = list(wrapper)
       wrapper.detach()
   sync_timedb.add_stats_file_to_db(lock, member_name, content)
+
+
+def _process_tar_member_task(task_args):
+  """Ingest one tar member; ``task_args`` is ``(lock, tar_path, member_name)``.
+
+  Must live at module scope: ``multiprocessing`` spawn workers re-import this
+  module and cannot unpickle nested functions defined under ``__main__``.
+  """
+  lock, tar_path, member_name = task_args
+  _process_tar_member(lock, tar_path, member_name)
 
 
 def _iter_tar_tasks_chunked(tar_files, chunk_size=TAR_TASK_CHUNK_SIZE):
@@ -76,18 +85,16 @@ if __name__ == '__main__':
     manager_lock = manager.Lock()
     with multiprocessing.get_context('spawn').Pool(
         processes=thread_count) as pool:
-      worker = partial(_process_tar_member, manager_lock)
-      def _worker_task(task):
-        return worker(*task)
       # Process in chunks so SIGTERM can exit between chunks and memory stays bounded.
       for chunk in _iter_tar_tasks_chunked(tar_files, TAR_TASK_CHUNK_SIZE):
         if shutdown_requested[0]:
           log_print("Exiting due to SIGTERM")
           break
+        chunk_locked = [(manager_lock, p, m) for p, m in chunk]
         _process_tar_chunk_interruptibly(
             pool,
-            _worker_task,
-            chunk,
+            _process_tar_member_task,
+            chunk_locked,
             lambda _result: None,
         )
         if shutdown_requested[0]:

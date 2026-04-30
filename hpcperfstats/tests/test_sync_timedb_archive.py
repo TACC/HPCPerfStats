@@ -1760,3 +1760,10 @@ def test_process_tar_chunk_stops_when_shutdown_requested():
     assert results == ["first"]
   finally:
     shutdown_requested[0] = False
+
+
+def test_process_tar_member_task_spawn_picklable():
+  """Spawn Pool workers must unpickle the worker callable (regression guard)."""
+  from multiprocessing.reduction import ForkingPickler
+
+  ForkingPickler.dumps(sta._process_tar_member_task)
