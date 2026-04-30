@@ -5,6 +5,7 @@ from hpcperfstats.site.machine.query_utils import (
     get_job_list_order_by,
     normalize_date_param,
     normalize_job_list_query_params,
+    partition_job_list_acct_filters,
 )
 
 
@@ -69,6 +70,33 @@ class TestGetJobListOrderBy:
     def test_legacy_has_metrics_not_allowed(self):
         assert get_job_list_order_by({"order_by": "has_metrics"}) is None
         assert get_job_list_order_by({"order_by": "-has_metrics"}) is None
+
+    def test_sample_count_maps_to_metrics_distinct_time_count(self):
+        assert get_job_list_order_by({"order_by": "sample_count"}) == "metrics_distinct_time_count"
+        assert get_job_list_order_by({"order_by": "-sample_count"}) == (
+            "-metrics_distinct_time_count"
+        )
+
+
+class TestPartitionJobListAcctFilters:
+    """partition_job_list_acct_filters drops unknown keys and extracts host."""
+
+    def test_drops_unknown_and_keeps_allowed(self):
+        allowed, host = partition_job_list_acct_filters(
+            {
+                "end_time__date": "2026-04-28",
+                "username": "alice",
+                "bogus_param": "x",
+                "host": "n1.example.com",
+            },
+        )
+        assert host == "n1.example.com"
+        assert allowed == {"end_time__date": "2026-04-28", "username": "alice"}
+
+    def test_host_only(self):
+        allowed, host = partition_job_list_acct_filters({"host": "  h1  "})
+        assert allowed == {}
+        assert host == "h1"
 
 
 class TestExpandMonthDateToRange:

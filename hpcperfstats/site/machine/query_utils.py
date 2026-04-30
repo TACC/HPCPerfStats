@@ -16,6 +16,29 @@ ORDER_BY_ALLOWED = frozenset({
     "nhosts",
     "node_hrs",
     "performance_sort_rank",
+    "metrics_distinct_time_count",
+})
+
+# Direct ``job_data.objects.filter(**kwargs)`` keys from SPA routes and extended search.
+# ``host`` is handled separately as ``host_list__contains`` (see ``partition_job_list_acct_filters``).
+_JOB_LIST_ACCT_FILTER_KEYS = frozenset({
+    "jid",
+    "username",
+    "account",
+    "account__icontains",
+    "state",
+    "queue",
+    "end_time__date",
+    "end_time__date__gte",
+    "end_time__date__lte",
+    "end_time__gte",
+    "end_time__lte",
+    "runtime__gte",
+    "runtime__lte",
+    "nhosts__gte",
+    "nhosts__lte",
+    "node_hrs__gte",
+    "node_hrs__lte",
 })
 
 
@@ -29,9 +52,26 @@ def get_job_list_order_by(fields):
         return None
     desc = raw.startswith("-")
     field = raw.lstrip("-")
+    if field == "sample_count":
+        field = "metrics_distinct_time_count"
     if field not in ORDER_BY_ALLOWED:
         return None
     return f"-{field}" if desc else field
+
+
+def partition_job_list_acct_filters(acct_data):
+    """Return (allowed_kwarg_dict, host_value) for job list ORM filters.
+
+    Drops unknown keys so stray query parameters cannot raise FieldError during
+    ``filter(**kwargs)``. Pulls ``host`` out for ``host_list__contains`` (SPA
+    ``/machine/host/:host/``), since ``job_data`` has no ``host`` column.
+    """
+    data = dict(acct_data)
+    raw_host = data.pop("host", None)
+    host_val = str(raw_host).strip() if raw_host else ""
+    host_val = host_val or None
+    allowed = {k: v for k, v in data.items() if k in _JOB_LIST_ACCT_FILTER_KEYS}
+    return allowed, host_val
 
 # Shorthand date patterns (e.g. "2026-1" or "2026-1-5") that Django DateField rejects; normalize to YYYY-MM-DD.
 _DATE_SHORTHAND = re.compile(r"^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?(?:T.*)?$")

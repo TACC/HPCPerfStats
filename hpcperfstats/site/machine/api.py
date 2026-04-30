@@ -24,6 +24,8 @@ from django.utils.encoding import iri_to_uri
 import os
 from types import SimpleNamespace
 
+logger = logging.getLogger(__name__)
+
 
 class _JSONResponse(Response):
     """Response subclass with a json() helper for unit tests.
@@ -87,6 +89,7 @@ from .query_utils import (
     expand_month_date_to_range,
     get_job_list_order_by,
     normalize_job_list_query_params,
+    partition_job_list_acct_filters,
 )
 from .job_list_performance import annotate_job_list_performance_fields
 from .serializers import JobListSerializer
@@ -513,24 +516,33 @@ def _build_job_list_queryset_from_request(request, extra_excluded_fields=(), ann
         if k.split("_", 1)[0] != "metrics" and k not in excluded_fields
     }
     order_by = get_job_list_order_by(fields) or "-end_time"
-    queryset = job_data.objects.filter(**acct_data)
+    acct_kwargs, host_val = partition_job_list_acct_filters(acct_data)
+    queryset = job_data.objects.filter(**acct_kwargs)
+    if host_val:
+        queryset = queryset.filter(host_list__contains=[host_val])
     queryset = _apply_non_staff_job_visibility(queryset, request)
     if annotate_all or order_by.lstrip("-") == "performance_sort_rank":
         queryset = annotate_job_list_performance_fields(queryset)
-    queryset = queryset.order_by(order_by)
     cur_metrics = {
         k.split("_", 1)[1]: v
         for k, v in fields.items()
         if k.split("_", 1)[0] == "metrics"
     }
     for key, val in cur_metrics.items():
-        name, op = key.split("__")
+        if "__" not in key:
+            logger.warning("Ignoring malformed metrics filter key %r", key)
+            continue
+        name, op = key.split("__", 1)
+        if not name or not op:
+            logger.warning("Ignoring malformed metrics filter key %r", key)
+            continue
         queryset = queryset.filter(
             **{
                 "metrics_data__metric": name,
                 "metrics_data__value__" + op: val,
             }
         )
+    queryset = queryset.order_by(order_by)
     return queryset, fields, cur_metrics, order_by
 
 
@@ -1584,6 +1596,7 @@ def job_list(request):
         nj = job_list_qs.count()
     except Exception:
         # Database unavailable or other error: behave as if no jobs matched.
+        logger.exception("job_list: count() failed")
         return Response(
             {"error": "No data found for this search request"},
             status=status.HTTP_404_NOT_FOUND,
