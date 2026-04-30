@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:with-bokeh-playwright-smoke": "BUILD_BOKEH_SMOKE=1 vite build",
     "preview": "vite preview",
     "test": "vitest",
     "test:watch": "vitest --watch",

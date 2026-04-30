@@ -5,6 +5,16 @@ import react from "@vitejs/plugin-react";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
+/** When set to `"1"`, also emit `bokeh-playwright-smoke.html` for Playwright (see package.json script). */
+const buildBokehPlaywrightSmoke = process.env.BUILD_BOKEH_SMOKE === "1";
+
+const rolldownBuildInput = buildBokehPlaywrightSmoke
+  ? {
+      main: resolve(__dirname, "index.html"),
+      bokehPlaywrightSmoke: resolve(__dirname, "bokeh-playwright-smoke.html"),
+    }
+  : resolve(__dirname, "index.html");
+
 /**
  * Rolldown warns on direct `eval`; indirect `(0, eval)(...)` keeps semantics but satisfies the checker.
  * - Bokeh CustomJS: dynamic `import()` workaround (microsoft/TypeScript#43329).
@@ -78,10 +88,7 @@ export default defineConfig({
     // Bokeh; async chunks are @bokeh/bokehjs (~1.7 MiB) and mathjax-full (~1.8 MiB via Bokeh).
     chunkSizeWarningLimit: 1900,
     rolldownOptions: {
-      input: {
-        main: resolve(__dirname, "index.html"),
-        bokehPlaywrightSmoke: resolve(__dirname, "bokeh-playwright-smoke.html"),
-      },
+      input: rolldownBuildInput,
       output: {
         codeSplitting: true,
       },

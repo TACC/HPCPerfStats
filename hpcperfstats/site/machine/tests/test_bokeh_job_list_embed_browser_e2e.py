@@ -173,8 +173,10 @@ def test_bokeh_embed_job_list_fixtures_vite_built_bundle_no_histogram_failure_co
     smoke_html = _STATIC_FRONTEND_DIR / "bokeh-playwright-smoke.html"
     if not smoke_html.is_file():
         pytest.skip(
-            "Built frontend missing bokeh-playwright-smoke.html; run "
-            "`npm run build` from hpcperfstats/site/frontend (see TESTING.md)."
+            "Built frontend missing bokeh-playwright-smoke.html; from "
+            "hpcperfstats/site/frontend run `npm run build:with-bokeh-playwright-smoke` "
+            "(or `BUILD_BOKEH_SMOKE=1 npm run build`). Default `npm run build` is SPA-only "
+            "(see TESTING.md)."
         )
     if not _VITE_CLI.is_file():
         pytest.skip(
@@ -215,8 +217,9 @@ def test_bokeh_embed_job_list_fixtures_vite_built_bundle_no_histogram_failure_co
         except TimeoutError:
             pytest.fail(
                 "vite preview did not start in time for Bokeh bundle smoke test "
-                f"(port {port}). Check that `npm run build` was run in "
-                "hpcperfstats/site/frontend and retry."
+                f"(port {port}). From hpcperfstats/site/frontend run "
+                "`npm run build:with-bokeh-playwright-smoke` (or `BUILD_BOKEH_SMOKE=1 npm run build`) "
+                "and retry."
             )
 
         with sync_playwright() as playwright:
