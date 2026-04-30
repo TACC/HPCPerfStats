@@ -9,10 +9,10 @@ From the project root (directory containing `pyproject.toml`):
 pip install -e ".[test]"
 
 # Unit tests only (no Django DB tests)
-python run_tests.py --no-django
+python scripts/run_tests.py --no-django
 
 # Full pytest collection (unit + Django tests)
-python run_tests.py
+python scripts/run_tests.py
 ```
 
 You can also run `pytest` directly:
@@ -31,7 +31,7 @@ PYTHONPATH=. pytest -q hpcperfstats/site/machine/tests
 
 ### Opt-in stress tests (massive `host_data`)
 
-The directory **`tests/stress_host_data/`** is **outside** the default `pytest` `testpaths` (`hpcperfstats` only), so `python run_tests.py` and `pytest hpcperfstats` never collect it.
+The directory **`tests/stress_host_data/`** is **outside** the default `pytest` `testpaths` (`hpcperfstats` only), so `python scripts/run_tests.py` and `pytest hpcperfstats` never collect it.
 
 **Default way to run (Docker Compose `db` + `redis`, migrate, pytest inside `web`):**
 
@@ -160,10 +160,10 @@ Coverage settings live in `pyproject.toml` (`[tool.coverage.*]`). Typical comman
 
 ```bash
 # Python package (from repo root with test extras installed)
-python run_tests.py --no-django --cov=hpcperfstats --cov-report=term-missing --cov-report=html
+python scripts/run_tests.py --no-django --cov=hpcperfstats --cov-report=term-missing --cov-report=html
 
 # Full tree including Django tests (needs Postgres/Redis per your settings, often via Docker)
-python run_tests.py --cov=hpcperfstats --cov-report=term-missing --cov-report=html
+python scripts/run_tests.py --cov=hpcperfstats --cov-report=term-missing --cov-report=html
 ```
 
 HTML output is written to `htmlcov/` (gitignored by convention).
@@ -211,13 +211,13 @@ Then follow `HPCPerfStats/cursor-rules/variable-metadata-*.mdc` for merging into
 
 ## Test runners
 
-### `run_tests.py` (default local runner)
+### `scripts/run_tests.py` (default local runner)
 
-`run_tests.py` wraps `pytest` and is the easiest default runner:
+`scripts/run_tests.py` wraps `pytest` and is the easiest default runner:
 
-- `python run_tests.py --no-django` ignores `hpcperfstats/site/machine/tests`
-- `python run_tests.py` runs `pytest -v hpcperfstats` by default
-- extra pytest args are forwarded (for example `python run_tests.py -k metrics`)
+- `python scripts/run_tests.py --no-django` ignores `hpcperfstats/site/machine/tests`
+- `python scripts/run_tests.py` runs `pytest -v hpcperfstats` by default
+- extra pytest args are forwarded (for example `python scripts/run_tests.py -k metrics`)
 
 ### `tests/run_web_e2e_workflow.sh` (compose E2E runner)
 
@@ -297,7 +297,7 @@ Runs `hpcperfstats/site/machine/tests/test_redis_cache_live.py` inside the `web`
 tests/run_redis_cache_pytest_workflow.sh
 ```
 
-Without that env var, the live Redis tests are **skipped** so normal `python run_tests.py` on a laptop does not require Redis.
+Without that env var, the live Redis tests are **skipped** so normal `python scripts/run_tests.py` on a laptop does not require Redis.
 
 Options: `--keep-env`, `--skip-build`. Forward pytest args the same way as the DB workflow (`-- -vv`).
 
@@ -355,7 +355,7 @@ Unit tests: `PYTHONPATH=. pytest -q hpcperfstats/tests/test_numa_topology.py hpc
 ## Requirements
 
 - **General**: Python 3.12+, `pip install -e ".[test]"`.
-- **Django tests**: For a full run matching production hostnames (`db`, `redis`), use `tests/run_db_pytest_workflow.sh`. Host-side `python run_tests.py` needs a reachable Postgres matching `HPCPERFSTATS_INI` `[PORTAL]` (and typically `host=localhost` with a published port, not `host=db`).
+- **Django tests**: For a full run matching production hostnames (`db`, `redis`), use `tests/run_db_pytest_workflow.sh`. Host-side `python scripts/run_tests.py` needs a reachable Postgres matching `HPCPERFSTATS_INI` `[PORTAL]` (and typically `host=localhost` with a published port, not `host=db`).
 - **Live Redis cache tests**: Optional; use `tests/run_redis_cache_pytest_workflow.sh` (sets `HPCPERFSTATS_PYTEST_LIVE_REDIS=1`).
 - **Browser E2E tests**: Playwright/Chromium tooling (installed by the DB workflow or E2E workflow script unless skipped).
 

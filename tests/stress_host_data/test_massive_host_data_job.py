@@ -1,7 +1,7 @@
 """Massive ``host_data`` stress: seed + real ``update_metrics(..., rerun=True)`` + JSON report.
 
 **Not run by default.** This directory is outside ``pyproject.toml`` ``testpaths``
-(``hpcperfstats`` only). CI and ``python run_tests.py`` never collect these tests.
+(``hpcperfstats`` only). CI and ``python scripts/run_tests.py`` never collect these tests.
 
 **Default: Docker Compose workflow** (PostgreSQL + Redis, migrate, env in-container):
 
