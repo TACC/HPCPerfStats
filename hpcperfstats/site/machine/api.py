@@ -1773,8 +1773,13 @@ def job_list(request):
     elif fields.get("queue"):
         qname = f"Jobs in queue {fields['queue']}"
 
+    serialized_jobs = JobListSerializer(page.object_list, many=True).data
+    if not request.session.get("is_staff", False):
+        for row in serialized_jobs:
+            row.pop("sample_count", None)
+
     return Response({
-        "job_list": JobListSerializer(page.object_list, many=True).data,
+        "job_list": serialized_jobs,
         "nj": nj,
         "aggregates": {
             "total_node_hours": round(total_node_hours, 4),

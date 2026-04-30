@@ -106,6 +106,91 @@ describe("JobList", () => {
     expect(screen.getByText("Summary available")).toBeInTheDocument();
   });
 
+  it("shows Sample Count as the second column for staff users", async () => {
+    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+      job_list: [
+        {
+          jid: 1,
+          sample_count: 1234,
+          performance: {
+            label: "Summary available",
+            tone: "success",
+            aria_label: "Performance: Summary available",
+            sort_rank: 0,
+          },
+          username: "alice",
+          account: "acct",
+          start_time: "2024-01-01T00:00:00Z",
+          end_time: "2024-01-01T01:00:00Z",
+          runtime: 3600,
+          queue: "normal",
+          jobname: "job1",
+          state: "COMPLETED",
+          ncores: 32,
+          nhosts: 2,
+          node_hrs: 64,
+        },
+      ],
+      nj: 1,
+      aggregates: { total_node_hours: 64 },
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    });
+    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({ plots: [] });
+    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+
+    renderJobList(["/jobs"], { is_staff: true });
+
+    await waitFor(() => {
+      expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+    });
+    const tableHeaders = within(screen.getByRole("table")).getAllByRole("columnheader");
+    expect(tableHeaders[1].textContent.trim()).toBe("Sample Count");
+    expect(screen.getByText("1,234.00")).toBeInTheDocument();
+  });
+
+  it("hides Sample Count column for non-staff users", async () => {
+    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+      job_list: [
+        {
+          jid: 1,
+          performance: {
+            label: "Summary available",
+            tone: "success",
+            aria_label: "Performance: Summary available",
+            sort_rank: 0,
+          },
+          username: "alice",
+          account: "acct",
+          start_time: "2024-01-01T00:00:00Z",
+          end_time: "2024-01-01T01:00:00Z",
+          runtime: 3600,
+          queue: "normal",
+          jobname: "job1",
+          state: "COMPLETED",
+          ncores: 32,
+          nhosts: 2,
+          node_hrs: 64,
+        },
+      ],
+      nj: 1,
+      aggregates: { total_node_hours: 64 },
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    });
+    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({ plots: [] });
+    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+
+    renderJobList(["/jobs"], { is_staff: false });
+
+    await waitFor(() => {
+      expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("columnheader", { name: "Sample Count" })).not.toBeInTheDocument();
+  });
+
   it("on narrow viewports uses Jobs and Charts tabs and jump link opens Charts", async () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,

@@ -10,6 +10,7 @@ class JobListSerializer(serializers.ModelSerializer):
 
     performance = serializers.SerializerMethodField()
     color = serializers.SerializerMethodField()
+    sample_count = serializers.SerializerMethodField()
 
     class Meta:
         model = job_data
@@ -25,6 +26,7 @@ class JobListSerializer(serializers.ModelSerializer):
             "ncores",
             "username",
             "account",
+            "sample_count",
             "queue",
             "state",
             "QOS",
@@ -52,6 +54,10 @@ class JobListSerializer(serializers.ModelSerializer):
     def get_color(self, obj):
         """Return hex color for the job's state (completed/failed/other)."""
         return obj.color()
+
+    def get_sample_count(self, obj):
+        """Expose metrics sample count used by staff job-list troubleshooting."""
+        return obj.metrics_distinct_time_count
 
 
 class MetricsDataSerializer(serializers.ModelSerializer):

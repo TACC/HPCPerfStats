@@ -9,6 +9,7 @@ import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { buildJobListApiParams } from "../utils/build-job-list-api-params";
 import { normalizeJobListHistogramEntry } from "../utils/normalize-job-list-histogram-entry";
+import { useSession } from "../session-context";
 import { tableSortAriaSort } from "../utils/table-sort-a11y";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import {
@@ -26,6 +27,8 @@ function performanceToneToBadgeClass(tone) {
 }
 
 export default function JobList() {
+  const session = useSession();
+  const isStaff = !!session?.is_staff;
   const [searchParams] = useSearchParams();
   const paramsFromRoute = useParams();
   const location = useLocation();
@@ -262,6 +265,7 @@ export default function JobList() {
 
   const columns = [
     { label: "Job ID", field: "jid", sortable: true },
+    ...(isStaff ? [{ label: "Sample Count", field: "sample_count", sortable: true }] : []),
     { label: "Performance Data", field: "performance_sort_rank", sortable: true },
     { label: "user", field: "username", sortable: true },
     { label: "Account", field: "account", sortable: true },
@@ -499,6 +503,9 @@ export default function JobList() {
               <td>
                 <Link to={`/job/${job.jid}/`}>{job.jid}</Link>
               </td>
+              {isStaff ? (
+                <td>{formatDecimalStandard(job.sample_count)}</td>
+              ) : null}
               <td>
                 {job.performance ? (
                   <span

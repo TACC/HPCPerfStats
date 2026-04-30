@@ -59,6 +59,15 @@ def test_browser_flow_for_web_pages():
   </div>
   <div id="staff-message"></div>
   <div id="plot-unavailable">Plot not available</div>
+  <table aria-label="Job list preview">
+    <thead>
+      <tr>
+        <th scope="col">Job ID</th>
+        <th scope="col" id="sample-count-col" hidden>Sample Count</th>
+        <th scope="col">Performance Data</th>
+      </tr>
+    </thead>
+  </table>
   <button type="button" id="show-plot-error-details" hidden>Show plot error details</button>
   <button id="copy-error-detail-btn" type="button" hidden>Copy error detail</button>
   <script>
@@ -82,12 +91,14 @@ def test_browser_flow_for_web_pages():
       const staffToggle = document.getElementById("staff-actions-toggle");
       const staffMenu = document.getElementById("staff-actions-menu");
       const staffMessage = document.getElementById("staff-message");
+      const sampleCountCol = document.getElementById("sample-count-col");
       const showPlotErrorDetailsBtn = document.getElementById("show-plot-error-details");
       const copyErrorDetailBtn = document.getElementById("copy-error-detail-btn");
 
       function setStaffUi(flag) {
         const shouldShow = !!flag;
         staffRoot.hidden = !shouldShow;
+        sampleCountCol.hidden = !shouldShow;
         showPlotErrorDetailsBtn.hidden = !shouldShow;
         copyErrorDetailBtn.hidden = !shouldShow;
         staffMenu.hidden = true;
@@ -165,6 +176,7 @@ def test_browser_flow_for_web_pages():
           assert page.get_by_text("Plot not available").is_visible()
           assert page.get_by_role("button", name="Show plot error details").is_visible()
           assert page.get_by_role("button", name="Copy error detail").is_visible()
+          assert page.get_by_role("columnheader", name="Sample Count").is_visible()
 
           assert_no_serious_axe_violations(page)
 
@@ -174,6 +186,7 @@ def test_browser_flow_for_web_pages():
           assert page.get_by_text("Plot not available").is_visible()
           assert page.get_by_role("button", name="Show plot error details").is_hidden()
           assert page.get_by_role("button", name="Copy error detail").is_hidden()
+          assert page.get_by_role("columnheader", name="Sample Count").is_hidden()
 
           # Demoting staff hides controls and shows the informational message.
           page.goto(f"{base_url}/machine/?staff=1")

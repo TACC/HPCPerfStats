@@ -7,8 +7,10 @@ Bokeh job-list embed regressions (real BokehJS + Playwright) live in
 import pytest
 from django.test import Client
 from django.test import override_settings
+from django.utils import timezone
 from unittest.mock import Mock, patch
 
+from hpcperfstats.site.machine.models import job_data
 
 @pytest.mark.django_db
 class TestWebPagesEndToEnd:
@@ -246,3 +248,40 @@ def test_job_detail_api_includes_staff_metrics_distinct_time_count_for_staff():
 
   assert response.status_code == 200
   assert response.data["staff_metrics_distinct_time_count"] == 42_000
+
+
+@pytest.mark.django_db
+def test_job_list_api_exposes_sample_count_only_for_staff():
+  """Staff sessions receive sample_count in job list rows; non-staff do not."""
+  client = Client()
+  now = timezone.now()
+  job = job_data.objects.create(
+      jid="e2e-job-list-sample-count",
+      submit_time=now,
+      start_time=now,
+      end_time=now,
+      runtime=60.0,
+      username="webtest-user",
+      host_list=["n1.example.com"],
+      metrics_distinct_time_count=321,
+  )
+
+  with patch(
+      "hpcperfstats.site.machine.api._build_job_list_queryset_from_request",
+      return_value=(job_data.objects.filter(pk=job.pk), {}, None, "-end_time"),
+  ):
+    session = client.session
+    session["access_token"] = "token"
+    session["username"] = "webtest-user"
+    session["is_staff"] = True
+    session.save()
+    staff_response = client.get("/api/job-list/")
+    assert staff_response.status_code == 200
+    assert staff_response.json()["job_list"][0]["sample_count"] == 321
+
+    session = client.session
+    session["is_staff"] = False
+    session.save()
+    non_staff_response = client.get("/api/job-list/")
+    assert non_staff_response.status_code == 200
+    assert "sample_count" not in non_staff_response.json()["job_list"][0]
