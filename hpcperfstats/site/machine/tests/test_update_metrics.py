@@ -722,6 +722,36 @@ def test_compute_jid_outcomes_batch_single_thread_no_metrics_lock(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
+def test_compute_jid_outcomes_batch_doubles_configured_thread_count(monkeypatch):
+  """Configured compute threads are doubled (capped by number of jobs)."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_compute_threads", lambda: 2)
+  barrier = threading.Barrier(3)
+  threads_seen = []
+
+  def shim(metrics_manager, prewarm_pipeline, job_ref, shared_pool, metrics_run_lock=None):
+    del metrics_manager, prewarm_pipeline, shared_pool, metrics_run_lock
+    threads_seen.append(threading.current_thread().ident)
+    barrier.wait(timeout=10)
+    return {
+        "ok": True,
+        "jid": job_ref.jid,
+        "metrics_s": 0.01,
+        "prewarm_s": 0.01,
+        "telemetry": {},
+    }
+
+  monkeypatch.setattr(update_metrics, "_compute_and_prewarm_jid", shim)
+  out = update_metrics._compute_jid_outcomes_batch(
+      [SimpleNamespace(jid="j1"), SimpleNamespace(jid="j2"), SimpleNamespace(jid="j3")],
+      MagicMock(),
+      MagicMock(),
+      None,
+  )
+  assert len(set(threads_seen)) == 3
+  assert [d["jid"] for d in out] == ["j1", "j2", "j3"]
+
+
+@pytest.mark.machine_unit_mock
 def test_proxy_readiness_has_any_and_post_end_semantics():
   """Matches legacy Exists: any row, and strictly-after-end sample."""
   t0 = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)

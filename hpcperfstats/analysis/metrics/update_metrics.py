@@ -1374,9 +1374,10 @@ def _compute_jid_outcomes_batch(
   """
   if not job_refs:
     return []
+  configured_threads = max(1, int(cfg.get_metrics_scheduler_compute_threads()))
   max_workers = max(
       1,
-      min(int(cfg.get_metrics_scheduler_compute_threads()), len(job_refs)),
+      min(configured_threads * 2, len(job_refs)),
   )
   metrics_run_lock = threading.Lock() if max_workers > 1 else None
 
