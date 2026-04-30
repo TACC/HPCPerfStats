@@ -8,6 +8,23 @@ from django.test import RequestFactory
 pytestmark = pytest.mark.django_db(databases=[])
 
 
+@pytest.fixture(autouse=True)
+def _patch_plot_fingerprint_dependencies(monkeypatch):
+  """Avoid DB access for fingerprint/L2 probes in databases=[] tests."""
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.api.get_live_distinct_time_count_for_jid",
+      lambda _jid: 0,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.api.compute_plot_input_fingerprint",
+      lambda _job, _live_distinct: "testfp",
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.api.load_cached_job_plot_entry",
+      lambda _jid, _plot_kind, _layout_key, _fingerprint: None,
+  )
+
+
 def _patch_allow_job_visibility():
   """job_plots calls _apply_non_staff_job_visibility(...).exists() before other mocks apply."""
   m = MagicMock()
@@ -68,7 +85,7 @@ def test_evict_stale_inflight_plot_tasks_removes_hung_entries():
       "future": stale_future,
       "created_at": 10.0,
   }
-  api._job_plot_inflight[("j2", "heatmap", "normal")] = {
+  api._job_plot_inflight[("j2", "gpu_roofline", "normal")] = {
       "future": done_future,
       "created_at": 20.0,
   }
@@ -81,7 +98,7 @@ def test_evict_stale_inflight_plot_tasks_removes_hung_entries():
     api._evict_stale_inflight_plot_tasks()
 
   assert ("j1", "summary_plot", "normal") not in api._job_plot_inflight
-  assert ("j2", "heatmap", "normal") not in api._job_plot_inflight
+  assert ("j2", "gpu_roofline", "normal") not in api._job_plot_inflight
   assert ("j3", "roofline", "normal") in api._job_plot_inflight
 
 
@@ -95,10 +112,9 @@ def test_job_plots_returns_full_payload_after_loading_state():
 
   fake_job = SimpleNamespace(jid=2945017)
   summary_future = Future()
-  heatmap_future = Future()
   roofline_future = Future()
   gpu_roofline_future = Future()
-  submitted_futures = [summary_future, heatmap_future, roofline_future, gpu_roofline_future]
+  submitted_futures = [summary_future, roofline_future, gpu_roofline_future]
 
   class _FakeExecutor:
     def submit(self, fn):
@@ -125,7 +141,6 @@ def test_job_plots_returns_full_payload_after_loading_state():
     assert first_response.data["status"] == "loading"
 
     summary_future.set_result(({"kind": "summary"}, None))
-    heatmap_future.set_result(({"kind": "heatmap"}, None))
     roofline_future.set_result(({"kind": "roofline"}, None))
     gpu_roofline_future.set_result(({"kind": "gpu_roofline"}, None))
 
@@ -134,11 +149,9 @@ def test_job_plots_returns_full_payload_after_loading_state():
   assert second_response.status_code == 200
   payload = second_response.data
   assert payload["mplot_item"] == {"kind": "summary"}
-  assert payload["hplot_item"] == {"kind": "heatmap"}
   assert payload["rplot_item"] == {"kind": "roofline"}
   assert payload["grplot_item"] == {"kind": "gpu_roofline"}
   assert payload["mplot_unavailable_reason"] is None
-  assert payload["hplot_unavailable_reason"] is None
   assert payload["rplot_unavailable_reason"] is None
   assert payload["grplot_unavailable_reason"] is None
 
@@ -189,63 +202,6 @@ def test_job_plots_supports_per_plot_loading_and_ready_states():
   assert ready_response.data["unavailable_reason"] is None
 
 
-def test_job_plots_refreshes_stale_cached_generic_heatmap_reason():
-  from hpcperfstats.site.machine import api
-
-  api._job_plot_inflight.clear()
-  factory = RequestFactory()
-  request = factory.get("/api/jobs/2945017/plots/")
-  request.session = {"username": "alice", "is_staff": True}
-
-  fake_job = SimpleNamespace(jid=2945017)
-  heatmap_future = Future()
-
-  class _FakeExecutor:
-    def submit(self, fn):
-      return heatmap_future
-
-  def _cache_get(cache_key):
-    if "heatmap" in cache_key:
-      return {
-          "plot_item": None,
-          "unavailable_reason": "No host-level MSR data available",
-      }
-    if "summary_plot" in cache_key:
-      return {"plot_item": {"kind": "summary"}, "unavailable_reason": None}
-    if "gpu_roofline" in cache_key:
-      return {"plot_item": {"kind": "gpu_roofline"}, "unavailable_reason": None}
-    if "roofline" in cache_key:
-      return {"plot_item": {"kind": "roofline"}, "unavailable_reason": None}
-    return None
-
-  with _patch_allow_job_visibility(), patch(
-      "hpcperfstats.site.machine.api._require_auth", return_value=None
-  ), patch(
-      "hpcperfstats.site.machine.api.cached_orm", return_value=fake_job
-  ), patch("hpcperfstats.site.machine.api.cache") as mock_cache, patch(
-      "hpcperfstats.site.machine.api.jid_table.jid_table",
-      return_value=SimpleNamespace(),
-  ), patch(
-      "hpcperfstats.site.machine.api._get_small_executor",
-      return_value=_FakeExecutor(),
-  ), patch(
-      "hpcperfstats.site.machine.api.logging.getLogger",
-      return_value=MagicMock(),
-  ):
-    mock_cache.get.side_effect = _cache_get
-
-    first_response = api.job_plots(request, 2945017)
-    assert first_response.status_code == 202
-    assert first_response.data["loading_plots"] == ["heatmap"]
-
-    heatmap_future.set_result((None, "Missing CPI counters in host_data"))
-    second_response = api.job_plots(request, 2945017)
-
-  assert second_response.status_code == 200
-  assert second_response.data["hplot_item"] is None
-  assert second_response.data["hplot_unavailable_reason"] == "Missing CPI counters in host_data"
-
-
 def test_job_plots_refreshes_stale_cached_generic_roofline_reason():
   from hpcperfstats.site.machine import api
 
@@ -264,8 +220,6 @@ def test_job_plots_refreshes_stale_cached_generic_roofline_reason():
   def _cache_get(cache_key):
     if "summary_plot" in cache_key:
       return {"plot_item": {"kind": "summary"}, "unavailable_reason": None}
-    if "heatmap" in cache_key:
-      return {"plot_item": {"kind": "heatmap"}, "unavailable_reason": None}
     if "gpu_roofline" in cache_key:
       return {"plot_item": {"kind": "gpu_roofline"}, "unavailable_reason": None}
     if "roofline" in cache_key:
@@ -324,8 +278,6 @@ def test_job_plots_refreshes_stale_cached_generic_summary_reason():
           "plot_item": None,
           "unavailable_reason": "No metric data available for this job.",
       }
-    if "heatmap" in cache_key:
-      return {"plot_item": {"kind": "heatmap"}, "unavailable_reason": None}
     if "gpu_roofline" in cache_key:
       return {"plot_item": {"kind": "gpu_roofline"}, "unavailable_reason": None}
     if "roofline" in cache_key:
@@ -378,8 +330,6 @@ def test_job_plots_refreshes_stale_cached_generic_gpu_roofline_reason():
   def _cache_get(cache_key):
     if "summary_plot" in cache_key:
       return {"plot_item": {"kind": "summary"}, "unavailable_reason": None}
-    if "heatmap" in cache_key:
-      return {"plot_item": {"kind": "heatmap"}, "unavailable_reason": None}
     if "gpu_roofline" in cache_key:
       return {
           "plot_item": None,
@@ -462,7 +412,6 @@ def test_job_plots_progressive_returns_200_partial_while_tasks_pending():
   assert payload["progressive"] is True
   assert set(payload["loading_plots"]) == {
       "summary_plot",
-      "heatmap",
       "roofline",
       "gpu_roofline",
   }
@@ -481,10 +430,9 @@ def test_job_plots_progressive_partial_includes_completed_plot_fields():
   fake_job = SimpleNamespace(jid=2945017)
   summary_future = Future()
   summary_future.set_result(({"kind": "summary"}, None))
-  heat_future = Future()
   roof_future = Future()
   gpu_future = Future()
-  queue = iter([summary_future, heat_future, roof_future, gpu_future])
+  queue = iter([summary_future, roof_future, gpu_future])
 
   class _FakeExecutor:
     def submit(self, fn):
@@ -515,8 +463,10 @@ def test_job_plots_progressive_partial_includes_completed_plot_fields():
   assert payload["status"] == "partial"
   assert payload["mplot_item"] == {"kind": "summary"}
   assert payload["mplot_unavailable_reason"] is None
-  assert "hplot_item" not in payload
-  assert "heatmap" in payload["loading_plots"]
+  assert "rplot_item" not in payload
+  assert "grplot_item" not in payload
+  assert "roofline" in payload["loading_plots"]
+  assert "gpu_roofline" in payload["loading_plots"]
 
 
 def test_job_plots_progressive_final_payload_includes_ready_metadata():
@@ -529,7 +479,7 @@ def test_job_plots_progressive_final_payload_includes_ready_metadata():
   request.session = {"username": "alice", "is_staff": True}
 
   fake_job = SimpleNamespace(jid=2945017)
-  futures = [Future() for _ in range(4)]
+  futures = [Future() for _ in range(3)]
   for fut in futures:
     fut.set_result(({"ok": True}, None))
 

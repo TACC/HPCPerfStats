@@ -48,10 +48,6 @@ const minimalBatchPlotsResponse = {
   mdiv: "",
   mplot_item: null,
   mplot_unavailable_reason: null,
-  hscript: "",
-  hdiv: "",
-  hplot_item: null,
-  hplot_unavailable_reason: null,
   rscript: "",
   rdiv: "",
   rplot_item: null,
@@ -66,7 +62,6 @@ function batchPlotsResponseWithRoots() {
   return {
     ...minimalBatchPlotsResponse,
     mplot_item: { doc: {}, root_ids: ["summary_plot-root"] },
-    hplot_item: { doc: {}, root_ids: ["heatmap-root"] },
     rplot_item: { doc: {}, root_ids: ["roofline-root"] },
     grplot_item: { doc: {}, root_ids: ["gpu_roofline-root"] },
   };
@@ -393,7 +388,7 @@ describe("JobDetail", () => {
     const partial = {
       status: "partial",
       progressive: true,
-      loading_plots: ["heatmap", "roofline", "gpu_roofline"],
+      loading_plots: ["roofline", "gpu_roofline"],
       retry_after_seconds: 0,
       mplot_item: { doc: {}, root_ids: ["s-only"] },
       mplot_unavailable_reason: null,
@@ -466,7 +461,27 @@ describe("JobDetail", () => {
     });
   });
 
-  it("remounts a single embed when switching host-level plot tabs", async () => {
+  it("shows tab order with Summary second and Roofline third", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(minimalJobDetailResponse);
+    mockAllPlotCallsReady();
+
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
+    });
+    const tabLabels = screen.getAllByRole("tab").map((tab) => tab.textContent);
+    expect(tabLabels).toEqual([
+      "Metrics",
+      "Summary plot",
+      "Roofline",
+      "Processes",
+      "Execution and hosts",
+      "Device data",
+    ]);
+  });
+
+  it("renders both roofline embeds in the shared Roofline tab", async () => {
     window.Bokeh = {
       embed: {
         embed_item: vi.fn(() => Promise.resolve()),
@@ -488,11 +503,9 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(document.querySelectorAll(".bokeh-embed-wrapper").length).toBe(1);
     });
-    await userEvent.click(
-      screen.getByRole("tab", { name: "GPU Roofline (PCIe/NvLink)" }),
-    );
+    await userEvent.click(screen.getByRole("tab", { name: "Roofline" }));
     await waitFor(() => {
-      expect(document.querySelectorAll(".bokeh-embed-wrapper").length).toBe(1);
+      expect(document.querySelectorAll(".bokeh-embed-wrapper").length).toBe(2);
     });
   });
 
@@ -528,7 +541,6 @@ describe("jobPlotStatesEqual", () => {
         plotItem: { doc: { id: "1" }, root_ids: ["r"] },
         unavailableReason: null,
       },
-      heatmap: { loading: true, plotItem: null, unavailableReason: null },
       roofline: { loading: true, plotItem: null, unavailableReason: null },
       gpu_roofline: { loading: true, plotItem: null, unavailableReason: null },
     };
@@ -538,7 +550,6 @@ describe("jobPlotStatesEqual", () => {
         plotItem: { doc: { id: "1" }, root_ids: ["r"] },
         unavailableReason: null,
       },
-      heatmap: { loading: true, plotItem: null, unavailableReason: null },
       roofline: { loading: true, plotItem: null, unavailableReason: null },
       gpu_roofline: { loading: true, plotItem: null, unavailableReason: null },
     };
@@ -549,7 +560,6 @@ describe("jobPlotStatesEqual", () => {
   it("returns false when loading flips for one plot", () => {
     const a = {
       summary_plot: { loading: true, plotItem: null, unavailableReason: null },
-      heatmap: { loading: true, plotItem: null, unavailableReason: null },
       roofline: { loading: true, plotItem: null, unavailableReason: null },
       gpu_roofline: { loading: true, plotItem: null, unavailableReason: null },
     };
@@ -574,14 +584,13 @@ describe("mergeProgressiveJobPlotsState", () => {
   it("marks keys in loading_plots as loading and applies completed plot fields", () => {
     const prev = {
       summary_plot: { loading: true, plotItem: null, unavailableReason: null },
-      heatmap: { loading: true, plotItem: null, unavailableReason: null },
       roofline: { loading: true, plotItem: null, unavailableReason: null },
       gpu_roofline: { loading: true, plotItem: null, unavailableReason: null },
     };
     const resp = {
       status: "partial",
       progressive: true,
-      loading_plots: ["heatmap", "roofline", "gpu_roofline"],
+      loading_plots: ["roofline", "gpu_roofline"],
       mplot_item: { doc: {}, root_ids: ["s"] },
       mplot_unavailable_reason: null,
     };
@@ -591,7 +600,6 @@ describe("mergeProgressiveJobPlotsState", () => {
       plotItem: { doc: {}, root_ids: ["s"] },
       unavailableReason: null,
     });
-    expect(next.heatmap.loading).toBe(true);
     expect(next.roofline.loading).toBe(true);
     expect(next.gpu_roofline.loading).toBe(true);
   });
@@ -599,17 +607,15 @@ describe("mergeProgressiveJobPlotsState", () => {
   it("retains prior plotItem for plots still listed in loading_plots", () => {
     const prev = {
       summary_plot: { loading: false, plotItem: { a: 1 }, unavailableReason: null },
-      heatmap: { loading: true, plotItem: { h: 1 }, unavailableReason: null },
       roofline: { loading: true, plotItem: null, unavailableReason: null },
       gpu_roofline: { loading: true, plotItem: null, unavailableReason: null },
     };
     const resp = {
-      loading_plots: ["heatmap", "roofline", "gpu_roofline"],
+      loading_plots: ["roofline", "gpu_roofline"],
       mplot_item: { a: 2 },
       mplot_unavailable_reason: null,
     };
     const next = mergeProgressiveJobPlotsState(prev, resp);
     expect(next.summary_plot.plotItem).toEqual({ a: 2 });
-    expect(next.heatmap.plotItem).toEqual({ h: 1 });
   });
 });

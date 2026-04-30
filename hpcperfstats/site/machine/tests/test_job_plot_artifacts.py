@@ -100,11 +100,11 @@ def test_load_cached_job_plot_entry_stale_fingerprint():
   )
   fp_old = compute_plot_input_fingerprint(j, 1)
   upsert_job_plot_artifact(
-      "stale1", "heatmap", "normal", fp_old, {"a": 1}
+      "stale1", "roofline", "normal", fp_old, {"a": 1}
   )
   fp_new = compute_plot_input_fingerprint(j, 999)
   assert (
-      load_cached_job_plot_entry("stale1", "heatmap", "normal", fp_new) is None
+      load_cached_job_plot_entry("stale1", "roofline", "normal", fp_new) is None
   )
 
 
@@ -205,7 +205,7 @@ def test_upsert_job_plot_artifact_batch_updates_existing_row():
   fp = compute_plot_input_fingerprint(j, 1)
   upsert_job_plot_artifact_batch([
       ("batch1", "summary_plot", "normal", fp, {"v": 1}),
-      ("batch1", "heatmap", "normal", fp, {"h": 1}),
+      ("batch1", "roofline", "normal", fp, {"r": 1}),
   ])
   assert job_plot_artifact.objects.filter(jid_id="batch1").count() == 2
   upsert_job_plot_artifact_batch([

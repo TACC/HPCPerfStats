@@ -45,13 +45,6 @@ JOB_PLOT_KIND_SPECS: Dict[str, JobPlotKindSpec] = {
         log_fail_action="generate summary plot",
         wall_time=True,
     ),
-    "heatmap": JobPlotKindSpec(
-        plot_fn=plots.plot_and_reason_from_jid_table,
-        empty_fallback=plots.MSG_NO_HOST_MSR_DATA,
-        json_item_key="hplot_item",
-        unavailable_reason_key="hplot_unavailable_reason",
-        log_fail_action="generate heatmap",
-    ),
     "roofline": JobPlotKindSpec(
         plot_fn=plots.plot_and_reason_roofline_from_jid_table,
         empty_fallback=plots.MSG_NO_ROOFLINE_DATA,
@@ -77,7 +70,7 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 
 # Bump when plot artifact semantics change (independent of Bokeh version).
 # See cursor-rules/job-plot-artifacts-caching.mdc and machine/tests/test_job_plot_artifacts.py.
-APP_PLOT_ARTIFACT_SCHEMA_VERSION = 5
+APP_PLOT_ARTIFACT_SCHEMA_VERSION = 6
 
 JOB_PLOT_JSON_KEYS: Dict[str, Tuple[str, str]] = {
     kind: (spec.json_item_key, spec.unavailable_reason_key)

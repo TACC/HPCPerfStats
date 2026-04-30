@@ -1867,12 +1867,11 @@ def job_plots(request, pk):
 
     Returns Bokeh json_items and availability reasons for:
     - Summary plot
-    - Heatmap
     - Roofline
     - GPU roofline
 
     Query params:
-    - plot: omit or ``all`` for all four; or one of summary_plot, heatmap, roofline, gpu_roofline.
+    - plot: omit or ``all`` for all three; or one of summary_plot, roofline, gpu_roofline.
     - zoom: ``1`` for zoom layout (single-plot requests only).
     - progressive: ``1`` with plot=all (no zoom): HTTP 200 with ``status`` partial/ready and
       only completed plot fields included while others are listed in ``loading_plots``;
@@ -2179,10 +2178,6 @@ def job_plots(request, pk):
         "mdiv": "",
         "mplot_item": cached_results["summary_plot"]["plot_item"],
         "mplot_unavailable_reason": cached_results["summary_plot"]["unavailable_reason"],
-        "hscript": "",
-        "hdiv": "",
-        "hplot_item": cached_results["heatmap"]["plot_item"],
-        "hplot_unavailable_reason": cached_results["heatmap"]["unavailable_reason"],
         "rscript": "",
         "rdiv": "",
         "rplot_item": cached_results["roofline"]["plot_item"],

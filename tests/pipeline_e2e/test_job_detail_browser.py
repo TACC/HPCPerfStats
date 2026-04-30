@@ -47,7 +47,7 @@ def test_job_detail_renders_and_summary_plot_payload():
         extra_http_headers={"X-API-Key": raw},
     )
     request.get("/api/session/")
-    for plot_kind in ("summary_plot", "heatmap", "roofline", "gpu_roofline"):
+    for plot_kind in ("summary_plot", "roofline", "gpu_roofline"):
       plots_resp = request.get(
           "/api/jobs/{}/plots/?plot={}".format(jid, plot_kind),
       )

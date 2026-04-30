@@ -58,28 +58,18 @@ const JOB_PLOT_CONFIGS = [
     plotName: "Summary plot",
   },
   {
-    key: "heatmap",
-    panelKey: "heatmap",
-    idPrefix: "job-hscript",
-    plotName: "Heatmap",
-  },
-  {
     key: "roofline",
-    panelKey: "cpu-roofline",
+    panelKey: "roofline-cpu",
     idPrefix: "job-roofline",
     plotName: "CPU Roofline",
   },
   {
     key: "gpu_roofline",
-    panelKey: "gpu-roofline",
+    panelKey: "roofline-gpu",
     idPrefix: "job-gpu-roofline",
     plotName: "GPU Roofline (PCIe/NvLink)",
   },
 ];
-
-/** Summary plot tab is shown first on the Job data bar; other plots follow non-plot tabs. */
-const SUMMARY_PLOT_TAB_CONFIG = JOB_PLOT_CONFIGS.find((c) => c.key === "summary_plot");
-const JOB_PLOT_TAB_CONFIGS_AFTER_SUMMARY = JOB_PLOT_CONFIGS.filter((c) => c.key !== "summary_plot");
 
 function createEmptyJobPlotsState(loading) {
   return JOB_PLOT_CONFIGS.reduce((acc, config) => {
@@ -95,7 +85,6 @@ function createEmptyJobPlotsState(loading) {
 /** Maps React plot keys to `job_plots` batch payload fields (plot=all). */
 const JOB_PLOTS_BATCH_FIELDS = {
   summary_plot: { item: "mplot_item", reason: "mplot_unavailable_reason" },
-  heatmap: { item: "hplot_item", reason: "hplot_unavailable_reason" },
   roofline: { item: "rplot_item", reason: "rplot_unavailable_reason" },
   gpu_roofline: { item: "grplot_item", reason: "grplot_unavailable_reason" },
 };
@@ -179,15 +168,11 @@ export default function JobDetail() {
   const tabExecHostsId = useId();
   const tabDeviceId = useId();
   const tabPlotSummaryId = useId();
-  const tabPlotHeatmapId = useId();
-  const tabPlotCpuRooflineId = useId();
-  const tabPlotGpuRooflineId = useId();
+  const tabPlotRooflineId = useId();
 
   const plotTabDomIds = {
     summary: tabPlotSummaryId,
-    heatmap: tabPlotHeatmapId,
-    "cpu-roofline": tabPlotCpuRooflineId,
-    "gpu-roofline": tabPlotGpuRooflineId,
+    roofline: tabPlotRooflineId,
   };
 
   useDocumentTitle(
@@ -428,33 +413,24 @@ export default function JobDetail() {
     ));
   }
 
-  function renderJobPlotTabPanel(config) {
+  function renderSinglePlotPanel(config, isTabActive) {
+    if (!config) return null;
     const panel = plotPanels.find((p) => p.key === config.panelKey);
     if (!panel) return null;
-    const plotPanelDomId = `job-detail-panel-plot-${config.panelKey}`;
-    const plotTabActive = analysisTab === config.panelKey;
     return (
-      <div
-        key={config.key}
-        id={plotPanelDomId}
-        role="tabpanel"
-        aria-labelledby={plotTabDomIds[config.panelKey]}
-        className="job-detail-single-plot-pane"
-        hidden={!plotTabActive}
-      >
+      <div key={config.key} className="job-detail-single-plot-host w-100 mb-3">
+        <h3 className="h6">{config.plotName}</h3>
         <p className="job-detail-plots-intro text-muted small mb-2">
           Host-level plot for this job. Loads progressively; chart width follows the panel below.
         </p>
-        {plotTabActive ? (
-          <div className="job-detail-single-plot-host w-100">
-            <PlotPanel
-              item={panel.item}
-              id={panel.id}
-              plotName={panel.plotName}
-              unavailableReason={panel.unavailableReason}
-              isLoading={panel.isLoading}
-            />
-          </div>
+        {isTabActive ? (
+          <PlotPanel
+            item={panel.item}
+            id={panel.id}
+            plotName={panel.plotName}
+            unavailableReason={panel.unavailableReason}
+            isLoading={panel.isLoading}
+          />
         ) : null}
       </div>
     );
@@ -747,22 +723,6 @@ export default function JobDetail() {
           role="tablist"
           aria-label="Job data views"
         >
-          {SUMMARY_PLOT_TAB_CONFIG ? (
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${analysisTab === SUMMARY_PLOT_TAB_CONFIG.panelKey ? "active" : ""}`}
-                id={plotTabDomIds[SUMMARY_PLOT_TAB_CONFIG.panelKey]}
-                role="tab"
-                aria-selected={analysisTab === SUMMARY_PLOT_TAB_CONFIG.panelKey}
-                aria-controls={`job-detail-panel-plot-${SUMMARY_PLOT_TAB_CONFIG.panelKey}`}
-                tabIndex={analysisTab === SUMMARY_PLOT_TAB_CONFIG.panelKey ? 0 : -1}
-                onClick={() => setAnalysisTab(SUMMARY_PLOT_TAB_CONFIG.panelKey)}
-              >
-                {SUMMARY_PLOT_TAB_CONFIG.plotName}
-              </button>
-            </li>
-          ) : null}
           <li className="nav-item" role="presentation">
             <button
               type="button"
@@ -775,6 +735,34 @@ export default function JobDetail() {
               onClick={() => setAnalysisTab("metrics")}
             >
               Metrics
+            </button>
+          </li>
+          <li className="nav-item" role="presentation">
+            <button
+              type="button"
+              className={`nav-link ${analysisTab === "summary" ? "active" : ""}`}
+              id={plotTabDomIds.summary}
+              role="tab"
+              aria-selected={analysisTab === "summary"}
+              aria-controls="job-detail-panel-plot-summary"
+              tabIndex={analysisTab === "summary" ? 0 : -1}
+              onClick={() => setAnalysisTab("summary")}
+            >
+              Summary plot
+            </button>
+          </li>
+          <li className="nav-item" role="presentation">
+            <button
+              type="button"
+              className={`nav-link ${analysisTab === "roofline" ? "active" : ""}`}
+              id={plotTabDomIds.roofline}
+              role="tab"
+              aria-selected={analysisTab === "roofline"}
+              aria-controls="job-detail-panel-plot-roofline"
+              tabIndex={analysisTab === "roofline" ? 0 : -1}
+              onClick={() => setAnalysisTab("roofline")}
+            >
+              Roofline
             </button>
           </li>
           <li className="nav-item" role="presentation">
@@ -819,26 +807,6 @@ export default function JobDetail() {
               Device data
             </button>
           </li>
-          {JOB_PLOT_TAB_CONFIGS_AFTER_SUMMARY.map((config) => {
-            const plotTabActive = analysisTab === config.panelKey;
-            const plotPanelDomId = `job-detail-panel-plot-${config.panelKey}`;
-            return (
-              <li key={config.key} className="nav-item" role="presentation">
-                <button
-                  type="button"
-                  className={`nav-link ${plotTabActive ? "active" : ""}`}
-                  id={plotTabDomIds[config.panelKey]}
-                  role="tab"
-                  aria-selected={plotTabActive}
-                  aria-controls={plotPanelDomId}
-                  tabIndex={plotTabActive ? 0 : -1}
-                  onClick={() => setAnalysisTab(config.panelKey)}
-                >
-                  {config.plotName}
-                </button>
-              </li>
-            );
-          })}
         </ul>
         <div className="job-detail-analysis-panel border border-top-0 rounded-bottom p-3 bg-body">
           {plotsLoading ? (
@@ -846,7 +814,34 @@ export default function JobDetail() {
               Loading job plots…
             </p>
           ) : null}
-          {SUMMARY_PLOT_TAB_CONFIG ? renderJobPlotTabPanel(SUMMARY_PLOT_TAB_CONFIG) : null}
+          <div
+            id="job-detail-panel-plot-summary"
+            role="tabpanel"
+            aria-labelledby={plotTabDomIds.summary}
+            className="job-detail-single-plot-pane"
+            hidden={analysisTab !== "summary"}
+          >
+            {renderSinglePlotPanel(
+              JOB_PLOT_CONFIGS.find((cfg) => cfg.key === "summary_plot"),
+              analysisTab === "summary",
+            )}
+          </div>
+          <div
+            id="job-detail-panel-plot-roofline"
+            role="tabpanel"
+            aria-labelledby={plotTabDomIds.roofline}
+            className="job-detail-single-plot-pane"
+            hidden={analysisTab !== "roofline"}
+          >
+            {renderSinglePlotPanel(
+              JOB_PLOT_CONFIGS.find((cfg) => cfg.key === "roofline"),
+              analysisTab === "roofline",
+            )}
+            {renderSinglePlotPanel(
+              JOB_PLOT_CONFIGS.find((cfg) => cfg.key === "gpu_roofline"),
+              analysisTab === "roofline",
+            )}
+          </div>
           <div
             id="job-detail-panel-metrics"
             role="tabpanel"
@@ -1046,7 +1041,6 @@ export default function JobDetail() {
               )}
             </div>
           </div>
-          {JOB_PLOT_TAB_CONFIGS_AFTER_SUMMARY.map((config) => renderJobPlotTabPanel(config))}
         </div>
       </section>
     </>
