@@ -278,6 +278,7 @@ class _CompletionReporter:
     self._completed_events = deque()
     self._readiness_error_events = deque()
     self._completed_total = 0
+    self._last_synced_completed_total = 0
     self._readiness_error_total = 0
     self._stop = threading.Event()
     self._thread = None
@@ -341,6 +342,23 @@ class _CompletionReporter:
   def completed_total(self):
     with self._lock:
       return self._completed_total
+
+  def sync_completed_total(self, total):
+    """Synchronize reporter totals from scheduler's authoritative processed count."""
+    now = time.monotonic()
+    with self._lock:
+      current = max(0, int(total))
+      # Handle restarts/resets defensively.
+      if current < self._last_synced_completed_total:
+        self._last_synced_completed_total = current
+        self._completed_total = current
+        self._completed_events.clear()
+      delta = current - self._last_synced_completed_total
+      if delta > 0:
+        self._completed_events.append((now, delta))
+        self._completed_total += delta
+        self._prune_locked(now)
+      self._last_synced_completed_total = current
 
   def readiness_errors_total(self):
     with self._lock:
@@ -1645,7 +1663,7 @@ def update_metrics_for_dates(dates, rerun=False):
             stats["failed"] += failed_count
             proc_total = stats["processed"]
             fail_total = stats["failed"]
-          completion_reporter.record_completed(len(succeeded_jids))
+          completion_reporter.sync_completed_total(proc_total)
           compute_batches += 1
           if compute_batches == 1 or compute_batches % 25 == 0:
             log_print(

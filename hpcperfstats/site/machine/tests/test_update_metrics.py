@@ -1579,6 +1579,17 @@ def test_main_default_sleep_after_waits_60_seconds(monkeypatch):
   assert sleeps == [60]
 
 
+@pytest.mark.machine_unit_mock
+def test_completion_reporter_sync_completed_total_tracks_delta():
+  rep = update_metrics._CompletionReporter(report_interval_s=5, window_s=3600)
+  rep.sync_completed_total(0)
+  rep.sync_completed_total(3)
+  rep.sync_completed_total(3)
+  rep.sync_completed_total(8)
+  assert rep.completed_total() == 8
+  assert rep.completed_in_window() == 8
+
+
 def test_main_env_false_disables_default_sleep(monkeypatch):
   """Env override should disable sleep when set to false-like values."""
   monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER", "false")
