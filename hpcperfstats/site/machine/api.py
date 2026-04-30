@@ -56,6 +56,7 @@ from .cache_utils import (
     KEY_GPU_COUNT,
     KEY_XALT,
     KEY_JOB,
+    KEY_JOB_SEARCH_JID,
     KEY_PROC_LIST,
     KEY_HOST_PLOT,
     cached_orm,
@@ -1271,7 +1272,7 @@ def search_dispatch(request):
         jid = request.GET["jid"]
         base_qs = _apply_non_staff_job_visibility(job_data.objects.all(), request)
         job_jid = cached_orm(
-            f"{KEY_JOB}:{jid}",
+            f"{KEY_JOB_SEARCH_JID}:{jid}",
             site_ttl,
             lambda: base_qs.filter(jid=jid).values_list("jid", flat=True).first(),
         )

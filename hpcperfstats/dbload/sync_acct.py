@@ -166,9 +166,9 @@ def _sync_acct_dataframe(df, jobs_in_db):
     job_data.objects.bulk_create(objs, ignore_conflicts=True)
   except Exception as e:
     log_print("error in bulk_create:", str(e))
-    inserted = _insert_job_data_individually(df)
+    inserted, saved_objs = _insert_job_data_individually(df)
     log_print("Total number of new entries (fallback single inserts):", inserted)
-    _notify_job_cache_after_acct_ingest(inserted, None)
+    _notify_job_cache_after_acct_ingest(inserted, saved_objs)
     return inserted
 
   existing_after = job_data.objects.filter(jid__in=jids).count()
@@ -183,15 +183,18 @@ def _insert_job_data_individually(df):
 
     """
   inserted = 0
+  saved_objs = []
   for row in df.itertuples(index=False):
     try:
-      job_data_instance_from_acct_row(row).save()
+      obj = job_data_instance_from_acct_row(row)
+      obj.save()
       inserted += 1
+      saved_objs.append(obj)
     except IntegrityError:
       pass  # skip duplicate jid
     except Exception as e:
       log_print("error in single insert:", str(e), "for jid", row.jid)
-  return inserted
+  return inserted, saved_objs
 
 
 if __name__ == "__main__":

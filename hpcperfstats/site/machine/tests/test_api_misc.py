@@ -388,6 +388,29 @@ class TestSearchDispatch:
     assert response.status_code == 200
     assert response.data["redirect"] == "/machine/job/123/"
 
+  def test_search_dispatch_jid_probe_uses_distinct_cache_key_from_job_row(self):
+    """search_dispatch must not use KEY_JOB — that key caches full job_data for job_detail."""
+    from hpcperfstats.site.machine import api
+    from hpcperfstats.site.machine import cache_utils as cu
+
+    captured = {}
+
+    def _capture_cached_orm(key, ttl, fn):
+      captured["cache_key"] = key
+      return "12345"
+
+    factory = RequestFactory()
+    request = factory.get("/api/search/", {"jid": "12345"})
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+        "hpcperfstats.site.machine.api.cached_orm", side_effect=_capture_cached_orm
+    ):
+      response = api.search_dispatch(request)
+
+    assert response.status_code == 200
+    assert captured.get("cache_key") == f"{cu.KEY_JOB_SEARCH_JID}:12345"
+    assert captured.get("cache_key") != f"{cu.KEY_JOB}:12345"
+
   def test_search_dispatch_returns_404_when_jid_not_found(self):
     """search_dispatch returns 404 JSON error when jid does not exist."""
     from hpcperfstats.site.machine import api
