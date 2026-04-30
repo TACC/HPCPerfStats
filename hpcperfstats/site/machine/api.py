@@ -3,7 +3,6 @@ import hashlib
 import logging
 import threading
 import time
-from collections import defaultdict
 from contextlib import contextmanager
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
@@ -1367,105 +1366,6 @@ def _build_histogram_dataframe(job_list_qs, cur_metrics):
     return df, hist_metrics, jids_ordered
 
 
-def _queue_histogram_display_label(raw_queue):
-    """Stable label for one queue bucket (Bokeh FactorRange factors must be unique)."""
-    s = (raw_queue or "").strip()
-    return s if s else "(no queue)"
-
-
-def _merge_queue_bar_rows(rows, *, metric):
-    """Merge ORM rows that map to the same display label (e.g. NULL vs '' → '(no queue)')."""
-    if metric == "jobs":
-        acc = defaultdict(int)
-        for q, c in rows:
-            acc[_queue_histogram_display_label(q)] += int(c or 0)
-    elif metric == "node_hours":
-        acc = defaultdict(float)
-        for q, v in rows:
-            acc[_queue_histogram_display_label(q)] += float(v or 0.0)
-    else:
-        raise ValueError(f"unknown queue bar metric: {metric!r}")
-    return sorted(acc.items(), key=lambda kv: (-kv[1], kv[0]))
-
-
-def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="jobs"):
-    """Bokeh vbar of per-queue job count or summed node hours (full filtered job list, non-paginated).
-
-    metric: ``"jobs"`` — Count(jid) per queue; ``"node_hours"`` — Sum(node_hrs) per queue.
-    """
-    from bokeh.models import ColumnDataSource
-
-    close_old_connections()
-    try:
-        if metric == "jobs":
-            rows = list(
-                job_list_qs.values("queue")
-                .annotate(_bar_top=Count("jid", distinct=True))
-                .order_by("-_bar_top")
-                .values_list("queue", "_bar_top")
-            )
-            title = "Jobs by queue"
-            y_label = "# jobs"
-        else:
-            rows = list(
-                job_list_qs.values("queue")
-                .annotate(_bar_top=Sum("node_hrs"))
-                .order_by("-_bar_top")
-                .values_list("queue", "_bar_top")
-            )
-            title = "Node hours by queue"
-            y_label = "node hours"
-        if not rows:
-            return None
-        merged = _merge_queue_bar_rows(rows, metric=metric)
-        # BokehJS categorical coords must be strings; tops must be plain floats for JSON/embed.
-        queue_names = [str(q) for q, _ in merged]
-        tops = [float(v) for _, v in merged]
-        source = ColumnDataSource(dict(x=queue_names, top=tops))
-        max_top = max(tops) if tops else 0.0
-        # Explicit y_range: auto-ranging yields NaN / zero span for all-zero or
-        # flat tops and breaks BokehJS 3.9 embed ("could not set initial ranges").
-        y_high = max(1.0, float(max_top) * 1.05) if max_top > 0 else 1.0
-        # No toolbar or HoverTool: Bokeh 3.x SPA embeds hit
-        # "can't access property is_valid, e is undefined" when tool panels /
-        # hover hit-testing run in tight layouts (see job_hist / queue charts).
-        p = new_spa_embedded_figure(
-            x_range=queue_names,
-            y_range=(0.0, y_high),
-            height=height,
-            width=width,
-            title=title,
-        )
-        p.vbar(
-            x="x",
-            top="top",
-            bottom=0,
-            width=0.7,
-            source=source,
-            fill_color="#3182bd",
-            line_color="#225ea8",
-        )
-        p.xaxis.axis_label = "queue"
-        p.yaxis.axis_label = y_label
-        p.xgrid.visible = False
-        p.xaxis.major_label_orientation = "vertical" if len(queue_names) > 5 else "horizontal"
-        return p
-    finally:
-        close_old_connections()
-
-
-# (metric_key, response_key, title, unavailable_message) for job_list_histograms group=queue
-_JOB_LIST_QUEUE_HIST_SPECS = (
-    ("jobs", "jobs_by_queue", "Jobs by queue", "No queue histogram data available for this query."),
-    (
-        "node_hours",
-        "cpu_hours_by_queue",
-        "Node hours by queue",
-        "No queue node-hour histogram data available for this query.",
-    ),
-)
-
-
 def _extract_bokeh_doc_root_ids(doc):
     """Return a set of root ids declared in a Bokeh json_item doc payload."""
     ids = set()
@@ -1556,16 +1456,13 @@ def job_list_histograms(request):
     """
     Return Bokeh histograms for the job list, loaded incrementally.
 
-    This endpoint now supports grouped, per-plot loading instead of building
-    all plots at once. The caller must provide a 'group' query parameter:
+    This endpoint supports per-plot loading for metric histograms. The caller
+    must provide a 'group' query parameter:
 
-    - group=queue: return queue-based histograms ("Jobs by queue" and
-      "Node hours by queue") as JSON items.
     - group=metric&metric=<name>: return a single metric histogram (thumb and
       full) for the given metric name.
 
     Example:
-      /api/jobs/histograms/?end_time__date=2024-01-01&group=queue
       /api/jobs/histograms/?end_time__date=2024-01-01&group=metric&metric=runtime
     """
     err = _require_auth(request)
@@ -1576,7 +1473,7 @@ def job_list_histograms(request):
         return _JSONResponse(
             {
                 "error": "Missing 'group' parameter.",
-                "allowed_groups": ["queue", "metric"],
+                "allowed_groups": ["metric"],
             },
             status=status.HTTP_400_BAD_REQUEST,
         )
@@ -1584,14 +1481,6 @@ def job_list_histograms(request):
     job_list_qs, nj, fields, cur_metrics = _build_histogram_queryset(request)
     if nj == 0:
         # Preserve a consistent shape even when no jobs match the filter.
-        if group == "queue":
-            return _JSONResponse(
-                {
-                    "group": "queue",
-                    "nj": 0,
-                    "plots": [],
-                }
-            )
         if group == "metric":
             metric_name = (request.GET.get("metric") or "").strip()
             return _JSONResponse(
@@ -1608,56 +1497,13 @@ def job_list_histograms(request):
         return _JSONResponse(
             {
                 "error": f"Unknown group '{group}'.",
-                "allowed_groups": ["queue", "metric"],
+                "allowed_groups": ["metric"],
             },
             status=status.HTTP_400_BAD_REQUEST,
         )
 
     THUMB_WIDTH, THUMB_HEIGHT = 280, 200
     FULL_WIDTH, FULL_HEIGHT = 600, 400
-
-    if group == "queue":
-        executor = _get_small_executor()
-        thumb_wh = (THUMB_WIDTH, THUMB_HEIGHT)
-        full_wh = (FULL_WIDTH, FULL_HEIGHT)
-        pending = []
-        for metric, plot_key, title, unavail_msg in _JOB_LIST_QUEUE_HIST_SPECS:
-            f_thumb = executor.submit(
-                partial(_job_list_queue_bar_chart, metric=metric),
-                job_list_qs,
-                *thumb_wh,
-            )
-            f_full = executor.submit(
-                partial(_job_list_queue_bar_chart, metric=metric),
-                job_list_qs,
-                *full_wh,
-            )
-            pending.append((plot_key, title, unavail_msg, f_thumb, f_full))
-
-        plots = []
-        for plot_key, title, unavail_msg, f_thumb, f_full in pending:
-            thumb_plot = f_thumb.result()
-            full_plot = f_full.result()
-            thumb_item = _sanitize_hist_plot_item(thumb_plot)
-            full_item = _sanitize_hist_plot_item(full_plot)
-            plots.append(
-                {
-                    "key": plot_key,
-                    "title": title,
-                    "plot_item_thumb": thumb_item,
-                    "plot_item_full": full_item,
-                    "plot_unavailable_reason": None
-                    if (thumb_item is not None and full_item is not None)
-                    else unavail_msg,
-                }
-            )
-        return _JSONResponse(
-            {
-                "group": "queue",
-                "nj": nj,
-                "plots": plots,
-            }
-        )
 
     if group == "metric":
         metric_name = (request.GET.get("metric") or "").strip()
@@ -1714,7 +1560,7 @@ def job_list_histograms(request):
     return _JSONResponse(
         {
             "error": f"Unknown group '{group}'.",
-            "allowed_groups": ["queue", "metric"],
+            "allowed_groups": ["metric"],
         },
         status=status.HTTP_400_BAD_REQUEST,
     )

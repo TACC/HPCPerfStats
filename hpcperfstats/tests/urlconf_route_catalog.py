@@ -145,7 +145,7 @@ def build_pipeline_http_endpoint_specs(
   add(PipelineHttpEndpointSpec(
       "api/jobs/", "GET", "/api/jobs/", 200, 299, "application/json", False))
   add(PipelineHttpEndpointSpec(
-      "api/jobs/histograms/", "GET", "/api/jobs/histograms/?group=queue",
+      "api/jobs/histograms/", "GET", "/api/jobs/histograms/?group=metric&metric=runtime",
       200, 299, "application/json", False))
   add(PipelineHttpEndpointSpec(
       "api/jobs/<str:pk>/", "GET", "/api/jobs/{}/".format(jid),

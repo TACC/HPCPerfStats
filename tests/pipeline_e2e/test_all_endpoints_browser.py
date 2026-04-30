@@ -56,18 +56,11 @@ def _assert_job_list_histograms_payload(resp, spec: PipelineHttpEndpointSpec):
   if not spec.path.startswith("/api/jobs/histograms/"):
     return
   payload = resp.json()
-  assert payload.get("group") == "queue", payload
-  plots = payload.get("plots")
-  assert isinstance(plots, list), payload
-  expected_keys = {"jobs_by_queue", "cpu_hours_by_queue"}
-  actual_keys = {plot.get("key") for plot in plots}
-  assert expected_keys.issubset(actual_keys), payload
-  for plot in plots:
-    if plot.get("key") not in expected_keys:
-      continue
-    assert plot.get("plot_item_thumb") is not None, payload
-    assert plot.get("plot_item_full") is not None, payload
-    assert plot.get("plot_unavailable_reason") is None, payload
+  assert payload.get("group") == "metric", payload
+  assert payload.get("metric") == "runtime", payload
+  assert payload.get("plot_item_thumb") is not None, payload
+  assert payload.get("plot_item_full") is not None, payload
+  assert payload.get("plot_unavailable_reason") is None, payload
 
 
 @pytest.mark.django_db(databases=[])

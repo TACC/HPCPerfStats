@@ -35,10 +35,6 @@ export default function JobList() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [histograms, setHistograms] = useState(null);
-  const [queueHistStatus, setQueueHistStatus] = useState({
-    loading: false,
-    error: null,
-  });
   const metricNames = ["runtime", "nhosts", "queue_wait"];
   const createInitialMetricStatus = () =>
     metricNames.reduce(
@@ -87,30 +83,9 @@ export default function JobList() {
 
     // Then load histograms separately so they don't block the list
     setHistograms(null);
-    setQueueHistStatus({ loading: true, error: null });
     setMetricHistStatus(createInitialMetricStatus());
 
     const loadHistograms = async () => {
-      let baseHistograms = [];
-      try {
-        const queueData = await api.getJobQueueHistograms(params);
-        const queuePlots = queueData?.plots || [];
-        baseHistograms = queuePlots
-          .map((p) => normalizeJobListHistogramEntry(p))
-          .filter(Boolean);
-        setQueueHistStatus({ loading: false, error: null });
-      } catch (e) {
-        // Queue histogram errors should not break the main page; log to console for debugging.
-        // eslint-disable-next-line no-console
-        console.warn("Failed to load queue job list histograms", e);
-        setQueueHistStatus({
-          loading: false,
-          error:
-            e?.message ||
-            "Failed to load queue histograms for this job list.",
-        });
-      }
-
       const metricPromises = metricNames.map((metric) => {
         return api
           .getJobMetricHistogram(params, metric)
@@ -147,7 +122,7 @@ export default function JobList() {
       const metricResults = await Promise.all(metricPromises);
       const metricHistograms = metricResults.filter(Boolean);
 
-      setHistograms([...baseHistograms, ...metricHistograms]);
+      setHistograms(metricHistograms);
     };
 
     loadHistograms();
@@ -245,13 +220,11 @@ export default function JobList() {
     return tableSortAriaSort(field, sortColumn, sortDirection) ?? "none";
   };
 
-  const queueHistDone = !queueHistStatus.loading;
   const allMetricHistsDone = metricNames.every(
     (m) => !metricHistStatus[m]?.loading,
   );
-  const histogramsFinishedLoading = queueHistDone && allMetricHistsDone;
+  const histogramsFinishedLoading = allMetricHistsDone;
   const failedHistogramLabels = [];
-  if (queueHistStatus.error) failedHistogramLabels.push("queues");
   const labelMap = {
     runtime: "Runtime",
     nhosts: "Node count",
@@ -327,9 +300,6 @@ export default function JobList() {
       >
         <h2 className="h5 mb-2">Distributions for this list</h2>
         <div className="text-center">
-          {queueHistStatus.loading && (
-            <LoadingMessage message="Loading queue histograms…" />
-          )}
           {metricNames.map((metric) => {
             const status = metricHistStatus[metric] || {
               loading: false,

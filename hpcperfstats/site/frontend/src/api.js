@@ -62,12 +62,6 @@ export const api = {
   search: (params) => request(`${API_PATHS.search}?${new URLSearchParams(params).toString()}`),
   getJobList: (params) => request(`${API_PATHS.jobs}?${new URLSearchParams(params).toString()}`),
   /**
-   * Queue-based histograms for a job list (jobs by queue, CPU hours by queue).
-   * Uses the same filter params as getJobList, plus group=queue.
-   */
-  getJobQueueHistograms: (params) =>
-    request(`${API_PATHS.jobsHistograms}?${buildJobHistogramSearchParams(params, { group: "queue" }).toString()}`),
-  /**
    * Single metric histogram (thumb + full) for a job list.
    * Uses the same filter params as getJobList, plus group=metric&metric=<name>.
    */

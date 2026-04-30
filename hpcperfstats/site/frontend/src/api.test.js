@@ -92,14 +92,8 @@ describe("api client", () => {
       ok: true,
       json: async () => ({ plots: [] }),
     });
-    await api.getJobQueueHistograms({ queue: "normal" });
-    const queueUrl = fetch.mock.calls[0][0];
-    expect(queueUrl).toContain("/api/jobs/histograms/");
-    expect(queueUrl).toContain("group=queue");
-    expect(queueUrl).toContain("_histogram_embed_v=8");
-
     await api.getJobMetricHistogram({ queue: "normal" }, "runtime");
-    const metricUrl = fetch.mock.calls[1][0];
+    const metricUrl = fetch.mock.calls[0][0];
     expect(metricUrl).toContain("group=metric");
     expect(metricUrl).toContain("metric=runtime");
     expect(metricUrl).toContain("_histogram_embed_v=8");

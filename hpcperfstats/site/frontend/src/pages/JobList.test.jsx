@@ -44,9 +44,6 @@ describe("JobList", () => {
     vi.spyOn(apiModule.api, "getJobList").mockReturnValue(
       new Promise(() => {})
     );
-    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({
-      plots: [],
-    });
     vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
 
     renderJobList();
@@ -84,9 +81,6 @@ describe("JobList", () => {
       pagination: { page: 1, num_pages: 1 },
     });
 
-    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({
-      plots: [],
-    });
     vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
 
     const view = renderJobList();
@@ -137,7 +131,6 @@ describe("JobList", () => {
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
     });
-    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({ plots: [] });
     vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
 
     renderJobList(["/jobs"], { is_staff: true });
@@ -180,7 +173,6 @@ describe("JobList", () => {
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
     });
-    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({ plots: [] });
     vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
 
     renderJobList(["/jobs"], { is_staff: false });
@@ -236,18 +228,18 @@ describe("JobList", () => {
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
     });
-    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({
-      plots: [
-        {
-          key: "jobs_by_queue",
-          title: "Jobs by queue",
+    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockImplementation((_, metric) => {
+      if (metric === "runtime") {
+        return Promise.resolve({
+          metric: "runtime",
+          title: "Runtime",
           plot_item_thumb: { doc: {}, root_ids: ["thumb-root"] },
           plot_item_full: { doc: {}, root_ids: ["full-root"] },
           plot_unavailable_reason: null,
-        },
-      ],
+        });
+      }
+      return Promise.resolve(null);
     });
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
 
     renderJobList();
 
@@ -284,7 +276,6 @@ describe("JobList", () => {
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
     });
-    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({ plots: [] });
     vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
 
     renderJobList(["/year/2024"]);
@@ -324,9 +315,6 @@ describe("JobList", () => {
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 5 },
     });
-    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({
-      plots: [],
-    });
     vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
 
     renderJobList();
@@ -345,18 +333,6 @@ describe("JobList", () => {
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
-    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({
-      plots: [
-        {
-          key: "jobs_by_queue",
-          title: "Jobs by queue",
-          plot_item_thumb: null,
-          plot_item_full: null,
-          plot_unavailable_reason:
-            "No queue histogram data available for this query.",
-        },
-      ],
     });
     vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue({
       metric: "runtime",
@@ -403,18 +379,6 @@ describe("JobList", () => {
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
-    vi.spyOn(apiModule.api, "getJobQueueHistograms").mockResolvedValue({
-      plots: [
-        {
-          key: "jobs_by_queue",
-          title: "Jobs by queue",
-          plot_item_thumb: null,
-          plot_item_full: null,
-          plot_unavailable_reason:
-            "No queue histogram data available for this query.",
-        },
-      ],
     });
     vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
 
