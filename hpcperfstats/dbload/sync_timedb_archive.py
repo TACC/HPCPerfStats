@@ -2,16 +2,46 @@
 """Load stats from existing .tar archives into the database. Workers read from
 tar by (path, member_name) so the main process never holds file contents.
 
+Ingest uses Django ORM bulk paths via ``sync_timedb.add_stats_file_to_db`` (not
+raw SQL). Heavy ``sync_timedb`` / DB driver imports are deferred until a worker
+actually writes so lightweight imports (e.g. tests that only chunk tar tasks)
+do not load the database stack.
+
+``sync_timedb_archive_helpers`` transitively imports numpy/pandas; without a low
+BLAS/OpenMP thread cap, each process tries to spawn many pthreads and
+multiprocessing ``spawn`` workers can hit ``Resource temporarily unavailable`` in
+containers. Defaults are applied below before those imports (override via env).
+
 """
 import io
 import itertools
 import multiprocessing
+import os
 import sys
 import tarfile
 import time
 
+_BLAS_THREAD_ENV_KEYS = (
+    "OPENBLAS_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+)
+
+
+def _configure_blas_thread_env():
+  """Cap BLAS/OpenMP worker threads before numpy is first imported.
+
+  Uses setdefault so operator-provided env wins. Safe to call repeatedly.
+  """
+  for key in _BLAS_THREAD_ENV_KEYS:
+    os.environ.setdefault(key, "1")
+
+
+_configure_blas_thread_env()
+
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload import sync_timedb
 from hpcperfstats.file_locking import file_read_lock_wait
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.sync_timedb_archive_helpers import get_tar_file_tasks
@@ -26,6 +56,7 @@ TAR_TASK_CHUNK_SIZE = 50
 def _process_tar_member(lock, tar_path, member_name):
   """Open tar, extract one member, pass contents to add_stats_file_to_db.
   Keeps file contents only in the worker process."""
+  _configure_blas_thread_env()
   log_print("extracting %s from %s" % (member_name, tar_path))
   with file_read_lock_wait(tar_path):
     with tarfile.open(tar_path, 'r') as tar:
@@ -37,7 +68,16 @@ def _process_tar_member(lock, tar_path, member_name):
       wrapper = io.TextIOWrapper(f, encoding="utf-8")
       content = list(wrapper)
       wrapper.detach()
-  sync_timedb.add_stats_file_to_db(lock, member_name, content)
+  # Defer sync_timedb import until after tar I/O so DB connections and the
+  # backend driver are not loaded for idle workers or lightweight module imports.
+  from django.db import close_old_connections
+
+  from hpcperfstats.django_bootstrap import ensure_django
+  from hpcperfstats.dbload.sync_timedb import add_stats_file_to_db
+
+  ensure_django()
+  close_old_connections()
+  add_stats_file_to_db(lock, member_name, content)
 
 
 def _process_tar_member_task(task_args):
@@ -71,7 +111,23 @@ def _process_tar_chunk_interruptibly(pool, worker, chunk, on_result):
 
 
 if __name__ == '__main__':
-  sync_timedb.database_startup()
+  _configure_blas_thread_env()
+
+  from django.db import close_old_connections, connections
+
+  from hpcperfstats.django_bootstrap import ensure_django
+  from hpcperfstats.dbload.sync_timedb import (
+      _reset_sync_runtime_caches,
+      database_startup,
+  )
+
+  ensure_django()
+  database_startup()
+  _reset_sync_runtime_caches()
+  # Parent only needed the DB for startup diagnostics; drop connections before
+  # workers run so the server is not charged an extra idle session per archive run.
+  close_old_connections()
+  connections.close_all()
 
   tar_files = sys.argv[1:]
 
@@ -102,5 +158,9 @@ if __name__ == '__main__':
           break
   finally:
     manager.shutdown()
+  try:
+    connections.close_all()
+  except Exception:
+    pass
   if shutdown_requested[0]:
     sys.exit(143)

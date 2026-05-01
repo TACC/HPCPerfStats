@@ -1767,3 +1767,9 @@ def test_process_tar_member_task_spawn_picklable():
   from multiprocessing.reduction import ForkingPickler
 
   ForkingPickler.dumps(sta._process_tar_member_task)
+
+
+def test_configure_blas_thread_env_idempotent():
+  """Caps BLAS/OpenMP threads before numpy (avoids pthread EAGAIN under spawn)."""
+  sta._configure_blas_thread_env()
+  sta._configure_blas_thread_env()
