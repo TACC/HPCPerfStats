@@ -18,7 +18,16 @@ C implementation of the **hpcperfstats** data collector: either a **RabbitMQ dae
 - **RabbitMQ build** (typical for `hpcperfstatsd`): `monitor.c`, `monitor_cli.c`, `monitor_daemon.c`, `stats_buffer.c`, AMQP + libev + LIKWID as configured.
 - **Non–RabbitMQ build**: `main.c`, `stats_file.c`, `stats_file_format.c` — local file client and archive I/O.
 
-Configure selects sources via Automake conditionals; use **`./configure --help`** for options (including **`--enable-all-static`**).
+Configure selects sources via Automake conditionals; use **`./configure --help`** for options (including **`--enable-all-static`**, **`--enable-metric-profiler`**, and **`--with-metric-profiler-backend={none,ebpf}`**).
+
+## Metric profiler build options
+
+- `--enable-metric-profiler` enables compile-time collector timing instrumentation (per-type `st_collect` and per-metric `stats_set`/`stats_inc` paths).
+- `--with-metric-profiler-backend=none` keeps attribution internal (wall vs thread CPU vs inferred wait).
+- `--with-metric-profiler-backend=ebpf` enables the backend path that emits host-side attribution signals with each periodic profile report.
+- Static bundle integration: when `--with-metric-profiler-backend=ebpf` is passed through `scripts/build_static_bundle.sh`, the script also downloads and builds pinned static `libbpf` into the same `PREFIX` tree.
+
+Profiling output is emitted periodically as `metric-profiler:*` lines and includes aggregated call counts, total/avg/min/max wall time, CPU time, and inferred wait time (`wall-cpu` clamped at zero).
 
 ## Key source modules
 

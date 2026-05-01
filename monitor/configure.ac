@@ -393,6 +393,44 @@ esac],
 [debug=false])
 AM_CONDITIONAL([DEBUG], [test x$debug = xtrue])
 
+AC_ARG_ENABLE([metric-profiler],
+[AS_HELP_STRING([--enable-metric-profiler], [Enable compile-time metric profiling instrumentation (default: no)])],
+[case "${enableval}" in
+  yes) metric_profiler=true ;;
+  no)  metric_profiler=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable-metric-profiler]) ;;
+esac],
+[metric_profiler=false])
+AM_CONDITIONAL([METRIC_PROFILER], [test x$metric_profiler = xtrue])
+if test "x$metric_profiler" = "xtrue"; then
+  METRIC_PROFILER_CPPFLAG="-DMONITOR_METRIC_PROFILER"
+else
+  METRIC_PROFILER_CPPFLAG=""
+fi
+AC_SUBST([METRIC_PROFILER_CPPFLAG])
+
+AC_ARG_WITH([metric-profiler-backend],
+[AS_HELP_STRING([--with-metric-profiler-backend={none,ebpf}], [Metric profiler attribution backend (default: none)])],
+[metric_profiler_backend="$withval"],
+[metric_profiler_backend="none"])
+case "$metric_profiler_backend" in
+  none|ebpf) ;;
+  *) AC_MSG_ERROR([bad value ${metric_profiler_backend} for --with-metric-profiler-backend]) ;;
+esac
+if test "x$metric_profiler" != "xtrue" && test "x$metric_profiler_backend" != "xnone"; then
+  AC_MSG_ERROR([--with-metric-profiler-backend requires --enable-metric-profiler])
+fi
+METRIC_PROFILER_BACKEND_CPPFLAG=""
+if test "x$metric_profiler_backend" = "xebpf"; then
+  AC_CHECK_HEADERS([bpf/libbpf.h linux/bpf.h], [],
+    [AC_MSG_ERROR([Unable to find bpf/libbpf.h and linux/bpf.h for eBPF metric profiler backend])])
+  AC_SEARCH_LIBS([bpf_object__open], [bpf], [have_libbpf=yes],
+    [AC_MSG_ERROR([Unable to find libbpf for eBPF metric profiler backend])], [-lelf -lz])
+  METRIC_PROFILER_BACKEND_CPPFLAG="-DMONITOR_METRIC_PROFILER_EBPF"
+fi
+AM_CONDITIONAL([METRIC_PROFILER_BACKEND_EBPF], [test x$metric_profiler_backend = xebpf])
+AC_SUBST([METRIC_PROFILER_BACKEND_CPPFLAG])
+
 AC_SEARCH_LIBS([ev_run], [ev], [libev=yes], [AC_MSG_ERROR([Failed to find libev])])
 AC_CHECK_HEADERS([ev.h], [ev=true], [AC_MSG_ERROR([Failed to find header ev.h])])
 

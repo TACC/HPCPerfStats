@@ -60,11 +60,13 @@ STATIC_PIN_LIBEV_VERSION="4.33"
 STATIC_PIN_RABBITMQ_C_VERSION="0.14.0"
 # LIKWID: Git tag name without a leading "v" (archive is .../tags/v${VER}.tar.gz).
 STATIC_PIN_LIKWID_VERSION="5.3.0"
+STATIC_PIN_LIBBPF_VERSION="1.5.0"
 # Optional: override tarball base URLs (must contain a single %s for version where used).
 STATIC_PIN_LIBEV_URL_FMT="http://dist.schmorp.de/libev/libev-%s.tar.gz"
 # rabbitmq-c: source-of-truth repo is alanxz/rabbitmq-c; github.com/rabbitmq/rabbitmq-c archive URLs return 404.
 STATIC_PIN_RABBITMQ_C_URL_FMT="https://github.com/alanxz/rabbitmq-c/archive/refs/tags/v%s.tar.gz"
 STATIC_PIN_LIKWID_URL_FMT="https://github.com/RRZE-HPC/likwid/archive/refs/tags/v%s.tar.gz"
+STATIC_PIN_LIBBPF_URL_FMT="https://github.com/libbpf/libbpf/archive/refs/tags/v%s.tar.gz"
 # =============================================================================
 
 PREFIX="${PREFIX:-${REPO_ROOT}/.build/prefix-static}"
@@ -117,9 +119,13 @@ static_bundle_apply_release_build_flags() {
 LIBEV_VER="${LIBEV_VER:-${STATIC_PIN_LIBEV_VERSION}}"
 RABBITMQ_VER="${RABBITMQ_VER:-${STATIC_PIN_RABBITMQ_C_VERSION}}"
 LIKWID_TAG="${LIKWID_TAG:-${STATIC_PIN_LIKWID_VERSION}}"
+LIBBPF_VER="${LIBBPF_VER:-${STATIC_PIN_LIBBPF_VERSION}}"
 LIBEV_URL_FMT="${LIBEV_URL_FMT:-${STATIC_PIN_LIBEV_URL_FMT}}"
 RABBITMQ_C_URL_FMT="${RABBITMQ_C_URL_FMT:-${STATIC_PIN_RABBITMQ_C_URL_FMT}}"
 LIKWID_URL_FMT="${LIKWID_URL_FMT:-${STATIC_PIN_LIKWID_URL_FMT}}"
+LIBBPF_URL_FMT="${LIBBPF_URL_FMT:-${STATIC_PIN_LIBBPF_URL_FMT}}"
+
+WANT_METRIC_PROFILER_EBPF=0
 
 fetch_url_validate_gzip() {
   local dest="$1"
@@ -371,6 +377,32 @@ build_likwid() {
     "${likwid_mk[@]}"
 }
 
+build_libbpf() {
+  local d="${SRCDIR}/libbpf-${LIBBPF_VER}"
+  local t="${SRCDIR}/libbpf-${LIBBPF_VER}.tar.gz"
+  if test ! -d "$d"; then
+    fetch_url "$(printf "${LIBBPF_URL_FMT}" "${LIBBPF_VER}")" "$t"
+    tar -C "${SRCDIR}" -xzf "$t"
+  fi
+  cd "$d/src"
+  make -j"${JOBS}" BUILD_STATIC_ONLY=y OBJDIR=build DESTDIR= CC="${CC_FOR_BUILD:-cc}" HOSTCC="${HOSTCC_FOR_BUILD:-cc}"
+  make install PREFIX="${PREFIX}" BUILD_STATIC_ONLY=y OBJDIR=build DESTDIR= CC="${CC_FOR_BUILD:-cc}" HOSTCC="${HOSTCC_FOR_BUILD:-cc}"
+}
+
+configure_arg_requests_ebpf() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --with-metric-profiler-backend=ebpf) return 0 ;;
+      --with-metric-profiler-backend=none) return 1 ;;
+    esac
+  done
+  case "${MONITOR_METRIC_PROFILER_BACKEND:-none}" in
+    ebpf) return 0 ;;
+  esac
+  return 1
+}
+
 build_monitor() {
   if test "${SKIP_CLEAN}" != "1"; then
     if test -d "${MONITOR_DIR}/.build-static"; then
@@ -469,6 +501,10 @@ build_static_dependencies() {
     else
       echo "Skipping LIKWID build on $(uname -m) (monitor uses DCGM CPU backend here, not LIKWID)." >&2
     fi
+    if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
+      echo "Pinned static deps (metric profiler ebpf): libbpf=${LIBBPF_VER}"
+      build_libbpf
+    fi
   fi
 }
 
@@ -488,7 +524,7 @@ Usage: $(basename "$0") [--deps-only] [--release] [CONFIGURE_ARGS...]
   --disable-lustre); ignored with --deps-only.
 
 Environment: PREFIX, SRCDIR, SKIP_DEPS, SKIP_CLEAN, JOBS, HPC_BUNDLE_RELEASE_BUILD,
-  and pin overrides (see script header).
+  MONITOR_METRIC_PROFILER_BACKEND (ebpf|none), and pin overrides (see script header).
 EOF
   exit "${1:-0}"
 }
@@ -516,6 +552,10 @@ main() {
     esac
   done
 
+  if configure_arg_requests_ebpf "${monitor_args[@]}"; then
+    WANT_METRIC_PROFILER_EBPF=1
+  fi
+
   static_bundle_print_detection_summary
   static_bundle_apply_release_build_flags
   build_static_dependencies
@@ -526,6 +566,9 @@ main() {
       echo "Expected archives include: libev.a librabbitmq.a liblikwid.a liblikwid-hwloc.a liblikwid-lua.a"
     else
       echo "Expected archives include: libev.a librabbitmq.a (LIKWID not built on this architecture)."
+    fi
+    if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
+      echo "Expected archives include: libbpf.a (metric profiler eBPF backend selected)."
     fi
     echo "Configure the monitor with the same PREFIX in CPPFLAGS/LDFLAGS, then make (default --enable-all-static)."
     print_notes

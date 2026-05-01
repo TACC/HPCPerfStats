@@ -29,7 +29,9 @@ hpcperfstatsd_CPPFLAGS = \
 	-DSTATS_DIR_PATH=\"$(STATS_DIR_PATH)\" \
 	-DSTATS_LOCK_PATH=\"$(STATS_LOCK_PATH)\" \
 	-DJOBID_FILE_PATH=\"$(JOBID_FILE_PATH)\" \
-	@CPU_COUNTER_BACKEND_CPPFLAG@
+	@CPU_COUNTER_BACKEND_CPPFLAG@ \
+	@METRIC_PROFILER_CPPFLAG@ \
+	@METRIC_PROFILER_BACKEND_CPPFLAG@
 
 if MONITOR_USE_DCGM_VENDOR_INCLUDES
 hpcperfstatsd_CPPFLAGS += \
@@ -75,9 +77,17 @@ hpcperfstatsd_SOURCES = \
 	schema_entry_parse.c \
 	stats.h \
 	stats.c \
+	metric_profiler.h \
+	metric_profiler.c \
 	roofline_hw_peak.h \
 	string1.h \
 	trace.h
+
+if METRIC_PROFILER_BACKEND_EBPF
+hpcperfstatsd_SOURCES += \
+	metric_profiler_ebpf.h \
+	metric_profiler_ebpf.c
+endif
 
 if RABBITMQ
 hpcperfstatsd_SOURCES += \

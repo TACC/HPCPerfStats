@@ -5,3 +5,5 @@ set -e
 cd "$(dirname "$0")/.." || exit 1
 test -f ./configure
 ./configure --help | grep -q 'enable-all-static'
+./configure --help | grep -q 'enable-metric-profiler'
+./configure --help | grep -q 'with-metric-profiler-backend'

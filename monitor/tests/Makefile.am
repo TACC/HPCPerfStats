@@ -20,7 +20,9 @@ monitor_unit_cppflags = \
 	-DSTATS_DIR_PATH=\"$(STATS_DIR_PATH)\" \
 	-DSTATS_LOCK_PATH=\"$(STATS_LOCK_PATH)\" \
 	-DJOBID_FILE_PATH=\"$(JOBID_FILE_PATH)\" \
-	@CPU_COUNTER_BACKEND_CPPFLAG@
+	@CPU_COUNTER_BACKEND_CPPFLAG@ \
+	@METRIC_PROFILER_CPPFLAG@ \
+	@METRIC_PROFILER_BACKEND_CPPFLAG@
 
 if DEBUG
 monitor_unit_cppflags += -DDEBUG
@@ -36,7 +38,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_metric_profiler
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer
 endif
@@ -98,6 +100,14 @@ test_nfs_schema_subset_SOURCES = \
 	test_nfs_schema_subset.c \
 	$(top_srcdir)/src/nfs.c
 
+test_metric_profiler_SOURCES = \
+	test_metric_profiler.c \
+	$(top_srcdir)/src/metric_profiler.c
+if METRIC_PROFILER_BACKEND_EBPF
+test_metric_profiler_SOURCES += \
+	$(top_srcdir)/src/metric_profiler_ebpf.c
+endif
+
 if RABBITMQ
 test_monitor_cli_SOURCES = \
 	test_monitor_cli.c \
@@ -128,6 +138,7 @@ test_cpu_counter_metrics_schema_LDADD = $(LDADD)
 test_roofline_hw_peak_schema_LDADD = $(LDADD)
 test_roofline_hw_peak_changeover_LDADD = $(LDADD)
 test_nfs_schema_subset_LDADD = $(LDADD)
+test_metric_profiler_LDADD = $(LDADD)
 if RABBITMQ
 test_monitor_cli_LDADD = $(LDADD)
 test_ring_buffer_LDADD = $(LDADD)

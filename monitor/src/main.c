@@ -18,6 +18,7 @@
 #include "pscanf.h"
 #include "cpuid.h"
 #include "hwdetect.h"
+#include "metric_profiler.h"
 
 struct timeval tp;
 double current_time;
@@ -125,6 +126,7 @@ static void main_init_enable_and_collect_types(main_cmd_t cmd, int enable_all,
   struct stats_type *type;
 
   auto_disable_optional_stats_by_lspci();
+  metric_profiler_cycle_begin();
 
   while ((type = stats_type_for_each(&i)) != NULL) {
     if (enable_all)
@@ -144,9 +146,13 @@ static void main_init_enable_and_collect_types(main_cmd_t cmd, int enable_all,
     if (cmd == main_cmd_begin && type->st_begin != NULL)
       (*type->st_begin)(type);
 
-    if (type->st_enabled && type->st_selected)
+    if (type->st_enabled && type->st_selected) {
+      metric_profiler_collect_begin(type->st_name);
       (*type->st_collect)(type);
+      metric_profiler_collect_end(type->st_name);
+    }
   }
+  metric_profiler_cycle_end(stderr);
 }
 
 static void main_apply_mark_or_jobid(struct stats_file *sf, main_cmd_t cmd,

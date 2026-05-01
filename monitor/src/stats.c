@@ -5,6 +5,7 @@
 #include "trace.h"
 #include "dict.h"
 #include "schema.h"
+#include "metric_profiler.h"
 
 #define X(t) extern struct stats_type t##_stats_type;
 #include "stats.x"
@@ -20,6 +21,15 @@ static size_t nr_stats_types = sizeof(type_table) / sizeof(type_table[0]);
 int stats_collect_on_changeover = 0;
 
 static void stats_destroy(struct stats *stats);
+#ifdef MONITOR_METRIC_PROFILER
+static unsigned long long stats_now_ns(clockid_t cid)
+{
+  struct timespec ts;
+  if (clock_gettime(cid, &ts) != 0)
+    return 0;
+  return (unsigned long long)ts.tv_sec * 1000000000ULL + (unsigned long long)ts.tv_nsec;
+}
+#endif
 
 int stats_type_init(struct stats_type *st)
 {
@@ -148,6 +158,10 @@ struct stats *get_current_stats(struct stats_type *type, const char *dev)
 
 void stats_set(struct stats *stats, const char *key, unsigned long long val)
 {
+#ifdef MONITOR_METRIC_PROFILER
+  unsigned long long wall_begin_ns = stats_now_ns(CLOCK_MONOTONIC);
+  unsigned long long cpu_begin_ns = stats_now_ns(CLOCK_THREAD_CPUTIME_ID);
+#endif
   int i = schema_ref(&stats->s_type->st_schema, key);
 
   TRACE("%s %s %s %llu %d\n",
@@ -155,10 +169,19 @@ void stats_set(struct stats *stats, const char *key, unsigned long long val)
 
   if (i >= 0)
     stats->s_val[i] = val;
+#ifdef MONITOR_METRIC_PROFILER
+  metric_profiler_record_metric(stats->s_type->st_name, stats->s_dev, key,
+                                stats_now_ns(CLOCK_MONOTONIC) - wall_begin_ns,
+                                stats_now_ns(CLOCK_THREAD_CPUTIME_ID) - cpu_begin_ns);
+#endif
 }
 
 void stats_inc(struct stats *stats, const char *key, unsigned long long val)
 {
+#ifdef MONITOR_METRIC_PROFILER
+  unsigned long long wall_begin_ns = stats_now_ns(CLOCK_MONOTONIC);
+  unsigned long long cpu_begin_ns = stats_now_ns(CLOCK_THREAD_CPUTIME_ID);
+#endif
   int i = schema_ref(&stats->s_type->st_schema, key);
 
   TRACE("%s %s %s %llu %d\n",
@@ -166,4 +189,9 @@ void stats_inc(struct stats *stats, const char *key, unsigned long long val)
 
   if (i >= 0)
     stats->s_val[i] += val;
+#ifdef MONITOR_METRIC_PROFILER
+  metric_profiler_record_metric(stats->s_type->st_name, stats->s_dev, key,
+                                stats_now_ns(CLOCK_MONOTONIC) - wall_begin_ns,
+                                stats_now_ns(CLOCK_THREAD_CPUTIME_ID) - cpu_begin_ns);
+#endif
 }

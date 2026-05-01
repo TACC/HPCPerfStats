@@ -19,9 +19,10 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_dcgm_pkg_uniq.c` | Sorted package-id unique-count logic (maps to DCGM_FE_CPU pairing) |
 | `test_gpu_schema_contract.c` | NVIDIA/AMD GPU schema substrings (incl. module/sysio power keys) |
 | `test_nfs_schema_subset.c` | NFS collector schema tokens vs. `nfs.c` |
+| `test_metric_profiler.c` | Metric profiler aggregation/report smoke test (enabled and disabled builds) |
 | `test_monitor_cli.c` | RabbitMQ daemon CLI (`monitor_cli_*`), including `-h` via subprocess |
 | `test_monitor_cli_globals.c` | Stub globals for `test_monitor_cli` |
-| `test_monitor_configure_help.sh.in` | Regression (via `check-local`): `configure --help` mentions `--enable-all-static` |
+| `test_monitor_configure_help.sh.in` | Regression (via `check-local`): `configure --help` mentions `--enable-all-static`, `--enable-metric-profiler`, and `--with-metric-profiler-backend` |
 | `Makefile.am` | Automake `check_PROGRAMS` / `TESTS`; **keep `monitor_unit_cppflags` in sync** with `src/Makefile.am` `hpcperfstatsd_CPPFLAGS` for `-D` flags |
 | `run_tests.sh` | Convenience wrapper around `make check` in a build directory |
 | `../scripts/profile_hpcperfstatsd_example.sh` | Prints `perf record` / `perf stat` recipes for CPU baseline comparisons |

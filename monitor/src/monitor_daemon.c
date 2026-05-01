@@ -24,6 +24,7 @@
 #include "stats.h"
 #include "collect.h"
 #include "stats_buffer.h"
+#include "metric_profiler.h"
 #include "trace.h"
 #include "pscanf.h"
 #include "hwdetect.h"
@@ -308,12 +309,17 @@ static int send_stats_buffer(struct stats_buffer *sf)
   size_t i = 0;
   struct stats_type *type;
   int rc = 0;
+  metric_profiler_cycle_begin();
   while ((type = stats_type_for_each(&i)) != NULL) {
-    if (type->st_enabled)
+    if (type->st_enabled) {
+      metric_profiler_collect_begin(type->st_name);
       (*type->st_collect)(type);
+      metric_profiler_collect_end(type->st_name);
+    }
   }
   if (stats_buffer_collect(sf) < 0)
     rc = -1;
+  metric_profiler_cycle_end(log_stream);
   return rc;
 }
 
