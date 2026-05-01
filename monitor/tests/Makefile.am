@@ -36,7 +36,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_dcgm_pkg_uniq test_nfs_schema_subset
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer
 endif
@@ -87,6 +87,13 @@ test_dcgm_pkg_uniq_SOURCES = test_dcgm_pkg_uniq.c
 
 test_cpu_counter_metrics_schema_SOURCES = test_cpu_counter_metrics_schema.c
 
+test_roofline_hw_peak_schema_SOURCES = \
+	test_roofline_hw_peak_schema.c
+
+test_roofline_hw_peak_changeover_SOURCES = \
+	test_roofline_hw_peak_changeover.c \
+	$(top_srcdir)/src/roofline_hw_peak.c
+
 test_nfs_schema_subset_SOURCES = \
 	test_nfs_schema_subset.c \
 	$(top_srcdir)/src/nfs.c
@@ -118,6 +125,8 @@ test_stats_file_format_LDADD = $(LDADD)
 test_gpu_schema_contract_LDADD = $(LDADD)
 test_dcgm_pkg_uniq_LDADD = $(LDADD)
 test_cpu_counter_metrics_schema_LDADD = $(LDADD)
+test_roofline_hw_peak_schema_LDADD = $(LDADD)
+test_roofline_hw_peak_changeover_LDADD = $(LDADD)
 test_nfs_schema_subset_LDADD = $(LDADD)
 if RABBITMQ
 test_monitor_cli_LDADD = $(LDADD)

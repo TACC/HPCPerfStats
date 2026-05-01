@@ -331,7 +331,9 @@ static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_h
   if (mark_line != NULL)
     stats_buffer_mark(sf, "%s", mark_line);
   w->b_count++;
+  stats_collect_on_changeover = write_hdr ? 1 : 0;
   w->status = send_stats_buffer(sf);
+  stats_collect_on_changeover = 0;
   if (w->status < 0) {
     ERROR("Failed building stats payload. Dropping sample\n");
     stats_buffer_close(sf);

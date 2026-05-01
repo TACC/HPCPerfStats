@@ -21,6 +21,8 @@ extern char jobid[80];
 extern int nr_cpus;
 extern int n_pmcs;
 extern processor_t processor;
+/* Set by daemon collection path for samples that coincide with `$` schema/header changeover. */
+extern int stats_collect_on_changeover;
 
 struct stats_type {
   int (*st_begin)(struct stats_type *type);

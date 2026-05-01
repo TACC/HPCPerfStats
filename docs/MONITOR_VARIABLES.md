@@ -74,6 +74,7 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `osc` | `osc.c` | Lustre OSC |
 | `proc` | `proc.c` | Per-process `/proc` status |
 | `ps` | `ps.c` | Skipped by default ingest |
+| `roofline_hw_peak` | `roofline_hw_peak.c` | Host-level roofline peak metadata; emitted only on `$` schema/header changeover |
 | `sysv_shm` | `sysv_shm.c` | Skipped by default ingest |
 | `tmpfs` | `tmpfs.c` | Skipped by default ingest |
 | `vfs` | `vfs.c` | Skipped by default ingest |

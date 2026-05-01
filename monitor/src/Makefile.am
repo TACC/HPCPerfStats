@@ -75,6 +75,7 @@ hpcperfstatsd_SOURCES = \
 	schema_entry_parse.c \
 	stats.h \
 	stats.c \
+	roofline_hw_peak.h \
 	string1.h \
 	trace.h
 
@@ -116,6 +117,7 @@ TYPES 	= \
 	net.c \
 	nfs.c \
 	numa.c \
+	roofline_hw_peak.c \
 	proc.c \
 	ps.c \
 	sysv_shm.c \

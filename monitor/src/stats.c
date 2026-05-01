@@ -17,6 +17,7 @@ struct stats_type *type_table[] = {
 };
 
 static size_t nr_stats_types = sizeof(type_table) / sizeof(type_table[0]);
+int stats_collect_on_changeover = 0;
 
 static void stats_destroy(struct stats *stats);
 
