@@ -176,7 +176,7 @@ def test_bokeh_embed_job_list_fixtures_vite_built_bundle_no_histogram_failure_co
             "Built frontend missing bokeh-playwright-smoke.html; from "
             "hpcperfstats/site/frontend run `npm run build:with-bokeh-playwright-smoke` "
             "(or `BUILD_BOKEH_SMOKE=1 npm run build`). Default `npm run build` is SPA-only "
-            "(see TESTING.md)."
+            "(see docs/TESTING.md)."
         )
     if not _VITE_CLI.is_file():
         pytest.skip(

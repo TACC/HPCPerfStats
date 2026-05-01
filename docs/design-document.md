@@ -42,7 +42,7 @@ HPC centers need **multi-resolution visibility** into how jobs use nodes: CPU, m
 Operational signals used in this repo (not a complete SLO spec):
 
 - Compose **healthchecks** for `db`, `redis`, `rabbitmq`, and `proxy` (`docker-compose.yaml`).
-- Automated tests for **listend** message handling, **sync_timedb** archive edge cases, metrics updates, and web/API behavior (`HPCPerfStats/TESTING.md`).
+- Automated tests for **listend** message handling, **sync_timedb** archive edge cases, metrics updates, and web/API behavior (`HPCPerfStats/docs/TESTING.md`).
 - **Idempotent** metrics recomputation expectations where documented under ingestion/metrics rules.
 
 ---
@@ -207,7 +207,7 @@ Canonical Python references (see `HPCPerfStats/hpcperfstats/cursor-rules/monitor
 - **Python:** pytest with Django settings (`pyproject.toml`); many tests under `hpcperfstats/tests/` and `hpcperfstats/site/.../tests/`.
 - **Web E2E:** `test_web_pages_e2e.py` and Playwright `test_web_pages_browser_e2e.py` must be updated when web routes or SPA behavior changes.
 - **Compose workflows:** For DB/Redis-dependent tests, use the Docker Compose network so hostnames like `db` resolve (see `full-test-with-db-redis` and `local-compose-db-lifecycle-for-web-tests` rules).
-- **Testing entrypoints:** `HPCPerfStats/TESTING.md` must stay in sync when test commands or runners change.
+- **Testing entrypoints:** `HPCPerfStats/docs/TESTING.md` must stay in sync when test commands or runners change.
 
 ---
 

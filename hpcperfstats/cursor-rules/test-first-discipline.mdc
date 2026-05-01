@@ -24,4 +24,4 @@ Treat every non-trivial change as test-first work.
 - Follow compose-network workflows for non-unit tests per `docker-compose-non-unit-testing.mdc` and `full-test-with-db-redis.mdc`.
 - When web pages/routes change, also follow `web-pages-e2e-test-maintenance.mdc` and `pipeline-endpoint-matrix-drift-guard.mdc`.
 - When ingest/metrics behavior changes, also follow `pipeline-metrics-e2e-maintenance.mdc` and `runtime-resource-and-metrics-safety.mdc`.
-- When test workflows/scope/prereqs change, update `HPCPerfStats/TESTING.md` per `testing-doc-sync.mdc`.
+- When test workflows/scope/prereqs change, update `HPCPerfStats/docs/TESTING.md` per `testing-doc-sync.mdc`.

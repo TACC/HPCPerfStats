@@ -36,5 +36,5 @@ in the same task.
 - A route change is not complete until the snapshot and matrix tests both pass.
 
 ## Documentation sync
-- If route-matrix workflow or prerequisites change, update `HPCPerfStats/TESTING.md`
+- If route-matrix workflow or prerequisites change, update `HPCPerfStats/docs/TESTING.md`
   in the same task.

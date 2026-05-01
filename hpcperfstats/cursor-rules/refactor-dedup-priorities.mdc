@@ -26,7 +26,7 @@ When refactoring or removing duplication (Python under `hpcperfstats/`, React/JS
 
 - Before changing behavior-bearing code, add or extend **unit tests** that lock current behavior (pytest / Vitest as appropriate for the layer).
 - After the refactor, run the **relevant** unit tests and keep them green before considering the task done.
-- Follow existing workspace rules for E2E, `TESTING.md`, and `monitor/` guardrails; this rule does not relax them.
+- Follow existing workspace rules for E2E, `docs/TESTING.md`, and `monitor/` guardrails; this rule does not relax them.
 
 ## Overlap
 

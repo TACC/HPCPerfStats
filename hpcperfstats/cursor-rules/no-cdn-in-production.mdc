@@ -16,7 +16,7 @@ alwaysApply: true
 - Django **middleware** (CSP headers), views, and templates served to users.
 - React/Vite **application source** under `hpcperfstats/site/frontend/src/` and production **`index.html`** (built output under `static/frontend/`).
 - Nginx/site configs that inject or proxy **external** script/style/font URLs to clients.
-- **Not** production: unit/integration E2E tests, Cursor rules, `TESTING.md` examples, pipeline fixtures.
+- **Not** production: unit/integration E2E tests, Cursor rules, `docs/TESTING.md` examples, pipeline fixtures.
 
 ## CSP relationship
 

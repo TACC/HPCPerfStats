@@ -20,7 +20,7 @@ Stress tests are **opt-in** (`HPCPERFSTATS_STRESS_HOST_DATA=1`); the workflow sc
 ## When adding or changing non-unit tests
 
 - Prefer a **workflow shell script** under `tests/run_*_workflow.sh` that: resets or documents compose state, starts required services, waits for health, runs `docker-compose run … web` with the repo mounted, and tears down unless `--keep-env`.
-- Document the script in `TESTING.md` in the same change.
+- Document the script in `docs/TESTING.md` in the same change.
 - Keep `monitor/` read-only per workspace guardrails unless the user explicitly approves edits there.
 
 ## Overlap

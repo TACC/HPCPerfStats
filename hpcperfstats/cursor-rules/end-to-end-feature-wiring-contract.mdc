@@ -17,7 +17,7 @@ For any new metric, counter, summary field, route behavior, or user-visible plot
  - API tests for response shape and fallback behavior,
  - required E2E suites when web behavior changes.
 - Update docs when behavior or test workflow changes:
- - `TESTING.md` for test workflow/scope/dependency changes,
+ - `docs/TESTING.md` for test workflow/scope/dependency changes,
  - user docs when user-visible behavior changes,
  - design docs when architecture/contract decisions change.
 

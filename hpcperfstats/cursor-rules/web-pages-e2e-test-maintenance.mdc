@@ -79,10 +79,10 @@ Also regenerate if the Playwright test’s **failure substrings** or embed harne
 4. Run `pytest hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (requires `python -m playwright install chromium` and network for the Bokeh CDN).
 5. Keep **Python contract tests** in `test_job_hist_bokeh_ranges.py` green in the same change.
 
-Copy-paste commands and a full generator snippet are maintained in `HPCPerfStats/TESTING.md` (web E2E section); update that doc when regeneration steps or paths change (`testing-doc-sync.mdc`).
+Copy-paste commands and a full generator snippet are maintained in `HPCPerfStats/docs/TESTING.md` (web E2E section); update that doc when regeneration steps or paths change (`testing-doc-sync.mdc`).
 
 ### Overlap
 
-- Complements `testing-doc-sync.mdc` (document workflow in `TESTING.md`).
+- Complements `testing-doc-sync.mdc` (document workflow in `docs/TESTING.md`).
 - Complements `test-first-discipline.mdc` and `test_job_hist_bokeh_ranges.py` (server-side range invariants).
 - The Playwright harness’s **jsDelivr** Bokeh script URL is **test-only**; do not copy this pattern into production UI. See **`no-cdn-in-production.mdc`**.

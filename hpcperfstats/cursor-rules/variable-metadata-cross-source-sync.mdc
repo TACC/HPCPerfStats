@@ -68,4 +68,4 @@ After changing **`augment_monitor_variables_diagnostics.py`** only (diagnostic w
 
 - `variable-metadata-monitor-contract.mdc` — monitor ↔ generator ↔ `MONITOR_EVENT_METADATA`.  
 - `variable-metadata-derived-metrics-sync.mdc` — `metrics.py` ↔ `JOB_ACCOUNTING_AND_DERIVED_METADATA`.  
-- `testing-doc-sync.mdc` — if you add new test scripts or documented commands for this workflow, update `TESTING.md` in the same task.
+- `testing-doc-sync.mdc` — if you add new test scripts or documented commands for this workflow, update `docs/TESTING.md` in the same task.

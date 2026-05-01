@@ -36,5 +36,5 @@ in the same task.
   - `hpcperfstats/analysis/metrics/tests/` and/or `hpcperfstats/tests/`
 
 ## Documentation sync
-- When this E2E workflow behavior/expectations change, update `HPCPerfStats/TESTING.md`
+- When this E2E workflow behavior/expectations change, update `HPCPerfStats/docs/TESTING.md`
   in the same task.

@@ -20,7 +20,7 @@ When the task is a traceback fix, timeout fix, memory/runtime reduction, or oper
 
 - Add or extend targeted regression tests for the specific failure mode.
 - For DB/Redis/networked behavior, validate in compose-network workflows, not host-only assumptions.
-- When fix scope changes test commands or runner prerequisites, update `TESTING.md` in the same task.
+- When fix scope changes test commands or runner prerequisites, update `docs/TESTING.md` in the same task.
 
 ## Guardrails
 

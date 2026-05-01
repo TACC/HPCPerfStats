@@ -24,7 +24,7 @@ Documented limitations (e.g. Bokeh canvas for screen readers, OAuth IdP UI) do n
 - **Semantics**: Correct landmarks (`main`, `nav`, labeled regions/dialogs), headings in logical order, **labels** / **`aria-*`** on forms and dynamic status (e.g. `aria-live` where appropriate), tables with **`scope`** / captions when tabular.
 - **Perceivable**: Sufficient **contrast** for text and UI chrome; do not rely on **color alone** for meaning; respect **`prefers-reduced-motion`** for non-essential animation.
 - **Titles**: Keep **`useDocumentTitle`** (or equivalent) accurate for the view after your change.
-- **Verification**: Run frontend tests (`npm test -- --run` under `hpcperfstats/site/frontend`). Follow **Accessibility** in [`TESTING.md`](TESTING.md) for manual checks on substantive UX changes.
+- **Verification**: Run frontend tests (`npm test -- --run` under `hpcperfstats/site/frontend`). Follow **Accessibility** in [`docs/TESTING.md`](docs/TESTING.md) for manual checks on substantive UX changes.
 
 ## Mobile view (when touching any webpage)
 
