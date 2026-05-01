@@ -20,7 +20,7 @@ All of the typenames above are whatever the **monitor** publishes as `host_data.
 - **Intel**: One table row per entry in **`INTEL_IMC_STATS_TYPES`** (same strings as the monitor). Inference picks the **first** typename in that tuple present in the schema—matching roofline’s IMC bandwidth scan order.
 - **AMD**: `amd64_pmc` + `amd64_df` → default 2S EPYC-class peak row (`amd64_epyc_2s_default`); Zen generation is **not** in `host_data.type`, so optional per-generation rows are for documentation/overrides only until host metadata or config exists.
 - **ARM Grace-class**: `arm_imc` in schema → Grace single-die peak row; synthetic DCGM counters remain under `cpu_counter_metrics` (see monitor `cpu_counter_metrics.c`).
-- **Cursor rule**: `HPCPerfStats/cursor-rules/monitor-analysis-architecture-sync.mdc` summarizes how these pieces stay in sync when the monitor or analysis changes.
+- **Cursor rule**: `HPCPerfStats/hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc` summarizes how these pieces stay in sync when the monitor or analysis changes.
 
 ## GPU (NVIDIA, AMD)
 

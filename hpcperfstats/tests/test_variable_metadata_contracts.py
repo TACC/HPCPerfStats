@@ -57,6 +57,6 @@ def test_generated_monitor_metadata_header_references_authoritative_rule_path():
   js_out_path = repo_root / "hpcperfstats" / "site" / "frontend" / "src" / "utils" / "variableMetadataMonitorEvents.js"
   gen_text = _read_text(gen_path)
   js_text = _read_text(js_out_path)
-  expected = "HPCPerfStats/cursor-rules/variable-metadata-monitor-contract.mdc"
+  expected = "HPCPerfStats/hpcperfstats/cursor-rules/variable-metadata-monitor-contract.mdc"
   assert expected in gen_text
   assert expected in js_text

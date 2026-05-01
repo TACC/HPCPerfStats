@@ -23,7 +23,7 @@ If the user’s scope is unclear, ask once for a time window (e.g. last N days, 
 1. Use the scope the user gives (dates, folders, or transcript files). If none, ask once.
 2. Read **parent** agent transcripts (or paths the user specifies). Do not rely on subagent-only transcripts for rule evidence unless the user says otherwise.
 3. Identify repeated mistakes, rework loops, or stable user preferences that would benefit from a **narrow, testable** rule.
-4. Check overlap with existing rules under `.cursor/rules/` and `cursor-rules/`; prefer **updating** an existing rule over adding a duplicate.
+4. Check overlap with existing rules under `.cursor/rules/` and `hpcperfstats/cursor-rules/`; prefer **updating** an existing rule over adding a duplicate.
 5. For each candidate, document:
    - the pattern it addresses
    - evidence (references to parent chats in that scope)

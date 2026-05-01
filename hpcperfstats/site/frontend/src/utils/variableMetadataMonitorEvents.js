@@ -1,7 +1,7 @@
 /**
  * Monitor `host_data.event` names: definitions align with HPCPerfStats/monitor schema KEYS.
  * Regenerate: python3 hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py
- * (see HPCPerfStats/cursor-rules/variable-metadata-monitor-contract.mdc).
+ * (see HPCPerfStats/hpcperfstats/cursor-rules/variable-metadata-monitor-contract.mdc).
  */
 
 export const MONITOR_EVENT_METADATA = {

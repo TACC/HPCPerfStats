@@ -16,19 +16,19 @@ Example shape:
 ```text
 <workspace_root>/
   .venv/                 ← use THIS for python/pip on the host
-  .cursor/rules          ← symlink → HPCPerfStats/cursor-rules
+  .cursor/rules          ← symlink → HPCPerfStats/hpcperfstats/cursor-rules
   HPCPerfStats/          ← cd here for compose, pip install -e, pytest paths in docs
-    cursor-rules/        ← authoritative rule *.mdc files (edit here)
     pyproject.toml
     docker-compose.yaml
     hpcperfstats/
+      cursor-rules/      ← authoritative rule *.mdc files (edit here)
 ```
 
 Do **not** treat `HPCPerfStats/HPCPerfStats/` alone as “project root” for `.venv`; the venv one level **above** that folder is canonical.
 
 ## Where to edit Cursor rules
 
-- **Authoritative rules directory:** `HPCPerfStats/cursor-rules/*.mdc` (inside the git repo).
+- **Authoritative rules directory:** `HPCPerfStats/hpcperfstats/cursor-rules/*.mdc` (inside the git repo).
 - Workspace **`.cursor/rules`** should point at that directory (symlink), so Cursor loads the same files.
 - **Do not** maintain a second copy under `HPCPerfStats/.cursor/rules/` — that bypasses the symlink and splits the rule set.
 

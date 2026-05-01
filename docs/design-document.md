@@ -106,7 +106,7 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 
 - **Purpose:** Collect node-level statistics from MSRs, `/proc`, `/sys`, accelerators (e.g. DCGM), network counters, etc., and publish **one message per sample** to RabbitMQ (or append in file mode).
 - **Build:** Autotools; production packaging via static-bundle + RPM spec under `HPCPerfStats/monitor/` (see `README.md`).
-- **Workspace rule split:** Application Python code treats `monitor/` as **read-only** unless the user explicitly approves edits; monitor-only work follows `HPCPerfStats/monitor/cursor-rules/` (which explicitly **ignores** root `HPCPerfStats/cursor-rules/` for monitor changes).
+- **Workspace rule split:** Application Python code treats `monitor/` as **read-only** unless the user explicitly approves edits; monitor-only work follows `HPCPerfStats/monitor/cursor-rules/` (which explicitly **ignores** `HPCPerfStats/hpcperfstats/cursor-rules/` for monitor changes).
 
 ### 5.2 Docker Compose services
 
@@ -178,7 +178,7 @@ It also includes **syslog-ng** and **logrotate** hooks for operational logging.
 
 The monitor publishes **`host_data.type`** strings (from C `stats_type.st_name` / schema). **Analysis code must treat those names as the contract**: Intel IMC ordering, PMC priority, AMD (`amd64_pmc` / `amd64_df`), ARM/Grace paths, and **roofline nominal peaks** must stay aligned with what the monitor can emit.
 
-Canonical Python references (see `HPCPerfStats/cursor-rules/monitor-analysis-architecture-sync.mdc` and `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md`):
+Canonical Python references (see `HPCPerfStats/hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc` and `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md`):
 
 - `hpcperfstats/analysis/gen/utils.py` — `INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, `INTEL_CORE_PMC_TYPES_ORDERED`, `PMC_TYPENAME_PRIORITY`, etc.
 - `hpcperfstats/analysis/plot/roofline_peaks.py` — peak tables and inference.
@@ -242,6 +242,6 @@ This section records **typical** tradeoffs implicit in the design—not a formal
 | Architecture-agnostic analysis | `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md` |
 | Compose topology | `docker-compose.yaml` (includes `docker-compose.app.yaml`, `docker-compose.cpu-pinning.*.yaml`) |
 | Supervisor programs (example) | `services-conf/supervisord.conf.example` |
-| Workspace guardrails (monitor/tools/nginx/redis) | `HPCPerfStats/cursor-rules/workspace-guardrails.mdc` |
+| Workspace guardrails (monitor/tools/nginx/redis) | `HPCPerfStats/hpcperfstats/cursor-rules/workspace-guardrails.mdc` |
 | Monitor message contract | `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc` |
-| Monitor ↔ analysis type sync | `HPCPerfStats/cursor-rules/monitor-analysis-architecture-sync.mdc` |
+| Monitor ↔ analysis type sync | `HPCPerfStats/hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc` |

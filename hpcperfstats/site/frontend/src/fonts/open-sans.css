@@ -1,7 +1,7 @@
 /**
  * Self-hosted Open Sans (latin + latin-ext, 400/700 + italics) for Bootswatch Spacelab.
  * Vite emits woff2 under /static/frontend/assets/ — same origin as the SPA (no font CDN).
- * @see cursor-rules/no-cdn-in-production.mdc
+ * @see hpcperfstats/cursor-rules/no-cdn-in-production.mdc
  */
 @import "@fontsource/open-sans/latin-400.css";
 @import "@fontsource/open-sans/latin-400-italic.css";

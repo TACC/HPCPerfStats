@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Monitor-Only Workspace Rule
 
-- Ignore all rules in `HPCPerfStats/cursor-rules/`. Do not apply or inherit guidance from those rule files.
+- Ignore all rules in `HPCPerfStats/hpcperfstats/cursor-rules/`. Do not apply or inherit guidance from those rule files.
 - Make code changes only under `HPCPerfStats/monitor/` (primarily `HPCPerfStats/monitor/src/` for C sources).
 - You may analyze files outside `HPCPerfStats/monitor/` when needed to understand interfaces, behavior, or integration points.
 - Do not modify non-monitor code unless the user explicitly overrides this rule in the current chat.

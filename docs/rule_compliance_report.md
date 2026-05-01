@@ -15,7 +15,7 @@
   - variable metadata parity/sync/regeneration header-path tests;
   - scientific-notation assertions on job detail + plot API payloads in pipeline browser test.
 - Non-logic hygiene:
-  - authoritative `cursor-rules` path references fixed in docs/generator outputs;
+  - authoritative `hpcperfstats/cursor-rules` path references fixed in docs/generator outputs;
   - conflict artifact rule file removed;
   - logic-change checklist added;
   - incremental frontend naming plan documented;
