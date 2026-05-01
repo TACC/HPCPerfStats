@@ -84,7 +84,7 @@ class TestInvalidateCacheForPage:
     assert response.status_code == 400
     assert "page_path" in str(response.data.get("error", "")).lower()
 
-  def test_non_scannable_cache_returns_503(self):
+  def test_non_scannable_redis_still_ok_without_raw_client(self):
     from hpcperfstats.site.machine import api
 
     factory = APIRequestFactory()
@@ -93,12 +93,13 @@ class TestInvalidateCacheForPage:
         {"page_path": "jobs"},
         format="json",
     )
-    request.META["HTTP_HOST"] = "example.com"
+    request.META["HTTP_HOST"] = "testserver"
     with patch.object(api, "_require_staff", return_value=None), patch.object(
         api, "_get_redis_cache_client", return_value=object()
     ):
       response = api.invalidate_cache_for_page(request)
-    assert response.status_code == 503
+    assert response.status_code == 200
+    assert response.data["ok"] is True
 
   def test_success_deletes_matching_keys(self):
     from hpcperfstats.site.machine import api
@@ -109,18 +110,19 @@ class TestInvalidateCacheForPage:
         {"page_path": "/machine"},
         format="json",
     )
-    request.META["HTTP_HOST"] = "example.com"
+    request.META["HTTP_HOST"] = "testserver"
 
     class _FakeRedis:
       def __init__(self):
         self.deleted = []
 
-      def scan_iter(self, count=500):
+      def scan_iter(self, count=500, match=None):
         yield b"unrelated"
         yield b"cache:machine:https://example.com/machine"
 
       def delete(self, raw_key):
         self.deleted.append(raw_key)
+        return 1
 
     fake = _FakeRedis()
     with patch.object(api, "_require_staff", return_value=None), patch.object(

@@ -179,7 +179,7 @@ class TestWebPagesEndToEnd:
           data={"page_path": "/machine/jobs"},
           content_type="application/json",
       )
-      assert staff_invalidate.status_code in (200, 503)
+      assert staff_invalidate.status_code == 200
 
       non_staff_session = client.session
       non_staff_session["is_staff"] = False

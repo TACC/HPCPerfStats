@@ -19,8 +19,12 @@ from rest_framework.response import Response
 from django.conf import settings
 from django.core.cache import cache
 from django.db import connection, close_old_connections, transaction
-from django.utils.encoding import iri_to_uri
-
+from django.test import RequestFactory
+from django.utils.cache import (
+    _generate_cache_header_key,
+    _generate_cache_key,
+    get_cache_key,
+)
 import os
 from types import SimpleNamespace
 
@@ -564,6 +568,93 @@ def _get_redis_cache_client():
             except Exception:
                 client = None
     return client
+
+
+def _full_page_cache_url_digests_for_request_paths(request, paths):
+    """Return MD5 hex digests of absolute URIs used in Django ``cache_page`` keys.
+
+    Matches ``django.utils.cache._generate_cache_key`` / ``get_cache_key`` URL
+    hashing (``md5(request.build_absolute_uri().encode("ascii"))``).
+    """
+    factory = RequestFactory()
+    host = request.get_host() or "localhost"
+    digests = set()
+    for raw_path in paths:
+        path = raw_path if (raw_path or "").startswith("/") else f"/{raw_path}"
+        for secure in (False, True):
+            req = factory.get(path, HTTP_HOST=host, secure=secure)
+            uri = req.build_absolute_uri()
+            digests.add(
+                hashlib.md5(uri.encode("ascii"), usedforsecurity=False).hexdigest()
+            )
+    return digests
+
+
+def _delete_django_cache_page_entries_for_request(request, paths):
+    """Delete ``@cache_page`` / ``dynamic_cache_page`` entries via Django's cache API.
+
+    Drops the ``cache_header`` registry entry, then either the ``get_cache_key`` page
+    key or—when the registry is missing—the empty-``Vary`` page key Django would use.
+    """
+    factory = RequestFactory()
+    host = request.get_host() or "localhost"
+    deleted = 0
+    key_prefix = settings.CACHE_MIDDLEWARE_KEY_PREFIX
+    for raw_path in paths:
+        path = raw_path if (raw_path or "").startswith("/") else f"/{raw_path}"
+        for secure in (False, True):
+            req = factory.get(path, HTTP_HOST=host, secure=secure)
+            hk = _generate_cache_header_key(key_prefix, req)
+            if cache.delete(hk):
+                deleted += 1
+            ck = get_cache_key(req)
+            if ck is not None:
+                if cache.delete(ck):
+                    deleted += 1
+            else:
+                nk = _generate_cache_key(req, "GET", [], key_prefix)
+                if cache.delete(nk):
+                    deleted += 1
+    return deleted
+
+
+def _redis_delete_cache_page_keys_matching_digests(client, digests):
+    """Delete raw Redis keys for ``cache_page`` / ``cache_header`` rows matching URL digests.
+
+    Needed when responses ``Vary`` on headers (e.g. ``Cookie``): each variant has
+    a distinct full key, so ``get_cache_key`` for a single synthetic request is
+    not enough. Keys still embed the URL MD5 hex from Django's cache layer.
+    """
+    if not digests or client is None or not hasattr(client, "scan_iter"):
+        return 0
+    deleted = 0
+    for d in digests:
+        iterator = None
+        try:
+            iterator = client.scan_iter(match=f"*{d}*", count=500)
+        except TypeError:
+            iterator = client.scan_iter(count=500)
+        try:
+            for raw_key in iterator:
+                key_str = (
+                    raw_key.decode("utf-8", "replace")
+                    if isinstance(raw_key, bytes)
+                    else str(raw_key)
+                )
+                if d not in key_str:
+                    continue
+                if (
+                    "views.decorators.cache.cache_page" not in key_str
+                    and "views.decorators.cache.cache_header" not in key_str
+                ):
+                    continue
+                try:
+                    deleted += int(client.delete(raw_key) or 0)
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    return deleted
 
 
 def _get_cache_stats():
@@ -1120,11 +1211,16 @@ def drop_staff_for_session(request):
 
 @api_view(["POST"])
 def invalidate_cache_for_page(request):
-    """Invalidate Redis cache keys associated with the provided page path.
+    """Invalidate cache entries associated with the provided page path.
 
-    For any ``/machine`` or ``/machine/...`` path, also purges ``GET /api/home/``
-    page-cache entries (same URL-hash scan) and drops ``home_options`` ORM cache
-    keys (dates, metrics list, queues, states, site newest job end).
+    Deletes Django ``@cache_page`` / ``dynamic_cache_page`` rows via ``cache.delete``
+    (correct key prefix/versioning), then raw Redis ``SCAN`` for keys whose names
+    embed the same URL MD5 as Django's cache layer (covers ``Vary`` variants).
+
+    For any ``/machine`` or ``/machine/...`` path, also targets ``/api/home/`` and
+    drops ``home_options`` ORM cache keys (dates, metrics list, queues, states,
+    site newest job end). Works without a raw Redis client (LocMem): ORM + Django
+    cache deletes still run.
     """
     err = _require_staff(request)
     if err is not None:
@@ -1153,42 +1249,39 @@ def invalidate_cache_for_page(request):
         path_variants.add("/api/home/")
         invalidate_home_options_query_cache()
 
-    host = request.get_host() or "localhost"
-    url_hashes = set()
-    for variant in path_variants:
-        for scheme in ("http", "https"):
-            absolute_uri = f"{scheme}://{host}{variant}"
-            url_hashes.add(hashlib.md5(iri_to_uri(absolute_uri).encode("ascii")).hexdigest())
-
-    client = _get_redis_cache_client()
-    if client is None or not hasattr(client, "scan_iter"):
-        return Response(
-            {"error": "Cache backend does not support key scanning"},
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
+    paths_sorted = sorted(path_variants)
+    digests = _full_page_cache_url_digests_for_request_paths(request, paths_sorted)
 
     deleted_count = 0
+    deleted_count += _delete_django_cache_page_entries_for_request(request, paths_sorted)
+
+    client = _get_redis_cache_client()
+    redis_deleted = 0
     scanned_count = 0
     matched_keys = []
-    max_scan = 5000
-    for raw_key in client.scan_iter(count=500):
-        scanned_count += 1
-        if scanned_count > max_scan:
-            break
+    max_legacy_scan = 5000
+    if client is not None and hasattr(client, "scan_iter"):
+        redis_deleted += _redis_delete_cache_page_keys_matching_digests(client, digests)
+        for raw_key in client.scan_iter(count=500):
+            scanned_count += 1
+            if scanned_count > max_legacy_scan:
+                break
+            key_str = (
+                raw_key.decode("utf-8", "replace")
+                if isinstance(raw_key, bytes)
+                else str(raw_key)
+            )
+            has_path_match = any(pv in key_str for pv in path_variants)
+            if not has_path_match:
+                continue
+            try:
+                redis_deleted += int(client.delete(raw_key) or 0)
+                if len(matched_keys) < 25:
+                    matched_keys.append(key_str)
+            except Exception:
+                continue
 
-        key_str = raw_key.decode("utf-8", "replace") if isinstance(raw_key, bytes) else str(raw_key)
-        has_path_match = any(path_variant in key_str for path_variant in path_variants)
-        has_hash_match = any(url_hash in key_str for url_hash in url_hashes)
-        if not has_path_match and not has_hash_match:
-            continue
-
-        try:
-            client.delete(raw_key)
-            deleted_count += 1
-            if len(matched_keys) < 25:
-                matched_keys.append(key_str)
-        except Exception:
-            continue
+    deleted_count += redis_deleted
 
     return Response(
         {
@@ -1197,7 +1290,7 @@ def invalidate_cache_for_page(request):
             "deleted_keys": deleted_count,
             "scanned_keys": scanned_count,
             "matched_sample": matched_keys,
-            "truncated_scan": scanned_count > max_scan,
+            "truncated_scan": scanned_count > max_legacy_scan,
         }
     )
 
