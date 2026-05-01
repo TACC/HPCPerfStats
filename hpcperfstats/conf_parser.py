@@ -2,8 +2,10 @@
 
 """
 import configparser
+import ipaddress
 import math
 import os
+import re
 from zoneinfo import ZoneInfo
 
 _DEFAULT_TOTAL_CORES = "40"
@@ -209,6 +211,81 @@ def get_server_name():
 def get_data_dir_path():
   """Return the data directory path from DEFAULT config."""
   return _get('DEFAULT', 'data_dir')
+
+
+def get_syslog_allow_from_ipv4_networks():
+  """Return IPv4 CIDR strings for pipeline syslog-ng ``netmask()`` allowlist.
+
+  Whitespace and commas separate entries. ``#`` starts an end-of-line comment.
+  An **empty** list (missing ``[SYSLOG]``, blank ``allow_from``, or only
+  comments) means **allow all IPv4** (``0.0.0.0/0``) for backward compatibility.
+  IPv6-only networks are skipped with no error (syslog-ng filter uses
+  ``netmask()`` IPv4 form in generated config).
+  """
+  _ensure_cfg_loaded()
+  if not cfg.has_section('SYSLOG'):
+    return []
+  raw = cfg.get('SYSLOG', 'allow_from', fallback='').strip()
+  if not raw:
+    return []
+  nets = []
+  for line in raw.replace(',', '\n').splitlines():
+    line = line.split('#', 1)[0].strip()
+    if not line:
+      continue
+    for token in re.split(r'[\s,]+', line):
+      token = token.strip()
+      if not token or token.startswith('#'):
+        continue
+      try:
+        net = ipaddress.ip_network(token, strict=False)
+      except ValueError as exc:
+        raise ValueError(
+            "Invalid SYSLOG allow_from entry %r: %s" % (token, exc),
+        ) from exc
+      if net.version != 4:
+        continue
+      nets.append(str(net))
+  return nets
+
+
+def get_syslog_listen_tcp():
+  """Return True if pipeline syslog-ng should listen on TCP 514 (default True)."""
+  _ensure_cfg_loaded()
+  if not cfg.has_section('SYSLOG'):
+    return True
+  return cfg.get('SYSLOG', 'listen_tcp', fallback='yes').lower() in (
+      'yes', 'true', '1',
+  )
+
+
+def get_syslog_listen_udp():
+  """Return True if pipeline syslog-ng should listen on UDP 514 (default True)."""
+  _ensure_cfg_loaded()
+  if not cfg.has_section('SYSLOG'):
+    return True
+  return cfg.get('SYSLOG', 'listen_udp', fallback='yes').lower() in (
+      'yes', 'true', '1',
+  )
+
+
+def get_syslog_logs_current_path():
+  """Directory for live per-host syslog files (under ``data_dir``)."""
+  return os.path.normpath(
+      os.path.join(get_data_dir_path(), 'logs', 'current'),
+  )
+
+
+def get_syslog_logs_archive_path():
+  """Directory for sealed daily syslog tarballs (under ``data_dir``)."""
+  return os.path.normpath(
+      os.path.join(get_data_dir_path(), 'logs', 'log_archive'),
+  )
+
+
+def get_syslog_generated_config_path():
+  """Runtime path for syslog-ng fragment (inside the pipeline container)."""
+  return '/home/hpcperfstats/services-conf/syslog-ng.d/10-hpcperfstats-generated.conf'
 
 
 def get_engine_name():
@@ -764,7 +841,7 @@ def get_sync_budget_overcommit_factor():
 
 def pipeline_cpu_process_buckets(include_browser_phase=False, include_rsync=False):
   """Return process inventory grouped by priority bucket for pipeline accounting."""
-  best_effort = ["syslog-ng", "logrotate.sh"]
+  best_effort = ["syslog-ng", "seal_syslog_daily.py"]
   if include_rsync:
     best_effort.append("rsync_data (optional)")
   if include_browser_phase:

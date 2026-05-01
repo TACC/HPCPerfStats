@@ -23,7 +23,8 @@ FROM python:3.12-trixie
 
 # Setup users, directories, and required runtime packages.
 RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
-    && mkdir -p /hpcperfstats /hpcperfstatslog /home/hpcperfstats/.ssh \
+    && mkdir -p /hpcperfstats /home/hpcperfstats/.ssh \
+        /home/hpcperfstats/services-conf/syslog-ng.d \
     && chmod 700 /home/hpcperfstats/.ssh \
     && chown hpcperfstats:hpcperfstats /home/hpcperfstats/.ssh \
     && apt-get update -y \

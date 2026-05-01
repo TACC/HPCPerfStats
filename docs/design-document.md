@@ -113,7 +113,7 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 | Service | Role |
 |---------|------|
 | **web** | Builds from repo `Dockerfile`; runs Django via `services-conf/django_startup.sh`; exposes app port (default host `8000` via `HPCPERFSTATS_WEB_PORT`). Depends on healthy `db` and `redis`. |
-| **pipeline** | Same image as `web`; runs `supervisor_startup.sh` to supervise long-running ingest/processing programs (see §6.2). Uses bound volumes for archive/accounting/log paths (`docker-compose.app.yaml`). |
+| **pipeline** | Same image as `web`; runs `supervisor_startup.sh` to supervise long-running ingest/processing programs (see §6.2). Uses the **`hpcperfstatsdata`** bind for archive, accounting, daily archive, and **cluster syslog** under **`/hpcperfstats/logs/`** (`docker-compose.app.yaml`). |
 | **db** | TimescaleDB/PostgreSQL 15 image; primary system of record for ingested and derived data. |
 | **redis** | Django cache backend and auxiliary keys (e.g. listend recent-host tracking). |
 | **rabbitmq** | Broker for monitor→site message delivery. |
@@ -140,7 +140,7 @@ The example supervisor configuration (`services-conf/supervisord.conf.example`) 
 - **`sync_timedb.py all`** — Imports node-level data from the archive into the database; runs until stopped, rescans for new files after each wave, and sleeps when the queue is empty while periodic archive maintenance continues.
 - **`update_metrics.py`** — Builds/updates job-indexed and secondary metrics from DB state.
 
-It also includes **syslog-ng** and **logrotate** hooks for operational logging.
+It also includes **syslog-ng** (with **`render_syslog_ng_generated`** from **`[SYSLOG]`** in `hpcperfstats.ini`), **`seal_syslog_daily`** to pack prior-day per-host logs into **`logs/log_archive/YYYY-MM-DD-syslog.tar.gz`**, and related operational logging.
 
 **Accounting (job-level) ingest** is **not** listed in that example file: operators either:
 
@@ -162,6 +162,8 @@ It also includes **syslog-ng** and **logrotate** hooks for operational logging.
 ### 7.2 Archive layout (listend)
 
 `listend.py` appends monitor payloads under the configured **archive directory**, per host, using a **`current`** file and **`$`-prefixed rotation** semantics. Epoch-named files and hardlink relationships are coordinated so **`sync_timedb`** can avoid racing active writes (see `hpcperfstats/dbload/sync_timedb_archive_helpers.py` and listend tests). This is the **transport/archive contract** documented in `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc`.
+
+**Cluster syslog (pipeline):** under the same **`data_dir`** bind mount, **`logs/current/`** holds live per-host syslog files (date in the filename), and **`logs/log_archive/`** holds sealed **daily** **`*.tar.gz`** bundles—analogous in operator terms to **`archive_dir`’s `current`** workflow and **`daily_archive`** cold storage, though the on-disk mechanics differ.
 
 **Canonical consumer/parser contract** for monitor output: treat **`hpcperfstats/listend.py`** as source of truth for:
 

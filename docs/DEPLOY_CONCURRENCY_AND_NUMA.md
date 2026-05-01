@@ -45,7 +45,7 @@ Priority buckets used for accounting and deprioritization:
 
 - `real_time`: listener feed path + sync ingest (+ db-writer path when enabled)
 - `normal`: sync archive/retries + update_metrics + startup migrations/bootstrap
-- `best_effort`: `syslog-ng`, `logrotate.sh`, optional `rsync_data`, optional browser/API test traffic
+- `best_effort`: `syslog-ng`, `seal_syslog_daily.py`, optional `rsync_data`, optional browser/API test traffic
 
 Relevant ini keys:
 

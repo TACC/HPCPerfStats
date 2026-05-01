@@ -79,6 +79,8 @@ chmod -c 755 /hpcperfstats/
 mkdir -pv /hpcperfstats/accounting
 mkdir -pv /hpcperfstats/archive
 mkdir -pv /hpcperfstats/daily_archive
+mkdir -pv /hpcperfstats/logs/current
+mkdir -pv /hpcperfstats/logs/log_archive
 chown -R hpcperfstats:hpcperfstats /hpcperfstats/* 
 cp /hpcperfstats/.ssh/id* /home/hpcperfstats/.ssh/
 chown -R hpcperfstats:hpcperfstats /home/hpcperfstats/.ssh

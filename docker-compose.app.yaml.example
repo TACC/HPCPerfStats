@@ -34,7 +34,6 @@ services:
       - hpcperfstatsdata:/hpcperfstats/
       # The ssh keys don't have to be a user's, they just have to be a .ssh directory
       - /home/sharrell/.ssh:/hpcperfstats/.ssh/:ro
-      - hpcperfstatsnodelog:/hpcperfstatslog/
     networks:
       hpcperfstats_net:
         aliases:
@@ -48,13 +47,6 @@ volumes:
     driver_opts:
       type: none
       device: /opt/hpcperfstats_data/
-      o: bind
-
-  hpcperfstatsnodelog:
-    driver: local
-    driver_opts:
-      type: none
-      device: /opt/hpcperfstats_log
       o: bind
 
 networks:

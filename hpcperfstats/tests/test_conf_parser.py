@@ -750,3 +750,64 @@ def test_conf_parser_defaults_audit_snapshot(temp_ini, monkeypatch):
   assert "overlap_contention" in snapshot
   assert "stability" in snapshot
   assert snapshot["sync_throughput"]["sync_budget_ingest_ratio"] == 0.60
+
+
+def test_get_syslog_allow_from_ipv4_networks_empty_default(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_syslog_allow_from_ipv4_networks() == []
+
+
+def test_get_syslog_allow_from_ipv4_networks_parses_csv(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content += (
+      "\n[SYSLOG]\n"
+      "allow_from = 10.0.0.0/8, 192.168.1.2/32\n"
+      "listen_tcp = no\n"
+      "listen_udp = yes\n"
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_syslog_allow_from_ipv4_networks() == ["10.0.0.0/8", "192.168.1.2/32"]
+  assert cfg.get_syslog_listen_tcp() is False
+  assert cfg.get_syslog_listen_udp() is True
+
+
+def test_get_syslog_allow_from_ipv4_networks_rejects_invalid(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content += "\n[SYSLOG]\nallow_from = not-a-network\n"
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  with pytest.raises(ValueError, match="allow_from"):
+    cfg.get_syslog_allow_from_ipv4_networks()
+
+
+def test_render_syslog_ng_generated_text_allowlist(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace("data_dir = /tmp", "data_dir = /tmp/syslog-data")
+  content += "\n[SYSLOG]\nallow_from = 10.0.0.0/8\n"
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.render_syslog_ng_generated as rsg
+  importlib.reload(cfg)
+  importlib.reload(rsg)
+  text = rsg.render_syslog_ng_generated_text()
+  assert "netmask(10.0.0.0/8)" in text
+  assert "source s_net" in text
+  assert "filter f_hps_syslog_allow_net" in text

@@ -208,7 +208,6 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    - **pipeline → volumes:** path to a `.ssh` directory with valid keys and permissions  
    - **volumes → hpcperfstatsdata → device:** path for data (your user and directory)  
-   - **volumes → hpcperfstatsnodelog → device:** path for node logs (your user and directory)  
 
    Create the directories (e.g.):
 
@@ -217,10 +216,19 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo mkdir -p /opt/hpcperfstats_data/accounting
    sudo mkdir -p /opt/hpcperfstats_data/archive
    sudo mkdir -p /opt/hpcperfstats_data/daily_archive
-   sudo mkdir -p /opt/hpcperfstats_log
+   sudo mkdir -p /opt/hpcperfstats_data/logs/current
+   sudo mkdir -p /opt/hpcperfstats_data/logs/log_archive
    ```
 
-   The host paths you configure must match the container paths used in `docker-compose.app.yaml` (for example `/hpcperfstats/accounting`, `/hpcperfstats/archive`, and `/hpcperfstatslog/` inside the container).
+   The host bind mount for `hpcperfstatsdata` maps to **`/hpcperfstats/`** in the `pipeline` and `web` containers (for example `/hpcperfstats/accounting`, `/hpcperfstats/archive`, `/hpcperfstats/daily_archive`, and **`/hpcperfstats/logs/`** for cluster syslog).
+
+   **Cluster syslog (optional but typical on production clusters):** the **`pipeline`** service publishes **TCP and UDP port 514** on the Docker host. Compute or login nodes should forward syslog to **`<docker-host>:514`** (rsyslog examples: TCP `@@host:514`, UDP `@host:514`). Ingest runs in **`syslog-ng`** inside `pipeline` (not `web`). Live files are written under **`/hpcperfstats/logs/current/`** as **`$HOST.$R_YEAR$R_MONTH$R_DAY.log`** (one file per host per calendar day). After local midnight, **`seal_syslog_daily`** (supervisord) packs the previous day’s files into **`/hpcperfstats/logs/log_archive/YYYY-MM-DD-syslog.tar.gz`** and removes the sealed sources. This mirrors the “`current` vs sealed archive” story used for monitor data under `archive_dir` / `daily_archive`.
+
+   **`[SYSLOG]` in `hpcperfstats.ini`:** set **`allow_from`** to a comma- or line-separated list of **IPv4 CIDRs** that may send remote syslog (for example `10.0.0.0/8, 192.168.50.0/24`). If **`allow_from`** is blank or **`[SYSLOG]`** is omitted, **all IPv4 sources** are accepted (backward compatible). Changing **`allow_from`** requires a **pipeline restart** so `render_syslog_ng_generated` can rewrite the syslog-ng fragment. **`listen_tcp`** / **`listen_udp`** (default `yes`) toggle listeners.
+
+   **Operational notes:** `syslog-ng` emits periodic internal **stats** (`stats(freq(60))` in `services-conf/syslog-ng.conf`); operators can run **`syslog-ng-ctl stats`** (as root) inside `pipeline` for counters. Monitor **disk use** on the data volume (`logs/log_archive` grows with cluster size and retention). **Troubleshooting:** if packets reach the host but nothing is logged, check **firewall rules**, that traffic targets the **published 514** on the host running `pipeline`, **`allow_from`** includes the sender’s IPv4 address, and (for filenames) that forwarders preserve a sensible hostname/FQDN.
+
+   **Migrating from the old layout:** if you previously used a separate host path for node logs (for example `/opt/hpcperfstats_log` mounted at `/hpcperfstatslog/`), copy any `cluster.log` into **`/opt/hpcperfstats_data/logs/current/`** if you need the history, then drop the extra compose volume.
 
 5. **Application config:**
 
@@ -240,7 +248,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    - `secret_key` - a random string
 
    You will only need to edit the `[DEFAULT]` section as detailed above. The `[RMQ]` and `[PORTAL]` sections have been configured to work for the docker installation, and we do not recommend changing any of the variables in these sections.
-   If you need to edit some of those variables, please note that a lot of them are tied to the docker yaml file.
+   If you need to edit some of those variables, please note that a lot of them are tied to the docker yaml file. For **cluster syslog**, add or edit the optional **`[SYSLOG]`** section (see `hpcperfstats.ini.example` and the compose step above).
 
 6. **Supervisord and rsync:**
 
