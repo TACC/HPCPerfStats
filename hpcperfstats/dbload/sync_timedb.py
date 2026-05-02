@@ -666,7 +666,11 @@ def _insert_host_data_individually(stats_df):
     )
     for row in stats_df.itertuples(index=False):
       try:
-        host_data_instance_from_stats_row(row).save()
+        # force_insert: avoid Django's "pk exists -> UPDATE" path. Updates on
+        # compressed Timescale chunks decompress huge tuple batches and hit
+        # timescaledb.max_tuples_decompressed_per_dml_transaction; duplicates
+        # should be skipped (IntegrityError), not merged via UPDATE.
+        host_data_instance_from_stats_row(row).save(force_insert=True)
       except IntegrityError:
         unique_violations += 1
       except Exception as e:

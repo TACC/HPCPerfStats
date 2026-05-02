@@ -4,6 +4,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 import json
+from unittest.mock import MagicMock, patch
 
 import hpcperfstats.dbload.sync_timedb as st
 import pandas as pd
@@ -1471,3 +1472,28 @@ def test_log_db_lock_wait_emits_over_30_seconds(monkeypatch):
 
   assert len(messages) == 1
   assert "DB lock wait host batch file=/tmp/stats0" in messages[0]
+
+
+def test_insert_host_data_individually_uses_force_insert():
+  """Fallback inserts must not use Django.save() UPDATE path on existing pk (Timescale decompress limit)."""
+  mock_inst = MagicMock()
+  row_time = pd.Timestamp("2026-04-05 07:40:44.301268101+0000", tz="UTC")
+  df = pd.DataFrame(
+      [
+          {
+              "host": "i615-154.vista.tacc.utexas.edu",
+              "jid": None,
+              "type": "block",
+              "event": "in_flight",
+              "unit": "#",
+              "time": row_time,
+              "value": 0.0,
+              "delta": 0.0,
+              "arc": 0.0,
+          }
+      ]
+  )
+  with patch.object(st, "host_data_instance_from_stats_row", return_value=mock_inst):
+    st._insert_host_data_individually(df)
+
+  mock_inst.save.assert_called_once_with(force_insert=True)

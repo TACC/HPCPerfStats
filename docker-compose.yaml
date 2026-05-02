@@ -75,6 +75,10 @@ services:
       - idle_in_transaction_session_timeout=300000
       - -c
       - max_wal_size=16GB
+      # Ingest replays and occasional DML on compressed host_data chunks can
+      # exceed TimescaleDB's default 100k tuple decompress cap per transaction.
+      - -c
+      - timescaledb.max_tuples_decompressed_per_dml_transaction=1000000
     restart: always
     healthcheck:
       test:
