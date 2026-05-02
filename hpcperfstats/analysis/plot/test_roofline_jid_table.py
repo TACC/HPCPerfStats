@@ -1,10 +1,12 @@
 """Unit tests for roofline plot diagnostics and fallbacks."""
 import pandas as pd
+import pytest
 from unittest.mock import MagicMock
 
 from hpcperfstats.analysis.plot.roofline import (
   plot_and_reason_gpu_roofline_from_jid_table,
   plot_and_reason_roofline_from_jid_table,
+  plot_gpu_roofline_from_jid_table,
 )
 
 
@@ -244,3 +246,54 @@ def test_gpu_roofline_succeeds_for_nvidia_when_flops_and_link_arc_present():
   fig, reason = plot_and_reason_gpu_roofline_from_jid_table(jt)
   assert fig is not None
   assert reason is None
+
+
+def test_gpu_roofline_uses_inferred_peaks_when_explicit_args_missing(monkeypatch):
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt([("n1.cluster", t0)], {})
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if val_col != "arc":
+      return pd.DataFrame(columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and list(events) == ["gpu_flops"]:
+      return pd.DataFrame([("n1.cluster", t0, 40.0)], columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and list(events) == ["gpu_io_link_total_bytes"]:
+      return pd.DataFrame([("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"])
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.plot.roofline.infer_gpu_roofline_peak_flops_and_bw_gbps",
+      lambda _jt: (321.0, 12.5),
+  )
+  fig = plot_gpu_roofline_from_jid_table(jt)
+  assert fig is not None
+  roof_renderer = fig.renderers[0]
+  assert max(roof_renderer.data_source.data["perf"]) == 321.0
+
+
+def test_gpu_roofline_explicit_peak_args_override_inferred_peaks(monkeypatch):
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt([("n1.cluster", t0)], {})
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if val_col != "arc":
+      return pd.DataFrame(columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and list(events) == ["gpu_flops"]:
+      return pd.DataFrame([("n1.cluster", t0, 40.0)], columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and list(events) == ["gpu_io_link_total_bytes"]:
+      return pd.DataFrame([("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"])
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.plot.roofline.infer_gpu_roofline_peak_flops_and_bw_gbps",
+      lambda _jt: (321.0, 12.5),
+  )
+  fig = plot_gpu_roofline_from_jid_table(jt, peak_flops_gf=111.0, peak_bw_gb=7.0)
+  assert fig is not None
+  roof_renderer = fig.renderers[0]
+  assert max(roof_renderer.data_source.data["perf"]) == pytest.approx(111.0)

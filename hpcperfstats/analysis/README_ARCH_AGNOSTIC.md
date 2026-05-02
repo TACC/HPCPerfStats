@@ -16,7 +16,12 @@ All of the typenames above are whatever the **monitor** publishes as `host_data.
 
 ### Roofline nominal peaks (`roofline_peaks.py`)
 
-- **File**: `hpcperfstats/analysis/plot/roofline_peaks.py` defines `ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS` and `infer_cpu_roofline_peak_flops_and_bw_gbps(jt)` using **`jid_table.schema`** (keys = `host_data.type` values for the job).
+- **File**: `hpcperfstats/analysis/plot/roofline_peaks.py` defines `ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS`, `infer_cpu_roofline_peak_flops_and_bw_gbps(jt)`, and `infer_gpu_roofline_peak_flops_and_bw_gbps(jt)`.
+- **Optional true-roof contract**: if `host_data.type` includes **`roofline_hw_peak`**, analysis will use these events first:
+  - CPU: `cpu_peak_fp64_flops_per_s`, `cpu_peak_dram_bw_bytes_per_s`
+  - GPU: `gpu_peak_fp64_flops_per_s`, and bandwidth preferring `gpu_peak_io_link_bw_bytes_per_s` over `gpu_peak_mem_bw_bytes_per_s`
+  - Units are converted as FLOP/s -> GFLOP/s and B/s -> GB/s.
+- **Compatibility**: explicit plot args (`peak_flops_gf`, `peak_bw_gb`) remain highest priority, and missing/partial `roofline_hw_peak` data falls back to legacy inference.
 - **Intel**: One table row per entry in **`INTEL_IMC_STATS_TYPES`** (same strings as the monitor). Inference picks the **first** typename in that tuple present in the schema—matching roofline’s IMC bandwidth scan order.
 - **AMD**: `amd64_pmc` + `amd64_df` → default 2S EPYC-class peak row (`amd64_epyc_2s_default`); Zen generation is **not** in `host_data.type`, so optional per-generation rows are for documentation/overrides only until host metadata or config exists.
 - **ARM Grace-class**: `arm_imc` in schema → Grace single-die peak row; synthetic DCGM counters remain under `cpu_counter_metrics` (see monitor `cpu_counter_metrics.c`).

@@ -31,6 +31,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
+import pandas as pd
+
 from hpcperfstats.analysis.gen.utils import INTEL_IMC_STATS_TYPES
 
 # (peak_fp64_gflop_s, peak_dram_bw_gb_s) — see module docstring for interpretation.
@@ -59,12 +62,76 @@ ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS: Dict[str, Tuple[float, float]] = {
 }
 
 
+def _max_converted_sum_val(
+    jt: Any,
+    event: str,
+    conv: float,
+    *,
+    type_name: str = "roofline_hw_peak",
+) -> Optional[float]:
+  """Return max converted value for one roofline_hw_peak event, or None when unavailable.
+
+  Prefer ``value`` samples for gauge-like peak fields, then fall back to ``arc`` if needed.
+  """
+  for value_column in ("value", "arc"):
+    try:
+      df = jt.get_aggregate_df(type_name, value_column, [event], conv)
+    except Exception:
+      continue
+    if df is None or df.empty or "sum_val" not in df.columns:
+      continue
+    values = pd.to_numeric(df["sum_val"], errors="coerce").to_numpy(dtype=float, copy=False)
+    if values.size == 0:
+      continue
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+      continue
+    return float(np.max(finite))
+  return None
+
+
+def _infer_cpu_roofline_peak_from_host_data(jt: Any) -> Tuple[Optional[float], Optional[float]]:
+  """Infer CPU roofline peaks from ``roofline_hw_peak`` events when complete."""
+  schema = getattr(jt, "schema", None)
+  if not isinstance(schema, dict) or "roofline_hw_peak" not in schema:
+    return (None, None)
+
+  peak_flops_gf = _max_converted_sum_val(jt, "cpu_peak_fp64_flops_per_s", 1e-9)
+  peak_bw_gb = _max_converted_sum_val(jt, "cpu_peak_dram_bw_bytes_per_s", 1 / (1024 ** 3))
+  if peak_flops_gf is None or peak_bw_gb is None:
+    return (None, None)
+  return (peak_flops_gf, peak_bw_gb)
+
+
+def infer_gpu_roofline_peak_flops_and_bw_gbps(jt: Any) -> Tuple[Optional[float], Optional[float]]:
+  """Infer GPU roofline peaks from ``roofline_hw_peak`` when complete, else (None, None).
+
+  Bandwidth preference matches the current GPU roofline x-axis semantics:
+  use IO-link BW first, then memory BW as fallback.
+  """
+  schema = getattr(jt, "schema", None)
+  if not isinstance(schema, dict) or "roofline_hw_peak" not in schema:
+    return (None, None)
+
+  peak_flops_gf = _max_converted_sum_val(jt, "gpu_peak_fp64_flops_per_s", 1e-9)
+  peak_bw_gb = _max_converted_sum_val(jt, "gpu_peak_io_link_bw_bytes_per_s", 1 / (1024 ** 3))
+  if peak_bw_gb is None:
+    peak_bw_gb = _max_converted_sum_val(jt, "gpu_peak_mem_bw_bytes_per_s", 1 / (1024 ** 3))
+  if peak_flops_gf is None or peak_bw_gb is None:
+    return (None, None)
+  return (peak_flops_gf, peak_bw_gb)
+
+
 def infer_cpu_roofline_peak_flops_and_bw_gbps(jt: Any) -> Tuple[Optional[float], Optional[float]]:
   """Return ``(peak_flops_gf, peak_bw_gb)`` from job schema when recognizable, else (None, None).
 
   Uses the same Intel IMC precedence as roofline bandwidth collection: first typename
   in ``INTEL_IMC_STATS_TYPES`` present in ``jt.schema``.
   """
+  host_inferred = _infer_cpu_roofline_peak_from_host_data(jt)
+  if host_inferred != (None, None):
+    return host_inferred
+
   schema = getattr(jt, "schema", None)
   if not isinstance(schema, dict) or not schema:
     return (None, None)
