@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 import hpcperfstats.conf_parser as cfg
 from bokeh.embed import json_item
 from django.utils import timezone
-from pandas import DataFrame, to_timedelta
+from pandas import DataFrame
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -98,6 +98,7 @@ from .query_utils import (
     partition_job_list_acct_filters,
 )
 from .job_list_performance import annotate_job_list_performance_fields
+from .job_list_queue_wait import aggregate_queue_wait_seconds_stats, queue_wait_hours_series
 from .serializers import JobListSerializer
 from .views import (
     job_hist,
@@ -1474,9 +1475,7 @@ def _build_histogram_dataframe(job_list_qs, cur_metrics):
     df = DataFrame(jid_dict).set_index("jid")
     hist_metrics = list(hist_metrics_set)
     df = df.join(job_df)
-    df["queue_wait"] = (
-        to_timedelta(df["start_time"] - df["submit_time"]).dt.total_seconds() / 3600
-    )
+    df["queue_wait"] = queue_wait_hours_series(job_df["start_time"], job_df["submit_time"])
     df["runtime"] = df["runtime"] / 3600
     # Fixed histograms use actual df column names; display titles mapped for UI
     hist_metrics += [("runtime", "hours"), ("nhosts", "# nodes"), ("queue_wait", "hours")]
@@ -1722,6 +1721,19 @@ def job_list(request):
     agg = job_list_qs.aggregate(total_node_hours=Sum("node_hrs"))
     total_node_hours = agg.get("total_node_hours") or 0.0
 
+    aggregates = {"total_node_hours": round(total_node_hours, 4)}
+    if request.session.get("is_staff", False):
+        try:
+            wait_agg = aggregate_queue_wait_seconds_stats(job_list_qs)
+            mean_s = wait_agg.get("mean_wait_s")
+            std_s = wait_agg.get("std_wait_s")
+            if mean_s is not None:
+                aggregates["queue_wait_mean_hours"] = round(float(mean_s) / 3600.0, 4)
+            if std_s is not None:
+                aggregates["queue_wait_stddev_hours"] = round(float(std_s) / 3600.0, 4)
+        except Exception:
+            logger.exception("job_list: queue wait aggregate failed")
+
     page_num = request.GET.get("page", 1)
     paginator = Paginator(job_list_qs, min(100, nj))
     try:
@@ -1749,9 +1761,7 @@ def job_list(request):
     return Response({
         "job_list": serialized_jobs,
         "nj": nj,
-        "aggregates": {
-            "total_node_hours": round(total_node_hours, 4),
-        },
+        "aggregates": aggregates,
         "current_path": current_path,
         "qname": qname,
         "order_by": order_by,

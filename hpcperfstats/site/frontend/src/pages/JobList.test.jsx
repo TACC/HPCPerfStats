@@ -143,6 +143,98 @@ describe("JobList", () => {
     expect(screen.getByText("1,234.00")).toBeInTheDocument();
   });
 
+  it("shows mean queue wait and standard deviation for staff when aggregates include them", async () => {
+    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+      job_list: [
+        {
+          jid: 1,
+          sample_count: 10,
+          performance: {
+            label: "Summary available",
+            tone: "success",
+            aria_label: "Performance: Summary available",
+            sort_rank: 0,
+          },
+          username: "alice",
+          account: "acct",
+          start_time: "2024-01-01T00:00:00Z",
+          end_time: "2024-01-01T01:00:00Z",
+          runtime: 3600,
+          queue: "normal",
+          jobname: "job1",
+          state: "COMPLETED",
+          ncores: 32,
+          nhosts: 2,
+          node_hrs: 64,
+        },
+      ],
+      nj: 1,
+      aggregates: {
+        total_node_hours: 64,
+        queue_wait_mean_hours: 1.25,
+        queue_wait_stddev_hours: 0.5,
+      },
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    });
+    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+
+    renderJobList(["/jobs"], { is_staff: true });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Mean queue wait \(all matching jobs\):/)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/1\.25 hours/)).toBeInTheDocument();
+    expect(screen.getByText(/Standard deviation:/)).toBeInTheDocument();
+    expect(screen.getByText(/0\.50 hours/)).toBeInTheDocument();
+  });
+
+  it("does not show queue wait summary lines for non-staff even if aggregates would include them", async () => {
+    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+      job_list: [
+        {
+          jid: 1,
+          performance: {
+            label: "Summary available",
+            tone: "success",
+            aria_label: "Performance: Summary available",
+            sort_rank: 0,
+          },
+          username: "alice",
+          account: "acct",
+          start_time: "2024-01-01T00:00:00Z",
+          end_time: "2024-01-01T01:00:00Z",
+          runtime: 3600,
+          queue: "normal",
+          jobname: "job1",
+          state: "COMPLETED",
+          ncores: 32,
+          nhosts: 2,
+          node_hrs: 64,
+        },
+      ],
+      nj: 1,
+      aggregates: {
+        total_node_hours: 64,
+        queue_wait_mean_hours: 1.25,
+        queue_wait_stddev_hours: 0.5,
+      },
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    });
+    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+
+    renderJobList(["/jobs"], { is_staff: false });
+
+    await waitFor(() => {
+      expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Mean queue wait \(all matching jobs\):/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Standard deviation:/)).not.toBeInTheDocument();
+  });
+
   it("hides Sample Count column for non-staff users", async () => {
     vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
       job_list: [

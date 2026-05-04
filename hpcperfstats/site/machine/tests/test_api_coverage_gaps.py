@@ -417,3 +417,83 @@ class TestSacctIngestApi:
     assert response.status_code == 200
     assert response.data["inserted"] == 3
     mock_sync.assert_called_once()
+
+
+class TestJobListQueueWaitAggregates:
+  """Staff-only queue wait mean/stddev merged into job_list aggregates."""
+
+  def test_staff_response_includes_queue_wait_aggregates(self):
+    from hpcperfstats.site.machine import api
+
+    page = MagicMock()
+    page.object_list = []
+    page.number = 1
+    page.has_previous.return_value = False
+    page.has_next.return_value = False
+
+    paginator_inst = MagicMock()
+    paginator_inst.num_pages = 1
+    paginator_inst.page.return_value = page
+
+    mock_qs = MagicMock()
+    mock_qs.count.return_value = 1
+    mock_qs.aggregate.return_value = {"total_node_hours": 64.0}
+
+    request = DjangoRequestFactory().get("/api/job-list/")
+    request.session = {"username": "u1", "is_staff": True}
+
+    ser = MagicMock()
+    ser.data = [{"jid": "j1"}]
+
+    with patch.object(api, "_require_auth", return_value=None), patch.object(
+        api,
+        "_build_job_list_queryset_from_request",
+        return_value=(mock_qs, {}, None, "-end_time"),
+    ), patch.object(api, "Paginator", return_value=paginator_inst), patch.object(
+        api,
+        "aggregate_queue_wait_seconds_stats",
+        return_value={"mean_wait_s": 3600.0, "std_wait_s": 600.0},
+    ) as mock_wait, patch.object(api, "JobListSerializer", return_value=ser):
+      response = api.job_list(request)
+
+    assert response.status_code == 200
+    mock_wait.assert_called_once_with(mock_qs)
+    assert response.data["aggregates"]["total_node_hours"] == 64.0
+    assert response.data["aggregates"]["queue_wait_mean_hours"] == 1.0
+    assert response.data["aggregates"]["queue_wait_stddev_hours"] == round(600.0 / 3600.0, 4)
+
+  def test_non_staff_does_not_call_queue_wait_aggregate(self):
+    from hpcperfstats.site.machine import api
+
+    page = MagicMock()
+    page.object_list = []
+    page.number = 1
+    page.has_previous.return_value = False
+    page.has_next.return_value = False
+
+    paginator_inst = MagicMock()
+    paginator_inst.num_pages = 1
+    paginator_inst.page.return_value = page
+
+    mock_qs = MagicMock()
+    mock_qs.count.return_value = 1
+    mock_qs.aggregate.return_value = {"total_node_hours": 10.0}
+
+    request = DjangoRequestFactory().get("/api/job-list/")
+    request.session = {"username": "u1", "is_staff": False}
+
+    ser = MagicMock()
+    ser.data = [{"jid": "j1"}]
+
+    with patch.object(api, "_require_auth", return_value=None), patch.object(
+        api,
+        "_build_job_list_queryset_from_request",
+        return_value=(mock_qs, {}, None, "-end_time"),
+    ), patch.object(api, "Paginator", return_value=paginator_inst), patch.object(
+        api, "aggregate_queue_wait_seconds_stats"
+    ) as mock_wait, patch.object(api, "JobListSerializer", return_value=ser):
+      response = api.job_list(request)
+
+    assert response.status_code == 200
+    mock_wait.assert_not_called()
+    assert response.data["aggregates"] == {"total_node_hours": 10.0}
