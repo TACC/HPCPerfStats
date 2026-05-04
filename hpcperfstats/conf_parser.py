@@ -284,8 +284,13 @@ def get_syslog_logs_archive_path():
 
 
 def get_syslog_generated_config_path():
-  """Runtime path for syslog-ng fragment (inside the pipeline container)."""
-  return '/home/hpcperfstats/services-conf/syslog-ng.d/10-hpcperfstats-generated.conf'
+  """Runtime path for syslog-ng fragment (inside the pipeline container).
+
+  Stored under ``/var/lib/`` (not ``services-conf/``) so a bind-mount over
+  ``/home/hpcperfstats/services-conf`` cannot hide or make read-only the
+  generated file that ``@include`` requires.
+  """
+  return '/var/lib/hpcperfstats-syslog/generated.conf'
 
 
 def get_engine_name():

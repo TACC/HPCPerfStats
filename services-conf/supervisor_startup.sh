@@ -86,6 +86,9 @@ cp /hpcperfstats/.ssh/id* /home/hpcperfstats/.ssh/
 chown -R hpcperfstats:hpcperfstats /home/hpcperfstats/.ssh
 chmod -R 0600  /home/hpcperfstats/.ssh/*
 
+mkdir -p /var/lib/hpcperfstats-syslog
+/usr/local/bin/python3 -m hpcperfstats.render_syslog_ng_generated || exit 1
+
 /usr/bin/supervisord -c /home/hpcperfstats/services-conf/supervisord.conf
 
 

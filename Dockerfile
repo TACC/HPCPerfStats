@@ -24,7 +24,7 @@ FROM python:3.12-trixie
 # Setup users, directories, and required runtime packages.
 RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && mkdir -p /hpcperfstats /home/hpcperfstats/.ssh \
-        /home/hpcperfstats/services-conf/syslog-ng.d \
+        /var/lib/hpcperfstats-syslog \
     && chmod 700 /home/hpcperfstats/.ssh \
     && chown hpcperfstats:hpcperfstats /home/hpcperfstats/.ssh \
     && apt-get update -y \
@@ -41,6 +41,11 @@ COPY --chown=hpcperfstats:hpcperfstats . .
 COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
     /tmp/frontend-static \
     /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
+
+# Default syslog-ng allowlist fragment (render overwrites at container start).
+RUN cp /home/hpcperfstats/services-conf/syslog-ng.d/10-hpcperfstats-generated.conf \
+    /var/lib/hpcperfstats-syslog/generated.conf \
+    && chmod 644 /var/lib/hpcperfstats-syslog/generated.conf
 
 # Set python install variables.
 ENV PYTHONDONTWRITEBYTECODE=1 \
