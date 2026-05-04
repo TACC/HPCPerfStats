@@ -1,0 +1,40 @@
+---
+description: Scoped renames for legacy SPA filenames to Page* components (incremental only)
+globs:
+  - "**/hpcperfstats/site/frontend/src/Layout.jsx"
+  - "**/hpcperfstats/site/frontend/src/PageLayoutMain.jsx"
+  - "**/hpcperfstats/site/frontend/src/App.jsx"
+  - "**/hpcperfstats/site/frontend/src/PageAppMachine.jsx"
+  - "**/hpcperfstats/site/frontend/src/pages/JobList.jsx"
+  - "**/hpcperfstats/site/frontend/src/pages/PageJobList.jsx"
+  - "**/hpcperfstats/site/frontend/src/pages/JobDetail.jsx"
+  - "**/hpcperfstats/site/frontend/src/pages/PageJobDetail.jsx"
+  - "**/hpcperfstats/site/frontend/src/pages/Search.jsx"
+  - "**/hpcperfstats/site/frontend/src/pages/PageSearch.jsx"
+alwaysApply: false
+---
+
+# Frontend Naming: Incremental Rename Plan
+
+Apply this rule **only** when the current change already edits one of the paths above (or its post-rename equivalent). General `Page*` / `Button*` conventions and component/file naming live in **`react-js-cursor-rule.mdc`**.
+
+## Rename targets (local scope only)
+
+| Current path | Target component file |
+|-----|----|
+| `hpcperfstats/site/frontend/src/Layout.jsx` | `PageLayoutMain.jsx` |
+| `hpcperfstats/site/frontend/src/App.jsx` | `PageAppMachine.jsx` |
+| `hpcperfstats/site/frontend/src/pages/JobList.jsx` | `PageJobList.jsx` |
+| `hpcperfstats/site/frontend/src/pages/JobDetail.jsx` | `PageJobDetail.jsx` |
+| `hpcperfstats/site/frontend/src/pages/Search.jsx` | `PageSearch.jsx` |
+
+## Guardrails
+
+- Rename **only** when the same PR already modifies that target file (do not open renames-only PRs for these paths).
+- Update **all** imports and matching tests in the **same** change.
+- Do **not** perform repo-wide naming churn unless the user explicitly requests it.
+- Keep behavior unchanged; naming consistency only.
+
+## Overlap
+
+- **`react-js-cursor-rule.mdc`** — Naming Conventions, incremental adoption pointer, and Bokeh/CSP expectations for touched frontend files.

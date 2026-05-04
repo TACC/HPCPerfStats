@@ -42,7 +42,7 @@ Key Conventions
 
 ## Incremental adoption (this repository)
 
-Some existing components use short names (for example `Layout.jsx`, `ExtendedSearch.jsx`) instead of `Page*` / `Button*` prefixes. When touching a file, align it with naming and structure rules if the rename/update stays local to the task scope (component + imports + tests). Do not perform broad repo-wide renames unless explicitly requested.
+See **`frontend-naming-incremental.mdc`** for the canonical table of legacy SPA files mapped to `Page*` filenames and the guardrails for those renames. For any other short-named component (for example `ExtendedSearch.jsx`), apply the same discipline when touched: align naming and structure within the task scope (component + imports + tests), and do not perform broad repo-wide renames unless explicitly requested.
 
 ## Bokeh plots in the SPA
 
