@@ -387,6 +387,25 @@ def _persist_metrics_batch(job_results, distinct_time_count):
       pass
 
 
+def _drain_metrics_imap(active_pool, tasks, chunksize):
+  """Apply ``imap_unordered`` results from workers and persist metrics (main process only)."""
+  for payload in active_pool.imap_unordered(
+      _unwrap,
+      tasks,
+      chunksize=chunksize,
+  ):
+    if not payload:
+      continue
+    job_rows = payload["rows"]
+    distinct_n = payload.get("distinct_time_count")
+    if not job_rows:
+      continue
+    run_with_db_retry(
+        lambda: _persist_metrics_batch(job_rows, distinct_n),
+        attempts=2,
+    )
+
+
 def _jid_table_host_data_time_kwargs(base):
   """ORM time scope from ``jid_table._base_filter`` (full window or sampled ``time__in``)."""
   if not base:
@@ -618,24 +637,19 @@ class Metrics():
     active_pool = pool
     if active_pool is None:
       active_pool = multiprocessing.Pool(processes=threads)
+    tasks = [(self, job) for job in job_list]
     try:
-      for payload in active_pool.imap_unordered(
-          _unwrap,
-          ((self, job) for job in job_list),
-          chunksize=pool_chunksize,
-      ):
-        if not payload:
-          continue
-        job_rows = payload["rows"]
-        distinct_n = payload.get("distinct_time_count")
-        if not job_rows:
-          continue
-        # Ensure main process uses a fresh DB connection (may have gone stale
-        # while waiting on pool). Retry once on connection errors.
-        run_with_db_retry(
-            lambda: _persist_metrics_batch(job_rows, distinct_n),
-            attempts=2,
+      try:
+        _drain_metrics_imap(active_pool, tasks, pool_chunksize)
+      except IndexError:
+        # Rare pool/imap edge case (e.g. short batches); single-job tasks avoid it.
+        log_print(
+            "Metrics.run: imap raised IndexError (batch size=%s); retrying per-job."
+            % len(tasks),
+            flush=True,
         )
+        for single in tasks:
+          _drain_metrics_imap(active_pool, [single], 1)
     finally:
       if own_pool:
         active_pool.close()

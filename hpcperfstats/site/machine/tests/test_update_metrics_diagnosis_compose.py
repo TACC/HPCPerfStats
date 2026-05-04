@@ -2,8 +2,13 @@
 
 Requires PostgreSQL on host ``db`` (``HPCPERFSTATS_COMPOSE_NETWORK=1``). See
 ``tests/run_update_metrics_diagnosis_workflow.sh``.
+
+If ``HPCPERFSTATS_UM_DIAG_JSON_OUT`` is set, a copy of the diagnosis report is
+also written to that path (e.g. under the repo mount in Docker).
 """
+import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -18,7 +23,7 @@ def _compose_network():
   )
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_update_metrics_diagnosis_compose_records_phases(monkeypatch, tmp_path):
   """Small (100–300) and large (300–5000) in-window host_data rows; capture phase totals."""
   if not _compose_network():
@@ -36,8 +41,10 @@ def test_update_metrics_diagnosis_compose_records_phases(monkeypatch, tmp_path):
 
   um.LAST_UPDATE_METRICS_DIAGNOSTICS = None
   meta = seed_update_metrics_diagnosis_jobs()
-  assert 100 <= meta["n_rows_small"] <= 300, meta["n_rows_small"]
-  assert 300 <= meta["n_rows_large"] <= 5000, meta["n_rows_large"]
+  # Defaults seed 100-300 / 300-5000 rows; env overrides may intentionally exceed.
+  assert meta["n_rows_small"] > 0, meta["n_rows_small"]
+  assert meta["n_rows_large"] > 0, meta["n_rows_large"]
+  assert meta["n_rows_large"] >= meta["n_rows_small"], (meta["n_rows_small"], meta["n_rows_large"])
 
   from hpcperfstats.analysis.metrics.update_metrics import update_metrics_for_dates
 
@@ -63,8 +70,12 @@ def test_update_metrics_diagnosis_compose_records_phases(monkeypatch, tmp_path):
       "elapsed_s": diag["elapsed_s"],
       "jobs_per_min": diag["jobs_per_min"],
   }
+  text = json.dumps(report, indent=2) + "\n"
   path = tmp_path / "update_metrics_diagnosis.json"
-  import json
-
-  path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+  path.write_text(text, encoding="utf-8")
   assert path.is_file()
+  extra = os.environ.get("HPCPERFSTATS_UM_DIAG_JSON_OUT", "").strip()
+  if extra:
+    p = Path(extra)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")

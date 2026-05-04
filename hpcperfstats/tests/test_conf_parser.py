@@ -205,6 +205,15 @@ def test_get_metrics_pool_process_count_respects_cap(temp_ini, monkeypatch):
   assert cfg.get_metrics_pool_process_count() == 5
 
 
+def test_get_metrics_pool_process_cap_env_override(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  monkeypatch.setenv("METRICS_POOL_PROCESS_CAP", "7")
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_metrics_pool_process_cap() == 7
+
+
 def test_get_redis_location_default(temp_ini, monkeypatch):
   """get_redis_location returns default when CACHE section missing."""
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)

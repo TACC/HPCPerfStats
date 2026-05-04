@@ -35,6 +35,7 @@ total_cores = 40
 # Concurrency caps (optional; see docs/DEPLOY_CONCURRENCY_AND_NUMA.md)
 # max_gunicorn_workers = 32
 # metrics_pool_process_cap = 32
+# (Compose diagnosis baseline: docs/update_metrics_speedup_followup.md — compute phase dominated at default UM_DIAG seed scale.)
 # parallel_db_prefetch_max = 6
 # api_small_executor_max_workers = 8
 # sync_pool_process_cap =

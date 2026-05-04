@@ -412,6 +412,9 @@ def get_max_gunicorn_workers_cap():
 
 def get_metrics_pool_process_cap():
   """Upper bound for ``multiprocessing.Pool`` process count in metrics compute."""
+  env = os.environ.get("METRICS_POOL_PROCESS_CAP", "").strip()
+  if env:
+    return int(env)
   _ensure_cfg_loaded()
   return int(cfg.get("DEFAULT", "metrics_pool_process_cap", fallback="32"))
 

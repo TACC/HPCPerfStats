@@ -1578,6 +1578,23 @@ def update_metrics_for_dates(dates, rerun=False):
   }
 
   def _run():
+    nonlocal phase_timer, stats
+    # ``run_with_db_retry`` may invoke ``_run`` again; reset diagnostics per attempt
+    # so retries report one scheduler pass, not cumulative counters.
+    phase_timer = _PhaseTimer()
+    stats = {
+        "processed": 0,
+        "failed": 0,
+        "skipped_not_ready": 0,
+        "candidate_jids": 0,
+        "readiness_error_chunks": 0,
+        "proxy_checked_chunks": 0,
+        "proxy_rejected_jids": 0,
+        "strict_check_calls": 0,
+        "strict_check_timeouts": 0,
+        "strict_check_avg_latency_ms": 0.0,
+        "strict_batch_size_current": STRICT_CHECK_BATCH_MIN,
+    }
     with _pg_session_statement_timeout_for_metrics_batch():
       metrics_manager = metrics.Metrics()
       prewarm_pipeline = _PrewarmPipeline()

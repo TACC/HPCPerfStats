@@ -53,7 +53,9 @@ cd HPCPerfStats   # directory with docker-compose.yaml
 tests/run_update_metrics_diagnosis_workflow.sh
 ```
 
-Options: **`--skip-build`**, **`--keep-env`**; extra pytest args after **`--`**. Tunables (forwarded by the workflow): **`HPCPERFSTATS_UM_DIAG_SMALL_HOSTS`**, **`HPCPERFSTATS_UM_DIAG_SMALL_STEPS`**, **`HPCPERFSTATS_UM_DIAG_LARGE_HOSTS`**, **`HPCPERFSTATS_UM_DIAG_LARGE_STEPS`**.
+Options: **`--skip-build`**, **`--keep-env`**; extra pytest args after **`--`**. Tunables (forwarded by the workflow): **`HPCPERFSTATS_UM_DIAG_SMALL_HOSTS`**, **`HPCPERFSTATS_UM_DIAG_SMALL_STEPS`**, **`HPCPERFSTATS_UM_DIAG_LARGE_HOSTS`**, **`HPCPERFSTATS_UM_DIAG_LARGE_STEPS`**, **`METRICS_POOL_PROCESS_CAP`**.
+
+**Artifact:** `tests/run_update_metrics_diagnosis_inner.sh` sets **`HPCPERFSTATS_UM_DIAG_JSON_OUT`** (default **`tmp/update_metrics_diagnosis.json`** on the bind-mounted repo) so a copy of the JSON report is written next to the tree, not only under pytest’s temp directory. Override the path by exporting **`HPCPERFSTATS_UM_DIAG_JSON_OUT`** before invoking the workflow. Interpret results against **`docs/update_metrics_speedup_followup.md`** (baseline snapshot, sweeps, and ranked tunables).
 
 **Throughput / backlog tuning (production):** use **`[DEFAULT] pipeline_overlap_mode`** (`balanced` vs `ingest_priority`), **`metrics_pool_process_cap`**, **`metrics_ingest_priority_scale`**, **`sync_pool_process_cap`**, and Django **`max_connections`** so `sync_timedb` and `update_metrics` are not both starved. After enabling batched metrics runs, you may raise the scheduler dequeue cap (**`metrics_scheduler_ready_queue_target`** vs internal **`GLOBAL_SCHEDULER_BATCH_SIZE`** in code) only if the DB and pool keep up. **`metrics_scheduler_skip_prewarm`** (or env **`HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM`**) trades warmer job pages for faster catch-up.
 
