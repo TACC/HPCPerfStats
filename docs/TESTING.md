@@ -44,6 +44,19 @@ The workflow sets **`HPCPERFSTATS_STRESS_HOST_DATA=1`** and **`HPCPERFSTATS_COMP
 
 **Scale / report env** (forwarded by `tests/run_stress_host_data_workflow.sh`; see `--help`): **`HPCPERFSTATS_STRESS_USE_TIME_SCALE`**, **`HPCPERFSTATS_STRESS_N_HOSTS`**, **`HPCPERFSTATS_STRESS_INTERVAL_SEC`**, **`HPCPERFSTATS_STRESS_DURATION_SEC`**, **`HPCPERFSTATS_STRESS_JID`**, **`HPCPERFSTATS_STRESS_REPORT_DIR`**, **`HPCPERFSTATS_STRESS_EXPLAIN`**, **`HPCPERFSTATS_STRESS_MANUAL_PLOT_SANITY`**, **`HPCPERFSTATS_STRESS_SAMPLE_PATH`**.
 
+### Opt-in `update_metrics` diagnosis (mixed-scale jobs, phase timings)
+
+Seeds two jobs ending the same local calendar day: **small** in-window `host_data` scale **100–300** rows (default **10×15 = 150**) and **large** **300–5000** rows (default **25×32 = 800**), runs **`update_metrics_for_dates`**, and asserts **`LAST_UPDATE_METRICS_DIAGNOSTICS`** phase totals when **`HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS=1`**. The test sets **`HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM=1`** for a faster CI-friendly path (metrics + readiness only).
+
+```bash
+cd HPCPerfStats   # directory with docker-compose.yaml
+tests/run_update_metrics_diagnosis_workflow.sh
+```
+
+Options: **`--skip-build`**, **`--keep-env`**; extra pytest args after **`--`**. Tunables (forwarded by the workflow): **`HPCPERFSTATS_UM_DIAG_SMALL_HOSTS`**, **`HPCPERFSTATS_UM_DIAG_SMALL_STEPS`**, **`HPCPERFSTATS_UM_DIAG_LARGE_HOSTS`**, **`HPCPERFSTATS_UM_DIAG_LARGE_STEPS`**.
+
+**Throughput / backlog tuning (production):** use **`[DEFAULT] pipeline_overlap_mode`** (`balanced` vs `ingest_priority`), **`metrics_pool_process_cap`**, **`metrics_ingest_priority_scale`**, **`sync_pool_process_cap`**, and Django **`max_connections`** so `sync_timedb` and `update_metrics` are not both starved. After enabling batched metrics runs, you may raise the scheduler dequeue cap (**`metrics_scheduler_ready_queue_target`** vs internal **`GLOBAL_SCHEDULER_BATCH_SIZE`** in code) only if the DB and pool keep up. **`metrics_scheduler_skip_prewarm`** (or env **`HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM`**) trades warmer job pages for faster catch-up.
+
 Optional env: **`HPCPERFSTATS_STRESS_PLOT_SEC`** (with manual plot sanity), **`HPCPERFSTATS_LARGE_JOB_HOST_DATA_ROWS`**, **`HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS`**, **`HPCPERFSTATS_LARGE_JOB_WINDOW_ROW_COUNT_CACHE_TTL`** (seconds; `0` disables cached window `COUNT(*)` for large-job gating), **`HPCPERFSTATS_LARGE_JOB_TIME_SQL`** (`date_bin` default; set `ntile` for legacy distinct-time + NTILE sampling on PostgreSQL 14+), **`HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST`** (`1` restores `unnest(host_list)` live distinct SQL; emergency rollback only—see `get_live_distinct_use_legacy_hostlist()` docstring), **`HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER`** (`1`/`true`/`yes` makes the **`update_metrics.py`** script entrypoint sleep 300s (5 minutes) after a run; default is exit without sleep).
 
 ### Opt-in pipeline E2E (RabbitMQ → listend → sync_timedb → metrics → live web)

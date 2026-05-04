@@ -684,6 +684,19 @@ def get_metrics_plot_prewarm_mode():
   return "pipeline_required"
 
 
+def get_metrics_scheduler_skip_prewarm():
+  """When true, ``update_metrics`` persists metrics but skips job detail/plot prewarm."""
+  env = os.environ.get("HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM", "").strip().lower()
+  if env in ("1", "yes", "true", "on"):
+    return True
+  if env in ("0", "no", "false", "off"):
+    return False
+  _ensure_cfg_loaded()
+  return cfg.get(
+      "DEFAULT", "metrics_scheduler_skip_prewarm", fallback="no"
+  ).strip().lower() in ("1", "yes", "true", "on")
+
+
 def get_metrics_prewarm_workers():
   """Thread workers for required plot prewarm stage."""
   _ensure_cfg_loaded()
@@ -1001,6 +1014,7 @@ def get_conf_parser_defaults_audit_snapshot():
           "metrics_scheduler_prefetch_chunks": 8,
           "metrics_scheduler_ready_queue_target": 2000,
           "metrics_plot_prewarm_mode": "pipeline_required",
+          "metrics_scheduler_skip_prewarm": "no",
           "metrics_prewarm_workers": 4,
           "metrics_scheduler_compute_threads": 4,
           "metrics_prewarm_retry_attempts": 2,

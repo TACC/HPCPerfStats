@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from datetime import datetime, timedelta
 from collections import deque
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
@@ -71,6 +71,10 @@ from hpcperfstats.site.machine.models import (
 )
 
 DEBUG = cfg.get_debug()
+
+# Populated after ``update_metrics_for_dates`` completes when
+# ``HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS`` is truthy (tests / profiling).
+LAST_UPDATE_METRICS_DIAGNOSTICS = None
 
 # Process jobs in chunks to bound memory; full job rows are not all held at once.
 CHUNK_SIZE = 500
@@ -216,6 +220,13 @@ class _PrewarmPipeline:
       fut = self._executor.submit(self._run_one, jid)
       self._created_at[fut] = time.monotonic()
       self._pending.add(fut)
+
+  def has_pending(self):
+    """True when async prewarm tasks are still running (``pipeline_required``)."""
+    if self._mode == "inline" or self._executor is None:
+      return False
+    with self._pending_lock:
+      return bool(self._pending)
 
   def drain_some(self, force=False):
     if self._mode == "inline" or not self._pending:
@@ -911,14 +922,32 @@ def _fill_ready_queue(
     except StopIteration:
       return None, True
 
-  def _strict_ready_single_jid(jid):
-    """Strict readiness for one jid; ``None`` if not ready, on cooldown, or DB error."""
+  def _strict_ready_record_latency(latency_s, n_calls):
+    """Update rolling strict-check latency and adaptive batch size (``n_calls`` DB calls)."""
     with scheduler_shared_lock:
-      if strict_check_cooldown_until.get(jid, 0.0) > now:
+      prev = stats["strict_check_avg_latency_ms"]
+      per_ms = (latency_s / max(1, n_calls)) * 1000.0
+      prev_total = stats["strict_check_calls"]
+      stats["strict_check_calls"] += n_calls
+      if prev_total == 0:
+        stats["strict_check_avg_latency_ms"] = per_ms
+      else:
+        stats["strict_check_avg_latency_ms"] = (prev * 0.85) + (per_ms * 0.15)
+      strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
+          current_size=strict_check_state["batch_size"],
+          had_timeout=False,
+          latency_s=latency_s / max(1, n_calls),
+          max_size=strict_check_state["max_batch_size"],
+      )
+      stats["strict_batch_size_current"] = strict_check_state["batch_size"]
+
+  def _strict_ready_fallback_one(jid):
+    """Single-jid strict readiness after batch failure (same semantics as legacy path)."""
+    mono_now = time.monotonic()
+    with scheduler_shared_lock:
+      if strict_check_cooldown_until.get(jid, 0.0) > mono_now:
         return None
     t0 = time.monotonic()
-    with scheduler_shared_lock:
-      stats["strict_check_calls"] += 1
     try:
       with phase_timer.phase("readiness_s"):
         strict_ready = _filter_jids_with_samples_after_end([jid])
@@ -933,7 +962,7 @@ def _fill_ready_queue(
             max_size=strict_check_state["max_batch_size"],
         )
         batch_sz = strict_check_state["batch_size"]
-        strict_check_cooldown_until[jid] = now + STRICT_CHECK_COOLDOWN_SECONDS
+        strict_check_cooldown_until[jid] = mono_now + STRICT_CHECK_COOLDOWN_SECONDS
         stats["strict_batch_size_current"] = strict_check_state["batch_size"]
       log_print(
           "strict readiness sub-batch timed out size={0}; new_strict_batch_size={1}: {2}".format(
@@ -943,20 +972,7 @@ def _fill_ready_queue(
       )
       return None
     latency = time.monotonic() - t0
-    with scheduler_shared_lock:
-      prev = stats["strict_check_avg_latency_ms"]
-      current_ms = latency * 1000.0
-      if stats["strict_check_calls"] <= 1:
-        stats["strict_check_avg_latency_ms"] = current_ms
-      else:
-        stats["strict_check_avg_latency_ms"] = (prev * 0.85) + (current_ms * 0.15)
-      strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
-          current_size=strict_check_state["batch_size"],
-          had_timeout=False,
-          latency_s=latency,
-          max_size=strict_check_state["max_batch_size"],
-      )
-      stats["strict_batch_size_current"] = strict_check_state["batch_size"]
+    _strict_ready_record_latency(latency, 1)
     if not strict_ready:
       return None
     return strict_ready[0]
@@ -966,32 +982,116 @@ def _fill_ready_queue(
 
     Returns ``True`` when ``len(ready_queue) >= prefetch_chunks`` and the caller
     should stop scheduling more readiness work in this invocation.
+
+    Uses batched proxy rejection and batched strict readiness probes to avoid
+    per-jid round-trips on the producer thread.
     """
-    for idx, jid in enumerate(pk_chunk):
+    ordered = list(pk_chunk)
+    for jid in ordered:
       if on_candidate_jid is not None:
         on_candidate_jid(jid)
       with scheduler_shared_lock:
         stats["candidate_jids"] += 1
-      if _proxy_readiness_for_jid(jid) == "reject":
+
+    reject_set, _ = _proxy_reject_not_ready_jids(ordered)
+    reject_set = set(reject_set)
+    for jid in ordered:
+      if jid not in reject_set:
+        continue
+      if on_not_ready_jid is not None:
+        on_not_ready_jid(jid)
+      with scheduler_shared_lock:
+        stats["proxy_rejected_jids"] += 1
+        stats["skipped_not_ready"] += 1
+
+    unknown_ordered = [jid for jid in ordered if jid not in reject_set]
+    bs = max(1, int(strict_check_state["batch_size"]))
+    pos = 0
+    while pos < len(unknown_ordered):
+      if len(ready_queue) >= prefetch_chunks:
+        state["pending_tail"] = unknown_ordered[pos:]
+        return True
+      sub_end = min(pos + bs, len(unknown_ordered))
+      sub = unknown_ordered[pos:sub_end]
+      batch_mono = time.monotonic()
+      cooldown_jids = []
+      for jid in sub:
+        with scheduler_shared_lock:
+          if strict_check_cooldown_until.get(jid, 0.0) > batch_mono:
+            cooldown_jids.append(jid)
+      work = [jid for jid in sub if jid not in cooldown_jids]
+      for jid in cooldown_jids:
         if on_not_ready_jid is not None:
           on_not_ready_jid(jid)
         with scheduler_shared_lock:
-          stats["proxy_rejected_jids"] += 1
           stats["skipped_not_ready"] += 1
-      else:
-        ready_jid = _strict_ready_single_jid(jid)
-        if ready_jid is None:
+      pos = sub_end
+      if not work:
+        continue
+      try:
+        with phase_timer.phase("readiness_s"):
+          ready_list = _filter_jids_with_samples_after_end(work)
+      except (OperationalError, DatabaseError) as exc:
+        with scheduler_shared_lock:
+          stats["strict_check_timeouts"] += 1
+          stats["readiness_error_chunks"] += 1
+          strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
+              current_size=strict_check_state["batch_size"],
+              had_timeout=True,
+              latency_s=(time.monotonic() - batch_mono),
+              max_size=strict_check_state["max_batch_size"],
+          )
+          batch_sz = strict_check_state["batch_size"]
+          stats["strict_batch_size_current"] = strict_check_state["batch_size"]
+        log_print(
+            "strict readiness batch timed out size={0}; new_strict_batch_size={1}: {2}".format(
+                len(work), batch_sz, exc
+            ),
+            flush=True,
+        )
+        mono_now = time.monotonic()
+        for jid in work:
+          strict_check_cooldown_until[jid] = mono_now + STRICT_CHECK_COOLDOWN_SECONDS
+        for jid in work:
+          ready_jid = _strict_ready_fallback_one(jid)
+          if ready_jid is None:
+            if on_not_ready_jid is not None:
+              on_not_ready_jid(jid)
+            with scheduler_shared_lock:
+              stats["skipped_not_ready"] += 1
+          else:
+            ready_queue.append(ready_jid)
+            if len(ready_queue) >= prefetch_chunks:
+              tail = []
+              seen = False
+              for j2 in work:
+                if j2 == ready_jid:
+                  seen = True
+                  continue
+                if seen:
+                  tail.append(j2)
+              tail.extend(unknown_ordered[pos:])
+              if tail:
+                state["pending_tail"] = tail
+              return True
+        continue
+
+      latency = time.monotonic() - batch_mono
+      _strict_ready_record_latency(latency, len(work))
+      ready_set = set(ready_list)
+      for k, jid in enumerate(work):
+        if jid in ready_set:
+          ready_queue.append(jid)
+          if len(ready_queue) >= prefetch_chunks:
+            tail = work[k + 1:] + unknown_ordered[pos:]
+            if tail:
+              state["pending_tail"] = tail
+            return True
+        else:
           if on_not_ready_jid is not None:
             on_not_ready_jid(jid)
           with scheduler_shared_lock:
             stats["skipped_not_ready"] += 1
-        else:
-          ready_queue.append(ready_jid)
-      if len(ready_queue) >= prefetch_chunks:
-        rest = pk_chunk[idx + 1:]
-        if rest:
-          state["pending_tail"] = rest
-        return True
     return False
 
   if mode == "strict_date":
@@ -1359,21 +1459,19 @@ def _compute_and_prewarm_jid(
   }
 
 
-def _compute_jid_worker_entry(
-    metrics_manager,
-    prewarm_pipeline,
-    job_ref,
-    shared_pool,
-    metrics_run_lock,
-):
-  close_old_connections()
-  return _compute_and_prewarm_jid(
-      metrics_manager,
-      prewarm_pipeline,
-      job_ref,
-      shared_pool,
-      metrics_run_lock=metrics_run_lock,
-  )
+def _empty_jid_outcome_telemetry():
+  """Telemetry dict shape expected by the scheduler consumer."""
+  return {
+      "detail_gpu_metrics_reused": 0,
+      "detail_fsio_metrics_reused": 0,
+      "detail_fsio_fallback_queries": 0,
+      "detail_gpu_fallback_queries": 0,
+      "plot_row_lookup_queries": 0,
+      "plot_row_lookup_hits": 0,
+      "plot_jt_memo_host_time_hits": 0,
+      "plot_jt_memo_aggregate_hits": 0,
+      "plot_jt_memo_aggregate_misses": 0,
+  }
 
 
 def _compute_jid_outcomes_batch(
@@ -1382,79 +1480,83 @@ def _compute_jid_outcomes_batch(
     prewarm_pipeline,
     shared_pool,
 ):
-  """Run per-jid metrics+prewarm; parallel threads overlap prewarm with metrics.
+  """Run one batched ``Metrics.run`` then optional prewarm (submit/drain).
 
   Returns outcome dicts sorted by ``jid`` for stable counters/telemetry.
 
-  ``Metrics.run`` uses a process pool; concurrent ``imap_unordered`` iterators
-  on the same pool are unsafe, so ``metrics_run_lock`` serializes only the
-  ``run()`` call when using more than one scheduler thread.
+  A single ``Metrics.run(job_refs, …)`` saturates the process pool; prewarm
+  uses ``_PrewarmPipeline.submit`` + ``drain_some`` when ``pipeline_required``,
+  or runs inline when configured. Set ``[DEFAULT] metrics_scheduler_skip_prewarm``
+  (or env ``HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM``) to skip plot/detail
+  persistence for catch-up runs.
   """
   if not job_refs:
     return []
-  configured_threads = max(1, int(cfg.get_metrics_scheduler_compute_threads()))
-  max_workers = max(
-      1,
-      min(configured_threads * 2, len(job_refs)),
-  )
-  metrics_run_lock = threading.Lock() if max_workers > 1 else None
+  if shutdown_requested[0]:
+    return [{
+        "ok": False,
+        "jid": r.jid,
+        "metrics_s": 0.0,
+        "prewarm_s": 0.0,
+        "telemetry": _empty_jid_outcome_telemetry(),
+    } for r in job_refs]
+  skip_prewarm = cfg.get_metrics_scheduler_skip_prewarm()
+  t_batch = time.monotonic()
+  try:
+    metrics_manager.run(job_refs, pool=shared_pool)
+  except Exception as exc:
+    log_print(
+        "metrics scheduler: batch Metrics.run failed size={0}: {1}".format(
+            len(job_refs), exc
+        ),
+        flush=True,
+    )
+    return [{
+        "ok": False,
+        "jid": r.jid,
+        "metrics_s": 0.0,
+        "prewarm_s": 0.0,
+        "telemetry": _empty_jid_outcome_telemetry(),
+    } for r in job_refs]
+  metrics_elapsed = time.monotonic() - t_batch
+  n = max(1, len(job_refs))
+  per_metrics = metrics_elapsed / n
+  telem = _empty_jid_outcome_telemetry()
+  if skip_prewarm:
+    ordered = sorted(job_refs, key=lambda r: r.jid)
+    return [{
+        "ok": True,
+        "jid": r.jid,
+        "metrics_s": per_metrics,
+        "prewarm_s": 0.0,
+        "telemetry": dict(telem),
+    } for r in ordered]
 
-  if max_workers == 1:
-    outcomes = []
-    for job_ref in job_refs:
-      if shutdown_requested[0]:
-        break
-      close_old_connections()
-      outcomes.append(
-          _compute_and_prewarm_jid(
-              metrics_manager,
-              prewarm_pipeline,
-              job_ref,
-              shared_pool,
-              metrics_run_lock=None,
-          )
-      )
-    return outcomes
-
-  by_jid = {}
-  with ThreadPoolExecutor(max_workers=max_workers) as executor:
-    future_to_jid = {}
-    for job_ref in job_refs:
-      if shutdown_requested[0]:
-        break
-      fut = executor.submit(
-          _compute_jid_worker_entry,
-          metrics_manager,
-          prewarm_pipeline,
-          job_ref,
-          shared_pool,
-          metrics_run_lock,
-      )
-      future_to_jid[fut] = job_ref.jid
-    for fut in as_completed(future_to_jid):
-      jid = future_to_jid[fut]
-      try:
-        by_jid[jid] = fut.result()
-      except Exception as exc:
-        log_print(
-            "metrics scheduler: worker failed jid={0}; skipping: {1}".format(
-                jid, exc
-            ),
-            flush=True,
-        )
-        by_jid[jid] = {
-            "ok": False,
-            "jid": jid,
-            "metrics_s": 0.0,
-            "prewarm_s": 0.0,
-            "telemetry": {},
-        }
+  t_prewarm = time.monotonic()
+  for job_ref in job_refs:
+    if shutdown_requested[0]:
+      break
+    prewarm_pipeline.submit(job_ref.jid)
+  while prewarm_pipeline.has_pending():
+    if shutdown_requested[0]:
+      break
+    prewarm_pipeline.drain_some()
+  prewarm_elapsed = time.monotonic() - t_prewarm
+  per_prewarm = prewarm_elapsed / n
   ordered = sorted(job_refs, key=lambda r: r.jid)
-  return [by_jid[r.jid] for r in ordered if r.jid in by_jid]
+  return [{
+      "ok": True,
+      "jid": r.jid,
+      "metrics_s": per_metrics,
+      "prewarm_s": per_prewarm,
+      "telemetry": dict(telem),
+  } for r in ordered]
 
 
 def update_metrics_for_dates(dates, rerun=False):
   """Global scheduler across dates to keep workers saturated."""
+  global LAST_UPDATE_METRICS_DIAGNOSTICS
+  LAST_UPDATE_METRICS_DIAGNOSTICS = None
   close_old_connections()
   min_time = 300
   phase_timer = _PhaseTimer()
@@ -1787,6 +1889,19 @@ def update_metrics_for_dates(dates, rerun=False):
           ),
           flush=True,
       )
+
+      if os.environ.get(
+          "HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", ""
+      ).strip().lower() in ("1", "yes", "true", "on"):
+        global LAST_UPDATE_METRICS_DIAGNOSTICS
+        LAST_UPDATE_METRICS_DIAGNOSTICS = {
+            "phase_totals": dict(totals),
+            "stats": dict(snap),
+            "elapsed_s": elapsed,
+            "jobs_per_min": (snap["processed"] * 60.0) / elapsed,
+            "prewarm_stats": dict(prewarm_stats),
+            "scheduler_mode": scheduler_mode,
+        }
 
   run_with_db_retry(
       _run,

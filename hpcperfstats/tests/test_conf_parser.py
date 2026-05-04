@@ -553,6 +553,7 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_scheduler_compute_threads() == 4
   assert cfg.get_metrics_prewarm_retry_attempts() == 2
   assert cfg.get_metrics_proxy_reject_jid_batch_size() == 48
+  assert cfg.get_metrics_scheduler_skip_prewarm() is False
 
   with open(temp_ini) as f:
     content = f.read()
@@ -566,11 +567,13 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
       "metrics_prewarm_workers = 7\n"
       "metrics_scheduler_compute_threads = 6\n"
       "metrics_prewarm_retry_attempts = 5\n"
-      "metrics_proxy_reject_jid_batch_size = 32",
+      "metrics_proxy_reject_jid_batch_size = 32\n"
+      "metrics_scheduler_skip_prewarm = yes",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
   importlib.reload(cfg)
+  assert cfg.get_metrics_scheduler_skip_prewarm() is True
   assert cfg.get_metrics_scheduler_mode() == "global_fifo"
   assert cfg.get_metrics_scheduler_prefetch_chunks() == 3
   assert cfg.get_metrics_scheduler_ready_queue_target() == 111
