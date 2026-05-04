@@ -62,7 +62,7 @@ services:
     container_name: hpcperfstats_db_1
     # Default container /dev/shm is 64MiB; Postgres dynamic shared memory exhausts it easily
     # with max_connections=500.
-    shm_size: "16gb"
+    shm_size: "8gb"
     # statement_timeout / idle_in_transaction_session_timeout: align with Django OPTIONS in settings
     # (defaults 120s / 300s in ms). Shed runaway queries; tune bulk jobs if needed.
     # max_wal_size: reduce checkpoint churn under sustained write load.
@@ -74,7 +74,7 @@ services:
       - -c
       - idle_in_transaction_session_timeout=300000
       - -c
-      - max_wal_size=16GB
+      - max_wal_size=8GB
       # Ingest replays and occasional DML on compressed host_data chunks can
       # exceed TimescaleDB's default 100k tuple decompress cap per transaction.
       - -c
