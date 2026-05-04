@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
-from django.db.models import Avg, F, QuerySet, StdDev
+from django.db.models import Avg, F, QuerySet
 from django.db.models.functions import Extract
 
 
@@ -19,13 +19,13 @@ def queue_wait_seconds_expression():
 
 def aggregate_queue_wait_seconds_stats(queryset: QuerySet) -> dict:
     """
-    Mean and sample standard deviation of queue wait in seconds over eligible rows.
+    Mean queue wait in seconds over eligible rows.
 
-    Returns dict with keys ``mean_wait_s`` and ``std_wait_s`` (each may be None).
+    Returns dict with key ``mean_wait_s`` (may be None when no eligible rows).
     """
     qs = filter_queue_wait_eligible(queryset)
     expr = queue_wait_seconds_expression()
-    return qs.aggregate(mean_wait_s=Avg(expr), std_wait_s=StdDev(expr))
+    return qs.aggregate(mean_wait_s=Avg(expr))
 
 
 def queue_wait_hours_series(start_time: pd.Series, submit_time: pd.Series) -> pd.Series:

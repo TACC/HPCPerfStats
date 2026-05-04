@@ -189,7 +189,6 @@ export default function JobList() {
   } = data;
   const totalNodeHours = aggregates.total_node_hours;
   const queueWaitMeanHours = aggregates.queue_wait_mean_hours;
-  const queueWaitStddevHours = aggregates.queue_wait_stddev_hours;
   const { page, num_pages } = pagination;
 
   const paginationParams = buildJobListApiParams(searchParams, paramsFromRoute);
@@ -291,21 +290,10 @@ export default function JobList() {
           Total node hours (all matching jobs): {formatDecimalStandard(totalNodeHours)}
         </p>
       )}
-      {isStaff &&
-      (queueWaitMeanHours != null || queueWaitStddevHours != null) ? (
-        <div className="mb-3 text-muted small">
-          {queueWaitMeanHours != null ? (
-            <p className="mb-1">
-              Mean queue wait (all matching jobs):{" "}
-              {formatDecimalStandard(queueWaitMeanHours)} hours
-            </p>
-          ) : null}
-          {queueWaitStddevHours != null ? (
-            <p className="mb-0">
-              Standard deviation: {formatDecimalStandard(queueWaitStddevHours)} hours
-            </p>
-          ) : null}
-        </div>
+      {isStaff && queueWaitMeanHours != null ? (
+        <p className="mb-3 text-muted small">
+          Mean queue wait (all matching jobs): {formatDecimalStandard(queueWaitMeanHours)} hours
+        </p>
       ) : null}
 
       <section

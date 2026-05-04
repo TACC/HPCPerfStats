@@ -1726,11 +1726,8 @@ def job_list(request):
         try:
             wait_agg = aggregate_queue_wait_seconds_stats(job_list_qs)
             mean_s = wait_agg.get("mean_wait_s")
-            std_s = wait_agg.get("std_wait_s")
             if mean_s is not None:
                 aggregates["queue_wait_mean_hours"] = round(float(mean_s) / 3600.0, 4)
-            if std_s is not None:
-                aggregates["queue_wait_stddev_hours"] = round(float(std_s) / 3600.0, 4)
         except Exception:
             logger.exception("job_list: queue wait aggregate failed")
 

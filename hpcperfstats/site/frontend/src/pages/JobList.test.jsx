@@ -143,7 +143,7 @@ describe("JobList", () => {
     expect(screen.getByText("1,234.00")).toBeInTheDocument();
   });
 
-  it("shows mean queue wait and standard deviation for staff when aggregates include them", async () => {
+  it("shows mean queue wait for staff when aggregates include it", async () => {
     vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
       job_list: [
         {
@@ -172,7 +172,6 @@ describe("JobList", () => {
       aggregates: {
         total_node_hours: 64,
         queue_wait_mean_hours: 1.25,
-        queue_wait_stddev_hours: 0.5,
       },
       qname: "Jobs",
       order_by: "-end_time",
@@ -186,8 +185,6 @@ describe("JobList", () => {
       expect(screen.getByText(/Mean queue wait \(all matching jobs\):/)).toBeInTheDocument();
     });
     expect(screen.getByText(/1\.25 hours/)).toBeInTheDocument();
-    expect(screen.getByText(/Standard deviation:/)).toBeInTheDocument();
-    expect(screen.getByText(/0\.50 hours/)).toBeInTheDocument();
   });
 
   it("does not show queue wait summary lines for non-staff even if aggregates would include them", async () => {
@@ -218,7 +215,6 @@ describe("JobList", () => {
       aggregates: {
         total_node_hours: 64,
         queue_wait_mean_hours: 1.25,
-        queue_wait_stddev_hours: 0.5,
       },
       qname: "Jobs",
       order_by: "-end_time",
@@ -232,7 +228,6 @@ describe("JobList", () => {
       expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
     });
     expect(screen.queryByText(/Mean queue wait \(all matching jobs\):/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Standard deviation:/)).not.toBeInTheDocument();
   });
 
   it("hides Sample Count column for non-staff users", async () => {

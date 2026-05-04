@@ -452,7 +452,7 @@ class TestJobListQueueWaitAggregates:
     ), patch.object(api, "Paginator", return_value=paginator_inst), patch.object(
         api,
         "aggregate_queue_wait_seconds_stats",
-        return_value={"mean_wait_s": 3600.0, "std_wait_s": 600.0},
+        return_value={"mean_wait_s": 3600.0},
     ) as mock_wait, patch.object(api, "JobListSerializer", return_value=ser):
       response = api.job_list(request)
 
@@ -460,7 +460,7 @@ class TestJobListQueueWaitAggregates:
     mock_wait.assert_called_once_with(mock_qs)
     assert response.data["aggregates"]["total_node_hours"] == 64.0
     assert response.data["aggregates"]["queue_wait_mean_hours"] == 1.0
-    assert response.data["aggregates"]["queue_wait_stddev_hours"] == round(600.0 / 3600.0, 4)
+    assert "queue_wait_stddev_hours" not in response.data["aggregates"]
 
   def test_non_staff_does_not_call_queue_wait_aggregate(self):
     from hpcperfstats.site.machine import api
