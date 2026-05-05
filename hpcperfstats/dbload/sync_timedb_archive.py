@@ -44,7 +44,7 @@ _configure_blas_thread_env()
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.file_locking import file_read_lock_wait
 from hpcperfstats.print_utils import log_print
-from hpcperfstats.dbload.sync_timedb_archive_helpers import get_tar_file_tasks
+from hpcperfstats.dbload.sync_timedb_archive_helpers import iter_tar_file_tasks
 from hpcperfstats.shutdown_utils import (
     shutdown_requested,
 )
@@ -94,7 +94,9 @@ def _iter_tar_tasks_chunked(tar_files, chunk_size=TAR_TASK_CHUNK_SIZE):
   """Yield (tar_path, member_name) tasks in bounded chunks."""
   if chunk_size < 1:
     chunk_size = 1
-  tasks_iter = itertools.chain.from_iterable(get_tar_file_tasks(path) for path in tar_files)
+  tasks_iter = itertools.chain.from_iterable(
+      iter_tar_file_tasks(path) for path in tar_files
+  )
   while True:
     chunk = list(itertools.islice(tasks_iter, chunk_size))
     if not chunk:
@@ -136,17 +138,15 @@ if __name__ == '__main__':
   for tar_file_name in tar_files:
     log_print(tar_file_name)
 
-  manager = multiprocessing.Manager()
-  try:
-    manager_lock = manager.Lock()
-    with multiprocessing.get_context('spawn').Pool(
-        processes=thread_count) as pool:
+  ctx = multiprocessing.get_context('spawn')
+  lock = ctx.Lock()
+  with ctx.Pool(processes=thread_count) as pool:
       # Process in chunks so SIGTERM can exit between chunks and memory stays bounded.
       for chunk in _iter_tar_tasks_chunked(tar_files, TAR_TASK_CHUNK_SIZE):
         if shutdown_requested[0]:
           log_print("Exiting due to SIGTERM")
           break
-        chunk_locked = [(manager_lock, p, m) for p, m in chunk]
+        chunk_locked = [(lock, p, m) for p, m in chunk]
         _process_tar_chunk_interruptibly(
             pool,
             _process_tar_member_task,
@@ -156,8 +156,6 @@ if __name__ == '__main__':
         if shutdown_requested[0]:
           pool.terminate()
           break
-  finally:
-    manager.shutdown()
   try:
     connections.close_all()
   except Exception:

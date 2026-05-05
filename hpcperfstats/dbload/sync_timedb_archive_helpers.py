@@ -765,8 +765,8 @@ def _gzip_backup_and_uncompressed_targets(open_path):
   return ("%s.gz" % open_path, open_path)
 
 
-def get_tar_file_tasks(tar_path):
-  """Return list of (tar_path, member_name) for file members only (no dirs).
+def iter_tar_file_tasks(tar_path):
+  """Yield ``(tar_path, member_name)`` for file members only (no dirs).
 
   If the tar is unreadable and a sibling ``.tar.gz`` exists, delete the
   unreadable tar, restore it with pigz, and retry once.
@@ -776,15 +776,17 @@ def get_tar_file_tasks(tar_path):
   """
   open_path = resolve_preferred_archive_path_for_read(tar_path)
 
-  def _read_members():
-    members = []
+  def _iter_members():
     with file_read_lock_wait(open_path):
       with _open_tarfile_for_read(open_path, pigz_thread_count) as archive_tar:
-        for member_info in archive_tar.getmembers():
+        try:
+          member_infos = iter(archive_tar)
+        except TypeError:
+          member_infos = archive_tar.getmembers()
+        for member_info in member_infos:
           if not member_info.isfile():
             continue
-          members.append((open_path, member_info.name))
-    return members
+          yield (open_path, member_info.name)
 
   def _restore_from_gzip():
     gz_path, tar_out = _gzip_backup_and_uncompressed_targets(open_path)
@@ -799,7 +801,7 @@ def get_tar_file_tasks(tar_path):
       return False
 
   try:
-    return _read_members()
+    yield from _iter_members()
   except (tarfile.TarError, OSError, EOFError):
     log_print(
         "Unable to read archive %s (possible corruption); attempting restore from gzip"
@@ -813,7 +815,15 @@ def get_tar_file_tasks(tar_path):
       raise
     log_print("Archive recovery succeeded for %s; retrying read" % open_path)
     open_path = resolve_preferred_archive_path_for_read(tar_path)
-  return _read_members()
+  yield from _iter_members()
+
+
+def get_tar_file_tasks(tar_path):
+  """Return list of (tar_path, member_name) for file members only (no dirs).
+
+  Wrapper over ``iter_tar_file_tasks`` for callers/tests that need eager lists.
+  """
+  return list(iter_tar_file_tasks(tar_path))
 
 
 def parse_archive_date_from_daily_tar_path(tar_path):

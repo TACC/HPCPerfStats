@@ -22,6 +22,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     get_file_member_sizes_from_gzip_archive,
     get_stats_chunk,
     get_tar_file_tasks,
+    iter_tar_file_tasks,
     get_tar_member_name,
     get_verified_files_to_remove,
     collect_first_timestamps_by_path,
@@ -411,6 +412,22 @@ def test_get_tar_file_tasks_returns_file_members_only(tmp_path):
   assert set(tasks) == {(str(tar_path), "a.txt"), (str(tar_path), "subdir/b.txt")}
 
 
+def test_iter_tar_file_tasks_matches_get_tar_file_tasks(tmp_path):
+  """Streaming and eager helpers produce the same task tuples."""
+  tar_path = tmp_path / "test.tar"
+  a = tmp_path / "a.txt"
+  a.write_text("x")
+  (tmp_path / "subdir").mkdir()
+  sub_f = tmp_path / "subdir" / "b.txt"
+  sub_f.write_text("y")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(a), arcname="a.txt")
+    tf.add(str(tmp_path / "subdir"), arcname="subdir")
+    tf.add(str(sub_f), arcname="subdir/b.txt")
+
+  assert list(iter_tar_file_tasks(str(tar_path))) == get_tar_file_tasks(str(tar_path))
+
+
 def test_get_tar_file_tasks_empty_tar(tmp_path):
   """Empty tar returns empty list."""
   tar_path = tmp_path / "empty.tar"
@@ -446,8 +463,8 @@ def test_iter_tar_tasks_chunked_streams_without_accumulating(monkeypatch):
       "b.tar": [("b.tar", "m1")],
   }
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive.get_tar_file_tasks",
-      lambda tar_path: by_tar.get(tar_path, []),
+      "hpcperfstats.dbload.sync_timedb_archive.iter_tar_file_tasks",
+      lambda tar_path: iter(by_tar.get(tar_path, [])),
   )
   chunks = list(_iter_tar_tasks_chunked(["a.tar", "b.tar"], chunk_size=2))
   assert chunks == [
