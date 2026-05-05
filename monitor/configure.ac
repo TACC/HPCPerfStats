@@ -456,6 +456,17 @@ AS_IF([test "x$with_systemduserunitdir" != "xno"],
       [AC_SUBST([systemduserunitdir], [$with_systemduserunitdir])])
 AM_CONDITIONAL([HAVE_SYSTEMD], [test "x$with_systemduserunitdir" != "xno"])
 
+dnl Optional stats modules: must stay aligned with src/Makefile.am TYPES (+ stats_registry.c).
+AM_COND_IF([HARDWARE], [AC_DEFINE([MONITOR_WITH_HARDWARE], [1], [Hardware counter stats modules])])
+AM_COND_IF([INFINIBAND], [AC_DEFINE([MONITOR_WITH_INFINIBAND], [1], [Extended InfiniBand stats])])
+AM_COND_IF([LUSTRE], [AC_DEFINE([MONITOR_WITH_LUSTRE], [1], [Lustre mdc/llite stats])])
+AM_COND_IF([MIC], [AC_DEFINE([MONITOR_WITH_MIC], [1], [Intel MIC stats])])
+AM_COND_IF([OPA], [AC_DEFINE([MONITOR_WITH_OPA], [1], [Intel OPA stats])])
+AM_COND_IF([GPU], [AC_DEFINE([MONITOR_WITH_GPU], [1], [NVIDIA GPU stats])])
+AM_COND_IF([AMD_GPU], [AC_DEFINE([MONITOR_WITH_AMD_GPU], [1], [AMD GPU stats])])
+AM_COND_IF([MONITOR_ARCH_ARM],
+  [AC_DEFINE([MONITOR_HOST_IS_ARM], [1], [ARM/aarch64-only stats modules (e.g. arm_imc)])])
+
 AC_CONFIG_FILES([Makefile src/Makefile tests/Makefile])
 AC_OUTPUT
 

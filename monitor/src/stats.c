@@ -2,22 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include "stats.h"
+#include "stats_registry.h"
 #include "trace.h"
 #include "dict.h"
 #include "schema.h"
 #include "metric_profiler.h"
-
-#define X(t) extern struct stats_type t##_stats_type;
-#include "stats.x"
-#undef X
-
-struct stats_type *type_table[] = {
-#define X(t) &t##_stats_type,
-#include "stats.x"
-#undef X
-};
-
-static size_t nr_stats_types = sizeof(type_table) / sizeof(type_table[0]);
 int stats_collect_on_changeover = 0;
 
 static void stats_destroy(struct stats *stats);
@@ -64,11 +53,11 @@ void stats_type_destroy(struct stats_type *st)
 
 struct stats_type *stats_type_get(const char *name)
 {
-  size_t begin = 0, end = nr_stats_types;
+  size_t begin = 0, end = stats_type_nr;
 
   while (begin < end) {
     size_t mid = begin + (end - begin) / 2;
-    struct stats_type *type = type_table[mid];
+    struct stats_type *type = stats_type_table[mid];
 
     int cmp = strcmp(name, type->st_name);
     if (cmp < 0)
@@ -86,8 +75,8 @@ struct stats_type *stats_type_for_each(size_t *i)
 {
   struct stats_type *type = NULL;
 
-  if (*i < nr_stats_types) {
-    type = type_table[*i];
+  if (*i < stats_type_nr) {
+    type = stats_type_table[*i];
     (*i)++;
   }
 

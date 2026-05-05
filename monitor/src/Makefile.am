@@ -90,6 +90,8 @@ hpcperfstatsd_SOURCES = \
 	schema_entry_parse.c \
 	stats.h \
 	stats.c \
+	stats_registry.h \
+	stats_registry.c \
 	metric_profiler.h \
 	metric_profiler.c \
 	roofline_hw_peak.h \
@@ -273,9 +275,6 @@ hpcperfstatsd_SOURCES += \
 hpcperfstatsd_LDFLAGS += \
 	-lm
 
-nodist_hpcperfstatsd_SOURCES = \
-	stats.x
-
 if GPU
 TYPES += \
 	nvidia_gpu.c
@@ -289,12 +288,6 @@ TYPES += \
 hpcperfstatsd_SOURCES += \
 	amd_gpu.h
 endif
-
-BUILT_SOURCES = stats.x
-CLEANFILES = stats.x
-stats.o: stats.x
-stats.x: Makefile
-	echo '$(patsubst %.c, X(%),$(sort $(TYPES)))' > $@
 
 EXTRA_DIST = hpcperfstats.conf hpcperfstats.service \
 	$(top_srcdir)/scripts/build_static_bundle.sh \
