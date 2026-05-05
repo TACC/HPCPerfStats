@@ -117,6 +117,32 @@ def test_persist_metrics_batch_coerces_list_metric_fields(sample_metric_row):
   assert rows[0].units == "#cores,max"
 
 
+@pytest.mark.django_db(databases=[])
+def test_persist_metrics_batch_coerces_list_like_jid(sample_metric_row):
+  """List-like jid payloads should not crash set/dict key construction."""
+  row = dict(sample_metric_row)
+  bad_job = MagicMock()
+  bad_job.jid = ["j1", "part"]
+  row["jid"] = bad_job
+  with patch.object(
+      metrics_module.metrics_data.objects,
+      "bulk_create",
+  ) as mock_bulk_create, patch.object(
+      metrics_module.job_data.objects,
+      "filter",
+      return_value=[],
+  ), patch.object(
+      metrics_module.transaction,
+      "atomic",
+      MagicMock(return_value=nullcontext()),
+  ):
+    _persist_metrics_batch([row], None)
+
+  rows = mock_bulk_create.call_args.args[0]
+  assert len(rows) == 1
+  assert rows[0].jid_id == "j1,part"
+
+
 @pytest.mark.django_db
 def test_persist_metrics_batch_upserts_same_key():
   """Second persist with same (jid, type, metric) updates one row (ON CONFLICT)."""

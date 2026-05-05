@@ -354,17 +354,26 @@ def _persist_metrics_batch(job_results, distinct_time_count):
       return ",".join(str(v) for v in value)
     return str(value)
 
+  def _coerce_jid_pk(job_or_pk):
+    raw = getattr(job_or_pk, "jid", job_or_pk)
+    if isinstance(raw, str):
+      return raw
+    if isinstance(raw, (list, tuple, set)):
+      return ",".join(str(v) for v in raw)
+    return str(raw)
+
   with transaction.atomic():
-    jids = list({item["jid"].jid for item in job_results})
+    jids = list({_coerce_jid_pk(item["jid"]) for item in job_results})
     by_key = {}
     for item in job_results:
+      row_jid = _coerce_jid_pk(item["jid"])
       row_type = _coerce_metric_field(item["type"])
       row_metric = _coerce_metric_field(item["metric"])
-      key = (item["jid"].jid, row_type, row_metric)
+      key = (row_jid, row_type, row_metric)
       by_key[key] = item
     rows = [
         metrics_data(
-            jid_id=item["jid"].jid,
+            jid_id=_coerce_jid_pk(item["jid"]),
             type=_coerce_metric_field(item["type"]),
             metric=_coerce_metric_field(item["metric"]),
             units=_coerce_metric_field(item["units"]),
