@@ -83,6 +83,7 @@ from .job_plot_artifacts import (
 )
 from .job_detail_artifacts import (
     ARTIFACT_KIND_JOB_DETAIL,
+    ARTIFACT_KIND_MULTIPRECISION_MIX,
     ARTIFACT_KIND_TYPE_DETAIL,
     compute_detail_input_fingerprint,
     load_job_detail_artifact,
@@ -1875,6 +1876,12 @@ def job_detail(request, pk):
         "",
         compute_detail_input_fingerprint(job),
     ) or {}
+    multiprecision_payload = load_job_detail_artifact(
+        job.jid,
+        ARTIFACT_KIND_MULTIPRECISION_MIX,
+        "",
+        compute_detail_input_fingerprint(job),
+    ) or {}
 
     def _fetch_proc_list():
         from .models import proc_data
@@ -1992,6 +1999,10 @@ def job_detail(request, pk):
         "metrics_list": metrics_list,
         "proc_list": proc_list,
         "derived_data_status": "ready" if detail_payload else "loading",
+        "multiprecision_cpu_plot_item": multiprecision_payload.get("cpu_plot_item"),
+        "multiprecision_cpu_unavailable_reason": multiprecision_payload.get("cpu_unavailable_reason"),
+        "multiprecision_gpu_plot_item": multiprecision_payload.get("gpu_plot_item"),
+        "multiprecision_gpu_unavailable_reason": multiprecision_payload.get("gpu_unavailable_reason"),
     }
     if request.session.get("is_staff", False):
         payload["staff_metrics_distinct_time_count"] = job.metrics_distinct_time_count

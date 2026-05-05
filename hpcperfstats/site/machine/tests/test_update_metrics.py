@@ -190,6 +190,7 @@ def test_jobs_queryset_postgresql_sql_jid_scoped_live_samples(monkeypatch):
   assert "encode(sha256" in sql
   assert "job_plot_artifact" in sql
   assert "job_detail_artifact" in sql
+  assert "multiprecision_mix" in sql
   # TypeDetailFreshFingerprintRowCount raw SQL must use the real FK column
   # (db_column="jid"), not Django's jid_id ORM suffix.
   assert 't."jid" = "job_data"."jid"' in str(qs.query)

@@ -55,6 +55,12 @@ def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
       "gpu_utilization_mean": None,
       "gpu_count": gpu_count_cached,
   }
+  multiprecision_payload = {
+      "cpu_plot_item": None,
+      "cpu_unavailable_reason": "No usable precision-width telemetry is available for this chart.",
+      "gpu_plot_item": None,
+      "gpu_unavailable_reason": "No usable precision-width telemetry is available for this chart.",
+  }
   if gpu_agg and gpu_agg.get("cnt", 0) > 2:
     detail_payload["gpu_active"] = 3 if float(gpu_agg.get("vmax", 0.0) or 0.0) > 0.0 else 0
     detail_payload["gpu_utilization_max"] = float(gpu_agg.get("vmax", 0.0) or 0.0)
@@ -70,7 +76,8 @@ def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
       patch.object(api_module.cfg, "get_xalt_user", return_value=""),
       patch.object(api_module.cfg, "get_host_name_ext", return_value=""),
       patch.object(api_module, "cached_orm", side_effect=cached_se),
-      patch.object(api_module, "load_job_detail_artifact", return_value=detail_payload),
+      patch.object(api_module, "load_job_detail_artifact", side_effect=[
+          detail_payload, multiprecision_payload]),
       patch.object(
           api_module,
           "JobListSerializer",
@@ -105,6 +112,8 @@ def test_job_detail_gpu_stats_from_aggregate_dict():
   assert data["gpu_active"] == 3
   assert data["gpu_utilization_mean"] == 80.0
   assert data["gpu_count"] == 8
+  assert "multiprecision_cpu_plot_item" in data
+  assert "multiprecision_gpu_plot_item" in data
 
 
 def test_job_detail_gpu_stats_none_when_two_or_fewer_samples():

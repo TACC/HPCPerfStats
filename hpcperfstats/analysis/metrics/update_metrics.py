@@ -54,6 +54,7 @@ from hpcperfstats.site.machine.job_plot_artifacts import (
 )
 from hpcperfstats.site.machine.job_detail_artifacts import (
     ARTIFACT_KIND_JOB_DETAIL,
+    ARTIFACT_KIND_MULTIPRECISION_MIX,
     persist_job_detail_artifacts_for_jid,
 )
 from hpcperfstats.site.machine.artifact_readiness_expressions import (
@@ -659,6 +660,14 @@ def _jobs_queryset(date, min_time, rerun):
             input_fingerprint=OuterRef("expected_detail_input_fp"),
         )
     )
+    multiprecision_mix_ok = Exists(
+        job_detail_artifact.objects.filter(
+            jid_id=OuterRef("jid"),
+            artifact_kind=ARTIFACT_KIND_MULTIPRECISION_MIX,
+            artifact_scope="",
+            input_fingerprint=OuterRef("expected_detail_input_fp"),
+        )
+    )
     annotated = annotated.annotate(
         expected_plot_input_fp=PlotArtifactInputFingerprintHex(
             _host_name_suffix(),
@@ -670,6 +679,7 @@ def _jobs_queryset(date, min_time, rerun):
     annotated = annotated.annotate(
         plot_fp_row_matches=Coalesce(plot_fp_match_sq, int0),
         job_detail_row_ok=job_detail_ok,
+        multiprecision_mix_row_ok=multiprecision_mix_ok,
     )
     metrics_complete = Q(md_count__gte=expected) & Q(stale_null=0)
     need_plot_artifacts = metrics_complete & Q(
@@ -677,6 +687,7 @@ def _jobs_queryset(date, min_time, rerun):
     )
     need_detail_artifacts = metrics_complete & (
         Q(job_detail_row_ok=False)
+        | Q(multiprecision_mix_row_ok=False)
         | Q(schema_type_slot_count__gt=F("type_detail_fresh_row_count"))
     )
     need_metrics |= need_plot_artifacts | need_detail_artifacts

@@ -117,3 +117,55 @@ def test_persist_job_detail_skips_type_detail_when_artifact_is_fresh(monkeypatch
   )
 
   jda.persist_job_detail_artifacts_for_jid(job.jid)
+
+
+@pytest.mark.django_db
+def test_persist_job_detail_prewarms_multiprecision_mix_payload(monkeypatch):
+  job = _mk_job("detail-multiprecision-mix")
+  for metric_name, value in (
+      ("vecpercent_64b", 40.0),
+      ("vecpercent_32b", 60.0),
+  ):
+    metrics_data.objects.create(
+        jid=job,
+        type="pmc",
+        metric=metric_name,
+        units="%",
+        value=value,
+        no_data_reason=None,
+    )
+
+  class _FakeJt:
+    acct_host_list = ["n1"]
+    schema = {}
+    start_time = job.start_time
+    end_time = job.end_time
+
+    def get_llite_delta_by_event(self):
+      return pd.DataFrame()
+
+    def get_nfs_delta_totals_mb(self):
+      return None
+
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_detail_artifacts.jid_table.jid_table",
+      lambda _jid: _FakeJt(),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_detail_artifacts.gpu_precision_mix_rows_for_job_window",
+      lambda _jt: [{"event": "fp16_active", "vmean": 70.0}, {"event": "fp32_active", "vmean": 30.0}],
+  )
+
+  jda.persist_job_detail_artifacts_for_jid(job.jid)
+  fp = jda.compute_detail_input_fingerprint(job)
+  payload = jda.load_job_detail_artifact(
+      job.jid,
+      jda.ARTIFACT_KIND_MULTIPRECISION_MIX,
+      "",
+      fp,
+  )
+  assert payload is not None
+  assert payload["cpu_plot_item"] is not None
+  assert payload["gpu_plot_item"] is not None
+  assert payload["cpu_unavailable_reason"] is None
+  assert payload["gpu_unavailable_reason"] is None

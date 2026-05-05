@@ -35,6 +35,10 @@ const minimalJobDetailResponse = {
   gpu_utilization_max: null,
   gpu_utilization_mean: null,
   gpu_count: null,
+  multiprecision_cpu_plot_item: null,
+  multiprecision_cpu_unavailable_reason: "No usable precision-width telemetry is available for this chart.",
+  multiprecision_gpu_plot_item: null,
+  multiprecision_gpu_unavailable_reason: "No usable precision-width telemetry is available for this chart.",
   metrics_list: [],
   proc_list: [],
 };
@@ -475,6 +479,7 @@ describe("JobDetail", () => {
       "Metrics",
       "Summary plot",
       "Roofline",
+      "Multiprecision Mix",
       "Processes",
       "Execution and hosts",
       "Device data",
@@ -530,6 +535,33 @@ describe("JobDetail", () => {
     });
     await userEvent.click(screen.getByRole("tab", { name: "Summary plot" }));
     expect(screen.getByText(/Loading Summary plot/i)).toBeInTheDocument();
+  });
+
+  it("renders both multiprecision mix embeds when tab is selected", async () => {
+    window.Bokeh = {
+      embed: {
+        embed_item: vi.fn(() => Promise.resolve()),
+      },
+    };
+    const withMultiprecision = {
+      ...minimalJobDetailResponse,
+      multiprecision_cpu_plot_item: { doc: {}, root_ids: ["mix-cpu-root"] },
+      multiprecision_cpu_unavailable_reason: null,
+      multiprecision_gpu_plot_item: { doc: {}, root_ids: ["mix-gpu-root"] },
+      multiprecision_gpu_unavailable_reason: null,
+    };
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(withMultiprecision);
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(withMultiprecision);
+    mockAllPlotCallsReady();
+
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole("tab", { name: "Multiprecision Mix" }));
+    await waitFor(() => {
+      expect(document.querySelectorAll(".bokeh-embed-wrapper").length).toBe(2);
+    });
   });
 });
 

@@ -180,6 +180,7 @@ export default function JobDetail() {
   const tabDeviceId = useId();
   const tabPlotSummaryId = useId();
   const tabPlotRooflineId = useId();
+  const tabMultiprecisionMixId = useId();
 
   const plotTabDomIds = {
     summary: tabPlotSummaryId,
@@ -341,6 +342,10 @@ export default function JobDetail() {
     gpu_utilization_max,
     gpu_utilization_mean,
     gpu_count,
+    multiprecision_cpu_plot_item,
+    multiprecision_cpu_unavailable_reason,
+    multiprecision_gpu_plot_item,
+    multiprecision_gpu_unavailable_reason,
     metrics_list = [],
     proc_list = [],
     staff_metrics_distinct_time_count: staffMetricsDistinctTimeCount,
@@ -755,6 +760,20 @@ export default function JobDetail() {
           <li className="nav-item" role="presentation">
             <button
               type="button"
+              className={`nav-link ${analysisTab === "multiprecisionMix" ? "active" : ""}`}
+              id={tabMultiprecisionMixId}
+              role="tab"
+              aria-selected={analysisTab === "multiprecisionMix"}
+              aria-controls="job-detail-panel-multiprecision-mix"
+              tabIndex={analysisTab === "multiprecisionMix" ? 0 : -1}
+              onClick={() => setAnalysisTab("multiprecisionMix")}
+            >
+              Multiprecision Mix
+            </button>
+          </li>
+          <li className="nav-item" role="presentation">
+            <button
+              type="button"
               className={`nav-link ${analysisTab === "processes" ? "active" : ""}`}
               id={tabProcessesId}
               role="tab"
@@ -863,6 +882,39 @@ export default function JobDetail() {
                 </div>
               </div>
             )}
+          </div>
+          <div
+            id="job-detail-panel-multiprecision-mix"
+            role="tabpanel"
+            aria-labelledby={tabMultiprecisionMixId}
+            hidden={analysisTab !== "multiprecisionMix"}
+          >
+            <div className="row g-3">
+              <div className="col-12 col-lg-6">
+                <h3 className="h6">CPU Multiprecision Mix</h3>
+                {analysisTab === "multiprecisionMix" ? (
+                  <PlotPanel
+                    item={multiprecision_cpu_plot_item}
+                    id={`job-multiprecision-cpu-${pk}`}
+                    plotName="CPU Multiprecision Mix"
+                    unavailableReason={multiprecision_cpu_unavailable_reason}
+                    isLoading={detailsLoading}
+                  />
+                ) : null}
+              </div>
+              <div className="col-12 col-lg-6">
+                <h3 className="h6">GPU Multiprecision Mix</h3>
+                {analysisTab === "multiprecisionMix" ? (
+                  <PlotPanel
+                    item={multiprecision_gpu_plot_item}
+                    id={`job-multiprecision-gpu-${pk}`}
+                    plotName="GPU Multiprecision Mix"
+                    unavailableReason={multiprecision_gpu_unavailable_reason}
+                    isLoading={detailsLoading}
+                  />
+                ) : null}
+              </div>
+            </div>
           </div>
           <div
             id="job-detail-panel-processes"

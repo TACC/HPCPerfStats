@@ -58,6 +58,7 @@ class TestWebPagesEndToEnd:
           "/machine/jobs/",
           "/machine/job/123/",
           "/machine/job/123/?tab=roofline",
+          "/machine/job/123/?tab=multiprecisionMix",
           "/machine/job/123/cpu/",
           "/machine/year/2020/",
           "/machine/host/node1/plot/",
