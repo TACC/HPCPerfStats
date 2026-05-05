@@ -89,6 +89,34 @@ def test_persist_metrics_batch_skips_job_update_when_distinct_none(sample_metric
   mock_jd_bulk_update.assert_not_called()
 
 
+@pytest.mark.django_db(databases=[])
+def test_persist_metrics_batch_coerces_list_metric_fields(sample_metric_row):
+  """List-like type/metric/units should be coerced to stable strings."""
+  row = dict(sample_metric_row)
+  row["type"] = ["cpu", "agg"]
+  row["metric"] = ["avg_cpuusage", "peak_cpuusage"]
+  row["units"] = ["#cores", "max"]
+  with patch.object(
+      metrics_module.metrics_data.objects,
+      "bulk_create",
+  ) as mock_bulk_create, patch.object(
+      metrics_module.job_data.objects,
+      "filter",
+      return_value=[],
+  ), patch.object(
+      metrics_module.transaction,
+      "atomic",
+      MagicMock(return_value=nullcontext()),
+  ):
+    _persist_metrics_batch([row], None)
+
+  rows = mock_bulk_create.call_args.args[0]
+  assert len(rows) == 1
+  assert rows[0].type == "cpu,agg"
+  assert rows[0].metric == "avg_cpuusage,peak_cpuusage"
+  assert rows[0].units == "#cores,max"
+
+
 @pytest.mark.django_db
 def test_persist_metrics_batch_upserts_same_key():
   """Second persist with same (jid, type, metric) updates one row (ON CONFLICT)."""

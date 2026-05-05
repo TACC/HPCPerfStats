@@ -347,18 +347,27 @@ def _persist_metrics_batch(job_results, distinct_time_count):
   ON CONFLICT does not hit the same row twice.
   Called in main process only.
   """
+  def _coerce_metric_field(value):
+    if isinstance(value, str):
+      return value
+    if isinstance(value, (list, tuple, set)):
+      return ",".join(str(v) for v in value)
+    return str(value)
+
   with transaction.atomic():
     jids = list({item["jid"].jid for item in job_results})
     by_key = {}
     for item in job_results:
-      key = (item["jid"].jid, item["type"], item["metric"])
+      row_type = _coerce_metric_field(item["type"])
+      row_metric = _coerce_metric_field(item["metric"])
+      key = (item["jid"].jid, row_type, row_metric)
       by_key[key] = item
     rows = [
         metrics_data(
             jid_id=item["jid"].jid,
-            type=item["type"],
-            metric=item["metric"],
-            units=item["units"],
+            type=_coerce_metric_field(item["type"]),
+            metric=_coerce_metric_field(item["metric"]),
+            units=_coerce_metric_field(item["units"]),
             value=item["value"],
             no_data_reason=item.get("no_data_reason"),
         )
