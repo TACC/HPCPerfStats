@@ -3,6 +3,7 @@
 DB access is process-safe: _unwrap runs in multiprocessing workers and calls close_old_connections() at entry so each worker uses a fresh connection for reads (e.g. job_arc); writes are done in the main process only.
 
 """
+import json
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.print_utils import log_print
 
@@ -40,6 +41,48 @@ except ImportError:
   from numpy import trapz
 
 NUMEXPR_MIN_ARRAY_SIZE = 100_000
+
+
+def _coerce_metrics_identity_str(value):
+  """Stable string for metrics_data keys and set/hash uses (never lists/dicts raw).
+
+  Bad monitor/ingest payloads occasionally surface list-typed labels in host_data
+  or schema-derived paths; using those in ``set`` membership, ``frozenset``, or
+  ORM dedupe keys raises ``unhashable type: 'list'``.
+  """
+  if value is None:
+    return ""
+  if isinstance(value, str):
+    return value
+  if isinstance(value, (list, tuple, set)):
+    return ",".join(str(v) for v in value)
+  if isinstance(value, dict):
+    try:
+      return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    except TypeError:
+      return str(value)
+  return str(value)
+
+
+def _sanitize_metrics_compute_rows(rows):
+  """Normalize type/metric/units on every worker-produced row before persist."""
+  out = []
+  for row in rows:
+    if not isinstance(row, dict):
+      continue
+    jid = row.get("jid")
+    if jid is None:
+      continue
+    out.append({
+        "jid": jid,
+        "type": _coerce_metrics_identity_str(row.get("type")),
+        "metric": _coerce_metrics_identity_str(row.get("metric")),
+        "units": _coerce_metrics_identity_str(row.get("units")),
+        "value": row.get("value"),
+        "no_data_reason": row.get("no_data_reason"),
+    })
+  return out
+
 
 # Skip time_imbalance slices where b/a is non-finite or absurd (near-zero "before"
 # integral blows up the ratio); values above this are not meaningful as %.
@@ -248,6 +291,9 @@ class _JobForMetrics:
     # Global sorted time axis.
     df["time"] = to_datetime(df["time"]).dt.tz_localize(None)
     df = df.sort_values("time")
+    for col in ("host", "type", "event"):
+      if col in df.columns:
+        df[col] = df[col].map(_coerce_metrics_identity_str)
     # Sample count for invalidation: per-host COUNT(DISTINCT time), summed
     # (same semantics as live host_data subquery in update_metrics).
     self.per_host_distinct_time_sum = int(
@@ -265,8 +311,10 @@ class _JobForMetrics:
         df[col] = df[col].astype("category")
 
     # Build schemas based on jt.schema (type -> [events])
-    for typename, events in jt.schema.items():
-      self.schemas[typename] = _Schema(events)
+    for raw_typename, events in jt.schema.items():
+      typename = _coerce_metrics_identity_str(raw_typename)
+      ev_list = [_coerce_metrics_identity_str(e) for e in (events or [])]
+      self.schemas[typename] = _Schema(ev_list)
 
     # Prepare host containers
     host_list = df["host"].drop_duplicates().values
@@ -347,36 +395,25 @@ def _persist_metrics_batch(job_results, distinct_time_count):
   ON CONFLICT does not hit the same row twice.
   Called in main process only.
   """
-  def _coerce_metric_field(value):
-    if isinstance(value, str):
-      return value
-    if isinstance(value, (list, tuple, set)):
-      return ",".join(str(v) for v in value)
-    return str(value)
-
   def _coerce_jid_pk(job_or_pk):
     raw = getattr(job_or_pk, "jid", job_or_pk)
-    if isinstance(raw, str):
-      return raw
-    if isinstance(raw, (list, tuple, set)):
-      return ",".join(str(v) for v in raw)
-    return str(raw)
+    return _coerce_metrics_identity_str(raw)
 
   with transaction.atomic():
     jids = list({_coerce_jid_pk(item["jid"]) for item in job_results})
     by_key = {}
     for item in job_results:
       row_jid = _coerce_jid_pk(item["jid"])
-      row_type = _coerce_metric_field(item["type"])
-      row_metric = _coerce_metric_field(item["metric"])
+      row_type = _coerce_metrics_identity_str(item["type"])
+      row_metric = _coerce_metrics_identity_str(item["metric"])
       key = (row_jid, row_type, row_metric)
       by_key[key] = item
     rows = [
         metrics_data(
             jid_id=_coerce_jid_pk(item["jid"]),
-            type=_coerce_metric_field(item["type"]),
-            metric=_coerce_metric_field(item["metric"]),
-            units=_coerce_metric_field(item["units"]),
+            type=_coerce_metrics_identity_str(item["type"]),
+            metric=_coerce_metrics_identity_str(item["metric"]),
+            units=_coerce_metrics_identity_str(item["units"]),
             value=item["value"],
             no_data_reason=item.get("no_data_reason"),
         )
@@ -1133,18 +1170,19 @@ class Metrics():
             | {m for m, _, _ in fsio_job_detail_catalog()}
         )
         for entry in job_metrics_catalog_entries():
-          if entry["metric"] in done_metrics:
+          catalog_metric = _coerce_metrics_identity_str(entry["metric"])
+          if catalog_metric in done_metrics:
             continue
           results.append({
               "jid": job,
-              "type": entry["type"],
-              "metric": entry["metric"],
-              "units": entry["units"],
+              "type": _coerce_metrics_identity_str(entry["type"]),
+              "metric": catalog_metric,
+              "units": _coerce_metrics_identity_str(entry["units"]),
               "value": None,
               "no_data_reason": NO_TIME_SERIES_MSG,
           })
         return {
-            "rows": results,
+            "rows": _sanitize_metrics_compute_rows(results),
             "distinct_time_count": distinct_time_count,
         }
 
@@ -1375,7 +1413,7 @@ class Metrics():
           })
 
     return {
-        "rows": results,
+        "rows": _sanitize_metrics_compute_rows(results),
         "distinct_time_count": distinct_time_count,
     }
 
@@ -1398,19 +1436,35 @@ def job_metrics_catalog_entries():
   out = []
   for metric, spec in m.simple_metrics_list.items():
     out.append({
-        "type": spec["typename"],
-        "metric": metric,
-        "units": spec["units"],
+        "type": _coerce_metrics_identity_str(spec["typename"]),
+        "metric": _coerce_metrics_identity_str(metric),
+        "units": _coerce_metrics_identity_str(spec["units"]),
     })
   for name in m.complex_metrics_list:
     t, u = _COMPLEX_PLACEHOLDER_TYPE_UNITS[name]
-    out.append({"type": t, "metric": name, "units": u})
+    out.append({
+        "type": _coerce_metrics_identity_str(t),
+        "metric": _coerce_metrics_identity_str(name),
+        "units": _coerce_metrics_identity_str(u),
+    })
   for metric, t, u in _GPU_JOB_DETAIL_CATALOG:
-    out.append({"type": t, "metric": metric, "units": u})
+    out.append({
+        "type": _coerce_metrics_identity_str(t),
+        "metric": _coerce_metrics_identity_str(metric),
+        "units": _coerce_metrics_identity_str(u),
+    })
   agt, agu = _COMPLEX_PLACEHOLDER_TYPE_UNITS["avg_gpuutil"]
-  out.append({"type": agt, "metric": "avg_gpuutil", "units": agu})
+  out.append({
+      "type": _coerce_metrics_identity_str(agt),
+      "metric": _coerce_metrics_identity_str("avg_gpuutil"),
+      "units": _coerce_metrics_identity_str(agu),
+  })
   for metric, t, u in fsio_job_detail_catalog():
-    out.append({"type": t, "metric": metric, "units": u})
+    out.append({
+        "type": _coerce_metrics_identity_str(t),
+        "metric": _coerce_metrics_identity_str(metric),
+        "units": _coerce_metrics_identity_str(u),
+    })
   return out
 
 
@@ -1420,10 +1474,12 @@ def expected_job_metric_row_count():
 
 def build_job_metrics_display_list(job):
   """API: full metrics_list with a row per catalog metric (value or no_data_reason)."""
-  by_metric = {o.metric: o for o in job.metrics_data_set.all()}
+  by_metric = {
+      _coerce_metrics_identity_str(o.metric): o for o in job.metrics_data_set.all()
+  }
   out = []
   for spec in job_metrics_catalog_entries():
-    row = by_metric.get(spec["metric"])
+    row = by_metric.get(_coerce_metrics_identity_str(spec["metric"]))
     if row is None:
       out.append({
           "type": spec["type"],
@@ -1434,9 +1490,9 @@ def build_job_metrics_display_list(job):
       })
     else:
       out.append({
-          "type": row.type,
-          "metric": row.metric,
-          "units": row.units,
+          "type": _coerce_metrics_identity_str(row.type),
+          "metric": _coerce_metrics_identity_str(row.metric),
+          "units": _coerce_metrics_identity_str(row.units),
           "value": row.value,
           "no_data_reason": row.no_data_reason,
       })

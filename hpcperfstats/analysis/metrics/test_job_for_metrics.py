@@ -54,3 +54,63 @@ def test_job_for_metrics_builds_time_axis_and_host_stats():
   assert abs(cm_cpu[1, 0] - 16.0) < 1e-9
   assert abs(cm_cpu[1, 1] - 8.5) < 1e-9
 
+
+class _FakeJidTableListyLabels:
+  """Labels occasionally deserialize as list/tuple; grouping keys must stay hashable."""
+
+  def __init__(self):
+    self.jid = 456
+    self.host_list = ["host1"]
+    self.schema = {("cpu", "lane"): ["user", "system"]}
+
+  def get_full_host_data_df(self, columns):
+    data = [
+        {"host": "host1", "time": "2024-01-01T00:00:00Z",
+         "type": ["cpu", "lane"], "event": ["user"], "value": 10.0},
+        {"host": "host1", "time": "2024-01-01T00:00:00Z",
+         "type": ["cpu", "lane"], "event": ["system"], "value": 5.0},
+        {"host": "host1", "time": "2024-01-01T00:05:00Z",
+         "type": ["cpu", "lane"], "event": ["user"], "value": 11.0},
+        {"host": "host1", "time": "2024-01-01T00:05:00Z",
+         "type": ["cpu", "lane"], "event": ["system"], "value": 6.0},
+    ]
+    return pd.DataFrame(data)[columns]
+
+
+def test_job_for_metrics_coerces_list_like_labels_before_groupby():
+  job = metrics._JobForMetrics(_FakeJidTableListyLabels())
+  assert "cpu,lane" in job.schemas
+  assert job.hosts.keys() == {"host1"}
+  agg = job.hosts["host1"].stats["cpu,lane"]["agg"]
+  assert agg.shape == (2, 2)
+
+
+def test_coerce_metrics_identity_str_stable():
+  assert metrics._coerce_metrics_identity_str(["a", "b"]) == "a,b"
+  assert metrics._coerce_metrics_identity_str(("cpu", "x")) == "cpu,x"
+  assert metrics._coerce_metrics_identity_str({"z": 1}) == '{"z":1}'
+
+
+def test_sanitize_metrics_compute_rows_coerces_list_identity_fields():
+  rows = [{
+      "jid": "j1",
+      "type": ["procstat"],
+      "metric": ["wallclock"],
+      "units": [],
+      "value": 1.0,
+      "no_data_reason": None,
+  }]
+  out = metrics._sanitize_metrics_compute_rows(rows)
+  assert len(out) == 1
+  assert out[0]["jid"] == "j1"
+  assert out[0]["type"] == "procstat"
+  assert out[0]["metric"] == "wallclock"
+  assert out[0]["units"] == ""
+
+
+def test_coerced_catalog_metric_is_hashable_for_set_membership():
+  entry = {"metric": ["oops"], "type": "job", "units": "s"}
+  catalog_metric = metrics._coerce_metrics_identity_str(entry["metric"])
+  assert catalog_metric == "oops"
+  assert catalog_metric in frozenset({"oops", "other"})
+
