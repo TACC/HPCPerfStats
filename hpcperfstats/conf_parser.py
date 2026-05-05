@@ -1084,7 +1084,7 @@ def get_large_job_host_data_row_threshold():
     return 1_500_000
   try:
     return max(1000, int(env))
-  except (TypeError, ValueError):
+  except (TypeError, ValueError, OverflowError):
     return 1_500_000
 
 
@@ -1098,7 +1098,7 @@ def get_large_job_time_buckets():
     return 2048
   try:
     return max(32, int(env))
-  except (TypeError, ValueError):
+  except (TypeError, ValueError, OverflowError):
     return 2048
 
 
@@ -1115,7 +1115,7 @@ def get_large_job_window_row_count_cache_ttl():
     return 300
   try:
     return max(0, int(env))
-  except (TypeError, ValueError):
+  except (TypeError, ValueError, OverflowError):
     return 300
 
 

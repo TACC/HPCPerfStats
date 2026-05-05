@@ -192,15 +192,21 @@ def test_unpack_cached_job_window_row_three_tuple():
 
 def test_coerce_nonnegative_window_row_count_scalar_and_wrapped():
   """Cache serializers may return a count as int, str, or one-element list/tuple."""
+  from collections import deque
+
   assert _coerce_nonnegative_window_row_count(None) is None
   assert _coerce_nonnegative_window_row_count(42) == 42
   assert _coerce_nonnegative_window_row_count("99") == 99
   assert _coerce_nonnegative_window_row_count([1_500_001]) == 1_500_001
   assert _coerce_nonnegative_window_row_count([[9_000_000]]) == 9_000_000
   assert _coerce_nonnegative_window_row_count(([3],)) == 3
+  assert _coerce_nonnegative_window_row_count(deque([8_000_000])) == 8_000_000
+  assert _coerce_nonnegative_window_row_count(True) is None
+  assert _coerce_nonnegative_window_row_count(False) is None
   assert _coerce_nonnegative_window_row_count([1, 2]) is None
   assert _coerce_nonnegative_window_row_count([]) is None
   assert _coerce_nonnegative_window_row_count(-5) is None
+  assert _coerce_nonnegative_window_row_count("net") is None
 
 
 def test_count_host_data_rows_for_window_cached_accepts_list_wrapped_scalar(monkeypatch):
@@ -259,14 +265,14 @@ def test_count_host_data_rows_for_window_cached_multi_element_list_recomputes(mo
 
 
 def test_count_host_data_rows_for_window_cached_handles_invalid_int_parse(monkeypatch):
-  """Invalid int conversion in row-count config/cache paths must not bubble."""
+  """TTL getter failures fall back to default TTL and still run uncached COUNT (*)."""
   from datetime import timezone as dt_utc
 
   st = datetime(2026, 2, 2, 12, 0, 0, tzinfo=dt_utc.utc)
   et = datetime(2026, 2, 2, 13, 0, 0, tzinfo=dt_utc.utc)
 
   def _bad_ttl():
-    raise ValueError("invalid literal for int() with base 10: 'c611-041.vista.tacc.utexas.edu'")
+    raise ValueError("invalid literal for int() with base 10: 'net'")
 
   monkeypatch.setattr(
       "hpcperfstats.analysis.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
@@ -274,10 +280,10 @@ def test_count_host_data_rows_for_window_cached_handles_invalid_int_parse(monkey
   )
   monkeypatch.setattr(
       "hpcperfstats.analysis.gen.jid_table._count_host_data_rows_for_window",
-      lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not run")),
+      lambda *_a, **_k: 917,
   )
   n = _count_host_data_rows_for_window_cached("j695088", st, et, ["h.x"])
-  assert n == 0
+  assert n == 917
 
 
 def test_ensure_tz_none():

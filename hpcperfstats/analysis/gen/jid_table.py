@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 import time
+from collections import deque
 from datetime import timezone as dt_utc
 
 from django.core.cache import cache
@@ -183,28 +184,72 @@ def _coerce_nonnegative_window_row_count(value):
   if value is None:
     return None
   cur = value
-  for _ in range(16):
+  for _ in range(24):
     if isinstance(cur, (list, tuple)) and len(cur) == 1:
       cur = cur[0]
       continue
+    if isinstance(cur, deque) and len(cur) == 1:
+      cur = cur[0]
+      continue
+    # NumPy scalars / 0-d arrays, pandas Series (len 1), etc.: one logical element.
+    if isinstance(cur, (str, bytes, dict, set)):
+      break
+    if hasattr(cur, "__len__") and hasattr(cur, "__getitem__"):
+      try:
+        ln = len(cur)
+      except Exception:
+        break
+      if ln == 1:
+        try:
+          cur = cur[0]
+        except Exception:
+          break
+        continue
     break
+  if isinstance(cur, bool):
+    return None
   try:
     n = int(cur)
-  except (TypeError, ValueError, OverflowError):
+  except Exception:
     return None
   return n if n >= 0 else None
 
 
+def _safe_positive_int_ttl_seconds(raw_ttl, *, default):
+  """Cache timeout for row-count entries; never raises (misconfig / odd cache types)."""
+  try:
+    n = int(raw_ttl)
+  except Exception:
+    return default
+  return n if n >= 0 else 0
+
+
+def _job_window_iso_pair_for_cache_key(start, end):
+  """Return ``(start_iso, end_iso)`` or ``None`` if bounds are not cache-key safe."""
+  if start is None or end is None:
+    return None
+  try:
+    return (start.isoformat(), end.isoformat())
+  except Exception:
+    return None
+
+
 def _count_host_data_rows_for_window_cached(jid, start, end, acct_hosts):
   """Exact window COUNT(*) with optional short Django-cache TTL (see conf_parser)."""
+  default_ttl = 300
   try:
-    ttl = cfg.get_large_job_window_row_count_cache_ttl()
-    if ttl > 0 and jid and start is not None and end is not None:
+    try:
+      ttl_raw = cfg.get_large_job_window_row_count_cache_ttl()
+    except Exception:
+      ttl_raw = default_ttl
+    ttl = _safe_positive_int_ttl_seconds(ttl_raw, default=default_ttl)
+    iso_pair = _job_window_iso_pair_for_cache_key(start, end)
+    if ttl > 0 and jid and iso_pair is not None:
       key = make_cache_key(
           KEY_JID_HOST_WINDOW_ROW_COUNT,
           jid,
-          start.isoformat(),
-          end.isoformat(),
+          iso_pair[0],
+          iso_pair[1],
           _acct_hosts_cache_fingerprint(acct_hosts),
       )
       try:
