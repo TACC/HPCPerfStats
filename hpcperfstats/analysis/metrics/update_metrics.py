@@ -105,6 +105,10 @@ DEFERRED_NOT_READY_MAX_AGE_SECONDS = 900.0
 DEFERRED_NOT_READY_QUARANTINE_SECONDS = 300.0
 STALL_WARNING_EVERY_PASSES = 200
 STALL_EXIT_AFTER_SECONDS = 900.0
+COMPUTE_BATCH_WATCHDOG_SECONDS = 120.0
+COMPUTE_BATCH_MIN_CAP = 16
+COMPUTE_BATCH_DOWNSHIFT_FACTOR = 0.5
+COMPUTE_BATCH_UPSHIFT_STEP = 16
 RESCAN_FETCH_LIMIT = CHUNK_SIZE
 TELEMETRY_SAMPLE_LIMIT = 2048
 
@@ -142,6 +146,14 @@ def _new_scheduler_stats():
       "deferred_not_ready_due_now": 0,
       "deferred_quarantined_jids": 0,
       "stall_exit_triggered": 0,
+      "stall_reason": "",
+      "ready_enqueued_total": 0,
+      "ready_dequeued_total": 0,
+      "inflight_jids": 0,
+      "compute_batches_total": 0,
+      "batch_compute_exceptions_total": 0,
+      "per_jid_fallback_failures_total": 0,
+      "attempted_total": 0,
       "strict_check_calls": 0,
       "strict_check_timeouts": 0,
       "strict_check_avg_latency_ms": 0.0,
@@ -464,7 +476,10 @@ class _CompletionReporter:
               "strict_check_timeouts={2} strict_check_avg_latency_ms={3:.2f} "
               "proxy_not_ready_jids={4} strict_not_ready_jids={5} strict_ready_jids={6} "
               "strict_cooldown_skips={7} deferred_not_ready_queue_size={8} "
-              "deferred_not_ready_due_now={9} deferred_quarantined_jids={10}".format(
+              "deferred_not_ready_due_now={9} deferred_quarantined_jids={10} "
+              "ready_enqueued_total={11} ready_dequeued_total={12} inflight_jids={13} "
+              "compute_batches_total={14} batch_compute_exceptions_total={15} "
+              "per_jid_fallback_failures_total={16} attempted_total={17}".format(
                   int(extra_map.get("strict_batch_size_current", 0)),
                   int(extra_map.get("strict_check_calls", 0)),
                   int(extra_map.get("strict_check_timeouts", 0)),
@@ -476,6 +491,13 @@ class _CompletionReporter:
                   int(extra_map.get("deferred_not_ready_queue_size", 0)),
                   int(extra_map.get("deferred_not_ready_due_now", 0)),
                   int(extra_map.get("deferred_quarantined_jids", 0)),
+                  int(extra_map.get("ready_enqueued_total", 0)),
+                  int(extra_map.get("ready_dequeued_total", 0)),
+                  int(extra_map.get("inflight_jids", 0)),
+                  int(extra_map.get("compute_batches_total", 0)),
+                  int(extra_map.get("batch_compute_exceptions_total", 0)),
+                  int(extra_map.get("per_jid_fallback_failures_total", 0)),
+                  int(extra_map.get("attempted_total", 0)),
               )
           )
         except Exception:
@@ -1292,7 +1314,7 @@ def _start_readiness_producer(
     rr_cursor = {"idx": 0}
     deferred_not_ready = {}
     deferred_meta = {}
-    last_processed_total = 0
+    last_attempted_total = 0
     last_progress_at = time.monotonic()
 
     def _remember_candidate(jid):
@@ -1320,9 +1342,9 @@ def _start_readiness_producer(
     try:
       while not shutdown_requested[0]:
         with scheduler_shared_lock:
-          processed_now = int(stats["processed"])
-        if processed_now > last_processed_total:
-          last_processed_total = processed_now
+          attempted_now = int(stats["processed"]) + int(stats["failed"])
+        if attempted_now > last_attempted_total:
+          last_attempted_total = attempted_now
           last_progress_at = time.monotonic()
         with ready_queue_lock:
           current_depth = len(ready_queue)
@@ -1390,6 +1412,8 @@ def _start_readiness_producer(
               )
             with ready_queue_lock:
               ready_queue.extend(local_ready)
+            with scheduler_shared_lock:
+              stats["ready_enqueued_total"] += len(local_ready)
             continue
         _fill_ready_queue(
             date_states,
@@ -1425,6 +1449,8 @@ def _start_readiness_producer(
         if local_ready:
           with ready_queue_lock:
             ready_queue.extend(local_ready)
+          with scheduler_shared_lock:
+            stats["ready_enqueued_total"] += len(local_ready)
           continue
         with rescan_lock:
           has_rescan_backlog = bool(rescan_candidate_jids)
@@ -1434,11 +1460,12 @@ def _start_readiness_producer(
         if stalled_for_s >= STALL_EXIT_AFTER_SECONDS:
           with scheduler_shared_lock:
             stats["stall_exit_triggered"] = 1
+            stats["stall_reason"] = "no_ready_candidates"
           log_print(
               "metrics scheduler: no progress for {0:.1f}s; exiting producer "
-              "(processed_total={1} candidate_jids={2} deferred_not_ready={3} rescan_backlog={4}).".format(
+              "(attempted_total={1} candidate_jids={2} deferred_not_ready={3} rescan_backlog={4}).".format(
                   stalled_for_s,
-                  processed_now,
+                  attempted_now,
                   stats.get("candidate_jids", 0),
                   len(deferred_not_ready),
                   int(has_rescan_backlog),
@@ -1649,6 +1676,8 @@ def _compute_jid_outcomes_batch(
           "metrics_s": per_metrics,
           "prewarm_s": 0.0,
           "telemetry": dict(telem),
+          "_batch_exception": True,
+          "_fallback_failed": False,
       })
     for ref in sorted(failed, key=lambda r: r.jid):
       outcomes.append({
@@ -1657,6 +1686,8 @@ def _compute_jid_outcomes_batch(
           "metrics_s": per_metrics,
           "prewarm_s": 0.0,
           "telemetry": dict(telem),
+          "_batch_exception": True,
+          "_fallback_failed": True,
       })
     return outcomes
   metrics_elapsed = time.monotonic() - t_batch
@@ -1671,6 +1702,8 @@ def _compute_jid_outcomes_batch(
         "metrics_s": per_metrics,
         "prewarm_s": 0.0,
         "telemetry": dict(telem),
+        "_batch_exception": False,
+        "_fallback_failed": False,
     } for r in ordered]
 
   t_prewarm = time.monotonic()
@@ -1691,6 +1724,8 @@ def _compute_jid_outcomes_batch(
       "metrics_s": per_metrics,
       "prewarm_s": per_prewarm,
       "telemetry": dict(telem),
+      "_batch_exception": False,
+      "_fallback_failed": False,
   } for r in ordered]
 
 
@@ -1748,18 +1783,26 @@ def update_metrics_for_dates(dates, rerun=False):
               "deferred_not_ready_queue_size": stats["deferred_not_ready_queue_size"],
               "deferred_not_ready_due_now": stats["deferred_not_ready_due_now"],
               "deferred_quarantined_jids": stats["deferred_quarantined_jids"],
+              "ready_enqueued_total": stats["ready_enqueued_total"],
+              "ready_dequeued_total": stats["ready_dequeued_total"],
+              "inflight_jids": stats["inflight_jids"],
+              "compute_batches_total": stats["compute_batches_total"],
+              "batch_compute_exceptions_total": stats["batch_compute_exceptions_total"],
+              "per_jid_fallback_failures_total": stats["per_jid_fallback_failures_total"],
+              "attempted_total": stats["attempted_total"],
           }
 
       completion_reporter.set_extra_stats_getter(_extra_stats_snapshot)
       completion_reporter.start()
       batch_cap = min(prefetch_target, GLOBAL_SCHEDULER_BATCH_SIZE)
+      effective_batch_cap = max(COMPUTE_BATCH_MIN_CAP, int(batch_cap))
       log_print(
           "Starting metrics scheduler days={0} mode={1} prefetch_ready_cap={2} "
           "compute_batch_cap={3} prewarm_mode={4}".format(
               len(dates),
               scheduler_mode,
               prefetch_ready_cap,
-              batch_cap,
+              effective_batch_cap,
               cfg.get_metrics_plot_prewarm_mode(),
           ),
           flush=True,
@@ -1824,10 +1867,14 @@ def update_metrics_for_dates(dates, rerun=False):
           with ready_queue_lock:
             if ready_queue:
               jobs_this_round = []
-              while ready_queue and len(jobs_this_round) < batch_cap:
+              while ready_queue and len(jobs_this_round) < effective_batch_cap:
                 jobs_this_round.append(ready_queue.popleft())
             else:
               jobs_this_round = []
+          with scheduler_shared_lock:
+            if jobs_this_round:
+              stats["ready_dequeued_total"] += len(jobs_this_round)
+              stats["inflight_jids"] += len(jobs_this_round)
           if not jobs_this_round:
             if producer_done.is_set():
               break
@@ -1842,11 +1889,17 @@ def update_metrics_for_dates(dates, rerun=False):
                 deferred_q = stats["deferred_not_ready_queue_size"]
                 deferred_due = stats["deferred_not_ready_due_now"]
                 strict_ready = stats["strict_ready_jids"]
+                enq = stats["ready_enqueued_total"]
+                deq = stats["ready_dequeued_total"]
+                inflight = stats["inflight_jids"]
+                if inflight > 0 and not stats.get("stall_reason"):
+                  stats["stall_reason"] = "compute_stuck_inflight"
               log_print(
                   "metrics scheduler: no ready jobs yet "
                   "(pending_days={0} candidate_jids={1} skipped_not_ready={2} "
                   "proxy_not_ready_jids={3} strict_not_ready_jids={4} strict_ready_jids={5} "
-                  "deferred_not_ready_queue_size={6} deferred_not_ready_due_now={7} stall_pass={8}); "
+                  "deferred_not_ready_queue_size={6} deferred_not_ready_due_now={7} "
+                  "ready_enqueued_total={8} ready_dequeued_total={9} inflight_jids={10} stall_pass={11}); "
                   "still scanning candidates.".format(
                       pending_days,
                       cand,
@@ -1856,6 +1909,9 @@ def update_metrics_for_dates(dates, rerun=False):
                       strict_ready,
                       deferred_q,
                       deferred_due,
+                      enq,
+                      deq,
+                      inflight,
                       stall_iters,
                   ),
                   flush=True,
@@ -1864,6 +1920,15 @@ def update_metrics_for_dates(dates, rerun=False):
             continue
           stall_iters = 0
           job_refs = _job_refs_from_jids(jobs_this_round)
+          log_print(
+              "metrics scheduler: compute batch starting size={0} inflight_jids={1} batch_cap={2}".format(
+                  len(job_refs),
+                  len(job_refs),
+                  effective_batch_cap,
+              ),
+              flush=True,
+          )
+          batch_start = time.monotonic()
           with phase_timer.phase("metrics_compute_s"):
             succeeded_jids = []
             failed_count = 0
@@ -1913,21 +1978,59 @@ def update_metrics_for_dates(dates, rerun=False):
                   )
               else:
                 failed_count += 1
+          batch_elapsed = time.monotonic() - batch_start
+          has_batch_exception = any(bool(o.get("_batch_exception")) for o in jid_outcomes)
+          fallback_failed = sum(1 for o in jid_outcomes if bool(o.get("_fallback_failed")))
           with scheduler_shared_lock:
             stats["processed"] += len(succeeded_jids)
             stats["failed"] += failed_count
+            stats["attempted_total"] = stats["processed"] + stats["failed"]
+            stats["compute_batches_total"] += 1
+            if has_batch_exception:
+              stats["batch_compute_exceptions_total"] += 1
+            stats["per_jid_fallback_failures_total"] += fallback_failed
+            stats["inflight_jids"] = max(0, stats["inflight_jids"] - len(job_refs))
             proc_total = stats["processed"]
             fail_total = stats["failed"]
+            attempted_total = stats["attempted_total"]
+            if attempted_total > 0 and proc_total == 0 and fail_total > 0:
+              stats["stall_reason"] = "compute_all_failed"
           completion_reporter.sync_completed_total(proc_total)
           compute_batches += 1
+          if batch_elapsed >= COMPUTE_BATCH_WATCHDOG_SECONDS:
+            new_cap = max(
+                COMPUTE_BATCH_MIN_CAP,
+                int(max(COMPUTE_BATCH_MIN_CAP, effective_batch_cap) * COMPUTE_BATCH_DOWNSHIFT_FACTOR),
+            )
+            if new_cap < effective_batch_cap:
+              effective_batch_cap = new_cap
+            log_print(
+                "metrics scheduler: compute watchdog elapsed_s={0:.1f} size={1} attempted_total={2} "
+                "new_compute_batch_cap={3}".format(
+                    batch_elapsed,
+                    len(job_refs),
+                    attempted_total,
+                    effective_batch_cap,
+                ),
+                flush=True,
+            )
+          elif len(job_refs) >= effective_batch_cap and fail_total == 0 and batch_elapsed < 5.0:
+            effective_batch_cap = min(batch_cap, effective_batch_cap + COMPUTE_BATCH_UPSHIFT_STEP)
           if compute_batches == 1 or compute_batches % 25 == 0:
             log_print(
                 "metrics scheduler: compute batch {0} size={1} "
-                "processed_total={2} failed_total={3}".format(
+                "processed_total={2} failed_total={3} attempted_total={4} "
+                "batch_compute_exceptions_total={5} per_jid_fallback_failures_total={6} "
+                "compute_batch_elapsed_s={7:.2f} next_batch_cap={8}".format(
                     compute_batches,
                     len(job_refs),
                     proc_total,
                     fail_total,
+                    attempted_total,
+                    int(has_batch_exception),
+                    fallback_failed,
+                    batch_elapsed,
+                    effective_batch_cap,
                 ),
                 flush=True,
             )
@@ -2006,6 +2109,14 @@ def update_metrics_for_dates(dates, rerun=False):
             "deferred_not_ready_due_now": stats["deferred_not_ready_due_now"],
             "deferred_quarantined_jids": stats["deferred_quarantined_jids"],
             "stall_exit_triggered": stats["stall_exit_triggered"],
+            "stall_reason": stats["stall_reason"],
+            "ready_enqueued_total": stats["ready_enqueued_total"],
+            "ready_dequeued_total": stats["ready_dequeued_total"],
+            "inflight_jids": stats["inflight_jids"],
+            "compute_batches_total": stats["compute_batches_total"],
+            "batch_compute_exceptions_total": stats["batch_compute_exceptions_total"],
+            "per_jid_fallback_failures_total": stats["per_jid_fallback_failures_total"],
+            "attempted_total": stats["attempted_total"],
             "readiness_probe_value": readiness_probe_target["value"],
             "strict_batch_size_current": stats["strict_batch_size_current"],
             "strict_check_calls": stats["strict_check_calls"],
@@ -2018,13 +2129,16 @@ def update_metrics_for_dates(dates, rerun=False):
           "proxy_checked_chunks={6} proxy_rejected_jids={7} proxy_not_ready_jids={8} "
           "strict_not_ready_jids={9} strict_ready_jids={10} strict_cooldown_skips={11} "
           "deferred_not_ready_queue_size={12} deferred_not_ready_due_now={13} "
-          "deferred_quarantined_jids={14} stall_exit_triggered={15} readiness_probe_target={16} "
-          "strict_batch_size_current={17} strict_check_calls={18} strict_check_timeouts={19} "
-          "strict_check_avg_latency_ms={20:.2f} completed_last_hour={21} elapsed_s={22:.2f} jobs_per_min={23:.2f} "
-          "worker_busy_ratio={24:.3f} phase_candidate_s={25:.2f} "
-          "phase_readiness_s={26:.2f} phase_compute_s={27:.2f} phase_prewarm_s={28:.2f} "
-          "prewarm_backlog_jobs={29} prewarm_lag_seconds_p95={30:.3f} "
-          "prewarm_success_ratio={31:.3f}{32}".format(
+          "deferred_quarantined_jids={14} stall_exit_triggered={15} stall_reason={16} "
+          "ready_enqueued_total={17} ready_dequeued_total={18} inflight_jids={19} "
+          "compute_batches_total={20} batch_compute_exceptions_total={21} "
+          "per_jid_fallback_failures_total={22} attempted_total={23} readiness_probe_target={24} "
+          "strict_batch_size_current={25} strict_check_calls={26} strict_check_timeouts={27} "
+          "strict_check_avg_latency_ms={28:.2f} completed_last_hour={29} elapsed_s={30:.2f} jobs_per_min={31:.2f} "
+          "worker_busy_ratio={32:.3f} phase_candidate_s={33:.2f} "
+          "phase_readiness_s={34:.2f} phase_compute_s={35:.2f} phase_prewarm_s={36:.2f} "
+          "prewarm_backlog_jobs={37} prewarm_lag_seconds_p95={38:.3f} "
+          "prewarm_success_ratio={39:.3f}{40}".format(
               scheduler_mode,
               snap["processed"],
               snap["failed"],
@@ -2041,6 +2155,14 @@ def update_metrics_for_dates(dates, rerun=False):
               snap["deferred_not_ready_due_now"],
               snap["deferred_quarantined_jids"],
               snap["stall_exit_triggered"],
+              snap["stall_reason"] or "n/a",
+              snap["ready_enqueued_total"],
+              snap["ready_dequeued_total"],
+              snap["inflight_jids"],
+              snap["compute_batches_total"],
+              snap["batch_compute_exceptions_total"],
+              snap["per_jid_fallback_failures_total"],
+              snap["attempted_total"],
               snap["readiness_probe_value"],
               snap["strict_batch_size_current"],
               snap["strict_check_calls"],

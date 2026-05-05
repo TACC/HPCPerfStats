@@ -751,6 +751,8 @@ def test_compute_jid_outcomes_batch_falls_back_per_jid_after_batch_failure(monke
   assert calls[1:] == [["good1"], ["bad"], ["good2"]]
   by_jid = {d["jid"]: d["ok"] for d in out}
   assert by_jid == {"good1": True, "good2": True, "bad": False}
+  assert any(d.get("_batch_exception") for d in out)
+  assert sum(1 for d in out if d.get("_fallback_failed")) == 1
 
 
 @pytest.mark.machine_unit_mock
@@ -1331,6 +1333,62 @@ def test_update_metrics_for_dates_sets_stall_diagnostics_on_no_progress(monkeypa
   assert diag is not None
   assert diag["stats"]["stall_exit_triggered"] == 1
   assert diag["stats"]["strict_not_ready_jids"] >= 1
+  assert diag["stats"]["stall_reason"] == "no_ready_candidates"
+
+
+@pytest.mark.django_db(databases=[])
+def test_update_metrics_for_dates_records_queue_and_attempt_counters(monkeypatch):
+  """Scheduler diagnostics should expose enqueue/dequeue/inflight and attempt progress."""
+  monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs([([1001, 1002], 2)]),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      del pool
+      raise RuntimeError("compute failure")
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+  update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS = None
+  update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  diag = update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS
+  assert diag is not None
+  assert diag["stats"]["ready_enqueued_total"] == 2
+  assert diag["stats"]["ready_dequeued_total"] == 2
+  assert diag["stats"]["inflight_jids"] == 0
+  assert diag["stats"]["attempted_total"] == 2
+  assert diag["stats"]["batch_compute_exceptions_total"] >= 1
+  assert diag["stats"]["per_jid_fallback_failures_total"] == 2
+  assert diag["stats"]["stall_reason"] == "compute_all_failed"
 
 
 @pytest.mark.django_db(databases=[])

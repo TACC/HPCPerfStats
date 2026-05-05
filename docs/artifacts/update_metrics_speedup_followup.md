@@ -111,3 +111,16 @@ Artifacts were captured under `tmp/um_diag_sweeps/`:
 - `update_metrics_for_dates` now resets diagnostics counters/timers on retry attempts, preventing cumulative `processed`/`candidate_jids` across retries.
 - Scheduler readiness now reports split counters (`proxy_not_ready_jids`, `strict_not_ready_jids`, `strict_ready_jids`, `strict_cooldown_skips`) plus deferred queue health (`deferred_not_ready_queue_size`, `deferred_not_ready_due_now`, `deferred_quarantined_jids`) so no-progress incidents are diagnosable from logs.
 - Permanently not-ready churn is bounded by deferred retry aging/quarantine and an explicit no-progress stall exit (`stall_exit_triggered`) instead of indefinite silent loops.
+
+## Stall taxonomy and latest validation
+
+Latest compose diagnosis artifact (`tmp/update_metrics_diagnosis_large.json`, generated with `HPCPERFSTATS_UM_DIAG_JSON_OUT=/home/hpcperfstats/tmp/update_metrics_diagnosis_large.json`) confirms the new queue/compute counters are populated:
+
+- `ready_enqueued_total=4`, `ready_dequeued_total=4`, `inflight_jids=0`
+- `compute_batches_total=1`, `batch_compute_exceptions_total=0`, `per_jid_fallback_failures_total=0`
+- `attempted_total=4`, `processed=4`, `failed=0`, `stall_reason=""`
+
+Interpretation sequence for stall runs:
+1. If `ready_enqueued_total` does not grow, treat as candidate/readiness starvation.
+2. If enqueued/dequeued grow but `inflight_jids` remains elevated with low `attempted_total`, treat as compute stuck inflight.
+3. If `attempted_total` grows while `processed=0` and `failed>0`, classify as compute failure churn (`stall_reason=compute_all_failed`).
