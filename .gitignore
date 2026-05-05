@@ -5,6 +5,8 @@
 patch
 .coverage
 htmlcov/
+.pytest*
+.pytest*/
 .env.dev
 .venv/
 .ruff*/
