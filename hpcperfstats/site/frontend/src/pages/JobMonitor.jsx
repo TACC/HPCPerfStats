@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
+import SortableTableHeader from "../components/SortableTableHeader";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import {
   JOB_MONITOR_GPU_NO_DATA_ROW,
@@ -11,22 +12,6 @@ import {
 } from "../utils/job-monitor-gpu";
 import { useTableSort } from "../hooks/useTableSort";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
-import { tableSortAriaSort, tableSortColumnArrow } from "../utils/table-sort-a11y";
-
-function SortableTh({ column, sortKey, sortDir, onSort, children }) {
-  return (
-    <th scope="col" aria-sort={tableSortAriaSort(column, sortKey, sortDir)}>
-      <button
-        type="button"
-        className="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
-        onClick={() => onSort(column)}
-      >
-        {children}
-        {tableSortColumnArrow(column, sortKey, sortDir)}
-      </button>
-    </th>
-  );
-}
 
 export default function JobMonitor() {
   useDocumentTitle("Job failure monitor");
@@ -46,6 +31,12 @@ export default function JobMonitor() {
     const n = Number(value);
     if (!Number.isFinite(n)) return "N/A";
     return formatDecimalStandard(n);
+  };
+
+  const formatGpuPercentValue = (value, loadingState) => {
+    if (loadingState === "loading") return "Loading";
+    const formatted = formatGpuValue(value, "loaded");
+    return formatted === "N/A" ? "N/A" : `${formatted}%`;
   };
 
   const loadGpuRowsAsync = (rowsData, daysForWindow) => {
@@ -187,78 +178,87 @@ export default function JobMonitor() {
             </caption>
             <thead>
               <tr>
-                <SortableTh
+                <SortableTableHeader
                   column="username"
                   sortKey={sortKey}
                   sortDir={sortDir}
                   onSort={onSort}
+                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
                 >
                   User
-                </SortableTh>
-                <SortableTh
+                </SortableTableHeader>
+                <SortableTableHeader
                   column="total_jobs"
                   sortKey={sortKey}
                   sortDir={sortDir}
                   onSort={onSort}
+                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
                 >
                   Number of jobs
-                </SortableTh>
-                <SortableTh
+                </SortableTableHeader>
+                <SortableTableHeader
                   column="failed_jobs"
                   sortKey={sortKey}
                   sortDir={sortDir}
                   onSort={onSort}
+                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
                 >
                   Number of failed jobs
-                </SortableTh>
-                <SortableTh
+                </SortableTableHeader>
+                <SortableTableHeader
                   column="failed_rate"
                   sortKey={sortKey}
                   sortDir={sortDir}
                   onSort={onSort}
+                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
                 >
                   % failed
-                </SortableTh>
-                <SortableTh
+                </SortableTableHeader>
+                <SortableTableHeader
                   column="timedout_jobs"
                   sortKey={sortKey}
                   sortDir={sortDir}
                   onSort={onSort}
+                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
                 >
                   Number of timed out jobs
-                </SortableTh>
-                <SortableTh
+                </SortableTableHeader>
+                <SortableTableHeader
                   column="timedout_rate"
                   sortKey={sortKey}
                   sortDir={sortDir}
                   onSort={onSort}
+                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
                 >
                   % timed out
-                </SortableTh>
-                <SortableTh
+                </SortableTableHeader>
+                <SortableTableHeader
                   column="gpu_count_total"
                   sortKey={sortKey}
                   sortDir={sortDir}
                   onSort={onSort}
+                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
                 >
                   Total GPUs Allocated
-                </SortableTh>
-                <SortableTh
+                </SortableTableHeader>
+                <SortableTableHeader
                   column="gpu_active_total"
                   sortKey={sortKey}
                   sortDir={sortDir}
                   onSort={onSort}
+                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
                 >
                   Number of GPUs Active
-                </SortableTh>
-                <SortableTh
+                </SortableTableHeader>
+                <SortableTableHeader
                   column="gpu_active_percentage"
                   sortKey={sortKey}
                   sortDir={sortDir}
                   onSort={onSort}
+                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
                 >
                   Percentage of GPUs Active
-                </SortableTh>
+                </SortableTableHeader>
               </tr>
             </thead>
             <tbody>
@@ -281,13 +281,10 @@ export default function JobMonitor() {
                   <td>{formatGpuValue(row.gpu_count_total, row.gpuLoadingState)}</td>
                   <td>{formatGpuValue(row.gpu_active_total, row.gpuLoadingState)}</td>
                   <td>
-                    {row.gpuLoadingState === "loading"
-                      ? "Loading"
-                      : row.gpu_active_percentage === null ||
-                    row.gpu_active_percentage === undefined ||
-                    row.gpu_active_percentage === ""
-                      ? "N/A"
-                      : `${formatDecimalStandard(row.gpu_active_percentage)}%`}
+                    {formatGpuPercentValue(
+                      row.gpu_active_percentage,
+                      row.gpuLoadingState,
+                    )}
                   </td>
                 </tr>
               ))}

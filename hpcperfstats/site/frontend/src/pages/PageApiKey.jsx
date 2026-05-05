@@ -4,6 +4,7 @@ import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import { api } from "../api";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
+import { copyToClipboard } from "../utils/copy-to-clipboard";
 
 export default function PageApiKey() {
   const rotateHelpId = useId();
@@ -57,13 +58,8 @@ export default function PageApiKey() {
     const key = (rawKey || "").trim();
     if (!key) return;
     setCopyStatus("");
-    try {
-      await navigator.clipboard.writeText(key);
-      setCopyStatus("Copied");
-    } catch (err) {
-      console.error("Failed to copy API key", err);
-      setCopyStatus("Copy failed");
-    }
+    const didCopy = await copyToClipboard(key);
+    setCopyStatus(didCopy ? "Copied" : "Copy failed");
   }
 
   async function handleRotate(event) {

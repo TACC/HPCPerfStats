@@ -95,6 +95,36 @@ def _iter_archive_validation_results_stream(
       yield gz_path, ok, members
 
 
+def _log_archive_validation_summary(
+    *,
+    log_fn,
+    validation_targets_count,
+    workers,
+    success_count,
+    failed_count,
+    validation_started,
+    validation_cache,
+):
+  if not log_fn:
+    return
+  log_fn(
+      "Archive validation parallel summary archives=%d workers=%d success=%d failed=%d elapsed_s=%.3f"
+      % (
+          validation_targets_count,
+          workers,
+          success_count,
+          failed_count,
+          max(0.0, time.time() - validation_started),
+      ),
+      flush=True,
+  )
+  log_fn(
+      "Archive validation cache summary hits=%d misses=%d"
+      % (int(validation_cache["hits"]), int(validation_cache["misses"])),
+      flush=True,
+  )
+
+
 def _is_lock_file_name(name):
   """Return True for sidecar/advisory lock files (e.g. *.fnctl.lock)."""
   # We intentionally skip generic *.lock too, because different lock
@@ -109,6 +139,24 @@ def _remove_read_lock_sidecar(target_path):
     os.remove("%s%s" % (target_path, LOCK_SUFFIX))
   except OSError:
     pass
+
+
+def _read_first_timestamp_from_stats_file(stats_fname, parse_first_ts_fn):
+  """Read minimal file head and parse first stats timestamp."""
+  try:
+    with file_read_lock_wait(stats_fname):
+      with open(stats_fname, "r") as f:
+        head = []
+        for line in f:
+          head.append(line)
+          if head and head[-1] and head[-1][0].isdigit():
+            break
+  except OSError:
+    return None
+  finally:
+    _remove_read_lock_sidecar(stats_fname)
+  t, _jid, _host = parse_first_ts_fn(head)
+  return t
 
 
 def collect_lock_sidecar_stats(directory, stale_after_seconds=LOCK_EXPIRY_SECONDS):
@@ -559,24 +607,15 @@ def remove_verified_archived_raw_files(
         except OSError as exc:
           if log_fn:
             log_fn("Could not remove %s: %s" % (path, exc), flush=True)
-  if log_fn:
-    log_fn(
-        "Archive validation parallel summary archives=%d workers=%d success=%d failed=%d elapsed_s=%.3f"
-        % (
-            len(validation_targets),
-            workers,
-            success_count,
-            failed_count,
-            max(0.0, time.time() - validation_started),
-        ),
-        flush=True,
-    )
-  if log_fn:
-    log_fn(
-        "Archive validation cache summary hits=%d misses=%d"
-        % (int(validation_cache["hits"]), int(validation_cache["misses"])),
-        flush=True,
-    )
+  _log_archive_validation_summary(
+      log_fn=log_fn,
+      validation_targets_count=len(validation_targets),
+      workers=workers,
+      success_count=success_count,
+      failed_count=failed_count,
+      validation_started=validation_started,
+      validation_cache=validation_cache,
+  )
 
 
 def remove_verified_uncompressed_daily_tars(
@@ -641,24 +680,15 @@ def remove_verified_uncompressed_daily_tars(
     except OSError as exc:
       if log_fn:
         log_fn("Could not remove verified tar %s: %s" % (tar_path, exc), flush=True)
-  if log_fn:
-    log_fn(
-        "Archive validation parallel summary archives=%d workers=%d success=%d failed=%d elapsed_s=%.3f"
-        % (
-            len(validation_targets),
-            workers,
-            success_count,
-            failed_count,
-            max(0.0, time.time() - validation_started),
-        ),
-        flush=True,
-    )
-  if log_fn:
-    log_fn(
-        "Archive validation cache summary hits=%d misses=%d"
-        % (int(validation_cache["hits"]), int(validation_cache["misses"])),
-        flush=True,
-    )
+  _log_archive_validation_summary(
+      log_fn=log_fn,
+      validation_targets_count=len(validation_targets),
+      workers=workers,
+      success_count=success_count,
+      failed_count=failed_count,
+      validation_started=validation_started,
+      validation_cache=validation_cache,
+  )
 
 
 def tar_has_duplicate_file_members(tar_path):
@@ -1212,19 +1242,7 @@ def build_archive_mapping(
       t = precomputed_ts
       _jid = _host = None
     else:
-      try:
-        with file_read_lock_wait(stats_fname):
-          with open(stats_fname, "r") as f:
-            head = []
-            for line in f:
-              head.append(line)
-              if head and head[-1] and head[-1][0].isdigit():
-                break
-      except OSError:
-        continue
-      finally:
-        _remove_read_lock_sidecar(stats_fname)
-      t, _jid, _host = parse_first_ts_fn(head)
+      t = _read_first_timestamp_from_stats_file(stats_fname, parse_first_ts_fn)
     if t is None:
       log_print(
           "Unable to find first timestamp in %s, skipping archiving"
@@ -1253,19 +1271,7 @@ def collect_first_timestamps_by_path(files_to_be_archived, parse_first_ts_fn=Non
     parse_first_ts_fn = parse_first_timestamp_line
   timestamps = {}
   for stats_fname in files_to_be_archived:
-    try:
-      with file_read_lock_wait(stats_fname):
-        with open(stats_fname, "r") as f:
-          head = []
-          for line in f:
-            head.append(line)
-            if head and head[-1] and head[-1][0].isdigit():
-              break
-    except OSError:
-      continue
-    finally:
-      _remove_read_lock_sidecar(stats_fname)
-    t, _jid, _host = parse_first_ts_fn(head)
+    t = _read_first_timestamp_from_stats_file(stats_fname, parse_first_ts_fn)
     if t is not None:
       timestamps[stats_fname] = t
   return timestamps

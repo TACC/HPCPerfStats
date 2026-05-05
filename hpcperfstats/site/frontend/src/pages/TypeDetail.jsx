@@ -5,6 +5,7 @@ import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
+import { buildAsyncPageTitle } from "../utils/async-page-title";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 
 export default function TypeDetail() {
@@ -15,11 +16,13 @@ export default function TypeDetail() {
 
   const typeLabel = data?.type_name || typeName;
   useDocumentTitle(
-    loading && jid && typeName
-      ? `Loading job ${jid} · ${typeName}`
-      : jid && typeName
-        ? `Job ${jid} · ${typeLabel || typeName}`
-        : "Type detail",
+    buildAsyncPageTitle({
+      loading: loading && !!jid && !!typeName,
+      hasError: !!error,
+      loadingTitle: `Loading job ${jid || ""} · ${typeName || ""}`.trim(),
+      readyTitle: jid && typeName ? `Job ${jid} · ${typeLabel || typeName}` : "",
+      fallbackTitle: "Type detail",
+    }),
   );
 
   useEffect(() => {

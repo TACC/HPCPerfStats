@@ -4,6 +4,7 @@ import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import { useTableSort } from "../hooks/useTableSort";
 import { createAdminMonitorSectionLoader } from "../utils/create-admin-monitor-section-loader";
+import { copyToClipboard } from "../utils/copy-to-clipboard";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { tableSortAriaSort, tableSortColumnArrow } from "../utils/table-sort-a11y";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
@@ -316,22 +317,8 @@ export default function AdminMonitor() {
 
   const handleCopyNonResponding36 = async () => {
     if (!nonRespondingHosts36) return;
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(nonRespondingHosts36);
-      } else {
-        const ta = document.createElement("textarea");
-        ta.value = nonRespondingHosts36;
-        ta.style.position = "fixed";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
-    } catch (e) {
-      console.error("Failed to copy non-responding hosts list", e);
-    }
+    const ok = await copyToClipboard(nonRespondingHosts36);
+    if (!ok) console.error("Failed to copy non-responding hosts list");
   };
 
   return (

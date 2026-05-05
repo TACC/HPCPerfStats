@@ -76,6 +76,46 @@ def _get(section, option):
   return cfg.get(section, option)
 
 
+def _parse_bool(raw, *, default=False):
+  if raw is None:
+    return default
+  value = str(raw).strip().lower()
+  if value in ("1", "yes", "true", "on"):
+    return True
+  if value in ("0", "no", "false", "off"):
+    return False
+  return default
+
+
+def _env_or_cfg_int(env_key, section, option, fallback):
+  env = os.environ.get(env_key, "").strip()
+  if env:
+    return int(env)
+  _ensure_cfg_loaded()
+  return int(cfg.get(section, option, fallback=str(fallback)))
+
+
+def _env_or_cfg_bounded_float(env_key, section, option, fallback, *, lower, upper):
+  env = os.environ.get(env_key, "").strip()
+  if env:
+    return max(lower, min(upper, float(env)))
+  _ensure_cfg_loaded()
+  return max(
+      lower,
+      min(upper, float(cfg.get(section, option, fallback=str(fallback)))),
+  )
+
+
+def _optional_default_int_option(option_name):
+  _ensure_cfg_loaded()
+  if not cfg.has_option("DEFAULT", option_name):
+    return None
+  value = cfg.get("DEFAULT", option_name).strip()
+  if not value:
+    return None
+  return int(value)
+
+
 def get_db_connection_string():
   """Return a PostgreSQL connection string from PORTAL config (dbname, user, password, port, host)."""
   return "dbname={0} user={1} password={2} port={3} host={4}".format(
@@ -254,9 +294,7 @@ def get_syslog_listen_tcp():
   _ensure_cfg_loaded()
   if not cfg.has_section('SYSLOG'):
     return True
-  return cfg.get('SYSLOG', 'listen_tcp', fallback='yes').lower() in (
-      'yes', 'true', '1',
-  )
+  return _parse_bool(cfg.get('SYSLOG', 'listen_tcp', fallback='yes'), default=True)
 
 
 def get_syslog_listen_udp():
@@ -264,9 +302,7 @@ def get_syslog_listen_udp():
   _ensure_cfg_loaded()
   if not cfg.has_section('SYSLOG'):
     return True
-  return cfg.get('SYSLOG', 'listen_udp', fallback='yes').lower() in (
-      'yes', 'true', '1',
-  )
+  return _parse_bool(cfg.get('SYSLOG', 'listen_udp', fallback='yes'), default=True)
 
 
 def get_syslog_logs_current_path():
@@ -455,34 +491,18 @@ def get_cpuset_pin_min_cores_per_node():
 
 def get_web_numa_node():
   """Optional explicit sysfs node id for web+proxy; None if unset."""
-  _ensure_cfg_loaded()
-  if not cfg.has_option("DEFAULT", "web_numa_node"):
-    return None
-  s = cfg.get("DEFAULT", "web_numa_node").strip()
-  if not s:
-    return None
-  return int(s)
+  return _optional_default_int_option("web_numa_node")
 
 
 def get_pipeline_numa_node():
   """Optional explicit sysfs node id for pipeline; None if unset."""
-  _ensure_cfg_loaded()
-  if not cfg.has_option("DEFAULT", "pipeline_numa_node"):
-    return None
-  s = cfg.get("DEFAULT", "pipeline_numa_node").strip()
-  if not s:
-    return None
-  return int(s)
+  return _optional_default_int_option("pipeline_numa_node")
 
 
 def get_pin_proxy_for_compose():
   """If True, NUMA pinning script also sets ``cpuset`` on ``proxy`` (match web node)."""
   _ensure_cfg_loaded()
-  return cfg.get("DEFAULT", "pin_proxy_in_compose", fallback="no").lower() in (
-      "yes",
-      "true",
-      "1",
-  )
+  return _parse_bool(cfg.get("DEFAULT", "pin_proxy_in_compose", fallback="no"))
 
 
 def get_numa_pin_max_nodes_auto():
@@ -520,11 +540,7 @@ def get_db_conn_max_age():
 
   Env ``DJANGO_CONN_MAX_AGE`` overrides ``[DEFAULT] db_conn_max_age``.
   """
-  env = os.environ.get("DJANGO_CONN_MAX_AGE", "").strip()
-  if env:
-    return int(env)
-  _ensure_cfg_loaded()
-  return int(cfg.get("DEFAULT", "db_conn_max_age", fallback="90"))
+  return _env_or_cfg_int("DJANGO_CONN_MAX_AGE", "DEFAULT", "db_conn_max_age", 90)
 
 
 def get_db_statement_timeout_ms():
@@ -533,21 +549,22 @@ def get_db_statement_timeout_ms():
   ``0`` means do not set (omit from Django ``OPTIONS``). Default **120000** (2 minutes).
   Env ``DJANGO_DB_STATEMENT_TIMEOUT_MS`` overrides ``[DEFAULT] db_statement_timeout_ms``.
   """
-  env = os.environ.get("DJANGO_DB_STATEMENT_TIMEOUT_MS", "").strip()
-  if env:
-    return int(env)
-  _ensure_cfg_loaded()
-  return int(cfg.get("DEFAULT", "db_statement_timeout_ms", fallback="120000"))
+  return _env_or_cfg_int(
+      "DJANGO_DB_STATEMENT_TIMEOUT_MS",
+      "DEFAULT",
+      "db_statement_timeout_ms",
+      120000,
+  )
 
 
 def get_db_idle_in_transaction_session_timeout_ms():
   """``idle_in_transaction_session_timeout`` in ms; ``0`` = omit. Default **300000** (5 min)."""
-  env = os.environ.get("DJANGO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS", "").strip()
-  if env:
-    return int(env)
-  _ensure_cfg_loaded()
-  return int(
-      cfg.get("DEFAULT", "db_idle_in_transaction_session_timeout_ms", fallback="300000"))
+  return _env_or_cfg_int(
+      "DJANGO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS",
+      "DEFAULT",
+      "db_idle_in_transaction_session_timeout_ms",
+      300000,
+  )
 
 
 def build_postgres_connection_options():
@@ -694,15 +711,13 @@ def get_metrics_plot_prewarm_mode():
 
 def get_metrics_scheduler_skip_prewarm():
   """When true, ``update_metrics`` persists metrics but skips job detail/plot prewarm."""
-  env = os.environ.get("HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM", "").strip().lower()
-  if env in ("1", "yes", "true", "on"):
-    return True
-  if env in ("0", "no", "false", "off"):
-    return False
+  env = os.environ.get("HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM", "").strip()
+  if env:
+    return _parse_bool(env)
   _ensure_cfg_loaded()
-  return cfg.get(
-      "DEFAULT", "metrics_scheduler_skip_prewarm", fallback="no"
-  ).strip().lower() in ("1", "yes", "true", "on")
+  return _parse_bool(
+      cfg.get("DEFAULT", "metrics_scheduler_skip_prewarm", fallback="no"),
+  )
 
 
 def get_metrics_prewarm_workers():
@@ -734,13 +749,14 @@ def get_metrics_proxy_reject_jid_batch_size():
 
 def get_sync_enable_cpuset_priority_budget():
   """Enable cpuset-aware S/A/M budgeting for sync + metrics pools (default yes)."""
-  env = os.environ.get("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "").strip().lower()
+  env = os.environ.get("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "").strip()
   if env:
-    return env in ("1", "yes", "true")
+    return _parse_bool(env)
   _ensure_cfg_loaded()
-  return cfg.get(
-      "DEFAULT", "sync_enable_cpuset_priority_budget", fallback="yes"
-  ).strip().lower() in ("1", "yes", "true")
+  return _parse_bool(
+      cfg.get("DEFAULT", "sync_enable_cpuset_priority_budget", fallback="yes"),
+      default=True,
+  )
 
 
 def derive_pipeline_cpuset_priority_budget():
@@ -807,56 +823,56 @@ def derive_pipeline_cpuset_priority_budget():
 
 def get_sync_enable_overprovision_mode():
   """Enable bounded overprovision mode for S/A/M derivation (default disabled)."""
-  env = os.environ.get("SYNC_ENABLE_OVERPROVISION_MODE", "").strip().lower()
+  env = os.environ.get("SYNC_ENABLE_OVERPROVISION_MODE", "").strip()
   if env:
-    return env in ("1", "yes", "true")
+    return _parse_bool(env)
   _ensure_cfg_loaded()
-  return cfg.get(
-      "DEFAULT", "sync_enable_overprovision_mode", fallback="no"
-  ).strip().lower() in ("1", "yes", "true")
+  return _parse_bool(
+      cfg.get("DEFAULT", "sync_enable_overprovision_mode", fallback="no"),
+  )
 
 
 def get_sync_overprovision_ingest_multiplier():
-  env = os.environ.get("SYNC_OVERPROVISION_INGEST_MULTIPLIER", "").strip()
-  if env:
-    return max(1.00, min(2.50, float(env)))
-  _ensure_cfg_loaded()
-  return max(
+  return _env_or_cfg_bounded_float(
+      "SYNC_OVERPROVISION_INGEST_MULTIPLIER",
+      "DEFAULT",
+      "sync_overprovision_ingest_multiplier",
       1.00,
-      min(2.50, float(cfg.get("DEFAULT", "sync_overprovision_ingest_multiplier", fallback="1.00"))),
+      lower=1.00,
+      upper=2.50,
   )
 
 
 def get_sync_overprovision_archive_multiplier():
-  env = os.environ.get("SYNC_OVERPROVISION_ARCHIVE_MULTIPLIER", "").strip()
-  if env:
-    return max(1.00, min(2.50, float(env)))
-  _ensure_cfg_loaded()
-  return max(
+  return _env_or_cfg_bounded_float(
+      "SYNC_OVERPROVISION_ARCHIVE_MULTIPLIER",
+      "DEFAULT",
+      "sync_overprovision_archive_multiplier",
       1.00,
-      min(2.50, float(cfg.get("DEFAULT", "sync_overprovision_archive_multiplier", fallback="1.00"))),
+      lower=1.00,
+      upper=2.50,
   )
 
 
 def get_sync_overprovision_metrics_multiplier():
-  env = os.environ.get("SYNC_OVERPROVISION_METRICS_MULTIPLIER", "").strip()
-  if env:
-    return max(0.10, min(2.50, float(env)))
-  _ensure_cfg_loaded()
-  return max(
-      0.10,
-      min(2.50, float(cfg.get("DEFAULT", "sync_overprovision_metrics_multiplier", fallback="1.00"))),
+  return _env_or_cfg_bounded_float(
+      "SYNC_OVERPROVISION_METRICS_MULTIPLIER",
+      "DEFAULT",
+      "sync_overprovision_metrics_multiplier",
+      1.00,
+      lower=0.10,
+      upper=2.50,
   )
 
 
 def get_sync_budget_overcommit_factor():
-  env = os.environ.get("SYNC_BUDGET_OVERCOMMIT_FACTOR", "").strip()
-  if env:
-    return max(1.00, min(2.00, float(env)))
-  _ensure_cfg_loaded()
-  return max(
+  return _env_or_cfg_bounded_float(
+      "SYNC_BUDGET_OVERCOMMIT_FACTOR",
+      "DEFAULT",
+      "sync_budget_overcommit_factor",
       1.00,
-      min(2.00, float(cfg.get("DEFAULT", "sync_budget_overcommit_factor", fallback="1.00"))),
+      lower=1.00,
+      upper=2.00,
   )
 
 
@@ -934,9 +950,7 @@ def get_sync_write_lock_shards():
 def get_sync_enable_db_writer_pipeline():
   """Feature flag for optional parse-worker -> DB-writer queue pipeline (default disabled)."""
   _ensure_cfg_loaded()
-  return cfg.get(
-      "DEFAULT", "sync_enable_db_writer_pipeline", fallback="no"
-  ).strip().lower() in ("1", "yes", "true")
+  return _parse_bool(cfg.get("DEFAULT", "sync_enable_db_writer_pipeline", fallback="no"))
 
 
 def get_sync_db_writer_pool_multiplier():
@@ -969,9 +983,10 @@ def get_sync_db_writer_pool_processes(ingest_processes=None):
 
 def get_sync_adaptive_dispatch_enabled():
   _ensure_cfg_loaded()
-  return cfg.get(
-      "DEFAULT", "sync_adaptive_dispatch_enabled", fallback="yes"
-  ).strip().lower() in ("1", "yes", "true")
+  return _parse_bool(
+      cfg.get("DEFAULT", "sync_adaptive_dispatch_enabled", fallback="yes"),
+      default=True,
+  )
 
 
 def get_sync_dispatch_burst_factor():
@@ -1042,9 +1057,9 @@ def get_conf_parser_defaults_audit_snapshot():
 def get_sync_enable_ingest_first_durability_mode():
   """Feature flag for ingest-first durability semantics (default disabled)."""
   _ensure_cfg_loaded()
-  return cfg.get(
-      "DEFAULT", "sync_enable_ingest_first_durability_mode", fallback="no"
-  ).strip().lower() in ("1", "yes", "true")
+  return _parse_bool(
+      cfg.get("DEFAULT", "sync_enable_ingest_first_durability_mode", fallback="no"),
+  )
 
 
 def get_redis_location():

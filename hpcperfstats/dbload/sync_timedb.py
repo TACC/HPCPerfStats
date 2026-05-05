@@ -140,6 +140,15 @@ _HOST_ITIMES_CACHE_MAX_ENTRIES = 2000
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
 
 
+def _ensure_daily_archive_dir_exists():
+  """Create daily archive dir, tolerating races."""
+  try:
+    os.makedirs(tgz_archive_dir, exist_ok=True)
+  except OSError:
+    if not os.path.isdir(tgz_archive_dir):
+      raise
+
+
 def _log_db_lock_wait(batch_kind, stats_file, lock_wait):
   """Log DB lock contention only when wait exceeds threshold."""
   if lock_wait <= LOCK_WAIT_LOG_THRESHOLD_SECONDS:
@@ -1349,11 +1358,7 @@ def run_sync_timedb_supervisor_loop(
         ".tar.gz matches) before initial scan",
         flush=True,
     )
-    try:
-      os.makedirs(tgz_archive_dir, exist_ok=True)
-    except OSError:
-      if not os.path.isdir(tgz_archive_dir):
-        raise
+    _ensure_daily_archive_dir_exists()
     _run_scheduled_archive_maintenance(
         run_verified_uncompressed_tar_removal=True,
         reason="startup",
@@ -1406,11 +1411,7 @@ def run_sync_timedb_supervisor_loop(
           % (reason_label, elapsed),
           flush=True,
       )
-      try:
-        os.makedirs(tgz_archive_dir, exist_ok=True)
-      except OSError:
-        if not os.path.isdir(tgz_archive_dir):
-          raise
+      _ensure_daily_archive_dir_exists()
       _run_scheduled_archive_maintenance(
           reason="scheduled",
           elapsed_since_last_s=elapsed,
@@ -1479,11 +1480,7 @@ def run_sync_timedb_supervisor_loop(
               "Running final archive sealing and verified raw-file cleanup before exit",
               flush=True,
           )
-          try:
-            os.makedirs(tgz_archive_dir, exist_ok=True)
-          except OSError:
-            if not os.path.isdir(tgz_archive_dir):
-              raise
+          _ensure_daily_archive_dir_exists()
           _run_scheduled_archive_maintenance(
               force_full=True,
               reason="final_idle",
@@ -1676,7 +1673,7 @@ def run_sync_timedb_supervisor_loop(
         log_print("Files marked for archival: %d" % len(files_to_be_archived))
 
         if files_to_be_archived:
-          os.makedirs(tgz_archive_dir, exist_ok=True)
+          _ensure_daily_archive_dir_exists()
         ar_file_mapping = build_archive_mapping(
             files_to_be_archived,
             tgz_archive_dir,

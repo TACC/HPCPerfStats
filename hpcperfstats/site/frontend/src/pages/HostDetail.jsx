@@ -5,6 +5,7 @@ import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
+import { buildAsyncPageTitle } from "../utils/async-page-title";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 
 export default function HostDetail() {
@@ -15,13 +16,13 @@ export default function HostDetail() {
   const [loading, setLoading] = useState(true);
 
   useDocumentTitle(
-    loading && host
-      ? `Loading host ${host}`
-      : host && data?.host
-        ? `Host ${data.host} · plot`
-        : host
-          ? `Host ${host}`
-          : "Host plot",
+    buildAsyncPageTitle({
+      loading: loading && !!host,
+      hasError: !!error,
+      loadingTitle: `Loading host ${host || ""}`.trim(),
+      readyTitle: host && data?.host ? `Host ${data.host} · plot` : "",
+      fallbackTitle: host ? `Host ${host}` : "Host plot",
+    }),
   );
 
   useEffect(() => {

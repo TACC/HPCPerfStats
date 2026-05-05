@@ -5,6 +5,27 @@ import LoadingMessage from "../components/LoadingMessage";
 import { useHomeOptions } from "../hooks/use-home-options";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 
+function toMonthSlug(value) {
+  return String(value || "").replace(/[^a-zA-Z0-9_-]/g, "-");
+}
+
+function BrowseTabButton({ isActive, id, panelId, onClick, children }) {
+  return (
+    <button
+      type="button"
+      className={`nav-link ${isActive ? "active" : ""}`}
+      id={id}
+      role="tab"
+      aria-selected={isActive}
+      aria-controls={panelId}
+      tabIndex={isActive ? 0 : -1}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function Search() {
   const navigate = useNavigate();
   const { options, error, loading } = useHomeOptions();
@@ -99,7 +120,7 @@ export default function Search() {
               const month = e.target.value;
               if (!month) return;
               const el = document.getElementById(
-                `search-month-${month.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+                `search-month-${toMonthSlug(month)}`,
               );
               el?.scrollIntoView({ block: "start" });
               e.target.selectedIndex = 0;
@@ -116,17 +137,19 @@ export default function Search() {
           </select>
         </div>
         <div className="search-calendar-months">
-          {date_list.map(([month, dates]) => (
+          {date_list.map(([month, dates]) => {
+            const monthSlug = toMonthSlug(month);
+            return (
             <section
               className="search-calendar-month-card"
               key={month}
-              id={`search-month-${month.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
-              aria-labelledby={`search-month-heading-${month.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
+              id={`search-month-${monthSlug}`}
+              aria-labelledby={`search-month-heading-${monthSlug}`}
             >
               <div className="search-calendar-month-header">
                 <Link
                   className="search-calendar-month-title"
-                  id={`search-month-heading-${month.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
+                  id={`search-month-heading-${monthSlug}`}
                   to={`/date/${month}`}
                 >
                   {month}
@@ -146,7 +169,8 @@ export default function Search() {
                 ))}
               </ul>
             </section>
-          ))}
+            );
+          })}
         </div>
       </>
     ) : (
@@ -165,32 +189,24 @@ export default function Search() {
       <div className="search-browse-tabs mb-3">
         <ul className="nav nav-tabs" role="tablist">
           <li className="nav-item" role="presentation">
-            <button
-              type="button"
-              className={`nav-link ${browseTab === "calendar" ? "active" : ""}`}
+            <BrowseTabButton
+              isActive={browseTab === "calendar"}
               id={tabCalendarId}
-              role="tab"
-              aria-selected={browseTab === "calendar"}
-              aria-controls={panelCalendarId}
-              tabIndex={browseTab === "calendar" ? 0 : -1}
+              panelId={panelCalendarId}
               onClick={() => setBrowseTab("calendar")}
             >
               Calendar
-            </button>
+            </BrowseTabButton>
           </li>
           <li className="nav-item" role="presentation">
-            <button
-              type="button"
-              className={`nav-link ${browseTab === "year" ? "active" : ""}`}
+            <BrowseTabButton
+              isActive={browseTab === "year"}
               id={tabYearId}
-              role="tab"
-              aria-selected={browseTab === "year"}
-              aria-controls={panelYearId}
-              tabIndex={browseTab === "year" ? 0 : -1}
+              panelId={panelYearId}
               onClick={() => setBrowseTab("year")}
             >
               By year
-            </button>
+            </BrowseTabButton>
           </li>
         </ul>
       </div>
