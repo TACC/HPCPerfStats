@@ -53,6 +53,7 @@
 #include "msr_io.h"
 #include "pscanf.h"
 #include "cpuid.h"
+#include "intel_topology_walk.h"
 
 /*! \name PCU global control register
 
@@ -290,31 +291,33 @@ static uint64_t pcu_events[4] = {
   FREQ_MIN_SNOOP_CYCLES
 };
 
+struct pcu_begin_ctx {
+  int nr;
+};
+
+static void pcu_begin_visit(void *ctx, char *cpu, int pkg_id, int nr_cores)
+{
+  struct pcu_begin_ctx *c = ctx;
+
+  (void)nr_cores;
+  (void)pkg_id;
+  if (intel_pcu_begin_socket(cpu, pcu_events) == 0)
+    c->nr++;
+}
+
 //! Configure and start counters
 static int intel_pcu_begin(struct stats_type *type)
 {
-  int nr = 0;
+  struct pcu_begin_ctx ctx = {0};
 
-  int i;
+  if (processor == SANDYBRIDGE || processor == IVYBRIDGE || processor == HASWELL
+      || processor == BROADWELL)
+    intel_topology_foreach_pkg_leader_core(&ctx, pcu_begin_visit);
 
-  if (processor == SANDYBRIDGE || processor == IVYBRIDGE || processor == HASWELL || processor == BROADWELL)
-    for (i = 0; i < nr_cpus; i++) {
-      char cpu[80];
-      int pkg_id = -1;
-      int core_id = -1;
-      int smt_id = -1;
-      int nr_cores = 0;
-      snprintf(cpu, sizeof(cpu), "%d", i);
-      cpuid_read_cpu_topology(cpu, &pkg_id, &core_id, &smt_id, &nr_cores);
-      if (core_id == 0 && smt_id == 0)
-	if (intel_pcu_begin_socket(cpu, pcu_events) == 0)
-	  nr++;
-    }
-
-  if (nr == 0)
+  if (ctx.nr == 0)
     type->st_enabled = 0;
 
-  return nr > 0 ? 0 : -1;
+  return ctx.nr > 0 ? 0 : -1;
 }
 
 //! Collect values of counters for PCU
@@ -368,22 +371,24 @@ static void intel_pcu_collect_socket(struct stats_type *type, char *cpu, int pkg
     close(msr_fd);
 }
 
+struct pcu_collect_ctx {
+  struct stats_type *type;
+};
+
+static void pcu_collect_visit(void *ctx, char *cpu, int pkg_id, int nr_cores)
+{
+  struct pcu_collect_ctx *c = ctx;
+
+  (void)nr_cores;
+  intel_pcu_collect_socket(c->type, cpu, pkg_id);
+}
+
 //! Collect values of counters
 static void intel_pcu_collect(struct stats_type *type)
 {
-  int i;
-  for (i = 0; i < nr_cpus; i++) {
-    char cpu[80];
-    int pkg_id = -1;
-    int core_id = -1;
-    int smt_id = -1;
-    int nr_cores = 0;
-    snprintf(cpu, sizeof(cpu), "%d", i);
-    cpuid_read_cpu_topology(cpu, &pkg_id, &core_id, &smt_id, &nr_cores);
-  
-    if (core_id == 0 && smt_id == 0)
-      intel_pcu_collect_socket(type, cpu, pkg_id);
-  }
+  struct pcu_collect_ctx ctx = {type};
+
+  intel_topology_foreach_pkg_leader_core(&ctx, pcu_collect_visit);
 }
 
 //! Definition of stats for this type

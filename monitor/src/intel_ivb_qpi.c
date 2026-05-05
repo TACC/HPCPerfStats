@@ -1,102 +1,60 @@
-#include <stddef.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <string.h>
-#include <unistd.h>
-#include <dirent.h>
-#include <errno.h>
-#include <malloc.h>
-#include <ctype.h>
-#include <fcntl.h>
 #include "stats.h"
-#include "trace.h"
-#include "pscanf.h"
-#include "pci.h"
-#include "intel_pmc_uncore.h"
+#include "JOIN.h"
+#include "intel_uncore_pci.h"
 
-#define MASK0    0x238
-#define MASK1    0x23C
-#define MATCH0   0x228
-#define MATCH1   0x22C
+#define CTL_KEYS                                                             \
+  X(CTL0, "C", ""),                                                          \
+      X(CTL1, "C", ""),                                                      \
+      X(CTL2, "C", ""),                                                      \
+      X(CTL3, "C", "")
 
-#define CTL_KEYS \
-    X(CTL0, "C", ""), \
-    X(CTL1, "C", ""), \
-    X(CTL2, "C", ""), \
-    X(CTL3, "C", "")
-
-#define CTR_KEYS \
-    X(CTR0, "E,W=48,U=flt", ""), \
-    X(CTR1, "E,W=48,U=flt", ""), \
-    X(CTR2, "E,W=48,U=flt", ""), \
-    X(CTR3, "E,W=48,U=flt", "")
+#define CTR_KEYS                                                             \
+  X(CTR0, "E,W=48,U=flt", ""),                                               \
+      X(CTR1, "E,W=48,U=flt", ""),                                           \
+      X(CTR2, "E,W=48,U=flt", ""),                                           \
+      X(CTR3, "E,W=48,U=flt", "")
 
 #define KEYS CTL_KEYS, CTR_KEYS
 
-#define PERF_EVENT(event, umask)		\
-  ( (event)					\
-    | (umask << 8)				\
-    | (0UL << 18) /* Edge Detection. */		\
-    | (1UL << 21) /* Enable extra bit. */	\
-    | (1UL << 22) /* Enable. */			\
-    | (0UL << 23) /* Invert */			\
-  )
+#define PERF_EVENT(event, umask)                                             \
+  ((event) | (umask << 8) | (0UL << 18) | (1UL << 21) | (1UL << 22)           \
+   | (0UL << 23))
 
-#define TxL_FLITS_G1_SNP  PERF_EVENT(0x00,0x01) //!< snoops requests
-#define TxL_FLITS_G1_HOM  PERF_EVENT(0x00,0x04) //!< snoop responses
-#define G1_DRS_DATA       PERF_EVENT(0x02,0x08) //!< for data bandwidth, flits x 8B/time
-#define G2_NCB_DATA       PERF_EVENT(0x03,0x04) //!< for data bandwidth, flits x 8B/time
+#define TxL_FLITS_G1_SNP PERF_EVENT(0x00, 0x01)
+#define TxL_FLITS_G1_HOM PERF_EVENT(0x00, 0x04)
+#define G1_DRS_DATA	 PERF_EVENT(0x02, 0x08)
+#define G2_NCB_DATA	 PERF_EVENT(0x03, 0x04)
 
-static uint32_t events[] = {TxL_FLITS_G1_SNP,  TxL_FLITS_G1_HOM, G1_DRS_DATA, G2_NCB_DATA};
+static uint32_t events[] = {
+    TxL_FLITS_G1_SNP,
+    TxL_FLITS_G1_HOM,
+    G1_DRS_DATA,
+    G2_NCB_DATA,
+};
 static int dids[] = {0x0e32, 0x0e33, 0x0e3a};
+
+static const struct intel_uncore_pci_cfg intel_ivb_qpi_pci_cfg = {
+    .pci_dids = dids,
+    .nr_pci_dids = 3,
+    .events = events,
+    .nr_events = 4,
+};
 
 static int intel_ivb_qpi_begin(struct stats_type *type)
 {
-  int nr = 0;
-  int nr_dids = 3;
-
-  int nr_events = 4;
-
-  char **dev_paths = NULL;
-  int nr_devs;
-
-  if (pci_map_create(&dev_paths, &nr_devs, dids, nr_dids) < 0)
-    TRACE("Failed to identify pci devices");
-  
-  int i;
-  for (i = 0; i < nr_devs; i++)
-    if (intel_pmc_uncore_begin_dev(dev_paths[i], events, nr_events) == 0)
-      nr++;
-  
-  if (nr == 0)
-    type->st_enabled = 0;
-
-  pci_map_destroy(&dev_paths, nr_devs);
-  return nr > 0 ? 0 : -1;
-
+  return intel_uncore_pci_begin(&intel_ivb_qpi_pci_cfg, type);
 }
 
 static void intel_ivb_qpi_collect(struct stats_type *type)
 {
-  int nr_dids = 3;
-
-  char **dev_paths = NULL;
-  int nr_devs;
-  if (pci_map_create(&dev_paths, &nr_devs, dids, nr_dids) < 0)
-    TRACE("Failed to identify pci devices");
-  
-  int i;
-  for (i = 0; i < nr_devs; i++)
-    intel_pmc_uncore_collect_dev(type, dev_paths[i]);  
-  pci_map_destroy(&dev_paths, nr_devs);
+  intel_uncore_pci_collect(&intel_ivb_qpi_pci_cfg, type);
 }
 
 struct stats_type intel_ivb_qpi_stats_type = {
-  .st_name = "intel_ivb_qpi",
-  .st_begin = &intel_ivb_qpi_begin,
-  .st_collect = &intel_ivb_qpi_collect,
+    .st_name = "intel_ivb_qpi",
+    .st_begin = &intel_ivb_qpi_begin,
+    .st_collect = &intel_ivb_qpi_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

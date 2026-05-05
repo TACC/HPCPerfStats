@@ -1,0 +1,25 @@
+#ifndef INTEL_UNCORE_PCI_H_
+#define INTEL_UNCORE_PCI_H_
+
+#include <stdint.h>
+
+#include "stats.h"
+
+/*
+ * SNB–BDW-style uncore boxes enumerated via PCI DID lists + fixed event
+ * programming passed to intel_pmc_uncore_*.
+ */
+struct intel_uncore_pci_cfg {
+  const int *pci_dids;
+  int nr_pci_dids;
+  const uint32_t *events;
+  int nr_events;
+};
+
+int intel_uncore_pci_begin(const struct intel_uncore_pci_cfg *cfg,
+			   struct stats_type *type);
+
+void intel_uncore_pci_collect(const struct intel_uncore_pci_cfg *cfg,
+			      struct stats_type *type);
+
+#endif

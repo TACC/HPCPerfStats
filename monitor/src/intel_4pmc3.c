@@ -6,12 +6,13 @@
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
+
+#include "intel_pmc3.h"
+#include "intel_pmc3_core.h"
 #include "stats.h"
 #include "trace.h"
 #include "msr_io.h"
-#include "intel_pmc3.h"
 
-//! Collect values in counters for cpu
 static void intel_4pmc3_collect_cpu(struct stats_type *type, char *cpu)
 {
   struct stats *stats = NULL;
@@ -27,53 +28,38 @@ static void intel_4pmc3_collect_cpu(struct stats_type *type, char *cpu)
   if (msr_fd < 0)
     goto out;
 
-#define X(k,r...)							\
-    ({									\
-      uint64_t val = 0;							\
-      if (msr_read_u64(msr_fd, IA32_##k, &val) < 0)			\
-	TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, IA32_##k, cpu); \
-      else								\
-	stats_set(stats, #k, val);					\
-    })
+#define X(k, r...)                                                             \
+  ({                                                                         \
+    uint64_t val = 0;                                                        \
+    if (msr_read_u64(msr_fd, IA32_##k, &val) < 0)                            \
+      TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, IA32_##k,      \
+	    cpu);                                                            \
+    else                                                                     \
+      stats_set(stats, #k, val);                                             \
+  })
     HT_KEYS;
 #undef X
 
- out:
+out:
   if (msr_fd >= 0)
     close(msr_fd);
 }
 
 static void intel_4pmc3_collect(struct stats_type *type)
 {
-  int i;
-  for (i = 0; i < nr_cpus; i++) {
-    char cpu[80];
-    snprintf(cpu, sizeof(cpu), "%d", i);
-    intel_4pmc3_collect_cpu(type, cpu);
-  }
-}
-static int intel_4pmc3_begin(struct stats_type *type)
-{
-  int nr = 0;
-  int i;
-  if (n_pmcs == 4)
-    for (i = 0; i < nr_cpus; i++) {
-      char cpu[80];
-      snprintf(cpu, sizeof(cpu), "%d", i);    
-      if (intel_pmc3_begin_cpu(cpu) == 0)
-	nr++;
-    }  
-  if (nr == 0) 
-    type->st_enabled = 0;
-  return nr > 0 ? 0 : -1;
+  intel_pmc3_core_foreach_cpu(type, intel_4pmc3_collect_cpu);
 }
 
-//! Definition of stats entry for this type
+static int intel_4pmc3_begin(struct stats_type *type)
+{
+  return intel_pmc3_core_begin_if_pmcs(type, 4);
+}
+
 struct stats_type intel_4pmc3_stats_type = {
-  .st_name = "intel_4pmc3",
-  .st_begin = &intel_4pmc3_begin,
-  .st_collect = &intel_4pmc3_collect,
+    .st_name = "intel_4pmc3",
+    .st_begin = &intel_4pmc3_begin,
+    .st_collect = &intel_4pmc3_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(HT_KEYS),
+    .st_schema_def = JOIN(HT_KEYS),
 #undef X
 };

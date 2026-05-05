@@ -160,6 +160,9 @@ TYPES 	+= \
 	amd64_df.c \
 	intel_4pmc3.c \
 	intel_8pmc3.c \
+	intel_pmc3_core.c \
+	intel_uncore_msr_box.c \
+	intel_uncore_pci.c \
 	intel_bdw_cbo.c \
 	intel_bdw_hau.c \
 	intel_bdw_imc.c \
@@ -187,7 +190,11 @@ TYPES 	+= \
 	intel_snb_qpi.c \
 	intel_snb_r2pci.c
 hpcperfstatsd_SOURCES += \
-	cpu_counter_metrics.h
+	cpu_counter_metrics.h \
+	intel_pmc3_core.h \
+	intel_topology_walk.h \
+	intel_uncore_msr_box.h \
+	intel_uncore_pci.h
 endif
 if CPU_BACKEND_DCGM
 TYPES += \
