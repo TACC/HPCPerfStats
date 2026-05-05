@@ -925,6 +925,14 @@ def test_fill_ready_queue_prefetch_one_leaves_pending_tail(monkeypatch):
       "readiness_error_chunks": 0,
       "proxy_checked_chunks": 0,
       "proxy_rejected_jids": 0,
+      "proxy_not_ready_jids": 0,
+      "strict_not_ready_jids": 0,
+      "strict_ready_jids": 0,
+      "strict_cooldown_skips": 0,
+      "deferred_not_ready_queue_size": 0,
+      "deferred_not_ready_due_now": 0,
+      "deferred_quarantined_jids": 0,
+      "stall_exit_triggered": 0,
       "strict_check_calls": 0,
       "strict_check_timeouts": 0,
       "strict_check_avg_latency_ms": 0.0,
@@ -1023,6 +1031,14 @@ def test_fill_ready_queue_strict_subbatch_timeout_does_not_abort(monkeypatch):
       "readiness_error_chunks": 0,
       "proxy_checked_chunks": 0,
       "proxy_rejected_jids": 0,
+      "proxy_not_ready_jids": 0,
+      "strict_not_ready_jids": 0,
+      "strict_ready_jids": 0,
+      "strict_cooldown_skips": 0,
+      "deferred_not_ready_queue_size": 0,
+      "deferred_not_ready_due_now": 0,
+      "deferred_quarantined_jids": 0,
+      "stall_exit_triggered": 0,
       "strict_check_calls": 0,
       "strict_check_timeouts": 0,
       "strict_check_avg_latency_ms": 0.0,
@@ -1071,6 +1087,58 @@ def test_fill_ready_queue_strict_subbatch_timeout_does_not_abort(monkeypatch):
   # Two timeouts clamp to STRICT_CHECK_BATCH_MIN, then the j3 success path grows
   # toward max_batch_size under STRICT_CHECK_FAST_SUCCESS_S.
   assert strict_state["batch_size"] == strict_state["max_batch_size"]
+
+
+@pytest.mark.django_db(databases=[])
+def test_fill_ready_queue_counts_cooldown_skips(monkeypatch):
+  """Cooldown-suppressed strict checks should be visible in scheduler counters."""
+  states = [{
+      "date": datetime(2025, 4, 10),
+      "iter": iter([(["j1"], 1)]),
+      "done": False,
+      "pending_tail": None,
+  }]
+  ready = []
+  timer = update_metrics._PhaseTimer()
+  stats = {
+      "candidate_jids": 0,
+      "skipped_not_ready": 0,
+      "readiness_error_chunks": 0,
+      "proxy_checked_chunks": 0,
+      "proxy_rejected_jids": 0,
+      "proxy_not_ready_jids": 0,
+      "strict_not_ready_jids": 0,
+      "strict_ready_jids": 0,
+      "strict_cooldown_skips": 0,
+      "deferred_not_ready_queue_size": 0,
+      "deferred_not_ready_due_now": 0,
+      "deferred_quarantined_jids": 0,
+      "stall_exit_triggered": 0,
+      "strict_check_calls": 0,
+      "strict_check_timeouts": 0,
+      "strict_check_avg_latency_ms": 0.0,
+      "strict_batch_size_current": update_metrics.STRICT_CHECK_BATCH_MIN,
+  }
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 100.0)
+  update_metrics._fill_ready_queue(
+      states,
+      ready,
+      mode="strict_date",
+      prefetch_chunks=10,
+      phase_timer=timer,
+      stats=stats,
+      strict_check_state={
+          "batch_size": update_metrics.STRICT_CHECK_BATCH_MIN,
+          "max_batch_size": update_metrics.STRICT_CHECK_BATCH_MIN,
+      },
+      strict_check_cooldown_until={"j1": 200.0},
+      rr_cursor={"idx": 0},
+      scheduler_shared_lock=threading.Lock(),
+  )
+  assert ready == []
+  assert stats["strict_cooldown_skips"] == 1
+  assert stats["strict_not_ready_jids"] == 1
 
 
 @pytest.mark.django_db(databases=[])
@@ -1141,6 +1209,7 @@ def test_update_metrics_for_dates_exhausts_when_readiness_filters_all(monkeypatc
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
   monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: [])
+  monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.1)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
 
@@ -1178,6 +1247,57 @@ def test_update_metrics_for_dates_exhausts_when_readiness_filters_all(monkeypatc
   d1 = datetime(2025, 4, 10)
   d2 = datetime(2025, 4, 9)
   update_metrics.update_metrics_for_dates([d1, d2], rerun=False)
+
+
+@pytest.mark.django_db(databases=[])
+def test_update_metrics_for_dates_sets_stall_diagnostics_on_no_progress(monkeypatch):
+  """Persistent not-ready loops should terminate with explicit stall diagnostics."""
+  monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: [])
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.1)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  by_day = {10: [([1001], 1)]}
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs(list(by_day[d.day])),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      raise AssertionError("metrics run should not execute when all jobs are not-ready")
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+  update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS = None
+  update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  diag = update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS
+  assert diag is not None
+  assert diag["stats"]["stall_exit_triggered"] == 1
+  assert diag["stats"]["strict_not_ready_jids"] >= 1
 
 
 @pytest.mark.django_db(databases=[])

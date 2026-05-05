@@ -99,6 +99,11 @@ STRICT_CHECK_FAST_SUCCESS_S = 0.25
 STRICT_CHECK_COOLDOWN_SECONDS = 30
 RESCAN_INTERVAL_SECONDS = 5.0
 DEFERRED_NOT_READY_RETRY_SECONDS = 10.0
+DEFERRED_NOT_READY_MAX_RETRIES = 30
+DEFERRED_NOT_READY_MAX_AGE_SECONDS = 900.0
+DEFERRED_NOT_READY_QUARANTINE_SECONDS = 300.0
+STALL_WARNING_EVERY_PASSES = 200
+STALL_EXIT_AFTER_SECONDS = 900.0
 RESCAN_FETCH_LIMIT = CHUNK_SIZE
 TELEMETRY_SAMPLE_LIMIT = 2048
 
@@ -383,11 +388,21 @@ class _CompletionReporter:
           extra_map = self._extra_stats_getter() or {}
           extra = (
               " strict_batch_size_current={0} strict_check_calls={1} "
-              "strict_check_timeouts={2} strict_check_avg_latency_ms={3:.2f}".format(
+              "strict_check_timeouts={2} strict_check_avg_latency_ms={3:.2f} "
+              "proxy_not_ready_jids={4} strict_not_ready_jids={5} strict_ready_jids={6} "
+              "strict_cooldown_skips={7} deferred_not_ready_queue_size={8} "
+              "deferred_not_ready_due_now={9} deferred_quarantined_jids={10}".format(
                   int(extra_map.get("strict_batch_size_current", 0)),
                   int(extra_map.get("strict_check_calls", 0)),
                   int(extra_map.get("strict_check_timeouts", 0)),
                   float(extra_map.get("strict_check_avg_latency_ms", 0.0)),
+                  int(extra_map.get("proxy_not_ready_jids", 0)),
+                  int(extra_map.get("strict_not_ready_jids", 0)),
+                  int(extra_map.get("strict_ready_jids", 0)),
+                  int(extra_map.get("strict_cooldown_skips", 0)),
+                  int(extra_map.get("deferred_not_ready_queue_size", 0)),
+                  int(extra_map.get("deferred_not_ready_due_now", 0)),
+                  int(extra_map.get("deferred_quarantined_jids", 0)),
               )
           )
         except Exception:
@@ -1001,6 +1016,7 @@ def _fill_ready_queue(
       if on_not_ready_jid is not None:
         on_not_ready_jid(jid)
       with scheduler_shared_lock:
+        stats["proxy_not_ready_jids"] += 1
         stats["proxy_rejected_jids"] += 1
         stats["skipped_not_ready"] += 1
 
@@ -1024,6 +1040,8 @@ def _fill_ready_queue(
         if on_not_ready_jid is not None:
           on_not_ready_jid(jid)
         with scheduler_shared_lock:
+          stats["strict_not_ready_jids"] += 1
+          stats["strict_cooldown_skips"] += 1
           stats["skipped_not_ready"] += 1
       pos = sub_end
       if not work:
@@ -1058,8 +1076,11 @@ def _fill_ready_queue(
             if on_not_ready_jid is not None:
               on_not_ready_jid(jid)
             with scheduler_shared_lock:
+              stats["strict_not_ready_jids"] += 1
               stats["skipped_not_ready"] += 1
           else:
+            with scheduler_shared_lock:
+              stats["strict_ready_jids"] += 1
             ready_queue.append(ready_jid)
             if len(ready_queue) >= prefetch_chunks:
               tail = []
@@ -1081,6 +1102,8 @@ def _fill_ready_queue(
       ready_set = set(ready_list)
       for k, jid in enumerate(work):
         if jid in ready_set:
+          with scheduler_shared_lock:
+            stats["strict_ready_jids"] += 1
           ready_queue.append(jid)
           if len(ready_queue) >= prefetch_chunks:
             tail = work[k + 1:] + unknown_ordered[pos:]
@@ -1091,6 +1114,7 @@ def _fill_ready_queue(
           if on_not_ready_jid is not None:
             on_not_ready_jid(jid)
           with scheduler_shared_lock:
+            stats["strict_not_ready_jids"] += 1
             stats["skipped_not_ready"] += 1
     return False
 
@@ -1203,13 +1227,39 @@ def _start_readiness_producer(
     close_old_connections()
     rr_cursor = {"idx": 0}
     deferred_not_ready = {}
+    deferred_meta = {}
+    last_processed_total = 0
+    last_progress_at = time.monotonic()
 
     def _remember_candidate(jid):
       with rescan_lock:
         rescan_seen_jids.add(jid)
+      deferred_meta.setdefault(jid, {"first_seen": time.monotonic(), "attempts": 0})
+
+    def _defer_not_ready_jid(jid):
+      now = time.monotonic()
+      meta = deferred_meta.setdefault(jid, {"first_seen": now, "attempts": 0})
+      meta["attempts"] += 1
+      age_s = max(0.0, now - float(meta["first_seen"]))
+      use_quarantine = (
+          meta["attempts"] >= DEFERRED_NOT_READY_MAX_RETRIES
+          or age_s >= DEFERRED_NOT_READY_MAX_AGE_SECONDS
+      )
+      if use_quarantine:
+        retry_after = DEFERRED_NOT_READY_QUARANTINE_SECONDS
+        with scheduler_shared_lock:
+          stats["deferred_quarantined_jids"] += 1
+      else:
+        retry_after = DEFERRED_NOT_READY_RETRY_SECONDS
+      deferred_not_ready[jid] = now + retry_after
 
     try:
       while not shutdown_requested[0]:
+        with scheduler_shared_lock:
+          processed_now = int(stats["processed"])
+        if processed_now > last_processed_total:
+          last_processed_total = processed_now
+          last_progress_at = time.monotonic()
         with ready_queue_lock:
           current_depth = len(ready_queue)
         if current_depth >= prefetch_ready_cap:
@@ -1264,9 +1314,7 @@ def _start_readiness_producer(
               on_candidate_jid=_remember_candidate,
           )
           for jid in deferred_hits:
-            deferred_not_ready[jid] = (
-                time.monotonic() + DEFERRED_NOT_READY_RETRY_SECONDS
-            )
+            _defer_not_ready_jid(jid)
           if len(local_ready) >= probe_target:
             with scheduler_shared_lock:
               readiness_probe_target["value"] = _adjust_readiness_probe_target(
@@ -1294,9 +1342,7 @@ def _start_readiness_producer(
             on_candidate_jid=_remember_candidate,
         )
         for jid in deferred_hits:
-          deferred_not_ready[jid] = (
-              time.monotonic() + DEFERRED_NOT_READY_RETRY_SECONDS
-          )
+          _defer_not_ready_jid(jid)
         with scheduler_shared_lock:
           readiness_probe_target["value"] = _adjust_readiness_probe_target(
               current_target=readiness_probe_target["value"],
@@ -1306,6 +1352,8 @@ def _start_readiness_producer(
               max_target=prefetch_ready_cap,
           )
           err_chunks = stats["readiness_error_chunks"]
+          stats["deferred_not_ready_queue_size"] = len(deferred_not_ready)
+          stats["deferred_not_ready_due_now"] = len(deferred_due)
         if err_chunks > completion_reporter.readiness_errors_total():
           completion_reporter.record_readiness_error_chunk(
               err_chunks - completion_reporter.readiness_errors_total()
@@ -1317,6 +1365,22 @@ def _start_readiness_producer(
         with rescan_lock:
           has_rescan_backlog = bool(rescan_candidate_jids)
         if all(s["done"] for s in date_states) and (not deferred_not_ready) and (not has_rescan_backlog):
+          break
+        stalled_for_s = time.monotonic() - last_progress_at
+        if stalled_for_s >= STALL_EXIT_AFTER_SECONDS:
+          with scheduler_shared_lock:
+            stats["stall_exit_triggered"] = 1
+          log_print(
+              "metrics scheduler: no progress for {0:.1f}s; exiting producer "
+              "(processed_total={1} candidate_jids={2} deferred_not_ready={3} rescan_backlog={4}).".format(
+                  stalled_for_s,
+                  processed_now,
+                  stats.get("candidate_jids", 0),
+                  len(deferred_not_ready),
+                  int(has_rescan_backlog),
+              ),
+              flush=True,
+          )
           break
         time.sleep(0.05)
     finally:
@@ -1571,6 +1635,14 @@ def update_metrics_for_dates(dates, rerun=False):
       "readiness_error_chunks": 0,
       "proxy_checked_chunks": 0,
       "proxy_rejected_jids": 0,
+      "proxy_not_ready_jids": 0,
+      "strict_not_ready_jids": 0,
+      "strict_ready_jids": 0,
+      "strict_cooldown_skips": 0,
+      "deferred_not_ready_queue_size": 0,
+      "deferred_not_ready_due_now": 0,
+      "deferred_quarantined_jids": 0,
+      "stall_exit_triggered": 0,
       "strict_check_calls": 0,
       "strict_check_timeouts": 0,
       "strict_check_avg_latency_ms": 0.0,
@@ -1590,6 +1662,14 @@ def update_metrics_for_dates(dates, rerun=False):
         "readiness_error_chunks": 0,
         "proxy_checked_chunks": 0,
         "proxy_rejected_jids": 0,
+        "proxy_not_ready_jids": 0,
+        "strict_not_ready_jids": 0,
+        "strict_ready_jids": 0,
+        "strict_cooldown_skips": 0,
+        "deferred_not_ready_queue_size": 0,
+        "deferred_not_ready_due_now": 0,
+        "deferred_quarantined_jids": 0,
+        "stall_exit_triggered": 0,
         "strict_check_calls": 0,
         "strict_check_timeouts": 0,
         "strict_check_avg_latency_ms": 0.0,
@@ -1624,6 +1704,13 @@ def update_metrics_for_dates(dates, rerun=False):
               "strict_check_calls": stats["strict_check_calls"],
               "strict_check_timeouts": stats["strict_check_timeouts"],
               "strict_check_avg_latency_ms": stats["strict_check_avg_latency_ms"],
+              "proxy_not_ready_jids": stats["proxy_not_ready_jids"],
+              "strict_not_ready_jids": stats["strict_not_ready_jids"],
+              "strict_ready_jids": stats["strict_ready_jids"],
+              "strict_cooldown_skips": stats["strict_cooldown_skips"],
+              "deferred_not_ready_queue_size": stats["deferred_not_ready_queue_size"],
+              "deferred_not_ready_due_now": stats["deferred_not_ready_due_now"],
+              "deferred_quarantined_jids": stats["deferred_quarantined_jids"],
           }
 
       completion_reporter.set_extra_stats_getter(_extra_stats_snapshot)
@@ -1708,18 +1795,30 @@ def update_metrics_for_dates(dates, rerun=False):
             if producer_done.is_set():
               break
             stall_iters += 1
-            if stall_iters == 1 or stall_iters % 200 == 0:
+            if stall_iters == 1 or stall_iters % STALL_WARNING_EVERY_PASSES == 0:
               pending_days = sum(1 for s in date_states if not s["done"]) if not producer_done.is_set() else 0
               with scheduler_shared_lock:
                 cand = stats["candidate_jids"]
                 skipped = stats["skipped_not_ready"]
+                proxy_not_ready = stats["proxy_not_ready_jids"]
+                strict_not_ready = stats["strict_not_ready_jids"]
+                deferred_q = stats["deferred_not_ready_queue_size"]
+                deferred_due = stats["deferred_not_ready_due_now"]
+                strict_ready = stats["strict_ready_jids"]
               log_print(
                   "metrics scheduler: no ready jobs yet "
-                  "(pending_days={0} candidate_jids={1} skipped_not_ready={2} stall_pass={3}); "
+                  "(pending_days={0} candidate_jids={1} skipped_not_ready={2} "
+                  "proxy_not_ready_jids={3} strict_not_ready_jids={4} strict_ready_jids={5} "
+                  "deferred_not_ready_queue_size={6} deferred_not_ready_due_now={7} stall_pass={8}); "
                   "still scanning candidates.".format(
                       pending_days,
                       cand,
                       skipped,
+                      proxy_not_ready,
+                      strict_not_ready,
+                      strict_ready,
+                      deferred_q,
+                      deferred_due,
                       stall_iters,
                   ),
                   flush=True,
@@ -1862,6 +1961,14 @@ def update_metrics_for_dates(dates, rerun=False):
             "readiness_error_chunks": stats["readiness_error_chunks"],
             "proxy_checked_chunks": stats["proxy_checked_chunks"],
             "proxy_rejected_jids": stats["proxy_rejected_jids"],
+            "proxy_not_ready_jids": stats["proxy_not_ready_jids"],
+            "strict_not_ready_jids": stats["strict_not_ready_jids"],
+            "strict_ready_jids": stats["strict_ready_jids"],
+            "strict_cooldown_skips": stats["strict_cooldown_skips"],
+            "deferred_not_ready_queue_size": stats["deferred_not_ready_queue_size"],
+            "deferred_not_ready_due_now": stats["deferred_not_ready_due_now"],
+            "deferred_quarantined_jids": stats["deferred_quarantined_jids"],
+            "stall_exit_triggered": stats["stall_exit_triggered"],
             "readiness_probe_value": readiness_probe_target["value"],
             "strict_batch_size_current": stats["strict_batch_size_current"],
             "strict_check_calls": stats["strict_check_calls"],
@@ -1871,13 +1978,16 @@ def update_metrics_for_dates(dates, rerun=False):
       log_print(
           "Finished metrics scheduler mode={0}: processed={1} failed={2} "
           "candidate_jids={3} skipped_not_ready={4} readiness_error_chunks={5} "
-          "proxy_checked_chunks={6} proxy_rejected_jids={7} readiness_probe_target={8} "
-          "strict_batch_size_current={9} strict_check_calls={10} strict_check_timeouts={11} "
-          "strict_check_avg_latency_ms={12:.2f} completed_last_hour={13} elapsed_s={14:.2f} jobs_per_min={15:.2f} "
-          "worker_busy_ratio={16:.3f} phase_candidate_s={17:.2f} "
-          "phase_readiness_s={18:.2f} phase_compute_s={19:.2f} phase_prewarm_s={20:.2f} "
-          "prewarm_backlog_jobs={21} prewarm_lag_seconds_p95={22:.3f} "
-          "prewarm_success_ratio={23:.3f}{24}".format(
+          "proxy_checked_chunks={6} proxy_rejected_jids={7} proxy_not_ready_jids={8} "
+          "strict_not_ready_jids={9} strict_ready_jids={10} strict_cooldown_skips={11} "
+          "deferred_not_ready_queue_size={12} deferred_not_ready_due_now={13} "
+          "deferred_quarantined_jids={14} stall_exit_triggered={15} readiness_probe_target={16} "
+          "strict_batch_size_current={17} strict_check_calls={18} strict_check_timeouts={19} "
+          "strict_check_avg_latency_ms={20:.2f} completed_last_hour={21} elapsed_s={22:.2f} jobs_per_min={23:.2f} "
+          "worker_busy_ratio={24:.3f} phase_candidate_s={25:.2f} "
+          "phase_readiness_s={26:.2f} phase_compute_s={27:.2f} phase_prewarm_s={28:.2f} "
+          "prewarm_backlog_jobs={29} prewarm_lag_seconds_p95={30:.3f} "
+          "prewarm_success_ratio={31:.3f}{32}".format(
               scheduler_mode,
               snap["processed"],
               snap["failed"],
@@ -1886,6 +1996,14 @@ def update_metrics_for_dates(dates, rerun=False):
               snap["readiness_error_chunks"],
               snap["proxy_checked_chunks"],
               snap["proxy_rejected_jids"],
+              snap["proxy_not_ready_jids"],
+              snap["strict_not_ready_jids"],
+              snap["strict_ready_jids"],
+              snap["strict_cooldown_skips"],
+              snap["deferred_not_ready_queue_size"],
+              snap["deferred_not_ready_due_now"],
+              snap["deferred_quarantined_jids"],
+              snap["stall_exit_triggered"],
               snap["readiness_probe_value"],
               snap["strict_batch_size_current"],
               snap["strict_check_calls"],
