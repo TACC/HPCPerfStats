@@ -1,4 +1,12 @@
-"""Browser-driven end-to-end tests for web page flows."""
+"""Browser-driven end-to-end tests for web page flows.
+
+This module serves a stub SPA shell (a static ``index.html`` with the literal
+text ``spa-shell``) and asserts SPA route delivery, staff-control visibility,
+and a few stub API key flows. It does not load the real React bundle or render
+a populated job list, so the JobList pagination top/bottom and per-column sort
+default direction are covered by the SPA Vitest suite at
+``hpcperfstats/site/frontend/src/pages/JobList.test.jsx`` rather than here.
+"""
 
 import tempfile
 import threading

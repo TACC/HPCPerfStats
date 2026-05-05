@@ -89,7 +89,7 @@ describe("JobList", () => {
       expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
     });
     expect(await axeSeriousViolations(view.container)).toEqual([]);
-    expect(screen.getByRole("heading", { name: /distributions for this list/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /distributions for this job selection/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /jump to histograms/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /continue to job table/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Performance Data" })).toBeInTheDocument();
@@ -372,7 +372,7 @@ describe("JobList", () => {
     });
   });
 
-  it("renders pagination controls when multiple pages exist", async () => {
+  it("renders pagination controls at the top and the bottom when multiple pages exist", async () => {
     vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
       job_list: [
         {
@@ -407,9 +407,129 @@ describe("JobList", () => {
     renderJobList();
 
     await waitFor(() => {
-      expect(screen.getByText("First")).toBeInTheDocument();
+      expect(
+        screen.getByRole("navigation", { name: /Job list pagination \(top\)/i }),
+      ).toBeInTheDocument();
     });
-    expect(screen.getByText("Last")).toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: /Job list pagination \(bottom\)/i }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("First")).toHaveLength(2);
+    expect(screen.getAllByText("Last")).toHaveLength(2);
+  });
+
+  it("does not render any pagination control when only a single page exists", async () => {
+    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+      job_list: [],
+      nj: 0,
+      aggregates: {},
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    });
+    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+
+    renderJobList();
+
+    await waitFor(() => {
+      expect(screen.getByText("#Jobs = 0")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("navigation", { name: /Job list pagination/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  describe("default first-click sort direction", () => {
+    function jobRow(extra = {}) {
+      return {
+        jid: 1,
+        sample_count: 1234,
+        performance: {
+          label: "Summary available",
+          tone: "success",
+          aria_label: "Performance: Summary available",
+          sort_rank: 0,
+        },
+        username: "alice",
+        account: "acct",
+        start_time: "2024-01-01T00:00:00Z",
+        end_time: "2024-01-01T01:00:00Z",
+        runtime: 3600,
+        queue: "normal",
+        jobname: "job1",
+        state: "COMPLETED",
+        ncores: 32,
+        nhosts: 2,
+        node_hrs: 64,
+        ...extra,
+      };
+    }
+
+    function mockJobListWithOrderBy(orderBy) {
+      vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+        job_list: [jobRow()],
+        nj: 1,
+        aggregates: { total_node_hours: 64 },
+        qname: "Jobs",
+        order_by: orderBy,
+        pagination: { page: 1, num_pages: 1 },
+      });
+      vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+    }
+
+    function getOrderByFromHref(link) {
+      const href = link.getAttribute("href") || "";
+      const query = href.includes("?") ? href.split("?")[1] : "";
+      return new URLSearchParams(query).get("order_by");
+    }
+
+    it("first click on Sample Count sorts descending (largest first)", async () => {
+      mockJobListWithOrderBy("-end_time");
+      renderJobList(["/jobs"], { is_staff: true });
+
+      await waitFor(() => {
+        expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+      });
+
+      const link = screen.getByRole("link", { name: /Sample Count/i });
+      expect(getOrderByFromHref(link)).toBe("-sample_count");
+    });
+
+    it("first click on Performance Data sorts so Summary available is first (ascending)", async () => {
+      mockJobListWithOrderBy("-end_time");
+      renderJobList(["/jobs"], { is_staff: false });
+
+      await waitFor(() => {
+        expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+      });
+
+      const link = screen.getByRole("link", { name: /Performance Data/i });
+      expect(getOrderByFromHref(link)).toBe("performance_sort_rank");
+    });
+
+    it("toggles Performance Data direction when already sorted ascending", async () => {
+      mockJobListWithOrderBy("performance_sort_rank");
+      renderJobList(["/jobs?order_by=performance_sort_rank"], { is_staff: false });
+
+      await waitFor(() => {
+        expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+      });
+
+      const link = screen.getByRole("link", { name: /Performance Data/i });
+      expect(getOrderByFromHref(link)).toBe("-performance_sort_rank");
+    });
+
+    it("toggles Sample Count direction when already sorted descending", async () => {
+      mockJobListWithOrderBy("-sample_count");
+      renderJobList(["/jobs?order_by=-sample_count"], { is_staff: true });
+
+      await waitFor(() => {
+        expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+      });
+
+      const link = screen.getByRole("link", { name: /Sample Count/i });
+      expect(getOrderByFromHref(link)).toBe("sample_count");
+    });
   });
 
   it("hides histogram unavailable details and copy for non-staff users", async () => {

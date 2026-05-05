@@ -196,19 +196,47 @@ export default function JobList() {
   const paginationQuery = (pageNum) =>
     new URLSearchParams({ ...paginationParams, page: String(pageNum) }).toString();
 
+  const columns = [
+    { label: "Job ID", field: "jid", sortable: true },
+    ...(isStaff
+      ? [{ label: "Sample Count", field: "sample_count", sortable: true, defaultSortDirection: "desc" }]
+      : []),
+    { label: "Performance Data", field: "performance_sort_rank", sortable: true, defaultSortDirection: "asc" },
+    { label: "user", field: "username", sortable: true },
+    { label: "Account", field: "account", sortable: true },
+    { label: "start time", field: "start_time", sortable: true },
+    { label: "end time", field: "end_time", sortable: true },
+    { label: "run time (s)", field: "runtime", sortable: true },
+    { label: "queue", field: "queue", sortable: true },
+    { label: "status", field: "state", sortable: true },
+    { label: "cores", field: "ncores", sortable: true },
+    { label: "nodes", field: "nhosts", sortable: true },
+    { label: "node hrs", field: "node_hrs", sortable: true },
+    { label: "name", field: "jobname", sortable: false },
+  ];
+  const defaultDirByField = Object.fromEntries(
+    columns.map((c) => [c.field, c.defaultSortDirection || "desc"]),
+  );
+
   // Sort: all columns except name. order_by from URL/response: e.g. "-end_time" (desc) or "username" (asc).
   const orderBy = searchParams.get("order_by") || responseOrderBy;
   const sortColumn = orderBy.startsWith("-") ? orderBy.slice(1) : orderBy;
   const sortDirection = orderBy.startsWith("-") ? "desc" : "asc";
   const sortQuery = (orderByValue) =>
     new URLSearchParams({ ...paginationParams, order_by: orderByValue, page: "1" }).toString();
+  // First-click direction is the column's natural default. performance_sort_rank
+  // sorts ascending so rank 0 ("Summary available") appears first; numeric/time
+  // columns default to descending so largest/newest values come first.
   const sortLink = (field) => {
+    const defaultDir = defaultDirByField[field] || "desc";
     const next =
       sortColumn === field
         ? sortDirection === "desc"
           ? field
           : `-${field}`
-        : `-${field}`;
+        : defaultDir === "asc"
+          ? field
+          : `-${field}`;
     return `${location.pathname}?${sortQuery(next)}`;
   };
   const sortIndicator = (field) => {
@@ -237,23 +265,6 @@ export default function JobList() {
     }
   });
 
-  const columns = [
-    { label: "Job ID", field: "jid", sortable: true },
-    ...(isStaff ? [{ label: "Sample Count", field: "sample_count", sortable: true }] : []),
-    { label: "Performance Data", field: "performance_sort_rank", sortable: true },
-    { label: "user", field: "username", sortable: true },
-    { label: "Account", field: "account", sortable: true },
-    { label: "start time", field: "start_time", sortable: true },
-    { label: "end time", field: "end_time", sortable: true },
-    { label: "run time (s)", field: "runtime", sortable: true },
-    { label: "queue", field: "queue", sortable: true },
-    { label: "status", field: "state", sortable: true },
-    { label: "cores", field: "ncores", sortable: true },
-    { label: "nodes", field: "nhosts", sortable: true },
-    { label: "node hrs", field: "node_hrs", sortable: true },
-    { label: "name", field: "jobname", sortable: false },
-  ];
-
   const pageSummary = jobListPageHumanSummary(paramsFromRoute);
 
   function handleJumpToDistributions(event) {
@@ -278,6 +289,73 @@ export default function JobList() {
   // Jobs tab is active; Bokeh must not embed into a zero-size subtree (see BokehEmbed).
   const distributionPlotsVisible = isLgUp || listViewTab === "charts";
 
+  // Single source of truth for the pagination control; rendered above and below
+  // the job table so users can navigate from either end of long lists.
+  const renderPaginationNav = (positionId) => {
+    if (!(num_pages > 1)) return null;
+    return (
+      <nav
+        className="pagination-wrapper"
+        aria-label={`Job list pagination (${positionId})`}
+        data-testid={`job-list-pagination-${positionId}`}
+      >
+        {page > 1 ? (
+          <Link
+            to={`${location.pathname}?${paginationQuery(1)}`}
+            className="pagination-first"
+          >
+            First
+          </Link>
+        ) : (
+          <span className="pagination-first disabled" aria-hidden="true">
+            First
+          </span>
+        )}
+        <ResolvedReactPaginate
+          forcePage={page - 1}
+          pageCount={num_pages}
+          onPageChange={({ selected }) =>
+            navigate(`${location.pathname}?${paginationQuery(selected + 1)}`)
+          }
+          previousLabel="«"
+          nextLabel="»"
+          previousAriaLabel="Previous page"
+          nextAriaLabel="Next page"
+          breakLabel="..."
+          pageRangeDisplayed={5}
+          marginPagesDisplayed={1}
+          containerClassName="pagination"
+          pageClassName="page-item"
+          pageLinkClassName="page-link"
+          previousClassName="page-item"
+          previousLinkClassName="page-link"
+          nextClassName="page-item"
+          nextLinkClassName="page-link"
+          breakClassName="page-item"
+          breakLinkClassName="page-link"
+          activeClassName="active"
+          disabledClassName="disabled"
+          renderOnZeroPageCount={null}
+          ariaLabelBuilder={(pageNumber, selected) =>
+            selected ? `Current page, page ${pageNumber}` : `Go to page ${pageNumber}`
+          }
+        />
+        {page < num_pages ? (
+          <Link
+            to={`${location.pathname}?${paginationQuery(num_pages)}`}
+            className="pagination-last"
+          >
+            Last
+          </Link>
+        ) : (
+          <span className="pagination-last disabled" aria-hidden="true">
+            Last
+          </span>
+        )}
+      </nav>
+    );
+  };
+
   return (
     <>
       <h1 className="h2 mb-3">{qname}</h1>
@@ -301,10 +379,10 @@ export default function JobList() {
         role={isLgUp ? undefined : "tabpanel"}
         aria-labelledby={isLgUp ? undefined : tabChartsId}
         className="job-list-distributions mb-4"
-        aria-label="Distributions for this list"
+        aria-label="Distributions for this job selection"
         hidden={!isLgUp && listViewTab !== "charts"}
       >
-        <h2 className="h5 mb-2">Distributions for this list</h2>
+        <h2 className="h5 mb-2">Distributions for this job selection</h2>
         <div className="text-center">
           {metricNames.map((metric) => {
             const status = metricHistStatus[metric] || {
@@ -394,63 +472,7 @@ export default function JobList() {
         aria-labelledby={isLgUp ? undefined : tabJobsId}
         hidden={!isLgUp && listViewTab !== "jobs"}
       >
-      {num_pages > 1 && (
-        <nav className="pagination-wrapper" aria-label="Job list pagination">
-          {page > 1 ? (
-            <Link
-              to={`${location.pathname}?${paginationQuery(1)}`}
-              className="pagination-first"
-            >
-              First
-            </Link>
-          ) : (
-            <span className="pagination-first disabled" aria-hidden="true">
-              First
-            </span>
-          )}
-          <ResolvedReactPaginate
-            forcePage={page - 1}
-            pageCount={num_pages}
-            onPageChange={({ selected }) =>
-              navigate(`${location.pathname}?${paginationQuery(selected + 1)}`)
-            }
-            previousLabel="«"
-            nextLabel="»"
-            previousAriaLabel="Previous page"
-            nextAriaLabel="Next page"
-            breakLabel="..."
-            pageRangeDisplayed={5}
-            marginPagesDisplayed={1}
-            containerClassName="pagination"
-            pageClassName="page-item"
-            pageLinkClassName="page-link"
-            previousClassName="page-item"
-            previousLinkClassName="page-link"
-            nextClassName="page-item"
-            nextLinkClassName="page-link"
-            breakClassName="page-item"
-            breakLinkClassName="page-link"
-            activeClassName="active"
-            disabledClassName="disabled"
-            renderOnZeroPageCount={null}
-            ariaLabelBuilder={(pageNumber, selected) =>
-              selected ? `Current page, page ${pageNumber}` : `Go to page ${pageNumber}`
-            }
-          />
-          {page < num_pages ? (
-            <Link
-              to={`${location.pathname}?${paginationQuery(num_pages)}`}
-              className="pagination-last"
-            >
-              Last
-            </Link>
-          ) : (
-            <span className="pagination-last disabled" aria-hidden="true">
-              Last
-            </span>
-          )}
-        </nav>
-      )}
+      {renderPaginationNav("top")}
 
       <div className="table-responsive job-list-table-wrapper" id="job-list-table">
         <table className="table table-sm table-bordered">
@@ -532,6 +554,8 @@ export default function JobList() {
         </tbody>
         </table>
       </div>
+
+      {renderPaginationNav("bottom")}
 
       <p className="small mt-2 mb-0">
         <a href="#job-list-distributions" onClick={handleJumpToDistributions}>
