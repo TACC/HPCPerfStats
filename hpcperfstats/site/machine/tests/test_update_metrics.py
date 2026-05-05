@@ -721,6 +721,38 @@ def test_compute_jid_outcomes_batch_prewarm_submits_each_jid(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
+def test_compute_jid_outcomes_batch_falls_back_per_jid_after_batch_failure(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
+  calls = []
+
+  class _M:
+    def run(self, job_refs, pool=None):
+      del pool
+      calls.append([r.jid for r in job_refs])
+      if len(job_refs) > 1:
+        raise TypeError("unhashable type: 'list'")
+      if job_refs[0].jid == "bad":
+        raise TypeError("still bad")
+
+  job_refs = [
+      SimpleNamespace(jid="good1"),
+      SimpleNamespace(jid="bad"),
+      SimpleNamespace(jid="good2"),
+  ]
+  out = update_metrics._compute_jid_outcomes_batch(
+      job_refs,
+      _M(),
+      MagicMock(),
+      None,
+  )
+  # One batch attempt, then per-jid fallback attempts.
+  assert calls[0] == ["good1", "bad", "good2"]
+  assert calls[1:] == [["good1"], ["bad"], ["good2"]]
+  by_jid = {d["jid"]: d["ok"] for d in out}
+  assert by_jid == {"good1": True, "good2": True, "bad": False}
+
+
+@pytest.mark.machine_unit_mock
 def test_proxy_readiness_has_any_and_post_end_semantics():
   """Matches legacy Exists: any row, and strictly-after-end sample."""
   t0 = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)

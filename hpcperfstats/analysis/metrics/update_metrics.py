@@ -1575,13 +1575,46 @@ def _compute_jid_outcomes_batch(
         ),
         flush=True,
     )
-    return [{
-        "ok": False,
-        "jid": r.jid,
-        "metrics_s": 0.0,
-        "prewarm_s": 0.0,
-        "telemetry": _empty_jid_outcome_telemetry(),
-    } for r in job_refs]
+    # Do not fail the whole dequeue batch on one batch-level exception (e.g.
+    # malformed payload causing an exception during persistence). Retry per jid
+    # so unaffected jobs can still progress.
+    t_recover = time.monotonic()
+    succeeded = []
+    failed = []
+    for ref in job_refs:
+      try:
+        metrics_manager.run([ref], pool=shared_pool)
+        succeeded.append(ref)
+      except Exception as one_exc:
+        failed.append(ref)
+        log_print(
+            "metrics scheduler: per-jid Metrics.run failed jid={0} after batch failure: {1}".format(
+                ref.jid, one_exc
+            ),
+            flush=True,
+        )
+    total_elapsed = time.monotonic() - t_recover
+    n_total = max(1, len(job_refs))
+    per_metrics = total_elapsed / n_total
+    telem = _empty_jid_outcome_telemetry()
+    outcomes = []
+    for ref in sorted(succeeded, key=lambda r: r.jid):
+      outcomes.append({
+          "ok": True,
+          "jid": ref.jid,
+          "metrics_s": per_metrics,
+          "prewarm_s": 0.0,
+          "telemetry": dict(telem),
+      })
+    for ref in sorted(failed, key=lambda r: r.jid):
+      outcomes.append({
+          "ok": False,
+          "jid": ref.jid,
+          "metrics_s": per_metrics,
+          "prewarm_s": 0.0,
+          "telemetry": dict(telem),
+      })
+    return outcomes
   metrics_elapsed = time.monotonic() - t_batch
   n = max(1, len(job_refs))
   per_metrics = metrics_elapsed / n
