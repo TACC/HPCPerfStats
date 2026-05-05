@@ -43,9 +43,20 @@ COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
     /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
 
 # Default syslog-ng allowlist fragment (render overwrites at container start).
-RUN cp /home/hpcperfstats/services-conf/syslog-ng.d/10-hpcperfstats-generated.conf \
-    /var/lib/hpcperfstats-syslog/generated.conf \
-    && chmod 644 /var/lib/hpcperfstats-syslog/generated.conf
+# Keep this self-contained so image builds do not depend on optional files in
+# services-conf/ that may be absent in some checkouts.
+RUN /bin/bash -o pipefail -c "printf '%s\n' \
+    '# Generated fallback (build-time default). Runtime startup rewrites this file.' \
+    'source s_net {' \
+    '       tcp(ip(0.0.0.0) port(514) max-connections (100) log_iw_size(100000)) ;' \
+    '       udp(ip(0.0.0.0) port(514));' \
+    '};' \
+    '' \
+    'filter f_hps_syslog_allow_net {' \
+    '       netmask(0.0.0.0/0);' \
+    '};' \
+    > /var/lib/hpcperfstats-syslog/generated.conf \
+    && chmod 644 /var/lib/hpcperfstats-syslog/generated.conf"
 
 # Set python install variables.
 ENV PYTHONDONTWRITEBYTECODE=1 \
