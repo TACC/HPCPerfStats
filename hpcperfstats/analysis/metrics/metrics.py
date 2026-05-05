@@ -247,9 +247,20 @@ class _Schema:
     """Return _EventIndex for the given event name."""
     return _EventIndex(self._index[name])
 
+  def __contains__(self, name):
+    """Membership check for event columns (partial schemas must not KeyError complex metrics)."""
+    return str(name) in self._index
+
   def __iter__(self):
     """Iterate event names (required: without this, ``for x in schema`` uses integer indices and breaks __getitem__)."""
     return iter(self.events)
+
+
+def _schema_has_events(schema, *event_names):
+  """True when ``schema`` defines every listed event (handles incomplete ``mem``/fabric/net rows)."""
+  if schema is None:
+    return False
+  return all(name in schema for name in event_names)
 
 
 class _Host:
@@ -1558,7 +1569,8 @@ class avg_ethbw():
   def compute_metric(self, u):
     typename = "net"
     schema, _stats = u.get_type(typename)
-    if schema is None:
+    if schema is None or not _schema_has_events(
+        schema, "rx_bytes", "tx_bytes"):
       return None, typename, 'MB/s'
     rxi = schema["rx_bytes"].index
     txi = schema["tx_bytes"].index
@@ -1624,24 +1636,45 @@ class avg_packetsize():
     """
 
   def compute_metric(self, u):
-    typename = "ib_ext"
-    schema, _stats = u.get_type(typename)
-    if schema is not None:
+    ib_schema, ib_stats = u.get_type("ib_ext")
+    if ib_schema is not None and _schema_has_events(
+        ib_schema,
+        "port_xmit_pkts",
+        "port_rcv_pkts",
+        "port_xmit_data",
+        "port_rcv_data",
+    ):
+      typename = "ib_ext"
+      schema, _stats = ib_schema, ib_stats
       tx, rx = schema["port_xmit_pkts"].index, schema["port_rcv_pkts"].index
       tb, rb = schema["port_xmit_data"].index, schema["port_rcv_data"].index
       conv2mb = 1024 * 1024
     else:
-      typename = "opa"
-      schema, _stats = u.get_type(typename)
-      if schema is not None:
+      opa_schema, opa_stats = u.get_type("opa")
+      if opa_schema is not None and _schema_has_events(
+          opa_schema,
+          "PortXmitPkts",
+          "PortRcvPkts",
+          "PortXmitData",
+          "PortRcvData",
+      ):
+        typename = "opa"
+        schema, _stats = opa_schema, opa_stats
         tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
         tb, rb = schema["PortXmitData"].index, schema["PortRcvData"].index
         conv2mb = 125000
       else:
-        typename = "net"
-        schema, _stats = u.get_type(typename)
-        if schema is None:
+        net_schema, net_stats = u.get_type("net")
+        if net_schema is None or not _schema_has_events(
+            net_schema,
+            "tx_packets",
+            "rx_packets",
+            "tx_bytes",
+            "rx_bytes",
+        ):
           return None, "ib_ext", 'MB'
+        typename = "net"
+        schema, _stats = net_schema, net_stats
         tx, rx = schema["tx_packets"].index, schema["rx_packets"].index
         tb, rb = schema["tx_bytes"].index, schema["rx_bytes"].index
         conv2mb = 1024 * 1024
@@ -1670,22 +1703,28 @@ class max_fabricbw():
 
   def compute_metric(self, u):
     max_bw = 0
-    typename = "ib_ext"
-    schema, _stats = u.get_type(typename)
-    if schema is not None:
+    ib_schema, ib_stats = u.get_type("ib_ext")
+    if ib_schema is not None and _schema_has_events(
+        ib_schema, "port_xmit_data", "port_rcv_data"):
+      typename = "ib_ext"
+      schema, _stats = ib_schema, ib_stats
       tx, rx = schema["port_xmit_data"].index, schema["port_rcv_data"].index
       conv2mb = 1024 * 1024
     else:
-      typename = "opa"
-      schema, _stats = u.get_type(typename)
-      if schema is not None:
+      opa_schema, opa_stats = u.get_type("opa")
+      if opa_schema is not None and _schema_has_events(
+          opa_schema, "PortXmitData", "PortRcvData"):
+        typename = "opa"
+        schema, _stats = opa_schema, opa_stats
         tx, rx = schema["PortXmitData"].index, schema["PortRcvData"].index
         conv2mb = 125000
       else:
-        typename = "net"
-        schema, _stats = u.get_type(typename)
-        if schema is None:
+        net_schema, net_stats = u.get_type("net")
+        if net_schema is None or not _schema_has_events(
+            net_schema, "tx_bytes", "rx_bytes"):
           return None, "ib_ext", 'MB/s'
+        typename = "net"
+        schema, _stats = net_schema, net_stats
         tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
         conv2mb = 1024 * 1024
     cluster_peak = _peak_interval_rate_from_cluster_mean(
@@ -1711,7 +1750,8 @@ class max_lnetbw():
   def compute_metric(self, u):
     typename = "lnet"
     schema, _stats = u.get_type(typename)
-    if schema is None:
+    if schema is None or not _schema_has_events(
+        schema, "tx_bytes", "rx_bytes"):
       return None, typename, 'MB/s'
     max_bw = 0.0
     tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
@@ -1746,7 +1786,7 @@ class max_mds():
         "removexattr", "readdir", "create", "lookup", "link", "unlink",
         "symlink", "mkdir", "rmdir", "mknod", "rename",
     ]
-    if schema is not None:
+    if schema is not None and _schema_has_events(schema, *mds_cols):
       col_idx = [schema[c].index for c in mds_cols]
       cluster_peak = _peak_interval_rate_from_cluster_mean(
           u, typename, col_idx, 1)
@@ -1809,20 +1849,26 @@ class max_packetrate():
 
   def compute_metric(self, u):
     max_pr = 0
-    typename = "ib_ext"
-    schema, _stats = u.get_type(typename)
-    if schema is not None:
+    ib_schema, ib_stats = u.get_type("ib_ext")
+    if ib_schema is not None and _schema_has_events(
+        ib_schema, "port_xmit_pkts", "port_rcv_pkts"):
+      typename = "ib_ext"
+      schema, _stats = ib_schema, ib_stats
       tx, rx = schema["port_xmit_pkts"].index, schema["port_rcv_pkts"].index
     else:
-      typename = "opa"
-      schema, _stats = u.get_type(typename)
-      if schema is not None:
+      opa_schema, opa_stats = u.get_type("opa")
+      if opa_schema is not None and _schema_has_events(
+          opa_schema, "PortXmitPkts", "PortRcvPkts"):
+        typename = "opa"
+        schema, _stats = opa_schema, opa_stats
         tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
       else:
-        typename = "net"
-        schema, _stats = u.get_type(typename)
-        if schema is None:
+        net_schema, net_stats = u.get_type("net")
+        if net_schema is None or not _schema_has_events(
+            net_schema, "tx_packets", "rx_packets"):
           return None, "ib_ext", '#/s'
+        typename = "net"
+        schema, _stats = net_schema, net_stats
         tx, rx = schema["tx_packets"].index, schema["rx_packets"].index
 
     cluster_peak = _peak_interval_rate_from_cluster_mean(
@@ -1854,7 +1900,8 @@ class mem_hwm():
     max_memusage = 0.0
     typename = "mem"
     schema, _stats = u.get_type(typename)
-    if schema is None:
+    if schema is None or not _schema_has_events(
+        schema, "MemUsed", "Slab", "FilePages"):
       return None, typename, 'GiB'
     for hostname, stats in _stats.items():
       mem_arr = (stats[:, schema["MemUsed"].index] -
@@ -2201,7 +2248,7 @@ class node_imbalance():
   def compute_metric(self, u):
     typename = "cpu"
     schema, _stats = u.get_type(typename)
-    if schema is None:
+    if schema is None or "user" not in schema:
       return None, typename, '%'
     user_i = schema["user"].index
     max_usage = zeros(u.nt - 1)
@@ -2232,7 +2279,7 @@ class time_imbalance():
   def compute_metric(self, u):
     typename = "cpu"
     schema, _stats = u.get_type(typename)
-    if schema is None:
+    if schema is None or "user" not in schema:
       return None, typename, '%'
     tmid = (u.t[:-1] + u.t[1:]) / 2.0
     dt = diff(u.t)
