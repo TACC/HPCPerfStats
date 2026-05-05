@@ -258,6 +258,28 @@ def test_count_host_data_rows_for_window_cached_multi_element_list_recomputes(mo
   assert set_calls[0][2] == 120
 
 
+def test_count_host_data_rows_for_window_cached_handles_invalid_int_parse(monkeypatch):
+  """Invalid int conversion in row-count config/cache paths must not bubble."""
+  from datetime import timezone as dt_utc
+
+  st = datetime(2026, 2, 2, 12, 0, 0, tzinfo=dt_utc.utc)
+  et = datetime(2026, 2, 2, 13, 0, 0, tzinfo=dt_utc.utc)
+
+  def _bad_ttl():
+    raise ValueError("invalid literal for int() with base 10: 'c611-041.vista.tacc.utexas.edu'")
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
+      _bad_ttl,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table._count_host_data_rows_for_window",
+      lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not run")),
+  )
+  n = _count_host_data_rows_for_window_cached("j695088", st, et, ["h.x"])
+  assert n == 0
+
+
 def test_ensure_tz_none():
   """_ensure_tz returns None for None input."""
   assert _ensure_tz(None) is None
