@@ -1,0 +1,28 @@
+---
+alwaysApply: true
+---
+
+# Exhaustive Error-Path Analysis Before Fixes
+
+When investigating a specific error signature (traceback, assertion, log message, incorrect output), do not patch only the first matching location.
+
+## Required behavior
+
+- Search and review all plausible code paths that can produce the same failure signature before deciding on a fix.
+- Include alternate entrypoints and execution contexts where the same logic can run (API, background jobs, batch pipelines, cron/scheduler paths, and test fixtures/helpers).
+- Verify shared helpers, wrappers, and compatibility shims that may invoke the failing behavior indirectly.
+- Apply the smallest root-cause fix that covers all relevant paths, not a one-off symptom patch for one call site.
+- If only one path truly applies, document why other candidate paths were excluded.
+
+## Minimum analysis checklist
+
+1. Identify the exact failure signature (exception type, message, and key stack frame or assertion).
+2. Enumerate candidate producers/consumers of that signature across the repository.
+3. Confirm whether shared logic or duplicated branches exist and consolidate when required by dedup rules.
+4. Add or update regression tests that protect the corrected behavior across affected paths.
+
+## Overlap
+
+- Complements `bugfix-and-perf-change-playbook.mdc` (root-cause-first fixes).
+- Complements `logic-change-checklist.mdc` (failure-mode and invariant review).
+- Complements `every-error-regression-test.mdc` and `test-first-discipline.mdc` (required regression coverage).
