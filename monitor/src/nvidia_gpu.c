@@ -41,6 +41,13 @@
 #ifndef DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT
 #define DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT 1133
 #endif
+/* Newer DCGM tensor splits (IMMA / HMMA); vendored dcgm_fields.h supplies these when missing. */
+#ifndef DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE
+#define DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE 1013
+#endif
+#ifndef DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE
+#define DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE 1014
+#endif
 
 #define DBL_TO_LLU(x) ((unsigned long long) ((x) + 0.5))
 #define DBL_TO_LLU_PERCENT(x) ((unsigned long long) ((100.0 * (x)) + 0.5))
@@ -54,6 +61,8 @@ static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
   DCGM_FI_DEV_FB_TOTAL,
   DCGM_FI_DEV_FB_USED,
   DCGM_FI_PROF_PIPE_TENSOR_ACTIVE,
+  DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE,
+  DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE,
   DCGM_FI_PROF_PIPE_FP64_ACTIVE,
   DCGM_FI_PROF_PIPE_FP32_ACTIVE,
   DCGM_FI_PROF_PIPE_FP16_ACTIVE,
@@ -244,6 +253,12 @@ static int list_field_values(unsigned int gpu_id,
       case DCGM_FI_PROF_PIPE_TENSOR_ACTIVE:
         (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_active);
         break;
+      case DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE:
+        (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_imma_active);
+        break;
+      case DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE:
+        (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_hmma_active);
+        break;
       case DCGM_FI_DEV_CLOCK_THROTTLE_REASONS:
         data[gpu_id].clocks_event_reasons = values[i].value.i64;
         break;
@@ -338,6 +353,11 @@ static int nvidia_gpu_collect_dev(struct stats *stats,
   unsigned long long delta_mem_read_bytes = 0ULL;
   unsigned long long delta_mem_write_bytes = 0ULL;
 
+  /*
+   * gpu_flops_rate uses fp_mix from scalar/tensor pipes only. tensor_imma_active and
+   * tensor_hmma_active are reported for multiprecision visibility but omitted here: they
+   * overlap tensor_active (1004) / HMMA semantics on many stacks and would double-count.
+   */
   fp_mix = row->fp64_active + row->fp32_active + row->fp16_active + row->tensor_active;
   if (fp_mix < 0.0)
     fp_mix = 0.0;
@@ -376,6 +396,8 @@ static int nvidia_gpu_collect_dev(struct stats *stats,
   stats_set(stats, "sm_active", DBL_TO_LLU_PERCENT(row->sm_active));
   stats_set(stats, "sm_occupancy", DBL_TO_LLU_PERCENT(row->sm_occupancy));
   stats_set(stats, "tensor_active", DBL_TO_LLU_PERCENT(row->tensor_active));
+  stats_set(stats, "tensor_imma_active", DBL_TO_LLU_PERCENT(row->tensor_imma_active));
+  stats_set(stats, "tensor_hmma_active", DBL_TO_LLU_PERCENT(row->tensor_hmma_active));
   stats_set(stats, "clocks_event_reasons", I64_TO_LLU(row->clocks_event_reasons));
   stats_set(stats, "gpu_flops_rate", clamp_double_to_ull(flops_rate));
   stats_set(stats, "gpu_mem_bw_bytes_rate", clamp_double_to_ull(mem_bw_rate));

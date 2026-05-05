@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define NVIDIA_GPU_NFIELDS 19
+#define NVIDIA_GPU_NFIELDS 21
 
 #define KEYS \
   X(gpu_util, "", "GPU utilization in %"), \
@@ -20,6 +20,8 @@
   X(fp32_active, "", "Ratio of cycles fp32 pipes are active (in %)"), \
   X(fp16_active, "", "Ratio of cycles fp16 pipes are active (in %)"), \
   X(tensor_active, "", "Ratio of cycles any tensor pipe is active (in %)"), \
+  X(tensor_imma_active, "", "DCGM tensor IMMA pipe duty cycle (in %); int/low-precision tensor path — use as FP8-adjacent signal only, not dedicated FP8 FLOPs"), \
+  X(tensor_hmma_active, "", "DCGM tensor HMMA pipe duty cycle (in %); overlaps tensor_active (1004) on some stacks — excluded from gpu_flops fp_mix with tensor_imma_active"), \
   X(clocks_event_reasons, "", "Bitmask of GPU clock slowdown reasons"), \
   X(gpu_flops_rate, "U=FLOP/s", "Estimated GPU floating-point rate (FLOP/s)"), \
   X(gpu_mem_bw_bytes_rate, "U=B/s", "Estimated GPU memory bandwidth (bytes/s)"), \
@@ -41,6 +43,8 @@ typedef struct dcgm_data {
   double sysio_power_usage;
   double module_power_usage;
   double tensor_active;
+  double tensor_imma_active;
+  double tensor_hmma_active;
   double fp64_active;
   double fp32_active;
   double fp16_active;
