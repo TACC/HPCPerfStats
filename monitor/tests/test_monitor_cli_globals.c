@@ -27,6 +27,7 @@ char *dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
 char *jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
 double sample_freq = 300;
 double send_freq = 300;
+double buffer_hours = 6.0;
 int max_buffer_size = 0;
 int allow_ring_buffer_overwrite = 1;
 int file_mode_enabled = 0;
@@ -35,6 +36,11 @@ int send_success_count_max = 3;
 ev_timer sample_timer;
 ev_timer send_timer;
 ev_timer rotate_timer;
+
+void monitor_daemon_conf_set_buffer_max(int value)
+{
+	max_buffer_size = value;
+}
 
 void test_monitor_cli_reset_globals(void)
 {
@@ -68,6 +74,7 @@ void test_monitor_cli_reset_globals(void)
   jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
   sample_freq = 300;
   send_freq = 300;
+  buffer_hours = 6.0;
   max_buffer_size = 0;
   allow_ring_buffer_overwrite = 1;
   file_mode_enabled = 0;

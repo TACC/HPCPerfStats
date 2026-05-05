@@ -9,6 +9,7 @@
 #include "stats.h"
 #include "stats_file.h"
 #include "stats_file_format.h"
+#include "stats_text_format.h"
 #include "schema.h"
 #include "trace.h"
 #include "pscanf.h"
@@ -24,15 +25,14 @@
 
 #define sf_printf(sf, fmt, args...) fprintf(sf->sf_file, fmt, ##args)
 
-static void stats_file_fprint_schema_line_for_type(struct stats_file *sf, struct stats_type *type)
+static void stats_file_emit(void *opaque, const char *fmt, ...)
 {
-  sf_printf(sf, "%c%s", SF_SCHEMA_CHAR, type->st_name);
-  for (size_t j = 0; j < type->st_schema.sc_len; j++) {
-    struct schema_entry *se = type->st_schema.sc_ent[j];
-    sf_printf(sf, " %s", se->se_key);
-    stats_file_fprint_schema_entry_suffix(sf->sf_file, se);
-  }
-  sf_printf(sf, "\n");
+  struct stats_file *sf = opaque;
+  va_list ap;
+
+  va_start(ap, fmt);
+  vfprintf(sf->sf_file, fmt, ap);
+  va_end(ap);
 }
 
 static void stats_file_write_property_banner(struct stats_file *sf)
@@ -43,11 +43,11 @@ static void stats_file_write_property_banner(struct stats_file *sf)
   uname(&uts_buf);
   pscanf("/proc/uptime", "%llu", &uptime);
 
-  sf_printf(sf, "%c%s %s\n", SF_PROPERTY_CHAR, STATS_PROGRAM, STATS_VERSION);
-  sf_printf(sf, "%chostname %s\n", SF_PROPERTY_CHAR, uts_buf.nodename);
-  sf_printf(sf, "%cuname %s %s %s %s\n", SF_PROPERTY_CHAR, uts_buf.sysname,
-	    uts_buf.machine, uts_buf.release, uts_buf.version);
-  sf_printf(sf, "%cuptime %llu\n", SF_PROPERTY_CHAR, uptime);
+  stats_format_emit_property_banner(stats_file_emit, sf, SF_PROPERTY_CHAR,
+				    STATS_PROGRAM, STATS_VERSION,
+				    uts_buf.nodename, uts_buf.sysname,
+				    uts_buf.machine, uts_buf.release,
+				    uts_buf.version, uptime);
 }
 
 static int sf_rd_dispatch_header_line(struct stats_file *sf, char *first, char *line, int line_nr)
@@ -135,7 +135,7 @@ static int sf_wr_hdr(struct stats_file *sf)
       continue;
 
     TRACE("type %s, schema_len %zu\n", type->st_name, type->st_schema.sc_len);
-    stats_file_fprint_schema_line_for_type(sf, type);
+    stats_format_emit_schema_line(stats_file_emit, sf, SF_SCHEMA_CHAR, type);
   }
 
   fflush(sf->sf_file);
@@ -213,10 +213,7 @@ int stats_file_close(struct stats_file *sf)
     while ((dev = dict_for_each(&type->st_current_dict, &j)) != NULL) {
       struct stats *stats = key_to_stats(dev);
 
-      sf_printf(sf, "%s %s", type->st_name, stats->s_dev);
-      for (size_t k = 0; k < type->st_schema.sc_len; k++)
-	sf_printf(sf, " %llu", stats->s_val[k]);
-      sf_printf(sf, "\n");
+      stats_format_fprint_stats_row(sf->sf_file, type, stats);
     }
   }
 

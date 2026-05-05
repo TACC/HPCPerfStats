@@ -1,0 +1,183 @@
+#include <errno.h>
+#include <getopt.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "monitor_cli.h"
+#include "monitor_daemon.h"
+#include "monitor_log.h"
+#include "monitor_options.h"
+
+void monitor_options_print_daemon_usage(FILE *stream)
+{
+	fprintf(stream,
+		"Usage: %s [OPTION]... [TYPE]...\n"
+		"Collect statistics.\n"
+		"\n"
+		"Mandatory arguments to long options are mandatory for short options too.\n"
+		"  -h, --help         display this help and exit\n"
+		"  -c [CONFIGFILE] or --configfile [CONFIGFILE] or --config-file [CONFIGFILE] Configuration file to use.\n"
+		"  -s [SERVER]     or --server     [SERVER]     Server to send data.\n"
+		"  -q [QUEUE]      or --queue      [QUEUE]      Queue to route data to on RMQ server. \n"
+		"  -p [PORT]       or --port       [PORT]       Port to use (5672 is the default).\n"
+		"  -t [TMP_DIR]    or --tmp        [TMP_DIR]    Directory for dumpfiles (/tmp/hpcperfstats is the default).\n"
+		"  -b [BUFFER]     or --buffer     [BUFFER]     Max size (in # of stats) for temporary in-memory storage (4096 is the default).\n"
+		"  -f [FREQUENCY]  or --frequency  [FREQUENCY]  Deprecated alias for --sample-frequency.\n"
+		"     [SECONDS]    or --sample-frequency [SECONDS] Sampling cadence in seconds (default 300).\n"
+		"     [SECONDS]    or --send-frequency   [SECONDS] RabbitMQ send cadence in seconds (default 300).\n",
+		program_invocation_short_name);
+}
+
+void monitor_options_parse_daemon_argv(int argc, char *argv[], int *daemonmode_out)
+{
+	struct option opts[] = {
+	    {"help", no_argument, 0, 'h'},
+	    {"daemon", no_argument, 0, 'd'},
+	    {"server", required_argument, 0, 's'},
+	    {"queue", required_argument, 0, 'q'},
+	    {"port", required_argument, 0, 'p'},
+	    {"buffer", required_argument, 0, 'b'},
+	    {"conf_file", required_argument, 0, 'c'},
+	    {"configfile", required_argument, 0, 'c'},
+	    {"config-file", required_argument, 0, 'c'},
+	    {"tmp_dir", required_argument, 0, 't'},
+	    {"frequency", required_argument, 0, 'f'},
+	    {"sample-frequency", required_argument, 0, 'F'},
+	    {"send-frequency", required_argument, 0, 'S'},
+	    {NULL, 0, 0, 0},
+	};
+
+	*daemonmode_out = 0;
+
+	for (;;) {
+		int c = getopt_long(argc, argv, "hdc:s:q:f:F:S:p:b:t:", opts, NULL);
+
+		if (c == -1)
+			break;
+
+		switch (c) {
+		case 'd':
+			*daemonmode_out = 1;
+			break;
+		case 's':
+			free(server);
+			server = strdup(optarg);
+			break;
+		case 'f':
+			sample_freq = atof(optarg);
+			break;
+		case 'F':
+			sample_freq = atof(optarg);
+			break;
+		case 'S':
+			send_freq = atof(optarg);
+			break;
+		case 'c':
+			free(conf_file_name);
+			conf_file_name = strdup(optarg);
+			break;
+		case 'q':
+			monitor_cli_heap_dup_setting(&queue, monitor_cli_lit_queue,
+						     optarg);
+			break;
+		case 'p':
+			monitor_cli_heap_dup_setting(&port, monitor_cli_lit_port,
+						     optarg);
+			break;
+		case 't':
+			monitor_cli_heap_dup_setting(&dumpfile_dir,
+						     monitor_cli_lit_dumpfile_dir,
+						     optarg);
+			break;
+		case 'b':
+			max_buffer_size = atoi(optarg);
+			break;
+		case 'h':
+			monitor_options_print_daemon_usage(stderr);
+			exit(0);
+		case '?':
+			fprintf(stderr,
+				"Try `%s --help' for more information.\n",
+				program_invocation_short_name);
+			exit(1);
+		}
+	}
+}
+
+void monitor_options_apply_daemon_conf_kv(const char *key, char *value_line)
+{
+	if (strcmp(key, "server") == 0) {
+		free(server);
+		server = strdup(value_line);
+		monitor_log_info("%s: Setting server to %s based on file %s\n",
+				 app_name, server, conf_file_name);
+	}
+	if (strcmp(key, "queue") == 0) {
+		monitor_cli_heap_dup_setting(&queue, monitor_cli_lit_queue,
+					     value_line);
+		monitor_log_info("%s: Setting queue to %s based on file %s\n",
+				 app_name, queue, conf_file_name);
+	}
+	if (strcmp(key, "port") == 0) {
+		monitor_cli_heap_dup_setting(&port, monitor_cli_lit_port,
+					     value_line);
+		monitor_log_info(
+		    "%s: Setting server port to %s based on file %s\n",
+		    app_name, port, conf_file_name);
+	}
+	if (strcmp(key, "user") == 0) {
+		monitor_cli_heap_dup_setting(&rmq_user,
+					     monitor_cli_lit_rmq_user,
+					     value_line);
+		monitor_log_info("%s: Setting RMQ user to %s based on file %s\n",
+				 app_name, rmq_user, conf_file_name);
+	}
+	if (strcmp(key, "password") == 0) {
+		monitor_cli_heap_dup_setting(
+		    &rmq_password, monitor_cli_lit_rmq_password, value_line);
+		monitor_log_info("%s: Setting RMQ password from file %s\n",
+				 app_name, conf_file_name);
+	}
+	if (strcmp(key, "buffer") == 0) {
+		monitor_daemon_conf_set_buffer_max(atoi(value_line));
+		monitor_log_info(
+		    "%s: Setting buffer size to %d based on file %s\n",
+		    app_name, max_buffer_size, conf_file_name);
+	}
+	if (strcmp(key, "sample_freq") == 0) {
+		if (sscanf(value_line, "%lf", &sample_freq) == 1)
+			monitor_log_info("%s: Setting sample frequency to %f "
+					 "based on file %s\n",
+					 app_name, sample_freq,
+					 conf_file_name);
+	}
+	if (strcmp(key, "send_freq") == 0) {
+		if (sscanf(value_line, "%lf", &send_freq) == 1)
+			monitor_log_info("%s: Setting send frequency to %f "
+					 "based on file %s\n",
+					 app_name, send_freq,
+					 conf_file_name);
+	}
+	if (strcmp(key, "buffer_hours") == 0) {
+		if (sscanf(value_line, "%lf", &buffer_hours) == 1)
+			monitor_log_info("%s: Setting buffer hours to %f "
+					 "based on file %s\n",
+					 app_name, buffer_hours,
+					 conf_file_name);
+	}
+	if (strcmp(key, "freq") == 0) {
+		if (sscanf(value_line, "%lf", &sample_freq) == 1)
+			monitor_log_info("%s: Deprecated key `freq` mapped to "
+					 "sample_freq=%f in file %s\n",
+					 app_name, sample_freq,
+					 conf_file_name);
+	}
+	if (strcmp(key, "jobid_file") == 0) {
+		monitor_cli_heap_dup_setting(
+		    &jobid_file_path, monitor_cli_lit_jobid_file_path,
+		    value_line);
+		monitor_log_info("%s: Setting jobid file to %s based on "
+				 "file %s\n",
+				 app_name, jobid_file_path, conf_file_name);
+	}
+}

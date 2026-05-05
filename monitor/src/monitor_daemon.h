@@ -32,6 +32,7 @@ extern ev_timer send_timer;
 extern ev_timer rotate_timer;
 
 int read_conf_file(void);
+void monitor_daemon_conf_set_buffer_max(int value);
 void monitor_daemon_finalize_runtime_settings(void);
 void monitor_daemon_prime_file_mode_from_dumpdir(void);
 void monitor_daemon_replay_dumpfiles_if_present(struct sf_ring_buffer *w);

@@ -47,11 +47,33 @@ static void test_parse_sets_server(void)
 static void test_parse_double_config_replaces(void)
 {
   next_cli_test();
-  char *argv[] = { "prog", "-c", "/tmp/a", "-c", "/tmp/b" };
+  char *argv[] = { "prog", "-c", "/tmp/a", "-c", "/tmp/b", NULL };
   int dm;
   monitor_cli_parse_args(5, argv, &dm);
   assert(conf_file_name != NULL);
   assert(strcmp(conf_file_name, "/tmp/b") == 0);
+}
+
+static void test_parse_long_configfile_option(void)
+{
+  next_cli_test();
+  char *argv[] = { "prog", "--configfile", "/etc/hpcperfstats.conf", NULL };
+  int dm = 0;
+
+  monitor_cli_parse_args(3, argv, &dm);
+  assert(conf_file_name != NULL);
+  assert(strcmp(conf_file_name, "/etc/hpcperfstats.conf") == 0);
+}
+
+static void test_parse_long_config_hyphen_option(void)
+{
+  next_cli_test();
+  char *argv[] = { "prog", "--config-file", "/tmp/z.cfg", NULL };
+  int dm = 0;
+
+  monitor_cli_parse_args(3, argv, &dm);
+  assert(conf_file_name != NULL);
+  assert(strcmp(conf_file_name, "/tmp/z.cfg") == 0);
 }
 
 static void test_parse_daemon_flag(void)
@@ -103,6 +125,8 @@ int main(void)
   test_heap_dup_replaces_heap_value();
   test_parse_sets_server();
   test_parse_double_config_replaces();
+  test_parse_long_configfile_option();
+  test_parse_long_config_hyphen_option();
   test_parse_daemon_flag();
   test_help_invokes_usage_and_exits_zero();
   test_free_heap_resets_queue_to_default();

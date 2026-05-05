@@ -38,7 +38,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_metric_profiler
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_pscanf test_schema_parse test_stats_file_format test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_metric_profiler
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer test_monitor_timing
 endif
@@ -49,7 +49,7 @@ TESTS = $(check_PROGRAMS)
 check-local:
 	$(SHELL) '$(srcdir)/test_monitor_configure_help.sh.in'
 
-EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_path_open_fail_once.c test_monitor_timing.c
+EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c
 
 test_likwid_rapl_scale_SOURCES = test_likwid_rapl_scale.c
 
@@ -112,7 +112,12 @@ test_schema_parse_SOURCES = \
 
 test_stats_file_format_SOURCES = \
 	test_stats_file_format.c \
-	$(top_srcdir)/src/stats_file_format.c
+	$(top_srcdir)/src/stats_file_format.c \
+	$(top_srcdir)/src/stats_text_format.c
+
+test_stats_text_format_SOURCES = \
+	test_stats_text_format.c \
+	$(top_srcdir)/src/stats_text_format.c
 
 test_gpu_schema_contract_SOURCES = \
 	test_gpu_schema_contract.c
@@ -144,13 +149,16 @@ if RABBITMQ
 test_monitor_cli_SOURCES = \
 	test_monitor_cli.c \
 	test_monitor_cli_globals.c \
-	$(top_srcdir)/src/monitor_cli.c
+	$(top_srcdir)/src/monitor_cli.c \
+	$(top_srcdir)/src/monitor_options.c \
+	$(top_srcdir)/src/monitor_log.c
 
 test_ring_buffer_SOURCES = \
 	test_ring_buffer.c \
 	test_ring_buffer_stubs.c \
 	$(top_srcdir)/src/stats_buffer.c \
 	$(top_srcdir)/src/stats_buffer_data_append.c \
+	$(top_srcdir)/src/stats_text_format.c \
 	$(top_srcdir)/src/monitor_log.c \
 	$(top_srcdir)/src/path_open_fail_once.c
 test_ring_buffer_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
@@ -175,6 +183,7 @@ test_monitor_log_LDADD = $(LDADD)
 test_pscanf_LDADD = $(LDADD)
 test_schema_parse_LDADD = $(LDADD)
 test_stats_file_format_LDADD = $(LDADD)
+test_stats_text_format_LDADD = $(LDADD)
 test_gpu_schema_contract_LDADD = $(LDADD)
 test_dcgm_pkg_uniq_LDADD = $(LDADD)
 test_cpu_counter_metrics_schema_LDADD = $(LDADD)

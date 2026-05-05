@@ -94,7 +94,12 @@ hpcperfstatsd_SOURCES = \
 	metric_profiler.c \
 	roofline_hw_peak.h \
 	string1.h \
-	trace.h
+	trace.h \
+	stats_sink.h \
+	stats_runtime.h \
+	stats_runtime.c \
+	stats_text_format.h \
+	stats_text_format.c
 
 if METRIC_PROFILER_BACKEND_EBPF
 hpcperfstatsd_SOURCES += \
@@ -107,6 +112,8 @@ hpcperfstatsd_SOURCES += \
 	monitor.c \
 	monitor_cli.c \
 	monitor_cli.h \
+	monitor_options.h \
+	monitor_options.c \
 	monitor_daemon.c \
 	monitor_daemon.h \
 	monitor_timing.c \

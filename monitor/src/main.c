@@ -19,6 +19,7 @@
 #include "cpuid.h"
 #include "hwdetect.h"
 #include "metric_profiler.h"
+#include "stats_runtime.h"
 
 struct timeval tp;
 double current_time;
@@ -122,36 +123,15 @@ static void main_select_types_named_in_argv(char **arg_list, size_t arg_count)
 static void main_init_enable_and_collect_types(main_cmd_t cmd, int enable_all,
 					       int select_all)
 {
-  size_t i = 0;
-  struct stats_type *type;
+  stats_runtime_main_prepare_spec spec = {
+      .enable_all = enable_all,
+      .select_all = select_all,
+      .call_begin = (cmd == main_cmd_begin),
+  };
 
-  auto_disable_optional_stats_by_lspci();
   metric_profiler_cycle_begin();
-
-  while ((type = stats_type_for_each(&i)) != NULL) {
-    if (enable_all)
-      type->st_enabled = 1;
-
-    if (!type->st_enabled)
-      continue;
-
-    if (stats_type_init(type) < 0) {
-      type->st_enabled = 0;
-      continue;
-    }
-
-    if (select_all)
-      type->st_selected = 1;
-
-    if (cmd == main_cmd_begin && type->st_begin != NULL)
-      (*type->st_begin)(type);
-
-    if (type->st_enabled && type->st_selected) {
-      metric_profiler_collect_begin(type->st_name);
-      (*type->st_collect)(type);
-      metric_profiler_collect_end(type->st_name);
-    }
-  }
+  stats_runtime_main_prepare_types(&spec);
+  stats_runtime_collect_enabled_metrics(1);
   metric_profiler_cycle_end(stderr);
 }
 
@@ -168,10 +148,7 @@ static void main_apply_mark_or_jobid(struct stats_file *sf, main_cmd_t cmd,
 
 static void main_destroy_all_types(void)
 {
-  size_t i = 0;
-  struct stats_type *type;
-  while ((type = stats_type_for_each(&i)) != NULL)
-    stats_type_destroy(type);
+  stats_runtime_teardown();
 }
 
 static void usage(void)

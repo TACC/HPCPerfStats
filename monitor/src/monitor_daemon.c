@@ -30,6 +30,9 @@
 #include "hwdetect.h"
 #include "monitor_timing.h"
 #include "monitor_log.h"
+#include "monitor_options.h"
+#include "stats_sink.h"
+#include "stats_runtime.h"
 
 char *app_name = NULL;
 char *conf_file_name = NULL;
@@ -144,6 +147,12 @@ static void monitor_daemon_maybe_send_dumpfiles_after_sample_timer(struct sf_rin
   send_dumpfile_stats(w);
 }
 
+void monitor_daemon_conf_set_buffer_max(int value)
+{
+	max_buffer_size = value;
+	max_buffer_size_explicit = 1;
+}
+
 static void monitor_daemon_maybe_send_dumpfiles_after_jobid_cleared(struct sf_ring_buffer *w,
 								    const char *new_jobid)
 {
@@ -155,37 +164,6 @@ static void monitor_daemon_maybe_send_dumpfiles_after_jobid_cleared(struct sf_ri
     return;
   monitor_daemon_log_dumpfile_resend_line();
   send_dumpfile_stats(w);
-}
-
-static void monitor_reset_all_stats_types(void)
-{
-  size_t i = 0;
-  struct stats_type *type;
-
-  cpu_stats_invalidate_file_caches();
-  net_stats_invalidate_iface_cache();
-  while ((type = stats_type_for_each(&i)) != NULL)
-    stats_type_destroy(type);
-}
-
-static void monitor_init_enabled_stats_types(void)
-{
-  size_t i = 0;
-  struct stats_type *type;
-  while ((type = stats_type_for_each(&i)) != NULL)
-    type->st_enabled = 1;
-  auto_disable_optional_stats_by_lspci();
-  i = 0;
-  while ((type = stats_type_for_each(&i)) != NULL) {
-    if (!type->st_enabled)
-      continue;
-    if (stats_type_init(type) < 0) {
-      type->st_enabled = 0;
-      continue;
-    }
-    if (type->st_begin != NULL)
-      (*type->st_begin)(type);
-  }
 }
 
 static int get_dumpfile_number(void);
@@ -255,63 +233,7 @@ int read_conf_file(void)
     str_trim_inplace(line);
     if (key[0] == '\0')
       continue;
-    if (strcmp(key, "server") == 0) {
-      free(server);
-      server = strdup(line);
-      monitor_log_info( "%s: Setting server to %s based on file %s\n",
-              app_name, server, conf_file_name);
-    }
-    if (strcmp(key, "queue") == 0) {
-      monitor_cli_heap_dup_setting(&queue, monitor_cli_lit_queue, line);
-      monitor_log_info( "%s: Setting queue to %s based on file %s\n",
-              app_name, queue, conf_file_name);
-    }
-    if (strcmp(key, "port") == 0) {
-      monitor_cli_heap_dup_setting(&port, monitor_cli_lit_port, line);
-      monitor_log_info( "%s: Setting server port to %s based on file %s\n",
-              app_name, port, conf_file_name);
-    }
-    if (strcmp(key, "user") == 0) {
-      monitor_cli_heap_dup_setting(&rmq_user, monitor_cli_lit_rmq_user, line);
-      monitor_log_info( "%s: Setting RMQ user to %s based on file %s\n",
-              app_name, rmq_user, conf_file_name);
-    }
-    if (strcmp(key, "password") == 0) {
-      monitor_cli_heap_dup_setting(&rmq_password, monitor_cli_lit_rmq_password, line);
-      monitor_log_info( "%s: Setting RMQ password from file %s\n",
-              app_name, conf_file_name);
-    }
-    if (strcmp(key, "buffer") == 0) {
-      max_buffer_size = atoi(line);
-      max_buffer_size_explicit = 1;
-      monitor_log_info( "%s: Setting buffer size to %d based on file %s\n",
-              app_name, max_buffer_size, conf_file_name);
-    }
-    if (strcmp(key, "sample_freq") == 0) {
-      if (sscanf(line, "%lf", &sample_freq) == 1)
-        monitor_log_info( "%s: Setting sample frequency to %f based on file %s\n",
-                app_name, sample_freq, conf_file_name);
-    }
-    if (strcmp(key, "send_freq") == 0) {
-      if (sscanf(line, "%lf", &send_freq) == 1)
-        monitor_log_info( "%s: Setting send frequency to %f based on file %s\n",
-                app_name, send_freq, conf_file_name);
-    }
-    if (strcmp(key, "buffer_hours") == 0) {
-      if (sscanf(line, "%lf", &buffer_hours) == 1)
-        monitor_log_info( "%s: Setting buffer hours to %f based on file %s\n",
-                app_name, buffer_hours, conf_file_name);
-    }
-    if (strcmp(key, "freq") == 0) {
-      if (sscanf(line, "%lf", &sample_freq) == 1)
-        monitor_log_info( "%s: Deprecated key `freq` mapped to sample_freq=%f in file %s\n",
-                app_name, sample_freq, conf_file_name);
-    }
-    if (strcmp(key, "jobid_file") == 0) {
-      monitor_cli_heap_dup_setting(&jobid_file_path, monitor_cli_lit_jobid_file_path, line);
-      monitor_log_info( "%s: Setting jobid file to %s based on file %s\n",
-              app_name, jobid_file_path, conf_file_name);
-    }
+    monitor_options_apply_daemon_conf_kv(key, line);
   }
   if (line_buf)
     free(line_buf);
@@ -328,23 +250,22 @@ void monitor_daemon_prime_file_mode_from_dumpdir(void)
   }
 }
 
+static int monitor_daemon_sink_finalize_stats_buffer(void *opaque)
+{
+	struct stats_buffer *sf = opaque;
+
+	return stats_buffer_collect(sf);
+}
+
+static const struct stats_sink_ops monitor_daemon_stats_collect_sink = {
+    .finalize = monitor_daemon_sink_finalize_stats_buffer,
+};
+
 static int send_stats_buffer(struct stats_buffer *sf)
 {
-  size_t i = 0;
-  struct stats_type *type;
-  int rc = 0;
-  metric_profiler_cycle_begin();
-  while ((type = stats_type_for_each(&i)) != NULL) {
-    if (type->st_enabled) {
-      metric_profiler_collect_begin(type->st_name);
-      (*type->st_collect)(type);
-      metric_profiler_collect_end(type->st_name);
-    }
-  }
-  if (stats_buffer_collect(sf) < 0)
-    rc = -1;
-  metric_profiler_cycle_end(monitor_log_get_stream());
-  return rc;
+	return stats_runtime_collect_cycle(monitor_log_get_stream(), sf,
+					   &monitor_daemon_stats_collect_sink,
+					   0);
 }
 
 static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_hdr, const char *mark_line)
@@ -354,8 +275,8 @@ static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_h
   if (sf == NULL)
     return;
 
-  monitor_reset_all_stats_types();
-  monitor_init_enabled_stats_types();
+  stats_runtime_teardown();
+  stats_runtime_daemon_prepare_types();
   if (write_hdr)
     stats_wr_hdr(sf);
   if (mark_line != NULL)

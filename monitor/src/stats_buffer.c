@@ -21,7 +21,7 @@
 #include "path_open_fail_once.h"
 #include "stats_buffer.h"
 #include "stats_buffer_data_append.h"
-#include "schema.h"
+#include "stats_text_format.h"
 #include "trace.h"
 #include "monitor_log.h"
 #include "pscanf.h"
@@ -241,27 +241,17 @@ static void stats_buffer_append_fmt(struct stats_buffer *sf, const char *fmt, ..
   va_end(ap);
 }
 
-static void stats_buffer_append_schema_entry_suffix(struct stats_buffer *sf, struct schema_entry *se)
+static void stats_buf_emit(void *opaque, const char *fmt, ...)
 {
-  if (se->se_type == SE_CONTROL)
-    stats_buffer_append_fmt(sf, ",C");
-  if (se->se_type == SE_EVENT)
-    stats_buffer_append_fmt(sf, ",E");
-  if (se->se_unit != NULL)
-    stats_buffer_append_fmt(sf, ",U=%s", se->se_unit);
-  if (se->se_width != 0)
-    stats_buffer_append_fmt(sf, ",W=%u", se->se_width);
-}
+  struct stats_buffer *sf = opaque;
+  va_list ap;
 
-static void stats_buffer_append_schema_line_for_type(struct stats_buffer *sf, struct stats_type *type)
-{
-  stats_buffer_append_fmt(sf, "%c%s", SF_SCHEMA_CHAR, type->st_name);
-  for (size_t j = 0; j < type->st_schema.sc_len; j++) {
-    struct schema_entry *se = type->st_schema.sc_ent[j];
-    stats_buffer_append_fmt(sf, " %s", se->se_key);
-    stats_buffer_append_schema_entry_suffix(sf, se);
+  va_start(ap, fmt);
+  if (stats_buffer_data_append_vfmt(&sf->sf_data, &sf->sf_data_len, &sf->sf_data_cap, fmt,
+				    ap) < 0) {
+    /* Best-effort on OOM (buffer unchanged). */
   }
-  stats_buffer_append_fmt(sf, "\n");
+  va_end(ap);
 }
 
 static void close_rmq_connection(amqp_connection_state_t conn, int channel_opened)
@@ -658,20 +648,22 @@ int stats_wr_hdr(struct stats_buffer *sf)
   stats_buffer_ensure_uts_cached();
   pscanf("/proc/uptime", "%llu", &uptime);
 
-  stats_buffer_append_fmt(sf, "%c%s %s\n", SF_PROPERTY_CHAR, STATS_PROGRAM, STATS_VERSION);
-  stats_buffer_append_fmt(sf, "%chostname %s\n", SF_PROPERTY_CHAR, cached_uts.nodename);
-  stats_buffer_append_fmt(sf, "%cuname %s %s %s %s\n", SF_PROPERTY_CHAR, cached_uts.sysname,
-			  cached_uts.machine, cached_uts.release, cached_uts.version);
-  stats_buffer_append_fmt(sf, "%cuptime %llu\n", SF_PROPERTY_CHAR, uptime);
-  
-  size_t i = 0;
-  struct stats_type *type;
-  while ((type = stats_type_for_each(&i)) != NULL) {
-    if (!type->st_enabled)
-      continue;
+  stats_format_emit_property_banner(stats_buf_emit, sf, SF_PROPERTY_CHAR, STATS_PROGRAM,
+				    STATS_VERSION, cached_uts.nodename, cached_uts.sysname,
+				    cached_uts.machine, cached_uts.release,
+				    cached_uts.version, uptime);
 
-    TRACE("type %s, schema_len %zu\n", type->st_name, type->st_schema.sc_len);
-    stats_buffer_append_schema_line_for_type(sf, type);
+  {
+    size_t i = 0;
+    struct stats_type *type;
+
+    while ((type = stats_type_for_each(&i)) != NULL) {
+      if (!type->st_enabled)
+	continue;
+
+      TRACE("type %s, schema_len %zu\n", type->st_name, type->st_schema.sc_len);
+      stats_format_emit_schema_line(stats_buf_emit, sf, SF_SCHEMA_CHAR, type);
+    }
   }
 
   return 0;
@@ -746,60 +738,45 @@ static void stats_buffer_append_mark_lines(struct stats_buffer *sf)
 {
   if (sf->sf_mark == NULL)
     return;
-  const char *str = sf->sf_mark;
-  while (*str != 0) {
-    const char *eol = strchrnul(str, '\n');
-    stats_buffer_append_fmt(sf, "%c%*s\n", SF_MARK_CHAR, (int)(eol - str), str);
-    str = eol;
-    if (*str == '\n')
-      str++;
-  }
+
+  stats_format_emit_mark_multiline(stats_buf_emit, sf, SF_MARK_CHAR,
+				   sf->sf_mark);
 }
 
 static int stats_buffer_append_type_row(struct stats_buffer *sf, struct stats_type *type, struct stats *stats)
 {
-  size_t k;
+  int attempt;
 
-  for (int attempt = 0; attempt < 8; attempt++) {
+  for (attempt = 0; attempt < 8; attempt++) {
     size_t need = strlen(type->st_name) + 1 + strlen(stats->s_dev) + 4;
+    size_t k;
+
     for (k = 0; k < type->st_schema.sc_len; k++)
       need += 24;
     if (need < 256)
       need = 256;
     if (need > row_line_cap) {
       char *nr = realloc(row_line_buf, need);
+
       if (nr == NULL)
 	return -1;
       row_line_buf = nr;
       row_line_cap = need;
     }
 
-    char *p = row_line_buf;
-    char *end = row_line_buf + row_line_cap;
-    int n = snprintf(p, (size_t)(end - p), "%s %s", type->st_name, stats->s_dev);
-    if (n < 0)
-      return -1;
-    if ((size_t)n >= (size_t)(end - p))
-      continue;
-    p += n;
-    int ok = 1;
-    for (k = 0; k < type->st_schema.sc_len; k++) {
-      n = snprintf(p, (size_t)(end - p), " %llu", stats->s_val[k]);
-      if (n < 0)
+    {
+      int total = stats_format_snprintf_stats_row(row_line_buf, row_line_cap,
+						  type, stats);
+
+      if (total < 0)
 	return -1;
-      if ((size_t)n >= (size_t)(end - p)) {
-	ok = 0;
-	break;
-      }
-      p += n;
+      if ((size_t)total >= row_line_cap)
+	continue;
+      row_line_buf[total] = '\n';
+      return stats_buffer_data_append_bytes(&sf->sf_data, &sf->sf_data_len,
+					    &sf->sf_data_cap, row_line_buf,
+					    (size_t)(total + 1));
     }
-    if (!ok)
-      continue;
-    if ((size_t)(end - p) < 2)
-      continue;
-    *p++ = '\n';
-    return stats_buffer_data_append_bytes(&sf->sf_data, &sf->sf_data_len, &sf->sf_data_cap, row_line_buf,
-					  (size_t)(p - row_line_buf));
   }
   return -1;
 }
