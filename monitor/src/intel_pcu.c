@@ -50,7 +50,7 @@
 #include <fcntl.h>
 #include "stats.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
+#include "msr_io.h"
 #include "pscanf.h"
 #include "cpuid.h"
 
@@ -229,22 +229,18 @@
 
 //! Configure and start counters for PCU
 
-static processor_t p = 0;
 static int intel_pcu_begin_socket(char *cpu, uint64_t *events)
 {
   int rc = -1;
-  char msr_path[80];
   int msr_fd = -1;
   uint64_t ctl;
+  /* Use the global `processor` (T16 cleans up the unassigned local `p` that
+   * historically guarded these branches and rendered them dead). */
+  processor_t p = processor;
 
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
-  if (path_open_is_skipped(msr_path))
+  msr_fd = msr_open_cpu(cpu, O_RDWR);
+  if (msr_fd < 0)
     goto out;
-  msr_fd = open(msr_path, O_RDWR);
-  if (msr_fd < 0) {
-    path_open_record_failure_once(msr_path);
-    goto out;
-  }
 
   ctl = 0x00000ULL; // unfreeze counter
 
@@ -253,12 +249,12 @@ static int intel_pcu_begin_socket(char *cpu, uint64_t *events)
   if (p == SANDYBRIDGE || p == IVYBRIDGE)
     for (i = 0; i < 4; i++) {
       TRACE("MSR %08X, event %016llX\n", V1_CTL0 + i, (unsigned long long) events[i]);
-      if (pwrite(msr_fd, &events[i], sizeof(events[i]), V1_CTL0 + i) < 0) { 
-	ERROR("cannot write event %016llX to MSR %08X through `%s': %m\n", 
-	      (unsigned long long) events[i], (unsigned) V1_CTL0 + i, msr_path);
+      if (msr_write_u64(msr_fd, V1_CTL0 + i, events[i]) < 0) {
+	ERROR("cannot write event %016llX to MSR %08X for cpu `%s': %m\n",
+	      (unsigned long long) events[i], (unsigned) V1_CTL0 + i, cpu);
 	goto out;
       }
-      if (pwrite(msr_fd, &ctl, sizeof(ctl), V1_CTL) < 0) {
+      if (msr_write_u64(msr_fd, V1_CTL, ctl) < 0) {
 	ERROR("cannot unfreeze PCU counters: %m\n");
 	goto out;
       }
@@ -267,17 +263,17 @@ static int intel_pcu_begin_socket(char *cpu, uint64_t *events)
   if (p == HASWELL || p == BROADWELL)
     for (i = 0; i < 4; i++) {
       TRACE("MSR %08X, event %016llX\n", V3_CTL0 + i, (unsigned long long) events[i]);
-      if (pwrite(msr_fd, &events[i], sizeof(events[i]), V3_CTL0 + i) < 0) { 
-	ERROR("cannot write event %016llX to MSR %08X through `%s': %m\n", 
-	      (unsigned long long) events[i], (unsigned) V3_CTL0 + i, msr_path);
+      if (msr_write_u64(msr_fd, V3_CTL0 + i, events[i]) < 0) {
+	ERROR("cannot write event %016llX to MSR %08X for cpu `%s': %m\n",
+	      (unsigned long long) events[i], (unsigned) V3_CTL0 + i, cpu);
 	goto out;
       }
-      if (pwrite(msr_fd, &ctl, sizeof(ctl), V3_CTL) < 0) {
+      if (msr_write_u64(msr_fd, V3_CTL, ctl) < 0) {
 	ERROR("cannot unfreeze PCU counters: %m\n");
 	goto out;
       }
     }
-  
+
   rc = 0;
 
  out:
@@ -301,21 +297,20 @@ static int intel_pcu_begin(struct stats_type *type)
 
   int i;
 
-  if (processor == SANDYBRIDGE || processor == IVYBRIDGE || processor == HASWELL || processor == BROADWELL) 
+  if (processor == SANDYBRIDGE || processor == IVYBRIDGE || processor == HASWELL || processor == BROADWELL)
     for (i = 0; i < nr_cpus; i++) {
       char cpu[80];
       int pkg_id = -1;
       int core_id = -1;
       int smt_id = -1;
       int nr_cores = 0;
-      snprintf(cpu, sizeof(cpu), "%d", i);      
+      snprintf(cpu, sizeof(cpu), "%d", i);
       cpuid_read_cpu_topology(cpu, &pkg_id, &core_id, &smt_id, &nr_cores);
       if (core_id == 0 && smt_id == 0)
 	if (intel_pcu_begin_socket(cpu, pcu_events) == 0)
 	  nr++;
     }
-  
- out:
+
   if (nr == 0)
     type->st_enabled = 0;
 
@@ -326,8 +321,8 @@ static int intel_pcu_begin(struct stats_type *type)
 static void intel_pcu_collect_socket(struct stats_type *type, char *cpu, int pkg_id)
 {
   struct stats *stats = NULL;
-  char msr_path[80];
   int msr_fd = -1;
+  processor_t p = processor;
 
   char pkg[80];
   snprintf(pkg, sizeof(pkg), "%d", pkg_id);
@@ -338,21 +333,16 @@ static void intel_pcu_collect_socket(struct stats_type *type, char *cpu, int pkg
   if (stats == NULL)
     goto out;
 
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
-  if (path_open_is_skipped(msr_path))
+  msr_fd = msr_open_cpu(cpu, O_RDONLY);
+  if (msr_fd < 0)
     goto out;
-  msr_fd = open(msr_path, O_RDONLY);
-  if (msr_fd < 0) {
-    path_open_record_failure_once(msr_path);
-    goto out;
-  }
 
   if (p == SANDYBRIDGE || p == IVYBRIDGE) {
 #define X(k,r...) \
   ({ \
     uint64_t val = 0; \
-    if (pread(msr_fd, &val, sizeof(val), k) < 0) \
-      ERROR("cannot read `%s' (%08X) through `%s': %m\n", #k, k, msr_path); \
+    if (msr_read_u64(msr_fd, k, &val) < 0) \
+      ERROR("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, k, cpu); \
     else \
       stats_set(stats, #k, val); \
   })
@@ -364,8 +354,8 @@ static void intel_pcu_collect_socket(struct stats_type *type, char *cpu, int pkg
 #define X(k,r...) \
   ({ \
     uint64_t val = 0; \
-    if (pread(msr_fd, &val, sizeof(val), k) < 0) \
-      ERROR("cannot read `%s' (%08X) through `%s': %m\n", #k, k, msr_path); \
+    if (msr_read_u64(msr_fd, k, &val) < 0) \
+      ERROR("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, k, cpu); \
     else \
       stats_set(stats, #k, val); \
   })

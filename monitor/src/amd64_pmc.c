@@ -4,14 +4,11 @@
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
-#include <dirent.h>
 #include <errno.h>
-#include <malloc.h>
-#include <ctype.h>
 #include <fcntl.h>
 #include "stats.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
+#include "msr_io.h"
 #include "cpuid.h"
 #include "amd64_pmc.h"
 
@@ -43,7 +40,6 @@ static  uint64_t amd19h_events[] = {
 static int amd64_pmc_begin_cpu(char *cpu)
 {
   int rc = -1;
-  char msr_path[80];
   int msr_fd = -1;
   uint64_t *events;
 
@@ -51,7 +47,7 @@ static int amd64_pmc_begin_cpu(char *cpu)
   switch(processor) {
 
   case AMD_10H:
-    events = amd10h_events; 
+    events = amd10h_events;
     break;
   case AMD_17H:
     events = amd17h_events;
@@ -64,24 +60,19 @@ static int amd64_pmc_begin_cpu(char *cpu)
     goto out;
   }
 
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
-  if (path_open_is_skipped(msr_path))
+  msr_fd = msr_open_cpu(cpu, O_RDWR);
+  if (msr_fd < 0)
     goto out;
-  msr_fd = open(msr_path, O_RDWR);
-  if (msr_fd < 0) {
-    path_open_record_failure_once(msr_path);
-    goto out;
-  }
 
   int i;
   for (i = 0; i < n_pmcs; i++) {
     TRACE("MSR %08X, event %016llX\n", MSR_PERF_CTL0 + i*2, (unsigned long long) events[i]);
 
-    if (pwrite(msr_fd, &events[i], sizeof(events[i]), MSR_PERF_CTL0 + i*2) < 0) {
-      ERROR("cannot write event %016llX to MSR %08X through `%s': %m\n",
+    if (msr_write_u64(msr_fd, MSR_PERF_CTL0 + i*2, events[i]) < 0) {
+      ERROR("cannot write event %016llX to MSR %08X for cpu `%s': %m\n",
             (unsigned long long) events[i],
             (unsigned) MSR_PERF_CTL0 + i*2,
-            msr_path);
+            cpu);
       goto out;
     }
   }
@@ -89,31 +80,18 @@ static int amd64_pmc_begin_cpu(char *cpu)
   /* HWCR must be read-modify-write: a write of only (1<<30) clears other bits
    * and is rejected on Zen (EIO / wrmsr "cannot set MSR"). */
   uint64_t hwcr = 0;
-  if (pread(msr_fd, &hwcr, sizeof(hwcr), MSR_HW_CONFIG) != (ssize_t) sizeof(hwcr)) {
-    ERROR("cannot read HWCR before enabling instr retired ctr (MSR %08X) through `%s': %m\n",
-          (unsigned) MSR_HW_CONFIG, msr_path);
+  if (msr_read_u64(msr_fd, MSR_HW_CONFIG, &hwcr) < 0) {
+    ERROR("cannot read HWCR before enabling instr retired ctr (MSR %08X) for cpu `%s': %m\n",
+          (unsigned) MSR_HW_CONFIG, cpu);
     goto out;
   }
   hwcr |= (1ULL << 30);
-  if (pwrite(msr_fd, &hwcr, sizeof(hwcr), MSR_HW_CONFIG) < 0) {
-    ERROR("cannot enable instr retired ctr at MSR %08X through `%s': %m\n",
-          (unsigned) MSR_HW_CONFIG, msr_path);
+  if (msr_write_u64(msr_fd, MSR_HW_CONFIG, hwcr) < 0) {
+    ERROR("cannot enable instr retired ctr at MSR %08X for cpu `%s': %m\n",
+          (unsigned) MSR_HW_CONFIG, cpu);
     goto out;
   }
-  /*
-  uint64_t zero = 0x00;
-  for (i = 0; i < n_pmcs; i++) {
-    TRACE("MSR %08X, event %016llX\n", MSR_PERF_CTR0 + i*2, zero);
 
-    if (pwrite(msr_fd, &zero, sizeof(zero), MSR_PERF_CTR0 + i*2) < 0) {
-      ERROR("cannot write %016llX to MSR %08X through `%s': %m\n",
-            zero,
-            (unsigned) MSR_PERF_CTR0 + i*2,
-            msr_path);
-      goto out;
-    }
-  }
-  */
   rc = 0;
 
  out:
@@ -125,7 +103,6 @@ static int amd64_pmc_begin_cpu(char *cpu)
 
 static void amd64_pmc_collect_cpu(struct stats_type *type, char *cpu)
 {
-  char msr_path[80];
   int msr_fd = -1;
   struct stats *stats = NULL;
 
@@ -133,21 +110,15 @@ static void amd64_pmc_collect_cpu(struct stats_type *type, char *cpu)
   if (stats == NULL)
     goto out;
 
-  /* Read MSRs. */
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
-  if (path_open_is_skipped(msr_path))
+  msr_fd = msr_open_cpu(cpu, O_RDONLY);
+  if (msr_fd < 0)
     goto out;
-  msr_fd = open(msr_path, O_RDONLY);
-  if (msr_fd < 0) {
-    path_open_record_failure_once(msr_path);
-    goto out;
-  }
 
 #define X(k,r...)							\
   ({									\
     uint64_t val = 0;							\
-    if (pread(msr_fd, &val, sizeof(val), MSR_PERF_##k) < 0)		\
-      TRACE("cannot read `%s' (%08X) through `%s': %m\n", #k, MSR_PERF_##k, msr_path); \
+    if (msr_read_u64(msr_fd, MSR_PERF_##k, &val) < 0)			\
+      TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, MSR_PERF_##k, cpu); \
     else								\
       stats_set(stats, #k, val);					\
   })

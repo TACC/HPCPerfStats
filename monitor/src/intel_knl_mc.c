@@ -13,7 +13,7 @@
 #include "cpuid.h"
 #include "stats.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
+#include "intel_mmconfig.h"
 
 #define pci_cfg_address(bus, dev, func) (bus << 20) | (dev << 15) | (func << 12)
 #define reg(address, off) (address | off)/4
@@ -193,89 +193,58 @@ uint32_t mc_dclk_events[] = { CAS_READS, CAS_WRITES, DCLK_CYCLES };
 int nr_mc_dclk_events = 3;
 uint32_t mc_dclk_dev[] = {0x08, 0x09};
 
+static const uint64_t knl_mc_mmconfig_base = 0xc0000000;
+static const uint64_t knl_mc_mmconfig_size = 0x10000000;
+
 static int intel_knl_mc_begin(struct stats_type *type)
 {
   int nr = 0;
-  int n_pmcs = 0;
-  int fd = -1;
+  struct intel_mmconfig mm = { -1, MAP_FAILED, 0, 0 };
 
   if (processor != KNL) goto out;
-  const char *path = "/dev/mem";
-  uint64_t mmconfig_base = 0xc0000000;
-  uint64_t mmconfig_size = 0x10000000;
-  uint32_t *mmconfig_ptr;
+  if (intel_mmconfig_open(&mm, knl_mc_mmconfig_base, knl_mc_mmconfig_size) < 0)
+    goto out;
 
-  if (path_open_is_skipped(path))
-    goto out;
-  fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
-  if (fd < 0) {
-    path_open_record_failure_once(path);
-    goto out;
-  }
-  mmconfig_ptr = mmap(NULL, mmconfig_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mmconfig_base);
-  if (mmconfig_ptr == MAP_FAILED) {
-    ERROR("cannot mmap `%s': %m\n", path);
-    goto out;
-  }
-
-  int i;  
+  int i;
   for (i = 0; i < nr_mc_devs; i++) {
-    if (intel_knl_mc_uclk_begin_dev(mc_uclk_dev[i], mmconfig_ptr, mc_uclk_events, nr_mc_uclk_events) == 0)
-      nr++;      
-    if (intel_knl_mc_dclk_begin_dev(mc_dclk_dev[i], 0x02, mmconfig_ptr, mc_dclk_events, nr_mc_dclk_events) == 0)
-      nr++;      
-    if (intel_knl_mc_dclk_begin_dev(mc_dclk_dev[i], 0x03, mmconfig_ptr, mc_dclk_events, nr_mc_dclk_events) == 0)
-      nr++;      
-    if (intel_knl_mc_dclk_begin_dev(mc_dclk_dev[i], 0x04, mmconfig_ptr, mc_dclk_events, nr_mc_dclk_events) == 0)
+    if (intel_knl_mc_uclk_begin_dev(mc_uclk_dev[i], mm.map, mc_uclk_events, nr_mc_uclk_events) == 0)
+      nr++;
+    if (intel_knl_mc_dclk_begin_dev(mc_dclk_dev[i], 0x02, mm.map, mc_dclk_events, nr_mc_dclk_events) == 0)
+      nr++;
+    if (intel_knl_mc_dclk_begin_dev(mc_dclk_dev[i], 0x03, mm.map, mc_dclk_events, nr_mc_dclk_events) == 0)
+      nr++;
+    if (intel_knl_mc_dclk_begin_dev(mc_dclk_dev[i], 0x04, mm.map, mc_dclk_events, nr_mc_dclk_events) == 0)
       nr++;
   }
-  munmap(mmconfig_ptr, mmconfig_size);
 
  out:
-  if (fd >= 0)
-    close(fd);
+  intel_mmconfig_close(&mm);
   if (nr == 0)
     type->st_enabled = 0;
-  return nr > 0 ? 0 : -1;  
+  return nr > 0 ? 0 : -1;
 }
 
 static void intel_knl_mc_collect(struct stats_type *type)
 {
-  const char *path = "/dev/mem";
-  uint64_t mmconfig_base = 0xc0000000;
-  uint64_t mmconfig_size = 0x10000000;
-  uint32_t *mmconfig_ptr;
-  int fd = -1;
+  struct intel_mmconfig mm = { -1, MAP_FAILED, 0, 0 };
 
-  if (path_open_is_skipped(path))
+  if (intel_mmconfig_open(&mm, knl_mc_mmconfig_base, knl_mc_mmconfig_size) < 0)
     goto out;
-  fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
-  if (fd < 0) {
-    path_open_record_failure_once(path);
-    goto out;
-  }
-  mmconfig_ptr = mmap(NULL, mmconfig_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mmconfig_base);
-  if (mmconfig_ptr == MAP_FAILED) {
-    ERROR("cannot mmap `%s': %m\n", path);
-    goto out;
-  }
 
   int i;
-  int nr_mc_devs = 2;
+  int local_nr_mc_devs = 2;
 
-  uint32_t mc_uclk_dev[] = {0x0a, 0x0b};
-  uint32_t mc_dclk_dev[] = {0x08, 0x09};
-  for (i = 0; i < nr_mc_devs; i++) {
-    intel_knl_mc_uclk_collect_dev(type, mc_uclk_dev[i], mmconfig_ptr);
-    intel_knl_mc_dclk_collect_dev(type, 0x02, mc_dclk_dev[i], mmconfig_ptr);
-    intel_knl_mc_dclk_collect_dev(type, 0x03, mc_dclk_dev[i], mmconfig_ptr);
-    intel_knl_mc_dclk_collect_dev(type, 0x04, mc_dclk_dev[i], mmconfig_ptr);
-  }  
-  munmap(mmconfig_ptr, mmconfig_size);
+  uint32_t local_mc_uclk_dev[] = {0x0a, 0x0b};
+  uint32_t local_mc_dclk_dev[] = {0x08, 0x09};
+  for (i = 0; i < local_nr_mc_devs; i++) {
+    intel_knl_mc_uclk_collect_dev(type, local_mc_uclk_dev[i], mm.map);
+    intel_knl_mc_dclk_collect_dev(type, 0x02, local_mc_dclk_dev[i], mm.map);
+    intel_knl_mc_dclk_collect_dev(type, 0x03, local_mc_dclk_dev[i], mm.map);
+    intel_knl_mc_dclk_collect_dev(type, 0x04, local_mc_dclk_dev[i], mm.map);
+  }
 
  out:
-  if (fd >= 0)
-    close(fd);
+  intel_mmconfig_close(&mm);
 }
 
 struct stats_type intel_knl_mc_stats_type = {

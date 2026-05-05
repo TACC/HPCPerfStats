@@ -4,14 +4,11 @@
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
-#include <dirent.h>
 #include <errno.h>
-#include <malloc.h>
-#include <ctype.h>
 #include <fcntl.h>
 #include "stats.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
+#include "msr_io.h"
 #include "intel_pmc3.h"
 
 
@@ -19,9 +16,7 @@
 static void intel_8pmc3_collect_cpu(struct stats_type *type, char *cpu)
 {
   struct stats *stats = NULL;
-  char msr_path[80];
   int msr_fd = -1;
-  int pmc = 0;
 
   stats = get_current_stats(type, cpu);
   if (stats == NULL)
@@ -29,26 +24,20 @@ static void intel_8pmc3_collect_cpu(struct stats_type *type, char *cpu)
 
   TRACE("cpu %s\n", cpu);
 
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
-  if (path_open_is_skipped(msr_path))
+  msr_fd = msr_open_cpu(cpu, O_RDONLY);
+  if (msr_fd < 0)
     goto out;
-  msr_fd = open(msr_path, O_RDONLY);
-  if (msr_fd < 0) {
-    path_open_record_failure_once(msr_path);
-    goto out;
-  }
 
 #define X(k,r...)							\
     ({									\
       uint64_t val = 0;							\
-      if (pread(msr_fd, &val, sizeof(val), IA32_##k) < 0)		\
-	TRACE("cannot read `%s' (%08X) through `%s': %m\n", #k, IA32_##k, msr_path); \
+      if (msr_read_u64(msr_fd, IA32_##k, &val) < 0)			\
+	TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, IA32_##k, cpu); \
       else								\
 	stats_set(stats, #k, val);					\
     })
     KEYS;
 #undef X
-    goto out;
 
  out:
   if (msr_fd >= 0)

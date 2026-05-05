@@ -1,14 +1,9 @@
 #include <stddef.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <errno.h>
-#include <malloc.h>
-#include <ctype.h>
+#include <string.h>
 #include "stats.h"
-#include "fileio.h"
+#include "procfile_parse.h"
+#include "procfile_kv.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
-#include "string1.h"
 #include "pscanf.h"
 
 // $ cat /proc/stat
@@ -30,41 +25,25 @@
   X(nr_running, "", ""), \
   X(nr_threads, "", "")
 
+static int ps_stat_line_cb(char *line, void *ctx)
+{
+  struct stats *stats = (struct stats *)ctx;
+
+  /* Skip per-cpu and aggregate cpu lines (handled by cpu.c) and the
+   * verbose interrupt line. */
+  if (strncmp(line, "cpu", 3) == 0)
+    return 0;
+  if (strncmp(line, "intr", 4) == 0 &&
+      (line[4] == ' ' || line[4] == '\t' || line[4] == '\0'))
+    return 0;
+
+  proc_kv_into_stats(stats, line);
+  return 0;
+}
+
 static void ps_collect_proc_stat(struct stats *stats)
 {
-  const char *path = "/proc/stat";
-  FILE *file = NULL;
-  char file_buf[4096];
-  char *line = NULL;
-  size_t line_size = 0;
-
-  file = path_file_fopen_read(path);
-  if (file == NULL)
-    goto out;
-  setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
-
-  while (getline(&line, &line_size, file) >= 0) {
-    char *key, *rest = line;
-    key = wsep(&rest);
-    if (key == NULL || rest == NULL)
-      continue;
-
-    if (strncmp(key, "cpu", 3) == 0)
-      continue;
-
-    if (strcmp(key, "intr") == 0)
-      continue;
-
-    errno = 0;
-    unsigned long long val = strtoull(rest, NULL, 0);
-    if (errno == 0)
-      stats_set(stats, key, val);
-  }
-
- out:
-  free(line);
-  if (file != NULL)
-    fclose(file);
+  procfile_for_each_line("/proc/stat", ps_stat_line_cb, stats);
 }
 
 static void ps_collect_loadavg(struct stats *stats)
@@ -94,9 +73,8 @@ static void ps_collect_loadavg(struct stats *stats)
 
 static void ps_collect(struct stats_type *type)
 {
-  struct stats *stats = NULL;
+  struct stats *stats = get_current_stats(type, NULL);
 
-  stats = get_current_stats(type, NULL);
   if (stats == NULL)
     return;
 

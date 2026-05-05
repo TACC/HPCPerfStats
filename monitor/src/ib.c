@@ -9,6 +9,7 @@
 #include "fileio.h"
 #include "trace.h"
 #include "path_open_fail_once.h"
+#include "sys_iter.h"
 
 // const char *perfquery = "/opt/ofed/sbin/perfquery";
 
@@ -138,53 +139,44 @@ static void ib_collect_port(struct stats_type *type, const char *dev, int port)
   fclose(file);
 }
 
+struct ib_port_ctx {
+  struct stats_type *type;
+  const char *dev;
+};
+
+static void ib_collect_port_each(const char *base, const char *name, void *ctx)
+{
+  struct ib_port_ctx *pc = (struct ib_port_ctx *)ctx;
+  char *endp = NULL;
+  long pn;
+
+  (void)base;
+  pn = strtol(name, &endp, 10);
+  if (endp == name || *endp != '\0')
+    return;
+  if (pn < 1 || pn > INT_MAX)
+    return;
+  ib_collect_port(pc->type, pc->dev, (int)pn);
+}
+
 static void ib_collect_dev(struct stats_type *type, const char *dev)
 {
   char ports_path[160];
-  DIR *ports_dir = NULL;
-  struct dirent *ent;
+  struct ib_port_ctx pc = { type, dev };
 
   snprintf(ports_path, sizeof(ports_path), "/sys/class/infiniband/%s/ports", dev);
-  ports_dir = path_opendir_or_record_fail(ports_path);
-  if (ports_dir == NULL)
-    return;
+  sys_iter_for_each(ports_path, ib_collect_port_each, &pc);
+}
 
-  while ((ent = readdir(ports_dir)) != NULL) {
-    char *endp = NULL;
-    long pn;
-
-    if (ent->d_name[0] == '.')
-      continue;
-    pn = strtol(ent->d_name, &endp, 10);
-    if (endp == ent->d_name || *endp != '\0')
-      continue;
-    if (pn < 1 || pn > INT_MAX)
-      continue;
-    ib_collect_port(type, dev, (int)pn);
-  }
-
-  closedir(ports_dir);
+static void ib_collect_each(const char *base, const char *name, void *ctx)
+{
+  (void)base;
+  ib_collect_dev((struct stats_type *)ctx, name);
 }
 
 static void ib_collect(struct stats_type *type)
 {
-  const char *path = "/sys/class/infiniband";
-  DIR *dir = NULL;
-
-  dir = path_opendir_or_record_fail(path);
-  if (dir == NULL)
-    goto out;
-
-  struct dirent *ent;
-  while ((ent = readdir(dir)) != NULL) {
-    if (ent->d_name[0] == '.')
-      continue;
-    ib_collect_dev(type, ent->d_name);
-  }
-
- out:
-  if (dir != NULL)
-    closedir(dir);
+  sys_iter_for_each("/sys/class/infiniband", ib_collect_each, type);
 }
 
 struct stats_type ib_stats_type = {

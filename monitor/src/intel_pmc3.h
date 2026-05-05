@@ -11,7 +11,7 @@
 #include <fcntl.h>
 #include "stats.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
+#include "msr_io.h"
 #include "cpuid.h"
 
 /*! 
@@ -245,11 +245,10 @@ static  uint64_t nhm_events[] = {
 static int intel_pmc3_begin_cpu(char *cpu)
 {
   int rc = -1;
-  char msr_path[80];
   int msr_fd = -1;
   uint64_t global_ctr_ctrl, fixed_ctr_ctrl;
   uint64_t *events;
-  
+
   switch(processor) {
   case NEHALEM:
     events = nhm_events; break;
@@ -272,18 +271,13 @@ static int intel_pmc3_begin_cpu(char *cpu)
     goto out;
   }
 
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
-  if (path_open_is_skipped(msr_path))
+  msr_fd = msr_open_cpu(cpu, O_RDWR);
+  if (msr_fd < 0)
     goto out;
-  msr_fd = open(msr_path, O_RDWR);
-  if (msr_fd < 0) {
-    path_open_record_failure_once(msr_path);
-    goto out;
-  }
 
   /* Disable counters globally. */
   global_ctr_ctrl = 0x0ULL;
-  if (pwrite(msr_fd, &global_ctr_ctrl, sizeof(global_ctr_ctrl), IA32_PERF_GLOBAL_CTRL) < 0) {
+  if (msr_write_u64(msr_fd, IA32_PERF_GLOBAL_CTRL, global_ctr_ctrl) < 0) {
     ERROR("cannot disable performance counters: %m\n");
     goto out;
   }
@@ -291,25 +285,25 @@ static int intel_pmc3_begin_cpu(char *cpu)
   int i;
   for (i = 0; i < n_pmcs; i++) {
     TRACE("MSR %08X, event %016llX\n", IA32_CTL0 + i, (unsigned long long) events[i]);
-    if (pwrite(msr_fd, &events[i], sizeof(events[i]), IA32_CTL0 + i) < 0) {
-      ERROR("cannot write event %016llX to MSR %08X through `%s': %m\n",
+    if (msr_write_u64(msr_fd, IA32_CTL0 + i, events[i]) < 0) {
+      ERROR("cannot write event %016llX to MSR %08X for cpu `%s': %m\n",
             (unsigned long long) events[i],
             (unsigned) IA32_CTL0 + i,
-            msr_path);
+            cpu);
       goto out;
     }
   }
-  
+
   rc = 0;
   /* Enable fixed counters.  Three 4 bit blocks, enable OS, User, Turn off any thread. */
   fixed_ctr_ctrl = 0x333UL;
 
-  if (pwrite(msr_fd, &fixed_ctr_ctrl, sizeof(fixed_ctr_ctrl), IA32_FIXED_CTR_CTRL) < 0)
+  if (msr_write_u64(msr_fd, IA32_FIXED_CTR_CTRL, fixed_ctr_ctrl) < 0)
     ERROR("cannot enable fixed counters: %m\n");
 
   /* Enable counters globally, n_pmcs PMC and 3 fixed. */
   global_ctr_ctrl = BIT_MASK(n_pmcs) | (0x7ULL << 32);
-  if (pwrite(msr_fd, &global_ctr_ctrl, sizeof(global_ctr_ctrl), IA32_PERF_GLOBAL_CTRL) < 0)
+  if (msr_write_u64(msr_fd, IA32_PERF_GLOBAL_CTRL, global_ctr_ctrl) < 0)
     ERROR("cannot enable performance counters: %m\n");
 
  out:

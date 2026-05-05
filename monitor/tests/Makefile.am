@@ -38,7 +38,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_metric_profiler
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_metric_profiler
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer test_monitor_timing
 endif
@@ -62,15 +62,43 @@ test_stats_buffer_data_append_SOURCES = \
 test_path_collect_SOURCES = \
 	test_path_collect.c \
 	$(top_srcdir)/src/collect.c \
+	$(top_srcdir)/src/path_read.c \
 	$(top_srcdir)/src/path_open_fail_once.c
 
 test_path_open_fail_once_SOURCES = \
 	test_path_open_fail_once.c \
 	$(top_srcdir)/src/path_open_fail_once.c
 
+test_path_read_SOURCES = \
+	test_path_read.c \
+	$(top_srcdir)/src/path_read.c \
+	$(top_srcdir)/src/path_open_fail_once.c
+
+test_sys_iter_SOURCES = \
+	test_sys_iter.c \
+	$(top_srcdir)/src/sys_iter.c \
+	$(top_srcdir)/src/path_open_fail_once.c
+
+test_procfile_parse_SOURCES = \
+	test_procfile_parse.c \
+	$(top_srcdir)/src/procfile_parse.c \
+	$(top_srcdir)/src/path_open_fail_once.c
+
+test_msr_io_SOURCES = \
+	test_msr_io.c \
+	$(top_srcdir)/src/msr_io.c \
+	$(top_srcdir)/src/path_open_fail_once.c
+
+test_intel_mmconfig_SOURCES = \
+	test_intel_mmconfig.c \
+	$(top_srcdir)/src/intel_mmconfig.c \
+	$(top_srcdir)/src/path_open_fail_once.c
+
 test_pscanf_SOURCES = \
 	test_pscanf.c \
-	$(top_srcdir)/src/pscanf.c
+	$(top_srcdir)/src/pscanf.c \
+	$(top_srcdir)/src/path_read.c \
+	$(top_srcdir)/src/path_open_fail_once.c
 
 test_schema_parse_SOURCES = \
 	test_schema_parse.c \
@@ -133,6 +161,11 @@ test_string1_LDADD = $(LDADD)
 test_stats_buffer_data_append_LDADD = $(LDADD)
 test_path_collect_LDADD = $(LDADD)
 test_path_open_fail_once_LDADD = $(LDADD)
+test_path_read_LDADD = $(LDADD)
+test_sys_iter_LDADD = $(LDADD)
+test_procfile_parse_LDADD = $(LDADD)
+test_msr_io_LDADD = $(LDADD)
+test_intel_mmconfig_LDADD = $(LDADD)
 test_pscanf_LDADD = $(LDADD)
 test_schema_parse_LDADD = $(LDADD)
 test_stats_file_format_LDADD = $(LDADD)

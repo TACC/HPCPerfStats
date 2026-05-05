@@ -1,10 +1,9 @@
 #include <stddef.h>
 #include <string.h>
-#include <dirent.h>
 #include "stats.h"
 #include "collect.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
+#include "sys_iter.h"
 
 /* Need to account for units.  According to block/stat.txt, in
    /sys/block/DEV/stat sector means 512B (as opposed to real sector
@@ -38,31 +37,19 @@ static void block_collect_dev(struct stats_type *type, const char *dev)
 #undef X
 }
 
+static void block_collect_each(const char *base, const char *name, void *ctx)
+{
+  (void)base;
+  if (strncmp(name, "ram", 3) == 0)
+    return;
+  if (strncmp(name, "loop", 4) == 0)
+    return;
+  block_collect_dev((struct stats_type *)ctx, name);
+}
+
 static void block_collect(struct stats_type *type)
 {
-  const char *path = "/sys/block";
-  DIR *dir = NULL;
-
-  dir = path_opendir_or_record_fail(path);
-  if (dir == NULL)
-    goto out;
-
-  struct dirent *ent;
-  while ((ent = readdir(dir)) != NULL) {
-    if (ent->d_name[0] == '.')
-      continue;
-    /* Ignore ram devices.  FIXME Make this a config. */
-    if (strncmp(ent->d_name, "ram", 3) == 0)
-      continue;
-    /* Ignore loop devices. ... */
-    if (strncmp(ent->d_name, "loop", 4) == 0)
-      continue;
-    block_collect_dev(type, ent->d_name);
-  }
-
- out:
-  if (dir != NULL)
-    closedir(dir);
+  sys_iter_for_each("/sys/block", block_collect_each, type);
 }
 
 struct stats_type block_stats_type = {

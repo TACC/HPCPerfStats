@@ -2,14 +2,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <dirent.h>
-#include <errno.h>
-#include <malloc.h>
-#include <ctype.h>
 #include "stats.h"
 #include "collect.h"
+#include "sys_iter.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
 
 // # cat /sys/devices/system/node/node0/numastat
 // numa_hit 24972369
@@ -27,36 +23,28 @@
   X(local_node, "E", ""), \
   X(other_node, "E", "")
 
+static void numa_collect_each(const char *base, const char *name, void *ctx)
+{
+  struct stats_type *type = (struct stats_type *)ctx;
+  struct stats *stats = NULL;
+  const char *node;
+  char path[80];
+
+  if (strncmp(name, "node", 4) != 0)
+    return;
+  node = name + 4;
+
+  stats = get_current_stats(type, node);
+  if (stats == NULL)
+    return;
+
+  snprintf(path, sizeof(path), "%s/%s/numastat", base, name);
+  path_collect_key_value(path, stats);
+}
+
 static void numa_collect(struct stats_type *type)
 {
-  const char *dir_path = "/sys/devices/system/node";
-  DIR *dir = NULL;
-
-  dir = path_opendir_or_record_fail(dir_path);
-  if (dir == NULL)
-    goto out;
-
-  struct dirent *ent;
-  while ((ent = readdir(dir)) != NULL) {
-    struct stats *stats = NULL;
-    const char *node;
-    char path[80];
-
-    if (strncmp(ent->d_name, "node", 4) != 0)
-      continue;
-
-    node = ent->d_name + 4;
-    stats = get_current_stats(type, node);
-    if (stats == NULL)
-      continue;
-
-    snprintf(path, sizeof(path), "%s/node%s/numastat", dir_path, node);
-    path_collect_key_value(path, stats);
-  }
-
- out:
-  if (dir != NULL)
-    closedir(dir);
+  sys_iter_for_each("/sys/devices/system/node", numa_collect_each, type);
 }
 
 struct stats_type numa_stats_type = {

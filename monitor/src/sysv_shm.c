@@ -1,78 +1,51 @@
-#include <stddef.h>
-#include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
-#include <errno.h>
 #include "stats.h"
-#include "fileio.h"
+#include "procfile_parse.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
 
 // From ipc/shm.c
 // # cat /proc/sysvipc/shm
 // key      shmid perms       size  cpid  lpid nattch   uid   gid  cuid  cgid      atime      dtime      ctime
 //   0     131072   666    1048576  2720  2720      1     0     0     0     0 1304962654          0 1304962654
-
+//
 // "%10d %10d  %4o %10u %5u %5u  %5d %5u %5u %5u %5u %10lu %10lu %10lu\n"
-// return seq_printf(s, format,
-//                   shp->shm_perm.key,
-//                   shp->id,
-//                   shp->shm_perm.mode,
-//                   shp->shm_segsz,
-//                   shp->shm_cprid,
-//                   shp->shm_lprid,
-//                   is_file_hugepages(shp->shm_file) ? (file_count(shp->shm_file) - 1) : shp->shm_nattch,
-//                   shp->shm_perm.uid,
-//                   shp->shm_perm.gid,
-//                   shp->shm_perm.cuid,
-//                   shp->shm_perm.cgid,
-//                   shp->shm_atim,
-//                   shp->shm_dtim,
-//                   shp->shm_ctim);
 
 #define KEYS \
   X(mem_used, "U=B", "System V shared memory used"), \
   X(segs_used, "", "number of System V shared segments used")
 
+struct sysv_shm_acc {
+  unsigned long long mem_used;
+  unsigned long long segs_used;
+};
+
+static int sysv_shm_line_cb(char *line, void *ctx)
+{
+  struct sysv_shm_acc *acc = (struct sysv_shm_acc *)ctx;
+  unsigned long long seg_size = 0;
+
+  if (sscanf(line, "%*d %*d %*o %llu", &seg_size) < 1)
+    return 0;
+  acc->mem_used += seg_size;
+  acc->segs_used++;
+  return 0;
+}
+
 static void sysv_shm_collect(struct stats_type *type)
 {
-  struct stats *stats = NULL;
-  const char *path = "/proc/sysvipc/shm";
-  FILE *file = NULL;
-  char file_buf[4096];
-  char *line_buf = NULL;
-  size_t line_buf_size = 0;
-  unsigned long long mem_used = 0, segs_used = 0;
+  struct stats *stats = get_current_stats(type, NULL);
+  struct sysv_shm_acc acc = { 0, 0 };
 
-  stats = get_current_stats(type, NULL);
   if (stats == NULL)
-    goto out;
+    return;
 
-  file = path_file_fopen_read(path);
-  if (file == NULL)
-    goto out;
-  setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
+  /* Skip the one-line header. */
+  if (procfile_for_each_line_skip("/proc/sysvipc/shm", 1,
+                                  sysv_shm_line_cb, &acc) < 0)
+    return;
 
-  /* Skip header. */
-  if (getline(&line_buf, &line_buf_size, file) < 0)
-    goto out;
-
-  while (getline(&line_buf, &line_buf_size, file) >= 0) {
-    unsigned long long seg_size = 0;
-    if (sscanf(line_buf, "%*d %*d %*o %llu", &seg_size) < 1)
-      continue;
-
-    mem_used += seg_size;
-    segs_used++;
-  }
-
-  stats_set(stats, "mem_used", mem_used);
-  stats_set(stats, "segs_used", segs_used);
-
- out:
-  free(line_buf);
-  if (file != NULL)
-    fclose(file);
+  stats_set(stats, "mem_used", acc.mem_used);
+  stats_set(stats, "segs_used", acc.segs_used);
 }
 
 struct stats_type sysv_shm_stats_type = {

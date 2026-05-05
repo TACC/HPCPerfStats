@@ -9,6 +9,7 @@
 #include "trace.h"
 #include "path_open_fail_once.h"
 #include "pscanf.h"
+#include "sys_iter.h"
 
 /* ib_sw collects IB HCA/PORT statistics by querying the extended
    performance counters of the switch port to which the HCA/PORT is
@@ -89,69 +90,60 @@ static void collect_hca_port(struct stats *stats, char *hca_name, int hca_port)
     mad_rpc_close_port(mad_port);
 }
 
-static void collect_ib_sw(struct stats_type *type)
+struct ib_sw_port_ctx {
+  struct stats_type *type;
+  const char *hca;
+};
+
+static void ib_sw_port_each(const char *base, const char *name, void *ctx)
 {
-  const char *ib_dir_path = "/sys/class/infiniband";
-  DIR *ib_dir = NULL;
+  struct ib_sw_port_ctx *pc = (struct ib_sw_port_ctx *)ctx;
+  int port = atoi(name);
+  int state = -1;
+  char state_path[80];
+  char dev[80];
+  struct stats *stats;
 
-  ib_dir = path_opendir_or_record_fail(ib_dir_path);
-  if (ib_dir == NULL)
-    goto out;
+  (void)base;
+  if (port <= 0)
+    return;
 
-  struct dirent *hca_ent;
-  while ((hca_ent = readdir(ib_dir)) != NULL) {
-    char *hca = hca_ent->d_name;
-    char ports_path[80];
-    DIR *ports_dir = NULL;
-
-    if (hca[0] == '.')
-      goto next_hca;
-
-    snprintf(ports_path, sizeof(ports_path), "%s/%s/ports", ib_dir_path, hca);
-    ports_dir = path_opendir_or_record_fail(ports_path);
-    if (ports_dir == NULL)
-      goto next_hca;
-
-    struct dirent *port_ent;
-    while ((port_ent = readdir(ports_dir)) != NULL) {
-      int port = atoi(port_ent->d_name);
-      if (port <= 0)
-        continue;
-
-      /* Check that port is active. .../HCA/ports/PORT/state should read "4: ACTIVE." */
-      int state = -1;
-      char state_path[80];
-      snprintf(state_path, sizeof(state_path), "/sys/class/infiniband/%s/ports/%d/state", hca, port);
-      if (pscanf(state_path, "%d", &state) != 1) {
-        ERROR("cannot read state of IB HCA `%s' port %d: %m\n", hca, port);
-        continue;
-      }
-
-      if (state != 4) {
-        TRACE("skipping inactive IB HCA `%s', port %d, state %d\n", hca, port, state);
-        continue;
-      }
-
-      /* Create dev name (HCA/PORT) and get stats for dev. */
-      char dev[80];
-      snprintf(dev, sizeof(dev), "%s/%d", hca, port);
-      TRACE("IB HCA `%s', port %d, dev `%s'\n", hca, port, dev);
-
-      struct stats *stats = get_current_stats(type, dev);
-      if (stats == NULL)
-        continue;
-
-      collect_hca_port(stats, hca, port);
-    }
-
-  next_hca:
-    if (ports_dir != NULL)
-      closedir(ports_dir);
+  /* Check that port is active. .../HCA/ports/PORT/state should read "4: ACTIVE." */
+  snprintf(state_path, sizeof(state_path),
+           "/sys/class/infiniband/%s/ports/%d/state", pc->hca, port);
+  if (pscanf(state_path, "%d", &state) != 1) {
+    ERROR("cannot read state of IB HCA `%s' port %d: %m\n", pc->hca, port);
+    return;
   }
 
- out:
-  if (ib_dir != NULL)
-    closedir(ib_dir);
+  if (state != 4) {
+    TRACE("skipping inactive IB HCA `%s', port %d, state %d\n", pc->hca, port, state);
+    return;
+  }
+
+  snprintf(dev, sizeof(dev), "%s/%d", pc->hca, port);
+  TRACE("IB HCA `%s', port %d, dev `%s'\n", pc->hca, port, dev);
+
+  stats = get_current_stats(pc->type, dev);
+  if (stats == NULL)
+    return;
+
+  collect_hca_port(stats, (char *)pc->hca, port);
+}
+
+static void ib_sw_hca_each(const char *base, const char *name, void *ctx)
+{
+  struct stats_type *type = (struct stats_type *)ctx;
+  char ports_path[160];
+  struct ib_sw_port_ctx pc = { type, name };
+
+  snprintf(ports_path, sizeof(ports_path), "%s/%s/ports", base, name);
+  sys_iter_for_each(ports_path, ib_sw_port_each, &pc);
+}
+
+static void collect_ib_sw(struct stats_type *type)
+{
+  sys_iter_for_each("/sys/class/infiniband", ib_sw_hca_each, type);
 }
 
 struct stats_type ib_sw_stats_type = {

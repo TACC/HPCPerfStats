@@ -14,7 +14,8 @@
 #include "stats.h"
 #include "string1.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
+#include "msr_io.h"
+#include "intel_mmconfig.h"
 
 #define pci_cfg_address(bus, dev, func) (bus << 20) | (dev << 15) | (func << 12)
 #define index(address, off) (address | off)/4
@@ -71,26 +72,17 @@ static int intel_skx_imc_begin_dev(uint32_t bus, uint32_t dev, uint32_t fun, uin
 {
   int i;
   uint32_t ctl  = 0x0UL;
-  size_t n = 4;
-
-  char msr_path[80];
   int msr_fd = -1;
   uint64_t global_ctr_ctrl;
-  uint32_t local_ctr_ctrl;
   uint32_t pci = pci_cfg_address(bus, dev, fun);
 
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", "0");
-  if (path_open_is_skipped(msr_path))
+  msr_fd = msr_open_cpu("0", O_RDWR);
+  if (msr_fd < 0)
     goto out;
-  msr_fd = open(msr_path, O_RDWR);
-  if (msr_fd < 0) {
-    path_open_record_failure_once(msr_path);
-    goto out;
-  }
 
   /* Enable uncore counters globally. */
   global_ctr_ctrl = 1ULL << 61;
-  if (pwrite(msr_fd, &global_ctr_ctrl, sizeof(global_ctr_ctrl), U_MSR_PMON_GLOBAL_CTL) < 0) {
+  if (msr_write_u64(msr_fd, U_MSR_PMON_GLOBAL_CTL, global_ctr_ctrl) < 0) {
     ERROR("cannot enable uncore performance counters: %m\n");
     goto out;
   }
@@ -100,7 +92,7 @@ static int intel_skx_imc_begin_dev(uint32_t bus, uint32_t dev, uint32_t fun, uin
 
   for (i=0; i < nr_events; i++)
     map_dev[index(pci, (DCLK_PMON_CTRCTL0_REG + 4*i))] = events[i];
-  
+
  out:
   if (msr_fd >= 0)
     close(msr_fd);
@@ -144,31 +136,19 @@ static uint32_t events[] = {
   CAS_READS, CAS_WRITES, ACT_COUNT, PRE_COUNT_MISS,
 };
 static uint32_t imc_dclk_dids[] = {0x2042, 0x2046, 0x204a};
-const char *path = "/dev/mem";
-const uint64_t mmconfig_base = 0x80000000;
-const uint64_t mmconfig_size = 0x10000000;
+static const uint64_t mmconfig_base = 0x80000000;
+static const uint64_t mmconfig_size = 0x10000000;
 
 static int intel_skx_imc_begin(struct stats_type *type)
 {
   int nr = 0;
   char **dev_paths = NULL;
   int nr_devs = 0;
-  uint32_t *mmconfig_ptr = MAP_FAILED;
-  int fd = -1;
+  struct intel_mmconfig mm = { -1, MAP_FAILED, 0, 0 };
 
   if (processor != SKYLAKE) goto out;
-  if (path_open_is_skipped(path))
+  if (intel_mmconfig_open(&mm, mmconfig_base, mmconfig_size) < 0)
     goto out;
-  fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
-  if (fd < 0) {
-    path_open_record_failure_once(path);
-    goto out;
-  }
-  mmconfig_ptr = mmap(NULL, mmconfig_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mmconfig_base);
-  if (mmconfig_ptr == MAP_FAILED) {
-    ERROR("cannot mmap `%s': %m\n", path);
-    goto out;
-  }
 
   int nr_events = 4;
 
@@ -179,49 +159,35 @@ static int intel_skx_imc_begin(struct stats_type *type)
   // MC: DCLK
   // Devices: 0x10 0x10 0x11 (Controllers)
   // Functions: 0x02 0x06 0x02 (Channels)
-  int i;  
+  int i;
   for (i = 0; i < nr_devs; i++) {
     char *cursor = dev_paths[i];
     uint32_t bus = strtol(strsep_ne(&cursor, "/"), NULL, 16);
     uint32_t dev = strtol(strsep_ne(&cursor, "."), NULL, 16);
     uint32_t fun = strtol(cursor, NULL, 16);
-      
-    if (intel_skx_imc_begin_dev(bus, dev, fun, mmconfig_ptr, events, nr_events) == 0)
-      nr++;      
+
+    if (intel_skx_imc_begin_dev(bus, dev, fun, mm.map, events, nr_events) == 0)
+      nr++;
   }
 
  out:
   if (dev_paths != NULL)
     pci_map_destroy(&dev_paths, nr_devs);
-  if (mmconfig_ptr != MAP_FAILED)
-    munmap(mmconfig_ptr, mmconfig_size);
-  if (fd >= 0)
-    close(fd);
+  intel_mmconfig_close(&mm);
 
   if (nr == 0)
     type->st_enabled = 0;
-  return nr > 0 ? 0 : -1;  
+  return nr > 0 ? 0 : -1;
 }
 
 static void intel_skx_imc_collect(struct stats_type *type)
 {
-  uint32_t *mmconfig_ptr = MAP_FAILED;
   char **dev_paths = NULL;
   int nr_devs = 0;
-  int fd = -1;
+  struct intel_mmconfig mm = { -1, MAP_FAILED, 0, 0 };
 
-  if (path_open_is_skipped(path))
+  if (intel_mmconfig_open(&mm, mmconfig_base, mmconfig_size) < 0)
     goto out;
-  fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
-  if (fd < 0) {
-    path_open_record_failure_once(path);
-    goto out;
-  }
-  mmconfig_ptr = mmap(NULL, mmconfig_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mmconfig_base);
-  if (mmconfig_ptr == MAP_FAILED) {
-    ERROR("cannot mmap `%s': %m\n", path);
-    goto out;
-  }
 
   if (pci_map_create(&dev_paths, &nr_devs, imc_dclk_dids, 3) < 0) {
     TRACE("Failed to identify pci devices");
@@ -235,15 +201,12 @@ static void intel_skx_imc_collect(struct stats_type *type)
       uint32_t dev = strtol(strsep_ne(&cursor, "."), NULL, 16);
       uint32_t fun = strtol(cursor, NULL, 16);
 
-      intel_skx_imc_collect_dev(type, bus, dev, fun, mmconfig_ptr);
-  }  
+      intel_skx_imc_collect_dev(type, bus, dev, fun, mm.map);
+  }
  out:
   if (dev_paths != NULL)
     pci_map_destroy(&dev_paths, nr_devs);
-  if (mmconfig_ptr != MAP_FAILED)
-    munmap(mmconfig_ptr, mmconfig_size);
-  if (fd >= 0)
-    close(fd);
+  intel_mmconfig_close(&mm);
 }
 
 struct stats_type intel_skx_imc_stats_type = {

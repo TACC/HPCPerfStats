@@ -4,14 +4,11 @@
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
-#include <dirent.h>
 #include <errno.h>
-#include <malloc.h>
-#include <ctype.h>
 #include <fcntl.h>
 #include "stats.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
+#include "msr_io.h"
 #include "cpuid.h"
 #include "amd64_df.h"
 
@@ -32,61 +29,40 @@ static  uint64_t amd19h_df_events[] = {
 static int amd64_df_begin_cpu(char *cpu)
 {
   int rc = -1;
-  char msr_path[80];
   int msr_fd = -1;
-  uint64_t *events;
   uint64_t *df_events;
 
   // 17H and 19H have 4 MC (DataFabric) Counters we can access.
   switch(processor) {
 
   case AMD_17H:
-    df_events = amd17h_df_events; 
+    df_events = amd17h_df_events;
     break;
   case AMD_19H:
-    df_events = amd19h_df_events; 
+    df_events = amd19h_df_events;
     break;
   default:
     TRACE("Processor model/family %d not supported\n", processor);
     goto out;
   }
 
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
-  if (path_open_is_skipped(msr_path))
+  msr_fd = msr_open_cpu(cpu, O_RDWR);
+  if (msr_fd < 0)
     goto out;
-  msr_fd = open(msr_path, O_RDWR);
-  if (msr_fd < 0) {
-    path_open_record_failure_once(msr_path);
-    goto out;
-  }
 
   /* Memory Counters */
   int i;
   for (i = 0; i < 4; i++) {
     TRACE("MSR %08X, event %016llX\n", MSR_DF_CTL0 + i*2, (unsigned long long) df_events[i]);
 
-    if (pwrite(msr_fd, &df_events[i], sizeof(df_events[i]), MSR_DF_CTL0 + i*2) < 0) {
-      ERROR("cannot write event %016llX to MSR %08X through `%s': %m\n",
+    if (msr_write_u64(msr_fd, MSR_DF_CTL0 + i*2, df_events[i]) < 0) {
+      ERROR("cannot write event %016llX to MSR %08X for cpu `%s': %m\n",
             (unsigned long long) df_events[i],
             (unsigned) MSR_DF_CTL0 + i*2,
-            msr_path);
+            cpu);
       goto out;
     }
   }
-  /*
-  uint64_t zero = 0x00; 
-  for (i = 0; i < 4; i++) {
-    TRACE("MSR %08X, event %016llX\n", MSR_DF_CTR0 + i*2, (unsigned long long) 0);
-
-    if (pwrite(msr_fd, &zero, sizeof(zero), MSR_DF_CTR0 + i*2) < 0) {
-      ERROR("cannot write event %016llX to MSR %08X through `%s': %m\n",
-            (unsigned long long) df_events[i],
-            (unsigned) MSR_DF_CTR0 + i*2,
-            msr_path);
-      goto out;
-    }
-  }
-  */
 
   rc = 0;
 
@@ -99,7 +75,6 @@ static int amd64_df_begin_cpu(char *cpu)
 
 static void amd64_df_collect_cpu(struct stats_type *type, char *cpu)
 {
-  char msr_path[80];
   int msr_fd = -1;
   struct stats *stats = NULL;
 
@@ -107,21 +82,15 @@ static void amd64_df_collect_cpu(struct stats_type *type, char *cpu)
   if (stats == NULL)
     goto out;
 
-  /* Read MSRs. */
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
-  if (path_open_is_skipped(msr_path))
+  msr_fd = msr_open_cpu(cpu, O_RDONLY);
+  if (msr_fd < 0)
     goto out;
-  msr_fd = open(msr_path, O_RDONLY);
-  if (msr_fd < 0) {
-    path_open_record_failure_once(msr_path);
-    goto out;
-  }
 
 #define X(k,r...)							\
   ({									\
     uint64_t val = 0;							\
-    if (pread(msr_fd, &val, sizeof(val), MSR_DF_##k) < 0)		\
-      TRACE("cannot read `%s' (%08X) through `%s': %m\n", #k, MSR_DF_##k, msr_path); \
+    if (msr_read_u64(msr_fd, MSR_DF_##k, &val) < 0)			\
+      TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, MSR_DF_##k, cpu); \
     else								\
       stats_set(stats, #k, val);					\
   })

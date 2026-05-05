@@ -10,6 +10,7 @@
 #include "trace.h"
 #include "path_open_fail_once.h"
 #include "pscanf.h"
+#include "sys_iter.h"
 
 /* CHECKME Is unit 4B for extended counters as well? */
 
@@ -112,43 +113,34 @@ static void collect_hca_port(struct stats_type *type, char *hca, int port)
   (void) 0;
 }
 
+struct ib_ext_port_ctx {
+  struct stats_type *type;
+  const char *hca;
+};
+
+static void ib_ext_port_each(const char *base, const char *name, void *ctx)
+{
+  struct ib_ext_port_ctx *pc = (struct ib_ext_port_ctx *)ctx;
+
+  (void)base;
+  if (!isdigit((unsigned char)name[0]))
+    return;
+  collect_hca_port(pc->type, (char *)pc->hca, atoi(name));
+}
+
+static void ib_ext_hca_each(const char *base, const char *name, void *ctx)
+{
+  struct stats_type *type = (struct stats_type *)ctx;
+  char ports_path[160];
+  struct ib_ext_port_ctx pc = { type, name };
+
+  snprintf(ports_path, sizeof(ports_path), "%s/%s/ports", base, name);
+  sys_iter_for_each(ports_path, ib_ext_port_each, &pc);
+}
+
 static void collect_ib_ext(struct stats_type *type)
 {
-  const char *sys_path = "/sys/class/infiniband";
-  DIR *sys_dir = NULL;
-
-  sys_dir = path_opendir_or_record_fail(sys_path);
-  if (sys_dir == NULL)
-    goto out;
-
-  struct dirent *sys_ent;
-  while ((sys_ent = readdir(sys_dir)) != NULL) {
-    char ports_path[80];
-    DIR *ports_dir = NULL;
-    char *hca = sys_ent->d_name;
-    struct dirent *ent;
-
-    if (hca[0] == '.')
-      goto next;
-
-    snprintf(ports_path, sizeof(ports_path), "%s/%s/ports", sys_path, hca);
-    ports_dir = path_opendir_or_record_fail(ports_path);
-    if (ports_dir == NULL)
-      goto next;
-
-    while ((ent = readdir(ports_dir)) != NULL) {
-      if (isdigit(ent->d_name[0]))
-        collect_hca_port(type, hca, atoi(ent->d_name));
-    }
-
-  next:
-    if (ports_dir != NULL)
-      closedir(ports_dir);
-  }
-
- out:
-  if (sys_dir != NULL)
-    closedir(sys_dir);
+  sys_iter_for_each("/sys/class/infiniband", ib_ext_hca_each, type);
 }
 
 struct stats_type ib_ext_stats_type = {

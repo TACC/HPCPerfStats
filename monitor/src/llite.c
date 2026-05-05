@@ -7,6 +7,8 @@
 #include "string1.h"
 #include "lustre_obd_to_mnt.h"
 #include "path_open_fail_once.h"
+#include "procfile_parse.h"
+#include "sys_iter.h"
 
 #define LLITE_DIR_PATH "/proc/fs/lustre/llite"
 
@@ -64,87 +66,61 @@
   X(mknod, "E", ""), \
   X(rename, "E", "")
 
+static int llite_stats_line_cb(char *line, void *ctx)
+{
+  struct stats *stats = (struct stats *)ctx;
+  char *rest = line;
+  char *key = wsep(&rest);
+  unsigned long long count = 0, sum = 0;
+  int n;
+
+  if (key == NULL || rest == NULL)
+    return 0;
+
+  n = sscanf(rest, "%llu samples %*s %*u %*u %llu", &count, &sum);
+  if (n == 1)
+    stats_set(stats, key, count);
+  else if (n == 2)
+    stats_set(stats, key, sum);
+  return 0;
+}
+
 static void llite_collect_fs(struct stats *stats, const char *d_name)
 {
   char *path = NULL;
-  FILE *file = NULL;
-  char file_buf[4096];
-  char *line_buf = NULL;
-  size_t line_buf_size = 0;
 
   if (asprintf(&path, "%s/%s/stats", LLITE_DIR_PATH, d_name) < 0) {
     ERROR("cannot create path: %m\n");
-    goto out;
+    return;
   }
-
-  file = path_file_fopen_read(path);
-  if (file == NULL)
-    goto out;
-  setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
-
-  // $ cat /proc/fs/lustre/llite/scratch-ffff81019a4eb000/stats
-  // snapshot_time             1301585789.189183 secs.usecs
-  // dirty_pages_hits          276 samples [regs]
-  // dirty_pages_misses        57841029 samples [regs]
-  // read_bytes                449131 samples [bytes] 1 23553884 101262334767
-  // write_bytes               201770 samples [bytes] 1 20971520 236938468092
-  // brw_read                  13 samples [pages] 4096 4096 53248
-  // ioctl                     8050 samples [regs]
-
-  while (getline(&line_buf, &line_buf_size, file) >= 0) {
-    char *line = line_buf;
-    char *key = wsep(&line);
-    if (key == NULL || line == NULL)
-      continue;
-
-    unsigned long long count = 0, sum = 0;
-    int n = sscanf(line, "%llu samples %*s %*u %*u %llu", &count, &sum);
-    if (n == 1)
-      stats_set(stats, key, count);
-    else if (n == 2)
-      stats_set(stats, key, sum);
-  }
-
- out:
-  free(line_buf);
-  if (file != NULL)
-    fclose(file);
+  procfile_for_each_line(path, llite_stats_line_cb, stats);
   free(path);
+}
+
+static void llite_each(const char *base, const char *name, void *ctx)
+{
+  struct stats_type *type = (struct stats_type *)ctx;
+  const char *mnt = lustre_obd_to_mnt(name);
+  struct stats *stats;
+
+  (void)base;
+  /* lustre_obd_to_mnt returns NULL for non-OBD entries (e.g. files like
+   * "blocked_locks" if any), which serves as our type filter. */
+  if (mnt == NULL)
+    return;
+
+  TRACE("d_name `%s', mnt `%s'\n", name, mnt);
+
+  stats = get_current_stats(type, mnt);
+  if (stats == NULL)
+    return;
+
+  llite_collect_fs(stats, name);
 }
 
 static void llite_collect(struct stats_type *type)
 {
-  const char *llite_dir_path = LLITE_DIR_PATH;
-  DIR *llite_dir = NULL;
-
-  llite_dir = path_opendir_or_record_fail(llite_dir_path);
-  if (llite_dir == NULL)
-    goto out;
-
-  struct dirent *de;
-  while ((de = readdir(llite_dir)) != NULL) {
-    struct stats *stats = NULL;
-    const char *mnt;
-
-    if (de->d_type != DT_DIR || *de->d_name == '.')
-      continue;
-
-    mnt = lustre_obd_to_mnt(de->d_name);
-    if (mnt == NULL)
-      continue;
-
-    TRACE("d_name `%s', mnt `%s'\n", de->d_name, mnt);
-
-    stats = get_current_stats(type, mnt);
-    if (stats == NULL)
-      continue;
-
-    llite_collect_fs(stats, de->d_name);
-  }
-
- out:
-  if (llite_dir != NULL)
-    closedir(llite_dir);
+  sys_iter_for_each(LLITE_DIR_PATH, llite_each, type);
 }
 
 struct stats_type llite_stats_type = {

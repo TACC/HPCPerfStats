@@ -14,6 +14,7 @@
 #include "pscanf.h"
 #include "trace.h"
 #include "path_open_fail_once.h"
+#include "sys_iter.h"
 
 #define KEYS \
   X(collisions, "E", ""), \
@@ -76,30 +77,6 @@ static int net_iface_cache_append(const char *name)
   return 0;
 }
 
-static void net_iface_cache_rebuild(struct stats_type *type)
-{
-  const char *dir_path = "/sys/class/net";
-  DIR *dir = NULL;
-  struct dirent *ent;
-
-  (void)type;
-  net_stats_invalidate_iface_cache();
-
-  dir = path_opendir_or_record_fail(dir_path);
-  if (dir == NULL)
-    return;
-
-  while ((ent = readdir(dir)) != NULL) {
-    unsigned int flags;
-    char flags_path[80];
-
-    if (ent->d_name[0] == '.')
-      continue;
-
-    snprintf(flags_path, sizeof(flags_path), "/sys/class/net/%s/flags", ent->d_name);
-    if (pscanf(flags_path, "%x", &flags) != 1)
-      continue;
-
 #define NET_FLAGS \
   X(IFF_UP), \
   X(IFF_BROADCAST), \
@@ -119,17 +96,31 @@ static void net_iface_cache_rebuild(struct stats_type *type)
   X(IFF_AUTOMEDIA), \
   X(IFF_DYNAMIC)
 
+static void net_iface_cache_each(const char *base, const char *name, void *ctx)
+{
+  unsigned int flags;
+  char flags_path[80];
+
+  (void)base;
+  (void)ctx;
+  snprintf(flags_path, sizeof(flags_path), "/sys/class/net/%s/flags", name);
+  if (pscanf(flags_path, "%x", &flags) != 1)
+    return;
+
 #define X(F) ((flags & F) ? " " #F : "")
-    TRACE("dev %s, flags %u%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
-	  ent->d_name, flags, NET_FLAGS);
+  TRACE("dev %s, flags %u%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
+        name, flags, NET_FLAGS);
 #undef X
 
-    if ((flags & IFF_UP) && net_iface_cache_append(ent->d_name) < 0)
-      ERROR("cannot cache net iface `%s': %m\n", ent->d_name);
-  }
+  if ((flags & IFF_UP) && net_iface_cache_append(name) < 0)
+    ERROR("cannot cache net iface `%s': %m\n", name);
+}
 
-  if (dir != NULL)
-    closedir(dir);
+static void net_iface_cache_rebuild(struct stats_type *type)
+{
+  (void)type;
+  net_stats_invalidate_iface_cache();
+  sys_iter_for_each("/sys/class/net", net_iface_cache_each, NULL);
 }
 
 static void net_collect_dev(struct stats_type *type, const char *dev)

@@ -62,6 +62,17 @@ hpcperfstatsd_SOURCES = \
 	dict.c \
 	path_open_fail_once.h \
 	path_open_fail_once.c \
+	path_read.h \
+	path_read.c \
+	sys_iter.h \
+	sys_iter.c \
+	procfile_parse.h \
+	procfile_parse.c \
+	procfile_kv.h \
+	msr_io.h \
+	msr_io.c \
+	intel_mmconfig.h \
+	intel_mmconfig.c \
 	fileio.h \
 	hwdetect.h \
 	hwdetect.c \

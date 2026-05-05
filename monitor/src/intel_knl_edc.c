@@ -13,7 +13,7 @@
 #include "cpuid.h"
 #include "stats.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
+#include "intel_mmconfig.h"
 
 #define pci_cfg_address(bus, dev, func) (bus << 20) | (dev << 15) | (func << 12)
 #define reg(address, off) (address | off)/4
@@ -197,82 +197,49 @@ uint32_t edc_eclk_events[] = { RPQ_INSERTS, WPQ_INSERTS, ECLK_CYCLES };
 int nr_edc_eclk_events = 3;
 uint32_t edc_eclk_dev[] = {0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
 
+static const uint64_t knl_mmconfig_base = 0xc0000000;
+static const uint64_t knl_mmconfig_size = 0x10000000;
+
 static int intel_knl_edc_begin(struct stats_type *type)
 {
   int nr = 0;
-  int n_pmcs = 0;
-  processor_t p;
-  int fd = -1;
+  struct intel_mmconfig mm = { -1, MAP_FAILED, 0, 0 };
 
-  if (processor != KNL) goto out; 
+  if (processor != KNL) goto out;
 
-  const char *path = "/dev/mem";
-  uint64_t mmconfig_base = 0xc0000000;
-  uint64_t mmconfig_size = 0x10000000;
-  uint32_t *mmconfig_ptr;
-
-  if (path_open_is_skipped(path))
+  if (intel_mmconfig_open(&mm, knl_mmconfig_base, knl_mmconfig_size) < 0)
     goto out;
-  fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
-  if (fd < 0) {
-    path_open_record_failure_once(path);
-    goto out;
-  }
 
-  mmconfig_ptr = mmap(NULL, mmconfig_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mmconfig_base);
-  if (mmconfig_ptr == MAP_FAILED) {
-    ERROR("cannot mmap `%s': %m\n", path);
-    goto out;
-  }
-  
   int i;
   for (i = 0; i < nr_edc_devs; i++) {
-    if (intel_knl_edc_uclk_begin_dev(edc_uclk_dev[i], mmconfig_ptr, edc_uclk_events, nr_edc_uclk_events) == 0)
+    if (intel_knl_edc_uclk_begin_dev(edc_uclk_dev[i], mm.map, edc_uclk_events, nr_edc_uclk_events) == 0)
       nr++;
-    if (intel_knl_edc_eclk_begin_dev(edc_eclk_dev[i], mmconfig_ptr, edc_eclk_events, nr_edc_eclk_events) == 0)
+    if (intel_knl_edc_eclk_begin_dev(edc_eclk_dev[i], mm.map, edc_eclk_events, nr_edc_eclk_events) == 0)
       nr++;
   }
-  munmap(mmconfig_ptr, mmconfig_size);
 
  out:
-  if (fd >= 0)
-    close(fd);
+  intel_mmconfig_close(&mm);
   if (nr == 0)
     type->st_enabled = 0;
-  return nr > 0 ? 0 : -1;  
+  return nr > 0 ? 0 : -1;
 }
 
 static void intel_knl_edc_collect(struct stats_type *type)
 {
-  const char *path = "/dev/mem";
-  uint64_t mmconfig_base = 0xc0000000;
-  uint64_t mmconfig_size = 0x10000000;
-  uint32_t *mmconfig_ptr;
-  int fd = -1;
+  struct intel_mmconfig mm = { -1, MAP_FAILED, 0, 0 };
 
-  if (path_open_is_skipped(path))
+  if (intel_mmconfig_open(&mm, knl_mmconfig_base, knl_mmconfig_size) < 0)
     goto out;
-  fd = open(path, O_RDWR);    // first check to see if file can be opened with read permission
-  if (fd < 0) {
-    path_open_record_failure_once(path);
-    goto out;
-  }
-  mmconfig_ptr = mmap(NULL, mmconfig_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mmconfig_base);
-  if (mmconfig_ptr == MAP_FAILED) {
-    ERROR("cannot mmap `%s': %m\n", path);
-    goto out;
-  }
 
   int i;
   for (i = 0; i < nr_edc_devs; i++) {
-    intel_knl_edc_uclk_collect_dev(type, edc_uclk_dev[i], mmconfig_ptr);
-    intel_knl_edc_eclk_collect_dev(type, edc_eclk_dev[i], mmconfig_ptr);
+    intel_knl_edc_uclk_collect_dev(type, edc_uclk_dev[i], mm.map);
+    intel_knl_edc_eclk_collect_dev(type, edc_eclk_dev[i], mm.map);
   }
 
-  munmap(mmconfig_ptr, mmconfig_size);
  out:
-  if (fd >= 0)
-    close(fd);
+  intel_mmconfig_close(&mm);
 }
 
 struct stats_type intel_knl_edc_stats_type = {

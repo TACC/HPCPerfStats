@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include "trace.h"
 #include "stats.h"
+#include "msr_io.h"
 #include "likwid_pmc_adapter.h"
 #include "amd64_pmc.h"
 
@@ -181,22 +182,23 @@ static void set_counter_by_name(struct stats *stats, const char *counter_name,
 
 static int read_msr_u64_cpu(int cpu, uint64_t reg, unsigned long long *val)
 {
+  char cpubuf[16];
   int fd;
-  char msr_path[80];
   uint64_t tmp = 0;
 
   if (cpu < 0 || val == NULL)
     return -1;
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%d/msr", cpu);
-  fd = open(msr_path, O_RDONLY);
+
+  snprintf(cpubuf, sizeof(cpubuf), "%d", cpu);
+  fd = msr_open_cpu(cpubuf, O_RDONLY);
   if (fd < 0)
     return -1;
-  if (pread(fd, &tmp, sizeof(tmp), reg) != (ssize_t) sizeof(tmp)) {
+  if (msr_read_u64(fd, (unsigned int)reg, &tmp) < 0) {
     close(fd);
     return -1;
   }
   close(fd);
-  *val = (unsigned long long) tmp;
+  *val = (unsigned long long)tmp;
   return 0;
 }
 

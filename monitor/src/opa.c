@@ -7,6 +7,7 @@
 #include "stats.h"
 #include "trace.h"
 #include "path_open_fail_once.h"
+#include "sys_iter.h"
 #include "oib_utils.h"
 #include "iba/stl_pa.h"
 #include "iba/stl_sm.h"
@@ -134,54 +135,44 @@ static int collect_hfi_port(struct stats *stats, uint32_t port)
   return rc;
 }
 
+struct opa_port_ctx {
+  struct stats_type *type;
+  const char *hfi;
+};
+
+static void opa_port_each(const char *base, const char *name, void *ctx)
+{
+  struct opa_port_ctx *pc = (struct opa_port_ctx *)ctx;
+  int port = atoi(name);
+  char dev[80];
+  struct stats *stats;
+
+  (void)base;
+  if (port <= 0)
+    return;
+
+  snprintf(dev, sizeof(dev), "%s/%d", pc->hfi, port);
+  TRACE("IB HFI `%s', port %d, dev `%s'\n", pc->hfi, port, dev);
+  stats = get_current_stats(pc->type, dev);
+  if (stats == NULL)
+    return;
+
+  collect_hfi_port(stats, port);
+}
+
+static void opa_hfi_each(const char *base, const char *name, void *ctx)
+{
+  struct stats_type *type = (struct stats_type *)ctx;
+  char ports_path[160];
+  struct opa_port_ctx pc = { type, name };
+
+  snprintf(ports_path, sizeof(ports_path), "%s/%s/ports", base, name);
+  sys_iter_for_each(ports_path, opa_port_each, &pc);
+}
+
 static void collect_opa(struct stats_type *type)
 {
-  const char *ib_dir_path = "/sys/class/infiniband";
-  DIR *ib_dir = NULL;
-
-  ib_dir = path_opendir_or_record_fail(ib_dir_path);
-  if (ib_dir == NULL)
-    goto out;
-
-  struct dirent *hfi_ent;
-  while ((hfi_ent = readdir(ib_dir)) != NULL) {
-    char *hfi = hfi_ent->d_name;
-    char ports_path[80];
-    DIR *ports_dir = NULL;
-
-    if (hfi[0] == '.')
-      goto next_hfi;
-
-    snprintf(ports_path, sizeof(ports_path), "%s/%s/ports", ib_dir_path, hfi);
-    ports_dir = path_opendir_or_record_fail(ports_path);
-    if (ports_dir == NULL)
-      goto next_hfi;
-
-    struct dirent *port_ent;
-    while ((port_ent = readdir(ports_dir)) != NULL) {
-      int port = atoi(port_ent->d_name);
-      if (port <= 0)
-        continue;
-
-      /* Create dev name (HFI/PORT) and get stats for dev. */
-      char dev[80];
-      snprintf(dev, sizeof(dev), "%s/%d", hfi, port);
-      TRACE("IB HFI `%s', port %d, dev `%s'\n", hfi, port, dev);
-      struct stats *stats = get_current_stats(type, dev);
-      if (stats == NULL)
-        continue;
-      
-      collect_hfi_port(stats, port);
-    }
-
-  next_hfi:
-    if (ports_dir != NULL)
-      closedir(ports_dir);
-  }
-
- out:
-  if (ib_dir != NULL)
-    closedir(ib_dir);
+  sys_iter_for_each("/sys/class/infiniband", opa_hfi_each, type);
 }
 
 struct stats_type opa_stats_type = {

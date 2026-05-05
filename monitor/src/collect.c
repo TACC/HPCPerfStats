@@ -4,118 +4,34 @@
 #include <stdarg.h>
 #include <errno.h>
 #include <ctype.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include <string.h>
 #include "stats.h"
 #include "trace.h"
 #include "collect.h"
 #include "path_open_fail_once.h"
+#include "path_read.h"
 #include "string1.h"
 
-#ifndef O_CLOEXEC
-#define O_CLOEXEC 0
-#endif
-
-/* Stack-sized reads for sysctl-style single-line /proc and /sys files (Tier C #8). */
 #define COLLECT_SMALL_BUF 4096
-/* Cap for path_collect_key_value (e.g. /proc/vmstat) to bound memory. */
-#define COLLECT_SLURP_MAX (1u << 20)
 
-/* Read up to bufsz-1 bytes into buf, NUL-terminate, close fd. Returns 0 or -1. */
+static const struct path_read_opts collect_read_opts = {
+  .skip_known_bad  = 1,
+  .report_errors   = 1,
+  .detect_overflow = 0,
+};
+
 static int collect_read_small(const char *path, char *buf, size_t bufsz, size_t *out_len)
 {
-  int fd;
-  size_t total;
-
-  if (bufsz < 2) {
-    ERROR("collect_read_small: buffer too small for `%s'\n", path);
-    return -1;
-  }
-
-  if (path_open_is_skipped(path))
-    return -1;
-  fd = open(path, O_RDONLY | O_CLOEXEC);
-  if (fd < 0) {
-    path_open_record_failure_once(path);
-    return -1;
-  }
-
-  total = 0;
-  while (total + 1 < bufsz) {
-    ssize_t n = read(fd, buf + total, bufsz - 1 - total);
-    if (n < 0) {
-      ERROR("cannot read `%s': %m\n", path);
-      close(fd);
-      return -1;
-    }
-    if (n == 0)
-      break;
-    total += (size_t)n;
-  }
-  close(fd);
-  buf[total] = '\0';
-  *out_len = total;
-  return 0;
+  return path_read_small(path, buf, bufsz, out_len, &collect_read_opts);
 }
 
-/* Read entire file into a malloc'd buffer (NUL-terminated). NULL on failure. */
 static char *collect_slurp_file(const char *path)
 {
-  int fd = -1;
-  size_t cap = 8192;
+  char *buf = NULL;
   size_t len = 0;
-  char *buf = malloc(cap);
 
-  if (buf == NULL) {
-    ERROR("cannot allocate read buffer for `%s': %m\n", path);
+  if (path_read_alloc(path, &buf, &len, &collect_read_opts) < 0)
     return NULL;
-  }
-
-  if (path_open_is_skipped(path)) {
-    free(buf);
-    return NULL;
-  }
-  fd = open(path, O_RDONLY | O_CLOEXEC);
-  if (fd < 0) {
-    path_open_record_failure_once(path);
-    free(buf);
-    return NULL;
-  }
-
-  for (;;) {
-    if (len + 1 >= cap) {
-      if (cap >= COLLECT_SLURP_MAX) {
-	ERROR("file `%s' exceeds COLLECT_SLURP_MAX\n", path);
-	free(buf);
-	close(fd);
-	return NULL;
-      }
-      size_t ncap = cap * 2;
-      if (ncap > COLLECT_SLURP_MAX)
-	ncap = COLLECT_SLURP_MAX;
-      char *nb = realloc(buf, ncap);
-      if (nb == NULL) {
-	ERROR("cannot grow read buffer for `%s': %m\n", path);
-	free(buf);
-	close(fd);
-	return NULL;
-      }
-      buf = nb;
-      cap = ncap;
-    }
-    ssize_t n = read(fd, buf + len, cap - len - 1);
-    if (n < 0) {
-      ERROR("cannot read `%s': %m\n", path);
-      free(buf);
-      close(fd);
-      return NULL;
-    }
-    if (n == 0)
-      break;
-    len += (size_t)n;
-  }
-  close(fd);
-  buf[len] = '\0';
   return buf;
 }
 
