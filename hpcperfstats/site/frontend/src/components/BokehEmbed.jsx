@@ -322,6 +322,11 @@ export default function BokehEmbed({
   const [errorDetailsOpen, setErrorDetailsOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
   const errorDetailsPanelId = `${id}-plot-error-details`;
+  const failEmbed = (reason) => {
+    setFailureReason(reason);
+    setLoadFailed(true);
+    if (onPlotReadyChange) onPlotReadyChange(false);
+  };
 
   const hasData = !!item;
   const showPlaceholder = !hasData || !plotReady || loadFailed;
@@ -381,10 +386,7 @@ export default function BokehEmbed({
           if (cancelled || !containerRef.current) return;
           const el = document.getElementById(id);
           if (!el || !window.Bokeh?.embed?.embed_item) {
-            if (!cancelled) {
-              setFailureReason("Bokeh embed target or embed_item not available");
-              setLoadFailed(true);
-            }
+            if (!cancelled) failEmbed("Bokeh embed target or embed_item not available");
             return;
           }
           return waitForNonZeroLayout(el, {
@@ -394,22 +396,18 @@ export default function BokehEmbed({
             if (cancelled || !containerRef.current) return;
             if (!layout.ok) {
               if (layout.reason === "abort") return;
-              setFailureReason(
+              failEmbed(
                 layout.reason === "timeout"
                   ? "Chart container stayed at zero size (try showing the charts panel)."
                   : "Chart embed target is missing from the page.",
               );
-              setLoadFailed(true);
-              if (onPlotReadyChange) onPlotReadyChange(false);
               return;
             }
             try {
               // Re-embedding into the same target (e.g., normal -> zoom item swap)
               // can otherwise leave duplicate Bokeh roots in the container.
               if (!isEmbedTargetRenderable(el)) {
-                setFailureReason("Chart container is detached or hidden before embed.");
-                setLoadFailed(true);
-                if (onPlotReadyChange) onPlotReadyChange(false);
+                failEmbed("Chart container is detached or hidden before embed.");
                 return;
               }
               disposeBokehViewsForTarget(el);
@@ -422,17 +420,13 @@ export default function BokehEmbed({
                 .then(() => {
                   if (cancelled) return;
                   if (!isEmbedTargetRenderable(el)) {
-                    setFailureReason("Chart container changed before render completed.");
-                    setLoadFailed(true);
-                    if (onPlotReadyChange) onPlotReadyChange(false);
+                    failEmbed("Chart container changed before render completed.");
                     return;
                   }
                   function markPlotReady() {
                     if (cancelled) return;
                     if (!isEmbedTargetRenderable(el)) {
-                      setFailureReason("Chart container changed before render completed.");
-                      setLoadFailed(true);
-                      if (onPlotReadyChange) onPlotReadyChange(false);
+                      failEmbed("Chart container changed before render completed.");
                       return;
                     }
                     scheduleBokehLayoutReflow();
@@ -448,25 +442,19 @@ export default function BokehEmbed({
                 })
                 .catch((err) => {
                   if (cancelled) return;
-                  setFailureReason(err?.message || "Embed failed");
-                  setLoadFailed(true);
-                  if (onPlotReadyChange) onPlotReadyChange(false);
+                  failEmbed(err?.message || "Embed failed");
                 });
             } catch (err) {
               console.warn("Bokeh embed_item failed:", err);
               if (!cancelled) {
-                setFailureReason(err?.message || "Embed failed");
-                setLoadFailed(true);
-                if (onPlotReadyChange) onPlotReadyChange(false);
+                failEmbed(err?.message || "Embed failed");
               }
             }
           });
         })
         .catch((err) => {
           if (cancelled || err?.name === "AbortError") return;
-          setFailureReason(err?.message || "Bokeh JS did not load in time");
-          setLoadFailed(true);
-          if (onPlotReadyChange) onPlotReadyChange(false);
+          failEmbed(err?.message || "Bokeh JS did not load in time");
         }),
     );
 

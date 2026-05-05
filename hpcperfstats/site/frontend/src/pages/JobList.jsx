@@ -26,6 +26,37 @@ function performanceToneToBadgeClass(tone) {
   return "badge text-bg-secondary";
 }
 
+function buildJobListTitle({ error, loading, data, routeCtx }) {
+  if (error) return routeCtx ? `Job list · ${routeCtx}` : "Job list";
+  if (loading) return routeCtx ? `Loading job list · ${routeCtx}` : "Loading job list";
+  if (data?.qname) return routeCtx ? `${data.qname} · ${routeCtx}` : data.qname;
+  return routeCtx ? `Job list · ${routeCtx}` : "Job list";
+}
+
+async function loadHistogramForMetric({ metric, params, setMetricHistStatus }) {
+  try {
+    const metricData = await api.getJobMetricHistogram(params, metric);
+    if (!metricData) return null;
+    setMetricHistStatus((prev) => ({
+      ...prev,
+      [metric]: { loading: false, error: null },
+    }));
+    return normalizeJobListHistogramEntry(metricData, metric);
+  } catch (err) {
+    // Metric-specific failures should not break other histograms.
+    // eslint-disable-next-line no-console
+    console.warn(`Failed to load job list histogram for metric '${metric}':`, err);
+    setMetricHistStatus((prev) => ({
+      ...prev,
+      [metric]: {
+        loading: false,
+        error: err?.message || `Failed to load ${metric} histogram for this job list.`,
+      },
+    }));
+    return null;
+  }
+}
+
 export default function JobList() {
   const session = useSession();
   const isStaff = !!session?.is_staff;
@@ -86,38 +117,9 @@ export default function JobList() {
     setMetricHistStatus(createInitialMetricStatus());
 
     const loadHistograms = async () => {
-      const metricPromises = metricNames.map((metric) => {
-        return api
-          .getJobMetricHistogram(params, metric)
-          .then((metricData) => {
-            if (!metricData) {
-              return null;
-            }
-            setMetricHistStatus((prev) => ({
-              ...prev,
-              [metric]: { loading: false, error: null },
-            }));
-            return normalizeJobListHistogramEntry(metricData, metric);
-          })
-          .catch((err) => {
-            // Metric-specific failures should not break other histograms.
-            // eslint-disable-next-line no-console
-            console.warn(
-              `Failed to load job list histogram for metric '${metric}':`,
-              err
-            );
-            setMetricHistStatus((prev) => ({
-              ...prev,
-              [metric]: {
-                loading: false,
-                error:
-                  err?.message ||
-                  `Failed to load ${metric} histogram for this job list.`,
-              },
-            }));
-            return null;
-          });
-      });
+      const metricPromises = metricNames.map((metric) =>
+        loadHistogramForMetric({ metric, params, setMetricHistStatus })
+      );
 
       const metricResults = await Promise.all(metricPromises);
       const metricHistograms = metricResults.filter(Boolean);
@@ -129,21 +131,7 @@ export default function JobList() {
   }, [searchParams, paramsFromRoute, histogramReloadKey]);
 
   const routeCtx = jobListRouteTitleContext(paramsFromRoute, searchParams);
-  const documentTitleSegment = error
-    ? routeCtx
-      ? `Job list · ${routeCtx}`
-      : "Job list"
-    : loading
-      ? routeCtx
-        ? `Loading job list · ${routeCtx}`
-        : "Loading job list"
-      : data?.qname
-        ? routeCtx
-          ? `${data.qname} · ${routeCtx}`
-          : data.qname
-        : routeCtx
-          ? `Job list · ${routeCtx}`
-          : "Job list";
+  const documentTitleSegment = buildJobListTitle({ error, loading, data, routeCtx });
   useDocumentTitle(documentTitleSegment);
 
   if (loading) {

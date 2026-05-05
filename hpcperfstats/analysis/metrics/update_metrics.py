@@ -108,6 +108,78 @@ RESCAN_FETCH_LIMIT = CHUNK_SIZE
 TELEMETRY_SAMPLE_LIMIT = 2048
 
 
+def _new_jid_telemetry():
+  """Default per-jid telemetry counters for scheduler diagnostics."""
+  return {
+      "detail_gpu_metrics_reused": 0,
+      "detail_fsio_metrics_reused": 0,
+      "detail_fsio_fallback_queries": 0,
+      "detail_gpu_fallback_queries": 0,
+      "plot_row_lookup_queries": 0,
+      "plot_row_lookup_hits": 0,
+      "plot_jt_memo_host_time_hits": 0,
+      "plot_jt_memo_aggregate_hits": 0,
+      "plot_jt_memo_aggregate_misses": 0,
+  }
+
+
+def _new_scheduler_stats():
+  """Default scheduler counters (reused for retry resets)."""
+  return {
+      "processed": 0,
+      "failed": 0,
+      "skipped_not_ready": 0,
+      "candidate_jids": 0,
+      "readiness_error_chunks": 0,
+      "proxy_checked_chunks": 0,
+      "proxy_rejected_jids": 0,
+      "proxy_not_ready_jids": 0,
+      "strict_not_ready_jids": 0,
+      "strict_ready_jids": 0,
+      "strict_cooldown_skips": 0,
+      "deferred_not_ready_queue_size": 0,
+      "deferred_not_ready_due_now": 0,
+      "deferred_quarantined_jids": 0,
+      "stall_exit_triggered": 0,
+      "strict_check_calls": 0,
+      "strict_check_timeouts": 0,
+      "strict_check_avg_latency_ms": 0.0,
+      "strict_batch_size_current": STRICT_CHECK_BATCH_MIN,
+  }
+
+
+def _handle_strict_readiness_db_error(
+    *,
+    stats,
+    strict_check_state,
+    elapsed_s,
+    batch_size_seen,
+    exc,
+    strict_check_cooldown_until=None,
+    cooldown_jids=None,
+):
+  """Update counters/batch-size for strict-readiness DB failures and log once."""
+  stats["strict_check_timeouts"] += 1
+  stats["readiness_error_chunks"] += 1
+  strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
+      current_size=strict_check_state["batch_size"],
+      had_timeout=True,
+      latency_s=elapsed_s,
+      max_size=strict_check_state["max_batch_size"],
+  )
+  stats["strict_batch_size_current"] = strict_check_state["batch_size"]
+  if strict_check_cooldown_until is not None and cooldown_jids:
+    mono_now = time.monotonic()
+    for jid in cooldown_jids:
+      strict_check_cooldown_until[jid] = mono_now + STRICT_CHECK_COOLDOWN_SECONDS
+  log_print(
+      "strict readiness batch timed out size={0}; new_strict_batch_size={1}: {2}".format(
+          int(batch_size_seen), strict_check_state["batch_size"], exc
+      ),
+      flush=True,
+  )
+
+
 class _PhaseTimer:
   """Collect per-phase wall-clock timings for pipeline reporting."""
 
@@ -958,9 +1030,8 @@ def _fill_ready_queue(
 
   def _strict_ready_fallback_one(jid):
     """Single-jid strict readiness after batch failure (same semantics as legacy path)."""
-    mono_now = time.monotonic()
     with scheduler_shared_lock:
-      if strict_check_cooldown_until.get(jid, 0.0) > mono_now:
+      if strict_check_cooldown_until.get(jid, 0.0) > time.monotonic():
         return None
     t0 = time.monotonic()
     try:
@@ -968,23 +1039,15 @@ def _fill_ready_queue(
         strict_ready = _filter_jids_with_samples_after_end([jid])
     except (OperationalError, DatabaseError) as exc:
       with scheduler_shared_lock:
-        stats["strict_check_timeouts"] += 1
-        stats["readiness_error_chunks"] += 1
-        strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
-            current_size=strict_check_state["batch_size"],
-            had_timeout=True,
-            latency_s=(time.monotonic() - t0),
-            max_size=strict_check_state["max_batch_size"],
+        _handle_strict_readiness_db_error(
+            stats=stats,
+            strict_check_state=strict_check_state,
+            elapsed_s=(time.monotonic() - t0),
+            batch_size_seen=1,
+            exc=exc,
+            strict_check_cooldown_until=strict_check_cooldown_until,
+            cooldown_jids=[jid],
         )
-        batch_sz = strict_check_state["batch_size"]
-        strict_check_cooldown_until[jid] = mono_now + STRICT_CHECK_COOLDOWN_SECONDS
-        stats["strict_batch_size_current"] = strict_check_state["batch_size"]
-      log_print(
-          "strict readiness sub-batch timed out size={0}; new_strict_batch_size={1}: {2}".format(
-              1, batch_sz, exc
-          ),
-          flush=True,
-      )
       return None
     latency = time.monotonic() - t0
     _strict_ready_record_latency(latency, 1)
@@ -1051,25 +1114,15 @@ def _fill_ready_queue(
           ready_list = _filter_jids_with_samples_after_end(work)
       except (OperationalError, DatabaseError) as exc:
         with scheduler_shared_lock:
-          stats["strict_check_timeouts"] += 1
-          stats["readiness_error_chunks"] += 1
-          strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
-              current_size=strict_check_state["batch_size"],
-              had_timeout=True,
-              latency_s=(time.monotonic() - batch_mono),
-              max_size=strict_check_state["max_batch_size"],
+          _handle_strict_readiness_db_error(
+              stats=stats,
+              strict_check_state=strict_check_state,
+              elapsed_s=(time.monotonic() - batch_mono),
+              batch_size_seen=len(work),
+              exc=exc,
+              strict_check_cooldown_until=strict_check_cooldown_until,
+              cooldown_jids=work,
           )
-          batch_sz = strict_check_state["batch_size"]
-          stats["strict_batch_size_current"] = strict_check_state["batch_size"]
-        log_print(
-            "strict readiness batch timed out size={0}; new_strict_batch_size={1}: {2}".format(
-                len(work), batch_sz, exc
-            ),
-            flush=True,
-        )
-        mono_now = time.monotonic()
-        for jid in work:
-          strict_check_cooldown_until[jid] = mono_now + STRICT_CHECK_COOLDOWN_SECONDS
         for jid in work:
           ready_jid = _strict_ready_fallback_one(jid)
           if ready_jid is None:
@@ -1441,17 +1494,7 @@ def _compute_and_prewarm_jid(
   runs outside the lock so prewarm can overlap other jobs' metrics phases.
   """
   context = PerJidComputeContext(jid=job_ref.jid)
-  telemetry = {
-      "detail_gpu_metrics_reused": 0,
-      "detail_fsio_metrics_reused": 0,
-      "detail_fsio_fallback_queries": 0,
-      "detail_gpu_fallback_queries": 0,
-      "plot_row_lookup_queries": 0,
-      "plot_row_lookup_hits": 0,
-      "plot_jt_memo_host_time_hits": 0,
-      "plot_jt_memo_aggregate_hits": 0,
-      "plot_jt_memo_aggregate_misses": 0,
-  }
+  telemetry = _new_jid_telemetry()
   context.artifact_context["_telemetry"] = telemetry
   t_metrics_start = time.monotonic()
   try:
@@ -1525,17 +1568,7 @@ def _compute_and_prewarm_jid(
 
 def _empty_jid_outcome_telemetry():
   """Telemetry dict shape expected by the scheduler consumer."""
-  return {
-      "detail_gpu_metrics_reused": 0,
-      "detail_fsio_metrics_reused": 0,
-      "detail_fsio_fallback_queries": 0,
-      "detail_gpu_fallback_queries": 0,
-      "plot_row_lookup_queries": 0,
-      "plot_row_lookup_hits": 0,
-      "plot_jt_memo_host_time_hits": 0,
-      "plot_jt_memo_aggregate_hits": 0,
-      "plot_jt_memo_aggregate_misses": 0,
-  }
+  return _new_jid_telemetry()
 
 
 def _compute_jid_outcomes_batch(
@@ -1660,54 +1693,14 @@ def update_metrics_for_dates(dates, rerun=False):
   scheduler_mode = cfg.get_metrics_scheduler_mode()
   prefetch_target = cfg.get_metrics_scheduler_ready_queue_target()
   prefetch_chunks = cfg.get_metrics_scheduler_prefetch_chunks()
-  stats = {
-      "processed": 0,
-      "failed": 0,
-      "skipped_not_ready": 0,
-      "candidate_jids": 0,
-      "readiness_error_chunks": 0,
-      "proxy_checked_chunks": 0,
-      "proxy_rejected_jids": 0,
-      "proxy_not_ready_jids": 0,
-      "strict_not_ready_jids": 0,
-      "strict_ready_jids": 0,
-      "strict_cooldown_skips": 0,
-      "deferred_not_ready_queue_size": 0,
-      "deferred_not_ready_due_now": 0,
-      "deferred_quarantined_jids": 0,
-      "stall_exit_triggered": 0,
-      "strict_check_calls": 0,
-      "strict_check_timeouts": 0,
-      "strict_check_avg_latency_ms": 0.0,
-      "strict_batch_size_current": STRICT_CHECK_BATCH_MIN,
-  }
+  stats = _new_scheduler_stats()
 
   def _run():
     nonlocal phase_timer, stats
     # ``run_with_db_retry`` may invoke ``_run`` again; reset diagnostics per attempt
     # so retries report one scheduler pass, not cumulative counters.
     phase_timer = _PhaseTimer()
-    stats = {
-        "processed": 0,
-        "failed": 0,
-        "skipped_not_ready": 0,
-        "candidate_jids": 0,
-        "readiness_error_chunks": 0,
-        "proxy_checked_chunks": 0,
-        "proxy_rejected_jids": 0,
-        "proxy_not_ready_jids": 0,
-        "strict_not_ready_jids": 0,
-        "strict_ready_jids": 0,
-        "strict_cooldown_skips": 0,
-        "deferred_not_ready_queue_size": 0,
-        "deferred_not_ready_due_now": 0,
-        "deferred_quarantined_jids": 0,
-        "stall_exit_triggered": 0,
-        "strict_check_calls": 0,
-        "strict_check_timeouts": 0,
-        "strict_check_avg_latency_ms": 0.0,
-        "strict_batch_size_current": STRICT_CHECK_BATCH_MIN,
-    }
+    stats = _new_scheduler_stats()
     with _pg_session_statement_timeout_for_metrics_batch():
       metrics_manager = metrics.Metrics()
       prewarm_pipeline = _PrewarmPipeline()

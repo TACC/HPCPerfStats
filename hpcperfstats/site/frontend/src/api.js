@@ -48,6 +48,11 @@ async function request(path, options = {}) {
   return data;
 }
 
+function requestWithQuery(path, params) {
+  const query = new URLSearchParams(params || {}).toString();
+  return request(query ? `${path}?${query}` : path);
+}
+
 export const api = {
   getSession: () => request(API_PATHS.session),
   getUserApiKey: () => request(API_PATHS.userApiKey),
@@ -59,14 +64,17 @@ export const api = {
       body: JSON.stringify({ page_path: pagePath }),
     }),
   getHomeOptions: () => request(API_PATHS.home),
-  search: (params) => request(`${API_PATHS.search}?${new URLSearchParams(params).toString()}`),
-  getJobList: (params) => request(`${API_PATHS.jobs}?${new URLSearchParams(params).toString()}`),
+  search: (params) => requestWithQuery(API_PATHS.search, params),
+  getJobList: (params) => requestWithQuery(API_PATHS.jobs, params),
   /**
    * Single metric histogram (thumb + full) for a job list.
    * Uses the same filter params as getJobList, plus group=metric&metric=<name>.
    */
   getJobMetricHistogram: (params, metric) =>
-    request(`${API_PATHS.jobsHistograms}?${buildJobHistogramSearchParams(params, { group: "metric", metric }).toString()}`),
+    requestWithQuery(
+      API_PATHS.jobsHistograms,
+      buildJobHistogramSearchParams(params, { group: "metric", metric }),
+    ),
   getJobDetail: (pk) => request(`/jobs/${encodeURIComponent(pk)}/`),
   getJobDetailLight: (pk) => request(`/jobs/${encodeURIComponent(pk)}/?light=1`),
   getJobPlots: (pk, plot = null, zoom = false, progressive = false) => {
@@ -80,23 +88,19 @@ export const api = {
   },
   getTypeDetail: (jid, typeName) =>
     request(`/jobs/${encodeURIComponent(jid)}/${encodeURIComponent(typeName)}/`),
-  getHostPlot: (params) =>
-    request(`${API_PATHS.hostPlot}?${new URLSearchParams(params).toString()}`),
+  getHostPlot: (params) => requestWithQuery(API_PATHS.hostPlot, params),
   getAdminMonitorSection: (section, options = {}) => {
     const params = { section };
     if (options.refresh) params.refresh = "1";
-    return request(`${API_PATHS.adminMonitor}?${new URLSearchParams(params).toString()}`);
+    return requestWithQuery(API_PATHS.adminMonitor, params);
   },
   getJobMonitor: (days) => {
-    const search = days
-      ? `?${new URLSearchParams({ days: String(days) }).toString()}`
-      : "";
-    return request(`${API_PATHS.jobMonitor}${search}`);
+    return requestWithQuery(API_PATHS.jobMonitor, days ? { days: String(days) } : {});
   },
   getJobMonitorGpuForUser: (username, days) => {
     const params = new URLSearchParams({ username: String(username || "") });
     if (days) params.set("days", String(days));
-    return request(`${API_PATHS.jobMonitorGpu}?${params.toString()}`);
+    return requestWithQuery(API_PATHS.jobMonitorGpu, params);
   },
 };
 

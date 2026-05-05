@@ -79,6 +79,18 @@ _DATE_SHORTHAND = re.compile(r"^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?(?:T.*)?$")
 _MONTH_ONLY = re.compile(r"^(\d{4})-(\d{2})$")
 # Year-only format YYYY (e.g. "2024") for whole-year filter.
 _YEAR_ONLY = re.compile(r"^(\d{4})$")
+_DATE_NORMALIZE_KEYS = frozenset({
+    "end_time__date",
+    "end_time__date__gte",
+    "end_time__date__lte",
+    "end_time__gte",
+    "end_time__lte",
+    "start_time__date",
+    "start_time__date__gte",
+    "start_time__date__lte",
+    "start_time__gte",
+    "start_time__lte",
+})
 
 
 def normalize_date_param(value):
@@ -101,7 +113,7 @@ def normalize_job_list_query_params(fields):
     """
     out = {}
     for k, v in fields.items():
-        if "time" in k and ("__date" in k or "__gte" in k or "__lte" in k):
+        if k in _DATE_NORMALIZE_KEYS:
             # Keep month-only (YYYY-MM) or year-only (YYYY) end_time__date so expand_month_date_to_range can expand it
             if k == "end_time__date" and v and (_MONTH_ONLY.match(str(v).strip()) or _YEAR_ONLY.match(str(v).strip())):
                 pass  # leave v unchanged

@@ -227,12 +227,8 @@ def _transition_file_state(file_states, path, new_state):
 
 
 def _load_dead_letter_entries(path):
-  try:
-    with open(path, "r", encoding="utf-8") as fh:
-      raw = json.load(fh)
-  except (OSError, ValueError, TypeError):
-    return []
-  if not isinstance(raw, list):
+  raw = _load_json_list(path)
+  if raw is None:
     return []
   out = []
   for item in raw:
@@ -258,10 +254,6 @@ def _load_dead_letter_entries(path):
 
 
 def _save_dead_letter_entries(path, entries):
-  parent = os.path.dirname(str(path))
-  if parent:
-    os.makedirs(parent, exist_ok=True)
-  tmp_path = "%s.tmp" % path
   payload = []
   for item in entries:
     task = item.get("task")
@@ -272,9 +264,7 @@ def _save_dead_letter_entries(path, entries):
         "paths": list(item.get("paths", [])),
         "attempt": int(task.attempt),
     })
-  with open(tmp_path, "w", encoding="utf-8") as fh:
-    json.dump(payload, fh)
-  os.replace(tmp_path, path)
+  _save_json_atomic(path, payload)
 
 
 def _get_adaptive_bulk_create_batch_size():
@@ -566,12 +556,8 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
 
 def _load_sync_checkpoint(state_path):
   """Load checkpoint entries from JSON list, returning [] on invalid content."""
-  try:
-    with open(state_path, "r", encoding="utf-8") as fh:
-      raw = json.load(fh)
-  except (OSError, ValueError, TypeError):
-    return []
-  if not isinstance(raw, list):
+  raw = _load_json_list(state_path)
+  if raw is None:
     return []
   entries = []
   for item in raw:
@@ -593,13 +579,30 @@ def _load_sync_checkpoint(state_path):
 
 def _save_sync_checkpoint(state_path, completed_entries):
   """Atomically save checkpoint entries."""
-  parent = os.path.dirname(str(state_path))
+  _save_json_atomic(state_path, list(completed_entries))
+
+
+def _load_json_list(path):
+  """Load JSON list content; return None when invalid/unreadable."""
+  try:
+    with open(path, "r", encoding="utf-8") as fh:
+      raw = json.load(fh)
+  except (OSError, ValueError, TypeError):
+    return None
+  if not isinstance(raw, list):
+    return None
+  return raw
+
+
+def _save_json_atomic(path, payload):
+  """Atomically persist JSON payload to path with parent mkdir."""
+  parent = os.path.dirname(str(path))
   if parent:
     os.makedirs(parent, exist_ok=True)
-  tmp_path = "%s.tmp" % state_path
+  tmp_path = "%s.tmp" % path
   with open(tmp_path, "w", encoding="utf-8") as fh:
-    json.dump(list(completed_entries), fh)
-  os.replace(tmp_path, state_path)
+    json.dump(payload, fh)
+  os.replace(tmp_path, path)
 
 
 def _path_fingerprint(path):
@@ -640,14 +643,11 @@ def _insert_proc_data_individually(proc_stats_df):
   """Fallback: insert proc_data rows one by one, skipping duplicates.
 
     """
-  unique_violations = 0
-  for row in proc_stats_df.itertuples(index=False):
-    try:
-      proc_data(jid=row.jid, host=row.host, proc=row.proc).save()
-    except IntegrityError:
-      unique_violations += 1
-    except Exception as e:
-      log_print("error in single proc_data insert:", str(e), "row:", row)
+  unique_violations = _insert_rows_individually(
+      rows=proc_stats_df.itertuples(index=False),
+      save_row=lambda row: proc_data(jid=row.jid, host=row.host, proc=row.proc).save(),
+      error_prefix="error in single proc_data insert:",
+  )
   if DEBUG:
     log_print("Existing Rows Found in DB: %s" % unique_violations)
 
@@ -664,21 +664,47 @@ def _insert_host_data_individually(stats_df):
         message=".*[Dd]iscarding nonzero nanoseconds.*",
         category=UserWarning,
     )
-    for row in stats_df.itertuples(index=False):
-      try:
-        # force_insert: avoid Django's "pk exists -> UPDATE" path. Updates on
-        # compressed Timescale chunks decompress huge tuple batches and hit
-        # timescaledb.max_tuples_decompressed_per_dml_transaction; duplicates
-        # should be skipped (IntegrityError), not merged via UPDATE.
-        host_data_instance_from_stats_row(row).save(force_insert=True)
-      except IntegrityError:
-        unique_violations += 1
-      except Exception as e:
-        log_print("error in single host_data insert:", str(e), "row:", row)
-        need_archival = False
+    def _save_host_row(row):
+      # force_insert: avoid Django's "pk exists -> UPDATE" path. Updates on
+      # compressed Timescale chunks decompress huge tuple batches and hit
+      # timescaledb.max_tuples_decompressed_per_dml_transaction; duplicates
+      # should be skipped (IntegrityError), not merged via UPDATE.
+      host_data_instance_from_stats_row(row).save(force_insert=True)
+
+    unique_violations, non_integrity_errors = _insert_rows_individually(
+        rows=stats_df.itertuples(index=False),
+        save_row=_save_host_row,
+        error_prefix="error in single host_data insert:",
+        return_non_integrity_errors=True,
+    )
+    if non_integrity_errors > 0:
+      need_archival = False
   if DEBUG:
     log_print("Existing Rows Found in DB: %s" % unique_violations)
   return need_archival
+
+
+def _insert_rows_individually(
+    *,
+    rows,
+    save_row,
+    error_prefix,
+    return_non_integrity_errors=False,
+):
+  """Insert rows one-by-one and count duplicate violations."""
+  unique_violations = 0
+  non_integrity_errors = 0
+  for row in rows:
+    try:
+      save_row(row)
+    except IntegrityError:
+      unique_violations += 1
+    except Exception as e:
+      non_integrity_errors += 1
+      log_print(error_prefix, str(e), "row:", row)
+  if return_non_integrity_errors:
+    return unique_violations, non_integrity_errors
+  return unique_violations
 
 
 

@@ -22,6 +22,17 @@ function formatJobMetricCell(obj, isStaff) {
   return "Data not available.";
 }
 
+function buildJobDetailTitle({ error, loading, data, pk }) {
+  if (error) return pk ? `Job ${pk} (error)` : "Job detail";
+  if (loading && pk) return `Loading job ${pk}`;
+  if (data?.job_data?.jid) return `Job ${data.job_data.jid}`;
+  return pk ? `Job ${pk}` : "Job detail";
+}
+
+function renderJobEntityLink(value, to, fallbackText) {
+  return value ? <Link to={to}>{value}</Link> : fallbackText;
+}
+
 const PlotPanel = memo(function PlotPanel({
   item,
   id,
@@ -175,19 +186,7 @@ export default function JobDetail() {
     roofline: tabPlotRooflineId,
   };
 
-  useDocumentTitle(
-    error
-      ? pk
-        ? `Job ${pk} (error)`
-        : "Job detail"
-      : loading && pk
-        ? `Loading job ${pk}`
-        : data?.job_data?.jid
-          ? `Job ${data.job_data.jid}`
-          : pk
-            ? `Job ${pk}`
-            : "Job detail",
-  );
+  useDocumentTitle(buildJobDetailTitle({ error, loading, data, pk }));
 
   useEffect(() => {
     if (!pk) return;
@@ -381,6 +380,10 @@ export default function JobDetail() {
   ];
 
   const hasDeviceData = Object.keys(schema).length > 0;
+  const plotConfigByKey = JOB_PLOT_CONFIGS.reduce((acc, config) => {
+    acc[config.key] = config;
+    return acc;
+  }, {});
   const plotPanels = JOB_PLOT_CONFIGS.map((config) => ({
     key: config.panelKey,
     item: plots?.[config.key]?.plotItem ?? null,
@@ -464,9 +467,9 @@ export default function JobDetail() {
               <div>
                 <div className="text-muted">Queue</div>
                 <div>
-                  {job.queue ? (
-                    <Link to={`/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</Link>
-                  ) : (
+                  {renderJobEntityLink(
+                    job.queue,
+                    `/queue/${encodeURIComponent(job.queue)}/`,
                     ""
                   )}
                 </div>
@@ -474,21 +477,13 @@ export default function JobDetail() {
               <div>
                 <div className="text-muted">User</div>
                 <div>
-                  {job.username ? (
-                    <Link to={`/username/${job.username}/`}>{job.username}</Link>
-                  ) : (
-                    "Unknown"
-                  )}
+                  {renderJobEntityLink(job.username, `/username/${job.username}/`, "Unknown")}
                 </div>
               </div>
               <div>
                 <div className="text-muted">Project</div>
                 <div>
-                  {job.account ? (
-                    <Link to={`/account/${job.account}/`}>{job.account}</Link>
-                  ) : (
-                    "None"
-                  )}
+                  {renderJobEntityLink(job.account, `/account/${job.account}/`, "None")}
                 </div>
               </div>
               <div>
@@ -587,27 +582,19 @@ export default function JobDetail() {
                     <Link to={`/job/${job.jid}`}>{job.jid}</Link>
                   </td>
                   <td>
-                    {job.username ? (
-                      <Link to={`/username/${job.username}/`}>{job.username}</Link>
-                    ) : (
-                      "Unknown"
-                    )}
+                    {renderJobEntityLink(job.username, `/username/${job.username}/`, "Unknown")}
                   </td>
                   <td>
-                    {job.account ? (
-                      <Link to={`/account/${job.account}/`}>{job.account}</Link>
-                    ) : (
-                      "None"
-                    )}
+                    {renderJobEntityLink(job.account, `/account/${job.account}/`, "None")}
                   </td>
                   <td>{formatDateTime(job.start_time)}</td>
                   <td>{formatDateTime(job.end_time)}</td>
                   <td>{formatDecimalStandard(job.runtime)}</td>
                   <td>{formatDecimalStandard(job.timelimit)}</td>
                   <td>
-                    {job.queue ? (
-                      <Link to={`/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</Link>
-                    ) : (
+                    {renderJobEntityLink(
+                      job.queue,
+                      `/queue/${encodeURIComponent(job.queue)}/`,
                       ""
                     )}
                   </td>
@@ -822,7 +809,7 @@ export default function JobDetail() {
             hidden={analysisTab !== "summary"}
           >
             {renderSinglePlotPanel(
-              JOB_PLOT_CONFIGS.find((cfg) => cfg.key === "summary_plot"),
+              plotConfigByKey.summary_plot,
               analysisTab === "summary",
             )}
           </div>
@@ -834,11 +821,11 @@ export default function JobDetail() {
             hidden={analysisTab !== "roofline"}
           >
             {renderSinglePlotPanel(
-              JOB_PLOT_CONFIGS.find((cfg) => cfg.key === "roofline"),
+              plotConfigByKey.roofline,
               analysisTab === "roofline",
             )}
             {renderSinglePlotPanel(
-              JOB_PLOT_CONFIGS.find((cfg) => cfg.key === "gpu_roofline"),
+              plotConfigByKey.gpu_roofline,
               analysisTab === "roofline",
             )}
           </div>
