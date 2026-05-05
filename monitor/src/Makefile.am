@@ -190,11 +190,19 @@ TYPES 	+= \
 	intel_snb_qpi.c \
 	intel_snb_r2pci.c
 hpcperfstatsd_SOURCES += \
+	amd64_event_tables.h \
+	amd64_event_tables.c \
+	amd64_pmu_core.h \
+	amd64_pmu_core.c \
 	cpu_counter_metrics.h \
 	intel_pmc3_core.h \
 	intel_topology_walk.h \
+	intel_uncore_mmio.h \
+	intel_uncore_mmio.c \
 	intel_uncore_msr_box.h \
-	intel_uncore_pci.h
+	intel_uncore_pci.h \
+	rapl_likwid_stats.h \
+	rapl_likwid_stats.c
 endif
 if CPU_BACKEND_DCGM
 TYPES += \

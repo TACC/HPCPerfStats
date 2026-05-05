@@ -130,6 +130,21 @@
 #define V3_CTR3 0x71A
 //@}
 
+struct intel_pcu_msr_layout {
+	uint32_t ctl_global;
+	uint32_t ctl0;
+};
+
+static const struct intel_pcu_msr_layout pcu_layout_v1 = {
+    .ctl_global = V1_CTL,
+    .ctl0 = V1_CTL0,
+};
+
+static const struct intel_pcu_msr_layout pcu_layout_v3 = {
+    .ctl_global = V3_CTL,
+    .ctl0 = V3_CTL0,
+};
+
 /*! \name Fixed registers
 
   Layout in Table 2-78 and 2-79.
@@ -230,50 +245,47 @@
 
 //! Configure and start counters for PCU
 
+static const struct intel_pcu_msr_layout *intel_pcu_layout_for_processor(void)
+{
+  processor_t p = processor;
+
+  if (p == SANDYBRIDGE || p == IVYBRIDGE)
+    return &pcu_layout_v1;
+  if (p == HASWELL || p == BROADWELL)
+    return &pcu_layout_v3;
+  return NULL;
+}
+
 static int intel_pcu_begin_socket(char *cpu, uint64_t *events)
 {
   int rc = -1;
   int msr_fd = -1;
-  uint64_t ctl;
-  /* Use the global `processor` (T16 cleans up the unassigned local `p` that
-   * historically guarded these branches and rendered them dead). */
-  processor_t p = processor;
+  uint64_t ctl = 0x00000ULL; /* unfreeze counter */
+  const struct intel_pcu_msr_layout *lay = intel_pcu_layout_for_processor();
+  int i;
+
+  if (lay == NULL)
+    goto out;
 
   msr_fd = msr_open_cpu(cpu, O_RDWR);
   if (msr_fd < 0)
     goto out;
 
-  ctl = 0x00000ULL; // unfreeze counter
+  for (i = 0; i < 4; i++) {
+    uint32_t ctl_msr = lay->ctl0 + (uint32_t)i;
 
-  /* Select Events for PCU */
-  int i;
-  if (p == SANDYBRIDGE || p == IVYBRIDGE)
-    for (i = 0; i < 4; i++) {
-      TRACE("MSR %08X, event %016llX\n", V1_CTL0 + i, (unsigned long long) events[i]);
-      if (msr_write_u64(msr_fd, V1_CTL0 + i, events[i]) < 0) {
-	ERROR("cannot write event %016llX to MSR %08X for cpu `%s': %m\n",
-	      (unsigned long long) events[i], (unsigned) V1_CTL0 + i, cpu);
-	goto out;
-      }
-      if (msr_write_u64(msr_fd, V1_CTL, ctl) < 0) {
-	ERROR("cannot unfreeze PCU counters: %m\n");
-	goto out;
-      }
+    TRACE("MSR %08X, event %016llX\n", ctl_msr,
+	  (unsigned long long)events[i]);
+    if (msr_write_u64(msr_fd, ctl_msr, events[i]) < 0) {
+      ERROR("cannot write event %016llX to MSR %08X for cpu `%s': %m\n",
+	    (unsigned long long)events[i], ctl_msr, cpu);
+      goto out;
     }
-
-  if (p == HASWELL || p == BROADWELL)
-    for (i = 0; i < 4; i++) {
-      TRACE("MSR %08X, event %016llX\n", V3_CTL0 + i, (unsigned long long) events[i]);
-      if (msr_write_u64(msr_fd, V3_CTL0 + i, events[i]) < 0) {
-	ERROR("cannot write event %016llX to MSR %08X for cpu `%s': %m\n",
-	      (unsigned long long) events[i], (unsigned) V3_CTL0 + i, cpu);
-	goto out;
-      }
-      if (msr_write_u64(msr_fd, V3_CTL, ctl) < 0) {
-	ERROR("cannot unfreeze PCU counters: %m\n");
-	goto out;
-      }
+    if (msr_write_u64(msr_fd, lay->ctl_global, ctl) < 0) {
+      ERROR("cannot unfreeze PCU counters: %m\n");
+      goto out;
     }
+  }
 
   rc = 0;
 

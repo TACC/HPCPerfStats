@@ -1,146 +1,108 @@
 #include <stddef.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <errno.h>
 #include <fcntl.h>
 #include "stats.h"
 #include "trace.h"
 #include "msr_io.h"
 #include "cpuid.h"
 #include "amd64_df.h"
-
-static  uint64_t amd17h_df_events[] = {
-  EVENT_DRAM_CHANNEL_0,
-  EVENT_DRAM_CHANNEL_1,
-  EVENT_DRAM_CHANNEL_2,
-  EVENT_DRAM_CHANNEL_3,
-};
-
-static  uint64_t amd19h_df_events[] = {
-  EVENT_DRAM_CHANNEL_0,
-  EVENT_DRAM_CHANNEL_1,
-  EVENT_DRAM_CHANNEL_2,
-  EVENT_DRAM_CHANNEL_3,
-};
+#include "amd64_event_tables.h"
+#include "amd64_pmu_core.h"
 
 static int amd64_df_begin_cpu(char *cpu)
 {
-  int rc = -1;
-  int msr_fd = -1;
-  uint64_t *df_events;
+	switch (processor) {
 
-  // 17H and 19H have 4 MC (DataFabric) Counters we can access.
-  switch(processor) {
+	case AMD_17H:
+	case AMD_19H:
+		break;
+	default:
+		TRACE("Processor model/family %d not supported\n", processor);
+		return -1;
+	}
 
-  case AMD_17H:
-    df_events = amd17h_df_events;
-    break;
-  case AMD_19H:
-    df_events = amd19h_df_events;
-    break;
-  default:
-    TRACE("Processor model/family %d not supported\n", processor);
-    goto out;
-  }
-
-  msr_fd = msr_open_cpu(cpu, O_RDWR);
-  if (msr_fd < 0)
-    goto out;
-
-  /* Memory Counters */
-  int i;
-  for (i = 0; i < 4; i++) {
-    TRACE("MSR %08X, event %016llX\n", MSR_DF_CTL0 + i*2, (unsigned long long) df_events[i]);
-
-    if (msr_write_u64(msr_fd, MSR_DF_CTL0 + i*2, df_events[i]) < 0) {
-      ERROR("cannot write event %016llX to MSR %08X for cpu `%s': %m\n",
-            (unsigned long long) df_events[i],
-            (unsigned) MSR_DF_CTL0 + i*2,
-            cpu);
-      goto out;
-    }
-  }
-
-  rc = 0;
-
- out:
-  if (msr_fd >= 0)
-    close(msr_fd);
-
-  return rc;
+	return amd64_pmu_msr_program_selects(cpu, MSR_DF_CTL0,
+					   amd64_df_dram_events, 4);
 }
 
 static void amd64_df_collect_cpu(struct stats_type *type, char *cpu)
 {
-  int msr_fd = -1;
-  struct stats *stats = NULL;
+	int msr_fd = -1;
+	struct stats *stats = NULL;
 
-  stats = get_current_stats(type, cpu);
-  if (stats == NULL)
-    goto out;
+	stats = get_current_stats(type, cpu);
+	if (stats == NULL)
+		goto out;
 
-  msr_fd = msr_open_cpu(cpu, O_RDONLY);
-  if (msr_fd < 0)
-    goto out;
+	msr_fd = msr_open_cpu(cpu, O_RDONLY);
+	if (msr_fd < 0)
+		goto out;
 
-#define X(k,r...)							\
-  ({									\
-    uint64_t val = 0;							\
-    if (msr_read_u64(msr_fd, MSR_DF_##k, &val) < 0)			\
-      TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, MSR_DF_##k, cpu); \
-    else								\
-      stats_set(stats, #k, val);					\
-  })
-  KEYS;
+#define X(k, r...)                                                              \
+	({                                                                      \
+		uint64_t val = 0;                                               \
+		if (msr_read_u64(msr_fd, MSR_DF_##k, &val) < 0)                 \
+			TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, \
+			      MSR_DF_##k, cpu);                                 \
+		else                                                            \
+			stats_set(stats, #k, val);                              \
+	})
+	KEYS;
 #undef X
 
- out:
-  if (msr_fd >= 0)
-    close(msr_fd);
+out:
+	if (msr_fd >= 0)
+		close(msr_fd);
 }
 
 static void amd64_df_collect(struct stats_type *type)
 {
-  int i;
-  for (i = 0; i < nr_cpus; i++) {
-    char cpu[80];
-    snprintf(cpu, sizeof(cpu), "%d", i);
-    int pkg, core, smt, nr_core;
+	int i;
 
-    if (cpuid_read_cpu_topology(cpu, &pkg, &core, &smt, &nr_core) && (core == 0) && (smt == 0)) {
-      amd64_df_collect_cpu(type, cpu);
-    }
-  }
+	for (i = 0; i < nr_cpus; i++) {
+		char cpu[80];
+		int pkg, core, smt, nr_core;
+
+		snprintf(cpu, sizeof(cpu), "%d", i);
+
+		if (cpuid_read_cpu_topology(cpu, &pkg, &core, &smt, &nr_core) &&
+		    (core == 0) && (smt == 0))
+			amd64_df_collect_cpu(type, cpu);
+	}
 }
 
 static int amd64_df_begin(struct stats_type *type)
 {
-  int nr = 0;
+	int nr = 0;
+	int i;
 
-  int i;
-  for (i = 0; i < nr_cpus; i++) {
-    char cpu[80];
-    snprintf(cpu, sizeof(cpu), "%d", i);
-    int pkg, core, smt, nr_core;
+	for (i = 0; i < nr_cpus; i++) {
+		char cpu[80];
+		int pkg, core, smt, nr_core;
 
-    if (cpuid_read_cpu_topology(cpu, &pkg, &core, &smt, &nr_core) && (core == 0) && (smt == 0))
-      if (amd64_df_begin_cpu(cpu) == 0)
-	nr++;
-  }
-  
-  if (nr == 0)
-    type->st_enabled = 0;
-  return nr > 0 ? 0 : -1;
+		snprintf(cpu, sizeof(cpu), "%d", i);
+
+		if (cpuid_read_cpu_topology(cpu, &pkg, &core, &smt, &nr_core) &&
+		    (core == 0) && (smt == 0)) {
+			if (amd64_df_begin_cpu(cpu) == 0)
+				nr++;
+		}
+	}
+
+	if (nr == 0)
+		type->st_enabled = 0;
+	return nr > 0 ? 0 : -1;
 }
 
 struct stats_type amd64_df_stats_type = {
-  .st_name = "amd64_df",
-  .st_begin = &amd64_df_begin,
-  .st_collect = &amd64_df_collect,
+    .st_name = "amd64_df",
+    .st_begin = &amd64_df_begin,
+    .st_collect = &amd64_df_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };
