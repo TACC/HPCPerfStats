@@ -96,6 +96,8 @@ hpcperfstatsd_SOURCES += \
 	monitor_cli.h \
 	monitor_daemon.c \
 	monitor_daemon.h \
+	monitor_timing.c \
+	monitor_timing.h \
 	stats_buffer_data_append.c \
 	stats_buffer_data_append.h \
 	stats_buffer.c \

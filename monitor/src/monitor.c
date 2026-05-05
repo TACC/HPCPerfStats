@@ -72,9 +72,9 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   fprintf(log_stream, "Starting hpcperfstatsd watching fd %s\n", jobid_file_path);
 
   sample_timer.data = (void *)rb;
-  ev_timer_init(&sample_timer, monitor_daemon_sample_timer_cb, sample_freq, sample_freq);
-  ev_timer_start(EV_DEFAULT, &sample_timer);
-  fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs\n", sample_freq);
+  ev_timer_init(&sample_timer, monitor_daemon_sample_timer_cb, 0.0, 0.0);
+  monitor_daemon_reanchor_sample_timer(EV_DEFAULT, sample_freq);
+  fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs (epoch-aligned)\n", sample_freq);
 
   send_timer.data = (void *)rb;
   ev_timer_init(&send_timer, monitor_daemon_send_timer_cb, send_freq, send_freq);

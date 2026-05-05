@@ -28,6 +28,7 @@
 #include "trace.h"
 #include "pscanf.h"
 #include "hwdetect.h"
+#include "monitor_timing.h"
 
 char *app_name = NULL;
 char *conf_file_name = NULL;
@@ -51,6 +52,7 @@ ev_timer sample_timer;
 ev_timer send_timer;
 ev_timer rotate_timer;
 static int max_buffer_size_explicit = 0;
+static double sample_timer_period = 300.0;
 
 char jobid[80] = "-";
 int nr_cpus;
@@ -186,6 +188,27 @@ static void monitor_init_enabled_stats_types(void)
 }
 
 static int get_dumpfile_number(void);
+
+static double monitor_daemon_get_realtime_now(void)
+{
+  struct timespec ts;
+  if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
+    return 0.0;
+  return (double)ts.tv_sec + ((double)ts.tv_nsec / 1000000000.0);
+}
+
+void monitor_daemon_reanchor_sample_timer(struct ev_loop *loop, double period)
+{
+  double now = monitor_daemon_get_realtime_now();
+  double wait;
+
+  sample_timer_period = monitor_timing_normalize_period(period);
+  wait = monitor_timing_seconds_until_next_boundary(now, sample_timer_period);
+
+  ev_timer_stop(loop, &sample_timer);
+  ev_timer_set(&sample_timer, wait, 0.0);
+  ev_timer_start(loop, &sample_timer);
+}
 
 void monitor_daemon_finalize_runtime_settings(void)
 {
@@ -565,11 +588,11 @@ void monitor_daemon_rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
 
 void monitor_daemon_sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)
 {
-  (void)loop;
   (void)revents;
   /* jobid: refreshed on ev_stat (JOBID file) and at startup; avoids fopen/fclose each tick. */
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
   monitor_daemon_collect_to_ring(w, 0, NULL);
+  monitor_daemon_reanchor_sample_timer(loop, sample_timer_period);
   print_buffer_status(w);
 }
 
@@ -602,15 +625,15 @@ void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
     if (strcmp(new_jobid, "-") != 0) {
       strcpy(jobid, new_jobid);
       fprintf(log_stream, "Loading jobid %s from %s\n", jobid, jobid_file_path);
-      sample_timer.repeat = sample_freq;
+      sample_timer_period = sample_freq;
       mark_line = strf("begin %s", jobid);
     } else {
       fprintf(log_stream, "Unloading jobid %s from %s\n", jobid, jobid_file_path);
       mark_line = strf("end %s", jobid);
-      sample_timer.repeat = 3600;
+      sample_timer_period = 3600.0;
       write_hdr = 1;
     }
-    ev_timer_again(EV_DEFAULT, &sample_timer);
+    monitor_daemon_reanchor_sample_timer(EV_DEFAULT, sample_timer_period);
     monitor_daemon_collect_to_ring(w, write_hdr, mark_line);
     if (mark_line != NULL)
       free((void *) mark_line);
@@ -660,9 +683,9 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
     fprintf(log_stream,
 	    "Skipping dumpfile replay on reload: ring buffer still has %d queued sample(s)\n",
 	    w->q_count);
-  sample_timer.repeat = sample_freq;
+  sample_timer_period = sample_freq;
   send_timer.repeat = send_freq;
-  ev_timer_again(EV_DEFAULT, &sample_timer);
+  monitor_daemon_reanchor_sample_timer(EV_DEFAULT, sample_timer_period);
   ev_timer_again(EV_DEFAULT, &send_timer);
   fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs\n", sample_freq);
   fprintf(log_stream, "Setting hpcperfstatsd send frequency to %.1fs\n", send_freq);
