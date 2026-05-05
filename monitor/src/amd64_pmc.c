@@ -20,8 +20,13 @@ static int amd64_pmc_begin_cpu(char *cpu)
 	switch (processor) {
 
 	case AMD_10H:
+#ifndef MONITOR_LEGACY_PMCS
+		ERROR("AMD Family 10h PMC programming requires building with --enable-legacy-pmcs\n");
+		return -1;
+#else
 		events = amd64_pmc_events_10h;
 		break;
+#endif
 	case AMD_17H:
 	case AMD_19H:
 		events = amd64_pmc_events_zen;

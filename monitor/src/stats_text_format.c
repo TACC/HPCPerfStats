@@ -2,6 +2,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "schema.h"
@@ -102,6 +103,40 @@ void stats_format_emit_mark_multiline(stats_format_emit_fn emit, void *opaque,
 		if (*str == '\n')
 			str++;
 	}
+}
+
+int stats_format_append_mark_va(char **markp, const char *fmt, va_list ap)
+{
+	char *suffix = NULL;
+	char *merged = NULL;
+	int n;
+
+	if (markp == NULL || fmt == NULL)
+		return -1;
+
+	n = vasprintf(&suffix, fmt, ap);
+	if (n < 0)
+		return -1;
+
+	if (suffix == NULL || suffix[0] == '\0') {
+		free(suffix);
+		return 0;
+	}
+
+	if (*markp == NULL || (*markp)[0] == '\0') {
+		free(*markp);
+		*markp = suffix;
+		return 0;
+	}
+
+	if (asprintf(&merged, "%s\n%s", *markp, suffix) < 0) {
+		free(suffix);
+		return -1;
+	}
+	free(*markp);
+	free(suffix);
+	*markp = merged;
+	return 0;
 }
 
 int stats_format_snprintf_stats_row(char *buf, size_t cap,

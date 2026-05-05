@@ -1,10 +1,21 @@
 #include <assert.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "schema.h"
 #include "stats_text_format.h"
+
+static void append_mark_helper(char **m, const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	assert(stats_format_append_mark_va(m, fmt, ap) == 0);
+	va_end(ap);
+}
 
 int main(void)
 {
@@ -44,6 +55,23 @@ int main(void)
 
 		assert(strcmp(suf, ",E,U=mJ,W=32") == 0);
 		assert(n == strlen(suf));
+	}
+
+	{
+		char *m = NULL;
+
+		append_mark_helper(&m, "%s", "first");
+		assert(m != NULL && strcmp(m, "first") == 0);
+
+		append_mark_helper(&m, "%s", "second");
+		assert(strcmp(m, "first\nsecond") == 0);
+
+		free(m);
+		m = strdup("");
+		assert(m != NULL);
+		append_mark_helper(&m, "%s", "after_empty");
+		assert(strcmp(m, "after_empty") == 0);
+		free(m);
 	}
 
 	printf("test_stats_text_format passed\n");

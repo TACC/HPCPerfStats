@@ -3,12 +3,14 @@
 #undef KEYS
 #include "amd64_pmc.h"
 
+#ifdef MONITOR_LEGACY_PMCS
 const uint64_t amd64_pmc_events_10h[] = {
 	FLOPS,
 	MERGE,
 	DISPATCH_STALL_CYCLES1,
 	DISPATCH_STALL_CYCLES0,
 };
+#endif
 
 const uint64_t amd64_pmc_events_zen[] = {
 	FLOPS,

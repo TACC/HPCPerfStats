@@ -104,6 +104,15 @@ esac],
 [hardware=true])
 AM_CONDITIONAL([HARDWARE], [test x$hardware = xtrue])
 
+AC_ARG_ENABLE([legacy-pmcs],
+[AS_HELP_STRING([--enable-legacy-pmcs], [Enable legacy monitoring paths (AMD Family 10h PMC programming; Intel MIC / Xeon Phi requires this together with --enable-mic). Default is disabled.])],
+[case "${enableval}" in
+  yes) legacy_pmcs=true ;;
+  no)  legacy_pmcs=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable-legacy-pmcs]) ;;
+esac],
+[legacy_pmcs=false])
+
 AC_ARG_WITH([cpu-counter-backend],
 [AS_HELP_STRING([--with-cpu-counter-backend={auto|likwid|dcgm}], [CPU counter backend selection (default: auto)])],
 [cpu_counter_backend="$withval"],
@@ -272,6 +281,9 @@ AC_ARG_ENABLE([mic],
 esac],
 [mic=false])
 AM_CONDITIONAL([MIC], [test x$mic = xtrue])
+if test "x$mic" = xtrue && test "x$legacy_pmcs" != xtrue; then
+  AC_MSG_ERROR([--enable-mic requires --enable-legacy-pmcs (Intel MIC / Xeon Phi support is legacy-only)])
+fi
 
 AC_ARG_ENABLE([gpu],
 [  --enable-gpu		Enable Nvidia GPU support (default is auto-detect)],
@@ -466,6 +478,10 @@ AM_COND_IF([GPU], [AC_DEFINE([MONITOR_WITH_GPU], [1], [NVIDIA GPU stats])])
 AM_COND_IF([AMD_GPU], [AC_DEFINE([MONITOR_WITH_AMD_GPU], [1], [AMD GPU stats])])
 AM_COND_IF([MONITOR_ARCH_ARM],
   [AC_DEFINE([MONITOR_HOST_IS_ARM], [1], [ARM/aarch64-only stats modules (e.g. arm_imc)])])
+
+AS_IF([test "x$legacy_pmcs" = xtrue],
+  [AC_DEFINE([MONITOR_LEGACY_PMCS], [1],
+    [Legacy PMC programming paths (AMD Family 10h) and related knobs])])
 
 AC_CONFIG_FILES([Makefile src/Makefile tests/Makefile])
 AC_OUTPUT

@@ -18,7 +18,7 @@ C implementation of the **hpcperfstats** data collector: either a **RabbitMQ dae
 - **RabbitMQ build** (typical for `hpcperfstatsd`): `monitor.c`, `monitor_cli.c`, `monitor_daemon.c`, `stats_buffer.c`, AMQP + libev + LIKWID as configured.
 - **Non–RabbitMQ build**: `main.c`, `stats_file.c`, `stats_file_format.c` — local file client and archive I/O.
 
-Configure selects sources via Automake conditionals; use **`./configure --help`** for options (including **`--enable-all-static`**, **`--enable-metric-profiler`**, and **`--with-metric-profiler-backend={none,ebpf}`**).
+Configure selects sources via Automake conditionals; use **`./configure --help`** for options (including **`--enable-all-static`**, **`--enable-legacy-pmcs`** / MIC linkage constraints, **`--enable-metric-profiler`**, and **`--with-metric-profiler-backend={none,ebpf}`**).
 
 ## Metric profiler build options
 
@@ -35,7 +35,10 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 
 | Area | Files (under `src/`) |
 |------|----------------------|
-| CLI defaults, argv parsing, heap teardown | `monitor_cli.c`, `monitor_cli.h` (shared literals `monitor_cli_lit_*` with `monitor_daemon.c`). |
+| Stats type registry (sorted `st_name` table for lookup / iteration) | `stats_registry.c`, `stats_registry.h` (optional modules guarded by configure **`MONITOR_WITH_*`** / backend macros — keep aligned with `Makefile.am` **`TYPES`**). |
+| Prepare/teardown and sink-facing collect cycles | `stats_runtime.c`, `stats_runtime.h`, `stats_sink.h`. |
+| Shared UTF-8 text for archive/buffer rows, schema suffixes, `%` marks | `stats_text_format.c`, `stats_text_format.h`. |
+| Long **`configure`/daemon-style options** and argv parsing | `monitor_options.c`, `monitor_options.h`; thin entrypoints `monitor_cli.c`, `monitor_cli.h` (shared literals `monitor_cli_lit_*` with `monitor_daemon.c`). |
 | Daemon loop, RMQ send, ring buffer | `monitor_daemon.c`, `monitor_daemon.h` (rate-limited resend `fprintf` when not `DEBUG`; full `$` schema header every 6h and when JOBID unloads to `-`). |
 | Schema text parsing | `schema_entry_parse.c` (`parse_schema_entry`); `schema.c` builds full schemas for types. |
 | Archive header / schema suffix / directive class / marks (file mode) | `stats_file_format.c`, `stats_file_format.h` (`stats_file_classify_header_directive`, `stats_file_fprint_mark_multiline`, …); orchestration in `stats_file.c`. |
@@ -140,6 +143,8 @@ Use these steps on a **representative host** (same kernel, privilege level, and 
    ```
 
    Do not rely on **`make check` only inside `build-tree/src/`**; the Automake `tests/` subdir runs from the top of the build mirror.
+
+3. **Cleanup** (optional after a successful verify pass): from the same build tree root, **`make distclean`** removes generated Makefiles and artifacts unless you need to keep the tree configured.
 
 See **monitor-static-build-verification** and **global-testing-discipline** in `monitor/cursor-rules/` for project expectations.
 

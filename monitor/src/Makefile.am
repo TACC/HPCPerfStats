@@ -160,6 +160,8 @@ TYPES 	= \
 	vm.c
 
 if HARDWARE
+hpcperfstatsd_SOURCES += \
+	cpu_counter_metrics.h
 if CPU_BACKEND_LIKWID
 TYPES 	+= \
 	cpu_counter_metrics.c \
@@ -222,8 +224,6 @@ TYPES += \
 hpcperfstatsd_SOURCES += \
 	arm_imc.h
 endif
-hpcperfstatsd_SOURCES += \
-	cpu_counter_metrics.h
 endif
 endif
 

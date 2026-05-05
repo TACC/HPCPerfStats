@@ -100,6 +100,8 @@ void daemonize()
 			  pid_file_name);
 	exit(EXIT_FAILURE);
       }
+      if (ftruncate(pid_fd, 0) != 0)
+	exit(EXIT_FAILURE);
       {
 	char pidbuf[32];
 	int len = snprintf(pidbuf, sizeof(pidbuf), "%ld\n", (long)getpid());

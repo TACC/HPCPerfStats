@@ -721,15 +721,9 @@ int stats_buffer_close(struct stats_buffer *sf)
 
 int stats_buffer_mark(struct stats_buffer *sf, const char *fmt, ...)
 {
-  /* TODO Concatenate new mark with old. */
   va_list args;
   va_start(args, fmt);
-  free(sf->sf_mark);
-  sf->sf_mark = NULL;
-
-  if (vasprintf(&sf->sf_mark, fmt, args) < 0)
-    sf->sf_mark = NULL;
-
+  (void)stats_format_append_mark_va(&sf->sf_mark, fmt, args);
   va_end(args);
   return 0;
 }
@@ -831,23 +825,11 @@ int stats_buffer_write(struct stats_buffer *sf)
   if (rc < 0)
     return rc;
   rc = stats_buffer_send_payload(sf);
-
-  /* For debugging */
-  /*if ((double)rand() / (double)RAND_MAX < 0.9)
-    rc = -1;
-  else
-    rc = 0;*/
   return rc;
 }
 
-// A modified send function with a controllable failure rate (for debugging)
 int stats_buffer_resend(struct stats_buffer *sf)
 {
-  /* For debugging */
-  /*if ((double)rand() / (double)RAND_MAX < 0)
-    return -1;
-  else
-    return 0;*/
   return stats_buffer_send_payload(sf);
 }
 

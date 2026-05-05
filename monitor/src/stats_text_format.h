@@ -1,6 +1,7 @@
 #ifndef STATS_TEXT_FORMAT_H
 #define STATS_TEXT_FORMAT_H
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 
@@ -25,6 +26,9 @@ void stats_format_emit_schema_line(stats_format_emit_fn emit, void *opaque,
 
 void stats_format_emit_mark_multiline(stats_format_emit_fn emit, void *opaque,
 				      int mark_char, const char *payload);
+
+/* Append formatted text to *markp (newline between prior and new); frees/replaces *markp. */
+int stats_format_append_mark_va(char **markp, const char *fmt, va_list ap);
 
 int stats_format_snprintf_stats_row(char *buf, size_t cap,
 				    struct stats_type *type,

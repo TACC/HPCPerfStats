@@ -173,13 +173,9 @@ int stats_file_open(struct stats_file *sf, const char *path)
 
 int stats_file_mark(struct stats_file *sf, const char *fmt, ...)
 {
-  /* TODO Concatenate new mark with old. */
   va_list args;
   va_start(args, fmt);
-
-  if (vasprintf(&sf->sf_mark, fmt, args) < 0)
-    sf->sf_mark = NULL;
-
+  (void)stats_format_append_mark_va(&sf->sf_mark, fmt, args);
   va_end(args);
 
   return 0;
