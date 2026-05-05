@@ -549,7 +549,17 @@ def _build_job_list_queryset_from_request(request, extra_excluded_fields=(), ann
                 "metrics_data__value__" + op: val,
             }
         )
-    queryset = queryset.order_by(order_by)
+    if order_by.lstrip("-") == "metrics_distinct_time_count":
+        # Keep blank sample counts at the end for both sort directions so
+        # "largest sample count first" behaves as users expect.
+        sample_count_order = (
+            F("metrics_distinct_time_count").desc(nulls_last=True)
+            if order_by.startswith("-")
+            else F("metrics_distinct_time_count").asc(nulls_last=True)
+        )
+        queryset = queryset.order_by(sample_count_order)
+    else:
+        queryset = queryset.order_by(order_by)
     return queryset, fields, cur_metrics, order_by
 
 

@@ -81,3 +81,63 @@ def test_job_list_queryset_stray_get_key_does_not_break_count():
         annotate_all=True,
     )
     assert qs.count() >= 1
+
+
+@pytest.mark.django_db
+def test_job_list_queryset_sample_count_desc_sorts_nulls_last():
+    """Descending sample_count keeps blank values at the end of the list."""
+    if connection.vendor != "postgresql":
+        pytest.skip("job_data.host_list ArrayField is PostgreSQL-specific in this project")
+
+    now = timezone.now()
+    job_data.objects.create(
+        jid="joblist-sample-sort-100",
+        submit_time=now,
+        start_time=now,
+        end_time=now,
+        runtime=60.0,
+        username="u3",
+        host_list=["s1.example.com"],
+        metrics_distinct_time_count=100,
+    )
+    job_data.objects.create(
+        jid="joblist-sample-sort-10",
+        submit_time=now,
+        start_time=now,
+        end_time=now,
+        runtime=60.0,
+        username="u3",
+        host_list=["s1.example.com"],
+        metrics_distinct_time_count=10,
+    )
+    job_data.objects.create(
+        jid="joblist-sample-sort-null",
+        submit_time=now,
+        start_time=now,
+        end_time=now,
+        runtime=60.0,
+        username="u3",
+        host_list=["s1.example.com"],
+        metrics_distinct_time_count=None,
+    )
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/",
+        {
+            "host": "s1.example.com",
+            "order_by": "-sample_count",
+            "page": "1",
+        },
+    )
+    request.session = {"username": "admin", "is_staff": True}
+
+    qs, _fields, _cur_metrics, order_by = _build_job_list_queryset_from_request(
+        request,
+        extra_excluded_fields=("group", "metric", "_histogram_embed_v"),
+        annotate_all=True,
+    )
+    assert order_by == "-metrics_distinct_time_count"
+    values = list(qs.values_list("metrics_distinct_time_count", flat=True))
+    assert values[:2] == [100, 10]
+    assert values[-1] is None
