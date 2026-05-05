@@ -67,6 +67,12 @@ export default function Layout({ session, onSessionChange, children }) {
             </div>
             <div className="navbar-actions ms-auto">
               <div className="navbar-actions-row">
+                <Link
+                  to="/live_jobs"
+                  className="btn btn-outline-secondary btn-sm me-2"
+                >
+                  Live jobs
+                </Link>
                 {session?.is_staff && (
                   <>
                     <Link

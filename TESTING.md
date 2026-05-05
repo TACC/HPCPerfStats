@@ -81,6 +81,19 @@ E2E_SEED_CMD="python your_seed_script.py" tests/run_web_e2e_workflow.sh
 - **Django tests**: PostgreSQL/Redis availability and valid `HPCPERFSTATS_INI` with required sections (`[PORTAL]`, `[DEFAULT]`).
 - **Browser E2E tests**: Playwright/Chromium tooling (installed by the E2E workflow script unless skipped).
 
+## Local Job Detail seed (`HPCPerfStatsdDataSample`)
+
+To load the bundled daemon sample (`hpcperfstats/dbload/tests/HPCPerfStatsdDataSample`) into PostgreSQL so Job Detail can join `job_data` and `host_data`, run from the repo root with a reachable DB and ini:
+
+```bash
+HPCPERFSTATS_INI=/path/to/hpcperfstats.ini PYTHONPATH=. \
+  python3 hpcperfstats/dbload/ingest_sample_test_data.py
+```
+
+The script rewrites the sample host to match `DEFAULT.host_name_ext` in your ini (so short node + suffix matches `jid_table`), ingests stats via `add_stats_file_to_db`, then inserts a synthetic sacct row via `sync_acct_from_content`. Set `SAMPLE_TEST_USERNAME` if the accounting user should differ from your login.
+
+Use a **fresh database** or delete conflicting `job_data` / `host_data` rows when re-seeding or switching fixtures; duplicate timestamps may otherwise be skipped by `add_stats_file_to_db`, and re-ingest behavior depends on existing rows.
+
 ## Notes
 
 - `pyproject.toml` exposes the canonical web E2E runner path under `[tool.hpcperfstats.testing].web_e2e_runner`.

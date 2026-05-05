@@ -3,6 +3,7 @@
 """
 import os
 import queue
+import re
 import signal
 import sys
 import time
@@ -37,6 +38,21 @@ _recent_host_worker_thread_started = False
 _recent_host_worker_stop_event = Event()
 _recent_host_queue = queue.Queue(maxsize=100000)
 _recent_host_redis_client = None
+
+LIVE_JOB_TTL_SECONDS = 15 * 60  # 15 minutes
+LIVE_JOB_INDEX_KEY = "live_job:index"
+
+# Per-core jiffies lines: ``cpu <core_id> user nice system idle iowait irq softirq ...``
+# (tacc_stats /proc snapshot style; see HPCPerfStatsdDataSample).
+_PER_CPU_JIFFIES_RE = re.compile(r"^cpu (\d+) (.*)$")
+# Reasonable upper bound so ``cpu <user_jiffies> ...`` aggregate lines are not mistaken for cores.
+_MAX_PER_CPU_CORE_ID = 4095
+
+_live_job_worker_thread_started = False
+_live_job_worker_stop_event = Event()
+_live_job_queue = queue.Queue(maxsize=100000)
+_live_job_redis_client = None
+_live_job_worker_redis_none_logged = False
 
 
 def _get_first_timestamp_seconds(file_path, use_lock=True):
@@ -178,6 +194,269 @@ def _recent_host_worker():
       _recent_host_queue.task_done()
 
 
+def _first_timestamp_seconds(message):
+  """First unix seconds from the first timestamp line, else now."""
+  for line in message.splitlines():
+    stripped = line.strip()
+    if not stripped or stripped[0] not in "0123456789":
+      continue
+    tok = stripped.split(maxsplit=1)[0]
+    try:
+      return int(float(tok))
+    except ValueError:
+      continue
+  return int(time.time())
+
+
+def _parse_first_timestamp_line_jid_host(message):
+  """Parse jid and host from the first '<t> <jid> <host>' line."""
+  for line in message.splitlines():
+    stripped = line.strip()
+    if not stripped or stripped[0] not in "0123456789":
+      continue
+    parts = stripped.split()
+    if len(parts) >= 3:
+      return parts[1], parts[2]
+    # e.g. ``$`` rotation metadata ``1 <host>`` — not a stats timestamp line.
+    continue
+  return None, None
+
+
+def _extract_named_percent(message, name):
+  """Parse ``name=12.34`` or ``name: 12.34`` (first match)."""
+  pat = re.compile(
+      r"\b" + re.escape(name) + r"\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)",
+      re.IGNORECASE,
+  )
+  m = pat.search(message)
+  if not m:
+    return None
+  try:
+    return float(m.group(1))
+  except ValueError:
+    return None
+
+
+def _extract_mem_percent_from_mem_lines(message):
+  """Derive memory use percent from ``mem <node> <MemTotal> <MemFree> <MemUsed> ...`` rows.
+
+  Sums MemTotal/MemUsed across NUMA nodes when multiple ``mem`` lines exist (prod sample).
+  """
+  total_kb = 0.0
+  used_kb = 0.0
+  for line in message.splitlines():
+    if not line.startswith("mem ") or line.startswith("mem_used"):
+      continue
+    parts = line.split()
+    if len(parts) < 5:
+      continue
+    try:
+      if not parts[1].isdigit():
+        continue
+      node_total = float(parts[2])
+      node_used = float(parts[4])
+    except (ValueError, IndexError):
+      continue
+    if node_total <= 0:
+      continue
+    total_kb += node_total
+    used_kb += node_used
+  if total_kb <= 0:
+    return None
+  return 100.0 * used_kb / total_kb
+
+
+def _extract_cpu_percent_from_cpu_lines(message):
+  """Derive CPU use percent from /proc-style jiffies lines (``!cpu`` schema in daemon payloads).
+
+  Prefer many ``cpu <id> user nice system idle iowait irq softirq ...`` per-core lines
+  (HPCPerfStatsdDataSample). Falls back to a single aggregate ``cpu user nice system idle ...``
+  line when the second field is not a small core id.
+  """
+  busy_sum = 0.0
+  total_sum = 0.0
+  for line in message.splitlines():
+    line = line.strip()
+    m = _PER_CPU_JIFFIES_RE.match(line)
+    if not m:
+      continue
+    core_id = int(m.group(1))
+    if core_id > _MAX_PER_CPU_CORE_ID:
+      continue
+    toks = m.group(2).split()
+    if len(toks) < 7:
+      continue
+    try:
+      nums = [float(x) for x in toks]
+    except ValueError:
+      continue
+    total_j = sum(nums)
+    if total_j <= 0:
+      continue
+    idle_j = nums[3]
+    busy_j = total_j - idle_j
+    busy_sum += busy_j
+    total_sum += total_j
+  if total_sum > 0:
+    return 100.0 * busy_sum / total_sum
+  for line in message.splitlines():
+    line = line.strip()
+    parts = line.split()
+    if len(parts) < 8 or parts[0] != "cpu":
+      continue
+    m = _PER_CPU_JIFFIES_RE.match(line)
+    if m and int(m.group(1)) <= _MAX_PER_CPU_CORE_ID:
+      continue
+    try:
+      nums = [float(parts[i]) for i in range(1, len(parts))]
+    except ValueError:
+      continue
+    if len(nums) < 5:
+      continue
+    total_j = sum(nums)
+    if total_j <= 0:
+      continue
+    idle_j = nums[3]
+    busy_j = total_j - idle_j
+    return 100.0 * busy_j / total_j
+  return None
+
+
+def parse_live_job_metrics(message, fallback_host=None):
+  """Extract jid/host/cpu_util/mem_util from a daemon stats payload, or None."""
+  jid, host = _parse_first_timestamp_line_jid_host(message)
+  if not jid or jid == "-":
+    return None
+  if not host and fallback_host:
+    host = fallback_host
+  if not host:
+    return None
+  cpu_util = _extract_named_percent(message, "cpu_util")
+  mem_util = _extract_named_percent(message, "mem_util")
+  if mem_util is None:
+    mem_util = _extract_mem_percent_from_mem_lines(message)
+  if cpu_util is None:
+    cpu_util = _extract_cpu_percent_from_cpu_lines(message)
+  if cpu_util is None or mem_util is None:
+    return None
+  updated_ts = _first_timestamp_seconds(message)
+  return {
+      "jid": str(jid),
+      "host": str(host),
+      "cpu_util": cpu_util,
+      "mem_util": mem_util,
+      "updated_ts": updated_ts,
+  }
+
+
+def _get_live_job_redis_client():
+  """Get or create Redis client for live-job hashes (decode_responses=True)."""
+  global _live_job_redis_client
+  if _live_job_redis_client is not None:
+    return _live_job_redis_client
+  try:
+    _live_job_redis_client = redis.from_url(
+        cfg.get_redis_location(), decode_responses=True)
+  except Exception:
+    _live_job_redis_client = None
+  return _live_job_redis_client
+
+
+def _enqueue_live_job_update(payload):
+  if not payload:
+    return
+  try:
+    _live_job_queue.put_nowait(payload)
+  except queue.Full:
+    if DEBUG:
+      log_print("Live-job Redis queue is full; dropping update")
+
+
+def _set_live_job_metrics(redis_client, payload):
+  """Write one live snapshot hash and index membership."""
+  jid = payload["jid"]
+  host = payload["host"]
+  rkey = "live_job:%s:%s" % (jid, host)
+  # region agent log
+  _wall_ts = int(time.time())
+  _sample_ts = int(payload.get("updated_ts", 0))
+  try:
+    import json as _json
+    with open(
+        "/home/beniyam12/HPCPerfStats/.cursor/debug-6046cd.log", "a"
+    ) as _df:
+      _df.write(_json.dumps({
+          "sessionId": "6046cd",
+          "hypothesisId": "H7",
+          "location": "listend.py:_set_live_job_metrics",
+          "message": "sample_ts vs wall_ts written to Redis",
+          "data": {
+              "jid": jid,
+              "host": host,
+              "payload_sample_ts": _sample_ts,
+              "redis_updated_ts": _wall_ts,
+              "delta_sample_behind_wall_sec": _wall_ts - _sample_ts,
+          },
+          "timestamp": int(time.time() * 1000),
+      }) + "\n")
+  except Exception:
+    pass
+  # endregion agent log
+  mapping = {
+      "jid": jid,
+      "host": host,
+      "cpu_util": str(payload["cpu_util"]),
+      "mem_util": str(payload["mem_util"]),
+      "updated_ts": str(_wall_ts),
+  }
+  pipe = redis_client.pipeline()
+  pipe.hset(rkey, mapping=mapping)
+  pipe.expire(rkey, LIVE_JOB_TTL_SECONDS)
+  pipe.sadd(LIVE_JOB_INDEX_KEY, rkey)
+  pipe.execute()
+
+
+def _live_job_worker():
+  """Background writer for live job CPU/mem snapshots."""
+  global _live_job_worker_redis_none_logged
+  while not _live_job_worker_stop_event.is_set():
+    try:
+      payload = _live_job_queue.get(timeout=1.0)
+    except queue.Empty:
+      continue
+    try:
+      client = _get_live_job_redis_client()
+      if client is None:
+        if not _live_job_worker_redis_none_logged:
+          _live_job_worker_redis_none_logged = True
+          try:
+            import json as _json
+            with open(
+                "/home/beniyam12/HPCPerfStats/.cursor/debug-6046cd.log",
+                "a",
+                encoding="utf-8",
+            ) as _df:
+              _df.write(
+                  _json.dumps({
+                      "sessionId": "6046cd",
+                      "hypothesisId": "H7b",
+                      "location": "listend.py:_live_job_worker",
+                      "message": "redis client is None; live_job writes skipped",
+                      "timestamp": int(time.time() * 1000),
+                  })
+                  + "\n"
+              )
+          except Exception:
+            pass
+      else:
+        _set_live_job_metrics(client, payload)
+    except Exception as e:
+      if DEBUG:
+        log_print("Live-job Redis update failed: %s" % e)
+    finally:
+      _live_job_queue.task_done()
+
+
 def on_message(channel, method_frame, header_frame, body):
   """Callback for each message: decode body, determine host, write/append to host's current file and optionally rotate. Acknowledges the message.
 
@@ -247,6 +526,10 @@ def on_message(channel, method_frame, header_frame, body):
         with open(current_path, "a") as fd:
           fd.write(message)
     _enqueue_recent_host_update(host)
+
+    live_payload = parse_live_job_metrics(message, fallback_host=host)
+    if live_payload:
+      _enqueue_live_job_update(live_payload)
 
     now = time.time()
     with _timestamps_lock:
@@ -334,6 +617,7 @@ def main():
   global _channel_ref
   global _idle_thread_started
   global _recent_host_worker_thread_started
+  global _live_job_worker_thread_started
   # Use a mutable container so the SIGTERM handler can update state without
   # relying on `nonlocal` (which is only valid for enclosing function scopes).
   sigterm_received = {"value": False}
@@ -342,6 +626,7 @@ def main():
   def _sigterm_handler(signum, frame):
     sigterm_received["value"] = True
     _idle_monitor_stop_event.set()
+    _live_job_worker_stop_event.set()
     raise SystemExit(143)
 
   previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
@@ -366,6 +651,10 @@ def main():
         recent_host_thread = Thread(target=_recent_host_worker, daemon=True)
         recent_host_thread.start()
         _recent_host_worker_thread_started = True
+      if not _live_job_worker_thread_started:
+        live_job_thread = Thread(target=_live_job_worker, daemon=True)
+        live_job_thread.start()
+        _live_job_worker_thread_started = True
 
       # Outer loop: keep the daemon running indefinitely by reconnecting to
       # RabbitMQ on failure instead of exiting. The process will typically only
@@ -442,6 +731,7 @@ def main():
   finally:
     _idle_monitor_stop_event.set()
     _recent_host_worker_stop_event.set()
+    _live_job_worker_stop_event.set()
     try:
       if connection and not connection.is_closed:
         connection.close()

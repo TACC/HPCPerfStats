@@ -272,6 +272,111 @@ def _require_auth(request):
     )
 
 
+LIVE_JOB_INDEX_KEY = "live_job:index"
+
+_AGENT_DEBUG_LOG = "/home/beniyam12/HPCPerfStats/.cursor/debug-6046cd.log"
+_live_jobs_redis_client = None
+_live_jobs_redis_lock = threading.Lock()
+_live_jobs_redis_direct_logged = False
+
+
+def _agent_debug_ndjson(location, message, hypothesis_id, data=None):
+    # region agent log
+    try:
+        import json as _json
+        import time as _time
+
+        payload = {
+            "sessionId": "6046cd",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "timestamp": int(_time.time() * 1000),
+        }
+        if data is not None:
+            payload["data"] = data
+        with open(_AGENT_DEBUG_LOG, "a", encoding="utf-8") as _df:
+            _df.write(_json.dumps(payload) + "\n")
+    except Exception:
+        pass
+    # endregion
+
+
+def _to_text(value):
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return str(value)
+
+
+def _get_live_job_redis_client():
+    """Redis client for live_job:* keys (same URL + decode_responses as listend)."""
+    global _live_jobs_redis_client, _live_jobs_redis_direct_logged
+    try:
+        import redis as redis_lib
+
+        if _live_jobs_redis_client is None:
+            with _live_jobs_redis_lock:
+                if _live_jobs_redis_client is None:
+                    _live_jobs_redis_client = redis_lib.from_url(
+                        cfg.get_redis_location(),
+                        decode_responses=True,
+                    )
+        if not _live_jobs_redis_direct_logged:
+            _live_jobs_redis_direct_logged = True
+            loc = cfg.get_redis_location()
+            tail = loc.split("@")[-1] if "@" in loc else loc
+            _agent_debug_ndjson(
+                "api.py:_get_live_job_redis_client",
+                "using direct redis (listend-aligned)",
+                "H0",
+                {"source": "direct", "location_tail": tail[:120]},
+            )
+        return _live_jobs_redis_client
+    except Exception as e:
+        _agent_debug_ndjson(
+            "api.py:_get_live_job_redis_client",
+            "direct redis failed; trying django cache unwrap",
+            "H0",
+            {"err": type(e).__name__, "msg": str(e)[:200]},
+        )
+    try:
+        client = getattr(cache, "_cache", None)
+        if hasattr(client, "get_client"):
+            try:
+                client = client.get_client()
+            except Exception:
+                client = None
+        if client is None:
+            client = getattr(cache, "client", None)
+            if hasattr(client, "get_client"):
+                try:
+                    client = client.get_client()
+                except Exception:
+                    client = None
+        if client is not None and hasattr(client, "hgetall"):
+            _agent_debug_ndjson(
+                "api.py:_get_live_job_redis_client",
+                "using django cache unwrap",
+                "H0",
+                {"source": "django_unwrap"},
+            )
+            return client
+    except Exception as e:
+        _agent_debug_ndjson(
+            "api.py:_get_live_job_redis_client",
+            "django unwrap failed",
+            "H0",
+            {"err": type(e).__name__, "msg": str(e)[:200]},
+        )
+    _agent_debug_ndjson(
+        "api.py:_get_live_job_redis_client",
+        "no redis client available",
+        "H3",
+        {},
+    )
+    return None
+
+
 def _get_cache_stats():
     """Return basic Redis/cache statistics for the HPCPerfStats Monitor."""
     # First try to return a recently cached snapshot of the Redis stats so that
@@ -1521,6 +1626,148 @@ def job_list_histograms(request):
         },
         status=status.HTTP_400_BAD_REQUEST,
     )
+
+
+@api_view(["GET"])
+def live_jobs(request):
+    """Return live CPU/memory utilization rows from Redis only (listend snapshots)."""
+    err = _require_auth(request)
+    if err is not None:
+        return err
+
+    redis_client = _get_live_job_redis_client()
+    if redis_client is None:
+        _agent_debug_ndjson(
+            "api.py:live_jobs",
+            "early return: no redis client",
+            "H3",
+            {},
+        )
+        return Response({"results": []})
+
+    try:
+        raw_members = redis_client.smembers(LIVE_JOB_INDEX_KEY)
+    except Exception as e:
+        _agent_debug_ndjson(
+            "api.py:live_jobs",
+            "smembers failed",
+            "H4",
+            {"err": type(e).__name__, "msg": str(e)[:200]},
+        )
+        return Response({"results": []})
+
+    if not raw_members:
+        _agent_debug_ndjson(
+            "api.py:live_jobs",
+            "empty index set",
+            "H5",
+            {"index_key": LIVE_JOB_INDEX_KEY},
+        )
+        return Response({"results": []})
+
+    _agent_debug_ndjson(
+        "api.py:live_jobs",
+        "index members loaded",
+        "H1",
+        {
+            "n_members": len(raw_members),
+            "sample_keys": [_to_text(k) for k in list(raw_members)[:3]],
+        },
+    )
+
+    keys = [_to_text(k) for k in raw_members]
+    pipe = redis_client.pipeline()
+    for k in keys:
+        pipe.hgetall(k)
+        pipe.ttl(k)
+    try:
+        responses = pipe.execute()
+    except Exception as e:
+        _agent_debug_ndjson(
+            "api.py:live_jobs",
+            "pipeline execute failed",
+            "H4",
+            {"err": type(e).__name__, "msg": str(e)[:200]},
+        )
+        return Response({"results": []})
+
+    rows = []
+    stale_keys = []
+    skipped_missing_metrics = 0
+    for idx in range(0, len(responses), 2):
+        raw_row = responses[idx] or {}
+        ttl = responses[idx + 1]
+        key = keys[idx // 2]
+        if ttl == -2:
+            stale_keys.append(key)
+            continue
+        row = {_to_text(k): _to_text(v) for k, v in raw_row.items()}
+        cpu_raw = row.get("cpu_util")
+        mem_raw = row.get("mem_util")
+        if cpu_raw is None or mem_raw is None:
+            skipped_missing_metrics += 1
+            continue
+        try:
+            cpu_f = float(cpu_raw)
+            mem_f = float(mem_raw)
+        except ValueError:
+            continue
+        try:
+            updated_ts = int(float(row.get("updated_ts", 0)))
+        except ValueError:
+            updated_ts = 0
+        rows.append({
+            "jid": row.get("jid", ""),
+            "host": row.get("host", ""),
+            "cpu_util": cpu_f,
+            "mem_util": mem_f,
+            "updated_ts": updated_ts,
+        })
+
+    _agent_debug_ndjson(
+        "api.py:live_jobs",
+        "rows after scan",
+        "H6",
+        {
+            "n_rows": len(rows),
+            "skipped_missing_metrics": skipped_missing_metrics,
+            "n_stale_keys": len(stale_keys),
+        },
+    )
+
+    # region agent log
+    if rows:
+        try:
+            import json as _json
+            import time as _time
+            _r0 = rows[0]
+            with open(
+                "/home/beniyam12/HPCPerfStats/.cursor/debug-6046cd.log", "a"
+            ) as _df:
+                _df.write(_json.dumps({
+                    "sessionId": "6046cd",
+                    "hypothesisId": "H2",
+                    "location": "api.py:live_jobs",
+                    "message": "first row updated_ts out",
+                    "data": {
+                        "jid": _r0.get("jid"),
+                        "updated_ts": _r0.get("updated_ts"),
+                        "wall_now": int(_time.time()),
+                    },
+                    "timestamp": int(_time.time() * 1000),
+                }) + "\n")
+        except Exception:
+            pass
+    # endregion agent log
+
+    if stale_keys:
+        try:
+            redis_client.srem(LIVE_JOB_INDEX_KEY, *stale_keys)
+        except Exception:
+            pass
+
+    rows.sort(key=lambda item: item.get("updated_ts", 0), reverse=True)
+    return Response({"results": rows})
 
 
 @cache_page(TIMEOUT_MEDIUM)

@@ -92,6 +92,7 @@ export const api = {
       : "";
     return request(`/job_monitor/${search}`);
   },
+  getLiveJobs: () => request("/live/jobs/"),
 };
 
 export default api;

@@ -70,6 +70,7 @@ markers = [
 script-files = [
   "hpcperfstats/analysis/metrics/update_metrics.py",
   "hpcperfstats/site/manage.py",
+  "hpcperfstats/dbload/ingest_sample_test_data.py",
   "hpcperfstats/dbload/sync_acct.py",
   "hpcperfstats/dbload/sync_timedb.py",
   "hpcperfstats/dbload/sync_timedb_archive.py",

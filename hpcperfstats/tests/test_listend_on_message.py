@@ -277,3 +277,30 @@ def test_on_message_hardlinks_missing_epoch_before_unlink(tmp_path, monkeypatch)
   assert len(listend._unlink_timestamps) == 1
   assert listend._unlink_timestamps[0] > cutoff_epoch_ts
 
+
+def test_on_message_dollar_prefix_enqueues_live_job_when_snapshot_present(
+    tmp_path, monkeypatch
+):
+  """Full ``$`` rotation messages include stats body; live metrics should enqueue."""
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  captured = []
+  monkeypatch.setattr(
+      listend, "_enqueue_live_job_update", lambda p: captured.append(p)
+  )
+  channel = _FakeChannel()
+  method_frame = _FakeMethodFrame(delivery_tag=501)
+  body = (
+      b"$\n1 node.example.com\n"
+      b"1773864970 12345 node.example.com\n"
+      b"cpu 0 100 0 100 0 0 0 0 0\n"
+      b"mem 0 1000 100 900 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+  )
+  listend.on_message(channel, method_frame, None, body)
+
+  assert channel.acked == [501]
+  assert len(captured) == 1
+  assert captured[0]["jid"] == "12345"
+  assert captured[0]["host"] == "node.example.com"
+
