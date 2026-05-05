@@ -96,15 +96,26 @@ static void test_parse_U_empty_value(void)
   free_entry(se);
 }
 
-static void test_parse_skips_empty_options(void)
+static void test_schema_flag_csv_strict(void)
 {
-  char *line = strdup("k,,E,,");
+  char *line = strdup("k,,E");
   struct schema_entry *se = parse_schema_entry(line);
   free(line);
+  assert(se == NULL);
 
+  line = strdup("port_xmit_wait,E,,W=32,U=ms");
+  se = parse_schema_entry(line);
+  free(line);
+  assert(se == NULL);
+
+  line = strdup("port_xmit_wait,E,W=32,U=ms");
+  se = parse_schema_entry(line);
+  free(line);
   assert(se != NULL);
-  assert(strcmp(se->se_key, "k") == 0);
+  assert(strcmp(se->se_key, "port_xmit_wait") == 0);
   assert(se->se_type == SE_EVENT);
+  assert(se->se_width == 32u);
+  assert(se->se_unit != NULL && strcmp(se->se_unit, "ms") == 0);
   free_entry(se);
 }
 
@@ -139,7 +150,7 @@ int main(void)
   test_parse_U_without_equals_skips();
   test_parse_W_hex();
   test_parse_U_empty_value();
-  test_parse_skips_empty_options();
+  test_schema_flag_csv_strict();
   test_parse_C_then_E_last_wins();
   printf("test_schema_parse passed\n");
   return 0;

@@ -412,9 +412,8 @@ build_monitor() {
   fi
   mkdir -p "${MONITOR_DIR}/.build-static"
   cd "${MONITOR_DIR}/.build-static"
-  if test ! -f "${MONITOR_DIR}/configure"; then
-    (cd "${MONITOR_DIR}" && autoreconf -fi)
-  fi
+  echo "Regenerating monitor Autotools files: autoreconf -fi (${MONITOR_DIR})" >&2
+  (cd "${MONITOR_DIR}" && autoreconf -fi)
   export CPPFLAGS="-I${PREFIX}/include ${CPPFLAGS:-}"
   export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
   # Prefer static archives from our tree (no RPATH to PREFIX for runtime).

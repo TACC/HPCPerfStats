@@ -58,6 +58,8 @@ hpcperfstatsd_SOURCES = \
 	cpuid.c \
 	daemonize.h \
 	daemonize.c \
+	monitor_log.h \
+	monitor_log.c \
 	dict.h \
 	dict.c \
 	path_open_fail_once.h \

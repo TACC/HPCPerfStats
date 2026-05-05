@@ -9,7 +9,6 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/utsname.h>
-#include <syslog.h>
 #include <search.h>
 #include <time.h>
 #include <rabbitmq-c/amqp.h>
@@ -24,6 +23,7 @@
 #include "stats_buffer_data_append.h"
 #include "schema.h"
 #include "trace.h"
+#include "monitor_log.h"
 #include "pscanf.h"
 #include "string1.h"
 
@@ -559,7 +559,7 @@ static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, 
 #ifdef DEBUG
     rmq_debug_log_rpc_reply("RMQ queue declare", ret);
 #else
-    syslog(LOG_ERR, "queue declare failed");
+    monitor_log_error("queue declare failed\n");
 #endif
     return -1;
   }
@@ -578,7 +578,7 @@ static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, 
 #ifdef DEBUG
     rmq_debug_log_rpc_reply("RMQ queue bind", ret);
 #else
-    syslog(LOG_ERR, "queue bind failed");
+    monitor_log_error("queue bind failed\n");
 #endif
     return -1;
   }
@@ -834,7 +834,7 @@ int stats_buffer_collect(struct stats_buffer *sf)
   struct timespec time;
 
   if (clock_gettime(CLOCK_REALTIME, &time) != 0) {
-    fprintf(stderr, "cannot clock_gettime(): %m\n");
+    monitor_log_error("cannot clock_gettime(): %m\n");
     rc = -1;
     goto out;
   }

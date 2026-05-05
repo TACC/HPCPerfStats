@@ -38,7 +38,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_metric_profiler
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_pscanf test_schema_parse test_stats_file_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_metric_profiler
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer test_monitor_timing
 endif
@@ -94,6 +94,10 @@ test_intel_mmconfig_SOURCES = \
 	$(top_srcdir)/src/intel_mmconfig.c \
 	$(top_srcdir)/src/path_open_fail_once.c
 
+test_monitor_log_SOURCES = \
+	test_monitor_log.c \
+	$(top_srcdir)/src/monitor_log.c
+
 test_pscanf_SOURCES = \
 	test_pscanf.c \
 	$(top_srcdir)/src/pscanf.c \
@@ -147,6 +151,7 @@ test_ring_buffer_SOURCES = \
 	test_ring_buffer_stubs.c \
 	$(top_srcdir)/src/stats_buffer.c \
 	$(top_srcdir)/src/stats_buffer_data_append.c \
+	$(top_srcdir)/src/monitor_log.c \
 	$(top_srcdir)/src/path_open_fail_once.c
 test_ring_buffer_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
 
@@ -166,6 +171,7 @@ test_sys_iter_LDADD = $(LDADD)
 test_procfile_parse_LDADD = $(LDADD)
 test_msr_io_LDADD = $(LDADD)
 test_intel_mmconfig_LDADD = $(LDADD)
+test_monitor_log_LDADD = $(LDADD)
 test_pscanf_LDADD = $(LDADD)
 test_schema_parse_LDADD = $(LDADD)
 test_stats_file_format_LDADD = $(LDADD)

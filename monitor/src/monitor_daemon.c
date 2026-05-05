@@ -29,6 +29,7 @@
 #include "pscanf.h"
 #include "hwdetect.h"
 #include "monitor_timing.h"
+#include "monitor_log.h"
 
 char *app_name = NULL;
 char *conf_file_name = NULL;
@@ -74,7 +75,7 @@ static void monitor_daemon_log_ring_resend_line(void)
   static unsigned seq;
   if (MONITOR_HOT_LOG_EVERY > 1u && (++seq % MONITOR_HOT_LOG_EVERY) != 1u)
     return;
-  fprintf(log_stream, "Resending stats in the ring buffer\n");
+  monitor_log_info( "Resending stats in the ring buffer\n");
 }
 
 static void monitor_daemon_log_dumpfile_resend_line(void)
@@ -82,7 +83,7 @@ static void monitor_daemon_log_dumpfile_resend_line(void)
   static unsigned seq;
   if (MONITOR_HOT_LOG_EVERY > 1u && (++seq % MONITOR_HOT_LOG_EVERY) != 1u)
     return;
-  fprintf(log_stream, "Resending stats in the dumpfile\n");
+  monitor_log_info( "Resending stats in the dumpfile\n");
 }
 
 static struct stats_buffer *monitor_daemon_alloc_stats_buffer(void)
@@ -233,7 +234,7 @@ int read_conf_file(void)
 
   conf_file_fd = file_fopen_read(conf_file_name);
   if (conf_file_fd == NULL) {
-    fprintf(log_stream, "Can not open config file: %s, error: %s",
+    monitor_log_info( "Can not open config file: %s, error: %s",
             conf_file_name, strerror(errno));
     return -1;
   }
@@ -257,58 +258,58 @@ int read_conf_file(void)
     if (strcmp(key, "server") == 0) {
       free(server);
       server = strdup(line);
-      fprintf(log_stream, "%s: Setting server to %s based on file %s\n",
+      monitor_log_info( "%s: Setting server to %s based on file %s\n",
               app_name, server, conf_file_name);
     }
     if (strcmp(key, "queue") == 0) {
       monitor_cli_heap_dup_setting(&queue, monitor_cli_lit_queue, line);
-      fprintf(log_stream, "%s: Setting queue to %s based on file %s\n",
+      monitor_log_info( "%s: Setting queue to %s based on file %s\n",
               app_name, queue, conf_file_name);
     }
     if (strcmp(key, "port") == 0) {
       monitor_cli_heap_dup_setting(&port, monitor_cli_lit_port, line);
-      fprintf(log_stream, "%s: Setting server port to %s based on file %s\n",
+      monitor_log_info( "%s: Setting server port to %s based on file %s\n",
               app_name, port, conf_file_name);
     }
     if (strcmp(key, "user") == 0) {
       monitor_cli_heap_dup_setting(&rmq_user, monitor_cli_lit_rmq_user, line);
-      fprintf(log_stream, "%s: Setting RMQ user to %s based on file %s\n",
+      monitor_log_info( "%s: Setting RMQ user to %s based on file %s\n",
               app_name, rmq_user, conf_file_name);
     }
     if (strcmp(key, "password") == 0) {
       monitor_cli_heap_dup_setting(&rmq_password, monitor_cli_lit_rmq_password, line);
-      fprintf(log_stream, "%s: Setting RMQ password from file %s\n",
+      monitor_log_info( "%s: Setting RMQ password from file %s\n",
               app_name, conf_file_name);
     }
     if (strcmp(key, "buffer") == 0) {
       max_buffer_size = atoi(line);
       max_buffer_size_explicit = 1;
-      fprintf(log_stream, "%s: Setting buffer size to %d based on file %s\n",
+      monitor_log_info( "%s: Setting buffer size to %d based on file %s\n",
               app_name, max_buffer_size, conf_file_name);
     }
     if (strcmp(key, "sample_freq") == 0) {
       if (sscanf(line, "%lf", &sample_freq) == 1)
-        fprintf(log_stream, "%s: Setting sample frequency to %f based on file %s\n",
+        monitor_log_info( "%s: Setting sample frequency to %f based on file %s\n",
                 app_name, sample_freq, conf_file_name);
     }
     if (strcmp(key, "send_freq") == 0) {
       if (sscanf(line, "%lf", &send_freq) == 1)
-        fprintf(log_stream, "%s: Setting send frequency to %f based on file %s\n",
+        monitor_log_info( "%s: Setting send frequency to %f based on file %s\n",
                 app_name, send_freq, conf_file_name);
     }
     if (strcmp(key, "buffer_hours") == 0) {
       if (sscanf(line, "%lf", &buffer_hours) == 1)
-        fprintf(log_stream, "%s: Setting buffer hours to %f based on file %s\n",
+        monitor_log_info( "%s: Setting buffer hours to %f based on file %s\n",
                 app_name, buffer_hours, conf_file_name);
     }
     if (strcmp(key, "freq") == 0) {
       if (sscanf(line, "%lf", &sample_freq) == 1)
-        fprintf(log_stream, "%s: Deprecated key `freq` mapped to sample_freq=%f in file %s\n",
+        monitor_log_info( "%s: Deprecated key `freq` mapped to sample_freq=%f in file %s\n",
                 app_name, sample_freq, conf_file_name);
     }
     if (strcmp(key, "jobid_file") == 0) {
       monitor_cli_heap_dup_setting(&jobid_file_path, monitor_cli_lit_jobid_file_path, line);
-      fprintf(log_stream, "%s: Setting jobid file to %s based on file %s\n",
+      monitor_log_info( "%s: Setting jobid file to %s based on file %s\n",
               app_name, jobid_file_path, conf_file_name);
     }
   }
@@ -342,7 +343,7 @@ static int send_stats_buffer(struct stats_buffer *sf)
   }
   if (stats_buffer_collect(sf) < 0)
     rc = -1;
-  metric_profiler_cycle_end(log_stream);
+  metric_profiler_cycle_end(monitor_log_get_stream());
   return rc;
 }
 
@@ -519,7 +520,7 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
   for (int i = 0; i < n_files; i++) {
     FILE *f = file_fopen_read(file_list[i]);
     if (f == NULL) {
-      fprintf(log_stream, "Error opening stats file %s\n", file_list[i]);
+      monitor_log_info( "Error opening stats file %s\n", file_list[i]);
       send_success_count = 0;
       break;
     }
@@ -533,13 +534,13 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
       ring_buffer_resend(w);
       if (w->q_count != 0) {
 #ifdef DEBUG
-	fprintf(log_stream, "w_q_count = %d\n", w->q_count);
+	monitor_log_info( "w_q_count = %d\n", w->q_count);
 #endif
         send_success_count = 0;
         break;
       }
     } else {
-      fprintf(log_stream, "Error loading stats file %s\n", file_list[i]);
+      monitor_log_info( "Error loading stats file %s\n", file_list[i]);
       send_success_count = 0;
       break;
     }
@@ -568,7 +569,7 @@ static void print_buffer_status(struct sf_ring_buffer *w)
     return;
 
   /* One fprintf: fewer lock/syscall round-trips than seven separate prints. */
-  fprintf(log_stream,
+  monitor_log_info(
 	  "status = %d, allow_overwrite = %d, file_mode = %d, #succ_send = %d/%d\n"
 	  "#acc_processed = %d, #cur_buffered = %d/%d, #acc_succ_sent = %d, #acc_succ_resent = %d\n"
 	  "#acc_deleted = %d, #acc_saved = %d, #acc_loaded = %d\n",
@@ -624,11 +625,11 @@ void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
   if (strcmp(jobid, new_jobid) != 0) {
     if (strcmp(new_jobid, "-") != 0) {
       strcpy(jobid, new_jobid);
-      fprintf(log_stream, "Loading jobid %s from %s\n", jobid, jobid_file_path);
+      monitor_log_info( "Loading jobid %s from %s\n", jobid, jobid_file_path);
       sample_timer_period = sample_freq;
       mark_line = strf("begin %s", jobid);
     } else {
-      fprintf(log_stream, "Unloading jobid %s from %s\n", jobid, jobid_file_path);
+      monitor_log_info( "Unloading jobid %s from %s\n", jobid, jobid_file_path);
       mark_line = strf("end %s", jobid);
       sample_timer_period = 3600.0;
       write_hdr = 1;
@@ -657,7 +658,7 @@ void monitor_daemon_signal_cb_int(struct ev_loop *loop, ev_signal *sig, int reve
   net_stats_invalidate_iface_cache();
   while ((type = stats_type_for_each(&i)) != NULL)
     stats_type_destroy(type);
-  fprintf(log_stream, "Stopping hpcperfstatsd\n");
+  monitor_log_info( "Stopping hpcperfstatsd\n");
   if (pid_fd != -1) {
     lockf(pid_fd, F_ULOCK, 0);
     close(pid_fd);
@@ -672,7 +673,7 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
   (void)loop;
   (void)revents;
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)sig->data;
-  fprintf(log_stream, "Reloading hpcperfstatsd config file %s\n", conf_file_name);
+  monitor_log_info( "Reloading hpcperfstatsd config file %s\n", conf_file_name);
   stats_buffer_runtime_caches_reset();
   read_conf_file();
   monitor_daemon_prime_file_mode_from_dumpdir();
@@ -680,16 +681,16 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
   if (w->q_count == 0)
     monitor_daemon_replay_dumpfiles_if_present(w);
   else
-    fprintf(log_stream,
+    monitor_log_info(
 	    "Skipping dumpfile replay on reload: ring buffer still has %d queued sample(s)\n",
 	    w->q_count);
   sample_timer_period = sample_freq;
   send_timer.repeat = send_freq;
   monitor_daemon_reanchor_sample_timer(EV_DEFAULT, sample_timer_period);
   ev_timer_again(EV_DEFAULT, &send_timer);
-  fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs\n", sample_freq);
-  fprintf(log_stream, "Setting hpcperfstatsd send frequency to %.1fs\n", send_freq);
-  fprintf(log_stream, "Setting hpcperfstatsd buffer capacity to %d samples (%.2fh)\n",
+  monitor_log_info( "Setting hpcperfstatsd sample frequency to %.1fs\n", sample_freq);
+  monitor_log_info( "Setting hpcperfstatsd send frequency to %.1fs\n", send_freq);
+  monitor_log_info( "Setting hpcperfstatsd buffer capacity to %d samples (%.2fh)\n",
           max_buffer_size, buffer_hours);
   send_success_count = 0;
   print_buffer_status(w);

@@ -28,7 +28,7 @@
   X(port_xmit_data, "E,W=32,U=4B", "data transmitted"), \
   X(port_xmit_discards, "E,W=32", "packets discarded due to down or congested port"), \
   X(port_xmit_packets, "E,W=32", "packets transmitted"), \
-  X(port_xmit_wait, "E,,W=32,U=ms", "wait time for credits or arbitration"), \
+  X(port_xmit_wait, "E,W=32,U=ms", "wait time for credits or arbitration"), \
   X(symbol_error, "E,W=32", "minor link errors"), \
   X(VL15_dropped, "E,W=32", "")
 

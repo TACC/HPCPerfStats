@@ -11,6 +11,7 @@
 #include "daemonize.h"
 #include "monitor_cli.h"
 #include "monitor_daemon.h"
+#include "monitor_log.h"
 #include "stats_buffer.h"
 #include "string1.h"
 #include "stats.h"
@@ -64,29 +65,29 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   rotate_timer.data = (void *)rb;
   ev_timer_init(&rotate_timer, monitor_daemon_rotate_timer_cb, 0.0, (double)schema_hdr_rotate_sec);
   ev_timer_start(EV_DEFAULT, &rotate_timer);
-  fprintf(log_stream, "Setting hpcperfstatsd schema header rotation every %ds\n", schema_hdr_rotate_sec);
+  monitor_log_info("Setting hpcperfstatsd schema header rotation every %ds\n", schema_hdr_rotate_sec);
 
   fd_watcher.data = (void *)rb;
   ev_stat_init(&fd_watcher, monitor_daemon_fd_cb, jobid_file_path, EV_READ);
   ev_stat_start(EV_DEFAULT, &fd_watcher);
-  fprintf(log_stream, "Starting hpcperfstatsd watching fd %s\n", jobid_file_path);
+  monitor_log_info("Starting hpcperfstatsd watching fd %s\n", jobid_file_path);
 
   sample_timer.data = (void *)rb;
   ev_timer_init(&sample_timer, monitor_daemon_sample_timer_cb, 0.0, 0.0);
   monitor_daemon_reanchor_sample_timer(EV_DEFAULT, sample_freq);
-  fprintf(log_stream, "Setting hpcperfstatsd sample frequency to %.1fs (epoch-aligned)\n", sample_freq);
+  monitor_log_info("Setting hpcperfstatsd sample frequency to %.1fs (epoch-aligned)\n", sample_freq);
 
   send_timer.data = (void *)rb;
   ev_timer_init(&send_timer, monitor_daemon_send_timer_cb, send_freq, send_freq);
   ev_timer_start(EV_DEFAULT, &send_timer);
-  fprintf(log_stream, "Setting hpcperfstatsd send frequency to %.1fs\n", send_freq);
+  monitor_log_info("Setting hpcperfstatsd send frequency to %.1fs\n", send_freq);
   /* rabbitmq-c sends AMQP heartbeats from wait_frame_inner; long send_freq with a broker-capped
    * heartbeat (e.g. 60s) otherwise yields "missed heartbeats from client" disconnects. */
   ev_timer_init(&rmq_io_timer, monitor_rmq_io_tick_cb, 10.0, 10.0);
   ev_timer_start(EV_DEFAULT, &rmq_io_timer);
-  fprintf(log_stream, "RMQ connection I/O service interval 10.0s (AMQP heartbeats)\n");
-  fprintf(log_stream, "Setting hpcperfstatsd buffer capacity to %d samples (%.2fh)\n",
-          max_buffer_size, buffer_hours);
+  monitor_log_info("RMQ connection I/O service interval 10.0s (AMQP heartbeats)\n");
+  monitor_log_info("Setting hpcperfstatsd buffer capacity to %d samples (%.2fh)\n",
+                   max_buffer_size, buffer_hours);
 
   if (pscanf(jobid_file_path, "%79s", jobid) < 1)
     strcpy(jobid, "-");
@@ -95,10 +96,10 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
 static void monitor_require_server_or_exit(void)
 {
   if (server == NULL) {
-    fprintf(log_stream, "Must specify a server to send data to with -s [--server] argument or conf file.\n");
+    monitor_log_info("Must specify a server to send data to with -s [--server] argument or conf file.\n");
     exit(0);
   }
-  fprintf(log_stream, "hpcperfstatsd data to server %s on port %s.\n", server, port);
+  monitor_log_info("hpcperfstatsd data to server %s on port %s.\n", server, port);
 }
 
 int main(int argc, char *argv[])
@@ -110,6 +111,7 @@ int main(int argc, char *argv[])
   monitor_cli_parse_args(argc, argv, &daemonmode);
 
   log_stream = stderr;
+  monitor_log_set_stream(log_stream);
   read_conf_file();
   monitor_daemon_finalize_runtime_settings();
 
@@ -119,7 +121,7 @@ int main(int argc, char *argv[])
     daemonize();
   }
 
-  fprintf(log_stream, "Started %s\n", app_name);
+  monitor_log_info("Started %s\n", app_name);
 
   monitor_try_mk_dumpdir();
   monitor_daemon_prime_file_mode_from_dumpdir();
@@ -137,7 +139,7 @@ int main(int argc, char *argv[])
 
   ev_run(EV_DEFAULT, 0);
 
-  fprintf(log_stream, "Stopped %s\n", app_name);
+  monitor_log_info("Stopped %s\n", app_name);
 
   monitor_cli_free_heap();
 

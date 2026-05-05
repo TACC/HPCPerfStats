@@ -7,12 +7,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-#ifdef DEBUG
-/* Match trace.h: DEBUG builds log to stdout instead of syslog. */
-#else
-#include <syslog.h>
-#endif
-
+#include "monitor_log.h"
 
 int pid_fd;
 char *pid_file_name;
@@ -91,14 +86,9 @@ void daemonize()
       exit(EXIT_FAILURE);
   }
   /* Try to write PID of daemon to lockfile */
-#ifdef DEBUG
-  fprintf(stdout, "%s\n", pid_file_name);
-#else
-  syslog(LOG_ERR, "%s\n", pid_file_name);
-#endif
   if (pid_file_name != NULL)
     {
-      char str[256];
+      monitor_log_info("%s\n", pid_file_name);
       pid_fd = open(pid_file_name, O_RDWR|O_CREAT, 0640);
       if (pid_fd < 0) {
 	/* Can't open lockfile */
@@ -106,16 +96,18 @@ void daemonize()
       }
       if (lockf(pid_fd, F_TLOCK, 0) < 0) {
 	/* Can't lock file */
-#ifdef DEBUG
-	fprintf(stdout, "%s already found. Abort second instance.\n", pid_file_name);
-#else
-	syslog(LOG_ERR, "%s already found. Abort second instance.\n", pid_file_name);
-#endif
+	monitor_log_error("%s already found. Abort second instance.\n",
+			  pid_file_name);
 	exit(EXIT_FAILURE);
       }
-      /* Get current PID */
-      sprintf(str, "%d\n", getpid());
-      /* Write PID to lockfile */
-      write(pid_fd, str, strlen(str));
+      {
+	char pidbuf[32];
+	int len = snprintf(pidbuf, sizeof(pidbuf), "%ld\n", (long)getpid());
+
+	if (len < 0 || (size_t)len >= sizeof(pidbuf))
+	  exit(EXIT_FAILURE);
+	if (write(pid_fd, pidbuf, (size_t)len) != (ssize_t)len)
+	  exit(EXIT_FAILURE);
+      }
     }
 }
