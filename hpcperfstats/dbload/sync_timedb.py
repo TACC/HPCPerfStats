@@ -964,8 +964,7 @@ def _should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
 ):
   """Whether ``remove_verified_uncompressed_daily_tars`` should run for this pass.
 
-  ``sync_timedb`` enables it only for **startup** maintenance
-  (``run_verified_uncompressed_tar_removal=True``) or **idle / full** maintenance
+  ``sync_timedb`` enables it only for **idle / full** maintenance
   (``force_full=True``). Pigz-interval maintenance passes both false so verified
   daily ``.tar`` removal does not run on that cadence.
 
@@ -1352,22 +1351,6 @@ def run_sync_timedb_supervisor_loop(
           processes=db_writer_processes)
 
   try:
-    log_print(
-        "Running startup archive sealing, verified raw-file cleanup, and "
-        "verified removal of uncompressed daily .tar files (when paired "
-        ".tar.gz matches) before initial scan",
-        flush=True,
-    )
-    _ensure_daily_archive_dir_exists()
-    _run_scheduled_archive_maintenance(
-        run_verified_uncompressed_tar_removal=True,
-        reason="startup",
-        elapsed_since_last_s=0.0,
-    )
-    last_archive_maint = time.time()
-    close_old_connections()
-    connections.close_all()
-
     def _maintenance_elapsed_s():
       return max(0.0, time.time() - last_archive_maint)
 

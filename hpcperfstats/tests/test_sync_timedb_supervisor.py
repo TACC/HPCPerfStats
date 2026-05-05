@@ -91,7 +91,7 @@ class _FakeArchivePoolRetry:
     return _R(result)
 
 
-def test_verified_daily_tar_removal_gate_matches_startup_and_full_only():
+def test_verified_daily_tar_removal_gate_matches_force_full_or_explicit_flag():
   """Pigz-interval maintenance must not run remove_verified_uncompressed_daily_tars."""
   assert not st._should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
       False,
@@ -279,13 +279,13 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
       archive_pool.__exit__(None, None, None)
 
     assert sleeps == [st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS]
-    assert final_maintenance["calls"] == 2
-    assert final_maintenance["remove_verified_tars_calls"] == 2
+    assert final_maintenance["calls"] == 1
+    assert final_maintenance["remove_verified_tars_calls"] == 1
   finally:
     shutdown_requested[0] = False
 
 
-def test_supervisor_runs_startup_maintenance_before_first_rescan(monkeypatch):
+def test_supervisor_first_rescan_before_archive_maintenance(monkeypatch):
   shutdown_requested[0] = False
   try:
     events = []
@@ -324,10 +324,9 @@ def test_supervisor_runs_startup_maintenance_before_first_rescan(monkeypatch):
     finally:
       archive_pool.__exit__(None, None, None)
 
-    assert len(events) >= 4
-    assert events[0] == "maintenance"
-    assert events[1] == "tar_removal"
-    assert events[2] == "rescan"
+    assert events[0] == "rescan"
+    assert events.index("maintenance") > events.index("rescan")
+    assert "tar_removal" in events
   finally:
     shutdown_requested[0] = False
 
@@ -540,7 +539,7 @@ def test_periodic_maintenance_runs_with_backlog_and_logs_context(monkeypatch):
     finally:
       archive_pool.__exit__(None, None, None)
 
-    assert maintenance_calls["n"] >= 3  # startup + periodic + final idle
+    assert maintenance_calls["n"] >= 2  # periodic + final idle (no startup pass)
     assert any("context=chunk_boundary" in line for line in logs)
   finally:
     shutdown_requested[0] = False
