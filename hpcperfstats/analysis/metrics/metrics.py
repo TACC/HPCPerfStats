@@ -64,6 +64,31 @@ def _coerce_metrics_identity_str(value):
   return str(value)
 
 
+def _hashable_metric_events_signature(events):
+  """Tuple of stable strings for ``simple_metric_cache`` / ``rows_cache`` dict keys.
+
+  ``tuple(events)`` is unsafe when ingest/catalog corruption nests lists inside
+  ``events`` — the tuple can contain a raw ``list``, which is unhashable and
+  crashes ``cache_key in cache`` during ``job_arc`` / ``job_value_mean``.
+  """
+  if not events:
+    return ()
+  return tuple(_coerce_metrics_identity_str(e) for e in events)
+
+
+def _flatten_event_names_for_host_data_query(events):
+  """Expand nested sequences so ``event__in`` matches scalar DB ``event`` values."""
+  if not events:
+    return []
+  out = []
+  for e in events:
+    if isinstance(e, (list, tuple)):
+      out.extend(str(x) for x in e)
+    else:
+      out.append(str(e))
+  return out
+
+
 def _sanitize_metrics_compute_rows(rows):
   """Normalize type/metric/units on every worker-produced row before persist."""
   out = []
@@ -505,7 +530,7 @@ def _host_data_row_cache_key(tkw, typename, events, metric_column):
     t_part = ("time__in", id(ti))
   else:
     t_part = ("range", tkw.get("time__gte"), tkw.get("time__lte"))
-  return (typename, metric_column, tuple(events or ()), t_part)
+  return (typename, metric_column, _hashable_metric_events_signature(events), t_part)
 
 
 def _host_data_metric_rows_batched(
@@ -523,7 +548,7 @@ def _host_data_metric_rows_batched(
       return rows_cache[cache_key]
   batch = jid_table._coerce_jid_table_host_query_batch_size(
       jid_table.JID_TABLE_HOST_QUERY_BATCH)
-  ev = list(events or [])
+  ev = _flatten_event_names_for_host_data_query(events)
   rows = []
   for i in range(0, len(host_list), batch):
     chunk = host_list[i:i + batch]
@@ -752,7 +777,12 @@ class Metrics():
       return None
     cache_key = None
     if cache is not None:
-      cache_key = (typename, tuple(events or ()), float(conv), bool(nonnegative_rate))
+      cache_key = (
+          _coerce_metrics_identity_str(typename),
+          _hashable_metric_events_signature(events),
+          float(conv),
+          bool(nonnegative_rate),
+      )
       if cache_key in cache:
         return cache[cache_key]
     tkw = _jid_table_host_data_time_kwargs(base)
@@ -816,7 +846,12 @@ class Metrics():
       return None
     cache_key = None
     if cache is not None:
-      cache_key = ("vm", typename, tuple(events or ()), float(conv))
+      cache_key = (
+          "vm",
+          _coerce_metrics_identity_str(typename),
+          _hashable_metric_events_signature(events),
+          float(conv),
+      )
       if cache_key in cache:
         return cache[cache_key]
     tkw = _jid_table_host_data_time_kwargs(base)
@@ -1529,7 +1564,7 @@ class avg_freq():
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, 'GHz'
-    events = frozenset(schema.events)
+    events = frozenset(_coerce_metrics_identity_str(e) for e in schema.events)
     per_host = []
 
     if "CLOCKS_UNHALTED_CORE" in events and "CLOCKS_UNHALTED_REF" in events:

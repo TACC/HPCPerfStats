@@ -103,9 +103,25 @@ PMC_TYPENAME_PRIORITY = (
 CHA_TYPENAME_PRIORITY = ("intel_skx_cha", "intel_knl_cha")
 
 
+def _coerce_schema_typename_key(key):
+  """Make jid schema keys hashable/set-safe (never raw lists from bad payloads)."""
+  if isinstance(key, str):
+    return key
+  if isinstance(key, (list, tuple, set)):
+    return ",".join(str(v) for v in key)
+  if isinstance(key, dict):
+    try:
+      import json
+
+      return json.dumps(key, sort_keys=True, separators=(",", ":"))
+    except TypeError:
+      return str(key)
+  return str(key)
+
+
 def _pick_pmc_typename(schema_keys):
   """First PMC typename present in schema_keys using PMC_TYPENAME_PRIORITY, else any known key."""
-  keys = set(schema_keys)
+  keys = {_coerce_schema_typename_key(k) for k in schema_keys}
   for typename in PMC_TYPENAME_PRIORITY:
     if typename in keys:
       return typename

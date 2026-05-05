@@ -2,6 +2,7 @@ from collections import OrderedDict
 
 import numpy as np
 
+from hpcperfstats.analysis.gen import utils as utils_mod
 from hpcperfstats.analysis.gen.utils import utils
 
 
@@ -110,3 +111,9 @@ def test_imc_first_match_follows_intel_imc_stats_order():
   expected_first = next(t for t in INTEL_IMC_STATS_TYPES if t in job.schemas)
   assert u.imc == expected_first
   assert u.imc == "intel_hsw_imc"
+
+
+def test_pick_pmc_typename_set_build_handles_sequence_typenames():
+  """Iterable schema labels may stringify nested sequences; ``set()`` must not crash."""
+  keys = ["intel_8pmc3", ["legacy", "label"], "intel_4pmc3"]
+  assert utils_mod._pick_pmc_typename(keys) == "intel_8pmc3"

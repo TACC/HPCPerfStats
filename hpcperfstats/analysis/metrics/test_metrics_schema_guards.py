@@ -54,3 +54,14 @@ def test_avg_packetsize_falls_through_partial_ib_ext():
   value, typename, units = metrics.avg_packetsize().compute_metric(u)
   assert typename == "net" and units == "MB"
   assert isinstance(value, float) and value > 0
+
+
+def test_hashable_metric_events_signature_nested_lists():
+  sig = metrics._hashable_metric_events_signature(["user", ["system", "nice"]])
+  assert sig == ("user", "system,nice")
+  hash(sig)
+
+
+def test_flatten_event_names_nested_once():
+  assert metrics._flatten_event_names_for_host_data_query(
+      [["rd_sectors", "wr_sectors"], "irq"]) == ["rd_sectors", "wr_sectors", "irq"]
