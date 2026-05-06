@@ -418,6 +418,15 @@ class TestSacctIngestApi:
     assert response.data["inserted"] == 3
     mock_sync.assert_called_once()
 
+  @override_settings(SACCT_INGEST_MAX_BODY_BYTES=4)
+  def test_ingest_rejects_oversized_body(self):
+    from hpcperfstats.site.machine import api
+
+    request = _plain_post("/api/sacct/ingest/?date=2024-06-15", b"12345")
+    with patch.object(api, "_require_staff", return_value=None):
+      response = api.sacct_ingest(request)
+    assert response.status_code == 413
+
 
 class TestJobListQueueWaitAggregates:
   """Staff-only queue wait mean/stddev merged into job_list aggregates."""
@@ -497,3 +506,5 @@ class TestJobListQueueWaitAggregates:
     assert response.status_code == 200
     mock_wait.assert_not_called()
     assert response.data["aggregates"] == {"total_node_hours": 10.0}
+
+

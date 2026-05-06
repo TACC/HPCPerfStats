@@ -1,0 +1,26 @@
+---
+description: Require compose-backed workflows for DB/Redis/RabbitMQ-affecting changes
+alwaysApply: true
+---
+
+# Compose Required For Data-Service Changes
+
+When a task changes behavior or configuration that touches PostgreSQL/Timescale, Redis, RabbitMQ, or code paths that depend on compose-network hostnames (`db`, `redis`, `rabbitmq`), validation must run through Docker Compose workflows.
+
+## Required behavior
+
+- Do not treat host-only pytest as sufficient for these changes.
+- Use compose-backed runners/scripts for tests and validation (for example `tests/run_db_pytest_workflow.sh`, `tests/run_redis_cache_pytest_workflow.sh`, `tests/run_pipeline_e2e_workflow.sh`, or equivalent `docker-compose run ...` inside the `web` service).
+- Confirm required services are started and healthy before running tests.
+- Keep teardown/cleanup aligned with project workflows after runs.
+
+## Trigger examples
+
+- Changes under DB ingest/metrics/archive paths (`dbload`, `analysis/metrics`, SQL/query helpers, migrations).
+- Cache behavior changes that rely on live Redis semantics.
+- Queue/consumer/producer changes involving RabbitMQ (`listend`, pipeline E2E, queue health behavior).
+- Settings/compose/env updates that change database, Redis, or RabbitMQ wiring.
+
+## Completion bar
+
+- A task in this scope is not complete until at least one relevant compose-backed test workflow has been executed and its result reported.

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from django.http import HttpResponseRedirect
 from django.test import RequestFactory
+from django.test import override_settings
 
 
 class TestSafeRedirectPath:
@@ -34,6 +35,47 @@ class TestCheckForTokens:
     request = RequestFactory().get("/")
     request.session = {"access_token": "t"}
     assert oauth2.check_for_tokens(request) is True
+
+  @override_settings(SESSION_IDLE_TIMEOUT_SECONDS=1, SESSION_ABSOLUTE_TIMEOUT_SECONDS=3600)
+  def test_false_when_idle_timeout_exceeded(self):
+    from hpcperfstats.site.machine import oauth2
+
+    request = RequestFactory().get("/")
+    request.session = {
+        "access_token": "tok",
+        "oauth_login_epoch": 100,
+        "oauth_last_seen_epoch": 100,
+        "oauth_last_validated_epoch": 100,
+    }
+    with patch("hpcperfstats.site.machine.oauth2.time.time", return_value=103):
+      assert oauth2.check_for_tokens(request) is False
+
+  def test_refreshes_access_token_when_expiring(self):
+    from hpcperfstats.site.machine import oauth2
+
+    request = RequestFactory().get("/")
+    request.session = {
+        "access_token": "old",
+        "refresh_token": "r1",
+        "oauth_login_epoch": 100,
+        "oauth_last_seen_epoch": 100,
+        "oauth_last_validated_epoch": 100,
+        "oauth_access_token_expiry_epoch": 110,
+    }
+    mock_post = MagicMock()
+    mock_post.return_value.status_code = 200
+    mock_post.return_value.json.return_value = {
+        "result": {
+            "access_token": {"access_token": "new", "expires_in": 3600},
+            "refresh_token": {"refresh_token": "r2"},
+        }
+    }
+    with patch.object(oauth2, "_http_session", MagicMock(post=mock_post)), patch(
+        "hpcperfstats.site.machine.oauth2.time.time", return_value=109
+    ):
+      assert oauth2.check_for_tokens(request) is True
+    assert request.session["access_token"] == "new"
+    assert request.session["refresh_token"] == "r2"
 
 
 class TestLoginOauth:

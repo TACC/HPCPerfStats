@@ -3,9 +3,11 @@
 """
 import logging
 import os
+import time
 from urllib.parse import quote
 
 import requests
+from django.conf import settings
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 from requests.auth import HTTPBasicAuth
@@ -23,6 +25,8 @@ server_name = cfg.get_server_name().split(',')[0]
 
 # Shared session for OAuth2 token and userinfo requests (connection reuse).
 _http_session = requests.Session()
+_TOKEN_VALIDATE_INTERVAL_SECONDS = 300
+_TOKEN_REFRESH_SKEW_SECONDS = 60
 
 
 def _get_redirect_uri():
@@ -89,6 +93,13 @@ def oauth_callback(request):
         "access_token"]
     request.session['refresh_token'] = token_data["result"]["refresh_token"][
         "refresh_token"]
+    now_epoch = int(time.time())
+    request.session['oauth_login_epoch'] = now_epoch
+    request.session['oauth_last_seen_epoch'] = now_epoch
+    request.session['oauth_last_validated_epoch'] = now_epoch
+    request.session['oauth_access_token_expiry_epoch'] = _extract_access_token_expiry_epoch(
+        token_data, now_epoch
+    )
     request.session['username'] = user_data['result']['username']
 
     # For now we determine whether a user is staff by seeing if hey have a specific email domain set in ini
@@ -129,9 +140,117 @@ def check_for_tokens(request):
 
     """
   try:
+    session = request.session
     access_token = request.session.get("access_token")
+    if access_token and str(access_token).startswith("api-key:"):
+      return True
     if access_token:
+      now_epoch = int(time.time())
+      if _session_expired(session, now_epoch):
+        session.flush()
+        return False
+      if _token_needs_refresh(session, now_epoch):
+        if not _refresh_access_token(session, now_epoch):
+          session.flush()
+          return False
+        access_token = session.get("access_token")
+      if _token_validation_due(session, now_epoch):
+        if not _validate_access_token(access_token):
+          if not _refresh_access_token(session, now_epoch):
+            session.flush()
+            return False
+        session["oauth_last_validated_epoch"] = now_epoch
+      session["oauth_last_seen_epoch"] = now_epoch
       return True
   except Exception:
     return False
   return False
+
+
+def _extract_access_token_expiry_epoch(token_data, now_epoch):
+  """Read token expiry from Tapis response; fallback to one hour."""
+  token = ((token_data or {}).get("result") or {}).get("access_token") or {}
+  expires_at = token.get("expires_at")
+  if isinstance(expires_at, (int, float)) and int(expires_at) > now_epoch:
+    return int(expires_at)
+  expires_in = token.get("expires_in")
+  if isinstance(expires_in, (int, float)) and int(expires_in) > 0:
+    return now_epoch + int(expires_in)
+  return now_epoch + 3600
+
+
+def _session_expired(session, now_epoch):
+  login_epoch = int(session.get("oauth_login_epoch") or now_epoch)
+  last_seen_epoch = int(session.get("oauth_last_seen_epoch") or login_epoch)
+  idle_timeout = int(getattr(settings, "SESSION_IDLE_TIMEOUT_SECONDS", 3600))
+  absolute_timeout = int(
+      getattr(settings, "SESSION_ABSOLUTE_TIMEOUT_SECONDS", settings.SESSION_COOKIE_AGE)
+  )
+  if idle_timeout > 0 and now_epoch - last_seen_epoch > idle_timeout:
+    return True
+  if absolute_timeout > 0 and now_epoch - login_epoch > absolute_timeout:
+    return True
+  return False
+
+
+def _token_needs_refresh(session, now_epoch):
+  expiry = int(session.get("oauth_access_token_expiry_epoch") or 0)
+  if expiry <= 0:
+    return False
+  return now_epoch >= (expiry - _TOKEN_REFRESH_SKEW_SECONDS)
+
+
+def _token_validation_due(session, now_epoch):
+  if session.get("oauth_last_validated_epoch") is None:
+    session["oauth_last_validated_epoch"] = now_epoch
+    return False
+  last_validated = int(session.get("oauth_last_validated_epoch") or 0)
+  return (now_epoch - last_validated) >= _TOKEN_VALIDATE_INTERVAL_SECONDS
+
+
+def _refresh_access_token(session, now_epoch):
+  refresh_token = session.get("refresh_token")
+  if not refresh_token:
+    return False
+  body = {
+      "grant_type": "refresh_token",
+      "refresh_token": refresh_token,
+  }
+  try:
+    response = _http_session.post(
+        '%s/oauth2/tokens' % tenant_base_url,
+        json=body,
+        auth=HTTPBasicAuth(client_id, client_key),
+        timeout=5,
+    )
+    if response.status_code >= 400:
+      return False
+    token_data = response.json()
+    result = token_data.get("result") or {}
+    access_token = (result.get("access_token") or {}).get("access_token")
+    if not access_token:
+      return False
+    session["access_token"] = access_token
+    new_refresh = (result.get("refresh_token") or {}).get("refresh_token")
+    if new_refresh:
+      session["refresh_token"] = new_refresh
+    session["oauth_access_token_expiry_epoch"] = _extract_access_token_expiry_epoch(
+        token_data, now_epoch
+    )
+    session["oauth_last_validated_epoch"] = now_epoch
+    return True
+  except Exception:
+    return False
+
+
+def _validate_access_token(access_token):
+  headers = {'x-tapis-token': access_token}
+  try:
+    response = _http_session.get(
+        '%s/oauth2/userinfo' % tenant_base_url,
+        headers=headers,
+        timeout=5,
+    )
+    return response.status_code < 400
+  except Exception:
+    return False

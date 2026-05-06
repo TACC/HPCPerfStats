@@ -410,6 +410,36 @@ ruff check hpcperfstats --select F401
 
 Use `ruff check hpcperfstats --select F401 --fix` only after reviewing the diff (tests and dynamic imports can confuse static analysis).
 
+## Security scanning (optional)
+
+See **[`docs/SECURITY_AUDIT.md`](SECURITY_AUDIT.md)** for the latest memo and **[`docs/SECURITY_REMEDIATION_BACKLOG.md`](SECURITY_REMEDIATION_BACKLOG.md)** for follow-ups.
+
+**Python (CVE audit on an environment):** install and run `pip-audit` against the same dependency set you ship (prefer the Docker build / production install; a raw `pip freeze` from a dev machine may include extra tools):
+
+```bash
+pip install pip-audit
+pip-audit -r <(pip freeze)
+```
+
+**Production-context audit workflow (recommended):**
+
+```bash
+cd HPCPerfStats
+tests/run_security_audit_workflow.sh
+```
+
+This runs `pip-audit` inside the compose `web` image and runs frontend `npm audit`.
+
+**Frontend:**
+
+```bash
+cd hpcperfstats/site/frontend && npm audit
+```
+
+**CI cadence:** `.github/workflows/security-audit.yaml` runs this workflow weekly and on pull requests that touch dependency/security-audit files.
+
+**CSP report endpoint:** regression tests live in `hpcperfstats/site/hpcperfstats_site/tests/test_csp_report_endpoint.py` (POST without CSRF token must succeed).
+
 ## Notes
 
 - `pyproject.toml` exposes canonical runner paths under `[tool.hpcperfstats.testing]`: `web_e2e_runner`, `db_pytest_runner`, `redis_cache_pytest_runner`.

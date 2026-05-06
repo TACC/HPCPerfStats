@@ -13,7 +13,7 @@ from bokeh.embed import json_item
 from django.utils import timezone
 from pandas import DataFrame
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, throttle_classes
 from rest_framework.response import Response
 
 from django.conf import settings
@@ -92,6 +92,7 @@ from hpcperfstats.analysis.metrics.metrics import build_job_metrics_display_list
 from hpcperfstats.dbload.sync_acct import sync_acct_from_content
 from .models import ApiKey, host_data, job_data, metrics_data
 from .oauth2 import check_for_tokens
+from .throttles import ExpensiveReadThrottle, StaffIngestThrottle
 from .query_utils import (
     expand_month_date_to_range,
     get_job_list_order_by,
@@ -1378,6 +1379,7 @@ def home_options(request):
 
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
+@throttle_classes([ExpensiveReadThrottle])
 def search_dispatch(request):
     """
     Dispatch search: if jid -> return redirect url; if host+times -> return host plot data; else return job list (index).
@@ -1583,6 +1585,7 @@ def _job_list_metric_hist_pair(df, metric_name, label, display_title, thumb_wh, 
 
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
+@throttle_classes([ExpensiveReadThrottle])
 def job_list_histograms(request):
     """
     Return Bokeh histograms for the job list, loaded incrementally.
@@ -1699,6 +1702,7 @@ def job_list_histograms(request):
 
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
+@throttle_classes([ExpensiveReadThrottle])
 def job_list(request):
     """Paginated job list only (histograms via separate job_list_histograms endpoint)."""
     err = _require_auth(request)
@@ -1785,6 +1789,7 @@ def job_list(request):
 
 
 @api_view(["GET"])
+@throttle_classes([ExpensiveReadThrottle])
 def job_detail(request, pk):
     """Single job detail: metadata, host_list, fsio, xalt, schema, URLs (plots via separate job_plots endpoint)."""
     err = _require_auth(request)
@@ -2011,6 +2016,7 @@ def job_detail(request, pk):
 
 
 @api_view(["GET"])
+@throttle_classes([ExpensiveReadThrottle])
 def job_plots(request, pk):
     """
     Job-level plots grouped by shared jid_table input.
@@ -2346,6 +2352,7 @@ def job_plots(request, pk):
 
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
+@throttle_classes([ExpensiveReadThrottle])
 def type_detail(request, jid, type_name):
     """Type detail: Bokeh json_item (tplot_item), stats_data, schema."""
     err = _require_auth(request)
@@ -2382,6 +2389,7 @@ def type_detail(request, jid, type_name):
 
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
+@throttle_classes([ExpensiveReadThrottle])
 def host_plot(request):
     """Return Bokeh plot_item for a single host and time range (GET host, end_time__gte, end_time__lte)."""
     err = _require_auth(request)
@@ -2600,6 +2608,7 @@ def _get_xalt_jid_coverage(days=3, missing_limit=200, chunk_size=1000):
 
 
 @api_view(["GET"])
+@throttle_classes([ExpensiveReadThrottle])
 def admin_monitor(request):
     """Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis, RabbitMQ, TimescaleDB stats).
 
@@ -2713,6 +2722,7 @@ def admin_monitor(request):
 
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
+@throttle_classes([ExpensiveReadThrottle])
 def job_monitor(request):
     """Staff-only: aggregate job failure statistics per user over a recent window.
 
@@ -2800,6 +2810,7 @@ def job_monitor(request):
 
 
 @api_view(["GET"])
+@throttle_classes([ExpensiveReadThrottle])
 def job_monitor_gpu_for_user(request):
     """Staff-only per-user GPU rollup for Job Monitor async row updates."""
     err = _require_staff(request)
@@ -2892,6 +2903,7 @@ def job_monitor_gpu_for_user(request):
 
 
 @api_view(["POST"])
+@throttle_classes([StaffIngestThrottle])
 def sacct_ingest(request):
     """Ingest pipe-delimited sacct output into job_data using sync_acct logic.
 
@@ -2903,6 +2915,12 @@ def sacct_ingest(request):
     err = _require_staff(request)
     if err is not None:
         return err
+    max_body_bytes = int(getattr(settings, "SACCT_INGEST_MAX_BODY_BYTES", 8 * 1024 * 1024))
+    if len(request.body or b"") > max_body_bytes:
+        return Response(
+            {"error": "Request body exceeds ingest size limit"},
+            status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        )
 
     try:
         body = request.body.decode("utf-8", errors="replace")

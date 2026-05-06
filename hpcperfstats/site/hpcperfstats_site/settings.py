@@ -30,8 +30,47 @@ OPENBLAS_NUM_THREADS = 4
 SECRET_KEY = os.environ.get("SECRET_KEY") or cfg.get_secret_key()
 DEBUG = cfg.get_debug()
 
+
+def _env_int(name, default):
+    """Read integer env var with safe fallback."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_cors_allowed_origins():
+    """Resolve CORS origins from env (comma-separated) or safe defaults."""
+    env_origins = (os.environ.get("CORS_ALLOWED_ORIGINS") or "").strip()
+    if env_origins:
+        return [o.strip() for o in env_origins.split(",") if o.strip()]
+    return [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ] if DEBUG else []
+
+
+def _validate_cors_allowed_origins(origins):
+    """Fail fast in production when CORS origins are missing or dev-only."""
+    if DEBUG:
+        return
+    if not origins:
+        raise ValueError(
+            "CORS_ALLOWED_ORIGINS must be set in production "
+            "(env CORS_ALLOWED_ORIGINS)."
+        )
+    disallowed = {"http://localhost:5173", "http://127.0.0.1:5173"}
+    if any(origin in disallowed for origin in origins):
+        raise ValueError(
+            "Production CORS_ALLOWED_ORIGINS cannot include localhost dev origins."
+        )
+
 # Skip Redis caching for job plot json_items when UTF-8 JSON exceeds this size (default 512 KiB).
 JOB_PLOT_REDIS_MAX_BYTES = int(os.environ.get("JOB_PLOT_REDIS_MAX_BYTES", "524288"))
+SACCT_INGEST_MAX_BODY_BYTES = _env_int("SACCT_INGEST_MAX_BODY_BYTES", 8 * 1024 * 1024)
 
 # Django 6+: ADMINS/MANAGERS are list of email strings (name in tuple deprecated).
 ADMINS = ["sharrell@tacc.utexas.edu"]
@@ -41,6 +80,13 @@ MANAGERS = ["sharrell@tacc.utexas.edu"]
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_AGE = _env_int("SESSION_COOKIE_AGE_SECONDS", 43200)
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_IDLE_TIMEOUT_SECONDS = _env_int("SESSION_IDLE_TIMEOUT_SECONDS", 3600)
+SESSION_ABSOLUTE_TIMEOUT_SECONDS = _env_int(
+    "SESSION_ABSOLUTE_TIMEOUT_SECONDS",
+    SESSION_COOKIE_AGE,
+)
 
 # SecurityMiddleware configuration.
 #
@@ -311,13 +357,28 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "hpcperfstats.site.machine.renderers.SafeJSONRenderer",
     ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "hpcperfstats.site.machine.throttles.AuthenticatedUserOrApiKeyThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "authenticated_user_or_api_key": os.environ.get(
+            "API_THROTTLE_AUTHENTICATED_RATE",
+            "1200/min",
+        ),
+        "expensive_read": os.environ.get(
+            "API_THROTTLE_EXPENSIVE_READ_RATE",
+            "600/min",
+        ),
+        "staff_ingest": os.environ.get(
+            "API_THROTTLE_STAFF_INGEST_RATE",
+            "30/min",
+        ),
+    },
 }
-# CORS: allow same-origin by default; set CORS_ALLOWED_ORIGINS in production
+# CORS: same-origin plus explicit trusted frontends only.
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+CORS_ALLOWED_ORIGINS = _parse_cors_allowed_origins()
+_validate_cors_allowed_origins(CORS_ALLOWED_ORIGINS)
 
 SESSION_SERIALIZER = 'django.contrib.sessions.serializers.JSONSerializer'
 SESSION_ENGINE = 'django.contrib.sessions.backends.file'

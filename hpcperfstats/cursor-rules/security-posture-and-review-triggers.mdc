@@ -1,0 +1,51 @@
+---
+description: Security posture checks when touching auth, HTTP surface, or dependencies
+globs:
+  - "**/settings.py"
+  - "**/middleware.py"
+  - "**/oauth2.py"
+  - "**/api.py"
+  - "**/urls.py"
+  - "**/views.py"
+  - "**/nginx*.conf"
+  - "**/pyproject.toml"
+  - "**/package.json"
+  - "**/package-lock.json"
+  - "**/docker-compose*.yaml"
+alwaysApply: false
+---
+
+# Security Posture And Review Triggers
+
+When editing files that affect authentication, authorization, browser security headers, CORS, TLS/proxy behavior, dependency pins, or high-risk primitives (`subprocess`, raw SQL), **explicitly review** the items below before finishing the task.
+
+## Trigger conditions (non-exhaustive)
+
+- Django **`SECRET_KEY`**, **`DEBUG`**, **`ALLOWED_HOSTS`**, session/cookie flags, **`CORS_*`**, **`REST_FRAMEWORK`**, cache/Redis settings.
+- **Middleware:** CSP, Permissions-Policy, COOP, cache-control, or new security headers.
+- **OAuth / API keys:** [`oauth2.py`](hpcperfstats/site/machine/oauth2.py), [`ApiKey`](hpcperfstats/site/machine/models.py), [`_require_auth`](hpcperfstats/site/machine/api.py) / `_require_staff`, new API routes.
+- **Public or unusual HTTP methods:** `csrf_exempt` (justify and bound abuse: size limits, rate limits where appropriate), **`/csp-report/`** (browsers do not send Django CSRF tokens).
+- **nginx / compose:** `client_max_body_size`, TLS versions, proxy headers, secrets in env (no committed credentials).
+- **Dependencies:** `pyproject.toml`, `package.json` / lockfiles — run or schedule **`pip-audit`** and **`npm audit`**; document upgrades that fix CVEs.
+- **`subprocess`**, **`cursor.execute`**: confirm no user-controlled strings in commands or SQL text; keep worker/thread limits configuration-driven per project rules.
+
+## Minimum review checklist
+
+1. **AuthZ:** Who may call this path (anonymous, user, staff, API key)? Is the check shared and tested?
+2. **AuthN edge cases:** Session vs API key; CSRF for session-mutating POST from browsers.
+3. **Data exposure:** Errors and logs must not leak secrets (`SECRET_KEY`, raw API keys, OAuth tokens); stack traces only when appropriate for operators.
+4. **SSRF / outbound HTTP:** Validate URLs and hosts for any user-influenced `requests` targets.
+5. **Injection:** ORM preferred; parameterized SQL only; template/HTML from user input avoided or escaped.
+6. **Rate / size:** Large bodies and expensive queries need limits (nginx + app where applicable).
+7. **Tests:** Add or extend assertions for status codes, auth failures, and security-sensitive headers when behavior changes.
+
+## Overlap (do not duplicate)
+
+- **[`react-js-cursor-rule.mdc`](react-js-cursor-rule.mdc)** — SPA CSP `connect-src`, minimal third-party use.
+- **[`no-cdn-in-production.mdc`](no-cdn-in-production.mdc)** — no production asset CDNs.
+- **[`pipeline-endpoint-matrix-drift-guard.mdc`](pipeline-endpoint-matrix-drift-guard.mdc)** — route catalog and endpoint smoke matrix when URLs change.
+- **[`logic-change-checklist.mdc`](logic-change-checklist.mdc)** — invariants, failure modes, regression tests.
+
+## Documentation
+
+- Substantive security findings or process changes: update [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md) and [`docs/SECURITY_REMEDIATION_BACKLOG.md`](docs/SECURITY_REMEDIATION_BACKLOG.md) in the same task when behavior or recommended practices change.
