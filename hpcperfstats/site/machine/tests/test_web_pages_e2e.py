@@ -20,66 +20,40 @@ from hpcperfstats.site.machine.models import job_data
 
 @pytest.mark.django_db
 class TestWebPagesEndToEnd:
-  def test_public_routes_and_spa_pages_are_served(self, tmp_path):
-    """Validate top-level pages and SPA deep links via HTTP."""
+  def test_public_routes_and_nginx_owned_spa_paths(self):
+    """Validate top-level pages and nginx-owned SPA route contract."""
     client = Client()
-    frontend_dir = tmp_path / "frontend"
-    frontend_dir.mkdir(parents=True, exist_ok=True)
-    (frontend_dir / "index.html").write_text(
-        "<!doctype html><html><head><title>HPCPerfStats</title></head>"
-        "<body><div id='root'>spa-shell</div></body></html>",
-        encoding="utf-8",
+    root_response = client.get("/")
+    assert root_response.status_code == 302
+    assert root_response["Location"] == "/machine/"
+
+    # Production contract: nginx serves /machine/* SPA shell, not WSGI.
+    assert client.get("/machine/").status_code == 404
+    for path in (
+        "/machine/home/",
+        "/machine/jobs/",
+        "/machine/job/123/",
+        "/machine/job/123/?tab=roofline",
+        "/machine/job/123/?tab=multiprecisionMix",
+        "/machine/job/123/cpu/",
+        "/machine/year/2020/",
+        "/machine/host/node1/plot/",
+        "/machine/admin_monitor/",
+        "/machine/job_monitor/",
+    ):
+      assert client.get(path).status_code == 404
+
+    robots_response = client.get("/robots.txt")
+    assert robots_response.status_code == 200
+    assert "User-agent: *" in robots_response.content.decode("utf-8")
+    assert "Disallow: /" in robots_response.content.decode("utf-8")
+
+    csp_response = client.post(
+        "/csp-report/",
+        data='{"csp-report":{"document-uri":"https://example.test"}}',
+        content_type="application/csp-report",
     )
-
-    with override_settings(STATICFILES_DIRS=(str(tmp_path),)):
-      root_response = client.get("/")
-      assert root_response.status_code == 302
-      assert root_response["Location"] == "/machine/"
-
-      machine_response = client.get("/machine/")
-      assert machine_response.status_code == 200
-      machine_html = machine_response.content.decode("utf-8")
-      assert "spa-shell" in machine_html
-      csp = machine_response["Content-Security-Policy"]
-      csp_report_only = machine_response["Content-Security-Policy-Report-Only"]
-      assert "font-src 'self' data:;" in csp
-      assert "style-src 'self' 'unsafe-inline';" in csp
-      assert "fonts.googleapis.com" not in csp
-      assert "fonts.gstatic.com" not in csp
-      assert "script-src 'self' 'unsafe-inline' 'unsafe-eval';" in csp
-      assert "font-src 'self' data:;" in csp_report_only
-      assert "style-src 'self' 'unsafe-inline';" in csp_report_only
-      assert "fonts.googleapis.com" not in csp_report_only
-      assert "script-src 'self' 'unsafe-inline' 'unsafe-eval';" in csp_report_only
-
-      # React router deep-link pages should still return the SPA shell.
-      for path in (
-          "/machine/home/",
-          "/machine/jobs/",
-          "/machine/job/123/",
-          "/machine/job/123/?tab=roofline",
-          "/machine/job/123/?tab=multiprecisionMix",
-          "/machine/job/123/cpu/",
-          "/machine/year/2020/",
-          "/machine/host/node1/plot/",
-          "/machine/admin_monitor/",
-          "/machine/job_monitor/",
-      ):
-        response = client.get(path)
-        assert response.status_code == 200
-        assert "spa-shell" in response.content.decode("utf-8")
-
-      robots_response = client.get("/robots.txt")
-      assert robots_response.status_code == 200
-      assert "User-agent: *" in robots_response.content.decode("utf-8")
-      assert "Disallow: /" in robots_response.content.decode("utf-8")
-
-      csp_response = client.post(
-          "/csp-report/",
-          data='{"csp-report":{"document-uri":"https://example.test"}}',
-          content_type="application/csp-report",
-      )
-      assert csp_response.status_code == 204
+    assert csp_response.status_code == 204
 
   def test_api_key_legacy_path_redirects_to_spa_route(self):
     """Bookmarks to /api-key/ continue to work via redirect to the React route."""

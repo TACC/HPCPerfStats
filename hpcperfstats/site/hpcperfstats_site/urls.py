@@ -1,4 +1,4 @@
-"""Root URL config: API, SPA shell, auth, and lightweight site endpoints.
+"""Root URL config: API, auth, and lightweight site endpoints.
 
 Do **not** add ``django.conf.urls.static.static(..., document_root=..., )`` for
 ``settings.STATIC_URL`` or introduce **WhiteNoise** (or any middleware/view) to
@@ -19,7 +19,6 @@ from hpcperfstats.site.machine.oauth2 import (
     oauth_callback,
 )
 from hpcperfstats.site.hpcperfstats_site.views import (
-    ReactSPAView,
     csp_report,
     robots_txt,
 )
@@ -31,8 +30,6 @@ urlpatterns = [
     path("robots.txt", robots_txt, name="robots_txt"),
     path("csp-report/", csp_report, name="csp_report"),
     path("", lambda r: HttpResponseRedirect("/machine/")),
-    path("machine/", ReactSPAView.as_view()),
-    path("machine/<path:path>", ReactSPAView.as_view()),
     path(
         "api-key/",
         RedirectView.as_view(url="/machine/api-key", permanent=False),
