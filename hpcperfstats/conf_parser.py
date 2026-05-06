@@ -248,6 +248,47 @@ def get_server_name():
   return _get('DEFAULT', 'server')
 
 
+def get_cors_origin_scheme():
+  """Return ``http`` or ``https`` when building CORS origins from ``[DEFAULT] server``.
+
+  Optional ``[DEFAULT] cors_origin_scheme`` may be set to ``http`` or ``https``.
+  When omitted, defaults to ``https`` (TLS-terminated deployments).
+  """
+  _ensure_cfg_loaded()
+  raw = cfg.get('DEFAULT', 'cors_origin_scheme', fallback='').strip().lower()
+  if raw in ('http', 'https'):
+    return raw
+  return 'https'
+
+
+def format_cors_allowed_origins_csv_from_ini():
+  """Build comma-separated browser ``Origin`` values from ``[DEFAULT] server``.
+
+  Mirrors how Django ``ALLOWED_HOSTS`` is populated from the same ``server``
+  key: each comma-separated hostname becomes ``{scheme}://{host}`` unless the
+  token already contains a scheme.
+
+  Returns an empty string when ``debug`` is enabled (Django applies Vite dev
+  origins instead) or when ``server`` is blank.
+  """
+  if get_debug():
+    return ''
+  raw = (get_server_name() or '').strip()
+  if not raw:
+    return ''
+  scheme = get_cors_origin_scheme()
+  origins = []
+  for part in raw.split(','):
+    host = part.strip()
+    if not host:
+      continue
+    if '://' in host:
+      origins.append(host.rstrip('/'))
+    else:
+      origins.append('%s://%s' % (scheme, host))
+  return ','.join(origins)
+
+
 def get_data_dir_path():
   """Return the data directory path from DEFAULT config."""
   return _get('DEFAULT', 'data_dir')

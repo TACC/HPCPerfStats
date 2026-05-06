@@ -100,6 +100,19 @@ else:
     print(min(2 * base + 1, cap))
 ")
 
+# Browser CORS: export origins from [DEFAULT] server when unset (production).
+if [ -z "${CORS_ALLOWED_ORIGINS:-}" ]; then
+  _cors_csv="$(
+    /usr/local/bin/python3 -c \
+      "from hpcperfstats import conf_parser as cfg; print(cfg.format_cors_allowed_origins_csv_from_ini())" \
+      2>/dev/null || true
+  )"
+  if [ -n "${_cors_csv}" ]; then
+    export CORS_ALLOWED_ORIGINS="${_cors_csv}"
+    echo "Derived CORS_ALLOWED_ORIGINS from hpcperfstats.ini [DEFAULT] server (${_cors_csv})."
+  fi
+fi
+
 # gunicorn is the django web server
 /usr/local/bin/gunicorn hpcperfstats.site.hpcperfstats_site.wsgi --bind 0.0.0.0:8000  \
   --env DJANGO_SETTINGS_MODULE=hpcperfstats.site.hpcperfstats_site.settings -u hpcperfstats \

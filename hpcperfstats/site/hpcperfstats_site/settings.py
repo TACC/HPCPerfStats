@@ -43,14 +43,19 @@ def _env_int(name, default):
 
 
 def _parse_cors_allowed_origins():
-    """Resolve CORS origins from env (comma-separated) or safe defaults."""
+    """Resolve CORS origins from env, then ``hpcperfstats.ini``, then dev defaults."""
     env_origins = (os.environ.get("CORS_ALLOWED_ORIGINS") or "").strip()
     if env_origins:
         return [o.strip() for o in env_origins.split(",") if o.strip()]
-    return [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ] if DEBUG else []
+    if DEBUG:
+        return [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+    ini_csv = cfg.format_cors_allowed_origins_csv_from_ini()
+    if ini_csv:
+        return [o.strip() for o in ini_csv.split(",") if o.strip()]
+    return []
 
 
 def _validate_cors_allowed_origins(origins):
@@ -60,7 +65,8 @@ def _validate_cors_allowed_origins(origins):
     if not origins:
         raise ValueError(
             "CORS_ALLOWED_ORIGINS must be set in production "
-            "(env CORS_ALLOWED_ORIGINS)."
+            "(env CORS_ALLOWED_ORIGINS), or set [DEFAULT] server in "
+            "hpcperfstats.ini so origins can be derived."
         )
     disallowed = {"http://localhost:5173", "http://127.0.0.1:5173"}
     if any(origin in disallowed for origin in origins):
@@ -72,12 +78,21 @@ def _validate_cors_allowed_origins(origins):
 def _is_non_http_management_command():
     """Return True when Django loads for CLI helpers that never serve browsers."""
     argv = sys.argv
+    # Many builds collapse argv for stdin / ``-c`` (e.g. ``['-']``, ``['']``, ``['-c']`` alone).
+    if len(argv) == 1:
+        arg0 = str(argv[0] or "")
+        if arg0 in {"-", "", "-c"}:
+            return True
+        # ``python <<EOF`` or ``cat script.py | python``: interpreter path only, script on stdin.
+        if not sys.stdin.isatty():
+            return True
+        return False
     if len(argv) < 2:
         return False
-    # ``python - <<'PY'`` (django_startup.sh SPA shell check): argv is ``[..., '-']``.
+    # ``python /path/python - <<'PY'`` (two-arg form): argv is ``[..., '-']``.
     if argv[1] == "-":
         return True
-    # ``python -c "..."``
+    # ``python -c "..."`` when argv preserves the executable path.
     if argv[1] == "-c":
         return True
     non_http_commands = {
