@@ -148,6 +148,11 @@ def _count_host_data_rows_for_window(start, end, acct_hosts):
   """
   if start is None or end is None:
     return 0
+  # Corrupted cache rows may surface list/dict bounds; never pass those to ORM.
+  if isinstance(start, (list, tuple, dict, set)):
+    return 0
+  if isinstance(end, (list, tuple, dict, set)):
+    return 0
   hosts = _listify_acct_hosts(acct_hosts)
   if not hosts:
     return 0

@@ -303,6 +303,19 @@ def test_count_host_data_rows_for_window_cached_handles_non_numeric_count(monkey
   assert n == 0
 
 
+def test_count_host_data_rows_for_window_rejects_non_datetime_bounds(monkeypatch):
+  class _FailingObjects:
+    def filter(self, **kwargs):
+      raise AssertionError("ORM filter should not run for non-datetime bounds")
+
+  class _FailingHostData:
+    objects = _FailingObjects()
+
+  monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.host_data", _FailingHostData())
+  n = _count_host_data_rows_for_window(start=["bad"], end=["bad"], acct_hosts=["h.x"])
+  assert n == 0
+
+
 def test_ensure_tz_none():
   """_ensure_tz returns None for None input."""
   assert _ensure_tz(None) is None
