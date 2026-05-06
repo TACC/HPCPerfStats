@@ -281,11 +281,6 @@ Use these numbered references when you want background on terms used throughout 
 | Date       | Change                                                                                  |
 | ---------- | --------------------------------------------------------------------------------------- |
 | 2026-04-03 | Initial researcher-facing guide aligned with current job detail UI and metrics catalog. |
-| 2026-05-06 | Updated job-detail guidance for tabbed UI (Summary/Roofline/Multiprecision/Metrics/Execution/Device data). |
-| 2026-05-06 | Consolidated data-availability messaging into one global note and removed repeated per-surface availability caveats. |
-| 2026-05-06 | Removed backend implementation details and staff-only references; kept guidance user-facing only. |
-| 2026-05-06 | Added section 6 roofline-regime explanation and an appendix with annotated external concept references for non-CS domain researchers. |
-| 2026-05-06 | Converted section 6 citations to paper-style numbered superscripts that point to numbered appendix references. |
-| 2026-05-06 | Expanded paper-style concept annotations across sections 1-7 and extended the appendix reference catalog to cover added CS/HPC terms. |
+| 2026-05-06 | Reorganized the guide for usability (index-first navigation and clearer section flow), aligned job-detail surfaces/metrics with current UI labels, and added paper-style concept citations with an appendix reference catalog for non-CS/HPC readers. |
 
 
