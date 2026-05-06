@@ -1,0 +1,45 @@
+---
+description: Web-facing changes must pass full web E2E workflow before completion
+alwaysApply: true
+---
+
+# Web Pages Full E2E Completion Gate
+
+## Trigger
+
+Any task that changes **web-facing** behavior is **not complete** until the full web E2E workflow has been **run successfully** (not merely updated). Examples:
+
+- Django URLs/views/templates/middleware affecting HTML, redirects, API-key pages, `robots.txt`, CSP-report, or SPA shell delivery.
+- React SPA routes/pages/layout under `hpcperfstats/site/frontend/` for `/machine/`.
+- Test or fixture changes that alter asserted browser contracts for those surfaces.
+
+## Required command
+
+From the Django project root (**directory containing `pyproject.toml`**, typically `HPCPerfStats/` inside the git checkout):
+
+```bash
+tests/run_web_e2e_workflow.sh
+```
+
+Use `tests/run_web_e2e_workflow.sh --seed-cmd "<command>"` when the scenario needs recreated DB data (same seed patterns as `web-pages-e2e-test-maintenance.mdc`).
+
+That runner resets compose state, rebuilds `web` when configured to do so, starts healthy `db`/`redis`, then runs **both** `test_web_pages_e2e.py` and `test_web_pages_browser_e2e.py` in one compose-backed pytest session.
+
+## Completion bar
+
+- Do **not** mark the task done on failing or skipped E2E modules without an explicit, documented environment blocker and a plan to run green elsewhere.
+- Report run outcome (pass/fail and what ran) when closing the task.
+
+## Narrow exceptions
+
+- **Documentation-only** or comment-only changes with **no** user-visible or routing behavior impact.
+- **Hard environment blockers** (no Docker, broken compose health): state the blocker and what was run instead; prefer CI or another machine for the full workflow rather than skipping silently.
+
+## Extra coverage when applicable
+
+When changes touch Bokeh job-list embed fixtures or `job_hist` / queue bar chart serialization covered by Playwright embed tests, also run or extend **`test_bokeh_job_list_embed_browser_e2e.py`** per **`web-pages-e2e-test-maintenance.mdc`** (that module is **not** invoked by `run_web_e2e_workflow.sh`).
+
+## Overlap
+
+- **`web-pages-e2e-test-maintenance.mdc`** — assertion/fixture maintenance for the same surfaces.
+- **`local-compose-db-lifecycle-for-web-tests.mdc`** — compose lifecycle expectations around web tests.

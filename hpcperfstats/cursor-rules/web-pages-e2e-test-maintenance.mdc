@@ -83,6 +83,7 @@ Copy-paste commands and a full generator snippet are maintained in `HPCPerfStats
 
 ### Overlap
 
+- **`web-pages-full-e2e-completion-gate.mdc`** — tasks that change web-facing behavior must pass **`tests/run_web_e2e_workflow.sh`** before completion (runs the two modules above; see that rule for exceptions and Bokeh embed add-ons).
 - Complements `testing-doc-sync.mdc` (document workflow in `docs/TESTING.md`).
 - Complements `test-first-discipline.mdc` and `test_job_hist_bokeh_ranges.py` (server-side range invariants).
 - The Playwright harness’s **jsDelivr** Bokeh script URL is **test-only**; do not copy this pattern into production UI. See **`no-cdn-in-production.mdc`**.
