@@ -56,11 +56,17 @@ in the same task.
    - Remove stale guidance that refers to surfaces no longer on the Job Detail page.
    - Ensure recommendations match current code behavior (for example progressive plot loading, staff vs non-staff no-data messaging, and artifact-backed fields).
 
-5. **Availability-note style (single warning policy)**
+5. **User-facing scope only (no implementation internals)**
+   - Keep this document focused on using the website as a researcher/user.
+   - Do not include backend construction details (API endpoint names, artifact/cache internals, pipeline/staging mechanics, model/serializer internals, storage implementation terms).
+   - Do not include staff-only guidance, staff-only UI fields, or operator-only troubleshooting context.
+   - If a concept is needed for user interpretation, describe behavior in UI terms only.
+
+6. **Availability-note style (single warning policy)**
    - Keep one general availability warning near the top of the document explaining that not all data appears for every job/architecture and that missing data is reported in the UI.
    - Do not repeat per-metric/per-tab “if data is unavailable” warnings throughout the document unless a behavior is unique and materially different from the general policy.
 
-6. **Document history**
+7. **Document history**
    - Add/update a changelog row in the doc’s history table whenever behavior-visible changes are documented.
 
 ## Validation checklist before closing

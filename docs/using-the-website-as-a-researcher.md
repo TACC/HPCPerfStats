@@ -8,7 +8,7 @@
 | **Last updated** | 2026-05-06                                                                                                                                 |
 
 
-This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections. Telemetry is collected by a node monitor and joined with scheduler accounting; the pipeline is **near-line**, so very recent jobs may show empty plots or “metric not computed” until background processing finishes.
+This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections.
 
 > **Data availability note:** Not all data appears for every job or architecture. When data is missing, the interface reports this directly in the relevant panel/tab.
 
@@ -31,7 +31,7 @@ This document is ordered so the **most decision-relevant ideas come first**. Dee
 - **Search home**: Browse by **year** or **date** to reach filtered job lists.
 - **Job list table**: Typical columns include job ID, submit/start/end times, **runtime**, **requested time (timelimit)**, resource shape (**nodes**, **cores**), **user**, **project/account**, **queue**, **state**, and **job name**. Row **background color** reflects completion state (e.g. completed vs failed vs other).
 - **Histograms** (where configured): Distribution thumbnails for metrics such as **runtime**, **node count**, and **queue wait** help you see whether your job is typical for that filter.
-- **Performance Data** column: Short status labels (e.g. summary available, monitoring gaps, not summarized yet) reflect whether usable metric values exist, sample coverage, and pipeline state—a gray “not summarized” row does not always mean a bad run; it can mean ingest or metric computation has not finished, or the job had no monitor coverage.
+- **Performance Data** column: Short status labels (e.g. summary available, monitoring gaps, not summarized yet) indicate current data readiness for each row.
 
 ---
 
@@ -55,13 +55,11 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 | **nnodes**             | Node count                | Multi-node imbalance metrics and network plots only make sense in this context.                                                            |
 
 
-**Staff-only:** “Sample count” reflects how many distinct timestamps were seen for metrics on the job—operators use it to diagnose sparse or broken sampling.
-
 ---
 
 ## 4. Job detail tabs and plots (Bokeh)
 
-The **Job data** section is tabbed. Plot tabs use progressive loading: placeholders can appear first, then finalize as artifacts become ready.
+The **Job data** section is tabbed.
 
 ### 4.1 Summary plot tab
 
@@ -84,7 +82,7 @@ This tab renders:
 - **CPU Roofline**
 - **GPU Roofline (PCIe/NVLink)**
 
-CPU roofline reads arithmetic intensity vs achieved FLOP/s against inferred compute/bandwidth ceilings from job schema.  
+CPU roofline reads arithmetic intensity vs achieved FLOP/s against inferred compute/bandwidth ceilings.  
 GPU roofline uses GPU-side FLOP and link-byte telemetry.
 
 ### 4.3 Multiprecision Mix tab
@@ -129,7 +127,7 @@ Lists each `**host_data.type`** name present for the job (e.g. `cpu`, `mem`, `nv
 | **Multiprecision Mix (tab)**    | CPU and GPU multiprecision mix panels                                                              | Understand precision usage patterns by compute surface.                                                                                                        |
 | **Processes (tab)**             | Distinct process command lines (`proc_list`)                                                       | Confirm what actually executed (wrappers, launch depth, wrong env, etc.).                                                                                     |
 | **Execution and hosts (tab)**   | XALT execution path/cwd/libset and host list                                                       | Environment drift, module/library mismatches, and host-level forensics.                                                                                       |
-| **Device data (tab)**           | `schema` map (`host_data.type` -> events) with links to type-detail pages                         | Discover collected counter families and drill into per-type analysis.                                                                                          |
+| **Device data (tab)**           | Device type names and recorded performance events, with links to type-detail pages                  | Discover collected counter families and drill into per-type analysis.                                                                                          |
 
 
 ---
@@ -192,48 +190,37 @@ This section mirrors the current Job detail **Metrics** tab exactly: metric name
 
 ## 8. Data/plot surfaces and what they mean diagnostically
 
-This section covers job-detail surfaces beyond scalar metrics and explains newer data sources.
+This section covers job-detail surfaces beyond scalar metrics.
 
-### 8.1 Summary plot (artifact-backed Bokeh)
+### 8.1 Summary plot
 
-- Source: `job_plots` API (`summary_plot`) with cached/prewarmed artifacts and progressive loading.
 - Diagnostic use: fastest phase/host outlier scan across CPU, memory, network, I/O, and GPU traces.
 - Performance recommendation: always pair with Metrics tab; peaks in summary often explain extreme scalar maxima.
 
 ### 8.2 Roofline tab (CPU + GPU)
 
-- Source: `job_plots` API (`roofline`, `gpu_roofline`) with schema-aware inference.
 - Diagnostic use: distinguish compute-ceiling vs bandwidth/link-ceiling regimes.
 - Recommendation: use `avg_flops`, `avg_mbw`, `max_gpu_link_gbps`, and fabric ratios to validate roofline reading.
 
 ### 8.3 Multiprecision Mix tab (CPU and GPU)
 
-- Source: `job_detail_artifact` kind `multiprecision_mix` (`multiprecision_cpu_plot_item`, `multiprecision_gpu_plot_item`).
 - Diagnostic use: quantify precision-path composition (DP/SP/tensor) by timeline.
 - Recommendation: when model/code changes precision policy, compare this tab first, then check throughput/utilization deltas.
 
 ### 8.4 Resources panel (FSIO + GPU summary + logs)
 
-- Source:
-  - FS totals from prewarmed job-detail artifact (`fsio`)
-  - GPU summary (`gpu_active`, `gpu_utilization_max`, `gpu_utilization_mean`, `gpu_count`)
-  - Optional external client/server log URLs
 - Diagnostic use: rapid verification of I/O volume and GPU occupancy before deep plotting.
 - Recommendation: if FS totals are high, check `FS MB/s`, `FS IOPS`, `MDS peak`, and LNET metrics for bottleneck type.
 
 ### 8.5 Execution and hosts tab
 
-- Source:
-  - XALT-derived executable path, cwd, library set
-  - Accounting host list
 - Diagnostic use: detect environment drift (wrong module/library/container path) and host-specific anomalies.
 - Recommendation: for regressions with “same script,” verify this tab before tuning code.
 
 ### 8.6 Device data tab
 
-- Source: job schema map (`host_data.type` to event columns), with links to type-detail pages.
 - Diagnostic use: confirms which counter families/events were actually collected for this job.
-- Recommendation: use this tab to explain missing plots/metrics before assuming a pipeline bug.
+- Recommendation: use this tab to confirm expected telemetry families when interpreting plots/metrics.
 
 ---
 
@@ -257,7 +244,7 @@ This section covers job-detail surfaces beyond scalar metrics and explains newer
 ### 9.4 GPU memory or accelerator under-use
 
 - Signals: low `GPU %`, low `Tensor %`, low `GPU mean %` with full `GPU count`.
-- Check: data pipeline bottlenecks, wrong device mapping, too-small kernels, launch configuration.
+- Check: input staging bottlenecks, wrong device mapping, too-small kernels, launch configuration.
 
 ### 9.5 Communication-dominated scaling
 
@@ -281,16 +268,14 @@ This section covers job-detail surfaces beyond scalar metrics and explains newer
 
 ### 9.9 Data continuity checks
 
-- Signals: gaps in expected plot/metric continuity or progressive panels that remain incomplete longer than expected.
-- Check: `Device data` schema presence, monitor counter coverage for expected event families, and pipeline completion timing.
+- Signals: gaps in expected plot/metric continuity.
+- Check: `Device data` event coverage for expected signal families and compare with similar jobs.
 
 ---
 
 ## 10. Related references in this repository
 
-- **System architecture and data flow:** `docs/design-document.md`
-- **Counter types and CPU/GPU analysis contracts:** `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md`
-- **Exhaustive monitor variable catalog (operator-oriented):** `docs/MONITOR_VARIABLES.md`
+- **Counter and variable catalog:** `docs/MONITOR_VARIABLES.md`
 
 ---
 
@@ -300,7 +285,8 @@ This section covers job-detail surfaces beyond scalar metrics and explains newer
 | Date       | Change                                                                                  |
 | ---------- | --------------------------------------------------------------------------------------- |
 | 2026-04-03 | Initial researcher-facing guide aligned with current job detail UI and metrics catalog. |
-| 2026-05-06 | Updated job-detail guidance for tabbed UI (Summary/Roofline/Multiprecision/Metrics/Execution/Device data) and current artifact-driven loading behavior. |
+| 2026-05-06 | Updated job-detail guidance for tabbed UI (Summary/Roofline/Multiprecision/Metrics/Execution/Device data). |
 | 2026-05-06 | Consolidated data-availability messaging into one global note and removed repeated per-surface availability caveats. |
+| 2026-05-06 | Removed backend implementation details and staff-only references; kept guidance user-facing only. |
 
 
