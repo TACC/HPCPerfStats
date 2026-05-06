@@ -1,5 +1,7 @@
 """Regression: WSGI must not answer STATIC_URL; nginx serves /static/ in production."""
 
+from pathlib import Path
+
 from django.test import Client
 from django.urls import reverse
 
@@ -24,3 +26,11 @@ def test_wsgi_resolves_known_app_route():
   client = Client()
   response = client.get(reverse("robots_txt"))
   assert response.status_code == 200
+
+
+def test_nginx_static_files_conf_returns_favicon_at_edge():
+  """Production proxy answers /favicon.ico without involving Django (currently 404)."""
+  repo_root = Path(__file__).resolve().parents[4]
+  conf = (repo_root / "services-conf" / "nginx-static-files.conf").read_text(encoding="utf-8")
+  assert "location = /favicon.ico" in conf
+  assert "return 404" in conf
