@@ -735,6 +735,42 @@ def get_metrics_scheduler_compute_threads():
   )
 
 
+def get_metrics_run_poll_timeout_s():
+  """Seconds for one ``imap_unordered`` poll in ``Metrics.run`` (host-side stall detection)."""
+  env = os.environ.get("HPCPERFSTATS_METRICS_RUN_POLL_TIMEOUT_S", "").strip()
+  if env:
+    try:
+      return max(0.1, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 5.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.1,
+        float(cfg.get("DEFAULT", "metrics_run_poll_timeout_s", fallback="5")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 5.0
+
+
+def get_metrics_run_stall_timeout_s():
+  """Max no-progress seconds allowed in ``Metrics.run`` before aborting batch."""
+  env = os.environ.get("HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S", "").strip()
+  if env:
+    try:
+      return max(5.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 600.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        5.0,
+        float(cfg.get("DEFAULT", "metrics_run_stall_timeout_s", fallback="600")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 600.0
+
+
 def get_metrics_prewarm_retry_attempts():
   """Retry attempts for plot artifact prewarm tasks."""
   _ensure_cfg_loaded()

@@ -1497,7 +1497,7 @@ def _compute_metrics_batch(metrics_manager, job_refs, shared_pool):
     if shutdown_requested[0]:
       break
     try:
-      metrics_manager.run([job_ref], pool=shared_pool)
+      metrics_manager.run([job_ref], pool=metrics_manager.ensure_pool())
       succeeded.append(job_ref.jid)
     except Exception as job_exc:
       failed += 1
@@ -1538,9 +1538,9 @@ def _compute_and_prewarm_jid(
   try:
     if metrics_run_lock is not None:
       with metrics_run_lock:
-        metrics_manager.run([job_ref], pool=shared_pool)
+        metrics_manager.run([job_ref], pool=metrics_manager.ensure_pool())
     else:
-      metrics_manager.run([job_ref], pool=shared_pool)
+      metrics_manager.run([job_ref], pool=metrics_manager.ensure_pool())
   except Exception as exc:
     log_print(
         "metrics scheduler: failed jid={0}; skipping and continuing: {1}".format(
@@ -1638,8 +1638,17 @@ def _compute_jid_outcomes_batch(
   skip_prewarm = cfg.get_metrics_scheduler_skip_prewarm()
   t_batch = time.monotonic()
   try:
-    metrics_manager.run(job_refs, pool=shared_pool)
+    metrics_manager.run(job_refs, pool=metrics_manager.ensure_pool())
   except Exception as exc:
+    if isinstance(exc, metrics.MetricsRunWorkerStallError):
+      log_print(
+          "metrics scheduler: compute batch aborted due to worker stall "
+          "(stall_duration_s={0:.1f} pool_reset_confirmed={1})".format(
+              float(exc.stalled_for_s),
+              1 if exc.pool_reset_confirmed else 0,
+          ),
+          flush=True,
+      )
     log_print(
         "metrics scheduler: batch Metrics.run failed size={0}: {1}".format(
             len(job_refs), exc
@@ -1654,7 +1663,7 @@ def _compute_jid_outcomes_batch(
     failed = []
     for ref in job_refs:
       try:
-        metrics_manager.run([ref], pool=shared_pool)
+        metrics_manager.run([ref], pool=metrics_manager.ensure_pool())
         succeeded.append(ref)
       except Exception as one_exc:
         failed.append(ref)

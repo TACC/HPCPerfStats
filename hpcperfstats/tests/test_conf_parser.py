@@ -560,6 +560,8 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
   assert cfg.get_metrics_prewarm_workers() == 4
   assert cfg.get_metrics_scheduler_compute_threads() == 4
+  assert cfg.get_metrics_run_poll_timeout_s() == 5.0
+  assert cfg.get_metrics_run_stall_timeout_s() == 600.0
   assert cfg.get_metrics_prewarm_retry_attempts() == 2
   assert cfg.get_metrics_proxy_reject_jid_batch_size() == 48
   assert cfg.get_metrics_scheduler_skip_prewarm() is False
@@ -575,6 +577,8 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
       "metrics_plot_prewarm_mode = inline\n"
       "metrics_prewarm_workers = 7\n"
       "metrics_scheduler_compute_threads = 6\n"
+      "metrics_run_poll_timeout_s = 1.5\n"
+      "metrics_run_stall_timeout_s = 120\n"
       "metrics_prewarm_retry_attempts = 5\n"
       "metrics_proxy_reject_jid_batch_size = 32\n"
       "metrics_scheduler_skip_prewarm = yes",
@@ -589,12 +593,18 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_plot_prewarm_mode() == "inline"
   assert cfg.get_metrics_prewarm_workers() == 7
   assert cfg.get_metrics_scheduler_compute_threads() == 6
+  assert cfg.get_metrics_run_poll_timeout_s() == 1.5
+  assert cfg.get_metrics_run_stall_timeout_s() == 120.0
   assert cfg.get_metrics_prewarm_retry_attempts() == 5
   assert cfg.get_metrics_proxy_reject_jid_batch_size() == 32
   monkeypatch.setenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", "strict_date")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_PLOT_PREWARM_MODE", "pipeline_required")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_RUN_POLL_TIMEOUT_S", "2.5")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S", "45")
   assert cfg.get_metrics_scheduler_mode() == "strict_date"
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
+  assert cfg.get_metrics_run_poll_timeout_s() == 2.5
+  assert cfg.get_metrics_run_stall_timeout_s() == 45.0
 
 
 def test_cpuset_priority_budget_overprovision_mode(temp_ini, monkeypatch):

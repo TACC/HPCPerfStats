@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from hpcperfstats.analysis.metrics import metrics
 
@@ -113,4 +114,25 @@ def test_coerced_catalog_metric_is_hashable_for_set_membership():
   catalog_metric = metrics._coerce_metrics_identity_str(entry["metric"])
   assert catalog_metric == "oops"
   assert catalog_metric in frozenset({"oops", "other"})
+
+
+class _AlwaysTimeoutIterator:
+  def next(self, timeout=None):
+    raise metrics.multiprocessing.TimeoutError()
+
+
+class _FakePoolTimeout:
+  def imap_unordered(self, fn, tasks, chunksize=1):
+    return _AlwaysTimeoutIterator()
+
+
+def test_drain_metrics_imap_times_out_when_no_worker_progress():
+  with pytest.raises(TimeoutError):
+    metrics._drain_metrics_imap(
+        _FakePoolTimeout(),
+        tasks=[("m", "j1")],
+        chunksize=1,
+        poll_timeout_s=0.0,
+        stall_timeout_s=0.0,
+    )
 

@@ -43,6 +43,15 @@ except ImportError:
 NUMEXPR_MIN_ARRAY_SIZE = 100_000
 
 
+class MetricsRunWorkerStallError(TimeoutError):
+  """Raised when ``Metrics.run`` makes no worker-result progress for too long."""
+
+  def __init__(self, stalled_for_s, message, pool_reset_confirmed=False):
+    super().__init__(message)
+    self.stalled_for_s = float(stalled_for_s)
+    self.pool_reset_confirmed = bool(pool_reset_confirmed)
+
+
 def _coerce_metrics_identity_str(value):
   """Stable string for metrics_data keys and set/hash uses (never lists/dicts raw).
 
@@ -478,13 +487,48 @@ def _persist_metrics_batch(job_results, distinct_time_count):
       pass
 
 
-def _drain_metrics_imap(active_pool, tasks, chunksize):
-  """Apply ``imap_unordered`` results from workers and persist metrics (main process only)."""
-  for payload in active_pool.imap_unordered(
+def _drain_metrics_imap(
+    active_pool,
+    tasks,
+    chunksize,
+    *,
+    poll_timeout_s,
+    stall_timeout_s,
+):
+  """Apply ``imap_unordered`` results from workers and persist metrics.
+
+  ``imap_unordered`` can block forever when a worker wedges (driver deadlock,
+  query hang, C-extension lock). Poll with timeout and fail fast on prolonged
+  no-progress so scheduler code can recover the pool and continue.
+  """
+  iterator = active_pool.imap_unordered(
       _unwrap,
       tasks,
       chunksize=chunksize,
-  ):
+  )
+  total = len(tasks)
+  done = 0
+  last_progress_at = time.monotonic()
+  while done < total:
+    try:
+      payload = iterator.next(timeout=float(max(0.0, poll_timeout_s)))
+    except multiprocessing.TimeoutError:
+      stalled_for = time.monotonic() - last_progress_at
+      if stalled_for >= max(0.0, float(stall_timeout_s)):
+        raise MetricsRunWorkerStallError(
+            stalled_for_s=stalled_for,
+            message=(
+                "Metrics.run worker stall: no completed jobs for %.1fs "
+                "(tasks=%s chunksize=%s)"
+            )
+            % (stalled_for, total, chunksize),
+            pool_reset_confirmed=False,
+        )
+      continue
+    except StopIteration:
+      break
+    done += 1
+    last_progress_at = time.monotonic()
     if not payload:
       continue
     job_rows = payload["rows"]
@@ -713,6 +757,16 @@ class Metrics():
     self._shared_pool.join()
     self._shared_pool = None
 
+  def reset_pool_hard(self):
+    """Terminate retained worker pool immediately (used after compute stall)."""
+    if self._shared_pool is None:
+      return
+    try:
+      self._shared_pool.terminate()
+      self._shared_pool.join()
+    finally:
+      self._shared_pool = None
+
   # Compute metrics in parallel (Shared memory only)
   def run(self, job_list, pool=None):
     """Run metric computation for each job in job_list in a process pool; persist results via metrics_data.update_or_create.
@@ -729,9 +783,17 @@ class Metrics():
     if active_pool is None:
       active_pool = multiprocessing.Pool(processes=threads)
     tasks = [(self, job) for job in job_list]
+    poll_timeout_s = cfg.get_metrics_run_poll_timeout_s()
+    stall_timeout_s = cfg.get_metrics_run_stall_timeout_s()
     try:
       try:
-        _drain_metrics_imap(active_pool, tasks, pool_chunksize)
+        _drain_metrics_imap(
+            active_pool,
+            tasks,
+            pool_chunksize,
+            poll_timeout_s=poll_timeout_s,
+            stall_timeout_s=stall_timeout_s,
+        )
       except IndexError:
         # Rare pool/imap edge case (e.g. short batches); single-job tasks avoid it.
         log_print(
@@ -740,9 +802,34 @@ class Metrics():
             flush=True,
         )
         for single in tasks:
-          _drain_metrics_imap(active_pool, [single], 1)
-    finally:
+          _drain_metrics_imap(
+              active_pool,
+              [single],
+              1,
+              poll_timeout_s=poll_timeout_s,
+              stall_timeout_s=stall_timeout_s,
+          )
+    except MetricsRunWorkerStallError as exc:
+      log_print("Metrics.run: %s" % exc, flush=True)
+      reset_confirmed = False
       if own_pool:
+        try:
+          active_pool.terminate()
+          active_pool.join()
+          active_pool = None
+          reset_confirmed = True
+        except Exception:
+          pass
+      else:
+        self.reset_pool_hard()
+        reset_confirmed = True
+      raise MetricsRunWorkerStallError(
+          stalled_for_s=exc.stalled_for_s,
+          message=str(exc),
+          pool_reset_confirmed=reset_confirmed,
+      )
+    finally:
+      if own_pool and active_pool is not None:
         active_pool.close()
         active_pool.join()
 
