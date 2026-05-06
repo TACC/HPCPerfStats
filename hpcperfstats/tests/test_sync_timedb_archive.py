@@ -473,6 +473,16 @@ def test_iter_tar_tasks_chunked_streams_without_accumulating(monkeypatch):
   ]
 
 
+def test_archive_worker_process_count_halves_sync_ingest(monkeypatch):
+  """Archive multiprocessing pool uses half of the configured sync ingest worker cap."""
+  monkeypatch.setattr(sta.cfg, "get_sync_ingest_pool_processes", lambda: 10)
+  assert sta._archive_worker_process_count() == 5
+  monkeypatch.setattr(sta.cfg, "get_sync_ingest_pool_processes", lambda: 3)
+  assert sta._archive_worker_process_count() == 1
+  monkeypatch.setattr(sta.cfg, "get_sync_ingest_pool_processes", lambda: 1)
+  assert sta._archive_worker_process_count() == 1
+
+
 def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
   """Corrupt tar with sibling .gz is restored via pigz and retried once."""
   import hpcperfstats.dbload.pigz_cli as pigz_cli

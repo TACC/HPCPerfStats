@@ -658,7 +658,10 @@ def get_archive_pool_process_cap():
 
 
 def get_sync_ingest_pool_processes():
-  """Worker count for ``sync_timedb`` / ``sync_timedb_archive`` after ``sync_pool_process_cap``."""
+  """Worker count for ``sync_timedb`` after ``sync_pool_process_cap``.
+
+  ``sync_timedb_archive`` uses half this count (minimum one process).
+  """
   if get_sync_enable_cpuset_priority_budget():
     raw = derive_pipeline_cpuset_priority_budget()["sync_ingest_cap"]
   else:

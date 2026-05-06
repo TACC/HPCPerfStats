@@ -49,7 +49,13 @@ from hpcperfstats.shutdown_utils import (
     shutdown_requested,
 )
 
-thread_count = cfg.get_sync_ingest_pool_processes()
+
+def _archive_worker_process_count():
+  """Archive ingest pool size: half of ``get_sync_ingest_pool_processes()``, min 1."""
+  return max(1, cfg.get_sync_ingest_pool_processes() // 2)
+
+
+thread_count = _archive_worker_process_count()
 TAR_TASK_CHUNK_SIZE = 50
 
 
@@ -152,7 +158,7 @@ if __name__ == '__main__':
           flush=True,
       )
     ctx = multiprocessing.get_context('spawn')
-    with ctx.Pool(processes=thread_count) as pool:
+    with ctx.Pool(processes=_archive_worker_process_count()) as pool:
       # Process in chunks so SIGTERM can exit between chunks and memory stays bounded.
       for chunk in _iter_tar_tasks_chunked(tar_files, TAR_TASK_CHUNK_SIZE):
         if shutdown_requested[0]:
