@@ -91,6 +91,12 @@ class _FakeArchivePoolRetry:
     return _R(result)
 
 
+@pytest.fixture(autouse=True)
+def _default_startup_unsealed_tar_count(monkeypatch):
+  """Keep startup archival gating deterministic unless a test overrides it."""
+  monkeypatch.setattr(st, "_count_non_sealed_daily_tars", lambda *_a, **_k: 0)
+
+
 def test_verified_daily_tar_removal_gate_matches_force_full_or_explicit_flag():
   """Pigz-interval maintenance must not run remove_verified_uncompressed_daily_tars."""
   assert not st._should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
@@ -297,6 +303,7 @@ def test_supervisor_first_rescan_before_archive_maintenance(monkeypatch):
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
+    monkeypatch.setattr(st, "_count_non_sealed_daily_tars", lambda *_a, **_k: 3)
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: events.append("maintenance"))
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(
@@ -327,6 +334,53 @@ def test_supervisor_first_rescan_before_archive_maintenance(monkeypatch):
     assert events[0] == "rescan"
     assert events.index("maintenance") > events.index("rescan")
     assert "tar_removal" in events
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_runs_startup_archive_maintenance_when_unsealed_tars_above_threshold(monkeypatch):
+  shutdown_requested[0] = False
+  try:
+    events = []
+
+    def fake_rescan(*_a, **_k):
+      events.append("rescan")
+      return []
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
+    monkeypatch.setattr(st, "_count_non_sealed_daily_tars", lambda *_a, **_k: 4)
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: events.append("maintenance"))
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(
+        st,
+        "remove_verified_uncompressed_daily_tars",
+        lambda *a, **k: events.append("tar_removal"),
+    )
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+
+    archive_pool = _FakeArchivePool()
+    archive_pool.__enter__()
+    try:
+      st.run_sync_timedb_supervisor_loop(
+          "/tmp/archive",
+          "all",
+          None,
+          ".hpc",
+          object(),
+          archive_pool,
+          run_once=True,
+      )
+    finally:
+      archive_pool.__exit__(None, None, None)
+
+    assert events[0] == "maintenance"
+    assert events[1] == "tar_removal"
+    assert events.index("rescan") > events.index("tar_removal")
   finally:
     shutdown_requested[0] = False
 
