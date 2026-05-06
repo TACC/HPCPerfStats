@@ -117,7 +117,7 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 | **db** | TimescaleDB/PostgreSQL 15 image; primary system of record for ingested and derived data. |
 | **redis** | Django cache backend and auxiliary keys (e.g. listend recent-host tracking). |
 | **rabbitmq** | Broker for monitor→site message delivery. |
-| **proxy** | Nginx TLS/front door; configuration under `services-conf/` (see workspace guardrails). |
+| **proxy** | Nginx TLS/front door; **`docker-compose.yaml`** mounts **`services-conf/nginx.conf`** as **`default.conf`**; image build **`cp`**s **`nginx.conf`** or **`nginx.conf.example`** plus generated **`hps-proxy-allowed-hosts.inc`** from INI (see workspace guardrails). |
 
 ### 5.3 Python package layout (concise)
 

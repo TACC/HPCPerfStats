@@ -1,0 +1,26 @@
+---
+description: Prefer minimal operator edits and avoid docker-compose.yaml churn in install docs
+alwaysApply: true
+---
+
+# Minimal Compose Install Footprint
+
+## Goal
+
+Documentation and defaults should let a fresh deployment succeed with **few touched files** and **no mandatory edits to `docker-compose.yaml`** when operators can reasonably configure behavior elsewhere (INI, `services-conf/` snippets, image build context).
+
+## Required behavior
+
+- Treat **`docker-compose.yaml`** as the **canonical stack wiring** (services, ports, volumes, healthchecks). Prefer **not** to instruct operators to edit it for routine site customization (TLS paths, hostname lists, branding-only knobs) when those concerns belong in **`hpcperfstats.ini`**, **`services-conf/nginx.conf.example`** / gitignored **`services-conf/nginx.conf`**, or other **`services-conf/`** artifacts called out in **`README.md`**.
+- When adding a new deployment-time knob, first ask: **can this live in INI or `services-conf/` consumed at image build or container startup** without forking compose?
+- Keep **`README.md` Installation** steps short: favor **`cp …example …`** flows (INI, nginx template, supervisord) over editing tracked compose YAML unless the change truly requires new services, published ports, or volume mounts.
+
+## Exceptions
+
+- **Structural** changes (new service, network alias, published port, volume name, healthcheck semantics) **do** belong in compose and must stay documented.
+- **Site-specific secrets or paths** that cannot use env-substitution from files already mounted should still avoid hardcoding in **`docker-compose.yaml`** inside git when an override file (`docker-compose.override.yaml`) or documented env vars are clearer — note the exception in **`README.md`** rather than expanding the default compose fragment unnecessarily.
+
+## Overlap
+
+- **`readme-installation-sync.mdc`** — README must stay accurate when install surfaces move between compose vs `services-conf/` vs INI.
+- **`immutable-image-ini-policy.mdc`** — runtime bind mounts for **`hpcperfstats.ini`** remain out of scope here; this rule governs **documentation preference** and **compose churn**, not image policy exceptions.

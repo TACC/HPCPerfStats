@@ -276,36 +276,49 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
 7. **Web server (nginx):**
 
-   **If you have SSL certificates:**
+   Set **`ssl_certificate`** and **`ssl_certificate_key`** in the nginx template to the
+   **`fullchain.pem`** / **`privkey.pem`** paths that match certificates mounted into the
+   **`proxy`** container (compose publishes host **`/etc/letsencrypt/`** at
+   **`/etc/letsencrypt/`**). Recommended: copy once so upgrades never clash with Git:
 
    ```bash
-   cp services-conf/nginx-withssl.conf services-conf/nginx.conf
+   cp services-conf/nginx.conf.example services-conf/nginx.conf
    ```
 
-   In `nginx.conf`, set `ssl_certificate` and `ssl_certificate_key`. Note: `/etc/letsencrypt` is mounted from the host via `docker-compose.yaml`; for another path, update the compose file to match.
+   Compose bind-mounts **`./services-conf/nginx.conf`** to **`/etc/nginx/http.d/default.conf`**
+   on **`proxy`** (same pattern as **`nginx-static-files.conf`** / **`nginx-django-proxy-common.inc`**),
+   so this **`cp`** step is **required** before **`docker compose up`**. Edit **`nginx.conf`** for TLS paths.
+
+   The proxy image still **`cp`**s **`nginx.conf`** into **`default.conf`** at **build** time when that file exists in the context (**`nginx.conf.example`** otherwise) so non-Compose **`docker run`** has a usable baseline.
+
+   Hostnames come from **`[DEFAULT] server=`** in
+   **`hpcperfstats.ini`** (preferred in the build context, else
+   **`hpcperfstats.ini.example`**): **`parse_hpcperfstats_proxy_hosts.py`** emits
+   **`/etc/nginx/hps-proxy-allowed-hosts.inc`**, which the main config **`include`**s
+   for **`server_name`**. Requests whose **`Host`** header does not match receive **404**
+   on port 80; on port 443, unknown names get TLS handshake rejection
+   (**`ssl_reject_handshake`**). Rebuild **`proxy`** after changing **`server=`**,
+   **`nginx.conf`**, or **`nginx.conf.example`**. No **`docker-compose.yaml`** edits
+   are required for TLS paths or hostnames.
+
    Static/media routing is split into a reusable include mounted at
-   `services-conf/nginx-static-files.conf`; both SSL and non-SSL nginx configs
-   include this file so nginx serves `/static/` and `/media/` directly, shells the
-   SPA under `/machine/` and `/pub/`, and proxies only an explicit Django URL
-   prefix list (shared `proxy_*` directives in
-   `services-conf/nginx-django-proxy-common.inc`); every other path gets **404**
-   from nginx. When you add a new top-level Django route, extend the allowlist in
-   `nginx-static-files.conf`.
+   **`services-conf/nginx-static-files.conf`**; nginx serves **`/static/`** and
+   **`/media/`** directly, shells the SPA under **`/machine/`** and **`/pub/`**,
+   and proxies only an explicit Django URL prefix list (shared **`proxy_*`**
+   directives in **`services-conf/nginx-django-proxy-common.inc`**); every other
+   path gets **404** from nginx. When you add a new top-level Django route,
+   extend the allowlist in **`nginx-static-files.conf`** and keep it aligned with
+   Django’s root **`urlpatterns`**.
+
    **Production:** browsers must load **`/static/*` through the `proxy` service**
-   (ports 80/443); nginx reads the same `staticfiles_data` volume mounted at
-   `STATIC_ROOT` on `web`. Hitting **`web:8000` directly** is not a supported way
-   to load hashed SPA assets (Gunicorn does not implement `/static/` URL
-   serving). For **local parity** with that layout, use full compose including
-   `proxy`, or run `manage.py runserver --nostatic` and still obtain `/static/`
-   via nginx rather than Django’s dev static handler.
-   The proxy container is built from `services-conf/proxy.Dockerfile` and enables
-   Brotli + gzip compression.
-
-   **If you do not have SSL (testing only):**
-
-   ```bash
-   cp services-conf/nginx-nossl.conf services-conf/nginx.conf
-   ```
+   (ports 80/443); nginx reads the same **`staticfiles_data`** volume mounted at
+   **`STATIC_ROOT`** on **`web`**. Hitting **`web:8000` directly** is not a
+   supported way to load hashed SPA assets (Gunicorn does not implement
+   **`/static/`** URL serving). For **local parity** with that layout, use full
+   compose including **`proxy`**, or run **`manage.py runserver --nostatic`** and
+   still obtain **`/static/`** via nginx rather than Django’s dev static handler.
+   The proxy container is built from **`services-conf/proxy.Dockerfile`** and
+   enables Brotli + gzip compression.
 
 8. **Build and start:**
 

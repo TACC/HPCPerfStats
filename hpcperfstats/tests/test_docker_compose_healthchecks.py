@@ -28,16 +28,21 @@ def test_docker_compose_rabbitmq_defaults_to_guest_credentials():
   assert "RABBITMQ_DEFAULT_PASS=guest" in content
 
 
-def test_docker_compose_proxy_mounts_existing_nginx_config():
+def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
   content = compose_path.read_text()
 
-  assert "./services-conf/nginx.conf" in content
-  assert "./services-conf/nginx-withssl.conf" not in content
+  assert "./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro" in content
+  assert "services-conf/proxy.Dockerfile" in content
+  assert "NGINX_SSL_CERT" not in content
+  assert "PROXY_NGINX_TLS" not in content
   assert "./services-conf/nginx-django-proxy-common.inc:/etc/nginx/nginx-django-proxy-common.inc:ro" in content
   assert (repo_root / "services-conf" / "nginx-static-files.conf").exists()
   assert (repo_root / "services-conf" / "nginx-django-proxy-common.inc").exists()
+  assert (repo_root / "services-conf" / "parse_hpcperfstats_proxy_hosts.py").exists()
+  assert (repo_root / "services-conf" / "write_nginx_proxy_allowed_hosts_include.py").exists()
+  assert (repo_root / "services-conf" / "nginx.conf.example").exists()
 
 
 def test_docker_compose_app_uses_configurable_pipeline_ssh_mount():

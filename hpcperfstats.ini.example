@@ -12,7 +12,10 @@ host_name_ext      = %(machine)s.domain.edu
 # Path you would like all of HPCPerfStats' data to be stored. It will be the central location where all the file operations occur.
 data_dir 	          = /hpcperfstats/
 
-# FQDN for the web server host, split with commas if multiple
+# FQDN for the web server host, split with commas if multiple. The docker proxy image
+# reads this list at build time into /etc/nginx/hps-proxy-allowed-hosts.inc (included by
+# nginx.conf): nginx only terminates TLS / serves static files / proxies Django for these
+# Host names; other hosts get HTTP 404 (HTTPS mismatched SNI is rejected).
 server 		          = servername.domain.edu, stats.cluster.domain.edu
 
 # Scheme used when building browser CORS Origin URLs from ``server`` (production /

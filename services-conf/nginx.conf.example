@@ -1,17 +1,45 @@
+# Proxy TLS front door (baked into the proxy image at build time).
+#
+# Allowed Host names come from /etc/nginx/hps-proxy-allowed-hosts.inc (generated from
+# [DEFAULT] server= in hpcperfstats.ini — see parse_hpcperfstats_proxy_hosts.py).
+#
+# Edit ssl_certificate / ssl_certificate_key below to match your Let's Encrypt (or
+# other) paths mounted at /etc/letsencrypt/ in docker-compose.yaml.
+#
+# Optional: copy this file to services-conf/nginx.conf (gitignored) and edit the
+# copy so merge conflicts never touch your TLS paths.
+
 upstream django_server {
     server web:8000;
     keepalive 64;
 }
 
 server {
-    listen 80;
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    return 404;
+}
 
-    #redirect all HTTP links to the matching HTTPS page
+server {
+    listen 80;
+    listen [::]:80;
+    include /etc/nginx/hps-proxy-allowed-hosts.inc;
+    # Preserve the request Host when upgrading (included snippet defines server_name).
     return 301 https://$host$request_uri;
 }
 
 server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    ssl_reject_handshake on;
+}
+
+server {
         listen 443 ssl;
+        listen [::]:443 ssl;
+
+        include /etc/nginx/hps-proxy-allowed-hosts.inc;
 
         server_tokens off;
 
@@ -48,9 +76,6 @@ server {
             image/svg+xml;
 
         # Allow large sacct ingest payloads from hpcperfstats-sacct-gen.
-        # Default nginx limits are too small for full-day accounting output.
-        # This applies to all HTTPS requests for simplicity, but the primary
-        # consumer is /api/sacct/ingest/.
         client_max_body_size 64M;
 
         ssl_protocols TLSv1.2 TLSv1.3;
@@ -58,9 +83,7 @@ server {
         ssl_stapling_verify on;
         ssl_ciphers ECDHE-RSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-CCM:DHE-RSA-AES256-CCM8:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-CCM:DHE-RSA-AES128-CCM8:DHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256;
 
-        # Perfect Forward Secrecy(PFS) is frequently compromised without this
         ssl_prefer_server_ciphers on;
-
 
         ssl_certificate /etc/letsencrypt/live/stats.stampede3.tacc.utexas.edu/fullchain.pem;
         ssl_certificate_key /etc/letsencrypt/live/stats.stampede3.tacc.utexas.edu/privkey.pem;
