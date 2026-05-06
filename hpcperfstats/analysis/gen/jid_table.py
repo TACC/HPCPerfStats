@@ -238,50 +238,50 @@ def _count_host_data_rows_for_window_cached(jid, start, end, acct_hosts):
   """Exact window COUNT(*) with optional short Django-cache TTL (see conf_parser)."""
   default_ttl = 300
   try:
+    ttl_raw = cfg.get_large_job_window_row_count_cache_ttl()
+  except Exception:
+    ttl_raw = default_ttl
+  ttl = _safe_positive_int_ttl_seconds(ttl_raw, default=default_ttl)
+  iso_pair = _job_window_iso_pair_for_cache_key(start, end)
+  if ttl > 0 and jid and iso_pair is not None:
+    key = make_cache_key(
+        KEY_JID_HOST_WINDOW_ROW_COUNT,
+        jid,
+        iso_pair[0],
+        iso_pair[1],
+        _acct_hosts_cache_fingerprint(acct_hosts),
+    )
     try:
-      ttl_raw = cfg.get_large_job_window_row_count_cache_ttl()
+      cached = cache.get(key)
     except Exception:
-      ttl_raw = default_ttl
-    ttl = _safe_positive_int_ttl_seconds(ttl_raw, default=default_ttl)
-    iso_pair = _job_window_iso_pair_for_cache_key(start, end)
-    if ttl > 0 and jid and iso_pair is not None:
-      key = make_cache_key(
-          KEY_JID_HOST_WINDOW_ROW_COUNT,
-          jid,
-          iso_pair[0],
-          iso_pair[1],
-          _acct_hosts_cache_fingerprint(acct_hosts),
-      )
-      try:
-        cached = cache.get(key)
-      except Exception:
-        cached = None
-      if cached is not None:
-        coerced = _coerce_nonnegative_window_row_count(cached)
-        if coerced is not None:
-          return coerced
-      n = _count_host_data_rows_for_window(start, end, acct_hosts)
-      coerced_n = _coerce_nonnegative_window_row_count(n)
-      if coerced_n is None:
-        _logger.warning(
-            "jid_table window row count not coercible jid=%s raw=%r",
-            jid,
-            n,
-        )
-        return 0
-      try:
-        cache.set(key, coerced_n, timeout=ttl)
-      except Exception:
-        pass
-      return coerced_n
-    return _count_host_data_rows_for_window(start, end, acct_hosts)
+      cached = None
+    if cached is not None:
+      coerced = _coerce_nonnegative_window_row_count(cached)
+      if coerced is not None:
+        return coerced
+  try:
+    n = _count_host_data_rows_for_window(start, end, acct_hosts)
   except (TypeError, ValueError, OverflowError) as exc:
     _logger.warning(
-        "jid_table window row count parse fallback jid=%s: %s",
+        "jid_table window row count count-fallback jid=%s: %s",
         jid,
         exc,
     )
     return 0
+  coerced_n = _coerce_nonnegative_window_row_count(n)
+  if coerced_n is None:
+    _logger.warning(
+        "jid_table window row count not coercible jid=%s raw=%r",
+        jid,
+        n,
+    )
+    return 0
+  if ttl > 0 and jid and iso_pair is not None:
+    try:
+      cache.set(key, coerced_n, timeout=ttl)
+    except Exception:
+      pass
+  return coerced_n
 
 
 def _distinct_times_in_window_batched(start, end, acct_hosts, batch_size=None):

@@ -506,12 +506,18 @@ def _drain_metrics_imap(
       tasks,
       chunksize=chunksize,
   )
+  iterator_next = getattr(iterator, "next", None)
+  iterator_next_supports_timeout = callable(iterator_next)
   total = len(tasks)
   done = 0
   last_progress_at = time.monotonic()
   while done < total:
     try:
-      payload = iterator.next(timeout=float(max(0.0, poll_timeout_s)))
+      if iterator_next_supports_timeout:
+        payload = iterator_next(timeout=float(max(0.0, poll_timeout_s)))
+      else:
+        # Some pool adapters/tests return plain generators with ``__next__`` only.
+        payload = next(iterator)
     except multiprocessing.TimeoutError:
       stalled_for = time.monotonic() - last_progress_at
       if stalled_for >= max(0.0, float(stall_timeout_s)):

@@ -286,6 +286,23 @@ def test_count_host_data_rows_for_window_cached_handles_invalid_int_parse(monkey
   assert n == 917
 
 
+def test_count_host_data_rows_for_window_cached_handles_non_numeric_count(monkeypatch):
+  from datetime import timezone as dt_utc
+
+  st = datetime(2026, 2, 2, 12, 0, 0, tzinfo=dt_utc.utc)
+  et = datetime(2026, 2, 2, 13, 0, 0, tzinfo=dt_utc.utc)
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
+      lambda: 0,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table._count_host_data_rows_for_window",
+      lambda *_a, **_k: ["net"],
+  )
+  n = _count_host_data_rows_for_window_cached("j696167_17", st, et, ["h.x"])
+  assert n == 0
+
+
 def test_ensure_tz_none():
   """_ensure_tz returns None for None input."""
   assert _ensure_tz(None) is None

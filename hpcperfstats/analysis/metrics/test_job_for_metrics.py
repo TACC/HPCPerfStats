@@ -136,3 +136,21 @@ def test_drain_metrics_imap_times_out_when_no_worker_progress():
         stall_timeout_s=0.0,
     )
 
+
+def test_drain_metrics_imap_supports_generator_without_next():
+  def _gen():
+    yield {"rows": [], "distinct_time_count": 1}
+
+  class _FakePoolGenerator:
+    def imap_unordered(self, fn, tasks, chunksize=1):
+      return _gen()
+
+  # Should not raise AttributeError("'generator' object has no attribute 'next'").
+  metrics._drain_metrics_imap(
+      _FakePoolGenerator(),
+      tasks=[("m", "j1")],
+      chunksize=1,
+      poll_timeout_s=0.0,
+      stall_timeout_s=0.5,
+  )
+
