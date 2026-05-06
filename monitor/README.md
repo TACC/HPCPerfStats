@@ -148,6 +148,70 @@ Use these steps on a **representative host** (same kernel, privilege level, and 
 
 See **monitor-static-build-verification** and **global-testing-discipline** in `monitor/cursor-rules/` for project expectations.
 
+## Cross-compile smoke (qemu-user)
+
+Use `scripts/cross_compile_test.sh` when you want one machine to run compile+test smoke for multiple target triplets.
+
+- **Native triplet** (`target` CPU family matches host): the script runs the canonical native path (`scripts/build_static_bundle.sh` then `make check`) without qemu wrapping for compilation.
+- **Foreign triplet** (`target` CPU family differs from host): the script uses host `make`/`cmake`/`pkg-config` and qemu-wrapped target compiler/binutils from a target sysroot (`gcc`, `g++`, `ar`, `ranlib`, `strip` under `SYSROOT/usr/bin`).
+- If `SYSROOT`/`SYSROOT_<TRIPLET>` is not set, the script auto-creates a **Rocky 9** sysroot under `.build/sysroots/` by downloading an official Rocky container-base rootfs tarball and extracting it in user space (`AUTO_CREATE_ROCKY9_SYSROOT=1`, default).
+- When the base rootfs lacks compiler/binutils, the script programmatically layers a Rocky **Container-Toolbox** rootfs tarball over the same sysroot to provide `gcc/g++/ar/ranlib/strip` in user space.
+- If the toolbox layer still lacks compiler binaries, the script performs a rootless RPM payload fallback: it downloads selected Rocky toolchain RPMs and unpacks them into the sysroot via `rpm2cpio|cpio` (no root, no package install transaction).
+- Fully explicit mode: set `ROOTFS_TARBALL` or `ROOTFS_TARBALL_<TRIPLET_SLUG>` to use your own rootfs tarball.
+- If qemu user emulators are missing, the script bootstraps a local qemu-user build under `.build/qemu-local` (`LOCAL_QEMU_ROOT`).
+- Rootless mode is the only mode: no `sudo`, no `podman/docker`, no `conmon/runc`, and no `binfmt_misc` registration.
+- The script keys behavior from the **configured triplet**, not `uname -m`, because user-mode emulation can still report host architecture.
+- Foreign monitor builds pass **`--disable-all-static`** so tests link against the sysroot’s dynamic **`libc`/`libm`** (full **`--enable-all-static`** against glibc tends to fail under qemu-user smoke due to static **`libm`** IFUNC resolvers). Native triplets still use the canonical static-bundle flow.
+- **`make check`** for foreign triplets runs test binaries under **qemu-user** via Automake **`LOG_COMPILER`**; **`QEMU_LD_PREFIX`** (already set by the script from **`SYSROOT`**) resolves target **`ld-linux`** / **`libc`** for emulation—same semantics as **`qemu-* -L SYSROOT`**.
+- For deterministic foreign smoke, monitor configure also forces:
+  **`--disable-gpu --disable-amd-gpu --disable-infiniband --disable-opa --disable-mic --disable-lustre`**.
+
+Foreign prerequisites:
+
+1. Install host build tooling: `make`, `cmake`, `pkg-config`, plus downloader (`curl` or `wget`).
+   QEMU source bootstrap may also install Python `tomli` and `ninja` in user space via `python3 -m pip --user`.
+2. Provide a sysroot per target triplet, or allow script auto-generation via Rocky rootfs tarball download.
+3. For non-x86 targets, ensure target-arch `libdcgm` and headers are available in the sysroot (DCGM CPU backend requirement in `configure.ac`).
+4. Export one of:
+   - `SYSROOT_<TRIPLET_SLUG>` (preferred), e.g. `SYSROOT_AARCH64_LINUX_GNU=/opt/sysroots/aarch64`
+   - `SYSROOT` as a fallback for all foreign targets.
+5. For automatic Rocky rootfs generation, ensure the host can download:
+   `https://download.rockylinux.org/pub/rocky/<release>/images/<arch>/Rocky-<release>-Container-Base.latest.<arch>.tar.xz`
+6. For automatic toolchain layering, ensure the host can also download:
+   `https://download.rockylinux.org/pub/rocky/<release>/images/<arch>/Rocky-<release>-Container-Toolbox.latest.<arch>.tar.xz`
+7. For RPM fallback layering, ensure host `rpm2cpio` and `cpio` are available.
+
+Example:
+
+```bash
+cd HPCPerfStats/monitor
+TARGETS="x86_64-linux-gnu aarch64-linux-gnu riscv64-linux-gnu" \
+SYSROOT_AARCH64_LINUX_GNU="/opt/sysroots/aarch64" \
+SYSROOT_RISCV64_LINUX_GNU="/opt/sysroots/riscv64" \
+./scripts/cross_compile_test.sh --fail-fast
+```
+
+If deps are already cached per target prefix, add `--skip-deps`.
+
+Automatic Rocky 9 rootfs download + sysroot extraction example:
+
+```bash
+cd HPCPerfStats/monitor
+TARGETS="x86_64-linux-gnu" \
+AUTO_CREATE_ROCKY9_SYSROOT=1 \
+./scripts/cross_compile_test.sh --force-foreign --fail-fast
+```
+
+Explicit rootfs tarball example:
+
+```bash
+cd HPCPerfStats/monitor
+TARGETS="x86_64-linux-gnu" \
+ROOTFS_TARBALL_X86_64_LINUX_GNU="/path/to/rocky9-x86_64-rootfs.tar.xz" \
+AUTO_CREATE_ROCKY9_SYSROOT=0 \
+./scripts/cross_compile_test.sh --force-foreign --fail-fast
+```
+
 ## Adding code and tests
 
 - New or extracted C helpers should get **`make check`** coverage; register drivers in **`tests/Makefile.am`** and keep **`monitor_unit_cppflags`** there aligned with **`src/Makefile.am`** `hpcperfstatsd_CPPFLAGS` for preprocessor defines. Rule: **monitor-c-new-function-unittests**.

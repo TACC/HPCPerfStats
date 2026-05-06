@@ -1,0 +1,33 @@
+---
+description: After monitor changes, require static bundle + make check and foreign cross_compile_test success
+globs:
+  - HPCPerfStats/monitor/**
+alwaysApply: true
+---
+
+# Monitor dual verification (static bundle + cross smoke)
+
+After **any substantive change** under **`HPCPerfStats/monitor/`** (C sources, **`configure.ac`**, **`Makefile.am`**, **`tests/`**, **`scripts/build_static_bundle.sh`**, **`scripts/cross_compile_test.sh`**, packaging/spec tied to the monitor build—**not** typo-only comments with zero behavioral impact), do **not** treat the task as complete until **both** of the following succeed on the agent’s runner:
+
+## 1. Canonical static bundle + unit tests
+
+Follow **`monitor-static-build-verification`** end-to-end:
+
+- Run **`HPCPerfStats/monitor/scripts/build_static_bundle.sh`** (from **`HPCPerfStats/monitor/`**, with **`SKIP_DEPS=1`** / **`PREFIX`** only when that rule allows).
+- Run **`make check`** in **`HPCPerfStats/monitor/.build-static`** (build tree root).
+- Run **`make distclean`** in **`.build-static`** after success per **`monitor-post-verify-distclean`**.
+
+## 2. Foreign cross-compile smoke (`cross_compile_test.sh`)
+
+Run **`HPCPerfStats/monitor/scripts/cross_compile_test.sh`** so that **at least one target runs in foreign mode** (CPU family differs from the host), **`make check`** included, exit zero:
+
+- Prefer **`--force-foreign --fail-fast`** so behavior does not depend on host triplet classification.
+- Set **`TARGETS`** to a triplet **foreign to this host** (e.g. on **aarch64** hosts use **`TARGETS=x86_64-linux-gnu`**; on **x86_64** hosts use e.g. **`TARGETS=aarch64-linux-gnu`** or another non-x86 default from the script—ensure the chosen triplet is actually foreign).
+- Use **`--skip-deps`** only when per-target prefix/sysroots are already populated and the change does not require rebuilding foreign deps; otherwise run a full deps pass.
+- If **`configure.ac`** / **`configure`** changed, allow **`autoreconf`** (script default); use **`--no-autoreconf`** only when **`configure`** is already regenerated and you need a faster rerun.
+
+Handoffs must state that **both** the static bundle path **and** **`cross_compile_test.sh`** completed successfully (mention **`SKIP_DEPS`**, **`TARGETS`**, and **`--force-foreign`** when relevant).
+
+## Relation to other rules
+
+- This **adds** the cross script requirement alongside the static bundle; it does **not** replace **`monitor-static-build-verification`** or **`monitor-workspace-contract`** (still monitor-only edits unless the user overrides).

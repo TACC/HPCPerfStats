@@ -141,32 +141,23 @@ if test "x$cpu_counter_backend" = "xlikwid" && test "x$is_x86" != "xtrue"; then
 fi
 
 if test "x$cpu_counter_backend" = "xlikwid"; then
-  dnl Static liblikwid.a needs hwloc/lua archives and -lm on the same link line; AC_SEARCH_LIBS
-  dnl probes with -llikwid only unless we pass other libs for the try link.
-  if test "x$enable_all_static" = xyes; then
-    LIKWID_STATIC_PROBE_LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm -lpthread -ldl -lrt"
-    save_LIBS=$LIBS
-    LIBS="${LIKWID_STATIC_PROBE_LIBS} $LIBS"
-    AC_LINK_IFELSE(
-      [AC_LANG_PROGRAM([[#include <likwid.h>]], [[perfmon_init(0, NULL);]])],
-      [have_likwid=yes],
-      [have_likwid=no]
-    )
-    LIBS=$save_LIBS
-    AS_IF([test "x$have_likwid" != xyes], [AC_MSG_ERROR([Unable to find liblikwid!])])
-    LIBS="$LIBS -llikwid -llikwid-hwloc -llikwid-lua -lrt"
-  else
-    AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
-      [AC_MSG_ERROR([Unable to find liblikwid!])])
-  fi
+  dnl liblikwid.a pulls symbols from nested archives; AC_SEARCH_LIBS([-llikwid]) alone fails.
+  dnl Use a grouped probe for both --enable-all-static and builds that still link LIKWID as .a.
+  LIKWID_PROBE_LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm -lpthread -ldl -lrt"
+  save_LIBS=$LIBS
+  LIBS="${LIKWID_PROBE_LIBS} $LIBS"
+  AC_LINK_IFELSE(
+    [AC_LANG_PROGRAM([[#include <likwid.h>]], [[perfmon_init(0, NULL);]])],
+    [have_likwid=yes],
+    [have_likwid=no]
+  )
+  LIBS=$save_LIBS
+  AS_IF([test "x$have_likwid" != xyes], [AC_MSG_ERROR([Unable to find liblikwid!])])
+  dnl Do not append -lm here: fully-static links fold -lm inside -Wl,-Bstatic groups elsewhere.
+  LIBS="$LIBS -llikwid -llikwid-hwloc -llikwid-lua -lrt"
   if test "x${have_likwid}" = xyes; then
     AC_CHECK_HEADERS([likwid.h], [likwid=true],
       [AC_MSG_ERROR([Unable to find likwid.h!])])
-  fi
-  dnl Static LIKWID: nested liblikwid-hwloc.a provides likwid_hwloc_*; liblikwid-lua.a for Lua.
-  dnl Do not append -lm here: final link uses shared libm outside -Wl,-Bstatic; probe above used -lm only for the try link.
-  if test "x$enable_all_static" = xyes; then
-    LIBS="$LIBS -llikwid-hwloc -llikwid-lua"
   fi
 fi
 AM_CONDITIONAL([LIKWID], [test x$likwid = xtrue])
@@ -443,7 +434,9 @@ fi
 AM_CONDITIONAL([METRIC_PROFILER_BACKEND_EBPF], [test x$metric_profiler_backend = xebpf])
 AC_SUBST([METRIC_PROFILER_BACKEND_CPPFLAG])
 
-AC_SEARCH_LIBS([ev_run], [ev], [libev=yes], [AC_MSG_ERROR([Failed to find libev])])
+dnl Static libev.a calls libm (e.g. floor); probe libev with -lm so AC_SEARCH_LIBS succeeds.
+AC_SEARCH_LIBS([floor], [m], [], [])
+AC_SEARCH_LIBS([ev_run], [ev], [libev=yes], [AC_MSG_ERROR([Failed to find libev])], [-lm])
 AC_CHECK_HEADERS([ev.h], [ev=true], [AC_MSG_ERROR([Failed to find header ev.h])])
 
 if test "x$enable_all_static" = xyes; then
