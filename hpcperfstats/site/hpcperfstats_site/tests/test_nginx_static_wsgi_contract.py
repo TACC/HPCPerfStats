@@ -34,3 +34,29 @@ def test_nginx_static_files_conf_returns_favicon_at_edge():
   conf = (repo_root / "services-conf" / "nginx-static-files.conf").read_text(encoding="utf-8")
   assert "location = /favicon.ico" in conf
   assert "return 404" in conf
+
+
+def test_nginx_static_files_conf_allowlists_django_prefixes_and_default_404():
+  """Proxy must not forward unknown paths; Django routes are enumerated explicitly."""
+  repo_root = Path(__file__).resolve().parents[4]
+  conf = (repo_root / "services-conf" / "nginx-static-files.conf").read_text(encoding="utf-8")
+  proxy_inc = "/etc/nginx/nginx-django-proxy-common.inc"
+  assert proxy_inc in conf
+  for needle in (
+      "\nlocation = / {\n",
+      "location ^~ /api/",
+      "location = /robots.txt",
+      "location ^~ /csp-report/",
+      "location ^~ /api-key/",
+      "location ^~ /admin_monitor/",
+      "location ^~ /login/",
+      "location = /login_prompt",
+      "location ^~ /logout/",
+      "location ^~ /oauth_callback/",
+      "location / {",
+      "return 404;",
+  ):
+    assert needle in conf
+  common = (repo_root / "services-conf" / "nginx-django-proxy-common.inc").read_text(encoding="utf-8")
+  assert "proxy_pass" not in common
+  assert "proxy_set_header Host $host;" in common

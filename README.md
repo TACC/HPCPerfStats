@@ -270,7 +270,12 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    In `nginx.conf`, set `ssl_certificate` and `ssl_certificate_key`. Note: `/etc/letsencrypt` is mounted from the host via `docker-compose.yaml`; for another path, update the compose file to match.
    Static/media routing is split into a reusable include mounted at
    `services-conf/nginx-static-files.conf`; both SSL and non-SSL nginx configs
-   include this file so nginx serves `/static/` and `/media/` directly.
+   include this file so nginx serves `/static/` and `/media/` directly, shells the
+   SPA under `/machine/` and `/pub/`, and proxies only an explicit Django URL
+   prefix list (shared `proxy_*` directives in
+   `services-conf/nginx-django-proxy-common.inc`); every other path gets **404**
+   from nginx. When you add a new top-level Django route, extend the allowlist in
+   `nginx-static-files.conf`.
    **Production:** browsers must load **`/static/*` through the `proxy` service**
    (ports 80/443); nginx reads the same `staticfiles_data` volume mounted at
    `STATIC_ROOT` on `web`. Hitting **`web:8000` directly** is not a supported way

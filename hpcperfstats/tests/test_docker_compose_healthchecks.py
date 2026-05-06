@@ -35,7 +35,9 @@ def test_docker_compose_proxy_mounts_existing_nginx_config():
 
   assert "./services-conf/nginx.conf" in content
   assert "./services-conf/nginx-withssl.conf" not in content
+  assert "./services-conf/nginx-django-proxy-common.inc:/etc/nginx/nginx-django-proxy-common.inc:ro" in content
   assert (repo_root / "services-conf" / "nginx-static-files.conf").exists()
+  assert (repo_root / "services-conf" / "nginx-django-proxy-common.inc").exists()
 
 
 def test_docker_compose_app_uses_configurable_pipeline_ssh_mount():

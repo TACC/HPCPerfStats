@@ -10,7 +10,9 @@ alwaysApply: true
 - **Browsers load `/static/*` only through nginx**, not through Gunicorn/Django WSGI.
 - Canonical wiring:
   - [`services-conf/nginx-static-files.conf`](services-conf/nginx-static-files.conf) — `location /static/` → `alias /srv/static/;`
-  - [`docker-compose.yaml`](docker-compose.yaml) — shared volume `staticfiles_data` mounted at `STATIC_ROOT` on `web` (`/home/hpcperfstats/staticfiles`) and read-only on `proxy` as `/srv/static`.
+  - Same file — SPA shells under **`/machine/`** and **`/pub/`**; **`/favicon.ico`** returns **404** at the edge; an explicit prefix allowlist proxies to Gunicorn for **`hpcperfstats_site.urls`** (anything else hits **`location / { return 404; }`**).
+  - [`services-conf/nginx-django-proxy-common.inc`](services-conf/nginx-django-proxy-common.inc) — shared `proxy_*` headers/timeouts included by each Gunicorn `location`.
+  - [`docker-compose.yaml`](docker-compose.yaml) — shared volume `staticfiles_data` mounted at `STATIC_ROOT` on `web` (`/home/hpcperfstats/staticfiles`) and read-only on `proxy` as `/srv/static`; mounts both nginx snippets into the **proxy** container.
 - **Do not** add Django URL patterns (`django.conf.urls.static.static` for `STATIC_URL`), **WhiteNoise**, or other middleware/views to answer **`STATIC_URL`** (`/static/`). That would duplicate nginx and violate the deployment contract.
 
 ## Django’s role (files on disk, not the `/static/` HTTP path)
@@ -27,3 +29,4 @@ alwaysApply: true
 ## Overlap
 
 - Asset bundling and CSP for **self-hosted** scripts/styles remain under **`no-cdn-in-production.mdc`** and **`react-js-cursor-rule.mdc`**. This rule governs **which process answers the `/static/` URL**, not how assets are built.
+- **`nginx-django-route-allowlist-sync.mdc`** — when adding or removing **top-level** Django routes, update the Gunicorn **`location`** allowlist in the same **`nginx-static-files.conf`** include (not only **`/static/`**).

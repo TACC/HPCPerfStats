@@ -37,4 +37,8 @@ in the same task.
 
 ## Documentation sync
 - If route-matrix workflow or prerequisites change, update `HPCPerfStats/docs/TESTING.md`
-  in the same task.
+ in the same task.
+
+## Overlap
+
+- **`nginx-django-route-allowlist-sync.mdc`** — when root **`urlpatterns`** change, production **`proxy`** nginx allowlisted **`location`** blocks must stay aligned ( **`services-conf/nginx-static-files.conf`** ); pipeline matrix alone does not update nginx.
