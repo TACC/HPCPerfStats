@@ -57,63 +57,24 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 
 ---
 
-## 4. Job detail tabs and plots (Bokeh)
+## 4. Device data, type detail, and host plots
 
-The **Job data** section is tabbed.
-
-### 4.1 Summary plot tab
-
-The summary tab shows one Bokeh summary figure over job time, typically with one line per host where data exists.
-
-Common signal families include:
-
-- **CPU usage / instruction activity**
-- **Memory / NUMA / DRAM bandwidth**
-- **Fabric/network and filesystem throughput**
-- **GPU utilization, power, link, memory bandwidth**
-- **Estimated node power**
-
-Use it to spot phase boundaries, node outliers, and cross-signal coupling (for example, GPU utilization drops while fabric traffic spikes).
-
-### 4.2 Roofline tab
-
-This tab renders:
-
-- **CPU Roofline**
-- **GPU Roofline (PCIe/NVLink)**
-
-CPU roofline reads arithmetic intensity vs achieved FLOP/s against inferred compute/bandwidth ceilings.  
-GPU roofline uses GPU-side FLOP and link-byte telemetry.
-
-### 4.3 Multiprecision Mix tab
-
-This tab shows:
-
-- **CPU Multiprecision Mix**
-- **GPU Multiprecision Mix**
-
-Each panel maps precision activity across the job timeline.
-
----
-
-## 5. Device data, type detail, and host plots
-
-### 5.1 Device data table (job page)
+### 4.1 Device data table (job page)
 
 Lists each `**host_data.type`** name present for the job (e.g. `cpu`, `mem`, `nvidia_gpu`, `ib_ext`, `llite`, PMC types) and the **event/column names** recorded. **Click the type name** to open the **type detail** page.
 
-### 5.2 Type detail page
+### 4.2 Type detail page
 
 - **Plot**: Rates aggregated over devices for that type (Bokeh).
 - **Table** (“Counts aggregated…”): Time-bucketed means across hosts/devices for each column—useful when you want **numeric export-style** inspection without hovering the plot.
 
-### 5.3 Host plot
+### 4.3 Host plot
 
 **Host-centric** view for a **time window you choose** (defaults to roughly the last day if you do not narrow it). Use it for **debugging a specific node** outside a single job context (noisy neighbor, hardware issue, or post-mortem on a login or service node if monitored).
 
 ---
 
-## 6. Supporting panels on the job page
+## 5. Supporting panels on the job page
 
 
 | Panel / tab                     | Content                                                                                           | Diagnostic use                                                                                                                                                 |
@@ -122,9 +83,9 @@ Lists each `**host_data.type`** name present for the job (e.g. `cpu`, `mem`, `nv
 | **Full scheduling record**      | Expanded accounting table with all core scheduler columns                                          | Audit exact scheduler/accounting values and formatting without leaving the page.                                                                               |
 | **Resources**                   | Shared filesystem totals (`fsio`), log links, GPU summary table                                    | Validate I/O totals, jump to external logs, and quickly assess GPU allocation vs activity.                                                                    |
 | **Metrics (tab)**               | Full job-level metrics catalog (`metrics_list`) with short labels + help metadata                 | Single-place scalar bottleneck and imbalance summary.                                                                                                           |
-| **Summary plot (tab)**          | Main host-level summary Bokeh plot                                                                 | Time/phase and host-outlier analysis.                                                                                                                          |
-| **Roofline (tab)**              | CPU roofline + GPU roofline panels                                                                 | Ceiling-model interpretation for compute vs bandwidth/link limits.                                                                                             |
-| **Multiprecision Mix (tab)**    | CPU and GPU multiprecision mix panels                                                              | Understand precision usage patterns by compute surface.                                                                                                        |
+| **Summary plot (tab)**          | Host-level timeline plot with CPU, memory/NUMA/DRAM, fabric/filesystem, GPU, and node-power traces | Best first visual scan for phase changes, host outliers, and cross-signal coupling (for example GPU drops while fabric spikes).                              |
+| **Roofline (tab)**              | CPU roofline and GPU roofline (PCIe/NVLink)                                                        | Distinguish compute-limited vs bandwidth/link-limited behavior and prioritize the right optimization work.                                                     |
+| **Multiprecision Mix (tab)**    | CPU and GPU precision-activity panels over time                                                    | Verify whether the run is using expected precision paths and detect precision mix drift across runs or code versions.                                         |
 | **Processes (tab)**             | Distinct process command lines (`proc_list`)                                                       | Confirm what actually executed (wrappers, launch depth, wrong env, etc.).                                                                                     |
 | **Execution and hosts (tab)**   | XALT execution path/cwd/libset and host list                                                       | Environment drift, module/library mismatches, and host-level forensics.                                                                                       |
 | **Device data (tab)**           | Device type names and recorded performance events, with links to type-detail pages                  | Discover collected counter families and drill into per-type analysis.                                                                                          |
@@ -132,9 +93,9 @@ Lists each `**host_data.type`** name present for the job (e.g. `cpu`, `mem`, `nv
 
 ---
 
-## 7. Job-level metrics catalog (one-for-one with current labels)
+## 6. Job-level metrics catalog
 
-This section mirrors the current Job detail **Metrics** tab exactly: metric name, short label, and how to interpret it.
+This section lists the metrics shown in the Job detail **Metrics** tab and how to interpret them.
 
 | Metric key | Short label | What it summarizes | Diagnostic / performance interpretation |
 | ---------- | ----------- | ------------------ | --------------------------------------- |
@@ -188,92 +149,92 @@ This section mirrors the current Job detail **Metrics** tab exactly: metric name
 
 ---
 
-## 8. Data/plot surfaces and what they mean diagnostically
+## 7. Data/plot surfaces and what they mean diagnostically
 
 This section covers job-detail surfaces beyond scalar metrics.
 
-### 8.1 Summary plot
+### 7.1 Summary plot
 
 - Diagnostic use: fastest phase/host outlier scan across CPU, memory, network, I/O, and GPU traces.
 - Performance recommendation: always pair with Metrics tab; peaks in summary often explain extreme scalar maxima.
 
-### 8.2 Roofline tab (CPU + GPU)
+### 7.2 Roofline tab (CPU + GPU)
 
 - Diagnostic use: distinguish compute-ceiling vs bandwidth/link-ceiling regimes.
 - Recommendation: use `avg_flops`, `avg_mbw`, `max_gpu_link_gbps`, and fabric ratios to validate roofline reading.
 
-### 8.3 Multiprecision Mix tab (CPU and GPU)
+### 7.3 Multiprecision Mix tab (CPU and GPU)
 
 - Diagnostic use: quantify precision-path composition (DP/SP/tensor) by timeline.
 - Recommendation: when model/code changes precision policy, compare this tab first, then check throughput/utilization deltas.
 
-### 8.4 Resources panel (FSIO + GPU summary + logs)
+### 7.4 Resources panel (FSIO + GPU summary + logs)
 
 - Diagnostic use: rapid verification of I/O volume and GPU occupancy before deep plotting.
 - Recommendation: if FS totals are high, check `FS MB/s`, `FS IOPS`, `MDS peak`, and LNET metrics for bottleneck type.
 
-### 8.5 Execution and hosts tab
+### 7.5 Execution and hosts tab
 
 - Diagnostic use: detect environment drift (wrong module/library/container path) and host-specific anomalies.
 - Recommendation: for regressions with “same script,” verify this tab before tuning code.
 
-### 8.6 Device data tab
+### 7.6 Device data tab
 
 - Diagnostic use: confirms which counter families/events were actually collected for this job.
 - Recommendation: use this tab to confirm expected telemetry families when interpreting plots/metrics.
 
 ---
 
-## 9. Failure-mode checklist (corrected to current surfaces)
+## 8. Failure-mode checklist
 
-### 9.1 Job did not run intended workload
+### 8.1 Job did not run intended workload
 
 - Signals: short runtime, flat/empty summary traces, empty process list.
 - Check: `Execution and hosts` (exec path/cwd/libset), `Processes`, scheduler record.
 
-### 9.2 Timeout/preemption risk
+### 8.2 Timeout/preemption risk
 
 - Signals: runtime near requested time, abrupt trace cutoff.
 - Check: tail-end spikes in FS/fabric/GPU activity; adjust timelimit or checkpoint cadence.
 
-### 9.3 Host memory pressure / OOM risk
+### 8.3 Host memory pressure / OOM risk
 
 - Signals: high `mem_hwm`, elevated `NUMA rem`, imbalance in `DRAM imbal`.
 - Check: first-touch policy, rank/thread placement, per-rank memory growth.
 
-### 9.4 GPU memory or accelerator under-use
+### 8.4 GPU memory or accelerator under-use
 
 - Signals: low `GPU %`, low `Tensor %`, low `GPU mean %` with full `GPU count`.
 - Check: input staging bottlenecks, wrong device mapping, too-small kernels, launch configuration.
 
-### 9.5 Communication-dominated scaling
+### 8.5 Communication-dominated scaling
 
 - Signals: high `IB MB/s`, `Fab peak`, `MB/GFLOP`, `MB/tensor`, packet-rate peaks.
 - Check: decomposition, collective strategy, message size (`Pkt size`), rank mapping.
 
-### 9.6 Filesystem/metadata bottlenecks
+### 8.6 Filesystem/metadata bottlenecks
 
 - Signals: high `FS IOPS`, `MDS peak`, `LNET peak`, large FS totals.
 - Check: file-per-rank patterns, small sync writes, metadata-heavy loops.
 
-### 9.7 Throttling/power constraints
+### 8.7 Throttling/power constraints
 
 - Signals: nonzero `GPU clk`, high `GPU W max`, capped `Node W max` with performance dips.
 - Check: power caps, thermal conditions, cluster policy limits.
 
-### 9.8 Cross-node imbalance / stragglers
+### 8.8 Cross-node imbalance / stragglers
 
 - Signals: elevated `CPU imbal`, `FLOP imbal`, `GPU imbal`, `Tensor imbal`, `Fab imbal`, `LNET imbal`, `DRAM imbal`.
 - Check: domain decomposition, skewed rank placement, node health differences.
 
-### 9.9 Data continuity checks
+### 8.9 Data continuity checks
 
 - Signals: gaps in expected plot/metric continuity.
 - Check: `Device data` event coverage for expected signal families and compare with similar jobs.
 
 ---
 
-## 10. Related references in this repository
+## 9. Related references in this repository
 
 - **Counter and variable catalog:** `docs/MONITOR_VARIABLES.md`
 

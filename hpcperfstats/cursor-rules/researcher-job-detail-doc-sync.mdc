@@ -61,6 +61,7 @@ in the same task.
    - Do not include backend construction details (API endpoint names, artifact/cache internals, pipeline/staging mechanics, model/serializer internals, storage implementation terms).
    - Do not include staff-only guidance, staff-only UI fields, or operator-only troubleshooting context.
    - If a concept is needed for user interpretation, describe behavior in UI terms only.
+   - Avoid internal conformance wording in user-facing prose (for example "one-for-one with current labels").
 
 6. **Availability-note style (single warning policy)**
    - Keep one general availability warning near the top of the document explaining that not all data appears for every job/architecture and that missing data is reported in the UI.
