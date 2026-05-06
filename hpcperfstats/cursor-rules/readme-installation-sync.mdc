@@ -1,0 +1,47 @@
+---
+description: Keep README installation/operator setup aligned with deploy and compose changes
+alwaysApply: true
+---
+
+# README Installation Instructions Sync
+
+Operator-facing setup lives primarily in **`HPCPerfStats/README.md`** under **Installation** and adjacent deployment sections (Compose stack, nginx, data volumes, cluster syslog, `hpcperfstats.ini`, supervisor/rsync). When a change would leave those instructions wrong, incomplete, or unsafe to follow on a fresh deploy, update **`README.md` in the same task**—**before** considering the change complete (same PR / same agent task). Do not land code or compose edits that alter the setup story without updating the README.
+
+## Canonical document
+
+- **[`HPCPerfStats/README.md`](HPCPerfStats/README.md)** — installation steps, prerequisites, copy/paste commands, and troubleshooting that operators rely on during first-time or upgraded deploys.
+
+## Change categories that require README updates
+
+Use this checklist when touching the listed areas. If any row applies, extend or correct **Installation** (and any README subsection that duplicates the same operator contract).
+
+| Category | Examples in repo | README impact |
+|----------|------------------|---------------|
+| **Compose services and wiring** | `docker-compose.yaml`, `docker-compose.app.yaml` (+ `.example`), service names, `depends_on`, networks, images, commands, env defaults | Document how to start/stop, what runs where, new/changed services, ports published to the host |
+| **Host-visible ports and firewall** | Published ports (`514`, `80`/`443`, DB/Redis/RMQ only-on-internal-network vs exposed) | Call out inbound firewall / syslog forwarder targets; avoid implying ports that no longer exist |
+| **Volumes and data paths** | Bind mounts, named volumes, `/hpcperfstats/` layout, log/accounting/archive dirs | Directory creation steps, ownership hints, migration notes when paths move |
+| **Container resource limits** | `shm_size` for Postgres, `mem_limit`, CPU pins, Redis `maxmemory`, sysctl overrides in compose | Operator prerequisites or tuning guidance when defaults change (e.g. shared memory, Redis memory cap, NUMA fragments cross-reference **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** if README points there) |
+| **Linux host / VM prerequisites** | Kernel sysctl (`vm.overcommit_memory`), ulimits, Docker Desktop vs Linux host distinctions | Persistent `sysctl` / reboot guidance when Redis, DB, or other services require host-level settings |
+| **Immutable config and examples** | `hpcperfstats.ini.example`, new required `[SECTION]` keys, deprecated keys | Mirror copy/edit steps and field tables under Installation; keep example and README in lockstep |
+| **Service configs operators must copy** | `services-conf/*.example`, nginx templates, supervisord, `rsync_data.sh.example`, syslog-ng fragments | README steps for `cp …example`, required edits (SSL paths, allowlists), and restart implications |
+| **Bootstrap / migration / one-shot ops** | New `manage.py` or documented migrate/collectstatic order, new mandatory seeds | Add or adjust README commands so a blank deploy succeeds |
+| **External integrations documented at deploy** | Cluster syslog (`[SYSLOG]`), RabbitMQ from monitors, accounting/rsync | Ports, INI knobs, forwarder examples—stay aligned with code defaults |
+
+## Required behavior
+
+1. Identify whether the change touches **operator setup**, **first-boot**, **upgrade**, or **host prerequisites**.
+2. If yes, update **`HPCPerfStats/README.md`** so a reader following **Installation** gets correct paths, ports, INI keys, and commands—including **“why”** when a sysctl or volume requirement is non-obvious.
+3. Prefer **copy-paste-ready** shell snippets and keep numbering/sections consistent with the current README structure.
+4. If behavior is documented in **`docs/*.md`** in detail, README may stay short with a **link**—but README must still list the prerequisite or step operators cannot skip.
+
+## When README-only edits suffice
+
+- Pure typo/format fixes in README with **no** product behavior claims changing elsewhere  
+(no codebase linkage requirement).
+
+## Overlap
+
+- **`syslog-cluster-ingest.mdc`** — cluster syslog README subsection stays aligned with `[SYSLOG]` and pipeline **514**.
+- **`immutable-image-ini-policy.mdc`** — README must not instruct runtime bind-mount overrides that contradict immutable **`hpcperfstats.ini`** in images.
+- **`nginx-django-route-allowlist-sync.mdc`** — when nginx snippets or compose mounts change deployment steps, README nginx/production bullets stay accurate (`README.md` / **`docs/TESTING.md`** per that rule).
+- **`postgres-docker-shared-memory.mdc`** — if **`shm_size`** or Postgres container tuning changes materially, README or linked ops doc should mention operator-visible tuning when failures are likely.
