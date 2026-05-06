@@ -184,6 +184,21 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo dnf install docker git podman-compose
    ```
 
+   **Redis / Linux kernel:** The Compose stack runs Redis. Redis warns when **`vm.overcommit_memory`** is disabled; background RDB saves use **`fork()`**, and without overcommit the kernel can reject that fork even when RAM is sufficient. On the **Linux machine whose kernel runs the Redis container** (your Docker host on Rocky/Linux; **not** macOS `sysctl` when using Docker Desktop), enable overcommit:
+
+   ```bash
+   sudo sysctl -w vm.overcommit_memory=1
+   ```
+
+   Persist across reboots:
+
+   ```bash
+   echo 'vm.overcommit_memory = 1' | sudo tee /etc/sysctl.d/99-redis-overcommit.conf
+   sudo sysctl --system
+   ```
+
+   Alternatively, add **`vm.overcommit_memory = 1`** to **`/etc/sysctl.conf`** and reboot (or run the **`sysctl -w`** command once). On Docker Desktop for macOS, host **`sysctl`** does not apply to the inner Linux VM; tune there only if your setup exposes it, or treat the warning as informational for small dev stacks.
+
 2. **Enable container restart after reboot:**
 
    ```bash
