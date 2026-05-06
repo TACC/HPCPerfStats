@@ -138,15 +138,27 @@ if __name__ == '__main__':
   for tar_file_name in tar_files:
     log_print(tar_file_name)
 
-  ctx = multiprocessing.get_context('spawn')
-  lock = ctx.Lock()
-  with ctx.Pool(processes=thread_count) as pool:
+  # Spawn workers receive tasks via pickle; plain ``ctx.Lock()`` is not picklable.
+  # Match ``sync_timedb.run_sync_timedb_supervisor_from_parsed``: Manager proxies.
+  manager = multiprocessing.Manager()
+  try:
+    lock_shards = max(1, int(cfg.get_sync_write_lock_shards()))
+    if lock_shards == 1:
+      manager_lock = manager.Lock()
+    else:
+      manager_lock = [manager.Lock() for _ in range(lock_shards)]
+      log_print(
+          "Using %d sync_timedb_archive write-lock shards" % lock_shards,
+          flush=True,
+      )
+    ctx = multiprocessing.get_context('spawn')
+    with ctx.Pool(processes=thread_count) as pool:
       # Process in chunks so SIGTERM can exit between chunks and memory stays bounded.
       for chunk in _iter_tar_tasks_chunked(tar_files, TAR_TASK_CHUNK_SIZE):
         if shutdown_requested[0]:
           log_print("Exiting due to SIGTERM")
           break
-        chunk_locked = [(lock, p, m) for p, m in chunk]
+        chunk_locked = [(manager_lock, p, m) for p, m in chunk]
         _process_tar_chunk_interruptibly(
             pool,
             _process_tar_member_task,
@@ -156,6 +168,8 @@ if __name__ == '__main__':
         if shutdown_requested[0]:
           pool.terminate()
           break
+  finally:
+    manager.shutdown()
   try:
     connections.close_all()
   except Exception:

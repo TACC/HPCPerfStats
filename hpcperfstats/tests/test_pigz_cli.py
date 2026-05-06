@@ -1,7 +1,9 @@
 """Tests for hpcperfstats.dbload.pigz_cli (no Django)."""
 from __future__ import annotations
 
+import io
 import shutil
+import signal
 import subprocess
 from unittest.mock import patch
 
@@ -37,6 +39,26 @@ def test_pigz_decompress_verbose_raises_on_nonzero():
       )
       with pytest.raises(subprocess.CalledProcessError):
         pigz_decompress_verbose("/a.gz", 2)
+
+
+def test_pigz_decompress_stdout_tolerates_sigpipe_after_reader_closes_pipe():
+  """Tar stops at end-of-archive; gzip decompressor may see SIGPIPE on stdout."""
+
+  class _FakeProc:
+    args = ["/usr/bin/pigz", "-d", "-c", "-p", "1", "/tmp/x.gz"]
+
+    def __init__(self):
+      self.stdout = io.BytesIO(b"a")
+
+    def wait(self):
+      return -signal.SIGPIPE
+
+  with patch(
+      "hpcperfstats.dbload.pigz_cli.subprocess.Popen",
+      return_value=_FakeProc(),
+  ):
+    with pigz_decompress_stdout("/tmp/x.gz", 1) as out:
+      assert out.read(1) == b"a"
 
 
 @pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")

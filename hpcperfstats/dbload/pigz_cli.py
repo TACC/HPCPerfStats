@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import shutil
+import signal
 import subprocess
 from collections.abc import Iterator
 from typing import BinaryIO
@@ -65,4 +67,8 @@ def pigz_decompress_stdout(
     proc.stdout.close()
     rc = proc.wait()
     if rc != 0:
+      # Streaming consumers (e.g. ``tarfile`` on ``pigz -d -c``) stop at tar EOF;
+      # closing the read end then yields SIGPIPE while gzip may still have trailer.
+      if os.name == "posix" and rc in (-signal.SIGPIPE, 128 + signal.SIGPIPE):
+        return
       raise subprocess.CalledProcessError(rc, proc.args)

@@ -1782,8 +1782,15 @@ def test_process_tar_chunk_stops_when_shutdown_requested():
 def test_process_tar_member_task_spawn_picklable():
   """Spawn Pool workers must unpickle the worker callable (regression guard)."""
   from multiprocessing.reduction import ForkingPickler
+  import multiprocessing
 
   ForkingPickler.dumps(sta._process_tar_member_task)
+  mgr = multiprocessing.Manager()
+  try:
+    lock = mgr.Lock()
+    ForkingPickler.dumps((lock, "/tmp/x.tar", "member"))
+  finally:
+    mgr.shutdown()
 
 
 def test_configure_blas_thread_env_idempotent():
