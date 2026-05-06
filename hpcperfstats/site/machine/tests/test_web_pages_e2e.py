@@ -11,6 +11,7 @@ Bokeh job-list embed regressions (real BokehJS + Playwright) live in
 """
 
 import pytest
+from django.core.cache import cache
 from django.test import Client
 from django.test import override_settings
 from django.utils import timezone
@@ -258,20 +259,22 @@ def test_job_list_api_exposes_sample_count_only_for_staff():
 
   with patch(
       "hpcperfstats.site.machine.api._build_job_list_queryset_from_request",
-      return_value=(job_data.objects.filter(pk=job.pk), {}, None, "-end_time"),
+      return_value=(job_data.objects.filter(pk=job.pk).order_by("pk"), {}, None, "-end_time"),
   ):
     session = client.session
     session["access_token"] = "token"
     session["username"] = "webtest-user"
     session["is_staff"] = True
     session.save()
-    staff_response = client.get("/api/job-list/")
+    cache.clear()
+    staff_response = client.get("/api/jobs/")
     assert staff_response.status_code == 200
     assert staff_response.json()["job_list"][0]["sample_count"] == 321
 
     session = client.session
     session["is_staff"] = False
     session.save()
-    non_staff_response = client.get("/api/job-list/")
+    cache.clear()
+    non_staff_response = client.get("/api/jobs/")
     assert non_staff_response.status_code == 200
     assert "sample_count" not in non_staff_response.json()["job_list"][0]

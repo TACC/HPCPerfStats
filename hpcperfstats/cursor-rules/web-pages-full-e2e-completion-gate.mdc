@@ -23,7 +23,7 @@ tests/run_web_e2e_workflow.sh
 
 Use `tests/run_web_e2e_workflow.sh --seed-cmd "<command>"` when the scenario needs recreated DB data (same seed patterns as `web-pages-e2e-test-maintenance.mdc`).
 
-That runner resets compose state, rebuilds `web` when configured to do so, starts healthy `db`/`redis`, then runs **both** `test_web_pages_e2e.py` and `test_web_pages_browser_e2e.py` in one compose-backed pytest session.
+That runner resets compose state, rebuilds `web` when configured to do so, starts healthy `db`/`redis`, runs **`manage.py migrate --noinput`** inside `web` with **`HPCPERFSTATS_COMPOSE_NETWORK=1`**, then runs **`test_web_pages_e2e.py`**, **`test_web_pages_browser_e2e.py`**, and **`test_nginx_static_wsgi_contract.py`** in one compose-backed pytest session.
 
 ## Completion bar
 

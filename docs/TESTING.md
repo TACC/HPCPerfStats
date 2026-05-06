@@ -149,7 +149,7 @@ All commands below assume your current directory is **`HPCPerfStats/`** (the one
 |------|---------|----------------|
 | 1 | `tests/run_db_pytest_workflow.sh` | Resets compose volumes, builds `web`, starts **db** + **redis**, migrates dev DB, installs **Playwright/Chromium** in the container, runs **`pytest -q hpcperfstats`** (entire tree, including **`test_web_pages_browser_e2e.py`** unless you pass `--skip-browser-e2e`). |
 | 2 | `tests/run_redis_cache_pytest_workflow.sh --skip-build` | Fresh compose session, **`test_redis_cache_live.py`** against real **Redis** (`HPCPERFSTATS_PYTEST_LIVE_REDIS=1`). |
-| 3 | `tests/run_web_e2e_workflow.sh --skip-build` | Dedicated **HTTP + Playwright** session for `test_web_pages_e2e.py` and `test_web_pages_browser_e2e.py` (run again after step 1 for an isolated E2E pass or CI parity). |
+| 3 | `tests/run_web_e2e_workflow.sh --skip-build` | Dedicated compose session: **`migrate`** + **`HPCPERFSTATS_COMPOSE_NETWORK=1`** + **`test_web_pages_e2e.py`**, **`test_web_pages_browser_e2e.py`**, **`test_nginx_static_wsgi_contract.py`** (isolated web-path parity vs step 1). |
 | 4 | `tests/run_stress_host_data_workflow.sh --skip-build` | Opt-in **`host_data`** stress (`tests/stress_host_data/`): seed + **`update_metrics`**, JSON report under **`artifacts/stress/`**, default **400000** rows (override row/time-scale env vars; see section above). |
 | 5 | `tests/run_pipeline_e2e_workflow.sh --skip-build` | Opt-in **full pipeline + browser** (`tests/pipeline_e2e/`): RabbitMQ ingest, **`sync_timedb once`**, **`update_metrics`**, then live **web** + Playwright endpoint matrix (see **Opt-in pipeline E2E** above). |
 
@@ -243,13 +243,14 @@ Then follow `HPCPerfStats/hpcperfstats/cursor-rules/variable-metadata-*.mdc` for
 
 ### `tests/run_web_e2e_workflow.sh` (compose E2E runner)
 
-Use this for web-page E2E modules:
+Use this for web-page E2E modules plus the nginx/WSGI route contract:
 
-- `hpcperfstats/site/machine/tests/test_web_pages_e2e.py` (includes a module-level `test_job_detail_api_includes_staff_metrics_distinct_time_count_for_staff` that does not use the `django_db` class marker, so it can run without a reachable Postgres host)
-- `hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py` (validates browser behavior for Django-served routes and asserts `/machine/*` returns 404 from WSGI, because nginx owns SPA shell delivery in production)
-- `hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + Bokeh 3.9 CDN: embeds committed `json_item` fixtures under `hpcperfstats/site/frontend/src/test-fixtures/` and fails if the browser console reports job-list histogram failure substrings). Includes a **two-plot** scenario (scroll + second `embed_item`). A third test serves the **Vite production build** with **`vite preview`**, loads **`bokeh-playwright-smoke.html`** (bundled `@bokeh/bokehjs` + ResizeObserver patch), and embeds the same fixtures—**skip** if that HTML is missing. Emit it with **`npm run build:with-bokeh-playwright-smoke`** (or **`BUILD_BOKEH_SMOKE=1 npm run build`**) from `hpcperfstats/site/frontend`; default **`npm run build`** is SPA-only and does not ship the smoke page. Requires **`pip install -e ".[test]"`** (includes **`playwright`**) and **`python -m playwright install chromium`** on the host running pytest. To refresh fixtures after changing `job_hist` / `_job_list_queue_bar_chart`, run Django with `DJANGO_SETTINGS_MODULE` set and dump `json_item(...)` for the target figures into those JSON files (see the module docstring in the test file).
+- `hpcperfstats/site/machine/tests/test_web_pages_e2e.py` (**PostgreSQL on Compose**: root **`conftest.py`** applies **`django_db`** to **`site/machine/tests`** by default when unset; **`pytest_collection_modifyitems`** skips Postgres-backed machine tests unless **`HPCPERFSTATS_COMPOSE_NETWORK=1`**. This workflow passes **`HPCPERFSTATS_COMPOSE_NETWORK=1`** into the **`web`** container and runs **`manage.py migrate --noinput`** before pytest.)
+- `hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py` (Playwright: Django stub server + **`/machine/*`** and **`/pub/*`** SPA shells return **404** from WSGI per nginx ownership contract)
+- `hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py` (**`/static/`**, **`/machine/`**, **`/pub/`** WSGI 404 contract + **`robots.txt`** sanity)
+- **`test_bokeh_job_list_embed_browser_e2e.py`** is **not** run here (needs CDN and optionally **`vite preview`** / **`node_modules`** inside the container). Run it separately—compose-backed **`pytest`** on **`web`** after **`pip install ".[test]"`** + **`playwright install chromium`**, or on the host with Playwright installed. See module docstring for **`BUILD_BOKEH_SMOKE`** and fixture regeneration after **`job_hist`** / queue bar chart changes.
 
-The workflow script handles Docker lifecycle and runs both files in one session:
+The workflow script handles Docker lifecycle and runs **`migrate`** plus those modules in one session:
 
 ```bash
 tests/run_web_e2e_workflow.sh
