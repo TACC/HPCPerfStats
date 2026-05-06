@@ -279,6 +279,31 @@ class job_detail_artifact(models.Model):
     return f"{self.jid_id}:{self.artifact_kind}:{self.artifact_scope}"
 
 
+class public_metrics_artifact(models.Model):
+  """Prewarmed gzip-compressed JSON for anonymous public dashboards (see update_metrics prewarm)."""
+
+  scope = models.CharField(max_length=64, db_index=True)
+  period_key = models.CharField(max_length=64, db_index=True)
+  payload_compressed = models.BinaryField()
+  payload_encoding = models.CharField(max_length=32)
+  input_fingerprint = models.CharField(max_length=64)
+  created_at = models.DateTimeField(auto_now_add=True)
+  updated_at = models.DateTimeField(auto_now=True)
+
+  class Meta:
+    db_table = "public_metrics_artifact"
+    managed = True
+    constraints = [
+        models.UniqueConstraint(
+            fields=["scope", "period_key"],
+            name="public_metrics_artifact_scope_period_uniq",
+        ),
+    ]
+
+  def __str__(self):
+    return f"{self.scope}:{self.period_key}"
+
+
 class ApiKey(models.Model):
   """API key for programmatic access, bound to an authenticated username.
 

@@ -6,17 +6,21 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 from django.views.decorators.http import require_POST
 
+from hpcperfstats.site.hpcperfstats_site.public_robots_allow_paths import (
+    PUBLIC_ROBOTS_ALLOW_PREFIXES,
+)
+
 # Browsers POST CSP violation reports without a Django CSRF token; cap body size for DoS safety.
 _CSP_REPORT_MAX_BYTES = 65536
 
 
 @require_GET
 def robots_txt(request):
-    """Disallow all automated crawlers; this app is not meant to be indexed."""
-    lines = [
-        "User-agent: *",
-        "Disallow: /",
-    ]
+    """Mostly disallow crawlers; explicit Allow entries surface anonymous `/pub/` HTML."""
+    lines = ["User-agent: *"]
+    for prefix in PUBLIC_ROBOTS_ALLOW_PREFIXES:
+        lines.append("Allow: {}".format(prefix))
+    lines.append("Disallow: /")
     return HttpResponse("\n".join(lines), content_type="text/plain")
 
 

@@ -205,6 +205,14 @@ def invalidate_after_job_data_ingest(inserted_count):
   if inserted_count <= 0:
     return
   invalidate_home_options_query_cache()
+  try:
+    from hpcperfstats.site.machine.public_metrics_artifacts import (
+        invalidate_all_public_metrics_artifacts,
+    )
+
+    invalidate_all_public_metrics_artifacts()
+  except Exception:
+    pass
 
 
 def warm_job_cache_entries(job_instances, timeout):
@@ -312,6 +320,14 @@ def invalidate_job_plot_cache_keys_for_jids(jids):
 
     job_plot_artifact.objects.filter(jid_id__in=[j for j in jids if j]).delete()
     job_detail_artifact.objects.filter(jid_id__in=[j for j in jids if j]).delete()
+  except Exception:
+    pass
+  try:
+    from hpcperfstats.site.machine.public_metrics_artifacts import (
+        invalidate_public_metrics_artifacts_for_jids,
+    )
+
+    invalidate_public_metrics_artifacts_for_jids(jids)
   except Exception:
     pass
 

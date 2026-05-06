@@ -8,6 +8,9 @@ import pytest
 from django.core.wsgi import get_wsgi_application
 
 from hpcperfstats.tests.playwright_axe import assert_no_serious_axe_violations
+from hpcperfstats.site.hpcperfstats_site.public_robots_allow_paths import (
+    PUBLIC_ROBOTS_ALLOW_PREFIXES,
+)
 
 try:
   from playwright.sync_api import sync_playwright
@@ -52,6 +55,8 @@ def test_browser_flow_for_web_pages():
           "/machine/jobs/",
           "/machine/job/123/",
           "/machine/job/123/cpu/",
+          "/pub/",
+          "/pub/monthly-metrics",
       ):
         response = page.goto(f"{base_url}{path}")
         assert response is not None
@@ -61,6 +66,8 @@ def test_browser_flow_for_web_pages():
       robots_text = page.locator("body").inner_text()
       assert "User-agent: *" in robots_text
       assert "Disallow: /" in robots_text
+      for prefix in PUBLIC_ROBOTS_ALLOW_PREFIXES:
+        assert "Allow: {}".format(prefix) in robots_text
       assert_no_serious_axe_violations(page)
 
       status_code = page.evaluate(

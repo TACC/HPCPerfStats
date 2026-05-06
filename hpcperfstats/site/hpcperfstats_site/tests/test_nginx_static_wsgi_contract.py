@@ -16,6 +16,7 @@ def test_wsgi_client_does_not_serve_spa_shell_routes():
   client = Client()
   assert client.get("/machine/").status_code == 404
   assert client.get("/machine/jobs/").status_code == 404
+  assert client.get("/pub/").status_code == 404
 
 
 def test_wsgi_resolves_known_app_route():

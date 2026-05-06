@@ -11,9 +11,11 @@ both:
 - `HPCPerfStats/hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py`
 in the same task.
 
+Also follow **`pub-surface-and-robots-sync.mdc`** when changing anonymous **`/pub/`** routes or **`robots.txt`** `Allow` entries.
+
 ## Trigger conditions
 - Django URL/view changes affecting page navigation or rendered page content.
-- React SPA route/page behavior changes under `/machine/`.
+- React SPA route/page behavior changes under `/machine/` or **`/pub/`**.
 - API-key page, robots, or CSP-report page behavior changes.
 
 ## Required actions

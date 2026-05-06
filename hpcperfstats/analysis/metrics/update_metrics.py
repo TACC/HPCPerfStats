@@ -71,6 +71,9 @@ from hpcperfstats.site.machine.models import (
     job_plot_artifact,
     metrics_data,
 )
+from hpcperfstats.site.machine.public_metrics_artifacts import (
+    refresh_public_expansion_factor_artifacts_safe,
+)
 
 DEBUG = cfg.get_debug()
 
@@ -2096,6 +2099,7 @@ def update_metrics_for_dates(dates, rerun=False):
           rescan_thread.join(timeout=2.0)
         with phase_timer.phase("prewarm_s"):
           prewarm_pipeline.finish()
+          refresh_public_expansion_factor_artifacts_safe()
         completion_reporter.stop()
         metrics_manager.close_pool()
 

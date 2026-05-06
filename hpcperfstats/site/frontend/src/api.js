@@ -115,3 +115,17 @@ function buildJobHistogramSearchParams(params, { group, metric }) {
 }
 
 export default api;
+
+/** Anonymous public dashboard bundle — must stay lightweight (pre-warmed DB artifacts only). */
+export async function fetchPubMonthlyMetrics() {
+  const res = await fetch(`${API_BASE}/pub/monthly-metrics/`, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    credentials: "omit",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+  }
+  return data;
+}

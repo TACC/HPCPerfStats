@@ -20,6 +20,22 @@ const rolldownBuildInput = buildBokehPlaywrightSmoke
  * - Bokeh CustomJS: dynamic `import()` workaround (microsoft/TypeScript#43329).
  * - SlickGrid (Bokeh bundle): debug helper `this.eval`.
  */
+/** Dev-server SPA fallback so `/pub/*` serves `index.html` like nginx does in production. */
+function pubSpaIndexFallbackPlugin() {
+  return {
+    name: "pub-spa-index-fallback",
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        const pathname = (req.url || "").split("?")[0];
+        if (pathname === "/pub" || pathname.startsWith("/pub/")) {
+          req.url = "/index.html";
+        }
+        next();
+      });
+    },
+  };
+}
+
 function bokehDependencyIndirectEvalPlugin() {
   const customJsDynamicImport = /await eval\(`import\("\$\{url\}"\)`\)/;
   return {
@@ -55,7 +71,11 @@ function bokehDependencyIndirectEvalPlugin() {
 }
 
 export default defineConfig({
-  plugins: [bokehDependencyIndirectEvalPlugin(), react()],
+  plugins: [
+    pubSpaIndexFallbackPlugin(),
+    bokehDependencyIndirectEvalPlugin(),
+    react(),
+  ],
   root: ".",
   base: "/static/frontend/",
   test: {

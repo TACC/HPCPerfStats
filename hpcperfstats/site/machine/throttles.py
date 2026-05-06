@@ -54,3 +54,15 @@ class StaffIngestThrottle(ScopedRateThrottle):
         if not username:
             return None
         return self.cache_format % {"scope": self.scope, "ident": f"staff:{username}"}
+
+
+class PublicMonthlyMetricsThrottle(ScopedRateThrottle):
+    """Anonymous throttle for ``/api/pub/**`` JSON (see ``public_api.py``)."""
+
+    scope = "public_monthly_metrics"
+
+    def get_cache_key(self, request, view):
+        ident = self.get_ident(request)
+        if not ident:
+            return None
+        return self.cache_format % {"scope": self.scope, "ident": ident}

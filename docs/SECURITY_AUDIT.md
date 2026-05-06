@@ -59,7 +59,9 @@ No high-severity issues; medium B608 on dynamic SQL helpers—treat as “verify
 - HSTS, `SECURE_PROXY_SSL_HEADER`, `Permissions-Policy`, `COOP`, CSP + CSP-Report-Only in middleware.
 - API key material hashed at rest; staff ingest requires `_require_staff`.
 - API throttling is active for authenticated and expensive API routes, with stricter staff-ingest scope.
-- `robots.txt` disallows crawlers; `SafeJSONRenderer` avoids non-finite JSON floats.
+- `robots.txt` defaults to **`Disallow: /`** with explicit **`Allow:`** prefixes only for anonymous **`/pub/`** HTML shell paths (registry in `public_robots_allow_paths.py`); **`/api/pub/`** remains uncrawlable by default.
+- Anonymous **`GET /api/pub/monthly-metrics/`** returns only pre-warmed JSON bundles; scoped DRF throttle **`public_monthly_metrics`** limits abuse (`REST_FRAMEWORK` rate + env override).
+- `SafeJSONRenderer` avoids non-finite JSON floats.
 
 ## References
 
@@ -72,3 +74,4 @@ No high-severity issues; medium B608 on dynamic SQL helpers—treat as “verify
 |------------|--------|
 | 2026-05-06 | Initial memo, scans, findings table; CSP report CSRF fix documented. |
 | 2026-05-06 | Closed F1/F2/F3/F4: dependency floor bumps, CI audit workflow, API throttles + ingest body cap, OAuth session/token hardening, and production CORS fail-fast checks. |
+| 2026-05-06 | Anonymous **`/api/pub/monthly-metrics/`** documented with scoped throttle + selective **`robots.txt`** `Allow` entries for **`/pub/`** HTML only. |

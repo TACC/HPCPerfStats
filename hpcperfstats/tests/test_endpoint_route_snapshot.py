@@ -1,5 +1,4 @@
 """Drift guard: root URLconf route templates vs expected set (update when adding paths)."""
-import pytest
 
 from hpcperfstats.tests.urlconf_route_catalog import (
     EXPECTED_ROUTE_TEMPLATES,
@@ -9,7 +8,6 @@ from hpcperfstats.tests.urlconf_route_catalog import (
 from django.urls import get_resolver
 
 
-@pytest.mark.django_db(databases=[])
 def test_root_urlconf_matches_expected_route_templates():
   live = frozenset(collect_route_templates(get_resolver().url_patterns))
   assert live == EXPECTED_ROUTE_TEMPLATES, (

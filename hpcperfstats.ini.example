@@ -15,6 +15,11 @@ data_dir 	          = /hpcperfstats/
 # FQDN for the web server host, split with commas if multiple
 server 		          = servername.domain.edu, stats.cluster.domain.edu
 
+# Scheme used when building browser CORS Origin URLs from ``server`` (production /
+# debug=no only). Defaults to https (nginx TLS termination). Use http only for
+# TLS-off deployments.
+# cors_origin_scheme = https
+
 # Keywords from queues which should be ignored
 restricted_queue_keywords = ['secure', 'secret']
 

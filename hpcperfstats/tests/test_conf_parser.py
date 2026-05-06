@@ -833,3 +833,68 @@ def test_render_syslog_ng_generated_text_allowlist(temp_ini, monkeypatch):
   assert "netmask(10.0.0.0/8)" in text
   assert "source s_net" in text
   assert "filter f_hps_syslog_allow_net" in text
+
+
+def test_format_cors_allowed_origins_csv_from_ini_production(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.format_cors_allowed_origins_csv_from_ini() == "https://test"
+
+
+def test_format_cors_allowed_origins_csv_empty_when_debug(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  with open(temp_ini) as f:
+    content = f.read().replace("debug = no", "debug = yes")
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.format_cors_allowed_origins_csv_from_ini() == ""
+
+
+def test_format_cors_allowed_origins_multiple_hosts(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  with open(temp_ini) as f:
+    content = f.read().replace("server = test\n", "server = a.example, b.example\n")
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.format_cors_allowed_origins_csv_from_ini() == (
+      "https://a.example,https://b.example"
+  )
+
+
+def test_format_cors_allowed_origins_respects_scheme_ini(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  with open(temp_ini) as f:
+    content = f.read().replace(
+        "server = test\n",
+        "server = legacy.example\ncors_origin_scheme = http\n",
+    )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_cors_origin_scheme() == "http"
+  assert cfg.format_cors_allowed_origins_csv_from_ini() == "http://legacy.example"
+
+
+def test_format_cors_allowed_origins_preserves_full_url_token(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  with open(temp_ini) as f:
+    content = f.read().replace(
+        "server = test\n",
+        "server = https://already.example\n",
+    )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.format_cors_allowed_origins_csv_from_ini() == "https://already.example"

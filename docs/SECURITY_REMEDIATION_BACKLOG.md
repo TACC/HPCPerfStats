@@ -27,6 +27,7 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 | CSP report storage decision | Keep endpoint lightweight no-op (validation + bounded body only) until retention requirements are formally requested. |
 | API key pepper decision | Deferred by policy (optional); current SHA-256 + high-entropy key design retained and documented. |
 | Bandit B608 review posture | Keep as ongoing review requirement when SQL helper modules change; no user-controlled identifiers accepted. |
+| Anonymous public metrics JSON | **`GET /api/pub/monthly-metrics/`** is AllowAny + **`PublicMonthlyMetricsThrottle`** (`public_monthly_metrics` rate); payloads are pre-warmed aggregates only—extend abuse review if new `/api/pub/**` routes ship. |
 
 ## History
 

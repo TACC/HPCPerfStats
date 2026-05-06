@@ -28,6 +28,7 @@ EXPECTED_ROUTE_TEMPLATES: FrozenSet[str] = frozenset({
     "api/jobs/<str:pk>/",
     "api/jobs/<str:pk>/plots/",
     "api/jobs/histograms/",
+    "api/pub/monthly-metrics/",
     "api/sacct/ingest/",
     "api/search/",
     "api/session/",
@@ -38,8 +39,6 @@ EXPECTED_ROUTE_TEMPLATES: FrozenSet[str] = frozenset({
     "login/",
     "login_prompt",
     "logout/",
-    "machine/",
-    "machine/<path:path>",
     "oauth_callback/",
     "robots.txt",
 })
@@ -121,17 +120,6 @@ def build_pipeline_http_endpoint_specs(
   add(PipelineHttpEndpointSpec(
       "logout/", "GET", "/logout/", 200, 399, None, True))
   add(PipelineHttpEndpointSpec(
-      "machine/", "GET", "/machine/", 200, 399, "text/html", True))
-  add(PipelineHttpEndpointSpec(
-      "machine/<path:path>", "GET", "/machine/job/{}/".format(jid),
-      200, 399, "text/html", True))
-  add(PipelineHttpEndpointSpec(
-      "machine/<path:path>", "GET", "/machine/api-key",
-      200, 399, "text/html", True))
-  add(PipelineHttpEndpointSpec(
-      "machine/<path:path>", "GET", "/machine/admin_monitor/",
-      200, 399, "text/html", True))
-  add(PipelineHttpEndpointSpec(
       "oauth_callback/", "GET", "/oauth_callback/", 200, 399, None, True))
   add(PipelineHttpEndpointSpec(
       "robots.txt", "GET", "/robots.txt", 200, 299, "text/plain", True))
@@ -146,6 +134,9 @@ def build_pipeline_http_endpoint_specs(
       "api/jobs/", "GET", "/api/jobs/", 200, 299, "application/json", False))
   add(PipelineHttpEndpointSpec(
       "api/jobs/histograms/", "GET", "/api/jobs/histograms/?group=metric&metric=runtime",
+      200, 299, "application/json", False))
+  add(PipelineHttpEndpointSpec(
+      "api/pub/monthly-metrics/", "GET", "/api/pub/monthly-metrics/",
       200, 299, "application/json", False))
   add(PipelineHttpEndpointSpec(
       "api/jobs/<str:pk>/", "GET", "/api/jobs/{}/".format(jid),

@@ -1,0 +1,34 @@
+---
+description: Keep robots Allow paths aligned with anonymous `/pub/` SPA routes
+globs:
+  - "**/public_robots_allow_paths.py"
+  - "**/views.py"
+  - "**/AppPub.jsx"
+  - "**/main.jsx"
+  - "**/nginx-static-files.conf"
+  - "**/test_web_pages_e2e.py"
+  - "**/test_web_pages_browser_e2e.py"
+alwaysApply: false
+---
+
+# Public `/pub/` Surface And robots.txt Sync
+
+## Trigger conditions
+
+- Any new user-facing React route or bookmark URL under the **`/pub/`** basename (see [`AppPub.jsx`](hpcperfstats/site/frontend/src/AppPub.jsx)).
+- Django/nginx/top-level URL changes that expose another crawlable HTML path under **`/pub/`**.
+- Changes to [`nginx-static-files.conf`](services-conf/nginx-static-files.conf) SPA shell routing for **`/pub/`**.
+
+## Required actions (same task)
+
+1. Append the browser path (no hostname; include a trailing slash when it is the canonical directory URL) to **`PUBLIC_ROBOTS_ALLOW_PREFIXES`** in [`public_robots_allow_paths.py`](hpcperfstats/site/hpcperfstats_site/public_robots_allow_paths.py).
+2. Confirm [`robots_txt`](hpcperfstats/site/hpcperfstats_site/views.py) still emits **`User-agent: *`**, each **`Allow:`** line from that tuple, then **`Disallow: /`**.
+3. Update assertions in [`test_web_pages_e2e.py`](hpcperfstats/site/machine/tests/test_web_pages_e2e.py) and [`test_web_pages_browser_e2e.py`](hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py):
+   - **`Allow:`** substring checks must cover every registry prefix (import the registry; avoid hardcoding duplicates).
+   - WSGI contract: Django must still return **404** for **`/pub/`** HTML deep links (nginx-only shell), matching **`/machine/`** behavior.
+4. Do **not** add **`Allow:`** entries for **`/api/pub/`** JSON unless product/security explicitly requires crawler access (default: APIs remain disallowed by the blanket **`Disallow: /`** except as overridden).
+
+## Overlap
+
+- [`web-pages-e2e-test-maintenance.mdc`](hpcperfstats/cursor-rules/web-pages-e2e-test-maintenance.mdc) — robots and SPA shell expectations for web E2E modules.
+- [`security-posture-and-review-triggers.mdc`](hpcperfstats/cursor-rules/security-posture-and-review-triggers.mdc) — review when crawler or anonymous HTTP surface changes.

@@ -17,6 +17,9 @@ from django.utils import timezone
 from unittest.mock import Mock, patch
 
 from hpcperfstats.site.machine.models import job_data
+from hpcperfstats.site.hpcperfstats_site.public_robots_allow_paths import (
+    PUBLIC_ROBOTS_ALLOW_PREFIXES,
+)
 
 @pytest.mark.django_db
 class TestWebPagesEndToEnd:
@@ -40,13 +43,18 @@ class TestWebPagesEndToEnd:
         "/machine/host/node1/plot/",
         "/machine/admin_monitor/",
         "/machine/job_monitor/",
+        "/pub/",
+        "/pub/monthly-metrics",
     ):
       assert client.get(path).status_code == 404
 
     robots_response = client.get("/robots.txt")
     assert robots_response.status_code == 200
-    assert "User-agent: *" in robots_response.content.decode("utf-8")
-    assert "Disallow: /" in robots_response.content.decode("utf-8")
+    robots_body = robots_response.content.decode("utf-8")
+    assert "User-agent: *" in robots_body
+    assert "Disallow: /" in robots_body
+    for prefix in PUBLIC_ROBOTS_ALLOW_PREFIXES:
+      assert "Allow: {}".format(prefix) in robots_body
 
     csp_response = client.post(
         "/csp-report/",

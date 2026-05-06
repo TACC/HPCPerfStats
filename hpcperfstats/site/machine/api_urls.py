@@ -1,6 +1,7 @@
 """URL routing for machine REST API."""
 from django.urls import path
 from . import api
+from . import public_api
 
 urlpatterns = [
     path("session/", api.session_info),
@@ -20,4 +21,9 @@ urlpatterns = [
     path("job_monitor/", api.job_monitor),
     path("job_monitor/gpu/", api.job_monitor_gpu_for_user),
     path("sacct/ingest/", api.sacct_ingest),
+    path(
+        "pub/monthly-metrics/",
+        public_api.PublicMonthlyMetricsAggregateView.as_view(),
+        name="public_monthly_metrics",
+    ),
 ]
