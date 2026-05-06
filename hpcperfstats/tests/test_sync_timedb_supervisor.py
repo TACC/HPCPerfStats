@@ -92,9 +92,9 @@ class _FakeArchivePoolRetry:
 
 
 @pytest.fixture(autouse=True)
-def _default_startup_unsealed_tar_count(monkeypatch):
+def _default_startup_daily_tar_count(monkeypatch):
   """Keep startup archival gating deterministic unless a test overrides it."""
-  monkeypatch.setattr(st, "_count_non_sealed_daily_tars", lambda *_a, **_k: 0)
+  monkeypatch.setattr(st, "_count_daily_tars", lambda *_a, **_k: 0)
 
 
 def test_verified_daily_tar_removal_gate_matches_force_full_or_explicit_flag():
@@ -303,7 +303,7 @@ def test_supervisor_first_rescan_before_archive_maintenance(monkeypatch):
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
-    monkeypatch.setattr(st, "_count_non_sealed_daily_tars", lambda *_a, **_k: 3)
+    monkeypatch.setattr(st, "_count_daily_tars", lambda *_a, **_k: 3)
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: events.append("maintenance"))
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(
@@ -338,7 +338,7 @@ def test_supervisor_first_rescan_before_archive_maintenance(monkeypatch):
     shutdown_requested[0] = False
 
 
-def test_supervisor_runs_startup_archive_maintenance_when_unsealed_tars_above_threshold(monkeypatch):
+def test_supervisor_runs_startup_archive_maintenance_when_daily_tars_above_threshold(monkeypatch):
   shutdown_requested[0] = False
   try:
     events = []
@@ -350,7 +350,7 @@ def test_supervisor_runs_startup_archive_maintenance_when_unsealed_tars_above_th
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
-    monkeypatch.setattr(st, "_count_non_sealed_daily_tars", lambda *_a, **_k: 4)
+    monkeypatch.setattr(st, "_count_daily_tars", lambda *_a, **_k: 4)
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: events.append("maintenance"))
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(

@@ -149,15 +149,11 @@ def _ensure_daily_archive_dir_exists():
       raise
 
 
-def _count_non_sealed_daily_tars(daily_archive_dir):
-  """Count daily ``.tar`` files that do not yet have a sibling ``.tar.gz``."""
+def _count_daily_tars(daily_archive_dir):
+  """Count daily ``.tar`` files in the archive directory."""
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
     return 0
-  count = 0
-  for tar_path in iter_daily_tar_paths(daily_archive_dir):
-    if not os.path.isfile("%s.gz" % tar_path):
-      count += 1
-  return count
+  return sum(1 for _ in iter_daily_tar_paths(daily_archive_dir))
 
 
 def _log_db_lock_wait(batch_kind, stats_file, lock_wait):
@@ -1362,12 +1358,13 @@ def run_sync_timedb_supervisor_loop(
           processes=db_writer_processes)
 
   try:
-    startup_unsealed_tars = _count_non_sealed_daily_tars(tgz_archive_dir)
-    if startup_unsealed_tars > 3:
+    startup_daily_tar_count = _count_daily_tars(tgz_archive_dir)
+    if startup_daily_tar_count > 3:
       log_print(
           "Running startup archive maintenance before initial scan "
-          "(non_sealed_daily_tars=%d threshold=3)"
-          % startup_unsealed_tars,
+          "(daily_tar_files=%d threshold=3); validating tar vs any sealed "
+          "counterparts before full maintenance"
+          % startup_daily_tar_count,
           flush=True,
       )
       _ensure_daily_archive_dir_exists()
@@ -1382,8 +1379,8 @@ def run_sync_timedb_supervisor_loop(
     else:
       log_print(
           "Skipping startup archive maintenance before initial scan "
-          "(non_sealed_daily_tars=%d threshold=3)"
-          % startup_unsealed_tars,
+          "(daily_tar_files=%d threshold=3)"
+          % startup_daily_tar_count,
           flush=True,
       )
 
