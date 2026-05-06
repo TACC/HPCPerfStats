@@ -24,6 +24,7 @@ from hpcperfstats.analysis.gen.jid_table import _distinct_times_in_window_batche
 from hpcperfstats.analysis.gen.jid_table import _ensure_tz
 from hpcperfstats.analysis.gen.jid_table import _iter_acct_host_batches
 from hpcperfstats.analysis.gen.jid_table import _normalize_host_data_schema_label
+from hpcperfstats.analysis.gen.jid_table import _normalize_host_cell_for_host_data
 from hpcperfstats.analysis.gen.jid_table import _normalize_job_accounting_host_list
 from hpcperfstats.analysis.gen.jid_table import _ntile_bucket_max_timestamps
 from hpcperfstats.analysis.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
@@ -93,6 +94,16 @@ def test_normalize_job_accounting_host_list_accepts_list_tuple():
   """Accounting host_list is coerced from list/tuple."""
   assert _normalize_job_accounting_host_list(["a", "b"]) == ["a", "b"]
   assert _normalize_job_accounting_host_list(("x",)) == ["x"]
+
+
+def test_normalize_job_accounting_host_list_flattens_nested_sequences():
+  assert _normalize_job_accounting_host_list([["n1"], "n2"]) == ["n1", "n2"]
+
+
+def test_normalize_host_cell_for_host_data_unwraps_list_wrapped_scalar():
+  assert _normalize_host_cell_for_host_data(["host.example.com"]) == "host.example.com"
+  assert _normalize_host_cell_for_host_data(None) is None
+  assert _normalize_host_cell_for_host_data({"a": 1}) is None
 
 
 def test_normalize_job_accounting_host_list_rejects_non_sequence():

@@ -9,6 +9,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Sequence
+from datetime import datetime
 from datetime import timezone as dt_utc
 
 from django.core.cache import cache
@@ -201,10 +202,17 @@ def _count_host_data_rows_for_window(start, end, acct_hosts):
       close_old_connections()
       total = 0
       for host_chunk in _iter_acct_host_batches(hosts):
+        clean_chunk = [
+            h for h in (
+                _normalize_host_cell_for_host_data(h) for h in host_chunk
+            ) if h
+        ]
+        if not clean_chunk:
+          continue
         total += host_data.objects.filter(
             time__gte=start,
             time__lte=end,
-            host__in=host_chunk,
+            host__in=clean_chunk,
         ).count()
       return total
     except Exception as exc:
@@ -306,7 +314,7 @@ def _count_host_data_rows_for_window_cached(jid, start, end, acct_hosts):
         return coerced
   try:
     n = _count_host_data_rows_for_window(start, end, acct_hosts)
-  except (TypeError, ValueError, OverflowError) as exc:
+  except Exception as exc:
     log_print(
         "[jid_table] window row count count-fallback jid={0}: {1}".format(
             jid, exc
@@ -509,17 +517,46 @@ def _ensure_tz(dt):
   return dt.astimezone(local_timezone)
 
 
+def _normalize_host_cell_for_host_data(value):
+  """Coerce ``host_data.host`` cell to a hashable hostname string (set/DISTINCT safe).
+
+  Bad payloads occasionally store nested sequences in ``host``; ``set.update``
+  on queryset rows then raises ``unhashable type: 'list'``.
+  """
+  if value is None:
+    return None
+  if isinstance(value, bytes):
+    s = value.decode("utf-8", errors="replace").strip()
+    return s if s else None
+  if isinstance(value, str):
+    s = value.strip()
+    return s if s else None
+  if isinstance(value, (list, tuple)):
+    for item in value:
+      nh = _normalize_host_cell_for_host_data(item)
+      if nh:
+        return nh
+    return None
+  if isinstance(value, dict):
+    return None
+  s = str(value).strip()
+  return s if s else None
+
+
 def _normalize_job_accounting_host_list(raw):
   """Coerce ``job_data.host_list`` (ArrayField) to a list of short hostnames.
 
   Defensive: corrupted cache/ORM values can surface as a non-list (e.g. a lone
   ``datetime``), which must not be iterated for FQDN construction. A single FQDN
   string (or comma-separated short names) is accepted like :func:`_listify_acct_hosts`.
+  Nested list payloads are flattened via :func:`_listify_acct_hosts`.
   """
   if raw is None:
     return []
-  if isinstance(raw, (list, tuple)):
-    return [str(h) for h in raw]
+  if isinstance(raw, datetime):
+    return []
+  if isinstance(raw, (list, tuple, set, deque)):
+    return _listify_acct_hosts(raw)
   if isinstance(raw, (str, bytes)):
     return _listify_acct_hosts(raw)
   return []
@@ -684,7 +721,10 @@ class jid_table:
             .values_list("host", flat=True)
             .distinct()
         )
-        found.update(host_qs)
+        for raw_host in host_qs:
+          nh = _normalize_host_cell_for_host_data(raw_host)
+          if nh:
+            found.add(nh)
       return list(found)
 
     _st = self.start_time.isoformat() if self.start_time else ""
