@@ -10,7 +10,7 @@
 
 This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections. Telemetry is collected by a node monitor and joined with scheduler accounting; the pipeline is **near-line**, so very recent jobs may show empty plots or “metric not computed” until background processing finishes.
 
-> **Data availability note:** Not all data appears for every job or or architecture. When data is missing, the interface reports this directly in the relevant panel/tab.
+> **Data availability note:** Not all data appears for every job or architecture. When data is missing, the interface reports this directly in the relevant panel/tab.
 
 ---
 
