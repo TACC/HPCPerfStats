@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 from collections import deque
+from collections.abc import Sequence
 from datetime import timezone as dt_utc
 
 from django.core.cache import cache
@@ -15,6 +16,7 @@ from django.db import InterfaceError, OperationalError, close_old_connections, c
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.analysis.gen.utils import queryset_to_dataframe
+from hpcperfstats.print_utils import log_print
 from hpcperfstats.site.machine.cache_utils import (
     KEY_AGG_DF,
     KEY_JOB_HOST_LIST,
@@ -148,10 +150,10 @@ def _count_host_data_rows_for_window(start, end, acct_hosts):
   """
   if start is None or end is None:
     return 0
-  # Corrupted cache rows may surface list/dict bounds; never pass those to ORM.
-  if isinstance(start, (list, tuple, dict, set)):
+  # Corrupted cache rows may surface wrapped/list-like bounds from cache serializers.
+  if isinstance(start, Sequence) and not isinstance(start, (str, bytes, bytearray)):
     return 0
-  if isinstance(end, (list, tuple, dict, set)):
+  if isinstance(end, Sequence) and not isinstance(end, (str, bytes, bytearray)):
     return 0
   hosts = _listify_acct_hosts(acct_hosts)
   if not hosts:
@@ -267,18 +269,20 @@ def _count_host_data_rows_for_window_cached(jid, start, end, acct_hosts):
   try:
     n = _count_host_data_rows_for_window(start, end, acct_hosts)
   except (TypeError, ValueError, OverflowError) as exc:
-    _logger.warning(
-        "jid_table window row count count-fallback jid=%s: %s",
-        jid,
-        exc,
+    log_print(
+        "[jid_table] window row count count-fallback jid={0}: {1}".format(
+            jid, exc
+        ),
+        flush=True,
     )
     return 0
   coerced_n = _coerce_nonnegative_window_row_count(n)
   if coerced_n is None:
-    _logger.warning(
-        "jid_table window row count not coercible jid=%s raw=%r",
-        jid,
-        n,
+    log_print(
+        "[jid_table] window row count not coercible jid={0} raw={1!r}".format(
+            jid, n
+        ),
+        flush=True,
     )
     return 0
   if ttl > 0 and jid and iso_pair is not None:
