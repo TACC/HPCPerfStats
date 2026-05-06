@@ -55,7 +55,7 @@ def _parse_cors_allowed_origins():
 
 def _validate_cors_allowed_origins(origins):
     """Fail fast in production when CORS origins are missing or dev-only."""
-    if DEBUG:
+    if DEBUG or _is_non_http_management_command():
         return
     if not origins:
         raise ValueError(
@@ -67,6 +67,25 @@ def _validate_cors_allowed_origins(origins):
         raise ValueError(
             "Production CORS_ALLOWED_ORIGINS cannot include localhost dev origins."
         )
+
+
+def _is_non_http_management_command():
+    """Return True for manage.py commands that do not serve browser requests."""
+    if len(sys.argv) < 2:
+        return False
+    command = str(sys.argv[1] or "").strip().lower()
+    non_http_commands = {
+        "collectstatic",
+        "migrate",
+        "makemigrations",
+        "showmigrations",
+        "createsuperuser",
+        "shell",
+        "dbshell",
+        "test",
+        "check",
+    }
+    return command in non_http_commands
 
 # Skip Redis caching for job plot json_items when UTF-8 JSON exceeds this size (default 512 KiB).
 JOB_PLOT_REDIS_MAX_BYTES = int(os.environ.get("JOB_PLOT_REDIS_MAX_BYTES", "524288"))

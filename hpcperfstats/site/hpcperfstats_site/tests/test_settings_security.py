@@ -23,3 +23,9 @@ def test_validate_cors_allowed_origins_rejects_dev_hosts_in_production(monkeypat
     monkeypatch.setattr(settings, "DEBUG", False)
     with pytest.raises(ValueError):
         settings._validate_cors_allowed_origins(["http://localhost:5173"])
+
+
+def test_validate_cors_allowed_origins_skips_non_http_management_commands(monkeypatch):
+    monkeypatch.setattr(settings, "DEBUG", False)
+    monkeypatch.setattr(settings.sys, "argv", ["manage.py", "collectstatic"])
+    settings._validate_cors_allowed_origins([])
