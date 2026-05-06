@@ -1,0 +1,77 @@
+---
+description: Keep researcher job-detail documentation synchronized with metrics/plots/tabs and include explicit user value rationale for every data surface
+alwaysApply: true
+---
+
+# Researcher Job Detail Documentation Sync
+
+When job-detail data shown to users changes, update:
+`HPCPerfStats/docs/using-the-website-as-a-researcher.md`
+in the same task.
+
+## Trigger conditions
+
+- Changes to job-detail API payload shape or semantics in:
+  - `hpcperfstats/site/machine/api.py` (`job_detail`, `job_plots`, multiprecision/detail artifacts, `metrics_list`, fsio/gpu summary fields, xalt/process/schema sections)
+  - `hpcperfstats/site/machine/job_plot_artifacts.py`
+  - `hpcperfstats/site/machine/job_detail_artifacts.py`
+- Changes to Job Detail frontend tabs/panels/labels in:
+  - `hpcperfstats/site/frontend/src/pages/JobDetail.jsx`
+  - `hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.js`
+  - `hpcperfstats/site/frontend/src/utils/variableMetadata*.js`
+- Changes to job metric catalog/meaning in:
+  - `hpcperfstats/analysis/metrics/metrics.py` (`job_metrics_catalog_entries`, metric keys/units/no-data behavior)
+- Any new metric, plot, graph, table, tab, field, or unavailable/no-data behavior visible on the Job Detail page.
+
+## Required documentation updates
+
+1. **One-to-one metric map**
+   - Keep section 7 aligned one-for-one with current `jobMetricDisplayLabels` keys and active catalog metrics.
+   - If a metric key is added/renamed/removed, apply the same change in the doc in the same task.
+   - Keep units and names consistent with the current UI/API output.
+
+2. **Surface-level coverage**
+   - Document every current Job Detail surface/tab:
+     - Job overview
+     - Full scheduling record
+     - Resources
+     - Metrics
+     - Summary plot
+     - Roofline
+     - Multiprecision Mix
+     - Processes
+     - Execution and hosts
+     - Device data
+   - For each surface, describe what data comes from where (artifact/API source) and any loading/unavailable behavior users can observe.
+
+3. **User value requirement (mandatory)**
+   - For every user-visible data element (metric, plot, table, field), explicitly answer:
+     - **“Why is this useful to me as a user/researcher?”**
+   - Keep this concrete and action-oriented:
+     - what decision the signal helps make,
+     - what failure/bottleneck it can detect,
+     - what follow-up check/tuning action it suggests.
+
+4. **Diagnostic correctness**
+   - Remove stale guidance that refers to surfaces no longer on the Job Detail page.
+   - Ensure recommendations match current code behavior (for example progressive plot loading, staff vs non-staff no-data messaging, and artifact-backed fields).
+
+5. **Availability-note style (single warning policy)**
+   - Keep one general availability warning near the top of the document explaining that not all data appears for every job/architecture and that missing data is reported in the UI.
+   - Do not repeat per-metric/per-tab “if data is unavailable” warnings throughout the document unless a behavior is unique and materially different from the general policy.
+
+6. **Document history**
+   - Add/update a changelog row in the doc’s history table whenever behavior-visible changes are documented.
+
+## Validation checklist before closing
+
+- Metric keys in docs match `jobMetricDisplayLabels` and `metrics.py` catalog.
+- Every currently rendered Job Detail tab/panel is represented in docs.
+- Every documented data source includes an explicit user/researcher usefulness statement.
+- No outdated tab/plot/field names remain.
+
+## Overlap
+
+- `variable-metadata-cross-source-sync.mdc` and `variable-metadata-derived-metrics-sync.mdc` for tooltip/metadata alignment.
+- `end-to-end-feature-wiring-contract.mdc` for multi-layer feature updates.
+- `testing-doc-sync.mdc` when testing workflow/docs also change.

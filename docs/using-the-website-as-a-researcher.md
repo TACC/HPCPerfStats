@@ -1,27 +1,28 @@
 # Using HPCPerfStats on the Web — Guide for Researchers and HPC Users
 
 
-| Field            | Value                                                                                       |
-| ---------------- | ------------------------------------------------------------------------------------------- |
-| **Audience**     | People who run jobs on the cluster and want to interpret site data                          |
-| **Scope**        | Django + React job views under `/machine/` (job lists, job detail, type detail, host plots) |
-| **Last updated** | 2026-04-03                                                                                  |
+| Field            | Value                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Audience**     | Users and Researchers that use clusters that are tracked by HPCPerfStats                                                                   |
+| **Scope**        | Using the data available in HPCPerfStats website with an eye towards understanding application runtime performance and diagnostic utiltiy. |
+| **Last updated** | 2026-05-06                                                                                                                                 |
 
 
 This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections. Telemetry is collected by a node monitor and joined with scheduler accounting; the pipeline is **near-line**, so very recent jobs may show empty plots or “metric not computed” until background processing finishes.
+
+> **Data availability note:** Not all data appears for every job or or architecture. When data is missing, the interface reports this directly in the relevant panel/tab.
 
 ---
 
 ## 1. What you should do first on a job page
 
-1. **Read scheduler metadata** (status, runtime vs requested time, cores, nodes, queue). This frames everything else: a failed or very short job may have little telemetry.
-2. **Scan the summary plot** (if present). It is the fastest way to see whether the run was CPU-bound, memory-bandwidth-heavy, GPU-active, doing heavy I/O or network, and whether behavior **changed over time** or **differs by node** (one line per host).
-3. **Check the heatmap** when available. It encodes **cycles per instruction (CPI)** per host over time—useful for spotting **stragglers**, **phases** (e.g. initialization vs steady state), and **load imbalance** across nodes.
-4. **Use roofline plots** when you care about **how close the code gets to peak compute vs peak memory traffic** (CPU roofline) or **GPU compute vs PCIe/NVLink byte traffic** (GPU roofline, when counters exist). They support “are we leaving performance on the table?” conversations.
-5. **Open the job-level metrics table** for single-number summaries (averages, peaks, imbalance percentages). Many rows have a **help icon** (variable metadata) next to the name—use it for definitions.
-6. **Drill into “Device Data and Plots”** when you need raw counter families (`host_data.type` names) or per-type time series on the type-detail page.
-
-If a panel says data is unavailable, the message is often literal (counter not enabled, wrong hardware path, or no overlapping samples)—see §8.
+1. **Read Job overview first** (status, runtime, queue, cores/nodes, user/project, start/end). This frames the run before touching telemetry.
+2. **Open the Summary plot tab** in **Job data**. It is the fastest way to see phase changes and node-to-node divergence across CPU, memory, I/O, network, and GPU signals.
+3. **Open the Roofline tab** for performance-ceiling context: it contains **both** CPU roofline and GPU roofline (GPU roofline appears when required counters exist).
+4. **Open the Multiprecision Mix tab** to check CPU/GPU precision activity composition.
+5. **Open the Metrics tab** for scalar job-level summaries (averages, peaks, imbalance percentages, detail GPU/FSIO rows). Many rows have a **help icon** for definitions.
+6. **Use Device data tab** to jump into per-type detail pages (`/job/<jid>/<type>/`) for raw event families and type-level plots/tables.
+7. **Use Processes and Execution and hosts tabs** when you need command-line provenance, XALT library context, and host list verification.
 
 ---
 
@@ -58,37 +59,42 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 
 ---
 
-## 4. Host-level plots (Bokeh)
+## 4. Job detail tabs and plots (Bokeh)
 
-All plots support **per-host coloring** where multiple nodes ran the job. Use **zoom** (link on each panel) for a full-screen view.
+The **Job data** section is tabbed. Plot tabs use progressive loading: placeholders can appear first, then finalize as artifacts become ready.
 
-### 4.1 Summary plot
+### 4.1 Summary plot tab
 
-A **grid of step plots over local time**, one subplot per available metric family. Typical groupings (when data exists):
+The summary tab shows one Bokeh summary figure over job time, typically with one line per host where data exists.
 
-- **CPU usage** — user/system time proxy: is the CPU actually busy?
-- **Memory / NUMA** — footprint and **remote NUMA references** when exposed: **NUMA misplacement** hurts performance.
-- **DRAM / socket bandwidth** — Intel IMC- or AMD DF-derived rates: **memory bandwidth limits** for stencil / sparse / streaming codes.
-- **Instruction throughput / FLOPs / cycles** — computational intensity over time; **Intel CHA**-derived traces (when present) give a coarse **uncore / LLC / coherence pressure** signal for multi-threaded or MPI+OpenMP codes.
-- **Frequency / package power** — **thermal throttling**, power caps, or **turbo** behavior.
-- **GPU** — utilization, framebuffer usage, **tensor core / SM / FP pipe** activity, estimated **HBM bandwidth**, **power**, **PCIe/NVLink byte rates** (vendor-dependent).
-- **Lustre / NFS client** — read/write throughput and metadata-heavy **IOPS**: **I/O storms**, small-file metadata bottlenecks.
-- **Network / fabric** — InfiniBand (or related) byte rates, **fabric bytes per GFLOP** and **fabric bytes per average tensor activity** (heuristic **communication intensity** for HPC and GPU+MPI workflows).
-- **Node power estimate** — Combined view when CPU/GPU/module power fragments exist.
+Common signal families include:
 
-**How to read it:** Look for **flat lines vs spikes**, **one node an outlier**, and **correlation** (e.g. GPU util drops while network rises → **halo exchange** or **checkpoint**).
+- **CPU usage / instruction activity**
+- **Memory / NUMA / DRAM bandwidth**
+- **Fabric/network and filesystem throughput**
+- **GPU utilization, power, link, memory bandwidth**
+- **Estimated node power**
 
-### 4.2 Heatmap (CPI)
+Use it to spot phase boundaries, node outliers, and cross-signal coupling (for example, GPU utilization drops while fabric traffic spikes).
 
-**Color = CPI** (cycles per instruction) by **host (rows)** and **time (columns)**—lower is often “more efficient instruction mix / fewer stalls,” but **very low CPI with low absolute performance** can still mean **not much useful work**. Sudden **vertical stripes** (all nodes) indicate **phases**; **horizontal outliers** indicate **straggler nodes**.
+### 4.2 Roofline tab
 
-### 4.3 CPU roofline
+This tab renders:
 
-Scatter of **arithmetic intensity (FLOP/byte)** vs **achieved GFLOP/s**, with a **roofline** curve from nominal peak FLOPs and DRAM bandwidth inferred from the job’s counter schema (**Intel**, **AMD**, **ARM Grace-class** paths each have rules). **Points near the memory roof** → bandwidth-limited; **below both roofs** → latency, serial sections, or **low vectorization**.
+- **CPU Roofline**
+- **GPU Roofline (PCIe/NVLink)**
 
-### 4.4 GPU roofline (PCIe / NVLink)
+CPU roofline reads arithmetic intensity vs achieved FLOP/s against inferred compute/bandwidth ceilings from job schema.  
+GPU roofline uses GPU-side FLOP and link-byte telemetry.
 
-Uses **NVIDIA** `nvidia_gpu` counters when present: **GPU FLOP/s** vs **PCIe + NVLink byte bandwidth** derived from **profiler-style link byte counters**—not framebuffer “GPU mem copy” alone. **High AI with low link GB/s** suggests the kernel is not **host–device transfer bound** on that axis; **points hugging the link roof** suggest **streaming / staging** limits. **Missing plot** usually means strict counters were not available or did not overlap in time.
+### 4.3 Multiprecision Mix tab
+
+This tab shows:
+
+- **CPU Multiprecision Mix**
+- **GPU Multiprecision Mix**
+
+Each panel maps precision activity across the job timeline.
 
 ---
 
@@ -112,173 +118,171 @@ Lists each `**host_data.type`** name present for the job (e.g. `cpu`, `mem`, `nv
 ## 6. Supporting panels on the job page
 
 
-| Panel                           | Content                                                     | Diagnostic use                                                                                                                                              |
-| ------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Shared file system**          | Per-filesystem **MB read / written** (job totals)           | **Checkpoint / post-processing** I/O; compare with Lustre/NFS summary subplots for **time structure**.                                                      |
-| **Client / server logs**        | External log URLs (when configured)                         | Jump to application or system logs; timestamps should align with job window.                                                                                |
-| **GPU statistics**              | Allocated vs **active** GPU count, **max/mean utilization** | **Under-used GPUs**: wrong binding, **serialization**, or **CPU bottleneck**.                                                                               |
-| **Processes**                   | Observed process command lines (when collected)             | Verify **which binary** actually ran (wrapper scripts, **wrong conda env**, **srun** depth).                                                                |
-| **Job-level metrics**           | Full catalog of scalar metrics (see §7–§9)                  | Single-place **bottleneck and imbalance** summary.                                                                                                          |
-| **Execution parameters (XALT)** | Executable path, cwd, **loaded shared libraries**           | **Environment drift** between interactive and batch; **wrong library** (e.g. CPU BLAS vs GPU). Only populated when XALT integration is enabled server-side. |
-| **Hosts**                       | Nodelist                                                    | Tie plots to specific nodes; compare with scheduler nodelist if troubleshooting **stragglers**.                                                             |
+| Panel / tab                     | Content                                                                                           | Diagnostic use                                                                                                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Job overview**                | Compact high-value fields (jid, status, runtime, queue, user/project, cores/nodes, start/end)    | Fast triage before deeper telemetry checks.                                                                                                                    |
+| **Full scheduling record**      | Expanded accounting table with all core scheduler columns                                          | Audit exact scheduler/accounting values and formatting without leaving the page.                                                                               |
+| **Resources**                   | Shared filesystem totals (`fsio`), log links, GPU summary table                                    | Validate I/O totals, jump to external logs, and quickly assess GPU allocation vs activity.                                                                    |
+| **Metrics (tab)**               | Full job-level metrics catalog (`metrics_list`) with short labels + help metadata                 | Single-place scalar bottleneck and imbalance summary.                                                                                                           |
+| **Summary plot (tab)**          | Main host-level summary Bokeh plot                                                                 | Time/phase and host-outlier analysis.                                                                                                                          |
+| **Roofline (tab)**              | CPU roofline + GPU roofline panels                                                                 | Ceiling-model interpretation for compute vs bandwidth/link limits.                                                                                             |
+| **Multiprecision Mix (tab)**    | CPU and GPU multiprecision mix panels                                                              | Understand precision usage patterns by compute surface.                                                                                                        |
+| **Processes (tab)**             | Distinct process command lines (`proc_list`)                                                       | Confirm what actually executed (wrappers, launch depth, wrong env, etc.).                                                                                     |
+| **Execution and hosts (tab)**   | XALT execution path/cwd/libset and host list                                                       | Environment drift, module/library mismatches, and host-level forensics.                                                                                       |
+| **Device data (tab)**           | `schema` map (`host_data.type` -> events) with links to type-detail pages                         | Discover collected counter families and drill into per-type analysis.                                                                                          |
 
 
 ---
 
-## 7. Theme: HPC-relevant variables and metrics
+## 7. Job-level metrics catalog (one-for-one with current labels)
 
-This theme covers **traditional parallel / scientific computing** signals. Names match the **job-level metrics** list and **summary** subplots where applicable.
+This section mirrors the current Job detail **Metrics** tab exactly: metric name, short label, and how to interpret it.
 
-### 7.1 CPU and instruction efficiency
-
-- `**avg_cpuusage` (#cores)**: Time-averaged **user/system** load vs allocation. Persistently **below expected parallel efficiency** → synchronization, I/O wait, or **OpenMP/MPI under-subscription**.
-- **Heatmap CPI**: **Stragglers** and **phases**; rising CPI can mean **memory stalls** or **more complex instruction mix** (e.g. after a **JIT** or **adaptive** phase).
-- `**avg_freq` (GHz)**: **Frequency behavior** vs power/thermal policy; compare with **package power** traces on the summary plot.
-- `**vecpercent_*`, `avg_vector_width_*`**: **SIMD width mix** (Intel FP arithmetic counters). Low vector % for FP-heavy loops → **compiler flags**, **data layout**, or **mixed precision** not using wide vectors.
-
-### 7.2 Memory, NUMA, and DRAM bandwidth
-
-- **Summary `mem` / NUMA / `mbw` / `amd_mbw`**: **Footprint**, **remote NUMA traffic**, and **socket DRAM bandwidth**. High **remote refs** → **numactl**, first-touch, or **MPI rank placement** fixes.
-- `**mem_hwm` (GiB)**: **High-water RSS**-style signal (when telemetry supports it). Compare to **per-node RAM** to assess **OOM risk** on larger inputs.
-- `**dram_bw_node_imbalance` (%)**: Spread of **DRAM bandwidth** across nodes—**different subdomain sizes**, **imbalanced decomposition**, or **one rank hoarding bandwidth**.
-
-### 7.3 Parallel imbalance (CPU-side)
-
-- `**node_imbalance` / `time_imbalance` (%)**: CPU usage **uneven across nodes** or **over time** within the job window—classic **load imbalance** or **root process** doing extra work.
-- `**flops_node_imbalance` (%)**: When FLOPs counters exist, quantifies **compute imbalance** across nodes (not just utilization).
-
-### 7.4 Interconnect and I/O
-
-- `**avg_ibbw`, `max_fabricbw`, `max_packetrate`, `avg_packetsize`**: **InfiniBand / related fabric** usage and **message size** hints—**many small messages** vs **bulk transfers**.
-- `**fabric_node_imbalance` (%)**: **MPI traffic** unevenly distributed across nodes (sometimes **rank-to-node mapping** or **I/O rank** effects).
-- `**max_lnetbw`, `lnet_node_imbalance`**: **Lustre network (LNet)** throughput and imbalance—**read-heavy** vs **write-heavy** parallel I/O patterns.
-- `**avg_sharedfs_bw`, `avg_sharedfs_iops`, `max_mds`**: **Client-side** shared filesystem **bandwidth** and **metadata / ops** rates—**small files**, **directory creation storms**, **ls -R** in batch scripts.
-- `**avg_blockbw`**: **Local block device** traffic—**scratch** spill, **local checkpoint**, or **unexpected disk** use.
-
-### 7.5 Power and reliability-ish signals
-
-- `**max_node_power_est_w`, `avg_node_power_est_w`**: **Blended node power** when CPU/GPU/module fragments allow—**energy-to-solution** comparisons across algorithm choices.
-- `**max_opa_congestion_rate`**: **Intel OPA**-specific congestion signaling when present—**network quality** issues vs pure bytes.
-
-### 7.6 Ethernet (when relevant)
-
-- `**avg_ethbw`**: **TCP/IP** heavy jobs (object storage, HTTP, **distributed DL** over RoCE-free paths)—complements IB-centric metrics.
-
----
-
-## 8. Theme: AI, GPUs, and large-model workflows
-
-### 8.1 Utilization and “is the accelerator working?”
-
-- `**avg_gpuutil` (%)** and summary **GPU util**: Distinguish **idle GPUs** (launcher bugs, **CPU preprocessing** bottleneck) from **sustained work**.
-- `**gpu_util_node_imbalance` (%)**: Multi-node training **straggler GPUs** or **uneven batch** distribution.
-
-### 8.2 Kernels: tensor cores, occupancy, precision
-
-- **Summary: `tensor_active`, `sm_occupancy`, `fp16_active`, `fp32_active`**: Whether time is in **tensor-heavy** paths, **occupancy-limited** kernels, or **FP32-dominated** regions—useful when **changing precision** or **framework version**.
-- `**avg_tensor_active` (%)** and `**tensor_node_imbalance` (%)`**: Job-level **tensor pipeline** use and **cross-node evenness**.
-
-### 8.3 Memory system on the GPU
-
-- **Framebuffer usage / `mem_util`**: **OOM** risk on GPU; **fragmentation** patterns when combined with time.
-- `**avg_gpu_mem_bw_gbps`**: **HBM bandwidth** utilization (when exposed)—**memory-bound** layers vs **compute-bound** layers in deep networks.
-
-### 8.4 Power, clocks, and throttling
-
-- `**max_gpu_power` (W)**: **Power headroom** and **cooling** stress.
-- `**max_gpu_clock_event_reasons`**: Opaque bitmask from **clock throttle reasons**—nonzero values warrant correlating with **temperature**, **power cap**, or **workload burstiness** (vendor documentation applies).
-
-### 8.5 Multi-GPU and host–device data movement
-
-- `**max_gpu_link_gbps`**: **PCIe/NVLink byte traffic** peaks—**staging**, **D2D**, **collectives** that use GPU-direct paths.
-- **GPU roofline**: Relates **achieved FLOP/s** to **link GB/s** for **NVIDIA** when strict counters exist—complements CPU roofline for **heterogeneous** steps.
-- `**fabric_mb_per_gflops` / `fabric_mb_per_avg_tensor` (summary)** and `**avg_fabric_mb_per_avg_tensor` (metric)**: **Communication intensity** relative to **compute** or **tensor activity**—**weak scaling** studies and **MPI+GPU** jobs where you expect **rising comms** with scale.
-
-### 8.6 CPU-side companions
-
-- `**dram_bw_node_imbalance`**, **CPU roofline**, and **CHA**-related summary traces: **Data loader**, **augmentation**, or **checkpoint** phases often show on **CPU memory / uncore** before **GPU util** rises.
+| Metric key | Short label | What it summarizes | Diagnostic / performance interpretation |
+| ---------- | ----------- | ------------------ | --------------------------------------- |
+| `avg_blockbw` | Block GB/s | Mean local block-device throughput | High values indicate local scratch/checkpoint pressure; unexpected nonzero can reveal spill to local disk. |
+| `avg_cpuusage` | CPU cores | Mean CPU cores used (from user/system/nice) | Low vs allocated cores suggests under-subscription, waiting, serialization, or I/O/network stalls. |
+| `avg_sharedfs_iops` | FS IOPS | Mean shared filesystem metadata/op rate | High with low MB/s points to small-file metadata bottlenecks. |
+| `avg_sharedfs_bw` | FS MB/s | Mean shared filesystem bandwidth | Sustained high values indicate file I/O-heavy phases; correlate with runtime spikes/checkpoint windows. |
+| `avg_ibbw` | IB MB/s | Mean InfiniBand/fabric byte throughput | High values with modest FLOP rate imply communication-heavy behavior. |
+| `avg_fabric_mb_per_gflops` | MB/GFLOP | Fabric MB per GFLOP | Communication intensity relative to compute; rising with scale often means weaker scaling efficiency. |
+| `avg_tensor_active` | Tensor % | Mean tensor pipeline activity | Low on expected tensor workloads suggests kernels not reaching tensor paths. |
+| `avg_gpu_mem_bw_gbps` | GPU HBM | Mean GPU memory-bandwidth rate | High with moderate utilization can indicate memory-bound kernels. |
+| `avg_fabric_mb_per_avg_tensor` | MB/tensor | Fabric MB per average tensor activity | Communication intensity normalized by tensor activity for GPU+MPI workloads. |
+| `avg_flops` | GFLOP/s | Mean achieved FLOP rate | Baseline compute throughput for CPU-side arithmetic. |
+| `avg_mbw` | DRAM GB/s | Mean DRAM bandwidth | High with low FLOPs suggests memory-bound CPU phases. |
+| `avg_freq` | CPU GHz | Mean CPU frequency | Drops may indicate power/thermal policy or throttling. |
+| `avg_ethbw` | Eth MB/s | Mean Ethernet bandwidth | Useful for TCP/object-store workflows that bypass IB paths. |
+| `detail_gpu_active` | GPU active | Number of active GPUs | Lower than allocated GPUs usually means mapping/launcher inefficiency. |
+| `detail_gpu_util_max` | GPU max % | Max GPU utilization observed | Peak headroom check; high max with low mean often indicates bursty kernels. |
+| `detail_gpu_util_mean` | GPU mean % | Mean GPU utilization observed | Primary “are GPUs doing work?” scalar for the job. |
+| `detail_gpu_count` | GPU count | Total GPUs allocated | Sanity check against scheduler request and host topology. |
+| `detail_fsio_llite_read_mb` | FSIO llite read | Total Lustre llite read MB | Aggregate client-side read volume for Lustre path. |
+| `detail_fsio_llite_write_mb` | FSIO llite write | Total Lustre llite write MB | Aggregate client-side write volume for Lustre path. |
+| `detail_fsio_nfs_read_mb` | FSIO NFS read | Total NFS read MB | Aggregate client-side read volume for NFS-backed paths. |
+| `detail_fsio_nfs_write_mb` | FSIO NFS write | Total NFS write MB | Aggregate client-side write volume for NFS-backed paths. |
+| `avg_gpuutil` | GPU % | Mean GPU utilization (vendor-aware source priority) | Core accelerator utilization KPI; low values indicate feed/scheduling inefficiency. |
+| `avg_packetsize` | Pkt size | Mean network packet size | Small average packet sizes imply metadata/collective chatter overhead. |
+| `max_fabricbw` | Fab peak | Peak fabric bandwidth | Captures communication bursts that may not appear in averages. |
+| `max_lnetbw` | LNET peak | Peak Lustre LNet bandwidth | Peak parallel file-system network pressure. |
+| `max_mds` | MDS peak | Peak metadata operation rate | High peaks indicate metadata storms (create/unlink/readdir heavy phases). |
+| `max_packetrate` | Pkt/s peak | Peak packet rate | High with small packet size suggests message-rate overhead. |
+| `max_opa_congestion_rate` | OPA cong | Peak OPA congestion-related counter rate | OPA-specific network contention indicator. |
+| `max_numa_remote_rate` | NUMA rem | Peak NUMA remote-access rate | High values indicate locality/memory placement issues. |
+| `max_gpu_power` | GPU W max | Peak GPU power draw | Detects power-cap proximity or thermal stress windows. |
+| `max_node_power_est_w` | Node W max | Peak estimated node power | Useful for peak power envelope checks and cooling stress. |
+| `avg_node_power_est_w` | Node W avg | Mean estimated node power | Energy-to-solution comparisons across runs/configurations. |
+| `max_gpu_link_gbps` | GPU link | Peak GPU link bandwidth (PCIe/NVLink aggregate path) | Host-device/device-device transfer pressure indicator. |
+| `max_gpu_clock_event_reasons` | GPU clk | Maximum clock event reason bitmask | Nonzero values suggest throttle/clock constraints; correlate with power/temp traces. |
+| `mem_hwm` | RSS HWM | High-water memory estimate (MemUsed-Slab-FilePages) | Compare with node RAM for host OOM risk. |
+| `node_imbalance` | CPU imbal | Node-level CPU rate imbalance | High values indicate decomposition/rank imbalance. |
+| `time_imbalance` | Time imbal | Temporal CPU imbalance across job timeline | Flags long underutilized windows or phase imbalance over time. |
+| `flops_node_imbalance` | FLOP imbal | Node-level FLOP rate imbalance | Compute work unevenly distributed across nodes. |
+| `fabric_node_imbalance` | Fab imbal | Node-level fabric traffic imbalance | Some ranks/nodes communicate disproportionately. |
+| `dram_bw_node_imbalance` | DRAM imbal | Node-level DRAM bandwidth imbalance | Memory pressure concentrated on subset of nodes. |
+| `lnet_node_imbalance` | LNET imbal | Node-level LNet imbalance | Uneven filesystem/network load distribution. |
+| `gpu_util_node_imbalance` | GPU imbal | Node-level GPU utilization imbalance | Multi-node training/inference skew across nodes. |
+| `tensor_node_imbalance` | Tensor imbal | Node-level tensor-activity imbalance | Tensor kernels unevenly distributed across participating nodes. |
+| `vecpercent_64b` | Vec% DP | Percent of double-precision FLOPs done via vector widths > scalar | Low values on DP-heavy code suggest SIMD/vectorization opportunity. |
+| `avg_vector_width_64b` | VW DP | Average effective DP vector width | Closer to scalar indicates weak SIMD utilization in DP paths. |
+| `vecpercent_32b` | Vec% SP | Percent of single-precision FLOPs done via vector widths > scalar | Low values on SP-heavy code suggest vectorization opportunity. |
+| `avg_vector_width_32b` | VW SP | Average effective SP vector width | Low average width indicates scalar/short-vector dominated SP execution. |
 
 ---
 
-## 9. Theme: failure modes and diagnostic reasoning (extended)
+## 8. Data/plot surfaces and what they mean diagnostically
 
-Use this section as a **checklist** when jobs **fail**, **underperform**, or **behave differently** across runs. Pair each hypothesis with **specific** site signals.
+This section covers job-detail surfaces beyond scalar metrics and explains newer data sources.
 
-### 9.1 Job never really “ran” your science
+### 8.1 Summary plot (artifact-backed Bokeh)
 
-- **Symptoms:** Very short **runtime**, **zero or flat** CPU/GPU plots, empty **processes**.
-- **Checks:** **Executable path / cwd / libraries (XALT)** vs what you intended; **process list** for wrapper vs real binary; **start/end** times vs your script’s `sleep` or **immediate exit**.
+- Source: `job_plots` API (`summary_plot`) with cached/prewarmed artifacts and progressive loading.
+- Diagnostic use: fastest phase/host outlier scan across CPU, memory, network, I/O, and GPU traces.
+- Performance recommendation: always pair with Metrics tab; peaks in summary often explain extreme scalar maxima.
 
-### 9.2 Time limit and preemption
+### 8.2 Roofline tab (CPU + GPU)
 
-- **Symptoms:** **State** failed or incomplete; **runtime ≈ timelimit**; plots **cut off** sharply at end.
-- **Checks:** Summary **I/O and network** spikes near the end (**checkpoint** rush); **GPU or CPU** still busy → need **more time** or **better checkpoint interval**.
+- Source: `job_plots` API (`roofline`, `gpu_roofline`) with schema-aware inference.
+- Diagnostic use: distinguish compute-ceiling vs bandwidth/link-ceiling regimes.
+- Recommendation: use `avg_flops`, `avg_mbw`, `max_gpu_link_gbps`, and fabric ratios to validate roofline reading.
 
-### 9.3 Out-of-memory (host)
+### 8.3 Multiprecision Mix tab (CPU and GPU)
 
-- **Symptoms:** Scheduler **OOM** or **SIGKILL**; **mem** subplot **near machine limits**; `**mem_hwm`** high relative to node RAM.
-- **Checks:** **NUMA remote** traffic spikes (allocation on wrong socket); **nhosts × per-rank memory** miscalculation.
+- Source: `job_detail_artifact` kind `multiprecision_mix` (`multiprecision_cpu_plot_item`, `multiprecision_gpu_plot_item`).
+- Diagnostic use: quantify precision-path composition (DP/SP/tensor) by timeline.
+- Recommendation: when model/code changes precision policy, compare this tab first, then check throughput/utilization deltas.
 
-### 9.4 Out-of-memory (GPU)
+### 8.4 Resources panel (FSIO + GPU summary + logs)
 
-- **Symptoms:** Job abort with CUDA/HIP OOM messages (in logs); **GPU framebuffer** trace **near capacity** before failure.
-- **Checks:** **Batch size**, **activation checkpointing**, **gradient accumulation**; multi-GPU **uneven** memory if **tensor parallel** mapping is wrong.
+- Source:
+  - FS totals from prewarmed job-detail artifact (`fsio`)
+  - GPU summary (`gpu_active`, `gpu_utilization_max`, `gpu_utilization_mean`, `gpu_count`)
+  - Optional external client/server log URLs
+- Diagnostic use: rapid verification of I/O volume and GPU occupancy before deep plotting.
+- Recommendation: if FS totals are high, check `FS MB/s`, `FS IOPS`, `MDS peak`, and LNET metrics for bottleneck type.
 
-### 9.5 CPU-bound / low parallel efficiency
+### 8.5 Execution and hosts tab
 
-- **Symptoms:** `**avg_cpuusage`** low relative to cores; **CPI heatmap** “cold” regions; **CPU roofline** points **well inside** the roof.
-- **Checks:** **OpenMP threads**, **MPI rank count**, **binding** (`taskset`, `srun --cpu-bind`); **I/O or network** waits visible on summary; **vector** metrics show **scalar-heavy** code.
+- Source:
+  - XALT-derived executable path, cwd, library set
+  - Accounting host list
+- Diagnostic use: detect environment drift (wrong module/library/container path) and host-specific anomalies.
+- Recommendation: for regressions with “same script,” verify this tab before tuning code.
 
-### 9.6 Memory-bandwidth-bound (CPU)
+### 8.6 Device data tab
 
-- **Symptoms:** **CPU roofline** near **DRAM roof**; high `**mbw` / `amd_mbw`** in summary; `**dram_bw_node_imbalance**` low but absolute BW high.
-- **Checks:** **Data layout** (AoS vs SoA), **spatial order** of stencils, **thread count** vs memory channels.
+- Source: job schema map (`host_data.type` to event columns), with links to type-detail pages.
+- Diagnostic use: confirms which counter families/events were actually collected for this job.
+- Recommendation: use this tab to explain missing plots/metrics before assuming a pipeline bug.
 
-### 9.7 NUMA and locality
+---
 
-- **Symptoms:** High `**numa_remote_refs`** (when present); **node_imbalance** without obvious MPI cause; performance **varies by rerun** on same queue.
-- **Checks:** **First-touch** allocation policy; **same executable** on different **nodelist** sizes.
+## 9. Failure-mode checklist (corrected to current surfaces)
 
-### 9.8 I/O-bound and metadata storms
+### 9.1 Job did not run intended workload
 
-- **Symptoms:** `**avg_sharedfs_iops`**, `**max_mds**`, or Lustre/NFS summary traces **dominate**; **CPU** partially idle while **llite** busy.
-- **Checks:** **File-per-rank** patterns, **small writes**, **directory listing** in job scripts; move to **shared files**, **burst buffers**, or **fewer, larger** operations.
+- Signals: short runtime, flat/empty summary traces, empty process list.
+- Check: `Execution and hosts` (exec path/cwd/libset), `Processes`, scheduler record.
 
-### 9.9 Network-bound (MPI / collectives)
+### 9.2 Timeout/preemption risk
 
-- **Symptoms:** High `**avg_ibbw` / `max_fabricbw`** correlated with **low CPU FLOPs**; `**fabric_node_imbalance`** or `**lnet_node_imbalance**`; `**opa_wait_cong` / `opa_ecn**` elevated on OPA.
-- **Checks:** **Process grid** vs **torus** / **fat-tree**; **collective algorithms**; **message size** (`avg_packetsize`).
+- Signals: runtime near requested time, abrupt trace cutoff.
+- Check: tail-end spikes in FS/fabric/GPU activity; adjust timelimit or checkpoint cadence.
 
-### 9.10 GPU under-utilization
+### 9.3 Host memory pressure / OOM risk
 
-- **Symptoms:** **Low `avg_gpuutil`**, low **tensor / FP** activity; **GPU roofline** not applicable or points **very low**.
-- **Checks:** **Data loader** on CPU (watch **CPU memory BW** and **GPU util** time shift); **too-small kernels**; **Python overhead**; **wrong device** in framework.
+- Signals: high `mem_hwm`, elevated `NUMA rem`, imbalance in `DRAM imbal`.
+- Check: first-touch policy, rank/thread placement, per-rank memory growth.
 
-### 9.11 Host–device transfer or link saturation
+### 9.4 GPU memory or accelerator under-use
 
-- **Symptoms:** High **link GB/s** on summary; **GPU roofline** near **link roof**; `**max_gpu_link_gbps`** high with moderate FLOPs.
-- **Checks:** **Pinned memory**, **cudaHostRegister**, **NCCL** settings, **PCIe** slot / **NVLink** topology.
+- Signals: low `GPU %`, low `Tensor %`, low `GPU mean %` with full `GPU count`.
+- Check: data pipeline bottlenecks, wrong device mapping, too-small kernels, launch configuration.
 
-### 9.12 Thermal or power throttling
+### 9.5 Communication-dominated scaling
 
-- **Symptoms:** `**max_gpu_clock_event_reasons`** nonzero; **frequency** or **power** traces **dip** under sustained load; **node power** **flat-caps** at a ceiling.
-- **Checks:** **Datacenter policy**, **GPU power cap**, **fan / cooling** events (with system logs).
+- Signals: high `IB MB/s`, `Fab peak`, `MB/GFLOP`, `MB/tensor`, packet-rate peaks.
+- Check: decomposition, collective strategy, message size (`Pkt size`), rank mapping.
 
-### 9.13 Load imbalance and stragglers
+### 9.6 Filesystem/metadata bottlenecks
 
-- **Symptoms:** **Heatmap** shows **one or few hot rows** (high CPI or very different color); `**node_imbalance`, `flops_node_imbalance`, `gpu_util_node_imbalance`, `tensor_node_imbalance`** elevated; summary plots show **one host line** far from others.
-- **Checks:** **Domain decomposition**, **dynamic load balance**, **I/O rank** or **checkpoint** on subset; **broken node** (compare **host name**).
+- Signals: high `FS IOPS`, `MDS peak`, `LNET peak`, large FS totals.
+- Check: file-per-rank patterns, small sync writes, metadata-heavy loops.
 
-### 9.14 “Wrong build” or dependency drift
+### 9.7 Throttling/power constraints
 
-- **Symptoms:** Performance regression with **same script**; **XALT libraries** show unexpected **MPI** or **BLAS** paths.
-- **Checks:** **Module** versions; **RPATH**; containers **digest** vs tag.
+- Signals: nonzero `GPU clk`, high `GPU W max`, capped `Node W max` with performance dips.
+- Check: power caps, thermal conditions, cluster policy limits.
 
-### 9.15 Missing data on the website (operational)
+### 9.8 Cross-node imbalance / stragglers
 
-- **“Data not available” / empty plot:** Monitor not running on those nodes, **counter not enabled** in monitor build, job **outside** retained archive, or metrics job **not yet computed**.
-- **Staff** may see `**no_data_reason`** text for a metric; non-staff often see a generic **not available** message for empty values.
-- **Partial plots:** Progressive loading may fill in later—**refresh** after a short wait.
+- Signals: elevated `CPU imbal`, `FLOP imbal`, `GPU imbal`, `Tensor imbal`, `Fab imbal`, `LNET imbal`, `DRAM imbal`.
+- Check: domain decomposition, skewed rank placement, node health differences.
+
+### 9.9 Data continuity checks
+
+- Signals: gaps in expected plot/metric continuity or progressive panels that remain incomplete longer than expected.
+- Check: `Device data` schema presence, monitor counter coverage for expected event families, and pipeline completion timing.
 
 ---
 
@@ -296,5 +300,7 @@ Use this section as a **checklist** when jobs **fail**, **underperform**, or **b
 | Date       | Change                                                                                  |
 | ---------- | --------------------------------------------------------------------------------------- |
 | 2026-04-03 | Initial researcher-facing guide aligned with current job detail UI and metrics catalog. |
+| 2026-05-06 | Updated job-detail guidance for tabbed UI (Summary/Roofline/Multiprecision/Metrics/Execution/Device data) and current artifact-driven loading behavior. |
+| 2026-05-06 | Consolidated data-availability messaging into one global note and removed repeated per-surface availability caveats. |
 
 
