@@ -1,16 +1,24 @@
 # Using HPCPerfStats on the Web — Guide for Researchers and HPC Users
 
 
-| Field            | Value                                                                                                                                      |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Audience**     | Users and Researchers that use clusters that are tracked by HPCPerfStats                                                                   |
-| **Scope**        | Using the data available in HPCPerfStats website with an eye towards understanding application runtime performance and diagnostic utiltiy. |
-| **Last updated** | 2026-05-06                                                                                                                                 |
+This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-05-06.
 
 
 This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections.
 
 > **Data availability note:** Not all data appears for every job or architecture. When data is missing, the interface reports this directly in the relevant panel/tab.
+
+## Index
+
+- [1. Finding jobs and reading the job list](#1-finding-jobs-and-reading-the-job-list)
+- [2. What you should do first on a job page](#2-what-you-should-do-first-on-a-job-page)
+- [3. Job detail - scheduler and accounting fields](#3-job-detail--scheduler-and-accounting-fields)
+- [4. Supporting panels on the job page](#4-supporting-panels-on-the-job-page)
+- [5. Job-level metrics catalog](#5-job-level-metrics-catalog)
+- [6. Data/plot surfaces and what they mean diagnostically](#6-dataplot-surfaces-and-what-they-mean-diagnostically)
+- [7. Failure-mode checklist](#7-failure-mode-checklist)
+- [8. Appendix - concept guide with external references](#8-appendix--concept-guide-with-external-references)
+- [9. Related references in this repository](#9-related-references-in-this-repository)
 
 ---
 
@@ -27,8 +35,8 @@ This document is ordered so the **most decision-relevant ideas come first**. Dee
 ## 2. What you should do first on a job page
 
 1. **Read Job overview first** (status, runtime, queue, cores/nodes, user/project, start/end). This frames the run before touching telemetry.
-2. **Open the Summary plot tab** in **Job data**. It is the fastest way to see phase changes and node-to-node divergence across CPU, memory, I/O, network, and GPU signals.
-3. **Open the Roofline tab** for performance-ceiling context: it contains **both** CPU roofline and GPU roofline (GPU roofline appears when required counters exist).
+2. **Open the Summary plot tab** in **Job data**. It is the fastest way to see phase changes and node-to-node divergence across CPU, memory, I/O<sup>[11](#ref-11)</sup>, network, and GPU signals.
+3. **Open the Roofline tab** for performance-ceiling context: it contains **both** CPU roofline and GPU roofline<sup>[1](#ref-1)</sup> (GPU roofline appears when required counters exist).
 4. **Open the Multiprecision Mix tab** to check CPU/GPU precision activity composition.
 5. **Open the Metrics tab** for scalar job-level summaries (averages, peaks, imbalance percentages, detail GPU/FSIO rows). Many rows have a **help icon** for definitions.
 6. **Use Device data tab** to jump into per-type detail pages (`/job/<jid>/<type>/`) for raw event families and type-level plots/tables.
@@ -52,7 +60,7 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 | **Queue**              | Partition / class         | Explains hardware policy (GPU vs CPU, debug vs production).                                                                                |
 | **Job name**           | User-provided label       | Often encodes experiment id or binary name—quick sanity check.                                                                             |
 | **Status / state**     | Completion outcome        | **Failed** jobs may still have partial telemetry—still worth opening.                                                                      |
-| **ncores**             | Core count allocated      | Match to how you launched MPI/OpenMP (miscounts → wrong binding).                                                                          |
+| **ncores**             | Core count allocated      | Match to how you launched MPI<sup>[9](#ref-9)</sup>/OpenMP<sup>[10](#ref-10)</sup> (miscounts → wrong binding).                                                                          |
 | **nnodes**             | Node count                | Multi-node imbalance metrics and network plots only make sense in this context.                                                            |
 
 
@@ -65,11 +73,11 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 | ------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Job overview**                | Compact high-value fields (jid, status, runtime, queue, user/project, cores/nodes, start/end)    | Fast triage before deeper telemetry checks.                                                                                                                    |
 | **Full scheduling record**      | Expanded accounting table with all core scheduler columns                                          | Audit exact scheduler/accounting values and formatting without leaving the page.                                                                               |
-| **Resources**                   | Shared filesystem totals (`fsio`), log links, GPU summary table                                    | Validate I/O totals, jump to external logs, and quickly assess GPU allocation vs activity.                                                                    |
+| **Resources**                   | Shared filesystem totals (`fsio`), log links, GPU summary table                                    | Validate I/O<sup>[11](#ref-11)</sup> totals, jump to external logs, and quickly assess GPU allocation vs activity.                                                                    |
 | **Metrics (tab)**               | Full job-level metrics catalog (`metrics_list`) with short labels + help metadata                 | Single-place scalar bottleneck and imbalance summary.                                                                                                           |
-| **Summary plot (tab)**          | Host-level timeline plot with CPU, memory/NUMA/DRAM, fabric/filesystem, GPU, and node-power traces | Best first visual scan for phase changes, host outliers, and cross-signal coupling (for example GPU drops while fabric spikes).                              |
-| **Roofline (tab)**              | CPU roofline and GPU roofline (PCIe/NVLink)                                                        | Distinguish compute-limited vs bandwidth/link-limited behavior and prioritize the right optimization work.                                                     |
-| **Multiprecision Mix (tab)**    | CPU and GPU precision-activity panels over time                                                    | Verify whether the run is using expected precision paths and detect precision mix drift across runs or code versions.                                         |
+| **Summary plot (tab)**          | Host-level timeline plot with CPU, memory/NUMA<sup>[4](#ref-4)</sup>/DRAM, fabric/filesystem, GPU, and node-power traces | Best first visual scan for phase changes, host outliers, and cross-signal coupling (for example GPU drops while fabric spikes).                              |
+| **Roofline (tab)**              | CPU roofline and GPU roofline (PCIe/NVLink<sup>[7](#ref-7)</sup>)                                                        | Distinguish compute-limited vs bandwidth/link-limited behavior and prioritize the right optimization work.                                                     |
+| **Multiprecision Mix (tab)**    | CPU and GPU precision-activity panels over time                                                    | Verify whether the run is using expected mixed-precision paths<sup>[6](#ref-6)</sup> and detect precision mix drift across runs or code versions.                                         |
 | **Processes (tab)**             | Distinct process command lines (`proc_list`)                                                       | Confirm what actually executed (wrappers, launch depth, wrong env, etc.).                                                                                     |
 | **Execution and hosts (tab)**   | XALT execution path/cwd/libset and host list                                                       | Environment drift, module/library mismatches, and host-level forensics.                                                                                       |
 | **Device data (tab)**           | Device type names and recorded performance events, with links to type-detail pages                  | Discover collected counter families and drill into per-type analysis.                                                                                          |
@@ -100,7 +108,7 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | `avg_cpuusage` | CPU cores | Mean CPU cores used (from user/system/nice) | Low vs allocated cores suggests under-subscription, waiting, serialization, or I/O/network stalls. |
 | `avg_sharedfs_iops` | FS IOPS | Mean shared filesystem metadata/op rate | High with low MB/s points to small-file metadata bottlenecks. |
 | `avg_sharedfs_bw` | FS MB/s | Mean shared filesystem bandwidth | Sustained high values indicate file I/O-heavy phases; correlate with runtime spikes/checkpoint windows. |
-| `avg_ibbw` | IB MB/s | Mean InfiniBand/fabric byte throughput | High values with modest FLOP rate imply communication-heavy behavior. |
+| `avg_ibbw` | IB MB/s | Mean InfiniBand/fabric byte throughput | High values with modest FLOP rate imply communication-heavy behavior<sup>[15](#ref-15)</sup>. |
 | `avg_fabric_mb_per_gflops` | MB/GFLOP | Fabric MB per GFLOP | Communication intensity relative to compute; rising with scale often means weaker scaling efficiency. |
 | `avg_tensor_active` | Tensor % | Mean tensor pipeline activity | Low on expected tensor workloads suggests kernels not reaching tensor paths. |
 | `avg_gpu_mem_bw_gbps` | GPU HBM | Mean GPU memory-bandwidth rate | High with moderate utilization can indicate memory-bound kernels. |
@@ -108,7 +116,7 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | `avg_flops` | GFLOP/s | Mean achieved FLOP rate | Baseline compute throughput for CPU-side arithmetic. |
 | `avg_mbw` | DRAM GB/s | Mean DRAM bandwidth | High with low FLOPs suggests memory-bound CPU phases. |
 | `avg_freq` | CPU GHz | Mean CPU frequency | Drops may indicate power/thermal policy or throttling. |
-| `avg_ethbw` | Eth MB/s | Mean Ethernet bandwidth | Useful for TCP/object-store workflows that bypass IB paths. |
+| `avg_ethbw` | Eth MB/s | Mean Ethernet bandwidth | Useful for TCP/object-store workflows that bypass IB paths<sup>[16](#ref-16)</sup>. |
 | `detail_gpu_active` | GPU active | Number of active GPUs | Lower than allocated GPUs usually means mapping/launcher inefficiency. |
 | `detail_gpu_util_max` | GPU max % | Max GPU utilization observed | Peak headroom check; high max with low mean often indicates bursty kernels. |
 | `detail_gpu_util_mean` | GPU mean % | Mean GPU utilization observed | Primary “are GPUs doing work?” scalar for the job. |
@@ -124,13 +132,13 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | `max_mds` | MDS peak | Peak metadata operation rate | High peaks indicate metadata storms (create/unlink/readdir heavy phases). |
 | `max_packetrate` | Pkt/s peak | Peak packet rate | High with small packet size suggests message-rate overhead. |
 | `max_opa_congestion_rate` | OPA cong | Peak OPA congestion-related counter rate | OPA-specific network contention indicator. |
-| `max_numa_remote_rate` | NUMA rem | Peak NUMA remote-access rate | High values indicate locality/memory placement issues. |
+| `max_numa_remote_rate` | NUMA rem | Peak NUMA remote-access rate | High values indicate locality/memory placement issues<sup>[4](#ref-4)</sup>. |
 | `max_gpu_power` | GPU W max | Peak GPU power draw | Detects power-cap proximity or thermal stress windows. |
 | `max_node_power_est_w` | Node W max | Peak estimated node power | Useful for peak power envelope checks and cooling stress. |
 | `avg_node_power_est_w` | Node W avg | Mean estimated node power | Energy-to-solution comparisons across runs/configurations. |
 | `max_gpu_link_gbps` | GPU link | Peak GPU link bandwidth (PCIe/NVLink aggregate path) | Host-device/device-device transfer pressure indicator. |
 | `max_gpu_clock_event_reasons` | GPU clk | Maximum clock event reason bitmask | Nonzero values suggest throttle/clock constraints; correlate with power/temp traces. |
-| `mem_hwm` | RSS HWM | High-water memory estimate (MemUsed-Slab-FilePages) | Compare with node RAM for host OOM risk. |
+| `mem_hwm` | RSS HWM | High-water memory estimate (MemUsed-Slab-FilePages) | Compare with node RAM for host OOM risk<sup>[14](#ref-14)</sup>. |
 | `node_imbalance` | CPU imbal | Node-level CPU rate imbalance | High values indicate decomposition/rank imbalance. |
 | `time_imbalance` | Time imbal | Temporal CPU imbalance across job timeline | Flags long underutilized windows or phase imbalance over time. |
 | `flops_node_imbalance` | FLOP imbal | Node-level FLOP rate imbalance | Compute work unevenly distributed across nodes. |
@@ -139,9 +147,9 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | `lnet_node_imbalance` | LNET imbal | Node-level LNet imbalance | Uneven filesystem/network load distribution. |
 | `gpu_util_node_imbalance` | GPU imbal | Node-level GPU utilization imbalance | Multi-node training/inference skew across nodes. |
 | `tensor_node_imbalance` | Tensor imbal | Node-level tensor-activity imbalance | Tensor kernels unevenly distributed across participating nodes. |
-| `vecpercent_64b` | Vec% DP | Percent of double-precision FLOPs done via vector widths > scalar | Low values on DP-heavy code suggest SIMD/vectorization opportunity. |
+| `vecpercent_64b` | Vec% DP | Percent of double-precision FLOPs done via vector widths > scalar | Low values on DP-heavy code suggest SIMD/vectorization opportunity<sup>[5](#ref-5)</sup>. |
 | `avg_vector_width_64b` | VW DP | Average effective DP vector width | Closer to scalar indicates weak SIMD utilization in DP paths. |
-| `vecpercent_32b` | Vec% SP | Percent of single-precision FLOPs done via vector widths > scalar | Low values on SP-heavy code suggest vectorization opportunity. |
+| `vecpercent_32b` | Vec% SP | Percent of single-precision FLOPs done via vector widths > scalar | Low values on SP-heavy code suggest vectorization opportunity<sup>[5](#ref-5)</sup>. |
 | `avg_vector_width_32b` | VW SP | Average effective SP vector width | Low average width indicates scalar/short-vector dominated SP execution. |
 
 ---
@@ -153,7 +161,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 ### 6.1 Summary plot
 
 - Diagnostic use: fastest phase/host outlier scan across CPU, memory, network, I/O, and GPU traces.
-- Performance recommendation: always pair with Metrics tab; peaks in summary often explain extreme scalar maxima.
+- Performance recommendation: always pair with Metrics tab; peaks in summary often explain extreme scalar maxima and telemetry behavior<sup>[12](#ref-12)</sup>.
 
 ### 6.2 Roofline tab (CPU + GPU)
 
@@ -173,7 +181,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 ### 6.4 Resources panel (FSIO + GPU summary + logs)
 
 - Diagnostic use: rapid verification of I/O volume and GPU occupancy before deep plotting.
-- Recommendation: if FS totals are high, check `FS MB/s`, `FS IOPS`, `MDS peak`, and LNET metrics for bottleneck type.
+- Recommendation: if FS totals are high, check `FS MB/s`, `FS IOPS`, `MDS peak`, and LNET metrics for bottleneck type; this is usually an I/O bottleneck triage path<sup>[11](#ref-11)</sup>.
 
 ### 6.5 Execution and hosts tab
 
@@ -197,7 +205,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 ### 7.2 Timeout/preemption risk
 
 - Signals: runtime near requested time, abrupt trace cutoff.
-- Check: tail-end spikes in FS/fabric/GPU activity; adjust timelimit or checkpoint cadence.
+- Check: tail-end spikes in FS/fabric/GPU activity; adjust timelimit or checkpoint cadence<sup>[13](#ref-13)</sup>.
 
 ### 7.3 Host memory pressure / OOM risk
 
@@ -211,7 +219,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 ### 7.5 Communication-dominated scaling
 
-- Signals: high `IB MB/s`, `Fab peak`, `MB/GFLOP`, `MB/tensor`, packet-rate peaks.
+- Signals: high `IB MB/s`, `Fab peak`, `MB/GFLOP`, `MB/tensor`, packet-rate peaks<sup>[15](#ref-15)</sup>.
 - Check: decomposition, collective strategy, message size (`Pkt size`), rank mapping.
 
 ### 7.6 Filesystem/metadata bottlenecks
@@ -238,7 +246,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 ## 8. Appendix — concept guide with external references
 
-Use these references when you want background on terms used in section 6.
+Use these numbered references when you want background on terms used throughout sections 1-7.
 
 | Ref | Concept | Why it matters for this guide | Reference |
 | --- | ------- | ----------------------------- | --------- |
@@ -250,6 +258,14 @@ Use these references when you want background on terms used in section 6.
 | <span id="ref-6">[6]</span> | Mixed precision | Context for the Multiprecision Mix tab (DP/SP/tensor behavior over time). | [Mixed-precision arithmetic (Wikipedia)](https://en.wikipedia.org/wiki/Mixed-precision_arithmetic) |
 | <span id="ref-7">[7]</span> | PCIe vs NVLink | Clarifies GPU interconnect effects behind GPU-link and communication ceilings. | [PCI Express (Wikipedia)](https://en.wikipedia.org/wiki/PCI_Express); [NVLink (Wikipedia)](https://en.wikipedia.org/wiki/NVLink) |
 | <span id="ref-8">[8]</span> | Practical roofline tuning workflow | Applied HPC interpretation examples that complement the theory above. | [NERSC Roofline documentation](https://docs.nersc.gov/tools/performance/roofline/) |
+| <span id="ref-9">[9]</span> | MPI | Explains distributed-memory message passing terminology used in scheduler and runtime interpretation. | [Message Passing Interface (Wikipedia)](https://en.wikipedia.org/wiki/Message_Passing_Interface) |
+| <span id="ref-10">[10]</span> | OpenMP | Background for shared-memory threading terminology used when reasoning about core utilization. | [OpenMP (Wikipedia)](https://en.wikipedia.org/wiki/OpenMP) |
+| <span id="ref-11">[11]</span> | I/O | General background for filesystem throughput/IOPS interpretation and bottleneck diagnosis. | [Input/output (Wikipedia)](https://en.wikipedia.org/wiki/Input/output) |
+| <span id="ref-12">[12]</span> | Telemetry | Explains instrumentation/measurement framing for interpreting counters and traces. | [Telemetry (Wikipedia)](https://en.wikipedia.org/wiki/Telemetry) |
+| <span id="ref-13">[13]</span> | Checkpointing | Background for checkpoint cadence tradeoffs in timeout-risk mitigation. | [Application checkpointing (Wikipedia)](https://en.wikipedia.org/wiki/Application_checkpointing) |
+| <span id="ref-14">[14]</span> | Out-of-memory conditions | Context for OOM-risk interpretation in memory-pressure diagnostics. | [Out of memory (Wikipedia)](https://en.wikipedia.org/wiki/Out_of_memory) |
+| <span id="ref-15">[15]</span> | InfiniBand | Background for IB/fabric metrics and communication-heavy scaling interpretation. | [InfiniBand (Wikipedia)](https://en.wikipedia.org/wiki/InfiniBand) |
+| <span id="ref-16">[16]</span> | Ethernet | Background for Ethernet bandwidth interpretation alongside IB paths. | [Ethernet (Wikipedia)](https://en.wikipedia.org/wiki/Ethernet) |
 
 ---
 
@@ -270,5 +286,6 @@ Use these references when you want background on terms used in section 6.
 | 2026-05-06 | Removed backend implementation details and staff-only references; kept guidance user-facing only. |
 | 2026-05-06 | Added section 6 roofline-regime explanation and an appendix with annotated external concept references for non-CS domain researchers. |
 | 2026-05-06 | Converted section 6 citations to paper-style numbered superscripts that point to numbered appendix references. |
+| 2026-05-06 | Expanded paper-style concept annotations across sections 1-7 and extended the appendix reference catalog to cover added CS/HPC terms. |
 
 

@@ -70,12 +70,35 @@ in the same task.
 7. **Document history**
    - Add/update a changelog row in the doc’s history table whenever behavior-visible changes are documented.
 
+8. **CS/HPC concept annotation policy (paper-style citations)**
+   - Any computer-science or HPC concept used in user-facing explanatory prose (sections 1-7) must use paper-style superscript numbered citations that point to the appendix reference table (for example `<sup>[3](#ref-3)</sup>`).
+   - Keep external URLs out of the body prose; place canonical external links in the appendix reference table only.
+   - Maintain stable `ref-*` anchors in the appendix and update numbering/entries when concepts are added, renamed, or removed.
+   - Prefer broadly reliable references (Wikipedia first when suitable; otherwise established HPC documentation such as NERSC).
+
+9. **Top-of-document index policy**
+   - Keep an **Index** section near the top of the document (before section 1 content) with hyperlinks to each top-level section.
+   - Whenever top-level sections are added, removed, renamed, or renumbered, update index labels and anchors in the same task.
+   - Keep index text user-facing (section titles only); do not include internal notes.
+
+10. **Intro metadata style**
+   - Keep the opening metadata as short prose, not a table (audience, scope, and last-updated context in sentence form).
+   - Avoid label-style boilerplate at the top (for example `Audience:` / `Scope:` / `Last updated:` lines); use natural paragraph prose.
+
+11. **Section ordering and discovery guidance**
+   - Keep job discovery first: section 1 should cover finding jobs and reading the job list before job-detail deep dives.
+   - Ensure job discovery guidance explicitly includes expanded search as the path for finding specific jobs (for example by jid/user/project/queue/time window/name pattern).
+
 ## Validation checklist before closing
 
 - Metric keys in docs match `jobMetricDisplayLabels` and `metrics.py` catalog.
 - Every currently rendered Job Detail tab/panel is represented in docs.
 - Every documented data source includes an explicit user/researcher usefulness statement.
 - No outdated tab/plot/field names remain.
+- CS/HPC concepts in explanatory prose use numbered superscripts that resolve to appendix `ref-*` anchors.
+- Index links exist and resolve to all current top-level sections.
+- Intro metadata appears as prose (not a table or label-style metadata block).
+- Section 1 includes expanded-search guidance for finding specific jobs.
 
 ## Overlap
 
