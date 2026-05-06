@@ -20,6 +20,7 @@ import threading
 import signal
 import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from datetime import datetime, timedelta
@@ -159,6 +160,37 @@ def _new_scheduler_stats():
       "strict_check_avg_latency_ms": 0.0,
       "strict_batch_size_current": STRICT_CHECK_BATCH_MIN,
   }
+
+
+def _log_exception_details(prefix, exc):
+  """Emit one-line-per-frame diagnostics for collectors that drop multiline logs."""
+  log_print(
+      "{0}: exception_type={1} exception_repr={2!r}".format(
+          prefix, type(exc).__name__, exc
+      ),
+      flush=True,
+  )
+  tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
+  for raw in tb_lines:
+    for line in str(raw).splitlines():
+      if line.strip():
+        log_print("{0}: traceback {1}".format(prefix, line), flush=True)
+  cause = getattr(exc, "__cause__", None)
+  if cause is not None:
+    log_print(
+        "{0}: cause_type={1} cause_repr={2!r}".format(
+            prefix, type(cause).__name__, cause
+        ),
+        flush=True,
+    )
+  context = getattr(exc, "__context__", None)
+  if context is not None and context is not cause:
+    log_print(
+        "{0}: context_type={1} context_repr={2!r}".format(
+            prefix, type(context).__name__, context
+        ),
+        flush=True,
+    )
 
 
 def _handle_strict_readiness_db_error(
@@ -1655,6 +1687,7 @@ def _compute_jid_outcomes_batch(
         ),
         flush=True,
     )
+    _log_exception_details("metrics scheduler: batch Metrics.run", exc)
     # Do not fail the whole dequeue batch on one batch-level exception (e.g.
     # malformed payload causing an exception during persistence). Retry per jid
     # so unaffected jobs can still progress.
@@ -1672,6 +1705,10 @@ def _compute_jid_outcomes_batch(
                 ref.jid, one_exc
             ),
             flush=True,
+        )
+        _log_exception_details(
+            "metrics scheduler: per-jid Metrics.run jid={0}".format(ref.jid),
+            one_exc,
         )
     total_elapsed = time.monotonic() - t_recover
     n_total = max(1, len(job_refs))

@@ -116,6 +116,14 @@ def test_coerced_catalog_metric_is_hashable_for_set_membership():
   assert catalog_metric in frozenset({"oops", "other"})
 
 
+def test_coerced_metric_name_set_normalizes_unhashable_metric_names():
+  metric_names = [["detail_gpu_count"], "avg_gpuutil", ("detail_fsio_llite_read_mb",)]
+  out = metrics._coerced_metric_name_set(metric_names)
+  assert "detail_gpu_count" in out
+  assert "avg_gpuutil" in out
+  assert "detail_fsio_llite_read_mb" in out
+
+
 class _AlwaysTimeoutIterator:
   def next(self, timeout=None):
     raise metrics.multiprocessing.TimeoutError()

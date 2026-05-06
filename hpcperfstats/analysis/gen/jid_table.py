@@ -75,25 +75,63 @@ def _listify_acct_hosts(acct_hosts):
   breaks ``host__in`` chunking and can trigger obscure driver errors (including
   ``invalid literal for int()`` on fragments).
   """
-  if acct_hosts is None:
-    return []
-  if isinstance(acct_hosts, (str, bytes)):
-    s = (
-        acct_hosts.decode("utf-8", errors="replace")
-        if isinstance(acct_hosts, bytes)
-        else acct_hosts
-    ).strip()
-    if not s:
+  def _norm_scalar(x):
+    if x is None:
       return []
-    if "," in s:
-      return [p.strip() for p in s.split(",") if p.strip()]
-    return [s]
-  if isinstance(acct_hosts, (list, tuple)):
-    return [str(h) for h in acct_hosts]
-  try:
-    return [str(h) for h in acct_hosts]
-  except TypeError:
-    return [str(acct_hosts)]
+    if isinstance(x, bytes):
+      s = x.decode("utf-8", errors="replace").strip()
+      if not s:
+        return []
+      if "," in s:
+        return [p.strip() for p in s.split(",") if p.strip()]
+      return [s]
+    if isinstance(x, str):
+      s = x.strip()
+      if not s:
+        return []
+      if "," in s:
+        return [p.strip() for p in s.split(",") if p.strip()]
+      return [s]
+    return [str(x)]
+
+  out = []
+  stack = [acct_hosts]
+  seen_container_ids = set()
+  while stack:
+    cur = stack.pop()
+    if cur is None:
+      continue
+    if isinstance(cur, (str, bytes)):
+      out.extend(_norm_scalar(cur))
+      continue
+    if isinstance(cur, dict):
+      out.extend(_norm_scalar(cur))
+      continue
+    if isinstance(cur, (list, tuple, set, deque)):
+      cid = id(cur)
+      if cid in seen_container_ids:
+        continue
+      seen_container_ids.add(cid)
+      stack.extend(reversed(list(cur)))
+      continue
+    try:
+      it = iter(cur)
+    except TypeError:
+      out.extend(_norm_scalar(cur))
+      continue
+    stack.extend(reversed(list(it)))
+  if not out:
+    return []
+  # Preserve order while dropping duplicates/empties.
+  deduped = []
+  seen = set()
+  for h in out:
+    hs = str(h).strip()
+    if not hs or hs in seen:
+      continue
+    seen.add(hs)
+    deduped.append(hs)
+  return deduped
 
 
 @contextlib.contextmanager

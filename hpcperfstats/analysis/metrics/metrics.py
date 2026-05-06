@@ -10,6 +10,7 @@ from hpcperfstats.print_utils import log_print
 import multiprocessing
 import sys
 import time
+import traceback
 
 import numpy as np
 import numexpr as ne
@@ -50,6 +51,36 @@ class MetricsRunWorkerStallError(TimeoutError):
     super().__init__(message)
     self.stalled_for_s = float(stalled_for_s)
     self.pool_reset_confirmed = bool(pool_reset_confirmed)
+
+
+def _log_exception_details(prefix, exc):
+  """Emit type/repr and traceback lines for diagnostics-first scheduler logs."""
+  et = type(exc).__name__
+  log_print(
+      "{0}: exception_type={1} exception_repr={2!r}".format(prefix, et, exc),
+      flush=True,
+  )
+  tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
+  for raw in tb_lines:
+    for line in str(raw).splitlines():
+      if line.strip():
+        log_print("{0}: traceback {1}".format(prefix, line), flush=True)
+  cause = getattr(exc, "__cause__", None)
+  if cause is not None:
+    log_print(
+        "{0}: cause_type={1} cause_repr={2!r}".format(
+            prefix, type(cause).__name__, cause
+        ),
+        flush=True,
+    )
+  context = getattr(exc, "__context__", None)
+  if context is not None and context is not cause:
+    log_print(
+        "{0}: context_type={1} context_repr={2!r}".format(
+            prefix, type(context).__name__, context
+        ),
+        flush=True,
+    )
 
 
 def _coerce_metrics_identity_str(value):
@@ -115,6 +146,14 @@ def _sanitize_metrics_compute_rows(rows):
         "value": row.get("value"),
         "no_data_reason": row.get("no_data_reason"),
     })
+  return out
+
+
+def _coerced_metric_name_set(metric_names):
+  """Return a hash-safe set of metric names from any iterable."""
+  out = set()
+  for name in metric_names or ():
+    out.add(_coerce_metrics_identity_str(name))
   return out
 
 
@@ -834,6 +873,9 @@ class Metrics():
           message=str(exc),
           pool_reset_confirmed=reset_confirmed,
       )
+    except Exception as exc:
+      _log_exception_details("Metrics.run failure", exc)
+      raise
     finally:
       if own_pool and active_pool is not None:
         active_pool.close()
@@ -1304,9 +1346,9 @@ class Metrics():
         for row in compute_job_detail_fsio_metric_rows(jt):
           results.append({"jid": job, **row})
         done_metrics = (
-            {m for m, _, _ in _GPU_JOB_DETAIL_CATALOG}
-            | {"avg_gpuutil"}
-            | {m for m, _, _ in fsio_job_detail_catalog()}
+            _coerced_metric_name_set(m for m, _, _ in _GPU_JOB_DETAIL_CATALOG)
+            | _coerced_metric_name_set(["avg_gpuutil"])
+            | _coerced_metric_name_set(m for m, _, _ in fsio_job_detail_catalog())
         )
         for entry in job_metrics_catalog_entries():
           catalog_metric = _coerce_metrics_identity_str(entry["metric"])

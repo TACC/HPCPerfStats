@@ -493,6 +493,11 @@ def test_listify_acct_hosts_comma_separated_short_names():
   assert _listify_acct_hosts("a,b, c") == ["a", "b", "c"]
 
 
+def test_listify_acct_hosts_flattens_nested_sequences_and_dedupes():
+  nested = [["n1.example"], ("n2.example", ["n3.example", "n1.example"])]
+  assert _listify_acct_hosts(nested) == ["n1.example", "n2.example", "n3.example"]
+
+
 def test_iter_acct_host_batches_accepts_single_fqdn_string():
   fqdn = "c608-081.vista.tacc.utexas.edu"
   chunks = list(_iter_acct_host_batches(fqdn))
@@ -523,6 +528,33 @@ def test_iter_acct_host_batches_non_numeric_batch_size_uses_default_chunking():
   assert len(chunks) == 2
   assert len(chunks[0]) == JID_TABLE_HOST_QUERY_BATCH
   assert len(chunks[1]) == 5
+
+
+def test_count_host_data_rows_for_window_flattens_nested_acct_hosts(monkeypatch):
+  captured_host_chunks = []
+
+  class _FakeCountQuerySet:
+    def count(self):
+      return 7
+
+  class _FakeObjects:
+    def filter(self, **kwargs):
+      captured_host_chunks.append(kwargs["host__in"])
+      return _FakeCountQuerySet()
+
+  class _FakeHostData:
+    objects = _FakeObjects()
+
+  monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.host_data", _FakeHostData())
+  start = datetime(2026, 5, 1, 0, 0, 0)
+  end = datetime(2026, 5, 1, 0, 5, 0)
+  n = _count_host_data_rows_for_window(
+      start,
+      end,
+      [["n1.example"], ["n2.example", ["n3.example"]]],
+  )
+  assert n == 7
+  assert captured_host_chunks == [["n1.example", "n2.example", "n3.example"]]
 
 
 def test_distinct_times_in_window_batched_uses_host_chunks(monkeypatch):
