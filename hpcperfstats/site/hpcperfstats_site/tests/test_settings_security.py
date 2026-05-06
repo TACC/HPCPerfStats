@@ -25,7 +25,27 @@ def test_validate_cors_allowed_origins_rejects_dev_hosts_in_production(monkeypat
         settings._validate_cors_allowed_origins(["http://localhost:5173"])
 
 
-def test_validate_cors_allowed_origins_skips_non_http_management_commands(monkeypatch):
+def test_validate_cors_allowed_origins_skips_collectstatic_invocation(monkeypatch):
     monkeypatch.setattr(settings, "DEBUG", False)
-    monkeypatch.setattr(settings.sys, "argv", ["manage.py", "collectstatic"])
+    monkeypatch.setattr(
+        settings.sys,
+        "argv",
+        [
+            "/usr/local/bin/python3",
+            "hpcperfstats/site/manage.py",
+            "collectstatic",
+            "--noinput",
+        ],
+    )
+    settings._validate_cors_allowed_origins([])
+
+
+def test_validate_cors_allowed_origins_skips_stdin_python_script(monkeypatch):
+    """django_startup.sh runs ``python -`` heredoc after collectstatic."""
+    monkeypatch.setattr(settings, "DEBUG", False)
+    monkeypatch.setattr(
+        settings.sys,
+        "argv",
+        ["/usr/local/bin/python3", "-"],
+    )
     settings._validate_cors_allowed_origins([])

@@ -70,10 +70,16 @@ def _validate_cors_allowed_origins(origins):
 
 
 def _is_non_http_management_command():
-    """Return True for manage.py commands that do not serve browser requests."""
-    if len(sys.argv) < 2:
+    """Return True when Django loads for CLI helpers that never serve browsers."""
+    argv = sys.argv
+    if len(argv) < 2:
         return False
-    command = str(sys.argv[1] or "").strip().lower()
+    # ``python - <<'PY'`` (django_startup.sh SPA shell check): argv is ``[..., '-']``.
+    if argv[1] == "-":
+        return True
+    # ``python -c "..."``
+    if argv[1] == "-c":
+        return True
     non_http_commands = {
         "collectstatic",
         "migrate",
@@ -85,7 +91,16 @@ def _is_non_http_management_command():
         "test",
         "check",
     }
-    return command in non_http_commands
+    # Typical: ``python path/to/manage.py <subcommand>`` — subcommand is argv[2], not argv[1].
+    for i, arg in enumerate(argv):
+        arg_str = str(arg or "")
+        if arg_str.endswith("manage.py"):
+            if i + 1 < len(argv):
+                command = str(argv[i + 1] or "").strip().lower()
+                if command in non_http_commands:
+                    return True
+            break
+    return False
 
 # Skip Redis caching for job plot json_items when UTF-8 JSON exceeds this size (default 512 KiB).
 JOB_PLOT_REDIS_MAX_BYTES = int(os.environ.get("JOB_PLOT_REDIS_MAX_BYTES", "524288"))
@@ -391,6 +406,11 @@ REST_FRAMEWORK = {
         "staff_ingest": os.environ.get(
             "API_THROTTLE_STAFF_INGEST_RATE",
             "30/min",
+        ),
+        # Anonymous `/api/pub/monthly-metrics/` pre-warmed bundle (see ``public_api.py``).
+        "public_monthly_metrics": os.environ.get(
+            "API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE",
+            "240/min",
         ),
     },
 }
