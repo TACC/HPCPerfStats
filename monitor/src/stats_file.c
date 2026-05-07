@@ -64,7 +64,17 @@ static int sf_rd_dispatch_header_line(struct stats_file *sf, char *first, char *
       ERROR("%s:%d: unknown type `%s'\n", sf->sf_path, line_nr, first + 1);
       return -1;
     }
+    if (type->st_schema_def_owned && type->st_schema_def != NULL) {
+      free(type->st_schema_def);
+      type->st_schema_def = NULL;
+      type->st_schema_def_owned = 0;
+    }
     type->st_schema_def = strdup(line);
+    if (type->st_schema_def == NULL) {
+      ERROR("%s:%d: schema strdup failed: %m\n", sf->sf_path, line_nr);
+      return -1;
+    }
+    type->st_schema_def_owned = 1;
     type->st_enabled = 1;
     break;
   case STATS_FILE_HDR_DEVICES:
