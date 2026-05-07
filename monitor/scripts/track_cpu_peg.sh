@@ -32,6 +32,10 @@ perf stat -p "${PID}" -e cycles,instructions,cache-misses,context-switches -I 50
   > "${OUT_DIR}/perf-stat.txt" 2>&1 &
 PERFSTAT_PID=$!
 
+perf record -F 199 -g --call-graph dwarf -p "${PID}" -- sleep "$((DURATION_MINUTES * 60))" \
+  -o "${OUT_DIR}/perf.data" > "${OUT_DIR}/perf-record.txt" 2>&1 &
+PERFREC_PID=$!
+
 strace -tt -f -p "${PID}" \
   -e trace=clock_nanosleep,epoll_wait,poll,read,openat,close \
   -o "${OUT_DIR}/strace.txt" &
@@ -40,15 +44,21 @@ STRACE_PID=$!
 sleep "$((DURATION_MINUTES * 60))"
 
 kill "${STRACE_PID}" "${PERFSTAT_PID}" "${PIDSTAT_PID}" 2>/dev/null || true
-wait "${STRACE_PID}" "${PERFSTAT_PID}" "${PIDSTAT_PID}" 2>/dev/null || true
+wait "${STRACE_PID}" "${PERFSTAT_PID}" "${PIDSTAT_PID}" "${PERFREC_PID}" 2>/dev/null || true
+
+perf report --stdio --no-children --sort dso,symbol -i "${OUT_DIR}/perf.data" \
+  > "${OUT_DIR}/perf-report.txt" 2>&1 || true
 
 journalctl -u hpcperfstatsd -S "-${DURATION_MINUTES}m" \
   | grep -E 'slow|drift|reconnect|warmup|replay|jobid|probe' \
   > "${OUT_DIR}/journal-hotpaths.txt" 2>/dev/null || true
 
+chmod -R a+rX "${OUT_DIR}" 2>/dev/null || true
+
 echo "Done. Artifacts:"
 echo "  ${OUT_DIR}/pidstat.txt"
 echo "  ${OUT_DIR}/perf-stat.txt"
+echo "  ${OUT_DIR}/perf-report.txt"
 echo "  ${OUT_DIR}/strace.txt"
 echo "  ${OUT_DIR}/journal-hotpaths.txt"
 
