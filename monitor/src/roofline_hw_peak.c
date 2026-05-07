@@ -127,8 +127,10 @@ static int line_contains_token(const char *line, const char *token)
   const char *p = line;
   size_t n = strlen(token);
   while (*p != '\0') {
-    while (*p == ' ' || *p == '\t')
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
       p++;
+    if (*p == '\0')
+      break;
     if (strncmp(p, token, n) == 0 && (p[n] == ' ' || p[n] == '\t' || p[n] == '\n' || p[n] == '\0'))
       return 1;
     while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\n')
