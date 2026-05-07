@@ -193,6 +193,11 @@ static int nvidia_gpu_watch_attempt_order(int order[3])
   return n;
 }
 
+static const char *dcgm_err(dcgmReturn_t rc)
+{
+  return errorString(rc);
+}
+
 static int nvidia_gpu_warmup_wait_latest_values(dcgmHandle_t dcgm_handle,
                                                 dcgmGpuGrp_t group_id,
                                                 dcgmFieldGrp_t field_group_id)
@@ -225,11 +230,6 @@ static unsigned long long clamp_double_to_ull(double v)
 static unsigned long long ull_add_sat(unsigned long long a, unsigned long long b)
 {
   return (ULLONG_MAX - a < b) ? ULLONG_MAX : (a + b);
-}
-
-static const char *dcgm_err(dcgmReturn_t rc)
-{
-  return errorString(rc);
 }
 
 static int bounded_ratio(double v, double *out)
