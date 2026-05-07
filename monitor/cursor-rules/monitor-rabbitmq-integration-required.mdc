@@ -1,0 +1,15 @@
+---
+description: Require rootless RabbitMQ integration verification for monitor RMQ send-path edits
+globs: HPCPerfStats/monitor/src/{stats_buffer.c,stats_buffer_data_append.c,stats_text_format.c,monitor_daemon.c,monitor.c,monitor_options.c,monitor_cli.c}
+alwaysApply: false
+---
+
+# Monitor RabbitMQ integration verification
+
+When changes under these globs can alter monitor -> RabbitMQ behavior, do not stop at unit tests alone.
+
+- Run `make -C HPCPerfStats/monitor/.build-static check-rabbitmq-integration` after the canonical static build path is ready.
+- If `.build-static` is not configured yet, run `HPCPerfStats/monitor/scripts/build_static_bundle.sh` first, then run the integration target.
+- Treat this as additive to `monitor-dual-verify-cross-and-static`: this rule adds RabbitMQ message contract verification, it does not replace static bundle + cross-compile verification.
+- Consider edits substantive when they can affect connection/login settings, queue declare/bind behavior, payload body formatting, AMQP publish properties, or send/retry orchestration.
+- Report integration-test pass/fail status explicitly in the handoff.

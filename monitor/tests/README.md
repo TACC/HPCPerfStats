@@ -29,6 +29,10 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_metric_profiler.c` | Metric profiler aggregation/report smoke test (enabled and disabled builds) |
 | `test_monitor_cli.c` | RabbitMQ daemon CLI (`monitor_cli_*`), including `-h` via subprocess |
 | `test_monitor_cli_globals.c` | Stub globals for `test_monitor_cli` |
+| `test_rabbitmq_integration.sh` | Rootless end-to-end monitor -> RabbitMQ publish validation |
+| `scripts/bootstrap_local_rabbitmq.sh` | User-space RabbitMQ bootstrap/start/stop helper |
+| `rmq_integration_validate.py` | Consumes queue messages and validates listend-compatible payload shape |
+| `requirements-rabbitmq-integration.txt` | Python dependency pin for integration validator (`pika`) |
 | `test_monitor_configure_help.sh.in` | Regression (via `check-local`): `configure --help` mentions `--enable-all-static`, `--enable-legacy-pmcs`, `--enable-metric-profiler`, and `--with-metric-profiler-backend` |
 | `Makefile.am` | Automake `check_PROGRAMS` / `TESTS`; **keep `monitor_unit_cppflags` in sync** with `src/Makefile.am` `hpcperfstatsd_CPPFLAGS` for `-D` flags |
 | `run_tests.sh` | Convenience wrapper around `make check` in a build directory |
@@ -57,6 +61,34 @@ make check
 ```
 
 Run from the **configured build tree root** (not only `build/src`). The suite lives in the `tests/` subdir of the build mirror.
+
+## RabbitMQ integration test (rootless, no Docker)
+
+This test path installs/starts RabbitMQ in user space, runs `hpcperfstatsd` against it, then validates consumed messages for:
+
+- UTF-8 decodability
+- listend-compatible host parsing (`$` payload host token and sample payload third token)
+- AMQP publish properties (`content_type=text/plain`, `delivery_mode=2`)
+
+Run explicitly:
+
+```bash
+make -C .build-static check-rabbitmq-integration
+```
+
+Or run with `check-local` by opting in:
+
+```bash
+RUN_RMQ_INTEGRATION=1 make -C .build-static check
+```
+
+Environment knobs:
+
+- `INSTALL_ROOT` (default `~/.cache/hpcperfstats-rmq`) for downloaded/built Erlang + RabbitMQ artifacts.
+- `ERLANG_HOME` and `RABBITMQ_HOME` to reuse preinstalled user-space trees and skip downloads/build.
+- `SKIP_DOWNLOAD=1` to forbid network fetches (requires local archives or provided homes).
+- `ERLANG_ARCHIVE_SHA256` / `RABBITMQ_ARCHIVE_SHA256` for archive integrity checks.
+- `MIN_MESSAGES`, `VALIDATE_TIMEOUT_SECONDS`, `MONITOR_WARMUP_SECONDS` to tune runtime/strictness.
 
 ## Adding a test
 
