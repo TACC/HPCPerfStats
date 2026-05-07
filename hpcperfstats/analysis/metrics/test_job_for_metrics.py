@@ -131,19 +131,25 @@ class _AlwaysTimeoutIterator:
 
 
 class _FakePoolTimeout:
+  def __init__(self):
+    self.seen_chunksize = None
+
   def imap_unordered(self, fn, tasks, chunksize=1):
+    self.seen_chunksize = chunksize
     return _AlwaysTimeoutIterator()
 
 
 def test_drain_metrics_imap_times_out_when_no_worker_progress():
+  pool = _FakePoolTimeout()
   with pytest.raises(TimeoutError):
     metrics._drain_metrics_imap(
-        _FakePoolTimeout(),
+        pool,
         tasks=[("m", "j1")],
-        chunksize=1,
+        chunksize=8,
         poll_timeout_s=0.0,
         stall_timeout_s=0.0,
     )
+  assert pool.seen_chunksize == 1
 
 
 def test_drain_metrics_imap_supports_generator_without_next():

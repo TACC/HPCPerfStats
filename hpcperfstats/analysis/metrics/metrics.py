@@ -598,10 +598,14 @@ def _drain_metrics_imap(
   query hang, C-extension lock). Poll with timeout and fail fast on prolonged
   no-progress so scheduler code can recover the pool and continue.
   """
+  # multiprocessing IMap* timeout polling is only reliable with chunksize=1.
+  # Larger chunks can block indefinitely on ``next(timeout=...)`` and bypass
+  # stall detection (observed as inflight batches with zero completions).
+  submit_chunksize = 1
   iterator = active_pool.imap_unordered(
       _unwrap,
       tasks,
-      chunksize=chunksize,
+      chunksize=submit_chunksize,
   )
   iterator_next = getattr(iterator, "next", None)
   iterator_next_supports_timeout = callable(iterator_next)
@@ -624,7 +628,7 @@ def _drain_metrics_imap(
                 "Metrics.run worker stall: no completed jobs for %.1fs "
                 "(tasks=%s chunksize=%s)"
             )
-            % (stalled_for, total, chunksize),
+            % (stalled_for, total, submit_chunksize),
             pool_reset_confirmed=False,
         )
       continue
