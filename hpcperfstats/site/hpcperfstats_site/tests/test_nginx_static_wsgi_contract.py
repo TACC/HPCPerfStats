@@ -44,6 +44,8 @@ def test_nginx_static_files_conf_robots_txt_is_static_with_edge_headers():
   assert "add_header Cache-Control" in edge
   assert "add_header X-Content-Type-Options" in edge
   assert "nosniff" in edge
+
+
 def test_nginx_static_files_conf_returns_favicon_at_edge():
   """Production proxy answers /favicon.ico without involving Django (currently 404)."""
   repo_root = Path(__file__).resolve().parents[4]
