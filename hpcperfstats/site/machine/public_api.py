@@ -24,5 +24,13 @@ class PublicClusterDashboardAggregateView(APIView):
   def get(self, request):
     bundle = assemble_public_monthly_metrics_bundle()
     response = Response(bundle)
-    response["Cache-Control"] = "public, max-age=120, stale-while-revalidate=300"
+    if bundle.get("status") == "ready":
+      response["Cache-Control"] = (
+          "public, max-age=120, stale-while-revalidate=300"
+      )
+    else:
+      # Warm / transitional — avoid freezing "still loading" at browsers or CDNs.
+      response["Cache-Control"] = (
+          "private, max-age=0, must-revalidate, no-store"
+      )
     return response
