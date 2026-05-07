@@ -516,6 +516,11 @@ void monitor_daemon_rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
   (void)revents;
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
   monitor_daemon_collect_to_ring(w, 1, NULL);
+  /*
+   * Schema/`$` payloads must reach RabbitMQ promptly — otherwise archives stay stale until the first
+   * send_timer tick (send_freq can be hundreds of seconds) after daemon restart or 6h rotation.
+   */
+  monitor_daemon_resend_ring_buffer_if_nonempty(w);
   print_buffer_status(w);
 }
 
@@ -630,5 +635,6 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
    * without waiting for the periodic rotate timer.
    */
   monitor_daemon_collect_to_ring(w, 1, NULL);
+  monitor_daemon_resend_ring_buffer_if_nonempty(w);
   print_buffer_status(w);
 }

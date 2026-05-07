@@ -82,7 +82,8 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   monitor_log_info("Setting hpcperfstatsd sample frequency to %.1fs (epoch-aligned)\n", sample_freq);
 
   send_timer.data = (void *)rb;
-  ev_timer_init(&send_timer, monitor_daemon_send_timer_cb, send_freq, send_freq);
+  /* First tick ASAP so queued samples drain soon after startup; repeat stays send_freq. */
+  ev_timer_init(&send_timer, monitor_daemon_send_timer_cb, 0.0, send_freq);
   ev_timer_start(EV_DEFAULT, &send_timer);
   monitor_log_info("Setting hpcperfstatsd send frequency to %.1fs\n", send_freq);
   /* rabbitmq-c sends AMQP heartbeats from wait_frame_inner; long send_freq with a broker-capped
