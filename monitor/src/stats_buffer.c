@@ -823,7 +823,8 @@ static void stats_buffer_append_enabled_type_rows(struct stats_buffer *sf)
 int stats_buffer_collect(struct stats_buffer *sf)
 {
   int rc = 0;
-
+  char header[256];
+  int header_len;
   struct timespec time;
 
   if (clock_gettime(CLOCK_REALTIME, &time) != 0) {
@@ -832,8 +833,15 @@ int stats_buffer_collect(struct stats_buffer *sf)
     goto out;
   }
   stats_buffer_ensure_uts_cached();
-  stats_buffer_append_fmt(sf, "\n%f %s %s\n", time.tv_sec + 1e-9 * time.tv_nsec, jobid,
-			  cached_uts.nodename);
+  header_len = snprintf(header, sizeof(header), "\n%f %s %s\n",
+			time.tv_sec + 1e-9 * time.tv_nsec, jobid, cached_uts.nodename);
+  if (header_len < 0 || (size_t)header_len >= sizeof(header)
+      || stats_buffer_data_append_bytes(&sf->sf_data, &sf->sf_data_len,
+					&sf->sf_data_cap, header,
+					(size_t)header_len) < 0) {
+    rc = -1;
+    goto out;
+  }
 
   stats_buffer_append_mark_lines(sf);
   stats_buffer_append_enabled_type_rows(sf);
@@ -1006,7 +1014,7 @@ void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long 
         break;
       if (stats_buffer_is_schema_payload(node->sf))
         break;
-      batch_len += strlen(node->sf->sf_data);
+      batch_len += node->sf->sf_data_len;
       batch_count++;
       node = node->forward;
       if (node == head)
@@ -1028,16 +1036,19 @@ void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long 
               batch_count);
         break;
       }
-      merged[0] = '\0';
-
+      char *dst = merged;
       node = head;
       for (int i = 0; i < batch_count; i++) {
-        strcat(merged, node->sf->sf_data);
+        size_t n = node->sf->sf_data_len;
+        memcpy(dst, node->sf->sf_data, n);
+        dst += n;
         node = node->forward;
       }
+      *dst = '\0';
 
       merged_sf = *head->sf;
       merged_sf.sf_data = merged;
+      merged_sf.sf_data_len = (size_t)(dst - merged);
       w->status = stats_buffer_send_payload(&merged_sf);
       free(merged);
     }

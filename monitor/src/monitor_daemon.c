@@ -47,6 +47,8 @@ char *jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
 double sample_freq = 300;
 double send_freq = 300;
 double buffer_hours = 6.0;
+char *collection_profile = NULL;
+char *disable_types = NULL;
 int max_buffer_size = 0;
 int allow_ring_buffer_overwrite = 1;
 int file_mode_enabled = 0;
@@ -83,7 +85,8 @@ static void monitor_daemon_log_timer_drift(const char *name, double now_s, doubl
 
 enum {
   MONITOR_RESEND_MAX_BATCHES_PER_CALL = 64,
-  MONITOR_RESEND_MAX_RUNTIME_US = 50000,
+  MONITOR_RESEND_MAX_RUNTIME_US = 12000,
+  MONITOR_RESEND_MAX_RUNTIME_US_BACKLOG = 25000,
   MONITOR_DUMPFILE_MAX_FILES_PER_CALL = 2,
   MONITOR_DUMPFILE_REPLAY_MAX_BATCHES_PER_FILE = 32,
   MONITOR_DUMPFILE_REPLAY_MAX_RUNTIME_US = 25000
@@ -197,14 +200,18 @@ static void monitor_daemon_resend_ring_buffer_if_nonempty(struct sf_ring_buffer 
   long elapsed_us;
   int q_before;
   int processed = 0;
+  long runtime_budget_us;
 
   if (w->q_count <= 0)
     return;
   q_before = w->q_count;
+  runtime_budget_us = MONITOR_RESEND_MAX_RUNTIME_US;
+  if (q_before > MONITOR_RESEND_MAX_BATCHES_PER_CALL)
+    runtime_budget_us = MONITOR_RESEND_MAX_RUNTIME_US_BACKLOG;
   started_us = monitor_daemon_monotonic_us();
   monitor_daemon_log_ring_resend_line();
   ring_buffer_resend_limited(w, MONITOR_RESEND_MAX_BATCHES_PER_CALL,
-			     MONITOR_RESEND_MAX_RUNTIME_US, &processed);
+			     runtime_budget_us, &processed);
   elapsed_us = (started_us > 0) ? monitor_daemon_monotonic_us() - started_us : -1;
   monitor_daemon_log_resend_stats(q_before, processed, elapsed_us, w->status, w->q_count);
   if (w->q_count > 0)
@@ -265,6 +272,7 @@ void monitor_daemon_reanchor_sample_timer(struct ev_loop *loop, double period)
 
 void monitor_daemon_finalize_runtime_settings(void)
 {
+  const char *profile_env = getenv("HPCPERFSTATS_COLLECTION_PROFILE");
   if (!isfinite(sample_freq) || sample_freq <= 0.0)
     sample_freq = 1.0;
   if (sample_freq < 0.1)
@@ -275,6 +283,26 @@ void monitor_daemon_finalize_runtime_settings(void)
     send_freq = 0.1;
   if (!isfinite(buffer_hours) || buffer_hours <= 0.0)
     buffer_hours = 1.0;
+  if (collection_profile == NULL && profile_env != NULL && *profile_env != '\0')
+    collection_profile = strdup(profile_env);
+  if (collection_profile == NULL)
+    collection_profile = strdup("default");
+  if (collection_profile != NULL) {
+    str_trim_inplace(collection_profile);
+    if (collection_profile[0] == '\0'
+        || (strcmp(collection_profile, "default") != 0
+            && strcmp(collection_profile, "minimal") != 0
+            && strcmp(collection_profile, "full") != 0)) {
+      monitor_log_warn("%s: invalid collection_profile `%s`; using `default`\n",
+                       app_name != NULL ? app_name : "hpcperfstatsd",
+                       collection_profile);
+      free(collection_profile);
+      collection_profile = strdup("default");
+    }
+  }
+  if (disable_types != NULL)
+    str_trim_inplace(disable_types);
+  stats_runtime_daemon_set_type_controls(collection_profile, disable_types);
   monitor_daemon_apply_dynamic_buffer_size_if_needed();
 }
 

@@ -8,7 +8,8 @@ AM_DISTCHECK_CONFIGURE_FLAGS = \
 if HAVE_SYSTEMD
 systemduserunit_DATA = \
 	hpcperfstats.service \
-	hpcperfstats.conf
+	hpcperfstats.conf \
+	hpcperfstatsd.sysconfig
 endif
 
 bin_PROGRAMS = hpcperfstatsd
@@ -289,6 +290,6 @@ hpcperfstatsd_SOURCES += \
 	amd_gpu.h
 endif
 
-EXTRA_DIST = hpcperfstats.conf hpcperfstats.service \
+EXTRA_DIST = hpcperfstats.conf hpcperfstats.service hpcperfstatsd.sysconfig \
 	$(top_srcdir)/scripts/build_static_bundle.sh \
 	$(top_srcdir)/scripts/ensure_dotbuild_prefix_static.sh

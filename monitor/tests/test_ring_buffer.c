@@ -18,12 +18,15 @@ int n_pmcs = 0;
 processor_t processor = (processor_t)0;
 
 static unsigned g_send_hook_calls;
+static char *g_last_payload;
 /* When >= 0, return -1 from hook after this many successful invocations (for failure-path tests). */
 static int g_fail_after_n = -1;
 
 int stats_buffer_test_send_hook(struct stats_buffer *sf)
 {
-  (void)sf;
+  free(g_last_payload);
+  g_last_payload = strdup(sf != NULL && sf->sf_data != NULL ? sf->sf_data : "");
+  assert(g_last_payload != NULL);
   g_send_hook_calls++;
   if (g_fail_after_n >= 0 && (int)g_send_hook_calls > g_fail_after_n)
     return -1;
@@ -33,6 +36,8 @@ int stats_buffer_test_send_hook(struct stats_buffer *sf)
 static void reset_hook(void)
 {
   g_send_hook_calls = 0;
+  free(g_last_payload);
+  g_last_payload = NULL;
   g_fail_after_n = -1;
 }
 
@@ -128,12 +133,14 @@ static void test_resend_batch_merge(void)
   struct sf_ring_buffer w;
   memset(&w, 0, sizeof(w));
   reset_hook();
-  for (int i = 0; i < 3; i++)
-    assert(ring_buffer_insert(make_payload_buf("1.0 job host x\n"), &w, -1, 1) == 0);
+  assert(ring_buffer_insert(make_payload_buf("1.0 job host a\n"), &w, -1, 1) == 0);
+  assert(ring_buffer_insert(make_payload_buf("1.0 job host b\n"), &w, -1, 1) == 0);
+  assert(ring_buffer_insert(make_payload_buf("1.0 job host c\n"), &w, -1, 1) == 0);
   ring_buffer_resend(&w);
   assert(w.q_count == 0);
   assert(w.status == 0);
   assert(g_send_hook_calls == 1u);
+  assert(strcmp(g_last_payload, "1.0 job host a\n1.0 job host b\n1.0 job host c\n") == 0);
 }
 
 static void test_resend_schema_then_stats(void)
@@ -239,6 +246,7 @@ int main(void)
   test_load_file_two_records();
   test_load_file_leading_blank_skipped();
   test_load_file_open_fails();
+  reset_hook();
   printf("test_ring_buffer passed\n");
   return 0;
 }

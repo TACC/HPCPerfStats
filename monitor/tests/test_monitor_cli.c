@@ -85,6 +85,26 @@ static void test_parse_daemon_flag(void)
   assert(dm == 1);
 }
 
+static void test_parse_collection_profile_option(void)
+{
+  next_cli_test();
+  char *argv[] = { "prog", "--collection-profile", "minimal", NULL };
+  int dm = 0;
+  monitor_cli_parse_args(3, argv, &dm);
+  assert(collection_profile != NULL);
+  assert(strcmp(collection_profile, "minimal") == 0);
+}
+
+static void test_parse_disable_types_option(void)
+{
+  next_cli_test();
+  char *argv[] = { "prog", "--disable-types", "proc,nvidia_gpu", NULL };
+  int dm = 0;
+  monitor_cli_parse_args(3, argv, &dm);
+  assert(disable_types != NULL);
+  assert(strcmp(disable_types, "proc,nvidia_gpu") == 0);
+}
+
 static void test_help_invokes_usage_and_exits_zero(void)
 {
   pid_t pid = fork();
@@ -128,6 +148,8 @@ int main(void)
   test_parse_long_configfile_option();
   test_parse_long_config_hyphen_option();
   test_parse_daemon_flag();
+  test_parse_collection_profile_option();
+  test_parse_disable_types_option();
   test_help_invokes_usage_and_exits_zero();
   test_free_heap_resets_queue_to_default();
   test_monitor_cli_reset_globals();

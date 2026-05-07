@@ -28,6 +28,8 @@ char *jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
 double sample_freq = 300;
 double send_freq = 300;
 double buffer_hours = 6.0;
+char *collection_profile = NULL;
+char *disable_types = NULL;
 int max_buffer_size = 0;
 int allow_ring_buffer_overwrite = 1;
 int file_mode_enabled = 0;
@@ -47,6 +49,8 @@ void test_monitor_cli_reset_globals(void)
   free(conf_file_name);
   free(pid_file_name);
   free(server);
+  free(collection_profile);
+  free(disable_types);
   if (queue != NULL && queue != (char *)monitor_cli_lit_queue)
     free(queue);
   if (port != NULL && port != (char *)monitor_cli_lit_port)
@@ -75,6 +79,8 @@ void test_monitor_cli_reset_globals(void)
   sample_freq = 300;
   send_freq = 300;
   buffer_hours = 6.0;
+  collection_profile = NULL;
+  disable_types = NULL;
   max_buffer_size = 0;
   allow_ring_buffer_overwrite = 1;
   file_mode_enabled = 0;

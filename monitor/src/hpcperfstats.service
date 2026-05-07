@@ -5,6 +5,11 @@ Description=Job-level Monitoring Service
 Type=simple
 # Default per-process soft FD limit is often 1024; collectors + LIKWID + dumpfiles can exceed it (EMFILE).
 LimitNOFILE=1048576
+EnvironmentFile=-/etc/sysconfig/hpcperfstatsd
+# Keep monitoring overhead off user-critical cores by default where admins set affinity.
+Nice=10
+IOSchedulingClass=idle
+IOSchedulingPriority=7
 ExecStart=/usr/sbin/hpcperfstatsd -c CONFIGFILE
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always

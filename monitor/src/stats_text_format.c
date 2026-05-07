@@ -70,15 +70,22 @@ void stats_format_emit_schema_line(stats_format_emit_fn emit, void *opaque,
 				   int schema_char, struct stats_type *type)
 {
 	size_t j;
+	char entry[256];
 
 	emit(opaque, "%c%s", schema_char, type->st_name);
 	for (j = 0; j < type->st_schema.sc_len; j++) {
 		struct schema_entry *se = type->st_schema.sc_ent[j];
 		char suf[96];
+		int n;
 
-		emit(opaque, " %s", se->se_key);
 		stats_format_schema_entry_suffix(suf, sizeof(suf), se);
-		emit(opaque, "%s", suf);
+		n = snprintf(entry, sizeof(entry), " %s%s", se->se_key, suf);
+		if (n > 0 && (size_t)n < sizeof(entry))
+			emit(opaque, "%s", entry);
+		else {
+			emit(opaque, " %s", se->se_key);
+			emit(opaque, "%s", suf);
+		}
 	}
 	emit(opaque, "\n");
 }

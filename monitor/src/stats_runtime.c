@@ -6,9 +6,66 @@
 #include "monitor_log.h"
 #include "stats.h"
 #include "trace.h"
+#include "string1.h"
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 static int g_daemon_types_ready;
+static char *g_type_profile;
+static char *g_disabled_types_csv;
+
+static void stats_runtime_disable_one_type(const char *name)
+{
+	struct stats_type *type;
+
+	if (name == NULL || *name == '\0')
+		return;
+	type = stats_type_get(name);
+	if (type == NULL) {
+		monitor_log_warn("stats_runtime: unknown type `%s` in disable list\n", name);
+		return;
+	}
+	type->st_enabled = 0;
+}
+
+static void stats_runtime_apply_profile_and_disables(void)
+{
+	char *list;
+	char *token;
+	char *saveptr = NULL;
+	const char *env_csv = getenv("HPCPERFSTATS_DISABLE_TYPES");
+
+	if (g_type_profile != NULL && strcmp(g_type_profile, "minimal") == 0)
+		stats_runtime_disable_one_type("proc");
+
+	if (g_disabled_types_csv != NULL && g_disabled_types_csv[0] != '\0') {
+		list = strdup(g_disabled_types_csv);
+		if (list != NULL) {
+			for (token = strtok_r(list, ",", &saveptr);
+			     token != NULL;
+			     token = strtok_r(NULL, ",", &saveptr)) {
+				str_trim_inplace(token);
+				stats_runtime_disable_one_type(token);
+			}
+			free(list);
+		}
+	}
+
+	if (env_csv != NULL && *env_csv != '\0') {
+		list = strdup(env_csv);
+		if (list != NULL) {
+			saveptr = NULL;
+			for (token = strtok_r(list, ",", &saveptr);
+			     token != NULL;
+			     token = strtok_r(NULL, ",", &saveptr)) {
+				str_trim_inplace(token);
+				stats_runtime_disable_one_type(token);
+			}
+			free(list);
+		}
+	}
+}
 
 static long long stats_runtime_monotonic_us(void)
 {
@@ -40,6 +97,7 @@ void stats_runtime_daemon_prepare_types(void)
 		type->st_enabled = 1;
 
 	auto_disable_optional_stats_by_lspci();
+	stats_runtime_apply_profile_and_disables();
 
 	i = 0;
 	while ((type = stats_type_for_each(&i)) != NULL) {
@@ -55,6 +113,22 @@ void stats_runtime_daemon_prepare_types(void)
 			(*type->st_begin)(type);
 	}
 	g_daemon_types_ready = 1;
+}
+
+void stats_runtime_daemon_set_type_controls(const char *profile, const char *disable_csv)
+{
+	char *profile_copy = NULL;
+	char *disable_copy = NULL;
+
+	if (profile != NULL)
+		profile_copy = strdup(profile);
+	if (disable_csv != NULL)
+		disable_copy = strdup(disable_csv);
+
+	free(g_type_profile);
+	free(g_disabled_types_csv);
+	g_type_profile = profile_copy;
+	g_disabled_types_csv = disable_copy;
 }
 
 void stats_runtime_daemon_reset_types(void)

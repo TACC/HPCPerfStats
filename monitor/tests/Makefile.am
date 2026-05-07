@@ -38,7 +38,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_pscanf test_schema_parse test_stats_file_format test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_metric_profiler test_hwdetect_policy
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_pscanf test_schema_parse test_stats_file_format test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_metric_profiler test_hwdetect_policy test_stats_runtime_type_controls
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer test_monitor_timing
 endif
@@ -149,6 +149,10 @@ test_hwdetect_policy_SOURCES = \
 	test_hwdetect_policy.c \
 	$(top_srcdir)/src/hwdetect.c
 
+test_stats_runtime_type_controls_SOURCES = \
+	test_stats_runtime_type_controls.c \
+	$(top_srcdir)/src/stats_runtime.c
+
 if RABBITMQ
 test_monitor_cli_SOURCES = \
 	test_monitor_cli.c \
@@ -196,6 +200,7 @@ test_roofline_hw_peak_changeover_LDADD = $(LDADD)
 test_nfs_schema_subset_LDADD = $(LDADD)
 test_metric_profiler_LDADD = $(LDADD)
 test_hwdetect_policy_LDADD = $(LDADD)
+test_stats_runtime_type_controls_LDADD = $(LDADD)
 if RABBITMQ
 test_monitor_cli_LDADD = $(LDADD)
 test_ring_buffer_LDADD = $(LDADD)

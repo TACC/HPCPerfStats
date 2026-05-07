@@ -1,0 +1,50 @@
+# Optional environment overrides for hpcperfstatsd.
+#
+# This file is sourced by systemd (EnvironmentFile=-/etc/sysconfig/hpcperfstatsd).
+# Leave entries commented out to keep daemon defaults.
+
+# Disable selected stats types (comma-separated list, case-sensitive).
+# Example: disable expensive proc collector on jitter-sensitive nodes.
+#HPCPERFSTATS_DISABLE_TYPES=proc
+
+# Collection profile:
+#   default - current normal behavior
+#   minimal - disables selected expensive collectors (currently proc)
+#   full    - reserved for explicit full-collection policy
+#HPCPERFSTATS_COLLECTION_PROFILE=minimal
+
+# NVIDIA/DCGM warmup during initialization (milliseconds).
+# Set lower to reduce startup delay on nodes where warmup fidelity is less critical.
+#HPCPERFSTATS_DCGM_WARMUP_MS=10000
+
+# Proc collector safeguards.
+# Cooldown before next full proc scan after an error/slow cycle (seconds).
+#HPCPERFSTATS_PROC_COOLDOWN_SEC=120
+# Warn threshold for long proc scans (seconds).
+#HPCPERFSTATS_PROC_WARN_SEC=10
+
+# Net interface cache rebuild throttling.
+# Skip rebuilds for this many seconds after a successful rebuild.
+#HPCPERFSTATS_NET_REBUILD_SKIP_SEC=120
+# Warn when rebuild exceeds this latency threshold (milliseconds).
+#HPCPERFSTATS_NET_REBUILD_WARN_MS=50
+
+# Hardware probe cache / behavior knobs.
+# Cache lspci results for this many seconds.
+#HPCPERFSTATS_LSPCI_CACHE_TTL_SEC=300
+# Force-enable NVIDIA GPU collector even if auto-detect misses.
+#HPCPERFSTATS_FORCE_NVIDIA_GPU=1
+# Disable nvidia_gpu after this many probe misses.
+#HPCPERFSTATS_NVIDIA_DISABLE_MISS_THRESHOLD=1
+
+# Roofline controls.
+#HPCPERFSTATS_ROOFLINE_MODE=off
+#HPCPERFSTATS_ROOFLINE_PERIOD_SAMPLES=10
+#HPCPERFSTATS_SKIP_HW_PROBE=1
+
+# LIKWID logging controls (x86 backend deployments).
+#HPCPERFSTATS_LIKWID_SETUP_QUIET=1
+#HPCPERFSTATS_LIKWID_VERBOSITY=0
+
+# Override monitor architecture mapping for LIKWID.
+#HPCPERFSTATS_MONITOR_ARCH=ZEN4

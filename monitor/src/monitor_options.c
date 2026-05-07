@@ -39,7 +39,9 @@ void monitor_options_print_daemon_usage(FILE *stream)
 		"  -b [BUFFER]     or --buffer     [BUFFER]     Max size (in # of stats) for temporary in-memory storage (4096 is the default).\n"
 		"  -f [FREQUENCY]  or --frequency  [FREQUENCY]  Deprecated alias for --sample-frequency.\n"
 		"     [SECONDS]    or --sample-frequency [SECONDS] Sampling cadence in seconds (default 300).\n"
-		"     [SECONDS]    or --send-frequency   [SECONDS] RabbitMQ send cadence in seconds (default 300).\n",
+		"     [SECONDS]    or --send-frequency   [SECONDS] RabbitMQ send cadence in seconds (default 300).\n"
+		"     [PROFILE]    or --collection-profile [PROFILE] Type profile: default|minimal|full.\n"
+		"     [CSV]        or --disable-types [CSV] Comma-separated stats types to disable.\n",
 		program_invocation_short_name);
 }
 
@@ -59,13 +61,15 @@ void monitor_options_parse_daemon_argv(int argc, char *argv[], int *daemonmode_o
 	    {"frequency", required_argument, 0, 'f'},
 	    {"sample-frequency", required_argument, 0, 'F'},
 	    {"send-frequency", required_argument, 0, 'S'},
+	    {"collection-profile", required_argument, 0, 'P'},
+	    {"disable-types", required_argument, 0, 'T'},
 	    {NULL, 0, 0, 0},
 	};
 
 	*daemonmode_out = 0;
 
 	for (;;) {
-		int c = getopt_long(argc, argv, "hdc:s:q:f:F:S:p:b:t:", opts, NULL);
+		int c = getopt_long(argc, argv, "hdc:s:q:f:F:S:P:T:p:b:t:", opts, NULL);
 
 		if (c == -1)
 			break;
@@ -92,6 +96,14 @@ void monitor_options_parse_daemon_argv(int argc, char *argv[], int *daemonmode_o
 			if (parse_double_arg(optarg, &send_freq) != 0)
 				monitor_log_warn("%s: ignoring invalid --send-frequency value `%s`\n",
 						 app_name, optarg);
+			break;
+		case 'P':
+			free(collection_profile);
+			collection_profile = strdup(optarg);
+			break;
+		case 'T':
+			free(disable_types);
+			disable_types = strdup(optarg);
 			break;
 		case 'c':
 			free(conf_file_name);
@@ -191,6 +203,18 @@ void monitor_options_apply_daemon_conf_kv(const char *key, char *value_line)
 					 "based on file %s\n",
 					 app_name, buffer_hours,
 					 conf_file_name);
+	}
+	if (strcmp(key, "collection_profile") == 0) {
+		free(collection_profile);
+		collection_profile = strdup(value_line);
+		monitor_log_info("%s: Setting collection profile to %s based on file %s\n",
+				 app_name, collection_profile, conf_file_name);
+	}
+	if (strcmp(key, "disable_types") == 0) {
+		free(disable_types);
+		disable_types = strdup(value_line);
+		monitor_log_info("%s: Setting disabled types to `%s` based on file %s\n",
+				 app_name, disable_types, conf_file_name);
 	}
 	if (strcmp(key, "freq") == 0) {
 		if (parse_double_arg(value_line, &sample_freq) == 0)

@@ -16,6 +16,7 @@ void stats_runtime_teardown(void);
 void stats_runtime_daemon_prepare_types(void);
 void stats_runtime_daemon_reset_types(void);
 int stats_runtime_daemon_ensure_types(void);
+void stats_runtime_daemon_set_type_controls(const char *profile, const char *disable_csv);
 
 void stats_runtime_main_prepare_types(const stats_runtime_main_prepare_spec *spec);
 
