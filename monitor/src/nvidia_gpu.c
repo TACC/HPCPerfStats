@@ -593,8 +593,13 @@ out:
       (void) dcgmStopEmbedded(dcgm_handle);
   }
   (void) dcgmShutdown();
+  /*
+   * Do not permanently disable nvidia_gpu on one failed cycle. DCGM profiling can be
+   * transiently unavailable (hostengine restart, permission windows, unsupported PROF
+   * subset on first attach). Keep the type enabled so later cycles can recover.
+   */
   if (nr == 0)
-    type->st_enabled = 0;
+    TRACE("nvidia_gpu: no device rows emitted this cycle; keeping type enabled for retry\n");
 }
 
 //! Definition of stats entry for this type
