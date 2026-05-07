@@ -726,10 +726,20 @@ out:
   if (dcgm_handle != (dcgmHandle_t)0) {
     if (dcgm_remote)
       (void) dcgmDisconnect(dcgm_handle);
+#if !defined(MONITOR_CPU_BACKEND_DCGM)
     else
       (void) dcgmStopEmbedded(dcgm_handle);
+#endif
+    /*
+     * When MONITOR_CPU_BACKEND_DCGM is set, cpu_counter_metrics owns a process-wide embedded
+     * DCGM session (see dcgm_backend_begin). dcgmStopEmbedded/dcgmShutdown here leave its
+     * g_dcgm_handle stale while st_begin still skips re-init (g_dcgm_ready stays 1); the next
+     * dcgmUpdateAllFields in cpu_counter_metrics_collect can spiral CPU and syslog stays quiet.
+     */
   }
+#if !defined(MONITOR_CPU_BACKEND_DCGM)
   (void) dcgmShutdown();
+#endif
   /*
    * Do not permanently disable nvidia_gpu on one failed cycle. DCGM profiling can be
    * transiently unavailable (hostengine restart, permission windows, unsupported PROF
