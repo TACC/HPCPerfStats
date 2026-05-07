@@ -380,13 +380,6 @@ static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_h
   int rc;
   if (sf == NULL)
     return;
-
-  if (stats_runtime_daemon_ensure_types() < 0) {
-    ERROR("Failed preparing daemon stats runtime\n");
-    stats_buffer_close(sf);
-    free(sf);
-    return;
-  }
   if (write_hdr)
     stats_wr_hdr(sf);
   if (mark_line != NULL)
@@ -738,6 +731,8 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
   stats_buffer_runtime_caches_reset();
   hwdetect_invalidate_probe_cache();
   read_conf_file();
+  if (stats_runtime_daemon_ensure_types() < 0)
+    monitor_log_warn("Failed preparing daemon stats runtime after SIGHUP\n");
   monitor_daemon_prime_file_mode_from_dumpdir();
   monitor_daemon_resend_ring_buffer_if_nonempty(w);
   if (w->q_count == 0)
