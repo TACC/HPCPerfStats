@@ -21,7 +21,7 @@ from hpcperfstats.site.machine.models import job_data, public_metrics_artifact
 
 logger = logging.getLogger(__name__)
 
-APP_PUBLIC_METRICS_SCHEMA_VERSION = 1
+APP_PUBLIC_METRICS_SCHEMA_VERSION = 2
 
 PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 
@@ -190,6 +190,30 @@ def _payload_from_weekly_means(weekly_means: List[float]) -> Dict[str, Any]:
   }
 
 
+def _attach_ef_histogram_bokeh_item(
+    payload: Dict[str, Any],
+    *,
+    period_key: str,
+    subtitle: str,
+) -> None:
+  edges = payload.get("histogram_bin_edges")
+  counts = payload.get("histogram_counts")
+  if not isinstance(edges, list) or not isinstance(counts, list):
+    return
+  from hpcperfstats.site.machine.public_metrics_bokeh import (
+      build_public_expansion_factor_histogram_json_item,
+  )
+
+  bokeh_item = build_public_expansion_factor_histogram_json_item(
+      period_key=period_key,
+      period_kind=subtitle,
+      edges=edges,
+      counts=counts,
+  )
+  if bokeh_item is not None:
+    payload["bokeh_histogram_json_item"] = bokeh_item
+
+
 def _build_month_daily_payload(year_month: str) -> Dict[str, Any]:
   start, end = _period_month_bounds(year_month)
   qs = (
@@ -221,6 +245,11 @@ def _build_month_daily_payload(year_month: str) -> Dict[str, Any]:
     daily_means.append(day_sum[d] / float(n))
   payload = _payload_from_daily_means(daily_means)
   payload["year_month"] = year_month
+  _attach_ef_histogram_bokeh_item(
+      payload,
+      period_key=year_month,
+      subtitle="histogram of daily mean EF (days in month)",
+  )
   return payload
 
 
@@ -258,6 +287,11 @@ def _build_year_weekly_payload(year_str: str) -> Dict[str, Any]:
     weekly_means.append(week_sum[key] / float(n))
   payload = _payload_from_weekly_means(weekly_means)
   payload["calendar_year"] = year_str
+  _attach_ef_histogram_bokeh_item(
+      payload,
+      period_key=year_str,
+      subtitle="histogram of weekly mean EF (ISO weeks in year)",
+  )
   return payload
 
 

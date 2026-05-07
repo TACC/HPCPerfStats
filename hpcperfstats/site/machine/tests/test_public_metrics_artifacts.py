@@ -10,8 +10,33 @@ from hpcperfstats.site.machine.public_metrics_artifacts import (
     PUBLIC_EF_MONTH_DAILY,
     PUBLIC_EF_YEAR_WEEKLY,
     compute_scheduler_expansion_factor_seconds,
+    decompress_public_payload,
     refresh_public_expansion_factor_artifacts,
 )
+
+
+@pytest.mark.machine_unit_mock
+def test_build_public_expansion_factor_histogram_json_item_shape():
+  from hpcperfstats.site.machine.public_metrics_artifacts import EF_HIST_BIN_EDGES
+  from hpcperfstats.site.machine.public_metrics_bokeh import (
+      build_public_expansion_factor_histogram_json_item,
+  )
+
+  edges = list(EF_HIST_BIN_EDGES)
+  counts = [0] * len(edges)
+  counts[3] = 2
+  counts[-1] = 1
+  item = build_public_expansion_factor_histogram_json_item(
+      period_key="2024-03",
+      period_kind="unit subtitle",
+      edges=edges,
+      counts=counts,
+  )
+  assert item is not None
+  assert "doc" in item
+  assert "root_id" in item
+  assert "target_id" in item
+  assert "version" in item
 
 
 @pytest.mark.machine_unit_mock
@@ -56,10 +81,21 @@ def test_refresh_public_expansion_factor_artifacts_builds_rows():
       scope=PUBLIC_EF_MONTH_DAILY, period_key="2024-03"
   )
   assert march.input_fingerprint
+
+  march_payload = decompress_public_payload(march)
+  assert "bokeh_histogram_json_item" in march_payload
+  assert isinstance(march_payload["bokeh_histogram_json_item"], dict)
+  assert "doc" in march_payload["bokeh_histogram_json_item"]
+  assert "root_id" in march_payload["bokeh_histogram_json_item"]
+
   year_row = public_metrics_artifact.objects.get(
       scope=PUBLIC_EF_YEAR_WEEKLY, period_key="2024"
   )
   assert year_row.input_fingerprint
+
+  year_payload = decompress_public_payload(year_row)
+  assert "bokeh_histogram_json_item" in year_payload
+  assert isinstance(year_payload["bokeh_histogram_json_item"], dict)
 
 
 @pytest.mark.django_db

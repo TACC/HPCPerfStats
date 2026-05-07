@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import BokehEmbed from "../components/BokehEmbed.jsx";
 import { fetchPubMonthlyMetrics } from "../api.js";
 import { useDocumentTitle } from "../utils/useDocumentTitle.js";
 import { formatDecimalStandard } from "../utils/formatDecimal.js";
@@ -8,7 +9,7 @@ function SectionExpansionFactor({ bundle }) {
   const monthly = efSection.monthly_daily_histograms || {};
   const yearly = efSection.yearly_weekly_histograms || {};
 
-  const renderHist = (title, payloadMap, axisHint) => {
+  const renderHist = (title, payloadMap, axisHint, groupingKey) => {
     const keys = Object.keys(payloadMap).sort();
     if (!keys.length) {
       return (
@@ -23,6 +24,7 @@ function SectionExpansionFactor({ bundle }) {
         <p className="small text-muted">{axisHint}</p>
         {keys.map((k) => {
           const block = payloadMap[k];
+          const safeDomId = String(k).replace(/[^a-zA-Z0-9_-]+/g, "-");
           const edges = block.histogram_bin_edges || [];
           const counts = block.histogram_counts || [];
           const maxCount = counts.length
@@ -34,7 +36,19 @@ function SectionExpansionFactor({ bundle }) {
               <div className="small text-muted mb-2">
                 definition: {block.expansion_factor_definition || "—"}
               </div>
-              <div className="d-flex flex-column gap-1">
+              {block.bokeh_histogram_json_item ? (
+                <div className="mb-3">
+                  <BokehEmbed
+                    item={block.bokeh_histogram_json_item}
+                    id={`pub-ef-${groupingKey}-${safeDomId}`}
+                    plotName={`Expansion factor histogram ${k}`}
+                    embedAriaLabel={`Expansion factor histogram for ${k}`}
+                    embedMinHeightPx={320}
+                  />
+                </div>
+              ) : null}
+              {!block.bokeh_histogram_json_item ? (
+                <div className="d-flex flex-column gap-1">
                 {(counts || []).map((cntRaw, idx) => {
                   const lo = edges[idx];
                   const hi = idx + 1 < edges.length ? edges[idx + 1] : null;
@@ -67,7 +81,8 @@ function SectionExpansionFactor({ bundle }) {
                     </div>
                   );
                 })}
-              </div>
+                </div>
+              ) : null}
             </div>
           );
         })}
@@ -90,11 +105,13 @@ function SectionExpansionFactor({ bundle }) {
         "Monthly — histogram of daily mean EF",
         monthly,
         "Each chart lists completed-job calendar months.",
+        "month",
       )}
       {renderHist(
         "Yearly — histogram of weekly mean EF",
         yearly,
         "Each chart lists calendar years; buckets are ISO weeks inside that year.",
+        "year",
       )}
     </section>
   );
