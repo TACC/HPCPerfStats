@@ -8,37 +8,6 @@ from hpcperfstats.site.hpcperfstats_site.middleware import (
 )
 
 
-def test_robots_txt_has_default_cache_and_security_headers_for_https():
-  client = Client()
-  response = client.get("/robots.txt", secure=True)
-
-  assert response.status_code == 200
-  assert response["Cache-Control"] == "no-store, no-cache"
-  assert response["X-Frame-Options"] == "SAMEORIGIN"
-  assert response["Permissions-Policy"] == DEFAULT_PERMISSIONS_POLICY
-  assert response["Cross-Origin-Opener-Policy"] == DEFAULT_COOP
-  assert response["Content-Security-Policy"] == DEFAULT_CSP
-  assert response["Content-Security-Policy-Report-Only"] == DEFAULT_CSP_REPORT_ONLY
-
-  hsts = response["Strict-Transport-Security"]
-  assert "max-age=31536000" in hsts
-  assert "includeSubDomains" in hsts
-
-
-def test_robots_txt_security_headers_for_http_do_not_include_hsts():
-  client = Client()
-  response = client.get("/robots.txt")
-
-  assert response.status_code == 200
-  assert response["Cache-Control"] == "no-store, no-cache"
-  assert response["X-Frame-Options"] == "SAMEORIGIN"
-  assert response["Permissions-Policy"] == DEFAULT_PERMISSIONS_POLICY
-  assert response["Cross-Origin-Opener-Policy"] == DEFAULT_COOP
-  assert response["Content-Security-Policy"] == DEFAULT_CSP
-  assert response["Content-Security-Policy-Report-Only"] == DEFAULT_CSP_REPORT_ONLY
-  assert "Strict-Transport-Security" not in response
-
-
 def test_spa_index_keeps_explicit_cache_control_from_view():
   client = Client()
   response = client.get("/machine/", secure=True)

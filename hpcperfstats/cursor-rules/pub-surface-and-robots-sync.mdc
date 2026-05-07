@@ -1,13 +1,17 @@
 ---
 description: Keep robots Allow paths aligned with anonymous `/pub/` SPA routes
 globs:
-  - "**/public_robots_allow_paths.py"
-  - "**/views.py"
+  - "**/publicRobotsAllowPrefixes.js"
+  - "**/robots-txt-format.js"
+  - "**/vite-plugins/generate-robots-txt.js"
+  - "**/vite.config.js"
   - "**/AppPub.jsx"
   - "**/main.jsx"
   - "**/nginx-static-files.conf"
+  - "**/nginx-edge-security-headers.inc"
   - "**/test_web_pages_e2e.py"
   - "**/test_web_pages_browser_e2e.py"
+  - "**/public_robots_js_registry.py"
 alwaysApply: false
 ---
 
@@ -17,15 +21,13 @@ alwaysApply: false
 
 - Any new user-facing React route or bookmark URL under the **`/pub/`** basename (see [`AppPub.jsx`](hpcperfstats/site/frontend/src/AppPub.jsx)).
 - Django/nginx/top-level URL changes that expose another crawlable HTML path under **`/pub/`**.
-- Changes to [`nginx-static-files.conf`](services-conf/nginx-static-files.conf) SPA shell routing for **`/pub/`**.
+- Changes to [`nginx-static-files.conf`](services-conf/nginx-static-files.conf) SPA shell routing for **`/pub/`** or static **`/robots.txt`**.
 
 ## Required actions (same task)
 
-1. Append the browser path (no hostname; include a trailing slash when it is the canonical directory URL) to **`PUBLIC_ROBOTS_ALLOW_PREFIXES`** in [`public_robots_allow_paths.py`](hpcperfstats/site/hpcperfstats_site/public_robots_allow_paths.py).
-2. Confirm [`robots_txt`](hpcperfstats/site/hpcperfstats_site/views.py) still emits **`User-agent: *`**, each **`Allow:`** line from that tuple, then **`Disallow: /`**.
-3. Update assertions in [`test_web_pages_e2e.py`](hpcperfstats/site/machine/tests/test_web_pages_e2e.py) and [`test_web_pages_browser_e2e.py`](hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py):
-   - **`Allow:`** substring checks must cover every registry prefix (import the registry; avoid hardcoding duplicates).
-   - WSGI contract: Django must still return **404** for **`/pub/`** HTML deep links (nginx-only shell), matching **`/machine/`** behavior.
+1. Append the browser path (no hostname; include a trailing slash when it is the canonical directory URL) to **`PUBLIC_ROBOTS_ALLOW_PREFIXES`** in [`publicRobotsAllowPrefixes.js`](hpcperfstats/site/frontend/src/config/publicRobotsAllowPrefixes.js) and run a frontend build so **`robots.txt`** is regenerated under **`hpcperfstats_site/static/frontend/`**.
+2. Confirm the emitted body is **`User-agent: *`**, each **`Allow:`** line from that list (stable order), then **`Disallow: /`** (see [`robots-txt-format.js`](hpcperfstats/site/frontend/src/utils/robots-txt-format.js)).
+3. Update assertions in [`test_web_pages_e2e.py`](hpcperfstats/site/machine/tests/test_web_pages_e2e.py) and [`test_web_pages_browser_e2e.py`](hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py) if needed: **`Allow:`** expectations are driven by the JS registry via [`public_robots_js_registry.py`](hpcperfstats/tests/public_robots_js_registry.py) helpers. WSGI must return **404** for **`/robots.txt`** and for **`/pub/`** HTML deep links (nginx-only shell), matching **`/machine/`** behavior.
 4. Do **not** add **`Allow:`** entries for **`/api/pub/`** JSON unless product/security explicitly requires crawler access (default: APIs remain disallowed by the blanket **`Disallow: /`** except as overridden).
 
 ## Overlap

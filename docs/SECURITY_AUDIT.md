@@ -59,7 +59,7 @@ No high-severity issues; medium B608 on dynamic SQL helpers—treat as “verify
 - HSTS, `SECURE_PROXY_SSL_HEADER`, `Permissions-Policy`, `COOP`, CSP + CSP-Report-Only in middleware.
 - API key material hashed at rest; staff ingest requires `_require_staff`.
 - API throttling is active for authenticated and expensive API routes, with stricter staff-ingest scope.
-- `robots.txt` defaults to **`Disallow: /`** with explicit **`Allow:`** prefixes only for anonymous **`/pub/`** HTML shell paths (registry in `public_robots_allow_paths.py`); **`/api/pub/`** remains uncrawlable by default.
+- `robots.txt` defaults to **`Disallow: /`** with explicit **`Allow:`** prefixes only for anonymous **`/pub/`** HTML shell paths (canonical registry in [`publicRobotsAllowPrefixes.js`](../hpcperfstats/site/frontend/src/config/publicRobotsAllowPrefixes.js), emitted at Vite build into static files; nginx serves **`/robots.txt`** from **`STATIC_ROOT`**); **`/api/pub/`** remains uncrawlable by default.
 - Anonymous **`GET /api/pub/cluster-dashboard/`** returns only pre-warmed JSON bundles; scoped DRF throttle **`public_cluster_dashboard`** limits abuse (`REST_FRAMEWORK` rate + env override; legacy `API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE` respected as fallback).
 - `SafeJSONRenderer` avoids non-finite JSON floats.
 
@@ -76,3 +76,4 @@ No high-severity issues; medium B608 on dynamic SQL helpers—treat as “verify
 | 2026-05-06 | Closed F1/F2/F3/F4: dependency floor bumps, CI audit workflow, API throttles + ingest body cap, OAuth session/token hardening, and production CORS fail-fast checks. |
 | 2026-05-06 | Anonymous **`GET /api/pub/monthly-metrics/`** documented with scoped throttle + selective **`robots.txt`** `Allow` entries for **`/pub/`** HTML only. |
 | 2026-05-07 | **`/pub/monthly-metrics`** and **`GET /api/pub/monthly-metrics/`** rebranded to **`/pub/cluster-dashboard`** and **`GET /api/pub/cluster-dashboard/`** (throttle scope **`public_cluster_dashboard`**; legacy env **`API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE`** still honored as fallback). |
+| 2026-05-07 | **`robots.txt`**: nginx serves a Vite-built static file; Allow-list registry is **`publicRobotsAllowPrefixes.js`** (edge headers in **`nginx-edge-security-headers.inc`**). |

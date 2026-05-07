@@ -40,7 +40,6 @@ EXPECTED_ROUTE_TEMPLATES: FrozenSet[str] = frozenset({
     "login_prompt",
     "logout/",
     "oauth_callback/",
-    "robots.txt",
 })
 
 
@@ -121,8 +120,6 @@ def build_pipeline_http_endpoint_specs(
       "logout/", "GET", "/logout/", 200, 399, None, True))
   add(PipelineHttpEndpointSpec(
       "oauth_callback/", "GET", "/oauth_callback/", 200, 399, None, True))
-  add(PipelineHttpEndpointSpec(
-      "robots.txt", "GET", "/robots.txt", 200, 299, "text/plain", True))
 
   # --- APIRequestContext (JSON / API) ---
   add(PipelineHttpEndpointSpec(

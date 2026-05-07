@@ -23,12 +23,12 @@ This allowlist must stay aligned with **top-level routes intended to hit Django/
 ## Required actions
 
 1. **`services-conf/nginx-static-files.conf`**
-   - For each **root** Django segment that must reach Gunicorn via **`proxy`**, add or adjust a **`location`** (exact-match **`location = ...`** for paths like **`/robots.txt`** or **`/login_prompt`**; prefix **`location ^~ ...`** for paths like **`/oauth_callback/`**).
+   - For each **root** Django segment that must reach Gunicorn via **`proxy`**, add or adjust a **`location`** (exact-match **`location = ...`** for paths like **`/login_prompt`**; prefix **`location ^~ ...`** for paths like **`/oauth_callback/`**). Paths answered only from nginx static files (for example **`/robots.txt`**) must **not** use **`proxy_pass`**.
    - If you **remove** a root route from Django, remove the corresponding **`location`** (or stale probes keep forwarding useless traffic).
 2. **`hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py`**
    - Extend or shrink **`test_nginx_static_files_conf_allowlists_django_prefixes_and_default_404`** string markers so the test continues to lock the allowlist contract whenever prefixes change.
 3. **`docker-compose.yaml`**
-   - If introducing a **new** included snippet path for nginx, add the matching **`proxy`** **`volumes`** mount (today **`nginx-static-files.conf`** and **`nginx-django-proxy-common.inc`** are mounted).
+   - If introducing a **new** included snippet path for nginx, add the matching **`proxy`** **`volumes`** mount (today **`nginx-static-files.conf`**, **`nginx-django-proxy-common.inc`**, and **`nginx-edge-security-headers.inc`** are mounted).
 
 ## Verification
 

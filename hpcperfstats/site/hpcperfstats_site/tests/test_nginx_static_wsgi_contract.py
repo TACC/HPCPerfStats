@@ -24,8 +24,26 @@ def test_wsgi_client_does_not_serve_spa_shell_routes():
 def test_wsgi_resolves_known_app_route():
   """Sanity: Client reaches urlpatterns (avoid false pass on generic 404)."""
   client = Client()
-  response = client.get(reverse("robots_txt"))
-  assert response.status_code == 200
+  response = client.get(reverse("csp_report"))
+  assert response.status_code == 405
+
+
+def test_wsgi_robots_txt_is_owned_by_nginx_not_wsgi():
+  """Production serves /robots.txt from static files at the edge; Gunicorn must not answer it."""
+  client = Client()
+  assert client.get("/robots.txt").status_code == 404
+
+
+def test_nginx_static_files_conf_robots_txt_is_static_with_edge_headers():
+  repo_root = Path(__file__).resolve().parents[4]
+  conf = (repo_root / "services-conf" / "nginx-static-files.conf").read_text(encoding="utf-8")
+  assert "location = /robots.txt" in conf
+  assert "alias /srv/static/frontend/robots.txt" in conf
+  assert "include /etc/nginx/nginx-edge-security-headers.inc" in conf
+  edge = (repo_root / "services-conf" / "nginx-edge-security-headers.inc").read_text(encoding="utf-8")
+  assert "add_header Cache-Control" in edge
+  assert "add_header X-Content-Type-Options" in edge
+  assert "nosniff" in edge
 
 
 def test_nginx_static_files_conf_returns_favicon_at_edge():

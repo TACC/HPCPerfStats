@@ -286,7 +286,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    ```
 
    Compose bind-mounts **`./services-conf/nginx.conf`** to **`/etc/nginx/http.d/default.conf`**
-   on **`proxy`** (same pattern as **`nginx-static-files.conf`** / **`nginx-django-proxy-common.inc`**),
+   on **`proxy`** (same pattern as **`nginx-static-files.conf`**, **`nginx-django-proxy-common.inc`**,
+   and **`nginx-edge-security-headers.inc`**),
    so this **`cp`** step is **required** before **`docker compose up`**. Edit **`nginx.conf`** for TLS paths.
 
    The proxy image still **`cp`**s **`nginx.conf`** into **`default.conf`** at **build** time when that file exists in the context (**`nginx.conf.example`** otherwise) so non-Compose **`docker run`** has a usable baseline.

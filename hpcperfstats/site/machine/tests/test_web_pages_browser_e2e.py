@@ -8,8 +8,9 @@ import pytest
 from django.core.wsgi import get_wsgi_application
 
 from hpcperfstats.tests.playwright_axe import assert_no_serious_axe_violations
-from hpcperfstats.site.hpcperfstats_site.public_robots_allow_paths import (
-    PUBLIC_ROBOTS_ALLOW_PREFIXES,
+from hpcperfstats.tests.public_robots_js_registry import (
+    format_public_robots_txt_body,
+    load_public_robots_allow_prefixes,
 )
 
 try:
@@ -69,12 +70,13 @@ def test_browser_flow_for_web_pages():
         assert response.status == 404
 
       robots_probe = page.context.request.get(f"{base_url}/robots.txt")
-      assert robots_probe.status == 200
-      robots_text = robots_probe.text()
-      assert "User-agent: *" in robots_text
-      assert "Disallow: /" in robots_text
-      for prefix in PUBLIC_ROBOTS_ALLOW_PREFIXES:
-        assert "Allow: {}".format(prefix) in robots_text
+      assert robots_probe.status == 404
+      prefixes = load_public_robots_allow_prefixes()
+      expected = format_public_robots_txt_body(prefixes)
+      assert "User-agent: *" in expected
+      for prefix in prefixes:
+        assert "Allow: {}".format(prefix) in expected
+      assert "Disallow: /" in expected
 
       # Browsers wrap text/plain robots bodies in a shell that fails axe;
       # probe a minimal document instead so WCAG checks still exercise the harness.

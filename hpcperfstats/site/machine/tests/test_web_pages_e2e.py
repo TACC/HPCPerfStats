@@ -10,6 +10,8 @@ Bokeh job-list embed regressions (real BokehJS + Playwright) live in
 ``test_bokeh_job_list_embed_browser_e2e.py``.
 """
 
+from pathlib import Path
+
 import pytest
 from django.core.cache import cache
 from django.test import Client
@@ -18,8 +20,9 @@ from django.utils import timezone
 from unittest.mock import Mock, patch
 
 from hpcperfstats.site.machine.models import job_data
-from hpcperfstats.site.hpcperfstats_site.public_robots_allow_paths import (
-    PUBLIC_ROBOTS_ALLOW_PREFIXES,
+from hpcperfstats.tests.public_robots_js_registry import (
+    format_public_robots_txt_body,
+    load_public_robots_allow_prefixes,
 )
 
 @pytest.mark.django_db
@@ -49,13 +52,18 @@ class TestWebPagesEndToEnd:
     ):
       assert client.get(path).status_code == 404
 
-    robots_response = client.get("/robots.txt")
-    assert robots_response.status_code == 200
-    robots_body = robots_response.content.decode("utf-8")
-    assert "User-agent: *" in robots_body
-    assert "Disallow: /" in robots_body
-    for prefix in PUBLIC_ROBOTS_ALLOW_PREFIXES:
-      assert "Allow: {}".format(prefix) in robots_body
+    assert client.get("/robots.txt").status_code == 404
+    prefixes = load_public_robots_allow_prefixes()
+    expected_body = format_public_robots_txt_body(prefixes)
+    assert "User-agent: *" in expected_body
+    assert "Disallow: /" in expected_body
+    for prefix in prefixes:
+      assert "Allow: {}".format(prefix) in expected_body
+    built_path = Path(__file__).resolve().parents[4] / (
+        "hpcperfstats/site/hpcperfstats_site/static/frontend/robots.txt"
+    )
+    if built_path.is_file():
+      assert built_path.read_text(encoding="utf-8") == expected_body
 
     csp_response = client.post(
         "/csp-report/",

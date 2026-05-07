@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { generateRobotsTxtPlugin } from "./vite-plugins/generate-robots-txt.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
@@ -74,6 +75,7 @@ export default defineConfig({
   plugins: [
     pubSpaIndexFallbackPlugin(),
     bokehDependencyIndirectEvalPlugin(),
+    generateRobotsTxtPlugin(),
     react(),
   ],
   root: ".",
