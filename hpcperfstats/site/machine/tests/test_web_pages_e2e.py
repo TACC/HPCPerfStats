@@ -45,7 +45,7 @@ class TestWebPagesEndToEnd:
         "/machine/admin_monitor/",
         "/machine/job_monitor/",
         "/pub/",
-        "/pub/monthly-metrics",
+        "/pub/cluster-dashboard",
     ):
       assert client.get(path).status_code == 404
 

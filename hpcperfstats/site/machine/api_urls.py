@@ -22,8 +22,8 @@ urlpatterns = [
     path("job_monitor/gpu/", api.job_monitor_gpu_for_user),
     path("sacct/ingest/", api.sacct_ingest),
     path(
-        "pub/monthly-metrics/",
-        public_api.PublicMonthlyMetricsAggregateView.as_view(),
-        name="public_monthly_metrics",
+        "pub/cluster-dashboard/",
+        public_api.PublicClusterDashboardAggregateView.as_view(),
+        name="public_cluster_dashboard",
     ),
 ]

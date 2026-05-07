@@ -116,9 +116,9 @@ function buildJobHistogramSearchParams(params, { group, metric }) {
 
 export default api;
 
-/** Anonymous public dashboard bundle — must stay lightweight (pre-warmed DB artifacts only). */
-export async function fetchPubMonthlyMetrics() {
-  const res = await fetch(`${API_BASE}/pub/monthly-metrics/`, {
+/** Anonymous public cluster dashboard bundle — must stay lightweight (pre-warmed DB artifacts only). */
+export async function fetchPubClusterDashboard() {
+  const res = await fetch(`${API_BASE}/pub/cluster-dashboard/`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "omit",

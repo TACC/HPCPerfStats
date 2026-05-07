@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import PageMonthlyMetrics from "./PageMonthlyMetrics.jsx";
+import PageClusterDashboard from "./PageClusterDashboard.jsx";
 
 vi.mock("../components/BokehEmbed.jsx", () => ({
   default: function BokehEmbedStub({ item, id }) {
@@ -14,7 +14,7 @@ vi.mock("../components/BokehEmbed.jsx", () => ({
   },
 }));
 
-describe("PageMonthlyMetrics", () => {
+describe("PageClusterDashboard", () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
@@ -53,19 +53,21 @@ describe("PageMonthlyMetrics", () => {
 
   it("loads anonymous dashboard bundle without session APIs", async () => {
     render(
-      <MemoryRouter initialEntries={["/monthly-metrics"]}>
+      <MemoryRouter initialEntries={["/cluster-dashboard"]}>
         <Routes>
-          <Route path="monthly-metrics" element={<PageMonthlyMetrics />} />
+          <Route path="cluster-dashboard" element={<PageClusterDashboard />} />
         </Routes>
       </MemoryRouter>,
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/Monthly metrics/i)).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { level: 1, name: "Cluster dashboard" }),
+      ).toBeInTheDocument();
     });
 
     expect(global.fetch).toHaveBeenCalledWith(
-      "/api/pub/monthly-metrics/",
+      "/api/pub/cluster-dashboard/",
       expect.objectContaining({
         method: "GET",
         credentials: "omit",

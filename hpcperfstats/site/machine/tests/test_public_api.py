@@ -17,20 +17,20 @@ from django.test import Client
         "sections": {"expansion_factor": {}},
     },
 )
-def test_public_monthly_metrics_allows_anonymous_get(_mock_bundle):
-  client = Client()
-  response = client.get("/api/pub/monthly-metrics/")
-  assert response.status_code == 200
-  payload = response.json()
-  assert payload["status"] in ("loading", "ready")
-  assert "sections" in payload
+def test_public_cluster_dashboard_allows_anonymous_get(_mock_bundle):
+    client = Client()
+    response = client.get("/api/pub/cluster-dashboard/")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] in ("loading", "ready")
+    assert "sections" in payload
 
 
 @pytest.mark.django_db(databases=[])
-def test_public_monthly_metrics_rejects_post():
-  client = Client()
-  response = client.post("/api/pub/monthly-metrics/")
-  assert response.status_code == 405
+def test_public_cluster_dashboard_rejects_post():
+    client = Client()
+    response = client.post("/api/pub/cluster-dashboard/")
+    assert response.status_code == 405
 
 
 @pytest.mark.django_db(databases=[])
@@ -38,8 +38,8 @@ def test_public_monthly_metrics_rejects_post():
     "hpcperfstats.site.machine.public_api.assemble_public_monthly_metrics_bundle",
     return_value={"status": "loading", "sections": {}},
 )
-def test_public_monthly_metrics_sets_reasonable_cache_header(_mock_bundle):
-  client = Client()
-  response = client.get("/api/pub/monthly-metrics/")
-  cache_control = response.get("Cache-Control", "")
-  assert "max-age" in cache_control.lower()
+def test_public_cluster_dashboard_sets_reasonable_cache_header(_mock_bundle):
+    client = Client()
+    response = client.get("/api/pub/cluster-dashboard/")
+    cache_control = response.get("Cache-Control", "")
+    assert "max-age" in cache_control.lower()

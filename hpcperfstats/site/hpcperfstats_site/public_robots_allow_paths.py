@@ -6,5 +6,5 @@ browser path here (no hostname) and extend ``test_web_pages_*`` robots checks.
 
 PUBLIC_ROBOTS_ALLOW_PREFIXES: tuple[str, ...] = (
     "/pub/",
-    "/pub/monthly-metrics",
+    "/pub/cluster-dashboard",
 )

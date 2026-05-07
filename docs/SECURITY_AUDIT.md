@@ -60,7 +60,7 @@ No high-severity issues; medium B608 on dynamic SQL helpers—treat as “verify
 - API key material hashed at rest; staff ingest requires `_require_staff`.
 - API throttling is active for authenticated and expensive API routes, with stricter staff-ingest scope.
 - `robots.txt` defaults to **`Disallow: /`** with explicit **`Allow:`** prefixes only for anonymous **`/pub/`** HTML shell paths (registry in `public_robots_allow_paths.py`); **`/api/pub/`** remains uncrawlable by default.
-- Anonymous **`GET /api/pub/monthly-metrics/`** returns only pre-warmed JSON bundles; scoped DRF throttle **`public_monthly_metrics`** limits abuse (`REST_FRAMEWORK` rate + env override).
+- Anonymous **`GET /api/pub/cluster-dashboard/`** returns only pre-warmed JSON bundles; scoped DRF throttle **`public_cluster_dashboard`** limits abuse (`REST_FRAMEWORK` rate + env override; legacy `API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE` respected as fallback).
 - `SafeJSONRenderer` avoids non-finite JSON floats.
 
 ## References
@@ -74,4 +74,5 @@ No high-severity issues; medium B608 on dynamic SQL helpers—treat as “verify
 |------------|--------|
 | 2026-05-06 | Initial memo, scans, findings table; CSP report CSRF fix documented. |
 | 2026-05-06 | Closed F1/F2/F3/F4: dependency floor bumps, CI audit workflow, API throttles + ingest body cap, OAuth session/token hardening, and production CORS fail-fast checks. |
-| 2026-05-06 | Anonymous **`/api/pub/monthly-metrics/`** documented with scoped throttle + selective **`robots.txt`** `Allow` entries for **`/pub/`** HTML only. |
+| 2026-05-06 | Anonymous **`GET /api/pub/monthly-metrics/`** documented with scoped throttle + selective **`robots.txt`** `Allow` entries for **`/pub/`** HTML only. |
+| 2026-05-07 | **`/pub/monthly-metrics`** and **`GET /api/pub/monthly-metrics/`** rebranded to **`/pub/cluster-dashboard`** and **`GET /api/pub/cluster-dashboard/`** (throttle scope **`public_cluster_dashboard`**; legacy env **`API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE`** still honored as fallback). |

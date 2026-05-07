@@ -8,16 +8,16 @@ from hpcperfstats.site.machine.public_metrics_artifacts import (
     assemble_public_monthly_metrics_bundle,
 )
 from hpcperfstats.site.machine.renderers import SafeJSONRenderer
-from hpcperfstats.site.machine.throttles import PublicMonthlyMetricsThrottle
+from hpcperfstats.site.machine.throttles import PublicClusterDashboardThrottle
 
 
-class PublicMonthlyMetricsAggregateView(APIView):
-  """Bundle every persisted expansion-factor histogram artifact for Monthly Metrics."""
+class PublicClusterDashboardAggregateView(APIView):
+  """Bundle every persisted expansion-factor histogram artifact for the public cluster dashboard."""
 
   permission_classes = [AllowAny]
   authentication_classes = []
-  throttle_scope = "public_monthly_metrics"
-  throttle_classes = [PublicMonthlyMetricsThrottle]
+  throttle_scope = "public_cluster_dashboard"
+  throttle_classes = [PublicClusterDashboardThrottle]
   renderer_classes = [SafeJSONRenderer]
   parser_classes = []
 

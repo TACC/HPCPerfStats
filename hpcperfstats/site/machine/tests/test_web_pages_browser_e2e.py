@@ -62,7 +62,7 @@ def test_browser_flow_for_web_pages():
           "/machine/job/123/",
           "/machine/job/123/cpu/",
           "/pub/",
-          "/pub/monthly-metrics",
+          "/pub/cluster-dashboard",
       ):
         response = page.goto(f"{base_url}{path}")
         assert response is not None

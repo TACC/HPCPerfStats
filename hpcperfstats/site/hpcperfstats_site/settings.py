@@ -422,10 +422,10 @@ REST_FRAMEWORK = {
             "API_THROTTLE_STAFF_INGEST_RATE",
             "30/min",
         ),
-        # Anonymous `/api/pub/monthly-metrics/` pre-warmed bundle (see ``public_api.py``).
-        "public_monthly_metrics": os.environ.get(
-            "API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE",
-            "240/min",
+        # Anonymous `/api/pub/cluster-dashboard/` pre-warmed bundle (see ``public_api.py``).
+        "public_cluster_dashboard": os.environ.get(
+            "API_THROTTLE_PUBLIC_CLUSTER_DASHBOARD_RATE",
+            os.environ.get("API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE", "240/min"),
         ),
     },
 }

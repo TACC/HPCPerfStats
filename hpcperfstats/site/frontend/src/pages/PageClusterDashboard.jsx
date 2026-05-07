@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import BokehEmbed from "../components/BokehEmbed.jsx";
-import { fetchPubMonthlyMetrics } from "../api.js";
+import { fetchPubClusterDashboard } from "../api.js";
 import { useDocumentTitle } from "../utils/useDocumentTitle.js";
 import { formatDecimalStandard } from "../utils/formatDecimal.js";
 
@@ -117,14 +117,14 @@ function SectionExpansionFactor({ bundle }) {
   );
 }
 
-export default function PageMonthlyMetrics() {
-  useDocumentTitle("Monthly metrics — public");
+export default function PageClusterDashboard() {
+  useDocumentTitle("Cluster dashboard — public");
   const [bundle, setBundle] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetchPubMonthlyMetrics()
+    fetchPubClusterDashboard()
       .then((data) => {
         if (!cancelled) setBundle(data);
       })
@@ -139,7 +139,7 @@ export default function PageMonthlyMetrics() {
   return (
     <div className="container py-4">
       <header className="mb-4">
-        <h1 className="h3">Monthly metrics</h1>
+        <h1 className="h3">Cluster dashboard</h1>
         <p className="text-muted mb-0">
           Public cluster dashboards built from pre-warmed aggregates (no live heavy queries).
         </p>

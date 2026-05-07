@@ -28,7 +28,7 @@ EXPECTED_ROUTE_TEMPLATES: FrozenSet[str] = frozenset({
     "api/jobs/<str:pk>/",
     "api/jobs/<str:pk>/plots/",
     "api/jobs/histograms/",
-    "api/pub/monthly-metrics/",
+    "api/pub/cluster-dashboard/",
     "api/sacct/ingest/",
     "api/search/",
     "api/session/",
@@ -136,7 +136,7 @@ def build_pipeline_http_endpoint_specs(
       "api/jobs/histograms/", "GET", "/api/jobs/histograms/?group=metric&metric=runtime",
       200, 299, "application/json", False))
   add(PipelineHttpEndpointSpec(
-      "api/pub/monthly-metrics/", "GET", "/api/pub/monthly-metrics/",
+      "api/pub/cluster-dashboard/", "GET", "/api/pub/cluster-dashboard/",
       200, 299, "application/json", False))
   add(PipelineHttpEndpointSpec(
       "api/jobs/<str:pk>/", "GET", "/api/jobs/{}/".format(jid),
