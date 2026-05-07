@@ -54,7 +54,7 @@ if RABBITMQ
 	fi
 endif
 
-EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh
+EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt $(srcdir)/scripts/bootstrap_local_rabbitmq.sh
 
 if RABBITMQ
 .PHONY: check-rabbitmq-integration

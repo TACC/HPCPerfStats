@@ -73,7 +73,8 @@ fi
 for distfile in \
   tests/test_monitor_configure_help.sh.in \
   tests/run_tests.sh \
-  tests/README.md
+  tests/README.md \
+  tests/scripts/bootstrap_local_rabbitmq.sh
 do
   if test ! -f "${MONITOR_DIR}/${distfile}"; then
     echo "Missing file required for make dist: ${MONITOR_DIR}/${distfile}" >&2
