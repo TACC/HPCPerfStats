@@ -54,6 +54,15 @@ def test_nginx_static_files_conf_returns_favicon_at_edge():
   assert "return 404" in conf
 
 
+def test_nginx_static_files_conf_sets_nosniff_and_html_types_on_static_locations():
+  """Nginx-served paths get nosniff; SPA shells get explicit HTML typing (not proxied to Django)."""
+  repo_root = Path(__file__).resolve().parents[4]
+  conf = (repo_root / "services-conf" / "nginx-static-files.conf").read_text(encoding="utf-8")
+  assert conf.count('add_header X-Content-Type-Options "nosniff" always') >= 6
+  assert conf.count("default_type text/html") == 2
+  assert conf.count("charset utf-8") == 2
+
+
 def test_nginx_static_files_conf_allowlists_django_prefixes_and_default_404():
   """Proxy must not forward unknown paths; Django routes are enumerated explicitly."""
   repo_root = Path(__file__).resolve().parents[4]
