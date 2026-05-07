@@ -63,15 +63,22 @@ int main(void)
   stats_collect_on_changeover = 0;
   type.st_collect(&type);
   assert(g_get_current_stats_calls == 2);
+  {
+    unsigned long long cached = g_cpu_peak_fp64_flops_per_s;
+    nr_cpus = 1;
+    type.st_collect(&type);
+    assert(g_get_current_stats_calls == 3);
+    assert(g_cpu_peak_fp64_flops_per_s == cached);
+  }
 
   setenv("HPCPERFSTATS_ROOFLINE_MODE", "periodic", 1);
   setenv("HPCPERFSTATS_ROOFLINE_PERIOD_SAMPLES", "100", 1);
   stats_collect_on_changeover = 0;
   type.st_collect(&type);
-  assert(g_get_current_stats_calls == 2);
+  assert(g_get_current_stats_calls == 3);
   stats_collect_on_changeover = 1;
   type.st_collect(&type);
-  assert(g_get_current_stats_calls == 3);
+  assert(g_get_current_stats_calls == 4);
 
   printf("test_roofline_hw_peak_changeover passed\n");
   return 0;

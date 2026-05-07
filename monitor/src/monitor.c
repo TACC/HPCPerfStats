@@ -13,6 +13,7 @@
 #include "monitor_daemon.h"
 #include "monitor_log.h"
 #include "stats_buffer.h"
+#include "stats_runtime.h"
 #include "string1.h"
 #include "stats.h"
 #include "trace.h"
@@ -169,6 +170,10 @@ int main(int argc, char *argv[])
 
   nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
   processor = signature(&n_pmcs);
+  if (stats_runtime_daemon_ensure_types() < 0) {
+    monitor_log_error("Failed preparing daemon runtime types at startup\n");
+    return EXIT_FAILURE;
+  }
 
   /*
    * Empty ring: publish `$` before replay so listend recreates `current` on startup.

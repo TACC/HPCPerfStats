@@ -347,8 +347,12 @@ static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_h
   if (sf == NULL)
     return;
 
-  stats_runtime_teardown();
-  stats_runtime_daemon_prepare_types();
+  if (stats_runtime_daemon_ensure_types() < 0) {
+    ERROR("Failed preparing daemon stats runtime\n");
+    stats_buffer_close(sf);
+    free(sf);
+    return;
+  }
   if (write_hdr)
     stats_wr_hdr(sf);
   if (mark_line != NULL)
@@ -673,17 +677,12 @@ void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
 void monitor_daemon_signal_cb_int(struct ev_loop *loop, ev_signal *sig, int revents)
 {
   (void)revents;
-  size_t i = 0;
-  struct stats_type *type;
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)sig->data;
   monitor_daemon_resend_ring_buffer_if_nonempty(w);
   save_file_ring_buffer(w);
   print_buffer_status(w);
   stats_buffer_rmq_shutdown();
-  cpu_stats_invalidate_file_caches();
-  net_stats_invalidate_iface_cache();
-  while ((type = stats_type_for_each(&i)) != NULL)
-    stats_type_destroy(type);
+  stats_runtime_daemon_reset_types();
   monitor_log_info( "Stopping hpcperfstatsd\n");
   if (pid_fd != -1) {
     lockf(pid_fd, F_ULOCK, 0);
@@ -700,6 +699,7 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
   (void)revents;
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)sig->data;
   monitor_log_info( "Reloading hpcperfstatsd config file %s\n", conf_file_name);
+  stats_runtime_daemon_reset_types();
   stats_buffer_runtime_caches_reset();
   hwdetect_invalidate_probe_cache();
   read_conf_file();

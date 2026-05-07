@@ -95,13 +95,24 @@ static int env_int_or_default(const char *name, int fallback)
 static unsigned long g_nvidia_detect_miss_streak = 0;
 struct hwdetect_probe_cache {
   int valid;
-  time_t expires_at;
+  long long cached_mono_us;
   int has_nvidia_gpu;
   int has_amd_gpu;
   int has_ib;
   int has_opa;
 };
 static struct hwdetect_probe_cache g_probe_cache;
+static unsigned long g_probe_cache_hits;
+static unsigned long g_probe_cache_misses;
+
+static long long hwdetect_monotonic_us(void)
+{
+  struct timespec ts;
+
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+    return -1;
+  return (long long) ts.tv_sec * 1000000LL + (long long) ts.tv_nsec / 1000LL;
+}
 
 void hwdetect_reset_nvidia_disable_state(void)
 {
@@ -139,8 +150,11 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
                                             int *has_ib,
                                             int *has_opa)
 {
-  time_t now = time(NULL);
+  long long now_mono_us = hwdetect_monotonic_us();
   int ttl_sec = env_int_or_default("HPCPERFSTATS_LSPCI_CACHE_TTL_SEC", 300);
+  long long ttl_us = (long long) ttl_sec * 1000000LL;
+  long long started_us = now_mono_us;
+  long long elapsed_us = -1;
   int nvidia = 0;
   int amd = 0;
   int ib = 0;
@@ -148,7 +162,9 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
   FILE *fp = popen("lspci -nn 2>/dev/null", "r");
   char line[1024];
 
-  if (g_probe_cache.valid && now > 0 && g_probe_cache.expires_at >= now) {
+  if (g_probe_cache.valid && now_mono_us > 0 && ttl_us > 0
+      && now_mono_us - g_probe_cache.cached_mono_us <= ttl_us) {
+    g_probe_cache_hits++;
     if (has_nvidia_gpu != NULL)
       *has_nvidia_gpu = g_probe_cache.has_nvidia_gpu;
     if (has_amd_gpu != NULL)
@@ -159,6 +175,7 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
       *has_opa = g_probe_cache.has_opa;
     return;
   }
+  g_probe_cache_misses++;
 
   if (fp == NULL) {
     if (has_nvidia_gpu != NULL)
@@ -209,13 +226,20 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
   if (has_opa != NULL)
     *has_opa = opa;
 
-  if (now > 0 && ttl_sec > 0) {
+  if (now_mono_us > 0 && ttl_sec > 0) {
     g_probe_cache.valid = 1;
-    g_probe_cache.expires_at = now + ttl_sec;
+    g_probe_cache.cached_mono_us = now_mono_us;
     g_probe_cache.has_nvidia_gpu = nvidia;
     g_probe_cache.has_amd_gpu = amd;
     g_probe_cache.has_ib = ib;
     g_probe_cache.has_opa = opa;
+  }
+  if (started_us > 0) {
+    elapsed_us = hwdetect_monotonic_us() - started_us;
+    if (elapsed_us > 50000LL) {
+      TRACE("hwdetect probe slow: elapsed_us=%lld cache_hits=%lu cache_misses=%lu\n",
+	    elapsed_us, g_probe_cache_hits, g_probe_cache_misses);
+    }
   }
 }
 

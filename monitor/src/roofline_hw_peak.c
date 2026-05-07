@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "stats.h"
 #include "roofline_hw_peak.h"
 
@@ -32,6 +33,25 @@ enum roofline_emit_mode {
 
 static unsigned long g_roofline_collect_calls;
 static unsigned long g_roofline_design_skip_calls;
+struct roofline_cached_peaks {
+  int initialized;
+  unsigned long long gpu_source;
+  unsigned long long cpu_flops;
+  unsigned long long cpu_bw;
+  unsigned long long gpu_flops;
+  unsigned long long gpu_mem_bw;
+  unsigned long long gpu_io_bw;
+};
+static struct roofline_cached_peaks g_roofline_cache;
+
+static long long roofline_monotonic_us(void)
+{
+  struct timespec ts;
+
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+    return -1;
+  return (long long) ts.tv_sec * 1000000LL + (long long) ts.tv_nsec / 1000LL;
+}
 
 static int roofline_env_int_or_default(const char *name, int fallback)
 {
@@ -561,12 +581,6 @@ static double detect_gpu_fp64_peak_vendor_runtime(void)
 static void roofline_hw_peak_collect(struct stats_type *type)
 {
   struct stats *stats;
-  double cpu_flops = 0.0;
-  double cpu_bw = 0.0;
-  double gpu_flops = 0.0;
-  double gpu_mem_bw = 0.0;
-  double gpu_io_bw = 0.0;
-  unsigned long long gpu_source = GPU_PEAK_SOURCE_PROBED;
   enum roofline_emit_mode mode = roofline_get_emit_mode();
   int should_emit = 0;
 
@@ -600,27 +614,54 @@ static void roofline_hw_peak_collect(struct stats_type *type)
   if (stats == NULL)
     return;
 
-  if (getenv("HPCPERFSTATS_SKIP_HW_PROBE") != NULL) {
-    cpu_flops = (nr_cpus > 0) ? (double) nr_cpus * 1.0e9 : 1.0e9;
-    cpu_bw = 1.0e9;
-  } else {
-    cpu_flops = detect_cpu_peak_flops_per_s();
-    cpu_bw = detect_cpu_peak_dram_bw_bytes_per_s();
-    detect_gpu_peaks_from_sysfs(&gpu_flops, &gpu_mem_bw, &gpu_io_bw);
-    if (gpu_flops <= 0.0) {
-      gpu_flops = detect_gpu_fp64_peak_vendor_runtime();
-      if (gpu_flops > 0.0)
-        gpu_source = GPU_PEAK_SOURCE_VENDOR_RUNTIME;
+  if (!g_roofline_cache.initialized) {
+    double cpu_flops = 0.0;
+    double cpu_bw = 0.0;
+    double gpu_flops = 0.0;
+    double gpu_mem_bw = 0.0;
+    double gpu_io_bw = 0.0;
+    unsigned long long gpu_source = GPU_PEAK_SOURCE_PROBED;
+    long long started_us = roofline_monotonic_us();
+    long long elapsed_us = -1;
+
+    if (getenv("HPCPERFSTATS_SKIP_HW_PROBE") != NULL) {
+      cpu_flops = (nr_cpus > 0) ? (double) nr_cpus * 1.0e9 : 1.0e9;
+      cpu_bw = 1.0e9;
+    } else {
+      cpu_flops = detect_cpu_peak_flops_per_s();
+      cpu_bw = detect_cpu_peak_dram_bw_bytes_per_s();
+      detect_gpu_peaks_from_sysfs(&gpu_flops, &gpu_mem_bw, &gpu_io_bw);
+      if (gpu_flops <= 0.0) {
+	gpu_flops = detect_gpu_fp64_peak_vendor_runtime();
+	if (gpu_flops > 0.0)
+	  gpu_source = GPU_PEAK_SOURCE_VENDOR_RUNTIME;
+      }
+    }
+
+    g_roofline_cache.cpu_flops = clamp_rate(cpu_flops);
+    g_roofline_cache.cpu_bw = clamp_rate(cpu_bw);
+    g_roofline_cache.gpu_flops = clamp_rate(gpu_flops);
+    g_roofline_cache.gpu_mem_bw = clamp_rate(gpu_mem_bw);
+    g_roofline_cache.gpu_io_bw = clamp_rate(gpu_io_bw);
+    g_roofline_cache.gpu_source = gpu_source;
+    g_roofline_cache.initialized = 1;
+
+    if (started_us > 0) {
+      elapsed_us = roofline_monotonic_us() - started_us;
+      if (elapsed_us > 100000L) {
+	fprintf(stderr, "roofline_hw_peak: one-shot detect elapsed_us=%lld source=%llu\n", elapsed_us,
+		g_roofline_cache.gpu_source);
+      }
     }
   }
 
-  stats_set(stats, "cpu_peak_fp64_flops_per_s", clamp_rate(cpu_flops));
-  stats_set(stats, "cpu_peak_dram_bw_bytes_per_s", clamp_rate(cpu_bw));
-  stats_set(stats, "gpu_peak_fp64_flops_per_s", clamp_rate(gpu_flops));
-  stats_set(stats, "gpu_peak_mem_bw_bytes_per_s", clamp_rate(gpu_mem_bw));
-  stats_set(stats, "gpu_peak_io_link_bw_bytes_per_s", clamp_rate(gpu_io_bw));
+  stats_set(stats, "cpu_peak_fp64_flops_per_s", g_roofline_cache.cpu_flops);
+  stats_set(stats, "cpu_peak_dram_bw_bytes_per_s", g_roofline_cache.cpu_bw);
+  stats_set(stats, "gpu_peak_fp64_flops_per_s", g_roofline_cache.gpu_flops);
+  stats_set(stats, "gpu_peak_mem_bw_bytes_per_s", g_roofline_cache.gpu_mem_bw);
+  stats_set(stats, "gpu_peak_io_link_bw_bytes_per_s", g_roofline_cache.gpu_io_bw);
   stats_set(stats, "cpu_peak_source", CPU_PEAK_SOURCE_PROBED);
-  stats_set(stats, "gpu_peak_source", gpu_source);
+  stats_set(stats, "gpu_peak_source", g_roofline_cache.gpu_source);
   stats_set(stats, "peak_calc_version", PEAK_CALC_VERSION_V1);
 }
 

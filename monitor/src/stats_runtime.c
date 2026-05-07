@@ -5,6 +5,19 @@
 #include "metric_profiler.h"
 #include "monitor_log.h"
 #include "stats.h"
+#include "trace.h"
+#include <time.h>
+
+static int g_daemon_types_ready;
+
+static long long stats_runtime_monotonic_us(void)
+{
+	struct timespec ts;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+		return -1;
+	return (long long)ts.tv_sec * 1000000LL + (long long)ts.tv_nsec / 1000LL;
+}
 
 void stats_runtime_teardown(void)
 {
@@ -15,6 +28,7 @@ void stats_runtime_teardown(void)
 	net_stats_invalidate_iface_cache();
 	while ((type = stats_type_for_each(&i)) != NULL)
 		stats_type_destroy(type);
+	g_daemon_types_ready = 0;
 }
 
 void stats_runtime_daemon_prepare_types(void)
@@ -40,6 +54,31 @@ void stats_runtime_daemon_prepare_types(void)
 		if (type->st_begin != NULL)
 			(*type->st_begin)(type);
 	}
+	g_daemon_types_ready = 1;
+}
+
+void stats_runtime_daemon_reset_types(void)
+{
+	if (!g_daemon_types_ready)
+		return;
+	stats_runtime_teardown();
+}
+
+int stats_runtime_daemon_ensure_types(void)
+{
+	long long started_us;
+	long long elapsed_us;
+
+	if (g_daemon_types_ready)
+		return 0;
+	started_us = stats_runtime_monotonic_us();
+	stats_runtime_daemon_prepare_types();
+	if (started_us > 0) {
+		elapsed_us = stats_runtime_monotonic_us() - started_us;
+		if (elapsed_us > 50000LL)
+			TRACE("stats_runtime daemon prepare slow: elapsed_us=%lld\n", elapsed_us);
+	}
+	return 0;
 }
 
 void stats_runtime_collect_enabled_metrics(int require_selected)

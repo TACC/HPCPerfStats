@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <malloc.h>
 #include <ctype.h>
+#include <time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <linux/if.h>
@@ -15,6 +16,7 @@
 #include "trace.h"
 #include "path_open_fail_once.h"
 #include "sys_iter.h"
+#include "monitor_log.h"
 
 #define KEYS \
   X(collisions, "E", ""), \
@@ -47,6 +49,32 @@
 static char **net_cached_devs;
 static size_t net_n_cached;
 static unsigned net_ticks_since_rebuild;
+static time_t net_rebuild_skip_until;
+
+static int net_env_int_or_default(const char *name, int fallback)
+{
+  const char *v = getenv(name);
+  char *end = NULL;
+  long parsed;
+
+  if (v == NULL || *v == '\0')
+    return fallback;
+  parsed = strtol(v, &end, 10);
+  if (end == v || *end != '\0' || parsed <= 0)
+    return fallback;
+  if (parsed > 86400L)
+    return 86400;
+  return (int)parsed;
+}
+
+static long long net_monotonic_us(void)
+{
+  struct timespec ts;
+
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+    return -1;
+  return (long long) ts.tv_sec * 1000000LL + (long long) ts.tv_nsec / 1000LL;
+}
 
 void net_stats_invalidate_iface_cache(void)
 {
@@ -118,9 +146,22 @@ static void net_iface_cache_each(const char *base, const char *name, void *ctx)
 
 static void net_iface_cache_rebuild(struct stats_type *type)
 {
+  long long started_us = net_monotonic_us();
+  long long elapsed_us = -1;
+  int slow_warn_ms = net_env_int_or_default("HPCPERFSTATS_NET_REBUILD_WARN_MS", 50);
+  int skip_sec = net_env_int_or_default("HPCPERFSTATS_NET_REBUILD_SKIP_SEC", 120);
+
   (void)type;
   net_stats_invalidate_iface_cache();
   sys_iter_for_each("/sys/class/net", net_iface_cache_each, NULL);
+  if (started_us > 0) {
+    elapsed_us = net_monotonic_us() - started_us;
+    if (elapsed_us > (long long)slow_warn_ms * 1000LL) {
+      monitor_log_warn("net cache rebuild slow: elapsed_us=%lld ifaces=%zu; skip rebuild %ds\n",
+		       elapsed_us, net_n_cached, skip_sec);
+      net_rebuild_skip_until = time(NULL) + skip_sec;
+    }
+  }
 }
 
 static void net_collect_dev(struct stats_type *type, const char *dev)
@@ -142,6 +183,9 @@ static void net_collect(struct stats_type *type)
 
   net_ticks_since_rebuild++;
   if (net_n_cached == 0 || net_ticks_since_rebuild >= NET_IFACE_CACHE_REFRESH_INTERVAL) {
+    time_t now = time(NULL);
+    if (net_n_cached != 0 && net_rebuild_skip_until > 0 && now > 0 && now < net_rebuild_skip_until)
+      return;
     net_ticks_since_rebuild = 0;
     net_iface_cache_rebuild(type);
   }
