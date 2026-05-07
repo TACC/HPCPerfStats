@@ -74,6 +74,10 @@ fi
 export SKIP_DEPS=1
 export JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 export HPC_BUNDLE_RELEASE_BUILD=1
+%ifarch aarch64
+# Grace Hopper packaging: fail the build if DCGM probing would silently disable nvidia_gpu.
+export HPCS_BUNDLE_REQUIRE_DCGM_GPU=1
+%endif
 # Third-party .a archives come from the tarball; only hpcperfstatsd is compiled here.
 ./scripts/build_static_bundle.sh
 sed -i 's/CONFIGFILE/\%{_sysconfdir}\/hpcperfstats\/hpcperfstats.conf/' src/hpcperfstats.service

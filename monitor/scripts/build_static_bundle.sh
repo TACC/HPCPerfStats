@@ -74,6 +74,7 @@ SRCDIR="${SRCDIR:-${REPO_ROOT}/.build/src-static}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 SKIP_DEPS="${SKIP_DEPS:-0}"
 SKIP_CLEAN="${SKIP_CLEAN:-0}"
+HPCS_BUNDLE_REQUIRE_DCGM_GPU="${HPCS_BUNDLE_REQUIRE_DCGM_GPU:-0}"
 
 # Populated by static_bundle_print_detection_summary(); used by build_monitor (no second probe pass).
 STATIC_BUNDLE_FEAT_FLAGS=()
@@ -262,6 +263,15 @@ static_bundle_print_detection_summary() {
     dcgm_ok=detected
   else
     dcgm_ok="not detected"
+    if test "${HPCS_BUNDLE_REQUIRE_DCGM_GPU}" = "1"; then
+      cat <<EOF >&2
+ERROR: DCGM link probe failed but HPCS_BUNDLE_REQUIRE_DCGM_GPU=1.
+Refusing to auto-disable nvidia_gpu in this build.
+Install libdcgm development package for this build root (and ensure linker visibility),
+or unset HPCS_BUNDLE_REQUIRE_DCGM_GPU if this build intentionally omits NVIDIA GPU support.
+EOF
+      exit 1
+    fi
     STATIC_BUNDLE_FEAT_FLAGS+=(--disable-gpu)
   fi
 
