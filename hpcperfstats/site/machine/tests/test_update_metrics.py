@@ -2,6 +2,7 @@
 
 """
 import contextlib
+import os
 import threading
 import time
 from concurrent.futures import Future
@@ -664,6 +665,9 @@ def test_compute_jid_outcomes_batch_calls_metrics_run_once(monkeypatch):
   batches = []
 
   class _M:
+    def ensure_pool(self):
+      return None
+
     def run(self, job_refs, pool=None):
       batches.append([r.jid for r in job_refs])
 
@@ -687,6 +691,9 @@ def test_compute_jid_outcomes_batch_skip_prewarm_skips_plot_submit(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
 
   class _M:
+    def ensure_pool(self):
+      return None
+
     def run(self, job_refs, pool=None):
       del pool
 
@@ -706,6 +713,9 @@ def test_compute_jid_outcomes_batch_prewarm_submits_each_jid(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: False)
 
   class _M:
+    def ensure_pool(self):
+      return None
+
     def run(self, job_refs, pool=None):
       del pool
 
@@ -727,6 +737,9 @@ def test_compute_jid_outcomes_batch_falls_back_per_jid_after_batch_failure(monke
   calls = []
 
   class _M:
+    def ensure_pool(self):
+      return None
+
     def run(self, job_refs, pool=None):
       del pool
       calls.append([r.jid for r in job_refs])
@@ -753,6 +766,61 @@ def test_compute_jid_outcomes_batch_falls_back_per_jid_after_batch_failure(monke
   assert by_jid == {"good1": True, "good2": True, "bad": False}
   assert any(d.get("_batch_exception") for d in out)
   assert sum(1 for d in out if d.get("_fallback_failed")) == 1
+
+
+@pytest.mark.machine_unit_mock
+def test_compute_jid_outcomes_batch_stall_recovery_budget_marks_remaining_failed(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
+  monkeypatch.setattr(update_metrics, "STALL_RECOVERY_MAX_WALL_SECONDS", 0.0)
+  calls = []
+
+  class _M:
+    def ensure_pool(self):
+      return None
+
+    def run(self, job_refs, pool=None):
+      del pool
+      calls.append([r.jid for r in job_refs])
+      if len(job_refs) > 1:
+        raise update_metrics.metrics.MetricsRunWorkerStallError(
+            stalled_for_s=601.0,
+            message="stall",
+            pool_reset_confirmed=True,
+        )
+
+  job_refs = [
+      SimpleNamespace(jid="j1"),
+      SimpleNamespace(jid="j2"),
+      SimpleNamespace(jid="j3"),
+  ]
+  out = update_metrics._compute_jid_outcomes_batch(
+      job_refs,
+      _M(),
+      MagicMock(),
+      None,
+  )
+  # Batch attempt happens once; no per-jid retries after immediate budget exhaustion.
+  assert calls == [["j1", "j2", "j3"]]
+  assert [d["jid"] for d in out] == ["j1", "j2", "j3"]
+  assert all(not d["ok"] for d in out)
+  assert all(d.get("_batch_exception") for d in out)
+  assert sum(1 for d in out if d.get("_fallback_failed")) == 3
+
+
+@pytest.mark.machine_unit_mock
+def test_temporary_metrics_run_timeouts_restores_env(monkeypatch):
+  poll_key = "HPCPERFSTATS_METRICS_RUN_POLL_TIMEOUT_S"
+  stall_key = "HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S"
+  monkeypatch.setenv(poll_key, "9")
+  monkeypatch.setenv(stall_key, "99")
+  with update_metrics._temporary_metrics_run_timeouts(
+      poll_timeout_s=1.5,
+      stall_timeout_s=45.0,
+  ):
+    assert os.environ[poll_key] == "1.5"
+    assert os.environ[stall_key] == "45.0"
+  assert os.environ[poll_key] == "9"
+  assert os.environ[stall_key] == "99"
 
 
 @pytest.mark.machine_unit_mock
@@ -1723,6 +1791,9 @@ def test_compute_and_prewarm_jid_logs_when_full_pipeline_succeeds(monkeypatch):
   monkeypatch.setattr(update_metrics, "log_print", _capture)
 
   class _M:
+    def ensure_pool(self):
+      return None
+
     def run(self, job_list, pool=None):
       return None
 

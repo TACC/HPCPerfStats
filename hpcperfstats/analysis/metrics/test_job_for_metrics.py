@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from types import SimpleNamespace
 
 from hpcperfstats.analysis.metrics import metrics
 
@@ -161,4 +162,73 @@ def test_drain_metrics_imap_supports_generator_without_next():
       poll_timeout_s=0.0,
       stall_timeout_s=0.5,
   )
+
+
+def test_metrics_run_stall_with_owned_pool_confirms_reset(monkeypatch):
+  fake_calls = {"terminate": 0}
+
+  class _Proc:
+    def __init__(self):
+      self.pid = 111
+
+    def join(self, timeout=None):
+      return None
+
+    def is_alive(self):
+      return False
+
+  class _OwnedPool:
+    def __init__(self, processes=None):
+      del processes
+      self._pool = [_Proc()]
+
+    def terminate(self):
+      fake_calls["terminate"] += 1
+
+    def close(self):
+      return None
+
+  monkeypatch.setattr(metrics.multiprocessing, "Pool", _OwnedPool)
+
+  def _raise_stall(*args, **kwargs):
+    raise metrics.MetricsRunWorkerStallError(
+        stalled_for_s=999.0,
+        message="stall",
+        pool_reset_confirmed=False,
+    )
+
+  monkeypatch.setattr(metrics, "_drain_metrics_imap", _raise_stall)
+
+  m = metrics.Metrics()
+  with pytest.raises(metrics.MetricsRunWorkerStallError) as excinfo:
+    m.run([SimpleNamespace(jid="j1")])
+  assert fake_calls["terminate"] >= 1
+  assert excinfo.value.pool_reset_confirmed is True
+
+
+def test_metrics_run_stall_with_shared_pool_calls_reset(monkeypatch):
+  class _SharedPool:
+    pass
+
+  def _raise_stall(*args, **kwargs):
+    raise metrics.MetricsRunWorkerStallError(
+        stalled_for_s=321.0,
+        message="stall",
+        pool_reset_confirmed=False,
+    )
+
+  monkeypatch.setattr(metrics, "_drain_metrics_imap", _raise_stall)
+  called = {"n": 0}
+
+  m = metrics.Metrics()
+
+  def _reset():
+    called["n"] += 1
+
+  monkeypatch.setattr(m, "reset_pool_hard", _reset)
+
+  with pytest.raises(metrics.MetricsRunWorkerStallError) as excinfo:
+    m.run([SimpleNamespace(jid="j2")], pool=_SharedPool())
+  assert called["n"] == 1
+  assert excinfo.value.pool_reset_confirmed is True
 

@@ -26,6 +26,7 @@ from types import SimpleNamespace
 from datetime import datetime, timedelta
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
@@ -115,6 +116,18 @@ COMPUTE_BATCH_DOWNSHIFT_FACTOR = 0.5
 COMPUTE_BATCH_UPSHIFT_STEP = 16
 RESCAN_FETCH_LIMIT = CHUNK_SIZE
 TELEMETRY_SAMPLE_LIMIT = 2048
+STALL_RECOVERY_PER_JID_TIMEOUT_SECONDS = 60.0
+STALL_RECOVERY_PER_JID_POLL_TIMEOUT_SECONDS = 2.0
+STALL_RECOVERY_MAX_WALL_SECONDS = 300.0
+PREWARM_FUTURE_RESULT_TIMEOUT_SECONDS = 60.0
+PREWARM_DRAIN_MAX_WALL_SECONDS = 300.0
+PREWARM_FINISH_MAX_WALL_SECONDS = 300.0
+STRICT_READINESS_DB_TIMEOUT_MS = int(
+    os.environ.get("HPCPERFSTATS_STRICT_READINESS_DB_TIMEOUT_MS", "120000")
+)
+STRICT_READINESS_DB_LOCK_TIMEOUT_MS = int(
+    os.environ.get("HPCPERFSTATS_STRICT_READINESS_DB_LOCK_TIMEOUT_MS", "10000")
+)
 
 
 def _new_jid_telemetry():
@@ -374,9 +387,19 @@ class _PrewarmPipeline:
       if start is not None:
         self._lag_samples.append(time.monotonic() - start)
       try:
-        fut.result()
+        fut.result(timeout=PREWARM_FUTURE_RESULT_TIMEOUT_SECONDS)
         with self._counters_lock:
           self._done += 1
+      except FuturesTimeoutError:
+        fut.cancel()
+        with self._counters_lock:
+          self._failed += 1
+        log_print(
+            "plot artifact prewarm timed out after {0}s".format(
+                PREWARM_FUTURE_RESULT_TIMEOUT_SECONDS
+            ),
+            flush=True,
+        )
       except Exception as exc:
         with self._counters_lock:
           self._failed += 1
@@ -385,9 +408,26 @@ class _PrewarmPipeline:
   def finish(self):
     if self._mode == "inline":
       return
+    started = time.monotonic()
     while self._pending:
+      if (time.monotonic() - started) >= PREWARM_FINISH_MAX_WALL_SECONDS:
+        with self._pending_lock:
+          timed_out_count = len(self._pending)
+          for fut in list(self._pending):
+            fut.cancel()
+          self._pending = set()
+        with self._counters_lock:
+          self._failed += timed_out_count
+        log_print(
+            "plot artifact prewarm finish timeout after {0:.1f}s; cancelling pending={1}".format(
+                time.monotonic() - started,
+                timed_out_count,
+            ),
+            flush=True,
+        )
+        break
       self.drain_some(force=True)
-    self._executor.shutdown(wait=True)
+    self._executor.shutdown(wait=False, cancel_futures=True)
 
   def stats(self):
     total = self._done + self._failed
@@ -583,6 +623,27 @@ def _pg_session_statement_timeout_for_metrics_batch():
 def _today_datetime():
   """Local now for default date-range bounds (monkeypatch in tests)."""
   return datetime.today()
+
+
+@contextlib.contextmanager
+def _pg_local_readiness_timeouts():
+  """Apply bounded DB and lock timeouts to strict-readiness probes."""
+  conn = connections["default"]
+  if conn.vendor != "postgresql":
+    yield
+    return
+  using = getattr(conn, "alias", None) or "default"
+  with transaction.atomic(using=using):
+    with conn.cursor() as cursor:
+      cursor.execute(
+          "SET LOCAL statement_timeout = %s",
+          [max(1, int(STRICT_READINESS_DB_TIMEOUT_MS))],
+      )
+      cursor.execute(
+          "SET LOCAL lock_timeout = %s",
+          [max(1, int(STRICT_READINESS_DB_LOCK_TIMEOUT_MS))],
+      )
+    yield
 
 
 def _metrics_telemetry_enabled():
@@ -1024,6 +1085,30 @@ def _iter_subbatches(values, batch_size):
     yield values[i:i + step]
 
 
+@contextlib.contextmanager
+def _temporary_metrics_run_timeouts(*, poll_timeout_s=None, stall_timeout_s=None):
+  """Temporarily override Metrics.run poll/stall timeout env vars."""
+  poll_key = "HPCPERFSTATS_METRICS_RUN_POLL_TIMEOUT_S"
+  stall_key = "HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S"
+  prev_poll = os.environ.get(poll_key)
+  prev_stall = os.environ.get(stall_key)
+  try:
+    if poll_timeout_s is not None:
+      os.environ[poll_key] = str(float(poll_timeout_s))
+    if stall_timeout_s is not None:
+      os.environ[stall_key] = str(float(stall_timeout_s))
+    yield
+  finally:
+    if prev_poll is None:
+      os.environ.pop(poll_key, None)
+    else:
+      os.environ[poll_key] = prev_poll
+    if prev_stall is None:
+      os.environ.pop(stall_key, None)
+    else:
+      os.environ[stall_key] = prev_stall
+
+
 def update_metrics(date, rerun=False):
   """Compute and persist metrics for all jobs ending on date (runtime >= min_time).
 
@@ -1104,7 +1189,8 @@ def _fill_ready_queue(
     t0 = time.monotonic()
     try:
       with phase_timer.phase("readiness_s"):
-        strict_ready = _filter_jids_with_samples_after_end([jid])
+        with _pg_local_readiness_timeouts():
+          strict_ready = _filter_jids_with_samples_after_end([jid])
     except (OperationalError, DatabaseError) as exc:
       with scheduler_shared_lock:
         _handle_strict_readiness_db_error(
@@ -1179,7 +1265,8 @@ def _fill_ready_queue(
         continue
       try:
         with phase_timer.phase("readiness_s"):
-          ready_list = _filter_jids_with_samples_after_end(work)
+          with _pg_local_readiness_timeouts():
+            ready_list = _filter_jids_with_samples_after_end(work)
       except (OperationalError, DatabaseError) as exc:
         with scheduler_shared_lock:
           _handle_strict_readiness_db_error(
@@ -1675,6 +1762,7 @@ def _compute_jid_outcomes_batch(
   try:
     metrics_manager.run(job_refs, pool=metrics_manager.ensure_pool())
   except Exception as exc:
+    batch_failed_with_stall = isinstance(exc, metrics.MetricsRunWorkerStallError)
     if isinstance(exc, metrics.MetricsRunWorkerStallError):
       log_print(
           "metrics scheduler: compute batch aborted due to worker stall "
@@ -1697,22 +1785,47 @@ def _compute_jid_outcomes_batch(
     t_recover = time.monotonic()
     succeeded = []
     failed = []
-    for ref in job_refs:
-      try:
-        metrics_manager.run([ref], pool=metrics_manager.ensure_pool())
-        succeeded.append(ref)
-      except Exception as one_exc:
-        failed.append(ref)
-        log_print(
-            "metrics scheduler: per-jid Metrics.run failed jid={0} after batch failure: {1}".format(
-                ref.jid, one_exc
-            ),
-            flush=True,
-        )
-        _log_exception_details(
-            "metrics scheduler: per-jid Metrics.run jid={0}".format(ref.jid),
-            one_exc,
-        )
+    recovery_budget_hit = False
+    stalled_recovery_skipped = 0
+    timeout_ctx = _temporary_metrics_run_timeouts(
+        poll_timeout_s=STALL_RECOVERY_PER_JID_POLL_TIMEOUT_SECONDS,
+        stall_timeout_s=STALL_RECOVERY_PER_JID_TIMEOUT_SECONDS,
+    ) if batch_failed_with_stall else contextlib.nullcontext()
+    with timeout_ctx:
+      for idx, ref in enumerate(job_refs):
+        if (
+            batch_failed_with_stall
+            and (time.monotonic() - t_recover) >= STALL_RECOVERY_MAX_WALL_SECONDS
+        ):
+          remaining = job_refs[idx:]
+          failed.extend(remaining)
+          stalled_recovery_skipped += len(remaining)
+          recovery_budget_hit = True
+          break
+        try:
+          metrics_manager.run([ref], pool=metrics_manager.ensure_pool())
+          succeeded.append(ref)
+        except Exception as one_exc:
+          failed.append(ref)
+          log_print(
+              "metrics scheduler: per-jid Metrics.run failed jid={0} after batch failure: {1}".format(
+                  ref.jid, one_exc
+              ),
+              flush=True,
+          )
+          _log_exception_details(
+              "metrics scheduler: per-jid Metrics.run jid={0}".format(ref.jid),
+              one_exc,
+          )
+    if recovery_budget_hit:
+      log_print(
+          "metrics scheduler: stall recovery time budget exhausted after {0:.1f}s; "
+          "marking remaining jids as failed without further retries count={1}".format(
+              time.monotonic() - t_recover,
+              stalled_recovery_skipped,
+          ),
+          flush=True,
+      )
     total_elapsed = time.monotonic() - t_recover
     n_total = max(1, len(job_refs))
     per_metrics = total_elapsed / n_total
@@ -1762,6 +1875,15 @@ def _compute_jid_outcomes_batch(
     prewarm_pipeline.submit(job_ref.jid)
   while prewarm_pipeline.has_pending():
     if shutdown_requested[0]:
+      break
+    if (time.monotonic() - t_prewarm) >= PREWARM_DRAIN_MAX_WALL_SECONDS:
+      log_print(
+          "metrics scheduler: prewarm drain timeout after {0:.1f}s size={1}; remaining work deferred to finish()".format(
+              time.monotonic() - t_prewarm,
+              len(job_refs),
+          ),
+          flush=True,
+      )
       break
     prewarm_pipeline.drain_some()
   prewarm_elapsed = time.monotonic() - t_prewarm

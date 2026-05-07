@@ -4,6 +4,7 @@ DB access is process-safe: _unwrap runs in multiprocessing workers and calls clo
 
 """
 import json
+import os
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.print_utils import log_print
 
@@ -42,6 +43,10 @@ except ImportError:
   from numpy import trapz
 
 NUMEXPR_MIN_ARRAY_SIZE = 100_000
+METRICS_POOL_JOIN_TIMEOUT_S = max(
+    1.0,
+    float(os.environ.get("HPCPERFSTATS_METRICS_POOL_JOIN_TIMEOUT_S", "30")),
+)
 
 
 class MetricsRunWorkerStallError(TimeoutError):
@@ -51,6 +56,59 @@ class MetricsRunWorkerStallError(TimeoutError):
     super().__init__(message)
     self.stalled_for_s = float(stalled_for_s)
     self.pool_reset_confirmed = bool(pool_reset_confirmed)
+
+
+def _wait_pool_processes_bounded(active_pool, timeout_s):
+  """Wait up to ``timeout_s`` for pool worker processes to exit."""
+  workers = list(getattr(active_pool, "_pool", []) or [])
+  deadline = time.monotonic() + max(0.1, float(timeout_s))
+  for proc in workers:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+      break
+    try:
+      proc.join(timeout=remaining)
+    except Exception:
+      continue
+  alive = [getattr(p, "pid", None) for p in workers if getattr(p, "is_alive", lambda: False)()]
+  return len(alive) == 0, alive
+
+
+def _close_pool_bounded(active_pool, timeout_s):
+  """Best-effort bounded graceful close; terminates if workers linger."""
+  try:
+    active_pool.close()
+  except Exception:
+    pass
+  all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
+  if all_done:
+    return True
+  try:
+    active_pool.terminate()
+  except Exception:
+    pass
+  all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
+  if not all_done:
+    log_print(
+        "Metrics.run: pool close timeout after terminate; lingering_workers=%s" % alive,
+        flush=True,
+    )
+  return all_done
+
+
+def _terminate_pool_bounded(active_pool, timeout_s):
+  """Best-effort bounded terminate used in stall recovery paths."""
+  try:
+    active_pool.terminate()
+  except Exception:
+    pass
+  all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
+  if not all_done:
+    log_print(
+        "Metrics.run: pool terminate timeout; lingering_workers=%s" % alive,
+        flush=True,
+    )
+  return all_done
 
 
 def _log_exception_details(prefix, exc):
@@ -798,8 +856,7 @@ class Metrics():
     """Close retained worker pool (idempotent)."""
     if self._shared_pool is None:
       return
-    self._shared_pool.close()
-    self._shared_pool.join()
+    _close_pool_bounded(self._shared_pool, METRICS_POOL_JOIN_TIMEOUT_S)
     self._shared_pool = None
 
   def reset_pool_hard(self):
@@ -807,8 +864,7 @@ class Metrics():
     if self._shared_pool is None:
       return
     try:
-      self._shared_pool.terminate()
-      self._shared_pool.join()
+      _terminate_pool_bounded(self._shared_pool, METRICS_POOL_JOIN_TIMEOUT_S)
     finally:
       self._shared_pool = None
 
@@ -859,10 +915,11 @@ class Metrics():
       reset_confirmed = False
       if own_pool:
         try:
-          active_pool.terminate()
-          active_pool.join()
+          reset_confirmed = _terminate_pool_bounded(
+              active_pool,
+              METRICS_POOL_JOIN_TIMEOUT_S,
+          )
           active_pool = None
-          reset_confirmed = True
         except Exception:
           pass
       else:
@@ -878,8 +935,7 @@ class Metrics():
       raise
     finally:
       if own_pool and active_pool is not None:
-        active_pool.close()
-        active_pool.join()
+        _close_pool_bounded(active_pool, METRICS_POOL_JOIN_TIMEOUT_S)
 
   def job_arc(self,
               jt,
