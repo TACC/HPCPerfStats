@@ -732,6 +732,48 @@ def test_compute_jid_outcomes_batch_prewarm_submits_each_jid(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
+def test_compute_jid_outcomes_batch_prewarm_drain_budget_defers_backlog(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: False)
+  monkeypatch.setattr(update_metrics, "PREWARM_DRAIN_BATCH_BUDGET_SECONDS", 0.0)
+
+  class _M:
+    def ensure_pool(self):
+      return None
+
+    def run(self, job_refs, pool=None):
+      del pool
+
+  class _Pipe:
+    def __init__(self):
+      self.submitted = []
+      self.drain_calls = 0
+
+    def submit(self, jid):
+      self.submitted.append(jid)
+
+    def has_pending(self):
+      return True
+
+    def drain_some(self):
+      self.drain_calls += 1
+
+    def stats(self):
+      return {"prewarm_backlog_jobs": 7}
+
+  pipe = _Pipe()
+  out = update_metrics._compute_jid_outcomes_batch(
+      [SimpleNamespace(jid="j1"), SimpleNamespace(jid="j2")],
+      _M(),
+      pipe,
+      None,
+  )
+  assert pipe.submitted == ["j1", "j2"]
+  # Budget is exhausted immediately, so backlog is deferred instead of spinning.
+  assert pipe.drain_calls == 0
+  assert [d["jid"] for d in out] == ["j1", "j2"]
+
+
+@pytest.mark.machine_unit_mock
 def test_compute_jid_outcomes_batch_falls_back_per_jid_after_batch_failure(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
   calls = []

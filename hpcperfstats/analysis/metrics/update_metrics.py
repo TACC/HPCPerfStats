@@ -124,6 +124,7 @@ STALL_RECOVERY_MAX_WALL_SECONDS = 300.0
 PREWARM_FUTURE_RESULT_TIMEOUT_SECONDS = 60.0
 PREWARM_DRAIN_MAX_WALL_SECONDS = 300.0
 PREWARM_FINISH_MAX_WALL_SECONDS = 300.0
+PREWARM_DRAIN_BATCH_BUDGET_SECONDS = 2.0
 STRICT_READINESS_DB_TIMEOUT_MS = int(
     os.environ.get("HPCPERFSTATS_STRICT_READINESS_DB_TIMEOUT_MS", "120000")
 )
@@ -1875,14 +1876,17 @@ def _compute_jid_outcomes_batch(
     if shutdown_requested[0]:
       break
     prewarm_pipeline.submit(job_ref.jid)
+  drain_started = time.monotonic()
   while prewarm_pipeline.has_pending():
     if shutdown_requested[0]:
       break
-    if (time.monotonic() - t_prewarm) >= PREWARM_DRAIN_MAX_WALL_SECONDS:
+    if (time.monotonic() - drain_started) >= PREWARM_DRAIN_BATCH_BUDGET_SECONDS:
+      pending = prewarm_pipeline.stats().get("prewarm_backlog_jobs", 0)
       log_print(
-          "metrics scheduler: prewarm drain timeout after {0:.1f}s size={1}; remaining work deferred to finish()".format(
-              time.monotonic() - t_prewarm,
+          "metrics scheduler: prewarm drain budget hit after {0:.1f}s size={1} pending={2}; remaining work deferred".format(
+              time.monotonic() - drain_started,
               len(job_refs),
+              int(pending),
           ),
           flush=True,
       )
