@@ -204,5 +204,5 @@ test_stats_runtime_type_controls_LDADD = $(LDADD)
 if RABBITMQ
 test_monitor_cli_LDADD = $(LDADD)
 test_ring_buffer_LDADD = $(LDADD)
-test_monitor_timing_LDADD = $(LDADD)
+test_monitor_timing_LDADD = $(LDADD) -lm
 endif

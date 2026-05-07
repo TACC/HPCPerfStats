@@ -1,8 +1,13 @@
 %global srcname hpcperfstats
+%if 0%{?hpc_debug_build}
+# Debug/profiling build: keep full symbols and emit debuginfo packages.
+%global _debugsource_packages 1
+%else
 # Release RPM only: disable automatic debuginfo/debugsource subpackages.
 # The static-bundle release path strips the daemon, which can leave debugsource empty.
 %global debug_package %{nil}
 %global _debugsource_packages 0
+%endif
 # Tarball / unpacked dir prefix: %%{srcname}-%%{version} (matches configure.ac AC_INIT / make dist).
 # Output RPM/SRPM names use %%{name} = hpcperfstatsd.
 Summary: Job-level Monitoring Client
@@ -73,7 +78,14 @@ if test ! -d "${PREFIX}/include" || ! { test -d "${PREFIX}/lib" || test -d "${PR
 fi
 export SKIP_DEPS=1
 export JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+%if 0%{?hpc_debug_build}
+export HPC_BUNDLE_RELEASE_BUILD=0
+export CFLAGS="%{optflags} -g3 -ggdb3 -fno-omit-frame-pointer -fno-inline"
+export CXXFLAGS="${CFLAGS}"
+export LDFLAGS="${LDFLAGS:-} -Wl,--build-id=sha1"
+%else
 export HPC_BUNDLE_RELEASE_BUILD=1
+%endif
 %ifarch aarch64
 # Grace Hopper packaging: fail the build if DCGM probing would silently disable nvidia_gpu.
 export HPCS_BUNDLE_REQUIRE_DCGM_GPU=1

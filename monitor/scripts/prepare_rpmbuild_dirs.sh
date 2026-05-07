@@ -9,6 +9,7 @@
 #
 # Usage (from anywhere; paths are anchored to HPCPerfStats/monitor):
 #   ./scripts/prepare_rpmbuild_dirs.sh
+#   ./scripts/prepare_rpmbuild_dirs.sh --debug-build
 #
 # Environment:
 #   SKIP_DEPS  If 1, skip rebuilding static deps when PREFIX already has the .a files
@@ -22,6 +23,29 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly SPEC_SRC="${MONITOR_DIR}/hpcperfstats.spec"
 readonly EMBED_PREFIX="${MONITOR_DIR}/embedded-static-prefix"
+
+debug_build=0
+while (($# > 0)); do
+  case "$1" in
+    --debug-build)
+      debug_build=1
+      ;;
+    -h|--help)
+      cat <<EOF
+Usage: ./scripts/prepare_rpmbuild_dirs.sh [--debug-build]
+
+  --debug-build  Prepare rpmbuild tree for symbol-rich profiling build.
+                 Pairs with: rpmbuild -ba ... --define "hpc_debug_build 1"
+EOF
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
 
 monitor_spec_field() {
   local field="$1"
@@ -175,4 +199,13 @@ echo "Source tarball: ${sources_dir}/${tb}"
 echo "RPM tree ready under ${topdir}"
 echo ""
 echo "Build binary and source RPMs with:"
-echo "  rpmbuild -ba --define \"_topdir ${topdir}\" \"${specs_dir}/hpcperfstats.spec\""
+if test "${debug_build}" = "1"; then
+  echo "  rpmbuild -ba --define \"_topdir ${topdir}\" --define \"hpc_debug_build 1\" \"${specs_dir}/hpcperfstats.spec\""
+  echo ""
+  echo "Debug/profiling mode enabled:"
+  echo "  - preserves symbols/debuginfo"
+  echo "  - uses -g3 -ggdb3 -fno-omit-frame-pointer -fno-inline"
+  echo "  - disables release strip path in static bundle build"
+else
+  echo "  rpmbuild -ba --define \"_topdir ${topdir}\" \"${specs_dir}/hpcperfstats.spec\""
+fi
