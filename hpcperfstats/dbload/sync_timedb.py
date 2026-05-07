@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; ``pigz`` seal and raw-file removal on ``archive_pigz_interval_seconds``, default 8h). Runs in parallel with configurable chunk size.
 
-After each ingest wave completes, rescans the archive directory for new files. When none are pending, it seals all dirty daily archives, removes verified raw files, sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s), and exits.
+When the ingest queue is empty, runs a **full** archive maintenance pass (same as idle ``force_full``: dedupe cadence, seal dirty daily tars, verified raw cleanup, verified uncompressed-daily-tar removal when configured) **before** rescanning for new stats files. After a rescan still finds nothing pending, it sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exits the loop iteration (continuous mode repeats).
 
 CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once all``.
 
@@ -1005,9 +1005,10 @@ def run_sync_timedb_supervisor_loop(
 ):
   """Rescan archive, ingest pending files in chunks, run pigz/removal on interval.
 
-  If ``run_once`` is True, exit after the first rescan that finds no pending
-  files (no ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` idle wait). Used by pipeline
-  E2E tests.
+  Whenever the ingest queue is empty, runs full archive maintenance before
+  ``rescan_pending_stats_files``. If ``run_once`` is True, exit after the first
+  rescan that finds no pending files (no ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS``
+  idle wait). Used by pipeline E2E tests.
   """
   pigz_interval_raw = cfg.get_archive_pigz_interval_seconds()
   pigz_interval, pigz_interval_warning = _resolve_archive_pigz_interval_seconds(
@@ -1469,6 +1470,21 @@ def run_sync_timedb_supervisor_loop(
               % (len(pending_archive_tasks), archive_queue_high),
               flush=True,
           )
+        _finalize_archive_job_if_needed(force=True, context="pre_rescan")
+        log_print(
+            "Full archive maintenance before rescan (ingest queue empty)",
+            flush=True,
+        )
+        _ensure_daily_archive_dir_exists()
+        _run_scheduled_archive_maintenance(
+            force_full=True,
+            reason="pre_rescan",
+            elapsed_since_last_s=_maintenance_elapsed_s(),
+        )
+        last_archive_maint = time.time()
+        maintenance_overdue_warned = False
+        close_old_connections()
+        connections.close_all()
         pending_stats_files = rescan_pending_stats_files(
             directory,
             startdate,
@@ -1492,16 +1508,6 @@ def run_sync_timedb_supervisor_loop(
           log_print("Worker idle loops while waiting for pending files: %d" % worker_idle_loops)
           log_print("No pending stats files after full rescan", flush=True)
           _finalize_archive_job_if_needed(force=True)
-          log_print(
-              "Running final archive sealing and verified raw-file cleanup before exit",
-              flush=True,
-          )
-          _ensure_daily_archive_dir_exists()
-          _run_scheduled_archive_maintenance(
-              force_full=True,
-              reason="final_idle",
-              elapsed_since_last_s=_maintenance_elapsed_s(),
-          )
           log_print(
               "Sleeping %s s before exiting sync_timedb"
               % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,

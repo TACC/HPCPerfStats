@@ -285,13 +285,15 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
       archive_pool.__exit__(None, None, None)
 
     assert sleeps == [st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS]
-    assert final_maintenance["calls"] == 1
-    assert final_maintenance["remove_verified_tars_calls"] == 1
+    # Empty-queue pre-rescan full maintenance runs when the queue first drains
+    # and again after the final empty rescan (no duplicate final_idle pass).
+    assert final_maintenance["calls"] == 2
+    assert final_maintenance["remove_verified_tars_calls"] == 2
   finally:
     shutdown_requested[0] = False
 
 
-def test_supervisor_first_rescan_before_archive_maintenance(monkeypatch):
+def test_supervisor_runs_full_archive_maintenance_before_rescan_when_idle(monkeypatch):
   shutdown_requested[0] = False
   try:
     events = []
@@ -331,8 +333,9 @@ def test_supervisor_first_rescan_before_archive_maintenance(monkeypatch):
     finally:
       archive_pool.__exit__(None, None, None)
 
-    assert events[0] == "rescan"
-    assert events.index("maintenance") > events.index("rescan")
+    assert events[0] == "maintenance"
+    assert events[-1] == "rescan"
+    assert events.index("maintenance") < events.index("rescan")
     assert "tar_removal" in events
   finally:
     shutdown_requested[0] = False
@@ -378,9 +381,10 @@ def test_supervisor_runs_startup_archive_maintenance_when_daily_tars_above_thres
     finally:
       archive_pool.__exit__(None, None, None)
 
-    assert events[0] == "maintenance"
-    assert events[1] == "tar_removal"
-    assert events.index("rescan") > events.index("tar_removal")
+    assert events[0:2] == ["maintenance", "tar_removal"]
+    # Startup maintenance, then pre-rescan full maintenance before the rescan.
+    assert events[2:4] == ["maintenance", "tar_removal"]
+    assert events[4] == "rescan"
   finally:
     shutdown_requested[0] = False
 
