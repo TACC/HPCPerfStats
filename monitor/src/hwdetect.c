@@ -65,16 +65,27 @@ static int lspci_line_nvidia_pci_gpu_device(const char *line)
       || strstr(line, "processing accelerators") != NULL;
 }
 
-void auto_disable_optional_stats_by_lspci(void)
+void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
+                                            int *has_amd_gpu,
+                                            int *has_ib,
+                                            int *has_opa)
 {
-  int has_nvidia_gpu = 0;
-  int has_amd_gpu = 0;
-  int has_ib = 0;
-  int has_opa = 0;
+  int nvidia = 0;
+  int amd = 0;
+  int ib = 0;
+  int opa = 0;
   FILE *fp = popen("lspci -nn 2>/dev/null", "r");
   char line[1024];
+
   if (fp == NULL) {
-    TRACE("lspci not available; keeping optional types enabled\n");
+    if (has_nvidia_gpu != NULL)
+      *has_nvidia_gpu = sysfs_proc_indicates_nvidia_gpu();
+    if (has_amd_gpu != NULL)
+      *has_amd_gpu = 0;
+    if (has_ib != NULL)
+      *has_ib = infiniband_sysfs_has_devices();
+    if (has_opa != NULL)
+      *has_opa = 0;
     return;
   }
 
@@ -86,25 +97,44 @@ void auto_disable_optional_stats_by_lspci(void)
         strstr(line, "processing accelerators") != NULL ||
         strstr(line, "accelerator") != NULL) {
       if (strstr(line, "nvidia") != NULL)
-        has_nvidia_gpu = 1;
+        nvidia = 1;
       if (strstr(line, "advanced micro devices") != NULL ||
           strstr(line, " amd/ati ") != NULL)
-        has_amd_gpu = 1;
+        amd = 1;
     }
     if (strstr(line, "infiniband") != NULL || strstr(line, "[0207]") != NULL)
-      has_ib = 1;
+      ib = 1;
     if (strstr(line, "omnipath") != NULL || strstr(line, "hfi") != NULL)
-      has_opa = 1;
-    if (!has_nvidia_gpu && lspci_line_nvidia_pci_gpu_device(line))
-      has_nvidia_gpu = 1;
+      opa = 1;
+    if (!nvidia && lspci_line_nvidia_pci_gpu_device(line))
+      nvidia = 1;
   }
   pclose(fp);
 
-  if (!has_ib)
-    has_ib = infiniband_sysfs_has_devices();
+  if (!ib)
+    ib = infiniband_sysfs_has_devices();
 
-  if (!has_nvidia_gpu)
-    has_nvidia_gpu = sysfs_proc_indicates_nvidia_gpu();
+  if (!nvidia)
+    nvidia = sysfs_proc_indicates_nvidia_gpu();
+
+  if (has_nvidia_gpu != NULL)
+    *has_nvidia_gpu = nvidia;
+  if (has_amd_gpu != NULL)
+    *has_amd_gpu = amd;
+  if (has_ib != NULL)
+    *has_ib = ib;
+  if (has_opa != NULL)
+    *has_opa = opa;
+}
+
+void auto_disable_optional_stats_by_lspci(void)
+{
+  int has_nvidia_gpu = 0;
+  int has_amd_gpu = 0;
+  int has_ib = 0;
+  int has_opa = 0;
+
+  hwdetect_probe_optional_stack_presence(&has_nvidia_gpu, &has_amd_gpu, &has_ib, &has_opa);
 
   if (!has_nvidia_gpu)
     disable_type_if_present("nvidia_gpu");

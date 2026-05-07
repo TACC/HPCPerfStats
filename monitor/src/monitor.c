@@ -106,6 +106,33 @@ static void monitor_require_server_or_exit(void)
   monitor_log_info("hpcperfstatsd data to server %s on port %s.\n", server, port);
 }
 
+static void monitor_log_optional_driver_probe(void)
+{
+  int has_nvidia_gpu = 0;
+  int has_amd_gpu = 0;
+  int has_ib = 0;
+  int has_opa = 0;
+  int has_nvidia_devnode = 0;
+  int has_dcgm_lib = 0;
+
+  hwdetect_probe_optional_stack_presence(&has_nvidia_gpu, &has_amd_gpu, &has_ib, &has_opa);
+  has_nvidia_devnode = (access("/dev/nvidia0", F_OK) == 0) ? 1 : 0;
+  has_dcgm_lib = (access("/usr/lib64/libdcgm.so", F_OK) == 0
+                   || access("/usr/lib64/libdcgm.so.4", F_OK) == 0
+                   || access("/usr/lib/libdcgm.so", F_OK) == 0
+                   || access("/usr/lib/libdcgm.so.4", F_OK) == 0) ? 1 : 0;
+
+  monitor_log_info(
+      "Driver/stack probe: nvidia_gpu=%s (devnode=%s, libdcgm=%s), amd_gpu=%s, "
+      "infiniband=%s, opa=%s\n",
+      has_nvidia_gpu ? "detected" : "not detected",
+      has_nvidia_devnode ? "yes" : "no",
+      has_dcgm_lib ? "yes" : "no",
+      has_amd_gpu ? "detected" : "not detected",
+      has_ib ? "detected" : "not detected",
+      has_opa ? "detected" : "not detected");
+}
+
 int main(int argc, char *argv[])
 {
   srand(1);
@@ -135,6 +162,7 @@ int main(int argc, char *argv[])
 
   monitor_install_ev_handlers(&ring_buffer);
   monitor_require_server_or_exit();
+  monitor_log_optional_driver_probe();
   monitor_daemon_replay_dumpfiles_if_present(&ring_buffer);
   monitor_start_timers_and_jobid_watcher(&ring_buffer);
 
