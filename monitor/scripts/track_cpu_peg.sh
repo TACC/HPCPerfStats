@@ -32,8 +32,8 @@ perf stat -p "${PID}" -e cycles,instructions,cache-misses,context-switches -I 50
   > "${OUT_DIR}/perf-stat.txt" 2>&1 &
 PERFSTAT_PID=$!
 
-perf record -F 199 -g --call-graph dwarf -p "${PID}" -- sleep "$((DURATION_MINUTES * 60))" \
-  -o "${OUT_DIR}/perf.data" > "${OUT_DIR}/perf-record.txt" 2>&1 &
+perf record -F 199 -g --call-graph dwarf -o "${OUT_DIR}/perf.data" -p "${PID}" -- \
+  sleep "$((DURATION_MINUTES * 60))" > "${OUT_DIR}/perf-record.txt" 2>&1 &
 PERFREC_PID=$!
 
 strace -tt -f -p "${PID}" \
@@ -46,8 +46,12 @@ sleep "$((DURATION_MINUTES * 60))"
 kill "${STRACE_PID}" "${PERFSTAT_PID}" "${PIDSTAT_PID}" 2>/dev/null || true
 wait "${STRACE_PID}" "${PERFSTAT_PID}" "${PIDSTAT_PID}" "${PERFREC_PID}" 2>/dev/null || true
 
-perf report --stdio --no-children --sort dso,symbol -i "${OUT_DIR}/perf.data" \
-  > "${OUT_DIR}/perf-report.txt" 2>&1 || true
+if [ -s "${OUT_DIR}/perf.data" ]; then
+  perf report --stdio --no-children --sort dso,symbol -i "${OUT_DIR}/perf.data" \
+    > "${OUT_DIR}/perf-report.txt" 2>&1 || true
+else
+  echo "perf.data missing or empty: perf record likely failed" > "${OUT_DIR}/perf-report.txt"
+fi
 
 journalctl -u hpcperfstatsd -S "-${DURATION_MINUTES}m" \
   | grep -E 'slow|drift|reconnect|warmup|replay|jobid|probe' \
