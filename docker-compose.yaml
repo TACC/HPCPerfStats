@@ -93,7 +93,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    stop_grace_period: 60s
+    stop_signal: SIGINT  # Preferred for faster, yet still graceful, shutdowns
+    stop_grace_period: 2m
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:
