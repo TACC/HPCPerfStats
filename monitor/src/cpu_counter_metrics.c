@@ -61,6 +61,8 @@
 #endif
 
 static int g_dcgm_ready = 0;
+static unsigned long g_dcgm_update_failures;
+static time_t g_dcgm_retry_after;
 static dcgmHandle_t g_dcgm_handle = (dcgmHandle_t) NULL;
 static int g_dcgm_cpu_use_disconnect = 0;
 static dcgmGpuGrp_t *g_dcgm_cpu_groups = NULL;
@@ -896,6 +898,12 @@ static int dcgm_backend_begin(struct stats_type *type)
 {
   size_t n = (size_t) nr_cpus;
   dcgmReturn_t rc;
+  time_t now = time(NULL);
+
+  if (g_dcgm_retry_after > 0 && now > 0 && now < g_dcgm_retry_after) {
+    type->st_enabled = 0;
+    return 0;
+  }
 
   if (g_dcgm_ready)
     return 0;
@@ -960,6 +968,7 @@ static int dcgm_backend_begin(struct stats_type *type)
   g_dcgm_mono_prev_us = 0;
   g_dcgm_stat_seeded = 0;
   g_dcgm_ready = 1;
+  g_dcgm_retry_after = 0;
   return 0;
 }
 #else
@@ -1054,9 +1063,31 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
 #ifdef MONITOR_CPU_BACKEND_DCGM
   long long delta_us_collect = 0;
   int proc_stat_ok = 0;
+  dcgmReturn_t update_rc = DCGM_ST_OK;
+  struct timespec t0, t1;
+  long long update_elapsed_us = 0;
 
-  if (g_dcgm_ready)
-    (void) dcgmUpdateAllFields(g_dcgm_handle, 0);
+  if (g_dcgm_ready) {
+    if (clock_gettime(CLOCK_MONOTONIC, &t0) != 0) {
+      t0.tv_sec = 0;
+      t0.tv_nsec = 0;
+    }
+    update_rc = dcgmUpdateAllFields(g_dcgm_handle, 0);
+    if (clock_gettime(CLOCK_MONOTONIC, &t1) == 0 && (t0.tv_sec > 0 || t0.tv_nsec > 0))
+      update_elapsed_us = ((long long)t1.tv_sec - (long long)t0.tv_sec) * 1000000LL
+	  + ((long long)t1.tv_nsec - (long long)t0.tv_nsec) / 1000LL;
+    if (update_elapsed_us > 500000LL)
+      monitor_log_warn("cpu_counter_metrics: dcgmUpdateAllFields slow path elapsed_us=%lld\n",
+		       update_elapsed_us);
+    if (update_rc != DCGM_ST_OK) {
+      g_dcgm_update_failures++;
+      monitor_log_warn(
+	  "cpu_counter_metrics: dcgmUpdateAllFields failed rc=%d (failures=%lu); resetting DCGM backend\n",
+	  (int)update_rc, g_dcgm_update_failures);
+      dcgm_backend_cleanup();
+      g_dcgm_retry_after = time(NULL) + 60;
+    }
+  }
   if (g_dcgm_ready && g_dcgm_ncpu_entities > 0)
     dcgm_cpu_refresh_socket_power();
   if (g_dcgm_ready && g_dcjm_cur != NULL && g_dcjm_prev != NULL && nr_cpus > 0)

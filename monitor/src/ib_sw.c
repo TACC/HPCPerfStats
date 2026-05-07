@@ -3,6 +3,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <stdint.h>
+#include <time.h>
 #include <infiniband/umad.h>
 #include <infiniband/mad.h>
 #include "stats.h"
@@ -10,6 +11,7 @@
 #include "path_open_fail_once.h"
 #include "pscanf.h"
 #include "sys_iter.h"
+#include "monitor_log.h"
 
 /* ib_sw collects IB HCA/PORT statistics by querying the extended
    performance counters of the switch port to which the HCA/PORT is
@@ -23,6 +25,22 @@
   X(tx_bytes, "E,U=4B", ""), \
   X(tx_packets, "E", "")
 
+static unsigned long g_ib_sw_fail_streak;
+static time_t g_ib_sw_skip_until;
+
+static int ib_sw_skip_active(void)
+{
+  time_t now = time(NULL);
+
+  if (g_ib_sw_skip_until <= 0 || now <= 0)
+    return 0;
+  if (now >= g_ib_sw_skip_until) {
+    g_ib_sw_skip_until = 0;
+    return 0;
+  }
+  return 1;
+}
+
 static void collect_hca_port(struct stats *stats, char *hca_name, int hca_port)
 {
   struct ibmad_port *mad_port = NULL;
@@ -31,6 +49,7 @@ static void collect_hca_port(struct stats *stats, char *hca_name, int hca_port)
 
   mad_port = mad_rpc_open_port(hca_name, hca_port, mad_classes, 2);
   if (mad_port == NULL) {
+    g_ib_sw_fail_streak++;
     ERROR("cannot open MAD port for HCA `%s' port %d\n", hca_name, hca_port);
     goto out;
   }
@@ -50,6 +69,7 @@ static void collect_hca_port(struct stats *stats, char *hca_name, int hca_port)
   uint8_t sw_info[64];
   memset(sw_info, 0, sizeof(sw_info));
   if (smp_query_via(sw_info, &sw_port_id, IB_ATTR_PORT_INFO, 0, mad_timeout, mad_port) == NULL) {
+    g_ib_sw_fail_streak++;
     ERROR("cannot query port info: %m\n");
     goto out;
   }
@@ -65,9 +85,11 @@ static void collect_hca_port(struct stats *stats, char *hca_name, int hca_port)
   uint8_t sw_pma[1024];
   memset(sw_pma, 0, sizeof(sw_pma));
   if (pma_query_via(sw_pma, &sw_port_id, sw_port, mad_timeout, IB_GSI_PORT_COUNTERS_EXT, mad_port) == NULL) {
+    g_ib_sw_fail_streak++;
     ERROR("cannot query performance counters of switch LID %d, port %d: %m\n", sw_lid, sw_port);
     goto out;
   }
+  g_ib_sw_fail_streak = 0;
 
   uint64_t sw_rx_bytes, sw_rx_packets, sw_tx_bytes, sw_tx_packets;
   mad_decode_field(sw_pma, IB_PC_EXT_RCV_BYTES_F, &sw_rx_bytes);
@@ -143,6 +165,16 @@ static void ib_sw_hca_each(const char *base, const char *name, void *ctx)
 
 static void collect_ib_sw(struct stats_type *type)
 {
+  enum { fail_threshold = 8, cooldown_sec = 120 };
+
+  if (ib_sw_skip_active())
+    return;
+  if (g_ib_sw_fail_streak >= fail_threshold) {
+    g_ib_sw_skip_until = time(NULL) + cooldown_sec;
+    monitor_log_warn("ib_sw: too many failures (%lu), skipping for %ds\n",
+		     g_ib_sw_fail_streak, cooldown_sec);
+    return;
+  }
   sys_iter_for_each("/sys/class/infiniband", ib_sw_hca_each, type);
 }
 

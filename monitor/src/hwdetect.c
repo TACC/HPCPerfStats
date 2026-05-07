@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <time.h>
 #include "stats.h"
 #include "trace.h"
 
@@ -92,10 +93,24 @@ static int env_int_or_default(const char *name, int fallback)
 }
 
 static unsigned long g_nvidia_detect_miss_streak = 0;
+struct hwdetect_probe_cache {
+  int valid;
+  time_t expires_at;
+  int has_nvidia_gpu;
+  int has_amd_gpu;
+  int has_ib;
+  int has_opa;
+};
+static struct hwdetect_probe_cache g_probe_cache;
 
 void hwdetect_reset_nvidia_disable_state(void)
 {
   g_nvidia_detect_miss_streak = 0;
+}
+
+void hwdetect_invalidate_probe_cache(void)
+{
+  memset(&g_probe_cache, 0, sizeof(g_probe_cache));
 }
 
 int hwdetect_should_disable_nvidia_gpu(int has_nvidia_gpu)
@@ -124,12 +139,26 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
                                             int *has_ib,
                                             int *has_opa)
 {
+  time_t now = time(NULL);
+  int ttl_sec = env_int_or_default("HPCPERFSTATS_LSPCI_CACHE_TTL_SEC", 300);
   int nvidia = 0;
   int amd = 0;
   int ib = 0;
   int opa = 0;
   FILE *fp = popen("lspci -nn 2>/dev/null", "r");
   char line[1024];
+
+  if (g_probe_cache.valid && now > 0 && g_probe_cache.expires_at >= now) {
+    if (has_nvidia_gpu != NULL)
+      *has_nvidia_gpu = g_probe_cache.has_nvidia_gpu;
+    if (has_amd_gpu != NULL)
+      *has_amd_gpu = g_probe_cache.has_amd_gpu;
+    if (has_ib != NULL)
+      *has_ib = g_probe_cache.has_ib;
+    if (has_opa != NULL)
+      *has_opa = g_probe_cache.has_opa;
+    return;
+  }
 
   if (fp == NULL) {
     if (has_nvidia_gpu != NULL)
@@ -179,6 +208,15 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
     *has_ib = ib;
   if (has_opa != NULL)
     *has_opa = opa;
+
+  if (now > 0 && ttl_sec > 0) {
+    g_probe_cache.valid = 1;
+    g_probe_cache.expires_at = now + ttl_sec;
+    g_probe_cache.has_nvidia_gpu = nvidia;
+    g_probe_cache.has_amd_gpu = amd;
+    g_probe_cache.has_ib = ib;
+    g_probe_cache.has_opa = opa;
+  }
 }
 
 void auto_disable_optional_stats_by_lspci(void)

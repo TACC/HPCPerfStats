@@ -68,6 +68,11 @@ processor_t processor = (processor_t) 0;
 
 static void send_dumpfile_stats(struct sf_ring_buffer *w);
 static int save_file_stats_buffer(struct stats_buffer *sf);
+static long monitor_daemon_monotonic_us(void);
+static void monitor_daemon_log_resend_stats(int q_before, int processed_entries, long elapsed_us,
+					    int had_error, int queue_remaining);
+static void monitor_daemon_log_timer_drift(const char *name, double now_s, double expected_period_s,
+					   double *last_fire_s);
 
 /* Tier B: rate-limit repetitive operational logs on hot paths (ring/dumpfile resend). */
 #ifdef DEBUG
@@ -75,6 +80,60 @@ static int save_file_stats_buffer(struct stats_buffer *sf);
 #else
 #define MONITOR_HOT_LOG_EVERY 32u
 #endif
+
+enum {
+  MONITOR_RESEND_MAX_BATCHES_PER_CALL = 64,
+  MONITOR_RESEND_MAX_RUNTIME_US = 50000,
+  MONITOR_DUMPFILE_MAX_FILES_PER_CALL = 2
+};
+
+static long monitor_daemon_monotonic_us(void)
+{
+  struct timespec ts;
+
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+    return -1;
+  return (long) ts.tv_sec * 1000000L + (long) ts.tv_nsec / 1000L;
+}
+
+static void monitor_daemon_log_resend_stats(int q_before, int processed_entries, long elapsed_us,
+					    int had_error, int queue_remaining)
+{
+#ifdef DEBUG
+  const unsigned log_every = 1u;
+#else
+  const unsigned log_every = 16u;
+#endif
+  static unsigned long tick;
+
+  if (!had_error && q_before <= 0)
+    return;
+  if (!had_error && elapsed_us < 20000L && processed_entries < 32
+      && queue_remaining <= 0 && (log_every > 1u && (tick++ % log_every) != 0u))
+    return;
+
+  monitor_log_info("ring resend: before=%d processed=%d left=%d elapsed_us=%ld status=%d\n",
+		   q_before, processed_entries, queue_remaining, elapsed_us, had_error);
+}
+
+static void monitor_daemon_log_timer_drift(const char *name, double now_s, double expected_period_s,
+					   double *last_fire_s)
+{
+  double delta;
+
+  if (last_fire_s == NULL || expected_period_s <= 0.0)
+    return;
+  if (*last_fire_s <= 0.0) {
+    *last_fire_s = now_s;
+    return;
+  }
+  delta = now_s - *last_fire_s;
+  *last_fire_s = now_s;
+  if (delta <= expected_period_s * 2.0)
+    return;
+  monitor_log_warn("%s timer drift detected: delta=%.3fs expected=%.3fs\n",
+		   name, delta, expected_period_s);
+}
 
 static void monitor_daemon_log_ring_resend_line(void)
 {
@@ -132,10 +191,20 @@ static void monitor_daemon_apply_dynamic_buffer_size_if_needed(void)
 /* After a send attempt: if the ring buffer still has entries, try to drain it over RMQ. */
 static void monitor_daemon_resend_ring_buffer_if_nonempty(struct sf_ring_buffer *w)
 {
+  long started_us;
+  long elapsed_us;
+  int q_before;
+  int processed = 0;
+
   if (w->q_count <= 0)
     return;
+  q_before = w->q_count;
+  started_us = monitor_daemon_monotonic_us();
   monitor_daemon_log_ring_resend_line();
-  ring_buffer_resend(w);
+  ring_buffer_resend_limited(w, MONITOR_RESEND_MAX_BATCHES_PER_CALL,
+			     MONITOR_RESEND_MAX_RUNTIME_US, &processed);
+  elapsed_us = (started_us > 0) ? monitor_daemon_monotonic_us() - started_us : -1;
+  monitor_daemon_log_resend_stats(q_before, processed, elapsed_us, w->status, w->q_count);
   if (w->q_count > 0)
     send_success_count = 0;
 }
@@ -441,6 +510,7 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
 {
   int rc;
   int n_files = get_dumpfile_number();
+  int n_files_attempted = 0;
   if (n_files <= 0)
     return;
   char **file_list = get_dumpfile_list();
@@ -450,6 +520,8 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
   }
   int n_files_deleted = 0;
   for (int i = 0; i < n_files; i++) {
+    if (n_files_attempted >= MONITOR_DUMPFILE_MAX_FILES_PER_CALL)
+      break;
     FILE *f = file_fopen_read(file_list[i]);
     if (f == NULL) {
       monitor_log_info( "Error opening stats file %s\n", file_list[i]);
@@ -471,6 +543,7 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
         send_success_count = 0;
         break;
       }
+      n_files_attempted++;
     } else {
       monitor_log_info( "Error loading stats file %s\n", file_list[i]);
       send_success_count = 0;
@@ -532,8 +605,11 @@ void monitor_daemon_rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
 void monitor_daemon_sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)
 {
   (void)revents;
+  static double last_sample_fire;
+  double now_s = monitor_daemon_get_realtime_now();
   /* jobid: refreshed on ev_stat (JOBID file) and at startup; avoids fopen/fclose each tick. */
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
+  monitor_daemon_log_timer_drift("sample", now_s, sample_timer_period, &last_sample_fire);
   monitor_daemon_collect_to_ring(w, 0, NULL);
   monitor_daemon_reanchor_sample_timer(loop, sample_timer_period);
   print_buffer_status(w);
@@ -543,8 +619,11 @@ void monitor_daemon_send_timer_cb(struct ev_loop *loop, ev_timer *w_, int revent
 {
   (void)loop;
   (void)revents;
+  static double last_send_fire;
+  double now_s = monitor_daemon_get_realtime_now();
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
   int q_before = w->q_count;
+  monitor_daemon_log_timer_drift("send", now_s, send_freq, &last_send_fire);
   monitor_daemon_resend_ring_buffer_if_nonempty(w);
   if (w->q_count < q_before)
     send_success_count++;
@@ -622,6 +701,7 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)sig->data;
   monitor_log_info( "Reloading hpcperfstatsd config file %s\n", conf_file_name);
   stats_buffer_runtime_caches_reset();
+  hwdetect_invalidate_probe_cache();
   read_conf_file();
   monitor_daemon_prime_file_mode_from_dumpdir();
   monitor_daemon_resend_ring_buffer_if_nonempty(w);

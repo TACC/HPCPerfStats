@@ -10,11 +10,13 @@
 #include <sys/param.h>
 #include <unistd.h>
 #include <pwd.h>
+#include <time.h>
 #include "stats.h"
 #include "fileio.h"
 #include "path_open_fail_once.h"
 #include "trace.h"
 #include "string1.h"
+#include "monitor_log.h"
 
 #define KEYS                                                            \
   X(Uid, "", "user id"),						\
@@ -30,7 +32,38 @@
     X(VmPTE, "U=kB", "page table entry size"),				\
     X(VmSwap, "U=kB", "swapped vm size"),				\
     X(Threads, "", "number of threads"),				\
-    
+
+static unsigned long g_proc_collect_failures;
+static time_t g_proc_collect_skip_until;
+
+static int proc_env_int_or_default(const char *name, int fallback)
+{
+  const char *v = getenv(name);
+  char *end = NULL;
+  long parsed;
+
+  if (v == NULL || *v == '\0')
+    return fallback;
+  parsed = strtol(v, &end, 10);
+  if (end == v || *end != '\0' || parsed <= 0)
+    return fallback;
+  if (parsed > 86400L)
+    return 86400;
+  return (int)parsed;
+}
+
+static int proc_collect_skip_active(void)
+{
+  time_t now = time(NULL);
+
+  if (g_proc_collect_skip_until <= 0 || now <= 0)
+    return 0;
+  if (now >= g_proc_collect_skip_until) {
+    g_proc_collect_skip_until = 0;
+    return 0;
+  }
+  return 1;
+}
 static void proc_collect_pid(struct stats_type *type, const char *pid)
 {
   struct stats *stats = NULL;
@@ -135,16 +168,36 @@ static void proc_collect(struct stats_type *type)
 
   struct dirent **namelist;
   int n;
+  int n_scanned = 0;
+  time_t started = time(NULL);
+  int cooldown_sec = proc_env_int_or_default("HPCPERFSTATS_PROC_COOLDOWN_SEC", 120);
+  int warn_sec = proc_env_int_or_default("HPCPERFSTATS_PROC_WARN_SEC", 10);
+
+  if (proc_collect_skip_active())
+    return;
 
   n = scandir("/proc", &namelist, filter, 0);
-  if (n < 0)
+  if (n < 0) {
+    g_proc_collect_failures++;
+    g_proc_collect_skip_until = time(NULL) + cooldown_sec;
     ERROR("Not enough memory.");
-  else {
+  } else {
+    n_scanned = n;
     while(n--) {
       proc_collect_pid(type, namelist[n]->d_name);
       free(namelist[n]);
     }
     free(namelist);
+    if (started > 0 && warn_sec > 0) {
+      time_t elapsed = time(NULL) - started;
+
+      if (elapsed >= warn_sec) {
+	monitor_log_warn(
+	    "proc collector: long cycle elapsed=%lds scanned=%d; cooling down %ds\n",
+	    (long)elapsed, n_scanned, cooldown_sec);
+	g_proc_collect_skip_until = time(NULL) + cooldown_sec;
+      }
+    }
   }
 }
 

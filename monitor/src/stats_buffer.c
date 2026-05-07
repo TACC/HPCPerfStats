@@ -205,6 +205,16 @@ static size_t row_line_cap;
 static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buffer *sf,
 				  amqp_socket_t **socket_out, int *channel_opened_out);
 static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, struct stats_buffer *sf);
+static long stats_buffer_monotonic_us(void);
+
+static long stats_buffer_monotonic_us(void)
+{
+  struct timespec ts;
+
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+    return -1;
+  return (long) ts.tv_sec * 1000000L + (long) ts.tv_nsec / 1000L;
+}
 
 static void rmq_timeval_seconds(struct timeval *tv, long sec)
 {
@@ -955,9 +965,18 @@ static void ring_buffer_drop_first(struct sf_ring_buffer *w)
   w->q_count -= 1;
 }
 
-void ring_buffer_resend(struct sf_ring_buffer *w)
+void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long max_runtime_us,
+				int *processed_entries)
 {
   enum { max_batch_entries = 10 };
+  int batches = 0;
+  long started_us = -1;
+
+  if (processed_entries != NULL)
+    *processed_entries = 0;
+
+  if (max_runtime_us > 0)
+    started_us = stats_buffer_monotonic_us();
 
   while (w->q_count > 0) {
     struct sf_queue *head = w->q_first;
@@ -974,8 +993,11 @@ void ring_buffer_resend(struct sf_ring_buffer *w)
       if (w->status != 0)
         break;
       w->r_count++;
+      if (processed_entries != NULL)
+	(*processed_entries)++;
       ring_buffer_drop_first(w);
-      continue;
+      batches++;
+      goto maybe_budget_break;
     }
 
     node = head;
@@ -1024,9 +1046,26 @@ void ring_buffer_resend(struct sf_ring_buffer *w)
       break;
 
     w->r_count += batch_count;
+    if (processed_entries != NULL)
+      *processed_entries += batch_count;
     for (int i = 0; i < batch_count; i++)
       ring_buffer_drop_first(w);
+    batches++;
+
+  maybe_budget_break:
+    if (max_batches > 0 && batches >= max_batches)
+      break;
+    if (max_runtime_us > 0 && started_us > 0) {
+      long now_us = stats_buffer_monotonic_us();
+      if (now_us > 0 && now_us - started_us >= max_runtime_us)
+	break;
+    }
   }
+}
+
+void ring_buffer_resend(struct sf_ring_buffer *w)
+{
+  ring_buffer_resend_limited(w, -1, -1, NULL);
 }
 
 int stats_buffer_write_file(struct stats_buffer *sf, char *path)

@@ -163,6 +163,26 @@ static void test_resend_stops_on_send_failure(void)
   reset_hook();
 }
 
+static void test_resend_limited_batches(void)
+{
+  struct sf_ring_buffer w;
+  int processed = 0;
+
+  memset(&w, 0, sizeof(w));
+  reset_hook();
+  assert(ring_buffer_insert(make_payload_buf("$hdr\n"), &w, -1, 1) == 0);
+  for (int i = 0; i < 5; i++)
+    assert(ring_buffer_insert(make_payload_buf("1.0 job host x\n"), &w, -1, 1) == 0);
+
+  ring_buffer_resend_limited(&w, 1, -1, &processed);
+  assert(processed > 0);
+  assert(w.q_count > 0);
+  assert(g_send_hook_calls == 1u);
+
+  ring_buffer_resend(&w);
+  assert(w.q_count == 0);
+}
+
 static void test_load_file_two_records(void)
 {
   struct sf_ring_buffer w;
@@ -215,6 +235,7 @@ int main(void)
   test_resend_batch_merge();
   test_resend_schema_then_stats();
   test_resend_stops_on_send_failure();
+  test_resend_limited_batches();
   test_load_file_two_records();
   test_load_file_leading_blank_skipped();
   test_load_file_open_fails();

@@ -44,6 +44,8 @@ int stats_buffer_resend(struct stats_buffer *sf);
 int stats_buffer_write_file(struct stats_buffer *sf, char *path);
 
 void ring_buffer_resend(struct sf_ring_buffer *w);
+void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long max_runtime_us,
+				int *processed_entries);
 
 int ring_buffer_insert(
   struct stats_buffer *sf, 
