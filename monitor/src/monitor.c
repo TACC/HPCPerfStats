@@ -62,14 +62,16 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
 
   /*
    * Full `$`/banner + `!` schema (`stats_wr_hdr`): listend treats payloads whose body begins with
-   * `$` as rotation/schema messages (same AMQP publish as the following timestamp/sample lines).
-   * `after=0` emits immediately once the event loop starts (after main initializes CPU topology).
+   * `$` as rotation/schema messages.
+   * Startup emits `$` synchronously in main (after CPU topology init) before dumpfile replay so a
+   * fresh daemon rotates listend `current` immediately; this timer only handles periodic rotation.
    */
-  enum { schema_hdr_rotate_sec = 6 * 3600 };
   rotate_timer.data = (void *)rb;
-  ev_timer_init(&rotate_timer, monitor_daemon_rotate_timer_cb, 0.0, (double)schema_hdr_rotate_sec);
+  ev_timer_init(&rotate_timer, monitor_daemon_rotate_timer_cb, (double)MONITOR_DAEMON_SCHEMA_ROTATE_SEC,
+		(double)MONITOR_DAEMON_SCHEMA_ROTATE_SEC);
   ev_timer_start(EV_DEFAULT, &rotate_timer);
-  monitor_log_info("Setting hpcperfstatsd schema header rotation every %ds\n", schema_hdr_rotate_sec);
+  monitor_log_info("Setting hpcperfstatsd schema header rotation every %ds\n",
+		   MONITOR_DAEMON_SCHEMA_ROTATE_SEC);
 
   fd_watcher.data = (void *)rb;
   ev_stat_init(&fd_watcher, monitor_daemon_fd_cb, jobid_file_path, EV_READ);
@@ -164,11 +166,22 @@ int main(int argc, char *argv[])
   monitor_install_ev_handlers(&ring_buffer);
   monitor_require_server_or_exit();
   monitor_log_optional_driver_probe();
-  monitor_daemon_replay_dumpfiles_if_present(&ring_buffer);
-  monitor_start_timers_and_jobid_watcher(&ring_buffer);
 
   nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
   processor = signature(&n_pmcs);
+
+  /*
+   * Empty ring: publish `$` before replay so listend recreates `current` on startup.
+   * If replay ran first, backlog sits ahead of `$` in the ring and broker/RMQ ordering could delay
+   * rotation until those publishes succeed (head-of-line blocking).
+   */
+  monitor_daemon_rotate_collect_flush(&ring_buffer);
+  monitor_log_info(
+      "Startup schema/`$` banner publish attempted (ring depth afterward=%d; nonzero=publish backlog)\n",
+      ring_buffer.q_count);
+
+  monitor_daemon_replay_dumpfiles_if_present(&ring_buffer);
+  monitor_start_timers_and_jobid_watcher(&ring_buffer);
 
   ev_run(EV_DEFAULT, 0);
 

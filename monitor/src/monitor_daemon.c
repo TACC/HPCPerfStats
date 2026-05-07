@@ -510,17 +510,22 @@ static void print_buffer_status(struct sf_ring_buffer *w)
 	  w->d_count, w->f_count, w->l_count);
 }
 
+void monitor_daemon_rotate_collect_flush(struct sf_ring_buffer *w)
+{
+  monitor_daemon_collect_to_ring(w, 1, NULL);
+  /*
+   * Schema/`$` payloads must reach RabbitMQ promptly — otherwise archives stay stale until the first
+   * send_timer tick (send_freq can be hundreds of seconds) after daemon restart or periodic rotate.
+   */
+  monitor_daemon_resend_ring_buffer_if_nonempty(w);
+}
+
 void monitor_daemon_rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents)
 {
   (void)loop;
   (void)revents;
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
-  monitor_daemon_collect_to_ring(w, 1, NULL);
-  /*
-   * Schema/`$` payloads must reach RabbitMQ promptly — otherwise archives stay stale until the first
-   * send_timer tick (send_freq can be hundreds of seconds) after daemon restart or 6h rotation.
-   */
-  monitor_daemon_resend_ring_buffer_if_nonempty(w);
+  monitor_daemon_rotate_collect_flush(w);
   print_buffer_status(w);
 }
 
@@ -568,7 +573,12 @@ void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
     } else {
       monitor_log_info( "Unloading jobid %s from %s\n", jobid, jobid_file_path);
       mark_line = strf("end %s", jobid);
-      sample_timer_period = 3600.0;
+      /*
+       * Idle (`-`) must keep the same sampling cadence as a cold start with no job.
+       * Historic code used 3600s here; that left q_count at 0 for up to an hour while send_timer
+       * still ran, so archives looked “stalled” and broker traffic was only from other hosts.
+       */
+      sample_timer_period = sample_freq;
       write_hdr = 1;
     }
     monitor_daemon_reanchor_sample_timer(EV_DEFAULT, sample_timer_period);
@@ -634,7 +644,6 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
    * Match daemon startup: emit `$`/schema refresh after reload so archives see updated types
    * without waiting for the periodic rotate timer.
    */
-  monitor_daemon_collect_to_ring(w, 1, NULL);
-  monitor_daemon_resend_ring_buffer_if_nonempty(w);
+  monitor_daemon_rotate_collect_flush(w);
   print_buffer_status(w);
 }

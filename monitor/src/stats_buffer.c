@@ -1002,6 +1002,8 @@ void ring_buffer_resend(struct sf_ring_buffer *w)
 
       if (merged == NULL) {
         w->status = -1;
+        ERROR("ring_buffer_resend: merged batch malloc failed (%zu bytes, batch=%d)\n", batch_len,
+              batch_count);
         break;
       }
       merged[0] = '\0';

@@ -9,6 +9,9 @@
 #include <ev.h>
 #include "stats_buffer.h"
 
+/* Periodic `$`/schema rotation interval (seconds); shared by daemon init and libev rotate_timer. */
+#define MONITOR_DAEMON_SCHEMA_ROTATE_SEC (6 * 3600)
+
 extern char *app_name;
 extern char *conf_file_name;
 extern FILE *log_stream;
@@ -37,6 +40,7 @@ void monitor_daemon_finalize_runtime_settings(void);
 void monitor_daemon_prime_file_mode_from_dumpdir(void);
 void monitor_daemon_replay_dumpfiles_if_present(struct sf_ring_buffer *w);
 void monitor_daemon_reanchor_sample_timer(struct ev_loop *loop, double period);
+void monitor_daemon_rotate_collect_flush(struct sf_ring_buffer *w);
 
 void monitor_daemon_rotate_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents);
 void monitor_daemon_sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int revents);
