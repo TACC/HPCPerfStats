@@ -114,6 +114,8 @@ COMPUTE_BATCH_WATCHDOG_SECONDS = 120.0
 COMPUTE_BATCH_MIN_CAP = 16
 COMPUTE_BATCH_DOWNSHIFT_FACTOR = 0.5
 COMPUTE_BATCH_UPSHIFT_STEP = 16
+COMPUTE_BATCH_WORKER_MULTIPLIER = 2
+COMPUTE_BATCH_ABSOLUTE_MAX = 64
 RESCAN_FETCH_LIMIT = CHUNK_SIZE
 TELEMETRY_SAMPLE_LIMIT = 2048
 STALL_RECOVERY_PER_JID_TIMEOUT_SECONDS = 60.0
@@ -1966,14 +1968,27 @@ def update_metrics_for_dates(dates, rerun=False):
       completion_reporter.set_extra_stats_getter(_extra_stats_snapshot)
       completion_reporter.start()
       batch_cap = min(prefetch_target, GLOBAL_SCHEDULER_BATCH_SIZE)
-      effective_batch_cap = max(COMPUTE_BATCH_MIN_CAP, int(batch_cap))
+      worker_count = max(1, int(cfg.get_metrics_pool_process_count()))
+      worker_scaled_cap = max(
+          COMPUTE_BATCH_MIN_CAP,
+          worker_count * COMPUTE_BATCH_WORKER_MULTIPLIER,
+      )
+      effective_batch_cap = max(
+          COMPUTE_BATCH_MIN_CAP,
+          min(
+              int(batch_cap),
+              int(worker_scaled_cap),
+              int(COMPUTE_BATCH_ABSOLUTE_MAX),
+          ),
+      )
       log_print(
           "Starting metrics scheduler days={0} mode={1} prefetch_ready_cap={2} "
-          "compute_batch_cap={3} prewarm_mode={4}".format(
+          "compute_batch_cap={3} worker_count={4} prewarm_mode={5}".format(
               len(dates),
               scheduler_mode,
               prefetch_ready_cap,
               effective_batch_cap,
+              worker_count,
               cfg.get_metrics_plot_prewarm_mode(),
           ),
           flush=True,
