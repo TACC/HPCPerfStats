@@ -8,7 +8,6 @@ import logging
 import threading
 import time
 from collections import deque
-from collections.abc import Sequence
 from datetime import datetime
 from datetime import timezone as dt_utc
 
@@ -170,6 +169,51 @@ def _iter_acct_host_batches(acct_host_list, batch_size=None):
     yield hosts[i:i + bs]
 
 
+def _unwrap_singleton_scalar(value):
+  """Unwrap one-element list/tuple/deque-style wrappers to a scalar."""
+  if value is None:
+    return None
+  cur = value
+  for _ in range(24):
+    if isinstance(cur, (list, tuple, deque)) and len(cur) == 1:
+      cur = cur[0]
+      continue
+    # pandas / numpy wrappers often expose one logical element.
+    if isinstance(cur, (str, bytes, bytearray, dict, set)):
+      break
+    if hasattr(cur, "__len__") and hasattr(cur, "__getitem__"):
+      try:
+        ln = len(cur)
+      except Exception:
+        break
+      if ln == 1:
+        try:
+          cur = cur[0]
+        except Exception:
+          break
+        continue
+      if ln > 1:
+        return None
+    break
+  return cur
+
+
+def _normalize_window_bound_datetime(value):
+  """Coerce cache/ORM window bound payloads to a datetime scalar or ``None``."""
+  cur = _unwrap_singleton_scalar(value)
+  if cur is None:
+    return None
+  # pandas.Timestamp, numpy datetime64 scalar wrappers.
+  if hasattr(cur, "to_pydatetime"):
+    try:
+      cur = cur.to_pydatetime()
+    except Exception:
+      return None
+  if isinstance(cur, datetime):
+    return cur
+  return None
+
+
 def _is_psycopg_connection_desync(exc):
   """True for errors that warrant a fresh DB connection and one retry."""
   if isinstance(exc, (InterfaceError, OperationalError)):
@@ -187,12 +231,9 @@ def _count_host_data_rows_for_window(start, end, acct_hosts):
   Retries once after :func:`close_old_connections` when the connection is
   desynchronized (same class of errors as raw-SQL / concurrent use).
   """
-  if start is None or end is None:
-    return 0
-  # Corrupted cache rows may surface wrapped/list-like bounds from cache serializers.
-  if isinstance(start, Sequence) and not isinstance(start, (str, bytes, bytearray)):
-    return 0
-  if isinstance(end, Sequence) and not isinstance(end, (str, bytes, bytearray)):
+  start_dt = _normalize_window_bound_datetime(start)
+  end_dt = _normalize_window_bound_datetime(end)
+  if start_dt is None or end_dt is None:
     return 0
   hosts = _listify_acct_hosts(acct_hosts)
   if not hosts:
@@ -210,8 +251,8 @@ def _count_host_data_rows_for_window(start, end, acct_hosts):
         if not clean_chunk:
           continue
         total += host_data.objects.filter(
-            time__gte=start,
-            time__lte=end,
+            time__gte=start_dt,
+            time__lte=end_dt,
             host__in=clean_chunk,
         ).count()
       return total
@@ -279,10 +320,12 @@ def _safe_positive_int_ttl_seconds(raw_ttl, *, default):
 
 def _job_window_iso_pair_for_cache_key(start, end):
   """Return ``(start_iso, end_iso)`` or ``None`` if bounds are not cache-key safe."""
-  if start is None or end is None:
+  start_dt = _normalize_window_bound_datetime(start)
+  end_dt = _normalize_window_bound_datetime(end)
+  if start_dt is None or end_dt is None:
     return None
   try:
-    return (start.isoformat(), end.isoformat())
+    return (start_dt.isoformat(), end_dt.isoformat())
   except Exception:
     return None
 
@@ -613,8 +656,8 @@ def gpu_acct_window_for_job_data(job):
   the job window).
   """
   hl_raw = getattr(job, "host_list", None)
-  st = getattr(job, "start_time", None)
-  et = getattr(job, "end_time", None)
+  st = _normalize_window_bound_datetime(getattr(job, "start_time", None))
+  et = _normalize_window_bound_datetime(getattr(job, "end_time", None))
   if st is None and et is None:
     return _ensure_tz(st), _ensure_tz(et), []
   acct_host_list = [
@@ -686,7 +729,9 @@ class jid_table:
       self._base_filter = {}
       return
 
-    hl_raw, st, et = _unpack_cached_job_window_row(row)
+    hl_raw, st_raw, et_raw = _unpack_cached_job_window_row(row)
+    st = _normalize_window_bound_datetime(st_raw)
+    et = _normalize_window_bound_datetime(et_raw)
     if st is None and et is None:
       self.acct_host_list = []
       self.host_list = []

@@ -26,6 +26,7 @@ from hpcperfstats.analysis.gen.jid_table import _iter_acct_host_batches
 from hpcperfstats.analysis.gen.jid_table import _normalize_host_data_schema_label
 from hpcperfstats.analysis.gen.jid_table import _normalize_host_cell_for_host_data
 from hpcperfstats.analysis.gen.jid_table import _normalize_job_accounting_host_list
+from hpcperfstats.analysis.gen.jid_table import _normalize_window_bound_datetime
 from hpcperfstats.analysis.gen.jid_table import _ntile_bucket_max_timestamps
 from hpcperfstats.analysis.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
 from hpcperfstats.analysis.gen.jid_table import _strided_distinct_times_for_large_job
@@ -327,6 +328,32 @@ def test_count_host_data_rows_for_window_rejects_non_datetime_bounds(monkeypatch
   assert n == 0
 
 
+def test_count_host_data_rows_for_window_rejects_deque_list_bounds(monkeypatch):
+  from collections import deque
+
+  class _FailingObjects:
+    def filter(self, **kwargs):
+      raise AssertionError("ORM filter should not run for list-like bound wrappers")
+
+  class _FailingHostData:
+    objects = _FailingObjects()
+
+  monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.host_data", _FailingHostData())
+  n = _count_host_data_rows_for_window(
+      start=deque([["bad"]]),
+      end=deque([["bad"]]),
+      acct_hosts=["h.x"],
+  )
+  assert n == 0
+
+
+def test_normalize_window_bound_datetime_unwraps_singleton_sequences():
+  dt = datetime(2026, 5, 6, 22, 13, 0)
+  assert _normalize_window_bound_datetime([[dt]]) == dt
+  assert _normalize_window_bound_datetime(["not-datetime"]) is None
+  assert _normalize_window_bound_datetime([dt, dt]) is None
+
+
 def test_ensure_tz_none():
   """_ensure_tz returns None for None input."""
   assert _ensure_tz(None) is None
@@ -621,7 +648,9 @@ def test_count_host_data_rows_for_window_chunked_single_batch(monkeypatch):
 
   monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.host_data.objects", FakeManager())
 
-  out = _count_host_data_rows_for_window(1, 2, hosts)
+  st = datetime(2026, 5, 1, 0, 0, 0)
+  et = datetime(2026, 5, 1, 0, 1, 0)
+  out = _count_host_data_rows_for_window(st, et, hosts)
   assert out == len(hosts)
 
 
@@ -643,7 +672,9 @@ def test_count_host_data_rows_for_window_chunked_multiple_batches(monkeypatch):
 
   monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.host_data.objects", FakeManager())
 
-  out = _count_host_data_rows_for_window(1, 2, hosts)
+  st = datetime(2026, 5, 1, 0, 0, 0)
+  et = datetime(2026, 5, 1, 0, 1, 0)
+  out = _count_host_data_rows_for_window(st, et, hosts)
   assert out == n
 
 
@@ -671,7 +702,9 @@ def test_count_host_data_rows_retries_after_lost_sync(monkeypatch):
       "hpcperfstats.analysis.gen.jid_table.close_old_connections",
       lambda: closed.append(1),
   )
-  out = _count_host_data_rows_for_window(1, 2, ["h1.example.com"])
+  st = datetime(2026, 5, 1, 0, 0, 0)
+  et = datetime(2026, 5, 1, 0, 1, 0)
+  out = _count_host_data_rows_for_window(st, et, ["h1.example.com"])
   assert out == 7
   assert calls["n"] == 2
   assert len(closed) == 2
