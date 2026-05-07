@@ -1,8 +1,9 @@
 """Metric computation for jobs: simple metrics (job_arc/time_bucket) and complex metrics (avg_freq, avg_ethbw, mem_hwm, etc.) via utils-compatible job view. Results written to metrics_data.
 
-DB access is process-safe: _unwrap runs in multiprocessing workers and calls close_old_connections() at entry so each worker uses a fresh connection for reads (e.g. job_arc); writes are done in the main process only.
-
-Public EF pool workers (:mod:`public_metrics_artifacts`) also call ``connections.close_all()`` because fork inherits the parent's socket and Postgres named iterator cursors would otherwise collide across processes.
+DB access is process-safe: _unwrap runs in multiprocessing workers, calls
+connections.close_all() then close_old_connections() so forked children never
+reuse the parent's PostgreSQL session (named server-side cursors / iterator
+state); writes are done in the main process only.
 
 """
 import json
@@ -20,7 +21,7 @@ import numexpr as ne
 from numpy import amax, diff, isnan, maximum, mean, zeros
 from pandas import to_datetime
 
-from django.db import transaction, close_old_connections
+from django.db import connections, transaction, close_old_connections
 from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.gen import jid_table
@@ -512,7 +513,9 @@ def _unwrap(args):
   """Wrapper for pool: call compute_metrics on the job. Used by Metrics.run.
 
     """
-  # Ensure this worker process uses a fresh DB connection (thread-safe for multiprocessing).
+  # Fork inherits the parent's DB socket on Linux; Django named cursors (iterator)
+  # must never share one PostgreSQL session across processes (#close_all_after_fork).
+  connections.close_all()
   close_old_connections()
   metrics_obj, job = args
 
