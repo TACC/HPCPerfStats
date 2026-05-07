@@ -56,7 +56,8 @@ void daemonize()
 
   /* Change the working directory to the root directory */
   /* or another appropriated directory */
-  chdir("/");
+  if (chdir("/") != 0)
+    exit(EXIT_FAILURE);
 
   /* Close all open file descriptors */
   for (fd = sysconf(_SC_OPEN_MAX); fd > 0; fd--) {

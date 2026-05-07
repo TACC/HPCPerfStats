@@ -19,19 +19,16 @@ void monitor_log_set_stream(FILE *stream)
   g_monitor_stream = stream;
 }
 
+#ifdef DEBUG
 static void monitor_log_va_diag(const char *fmt, va_list ap)
 {
-#ifdef DEBUG
 # ifdef RABBITMQ
   vfprintf(stdout, fmt, ap);
 # else
   vfprintf(stderr, fmt, ap);
 # endif
-#else
-  fprintf(stderr, "%s: ", program_invocation_short_name);
-  vfprintf(stderr, fmt, ap);
-#endif
 }
+#endif
 
 void monitor_log_info(const char *fmt, ...)
 {

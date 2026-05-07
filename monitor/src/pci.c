@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <limits.h>
 #include "trace.h"
 #include "path_open_fail_once.h"
 
@@ -26,9 +27,10 @@ int pci_map_create(char ***dev_paths, int *nr, int *ids, int nr_ids) {
     if (bus_no->d_type != DT_DIR || *bus_no->d_name == '.')
       continue;
 
-    char bus_dir_path[80];
-    snprintf(bus_dir_path, sizeof(bus_dir_path), "%s/%s", 
-	     pci_dir_path, bus_no->d_name);
+    char bus_dir_path[PATH_MAX];
+    if (snprintf(bus_dir_path, sizeof(bus_dir_path), "%s/%s",
+		 pci_dir_path, bus_no->d_name) >= (int)sizeof(bus_dir_path))
+      continue;
 
     DIR *bus_dir = NULL;
     bus_dir = path_opendir_or_record_fail(bus_dir_path);
@@ -41,9 +43,10 @@ int pci_map_create(char ***dev_paths, int *nr, int *ids, int nr_ids) {
 	continue;
       
       int pci_fd = -1;
-      char dev_fun_path[80];
-      snprintf(dev_fun_path, sizeof(dev_fun_path), "%s/%s/%s", 
-	       pci_dir_path, bus_no->d_name, dev_fun_no->d_name);
+      char dev_fun_path[PATH_MAX];
+      if (snprintf(dev_fun_path, sizeof(dev_fun_path), "%s/%s/%s",
+		   pci_dir_path, bus_no->d_name, dev_fun_no->d_name) >= (int)sizeof(dev_fun_path))
+	continue;
       
       if (path_open_is_skipped(dev_fun_path))
 	continue;
@@ -79,8 +82,15 @@ int pci_map_create(char ***dev_paths, int *nr, int *ids, int nr_ids) {
 	  }
 	  (*dev_paths)[*nr] = slot;
 
-	  snprintf((*dev_paths)[*nr], strlen(dev_fun_path) + 1, "%s/%s",
-		   bus_no->d_name, dev_fun_no->d_name);
+	  {
+	    int wrote = snprintf((*dev_paths)[*nr], strlen(dev_fun_path) + 1, "%s/%s",
+				 bus_no->d_name, dev_fun_no->d_name);
+	    if (wrote < 0 || (size_t)wrote >= strlen(dev_fun_path) + 1) {
+	      free((*dev_paths)[*nr]);
+	      (*dev_paths)[*nr] = NULL;
+	      continue;
+	    }
+	  }
 	  TRACE("%x %x %s\n", reg[0], reg[1], (*dev_paths)[*nr]);
 	  (*nr)++;
 	}

@@ -24,15 +24,14 @@ __attribute__((constructor))
 static void sb_dict_init(void)
 {
   const char *lov_dir_path = "/proc/fs/lustre/lov";
+  char lov_name[128] = "";
+  char *sb_mnt = NULL;
+  DIR *lov_dir = NULL;
 
   if (dict_init(&sb_dict, 8) < 0) {
     ERROR("cannot create sb_dict: %m\n");
     goto out;
   }
-
-  char lov_name[128] = "";
-  char *sb_mnt = NULL;
-  DIR *lov_dir = NULL;
 
   lov_dir = path_opendir_or_record_fail(lov_dir_path);
   if (lov_dir == NULL)
@@ -44,7 +43,7 @@ static void sb_dict_init(void)
     if (de->d_type != DT_DIR || *de->d_name == '.')
       continue;
     
-    snprintf(lov_name, sizeof(lov_name), de->d_name);
+    snprintf(lov_name, sizeof(lov_name), "%s", de->d_name);
     
     /* lov_name is of the form `work-clilov-ffff8102658ec800'. */
     if (strlen(lov_name) < 16) {

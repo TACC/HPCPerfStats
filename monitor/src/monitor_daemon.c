@@ -713,7 +713,8 @@ void monitor_daemon_signal_cb_int(struct ev_loop *loop, ev_signal *sig, int reve
   stats_runtime_daemon_reset_types();
   monitor_log_info( "Stopping hpcperfstatsd\n");
   if (pid_fd != -1) {
-    lockf(pid_fd, F_ULOCK, 0);
+    if (lockf(pid_fd, F_ULOCK, 0) != 0)
+      monitor_log_warn("Failed unlocking pid file fd=%d: %m\n", pid_fd);
     close(pid_fd);
   }
   if (pid_file_name != NULL)
