@@ -1,0 +1,29 @@
+---
+description: Prioritize low-jitter, low-overhead monitor code while preserving sample fidelity
+globs: HPCPerfStats/monitor/**
+alwaysApply: false
+---
+
+# Monitor Jitter and Fidelity Priority
+
+The monitor runs on overloaded systems and must minimize interference with user workloads.
+
+## Core requirements
+
+- Treat CPU jitter and monitor cycle consumption as first-class constraints for all monitor changes.
+- Prefer bounded, deterministic, and amortized work in hot paths (`sample_timer`, `send_timer`, per-collector `st_collect`).
+- Avoid unbounded loops and repeated control-plane setup/teardown inside recurring callbacks.
+- Use caches, handle reuse, cooldowns, and backoff to prevent repeated expensive probes/retries.
+
+## Sampling fidelity policy
+
+- Do not increase sampling interval as the default fix for CPU pressure.
+- Preserve data fidelity at existing cadence; optimize work per sample instead of reducing sample count.
+- If a cadence change is ever proposed, require explicit user approval and document the data-quality tradeoff.
+
+## Implementation guidance
+
+- Move heavyweight discovery/init to startup, explicit reload paths, or failure recovery paths.
+- Keep recurring collect paths focused on lightweight reads and bounded processing.
+- Add low-noise diagnostics that prove progress and identify stalls without creating additional jitter.
+
