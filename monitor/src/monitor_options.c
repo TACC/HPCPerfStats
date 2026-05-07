@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <getopt.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -7,6 +8,20 @@
 #include "monitor_daemon.h"
 #include "monitor_log.h"
 #include "monitor_options.h"
+
+static int parse_double_arg(const char *raw, double *out)
+{
+	char *end = NULL;
+	double v;
+
+	if (raw == NULL || *raw == '\0')
+		return -1;
+	v = strtod(raw, &end);
+	if (end == raw || *end != '\0' || !isfinite(v))
+		return -1;
+	*out = v;
+	return 0;
+}
 
 void monitor_options_print_daemon_usage(FILE *stream)
 {
@@ -64,13 +79,19 @@ void monitor_options_parse_daemon_argv(int argc, char *argv[], int *daemonmode_o
 			server = strdup(optarg);
 			break;
 		case 'f':
-			sample_freq = atof(optarg);
+			if (parse_double_arg(optarg, &sample_freq) != 0)
+				monitor_log_warn("%s: ignoring invalid --frequency value `%s`\n",
+						 app_name, optarg);
 			break;
 		case 'F':
-			sample_freq = atof(optarg);
+			if (parse_double_arg(optarg, &sample_freq) != 0)
+				monitor_log_warn("%s: ignoring invalid --sample-frequency value `%s`\n",
+						 app_name, optarg);
 			break;
 		case 'S':
-			send_freq = atof(optarg);
+			if (parse_double_arg(optarg, &send_freq) != 0)
+				monitor_log_warn("%s: ignoring invalid --send-frequency value `%s`\n",
+						 app_name, optarg);
 			break;
 		case 'c':
 			free(conf_file_name);
@@ -145,18 +166,24 @@ void monitor_options_apply_daemon_conf_kv(const char *key, char *value_line)
 		    app_name, max_buffer_size, conf_file_name);
 	}
 	if (strcmp(key, "sample_freq") == 0) {
-		if (sscanf(value_line, "%lf", &sample_freq) == 1)
+		if (parse_double_arg(value_line, &sample_freq) == 0)
 			monitor_log_info("%s: Setting sample frequency to %f "
 					 "based on file %s\n",
 					 app_name, sample_freq,
 					 conf_file_name);
+		else
+			monitor_log_warn("%s: ignoring invalid sample_freq `%s` in file %s\n",
+					 app_name, value_line, conf_file_name);
 	}
 	if (strcmp(key, "send_freq") == 0) {
-		if (sscanf(value_line, "%lf", &send_freq) == 1)
+		if (parse_double_arg(value_line, &send_freq) == 0)
 			monitor_log_info("%s: Setting send frequency to %f "
 					 "based on file %s\n",
 					 app_name, send_freq,
 					 conf_file_name);
+		else
+			monitor_log_warn("%s: ignoring invalid send_freq `%s` in file %s\n",
+					 app_name, value_line, conf_file_name);
 	}
 	if (strcmp(key, "buffer_hours") == 0) {
 		if (sscanf(value_line, "%lf", &buffer_hours) == 1)
@@ -166,11 +193,14 @@ void monitor_options_apply_daemon_conf_kv(const char *key, char *value_line)
 					 conf_file_name);
 	}
 	if (strcmp(key, "freq") == 0) {
-		if (sscanf(value_line, "%lf", &sample_freq) == 1)
+		if (parse_double_arg(value_line, &sample_freq) == 0)
 			monitor_log_info("%s: Deprecated key `freq` mapped to "
 					 "sample_freq=%f in file %s\n",
 					 app_name, sample_freq,
 					 conf_file_name);
+		else
+			monitor_log_warn("%s: ignoring invalid deprecated freq `%s` in file %s\n",
+					 app_name, value_line, conf_file_name);
 	}
 	if (strcmp(key, "jobid_file") == 0) {
 		monitor_cli_heap_dup_setting(

@@ -5,6 +5,7 @@
 #include <limits.h>
 #include <string.h>
 #include <ctype.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <time.h>
@@ -991,18 +992,52 @@ static int likwid_backend_begin(struct stats_type *type)
 #endif
 
 #ifndef MONITOR_CPU_BACKEND_DCGM
+static int *g_msr_fd_cache;
+static int g_msr_fd_cache_n;
+
+static int read_msr_cached_fd(const char *cpu)
+{
+  int cpu_id = atoi(cpu);
+  int fd;
+  char path[80];
+
+  if (cpu_id < 0 || cpu_id >= nr_cpus)
+    return -1;
+  if (nr_cpus > g_msr_fd_cache_n) {
+    int *next = (int *)realloc(g_msr_fd_cache, (size_t)nr_cpus * sizeof(int));
+    int i;
+    if (next == NULL)
+      return -1;
+    for (i = g_msr_fd_cache_n; i < nr_cpus; i++)
+      next[i] = -1;
+    g_msr_fd_cache = next;
+    g_msr_fd_cache_n = nr_cpus;
+  }
+  if (g_msr_fd_cache[cpu_id] >= 0)
+    return g_msr_fd_cache[cpu_id];
+
+  snprintf(path, sizeof(path), "/dev/cpu/%s/msr", cpu);
+  fd = open(path, O_RDONLY);
+  if (fd < 0)
+    return -1;
+  g_msr_fd_cache[cpu_id] = fd;
+  return fd;
+}
+
 static int read_msr_u64(const char *cpu, uint64_t reg, uint64_t *val)
 {
   int rc = -1;
-  char msr_path[80];
-  int msr_fd = -1;
-  snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%s/msr", cpu);
-  msr_fd = open(msr_path, O_RDONLY);
+  int msr_fd = read_msr_cached_fd(cpu);
+  int cpu_id = atoi(cpu);
   if (msr_fd < 0)
     return -1;
   if (pread(msr_fd, val, sizeof(*val), reg) == (ssize_t) sizeof(*val))
     rc = 0;
-  close(msr_fd);
+  else if (errno == EBADF || errno == EIO) {
+    close(msr_fd);
+    if (cpu_id >= 0 && cpu_id < g_msr_fd_cache_n)
+      g_msr_fd_cache[cpu_id] = -1;
+  }
   return rc;
 }
 

@@ -58,7 +58,7 @@ static void monitor_rmq_io_tick_cb(struct ev_loop *loop, ev_timer *w, int revent
 
 static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
 {
-  ev_stat fd_watcher;
+  static ev_stat fd_watcher;
   static ev_timer rmq_io_timer;
 
   /*

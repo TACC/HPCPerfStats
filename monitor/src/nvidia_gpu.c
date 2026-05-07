@@ -154,6 +154,8 @@ enum nvidia_gpu_fail_stage {
 static unsigned long g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_STAGE_NR];
 static unsigned long g_nvidia_gpu_gid_oob_skips;
 static unsigned long g_nvidia_gpu_stats_alloc_skips;
+static int g_nvidia_gpu_warmup_done;
+static int g_nvidia_gpu_warmup_profile = -1;
 
 static int env_int_or_default(const char *name, int fallback)
 {
@@ -216,6 +218,20 @@ static int nvidia_gpu_warmup_wait_latest_values(dcgmHandle_t dcgm_handle,
   }
   ERROR("DCGM warmup wait exhausted (%dms): %s\n", wait_ms, dcgm_err(rc));
   return -1;
+}
+
+static int nvidia_gpu_maybe_warmup(dcgmHandle_t dcgm_handle,
+				   dcgmGpuGrp_t group_id,
+				   dcgmFieldGrp_t field_group_id,
+				   int watch_profile)
+{
+  if (g_nvidia_gpu_warmup_done && g_nvidia_gpu_warmup_profile == watch_profile)
+    return 0;
+  if (nvidia_gpu_warmup_wait_latest_values(dcgm_handle, group_id, field_group_id) < 0)
+    return -1;
+  g_nvidia_gpu_warmup_done = 1;
+  g_nvidia_gpu_warmup_profile = watch_profile;
+  return 0;
 }
 
 static unsigned long long clamp_double_to_ull(double v)
@@ -673,7 +689,7 @@ static void nvidia_gpu_collect(struct stats_type *type)
     monitor_log_warn("nvidia_gpu: using DCGM fallback watch profile %s\n",
                      watch_profile == 1 ? "core-prof" : "basic-nonprof");
   }
-  if (nvidia_gpu_warmup_wait_latest_values(dcgm_handle, group_id, field_group_id) < 0)
+  if (nvidia_gpu_maybe_warmup(dcgm_handle, group_id, field_group_id, watch_profile) < 0)
     goto out;
 
   /*
@@ -715,6 +731,8 @@ static void nvidia_gpu_collect(struct stats_type *type)
   }
 
 out:
+  if (fail_stage != NVIDIA_GPU_FAIL_NONE)
+    g_nvidia_gpu_warmup_done = 0;
   if (fail_stage > NVIDIA_GPU_FAIL_NONE && fail_stage < NVIDIA_GPU_FAIL_STAGE_NR)
     g_nvidia_gpu_fail_counts[fail_stage]++;
   if (dcgm_data != NULL)

@@ -77,6 +77,9 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
   char name[16];
   char cmask[512];
   char mmask[32];
+  int name_ready = 0;
+  int cmask_ready = 0;
+  int mmask_ready = 0;
 
   TRACE("pid %s\n", pid);
 
@@ -86,47 +89,49 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
     goto out;
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
   
+  name[0] = '\0';
+  cmask[0] = '\0';
+  mmask[0] = '\0';
   while (getline(&line, &line_size, file) >= 0) {
     char *key, *rest = line;
+    size_t rest_len;
     key = wsep(&rest);
     
     if (key == NULL || rest == NULL)
 	continue;
 
-    rest[strlen(rest) - 1] = '\0';
+    rest_len = strlen(rest);
+    if (rest_len > 0 && rest[rest_len - 1] == '\n')
+      rest[rest_len - 1] = '\0';
     if (strcmp(key, "Name:") == 0) {     
       if (!strcmp("bash", rest) || !strcmp("ssh", rest) || 
 	  !strcmp("sshd", rest) || !strcmp("metacity", rest))
 	goto out;
       
       strcpy(name, rest);
+      name_ready = 1;
     }
     else if (strcmp(key, "Cpus_allowed_list:") == 0) {
       strcpy(cmask, rest);
+      cmask_ready = 1;
     }
     else if (strcmp(key, "Mems_allowed_list:") == 0) {
       strcpy(mmask, rest);
+      mmask_ready = 1;
     }
-  }
-
-  snprintf(process, sizeof(process), "%s/%s/%s/%s", name, pid, cmask, mmask);
-  stats = get_current_stats(type, process);       
-  if (stats == NULL)
-    goto out;
-
-  fseek(file, 0, SEEK_SET);
-  while (getline(&line, &line_size, file) >= 0) {
-    char *key, *rest = line;
-    key = wsep(&rest);
-    
-    if (key == NULL || rest == NULL)
-	continue;
-
-    errno = 0;
-    key[strlen(key) - 1] = '\0';  
-    unsigned long long val = strtoull(rest, NULL, 0);
-    if (errno == 0)
-      stats_set(stats, key, val);
+    if (stats == NULL && name_ready && cmask_ready && mmask_ready) {
+      snprintf(process, sizeof(process), "%s/%s/%s/%s", name, pid, cmask, mmask);
+      stats = get_current_stats(type, process);
+    }
+    if (stats != NULL) {
+      errno = 0;
+      key[strlen(key) - 1] = '\0';
+      {
+	unsigned long long val = strtoull(rest, NULL, 0);
+	if (errno == 0)
+	  stats_set(stats, key, val);
+      }
+    }
   }
   
  out:

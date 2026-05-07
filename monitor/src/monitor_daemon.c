@@ -84,7 +84,9 @@ static void monitor_daemon_log_timer_drift(const char *name, double now_s, doubl
 enum {
   MONITOR_RESEND_MAX_BATCHES_PER_CALL = 64,
   MONITOR_RESEND_MAX_RUNTIME_US = 50000,
-  MONITOR_DUMPFILE_MAX_FILES_PER_CALL = 2
+  MONITOR_DUMPFILE_MAX_FILES_PER_CALL = 2,
+  MONITOR_DUMPFILE_REPLAY_MAX_BATCHES_PER_FILE = 32,
+  MONITOR_DUMPFILE_REPLAY_MAX_RUNTIME_US = 25000
 };
 
 static long monitor_daemon_monotonic_us(void)
@@ -263,11 +265,15 @@ void monitor_daemon_reanchor_sample_timer(struct ev_loop *loop, double period)
 
 void monitor_daemon_finalize_runtime_settings(void)
 {
-  if (sample_freq <= 0.0)
+  if (!isfinite(sample_freq) || sample_freq <= 0.0)
     sample_freq = 1.0;
-  if (send_freq <= 0.0)
+  if (sample_freq < 0.1)
+    sample_freq = 0.1;
+  if (!isfinite(send_freq) || send_freq <= 0.0)
     send_freq = 1.0;
-  if (buffer_hours <= 0.0)
+  if (send_freq < 0.1)
+    send_freq = 0.1;
+  if (!isfinite(buffer_hours) || buffer_hours <= 0.0)
     buffer_hours = 1.0;
   monitor_daemon_apply_dynamic_buffer_size_if_needed();
 }
@@ -539,7 +545,8 @@ static void send_dumpfile_stats(struct sf_ring_buffer *w)
       remove(file_list[i]);
       n_files_deleted++;
       monitor_daemon_log_ring_resend_line();
-      ring_buffer_resend(w);
+      ring_buffer_resend_limited(w, MONITOR_DUMPFILE_REPLAY_MAX_BATCHES_PER_FILE,
+                                 MONITOR_DUMPFILE_REPLAY_MAX_RUNTIME_US, NULL);
       if (w->q_count != 0) {
 #ifdef DEBUG
 	monitor_log_info( "w_q_count = %d\n", w->q_count);
