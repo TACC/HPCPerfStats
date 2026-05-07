@@ -12,6 +12,7 @@
 #include "stats.h"
 #include "trace.h"
 #include "cpuid.h"
+#include "monitor_log.h"
 #ifdef MONITOR_CPU_BACKEND_DCGM
 #include "dcgm_agent.h"
 #include "dcgm_fields.h"

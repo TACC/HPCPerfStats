@@ -165,6 +165,10 @@ static dcgmGpuGrp_t g_nvidia_gpu_runtime_group = (dcgmGpuGrp_t)NULL;
 static dcgmFieldGrp_t g_nvidia_gpu_runtime_field_group = (dcgmFieldGrp_t)NULL;
 static unsigned int g_nvidia_gpu_runtime_gpu_ids[DCGM_MAX_NUM_DEVICES];
 
+static dcgmReturn_t nvidia_gpu_discover_gpu_ids(dcgmHandle_t h,
+						unsigned int *gpu_ids,
+						int *ndev);
+
 static int env_int_or_default(const char *name, int fallback)
 {
   const char *v = getenv(name);
