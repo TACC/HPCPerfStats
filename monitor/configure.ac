@@ -434,8 +434,12 @@ fi
 AM_CONDITIONAL([METRIC_PROFILER_BACKEND_EBPF], [test x$metric_profiler_backend = xebpf])
 AC_SUBST([METRIC_PROFILER_BACKEND_CPPFLAG])
 
-dnl Static libev.a calls libm (e.g. floor); probe libev with -lm so AC_SEARCH_LIBS succeeds.
-AC_SEARCH_LIBS([floor], [m], [], [])
+dnl Static libev.a calls libm (e.g. floor). Probe libm without leaving -lm in LIBS:
+dnl --enable-all-static wraps LIBS in -Wl,-Bstatic; static libm.a is often unavailable.
+save_LIBS=$LIBS
+LIBS=
+AC_SEARCH_LIBS([floor], [m], [], [AC_MSG_ERROR([Unable to find libm (floor)])])
+LIBS=$save_LIBS
 AC_SEARCH_LIBS([ev_run], [ev], [libev=yes], [AC_MSG_ERROR([Failed to find libev])], [-lm])
 AC_CHECK_HEADERS([ev.h], [ev=true], [AC_MSG_ERROR([Failed to find header ev.h])])
 
