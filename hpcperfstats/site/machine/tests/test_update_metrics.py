@@ -1618,8 +1618,13 @@ def test_update_metrics_refreshes_pub_dashboards_before_first_compute(monkeypatc
   order = []
   monkeypatch.setattr(
       update_metrics,
+      "refresh_public_expansion_factor_artifacts_parallel",
+      lambda pool: order.append(("pub_parallel", pool)),
+  )
+  monkeypatch.setattr(
+      update_metrics,
       "refresh_public_expansion_factor_artifacts_safe",
-      lambda: order.append("refresh"),
+      lambda: order.append("safe_final"),
   )
 
   class FakeMetrics:
@@ -1649,23 +1654,22 @@ def test_update_metrics_refreshes_pub_dashboards_before_first_compute(monkeypatc
   monkeypatch.setattr(update_metrics, "_start_readiness_producer", _producer_stub)
   update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
   assert "producer_start" in order
-  assert "refresh" in order
-  assert order.index("refresh") < order.index("producer_start")
+  pub_i = next(i for i, x in enumerate(order) if isinstance(x, tuple) and x[0] == "pub_parallel")
+  prod_i = order.index("producer_start")
+  assert pub_i < prod_i
+  assert "compute" in order
+  assert order.index("compute") > prod_i
+  assert order[-1] == "safe_final"
 
 
 @pytest.mark.machine_unit_mock
-def test_rescan_thread_refreshes_pub_dashboards_before_query(monkeypatch):
+def test_rescan_thread_discovers_candidates_without_pub_refresh(monkeypatch):
+  """Rescan only queries job candidates; /pub/ EF runs once before job compute."""
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
   monkeypatch.setattr(update_metrics, "RESCAN_INTERVAL_SECONDS", 0.0)
   events = []
   stop_event = threading.Event()
-
-  monkeypatch.setattr(
-      update_metrics,
-      "refresh_public_expansion_factor_artifacts_safe",
-      lambda: events.append("refresh"),
-  )
 
   class _FakeQs:
     def values_list(self, *args, **kwargs):
@@ -1688,7 +1692,7 @@ def test_rescan_thread_refreshes_pub_dashboards_before_query(monkeypatch):
   )
   assert thread is not None
   thread.join(timeout=1.0)
-  assert events[:2] == ["refresh", "query"]
+  assert events == ["query"]
 
 
 @pytest.mark.django_db(databases=[])
@@ -1759,7 +1763,8 @@ def test_update_metrics_for_dates_rechecks_deferred_not_ready_jid_until_ready(mo
 
 
 @pytest.mark.django_db(databases=[])
-def test_update_metrics_refreshes_pub_dashboards_after_compute_progress(monkeypatch):
+def test_update_metrics_pub_parallel_once_then_safe_in_finally(monkeypatch):
+  """/pub/ EF uses the metrics pool once up front; sequential safe() only in shutdown."""
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
@@ -1796,11 +1801,18 @@ def test_update_metrics_refreshes_pub_dashboards_after_compute_progress(monkeypa
 
   monkeypatch.setattr(update_metrics, "_start_readiness_producer", _producer_stub)
 
-  refresh_calls = []
+  parallel_calls = []
+  safe_calls = []
+
+  monkeypatch.setattr(
+      update_metrics,
+      "refresh_public_expansion_factor_artifacts_parallel",
+      lambda pool: parallel_calls.append(pool),
+  )
   monkeypatch.setattr(
       update_metrics,
       "refresh_public_expansion_factor_artifacts_safe",
-      lambda: refresh_calls.append("refresh"),
+      lambda: safe_calls.append("safe"),
   )
 
   class FakeMetrics:
@@ -1818,8 +1830,8 @@ def test_update_metrics_refreshes_pub_dashboards_after_compute_progress(monkeypa
 
   monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
   update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
-  # before_compute_start + after_compute_progress + final shutdown refresh
-  assert len(refresh_calls) >= 3
+  assert len(parallel_calls) == 1
+  assert safe_calls == ["safe"]
 
 
 @pytest.mark.django_db(databases=[])

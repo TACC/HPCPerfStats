@@ -15,6 +15,44 @@ from hpcperfstats.site.machine.public_metrics_artifacts import (
 )
 
 
+@pytest.mark.django_db
+def test_refresh_public_expansion_factor_artifacts_parallel_inline_pool():
+  """Parallel path with a pool that runs workers in-process matches sequential stats."""
+  submit = datetime(2024, 3, 1, tzinfo=dj_tz.utc)
+  start = datetime(2024, 3, 1, 1, 0, 0, tzinfo=dj_tz.utc)
+  end = datetime(2024, 3, 15, 2, 0, 0, tzinfo=dj_tz.utc)
+  runtime = float((end - start).total_seconds())
+  job_data.objects.create(
+      jid="pub_ef_parallel_demo",
+      submit_time=submit,
+      start_time=start,
+      end_time=end,
+      runtime=runtime,
+      ncores=4,
+      username="demo-user",
+      host_list=["n001.cluster.example"],
+  )
+
+  from hpcperfstats.site.machine.public_metrics_artifacts import (
+      refresh_public_expansion_factor_artifacts_parallel,
+  )
+
+  class _InlinePool:
+    def imap_unordered(self, fn, tasks, chunksize=1):
+      del chunksize
+      for t in tasks:
+        yield fn(t)
+
+  sequential = refresh_public_expansion_factor_artifacts()
+  public_metrics_artifact.objects.all().delete()
+
+  parallel = refresh_public_expansion_factor_artifacts_parallel(_InlinePool())
+
+  assert parallel["rebuilt_month_periods"] == sequential["rebuilt_month_periods"]
+  assert parallel["rebuilt_year_periods"] == sequential["rebuilt_year_periods"]
+  assert public_metrics_artifact.objects.filter(scope=PUBLIC_EF_MONTH_DAILY).exists()
+
+
 @pytest.mark.machine_unit_mock
 def test_build_public_expansion_factor_histogram_json_item_shape():
   from hpcperfstats.site.machine.public_metrics_artifacts import EF_HIST_BIN_EDGES

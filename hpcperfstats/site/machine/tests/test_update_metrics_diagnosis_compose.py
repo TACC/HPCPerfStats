@@ -56,6 +56,7 @@ def test_update_metrics_diagnosis_compose_records_phases(monkeypatch, tmp_path):
   totals = diag["phase_totals"]
   assert "candidate_sql_s" in totals
   assert "readiness_s" in totals
+  assert "public_ef_artifacts_s" in totals
   assert "metrics_compute_s" in totals
   assert "prewarm_s" in totals
   assert totals["metrics_compute_s"] >= 0.0

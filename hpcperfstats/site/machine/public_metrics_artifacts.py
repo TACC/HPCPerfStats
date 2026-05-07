@@ -2,6 +2,10 @@
 
 Computed only from ``update_metrics`` scheduler passes — HTTP handlers must not
 reaggregate heavy ranges here.
+
+The scheduler runs :func:`refresh_public_expansion_factor_artifacts_parallel` on
+the metrics ``multiprocessing`` pool (one calendar month or one calendar year
+per task) and **completes** that pass before starting job-based metrics.
 """
 from __future__ import annotations
 
@@ -28,6 +32,10 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 # Expansion-factor aggregates derived from scheduler timestamps only (see Carlson EF definitions).
 PUBLIC_EF_MONTH_DAILY = "ef_month_daily"
 PUBLIC_EF_YEAR_WEEKLY = "ef_year_weekly"
+
+# Task kind strings for :func:`_public_ef_period_worker` (pickled by multiprocessing).
+_PUBLIC_EF_KIND_MONTH = "month"
+_PUBLIC_EF_KIND_YEAR = "year"
 
 # Upper-exclusive EF histogram bin edges (last bucket captures overflow).
 EF_HIST_BIN_EDGES: Tuple[float, ...] = (
@@ -315,76 +323,133 @@ def decompress_public_payload(row: public_metrics_artifact) -> Dict[str, Any]:
   return json.loads(raw.decode("utf-8"))
 
 
-def refresh_public_expansion_factor_artifacts() -> Dict[str, int]:
-  """Recompute stale monthly/yearly expansion-factor histogram artifacts."""
+def _prune_orphan_public_ef_rows(months: Sequence[str], years: Sequence[str]) -> None:
+  """Remove persisted rows for periods with no backing job_data (retention / deletes)."""
+  month_qs = public_metrics_artifact.objects.filter(scope=PUBLIC_EF_MONTH_DAILY)
+  if months:
+    month_qs.exclude(period_key__in=list(months)).delete()
+  else:
+    month_qs.delete()
+  year_qs = public_metrics_artifact.objects.filter(scope=PUBLIC_EF_YEAR_WEEKLY)
+  if years:
+    year_qs.exclude(period_key__in=list(years)).delete()
+  else:
+    year_qs.delete()
+
+
+def _sync_reconcile_public_ef_month(ym: str) -> Dict[str, int]:
+  """Fingerprint check + optional rebuild for one ``YYYY-MM`` period (any process)."""
+  start, end = _period_month_bounds(ym)
+  qs = (
+      job_data.objects.filter(_eligible_jobs_filter())
+      .filter(end_time__gte=start, end_time__lt=end)
+      .only("jid", "end_time")
+  )
+  fp = _streaming_jid_epoch_fingerprint(f"{PUBLIC_EF_MONTH_DAILY}:{ym}", qs)
+  existing = (
+      public_metrics_artifact.objects.filter(
+          scope=PUBLIC_EF_MONTH_DAILY, period_key=ym
+      )
+      .values_list("input_fingerprint", flat=True)
+      .first()
+  )
+  if existing == fp:
+    return {"rebuilt_month_periods": 0, "skipped_month_periods": 1}
+  payload = _build_month_daily_payload(ym)
+  _upsert_row(PUBLIC_EF_MONTH_DAILY, ym, fp, payload)
+  return {"rebuilt_month_periods": 1, "skipped_month_periods": 0}
+
+
+def _sync_reconcile_public_ef_year(ys: str) -> Dict[str, int]:
+  """Fingerprint check + optional rebuild for one calendar year period (any process)."""
+  year_int = int(ys)
+  start, end = _period_year_bounds(year_int)
+  qs = (
+      job_data.objects.filter(_eligible_jobs_filter())
+      .filter(end_time__gte=start, end_time__lt=end)
+      .only("jid", "end_time")
+  )
+  fp = _streaming_jid_epoch_fingerprint(f"{PUBLIC_EF_YEAR_WEEKLY}:{ys}", qs)
+  existing = (
+      public_metrics_artifact.objects.filter(
+          scope=PUBLIC_EF_YEAR_WEEKLY, period_key=ys
+      )
+      .values_list("input_fingerprint", flat=True)
+      .first()
+  )
+  if existing == fp:
+    return {"rebuilt_year_periods": 0, "skipped_year_periods": 1}
+  payload = _build_year_weekly_payload(ys)
+  _upsert_row(PUBLIC_EF_YEAR_WEEKLY, ys, fp, payload)
+  return {"rebuilt_year_periods": 1, "skipped_year_periods": 0}
+
+
+def _public_ef_period_worker(task: Tuple[str, str]) -> Dict[str, int]:
+  """Picklable multiprocessing worker: reconcile exactly one month or year period."""
+  from django.db import close_old_connections
+
+  from hpcperfstats.django_bootstrap import ensure_django
+
+  ensure_django()
+  close_old_connections()
+  kind, key = task
+  try:
+    if kind == _PUBLIC_EF_KIND_MONTH:
+      return _sync_reconcile_public_ef_month(key)
+    if kind == _PUBLIC_EF_KIND_YEAR:
+      return _sync_reconcile_public_ef_year(key)
+    logger.error("public EF worker unknown kind=%s key=%s", kind, key)
+    return {"worker_exceptions": 1}
+  except Exception:
+    logger.exception("public EF period worker failed kind=%s key=%s", kind, key)
+    return {"worker_exceptions": 1}
+
+
+def refresh_public_expansion_factor_artifacts_parallel(pool: Any) -> Dict[str, int]:
+  """Recompute stale month/year EF rows using ``pool`` (one period per task).
+
+  Callers typically pass ``Metrics.ensure_pool()`` from ``update_metrics`` so
+  /pub aggregates finish before the same pool runs per-job metrics.
+  """
   months = _month_keys_present()
   years = _year_keys_present()
-  rebuilt_month = 0
-  rebuilt_year = 0
-  skipped_month = 0
-  skipped_year = 0
+  totals: Dict[str, int] = defaultdict(int)
+  totals["month_periods_total"] = len(months)
+  totals["year_periods_total"] = len(years)
+  tasks: List[Tuple[str, str]] = [
+      (_PUBLIC_EF_KIND_MONTH, ym) for ym in months
+  ] + [
+      (_PUBLIC_EF_KIND_YEAR, ys) for ys in years
+  ]
+  if not tasks:
+    _prune_orphan_public_ef_rows(months, years)
+    return dict(totals)
+
+  for piece in pool.imap_unordered(_public_ef_period_worker, tasks, chunksize=1):
+    for k, v in piece.items():
+      totals[k] += int(v)
+
+  _prune_orphan_public_ef_rows(months, years)
+  return dict(totals)
+
+
+def refresh_public_expansion_factor_artifacts() -> Dict[str, int]:
+  """Recompute stale monthly/yearly expansion-factor histogram artifacts (sequential)."""
+  months = _month_keys_present()
+  years = _year_keys_present()
+  totals: Dict[str, int] = defaultdict(int)
+  totals["month_periods_total"] = len(months)
+  totals["year_periods_total"] = len(years)
 
   for ym in months:
-    start, end = _period_month_bounds(ym)
-    qs = (
-        job_data.objects.filter(_eligible_jobs_filter())
-        .filter(end_time__gte=start, end_time__lt=end)
-        .only("jid", "end_time")
-    )
-    fp = _streaming_jid_epoch_fingerprint(f"{PUBLIC_EF_MONTH_DAILY}:{ym}", qs)
-    existing = (
-        public_metrics_artifact.objects.filter(
-            scope=PUBLIC_EF_MONTH_DAILY, period_key=ym
-        )
-        .values_list("input_fingerprint", flat=True)
-        .first()
-    )
-    if existing == fp:
-      skipped_month += 1
-      continue
-    payload = _build_month_daily_payload(ym)
-    _upsert_row(PUBLIC_EF_MONTH_DAILY, ym, fp, payload)
-    rebuilt_month += 1
-
+    for k, v in _sync_reconcile_public_ef_month(ym).items():
+      totals[k] += int(v)
   for ys in years:
-    year_int = int(ys)
-    start, end = _period_year_bounds(year_int)
-    qs = (
-        job_data.objects.filter(_eligible_jobs_filter())
-        .filter(end_time__gte=start, end_time__lt=end)
-        .only("jid", "end_time")
-    )
-    fp = _streaming_jid_epoch_fingerprint(f"{PUBLIC_EF_YEAR_WEEKLY}:{ys}", qs)
-    existing = (
-        public_metrics_artifact.objects.filter(
-            scope=PUBLIC_EF_YEAR_WEEKLY, period_key=ys
-        )
-        .values_list("input_fingerprint", flat=True)
-        .first()
-    )
-    if existing == fp:
-      skipped_year += 1
-      continue
-    payload = _build_year_weekly_payload(ys)
-    _upsert_row(PUBLIC_EF_YEAR_WEEKLY, ys, fp, payload)
-    rebuilt_year += 1
+    for k, v in _sync_reconcile_public_ef_year(ys).items():
+      totals[k] += int(v)
 
-  # Drop artifacts for periods no longer backed by data (retention / deletes).
-  public_metrics_artifact.objects.filter(
-      scope=PUBLIC_EF_MONTH_DAILY,
-  ).exclude(period_key__in=months).delete()
-  public_metrics_artifact.objects.filter(
-      scope=PUBLIC_EF_YEAR_WEEKLY,
-  ).exclude(period_key__in=years).delete()
-
-  return {
-      "rebuilt_month_periods": rebuilt_month,
-      "rebuilt_year_periods": rebuilt_year,
-      "skipped_month_periods": skipped_month,
-      "skipped_year_periods": skipped_year,
-      "month_periods_total": len(months),
-      "year_periods_total": len(years),
-  }
+  _prune_orphan_public_ef_rows(months, years)
+  return dict(totals)
 
 
 def refresh_public_expansion_factor_artifacts_safe() -> None:

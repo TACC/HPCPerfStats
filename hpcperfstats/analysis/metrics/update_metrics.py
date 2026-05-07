@@ -11,6 +11,11 @@ processes the last seven calendar days through today.
 Processing order: **newest calendar day first**, and within each day **newest job
 first** (``end_time`` descending, then ``jid`` descending as a stable tiebreaker).
 
+The global scheduler (**``update_metrics_for_dates``**) first finishes all
+`/pub/` expansion-factor aggregate artifacts using the metrics process pool (one
+calendar month or one calendar year per worker task), then begins job readiness
+checks and ``Metrics.run`` batches on the **same** pool.
+
 """
 import contextlib
 import functools
@@ -73,6 +78,7 @@ from hpcperfstats.site.machine.models import (
     metrics_data,
 )
 from hpcperfstats.site.machine.public_metrics_artifacts import (
+    refresh_public_expansion_factor_artifacts_parallel,
     refresh_public_expansion_factor_artifacts_safe,
 )
 
@@ -252,6 +258,7 @@ class _PhaseTimer:
     self._totals = {
         "candidate_sql_s": 0.0,
         "readiness_s": 0.0,
+        "public_ef_artifacts_s": 0.0,
         "metrics_compute_s": 0.0,
         "prewarm_s": 0.0,
     }
@@ -1385,7 +1392,6 @@ def _start_candidate_rescan_thread(
     close_old_connections()
     try:
       while not shutdown_requested[0] and not stop_event.is_set():
-        _refresh_public_dashboards_for_scheduler(reason="before_rescan")
         for d in dates:
           if shutdown_requested[0] or stop_event.is_set():
             break
@@ -1415,11 +1421,13 @@ def _start_candidate_rescan_thread(
   return thread
 
 
-def _refresh_public_dashboards_for_scheduler(reason):
-  """Refresh public dashboard artifacts from scheduler flow safely."""
-  refresh_public_expansion_factor_artifacts_safe()
+def _run_public_ef_artifacts_parallel_phase(shared_pool, phase_timer):
+  """Build /pub EF artifacts on the metrics pool before any job compute."""
+  with phase_timer.phase("public_ef_artifacts_s"):
+    pub_stats = refresh_public_expansion_factor_artifacts_parallel(shared_pool)
   log_print(
-      "metrics scheduler: refreshed /pub/ dashboards reason={0}".format(reason),
+      "metrics scheduler: finished /pub/ EF artifacts (parallel) before job compute "
+      "{0}".format(pub_stats),
       flush=True,
   )
 
@@ -2017,7 +2025,7 @@ def update_metrics_for_dates(dates, rerun=False):
       )
       shared_pool = metrics_manager.ensure_pool()
       log_print("Metrics worker pool ready.", flush=True)
-      _refresh_public_dashboards_for_scheduler(reason="before_compute_start")
+      _run_public_ef_artifacts_parallel_phase(shared_pool, phase_timer)
       ready_queue_lock = threading.Lock()
       producer_done = threading.Event()
       producer = _start_readiness_producer(
@@ -2063,7 +2071,6 @@ def update_metrics_for_dates(dates, rerun=False):
       telemetry_detail_gpu_metrics_reused = 0
       telemetry_detail_fsio_fallback_queries = 0
       telemetry_detail_gpu_fallback_queries = 0
-      last_public_refresh_mono = time.monotonic()
       try:
         while not shutdown_requested[0]:
           with ready_queue_lock:
@@ -2198,11 +2205,6 @@ def update_metrics_for_dates(dates, rerun=False):
             if attempted_total > 0 and proc_total == 0 and fail_total > 0:
               stats["stall_reason"] = "compute_all_failed"
           completion_reporter.sync_completed_total(proc_total)
-          if succeeded_jids:
-            now_mono = time.monotonic()
-            if (now_mono - last_public_refresh_mono) >= PREWARM_DRAIN_BATCH_BUDGET_SECONDS:
-              _refresh_public_dashboards_for_scheduler(reason="after_compute_progress")
-              last_public_refresh_mono = now_mono
           compute_batches += 1
           if batch_elapsed >= COMPUTE_BATCH_WATCHDOG_SECONDS:
             new_cap = max(
@@ -2344,9 +2346,9 @@ def update_metrics_for_dates(dates, rerun=False):
           "strict_batch_size_current={25} strict_check_calls={26} strict_check_timeouts={27} "
           "strict_check_avg_latency_ms={28:.2f} completed_last_hour={29} elapsed_s={30:.2f} jobs_per_min={31:.2f} "
           "worker_busy_ratio={32:.3f} phase_candidate_s={33:.2f} "
-          "phase_readiness_s={34:.2f} phase_compute_s={35:.2f} phase_prewarm_s={36:.2f} "
-          "prewarm_backlog_jobs={37} prewarm_lag_seconds_p95={38:.3f} "
-          "prewarm_success_ratio={39:.3f}{40}".format(
+          "phase_readiness_s={34:.2f} phase_pub_ef_s={35:.2f} phase_compute_s={36:.2f} phase_prewarm_s={37:.2f} "
+          "prewarm_backlog_jobs={38} prewarm_lag_seconds_p95={39:.3f} "
+          "prewarm_success_ratio={40:.3f}{41}".format(
               scheduler_mode,
               snap["processed"],
               snap["failed"],
@@ -2382,6 +2384,7 @@ def update_metrics_for_dates(dates, rerun=False):
               worker_busy_ratio,
               totals["candidate_sql_s"],
               totals["readiness_s"],
+              totals.get("public_ef_artifacts_s", 0.0),
               totals["metrics_compute_s"],
               totals["prewarm_s"],
               prewarm_stats["prewarm_backlog_jobs"],
