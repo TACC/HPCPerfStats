@@ -93,6 +93,20 @@ static int read_first_line(const char *path, char *buf, size_t cap)
   return 0;
 }
 
+static int roofline_path_join2(char *dst, size_t cap, const char *a, const char *b)
+{
+  int n;
+  n = snprintf(dst, cap, "%s/%s", a, b);
+  return (n > 0 && (size_t) n < cap) ? 0 : -1;
+}
+
+static int roofline_path_join3(char *dst, size_t cap, const char *a, const char *b, const char *c)
+{
+  int n;
+  n = snprintf(dst, cap, "%s/%s/%s", a, b, c);
+  return (n > 0 && (size_t) n < cap) ? 0 : -1;
+}
+
 static int read_long_long_from_file(const char *path, long long *out)
 {
   char line[256];
@@ -252,7 +266,8 @@ static double detect_cpu_peak_dram_bw_bytes_per_s(void)
     char mcpath[256];
     if (strncmp(mc->d_name, "mc", 2) != 0)
       continue;
-    snprintf(mcpath, sizeof(mcpath), "/sys/devices/system/edac/mc/%s", mc->d_name);
+    if (roofline_path_join2(mcpath, sizeof(mcpath), "/sys/devices/system/edac/mc", mc->d_name) != 0)
+      continue;
     dimm_dir = opendir(mcpath);
     if (dimm_dir == NULL)
       continue;
@@ -261,7 +276,8 @@ static double detect_cpu_peak_dram_bw_bytes_per_s(void)
       long long mtps = 0;
       if (strncmp(dimm->d_name, "dimm", 4) != 0)
         continue;
-      snprintf(p, sizeof(p), "%s/%s/dimm_mem_speed", mcpath, dimm->d_name);
+      if (roofline_path_join3(p, sizeof(p), mcpath, dimm->d_name, "dimm_mem_speed") != 0)
+        continue;
       if (read_long_long_from_file(p, &mtps) == 0 && mtps > 0)
         bw += (double) mtps * 1000000.0 * 8.0;
     }
@@ -306,10 +322,22 @@ static void detect_gpu_peaks_from_sysfs(double *flops, double *mem_bw, double *i
     double mclk_mhz = 0.0;
     if (strncmp(ent->d_name, "card", 4) != 0 || strchr(ent->d_name, '-') != NULL)
       continue;
-    snprintf(speed_path, sizeof(speed_path), "/sys/class/drm/%s/device/max_link_speed", ent->d_name);
-    snprintf(width_path, sizeof(width_path), "/sys/class/drm/%s/device/max_link_width", ent->d_name);
-    snprintf(bw_path, sizeof(bw_path), "/sys/class/drm/%s/device/mem_info_max_bandwidth", ent->d_name);
-    snprintf(mclk_path, sizeof(mclk_path), "/sys/class/drm/%s/device/pp_dpm_mclk", ent->d_name);
+    if (roofline_path_join3(speed_path, sizeof(speed_path), "/sys/class/drm", ent->d_name,
+			    "device/max_link_speed")
+	!= 0)
+      continue;
+    if (roofline_path_join3(width_path, sizeof(width_path), "/sys/class/drm", ent->d_name,
+			    "device/max_link_width")
+	!= 0)
+      continue;
+    if (roofline_path_join3(bw_path, sizeof(bw_path), "/sys/class/drm", ent->d_name,
+			    "device/mem_info_max_bandwidth")
+	!= 0)
+      continue;
+    if (roofline_path_join3(mclk_path, sizeof(mclk_path), "/sys/class/drm", ent->d_name,
+			    "device/pp_dpm_mclk")
+	!= 0)
+      continue;
 
     if (read_long_long_from_file(bw_path, &mem_bw_attr) == 0 && mem_bw_attr > 0)
       *mem_bw += (double) mem_bw_attr;

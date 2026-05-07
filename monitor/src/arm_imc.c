@@ -149,7 +149,8 @@ static int apply_event_token(const char *pmu_dir, struct perf_event_attr *attr, 
   char fmt[128];
   int lo, hi, fd;
   ssize_t n;
-  snprintf(path, sizeof(path), "%s/format/%s", pmu_dir, key);
+  if (snprintf(path, sizeof(path), "%s/format/%s", pmu_dir, key) >= (int) sizeof(path))
+    return -1;
   fd = open(path, O_RDONLY);
   if (fd < 0)
     return -1;
@@ -187,12 +188,14 @@ static int event_attr_from_alias(const char *pmu_dir, const char *alias, struct 
   attr->inherit = 0;
   attr->read_format = 0;
 
-  snprintf(path, sizeof(path), "%s/type", pmu_dir);
+  if (snprintf(path, sizeof(path), "%s/type", pmu_dir) >= (int) sizeof(path))
+    return -1;
   if (read_u64_path(path, &type) != 0)
     return -1;
   attr->type = (uint32_t) type;
 
-  snprintf(path, sizeof(path), "%s/events/%s", pmu_dir, alias);
+  if (snprintf(path, sizeof(path), "%s/events/%s", pmu_dir, alias) >= (int) sizeof(path))
+    return -1;
   fd = open(path, O_RDONLY);
   if (fd < 0)
     return -1;
@@ -254,8 +257,11 @@ static int arm_imc_begin(struct stats_type *type)
       continue;
     if (strstr(de->d_name, "dmc") == NULL && strstr(de->d_name, "imc") == NULL)
       continue;
-    snprintf(pmu_dir, sizeof(pmu_dir), "/sys/bus/event_source/devices/%s", de->d_name);
-    snprintf(cpumask, sizeof(cpumask), "%s/cpumask", pmu_dir);
+    if (snprintf(pmu_dir, sizeof(pmu_dir), "/sys/bus/event_source/devices/%s", de->d_name)
+	>= (int) sizeof(pmu_dir))
+      continue;
+    if (snprintf(cpumask, sizeof(cpumask), "%s/cpumask", pmu_dir) >= (int) sizeof(cpumask))
+      continue;
     fd_r = open_arm_imc_counter(pmu_dir, cpumask, read_aliases);
     fd_w = open_arm_imc_counter(pmu_dir, cpumask, write_aliases);
     if (fd_r < 0 || fd_w < 0) {
@@ -267,7 +273,8 @@ static int arm_imc_begin(struct stats_type *type)
     }
     dev = &g_arm_imc[g_arm_imc_n++];
     memset(dev, 0, sizeof(*dev));
-    snprintf(dev->name, sizeof(dev->name), "%s", de->d_name);
+    strncpy(dev->name, de->d_name, sizeof(dev->name) - 1);
+    dev->name[sizeof(dev->name) - 1] = '\0';
     dev->fd_read = fd_r;
     dev->fd_write = fd_w;
     dev->cpu = first_cpu_from_cpumask(cpumask);
