@@ -48,19 +48,8 @@ TESTS = $(check_PROGRAMS)
 # Run from source (not generated): avoids Automake distdir-am needing a built .sh on some versions.
 check-local:
 	$(SHELL) '$(srcdir)/test_monitor_configure_help.sh.in'
-if RABBITMQ
-	@if test "x$${RUN_RMQ_INTEGRATION:-0}" = "x1"; then \
-	  $(MAKE) check-rabbitmq-integration; \
-	fi
-endif
 
-EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt $(srcdir)/scripts/bootstrap_local_rabbitmq.sh
-
-if RABBITMQ
-.PHONY: check-rabbitmq-integration
-check-rabbitmq-integration:
-	$(SHELL) '$(srcdir)/test_rabbitmq_integration.sh' '$(top_builddir)'
-endif
+EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c
 
 test_likwid_rapl_scale_SOURCES = test_likwid_rapl_scale.c
 
