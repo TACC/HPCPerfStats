@@ -614,5 +614,10 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
   monitor_log_info( "Setting hpcperfstatsd buffer capacity to %d samples (%.2fh)\n",
           max_buffer_size, buffer_hours);
   send_success_count = 0;
+  /*
+   * Match daemon startup: emit `$`/schema refresh after reload so archives see updated types
+   * without waiting for the periodic rotate timer.
+   */
+  monitor_daemon_collect_to_ring(w, 1, NULL);
   print_buffer_status(w);
 }

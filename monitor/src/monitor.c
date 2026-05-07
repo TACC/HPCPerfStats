@@ -60,7 +60,11 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   ev_stat fd_watcher;
   static ev_timer rmq_io_timer;
 
-  /* Full `$` schema header (`stats_wr_hdr`): periodic refresh and on job end (see `monitor_daemon_fd_cb`). */
+  /*
+   * Full `$`/banner + `!` schema (`stats_wr_hdr`): listend treats payloads whose body begins with
+   * `$` as rotation/schema messages (same AMQP publish as the following timestamp/sample lines).
+   * After=0 runs immediately at startup so schema matches running types; repeat handles drift.
+   */
   enum { schema_hdr_rotate_sec = 6 * 3600 };
   rotate_timer.data = (void *)rb;
   ev_timer_init(&rotate_timer, monitor_daemon_rotate_timer_cb, 0.0, (double)schema_hdr_rotate_sec);

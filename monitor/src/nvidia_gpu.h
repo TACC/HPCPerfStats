@@ -4,6 +4,8 @@
 #include <stdint.h>
 
 #define NVIDIA_GPU_NFIELDS 21
+/* DCGM field-group size without optional tensor IMMA/HMMA split (older host engines). */
+#define NVIDIA_GPU_DCGM_NCORE 19
 
 #define KEYS \
   X(gpu_util, "", "GPU utilization in %"), \

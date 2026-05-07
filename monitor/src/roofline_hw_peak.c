@@ -532,6 +532,11 @@ static void roofline_hw_peak_collect(struct stats_type *type)
   double gpu_io_bw = 0.0;
   unsigned long long gpu_source = GPU_PEAK_SOURCE_PROBED;
 
+  /*
+   * Emit roofline_hw_peak only on collects that follow `stats_wr_hdr()` (same payload:
+   * `$` banner / `!` schema lines, then the first timestamp block from `stats_buffer_collect`).
+   * `stats_collect_on_changeover` is set only when `monitor_daemon_collect_to_ring(..., write_hdr=1, ...)`.
+   */
   if (!stats_collect_on_changeover)
     return;
 

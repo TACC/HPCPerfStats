@@ -53,6 +53,32 @@
 #define DBL_TO_LLU_PERCENT(x) ((unsigned long long) ((100.0 * (x)) + 0.5))
 #define I64_TO_LLU(x) ((unsigned long long) (x))
 
+/*
+ * Minimal DCGM watch list (works on stacks without PROF tensor IMMA/HMMA field IDs).
+ * Must stay aligned with the full list minus the two optional tensor split fields.
+ */
+static const unsigned short g_dcgm_field_ids_core[NVIDIA_GPU_DCGM_NCORE] = {
+  DCGM_FI_DEV_POWER_USAGE,
+  DCGM_FI_DEV_GPU_TEMP,
+  DCGM_FI_DEV_MEM_COPY_UTIL,
+  DCGM_FI_DEV_GPU_UTIL,
+  DCGM_FI_DEV_FB_TOTAL,
+  DCGM_FI_DEV_FB_USED,
+  DCGM_FI_PROF_PIPE_TENSOR_ACTIVE,
+  DCGM_FI_PROF_PIPE_FP64_ACTIVE,
+  DCGM_FI_PROF_PIPE_FP32_ACTIVE,
+  DCGM_FI_PROF_PIPE_FP16_ACTIVE,
+  DCGM_FI_PROF_SM_ACTIVE,
+  DCGM_FI_PROF_SM_OCCUPANCY,
+  DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+  DCGM_FI_PROF_PCIE_TX_BYTES,
+  DCGM_FI_PROF_PCIE_RX_BYTES,
+  DCGM_FI_PROF_NVLINK_TX_BYTES,
+  DCGM_FI_PROF_NVLINK_RX_BYTES,
+  DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT,
+  DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT
+};
+
 static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
   DCGM_FI_DEV_POWER_USAGE,
   DCGM_FI_DEV_GPU_TEMP,
@@ -473,20 +499,51 @@ static void nvidia_gpu_collect(struct stats_type *type)
     }
   }
 
-  rc = dcgmFieldGroupCreate(dcgm_handle,
-                            NVIDIA_GPU_NFIELDS,
-                            (unsigned short *) g_dcgm_field_ids,
-                            (char *) "hpcperfstats_fields",
-                            &field_group_id);
-  if (rc != DCGM_ST_OK) {
-    ERROR("DCGM field group creation failed: %s\n", dcgm_err(rc));
-    goto out;
-  }
+  /*
+   * Optional PROF tensor IMMA/HMMA IDs can fail on older embedded/hostengine builds.
+   * Fall back to the pre-split field set so Hopper/Grace nodes still emit nvidia_gpu.
+   */
+  {
+    int attempt;
+    for (attempt = 0; attempt < 2; attempt++) {
+      unsigned int nf =
+          (attempt == 0) ? (unsigned int) NVIDIA_GPU_NFIELDS : (unsigned int) NVIDIA_GPU_DCGM_NCORE;
+      const unsigned short *fid =
+          (attempt == 0) ? g_dcgm_field_ids : g_dcgm_field_ids_core;
 
-  rc = dcgmWatchFields(dcgm_handle, group_id, field_group_id, 10000000, 3600.0, 3600);
-  if (rc != DCGM_ST_OK) {
-    ERROR("DCGM watch fields failed: %s\n", dcgm_err(rc));
-    goto out;
+      if (field_group_id != (dcgmFieldGrp_t) NULL) {
+        (void) dcgmFieldGroupDestroy(dcgm_handle, field_group_id);
+        field_group_id = (dcgmFieldGrp_t) NULL;
+      }
+
+      rc = dcgmFieldGroupCreate(dcgm_handle,
+                              nf,
+                              (unsigned short *) fid,
+                              (char *) "hpcperfstats_fields",
+                              &field_group_id);
+      if (rc != DCGM_ST_OK) {
+        if (attempt == 1)
+          ERROR("DCGM field group creation failed: %s\n", dcgm_err(rc));
+        else
+          TRACE("DCGM field group creation failed (will retry core fields): %s\n", dcgm_err(rc));
+        continue;
+      }
+
+      rc = dcgmWatchFields(dcgm_handle, group_id, field_group_id, 10000000, 3600.0, 3600);
+      if (rc != DCGM_ST_OK) {
+        if (attempt == 1)
+          ERROR("DCGM watch fields failed: %s\n", dcgm_err(rc));
+        else
+          TRACE("DCGM watch fields failed (will retry without tensor IMMA/HMMA): %s\n",
+                dcgm_err(rc));
+        (void) dcgmFieldGroupDestroy(dcgm_handle, field_group_id);
+        field_group_id = (dcgmFieldGrp_t) NULL;
+        continue;
+      }
+      break;
+    }
+    if (rc != DCGM_ST_OK || field_group_id == (dcgmFieldGrp_t) NULL)
+      goto out;
   }
   usleep(10000000);
 
