@@ -273,8 +273,11 @@ static int arm_imc_begin(struct stats_type *type)
     }
     dev = &g_arm_imc[g_arm_imc_n++];
     memset(dev, 0, sizeof(*dev));
-    strncpy(dev->name, de->d_name, sizeof(dev->name) - 1);
-    dev->name[sizeof(dev->name) - 1] = '\0';
+    {
+      size_t name_len = strnlen(de->d_name, sizeof(dev->name) - 1);
+      memcpy(dev->name, de->d_name, name_len);
+      dev->name[name_len] = '\0';
+    }
     dev->fd_read = fd_r;
     dev->fd_write = fd_w;
     dev->cpu = first_cpu_from_cpumask(cpumask);
