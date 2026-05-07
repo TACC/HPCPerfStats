@@ -6,6 +6,8 @@
 #define NVIDIA_GPU_NFIELDS 21
 /* DCGM field-group size without optional tensor IMMA/HMMA split (older host engines). */
 #define NVIDIA_GPU_DCGM_NCORE 19
+/* Minimal non-PROF list for stacks where DCGM profiling watches are not permissioned/supported. */
+#define NVIDIA_GPU_DCGM_NBASIC 9
 
 #define KEYS \
   X(gpu_util, "", "GPU utilization in %"), \

@@ -123,6 +123,9 @@ static amqp_connection_state_t rmq_conn;
 static int rmq_channel_open;
 static struct timespec rmq_backoff_until;
 static int rmq_backoff_until_valid;
+static unsigned long rmq_connect_failures;
+static unsigned long rmq_queue_failures;
+static unsigned long rmq_publish_failures;
 
 static void rmq_clear_connect_backoff(void)
 {
@@ -608,16 +611,23 @@ static int stats_buffer_send_payload(struct stats_buffer *sf)
 #else
 static int stats_buffer_send_payload(struct stats_buffer *sf)
 {
-  if (rmq_ensure_connected(sf) < 0)
+  if (rmq_ensure_connected(sf) < 0) {
+    rmq_connect_failures++;
+    ERROR("RMQ connect/attach failed (count=%lu)\n", rmq_connect_failures);
     return -1;
+  }
 
   if (rmq_ensure_queue(sf) < 0) {
+    rmq_queue_failures++;
+    ERROR("RMQ queue declare/bind failed (count=%lu)\n", rmq_queue_failures);
     rmq_soft_disconnect();
     rmq_arm_connect_backoff();
     return -1;
   }
 
   if (rmq_publish_text_payload(rmq_conn, sf) < 0) {
+    rmq_publish_failures++;
+    ERROR("RMQ publish failed (count=%lu)\n", rmq_publish_failures);
     rmq_soft_disconnect();
     rmq_arm_connect_backoff();
     return -1;
@@ -627,6 +637,8 @@ static int stats_buffer_send_payload(struct stats_buffer *sf)
   return 0;
 }
 #endif
+
+static int stats_buffer_is_schema_payload(const struct stats_buffer *sf);
 
 static int stats_buffer_is_schema_payload(const struct stats_buffer *sf)
 {
@@ -841,6 +853,7 @@ int ring_buffer_insert(
 { 
   int rc = 0;
   struct sf_queue *q_new;
+  struct sf_queue *victim = NULL;
   
   /* Case 1: Empty buffer */
   if (w->q_count == 0) {
@@ -865,12 +878,34 @@ int ring_buffer_insert(
       rc = -1;
       goto out;
     }
-    if (w->q->forward->sf != NULL) {
-      stats_buffer_close(w->q->forward->sf);
-      free(w->q->forward->sf);
+    {
+      victim = w->q->forward;
+      struct sf_queue *node = w->q_first;
+      int scanned = 0;
+
+      while (node != NULL && scanned < w->q_count) {
+        if (node->sf != NULL && !stats_buffer_is_schema_payload(node->sf)) {
+          victim = node;
+          break;
+        }
+        node = node->forward;
+        scanned++;
+        if (node == w->q_first)
+          break;
+      }
+
+      if (victim->sf != NULL && stats_buffer_is_schema_payload(victim->sf)) {
+        rc = -1;
+        goto out;
+      }
+
+      if (victim->sf != NULL) {
+        stats_buffer_close(victim->sf);
+        free(victim->sf);
+      }
+      victim->sf = sf;
     }
-    w->q->forward->sf = sf;
-    w->q = w->q->forward;
+    w->q = victim;
     w->q_first = w->q->forward;
     w->d_count += 1;
     goto out;

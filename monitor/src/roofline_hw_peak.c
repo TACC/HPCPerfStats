@@ -24,6 +24,42 @@ static unsigned long long clamp_rate(double v)
   return (unsigned long long) (v + 0.5);
 }
 
+enum roofline_emit_mode {
+  ROOFLINE_EMIT_CHANGEOVER = 0,
+  ROOFLINE_EMIT_PERIODIC,
+  ROOFLINE_EMIT_EVERY_SAMPLE
+};
+
+static unsigned long g_roofline_collect_calls;
+static unsigned long g_roofline_design_skip_calls;
+
+static int roofline_env_int_or_default(const char *name, int fallback)
+{
+  const char *v = getenv(name);
+  char *end = NULL;
+  long parsed;
+  if (v == NULL || *v == '\0')
+    return fallback;
+  parsed = strtol(v, &end, 10);
+  if (end == v || *end != '\0' || parsed <= 0)
+    return fallback;
+  if (parsed > 1000000L)
+    return 1000000;
+  return (int) parsed;
+}
+
+static enum roofline_emit_mode roofline_get_emit_mode(void)
+{
+  const char *mode = getenv("HPCPERFSTATS_ROOFLINE_MODE");
+  if (mode == NULL || *mode == '\0' || strcmp(mode, "changeover") == 0)
+    return ROOFLINE_EMIT_CHANGEOVER;
+  if (strcmp(mode, "periodic") == 0)
+    return ROOFLINE_EMIT_PERIODIC;
+  if (strcmp(mode, "every_sample") == 0)
+    return ROOFLINE_EMIT_EVERY_SAMPLE;
+  return ROOFLINE_EMIT_CHANGEOVER;
+}
+
 static int read_first_line(const char *path, char *buf, size_t cap)
 {
   FILE *f = fopen(path, "re");
@@ -531,14 +567,34 @@ static void roofline_hw_peak_collect(struct stats_type *type)
   double gpu_mem_bw = 0.0;
   double gpu_io_bw = 0.0;
   unsigned long long gpu_source = GPU_PEAK_SOURCE_PROBED;
+  enum roofline_emit_mode mode = roofline_get_emit_mode();
+  int should_emit = 0;
+
+  g_roofline_collect_calls++;
 
   /*
    * Emit roofline_hw_peak only on collects that follow `stats_wr_hdr()` (same payload:
    * `$` banner / `!` schema lines, then the first timestamp block from `stats_buffer_collect`).
    * `stats_collect_on_changeover` is set only when `monitor_daemon_collect_to_ring(..., write_hdr=1, ...)`.
    */
-  if (!stats_collect_on_changeover)
+  if (mode == ROOFLINE_EMIT_EVERY_SAMPLE) {
+    should_emit = 1;
+  } else if (mode == ROOFLINE_EMIT_PERIODIC) {
+    int period_samples = roofline_env_int_or_default("HPCPERFSTATS_ROOFLINE_PERIOD_SAMPLES", 10);
+    should_emit = stats_collect_on_changeover || (g_roofline_collect_calls % (unsigned long) period_samples) == 0;
+  } else {
+    should_emit = stats_collect_on_changeover;
+  }
+
+  if (!should_emit) {
+    g_roofline_design_skip_calls++;
+    if ((g_roofline_design_skip_calls % 128UL) == 1UL) {
+      fprintf(stderr,
+              "roofline_hw_peak: skipped by cadence mode=%d (changeover=%d, skips=%lu)\n",
+              (int) mode, stats_collect_on_changeover, g_roofline_design_skip_calls);
+    }
     return;
+  }
 
   stats = get_current_stats(type, "-");
   if (stats == NULL)

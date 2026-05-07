@@ -3,6 +3,7 @@
 #include "collect.h"
 #include "hwdetect.h"
 #include "metric_profiler.h"
+#include "monitor_log.h"
 #include "stats.h"
 
 void stats_runtime_teardown(void)
@@ -31,6 +32,8 @@ void stats_runtime_daemon_prepare_types(void)
 		if (!type->st_enabled)
 			continue;
 		if (stats_type_init(type) < 0) {
+			monitor_log_error("stats_runtime: disabling `%s` due to init failure\n",
+					  type->st_name);
 			type->st_enabled = 0;
 			continue;
 		}
@@ -72,6 +75,8 @@ void stats_runtime_main_prepare_types(const stats_runtime_main_prepare_spec *spe
 		if (!type->st_enabled)
 			continue;
 		if (stats_type_init(type) < 0) {
+			monitor_log_error("stats_runtime: disabling `%s` due to init failure\n",
+					  type->st_name);
 			type->st_enabled = 0;
 			continue;
 		}

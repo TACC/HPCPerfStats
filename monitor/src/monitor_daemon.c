@@ -57,6 +57,9 @@ ev_timer send_timer;
 ev_timer rotate_timer;
 static int max_buffer_size_explicit = 0;
 static double sample_timer_period = 300.0;
+static unsigned long g_payload_build_drop_count;
+static unsigned long g_ring_insert_fail_count;
+static unsigned long g_dumpfile_save_fail_count;
 
 char jobid[80] = "-";
 int nr_cpus;
@@ -286,14 +289,18 @@ static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_h
   w->status = send_stats_buffer(sf);
   stats_collect_on_changeover = 0;
   if (w->status < 0) {
-    ERROR("Failed building stats payload. Dropping sample\n");
+    g_payload_build_drop_count++;
+    ERROR("Failed building stats payload. Dropping sample (drops=%lu)\n",
+          g_payload_build_drop_count);
     stats_buffer_close(sf);
     free(sf);
     return;
   }
   rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
   if (rc < 0) {
-    ERROR("Failed adding stats to ring buffer. Saving stats to dumpfile\n");
+    g_ring_insert_fail_count++;
+    ERROR("Failed adding stats to ring buffer (failures=%lu). Saving stats to dumpfile\n",
+          g_ring_insert_fail_count);
     rc = save_file_stats_buffer(sf);
     stats_buffer_close(sf);
     free(sf);
@@ -301,6 +308,10 @@ static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_h
       w->f_count++;
       file_mode_enabled = 1;
       send_success_count = 0;
+    } else {
+      g_dumpfile_save_fail_count++;
+      ERROR("Failed saving dropped payload to dumpfile (failures=%lu)\n",
+            g_dumpfile_save_fail_count);
     }
   }
 }

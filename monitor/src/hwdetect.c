@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include "stats.h"
 #include "trace.h"
 
@@ -63,6 +64,59 @@ static int lspci_line_nvidia_pci_gpu_device(const char *line)
       || strstr(line, "vga compatible controller") != NULL
       || strstr(line, "display controller") != NULL
       || strstr(line, "processing accelerators") != NULL;
+}
+
+static int env_truthy(const char *name)
+{
+  const char *v = getenv(name);
+  if (v == NULL)
+    return 0;
+  return strcmp(v, "1") == 0 || strcmp(v, "true") == 0 || strcmp(v, "TRUE") == 0
+      || strcmp(v, "yes") == 0 || strcmp(v, "YES") == 0 || strcmp(v, "on") == 0
+      || strcmp(v, "ON") == 0;
+}
+
+static int env_int_or_default(const char *name, int fallback)
+{
+  const char *v = getenv(name);
+  char *end = NULL;
+  long parsed;
+  if (v == NULL || *v == '\0')
+    return fallback;
+  parsed = strtol(v, &end, 10);
+  if (end == v || *end != '\0' || parsed <= 0)
+    return fallback;
+  if (parsed > 1000000L)
+    return 1000000;
+  return (int) parsed;
+}
+
+static unsigned long g_nvidia_detect_miss_streak = 0;
+
+void hwdetect_reset_nvidia_disable_state(void)
+{
+  g_nvidia_detect_miss_streak = 0;
+}
+
+int hwdetect_should_disable_nvidia_gpu(int has_nvidia_gpu)
+{
+  int miss_threshold = env_int_or_default("HPCPERFSTATS_NVIDIA_DISABLE_MISS_THRESHOLD", 1);
+  if (has_nvidia_gpu) {
+    if (g_nvidia_detect_miss_streak > 0) {
+      TRACE("hwdetect: nvidia probe recovered after %lu miss(es)\n",
+            g_nvidia_detect_miss_streak);
+    }
+    g_nvidia_detect_miss_streak = 0;
+    return 0;
+  }
+
+  g_nvidia_detect_miss_streak++;
+  if ((int) g_nvidia_detect_miss_streak < miss_threshold) {
+    TRACE("hwdetect: nvidia miss streak %lu/%d; not disabling nvidia_gpu yet\n",
+          g_nvidia_detect_miss_streak, miss_threshold);
+    return 0;
+  }
+  return 1;
 }
 
 void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
@@ -135,9 +189,15 @@ void auto_disable_optional_stats_by_lspci(void)
   int has_opa = 0;
 
   hwdetect_probe_optional_stack_presence(&has_nvidia_gpu, &has_amd_gpu, &has_ib, &has_opa);
+  if (env_truthy("HPCPERFSTATS_FORCE_NVIDIA_GPU")) {
+    TRACE("hwdetect: HPCPERFSTATS_FORCE_NVIDIA_GPU is active; forcing nvidia_gpu enable\n");
+    has_nvidia_gpu = 1;
+  }
 
-  if (!has_nvidia_gpu)
+  if (hwdetect_should_disable_nvidia_gpu(has_nvidia_gpu)) {
+    TRACE("hwdetect: disabling nvidia_gpu (probe did not detect NVIDIA GPU stack)\n");
     disable_type_if_present("nvidia_gpu");
+  }
   if (!has_amd_gpu)
     disable_type_if_present("amd_gpu");
   if (!has_ib) {

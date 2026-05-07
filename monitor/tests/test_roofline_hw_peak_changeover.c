@@ -45,6 +45,8 @@ int main(void)
 {
   struct stats_type type = roofline_hw_peak_stats_type;
   setenv("HPCPERFSTATS_SKIP_HW_PROBE", "1", 1);
+  unsetenv("HPCPERFSTATS_ROOFLINE_MODE");
+  unsetenv("HPCPERFSTATS_ROOFLINE_PERIOD_SAMPLES");
 
   stats_collect_on_changeover = 0;
   type.st_collect(&type);
@@ -56,6 +58,21 @@ int main(void)
   assert(g_cpu_peak_fp64_flops_per_s > 0ULL);
   assert(g_cpu_peak_source == 1ULL);
   assert(g_peak_calc_version == 1ULL);
+
+  setenv("HPCPERFSTATS_ROOFLINE_MODE", "every_sample", 1);
+  stats_collect_on_changeover = 0;
+  type.st_collect(&type);
+  assert(g_get_current_stats_calls == 2);
+
+  setenv("HPCPERFSTATS_ROOFLINE_MODE", "periodic", 1);
+  setenv("HPCPERFSTATS_ROOFLINE_PERIOD_SAMPLES", "100", 1);
+  stats_collect_on_changeover = 0;
+  type.st_collect(&type);
+  assert(g_get_current_stats_calls == 2);
+  stats_collect_on_changeover = 1;
+  type.st_collect(&type);
+  assert(g_get_current_stats_calls == 3);
+
   printf("test_roofline_hw_peak_changeover passed\n");
   return 0;
 }

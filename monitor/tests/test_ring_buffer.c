@@ -77,6 +77,40 @@ static void test_insert_full_overwrite(void)
   assert(w.q_count == 1);
 }
 
+static void test_insert_full_schema_protected(void)
+{
+  struct sf_ring_buffer w;
+  memset(&w, 0, sizeof(w));
+  assert(ring_buffer_insert(make_payload_buf("$hdr\n"), &w, 1, 1) == 0);
+  assert(ring_buffer_insert(make_payload_buf("new\n"), &w, 1, 1) == -1);
+  assert(w.q_count == 1);
+}
+
+static void test_insert_full_prefers_non_schema_victim(void)
+{
+  struct sf_ring_buffer w;
+  struct sf_queue *node;
+  int saw_schema = 0;
+  int saw_new = 0;
+  int i;
+  memset(&w, 0, sizeof(w));
+  assert(ring_buffer_insert(make_payload_buf("$hdr\n"), &w, 2, 1) == 0);
+  assert(ring_buffer_insert(make_payload_buf("old\n"), &w, 2, 1) == 0);
+  assert(ring_buffer_insert(make_payload_buf("new\n"), &w, 2, 1) == 0);
+  node = w.q_first;
+  for (i = 0; i < w.q_count; i++) {
+    if (node->sf != NULL && node->sf->sf_data != NULL) {
+      if (strstr(node->sf->sf_data, "$hdr") != NULL)
+        saw_schema = 1;
+      if (strstr(node->sf->sf_data, "new") != NULL)
+        saw_new = 1;
+    }
+    node = node->forward;
+  }
+  assert(saw_schema == 1);
+  assert(saw_new == 1);
+}
+
 static void test_resend_single_drains(void)
 {
   struct sf_ring_buffer w;
@@ -175,6 +209,8 @@ int main(void)
   test_insert_empty_and_append();
   test_insert_full_no_overwrite();
   test_insert_full_overwrite();
+  test_insert_full_schema_protected();
+  test_insert_full_prefers_non_schema_victim();
   test_resend_single_drains();
   test_resend_batch_merge();
   test_resend_schema_then_stats();
