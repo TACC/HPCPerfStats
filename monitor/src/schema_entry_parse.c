@@ -54,6 +54,9 @@ struct schema_entry *parse_schema_entry(char *str)
   while (str != NULL) {
     char *opt = strsep(&str, ",");
     if (*opt == 0) {
+      /* Allow a single trailing comma (e.g. generated "key,"). */
+      if (str == NULL)
+        continue;
       free(se->se_unit);
       free(se);
       return NULL;
