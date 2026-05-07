@@ -1759,6 +1759,70 @@ def test_update_metrics_for_dates_rechecks_deferred_not_ready_jid_until_ready(mo
 
 
 @pytest.mark.django_db(databases=[])
+def test_update_metrics_refreshes_pub_dashboards_after_compute_progress(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+  monkeypatch.setattr(update_metrics, "PREWARM_DRAIN_BATCH_BUDGET_SECONDS", 0.0)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs([([1001], 1)]),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+  class _DoneProducer:
+    def join(self, timeout=None):
+      del timeout
+
+  def _producer_stub(**kwargs):
+    with kwargs["ready_queue_lock"]:
+      kwargs["ready_queue"].append(1001)
+    kwargs["producer_done"].set()
+    return _DoneProducer()
+
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _producer_stub)
+
+  refresh_calls = []
+  monkeypatch.setattr(
+      update_metrics,
+      "refresh_public_expansion_factor_artifacts_safe",
+      lambda: refresh_calls.append("refresh"),
+  )
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      del pool
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  # before_compute_start + after_compute_progress + final shutdown refresh
+  assert len(refresh_calls) >= 3
+
+
+@pytest.mark.django_db(databases=[])
 def test_update_metrics_for_dates_empty_date_list_returns(monkeypatch):
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)

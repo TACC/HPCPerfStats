@@ -2063,6 +2063,7 @@ def update_metrics_for_dates(dates, rerun=False):
       telemetry_detail_gpu_metrics_reused = 0
       telemetry_detail_fsio_fallback_queries = 0
       telemetry_detail_gpu_fallback_queries = 0
+      last_public_refresh_mono = time.monotonic()
       try:
         while not shutdown_requested[0]:
           with ready_queue_lock:
@@ -2197,6 +2198,11 @@ def update_metrics_for_dates(dates, rerun=False):
             if attempted_total > 0 and proc_total == 0 and fail_total > 0:
               stats["stall_reason"] = "compute_all_failed"
           completion_reporter.sync_completed_total(proc_total)
+          if succeeded_jids:
+            now_mono = time.monotonic()
+            if (now_mono - last_public_refresh_mono) >= PREWARM_DRAIN_BATCH_BUDGET_SECONDS:
+              _refresh_public_dashboards_for_scheduler(reason="after_compute_progress")
+              last_public_refresh_mono = now_mono
           compute_batches += 1
           if batch_elapsed >= COMPUTE_BATCH_WATCHDOG_SECONDS:
             new_cap = max(
