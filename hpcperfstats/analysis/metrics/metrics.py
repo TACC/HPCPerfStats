@@ -2,6 +2,8 @@
 
 DB access is process-safe: _unwrap runs in multiprocessing workers and calls close_old_connections() at entry so each worker uses a fresh connection for reads (e.g. job_arc); writes are done in the main process only.
 
+Public EF pool workers (:mod:`public_metrics_artifacts`) also call ``connections.close_all()`` because fork inherits the parent's socket and Postgres named iterator cursors would otherwise collide across processes.
+
 """
 import json
 import os

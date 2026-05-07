@@ -384,14 +384,38 @@ def _sync_reconcile_public_ef_year(ys: str) -> Dict[str, int]:
   return {"rebuilt_year_periods": 1, "skipped_year_periods": 0}
 
 
+def _public_ef_reset_fork_inherited_db() -> None:
+  """Drop connections inherited after ``multiprocessing`` fork before ORM queries.
+
+  Forked worker processes share their parent's Postgres socket unless closed.
+  Django's ``QuerySet.iterator(chunk_size=…)`` declares named server-side
+  cursors; two processes multiplexing one session yields ``cursor … already exists``.
+  """
+  from django.db import close_old_connections, connections
+
+  connections.close_all()
+  close_old_connections()
+
+
+def _public_ef_parent_refresh_connections_after_forked_children() -> None:
+  """Reinitialize this process's DB handles after forked workers close shared fds.
+
+  ``connections.close_all()`` in a worker closes inherited sockets that were
+  still referenced by Django's wrappers in this (parent) process; discard and
+  reconnect before any subsequent ORM in the scheduler thread.
+  """
+  from django.db import close_old_connections, connections
+
+  connections.close_all()
+  close_old_connections()
+
+
 def _public_ef_period_worker(task: Tuple[str, str]) -> Dict[str, int]:
   """Picklable multiprocessing worker: reconcile exactly one month or year period."""
-  from django.db import close_old_connections
-
   from hpcperfstats.django_bootstrap import ensure_django
 
   ensure_django()
-  close_old_connections()
+  _public_ef_reset_fork_inherited_db()
   kind, key = task
   try:
     if kind == _PUBLIC_EF_KIND_MONTH:
@@ -429,6 +453,7 @@ def refresh_public_expansion_factor_artifacts_parallel(pool: Any) -> Dict[str, i
     for k, v in piece.items():
       totals[k] += int(v)
 
+  _public_ef_parent_refresh_connections_after_forked_children()
   _prune_orphan_public_ef_rows(months, years)
   return dict(totals)
 

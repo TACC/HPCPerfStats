@@ -53,6 +53,27 @@ def test_refresh_public_expansion_factor_artifacts_parallel_inline_pool():
   assert public_metrics_artifact.objects.filter(scope=PUBLIC_EF_MONTH_DAILY).exists()
 
 
+@pytest.mark.django_db
+def test_public_ef_period_worker_closes_connections_before_reconcile(monkeypatch):
+  import django.db
+
+  from hpcperfstats.site.machine import public_metrics_artifacts as pma
+
+  close_calls = []
+  monkeypatch.setattr(django.db.connections, "close_all", lambda: close_calls.append(1))
+
+  def fake_month(ym):
+    del ym
+    assert close_calls == [1], "connections.close_all() must run before ORM reconcile"
+    return {"rebuilt_month_periods": 0, "skipped_month_periods": 1}
+
+  monkeypatch.setattr(pma, "_sync_reconcile_public_ef_month", fake_month)
+
+  result = pma._public_ef_period_worker((pma._PUBLIC_EF_KIND_MONTH, "2025-06"))
+  assert close_calls == [1]
+  assert result == {"rebuilt_month_periods": 0, "skipped_month_periods": 1}
+
+
 @pytest.mark.machine_unit_mock
 def test_build_public_expansion_factor_histogram_json_item_shape():
   from hpcperfstats.site.machine.public_metrics_artifacts import EF_HIST_BIN_EDGES
