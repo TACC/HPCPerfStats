@@ -1385,6 +1385,7 @@ def _start_candidate_rescan_thread(
     close_old_connections()
     try:
       while not shutdown_requested[0] and not stop_event.is_set():
+        _refresh_public_dashboards_for_scheduler(reason="before_rescan")
         for d in dates:
           if shutdown_requested[0] or stop_event.is_set():
             break
@@ -1412,6 +1413,15 @@ def _start_candidate_rescan_thread(
   )
   thread.start()
   return thread
+
+
+def _refresh_public_dashboards_for_scheduler(reason):
+  """Refresh public dashboard artifacts from scheduler flow safely."""
+  refresh_public_expansion_factor_artifacts_safe()
+  log_print(
+      "metrics scheduler: refreshed /pub/ dashboards reason={0}".format(reason),
+      flush=True,
+  )
 
 
 def _start_readiness_producer(
@@ -2007,6 +2017,7 @@ def update_metrics_for_dates(dates, rerun=False):
       )
       shared_pool = metrics_manager.ensure_pool()
       log_print("Metrics worker pool ready.", flush=True)
+      _refresh_public_dashboards_for_scheduler(reason="before_compute_start")
       ready_queue_lock = threading.Lock()
       producer_done = threading.Event()
       producer = _start_readiness_producer(

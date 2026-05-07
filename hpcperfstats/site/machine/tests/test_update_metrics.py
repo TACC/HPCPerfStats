@@ -5,6 +5,7 @@ import contextlib
 import os
 import threading
 import time
+from collections import deque
 from concurrent.futures import Future
 from datetime import datetime
 from types import SimpleNamespace
@@ -1586,6 +1587,108 @@ def test_update_metrics_for_dates_rescan_picks_up_new_mid_run_jid(monkeypatch):
   flat = [jid for batch in seen_batches for jid in batch]
   assert 1001 in flat
   assert 2002 in flat
+
+
+@pytest.mark.django_db(databases=[])
+def test_update_metrics_refreshes_pub_dashboards_before_first_compute(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs([([1001], 1)]),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+
+  order = []
+  monkeypatch.setattr(
+      update_metrics,
+      "refresh_public_expansion_factor_artifacts_safe",
+      lambda: order.append("refresh"),
+  )
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      del pool
+      order.append("compute")
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  class _DoneProducer:
+    def join(self, timeout=None):
+      del timeout
+
+  def _producer_stub(**kwargs):
+    order.append("producer_start")
+    kwargs["producer_done"].set()
+    return _DoneProducer()
+
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _producer_stub)
+  update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  assert "producer_start" in order
+  assert "refresh" in order
+  assert order.index("refresh") < order.index("producer_start")
+
+
+@pytest.mark.machine_unit_mock
+def test_rescan_thread_refreshes_pub_dashboards_before_query(monkeypatch):
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics, "RESCAN_INTERVAL_SECONDS", 0.0)
+  events = []
+  stop_event = threading.Event()
+
+  monkeypatch.setattr(
+      update_metrics,
+      "refresh_public_expansion_factor_artifacts_safe",
+      lambda: events.append("refresh"),
+  )
+
+  class _FakeQs:
+    def values_list(self, *args, **kwargs):
+      return []
+
+  def _jobs_queryset(*args, **kwargs):
+    events.append("query")
+    stop_event.set()
+    return _FakeQs()
+
+  monkeypatch.setattr(update_metrics, "_jobs_queryset", _jobs_queryset)
+  thread = update_metrics._start_candidate_rescan_thread(
+      dates=[datetime(2025, 4, 10)],
+      min_time=300,
+      rerun=False,
+      rescan_candidate_jids=deque(),
+      rescan_seen_jids=set(),
+      rescan_lock=threading.Lock(),
+      stop_event=stop_event,
+  )
+  assert thread is not None
+  thread.join(timeout=1.0)
+  assert events[:2] == ["refresh", "query"]
 
 
 @pytest.mark.django_db(databases=[])
