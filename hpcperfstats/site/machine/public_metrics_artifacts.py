@@ -3,6 +3,10 @@
 Computed only from ``update_metrics`` scheduler passes — HTTP handlers must not
 reaggregate heavy ranges here.
 
+Rows are **not** deleted when inputs change: invalidation sets ``rebuild_required``
+so the bundle omits those periods until :func:`refresh_public_expansion_factor_artifacts`
+(or the parallel scheduler path) recomputes and clears the flag.
+
 The scheduler runs :func:`refresh_public_expansion_factor_artifacts_parallel` on
 the metrics ``multiprocessing`` pool (one calendar month or one calendar year
 per task) and **completes** that pass before starting job-based metrics.
@@ -312,6 +316,7 @@ def _upsert_row(scope: str, period_key: str, fingerprint: str, payload: Dict[str
           "payload_compressed": blob,
           "payload_encoding": PAYLOAD_ENCODING_GZIP_JSON,
           "input_fingerprint": fingerprint,
+          "rebuild_required": False,
       },
   )
 
@@ -346,14 +351,18 @@ def _sync_reconcile_public_ef_month(ym: str) -> Dict[str, int]:
       .only("jid", "end_time")
   )
   fp = _streaming_jid_epoch_fingerprint(f"{PUBLIC_EF_MONTH_DAILY}:{ym}", qs)
-  existing = (
+  meta = (
       public_metrics_artifact.objects.filter(
           scope=PUBLIC_EF_MONTH_DAILY, period_key=ym
       )
-      .values_list("input_fingerprint", flat=True)
+      .values("input_fingerprint", "rebuild_required")
       .first()
   )
-  if existing == fp:
+  if (
+      meta is not None
+      and not meta["rebuild_required"]
+      and meta["input_fingerprint"] == fp
+  ):
     return {"rebuilt_month_periods": 0, "skipped_month_periods": 1}
   payload = _build_month_daily_payload(ym)
   _upsert_row(PUBLIC_EF_MONTH_DAILY, ym, fp, payload)
@@ -370,14 +379,18 @@ def _sync_reconcile_public_ef_year(ys: str) -> Dict[str, int]:
       .only("jid", "end_time")
   )
   fp = _streaming_jid_epoch_fingerprint(f"{PUBLIC_EF_YEAR_WEEKLY}:{ys}", qs)
-  existing = (
+  meta = (
       public_metrics_artifact.objects.filter(
           scope=PUBLIC_EF_YEAR_WEEKLY, period_key=ys
       )
-      .values_list("input_fingerprint", flat=True)
+      .values("input_fingerprint", "rebuild_required")
       .first()
   )
-  if existing == fp:
+  if (
+      meta is not None
+      and not meta["rebuild_required"]
+      and meta["input_fingerprint"] == fp
+  ):
     return {"rebuilt_year_periods": 0, "skipped_year_periods": 1}
   payload = _build_year_weekly_payload(ys)
   _upsert_row(PUBLIC_EF_YEAR_WEEKLY, ys, fp, payload)
@@ -486,16 +499,20 @@ def refresh_public_expansion_factor_artifacts_safe() -> None:
 
 
 def assemble_public_monthly_metrics_bundle() -> Dict[str, Any]:
-  """Merge persisted artifacts into one JSON-safe bundle for the public API."""
+  """Merge persisted artifacts into one JSON-safe bundle for the public API.
+
+  Omits periods with ``rebuild_required`` so stale histograms are not served
+  after invalidation until the scheduler recomputes them.
+  """
   monthly_histograms: Dict[str, Any] = {}
   yearly_histograms: Dict[str, Any] = {}
-  for row in public_metrics_artifact.objects.filter(scope=PUBLIC_EF_MONTH_DAILY).order_by(
-      "period_key",
-  ):
+  for row in public_metrics_artifact.objects.filter(
+      scope=PUBLIC_EF_MONTH_DAILY, rebuild_required=False
+  ).order_by("period_key"):
     monthly_histograms[row.period_key] = decompress_public_payload(row)
-  for row in public_metrics_artifact.objects.filter(scope=PUBLIC_EF_YEAR_WEEKLY).order_by(
-      "period_key",
-  ):
+  for row in public_metrics_artifact.objects.filter(
+      scope=PUBLIC_EF_YEAR_WEEKLY, rebuild_required=False
+  ).order_by("period_key"):
     yearly_histograms[row.period_key] = decompress_public_payload(row)
   ready = bool(monthly_histograms or yearly_histograms)
   return {
@@ -513,7 +530,7 @@ def assemble_public_monthly_metrics_bundle() -> Dict[str, Any]:
 
 
 def invalidate_public_metrics_artifacts_for_jids(jids: Iterable[str]) -> None:
-  """Drop EF aggregates touching calendar periods for the provided accounting rows."""
+  """Mark EF aggregates stale for calendar periods touched by the given accounting rows."""
   jid_list = [j for j in jids if j]
   if not jid_list:
     return
@@ -524,21 +541,24 @@ def invalidate_public_metrics_artifacts_for_jids(jids: Iterable[str]) -> None:
       continue
     months.add(f"{et.year:04d}-{et.month:02d}")
     years.add(str(et.year))
-  if months:
-    public_metrics_artifact.objects.filter(
-        scope=PUBLIC_EF_MONTH_DAILY,
-        period_key__in=sorted(months),
-    ).delete()
-  if years:
-    public_metrics_artifact.objects.filter(
-        scope=PUBLIC_EF_YEAR_WEEKLY,
-        period_key__in=sorted(years),
-    ).delete()
+  try:
+    if months:
+      public_metrics_artifact.objects.filter(
+          scope=PUBLIC_EF_MONTH_DAILY,
+          period_key__in=sorted(months),
+      ).update(rebuild_required=True)
+    if years:
+      public_metrics_artifact.objects.filter(
+          scope=PUBLIC_EF_YEAR_WEEKLY,
+          period_key__in=sorted(years),
+      ).update(rebuild_required=True)
+  except Exception:
+    logger.exception("failed to mark public_metrics_artifact rows stale for jids")
 
 
 def invalidate_all_public_metrics_artifacts() -> None:
-  """Clear every prewarmed public dashboard artifact row."""
+  """Mark every prewarmed public dashboard artifact row for rebuild."""
   try:
-    public_metrics_artifact.objects.all().delete()
+    public_metrics_artifact.objects.all().update(rebuild_required=True)
   except Exception:
-    logger.exception("failed to delete public_metrics_artifact rows")
+    logger.exception("failed to mark public_metrics_artifact rows stale")

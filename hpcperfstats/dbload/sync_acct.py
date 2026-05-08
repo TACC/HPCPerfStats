@@ -33,7 +33,7 @@ from hpcperfstats.site.machine.models import job_data
 local_timezone = dt_timezone.utc
 
 
-def _notify_job_cache_after_acct_ingest(inserted, job_objs=None):
+def _notify_job_cache_after_acct_ingest(inserted, job_objs=None, inserted_jids=None):
   """Invalidate site/reference caches; optionally warm KEY_JOB after accounting ingest."""
   try:
     from hpcperfstats.site.machine.cache_utils import (
@@ -42,9 +42,13 @@ def _notify_job_cache_after_acct_ingest(inserted, job_objs=None):
         warm_job_cache_entries,
     )
 
-    invalidate_after_job_data_ingest(inserted)
+    invalidate_after_job_data_ingest(inserted, inserted_jids=inserted_jids)
     if inserted > 0 and job_objs:
-      warm_job_cache_entries(job_objs, get_site_content_cache_timeout())
+      if inserted_jids is not None:
+        ij = frozenset(inserted_jids)
+        job_objs = [o for o in job_objs if getattr(o, "jid", None) in ij]
+      if job_objs:
+        warm_job_cache_entries(job_objs, get_site_content_cache_timeout())
   except Exception:
     pass
 
@@ -160,7 +164,9 @@ def _sync_acct_dataframe(df, jobs_in_db):
   # Compute an accurate count of rows actually inserted, even when using
   # ignore_conflicts (which silently skips duplicates at the DB level).
   jids = [obj.jid for obj in objs]
-  existing_before = job_data.objects.filter(jid__in=jids).count()
+  jids_before = frozenset(
+      job_data.objects.filter(jid__in=jids).values_list("jid", flat=True),
+  )
 
   try:
     job_data.objects.bulk_create(objs, ignore_conflicts=True)
@@ -168,13 +174,19 @@ def _sync_acct_dataframe(df, jobs_in_db):
     log_print("error in bulk_create:", str(e))
     inserted, saved_objs = _insert_job_data_individually(df)
     log_print("Total number of new entries (fallback single inserts):", inserted)
-    _notify_job_cache_after_acct_ingest(inserted, saved_objs)
+    inserted_jids = [o.jid for o in saved_objs]
+    _notify_job_cache_after_acct_ingest(
+        inserted, saved_objs, inserted_jids=inserted_jids)
     return inserted
 
-  existing_after = job_data.objects.filter(jid__in=jids).count()
-  inserted = max(0, existing_after - existing_before)
+  jids_after = frozenset(
+      job_data.objects.filter(jid__in=jids).values_list("jid", flat=True),
+  )
+  inserted_jids_list = [j for j in jids_after if j not in jids_before]
+  inserted = len(inserted_jids_list)
   log_print("Total number of new entries:", inserted)
-  _notify_job_cache_after_acct_ingest(inserted, objs)
+  _notify_job_cache_after_acct_ingest(
+      inserted, objs, inserted_jids=inserted_jids_list)
   return inserted
 
 

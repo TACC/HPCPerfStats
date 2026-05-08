@@ -200,17 +200,28 @@ def invalidate_home_options_query_cache():
     pass
 
 
-def invalidate_after_job_data_ingest(inserted_count):
-  """Drop site freshness probe and home_options reference keys after new job_data rows."""
+def invalidate_after_job_data_ingest(inserted_count, inserted_jids=None):
+  """Drop site freshness probe and home_options reference keys after new job_data rows.
+
+  When *inserted_jids* is provided, only expansion-factor dashboard artifacts for
+  those jobs' calendar periods are marked for rebuild (see
+  :func:`invalidate_public_metrics_artifacts_for_jids`). Otherwise falls back
+  to marking every prewarmed /pub row stale — avoid that in hot paths where
+  *inserted_jids* is knowable (e.g. accounting ingest).
+  """
   if inserted_count <= 0:
     return
   invalidate_home_options_query_cache()
   try:
     from hpcperfstats.site.machine.public_metrics_artifacts import (
         invalidate_all_public_metrics_artifacts,
+        invalidate_public_metrics_artifacts_for_jids,
     )
 
-    invalidate_all_public_metrics_artifacts()
+    if inserted_jids:
+      invalidate_public_metrics_artifacts_for_jids(inserted_jids)
+    else:
+      invalidate_all_public_metrics_artifacts()
   except Exception:
     pass
 

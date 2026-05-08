@@ -9,6 +9,7 @@ from hpcperfstats.site.machine.models import job_data, public_metrics_artifact
 from hpcperfstats.site.machine.public_metrics_artifacts import (
     PUBLIC_EF_MONTH_DAILY,
     PUBLIC_EF_YEAR_WEEKLY,
+    PAYLOAD_ENCODING_GZIP_JSON,
     compute_scheduler_expansion_factor_seconds,
     decompress_public_payload,
     refresh_public_expansion_factor_artifacts,
@@ -51,6 +52,51 @@ def test_refresh_public_expansion_factor_artifacts_parallel_inline_pool():
   assert parallel["rebuilt_month_periods"] == sequential["rebuilt_month_periods"]
   assert parallel["rebuilt_year_periods"] == sequential["rebuilt_year_periods"]
   assert public_metrics_artifact.objects.filter(scope=PUBLIC_EF_MONTH_DAILY).exists()
+
+
+@pytest.mark.django_db
+def test_invalidate_after_acct_ingest_marks_only_touched_ef_month_rows_stale():
+  """Accounting ingest must not remove /pub EF rows; omit stale periods from bundle."""
+  import gzip
+
+  from hpcperfstats.site.machine import cache_utils
+  from hpcperfstats.site.machine.public_metrics_artifacts import (
+      assemble_public_monthly_metrics_bundle,
+  )
+
+  blob = gzip.compress(b"{}")
+  for key in ("2024-03", "2024-04"):
+    public_metrics_artifact.objects.create(
+        scope=PUBLIC_EF_MONTH_DAILY,
+        period_key=key,
+        payload_compressed=blob,
+        payload_encoding=PAYLOAD_ENCODING_GZIP_JSON,
+        input_fingerprint="testfp",
+        rebuild_required=False,
+    )
+  submit = datetime(2024, 3, 1, tzinfo=dj_tz.utc)
+  start = datetime(2024, 3, 1, 1, 0, 0, tzinfo=dj_tz.utc)
+  end = datetime(2024, 3, 15, 2, 0, 0, tzinfo=dj_tz.utc)
+  runtime = float((end - start).total_seconds())
+  job_data.objects.create(
+      jid="acct_inval_demo",
+      submit_time=submit,
+      start_time=start,
+      end_time=end,
+      runtime=runtime,
+      ncores=4,
+      username="demo-user",
+      host_list=["n001.cluster.example"],
+  )
+  cache_utils.invalidate_after_job_data_ingest(1, inserted_jids=["acct_inval_demo"])
+  march = public_metrics_artifact.objects.get(period_key="2024-03")
+  assert march.rebuild_required
+  april = public_metrics_artifact.objects.get(period_key="2024-04")
+  assert not april.rebuild_required
+  bundle = assemble_public_monthly_metrics_bundle()
+  monthly = bundle["sections"]["expansion_factor"]["monthly_daily_histograms"]
+  assert "2024-03" not in monthly
+  assert "2024-04" in monthly
 
 
 @pytest.mark.django_db
@@ -156,9 +202,16 @@ def test_refresh_public_expansion_factor_artifacts_builds_rows():
   assert "bokeh_histogram_json_item" in year_payload
   assert isinstance(year_payload["bokeh_histogram_json_item"], dict)
 
+  march.rebuild_required = True
+  march.save(update_fields=["rebuild_required"])
+  stats2 = refresh_public_expansion_factor_artifacts()
+  assert stats2["rebuilt_month_periods"] >= 1
+  march.refresh_from_db()
+  assert not march.rebuild_required
+
 
 @pytest.mark.django_db
-def test_invalidate_job_plot_also_drops_touching_public_artifacts():
+def test_invalidate_job_plot_marks_touching_public_artifacts_stale():
   from hpcperfstats.site.machine.cache_utils import invalidate_job_plot_cache_keys_for_jids
 
   submit = datetime(2024, 4, 1, tzinfo=dj_tz.utc)
@@ -179,6 +232,7 @@ def test_invalidate_job_plot_also_drops_touching_public_artifacts():
   assert public_metrics_artifact.objects.exists()
 
   invalidate_job_plot_cache_keys_for_jids(["pub_ef_inv"])
-  assert not public_metrics_artifact.objects.filter(
+  row = public_metrics_artifact.objects.get(
       scope=PUBLIC_EF_MONTH_DAILY, period_key="2024-04"
-  ).exists()
+  )
+  assert row.rebuild_required

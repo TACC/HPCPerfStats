@@ -181,6 +181,40 @@ def test_invalidate_after_job_data_ingest_deletes_keys():
   assert mock_cache.delete.call_count == 5
 
 
+def test_invalidate_after_job_data_ingest_granular_public_metrics_calls_for_jids():
+  mock_cache = MagicMock()
+  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
+    with patch(
+        "hpcperfstats.site.machine.public_metrics_artifacts.invalidate_public_metrics_artifacts_for_jids",
+    ) as mock_for_jids:
+      with patch(
+          "hpcperfstats.site.machine.public_metrics_artifacts.invalidate_all_public_metrics_artifacts",
+      ) as mock_all:
+        from hpcperfstats.site.machine import cache_utils
+
+        cache_utils.invalidate_after_job_data_ingest(2, inserted_jids=["a", "b"])
+  mock_for_jids.assert_called_once_with(["a", "b"])
+  mock_all.assert_not_called()
+  assert mock_cache.delete.call_count == 5
+
+
+def test_invalidate_after_job_data_ingest_without_jids_marks_all_public_metrics_stale():
+  mock_cache = MagicMock()
+  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
+    with patch(
+        "hpcperfstats.site.machine.public_metrics_artifacts.invalidate_public_metrics_artifacts_for_jids",
+    ) as mock_for_jids:
+      with patch(
+          "hpcperfstats.site.machine.public_metrics_artifacts.invalidate_all_public_metrics_artifacts",
+      ) as mock_all:
+        from hpcperfstats.site.machine import cache_utils
+
+        cache_utils.invalidate_after_job_data_ingest(1)
+  mock_for_jids.assert_not_called()
+  mock_all.assert_called_once()
+  assert mock_cache.delete.call_count == 5
+
+
 def test_warm_job_cache_entries_sets_job_keys():
   mock_cache = MagicMock()
   mock_job = MagicMock()

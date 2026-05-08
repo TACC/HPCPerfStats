@@ -287,6 +287,7 @@ class public_metrics_artifact(models.Model):
   payload_compressed = models.BinaryField()
   payload_encoding = models.CharField(max_length=32)
   input_fingerprint = models.CharField(max_length=64)
+  rebuild_required = models.BooleanField(default=False, db_index=True)
   created_at = models.DateTimeField(auto_now_add=True)
   updated_at = models.DateTimeField(auto_now=True)
 
