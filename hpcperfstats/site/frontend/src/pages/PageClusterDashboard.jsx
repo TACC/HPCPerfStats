@@ -182,7 +182,7 @@ export default function PageClusterDashboard() {
   return (
     <div className="container py-4">
       <header className="mb-4">
-        <h1 className="h3">Cluster dashboard</h1>
+        <h1 className="h3">Dashboard</h1>
         <p className="text-muted mb-0">
           Public cluster dashboards built from pre-warmed aggregates (no live heavy queries).
         </p>

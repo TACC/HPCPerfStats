@@ -81,7 +81,7 @@ describe("PageClusterDashboard", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { level: 1, name: "Cluster dashboard" }),
+        screen.getByRole("heading", { level: 1, name: "Dashboard" }),
       ).toBeInTheDocument();
     });
 
