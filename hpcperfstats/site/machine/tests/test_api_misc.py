@@ -394,8 +394,9 @@ class TestHomeOptions:
       mock_exec.return_value = MagicMock(submit=_submit)
 
       with patch("hpcperfstats.site.machine.api.job_data") as mock_job_data, patch(
-          "hpcperfstats.site.machine.api.metrics_data"
-      ) as mock_metrics_data, patch(
+          "hpcperfstats.site.machine.api.job_metrics_catalog_entries",
+          return_value=sample_metrics,
+      ), patch(
           "hpcperfstats.site.machine.api.cached_orm"
       ) as mock_cached_orm:
         # cached_orm simply delegates to the query function
@@ -405,7 +406,6 @@ class TestHomeOptions:
 
         # Configure job_data.querysets used in _dates_fn, _queues_fn, _states_fn
         mock_job_data.objects.dates.return_value = sample_dates
-        mock_metrics_data.objects.distinct.return_value.values.return_value = sample_metrics
         mock_job_data.objects.distinct.return_value.values_list.return_value = sample_queues
         (
             mock_job_data.objects.exclude.return_value.distinct.return_value.values_list.return_value

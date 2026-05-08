@@ -22,6 +22,11 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
     description: "Username of the job owner from Slurm accounting.",
     researcherUse: "Ownership and fair-share context.",
   },
+  host: {
+    description: "Compute node hostname recorded in the job allocation host list.",
+    researcherUse:
+      "Find jobs that ran on a specific node when investigating node-local failures or performance anomalies.",
+  },
   account: {
     description: "Project/account charged for the job in Slurm accounting.",
     researcherUse: "Billing and policy: which allocation was charged.",
@@ -63,6 +68,11 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
     description: "Number of nodes allocated to the job.",
     researcherUse:
       "Multi-node imbalance metrics and network plots only make sense in this node-count context.",
+  },
+  node_hrs: {
+    description: "Allocated node-hours for the job: node count multiplied by elapsed runtime in hours.",
+    researcherUse:
+      "Estimate allocation cost and compare resource scale across jobs with different runtimes or node counts.",
   },
   metrics_distinct_time_count: {
     description:

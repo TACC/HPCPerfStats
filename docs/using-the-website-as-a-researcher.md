@@ -1,7 +1,7 @@
 # Using HPCPerfStats on the Web — Guide for Researchers and HPC Users
 
 
-This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-05-06.
+This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-05-07.
 
 
 This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections.
@@ -25,7 +25,7 @@ This document is ordered so the **most decision-relevant ideas come first**. Dee
 ## 1. Finding jobs and reading the job list
 
 - **Search home**: Browse by **year** or **date** to reach filtered job lists.
-- **Expanded search**: Use expanded search when you need to find specific jobs quickly (for example by job ID, user, project/account, queue, time window, or job-name pattern), then open the matching row from the filtered results.
+- **Expanded search**: Use expanded search when you need to find specific jobs quickly (for example by job ID, host, user, project/account, queue, time window, node count, node-hours, or derived metric thresholds), then open the matching row from the filtered results. The **?** help icon next to each field defines the parameter. Derived metric choices match the **Metrics** tab on each job detail page, and those filters search prepared job-level metric summaries.
 - **Job list table**: Typical columns include job ID, submit/start/end times, **runtime**, **requested time (timelimit)**, resource shape (**nodes**, **cores**), **user**, **project/account**, **queue**, **state**, and **job name**. Row **background color** reflects completion state (e.g. completed vs failed vs other).
 - **Histograms** (where configured): Distribution thumbnails for metrics such as **runtime**, **node count**, and **queue wait** help you see whether your job is typical for that filter.
 - **Performance Data** column: Short status labels (e.g. summary available, monitoring gaps, not summarized yet) indicate current data readiness for each row.
@@ -282,5 +282,6 @@ Use these numbered references when you want background on terms used throughout 
 | ---------- | --------------------------------------------------------------------------------------- |
 | 2026-04-03 | Initial researcher-facing guide aligned with current job detail UI and metrics catalog. |
 | 2026-05-06 | Reorganized the guide for usability (index-first navigation and clearer section flow), aligned job-detail surfaces/metrics with current UI labels, and added paper-style concept citations with an appendix reference catalog for non-CS/HPC readers. |
+| 2026-05-07 | Clarified expanded search help icons and that derived metric filters match the Job detail Metrics tab. |
 
 

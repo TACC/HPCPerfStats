@@ -1,0 +1,28 @@
+---
+description: Keep Extended Search aligned with metrics, artifacts, and database-backed search contracts
+alwaysApply: true
+---
+
+# Search, Metrics, Artifacts, And Database Sync
+
+When changing any job search parameter, derived metric, prewarmed artifact/table, or database-backed filter that users can search on, update the full Extended Search contract in the same task.
+
+## Required sync points
+
+- **Frontend parameter registry:** update `hpcperfstats/site/frontend/src/utils/extended-search-parameters.js` and the rendered form in `ExtendedSearch.jsx`.
+- **Help text:** every search parameter and derived metric must have `VariableInfoLabel` metadata in `variableMetadata.js`; do not rely on generic fallback text for visible search fields.
+- **Derived metrics list:** Extended Search metric options must come from the same catalog as Job Detail Metrics: `job_metrics_catalog_entries()` / `metrics_list`.
+- **Database filtering:** derived metric filters must query persisted/prewarmed metric rows in `metrics_data`; new searchable artifact/database tables need explicit filter logic and stale/missing-data behavior.
+- **Candidate selection:** if a new prewarmed artifact/table is produced by `update_metrics`, update `_jobs_queryset` so jobs missing or stale for that data are selected.
+- **Docs:** update `docs/using-the-website-as-a-researcher.md` when users see a new or changed search field, metric, or no-data behavior.
+
+## Tests
+
+- Add/update per-parameter frontend tests in `ExtendedSearch.test.jsx`.
+- Add/update validation drift guards in `extended-search-validation.test.js`.
+- Add/update backend queryset tests in `test_job_list_queryset_build.py` for every query key that reaches `/api/jobs/`.
+- Add/update `/api/home/` tests so metric options stay locked to the Job Detail catalog.
+
+## Completion bar
+
+A metric/artifact/database change is not complete if Job Detail can display it but Extended Search cannot offer it, explain it, or test filtering against the persisted data source.

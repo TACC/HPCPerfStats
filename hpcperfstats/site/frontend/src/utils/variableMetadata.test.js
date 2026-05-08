@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  EXTENDED_SEARCH_PARAMETER_DEFINITIONS,
+  EXTENDED_SEARCH_ALLOWED_PARAM_NAMES,
+} from "./extended-search-parameters";
+import { JOB_METRIC_SHORT_LABELS } from "./jobMetricDisplayLabels";
+import {
   getDescriptionForVariable,
   getVariableTooltipContent,
   normalizeVariableKey,
@@ -70,6 +75,25 @@ describe("getDescriptionForVariable", () => {
 
   it("documents metrics_distinct_time_count for staff Sample Count help", () => {
     expect(getDescriptionForVariable("metrics_distinct_time_count")).toMatch(/distinct sample timestamps/i);
+  });
+
+  it("documents every Extended Search parameter metadata key", () => {
+    expect(EXTENDED_SEARCH_ALLOWED_PARAM_NAMES).toHaveLength(
+      EXTENDED_SEARCH_PARAMETER_DEFINITIONS.length,
+    );
+    for (const param of EXTENDED_SEARCH_PARAMETER_DEFINITIONS) {
+      const content = getVariableTooltipContent(param.metadataKey);
+      expect(content?.description, param.name).toBeTruthy();
+      expect(VARIABLE_METADATA[param.metadataKey], param.name).toBeDefined();
+    }
+  });
+
+  it("documents every Job Detail metric label used by Extended Search", () => {
+    for (const metric of Object.keys(JOB_METRIC_SHORT_LABELS)) {
+      const content = getVariableTooltipContent(metric);
+      expect(content?.description, metric).toBeTruthy();
+      expect(VARIABLE_METADATA[metric], metric).toBeDefined();
+    }
   });
 
   it("returns a description for code-derived definitions", () => {

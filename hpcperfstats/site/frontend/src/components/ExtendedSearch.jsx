@@ -2,27 +2,34 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import BannerErrorMessage from "./BannerErrorMessage";
 import LoadingMessage from "./LoadingMessage";
+import { VariableInfoLabel } from "./VariableInfoLabel";
 import { useHomeOptions } from "../hooks/use-home-options";
+import {
+  EXTENDED_SEARCH_ALLOWED_PARAM_NAMES,
+  getExtendedSearchParameterDefinition,
+} from "../utils/extended-search-parameters";
 import { validateExtendedSearchForm } from "../utils/extended-search-validation";
+import { getJobMetricShortLabel } from "../utils/jobMetricDisplayLabels";
 
 const EXTENDED_SEARCH_ERROR_SUMMARY_ID = "extended-search-submit-errors";
 
-const ALLOWED_PARAMS = [
-  "jid",
-  "host",
-  "username",
-  "account__icontains",
-  "state",
-  "queue",
-  "end_time__gte",
-  "end_time__lte",
-  "runtime__gte",
-  "runtime__lte",
-  "nhosts__gte",
-  "nhosts__lte",
-  "node_hrs__gte",
-  "node_hrs__lte",
-];
+function SearchFieldLabel({ parameterName, className = "form-label d-block" }) {
+  const definition = getExtendedSearchParameterDefinition(parameterName);
+  if (!definition) return null;
+  return (
+    <span className={className} id={`${definition.htmlId}-label`}>
+      <VariableInfoLabel
+        variableName={definition.metadataKey}
+        labelText={definition.label}
+        enableHelp
+      />
+    </span>
+  );
+}
+
+function ariaLabelledBy(htmlId) {
+  return { "aria-labelledby": `${htmlId}-label` };
+}
 
 export default function ExtendedSearch({ onClose }) {
   const navigate = useNavigate();
@@ -57,7 +64,7 @@ export default function ExtendedSearch({ onClose }) {
         params[el.name] = el.value;
         continue;
       }
-      if (ALLOWED_PARAMS.includes(el.name)) params[el.name] = el.value;
+      if (EXTENDED_SEARCH_ALLOWED_PARAM_NAMES.includes(el.name)) params[el.name] = el.value;
     }
 
     setSubmitErrors([]);
@@ -137,7 +144,7 @@ export default function ExtendedSearch({ onClose }) {
         <p className="text-muted small">Search fields are combined.</p>
         <div className="row mb-2">
           <div className="col-12 col-md-2">
-            <label htmlFor="ext-jid">Job ID</label>
+            <SearchFieldLabel parameterName="jid" />
           </div>
           <div className="col-12 col-md-4">
             <input
@@ -147,6 +154,7 @@ export default function ExtendedSearch({ onClose }) {
               name="jid"
               placeholder="Jump directly to a job"
               autoComplete="off"
+              {...ariaLabelledBy("ext-jid")}
             />
           </div>
         </div>
@@ -154,7 +162,7 @@ export default function ExtendedSearch({ onClose }) {
           <legend className="h6">Time range</legend>
           <div className="row">
             <div className="col-12 col-md-2">
-              <label htmlFor="ext-end-time-gte">Start Date</label>
+              <SearchFieldLabel parameterName="end_time__gte" />
             </div>
             <div className="col-12 col-md-2">
               <input
@@ -162,10 +170,12 @@ export default function ExtendedSearch({ onClose }) {
                 type="date"
                 className="form-control form-control-sm"
                 name="end_time__gte"
+                {...ariaLabelledBy("ext-end-time-gte")}
+                {...ariaErrorProps("ext-end-time-gte")}
               />
             </div>
             <div className="col-12 col-md-2">
-              <label htmlFor="ext-end-time-lte">End Date</label>
+              <SearchFieldLabel parameterName="end_time__lte" />
             </div>
             <div className="col-12 col-md-2">
               <input
@@ -173,13 +183,15 @@ export default function ExtendedSearch({ onClose }) {
                 type="date"
                 className="form-control form-control-sm"
                 name="end_time__lte"
+                {...ariaLabelledBy("ext-end-time-lte")}
+                {...ariaErrorProps("ext-end-time-lte")}
               />
             </div>
           </div>
         </fieldset>
         <div className="row">
           <div className="col-12 col-md-2">
-            <label htmlFor="ext-host">Host</label>
+            <SearchFieldLabel parameterName="host" />
           </div>
           <div className="col-12 col-md-2">
             <input
@@ -187,12 +199,13 @@ export default function ExtendedSearch({ onClose }) {
               className="form-control form-control-sm"
               name="host"
               id="ext-host"
+              {...ariaLabelledBy("ext-host")}
             />
           </div>
         </div>
         <div className="row">
           <div className="col-12 col-md-2">
-            <label htmlFor="ext-username">Username</label>
+            <SearchFieldLabel parameterName="username" />
           </div>
           <div className="col-12 col-md-2">
             <input
@@ -200,12 +213,13 @@ export default function ExtendedSearch({ onClose }) {
               className="form-control form-control-sm"
               name="username"
               id="ext-username"
+              {...ariaLabelledBy("ext-username")}
             />
           </div>
         </div>
         <div className="row">
           <div className="col-12 col-md-2">
-            <label htmlFor="ext-account">Account</label>
+            <SearchFieldLabel parameterName="account__icontains" />
           </div>
           <div className="col-12 col-md-2">
             <input
@@ -213,15 +227,21 @@ export default function ExtendedSearch({ onClose }) {
               className="form-control form-control-sm"
               name="account__icontains"
               id="ext-account"
+              {...ariaLabelledBy("ext-account")}
             />
           </div>
         </div>
         <div className="row">
           <div className="col-12 col-md-2">
-            <label htmlFor="ext-state">State</label>
+            <SearchFieldLabel parameterName="state" />
           </div>
           <div className="col-12 col-md-2">
-            <select className="form-control" id="ext-state" name="state">
+            <select
+              className="form-control"
+              id="ext-state"
+              name="state"
+              {...ariaLabelledBy("ext-state")}
+            >
               <option value="">--</option>
               {states.map((s) => (
                 <option key={s}>{s}</option>
@@ -231,10 +251,15 @@ export default function ExtendedSearch({ onClose }) {
         </div>
         <div className="row">
           <div className="col-12 col-md-2">
-            <label htmlFor="ext-queue">Queue</label>
+            <SearchFieldLabel parameterName="queue" />
           </div>
           <div className="col-12 col-md-2">
-            <select className="form-control" id="ext-queue" name="queue">
+            <select
+              className="form-control"
+              id="ext-queue"
+              name="queue"
+              {...ariaLabelledBy("ext-queue")}
+            >
               <option value="">--</option>
               {queues.map((q) => (
                 <option key={q}>{q}</option>
@@ -246,7 +271,7 @@ export default function ExtendedSearch({ onClose }) {
           <legend className="h5">Search on Resources</legend>
           <div className="row">
             <div className="col-12 col-md-2">
-              <label htmlFor="ext-runtime-gte">Runtime minimum (seconds)</label>
+              <SearchFieldLabel parameterName="runtime__gte" />
             </div>
             <div className="col-12 col-md-2">
               <input
@@ -255,11 +280,12 @@ export default function ExtendedSearch({ onClose }) {
                 className="form-control form-control-sm"
                 name="runtime__gte"
                 placeholder="min seconds"
+                {...ariaLabelledBy("ext-runtime-gte")}
                 {...ariaErrorProps("ext-runtime-gte")}
               />
             </div>
             <div className="col-12 col-md-2">
-              <label htmlFor="ext-runtime-lte">Runtime maximum (seconds)</label>
+              <SearchFieldLabel parameterName="runtime__lte" />
             </div>
             <div className="col-12 col-md-2">
               <input
@@ -268,13 +294,14 @@ export default function ExtendedSearch({ onClose }) {
                 className="form-control form-control-sm"
                 name="runtime__lte"
                 placeholder="max seconds"
+                {...ariaLabelledBy("ext-runtime-lte")}
                 {...ariaErrorProps("ext-runtime-lte")}
               />
             </div>
           </div>
           <div className="row">
             <div className="col-12 col-md-2">
-              <label htmlFor="ext-nhosts-gte">Nodes minimum</label>
+              <SearchFieldLabel parameterName="nhosts__gte" />
             </div>
             <div className="col-12 col-md-2">
               <input
@@ -283,11 +310,12 @@ export default function ExtendedSearch({ onClose }) {
                 className="form-control form-control-sm"
                 name="nhosts__gte"
                 placeholder="min nodes"
+                {...ariaLabelledBy("ext-nhosts-gte")}
                 {...ariaErrorProps("ext-nhosts-gte")}
               />
             </div>
             <div className="col-12 col-md-2">
-              <label htmlFor="ext-nhosts-lte">Nodes maximum</label>
+              <SearchFieldLabel parameterName="nhosts__lte" />
             </div>
             <div className="col-12 col-md-2">
               <input
@@ -296,13 +324,14 @@ export default function ExtendedSearch({ onClose }) {
                 className="form-control form-control-sm"
                 name="nhosts__lte"
                 placeholder="max nodes"
+                {...ariaLabelledBy("ext-nhosts-lte")}
                 {...ariaErrorProps("ext-nhosts-lte")}
               />
             </div>
           </div>
           <div className="row">
             <div className="col-12 col-md-2">
-              <label htmlFor="ext-node-hrs-gte">Node-hours minimum</label>
+              <SearchFieldLabel parameterName="node_hrs__gte" />
             </div>
             <div className="col-12 col-md-2">
               <input
@@ -311,11 +340,12 @@ export default function ExtendedSearch({ onClose }) {
                 className="form-control form-control-sm"
                 name="node_hrs__gte"
                 placeholder="min node-hrs"
+                {...ariaLabelledBy("ext-node-hrs-gte")}
                 {...ariaErrorProps("ext-node-hrs-gte")}
               />
             </div>
             <div className="col-12 col-md-2">
-              <label htmlFor="ext-node-hrs-lte">Node-hours maximum</label>
+              <SearchFieldLabel parameterName="node_hrs__lte" />
             </div>
             <div className="col-12 col-md-2">
               <input
@@ -324,6 +354,7 @@ export default function ExtendedSearch({ onClose }) {
                 className="form-control form-control-sm"
                 name="node_hrs__lte"
                 placeholder="max node-hrs"
+                {...ariaLabelledBy("ext-node-hrs-lte")}
                 {...ariaErrorProps("ext-node-hrs-lte")}
               />
             </div>
@@ -335,8 +366,14 @@ export default function ExtendedSearch({ onClose }) {
             <div className="row" key={m.metric}>
               <div className="col-12 col-md-2">
                 <span className="form-label d-block" id={`ext-metric-name-${idx}`}>
-                  {m.metric}{" "}
-                  <span className="text-muted small">({m.units})</span>
+                  <VariableInfoLabel
+                    variableName={m.metric}
+                    labelText={getJobMetricShortLabel(m.metric)}
+                    enableHelp
+                  />{" "}
+                  <span className="text-muted small">
+                    ({m.metric}, {m.units})
+                  </span>
                 </span>
               </div>
               <div className="col-12 col-md-2">

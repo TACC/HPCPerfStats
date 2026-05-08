@@ -88,7 +88,10 @@ from .job_detail_artifacts import (
     compute_detail_input_fingerprint,
     load_job_detail_artifact,
 )
-from hpcperfstats.analysis.metrics.metrics import build_job_metrics_display_list
+from hpcperfstats.analysis.metrics.metrics import (
+    build_job_metrics_display_list,
+    job_metrics_catalog_entries,
+)
 from hpcperfstats.dbload.sync_acct import sync_acct_from_content
 from .models import ApiKey, host_data, job_data, metrics_data
 from .oauth2 import check_for_tokens
@@ -123,6 +126,7 @@ def site_response_cache_timeout(request):
 
 _JOB_LIST_QUERY_FIELD_EXCLUDES_BASE = ("page", "order_by")
 _JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM = ("group", "metric", "_histogram_embed_v")
+_JOB_LIST_METRIC_FILTER_OPS_ALLOWED = frozenset({"gte", "lte"})
 
 
 def _get_admin_host_stats_statement_timeout_ms():
@@ -545,10 +549,13 @@ def _build_job_list_queryset_from_request(request, extra_excluded_fields=(), ann
         if not name or not op:
             logger.warning("Ignoring malformed metrics filter key %r", key)
             continue
+        if op not in _JOB_LIST_METRIC_FILTER_OPS_ALLOWED:
+            logger.warning("Ignoring unsupported metrics filter key %r", key)
+            continue
         queryset = queryset.filter(
             **{
-                "metrics_data__metric": name,
-                "metrics_data__value__" + op: val,
+                "metrics_data_set__metric": name,
+                "metrics_data_set__value__" + op: val,
             }
         )
     if order_by.lstrip("-") == "metrics_distinct_time_count":
@@ -1322,9 +1329,7 @@ def home_options(request):
         return sorted(job_data.objects.dates("end_time", "day"))
 
     def _metrics_fn():
-        return list(
-            metrics_data.objects.distinct("metric").values("metric", "units")
-        )
+        return job_metrics_catalog_entries()
 
     def _queues_fn():
         return list(
