@@ -9,6 +9,8 @@ include:
 
 services:
   web:
+    mem_limit: "12g"
+    mem_reservation: "8g"
     volumes:
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
@@ -16,6 +18,8 @@ services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "no", "--maxmemory", "8gb", "--maxmemory-policy", "allkeys-lru"]
+    mem_limit: "10g"
+    mem_reservation: "8g"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -33,6 +37,8 @@ services:
     image: hpcperfstats-proxy
     container_name: hpcperfstats_proxy_1
     restart: always
+    mem_limit: "1g"
+    mem_reservation: "512m"
     depends_on:
       web:
         condition: service_started
@@ -68,18 +74,42 @@ services:
     # Default container /dev/shm is 64MiB; Postgres dynamic shared memory exhausts it easily
     # with max_connections=500.
     shm_size: "8gb"
+    mem_limit: "56g"
+    mem_reservation: "40g"
     # statement_timeout / idle_in_transaction_session_timeout: align with Django OPTIONS in settings
     # (defaults 120s / 300s in ms). Shed runaway queries; tune bulk jobs if needed.
     # max_wal_size: reduce checkpoint churn under sustained write load.
     command:
       - -c
-      - max_connections=500
+      - max_connections=160
       - -c
       - statement_timeout=120000
       - -c
       - idle_in_transaction_session_timeout=300000
       - -c
-      - max_wal_size=8GB
+      - shared_buffers=16GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - autovacuum_work_mem=512MB
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - min_wal_size=2GB
+      - -c
+      - max_wal_size=6GB
+      - -c
+      - max_worker_processes=24
+      - -c
+      - max_parallel_workers=16
+      - -c
+      - max_parallel_workers_per_gather=2
+      - -c
+      - max_parallel_maintenance_workers=2
       # Ingest replays and occasional DML on compressed host_data chunks can
       # exceed TimescaleDB's default 100k tuple decompress cap per transaction.
       - -c
@@ -110,6 +140,8 @@ services:
     image: rabbitmq:4-alpine
     container_name: hpcperfstats_rabbitmq_1
     restart: always
+    mem_limit: "2g"
+    mem_reservation: "1g"
     environment:
       - RABBITMQ_DEFAULT_USER=guest
       - RABBITMQ_DEFAULT_PASS=guest

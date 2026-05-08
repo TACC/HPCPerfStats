@@ -260,10 +260,14 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    - `staff_email_domain` - the email domain of the institution/organization so authorized staff can see all jobs
    - `timezone` - your machine's local timezone
    - `total_cores` - CPU budget for app parallelism (omit to use code default **40**; see `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`)
+   - `max_gunicorn_workers`, `parallel_db_prefetch_max`, `api_small_executor_max_workers` - web/API memory pressure controls
+   - `metrics_pool_process_cap`, `metrics_scheduler_prefetch_chunks`, `metrics_scheduler_ready_queue_target`, `metrics_prewarm_workers`, `metrics_scheduler_compute_threads` - update_metrics memory/concurrency controls
+   - `sync_pool_process_cap`, `archive_pool_process_cap`, `sync_ingest_queue_max_size`, `sync_archive_queue_max_size`, `sync_checkpoint_flush_batch_size` - ingest/archive memory controls (including `sync_timedb_archive.py`, which derives workers from sync ingest pool settings)
    - `secret_key` - a random string
 
    You will only need to edit the `[DEFAULT]` section as detailed above. The `[RMQ]` and `[PORTAL]` sections have been configured to work for the docker installation, and we do not recommend changing any of the variables in these sections.
    If you need to edit some of those variables, please note that a lot of them are tied to the docker yaml file. For **cluster syslog**, add or edit the optional **`[SYSLOG]`** section (see `hpcperfstats.ini.example` and the compose step above).
+   For memory-constrained deployments, start with the conservative baseline values documented in `hpcperfstats.ini.example`, then scale up gradually after observing stable DB checkpoints and container RSS headroom.
 
 6. **Supervisord and rsync:**
 
@@ -337,6 +341,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    migrations (`manage.py makemigrations` and `manage.py migrate`) and
    `collectstatic` so **`STATIC_ROOT`** (the volume nginx serves as `/static/`)
    is populated before Gunicorn starts.
+
+   The compose DB service includes explicit PostgreSQL checkpoint/memory tuning (`max_connections`, `shared_buffers`, `work_mem`, `maintenance_work_mem`, `autovacuum_work_mem`, `checkpoint_*`, `min_wal_size`, `max_wal_size`, and parallel-worker caps) plus `shm_size`. Keep these aligned with host RAM and service memory limits; tune upward one notch at a time only after confirming checkpoint stability and no OOM events.
 
    If you change the codebase, bring the containers down, make your changes, and then rebuild and start the stack again.
 

@@ -41,13 +41,21 @@ timezone = America/Chicago
 total_cores = 40
 
 # Concurrency caps (optional; see docs/DEPLOY_CONCURRENCY_AND_NUMA.md)
-# max_gunicorn_workers = 32
-# metrics_pool_process_cap = 32
+# OOM-protection baseline profile (settings-only): start here, then raise gradually
+# max_gunicorn_workers = 8
+# metrics_pool_process_cap = 4
 # (Compose diagnosis baseline: docs/update_metrics_speedup_followup.md — compute phase dominated at default UM_DIAG seed scale.)
-# parallel_db_prefetch_max = 6
-# api_small_executor_max_workers = 8
-# sync_pool_process_cap =
-# archive_pool_process_cap =
+# parallel_db_prefetch_max = 2
+# api_small_executor_max_workers = 2
+# sync_pool_process_cap = 2
+# archive_pool_process_cap = 1
+# metrics_scheduler_prefetch_chunks = 4
+# metrics_scheduler_ready_queue_target = 500
+# metrics_prewarm_workers = 2
+# metrics_scheduler_compute_threads = 2
+# sync_ingest_queue_max_size = 500
+# sync_archive_queue_max_size = 250
+# sync_checkpoint_flush_batch_size = 50
 # sync_enable_cpuset_priority_budget = yes
 # pipeline_overlap_mode = balanced
 # metrics_ingest_priority_scale = 0.75
