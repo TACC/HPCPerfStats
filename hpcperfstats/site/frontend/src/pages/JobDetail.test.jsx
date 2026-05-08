@@ -565,6 +565,19 @@ describe("JobDetail", () => {
     expect(intros.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("shows staff plot error detail controls on Multiprecision Mix when reasons are present", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(minimalJobDetailResponse);
+    mockAllPlotCallsReady();
+    renderJobDetail("12345", { is_staff: true });
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole("tab", { name: "Multiprecision Mix" }));
+    expect(screen.getAllByRole("button", { name: "Show plot error details" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Copy error detail" })).toHaveLength(2);
+  });
+
   it("renders both multiprecision mix embeds when tab is selected", async () => {
     window.Bokeh = {
       embed: {

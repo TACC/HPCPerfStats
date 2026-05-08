@@ -887,6 +887,7 @@ export default function JobDetail() {
             id="job-detail-panel-multiprecision-mix"
             role="tabpanel"
             aria-labelledby={tabMultiprecisionMixId}
+            className="job-detail-single-plot-pane"
             hidden={analysisTab !== "multiprecisionMix"}
           >
             <div className="row g-3">
