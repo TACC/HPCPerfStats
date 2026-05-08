@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
 import BokehEmbed from "../components/BokehEmbed.jsx";
-import { fetchPubClusterDashboard } from "../api.js";
+import { usePubDashboardBundle } from "../pub-dashboard-bundle-context.js";
 import { useDocumentTitle } from "../utils/useDocumentTitle.js";
 import { formatDecimalStandard } from "../utils/formatDecimal.js";
 
@@ -119,22 +118,8 @@ function SectionExpansionFactor({ bundle }) {
 
 export default function PageClusterDashboard() {
   useDocumentTitle("Cluster dashboard — public");
-  const [bundle, setBundle] = useState(null);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchPubClusterDashboard()
-      .then((data) => {
-        if (!cancelled) setBundle(data);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message || String(err));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { loading, bundle, error: loadError } = usePubDashboardBundle();
+  const error = loadError || null;
 
   return (
     <div className="container py-4">
@@ -151,9 +136,9 @@ export default function PageClusterDashboard() {
         </div>
       ) : null}
 
-      {!bundle ? (
+      {loading ? (
         <p className="text-muted">Loading…</p>
-      ) : bundle.status !== "ready" ? (
+      ) : bundle == null ? null : bundle.status !== "ready" ? (
         <div className="alert alert-info" role="status">
           <div className="fw-semibold">Dashboard warming</div>
           <div className="small">

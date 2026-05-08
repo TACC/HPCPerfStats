@@ -8,6 +8,10 @@ from django.test import Client
 
 @pytest.mark.django_db(databases=[])
 @patch(
+    "hpcperfstats.site.machine.public_api.cfg.get_host_name_ext",
+    return_value="cluster.test",
+)
+@patch(
     "hpcperfstats.site.machine.public_api.assemble_public_monthly_metrics_bundle",
     return_value={
         "status": "ready",
@@ -17,13 +21,14 @@ from django.test import Client
         "sections": {"expansion_factor": {}},
     },
 )
-def test_public_cluster_dashboard_allows_anonymous_get(_mock_bundle):
+def test_public_cluster_dashboard_allows_anonymous_get(_mock_bundle, _mock_host):
     client = Client()
     response = client.get("/api/pub/cluster-dashboard/")
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] in ("loading", "ready")
     assert "sections" in payload
+    assert payload["machine_name"] == "cluster.test"
     cc = (response.get("Cache-Control") or "").lower()
     assert "public" in cc
     assert "max-age=" in cc

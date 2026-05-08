@@ -1,5 +1,6 @@
 """Anonymous read-only JSON endpoints for `/pub/` dashboards (pre-warmed artifacts only)."""
 
+import hpcperfstats.conf_parser as cfg
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -23,8 +24,11 @@ class PublicClusterDashboardAggregateView(APIView):
 
   def get(self, request):
     bundle = assemble_public_monthly_metrics_bundle()
-    response = Response(bundle)
-    if bundle.get("status") == "ready":
+    payload = dict(bundle) if isinstance(bundle, dict) else bundle
+    if isinstance(payload, dict):
+      payload["machine_name"] = cfg.get_host_name_ext()
+    response = Response(payload)
+    if isinstance(payload, dict) and payload.get("status") == "ready":
       response["Cache-Control"] = (
           "public, max-age=120, stale-while-revalidate=300"
       )
