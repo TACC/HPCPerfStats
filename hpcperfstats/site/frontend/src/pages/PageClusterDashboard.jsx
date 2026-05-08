@@ -1,14 +1,18 @@
+import { useId, useState } from "react";
 import BokehEmbed from "../components/BokehEmbed.jsx";
 import { usePubDashboardBundle } from "../pub-dashboard-bundle-context.js";
 import { useDocumentTitle } from "../utils/useDocumentTitle.js";
 import { formatDecimalStandard } from "../utils/formatDecimal.js";
 
+const CLUSTER_DASH_TAB_EXPANSION = "expansion-factors";
+
 function SectionExpansionFactor({ bundle }) {
   const efSection = bundle?.sections?.expansion_factor || {};
   const monthly = efSection.monthly_daily_histograms || {};
   const yearly = efSection.yearly_weekly_histograms || {};
+  const panelIntroId = useId();
 
-  const renderHist = (title, payloadMap, axisHint, groupingKey) => {
+  const renderHist = (payloadMap, axisHint, groupingKey, histogramCaption) => {
     const keys = Object.keys(payloadMap).sort();
     if (!keys.length) {
       return (
@@ -19,8 +23,8 @@ function SectionExpansionFactor({ bundle }) {
     }
     return (
       <div className="mb-4">
-        <h3 className="h6">{title}</h3>
-        <p className="small text-muted">{axisHint}</p>
+        <p className="small text-muted mb-2">{histogramCaption}</p>
+        <p className="small text-muted mb-3">{axisHint}</p>
         {keys.map((k) => {
           const block = payloadMap[k];
           const safeDomId = String(k).replace(/[^a-zA-Z0-9_-]+/g, "-");
@@ -39,8 +43,8 @@ function SectionExpansionFactor({ bundle }) {
                 <div className="mb-3">
                   <BokehEmbed
                     item={block.bokeh_histogram_json_item}
-                    id={`pub-ef-${groupingKey}-${safeDomId}`}
-                    plotName={`Expansion factor histogram ${k}`}
+                    id={`pub-expansion-factor-${groupingKey}-${safeDomId}`}
+                    plotName={`Expansion factor histogram for ${k}`}
                     embedAriaLabel={`Expansion factor histogram for ${k}`}
                     embedMinHeightPx={320}
                   />
@@ -48,38 +52,38 @@ function SectionExpansionFactor({ bundle }) {
               ) : null}
               {!block.bokeh_histogram_json_item ? (
                 <div className="d-flex flex-column gap-1">
-                {(counts || []).map((cntRaw, idx) => {
-                  const lo = edges[idx];
-                  const hi = idx + 1 < edges.length ? edges[idx + 1] : null;
-                  const cnt = Number(cntRaw) || 0;
-                  const widthPct = (cnt / maxCount) * 100;
-                  const labelRight =
-                    hi !== null
-                      ? `[${formatDecimalStandard(lo)}, ${formatDecimalStandard(hi)})`
-                      : `≥ ${formatDecimalStandard(lo)}`;
-                  return (
-                    <div key={`${k}-${idx}`} className="d-flex align-items-center gap-2">
-                      <div className="small flex-shrink-0" style={{ width: "14rem" }}>
-                        {labelRight}
-                      </div>
-                      <div className="flex-grow-1">
-                        <div className="progress" style={{ height: "1.1rem" }}>
-                          <div
-                            className="progress-bar"
-                            role="progressbar"
-                            style={{ width: `${widthPct}%` }}
-                            aria-valuenow={cnt}
-                            aria-valuemin={0}
-                            aria-valuemax={maxCount}
-                          />
+                  {(counts || []).map((cntRaw, idx) => {
+                    const lo = edges[idx];
+                    const hi = idx + 1 < edges.length ? edges[idx + 1] : null;
+                    const cnt = Number(cntRaw) || 0;
+                    const widthPct = (cnt / maxCount) * 100;
+                    const labelRight =
+                      hi !== null
+                        ? `[${formatDecimalStandard(lo)}, ${formatDecimalStandard(hi)})`
+                        : `≥ ${formatDecimalStandard(lo)}`;
+                    return (
+                      <div key={`${k}-${idx}`} className="d-flex align-items-center gap-2">
+                        <div className="small flex-shrink-0" style={{ width: "14rem" }}>
+                          {labelRight}
+                        </div>
+                        <div className="flex-grow-1">
+                          <div className="progress" style={{ height: "1.1rem" }}>
+                            <div
+                              className="progress-bar"
+                              role="progressbar"
+                              style={{ width: `${widthPct}%` }}
+                              aria-valuenow={cnt}
+                              aria-valuemin={0}
+                              aria-valuemax={maxCount}
+                            />
+                          </div>
+                        </div>
+                        <div className="small flex-shrink-0 text-end" style={{ width: "3rem" }}>
+                          {cnt}
                         </div>
                       </div>
-                      <div className="small flex-shrink-0 text-end" style={{ width: "3rem" }}>
-                        {cnt}
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
                 </div>
               ) : null}
             </div>
@@ -90,29 +94,83 @@ function SectionExpansionFactor({ bundle }) {
   };
 
   return (
-    <section aria-labelledby="expansion-factor-heading">
-      <h2 id="expansion-factor-heading" className="h5">
-        Expansion factor
-      </h2>
-      <p className="text-muted">
+    <section aria-labelledby={panelIntroId}>
+      <p id={panelIntroId} className="text-muted">
         Scheduler-centric expansion factor aggregates precomputed offline from accounting timestamps.
-        Monthly views summarize distributions of{" "}
-        <strong>daily mean EF</strong> values; yearly views summarize distributions of{" "}
-        <strong>weekly mean EF</strong> values (ISO weeks).
+        Yearly views summarize distributions of{" "}
+        <strong>weekly mean expansion factor</strong> values (ISO weeks). Monthly views summarize
+        distributions of <strong>daily mean expansion factor</strong> values.
       </p>
-      {renderHist(
-        "Monthly — histogram of daily mean EF",
-        monthly,
-        "Each chart lists completed-job calendar months.",
-        "month",
-      )}
-      {renderHist(
-        "Yearly — histogram of weekly mean EF",
-        yearly,
-        "Each chart lists calendar years; buckets are ISO weeks inside that year.",
-        "year",
-      )}
+
+      <div id="pub-dashboard-yearly" className="pt-2">
+        <div className="d-flex flex-wrap align-items-baseline justify-content-between gap-2 border-bottom pb-2 mb-3">
+          <h3 className="h4 mb-0">Yearly</h3>
+          <a href="#pub-dashboard-monthly" className="small">
+            Monthly
+          </a>
+        </div>
+        {renderHist(
+          yearly,
+          "Each chart lists calendar years; buckets are ISO weeks inside that year.",
+          "year",
+          "Histogram of weekly mean expansion factor.",
+        )}
+      </div>
+
+      <hr className="my-5 border-2 opacity-50" />
+
+      <div id="pub-dashboard-monthly">
+        <div className="d-flex flex-wrap align-items-baseline justify-content-between gap-2 border-bottom pb-2 mb-3">
+          <a href="#pub-dashboard-yearly" className="small">
+            Yearly
+          </a>
+          <h3 className="h4 mb-0">Monthly</h3>
+        </div>
+        {renderHist(
+          monthly,
+          "Each chart lists completed-job calendar months.",
+          "month",
+          "Histogram of daily mean expansion factor.",
+        )}
+      </div>
     </section>
+  );
+}
+
+function ClusterDashboardTabs({ bundle }) {
+  const [activeTab, setActiveTab] = useState(CLUSTER_DASH_TAB_EXPANSION);
+  const tabExpansionId = useId();
+  const panelExpansionId = useId();
+
+  return (
+    <div>
+      <ul className="nav nav-tabs mb-0" role="tablist">
+        <li className="nav-item" role="presentation">
+          <button
+            type="button"
+            role="tab"
+            id={tabExpansionId}
+            className={`nav-link ${activeTab === CLUSTER_DASH_TAB_EXPANSION ? "active" : ""}`}
+            aria-selected={activeTab === CLUSTER_DASH_TAB_EXPANSION}
+            aria-controls={panelExpansionId}
+            tabIndex={activeTab === CLUSTER_DASH_TAB_EXPANSION ? 0 : -1}
+            onClick={() => setActiveTab(CLUSTER_DASH_TAB_EXPANSION)}
+          >
+            Expansion factors
+          </button>
+        </li>
+      </ul>
+      <div
+        id={panelExpansionId}
+        role="tabpanel"
+        aria-labelledby={tabExpansionId}
+        className="tab-pane border border-top-0 rounded-bottom bg-white p-3 p-md-4"
+      >
+        {activeTab === CLUSTER_DASH_TAB_EXPANSION ? (
+          <SectionExpansionFactor bundle={bundle} />
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -147,7 +205,7 @@ export default function PageClusterDashboard() {
           </div>
         </div>
       ) : (
-        <SectionExpansionFactor bundle={bundle} />
+        <ClusterDashboardTabs bundle={bundle} />
       )}
     </div>
   );

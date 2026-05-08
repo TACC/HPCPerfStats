@@ -15,7 +15,7 @@ export default function LayoutPub({ machineName, children }) {
         Skip to main content
       </a>
       <nav
-        className="navbar navbar-expand-lg navbar-light bg-light"
+        className="navbar navbar-expand-lg navbar-light bg-light navbar-pub-site"
         aria-label="Primary"
       >
         <div className="container-fluid">
@@ -41,9 +41,7 @@ export default function LayoutPub({ machineName, children }) {
             className={`collapse navbar-collapse ${navOpen ? "show" : ""}`}
           >
             <div className="navbar-brand flex-grow-1 text-center navbar-brand-center">
-              <div style={{ fontSize: "1.1em", fontWeight: 600, color: "black" }}>
-                HPCPerfStats
-              </div>
+              <div className="navbar-pub-site-title">HPCPerfStats</div>
               <div className="text-muted small">a job-level resource usage monitoring tool</div>
               {machineName ? (
                 <div className="navbar-brand-cluster">{machineName}</div>

@@ -170,6 +170,43 @@ body {
   line-height: 1.35;
 }
 
+/* /pub/ shell: navbar taller than logo and room for title, tagline, and cluster name */
+.navbar-pub-site .container-fluid {
+  padding-top: 0.5rem;
+  padding-bottom: 0.85rem;
+}
+.navbar-pub-site .navbar-header-logo {
+  min-height: 4.75rem;
+}
+.navbar-pub-site .navbar-header-logo a {
+  min-height: 4.25rem;
+}
+.navbar-pub-site .navbar-logo-img {
+  max-height: 3.25rem;
+}
+.navbar-pub-site .navbar-pub-site-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #000;
+  line-height: 1.3;
+}
+.navbar-pub-site .navbar-brand-cluster {
+  font-size: 1.05rem;
+  line-height: 1.4;
+  padding-bottom: 0.35rem;
+}
+.navbar-pub-site .navbar-brand.navbar-brand-center {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 4.75rem;
+}
+@media (min-width: 992px) {
+  .navbar-pub-site.navbar-expand-lg .navbar-brand.navbar-brand-center {
+    min-height: 4.75rem;
+  }
+}
+
 /* Topbar actions: consistent hitbox height for all buttons and links */
 .navbar-actions {
   display: flex;
