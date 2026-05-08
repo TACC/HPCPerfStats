@@ -2,7 +2,6 @@
 from unittest.mock import MagicMock
 
 from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
-    reduce_gpu_precision_mix,
     reduce_gpu_agg_to_util_stats,
 )
 
@@ -77,14 +76,3 @@ def test_compute_job_gpu_summary_tuple_swallows_errors(monkeypatch):
 
   monkeypatch.setattr(g, "gpu_agg_rows_for_job_window", boom)
   assert g.compute_job_gpu_summary_tuple(j) == (None, None, None, None)
-
-
-def test_reduce_gpu_precision_mix_keeps_positive_precision_rows():
-  rows = [
-      {"event": "tensor_active", "vmean": 10.0},
-      {"event": "fp16_active", "vmean": 30.0},
-      {"event": "fp32_active", "vmean": 70.0},
-      {"event": "fp64_active", "vmean": None},
-      {"event": "other", "vmean": 50.0},
-  ]
-  assert reduce_gpu_precision_mix(rows) == {"Tensor": 10.0, "FP16": 30.0, "FP32": 70.0}

@@ -13,66 +13,6 @@ from hpcperfstats.analysis.gen import jid_table as jid_table_mod
 from hpcperfstats.site.machine.models import host_data
 
 
-def gpu_precision_mix_rows_for_job_window(j) -> List[dict]:
-  """Per-event mean activity for GPU precision counters in job window.
-
-  Prefer ``nvidia_gpu`` when present; otherwise fall back to ``amd_gpu``.
-  Returned rows contain ``event`` and ``vmean`` for available precision events.
-  """
-  hosts = getattr(j, "acct_host_list", None) or []
-  if not hosts:
-    return []
-  event_names = ("tensor_active", "fp16_active", "fp32_active", "fp64_active")
-  for gpu_typ in ("nvidia_gpu", "amd_gpu"):
-    rows: List[dict] = []
-    for chunk in jid_table_mod._iter_acct_host_batches(hosts):
-      rows.extend(
-          list(
-              host_data.objects.filter(
-                  type=gpu_typ,
-                  event__in=list(event_names),
-                  time__gte=j.start_time,
-                  time__lte=j.end_time,
-                  host__in=chunk,
-              )
-              .values("event")
-              .annotate(vmean=Avg("value"))
-          )
-      )
-    if rows:
-      return rows
-  return []
-
-
-def reduce_gpu_precision_mix(
-    rows: Any,
-) -> Dict[str, float]:
-  """Map available GPU precision events to positive mean activity values."""
-  out: Dict[str, float] = {}
-  if not isinstance(rows, (list, tuple)):
-    return out
-  event_to_label = {
-      "tensor_active": "Tensor",
-      "fp16_active": "FP16",
-      "fp32_active": "FP32",
-      "fp64_active": "FP64",
-  }
-  for row in rows:
-    if not isinstance(row, dict):
-      continue
-    event_name = str(row.get("event") or "")
-    label = event_to_label.get(event_name)
-    if not label:
-      continue
-    try:
-      value = float(row.get("vmean"))
-    except (TypeError, ValueError):
-      continue
-    if value > 0.0:
-      out[label] = out.get(label, 0.0) + value
-  return out
-
-
 def gpu_agg_rows_for_job_window(j) -> List[dict]:
   """Per-(host, dev, event) Count/Max/Avg for nvidia_gpu util in the job window."""
   hosts = getattr(j, "acct_host_list", None) or []

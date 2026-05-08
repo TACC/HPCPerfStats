@@ -27,8 +27,6 @@ from hpcperfstats.analysis.metrics.job_detail_fsio import (
 from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
     gpu_agg_rows_for_job_window,
     gpu_count_total_for_job_window,
-    gpu_precision_mix_rows_for_job_window,
-    reduce_gpu_precision_mix,
 )
 
 from .models import job_data, job_detail_artifact
@@ -46,10 +44,10 @@ _CPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
     "(need positive vecpercent_* shares)."
 )
 _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
-    "Missing GPU precision-width mix counters in host_data "
-    "(no renderable precision mix rows)."
+    "Missing GPU precision-width mix metrics in job metrics "
+    "(need positive avg_*_active shares)."
 )
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 2
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 3
 
 
 def _compress_payload(payload: Dict[str, Any]) -> tuple[bytes, str]:
@@ -216,17 +214,28 @@ def _gpu_detail_from_metric_values(metric_values: Dict[str, Optional[float]]) ->
   }
 
 
-def _cpu_precision_mix_from_metric_values(
-    metric_values: Dict[str, Optional[float]]
+_CPU_PRECISION_METRIC_TO_LABEL = {
+    "vecpercent_64b": "FP64",
+    "vecpercent_32b": "FP32",
+    # Presently unavailable in the CPU metrics catalog; omitted when missing.
+    "vecpercent_16b": "FP16",
+    "vecpercent_8b": "FP8",
+}
+
+_GPU_PRECISION_METRIC_TO_LABEL = {
+    "avg_tensor_active": "Tensor",
+    # Reserved labels populated only when the catalog persists matching metrics.
+    "avg_fp16_active": "FP16",
+    "avg_fp32_active": "FP32",
+    "avg_fp64_active": "FP64",
+}
+
+
+def _precision_mix_from_metric_values(
+    metric_values: Dict[str, Optional[float]],
+    metric_to_label: Dict[str, str],
 ) -> Dict[str, float]:
   out: Dict[str, float] = {}
-  metric_to_label = {
-      "vecpercent_64b": "FP64",
-      "vecpercent_32b": "FP32",
-      # Presently unavailable in the CPU metrics catalog; omitted when missing.
-      "vecpercent_16b": "FP16",
-      "vecpercent_8b": "FP8",
-  }
   for metric_name, label in metric_to_label.items():
     if metric_name not in metric_values:
       continue
@@ -310,10 +319,13 @@ def _pie_item_from_precision_mix(
 
 def _multiprecision_mix_payload(
     metric_values: Dict[str, Optional[float]],
-    jt: Any,
 ) -> Dict[str, Any]:
-  cpu_mix = _cpu_precision_mix_from_metric_values(metric_values)
-  gpu_mix = reduce_gpu_precision_mix(gpu_precision_mix_rows_for_job_window(jt))
+  cpu_mix = _precision_mix_from_metric_values(
+      metric_values, _CPU_PRECISION_METRIC_TO_LABEL
+  )
+  gpu_mix = _precision_mix_from_metric_values(
+      metric_values, _GPU_PRECISION_METRIC_TO_LABEL
+  )
   cpu_plot_item, cpu_reason = _pie_item_from_precision_mix(
       precision_mix=cpu_mix,
       title="CPU Multiprecision Mix",
@@ -456,7 +468,7 @@ def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, A
       artifact_kind=ARTIFACT_KIND_MULTIPRECISION_MIX,
       artifact_scope="",
       input_fingerprint=fingerprint,
-      payload=_multiprecision_mix_payload(metric_values, jt),
+      payload=_multiprecision_mix_payload(metric_values),
   )
 
   for type_name in sorted((schema or {}).keys()):
