@@ -1803,6 +1803,7 @@ def test_update_metrics_pub_parallel_once_then_safe_in_finally(monkeypatch):
 
   parallel_calls = []
   safe_calls = []
+  reset_calls = []
 
   monkeypatch.setattr(
       update_metrics,
@@ -1825,12 +1826,16 @@ def test_update_metrics_pub_parallel_once_then_safe_in_finally(monkeypatch):
     def close_pool(self):
       return None
 
+    def reset_pool_hard(self):
+      reset_calls.append("reset")
+
     def run(self, jobs, pool=None):
       del pool
 
   monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
   update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
   assert len(parallel_calls) == 1
+  assert reset_calls == ["reset"]
   assert safe_calls == ["safe"]
 
 

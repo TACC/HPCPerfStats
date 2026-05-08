@@ -12,9 +12,9 @@ Processing order: **newest calendar day first**, and within each day **newest jo
 first** (``end_time`` descending, then ``jid`` descending as a stable tiebreaker).
 
 The global scheduler (**``update_metrics_for_dates``**) first finishes all
-`/pub/` expansion-factor aggregate artifacts using the metrics process pool (one
-calendar month or one calendar year per worker task), then begins job readiness
-checks and ``Metrics.run`` batches on the **same** pool.
+`/pub/` expansion-factor aggregate artifacts using a metrics-sized process pool
+(one calendar month or one calendar year per worker task), then resets worker
+processes and begins job readiness checks plus ``Metrics.run`` batches.
 
 """
 import contextlib
@@ -1432,6 +1432,24 @@ def _run_public_ef_artifacts_parallel_phase(shared_pool, phase_timer):
   )
 
 
+def _reset_metrics_pool_after_public_phase(metrics_manager):
+  """Recreate worker processes after /pub phase before job metrics.
+
+  Public EF workers and job-metrics workers both use ORM-heavy paths. Recreating
+  the pool between phases avoids carrying any mixed server-cursor/session state
+  into the first metrics batch.
+  """
+  resetter = getattr(metrics_manager, "reset_pool_hard", None)
+  if callable(resetter):
+    try:
+      resetter()
+    except Exception as exc:
+      log_print(
+          "metrics scheduler: pool reset after /pub phase failed; recreating lazily: {0}".format(exc),
+          flush=True,
+      )
+
+
 def _start_readiness_producer(
     *,
     date_states,
@@ -2026,6 +2044,9 @@ def update_metrics_for_dates(dates, rerun=False):
       shared_pool = metrics_manager.ensure_pool()
       log_print("Metrics worker pool ready.", flush=True)
       _run_public_ef_artifacts_parallel_phase(shared_pool, phase_timer)
+      _reset_metrics_pool_after_public_phase(metrics_manager)
+      shared_pool = metrics_manager.ensure_pool()
+      log_print("Metrics worker pool recycled after /pub phase.", flush=True)
       ready_queue_lock = threading.Lock()
       producer_done = threading.Event()
       producer = _start_readiness_producer(

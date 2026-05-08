@@ -26,6 +26,12 @@ Example shape:
 
 Do **not** treat `HPCPerfStats/HPCPerfStats/` alone as “project root” for `.venv`; the venv one level **above** that folder is canonical.
 
+## Single `.venv` policy (mandatory)
+
+- Exactly one local virtualenv is allowed: `<workspace_root>/.venv`.
+- Any additional `.venv` directories under the workspace (for example `HPCPerfStats/.venv`) are non-canonical and must be removed.
+- If an agent finds multiple `.venv` directories, it must use the root `.venv` and remove the others unless the user explicitly asks to keep them.
+
 ## Where to edit Cursor rules
 
 - **Authoritative rules directory:** `HPCPerfStats/hpcperfstats/cursor-rules/*.mdc` (inside the git repo).
