@@ -43,12 +43,17 @@ def test_public_cluster_dashboard_rejects_post():
 
 @pytest.mark.django_db(databases=[])
 @patch(
+    "hpcperfstats.site.machine.public_api.cfg.get_host_name_ext",
+    return_value="cluster.test",
+)
+@patch(
     "hpcperfstats.site.machine.public_api.assemble_public_monthly_metrics_bundle",
     return_value={"status": "loading", "sections": {}},
 )
-def test_public_cluster_dashboard_loading_not_publicly_cached(_mock_bundle):
+def test_public_cluster_dashboard_loading_not_publicly_cached(_mock_bundle, _mock_host):
     client = Client()
     response = client.get("/api/pub/cluster-dashboard/")
+    assert response.json()["machine_name"] == "cluster.test"
     cc = (response.get("Cache-Control") or "").lower()
     assert "public" not in cc
     assert "no-store" in cc
