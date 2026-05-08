@@ -47,7 +47,7 @@ _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
     "Missing GPU precision-width mix metrics in job metrics "
     "(need positive avg_*_active shares)."
 )
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 3
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 4
 
 
 def _compress_payload(payload: Dict[str, Any]) -> tuple[bytes, str]:

@@ -123,6 +123,24 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
     researcherUse:
       "See whether time sits in tensor-heavy paths when changing precision or framework version.",
   },
+  avg_fp16_active: {
+    description:
+      "Average GPU FP16 pipeline activity percentage (NVIDIA preferred; AMD GPU when the same field is populated).",
+    researcherUse:
+      "Quantifies lower-precision execution share for mixed-precision training and inference runs.",
+  },
+  avg_fp32_active: {
+    description:
+      "Average GPU FP32 pipeline activity percentage (NVIDIA preferred; AMD GPU when the same field is populated).",
+    researcherUse:
+      "Highlights single-precision dominated phases when comparing precision policies.",
+  },
+  avg_fp64_active: {
+    description:
+      "Average GPU FP64 pipeline activity percentage (NVIDIA preferred; AMD GPU when the same field is populated).",
+    researcherUse:
+      "Shows double-precision intensity for numerically sensitive kernels on GPUs.",
+  },
   avg_gpu_mem_bw_gbps: {
     description:
       "Average estimated GPU HBM/memory bandwidth rate from DCGM (GB/s), job-mean across hosts and time buckets.",

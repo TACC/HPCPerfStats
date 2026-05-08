@@ -111,6 +111,9 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | `avg_ibbw` | IB MB/s | Mean InfiniBand/fabric byte throughput | High values with modest FLOP rate imply communication-heavy behavior<sup>[15](#ref-15)</sup>. |
 | `avg_fabric_mb_per_gflops` | MB/GFLOP | Fabric MB per GFLOP | Communication intensity relative to compute; rising with scale often means weaker scaling efficiency. |
 | `avg_tensor_active` | Tensor % | Mean tensor pipeline activity | Low on expected tensor workloads suggests kernels not reaching tensor paths. |
+| `avg_fp16_active` | FP16 % | Mean GPU FP16 pipeline activity | Confirms whether mixed-precision execution is using FP16-heavy kernels as expected. |
+| `avg_fp32_active` | FP32 % | Mean GPU FP32 pipeline activity | Tracks single-precision dominant GPU phases and precision-policy drift across runs. |
+| `avg_fp64_active` | FP64 % | Mean GPU FP64 pipeline activity | Surfaces double-precision-heavy GPU work that may reduce peak throughput. |
 | `avg_gpu_mem_bw_gbps` | GPU HBM | Mean GPU memory-bandwidth rate | High with moderate utilization can indicate memory-bound kernels. |
 | `avg_fabric_mb_per_avg_tensor` | MB/tensor | Fabric MB per average tensor activity | Communication intensity normalized by tensor activity for GPU+MPI workloads. |
 | `avg_flops` | GFLOP/s | Mean achieved FLOP rate | Baseline compute throughput for CPU-side arithmetic. |
@@ -180,6 +183,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 ### 6.3 Multiprecision Mix tab (CPU and GPU)
 
 - Diagnostic use: quantify mixed-precision path composition (DP/SP/tensor) by timeline<sup>[6](#ref-6)</sup>.
+- Width behavior: each pie includes the precision widths that have usable positive metrics for that job/architecture; missing widths are omitted rather than treated as errors.
 - Recommendation: when model/code changes precision policy, compare this tab first, then check throughput/utilization deltas.
 
 ### 6.4 Resources panel (FSIO + GPU summary + logs)
@@ -287,5 +291,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-04-03 | Initial researcher-facing guide aligned with current job detail UI and metrics catalog. |
 | 2026-05-06 | Reorganized the guide for usability (index-first navigation and clearer section flow), aligned job-detail surfaces/metrics with current UI labels, and added paper-style concept citations with an appendix reference catalog for non-CS/HPC readers. |
 | 2026-05-07 | Job Detail summary hardware error overlay, screen-space Bokeh help on Job Detail plots, FSIO peak columns and catalog metrics, Resources layout (GPU summary above log links), expanded-search help note. |
+| 2026-05-07 | Added GPU precision activity catalog entries (`avg_fp16_active`, `avg_fp32_active`, `avg_fp64_active`) and documented that Multiprecision Mix pies render whatever precision widths are available per job/architecture. |
 
 

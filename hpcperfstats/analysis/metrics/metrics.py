@@ -247,6 +247,9 @@ _COMPLEX_PLACEHOLDER_TYPE_UNITS = {
     "dram_bw_node_imbalance": ("imc", "%"),
     "lnet_node_imbalance": ("lnet", "%"),
     "avg_tensor_active": ("nvidia_gpu", "%"),
+    "avg_fp16_active": ("nvidia_gpu", "%"),
+    "avg_fp32_active": ("nvidia_gpu", "%"),
+    "avg_fp64_active": ("nvidia_gpu", "%"),
     "avg_gpu_mem_bw_gbps": ("nvidia_gpu", "GB/s"),
     "max_gpu_power": ("nvidia_gpu", "W"),
     "max_node_power_est_w": ("job", "W"),
@@ -281,6 +284,9 @@ _COMPLEX_NO_DATA_REASONS = {
     "dram_bw_node_imbalance": "No usable DRAM bandwidth telemetry for node imbalance",
     "lnet_node_imbalance": "No usable LNET byte telemetry for node imbalance",
     "avg_tensor_active": "No usable GPU tensor-activity telemetry",
+    "avg_fp16_active": "No usable GPU FP16-activity telemetry",
+    "avg_fp32_active": "No usable GPU FP32-activity telemetry",
+    "avg_fp64_active": "No usable GPU FP64-activity telemetry",
     "avg_gpu_mem_bw_gbps": "No usable GPU memory bandwidth rate telemetry",
     "max_gpu_power": "No usable GPU power telemetry",
     "max_node_power_est_w": "No usable node power estimate telemetry",
@@ -780,6 +786,24 @@ class Metrics():
         "avg_tensor_active": {
             "typename": "nvidia_gpu",
             "events": ["tensor_active"],
+            "conv": 0.0,
+            "units": "%",
+        },
+        "avg_fp16_active": {
+            "typename": "nvidia_gpu",
+            "events": ["fp16_active"],
+            "conv": 0.0,
+            "units": "%",
+        },
+        "avg_fp32_active": {
+            "typename": "nvidia_gpu",
+            "events": ["fp32_active"],
+            "conv": 0.0,
+            "units": "%",
+        },
+        "avg_fp64_active": {
+            "typename": "nvidia_gpu",
+            "events": ["fp64_active"],
             "conv": 0.0,
             "units": "%",
         },
@@ -1470,14 +1494,25 @@ class Metrics():
             row_type = (
                 fabric_typename or flops_typename or metric_obj["typename"]
             )
-        elif metric_name == "avg_tensor_active":
+        elif metric_name in (
+            "avg_tensor_active",
+            "avg_fp16_active",
+            "avg_fp32_active",
+            "avg_fp64_active",
+        ):
+          metric_event = {
+              "avg_tensor_active": "tensor_active",
+              "avg_fp16_active": "fp16_active",
+              "avg_fp32_active": "fp32_active",
+              "avg_fp64_active": "fp64_active",
+          }[metric_name]
           value = None
           row_type = "nvidia_gpu"
           for gt in ("nvidia_gpu", "amd_gpu"):
             v = self.job_value_mean(
                 jt,
                 typename=gt,
-                events=["tensor_active"],
+                events=[metric_event],
                 conv=1.0,
                 cache=simple_metric_cache,
                 rows_cache=host_data_rows_cache,

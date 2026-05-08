@@ -55,6 +55,9 @@ describe("getDescriptionForVariable", () => {
     );
     expect(getDescriptionForVariable("flops_node_imbalance")).toMatch(/FLOP/i);
     expect(getDescriptionForVariable("avg_tensor_active")).toMatch(/tensor/i);
+    expect(getDescriptionForVariable("avg_fp16_active")).toMatch(/FP16/i);
+    expect(getDescriptionForVariable("avg_fp32_active")).toMatch(/FP32/i);
+    expect(getDescriptionForVariable("avg_fp64_active")).toMatch(/FP64/i);
     expect(getDescriptionForVariable("dram_bw_node_imbalance")).toMatch(/DRAM/i);
     expect(getDescriptionForVariable("max_node_power_est_w")).toMatch(/node power/i);
     expect(getDescriptionForVariable("avg_node_power_est_w")).toMatch(/Mean estimated on-node power/i);

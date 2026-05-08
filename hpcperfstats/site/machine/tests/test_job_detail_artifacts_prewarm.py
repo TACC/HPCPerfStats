@@ -172,6 +172,55 @@ def test_persist_job_detail_prewarms_multiprecision_mix_payload(monkeypatch):
 
 
 @pytest.mark.django_db
+def test_persist_job_detail_multiprecision_gpu_uses_available_widths_only(monkeypatch):
+  """GPU pie should render with whichever precision widths are present for the job."""
+  job = _mk_job("detail-multiprecision-dynamic-widths")
+  for metric_name, metric_type, value in (
+      ("vecpercent_64b", "pmc", 55.0),
+      ("vecpercent_32b", "pmc", 45.0),
+      ("avg_tensor_active", "nvidia_gpu", 70.0),
+      ("avg_fp16_active", "nvidia_gpu", 30.0),
+  ):
+    metrics_data.objects.create(
+        jid=job,
+        type=metric_type,
+        metric=metric_name,
+        units="%",
+        value=value,
+        no_data_reason=None,
+    )
+
+  class _FakeJt:
+    acct_host_list = ["n1"]
+    schema = {}
+    start_time = job.start_time
+    end_time = job.end_time
+
+    def get_llite_delta_by_event(self):
+      return pd.DataFrame()
+
+    def get_nfs_delta_totals_mb(self):
+      return None
+
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_detail_artifacts.jid_table.jid_table",
+      lambda _jid: _FakeJt(),
+  )
+
+  jda.persist_job_detail_artifacts_for_jid(job.jid)
+  fp = jda.compute_detail_input_fingerprint(job)
+  payload = jda.load_job_detail_artifact(
+      job.jid,
+      jda.ARTIFACT_KIND_MULTIPRECISION_MIX,
+      "",
+      fp,
+  )
+  assert payload is not None
+  assert payload["gpu_plot_item"] is not None
+  assert payload["gpu_unavailable_reason"] is None
+
+
+@pytest.mark.django_db
 def test_persist_job_detail_multiprecision_gpu_unavailable_without_metrics(monkeypatch):
   """Without persisted GPU avg_*_active metrics, the GPU pie is unavailable
   (no host_data fallback)."""

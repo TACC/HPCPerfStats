@@ -643,6 +643,16 @@ def test_job_metrics_catalog_avg_gpuutil_placeholder_type_is_gpu():
   assert gpu["type"] == "gpu"
 
 
+def test_gpu_precision_activity_metrics_are_registered_with_expected_events():
+  """GPU precision activity metrics should be cataloged from monitor fp*_active fields."""
+  m = Metrics()
+  assert m.simple_metrics_list["avg_fp16_active"]["events"] == ["fp16_active"]
+  assert m.simple_metrics_list["avg_fp32_active"]["events"] == ["fp32_active"]
+  assert m.simple_metrics_list["avg_fp64_active"]["events"] == ["fp64_active"]
+  metrics = {entry["metric"] for entry in job_metrics_catalog_entries()}
+  assert {"avg_fp16_active", "avg_fp32_active", "avg_fp64_active"} <= metrics
+
+
 def test_job_metrics_catalog_entries_matches_simple_plus_complex():
   """Catalog length is all simple + complex metric names (API / update_metrics)."""
   entries = job_metrics_catalog_entries()
