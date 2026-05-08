@@ -891,28 +891,40 @@ export default function JobDetail() {
           >
             <div className="row g-3">
               <div className="col-12 col-lg-6">
-                <h3 className="h6">CPU Multiprecision Mix</h3>
-                {analysisTab === "multiprecisionMix" ? (
-                  <PlotPanel
-                    item={multiprecision_cpu_plot_item}
-                    id={`job-multiprecision-cpu-${pk}`}
-                    plotName="CPU Multiprecision Mix"
-                    unavailableReason={multiprecision_cpu_unavailable_reason}
-                    isLoading={detailsLoading}
-                  />
-                ) : null}
+                <div className="job-detail-single-plot-host w-100 mb-3">
+                  <h3 className="h6">CPU Multiprecision Mix</h3>
+                  <p className="job-detail-plots-intro text-muted small mb-2">
+                    Host-level plot for this job. Loads progressively; chart width follows the panel
+                    below.
+                  </p>
+                  {analysisTab === "multiprecisionMix" ? (
+                    <PlotPanel
+                      item={multiprecision_cpu_plot_item}
+                      id={`job-multiprecision-cpu-${pk}`}
+                      plotName="CPU Multiprecision Mix"
+                      unavailableReason={multiprecision_cpu_unavailable_reason}
+                      isLoading={false}
+                    />
+                  ) : null}
+                </div>
               </div>
               <div className="col-12 col-lg-6">
-                <h3 className="h6">GPU Multiprecision Mix</h3>
-                {analysisTab === "multiprecisionMix" ? (
-                  <PlotPanel
-                    item={multiprecision_gpu_plot_item}
-                    id={`job-multiprecision-gpu-${pk}`}
-                    plotName="GPU Multiprecision Mix"
-                    unavailableReason={multiprecision_gpu_unavailable_reason}
-                    isLoading={detailsLoading}
-                  />
-                ) : null}
+                <div className="job-detail-single-plot-host w-100 mb-3">
+                  <h3 className="h6">GPU Multiprecision Mix</h3>
+                  <p className="job-detail-plots-intro text-muted small mb-2">
+                    Host-level plot for this job. Loads progressively; chart width follows the panel
+                    below.
+                  </p>
+                  {analysisTab === "multiprecisionMix" ? (
+                    <PlotPanel
+                      item={multiprecision_gpu_plot_item}
+                      id={`job-multiprecision-gpu-${pk}`}
+                      plotName="GPU Multiprecision Mix"
+                      unavailableReason={multiprecision_gpu_unavailable_reason}
+                      isLoading={false}
+                    />
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>

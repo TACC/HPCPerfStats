@@ -31,6 +31,16 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 ARTIFACT_KIND_JOB_DETAIL = "job_detail"
 ARTIFACT_KIND_TYPE_DETAIL = "type_detail"
 ARTIFACT_KIND_MULTIPRECISION_MIX = "multiprecision_mix"
+
+# Staff-visible unavailable reasons (API detail); align phrasing with summary/roofline plot builders.
+_CPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
+    "Missing CPU precision-width mix metrics in job metrics "
+    "(need positive vecpercent_* shares)."
+)
+_GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
+    "Missing GPU precision-width mix counters in host_data "
+    "(no renderable precision mix rows)."
+)
 APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 1
 
 
@@ -225,12 +235,13 @@ def _pie_item_from_precision_mix(
     *,
     precision_mix: Dict[str, float],
     title: str,
+    empty_reason: str,
 ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
   if not precision_mix:
-    return None, "No usable precision-width telemetry is available for this chart."
+    return None, empty_reason
   total = sum(float(v) for v in precision_mix.values() if float(v) > 0.0)
   if total <= 0.0:
-    return None, "No usable precision-width telemetry is available for this chart."
+    return None, empty_reason
   labels = list(precision_mix.keys())
   values = [float(precision_mix[label]) for label in labels]
   starts = []
@@ -292,10 +303,12 @@ def _multiprecision_mix_payload(
   cpu_plot_item, cpu_reason = _pie_item_from_precision_mix(
       precision_mix=cpu_mix,
       title="CPU Multiprecision Mix",
+      empty_reason=_CPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON,
   )
   gpu_plot_item, gpu_reason = _pie_item_from_precision_mix(
       precision_mix=gpu_mix,
       title="GPU Multiprecision Mix",
+      empty_reason=_GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON,
   )
   return {
       "cpu_plot_item": cpu_plot_item,

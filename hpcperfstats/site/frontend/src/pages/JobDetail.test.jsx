@@ -36,9 +36,11 @@ const minimalJobDetailResponse = {
   gpu_utilization_mean: null,
   gpu_count: null,
   multiprecision_cpu_plot_item: null,
-  multiprecision_cpu_unavailable_reason: "No usable precision-width telemetry is available for this chart.",
+  multiprecision_cpu_unavailable_reason:
+    "Missing CPU precision-width mix metrics in job metrics (need positive vecpercent_* shares).",
   multiprecision_gpu_plot_item: null,
-  multiprecision_gpu_unavailable_reason: "No usable precision-width telemetry is available for this chart.",
+  multiprecision_gpu_unavailable_reason:
+    "Missing GPU precision-width mix counters in host_data (no renderable precision mix rows).",
   metrics_list: [],
   proc_list: [],
 };
@@ -535,6 +537,32 @@ describe("JobDetail", () => {
     });
     await userEvent.click(screen.getByRole("tab", { name: "Summary plot" }));
     expect(screen.getByText(/Loading Summary plot/i)).toBeInTheDocument();
+  });
+
+  it("shows multiprecision unavailable copy while full job detail fetch is still pending", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
+    vi.spyOn(apiModule.api, "getJobDetail").mockImplementation(() => new Promise(() => {}));
+    mockAllPlotCallsReady();
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole("tab", { name: "Multiprecision Mix" }));
+    expect(screen.queryByText(/Loading CPU Multiprecision Mix/i)).not.toBeInTheDocument();
+    expect(screen.getAllByText("Unavailable — Data not available.").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("renders plot-tab intro copy on the Multiprecision Mix tab", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(minimalJobDetailResponse);
+    mockAllPlotCallsReady();
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole("tab", { name: "Multiprecision Mix" }));
+    const intros = screen.getAllByText(/Host-level plot for this job/i);
+    expect(intros.length).toBeGreaterThanOrEqual(2);
   });
 
   it("renders both multiprecision mix embeds when tab is selected", async () => {

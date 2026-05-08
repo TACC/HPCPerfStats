@@ -1,0 +1,37 @@
+# Job Detail Analysis Tab Consistency
+
+When adding or changing a tab under **Job Detail → Analysis** (the Bootstrap nav shared by Metrics, Summary plot, Roofline, Multiprecision Mix, Processes, etc.), align presentation with existing tabs unless there is an explicit product reason not to.
+
+## Plot tabs (Bokeh panels)
+
+Canonical patterns live in **`hpcperfstats/site/frontend/src/pages/JobDetail.jsx`** → **`renderSinglePlotPanel`** and **`PlotPanel`** → **`BokehEmbed`**.
+
+### Structure
+
+- **Section chrome**: Wrap each chart block in **`job-detail-single-plot-host`** (`w-100 mb-3`), **`h3.h6`** title, then the shared intro paragraph with classes **`job-detail-plots-intro text-muted small mb-2`** — copy matches Summary/Roofline: *Host-level plot for this job. Loads progressively; chart width follows the panel below.*
+- **Embed**: Always **`PlotPanel`** (do not call **`BokehEmbed`** directly from the page for parity).
+
+### Loading / unavailable messaging
+
+- **Unavailable plots**: **`BokehEmbed`** shows the user-visible **`Unavailable — Data not available.`** status line for everyone; staff-only expandable detail uses **`unavailableReason`** from the API (`job_plot_artifacts` / `job_detail_artifacts` style strings — mirror **`Missing … in host_data`** / **`Missing … in job metrics`** phrasing used by summary and roofline builders).
+- **Do not** drive multiprecision or other artifact-backed embed **`isLoading`** from **`detailsLoading`** when plot payloads already arrive with **`getJobDetailLight`** — that flashes misleading **Loading …** copy instead of the same unavailable surfacing as Summary/Roofline.
+- Progressive **`job_plots`** tabs continue to use **`plots[key].loading`** as **`isLoadingExternal`** on **`PlotPanel`**.
+
+### Regression expectation
+
+Any new plot-class tab needs **`JobDetail.test.jsx`** coverage analogous to existing Summary/Roofline/Multiprecision tests (intro present; unavailable messaging stable).
+
+## Non-plot tabs
+
+Follow neighboring tabs for typography (**`h3.h6`** subsection headings), **`text-muted`** empty states (**Data not available.** where tables/lists would render), and role/tabpanel wiring (**`aria-labelledby`** / **`hidden`**).
+
+## Documentation
+
+When user-visible plot-tab behavior or semantics change, update **`docs/using-the-website-as-a-researcher.md`** per **`researcher-job-detail-doc-sync.mdc`**.
+
+## Overlap
+
+- **`researcher-job-detail-doc-sync.mdc`** — researcher-facing Job Detail docs when surfaces change.
+- **`bokeh-layout-surface-split.mdc`** — **`BokehEmbed`** contract and layout defaults.
+- **`react-js-cursor-rule.mdc`** — SPA patterns for touched frontend files.
+- **`web-pages-e2e-test-maintenance.mdc`** — Playwright/static HTML behavior updates.

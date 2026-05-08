@@ -102,6 +102,7 @@ in the same task.
 
 ## Overlap
 
+- `job-detail-analysis-tab-consistency.mdc` — SPA Job Detail analysis-tab chrome and error presentation patterns before documenting plot tabs.
 - `variable-metadata-cross-source-sync.mdc` and `variable-metadata-derived-metrics-sync.mdc` for tooltip/metadata alignment.
 - `end-to-end-feature-wiring-contract.mdc` for multi-layer feature updates.
 - `testing-doc-sync.mdc` when testing workflow/docs also change.

@@ -9,12 +9,10 @@ from django.test import RequestFactory
 
 from hpcperfstats.analysis.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
 from hpcperfstats.analysis.metrics.gpu_job_detail_summary import gpu_count_total_for_job_window
+from hpcperfstats.site.machine import cache_utils as cu
+from hpcperfstats.site.machine import job_detail_artifacts as job_detail_artifacts_mod
 
 pytestmark = pytest.mark.django_db(databases=[])
-
-from hpcperfstats.site.machine import cache_utils as cu
-
-
 def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
   """Return context manager that stubs job_detail dependencies (no ORM)."""
   mock_j = MagicMock()
@@ -57,9 +55,15 @@ def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
   }
   multiprecision_payload = {
       "cpu_plot_item": None,
-      "cpu_unavailable_reason": "No usable precision-width telemetry is available for this chart.",
+      "cpu_unavailable_reason": (
+          "Missing CPU precision-width mix metrics in job metrics "
+          "(need positive vecpercent_* shares)."
+      ),
       "gpu_plot_item": None,
-      "gpu_unavailable_reason": "No usable precision-width telemetry is available for this chart.",
+      "gpu_unavailable_reason": (
+          "Missing GPU precision-width mix counters in host_data "
+          "(no renderable precision mix rows)."
+      ),
   }
   if gpu_agg and gpu_agg.get("cnt", 0) > 2:
     detail_payload["gpu_active"] = 3 if float(gpu_agg.get("vmax", 0.0) or 0.0) > 0.0 else 0
@@ -389,3 +393,19 @@ def test_gpu_count_total_returns_none_when_no_gpu_rows_exist():
 
   with patch("hpcperfstats.analysis.metrics.gpu_job_detail_summary.host_data.objects", _Mgr()):
     assert gpu_count_total_for_job_window(j) is None
+
+
+def test_multiprecision_mix_payload_staff_reasons_align_with_plot_tabs(monkeypatch):
+  """Unavailable reasons follow the same Missing-/host_data/metrics style as roofline/summary."""
+  monkeypatch.setattr(
+      job_detail_artifacts_mod,
+      "gpu_precision_mix_rows_for_job_window",
+      lambda _jt: [],
+  )
+  payload = job_detail_artifacts_mod._multiprecision_mix_payload({}, MagicMock())
+  cpu_r = payload["cpu_unavailable_reason"] or ""
+  assert "Missing CPU precision-width mix metrics in job metrics" in cpu_r
+  assert "vecpercent_*" in cpu_r
+  assert "Missing GPU precision-width mix counters in host_data" in (
+      payload["gpu_unavailable_reason"] or ""
+  )
