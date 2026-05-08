@@ -11,6 +11,7 @@
 
 #define KEYS \
   X(bytes_used, "U=B", "bytes used"), \
+  X(bytes_avail, "U=B", "bytes available"), \
   X(files_used, "", "files used")
 
 static void tmpfs_collect(struct stats_type *type)
@@ -34,6 +35,8 @@ static void tmpfs_collect(struct stats_type *type)
 
     if (strcmp(me.mnt_type, "tmpfs") != 0)
       continue;
+    if (strcmp(me.mnt_dir, "/tmp") != 0)
+      continue;
 
     stats = get_current_stats(type, me.mnt_dir);
     if (stats == NULL)
@@ -45,9 +48,11 @@ static void tmpfs_collect(struct stats_type *type)
     }
 
     unsigned long long bytes_used = sfs.f_frsize * (sfs.f_blocks - sfs.f_bfree);
+    unsigned long long bytes_avail = sfs.f_frsize * sfs.f_bavail;
     unsigned long long files_used = sfs.f_files - sfs.f_ffree;
 
     stats_set(stats, "bytes_used", bytes_used);
+    stats_set(stats, "bytes_avail", bytes_avail);
     stats_set(stats, "files_used", files_used);
   }
 
