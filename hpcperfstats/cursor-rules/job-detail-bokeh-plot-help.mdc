@@ -1,0 +1,36 @@
+---
+description: Job Detail Bokeh plots must ship screen-space help, prose registry sync, tests, and artifact schema bumps
+globs:
+  - "**/bokeh_job_detail_help_marker.py"
+  - "**/job_detail_bokeh_plot_descriptions.py"
+  - "**/summary_metric_descriptions.py"
+  - "**/summaryplot.py"
+  - "**/roofline.py"
+  - "**/job_detail_artifacts.py"
+  - "**/job_plot_artifacts.py"
+  - "**/variableMetadata.js"
+  - "**/JobDetail.jsx"
+alwaysApply: false
+---
+
+# Job Detail Bokeh Plot Help (Screen-Space `?`)
+
+Whenever you add or **materially change** a Bokeh `json_item` shown on the Job Detail page (Summary grid, Roofline CPU/GPU, Multiprecision pies, summary hardware-error overlay, or future `BokehEmbed` payloads from `job_plots` / `job_detail` / sibling API fields consumed by `JobDetail.jsx`), complete **all** of the following in the **same task**:
+
+1. **Help UI** — Call `add_job_detail_bokeh_help_marker` from `hpcperfstats/analysis/plot/bokeh_job_detail_help_marker.py` on the figure after primary glyphs are built. Do not ship a new plot without the same blue `?` affordance and HTML hover as other Job Detail plots.
+2. **Definition** — Add user-facing prose for **what is plotted** (axes, units, data source in plain language). Optional second-line **researcher use** when it aids interpretation. Summary metrics use `summary_metric_descriptions.py`; fixed Job Detail surfaces use `job_detail_bokeh_plot_descriptions.py` (`JOB_DETAIL_BOKEH_HELP` and accessors).
+3. **Registry sync** — Update the Python registry **and** the paired `JOB_DETAIL_BOKEH_PLOT_METADATA` entry in `variableMetadata.js` (same strings) per `variable-metadata-cross-source-sync.mdc`.
+4. **Tests** — Add the smallest regression that fails if the marker or serialized embed contract regresses (for example `json_item` contains screen-unit `Label` metadata, or a focused builder test).
+5. **Artifacts** — Bump `APP_PLOT_ARTIFACT_SCHEMA_VERSION` in `job_plot_artifacts.py` and/or `APP_DETAIL_ARTIFACT_SCHEMA_VERSION` in `job_detail_artifacts.py` when serialized `json_item` or detail payloads change, per `job-plot-artifacts-caching.mdc`.
+
+## Cross-links
+
+- `variable-metadata-cross-source-sync.mdc` — summary keys + Job Detail Bokeh plot metadata pairing.
+- `bokeh-layout-surface-split.mdc` — deferral / viewport behavior for heavy embeds.
+- `job-plot-artifacts-caching.mdc` — fingerprint and schema versioning.
+- `web-pages-full-e2e-completion-gate.mdc` / `web-pages-e2e-test-maintenance.mdc` — when SPA or served HTML contracts change.
+
+## Overlap
+
+- `no-scientific-notation-web.mdc` — numeric hovers and tick policy on new plots.
+- `researcher-job-detail-doc-sync.mdc` — user-visible semantics on Job Detail surfaces.

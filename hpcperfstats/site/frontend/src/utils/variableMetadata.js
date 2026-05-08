@@ -208,6 +208,30 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
     researcherUse:
       "NFS-heavy workflows when Lustre llite is not available.",
   },
+  detail_fsio_llite_peak_mb_s: {
+    description:
+      "Peak aggregate Lustre client MB/s over the job: maximum over sample times of (read MB/s + write MB/s), each summed across hosts, using the same llite byte counters as the summary plot.",
+    researcherUse:
+      "Short burst read/write load on Lustre versus long-window totals.",
+  },
+  detail_fsio_llite_peak_iops: {
+    description:
+      "Peak aggregate Lustre client metadata IOPS: maximum over sample times of summed llite arc rates for the same metadata event set as the summary liops panel.",
+    researcherUse:
+      "Burst metadata load (creates, stats, readdirs) versus steady streaming.",
+  },
+  detail_fsio_nfs_peak_mb_s: {
+    description:
+      "Peak aggregate NFS client MB/s over the job: maximum over sample times of summed read and write MB/s (same counter families as summary NFS read/write panels).",
+    researcherUse:
+      "Short NFS throughput bursts when Lustre llite is absent.",
+  },
+  detail_fsio_nfs_peak_iops: {
+    description:
+      "Peak aggregate NFS client IOPS: maximum over sample times of summed READ_ops and WRITE_ops arc rates.",
+    researcherUse:
+      "Burst small-file or metadata-heavy NFS phases.",
+  },
   avg_gpuutil: {
     description:
       "GPU utilization % for the job: same value as detail GPU mean % (SQL aggregate over per-device averages, not a trimmed time-series mean).",
@@ -632,17 +656,11 @@ const SUMMARY_PLOT_METRIC_METADATA = {
     researcherUse:
       "Fabric bytes for MPI and GPU-direct traffic; correlate with CPU FLOPs and GPU util for comms-bound phases.",
   },
-  fabric_mb_per_gflops: {
+  summary_hardware_error_rates: {
     description:
-      "Fabric bandwidth (MB/s) divided by floating-point throughput (GFLOP/s) from the same job’s summary FLOPS column (AMD or Intel path).",
+      "Hardware error rates: each line is one counter channel summed across hosts at each sample time, using monitor counter deltas divided by elapsed time (events per second). InfiniBand, Omni-Path, and Ethernet error-style counters are included only when present in this job's schema.",
     researcherUse:
-      "Communication intensity relative to CPU floating-point work for weak scaling and MPI+GPU jobs.",
-  },
-  fabric_mb_per_avg_tensor: {
-    description:
-      "Fabric MB/s divided by tensor-activity percent (scaled as a fractional duty cycle) for coupled communication and GPU tensor workloads.",
-    researcherUse:
-      "Heuristic communication intensity relative to tensor activity for distributed AI.",
+      "Spikes can flag link quality, congestion, or driver issues worth correlating with application slowdowns.",
   },
   opa_wait_cong: {
     description:
@@ -657,10 +675,39 @@ const SUMMARY_PLOT_METRIC_METADATA = {
   },
 };
 
+/** Job Detail Bokeh figures (roofline, multiprecision) — keep prose in sync with ``job_detail_bokeh_plot_descriptions.py``. */
+const JOB_DETAIL_BOKEH_PLOT_METADATA = {
+  jobDetailPlot_roofline_cpu: {
+    description:
+      "CPU roofline: each point is one host and time sample. Horizontal axis is arithmetic intensity (GFLOP/s divided by GB/s memory bandwidth from the same sample). Vertical axis is achieved GFLOP/s. The navy curve is the theoretical roofline for this job using inferred CPU peak FLOPS and memory bandwidth.",
+    researcherUse:
+      "Points below the roof indicate memory-bound or imbalance behavior; points near the ridge show compute-bound phases.",
+  },
+  jobDetailPlot_roofline_gpu: {
+    description:
+      "GPU roofline: each point is one host and time sample from NVIDIA DCGM-style telemetry. Horizontal axis is arithmetic intensity (GPU GFLOP/s divided by PCIe plus NVLink byte rate in GB/s). Vertical axis is GPU GFLOP/s. The navy curve is the theoretical roof for this job using inferred GPU peaks.",
+    researcherUse:
+      "Use this to see whether the job is communication-limited versus GPU compute relative to the link roof.",
+  },
+  jobDetailPlot_multiprecision_cpu: {
+    description:
+      "CPU multiprecision mix: wedge areas show the fraction of CPU floating-point work attributed to each precision lane (from job-level metrics), as a share of the total that is classified.",
+    researcherUse:
+      "Compare FP64 versus vectorized FP32/16 activity when tuning vectorization and numerical stability.",
+  },
+  jobDetailPlot_multiprecision_gpu: {
+    description:
+      "GPU multiprecision mix: wedge areas show the fraction of GPU floating-point activity by precision (from host telemetry across the job window), as a share of classified GPU FLOPS.",
+    researcherUse:
+      "Use it to spot FP16-heavy kernels versus FP32/64-dominated phases.",
+  },
+};
+
 export const VARIABLE_METADATA = {
   ...MONITOR_EVENT_METADATA,
   ...JOB_ACCOUNTING_AND_DERIVED_METADATA,
   ...SUMMARY_PLOT_METRIC_METADATA,
+  ...JOB_DETAIL_BOKEH_PLOT_METADATA,
 };
 
 /** First token before whitespace or bracket — matches stored metric names. */

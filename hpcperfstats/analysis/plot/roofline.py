@@ -263,7 +263,9 @@ def _get_flops_bw_df_and_reason(jt):
     return (df, None)
 
 
-def _build_roofline_figure(df, peak_flops_gf, peak_bw_gb, title):
+def _build_roofline_figure(
+    df, peak_flops_gf, peak_bw_gb, title, help_plot_key="jobDetailPlot_roofline_cpu"
+):
     """Render a roofline figure from host,time,flops_gf,bw_gb data."""
     peak_flops_gf = peak_flops_gf if peak_flops_gf is not None else DEFAULT_PEAK_FLOPS_GF
     peak_bw_gb = peak_bw_gb if peak_bw_gb is not None else DEFAULT_PEAK_BW_GB
@@ -351,6 +353,19 @@ def _build_roofline_figure(df, peak_flops_gf, peak_bw_gb, title):
     hover_roof.renderers = [r_roof]
     hover_job.renderers = [r_job]
     p.add_tools(hover_roof, hover_job)
+    from hpcperfstats.analysis.plot.bokeh_job_detail_help_marker import (
+        add_job_detail_bokeh_help_marker,
+    )
+    from hpcperfstats.analysis.plot.job_detail_bokeh_plot_descriptions import (
+        description_for_job_detail_bokeh_plot,
+        researcher_use_for_job_detail_bokeh_plot,
+    )
+
+    add_job_detail_bokeh_help_marker(
+        p,
+        description_for_job_detail_bokeh_plot(help_plot_key),
+        researcher_use_for_job_detail_bokeh_plot(help_plot_key),
+    )
     return p
 
 
@@ -464,6 +479,7 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
         peak_flops_gf=peak_flops_gf,
         peak_bw_gb=peak_bw_gb,
         title="CPU Roofline (job)",
+        help_plot_key="jobDetailPlot_roofline_cpu",
     )
 
 
@@ -482,6 +498,7 @@ def plot_gpu_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
         peak_flops_gf=use_peak_flops,
         peak_bw_gb=use_peak_bw,
         title="GPU Roofline (job, PCIe/NvLink bytes)",
+        help_plot_key="jobDetailPlot_roofline_gpu",
     )
 
 
@@ -502,6 +519,7 @@ def plot_and_reason_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=N
         peak_flops_gf=use_peak_flops,
         peak_bw_gb=use_peak_bw,
         title="CPU Roofline (job)",
+        help_plot_key="jobDetailPlot_roofline_cpu",
     )
     if fig is None:
         return (None, reason or "No valid roofline points after AI/perf filtering")
@@ -525,6 +543,7 @@ def plot_and_reason_gpu_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_
         peak_flops_gf=use_peak_flops,
         peak_bw_gb=use_peak_bw,
         title="GPU Roofline (job, PCIe/NvLink bytes)",
+        help_plot_key="jobDetailPlot_roofline_gpu",
     )
     if fig is None:
         return (None, reason or "No valid GPU roofline points after AI/perf filtering")

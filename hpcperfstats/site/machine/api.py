@@ -258,24 +258,35 @@ def _gpu_detail_tuple_from_metrics(job):
 def _fsio_dict_from_metrics(job):
     """Return job_detail-shaped fsio dict from metrics_data, or None if incomplete."""
     by_m = {o.metric: o for o in job.metrics_data_set.all()}
-    lr = by_m.get("detail_fsio_llite_read_mb")
-    lw = by_m.get("detail_fsio_llite_write_mb")
-    if (
-        lr is not None
-        and lw is not None
-        and lr.value is not None
-        and lw.value is not None
-    ):
-        return {"llite": [float(lr.value), float(lw.value)]}
-    nr = by_m.get("detail_fsio_nfs_read_mb")
-    nw = by_m.get("detail_fsio_nfs_write_mb")
-    if (
-        nr is not None
-        and nw is not None
-        and nr.value is not None
-        and nw.value is not None
-    ):
-        return {"nfs": [float(nr.value), float(nw.value)]}
+
+    def _val(metric):
+        row = by_m.get(metric)
+        if row is None or row.value is None:
+            return None
+        return float(row.value)
+
+    lr = _val("detail_fsio_llite_read_mb")
+    lw = _val("detail_fsio_llite_write_mb")
+    if lr is not None and lw is not None:
+        return {
+            "llite": [
+                lr,
+                lw,
+                _val("detail_fsio_llite_peak_mb_s"),
+                _val("detail_fsio_llite_peak_iops"),
+            ],
+        }
+    nr = _val("detail_fsio_nfs_read_mb")
+    nw = _val("detail_fsio_nfs_write_mb")
+    if nr is not None and nw is not None:
+        return {
+            "nfs": [
+                nr,
+                nw,
+                _val("detail_fsio_nfs_peak_mb_s"),
+                _val("detail_fsio_nfs_peak_iops"),
+            ],
+        }
     return None
 
 

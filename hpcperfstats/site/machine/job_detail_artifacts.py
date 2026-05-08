@@ -13,9 +13,17 @@ from bokeh.embed import json_item
 from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.plotting import figure
 
-import hpcperfstats.analysis.gen.jid_table as jid_table
-import hpcperfstats.analysis.plot as plots
-from hpcperfstats.analysis.metrics.job_detail_fsio import fsio_job_detail_catalog
+from hpcperfstats.analysis.plot.bokeh_job_detail_help_marker import (
+    add_job_detail_bokeh_help_marker,
+)
+from hpcperfstats.analysis.plot.job_detail_bokeh_plot_descriptions import (
+    description_for_job_detail_bokeh_plot,
+    researcher_use_for_job_detail_bokeh_plot,
+)
+from hpcperfstats.analysis.metrics.job_detail_fsio import (
+    extend_fsio_payload_lists_with_peaks,
+    fsio_job_detail_catalog,
+)
 from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
     gpu_agg_rows_for_job_window,
     gpu_count_total_for_job_window,
@@ -41,7 +49,7 @@ _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
     "Missing GPU precision-width mix counters in host_data "
     "(no renderable precision mix rows)."
 )
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 1
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 2
 
 
 def _compress_payload(payload: Dict[str, Any]) -> tuple[bytes, str]:
@@ -236,6 +244,7 @@ def _pie_item_from_precision_mix(
     precision_mix: Dict[str, float],
     title: str,
     empty_reason: str,
+    help_plot_key: str,
 ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
   if not precision_mix:
     return None, empty_reason
@@ -291,6 +300,11 @@ def _pie_item_from_precision_mix(
     ]
   p.legend.location = "bottom_center"
   p.legend.orientation = "horizontal"
+  add_job_detail_bokeh_help_marker(
+      p,
+      description_for_job_detail_bokeh_plot(help_plot_key),
+      researcher_use_for_job_detail_bokeh_plot(help_plot_key),
+  )
   return json_item(p), None
 
 
@@ -304,11 +318,13 @@ def _multiprecision_mix_payload(
       precision_mix=cpu_mix,
       title="CPU Multiprecision Mix",
       empty_reason=_CPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON,
+      help_plot_key="jobDetailPlot_multiprecision_cpu",
   )
   gpu_plot_item, gpu_reason = _pie_item_from_precision_mix(
       precision_mix=gpu_mix,
       title="GPU Multiprecision Mix",
       empty_reason=_GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON,
+      help_plot_key="jobDetailPlot_multiprecision_gpu",
   )
   return {
       "cpu_plot_item": cpu_plot_item,
@@ -329,11 +345,25 @@ def _fsio_from_metric_values(
   llite_write = metric_values.get("detail_fsio_llite_write_mb")
   nfs_read = metric_values.get("detail_fsio_nfs_read_mb")
   nfs_write = metric_values.get("detail_fsio_nfs_write_mb")
+  llite_peak_mb = metric_values.get("detail_fsio_llite_peak_mb_s")
+  llite_peak_iops = metric_values.get("detail_fsio_llite_peak_iops")
+  nfs_peak_mb = metric_values.get("detail_fsio_nfs_peak_mb_s")
+  nfs_peak_iops = metric_values.get("detail_fsio_nfs_peak_iops")
   if llite_read is not None or llite_write is not None:
-    out["llite"] = [float(llite_read or 0.0), float(llite_write or 0.0)]
+    out["llite"] = [
+        float(llite_read or 0.0),
+        float(llite_write or 0.0),
+        llite_peak_mb,
+        llite_peak_iops,
+    ]
     return out, True
   if nfs_read is not None or nfs_write is not None:
-    out["nfs"] = [float(nfs_read or 0.0), float(nfs_write or 0.0)]
+    out["nfs"] = [
+        float(nfs_read or 0.0),
+        float(nfs_write or 0.0),
+        nfs_peak_mb,
+        nfs_peak_iops,
+    ]
     return out, True
   return out, True
 
@@ -395,6 +425,8 @@ def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, A
         fsio["nfs"] = nfs
     except Exception:
       pass
+
+  extend_fsio_payload_lists_with_peaks(fsio, jt)
 
   gpu_detail_from_metrics = _gpu_detail_from_metric_values(metric_values)
   gpu_detail = gpu_detail_from_metrics or _gpu_detail_from_jid_table(jt)

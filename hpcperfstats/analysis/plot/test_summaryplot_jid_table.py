@@ -10,6 +10,9 @@ from bokeh.palettes import d3
 from bokeh.plotting import figure
 
 from hpcperfstats.analysis.gen.utils import INTEL_FP_ARITH_DOUBLE_EVENTS
+from hpcperfstats.analysis.metrics.llite_metadata_iops_events import (
+    LLITE_METADATA_IOPS_EVENTS,
+)
 from hpcperfstats.analysis.plot.summaryplot import (
     SummaryPlot,
     _cycled_d3_category20_palette,
@@ -495,8 +498,8 @@ def test_summaryplot_uses_job_window_for_x_range():
   assert pd.Timestamp(seen_x_ranges[0].end).tz_convert("UTC") == job_end
 
 
-def test_summaryplot_orders_cpu_then_gpu_then_fabricbw():
-  """Summary subplot order: CPU block before GPU block before fabric (ibbw)."""
+def test_summaryplot_orders_cpu_then_gpu_then_ibbw():
+  """Summary subplot order: CPU block before GPU block before InfiniBand bandwidth (ibbw)."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
@@ -610,31 +613,7 @@ def test_summaryplot_orders_lustre_nfs_before_network():
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
-  llite_meta_events = [
-      "open",
-      "close",
-      "mmap",
-      "fsync",
-      "setattr",
-      "truncate",
-      "flock",
-      "getattr",
-      "statfs",
-      "alloc_inode",
-      "setxattr",
-      "listxattr",
-      "removexattr",
-      "readdir",
-      "create",
-      "lookup",
-      "link",
-      "unlink",
-      "symlink",
-      "mkdir",
-      "rmdir",
-      "mknod",
-      "rename",
-  ]
+  llite_meta_events = list(LLITE_METADATA_IOPS_EVENTS)
 
   def get_aggregate_df(typ, val_col, events, conv=1.0):
     del conv
@@ -702,7 +681,7 @@ def test_summaryplot_orders_lustre_nfs_before_network():
   assert captured_metrics.index("nfs_write_mb_s") < captured_metrics.index("nfs_iops")
   assert captured_metrics.index("nfs_iops") < captured_metrics.index("ibbw")
   idx_ibbw = captured_metrics.index("ibbw")
-  for name in ("fabric_mb_per_gflops", "fabric_mb_per_avg_tensor", "opa_wait_cong", "opa_ecn"):
+  for name in ("opa_wait_cong", "opa_ecn"):
     if name in captured_metrics:
       assert idx_ibbw < captured_metrics.index(name)
   assert isinstance(fig, GridPlot)
@@ -1031,3 +1010,21 @@ def test_summaryplot_node_power_est_w_prefers_module_branch():
   fig = summary.plot()
   assert fig is not None
   assert captured == [900.0]
+
+
+def test_plot_hardware_error_rates_figure_returns_when_ib_errors_present():
+  from hpcperfstats.analysis.plot.summaryplot import plot_hardware_error_rates_figure
+
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = MagicMock()
+  jt.schema = {"ib": ["port_rcv_errors"]}
+
+  def _agg(typ, val_col, events, conv=1.0):
+    del val_col, conv
+    if typ == "ib" and list(events) == ["port_rcv_errors"]:
+      return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = _agg
+  fig = plot_hardware_error_rates_figure(jt, None)
+  assert fig is not None

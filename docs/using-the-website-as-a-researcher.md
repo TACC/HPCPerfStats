@@ -73,7 +73,7 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 | ------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Job overview**                | Compact high-value fields (jid, status, runtime, queue, user/project, cores/nodes, start/end)    | Fast triage before deeper telemetry checks.                                                                                                                    |
 | **Full scheduling record**      | Expanded accounting table with all core scheduler columns                                          | Audit exact scheduler/accounting values and formatting without leaving the page.                                                                               |
-| **Resources**                   | Shared filesystem totals (`fsio`), log links, GPU summary table                                    | Validate I/O<sup>[11](#ref-11)</sup> totals, jump to external logs, and quickly assess GPU allocation vs activity.                                                                    |
+| **Resources**                   | Shared filesystem totals (`fsio`, including peak throughput and peak IOPS when computable), GPU summary table, then client/server log links | Validate I/O<sup>[11](#ref-11)</sup> volume and burst rates, compare GPU allocation vs activity, then jump to external logs. |
 | **Metrics (tab)**               | Full job-level metrics catalog (`metrics_list`) with short labels + help metadata                 | Single-place scalar bottleneck and imbalance summary.                                                                                                           |
 | **Summary plot (tab)**          | Host-level timeline plot with CPU, memory/NUMA<sup>[4](#ref-4)</sup>/DRAM, fabric/filesystem, GPU, and node-power traces | Best first visual scan for phase changes, host outliers, and cross-signal coupling (for example GPU drops while fabric spikes).                              |
 | **Roofline (tab)**              | CPU roofline and GPU roofline (PCIe/NVLink<sup>[7](#ref-7)</sup>)                                                        | Distinguish compute-limited vs bandwidth/link-limited behavior and prioritize the right optimization work.                                                     |
@@ -123,8 +123,12 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | `detail_gpu_count` | GPU count | Total GPUs allocated | Sanity check against scheduler request and host topology. |
 | `detail_fsio_llite_read_mb` | FSIO llite read | Total Lustre llite read MB | Aggregate client-side read volume for Lustre path. |
 | `detail_fsio_llite_write_mb` | FSIO llite write | Total Lustre llite write MB | Aggregate client-side write volume for Lustre path. |
+| `detail_fsio_llite_peak_mb_s` | FSIO llite peak MB/s | Peak aggregate Lustre client MB/s | Short burst combined read+write throughput versus job-total MB. |
+| `detail_fsio_llite_peak_iops` | FSIO llite peak IOPS | Peak aggregate Lustre metadata IOPS | Burst metadata load versus sustained streaming. |
 | `detail_fsio_nfs_read_mb` | FSIO NFS read | Total NFS read MB | Aggregate client-side read volume for NFS-backed paths. |
 | `detail_fsio_nfs_write_mb` | FSIO NFS write | Total NFS write MB | Aggregate client-side write volume for NFS-backed paths. |
+| `detail_fsio_nfs_peak_mb_s` | FSIO NFS peak MB/s | Peak aggregate NFS client MB/s | Short burst NFS throughput when Lustre llite is absent. |
+| `detail_fsio_nfs_peak_iops` | FSIO NFS peak IOPS | Peak aggregate NFS read/write op rate | Burst small-file or metadata-heavy NFS phases. |
 | `avg_gpuutil` | GPU % | Mean GPU utilization (vendor-aware source priority) | Core accelerator utilization KPI; low values indicate feed/scheduling inefficiency. |
 | `avg_packetsize` | Pkt size | Mean network packet size | Small average packet sizes imply metadata/collective chatter overhead. |
 | `max_fabricbw` | Fab peak | Peak fabric bandwidth | Captures communication bursts that may not appear in averages. |
@@ -160,7 +164,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 ### 6.1 Summary plot
 
-- Diagnostic use: fastest phase/host outlier scan across CPU, memory, network, I/O, and GPU traces.
+- Diagnostic use: fastest phase/host outlier scan across CPU, memory, network, I/O, and GPU traces; the bottom **Hardware error rates** panel overlays job-wide sums of InfiniBand, Ethernet, and OPA error counter rates when those streams exist.
 - Performance recommendation: always pair with Metrics tab; peaks in summary often explain extreme scalar maxima and telemetry behavior<sup>[12](#ref-12)</sup>.
 
 ### 6.2 Roofline tab (CPU + GPU)
@@ -180,8 +184,8 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 ### 6.4 Resources panel (FSIO + GPU summary + logs)
 
-- Diagnostic use: rapid verification of I/O volume and GPU occupancy before deep plotting.
-- Recommendation: if FS totals are high, check `FS MB/s`, `FS IOPS`, `MDS peak`, and LNET metrics for bottleneck type; this is usually an I/O bottleneck triage path<sup>[11](#ref-11)</sup>.
+- Diagnostic use: rapid verification of I/O volume, burst peaks, and GPU occupancy before deep plotting.
+- Recommendation: if FS totals or **Peak MB/s** / **Peak IOPS** are high, check `FS MB/s`, `FS IOPS`, `MDS peak`, and LNET metrics for bottleneck type; this is usually an I/O bottleneck triage path<sup>[11](#ref-11)</sup>. GPU statistics sit above the log buttons so you scan filesystem and accelerator context together before opening logs.
 
 ### 6.5 Execution and hosts tab
 
@@ -282,6 +286,6 @@ Use these numbered references when you want background on terms used throughout 
 | ---------- | --------------------------------------------------------------------------------------- |
 | 2026-04-03 | Initial researcher-facing guide aligned with current job detail UI and metrics catalog. |
 | 2026-05-06 | Reorganized the guide for usability (index-first navigation and clearer section flow), aligned job-detail surfaces/metrics with current UI labels, and added paper-style concept citations with an appendix reference catalog for non-CS/HPC readers. |
-| 2026-05-07 | Clarified expanded search help icons and that derived metric filters match the Job detail Metrics tab. |
+| 2026-05-07 | Job Detail summary hardware error overlay, screen-space Bokeh help on Job Detail plots, FSIO peak columns and catalog metrics, Resources layout (GPU summary above log links), expanded-search help note. |
 
 

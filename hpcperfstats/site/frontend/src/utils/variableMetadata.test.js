@@ -114,7 +114,9 @@ describe("getDescriptionForVariable", () => {
     expect(getDescriptionForVariable("cpu")).toMatch(/CPU cores in use/i);
     expect(getDescriptionForVariable("nfs_iops")).toMatch(/NFS client read/i);
     expect(getDescriptionForVariable("lustre_read_mb_s")).toMatch(/Lustre client read/i);
-    expect(getDescriptionForVariable("fabric_mb_per_gflops")).toMatch(/Fabric bandwidth/i);
+    expect(getDescriptionForVariable("summary_hardware_error_rates")).toMatch(
+      /Hardware error rates/i,
+    );
   });
 
   it("returns null for metrics with no doc text (sf evictrate)", () => {

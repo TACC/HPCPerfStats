@@ -137,13 +137,11 @@ SUMMARY_METRIC_DESCRIPTIONS: dict[str, str] = {
         "counters (receive plus transmit), in MB/s; Omni-Path may fill this "
         "when IB bytes are absent."
     ),
-    "fabric_mb_per_gflops": (
-        "Fabric bandwidth (MB/s) divided by floating-point throughput (GFLOP/s) "
-        "from the same job’s summary FLOPS column (AMD or Intel path)."
-    ),
-    "fabric_mb_per_avg_tensor": (
-        "Fabric MB/s divided by tensor-activity percent (scaled as a fractional "
-        "duty cycle) for coupled communication and GPU tensor workloads."
+    "summary_hardware_error_rates": (
+        "Hardware error rates: each line is one counter channel summed across hosts at "
+        "each sample time, using monitor counter deltas divided by elapsed time (events "
+        "per second). InfiniBand, Omni-Path, and Ethernet error-style counters are "
+        "included only when present in this job's schema."
     ),
     "opa_wait_cong": (
         "Omni-Path combined rate of port transmit wait and switch congestion counters."
@@ -252,12 +250,9 @@ SUMMARY_METRIC_RESEARCHER_USE: dict[str, str] = {
         "Fabric bytes for MPI and GPU-direct traffic; correlate with CPU FLOPs and "
         "GPU util for comms-bound phases."
     ),
-    "fabric_mb_per_gflops": (
-        "Communication intensity relative to CPU floating-point work for weak scaling "
-        "and MPI+GPU jobs."
-    ),
-    "fabric_mb_per_avg_tensor": (
-        "Heuristic communication intensity relative to tensor activity for distributed AI."
+    "summary_hardware_error_rates": (
+        "Spikes can flag link quality, congestion, or driver issues worth correlating "
+        "with application slowdowns."
     ),
     "opa_wait_cong": (
         "Congestion versus raw bandwidth on Omni-Path; pair with fabric bytes and "

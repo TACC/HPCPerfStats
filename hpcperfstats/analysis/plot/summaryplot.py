@@ -3,7 +3,6 @@
 """
 import hpcperfstats.conf_parser as cfg
 
-import html
 import logging
 import math
 import time
@@ -16,6 +15,9 @@ from django.db import close_old_connections
 from hpcperfstats.analysis.gen.jid_table import (
     begin_summary_aggregate_counting,
     end_summary_aggregate_counting,
+)
+from hpcperfstats.analysis.metrics.llite_metadata_iops_events import (
+    LLITE_METADATA_IOPS_EVENTS,
 )
 
 import numpy as np
@@ -47,6 +49,9 @@ from hpcperfstats.analysis.plot.job_window import job_window_bounds_local
 from hpcperfstats.analysis.plot.summary_metric_descriptions import (
     description_for_summary_metric,
     researcher_use_for_summary_metric,
+)
+from hpcperfstats.analysis.plot.bokeh_job_detail_help_marker import (
+    add_job_detail_bokeh_help_marker,
 )
 
 local_timezone = cfg.get_local_timezone()
@@ -231,31 +236,7 @@ _SUMMARY_SINGLE_SPECS = [
     (
         "llite",
         "arc",
-        [
-            "open",
-            "close",
-            "mmap",
-            "fsync",
-            "setattr",
-            "truncate",
-            "flock",
-            "getattr",
-            "statfs",
-            "alloc_inode",
-            "setxattr",
-            "listxattr",
-            "removexattr",
-            "readdir",
-            "create",
-            "lookup",
-            "link",
-            "unlink",
-            "symlink",
-            "mkdir",
-            "rmdir",
-            "mknod",
-            "rename",
-        ],
+        list(LLITE_METADATA_IOPS_EVENTS),
         "liops",
         1,
         "Lustre IOPS [#/s]",
@@ -381,7 +362,6 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset({
     "nv_gpu_mem_bw_gbs",
     "nv_gpu_link_gbs",
     "cha_counter_arc_sum",
-    "fabric_mb_per_avg_tensor",
     "opa_wait_cong",
     "opa_ecn",
     "numa_remote_refs",
@@ -568,32 +548,6 @@ def _merge_cha_counter_arc_sum(df, jt):
   return df
 
 
-def _add_fabric_mb_per_gflops_column(df):
-  """Fabric MB/s divided by GFLOPS (AMD ``amd_flops`` or Intel ``flops64b``+``flops32b``) for comm/compute intensity."""
-  if "ibbw" not in df.columns or not df["ibbw"].notna().any():
-    return df
-  gflops = None
-  if "amd_flops" in df.columns and df["amd_flops"].notna().any():
-    gflops = df["amd_flops"]
-  else:
-    intel_parts = [c for c in ("flops64b", "flops32b") if c in df.columns]
-    if intel_parts:
-      stack = df[intel_parts]
-      if stack.notna().any().any():
-        gflops = stack.fillna(0.0).sum(axis=1).where(stack.notna().any(axis=1))
-  if gflops is None:
-    return df
-  denom = np.asarray(gflops, dtype=np.float64)
-  num = np.asarray(df["ibbw"], dtype=np.float64)
-  with np.errstate(divide="ignore", invalid="ignore"):
-    ratio = num / denom
-  ratio = np.where(np.abs(denom) > 1e-30, ratio, np.nan)
-  df["fabric_mb_per_gflops"] = ratio
-  if not df["fabric_mb_per_gflops"].notna().any():
-    del df["fabric_mb_per_gflops"]
-  return df
-
-
 def _add_node_power_est_column(df):
   """Estimated on-node power (W): module-only when ``nv_module_power_w`` > 0, else CPU + GPU.
 
@@ -644,23 +598,6 @@ def _add_node_power_est_column(df):
   return df
 
 
-def _add_fabric_mb_per_avg_tensor_column(df):
-  """Fabric MB/s divided by tensor-activity fraction (tensor column is 0–100 from DCGM)."""
-  if "ibbw" not in df.columns or not df["ibbw"].notna().any():
-    return df
-  if "nv_tensor_active" not in df.columns:
-    return df
-  tens = np.asarray(df["nv_tensor_active"], dtype=np.float64)
-  num = np.asarray(df["ibbw"], dtype=np.float64)
-  denom = np.where(tens > 1e-6, tens / 100.0, np.nan)
-  with np.errstate(divide="ignore", invalid="ignore"):
-    ratio = num / denom
-  df["fabric_mb_per_avg_tensor"] = ratio
-  if not df["fabric_mb_per_avg_tensor"].notna().any():
-    del df["fabric_mb_per_avg_tensor"]
-  return df
-
-
 def iter_summary_aggregate_attempts():
   """Flat (typ, val_col, events, name, conv, label) for diagnostics."""
   for typ, val, events, name, conv, label in _SUMMARY_SINGLE_SPECS:
@@ -683,8 +620,6 @@ def _summary_metric_specs():
     out.append(("", fw["val_col"], [], fw["name"], 0, fw["label"]))
   out.append(("intel_imc", "arc", [], "mbw", _CAS_BW_CONV, "CPU DRAMBW[GB/s]"))
   out.append(("", "", [], "cha_counter_arc_sum", 0, "CPU CHA uncore [#/s]"))
-  out.append(("", "", [], "fabric_mb_per_gflops", 0, "Fabric MB/s per CPU GFLOPS"))
-  out.append(("", "", [], "fabric_mb_per_avg_tensor", 0, "Fabric MB/s per GPU tensor %"))
   out.append(("", "", [], "node_power_est_w", 0, "Est. node power (CPU+GPU) [W]"))
   return out
 
@@ -750,8 +685,6 @@ def _summary_plot_order_key(metric_name):
       "nfs_iops": 816,
       # --- 10) Network ---
       "ibbw": 900,
-      "fabric_mb_per_gflops": 910,
-      "fabric_mb_per_avg_tensor": 920,
       "opa_wait_cong": 930,
       "opa_ecn": 940,
   }
@@ -759,72 +692,145 @@ def _summary_plot_order_key(metric_name):
   return priority.get(metric_name, 395)
 
 
-def _add_summary_variable_help_marker(plot, description, researcher_use=None):
-  """Draw a small '?' at the upper-right of the data area with a hover explanation."""
-  if not description or not str(description).strip():
-    return
-  desc_str = str(description).strip()
-  ru_str = (
-      str(researcher_use).strip()
-      if researcher_use is not None and str(researcher_use).strip()
-      else ""
+# InfiniBand ``ib`` counters: error-like arc rates only (exclude byte/packet throughput and wait).
+_IB_SUMMARY_ERROR_EVENTS = (
+    "excessive_buffer_overrun_errors",
+    "link_downed",
+    "link_error_recovery",
+    "local_link_integrity_errors",
+    "port_rcv_constraint_errors",
+    "port_rcv_errors",
+    "port_rcv_remote_physical_errors",
+    "port_rcv_switch_relay_errors",
+    "port_xmit_constraint_errors",
+    "port_xmit_discards",
+    "symbol_error",
+)
+
+_NET_SUMMARY_ERROR_EVENTS = (
+    "rx_crc_errors",
+    "rx_errors",
+    "rx_fifo_errors",
+    "rx_frame_errors",
+    "rx_length_errors",
+    "rx_missed_errors",
+    "rx_over_errors",
+    "tx_aborted_errors",
+    "tx_carrier_errors",
+    "tx_errors",
+    "tx_fifo_errors",
+    "tx_heartbeat_errors",
+    "tx_window_errors",
+)
+
+
+def _one_error_job_series(jt, typ, event):
+  """Return DataFrame columns ``time``, ``rate`` (job-wide sum of arc per time) or None."""
+  agg = _get_agg_if_feasible(jt, typ, "arc", [event], 1.0)
+  if agg.empty or "sum_val" not in agg.columns:
+    return None
+  out = (
+      agg.groupby("time", as_index=False)["sum_val"]
+      .sum()
+      .rename(columns={"sum_val": "rate"})
   )
-  from pandas import Timedelta
+  if out.empty or not out["rate"].notna().any():
+    return None
+  return out
 
-  xe, xs = plot.x_range.end, plot.x_range.start
-  ye, ys = plot.y_range.end, plot.y_range.start
-  span_x = xe - xs
-  span_y = ye - ys
-  if hasattr(span_x, "total_seconds"):
-    if span_x.total_seconds() == 0:
-      span_x = Timedelta(seconds=60)
-  else:
-    try:
-      if float(span_x) == 0.0:
-        span_x = 1.0
-    except (TypeError, ValueError):
-      span_x = Timedelta(seconds=60)
-  if span_y == 0.0:
-    span_y = 1.0
-  help_x = xe - 0.018 * span_x
-  help_y = ye - 0.065 * span_y
 
-  inner = html.escape(desc_str)
-  if ru_str:
-    inner += (
-        '<hr style="margin:0.5em 0;border:0;'
-        'border-top:1px solid rgba(0,0,0,0.12);"/>'
-        f'<span style="color:#333;">{html.escape(ru_str)}</span>'
+def _collect_hardware_error_job_series(jt):
+  """List of (legend, time/rate frame) for overlay; may be empty."""
+  import pandas as pd
+
+  parts = []
+  for ev in _IB_SUMMARY_ERROR_EVENTS:
+    leg = f"ib:{ev}"
+    s = _one_error_job_series(jt, "ib", ev)
+    if s is not None:
+      parts.append((leg, s))
+  for ev in _NET_SUMMARY_ERROR_EVENTS:
+    leg = f"net:{ev}"
+    s = _one_error_job_series(jt, "net", ev)
+    if s is not None:
+      parts.append((leg, s))
+  s = _one_error_job_series(jt, "opa", "PortErrorCounterSummary")
+  if s is not None:
+    parts.append(("opa:PortErrorCounterSummary", s))
+  return parts
+
+
+def plot_hardware_error_rates_figure(jt, x_range):
+  """One figure: job-wide hardware error counter rates [#/s]; None if no data."""
+  import pandas as pd
+
+  series = _collect_hardware_error_job_series(jt)
+  if not series:
+    return None
+  merged = None
+  for leg, sdf in series:
+    sdf = sdf.rename(columns={"rate": leg})
+    if merged is None:
+      merged = sdf
+    else:
+      merged = pd.merge(merged, sdf, on="time", how="outer")
+  merged = merged.sort_values("time")
+  value_cols = [c for c in merged.columns if c != "time"]
+  if not value_cols:
+    return None
+  merged[value_cols] = merged[value_cols].fillna(0.0)
+  if not merged[value_cols].to_numpy().any():
+    return None
+
+  merged["time"] = to_datetime(merged["time"], utc=True)
+  merged["time"] = merged["time"].dt.tz_convert(local_timezone)
+
+  plot_kwargs = figure_embed_kw(
+      150,
+      x_axis_type="datetime",
+      x_axis_label="Time",
+      y_axis_label="Hardware error rates [#/s]",
+      title="Hardware error rates (job-wide sum)",
+  )
+  if x_range is not None:
+    plot_kwargs["x_range"] = x_range
+  plot = figure(**plot_kwargs)
+  plot.xaxis.ticker.desired_num_ticks = 5
+  set_linear_axes_plain_numeric(plot)
+  plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
+
+  palette = d3["Category10"][10]
+  num_hover = new_plain_number_hover_formatter()
+  line_renderers = []
+  for i, col in enumerate(value_cols):
+    sub = merged[["time", col]].dropna()
+    if sub.empty:
+      continue
+    xi, yi = _step_polyline_xy(sub["time"], sub[col])
+    color = palette[i % len(palette)]
+    src = ColumnDataSource(data={"x": xi, "y": yi})
+    ln = plot.line("x", "y", source=src, line_width=1.5, color=color, legend_label=col)
+    line_renderers.append(ln)
+    plot.add_tools(
+        HoverTool(
+            renderers=[ln],
+            tooltips=[
+                ("Series", col),
+                ("Time", "@x{%F %T}"),
+                ("Rate [#/s]", "@y{0.000}"),
+            ],
+            formatters={"@x": "datetime", "@y": num_hover},
+        )
     )
-  tip = (
-      '<div style="max-width:28em; white-space:normal; font-weight:400;">'
-      f"{inner}"
-      "</div>"
+  if line_renderers:
+    plot.legend.location = "top_left"
+    plot.legend.click_policy = "hide"
+  add_job_detail_bokeh_help_marker(
+      plot,
+      description_for_summary_metric("summary_hardware_error_rates"),
+      researcher_use_for_summary_metric("summary_hardware_error_rates"),
   )
-  help_src = ColumnDataSource(data={"hx": [help_x], "hy": [help_y], "qm": ["?"]})
-  hit = plot.scatter(
-      x="hx",
-      y="hy",
-      source=help_src,
-      size=18,
-      fill_alpha=0,
-      line_alpha=0,
-      level="overlay",
-  )
-  plot.text(
-      x="hx",
-      y="hy",
-      text="qm",
-      source=help_src,
-      text_font_size="11px",
-      text_color="#0d6efd",
-      text_align="center",
-      text_baseline="middle",
-      level="overlay",
-  )
-  plot.add_tools(
-      HoverTool(renderers=[hit], tooltips=tip),
-  )
+  return plot
 
 
 class SummaryPlot():
@@ -939,7 +945,7 @@ class SummaryPlot():
     else:
       doc_text = description_for_summary_metric(metric)
       researcher_use = researcher_use_for_summary_metric(metric)
-    _add_summary_variable_help_marker(plot, doc_text, researcher_use)
+    add_job_detail_bokeh_help_marker(plot, doc_text, researcher_use)
     log.debug("time to plot %s: %s", metric, time.time() - s)
     return plot
 
@@ -1004,8 +1010,6 @@ class SummaryPlot():
 
     df = _merge_cha_counter_arc_sum(df, self.jt)
     df = _merge_opa_fabric_if_no_ib_ext(df, self.jt)
-    df = _add_fabric_mb_per_gflops_column(df)
-    df = _add_fabric_mb_per_avg_tensor_column(df)
     df = _add_node_power_est_column(df)
 
     metrics = _summary_metric_specs()
@@ -1049,6 +1053,10 @@ class SummaryPlot():
     plots = []
     for name, label, y_top in render_specs:
       plots += [self.plot_metric(df, name, label, y_range_end=y_top, x_range=x_range)]
+
+    err_fig = plot_hardware_error_rates_figure(self.jt, x_range)
+    if err_fig is not None:
+      plots.append(err_fig)
 
     if not plots:
       raise ValueError(MSG_NO_METRIC_DATA)

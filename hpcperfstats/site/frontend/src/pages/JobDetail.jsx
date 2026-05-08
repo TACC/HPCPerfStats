@@ -627,18 +627,20 @@ export default function JobDetail() {
                     <th>Shared File System</th>
                     <th>MB Read</th>
                     <th>MB Written</th>
+                    <th>Peak MB/s</th>
+                    <th>Peak IOPS</th>
                   </tr>
                 </thead>
                 <tbody>
                   {detailsLoading ? (
                     <tr>
-                      <td colSpan={3} className="text-muted">
+                      <td colSpan={5} className="text-muted">
                         Loading shared file system data…
                       </td>
                     </tr>
                   ) : Object.keys(fsio).length === 0 ? (
                     <tr>
-                      <td colSpan={3} className="text-muted">
+                      <td colSpan={5} className="text-muted">
                         Data not available.
                       </td>
                     </tr>
@@ -648,6 +650,16 @@ export default function JobDetail() {
                         <td>{key}</td>
                         <td>{formatDecimalStandard(val[0])}</td>
                         <td>{formatDecimalStandard(val[1])}</td>
+                        <td>
+                          {val[2] != null && !Number.isNaN(val[2])
+                            ? formatDecimalStandard(val[2])
+                            : "—"}
+                        </td>
+                        <td>
+                          {val[3] != null && !Number.isNaN(val[3])
+                            ? formatDecimalStandard(val[3])
+                            : "—"}
+                        </td>
                       </tr>
                     ))
                   )}
@@ -655,28 +667,6 @@ export default function JobDetail() {
               </table>
             </div>
           </div>
-        </div>
-        <div className="d-flex flex-wrap gap-2 mt-2">
-          {client_url && (
-            <a
-              href={client_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-outline-secondary btn-sm"
-            >
-              Client Logs
-            </a>
-          )}
-          {server_url && (
-            <a
-              href={server_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-outline-secondary btn-sm"
-            >
-              Server Logs
-            </a>
-          )}
         </div>
         {(detailsLoading || gpu_active != null || gpu_count != null) && (
           <div className="mt-3">
@@ -700,6 +690,28 @@ export default function JobDetail() {
             )}
           </div>
         )}
+        <div className="d-flex flex-wrap gap-2 mt-2">
+          {client_url && (
+            <a
+              href={client_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-outline-secondary btn-sm"
+            >
+              Client Logs
+            </a>
+          )}
+          {server_url && (
+            <a
+              href={server_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-outline-secondary btn-sm"
+            >
+              Server Logs
+            </a>
+          )}
+        </div>
       </section>
 
       <section
