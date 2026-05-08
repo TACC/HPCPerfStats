@@ -188,22 +188,32 @@ body {
   font-size: 1.25rem;
   font-weight: 600;
   color: #000;
-  line-height: 1.3;
+  line-height: 1.25;
+}
+.navbar-pub-site .navbar-pub-site-subtitle {
+  line-height: 1.25;
+  margin-top: 0.1rem;
+  margin-bottom: 0.1rem;
 }
 .navbar-pub-site .navbar-brand-cluster {
   font-size: 1.05rem;
-  line-height: 1.4;
-  padding-bottom: 0.35rem;
+  line-height: 1.25;
+  margin: 0.1rem 0 0;
+  padding-bottom: 0;
 }
 .navbar-pub-site .navbar-brand.navbar-brand-center {
   display: flex;
   flex-direction: column;
+  align-items: center;
   justify-content: center;
-  min-height: 4.75rem;
+  gap: 0.1rem;
+  min-height: 5rem;
+  margin-top: 0;
+  margin-bottom: 0;
 }
 @media (min-width: 992px) {
   .navbar-pub-site.navbar-expand-lg .navbar-brand.navbar-brand-center {
-    min-height: 4.75rem;
+    min-height: 5rem;
   }
 }
 

@@ -13,7 +13,7 @@ function SectionExpansionFactor({ bundle }) {
   const panelIntroId = useId();
 
   const renderHist = (payloadMap, axisHint, groupingKey, histogramCaption) => {
-    const keys = Object.keys(payloadMap).sort();
+    const keys = Object.keys(payloadMap).sort().reverse();
     if (!keys.length) {
       return (
         <p className="text-muted mb-0">
@@ -105,7 +105,7 @@ function SectionExpansionFactor({ bundle }) {
       <div id="pub-dashboard-yearly" className="pt-2">
         <div className="d-flex flex-wrap align-items-baseline justify-content-between gap-2 border-bottom pb-2 mb-3">
           <h3 className="h4 mb-0">Yearly</h3>
-          <a href="#pub-dashboard-monthly" className="small">
+          <a href="#pub-dashboard-monthly" className="h4 mb-0 text-decoration-underline">
             Monthly
           </a>
         </div>
@@ -121,7 +121,7 @@ function SectionExpansionFactor({ bundle }) {
 
       <div id="pub-dashboard-monthly">
         <div className="d-flex flex-wrap align-items-baseline justify-content-between gap-2 border-bottom pb-2 mb-3">
-          <a href="#pub-dashboard-yearly" className="small">
+          <a href="#pub-dashboard-yearly" className="h4 mb-0 text-decoration-underline">
             Yearly
           </a>
           <h3 className="h4 mb-0">Monthly</h3>
@@ -183,9 +183,6 @@ export default function PageClusterDashboard() {
     <div className="container py-4">
       <header className="mb-4">
         <h1 className="h3">Dashboard</h1>
-        <p className="text-muted mb-0">
-          Public cluster dashboards built from pre-warmed aggregates (no live heavy queries).
-        </p>
       </header>
 
       {error ? (

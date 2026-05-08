@@ -29,6 +29,12 @@ const mockReadyBundle = {
   sections: {
     expansion_factor: {
       monthly_daily_histograms: {
+        "2100-02": {
+          expansion_factor_definition: "def-new",
+          histogram_bin_edges: [0, 0.5, 1.0],
+          histogram_counts: [2, 1, 0],
+          bokeh_histogram_json_item: mockBokeh,
+        },
         "2099-01": {
           expansion_factor_definition: "def",
           histogram_bin_edges: [0, 0.5, 1.0],
@@ -37,6 +43,12 @@ const mockReadyBundle = {
         },
       },
       yearly_weekly_histograms: {
+        "2099": {
+          expansion_factor_definition: "def-y-new",
+          histogram_bin_edges: [0, 1],
+          histogram_counts: [2],
+          bokeh_histogram_json_item: mockBokeh,
+        },
         "2098": {
           expansion_factor_definition: "def-y",
           histogram_bin_edges: [0, 1],
@@ -106,16 +118,43 @@ describe("PageClusterDashboard", () => {
       "href",
       "#pub-dashboard-monthly",
     );
+    expect(screen.getByRole("link", { name: "Monthly" })).toHaveClass("h4");
+    expect(screen.getByRole("link", { name: "Monthly" })).not.toHaveClass("small");
     expect(screen.getByRole("link", { name: "Yearly" })).toHaveAttribute(
       "href",
       "#pub-dashboard-yearly",
     );
+    expect(screen.getByRole("link", { name: "Yearly" })).toHaveClass("h4");
+    expect(screen.getByRole("link", { name: "Yearly" })).not.toHaveClass("small");
+    expect(
+      screen.queryByText(
+        "Public cluster dashboards built from pre-warmed aggregates (no live heavy queries).",
+      ),
+    ).not.toBeInTheDocument();
+
+    const yearKey2099 = screen.getByText("2099");
+    const yearKey2098 = screen.getByText("2098");
+    expect(
+      yearKey2099.compareDocumentPosition(yearKey2098) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    const monthKey210002 = screen.getByText("2100-02");
+    const monthKey209901 = screen.getByText("2099-01");
+    expect(
+      monthKey210002.compareDocumentPosition(monthKey209901) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
 
     await waitFor(() => {
       expect(screen.getByTestId("bokeh-pub-expansion-factor-year-2098")).toBeInTheDocument();
     });
     await waitFor(() => {
+      expect(screen.getByTestId("bokeh-pub-expansion-factor-year-2099")).toBeInTheDocument();
+    });
+    await waitFor(() => {
       expect(screen.getByTestId("bokeh-pub-expansion-factor-month-2099-01")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("bokeh-pub-expansion-factor-month-2100-02")).toBeInTheDocument();
     });
     expect(screen.queryAllByRole("progressbar")).toHaveLength(0);
   });

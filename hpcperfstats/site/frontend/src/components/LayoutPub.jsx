@@ -42,7 +42,9 @@ export default function LayoutPub({ machineName, children }) {
           >
             <div className="navbar-brand flex-grow-1 text-center navbar-brand-center">
               <div className="navbar-pub-site-title">HPCPerfStats</div>
-              <div className="text-muted small">a job-level resource usage monitoring tool</div>
+              <div className="text-muted small navbar-pub-site-subtitle">
+                a job-level resource usage monitoring tool
+              </div>
               {machineName ? (
                 <div className="navbar-brand-cluster">{machineName}</div>
               ) : null}
