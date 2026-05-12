@@ -1840,6 +1840,132 @@ def test_update_metrics_pub_parallel_once_then_safe_in_finally(monkeypatch):
 
 
 @pytest.mark.django_db(databases=[])
+def test_update_metrics_scheduler_runs_real_detail_prewarm_with_jid_table_stub(monkeypatch):
+  """Integration-style scheduler check: real detail prewarm path must execute without NameError."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs([(["jid-1"], 1)]),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+  monkeypatch.setattr(
+      update_metrics,
+      "refresh_public_expansion_factor_artifacts_parallel",
+      lambda pool: {},
+  )
+  monkeypatch.setattr(update_metrics, "refresh_public_expansion_factor_artifacts_safe", lambda: None)
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda *a, **k: None)
+
+  class _DoneProducer:
+    def join(self, timeout=None):
+      del timeout
+
+  def _producer_stub(**kwargs):
+    with kwargs["ready_queue_lock"]:
+      kwargs["ready_queue"].append("jid-1")
+    kwargs["producer_done"].set()
+    return _DoneProducer()
+
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _producer_stub)
+
+  class _FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def reset_pool_hard(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      del pool
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: _FakeMetrics())
+
+  # Keep detail prewarm real, but with lightweight providers so scheduler executes
+  # the actual symbol path ``job_detail_artifacts.jid_table`` without DB-heavy work.
+  from hpcperfstats.site.machine import job_detail_artifacts as jda
+
+  class _MiniJt:
+    schema = {}
+    acct_host_list = ["n1.example.org"]
+    start_time = datetime(2025, 4, 10, 0, 0, 0)
+    end_time = datetime(2025, 4, 10, 0, 5, 0)
+
+    def get_llite_delta_by_event(self):
+      import pandas as pd
+      return pd.DataFrame(columns=["event", "delta_sum"])
+
+    def get_nfs_delta_totals_mb(self):
+      return None
+
+  monkeypatch.setattr(jda.jid_table, "jid_table", lambda _jid: _MiniJt())
+  monkeypatch.setattr(jda.jid_table, "TypeDetailDataProvider", lambda *a, **k: object())
+
+  class _MiniDevPlot:
+    def __init__(self, provider, hosts):
+      del provider, hosts
+
+    def plot(self):
+      import pandas as pd
+      return pd.DataFrame(), None
+
+  import types
+  monkeypatch.setattr(
+      jda,
+      "plots",
+      types.SimpleNamespace(DevPlot=_MiniDevPlot),
+      raising=False,
+  )
+  monkeypatch.setattr(jda, "upsert_job_detail_artifact", lambda **kwargs: None)
+  monkeypatch.setattr(jda, "_metric_value_map", lambda job: {})
+  monkeypatch.setattr(jda, "_gpu_detail_from_jid_table", lambda jt: {})
+  monkeypatch.setattr(jda, "_multiprecision_mix_payload", lambda metric_values: {})
+  monkeypatch.setattr(jda, "extend_fsio_payload_lists_with_peaks", lambda fsio, jt: None)
+
+  class _MiniMetricsSet:
+    def all(self):
+      return []
+
+  class _MiniJob:
+    jid = "jid-1"
+    host_data_schema_json = {}
+    metrics_data_set = _MiniMetricsSet()
+
+  class _MiniJobQ:
+    def prefetch_related(self, *a, **k):
+      return self
+
+    def first(self):
+      return _MiniJob()
+
+  monkeypatch.setattr(jda.job_data.objects, "filter", lambda **kwargs: _MiniJobQ())
+
+  update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+
+
+@pytest.mark.django_db(databases=[])
 def test_update_metrics_for_dates_empty_date_list_returns(monkeypatch):
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)

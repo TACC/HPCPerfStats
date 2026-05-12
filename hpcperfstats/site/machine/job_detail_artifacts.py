@@ -28,6 +28,7 @@ from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
     gpu_agg_rows_for_job_window,
     gpu_count_total_for_job_window,
 )
+import hpcperfstats.analysis.gen.jid_table as jid_table
 
 from .models import job_data, job_detail_artifact
 

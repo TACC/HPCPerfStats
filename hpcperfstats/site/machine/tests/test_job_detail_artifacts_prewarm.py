@@ -10,6 +10,12 @@ from hpcperfstats.site.machine import job_detail_artifacts as jda
 from hpcperfstats.site.machine.models import job_data, job_detail_artifact, metrics_data
 
 
+def test_job_detail_artifacts_has_jid_table_import():
+  """Guard against NameError in prewarm path when jid_table import is dropped."""
+  assert hasattr(jda, "jid_table")
+  assert hasattr(jda.jid_table, "jid_table")
+
+
 def _mk_job(jid="detailtest1"):
   now = timezone.now()
   return job_data.objects.create(
