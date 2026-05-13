@@ -559,9 +559,13 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_scheduler_ready_queue_target() == 2000
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
   assert cfg.get_metrics_prewarm_workers() == 4
+  assert cfg.get_metrics_prewarm_backlog_cap() == 32
+  assert cfg.get_metrics_prewarm_backpressure_wait_s() == 0.25
   assert cfg.get_metrics_scheduler_compute_threads() == 4
   assert cfg.get_metrics_run_poll_timeout_s() == 5.0
   assert cfg.get_metrics_run_stall_timeout_s() == 600.0
+  assert cfg.get_metrics_persist_statement_timeout_ms() == 120000
+  assert cfg.get_metrics_persist_lock_timeout_ms() == 10000
   assert cfg.get_metrics_prewarm_retry_attempts() == 2
   assert cfg.get_metrics_proxy_reject_jid_batch_size() == 48
   assert cfg.get_metrics_scheduler_skip_prewarm() is False
@@ -576,9 +580,13 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
       "metrics_scheduler_ready_queue_target = 111\n"
       "metrics_plot_prewarm_mode = inline\n"
       "metrics_prewarm_workers = 7\n"
+      "metrics_prewarm_backlog_cap = 13\n"
+      "metrics_prewarm_backpressure_wait_s = 0.75\n"
       "metrics_scheduler_compute_threads = 6\n"
       "metrics_run_poll_timeout_s = 1.5\n"
       "metrics_run_stall_timeout_s = 120\n"
+      "metrics_persist_statement_timeout_ms = 45000\n"
+      "metrics_persist_lock_timeout_ms = 7000\n"
       "metrics_prewarm_retry_attempts = 5\n"
       "metrics_proxy_reject_jid_batch_size = 32\n"
       "metrics_scheduler_skip_prewarm = yes",
@@ -592,19 +600,40 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_scheduler_ready_queue_target() == 111
   assert cfg.get_metrics_plot_prewarm_mode() == "inline"
   assert cfg.get_metrics_prewarm_workers() == 7
+  assert cfg.get_metrics_prewarm_backlog_cap() == 13
+  assert cfg.get_metrics_prewarm_backpressure_wait_s() == 0.75
   assert cfg.get_metrics_scheduler_compute_threads() == 6
   assert cfg.get_metrics_run_poll_timeout_s() == 1.5
   assert cfg.get_metrics_run_stall_timeout_s() == 120.0
+  assert cfg.get_metrics_persist_statement_timeout_ms() == 45000
+  assert cfg.get_metrics_persist_lock_timeout_ms() == 7000
   assert cfg.get_metrics_prewarm_retry_attempts() == 5
   assert cfg.get_metrics_proxy_reject_jid_batch_size() == 32
   monkeypatch.setenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", "strict_date")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_PLOT_PREWARM_MODE", "pipeline_required")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_PREWARM_BACKLOG_CAP", "9")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_PREWARM_BACKPRESSURE_WAIT_S", "1.25")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_RUN_POLL_TIMEOUT_S", "2.5")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S", "45")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_PERSIST_STATEMENT_TIMEOUT_MS", "9000")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_PERSIST_LOCK_TIMEOUT_MS", "3000")
   assert cfg.get_metrics_scheduler_mode() == "strict_date"
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
+  assert cfg.get_metrics_prewarm_backlog_cap() == 9
+  assert cfg.get_metrics_prewarm_backpressure_wait_s() == 1.25
   assert cfg.get_metrics_run_poll_timeout_s() == 2.5
   assert cfg.get_metrics_run_stall_timeout_s() == 45.0
+  assert cfg.get_metrics_persist_statement_timeout_ms() == 9000
+  assert cfg.get_metrics_persist_lock_timeout_ms() == 3000
+
+
+def test_get_metrics_per_jid_phase_diagnostics_enabled_env(monkeypatch):
+  import hpcperfstats.conf_parser as cfg
+
+  monkeypatch.delenv("HPCPERFSTATS_METRICS_PER_JID_PHASE_LOG", raising=False)
+  assert cfg.get_metrics_per_jid_phase_diagnostics_enabled() is False
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_PER_JID_PHASE_LOG", "true")
+  assert cfg.get_metrics_per_jid_phase_diagnostics_enabled() is True
 
 
 def test_cpuset_priority_budget_overprovision_mode(temp_ini, monkeypatch):

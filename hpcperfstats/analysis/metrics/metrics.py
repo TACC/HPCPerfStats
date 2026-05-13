@@ -50,6 +50,12 @@ METRICS_POOL_JOIN_TIMEOUT_S = max(
     1.0,
     float(os.environ.get("HPCPERFSTATS_METRICS_POOL_JOIN_TIMEOUT_S", "30")),
 )
+_PARENT_PERSIST_TIMEOUT_MARKERS = (
+    "statement timeout",
+    "lock timeout",
+    "canceling statement due to statement timeout",
+    "canceling statement due to lock timeout",
+)
 
 
 class MetricsRunWorkerStallError(TimeoutError):
@@ -59,6 +65,41 @@ class MetricsRunWorkerStallError(TimeoutError):
     super().__init__(message)
     self.stalled_for_s = float(stalled_for_s)
     self.pool_reset_confirmed = bool(pool_reset_confirmed)
+
+
+def _metrics_jid_value(job_or_pk):
+  """Stable jid string from either a job-like object or a raw primary key."""
+  return _coerce_metrics_identity_str(getattr(job_or_pk, "jid", job_or_pk))
+
+
+def _metrics_run_outcome(
+    jid,
+    *,
+    ok,
+    status,
+    persisted_rows=0,
+    distinct_time_count=None,
+    persist_s=0.0,
+    error_type=None,
+    error_message=None,
+):
+  """Canonical per-jid outcome emitted by ``Metrics.run``."""
+  return {
+      "jid": _metrics_jid_value(jid),
+      "ok": bool(ok),
+      "status": str(status),
+      "persisted_rows": int(max(0, persisted_rows)),
+      "distinct_time_count": distinct_time_count,
+      "persist_s": float(max(0.0, persist_s)),
+      "error_type": error_type,
+      "error_message": error_message,
+  }
+
+
+def _is_parent_persist_timeout_error(exc):
+  """Best-effort classification for bounded persist timeout/lock timeout failures."""
+  text = str(exc or "").lower()
+  return any(marker in text for marker in _PARENT_PERSIST_TIMEOUT_MARKERS)
 
 
 def _wait_pool_processes_bounded(active_pool, timeout_s):
@@ -530,13 +571,30 @@ def _unwrap(args):
   # connection; on repeated failure, log and skip this job rather than
   # crashing the entire pool.
   try:
-    return run_with_db_retry(lambda: metrics_obj.compute_metrics(job), attempts=2)
+    payload = run_with_db_retry(lambda: metrics_obj.compute_metrics(job), attempts=2)
+    if not isinstance(payload, dict):
+      payload = {}
+    return {
+        "jid": _metrics_jid_value(job),
+        "status": "ok",
+        "rows": payload.get("rows") or [],
+        "distinct_time_count": payload.get("distinct_time_count"),
+        "error_type": None,
+        "error_message": None,
+    }
   except (OperationalError, DatabaseError) as exc:
     log_print(
         "Skipping metrics for jid %s after DB error in worker: %s" %
         (getattr(job, "jid", "?"), exc)
     )
-    return None
+    return {
+        "jid": _metrics_jid_value(job),
+        "status": "worker_db_error",
+        "rows": [],
+        "distinct_time_count": None,
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+    }
 
 
 def _persist_metrics_batch(job_results, distinct_time_count):
@@ -548,22 +606,30 @@ def _persist_metrics_batch(job_results, distinct_time_count):
   ON CONFLICT does not hit the same row twice.
   Called in main process only.
   """
-  def _coerce_jid_pk(job_or_pk):
-    raw = getattr(job_or_pk, "jid", job_or_pk)
-    return _coerce_metrics_identity_str(raw)
-
-  with transaction.atomic():
-    jids = list({_coerce_jid_pk(item["jid"]) for item in job_results})
+  conn = connections["default"]
+  using = getattr(conn, "alias", None) or "default"
+  with transaction.atomic(using=using):
+    if conn.vendor == "postgresql":
+      with conn.cursor() as cursor:
+        cursor.execute(
+            "SET LOCAL statement_timeout = %s",
+            [max(1000, int(cfg.get_metrics_persist_statement_timeout_ms()))],
+        )
+        cursor.execute(
+            "SET LOCAL lock_timeout = %s",
+            [max(1000, int(cfg.get_metrics_persist_lock_timeout_ms()))],
+        )
+    jids = list({_metrics_jid_value(item["jid"]) for item in job_results})
     by_key = {}
     for item in job_results:
-      row_jid = _coerce_jid_pk(item["jid"])
+      row_jid = _metrics_jid_value(item["jid"])
       row_type = _coerce_metrics_identity_str(item["type"])
       row_metric = _coerce_metrics_identity_str(item["metric"])
       key = (row_jid, row_type, row_metric)
       by_key[key] = item
     rows = [
         metrics_data(
-            jid_id=_coerce_jid_pk(item["jid"]),
+            jid_id=_metrics_jid_value(item["jid"]),
             type=_coerce_metrics_identity_str(item["type"]),
             metric=_coerce_metrics_identity_str(item["metric"]),
             units=_coerce_metrics_identity_str(item["units"]),
@@ -595,6 +661,85 @@ def _persist_metrics_batch(job_results, distinct_time_count):
       pass
 
 
+def _persist_metrics_payload(payload):
+  """Persist one worker payload and return a truthful per-jid outcome."""
+  jid = _metrics_jid_value(payload.get("jid"))
+  status = str(payload.get("status") or "ok")
+  if status != "ok":
+    log_print(
+        "Metrics.run worker outcome failed jid={0} status={1} error_type={2} error={3!r}".format(
+            jid,
+            status,
+            payload.get("error_type"),
+            payload.get("error_message"),
+        ),
+        flush=True,
+    )
+    return _metrics_run_outcome(
+        jid,
+        ok=False,
+        status=status,
+        persisted_rows=0,
+        distinct_time_count=payload.get("distinct_time_count"),
+        error_type=payload.get("error_type"),
+        error_message=payload.get("error_message"),
+    )
+  job_rows = payload.get("rows") or []
+  distinct_n = payload.get("distinct_time_count")
+  if not job_rows:
+    return _metrics_run_outcome(
+        jid,
+        ok=True,
+        status="ok",
+        persisted_rows=0,
+        distinct_time_count=distinct_n,
+        persist_s=0.0,
+    )
+  persist_started_at = time.monotonic()
+  try:
+    run_with_db_retry(
+        lambda: _persist_metrics_batch(job_rows, distinct_n),
+        attempts=2,
+    )
+  except (OperationalError, DatabaseError) as exc:
+    persist_elapsed = time.monotonic() - persist_started_at
+    persist_status = (
+        "parent_persist_timeout"
+        if _is_parent_persist_timeout_error(exc)
+        else "parent_persist_db_error"
+    )
+    log_print(
+        "Metrics.run parent persist failure jid={0} status={1} elapsed_s={2:.3f} "
+        "error_type={3} error={4!r}".format(
+            jid,
+            persist_status,
+            persist_elapsed,
+            type(exc).__name__,
+            exc,
+        ),
+        flush=True,
+    )
+    return _metrics_run_outcome(
+        jid,
+        ok=False,
+        status=persist_status,
+        persisted_rows=0,
+        distinct_time_count=distinct_n,
+        persist_s=persist_elapsed,
+        error_type=type(exc).__name__,
+        error_message=str(exc),
+    )
+  persist_elapsed = time.monotonic() - persist_started_at
+  return _metrics_run_outcome(
+      jid,
+      ok=True,
+      status="ok",
+      persisted_rows=len(job_rows),
+      distinct_time_count=distinct_n,
+      persist_s=persist_elapsed,
+  )
+
+
 def _drain_metrics_imap(
     active_pool,
     tasks,
@@ -623,6 +768,7 @@ def _drain_metrics_imap(
   total = len(tasks)
   done = 0
   last_progress_at = time.monotonic()
+  outcomes = []
   while done < total:
     try:
       if iterator_next_supports_timeout:
@@ -648,15 +794,18 @@ def _drain_metrics_imap(
     done += 1
     last_progress_at = time.monotonic()
     if not payload:
+      outcomes.append(
+          _metrics_run_outcome(
+              "unknown",
+              ok=False,
+              status="empty_worker_payload",
+              error_type="EmptyPayload",
+              error_message="worker returned empty payload",
+          )
+      )
       continue
-    job_rows = payload["rows"]
-    distinct_n = payload.get("distinct_time_count")
-    if not job_rows:
-      continue
-    run_with_db_retry(
-        lambda: _persist_metrics_batch(job_rows, distinct_n),
-        attempts=2,
-    )
+    outcomes.append(_persist_metrics_payload(payload))
+  return outcomes
 
 
 def _jid_table_host_data_time_kwargs(base):
@@ -908,7 +1057,7 @@ class Metrics():
         """
     if not job_list:
       log_print("Please specify a job list.")
-      return
+      return []
 
     threads = self._worker_process_count()
     pool_chunksize = self._imap_chunksize(len(job_list), threads)
@@ -919,9 +1068,10 @@ class Metrics():
     tasks = [(self, job) for job in job_list]
     poll_timeout_s = cfg.get_metrics_run_poll_timeout_s()
     stall_timeout_s = cfg.get_metrics_run_stall_timeout_s()
+    outcomes = []
     try:
       try:
-        _drain_metrics_imap(
+        outcomes = _drain_metrics_imap(
             active_pool,
             tasks,
             pool_chunksize,
@@ -936,13 +1086,13 @@ class Metrics():
             flush=True,
         )
         for single in tasks:
-          _drain_metrics_imap(
+          outcomes.extend(_drain_metrics_imap(
               active_pool,
               [single],
               1,
               poll_timeout_s=poll_timeout_s,
               stall_timeout_s=stall_timeout_s,
-          )
+          ))
     except MetricsRunWorkerStallError as exc:
       log_print("Metrics.run: %s" % exc, flush=True)
       reset_confirmed = False
@@ -969,6 +1119,7 @@ class Metrics():
     finally:
       if own_pool and active_pool is not None:
         _close_pool_bounded(active_pool, METRICS_POOL_JOIN_TIMEOUT_S)
+    return outcomes
 
   def job_arc(self,
               jt,

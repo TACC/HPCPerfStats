@@ -29,6 +29,7 @@ from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
     gpu_count_total_for_job_window,
 )
 import hpcperfstats.analysis.gen.jid_table as jid_table
+import hpcperfstats.analysis.plot as plots
 
 from .models import job_data, job_detail_artifact
 
@@ -403,6 +404,11 @@ def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, A
   schema = getattr(job, "host_data_schema_json", None)
   if not isinstance(schema, dict) or not schema:
     schema = jt.schema or {}
+  existing_type_detail_scopes = _load_existing_type_detail_scope_set(
+      jid,
+      fingerprint,
+      sorted((schema or {}).keys()),
+  )
 
   metric_values = _metric_value_map(job)
   fsio, fsio_from_metrics = _fsio_from_metric_values(metric_values)
@@ -473,6 +479,8 @@ def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, A
   )
 
   for type_name in sorted((schema or {}).keys()):
+    if type_name in existing_type_detail_scopes:
+      continue
     try:
       provider = jid_table.TypeDetailDataProvider(
           jid,
@@ -516,4 +524,20 @@ def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, A
           jid,
           type_name,
           exc_info=True,
+      )
+      upsert_job_detail_artifact(
+          jid=jid,
+          artifact_kind=ARTIFACT_KIND_TYPE_DETAIL,
+          artifact_scope=type_name,
+          input_fingerprint=fingerprint,
+          payload={
+              "type_name": type_name,
+              "jobid": jid,
+              "tplot_item": None,
+              "stats_data": [],
+              "schema": [],
+              "tplot_unavailable_reason": (
+                  "Type detail plot generation failed during artifact prewarm."
+              ),
+          },
       )

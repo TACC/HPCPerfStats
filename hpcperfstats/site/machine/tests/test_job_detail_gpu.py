@@ -395,6 +395,95 @@ def test_gpu_count_total_returns_none_when_no_gpu_rows_exist():
     assert gpu_count_total_for_job_window(j) is None
 
 
+def test_compute_job_gpu_stats_degrades_when_cache_set_fails():
+  """Real ``cached_orm``: cache miss + set error still returns aggregate + count from DB fns."""
+  from hpcperfstats.site.machine import api
+  from hpcperfstats.site.machine import cache_utils as cu
+
+  mock_cache = MagicMock()
+  mock_cache.get.side_effect = lambda key, default=None: default
+  mock_cache.set.side_effect = OSError("redis read-only")
+
+  job = MagicMock()
+  job.jid = "j-gpu-cache-set-fail"
+  j = MagicMock()
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  j.start_time = t0
+  j.end_time = t0
+  j.acct_host_list = ["n1.example.com"]
+
+  fake_agg = [
+      {
+          "host": "n1.example.com",
+          "dev": "0",
+          "event": "gpu_util",
+          "cnt": 4,
+          "vmax": 250.0,
+          "vmean": 80.0,
+      },
+  ]
+
+  with patch.object(cu, "cache", mock_cache):
+    with patch.object(api, "_gpu_agg_rows_for_job", return_value=fake_agg):
+      with patch(
+          "hpcperfstats.analysis.metrics.gpu_job_detail_summary.gpu_count_total_for_job_window",
+          return_value=6,
+      ):
+        gpu_active, gpu_max, gpu_mean, gpu_count = api._compute_job_gpu_stats(
+            job, j, 3600
+        )
+
+  assert gpu_max == 250.0
+  assert gpu_mean == 80.0
+  assert gpu_active == 1
+  assert gpu_count == 6
+  assert mock_cache.set.call_count >= 2
+
+
+def test_compute_job_gpu_stats_degrades_when_cache_get_raises():
+  """Real ``cached_orm``: cache.get failure skips set and still runs query fns."""
+  from hpcperfstats.site.machine import api
+  from hpcperfstats.site.machine import cache_utils as cu
+
+  mock_cache = MagicMock()
+  mock_cache.get.side_effect = ConnectionError("redis down")
+
+  job = MagicMock()
+  job.jid = "j-gpu-cache-get-fail"
+  j = MagicMock()
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  j.start_time = t0
+  j.end_time = t0
+  j.acct_host_list = ["n1.example.com"]
+
+  fake_agg = [
+      {
+          "host": "n1.example.com",
+          "dev": "0",
+          "event": "gpu_util",
+          "cnt": 4,
+          "vmax": 100.0,
+          "vmean": 50.0,
+      },
+  ]
+
+  with patch.object(cu, "cache", mock_cache):
+    with patch.object(api, "_gpu_agg_rows_for_job", return_value=fake_agg):
+      with patch(
+          "hpcperfstats.analysis.metrics.gpu_job_detail_summary.gpu_count_total_for_job_window",
+          return_value=2,
+      ):
+        gpu_active, gpu_max, gpu_mean, gpu_count = api._compute_job_gpu_stats(
+            job, j, 3600
+        )
+
+  assert gpu_max == 100.0
+  assert gpu_mean == 50.0
+  assert gpu_active == 1
+  assert gpu_count == 2
+  mock_cache.set.assert_not_called()
+
+
 def test_multiprecision_mix_payload_staff_reasons_align_with_plot_tabs():
   """Unavailable reasons follow the same Missing-/metrics style for CPU and GPU pies."""
   payload = job_detail_artifacts_mod._multiprecision_mix_payload({})

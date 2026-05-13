@@ -18,8 +18,10 @@ import hashlib
 import json
 import logging
 import math
+import time
 from collections import defaultdict
 from datetime import date, datetime
+from multiprocessing import TimeoutError as MultiprocessingTimeoutError
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from django.db.models import F, Max, Min, Q
@@ -442,7 +444,13 @@ def _public_ef_period_worker(task: Tuple[str, str]) -> Dict[str, int]:
     return {"worker_exceptions": 1}
 
 
-def refresh_public_expansion_factor_artifacts_parallel(pool: Any) -> Dict[str, int]:
+def refresh_public_expansion_factor_artifacts_parallel(
+    pool: Any,
+    *,
+    poll_timeout_s: float = 5.0,
+    no_progress_timeout_s: float = 120.0,
+    progress_callback=None,
+) -> Dict[str, int]:
   """Recompute stale month/year EF rows using ``pool`` (one period per task).
 
   Callers typically pass ``Metrics.ensure_pool()`` from ``update_metrics`` so
@@ -458,13 +466,51 @@ def refresh_public_expansion_factor_artifacts_parallel(pool: Any) -> Dict[str, i
   ] + [
       (_PUBLIC_EF_KIND_YEAR, ys) for ys in years
   ]
+  totals["tasks_total"] = len(tasks)
   if not tasks:
+    totals["tasks_completed"] = 0
+    totals["pending_tasks"] = 0
+    totals["degraded"] = 0
     _prune_orphan_public_ef_rows(months, years)
     return dict(totals)
 
-  for piece in pool.imap_unordered(_public_ef_period_worker, tasks, chunksize=1):
+  iterator = pool.imap_unordered(_public_ef_period_worker, tasks, chunksize=1)
+  next_with_timeout = getattr(iterator, "next", None)
+  completed = 0
+  last_progress_at = time.monotonic()
+  while completed < len(tasks):
+    try:
+      if callable(next_with_timeout):
+        piece = next_with_timeout(timeout=max(0.0, float(poll_timeout_s)))
+      else:
+        piece = next(iterator)
+    except StopIteration:
+      break
+    except MultiprocessingTimeoutError:
+      stalled_for_s = max(0.0, time.monotonic() - last_progress_at)
+      if callable(progress_callback):
+        progress_callback({
+            "tasks_total": len(tasks),
+            "tasks_completed": completed,
+            "pending_tasks": max(0, len(tasks) - completed),
+            "stalled_for_s": stalled_for_s,
+        })
+      if stalled_for_s >= max(float(poll_timeout_s), float(no_progress_timeout_s)):
+        totals["watchdog_timeouts"] += 1
+        break
+      continue
+    completed += 1
+    last_progress_at = time.monotonic()
     for k, v in piece.items():
       totals[k] += int(v)
+
+  totals["tasks_completed"] = completed
+  totals["pending_tasks"] = max(0, len(tasks) - completed)
+  totals["degraded"] = int(
+      totals.get("worker_exceptions", 0) > 0
+      or totals.get("watchdog_timeouts", 0) > 0
+      or totals["pending_tasks"] > 0
+  )
 
   _public_ef_parent_refresh_connections_after_forked_children()
   _prune_orphan_public_ef_rows(months, years)

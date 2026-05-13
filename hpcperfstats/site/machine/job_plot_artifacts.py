@@ -70,7 +70,7 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 
 # Bump when plot artifact semantics change (independent of Bokeh version).
 # See hpcperfstats/cursor-rules/job-plot-artifacts-caching.mdc and machine/tests/test_job_plot_artifacts.py.
-APP_PLOT_ARTIFACT_SCHEMA_VERSION = 7
+APP_PLOT_ARTIFACT_SCHEMA_VERSION = 8
 
 JOB_PLOT_JSON_KEYS: Dict[str, Tuple[str, str]] = {
     kind: (spec.json_item_key, spec.unavailable_reason_key)
@@ -164,6 +164,32 @@ def decompress_plot_item_dict(
   return json.loads(raw.decode("utf-8"))
 
 
+def _plot_artifact_storage_payload(
+    plot_item: Optional[Dict[str, Any]],
+    unavailable_reason: Optional[str],
+) -> Dict[str, Any]:
+  """Canonical stored payload for plot artifacts, including fresh unavailable rows."""
+  return {
+      "plot_item": plot_item,
+      "unavailable_reason": unavailable_reason,
+  }
+
+
+def _normalize_loaded_plot_artifact_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+  """Decode legacy raw-json-item rows and new explicit unavailable-state rows."""
+  if isinstance(payload, dict) and (
+      "plot_item" in payload or "unavailable_reason" in payload
+  ):
+    return {
+        "plot_item": payload.get("plot_item"),
+        "unavailable_reason": payload.get("unavailable_reason"),
+    }
+  return {
+      "plot_item": payload,
+      "unavailable_reason": None,
+  }
+
+
 def upsert_job_plot_artifact(
     jid: str,
     plot_kind: str,
@@ -171,7 +197,8 @@ def upsert_job_plot_artifact(
     input_fingerprint: str,
     plot_item: Dict[str, Any],
 ) -> None:
-  _raw_utf8, compressed, enc = json_item_to_compressed_payload(plot_item)
+  payload = _plot_artifact_storage_payload(plot_item, None)
+  _raw_utf8, compressed, enc = json_item_to_compressed_payload(payload)
   job_plot_artifact.objects.bulk_create(
       [job_plot_artifact(
           jid_id=jid,
@@ -195,7 +222,14 @@ def upsert_job_plot_artifact_batch(
     return
   objs = []
   for jid, plot_kind, layout, input_fingerprint, plot_item in rows:
-    _raw_utf8, compressed, enc = json_item_to_compressed_payload(plot_item)
+    payload = (
+        plot_item
+        if isinstance(plot_item, dict) and (
+            "plot_item" in plot_item or "unavailable_reason" in plot_item
+        )
+        else _plot_artifact_storage_payload(plot_item, None)
+    )
+    _raw_utf8, compressed, enc = json_item_to_compressed_payload(payload)
     objs.append(
         job_plot_artifact(
             jid_id=jid,
@@ -313,11 +347,11 @@ def load_cached_job_plot_entry(
       and row.payload_compressed
   ):
     try:
-      item = decompress_plot_item_dict(
+      item = _normalize_loaded_plot_artifact_payload(decompress_plot_item_dict(
           bytes(row.payload_compressed),
           row.payload_encoding,
-      )
-      return {"plot_item": item, "unavailable_reason": None}
+      ))
+      return item
     except Exception:
       logger.warning(
           "Corrupt job_plot_artifact jid=%s kind=%s layout=%s",
@@ -336,12 +370,14 @@ def load_cached_job_plot_entry(
         and base.payload_compressed
     ):
       try:
-        item = decompress_plot_item_dict(
+        item = _normalize_loaded_plot_artifact_payload(decompress_plot_item_dict(
             bytes(base.payload_compressed),
             base.payload_encoding,
-        )
-        zoomed = _apply_zoom_layout_to_json_item(item)
-        return {"plot_item": zoomed, "unavailable_reason": None}
+        ))
+        if item.get("plot_item") is None:
+          return item
+        zoomed = _apply_zoom_layout_to_json_item(item["plot_item"])
+        return {"plot_item": zoomed, "unavailable_reason": item.get("unavailable_reason")}
       except Exception:
         logger.warning(
             "Failed zoom layout from stored normal plot jid=%s kind=%s",
@@ -435,10 +471,15 @@ def persist_job_plot_artifacts_for_jid(
             layout,
             exc_info=True,
         )
-        continue
-      if plot_item is None:
-        continue
-      write_rows.append((jid, kind, layout, fp, plot_item))
+        plot_item = None
+        reason = "Plot generation failed during artifact prewarm."
+      write_rows.append((
+          jid,
+          kind,
+          layout,
+          fp,
+          _plot_artifact_storage_payload(plot_item, reason),
+      ))
   if not write_rows:
     return
   try:

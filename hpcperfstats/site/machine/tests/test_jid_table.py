@@ -9,9 +9,10 @@ import pytest
 pytestmark = pytest.mark.django_db(databases=[])
 
 from contextlib import nullcontext
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.db import OperationalError
+from django.db import connections
 
 from hpcperfstats.analysis.gen.jid_table import _coerce_jid_table_host_query_batch_size
 from hpcperfstats.analysis.gen.jid_table import _build_acct_host_fqdns
@@ -29,6 +30,7 @@ from hpcperfstats.analysis.gen.jid_table import _normalize_job_accounting_host_l
 from hpcperfstats.analysis.gen.jid_table import _normalize_window_bound_datetime
 from hpcperfstats.analysis.gen.jid_table import _ntile_bucket_max_timestamps
 from hpcperfstats.analysis.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
+from hpcperfstats.analysis.gen.jid_table import _strided_distinct_times_date_bin_postgresql
 from hpcperfstats.analysis.gen.jid_table import _strided_distinct_times_for_large_job
 from hpcperfstats.analysis.gen.jid_table import _unpack_cached_job_window_row
 from hpcperfstats.analysis.gen.jid_table import TypeDetailDataProvider
@@ -444,6 +446,86 @@ def test_jid_table_host_data_time_filter_kwargs_sampled():
   assert inst._host_data_time_filter_kwargs() == {"time__in": times}
 
 
+def test_jid_table_get_llite_delta_by_event_cache_set_failure_still_returns_df():
+  """``get_llite_delta_by_event`` uses ``cached_orm``; set failure must not drop results."""
+  from hpcperfstats.analysis.gen.jid_table import jid_table
+  from hpcperfstats.site.machine import cache_utils as cu
+
+  class FakeQs:
+    def values(self, *args):
+      return self
+
+    def annotate(self, **kwargs):
+      return self
+
+    def order_by(self, *args):
+      return self
+
+    def __iter__(self):
+      yield {"event": "read_bytes", "delta_sum": 10.0}
+      yield {"event": "write_bytes", "delta_sum": 20.0}
+
+  inst = jid_table.__new__(jid_table)
+  inst.jid = "jid-llite-set-fail"
+  inst._large_job_plot_cache_token = "full"
+  inst._host_data_qs = lambda **extra: FakeQs()
+
+  mock_cache = MagicMock()
+  mock_cache.get.side_effect = lambda key, default=None: default
+  mock_cache.set.side_effect = OSError("redis read-only")
+
+  with patch.object(cu, "cache", mock_cache):
+    with patch(
+        "hpcperfstats.analysis.gen.jid_table.get_site_content_cache_timeout",
+        return_value=60,
+    ):
+      df = jid_table.get_llite_delta_by_event(inst)
+
+  assert isinstance(df, pd.DataFrame)
+  assert not df.empty
+  assert "event" in df.columns
+  mock_cache.set.assert_called()
+
+
+def test_jid_table_get_nfs_delta_totals_mb_cache_set_failure_still_returns_list():
+  """``get_nfs_delta_totals_mb`` uses ``cached_orm``; set failure must not drop totals."""
+  from hpcperfstats.analysis.gen.jid_table import jid_table
+  from hpcperfstats.site.machine import cache_utils as cu
+
+  class FakeQs:
+    def values(self, *args):
+      return self
+
+    def annotate(self, **kwargs):
+      return self
+
+    def order_by(self, *args):
+      return self
+
+    def __iter__(self):
+      yield {"event": "normal_read", "delta_sum": 2 * 1024 * 1024}
+      yield {"event": "normal_write", "delta_sum": 1024 * 1024}
+
+  inst = jid_table.__new__(jid_table)
+  inst.jid = "jid-nfs-set-fail"
+  inst._large_job_plot_cache_token = "full"
+  inst._host_data_qs = lambda **extra: FakeQs()
+
+  mock_cache = MagicMock()
+  mock_cache.get.side_effect = lambda key, default=None: default
+  mock_cache.set.side_effect = RuntimeError("no write")
+
+  with patch.object(cu, "cache", mock_cache):
+    with patch(
+        "hpcperfstats.analysis.gen.jid_table.get_site_content_cache_timeout",
+        return_value=60,
+    ):
+      out = jid_table.get_nfs_delta_totals_mb(inst)
+
+  assert out == [2.0, 1.0]
+  mock_cache.set.assert_called()
+
+
 def test_iter_queryset_values_dicts_yields_rows():
   """iter_queryset_values_dicts streams without list(qs)."""
 
@@ -462,6 +544,64 @@ def test_iter_queryset_values_dicts_yields_rows():
   qs = FakeQs()
   got = list(iter_queryset_values_dicts(qs, "a", "b", chunk_size=1))
   assert got == [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
+
+
+def test_strided_distinct_times_date_bin_postgresql_skips_distinct_when_sql_nonempty(
+    monkeypatch,
+):
+  """Grouped-max SQL path must not call the batched DISTINCT time enumerator."""
+  from datetime import timedelta, timezone as dt_utc
+
+  monkeypatch.setattr(connections["default"], "vendor", "postgresql")
+  distinct_calls = []
+
+  def fake_sql(*_a, **_k):
+    st = datetime(2025, 1, 1, 0, 0, tzinfo=dt_utc.utc)
+    return [st, st + timedelta(seconds=30)]
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table._strided_distinct_times_date_bin_via_grouped_max_sql",
+      fake_sql,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table._distinct_times_in_window_batched",
+      lambda *a, **k: distinct_calls.append(1),
+  )
+  st = datetime(2025, 1, 1, 0, 0, tzinfo=dt_utc.utc)
+  en = st + timedelta(minutes=5)
+  out = _strided_distinct_times_date_bin_postgresql(st, en, ["n1.example.com"], 64)
+  assert out == [st, st + timedelta(seconds=30)]
+  assert distinct_calls == []
+
+
+def test_strided_distinct_times_date_bin_postgresql_falls_back_when_sql_empty(
+    monkeypatch,
+):
+  """When grouped-max SQL returns no rows, fall back to DISTINCT + Python bins."""
+  from datetime import timedelta, timezone as dt_utc
+
+  monkeypatch.setattr(connections["default"], "vendor", "postgresql")
+  distinct_calls = []
+  st = datetime(2025, 1, 1, 0, 0, tzinfo=dt_utc.utc)
+
+  def fake_distinct(*_a, **_k):
+    distinct_calls.append(1)
+    return [st + timedelta(seconds=i) for i in range(10)]
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table._strided_distinct_times_date_bin_via_grouped_max_sql",
+      lambda *_a, **_k: [],
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table._distinct_times_in_window_batched",
+      fake_distinct,
+  )
+  en = st + timedelta(seconds=100)
+  out = _strided_distinct_times_date_bin_postgresql(st, en, ["n1.example.com"], 8)
+  assert distinct_calls == [1]
+  assert out
+  assert out[0] >= st
+  assert out[-1] <= en
 
 
 def test_strided_distinct_times_for_large_job_falls_back_to_fixed_window_points(monkeypatch):

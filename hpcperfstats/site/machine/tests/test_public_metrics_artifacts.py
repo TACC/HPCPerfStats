@@ -13,11 +13,12 @@ from hpcperfstats.site.machine.public_metrics_artifacts import (
     compute_scheduler_expansion_factor_seconds,
     decompress_public_payload,
     refresh_public_expansion_factor_artifacts,
+    refresh_public_expansion_factor_artifacts_parallel,
 )
 
 
 @pytest.mark.django_db
-def test_refresh_public_expansion_factor_artifacts_parallel_inline_pool():
+def test_refresh_public_expansion_factor_artifacts_parallel_inline_pool(monkeypatch):
   """Parallel path with a pool that runs workers in-process matches sequential stats."""
   submit = datetime(2024, 3, 1, tzinfo=dj_tz.utc)
   start = datetime(2024, 3, 1, 1, 0, 0, tzinfo=dj_tz.utc)
@@ -36,6 +37,14 @@ def test_refresh_public_expansion_factor_artifacts_parallel_inline_pool():
 
   from hpcperfstats.site.machine.public_metrics_artifacts import (
       refresh_public_expansion_factor_artifacts_parallel,
+  )
+  from hpcperfstats.site.machine import public_metrics_artifacts as pma
+
+  monkeypatch.setattr(pma, "_public_ef_reset_fork_inherited_db", lambda: None)
+  monkeypatch.setattr(
+      pma,
+      "_public_ef_parent_refresh_connections_after_forked_children",
+      lambda: None,
   )
 
   class _InlinePool:
@@ -158,6 +167,48 @@ def test_compute_scheduler_expansion_factor_formula_and_guards():
   assert compute_scheduler_expansion_factor_seconds(submit, start, runtime, 0) is None
   bad_submit = start + timedelta(hours=1)
   assert compute_scheduler_expansion_factor_seconds(bad_submit, start, runtime, ncores) is None
+
+
+@pytest.mark.machine_unit_mock
+def test_refresh_public_expansion_factor_artifacts_parallel_marks_no_progress_degraded(monkeypatch):
+  from hpcperfstats.site.machine import public_metrics_artifacts as pma
+
+  monkeypatch.setattr(pma, "_month_keys_present", lambda: ["2025-06"])
+  monkeypatch.setattr(pma, "_year_keys_present", lambda: [])
+  monkeypatch.setattr(pma, "_prune_orphan_public_ef_rows", lambda months, years: None)
+  monkeypatch.setattr(
+      pma,
+      "_public_ef_parent_refresh_connections_after_forked_children",
+      lambda: None,
+  )
+
+  class _NeverProgressIterator:
+    def next(self, timeout=None):
+      del timeout
+      raise pma.MultiprocessingTimeoutError()
+
+  class _Pool:
+    def imap_unordered(self, fn, tasks, chunksize=1):
+      del fn, tasks, chunksize
+      return _NeverProgressIterator()
+
+  progress = []
+  times = iter([0.0, 6.0])
+  monkeypatch.setattr(pma.time, "monotonic", lambda: next(times))
+
+  result = refresh_public_expansion_factor_artifacts_parallel(
+      _Pool(),
+      poll_timeout_s=1.0,
+      no_progress_timeout_s=5.0,
+      progress_callback=progress.append,
+  )
+
+  assert result["tasks_total"] == 1
+  assert result["tasks_completed"] == 0
+  assert result["pending_tasks"] == 1
+  assert result["watchdog_timeouts"] == 1
+  assert result["degraded"] == 1
+  assert progress[-1]["pending_tasks"] == 1
 
 
 @pytest.mark.django_db

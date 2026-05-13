@@ -14,12 +14,14 @@ def test_job_detail_artifacts_has_jid_table_import():
   """Guard against NameError in prewarm path when jid_table import is dropped."""
   assert hasattr(jda, "jid_table")
   assert hasattr(jda.jid_table, "jid_table")
+  assert hasattr(jda, "plots")
+  assert hasattr(jda.plots, "DevPlot")
 
 
 def _mk_job(jid="detailtest1"):
   now = timezone.now()
   return job_data.objects.create(
-      jid=jid,
+      jid=jid[:32],
       submit_time=now - timedelta(minutes=2),
       start_time=now - timedelta(minutes=1),
       end_time=now,
@@ -123,6 +125,64 @@ def test_persist_job_detail_skips_type_detail_when_artifact_is_fresh(monkeypatch
   )
 
   jda.persist_job_detail_artifacts_for_jid(job.jid)
+
+
+@pytest.mark.django_db
+def test_persist_job_detail_records_type_detail_failure_as_fresh_unavailable(monkeypatch):
+  job = _mk_job("detail-type-failure")
+
+  class _FakeJt:
+    acct_host_list = ["n1"]
+    schema = {"cpu": ["user"]}
+    start_time = job.start_time
+    end_time = job.end_time
+
+    def get_llite_delta_by_event(self):
+      return pd.DataFrame()
+
+    def get_nfs_delta_totals_mb(self):
+      return None
+
+  class _FailingDevPlot:
+    def __init__(self, _provider, _hosts):
+      pass
+
+    def plot(self):
+      raise RuntimeError("type detail blew up")
+
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_detail_artifacts.jid_table.jid_table",
+      lambda _jid: _FakeJt(),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_detail_artifacts._gpu_detail_from_jid_table",
+      lambda _jt: {"gpu_active": None, "gpu_utilization_max": None, "gpu_utilization_mean": None, "gpu_count": None},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_detail_artifacts.jid_table.TypeDetailDataProvider",
+      lambda *args, **kwargs: object(),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_detail_artifacts.plots.DevPlot",
+      _FailingDevPlot,
+  )
+
+  jda.persist_job_detail_artifacts_for_jid(job.jid)
+
+  fp = jda.compute_detail_input_fingerprint(job)
+  payload = jda.load_job_detail_artifact(
+      job.jid,
+      jda.ARTIFACT_KIND_TYPE_DETAIL,
+      "cpu",
+      fp,
+  )
+  assert payload is not None
+  assert payload["tplot_item"] is None
+  assert payload["stats_data"] == []
+  assert payload["schema"] == []
+  assert payload["tplot_unavailable_reason"] == (
+      "Type detail plot generation failed during artifact prewarm."
+  )
 
 
 @pytest.mark.django_db

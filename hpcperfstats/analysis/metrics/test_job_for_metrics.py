@@ -170,6 +170,75 @@ def test_drain_metrics_imap_supports_generator_without_next():
   )
 
 
+def test_drain_metrics_imap_returns_explicit_worker_failure_outcome():
+  class _FakePoolWorkerFailure:
+    def imap_unordered(self, fn, tasks, chunksize=1):
+      del fn, tasks, chunksize
+      return iter([{
+          "jid": "j-worker",
+          "status": "worker_db_error",
+          "rows": [],
+          "distinct_time_count": None,
+          "error_type": "OperationalError",
+          "error_message": "lost synchronization with server",
+      }])
+
+  out = metrics._drain_metrics_imap(
+      _FakePoolWorkerFailure(),
+      tasks=[("m", "j-worker")],
+      chunksize=1,
+      poll_timeout_s=0.0,
+      stall_timeout_s=0.5,
+  )
+  assert len(out) == 1
+  assert out[0]["jid"] == "j-worker"
+  assert out[0]["ok"] is False
+  assert out[0]["status"] == "worker_db_error"
+  assert out[0]["error_type"] == "OperationalError"
+
+
+def test_drain_metrics_imap_returns_parent_persist_timeout_outcome(monkeypatch):
+  class _FakePoolPersistTimeout:
+    def imap_unordered(self, fn, tasks, chunksize=1):
+      del fn, tasks, chunksize
+      return iter([{
+          "jid": "j-persist",
+          "status": "ok",
+          "rows": [{
+              "jid": "j-persist",
+              "type": "cpu",
+              "metric": "avg_cpuusage",
+              "units": "#cores",
+              "value": 1.0,
+              "no_data_reason": None,
+          }],
+          "distinct_time_count": 2,
+          "error_type": None,
+          "error_message": None,
+      }])
+
+  monkeypatch.setattr(metrics, "run_with_db_retry", lambda fn, attempts=2: fn())
+
+  def _raise_timeout(job_rows, distinct_time_count):
+    del job_rows, distinct_time_count
+    raise metrics.DatabaseError("canceling statement due to statement timeout")
+
+  monkeypatch.setattr(metrics, "_persist_metrics_batch", _raise_timeout)
+
+  out = metrics._drain_metrics_imap(
+      _FakePoolPersistTimeout(),
+      tasks=[("m", "j-persist")],
+      chunksize=1,
+      poll_timeout_s=0.0,
+      stall_timeout_s=0.5,
+  )
+  assert len(out) == 1
+  assert out[0]["jid"] == "j-persist"
+  assert out[0]["ok"] is False
+  assert out[0]["status"] == "parent_persist_timeout"
+  assert out[0]["error_type"] == "DatabaseError"
+
+
 def test_metrics_run_stall_with_owned_pool_confirms_reset(monkeypatch):
   fake_calls = {"terminate": 0}
 

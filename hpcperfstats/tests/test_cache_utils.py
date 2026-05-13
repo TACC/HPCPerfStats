@@ -81,6 +81,40 @@ def test_cached_orm_exception_falls_back_to_query_fn():
   assert result == "fallback"
 
 
+def test_cached_orm_get_failure_does_not_call_set():
+  """If cache.get raises, do not attempt cache.set (degraded read path)."""
+  mock_cache = MagicMock()
+  mock_cache.get.side_effect = ConnectionError("redis unreachable")
+
+  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
+    from hpcperfstats.site.machine import cache_utils
+    result = cache_utils.cached_orm("key_no_set", 60, lambda: {"ok": 1})
+  assert result == {"ok": 1}
+  mock_cache.set.assert_not_called()
+
+
+def test_cached_orm_set_failure_still_returns_query_fn_result():
+  """If cache.set raises on miss, return computed value without caching."""
+  stored = {}
+  mock_cache = MagicMock()
+  mock_cache.get.side_effect = lambda key, default=None: stored.get(key, default)
+  mock_cache.set.side_effect = RuntimeError("redis read-only replica")
+
+  calls = []
+
+  def query_fn():
+    calls.append(1)
+    return {"v": 99}
+
+  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
+    from hpcperfstats.site.machine import cache_utils
+    result = cache_utils.cached_orm("key_set_err", 60, query_fn)
+  assert result == {"v": 99}
+  assert calls == [1]
+  assert "key_set_err" not in stored
+  mock_cache.set.assert_called()
+
+
 def test_get_site_content_cache_timeout_fresh_when_newest_within_window():
   """Newest job end within SITE_FRESHNESS_WINDOW_DAYS => 3600."""
   from datetime import datetime, timedelta, timezone as dt_tz

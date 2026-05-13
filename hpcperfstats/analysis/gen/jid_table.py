@@ -469,6 +469,83 @@ def _strided_distinct_times_postgresql(start, end, acct_hosts, n_buckets):
   return _ntile_bucket_max_timestamps(distinct_sorted, n_buckets)
 
 
+def _strided_distinct_times_date_bin_via_grouped_max_sql(
+    start, end, acct_hosts, n_buckets, batch_size=None,
+):
+  """One ``MAX(time)`` per wall-clock stride bucket, merged across host chunks.
+
+  Matches the stride grid used by :func:`_date_bin_bucket_maxima` without
+  materializing every distinct ``time`` in Python (which is expensive on very
+  large windows).
+  """
+  start_dt = _normalize_window_bound_datetime(start)
+  end_dt = _normalize_window_bound_datetime(end)
+  hosts = _listify_acct_hosts(acct_hosts)
+  if not hosts or start_dt is None or end_dt is None:
+    return []
+  span_sec = (end_dt - start_dt).total_seconds()
+  if span_sec <= 0:
+    return [start_dt]
+  try:
+    nb = max(2, int(n_buckets))
+  except (TypeError, ValueError, OverflowError):
+    nb = 2
+  step_sec = max(span_sec / float(nb - 1), 1e-9)
+
+  conn = connections["default"]
+  if conn.vendor != "postgresql":
+    return []
+
+  meta = host_data._meta
+  ops = conn.ops
+  tbl = ops.quote_name(meta.db_table)
+  tcol = ops.quote_name(meta.get_field("time").column)
+  hcol = ops.quote_name(meta.get_field("host").column)
+  merged = {}
+
+  for attempt in range(2):
+    try:
+      close_old_connections()
+      with _pg_relax_statement_timeout_for_large_job_time_sql():
+        for host_chunk in _iter_acct_host_batches(hosts, batch_size):
+          clean_chunk = [
+              h
+              for h in (
+                  _normalize_host_cell_for_host_data(h) for h in host_chunk
+              )
+              if h
+          ]
+          if not clean_chunk:
+            continue
+          placeholders = ", ".join(["%s"] * len(clean_chunk))
+          sql = (
+              "SELECT (FLOOR(EXTRACT(EPOCH FROM ("
+              + tbl + "." + tcol + " - %s)) / %s))::bigint AS grp, "
+              "MAX(" + tbl + "." + tcol + ") AS mx FROM " + tbl + " "
+              "WHERE " + tbl + "." + tcol + " >= %s AND " + tbl + "." + tcol
+              + " <= %s AND " + tbl + "." + hcol + " IN (" + placeholders
+              + ") GROUP BY 1"
+          )
+          params = [start_dt, step_sec, start_dt, end_dt] + clean_chunk
+          with conn.cursor() as cursor:
+            cursor.execute(sql, params)
+            for grp, mx in cursor.fetchall():
+              if mx is None:
+                continue
+              prev = merged.get(grp)
+              if prev is None or mx > prev:
+                merged[grp] = mx
+      break
+    except Exception as exc:
+      if attempt == 0 and _is_psycopg_connection_desync(exc):
+        continue
+      raise
+
+  if not merged:
+    return []
+  return [merged[k] for k in sorted(merged)]
+
+
 def _strided_distinct_times_date_bin_postgresql(start, end, acct_hosts, n_buckets):
   """Up to ~n_buckets timestamps via date-bin-style buckets (Python, same grid as PG)."""
   if not acct_hosts or start is None or end is None or n_buckets < 2:
@@ -476,6 +553,17 @@ def _strided_distinct_times_date_bin_postgresql(start, end, acct_hosts, n_bucket
   span_sec = (end - start).total_seconds()
   if span_sec <= 0:
     return [start]
+  if connections["default"].vendor == "postgresql":
+    try:
+      via_sql = _strided_distinct_times_date_bin_via_grouped_max_sql(
+          start, end, acct_hosts, n_buckets)
+      if via_sql:
+        return via_sql
+    except Exception:
+      _logger.warning(
+          "jid_table date_bin grouped-max SQL failed; falling back to DISTINCT",
+          exc_info=True,
+      )
   distinct_sorted = _distinct_times_in_window_batched(start, end, acct_hosts)
   if not distinct_sorted:
     return []

@@ -174,6 +174,30 @@ def test_jobs_queryset_orders_newest_job_first():
 
 
 @pytest.mark.django_db(databases=[])
+def test_jobs_queryset_filters_end_time_with_half_open_range(monkeypatch):
+  """Use ``end_time__gte`` / ``end_time__lt`` instead of ``end_time__date`` for index use."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  d = datetime(2025, 4, 10, 15, 30, 0)
+  qs = update_metrics._jobs_queryset(d, 300, rerun=True)
+  sql = str(qs.query).lower()
+  assert "end_time" in sql
+  assert ">=" in sql
+  assert "end_time__date" not in sql
+
+
+@pytest.mark.django_db(databases=[])
+def test_end_time_calendar_day_half_open_bounds_span_one_day():
+  from datetime import date as date_cls
+
+  lo, hi = update_metrics._end_time_calendar_day_half_open_bounds(
+      date_cls(2025, 4, 10)
+  )
+  assert lo < hi
+  assert (hi - lo).total_seconds() == 86400
+
+
+@pytest.mark.django_db(databases=[])
 def test_jobs_queryset_postgresql_sql_jid_scoped_live_samples(monkeypatch):
   """Non-rerun + PostgreSQL: live sum uses jid + window (default path)."""
   monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
@@ -235,6 +259,18 @@ def test_jobs_queryset_non_postgresql_omits_unnest_live_samples(monkeypatch):
   qs = update_metrics._jobs_queryset(d, 300, rerun=False)
   sql = str(qs.query).lower()
   assert "unnest" not in sql
+
+
+@pytest.mark.django_db(databases=[])
+def test_jobs_queryset_annotates_artifact_only_candidate(monkeypatch):
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  d = datetime(2025, 4, 10, 15, 30, 0)
+  qs = update_metrics._jobs_queryset(d, 300, rerun=False)
+  sql = str(qs.query)
+  assert "artifact_only_candidate" in sql
+  assert "job_plot_artifact" in sql
+  assert "job_detail_artifact" in sql
 
 
 def test_expected_job_metrics_row_count_cached(monkeypatch):
@@ -719,6 +755,14 @@ def test_compute_jid_outcomes_batch_prewarm_submits_each_jid(monkeypatch):
 
     def run(self, job_refs, pool=None):
       del pool
+      return [{
+          "jid": ref.jid,
+          "ok": True,
+          "status": "ok",
+          "error_type": None,
+          "error_message": None,
+          "persist_s": 0.0,
+      } for ref in job_refs]
 
   pipe = MagicMock()
   pipe.has_pending.return_value = False
@@ -730,6 +774,61 @@ def test_compute_jid_outcomes_batch_prewarm_submits_each_jid(monkeypatch):
   )
   assert [c.args[0] for c in pipe.submit.call_args_list] == ["j1", "j2", "j3"]
   assert [d["jid"] for d in out] == ["j1", "j2", "j3"]
+
+
+@pytest.mark.machine_unit_mock
+def test_compute_jid_outcomes_batch_skips_prewarm_for_explicit_failed_outcomes(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: False)
+
+  class _M:
+    def ensure_pool(self):
+      return None
+
+    def run(self, job_refs, pool=None):
+      del pool
+      return [
+          {
+              "jid": "j1",
+              "ok": True,
+              "status": "ok",
+              "error_type": None,
+              "error_message": None,
+              "persist_s": 0.0,
+          },
+          {
+              "jid": "j2",
+              "ok": False,
+              "status": "worker_db_error",
+              "error_type": "OperationalError",
+              "error_message": "lost synchronization with server",
+              "persist_s": 0.0,
+          },
+          {
+              "jid": "j3",
+              "ok": False,
+              "status": "parent_persist_timeout",
+              "error_type": "DatabaseError",
+              "error_message": "statement timeout",
+              "persist_s": 12.5,
+          },
+      ]
+
+  pipe = MagicMock()
+  pipe.has_pending.return_value = False
+  out = update_metrics._compute_jid_outcomes_batch(
+      [SimpleNamespace(jid="j1"), SimpleNamespace(jid="j2"), SimpleNamespace(jid="j3")],
+      _M(),
+      pipe,
+      None,
+  )
+  assert [c.args[0] for c in pipe.submit.call_args_list] == ["j1"]
+  by_jid = {d["jid"]: d for d in out}
+  assert by_jid["j1"]["ok"] is True
+  assert by_jid["j2"]["ok"] is False
+  assert by_jid["j2"]["failure_kind"] == "worker_db_error"
+  assert by_jid["j3"]["ok"] is False
+  assert by_jid["j3"]["failure_kind"] == "parent_persist_timeout"
+  assert by_jid["j3"]["persist_s"] == 12.5
 
 
 @pytest.mark.machine_unit_mock
@@ -772,6 +871,61 @@ def test_compute_jid_outcomes_batch_prewarm_drain_budget_defers_backlog(monkeypa
   # Budget is exhausted immediately, so backlog is deferred instead of spinning.
   assert pipe.drain_calls == 0
   assert [d["jid"] for d in out] == ["j1", "j2"]
+
+
+@pytest.mark.machine_unit_mock
+def test_compute_jid_outcomes_batch_skips_metrics_run_for_artifact_only_candidates(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: False)
+
+  calls = []
+
+  class _M:
+    def ensure_pool(self):
+      return None
+
+    def run(self, job_refs, pool=None):
+      del pool
+      calls.append([(ref.jid, bool(getattr(ref, "artifact_only", False))) for ref in job_refs])
+      return [{
+          "jid": "metrics-jid",
+          "ok": True,
+          "status": "ok",
+          "error_type": None,
+          "error_message": None,
+          "persist_s": 0.0,
+      }]
+
+  class _Pipe:
+    def __init__(self):
+      self.submitted = []
+
+    def submit(self, jid):
+      self.submitted.append(jid)
+
+    def has_pending(self):
+      return False
+
+    def drain_some(self, force=False, wait_timeout_s=0.0):
+      del force, wait_timeout_s
+
+  pipe = _Pipe()
+  out = update_metrics._compute_jid_outcomes_batch(
+      [
+          SimpleNamespace(jid="artifact-jid", artifact_only=True),
+          SimpleNamespace(jid="metrics-jid", artifact_only=False),
+      ],
+      _M(),
+      pipe,
+      None,
+  )
+
+  assert calls == [[("metrics-jid", False)]]
+  assert pipe.submitted == ["artifact-jid", "metrics-jid"]
+  by_jid = {row["jid"]: row for row in out}
+  assert by_jid["artifact-jid"]["ok"] is True
+  assert by_jid["artifact-jid"]["metrics_s"] == 0.0
+  assert by_jid["metrics-jid"]["ok"] is True
+  assert by_jid["metrics-jid"]["metrics_s"] >= 0.0
 
 
 @pytest.mark.machine_unit_mock
@@ -1502,6 +1656,105 @@ def test_update_metrics_for_dates_records_queue_and_attempt_counters(monkeypatch
   assert diag["stats"]["stall_reason"] == "compute_all_failed"
 
 
+@pytest.mark.machine_unit_mock
+def test_update_metrics_for_dates_records_explicit_worker_and_parent_persist_failures(monkeypatch):
+  """Scheduler diagnostics should track explicit worker and parent-persist failed outcomes."""
+  monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+  monkeypatch.setattr(
+      update_metrics,
+      "refresh_public_expansion_factor_artifacts_parallel",
+      lambda pool, **kwargs: {},
+  )
+  monkeypatch.setattr(update_metrics, "refresh_public_expansion_factor_artifacts_safe", lambda: None)
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs([([1001, 1002, 1003], 3)]),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+
+  class _DoneProducer:
+    def join(self, timeout=None):
+      del timeout
+
+  def _producer_stub(**kwargs):
+    with kwargs["ready_queue_lock"]:
+      kwargs["ready_queue"].extend([1001, 1002, 1003])
+    kwargs["producer_done"].set()
+    return _DoneProducer()
+
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _producer_stub)
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      del pool
+      return [
+          {
+              "jid": 1001,
+              "ok": True,
+              "status": "ok",
+              "error_type": None,
+              "error_message": None,
+              "persist_s": 0.0,
+          },
+          {
+              "jid": 1002,
+              "ok": False,
+              "status": "worker_db_error",
+              "error_type": "OperationalError",
+              "error_message": "lost synchronization with server",
+              "persist_s": 0.0,
+          },
+          {
+              "jid": 1003,
+              "ok": False,
+              "status": "parent_persist_timeout",
+              "error_type": "DatabaseError",
+              "error_message": "canceling statement due to statement timeout",
+              "persist_s": 7.5,
+          },
+      ]
+
+  prewarmed = []
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: prewarmed.append(jid))
+  monkeypatch.setattr(update_metrics, "persist_job_detail_artifacts_for_jid", lambda jid: None)
+  update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS = None
+  update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  diag = update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS
+  assert diag is not None
+  assert diag["stats"]["processed"] == 1
+  assert diag["stats"]["failed"] == 2
+  assert diag["stats"]["attempted_total"] == 3
+  assert diag["stats"]["worker_failed_outcomes_total"] == 1
+  assert diag["stats"]["parent_persist_failures_total"] == 1
+  assert prewarmed == [1001]
+
+
 @pytest.mark.django_db(databases=[])
 def test_update_metrics_for_dates_rescan_picks_up_new_mid_run_jid(monkeypatch):
   """Background rescan candidates should be merged without interrupting ready work."""
@@ -1589,7 +1842,7 @@ def test_update_metrics_for_dates_rescan_picks_up_new_mid_run_jid(monkeypatch):
   assert 2002 in flat
 
 
-@pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
 def test_update_metrics_refreshes_pub_dashboards_before_first_compute(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
@@ -1619,7 +1872,7 @@ def test_update_metrics_refreshes_pub_dashboards_before_first_compute(monkeypatc
   monkeypatch.setattr(
       update_metrics,
       "refresh_public_expansion_factor_artifacts_parallel",
-      lambda pool: order.append(("pub_parallel", pool)),
+      lambda pool, **kwargs: order.append(("pub_parallel", pool)) or {},
   )
   monkeypatch.setattr(
       update_metrics,
@@ -1648,6 +1901,8 @@ def test_update_metrics_refreshes_pub_dashboards_before_first_compute(monkeypatc
 
   def _producer_stub(**kwargs):
     order.append("producer_start")
+    with kwargs["ready_queue_lock"]:
+      kwargs["ready_queue"].append(1001)
     kwargs["producer_done"].set()
     return _DoneProducer()
 
@@ -1660,6 +1915,30 @@ def test_update_metrics_refreshes_pub_dashboards_before_first_compute(monkeypatc
   assert "compute" in order
   assert order.index("compute") > prod_i
   assert order[-1] == "safe_final"
+
+
+@pytest.mark.machine_unit_mock
+def test_run_public_ef_artifacts_parallel_phase_logs_degraded_state(monkeypatch):
+  logs = []
+  monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
+  monkeypatch.setattr(
+      update_metrics,
+      "refresh_public_expansion_factor_artifacts_parallel",
+      lambda pool, **kwargs: {
+          "degraded": 1,
+          "worker_exceptions": 2,
+          "watchdog_timeouts": 1,
+          "pending_tasks": 3,
+      },
+  )
+
+  stats = update_metrics._run_public_ef_artifacts_parallel_phase(
+      shared_pool=object(),
+      phase_timer=update_metrics._PhaseTimer(),
+  )
+
+  assert stats["degraded"] == 1
+  assert any("/pub/ EF artifacts degraded" in msg for msg in logs)
 
 
 @pytest.mark.machine_unit_mock
@@ -1808,7 +2087,7 @@ def test_update_metrics_pub_parallel_once_then_safe_in_finally(monkeypatch):
   monkeypatch.setattr(
       update_metrics,
       "refresh_public_expansion_factor_artifacts_parallel",
-      lambda pool: parallel_calls.append(pool),
+      lambda pool, **kwargs: parallel_calls.append(pool) or {},
   )
   monkeypatch.setattr(
       update_metrics,
@@ -1868,7 +2147,7 @@ def test_update_metrics_scheduler_runs_real_detail_prewarm_with_jid_table_stub(m
   monkeypatch.setattr(
       update_metrics,
       "refresh_public_expansion_factor_artifacts_parallel",
-      lambda pool: {},
+      lambda pool, **kwargs: {},
   )
   monkeypatch.setattr(update_metrics, "refresh_public_expansion_factor_artifacts_safe", lambda: None)
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda *a, **k: None)
@@ -2079,9 +2358,12 @@ def test_update_metrics_for_dates_per_jid_failure_does_not_stop_progress(monkeyp
   assert reporter.completed == 2
 
 
+@pytest.mark.machine_unit_mock
 def test_prewarm_pipeline_drain_some_force_does_not_use_invalid_wait_condition(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
 
   pipeline = update_metrics._PrewarmPipeline()
@@ -2094,6 +2376,135 @@ def test_prewarm_pipeline_drain_some_force_does_not_use_invalid_wait_condition(m
 
   assert pipeline._done == 1
   assert len(pipeline._pending) == 0
+  pipeline._executor.shutdown(wait=True)
+
+
+@pytest.mark.machine_unit_mock
+def test_prewarm_pipeline_drain_some_force_leaves_unfinished_future_pending(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
+
+  class _PendingFuture:
+    def __init__(self):
+      self.result_called = False
+
+    def done(self):
+      return False
+
+    def result(self):
+      self.result_called = True
+      raise AssertionError("unfinished future should not be consumed")
+
+    def cancel(self):
+      return True
+
+  pipeline = update_metrics._PrewarmPipeline()
+  fut = _PendingFuture()
+  pipeline._pending.add(fut)
+  pipeline._created_at[fut] = update_metrics.time.monotonic()
+  monkeypatch.setattr(update_metrics, "wait", lambda pending, timeout, return_when: (set(), set(pending)))
+
+  pipeline.drain_some(force=True, wait_timeout_s=0.0)
+
+  assert fut in pipeline._pending
+  assert fut.result_called is False
+  pipeline._executor.shutdown(wait=True)
+
+
+@pytest.mark.machine_unit_mock
+def test_prewarm_pipeline_finish_uses_global_timeout(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
+  monkeypatch.setattr(update_metrics, "PREWARM_FINISH_MAX_WALL_SECONDS", 1.0)
+  monkeypatch.setattr(update_metrics, "PREWARM_FINISH_WAIT_SLICE_SECONDS", 0.25)
+
+  class _PendingFuture:
+    def __init__(self):
+      self.cancel_calls = 0
+
+    def done(self):
+      return False
+
+    def cancel(self):
+      self.cancel_calls += 1
+      return True
+
+  class _FakeExecutor:
+    def __init__(self):
+      self.shutdown_calls = []
+
+    def shutdown(self, wait=False, cancel_futures=True):
+      self.shutdown_calls.append((wait, cancel_futures))
+
+  pipeline = update_metrics._PrewarmPipeline()
+  fut = _PendingFuture()
+  pipeline._pending.add(fut)
+  pipeline._created_at[fut] = 0.0
+  pipeline._executor = _FakeExecutor()
+  drain_calls = []
+  monkeypatch.setattr(
+      pipeline,
+      "drain_some",
+      lambda force=False, wait_timeout_s=0.0: drain_calls.append((force, wait_timeout_s)),
+  )
+  times = iter([0.0, 0.5, 1.1, 1.1, 1.1])
+  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: next(times))
+
+  pipeline.finish()
+
+  assert drain_calls == [(True, 0.25)]
+  assert fut.cancel_calls == 1
+  assert pipeline._failed == 1
+  assert pipeline._executor.shutdown_calls == [(False, True)]
+
+
+@pytest.mark.machine_unit_mock
+def test_prewarm_pipeline_submit_applies_backpressure_and_inline_fallback(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
+
+  class _PendingFuture:
+    def done(self):
+      return False
+
+    def cancel(self):
+      return True
+
+  pipeline = update_metrics._PrewarmPipeline()
+  fut = _PendingFuture()
+  pipeline._pending.add(fut)
+  pipeline._created_at[fut] = 10.0
+  drain_calls = []
+  inline_jids = []
+  logs = []
+  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 20.0)
+  monkeypatch.setattr(
+      pipeline,
+      "drain_some",
+      lambda force=False, wait_timeout_s=0.0: drain_calls.append((force, wait_timeout_s)),
+  )
+  monkeypatch.setattr(pipeline, "_run_inline_fallback", lambda jid: inline_jids.append(jid))
+  monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
+
+  pipeline.submit("jid-backpressure")
+
+  stats = pipeline.stats()
+  assert drain_calls == [(False, 0.0)]
+  assert inline_jids == ["jid-backpressure"]
+  assert stats["prewarm_backpressure_events"] == 2
+  assert stats["prewarm_inline_fallback_jobs"] == 1
+  assert stats["prewarm_backlog_jobs"] == 1
+  assert stats["prewarm_oldest_pending_age_s"] == 10.0
+  assert any("oldest_pending_age_s=10.000" in msg for msg in logs)
   pipeline._executor.shutdown(wait=True)
 
 

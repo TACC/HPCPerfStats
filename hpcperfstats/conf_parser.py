@@ -764,10 +764,64 @@ def get_metrics_scheduler_skip_prewarm():
   )
 
 
+def get_metrics_per_jid_phase_diagnostics_enabled():
+  """Env-only: emit per-batch jid phase lines from the metrics scheduler.
+
+  Set ``HPCPERFSTATS_METRICS_PER_JID_PHASE_LOG`` to 1/true/yes/on. Default off.
+  Intended for short compose-backed tuning runs (high log volume).
+  """
+  v = os.environ.get("HPCPERFSTATS_METRICS_PER_JID_PHASE_LOG", "").strip().lower()
+  return v in ("1", "true", "yes", "on")
+
+
 def get_metrics_prewarm_workers():
   """Thread workers for required plot prewarm stage."""
   _ensure_cfg_loaded()
   return max(1, int(cfg.get("DEFAULT", "metrics_prewarm_workers", fallback="4")))
+
+
+def get_metrics_prewarm_backlog_cap():
+  """Max queued async prewarm jobs before scheduler applies backpressure."""
+  env = os.environ.get("HPCPERFSTATS_METRICS_PREWARM_BACKLOG_CAP", "").strip()
+  if env:
+    try:
+      return max(1, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return 32
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1,
+        int(cfg.get("DEFAULT", "metrics_prewarm_backlog_cap", fallback="32")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 32
+
+
+def get_metrics_prewarm_backpressure_wait_s():
+  """Seconds to wait for one async prewarm slot before inline fallback."""
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_PREWARM_BACKPRESSURE_WAIT_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 0.25
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(
+            cfg.get(
+                "DEFAULT",
+                "metrics_prewarm_backpressure_wait_s",
+                fallback="0.25",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 0.25
 
 
 def get_metrics_scheduler_compute_threads():
@@ -813,6 +867,56 @@ def get_metrics_run_stall_timeout_s():
     )
   except (TypeError, ValueError, OverflowError):
     return 600.0
+
+
+def get_metrics_persist_statement_timeout_ms():
+  """Local PostgreSQL ``statement_timeout`` for parent metrics persistence."""
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_PERSIST_STATEMENT_TIMEOUT_MS", ""
+  ).strip()
+  if env:
+    try:
+      return max(1000, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return 120000
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1000,
+        int(
+            cfg.get(
+                "DEFAULT",
+                "metrics_persist_statement_timeout_ms",
+                fallback="120000",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 120000
+
+
+def get_metrics_persist_lock_timeout_ms():
+  """Local PostgreSQL ``lock_timeout`` for parent metrics persistence."""
+  env = os.environ.get("HPCPERFSTATS_METRICS_PERSIST_LOCK_TIMEOUT_MS", "").strip()
+  if env:
+    try:
+      return max(1000, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return 10000
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1000,
+        int(
+            cfg.get(
+                "DEFAULT",
+                "metrics_persist_lock_timeout_ms",
+                fallback="10000",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 10000
 
 
 def get_metrics_prewarm_retry_attempts():
@@ -1119,6 +1223,8 @@ def get_conf_parser_defaults_audit_snapshot():
           "metrics_plot_prewarm_mode": "pipeline_required",
           "metrics_scheduler_skip_prewarm": "no",
           "metrics_prewarm_workers": 4,
+      "metrics_prewarm_backlog_cap": 32,
+      "metrics_prewarm_backpressure_wait_s": 0.25,
           "metrics_scheduler_compute_threads": 4,
           "metrics_prewarm_retry_attempts": 2,
       },
@@ -1202,10 +1308,11 @@ def get_large_job_window_row_count_cache_ttl():
 def get_large_job_time_sample_sql_mode():
   """How to pick strided sample timestamps for large jobs: ``ntile`` or ``date_bin``.
 
-  Default ``date_bin`` (PostgreSQL 14+): ``GROUP BY date_bin(...)`` avoids building
-  a full ``DISTINCT`` time set + ``NTILE``, which often hits ``statement_timeout``
-  on large windows. Set env ``HPCPERFSTATS_LARGE_JOB_TIME_SQL=ntile`` for the
-  legacy index-space stride (distinct times, equal-count buckets).
+  Default ``date_bin``: PostgreSQL uses per-stride-bucket ``MAX(time)`` queries
+  merged across host chunks (same stride grid as the legacy Python path),
+  avoiding a full-window batched ``DISTINCT time`` pass when that succeeds.
+  Set env ``HPCPERFSTATS_LARGE_JOB_TIME_SQL=ntile`` for the legacy index-space
+  stride (distinct times, equal-count buckets in Python).
   """
   env = os.environ.get("HPCPERFSTATS_LARGE_JOB_TIME_SQL", "").strip().lower()
   if env in ("ntile",):
