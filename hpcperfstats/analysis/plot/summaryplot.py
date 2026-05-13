@@ -56,6 +56,10 @@ from hpcperfstats.analysis.plot.bokeh_job_detail_help_marker import (
 
 local_timezone = cfg.get_local_timezone()
 
+# Hard cap for nested aggregate prefetch threads (see job_plots + api ThreadPoolExecutor).
+# Keeps DB connection and work_mem spikes bounded when summaryplot runs inside a worker thread.
+_SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS = 2
+
 
 def _cycled_d3_category20_palette(n):
   """Return ``n`` colors from d3 Category20, cycling every 20 hosts.
@@ -124,8 +128,28 @@ def _step_polyline_xy(times, values):
   return xs, ys
 
 
+def compute_summary_aggregate_prefetch_pool_size(num_specs):
+  """Return ``ThreadPoolExecutor`` ``max_workers`` for summary aggregate prefetch.
+
+  Capped by ``_SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS`` so nested parallelism does not
+  multiply against ``site.machine.api``'s shared executor under ``job_plots``.
+  """
+  return max(
+    1,
+    min(
+      int(num_specs),
+      cfg.get_parallel_db_prefetch_max_workers(),
+      _SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS,
+    ),
+  )
+
+
 def _prefetch_single_spec_aggregates(jt, spec_rows):
-  """Parallel fetch for (typ, val, events, conv, name) rows; returns name -> DataFrame."""
+  """Parallel fetch for (typ, val, events, conv, name) rows; returns name -> DataFrame.
+
+  Thread count is capped by ``_SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS`` so this path
+  does not multiply against ``api.py``'s shared executor when building summary plots.
+  """
   import pandas as pd
 
   raw_schema = getattr(jt, "schema", None)
@@ -144,7 +168,7 @@ def _prefetch_single_spec_aggregates(jt, spec_rows):
   out = {}
   if not spec_rows:
     return out
-  max_workers = min(cfg.get_parallel_db_prefetch_max_workers(), len(spec_rows))
+  max_workers = compute_summary_aggregate_prefetch_pool_size(len(spec_rows))
   with ThreadPoolExecutor(max_workers=max_workers) as pool:
     futures = [pool.submit(_one, row) for row in spec_rows]
     for fut in as_completed(futures):

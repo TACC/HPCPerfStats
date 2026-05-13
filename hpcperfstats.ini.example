@@ -40,8 +40,9 @@ timezone = America/Chicago
 # Total amount of cores that are available for this application (omit to default to 40).
 total_cores = 40
 
-# Concurrency caps (optional; see docs/DEPLOY_CONCURRENCY_AND_NUMA.md)
-# OOM-protection baseline profile (settings-only): start here, then raise gradually
+# Concurrency caps (optional; see docs/DEPLOY_CONCURRENCY_AND_NUMA.md).
+# Defaults: parallel_db_prefetch_max=4 (API ThreadPoolExecutor + ORM prefetch);
+# summary plot inner aggregate prefetch is hard-capped at 2 threads (summaryplot).
 # max_gunicorn_workers = 8
 # metrics_pool_process_cap = 4
 # (Compose diagnosis baseline: docs/update_metrics_speedup_followup.md — compute phase dominated at default UM_DIAG seed scale.)

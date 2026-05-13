@@ -7,12 +7,12 @@ This document summarizes how **thread/process counts** and **Docker Compose CPU 
 | Service | Role | Parallelism | DB impact |
 |---------|------|----------------|-----------|
 | **web** | Gunicorn + Django | Workers = `min(2 * min(os.cpu_count(), effective_cores) + 1, max_gunicorn_workers)` (default cap **32**); override with **`WEB_CONCURRENCY`** | Each worker may hold a persistent DB connection (`CONN_MAX_AGE`, default **90s** via `conf_parser.get_db_conn_max_age()`) |
-| **web** | `api.py` | `ThreadPoolExecutor` size = **`api_small_executor_max_workers`**, or **`parallel_db_prefetch_max`** (default **6**) when the API key is unset | Extra concurrent ORM work per worker |
-| **web** | `summaryplot.py` | Parallel prefetch uses **`get_parallel_db_prefetch_max_workers()`** (same default **6**) | Same cap family as API executor |
+| **web** | `api.py` | `ThreadPoolExecutor` size = **`api_small_executor_max_workers`**, or **`parallel_db_prefetch_max`** (default **4**) when the API key is unset | Extra concurrent ORM work per worker |
+| **web** | `summaryplot.py` | Aggregate prefetch uses **`compute_summary_aggregate_prefetch_pool_size()`**: at most **2** inner threads, then **`parallel_db_prefetch_max`** (default **4**) | Prevents nested pools from multiplying against `api.py` under `job_plots` |
 | **pipeline** | `update_metrics.py` | `multiprocessing.Pool` size = **`get_metrics_pool_process_count()`** (≤ **`metrics_pool_process_cap`**) | Many concurrent readers during metrics passes |
 | **pipeline** | `sync_timedb.py` / archive | Ingest pool = **`get_sync_ingest_pool_processes()`** (same base as `get_worker_thread_count(2)`, optional **`sync_pool_process_cap`**); archive pool = **`get_sync_archive_pool_processes()`** (half of ingest, optional **`archive_pool_process_cap`**) | Load spikes + pigz CPU; `sync_timedb` is a long-lived loop (rescans archive after each wave; sleeps 5 minutes when no pending files) |
 | **pipeline** | `listend.py` | Pika + a few daemon threads; no Django DB in this module | Low |
-| **db** | PostgreSQL | `max_connections=500` in `docker-compose.yaml` | Hard ceiling for all clients |
+| **db** | PostgreSQL | `max_connections=500`; lowered `work_mem`, parallel worker caps, and maintenance buffers in `docker-compose.yaml` to limit RAM spikes | Hard slot ceiling; per-query memory bounded by GUCs |
 
 **Sizing rule:** **`effective_cores = min(ini total_cores, os.cpu_count())`**. If **`[DEFAULT] total_cores`** is **missing** in `hpcperfstats.ini`, the code uses **40** as the ini budget. If the host has more CPUs than **`total_cores`**, the ini value **caps** app parallelism. If **ini > host**, **`os.cpu_count()`** (including cgroup/cpuset limits) wins.
 
@@ -22,7 +22,7 @@ Rough peak connections:
 
 `web_workers + metrics_pool_processes + sync_timedb_processes + overhead`
 
-Keep this **below** `max_connections` minus headroom for admin, autovacuum, and monitoring. The stack does **not** use an external pooler (no PgBouncer): sizing is direct Django → Postgres. Use **`WEB_CONCURRENCY`**, **`metrics_pool_process_cap`**, **`sync_pool_process_cap`**, and **`parallel_db_prefetch_max`** to cap clients before raising `max_connections`.
+Compose sets **`max_connections=500`** with **reduced `work_mem` / parallel gather / maintenance buffers** to limit RAM spikes while keeping slot headroom. The stack does **not** use an external pooler (no PgBouncer): sizing is direct Django → Postgres. Still use **`WEB_CONCURRENCY`**, **`metrics_pool_process_cap`**, **`sync_pool_process_cap`**, and **`parallel_db_prefetch_max`** so concurrent heavy queries stay bounded.
 
 ## Connection lifetime, query timeouts, and staggered pipeline
 

@@ -72,7 +72,12 @@ services:
     image: timescale/timescaledb:latest-pg15
     container_name: hpcperfstats_db_1
     # Default container /dev/shm is 64MiB; Postgres dynamic shared memory exhausts it easily
-    # with max_connections=500.
+    # under parallel workers. Keep shm_size generous for max_connections=500 + modest parallelism.
+    #
+    # Memory / connection budget (operator): max_connections=500 is headroom for many Django
+    # workers + threads + pipeline pools, not permission to run 500 heavy queries at once.
+    # Spike control: lower work_mem and parallel gather workers cap per-query RAM; slightly lower
+    # shared_buffers frees container RAM for backends + OS cache (see README Postgres section).
     shm_size: "8gb"
     mem_limit: "56g"
     mem_reservation: "40g"
@@ -81,19 +86,21 @@ services:
     # max_wal_size: reduce checkpoint churn under sustained write load.
     command:
       - -c
-      - max_connections=160
+      - max_connections=500
       - -c
       - statement_timeout=120000
       - -c
       - idle_in_transaction_session_timeout=300000
       - -c
-      - shared_buffers=16GB
+      - shared_buffers=12GB
       - -c
-      - work_mem=16MB
+      - work_mem=8MB
       - -c
-      - maintenance_work_mem=1GB
+      - maintenance_work_mem=256MB
       - -c
-      - autovacuum_work_mem=512MB
+      - autovacuum_work_mem=256MB
+      - -c
+      - temp_buffers=4MB
       - -c
       - checkpoint_timeout=15min
       - -c
@@ -103,13 +110,13 @@ services:
       - -c
       - max_wal_size=6GB
       - -c
-      - max_worker_processes=24
+      - max_worker_processes=20
       - -c
-      - max_parallel_workers=16
+      - max_parallel_workers=8
       - -c
-      - max_parallel_workers_per_gather=2
+      - max_parallel_workers_per_gather=1
       - -c
-      - max_parallel_maintenance_workers=2
+      - max_parallel_maintenance_workers=1
       # Ingest replays and occasional DML on compressed host_data chunks can
       # exceed TimescaleDB's default 100k tuple decompress cap per transaction.
       - -c

@@ -260,13 +260,17 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    - `staff_email_domain` - the email domain of the institution/organization so authorized staff can see all jobs
    - `timezone` - your machine's local timezone
    - `total_cores` - CPU budget for app parallelism (omit to use code default **40**; see `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`)
-   - `max_gunicorn_workers`, `parallel_db_prefetch_max`, `api_small_executor_max_workers` - web/API memory pressure controls
+   - `max_gunicorn_workers`, `parallel_db_prefetch_max`, `api_small_executor_max_workers` - web/API memory pressure controls (override `WEB_CONCURRENCY` in compose for Gunicorn worker count)
+   - `db_conn_max_age` / `DJANGO_CONN_MAX_AGE` - how long idle Django workers keep a PostgreSQL backend open (shorter frees slots faster at the cost of connect overhead)
    - `metrics_pool_process_cap`, `metrics_scheduler_prefetch_chunks`, `metrics_scheduler_ready_queue_target`, `metrics_prewarm_workers`, `metrics_scheduler_compute_threads` - update_metrics memory/concurrency controls
    - `sync_pool_process_cap`, `archive_pool_process_cap`, `sync_ingest_queue_max_size`, `sync_archive_queue_max_size`, `sync_checkpoint_flush_batch_size` - ingest/archive memory controls (including `sync_timedb_archive.py`, which derives workers from sync ingest pool settings)
    - `secret_key` - a random string
 
    You will only need to edit the `[DEFAULT]` section as detailed above. The `[RMQ]` and `[PORTAL]` sections have been configured to work for the docker installation, and we do not recommend changing any of the variables in these sections.
    If you need to edit some of those variables, please note that a lot of them are tied to the docker yaml file. For **cluster syslog**, add or edit the optional **`[SYSLOG]`** section (see `hpcperfstats.ini.example` and the compose step above).
+
+   **PostgreSQL container (`docker-compose.yaml` `db` service):** `max_connections` is **500** so overlapping Gunicorn workers, threaded API routes (`job_plots`, `home_options`, `job_detail` aux tasks), and pipeline pools rarely hit `too many clients`. **Memory spikes** are controlled in the same `command:` block by a **lower `work_mem`**, **tighter `max_parallel_workers` / `max_parallel_workers_per_gather`**, **smaller maintenance/autovacuum work mem**, **`temp_buffers`**, and a **slightly lower `shared_buffers`** than the prior profile—see inline comments there. Summary plot aggregate prefetch uses at most **two** inner threads (see `summaryplot.compute_summary_aggregate_prefetch_pool_size`) so nested thread pools do not stack against the shared API executor. If legitimate bulk jobs slow down, prefer raising `work_mem` only during batch windows or increasing the `db` container `mem_limit` rather than unconstrained per-query memory.
+
    For memory-constrained deployments, start with the conservative baseline values documented in `hpcperfstats.ini.example`, then scale up gradually after observing stable DB checkpoints and container RSS headroom.
 
 6. **Supervisord and rsync:**

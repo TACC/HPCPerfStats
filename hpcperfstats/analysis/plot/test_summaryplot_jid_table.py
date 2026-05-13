@@ -16,8 +16,20 @@ from hpcperfstats.analysis.metrics.llite_metadata_iops_events import (
 from hpcperfstats.analysis.plot.summaryplot import (
     SummaryPlot,
     _cycled_d3_category20_palette,
+    compute_summary_aggregate_prefetch_pool_size,
     plot_and_reason_summary_from_jid_table,
 )
+
+
+def test_compute_summary_aggregate_prefetch_pool_size_caps_at_two(monkeypatch):
+  """Nested summary prefetch must not use full parallel_db_prefetch_max (API stacking)."""
+  import hpcperfstats.analysis.plot.summaryplot as sp
+
+  monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max_workers", lambda: 99)
+  assert compute_summary_aggregate_prefetch_pool_size(50) == 2
+  assert compute_summary_aggregate_prefetch_pool_size(1) == 1
+  monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max_workers", lambda: 1)
+  assert compute_summary_aggregate_prefetch_pool_size(50) == 1
 
 
 def test_summary_plot_reports_missing_counter_reason():

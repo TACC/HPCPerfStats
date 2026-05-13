@@ -385,8 +385,8 @@ def test_parallel_db_prefetch_and_api_defaults(temp_ini, monkeypatch):
   import importlib
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_parallel_db_prefetch_max_workers() == 6
-  assert cfg.get_api_small_executor_max_workers() == 6
+  assert cfg.get_parallel_db_prefetch_max_workers() == 4
+  assert cfg.get_api_small_executor_max_workers() == 4
 
 
 def test_api_small_executor_override(temp_ini, monkeypatch):
@@ -403,7 +403,7 @@ def test_api_small_executor_override(temp_ini, monkeypatch):
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_api_small_executor_max_workers() == 3
-  assert cfg.get_parallel_db_prefetch_max_workers() == 6
+  assert cfg.get_parallel_db_prefetch_max_workers() == 4
 
 
 def test_db_conn_max_age_default(temp_ini, monkeypatch):
@@ -801,6 +801,7 @@ def test_conf_parser_defaults_audit_snapshot(temp_ini, monkeypatch):
   assert "overlap_contention" in snapshot
   assert "stability" in snapshot
   assert snapshot["sync_throughput"]["sync_budget_ingest_ratio"] == 0.60
+  assert snapshot["stability"]["parallel_db_prefetch_max"] == 4
 
 
 def test_get_syslog_allow_from_ipv4_networks_empty_default(temp_ini, monkeypatch):

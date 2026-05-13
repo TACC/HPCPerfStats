@@ -486,7 +486,7 @@ def get_max_gunicorn_workers_cap():
   """Upper bound for Gunicorn workers (see ``django_startup.sh``).
 
   Default **32** pairs with a **40**-core ini budget: leaves headroom vs
-  ``max_connections`` alongside metrics/sync pools on one Postgres.
+  PostgreSQL ``max_connections`` (Compose default **500**) alongside metrics/sync pools.
   """
   _ensure_cfg_loaded()
   return int(cfg.get("DEFAULT", "max_gunicorn_workers", fallback="32"))
@@ -555,20 +555,23 @@ def get_numa_pin_max_nodes_auto():
 def get_parallel_db_prefetch_max_workers():
   """Max threads for parallel ORM prefetch (summary plots) and default API executor size.
 
+  Default **4** (INI ``parallel_db_prefetch_max``); summary aggregate prefetch also applies a
+  hard cap in ``summaryplot`` so nested pools do not multiply against the API executor.
+
   Override with ``[DEFAULT] parallel_db_prefetch_max`` or env ``PARALLEL_DB_PREFETCH_MAX``.
   """
   env = os.environ.get("PARALLEL_DB_PREFETCH_MAX", "").strip()
   if env:
     return max(1, int(env))
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "parallel_db_prefetch_max", fallback="6")))
+  return max(1, int(cfg.get("DEFAULT", "parallel_db_prefetch_max", fallback="4")))
 
 
 def get_api_small_executor_max_workers():
   """Max workers for shared ``ThreadPoolExecutor`` in ``site.machine.api``.
 
   If ``[DEFAULT] api_small_executor_max_workers`` is set, it wins; otherwise
-  ``get_parallel_db_prefetch_max_workers()`` (default **6**).
+  ``get_parallel_db_prefetch_max_workers()`` (default **4**).
   """
   _ensure_cfg_loaded()
   if cfg.has_option("DEFAULT", "api_small_executor_max_workers"):
@@ -1233,6 +1236,7 @@ def get_conf_parser_defaults_audit_snapshot():
           "sync_archive_retry_backoff_base_seconds": 1.0,
           "sync_archive_retry_backoff_max_seconds": 60.0,
           "sync_checkpoint_flush_batch_size": 100,
+          "parallel_db_prefetch_max": 4,
           "db_conn_max_age": 90,
           "db_statement_timeout_ms": 120000,
           "db_idle_in_transaction_session_timeout_ms": 300000,
