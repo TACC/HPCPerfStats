@@ -31,9 +31,16 @@ from hpcperfstats.django_bootstrap import ensure_django
 ensure_django()
 
 from django.db import IntegrityError, close_old_connections, connections
+from django.db.utils import DatabaseError, OperationalError
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
+from hpcperfstats.dbload.db_unavailable import (
+    DatabaseUnavailableExit,
+    is_database_unavailable_error,
+    log_and_raise_database_unavailable,
+    reraise_database_unavailable_chain,
+)
 from hpcperfstats.dbload.io_helpers import host_data_instance_from_stats_row
 from hpcperfstats.dbload.pigz_cli import pigz_decompress_verbose
 from hpcperfstats.print_utils import log_print
@@ -408,6 +415,10 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
         finally:
           write_lock.release()
     except Exception as e:
+      if is_database_unavailable_error(e):
+        log_and_raise_database_unavailable(
+            e, context="sync_timedb proc_data bulk_create"
+        )
       _record_adaptive_batch_feedback(2.0, had_error=True)
       if DEBUG:
         log_print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
@@ -439,6 +450,10 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
           finally:
             write_lock.release()
     except Exception as e:
+      if is_database_unavailable_error(e):
+        log_and_raise_database_unavailable(
+            e, context="sync_timedb host_data bulk_create"
+        )
       _record_adaptive_batch_feedback(2.0, had_error=True)
       if DEBUG:
         log_print("error in host_data bulk_create:", str(e))
@@ -556,18 +571,25 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
 
     """
   t0 = time.time()
-  stats_file, payload, need_archival, ingest_ok, _parse_elapsed = _parse_stats_file_payload(
-      stats_file, stats_file_contents=stats_file_contents
-  )
-  if not ingest_ok:
-    return (stats_file, need_archival, False, time.time() - t0)
-  if payload is None:
-    return (stats_file, need_archival, True, time.time() - t0)
-  stats, proc_stats = payload
-  stats_file, need_archival, ingest_ok = _write_stats_payload_to_db(
-      lock, stats_file, stats, proc_stats, need_archival=need_archival
-  )
-  return (stats_file, need_archival, ingest_ok, time.time() - t0)
+  try:
+    stats_file, payload, need_archival, ingest_ok, _parse_elapsed = _parse_stats_file_payload(
+        stats_file, stats_file_contents=stats_file_contents
+    )
+    if not ingest_ok:
+      return (stats_file, need_archival, False, time.time() - t0)
+    if payload is None:
+      return (stats_file, need_archival, True, time.time() - t0)
+    stats, proc_stats = payload
+    stats_file, need_archival, ingest_ok = _write_stats_payload_to_db(
+        lock, stats_file, stats, proc_stats, need_archival=need_archival
+    )
+    return (stats_file, need_archival, ingest_ok, time.time() - t0)
+  except (OperationalError, DatabaseError) as exc:
+    if is_database_unavailable_error(exc):
+      log_and_raise_database_unavailable(
+          exc, context="sync_timedb add_stats_file_to_db"
+      )
+    raise
 
 
 def _load_sync_checkpoint(state_path):
@@ -938,31 +960,38 @@ def _normalize_archive_groups_by_tgz(archive_mapping):
 def database_startup():
   """Print DB version, database size, and optionally chunk compression stats for host_data."""
   from django.db import connection
-  with connection.cursor() as cur:
-    # Single round-trip for version + size
-    cur.execute(
-        "SELECT version(), pg_size_pretty(pg_database_size(%s));",
-        [cfg.get_db_name()],
-    )
-    row = cur.fetchone()
-    if row:
+  try:
+    with connection.cursor() as cur:
+      # Single round-trip for version + size
+      cur.execute(
+          "SELECT version(), pg_size_pretty(pg_database_size(%s));",
+          [cfg.get_db_name()],
+      )
+      row = cur.fetchone()
+      if row:
+        if DEBUG:
+          log_print("Postgresql server version:", row[0])
+        log_print("Database Size:", row[1])
       if DEBUG:
-        log_print("Postgresql server version:", row[0])
-      log_print("Database Size:", row[1])
-    if DEBUG:
-      try:
-        cur.execute(
-            "SELECT chunk_name,before_compression_total_bytes/(1024*1024*1024),after_compression_total_bytes/(1024*1024*1024) FROM chunk_compression_stats('host_data');"
-        )
-        for x in cur.fetchall():
-          try:
-            log_print("{0} Size: {1:8.1f} {2:8.1f}".format(*x))
-          except Exception:
-            pass
-      except Exception:
-        pass
-    else:
-      log_print("Reading Chunk Data")
+        try:
+          cur.execute(
+              "SELECT chunk_name,before_compression_total_bytes/(1024*1024*1024),after_compression_total_bytes/(1024*1024*1024) FROM chunk_compression_stats('host_data');"
+          )
+          for x in cur.fetchall():
+            try:
+              log_print("{0} Size: {1:8.1f} {2:8.1f}".format(*x))
+            except Exception:
+              pass
+        except Exception:
+          pass
+      else:
+        log_print("Reading Chunk Data")
+  except (OperationalError, DatabaseError) as exc:
+    if is_database_unavailable_error(exc):
+      log_and_raise_database_unavailable(
+          exc, context="sync_timedb database_startup"
+      )
+    raise
 
 
 def _should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
@@ -1564,29 +1593,37 @@ def run_sync_timedb_supervisor_loop(
                   _parse_stats_file_payload,
                   [task.path for task in parse_envelopes],
               )
-          for parsed in parse_results_iter:
-            stats_fname, payload, need_archival, ingest_ok, parse_elapsed_s = parsed
-            k += 1
-            active_workers = max(active_workers, min(thread_count, k))
-            if not ingest_ok:
-              continue
-            if payload is None:
-              _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
-              successful_paths.append(stats_fname)
-              if should_archive and need_archival:
-                files_to_be_archived.append(stats_fname)
-              remaining = len(pending_stats_files) - chunk_ingest_finished - 1
-              chunk_ingest_finished += 1
-              _log_sync_timedb_ingest_completed(stats_fname, parse_elapsed_s, remaining)
-              continue
-            parse_tasks.append(
-                DBWriteTask(
-                    path=stats_fname,
-                    payload=payload,
-                    need_archival=need_archival,
-                    parse_elapsed_s=parse_elapsed_s,
-                ))
-            _transition_file_state(file_states, stats_fname, SyncFileState.PARSED)
+          try:
+            for parsed in parse_results_iter:
+              stats_fname, payload, need_archival, ingest_ok, parse_elapsed_s = parsed
+              k += 1
+              active_workers = max(active_workers, min(thread_count, k))
+              if not ingest_ok:
+                continue
+              if payload is None:
+                _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+                successful_paths.append(stats_fname)
+                if should_archive and need_archival:
+                  files_to_be_archived.append(stats_fname)
+                remaining = len(pending_stats_files) - chunk_ingest_finished - 1
+                chunk_ingest_finished += 1
+                _log_sync_timedb_ingest_completed(stats_fname, parse_elapsed_s, remaining)
+                continue
+              parse_tasks.append(
+                  DBWriteTask(
+                      path=stats_fname,
+                      payload=payload,
+                      need_archival=need_archival,
+                      parse_elapsed_s=parse_elapsed_s,
+                  ))
+              _transition_file_state(file_states, stats_fname, SyncFileState.PARSED)
+          except DatabaseUnavailableExit:
+            raise
+          except Exception as exc:
+            reraise_database_unavailable_chain(
+                exc, context="sync_timedb ingest parse pool"
+            )
+            raise
 
           if parse_tasks:
             writer_fn = partial(_db_writer_worker, manager_lock)
@@ -1608,16 +1645,24 @@ def run_sync_timedb_supervisor_loop(
                   writer_fn,
                   [_db_write_task_tuple(task) for task in parse_tasks],
               )
-            for result in write_results_iter:
-              stats_fname, need_archival, ingest_ok, elapsed_s = result
-              if ingest_ok:
-                _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
-                successful_paths.append(stats_fname)
-                if should_archive and need_archival:
-                  files_to_be_archived.append(stats_fname)
-                remaining = len(pending_stats_files) - chunk_ingest_finished - 1
-                chunk_ingest_finished += 1
-                _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+            try:
+              for result in write_results_iter:
+                stats_fname, need_archival, ingest_ok, elapsed_s = result
+                if ingest_ok:
+                  _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+                  successful_paths.append(stats_fname)
+                  if should_archive and need_archival:
+                    files_to_be_archived.append(stats_fname)
+                  remaining = len(pending_stats_files) - chunk_ingest_finished - 1
+                  chunk_ingest_finished += 1
+                  _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+            except DatabaseUnavailableExit:
+              raise
+            except Exception as exc:
+              reraise_database_unavailable_chain(
+                  exc, context="sync_timedb ingest db_writer pool"
+              )
+              raise
         else:
           add_stats_file = partial(add_stats_file_to_db, manager_lock)
           if _sync_timedb_ingest_inline_requested():
@@ -1628,25 +1673,33 @@ def run_sync_timedb_supervisor_loop(
             else:
               results_iter = ingest_pool.imap_unordered(
                   add_stats_file, stats_files_chunk)
-          for result in results_iter:
-            ingest_ok = True
-            elapsed_s = 0.0
-            if len(result) >= 4:
-              stats_fname, need_archival, ingest_ok, elapsed_s = result[:4]
-            elif len(result) >= 3:
-              stats_fname, need_archival, ingest_ok = result[:3]
-            else:
-              stats_fname, need_archival = result
-            k += 1
-            active_workers = max(active_workers, min(thread_count, k))
-            if ingest_ok:
-              _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
-              successful_paths.append(stats_fname)
-              if should_archive and need_archival:
-                files_to_be_archived.append(stats_fname)
-              remaining = len(pending_stats_files) - chunk_ingest_finished - 1
-              chunk_ingest_finished += 1
-              _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+          try:
+            for result in results_iter:
+              ingest_ok = True
+              elapsed_s = 0.0
+              if len(result) >= 4:
+                stats_fname, need_archival, ingest_ok, elapsed_s = result[:4]
+              elif len(result) >= 3:
+                stats_fname, need_archival, ingest_ok = result[:3]
+              else:
+                stats_fname, need_archival = result
+              k += 1
+              active_workers = max(active_workers, min(thread_count, k))
+              if ingest_ok:
+                _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+                successful_paths.append(stats_fname)
+                if should_archive and need_archival:
+                  files_to_be_archived.append(stats_fname)
+                remaining = len(pending_stats_files) - chunk_ingest_finished - 1
+                chunk_ingest_finished += 1
+                _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+          except DatabaseUnavailableExit:
+            raise
+          except Exception as exc:
+            reraise_database_unavailable_chain(
+                exc, context="sync_timedb ingest pool"
+            )
+            raise
 
         log_print("loading time", time.time() - ingest_t0)
         log_print(
@@ -1998,6 +2051,8 @@ if __name__ == '__main__':
     run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate)
     if shutdown_requested[0]:
       sys.exit(143)
+  except DatabaseUnavailableExit:
+    sys.exit(2)
   finally:
     # Best-effort cleanup + parent notification when SIGTERM is received.
     if sigterm_received["value"]:

@@ -47,6 +47,11 @@ from hpcperfstats.analysis.metrics.live_host_sample_count import (
 )
 from hpcperfstats.analysis.metrics.metrics import expected_job_metric_row_count
 from hpcperfstats.analysis.metrics.db_retry import run_with_db_retry
+from hpcperfstats.dbload.db_unavailable import (
+    DatabaseUnavailableExit,
+    is_database_unavailable_error,
+    log_and_raise_database_unavailable,
+)
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
 from hpcperfstats.shutdown_utils import (
@@ -1381,6 +1386,10 @@ def _fill_ready_queue(
         with _pg_local_readiness_timeouts():
           strict_ready = _filter_jids_with_samples_after_end([jid])
     except (OperationalError, DatabaseError) as exc:
+      if is_database_unavailable_error(exc):
+        log_and_raise_database_unavailable(
+            exc, context="update_metrics strict readiness (single)"
+        )
       with scheduler_shared_lock:
         _handle_strict_readiness_db_error(
             stats=stats,
@@ -1468,6 +1477,10 @@ def _fill_ready_queue(
                 [candidate.jid for candidate in work]
             )
       except (OperationalError, DatabaseError) as exc:
+        if is_database_unavailable_error(exc):
+          log_and_raise_database_unavailable(
+              exc, context="update_metrics strict readiness (batch)"
+          )
         with scheduler_shared_lock:
           _handle_strict_readiness_db_error(
               stats=stats,
@@ -3074,6 +3087,8 @@ if __name__ == "__main__":
     main()
     if shutdown_requested[0]:
       sys.exit(143)
+  except DatabaseUnavailableExit:
+    sys.exit(2)
   finally:
     _shutdown_db_best_effort()
     _notify_parent_if_sigterm(sigterm_received)

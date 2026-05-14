@@ -39,6 +39,7 @@ from hpcperfstats.analysis.metrics.job_detail_fsio import (
     fsio_job_detail_catalog,
 )
 from hpcperfstats.analysis.metrics.db_retry import run_with_db_retry
+from hpcperfstats.dbload.db_unavailable import DatabaseUnavailableExit
 
 try:
   from numpy import trapezoid as trapz
@@ -582,6 +583,8 @@ def _unwrap(args):
         "error_type": None,
         "error_message": None,
     }
+  except DatabaseUnavailableExit:
+    raise
   except (OperationalError, DatabaseError) as exc:
     log_print(
         "Skipping metrics for jid %s after DB error in worker: %s" %
@@ -776,6 +779,8 @@ def _drain_metrics_imap(
       else:
         # Some pool adapters/tests return plain generators with ``__next__`` only.
         payload = next(iterator)
+    except DatabaseUnavailableExit:
+      raise
     except multiprocessing.TimeoutError:
       stalled_for = time.monotonic() - last_progress_at
       if stalled_for >= max(0.0, float(stall_timeout_s)):
