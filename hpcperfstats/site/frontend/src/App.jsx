@@ -11,6 +11,7 @@ import HostDetail from "./pages/HostDetail";
 import AdminMonitor from "./pages/AdminMonitor";
 import JobMonitor from "./pages/JobMonitor";
 import LiveJobs from "./pages/LiveJobs";
+import LiveNodeHeatmap from "./pages/LiveNodeHeatmap";
 import { SessionContext } from "./session-context";
 
 export default function App() {
@@ -53,6 +54,7 @@ export default function App() {
           <Route path="admin_monitor" element={<AdminMonitor />} />
           <Route path="job_monitor" element={<JobMonitor />} />
           <Route path="live_jobs" element={<LiveJobs />} />
+          <Route path="live_node_heatmap" element={<LiveNodeHeatmap />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>

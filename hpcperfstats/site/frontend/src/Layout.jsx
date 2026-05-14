@@ -73,6 +73,12 @@ export default function Layout({ session, onSessionChange, children }) {
                 >
                   Live jobs
                 </Link>
+                <Link
+                  to="/live_node_heatmap"
+                  className="btn btn-outline-secondary btn-sm me-2"
+                >
+                  Node heatmap
+                </Link>
                 {session?.is_staff && (
                   <>
                     <Link

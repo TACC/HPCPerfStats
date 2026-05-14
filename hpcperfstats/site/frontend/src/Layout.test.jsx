@@ -37,6 +37,14 @@ describe("Layout", () => {
     vi.restoreAllMocks();
   });
 
+  it("links to live jobs and node heatmap", () => {
+    renderLayout({ logged_in: true, username: "alice", is_staff: false });
+    const live = screen.getByRole("link", { name: "Live jobs" });
+    const heat = screen.getByRole("link", { name: "Node heatmap" });
+    expect(live).toHaveAttribute("href", "/live_jobs");
+    expect(heat).toHaveAttribute("href", "/live_node_heatmap");
+  });
+
   it("shows staff demotion button only for staff sessions", () => {
     const firstRender = renderLayout({ logged_in: true, username: "alice", is_staff: true });
     expect(

@@ -2,18 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import LoadingMessage from "../components/LoadingMessage";
-
-function formatMinsAgo(epochSec) {
-  if (epochSec == null || !Number.isFinite(Number(epochSec))) {
-    return "—";
-  }
-  const secs = Math.floor(Date.now() / 1000) - Number(epochSec);
-  const mins = Math.max(0, Math.floor(secs / 60));
-  if (mins === 1) {
-    return "1 min ago";
-  }
-  return `${mins} mins ago`;
-}
+import { formatMinsAgo } from "../utils/formatRelativeTime";
 
 export default function LiveJobs() {
   const [rows, setRows] = useState([]);
