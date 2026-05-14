@@ -149,3 +149,55 @@ def test_lookup_roofline_cpu_peaks_returns_row_or_none():
       ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS["intel_hsw_imc"]
   )
   assert lookup_roofline_cpu_peaks("no_such_key") is None
+
+
+def test_infer_gpu_roofline_returns_none_when_peak_bw_is_zero():
+  """Zero max BW must not produce (gf, 0): log roofline cannot use ridge_ai = flops/0."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt(
+      {"roofline_hw_peak": []},
+      {
+          ("roofline_hw_peak", "value", ("gpu_peak_fp64_flops_per_s",)): [
+              ("n1.cluster", t0, 4_000_000_000_000.0),
+          ],
+          ("roofline_hw_peak", "value", ("gpu_peak_io_link_bw_bytes_per_s",)): [
+              ("n1.cluster", t0, 0.0),
+          ],
+          ("roofline_hw_peak", "value", ("gpu_peak_mem_bw_bytes_per_s",)): [
+              ("n1.cluster", t0, 0.0),
+          ],
+      },
+  )
+  assert infer_gpu_roofline_peak_flops_and_bw_gbps(jt) == (None, None)
+
+
+def test_infer_gpu_roofline_returns_none_when_peak_flops_is_zero():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt(
+      {"roofline_hw_peak": []},
+      {
+          ("roofline_hw_peak", "value", ("gpu_peak_fp64_flops_per_s",)): [
+              ("n1.cluster", t0, 0.0),
+          ],
+          ("roofline_hw_peak", "value", ("gpu_peak_mem_bw_bytes_per_s",)): [
+              ("n1.cluster", t0, 536_870_912_000.0),
+          ],
+      },
+  )
+  assert infer_gpu_roofline_peak_flops_and_bw_gbps(jt) == (None, None)
+
+
+def test_infer_cpu_roofline_hw_peak_zero_dram_returns_none_not_tuple_with_zero():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt(
+      {"roofline_hw_peak": []},
+      {
+          ("roofline_hw_peak", "value", ("cpu_peak_fp64_flops_per_s",)): [
+              ("n1.cluster", t0, 12_800_000_000_000.0),
+          ],
+          ("roofline_hw_peak", "value", ("cpu_peak_dram_bw_bytes_per_s",)): [
+              ("n1.cluster", t0, 0.0),
+          ],
+      },
+  )
+  assert infer_cpu_roofline_peak_flops_and_bw_gbps(jt) == (None, None)

@@ -100,6 +100,13 @@ def _infer_cpu_roofline_peak_from_host_data(jt: Any) -> Tuple[Optional[float], O
   peak_bw_gb = _max_converted_sum_val(jt, "cpu_peak_dram_bw_bytes_per_s", 1 / (1024 ** 3))
   if peak_flops_gf is None or peak_bw_gb is None:
     return (None, None)
+  if not (
+      np.isfinite(peak_flops_gf)
+      and peak_flops_gf > 0
+      and np.isfinite(peak_bw_gb)
+      and peak_bw_gb > 0
+  ):
+    return (None, None)
   return (peak_flops_gf, peak_bw_gb)
 
 
@@ -118,6 +125,13 @@ def infer_gpu_roofline_peak_flops_and_bw_gbps(jt: Any) -> Tuple[Optional[float],
   if peak_bw_gb is None:
     peak_bw_gb = _max_converted_sum_val(jt, "gpu_peak_mem_bw_bytes_per_s", 1 / (1024 ** 3))
   if peak_flops_gf is None or peak_bw_gb is None:
+    return (None, None)
+  if not (
+      np.isfinite(peak_flops_gf)
+      and peak_flops_gf > 0
+      and np.isfinite(peak_bw_gb)
+      and peak_bw_gb > 0
+  ):
     return (None, None)
   return (peak_flops_gf, peak_bw_gb)
 

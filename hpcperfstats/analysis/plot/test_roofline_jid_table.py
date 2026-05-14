@@ -4,6 +4,8 @@ import pytest
 from unittest.mock import MagicMock
 
 from hpcperfstats.analysis.plot.roofline import (
+  ROOFLINE_NOMINAL_PEAKS_INVALID_REASON,
+  _build_roofline_figure,
   plot_and_reason_gpu_roofline_from_jid_table,
   plot_and_reason_roofline_from_jid_table,
   plot_gpu_roofline_from_jid_table,
@@ -297,3 +299,123 @@ def test_gpu_roofline_explicit_peak_args_override_inferred_peaks(monkeypatch):
   assert fig is not None
   roof_renderer = fig.renderers[0]
   assert max(roof_renderer.data_source.data["perf"]) == pytest.approx(111.0)
+
+
+def test_gpu_roofline_no_traceback_when_hw_peak_bw_is_zero():
+  """Zero roofline_hw_peak BW must not raise in GPU roofline prewarm path."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt([("n1.cluster", t0)], {})
+  jt.schema = {"roofline_hw_peak": [], "nvidia_gpu": []}
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    evl = list(events)
+    if typ == "roofline_hw_peak" and val_col == "value":
+      if evl == ["gpu_peak_fp64_flops_per_s"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 4_000_000_000_000.0)],
+            columns=["host", "time", "sum_val"],
+        )
+      if evl == ["gpu_peak_io_link_bw_bytes_per_s"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 0.0)], columns=["host", "time", "sum_val"]
+        )
+      if evl == ["gpu_peak_mem_bw_bytes_per_s"]:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 0.0)], columns=["host", "time", "sum_val"]
+        )
+    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
+      return pd.DataFrame([("n1.cluster", t0, 20.0)], columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_io_link_total_bytes"]:
+      return pd.DataFrame([("n1.cluster", t0, 5.0)], columns=["host", "time", "sum_val"])
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+  fig, reason = plot_and_reason_gpu_roofline_from_jid_table(jt)
+  assert fig is not None
+  assert reason is None
+
+
+def test_plot_and_reason_gpu_rejects_explicit_zero_peak_bw():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt([("n1.cluster", t0)], {})
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
+      return pd.DataFrame([("n1.cluster", t0, 20.0)], columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_io_link_total_bytes"]:
+      return pd.DataFrame([("n1.cluster", t0, 5.0)], columns=["host", "time", "sum_val"])
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+  fig, reason = plot_and_reason_gpu_roofline_from_jid_table(
+      jt, peak_flops_gf=100.0, peak_bw_gb=0.0
+  )
+  assert fig is None
+  assert reason == ROOFLINE_NOMINAL_PEAKS_INVALID_REASON
+
+
+def test_plot_and_reason_cpu_rejects_explicit_zero_peak_bw():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  from hpcperfstats.analysis.gen.utils import INTEL_FP_ARITH_ALL_EVENTS
+
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  hsw = "intel_hsw_imc"
+  fp_events = list(INTEL_FP_ARITH_ALL_EVENTS)
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if val_col != "arc":
+      return empty
+    if typ in ("amd64_pmc", "amd64_df"):
+      return empty
+    if typ in ("intel_8pmc3", "intel_4pmc3"):
+      return empty
+    if typ == "cpu_counter_metrics" and list(events) == fp_events:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 4.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ == hsw and list(events) == ["CAS_READS", "CAS_WRITES"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 0.5)], columns=["host", "time", "sum_val"]
+      )
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  fig, reason = plot_and_reason_roofline_from_jid_table(
+      jt, peak_flops_gf=500.0, peak_bw_gb=0.0
+  )
+  assert fig is None
+  assert reason == ROOFLINE_NOMINAL_PEAKS_INVALID_REASON
+
+
+def test_build_roofline_figure_returns_none_for_nonpositive_peaks():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  df = pd.DataFrame(
+      {
+          "host": ["n1.cluster"],
+          "time": [t0],
+          "flops_gf": [10.0],
+          "bw_gb": [2.0],
+      }
+  )
+  assert _build_roofline_figure(
+      df,
+      peak_flops_gf=100.0,
+      peak_bw_gb=0.0,
+      title="t",
+      help_plot_key="jobDetailPlot_roofline_cpu",
+  ) is None
+  assert _build_roofline_figure(
+      df,
+      peak_flops_gf=float("nan"),
+      peak_bw_gb=10.0,
+      title="t",
+      help_plot_key="jobDetailPlot_roofline_cpu",
+  ) is None

@@ -25,10 +25,30 @@ from hpcperfstats.analysis.plot.roofline_peaks import (
     infer_gpu_roofline_peak_flops_and_bw_gbps,
 )
 
-
 # Default peak specs (GFLOP/s and GB/s) when not in config; ridge = peak_flops / peak_bw
 DEFAULT_PEAK_FLOPS_GF = 1000.0
 DEFAULT_PEAK_BW_GB = 100.0
+
+
+def _nominal_roofline_peaks_valid(peak_flops_gf, peak_bw_gb):
+  """True when nominal peaks are finite and strictly positive (ridge AI is log-scaled)."""
+  try:
+    pf = float(peak_flops_gf)
+    pb = float(peak_bw_gb)
+  except (TypeError, ValueError):
+    return False
+  return bool(
+      numpy.isfinite(pf)
+      and numpy.isfinite(pb)
+      and pf > 0.0
+      and pb > 0.0
+  )
+
+
+ROOFLINE_NOMINAL_PEAKS_INVALID_REASON = (
+    "Roofline nominal peaks (GFLOP/s or GB/s) are non-finite or non-positive; "
+    "cannot render log-scaled roofline."
+)
 
 
 def _hover_tooltip_html_roofline_job():
@@ -269,6 +289,8 @@ def _build_roofline_figure(
     """Render a roofline figure from host,time,flops_gf,bw_gb data."""
     peak_flops_gf = peak_flops_gf if peak_flops_gf is not None else DEFAULT_PEAK_FLOPS_GF
     peak_bw_gb = peak_bw_gb if peak_bw_gb is not None else DEFAULT_PEAK_BW_GB
+    if not _nominal_roofline_peaks_valid(peak_flops_gf, peak_bw_gb):
+        return None
 
     # Arithmetic intensity: FLOP/byte = (GFLOP/s) / (GB/s) = same ratio
     df = df.copy()
@@ -288,14 +310,18 @@ def _build_roofline_figure(
     # Clamp AI for plot range (avoid log(0))
     ai_min, ai_max = max(1e-3, float(ai.min())), max(1e-2, float(ai.max()))
     ridge_ai = peak_flops_gf / peak_bw_gb
+    if not (numpy.isfinite(ridge_ai) and ridge_ai > 0.0):
+        return None
     plot_ai_max = max(ai_max * 2, ridge_ai * 1.5, 10.0)
     plot_ai_min = min(ai_min / 2, 1e-2)
 
     # Roofline curve: from (plot_ai_min, peak_bw*plot_ai_min) to (ridge_ai, peak_flops), then flat
     n_pts = 80
+    seg1_lo = max(float(plot_ai_min), 1e-4)
+    seg1_hi = max(float(ridge_ai), seg1_lo * 1.01)
     ai_curve = numpy.logspace(
-        math.log10(max(plot_ai_min, 1e-4)),
-        math.log10(max(ridge_ai, plot_ai_min * 1.1)),
+        math.log10(seg1_lo),
+        math.log10(seg1_hi),
         num=max(2, n_pts // 2),
     )
     perf_curve = peak_bw_gb * ai_curve
@@ -303,10 +329,14 @@ def _build_roofline_figure(
     perf_curve = list(perf_curve)
     ai_curve.append(ridge_ai)
     perf_curve.append(peak_flops_gf)
+    flat_lo = float(ridge_ai)
+    flat_hi = float(plot_ai_max)
+    if flat_hi <= flat_lo:
+        flat_hi = flat_lo * (1.0 + 1e-6)
     flat_ai = numpy.logspace(
-        math.log10(ridge_ai),
-        math.log10(plot_ai_max),
-        num=n_pts // 2,
+        math.log10(flat_lo),
+        math.log10(flat_hi),
+        num=max(2, n_pts // 2),
     )
     ai_curve.extend(flat_ai)
     perf_curve.extend([peak_flops_gf] * len(flat_ai))
@@ -514,6 +544,12 @@ def plot_and_reason_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=N
     inf_f, inf_b = infer_cpu_roofline_peak_flops_and_bw_gbps(jt)
     use_peak_flops = peak_flops_gf if peak_flops_gf is not None else inf_f
     use_peak_bw = peak_bw_gb if peak_bw_gb is not None else inf_b
+    eff_flops = (
+        use_peak_flops if use_peak_flops is not None else DEFAULT_PEAK_FLOPS_GF
+    )
+    eff_bw = use_peak_bw if use_peak_bw is not None else DEFAULT_PEAK_BW_GB
+    if not _nominal_roofline_peaks_valid(eff_flops, eff_bw):
+        return (None, ROOFLINE_NOMINAL_PEAKS_INVALID_REASON)
     fig = _build_roofline_figure(
         df,
         peak_flops_gf=use_peak_flops,
@@ -538,6 +574,12 @@ def plot_and_reason_gpu_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_
     inf_f, inf_b = infer_gpu_roofline_peak_flops_and_bw_gbps(jt)
     use_peak_flops = peak_flops_gf if peak_flops_gf is not None else inf_f
     use_peak_bw = peak_bw_gb if peak_bw_gb is not None else inf_b
+    eff_flops = (
+        use_peak_flops if use_peak_flops is not None else DEFAULT_PEAK_FLOPS_GF
+    )
+    eff_bw = use_peak_bw if use_peak_bw is not None else DEFAULT_PEAK_BW_GB
+    if not _nominal_roofline_peaks_valid(eff_flops, eff_bw):
+        return (None, ROOFLINE_NOMINAL_PEAKS_INVALID_REASON)
     fig = _build_roofline_figure(
         df,
         peak_flops_gf=use_peak_flops,
