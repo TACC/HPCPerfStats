@@ -28,6 +28,18 @@ def test_docker_compose_rabbitmq_defaults_to_guest_credentials():
   assert "RABBITMQ_DEFAULT_PASS=guest" in content
 
 
+def test_docker_compose_rabbitmq_allows_large_monitor_messages():
+  """Regression: default 16 MiB max_message_size rejects ~41 MiB hpcperfstatsd publishes."""
+  repo_root = Path(__file__).resolve().parents[2]
+  compose_path = repo_root / "docker-compose.yaml"
+  content = compose_path.read_text()
+  conf_path = repo_root / "services-conf" / "rabbitmq_max_message_size.conf"
+
+  assert "rabbitmq_max_message_size.conf:/etc/rabbitmq/conf.d/20-max_message_size.conf" in content
+  conf_text = conf_path.read_text()
+  assert "max_message_size = 67108864" in conf_text
+
+
 def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
