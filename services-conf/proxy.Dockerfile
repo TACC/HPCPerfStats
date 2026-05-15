@@ -1,10 +1,13 @@
 FROM alpine:3.23
 
 RUN apk add --no-cache \
-    nginx \
     nginx-mod-http-brotli \
     netcat-openbsd \
     python3
+
+RUN apk upgrade nginx --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main
+
+RUN nginx -v
 
 RUN mkdir -p /usr/local/lib/hpcperfstats-proxy
 
