@@ -31,6 +31,18 @@ def _patch_scheduler_defaults(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_compute_threads", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_base_s", lambda: 2.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_max_s", lambda: 60.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_budget_per_successful_job_s", lambda: 0.5)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_window_seconds", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_single_job_runtime_seconds", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_unknown_runtime_seconds", lambda: 172800.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_watchdog_seconds", lambda: 120.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_total_watchdog_seconds", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_seconds", lambda: 10.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_max_retries", lambda: 30)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_max_age_seconds", lambda: 900.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_quarantine_seconds", lambda: 300.0)
   monkeypatch.setattr(update_metrics, "persist_job_detail_artifacts_for_jid", lambda jid: None)
 
 
@@ -79,7 +91,7 @@ def test_iter_chunked_pks_single_chunk():
   qs = Qs()
   chunks = list(_iter_chunked_pks(qs, 10))
   assert len(chunks) == 1
-  assert chunks[0][0] == [1, 2, 3]
+  assert [r.jid for r in chunks[0][0]] == [1, 2, 3]
   assert chunks[0][1] == 3
 
 
@@ -96,9 +108,9 @@ def test_iter_chunked_pks_multiple_chunks():
   qs = Qs()
   chunks = list(_iter_chunked_pks(qs, 2))
   assert len(chunks) == 3
-  assert chunks[0] == ([10, 20], 2)
-  assert chunks[1] == ([30, 40], 4)
-  assert chunks[2] == ([50], 5)
+  assert ([r.jid for r in chunks[0][0]], chunks[0][1]) == ([10, 20], 2)
+  assert ([r.jid for r in chunks[1][0]], chunks[1][1]) == ([30, 40], 4)
+  assert ([r.jid for r in chunks[2][0]], chunks[2][1]) == ([50], 5)
 
 
 def test_iter_chunked_pks_reraises_operational_error():
@@ -130,7 +142,7 @@ def test_iter_chunked_pks_uses_slice_windows_not_iterator():
 
   qs = Qs()
   chunks = list(_iter_chunked_pks(qs, 2))
-  assert chunks == [([1, 2], 2), ([3, 4], 4), ([5], 5)]
+  assert [([r.jid for r in ch], n) for ch, n in chunks] == [([1, 2], 2), ([3, 4], 4), ([5], 5)]
   # Fallback path may probe with [:chunk] before offset slices; all are bounded.
   assert qs.slice_calls[-4:] == [
       slice(0, 2, None),
@@ -834,7 +846,8 @@ def test_compute_jid_outcomes_batch_skips_prewarm_for_explicit_failed_outcomes(m
 @pytest.mark.machine_unit_mock
 def test_compute_jid_outcomes_batch_prewarm_drain_budget_defers_backlog(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: False)
-  monkeypatch.setattr(update_metrics, "PREWARM_DRAIN_BATCH_BUDGET_SECONDS", 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_base_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_budget_per_successful_job_s", lambda: 0.0)
 
   class _M:
     def ensure_pool(self):
@@ -871,6 +884,34 @@ def test_compute_jid_outcomes_batch_prewarm_drain_budget_defers_backlog(monkeypa
   # Budget is exhausted immediately, so backlog is deferred instead of spinning.
   assert pipe.drain_calls == 0
   assert [d["jid"] for d in out] == ["j1", "j2"]
+
+
+@pytest.mark.machine_unit_mock
+def test_pop_candidates_respects_max_window_seconds(monkeypatch):
+  """Greedy dequeue splits long-window jobs across batches when window cap is on."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_window_seconds", lambda: 100.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_single_job_runtime_seconds", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_unknown_runtime_seconds", lambda: 1.0)
+  q = deque([
+      update_metrics._candidate_ref("a", False, runtime_s=60.0),
+      update_metrics._candidate_ref("b", False, runtime_s=60.0),
+      update_metrics._candidate_ref("c", False, runtime_s=10.0),
+  ])
+  first = update_metrics._pop_candidates_for_compute_batch_locked(q, 8)
+  assert [r.jid for r in first] == ["a"]
+  second = update_metrics._pop_candidates_for_compute_batch_locked(q, 8)
+  assert [r.jid for r in second] == ["b", "c"]
+  assert len(q) == 0
+
+
+@pytest.mark.machine_unit_mock
+def test_effective_prewarm_drain_budget_scales_with_successful_count(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_base_s", lambda: 1.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_budget_per_successful_job_s", lambda: 0.5)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_max_s", lambda: 10.0)
+  assert update_metrics._effective_prewarm_drain_batch_budget_s(0) == 1.0
+  assert update_metrics._effective_prewarm_drain_batch_budget_s(2) == 2.0
+  assert update_metrics._effective_prewarm_drain_batch_budget_s(100) == 10.0
 
 
 @pytest.mark.machine_unit_mock
@@ -1781,7 +1822,7 @@ def test_update_metrics_for_dates_rescan_picks_up_new_mid_run_jid(monkeypatch):
   monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", _strict)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
-  monkeypatch.setattr(update_metrics, "DEFERRED_NOT_READY_RETRY_SECONDS", 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_seconds", lambda: 0.0)
 
   class _FakeQs:
     def __init__(self, chunks):
@@ -1990,7 +2031,7 @@ def test_update_metrics_for_dates_rechecks_deferred_not_ready_jid_until_ready(mo
   )
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
-  monkeypatch.setattr(update_metrics, "DEFERRED_NOT_READY_RETRY_SECONDS", 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_seconds", lambda: 0.0)
 
   class _FakeQs:
     def __init__(self, chunks):
@@ -2053,7 +2094,8 @@ def test_update_metrics_pub_parallel_once_then_safe_in_finally(monkeypatch):
   monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
   monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
   monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
-  monkeypatch.setattr(update_metrics, "PREWARM_DRAIN_BATCH_BUDGET_SECONDS", 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_base_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_budget_per_successful_job_s", lambda: 0.0)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)

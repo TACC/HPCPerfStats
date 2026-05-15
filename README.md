@@ -262,7 +262,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    - `total_cores` - CPU budget for app parallelism (omit to use code default **40**; see `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`)
    - `max_gunicorn_workers`, `parallel_db_prefetch_max`, `api_small_executor_max_workers` - web/API memory pressure controls (override `WEB_CONCURRENCY` in compose for Gunicorn worker count)
    - `db_conn_max_age` / `DJANGO_CONN_MAX_AGE` - how long idle Django workers keep a PostgreSQL backend open (shorter frees slots faster at the cost of connect overhead)
-   - `metrics_pool_process_cap`, `metrics_scheduler_prefetch_chunks`, `metrics_scheduler_ready_queue_target`, `metrics_prewarm_workers`, `metrics_scheduler_compute_threads` - update_metrics memory/concurrency controls
+   - `metrics_pool_process_cap`, `metrics_scheduler_prefetch_chunks`, `metrics_scheduler_ready_queue_target`, `metrics_prewarm_workers`, `metrics_scheduler_compute_threads`, optional `metrics_compute_batch_max_window_s` / `metrics_compute_batch_max_single_job_s`, `metrics_prewarm_drain_batch_budget_s` / `metrics_prewarm_drain_per_job_s` / `metrics_prewarm_drain_batch_budget_max_s`, `metrics_compute_watchdog_s` / `metrics_compute_total_watchdog_s`, and `metrics_deferred_not_ready_*` — update_metrics memory, batching, prewarm drain, watchdog, and deferred-readiness backoff controls
    - `sync_pool_process_cap`, `archive_pool_process_cap`, `sync_ingest_queue_max_size`, `sync_archive_queue_max_size`, `sync_checkpoint_flush_batch_size` - ingest/archive memory controls (including `sync_timedb_archive.py`, which derives workers from sync ingest pool settings)
    - `secret_key` - a random string
 

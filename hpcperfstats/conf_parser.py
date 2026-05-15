@@ -827,6 +827,325 @@ def get_metrics_prewarm_backpressure_wait_s():
     return 0.25
 
 
+def get_metrics_prewarm_drain_batch_budget_base_s():
+  """Base seconds to drain async plot prewarm after each ``Metrics.run`` batch.
+
+  Env ``HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_S`` overrides INI
+  ``metrics_prewarm_drain_batch_budget_s``. Default 2.0 matches legacy constant.
+  """
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 2.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(
+            cfg.get(
+                "DEFAULT",
+                "metrics_prewarm_drain_batch_budget_s",
+                fallback="2.0",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 2.0
+
+
+def get_metrics_prewarm_drain_batch_budget_max_s():
+  """Ceiling for scaled per-batch prewarm drain budget (seconds)."""
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_MAX_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 60.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(
+            cfg.get(
+                "DEFAULT",
+                "metrics_prewarm_drain_batch_budget_max_s",
+                fallback="60.0",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 60.0
+
+
+def get_metrics_prewarm_drain_budget_per_successful_job_s():
+  """Extra drain seconds added per successful jid in the batch (scaled budget)."""
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_PREWARM_DRAIN_PER_JOB_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 0.5
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(
+            cfg.get(
+                "DEFAULT",
+                "metrics_prewarm_drain_per_job_s",
+                fallback="0.5",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 0.5
+
+
+def get_metrics_compute_batch_max_window_seconds():
+  """Max sum of job accounting-window seconds per compute batch (0 = disabled).
+
+  Heterogeneity guard: avoids packing many multi-day jobs into one batch.
+  Env ``HPCPERFSTATS_METRICS_COMPUTE_BATCH_MAX_WINDOW_S`` overrides INI
+  ``metrics_compute_batch_max_window_s``.
+  """
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_COMPUTE_BATCH_MAX_WINDOW_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 0.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(
+            cfg.get(
+                "DEFAULT",
+                "metrics_compute_batch_max_window_s",
+                fallback="0",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 0.0
+
+
+def get_metrics_compute_batch_max_single_job_runtime_seconds():
+  """Max seconds for one non-artifact-only job in a batch (0 = disabled).
+
+  When set, a job whose window exceeds this is still scheduled alone if it would
+  otherwise block the batch (first slot rule in packer).
+  """
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_COMPUTE_BATCH_MAX_SINGLE_JOB_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 0.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(
+            cfg.get(
+                "DEFAULT",
+                "metrics_compute_batch_max_single_job_s",
+                fallback="0",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 0.0
+
+
+def get_metrics_compute_batch_unknown_runtime_seconds():
+  """Accounting window seconds assumed when start/end unavailable on a candidate."""
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_COMPUTE_BATCH_UNKNOWN_RUNTIME_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 172800.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(
+            cfg.get(
+                "DEFAULT",
+                "metrics_compute_batch_unknown_runtime_s",
+                fallback="172800",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 172800.0
+
+
+def get_metrics_compute_watchdog_seconds():
+  """Watchdog on metrics phase wall time inside a scheduler batch (seconds)."""
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_COMPUTE_WATCHDOG_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(1.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 120.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1.0,
+        float(
+            cfg.get(
+                "DEFAULT",
+                "metrics_compute_watchdog_s",
+                fallback="120",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 120.0
+
+
+def get_metrics_compute_total_watchdog_seconds():
+  """Watchdog on full batch wall (metrics + prewarm submit/drain). 0 = use metrics-only.
+
+  When 0, only ``get_metrics_compute_watchdog_seconds`` applies to the metrics
+  slice; total batch time is logged but does not downshift batch cap.
+  """
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_COMPUTE_TOTAL_WATCHDOG_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 0.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(
+            cfg.get(
+                "DEFAULT",
+                "metrics_compute_total_watchdog_s",
+                fallback="0",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 0.0
+
+
+def get_metrics_deferred_not_ready_retry_seconds():
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_RETRY_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(0.1, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 10.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.1,
+        float(
+            cfg.get(
+                "DEFAULT",
+                "metrics_deferred_not_ready_retry_s",
+                fallback="10",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 10.0
+
+
+def get_metrics_deferred_not_ready_max_retries():
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_MAX_RETRIES", ""
+  ).strip()
+  if env:
+    try:
+      return max(1, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return 30
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1,
+        int(cfg.get("DEFAULT", "metrics_deferred_not_ready_max_retries", fallback="30")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 30
+
+
+def get_metrics_deferred_not_ready_max_age_seconds():
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_MAX_AGE_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(1.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 900.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1.0,
+        float(
+            cfg.get(
+                "DEFAULT",
+                "metrics_deferred_not_ready_max_age_s",
+                fallback="900",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 900.0
+
+
+def get_metrics_deferred_not_ready_quarantine_seconds():
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_QUARANTINE_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(1.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 300.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1.0,
+        float(
+            cfg.get(
+                "DEFAULT",
+                "metrics_deferred_not_ready_quarantine_s",
+                fallback="300",
+            )
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 300.0
+
+
 def get_metrics_scheduler_compute_threads():
   """Thread workers for concurrent per-jid metrics+prewarm in update_metrics scheduler."""
   _ensure_cfg_loaded()

@@ -117,13 +117,8 @@ STRICT_CHECK_COOLDOWN_SECONDS = 30
 RESCAN_INTERVAL_SECONDS = 5.0
 # When rescan loops add no new jids, sleep backs off (capped) to cut duplicate SQL.
 RESCAN_IDLE_INTERVAL_MAX_SECONDS = 60.0
-DEFERRED_NOT_READY_RETRY_SECONDS = 10.0
-DEFERRED_NOT_READY_MAX_RETRIES = 30
-DEFERRED_NOT_READY_MAX_AGE_SECONDS = 900.0
-DEFERRED_NOT_READY_QUARANTINE_SECONDS = 300.0
 STALL_WARNING_EVERY_PASSES = 200
 STALL_EXIT_AFTER_SECONDS = 900.0
-COMPUTE_BATCH_WATCHDOG_SECONDS = 120.0
 COMPUTE_BATCH_MIN_CAP = 16
 COMPUTE_BATCH_DOWNSHIFT_FACTOR = 0.5
 COMPUTE_BATCH_UPSHIFT_STEP = 16
@@ -138,7 +133,6 @@ PREWARM_FUTURE_RESULT_TIMEOUT_SECONDS = 60.0
 PREWARM_DRAIN_MAX_WALL_SECONDS = 300.0
 PREWARM_FINISH_MAX_WALL_SECONDS = 300.0
 PREWARM_FINISH_WAIT_SLICE_SECONDS = 0.25
-PREWARM_DRAIN_BATCH_BUDGET_SECONDS = 2.0
 PUBLIC_EF_PHASE_POLL_TIMEOUT_SECONDS = float(
     os.environ.get("HPCPERFSTATS_PUBLIC_EF_PHASE_POLL_TIMEOUT_S", "5.0")
 )
@@ -151,6 +145,100 @@ STRICT_READINESS_DB_TIMEOUT_MS = int(
 STRICT_READINESS_DB_LOCK_TIMEOUT_MS = int(
     os.environ.get("HPCPERFSTATS_STRICT_READINESS_DB_LOCK_TIMEOUT_MS", "10000")
 )
+
+
+def _job_window_runtime_seconds(start_time, end_time):
+  """Return job accounting-window length in seconds, or None if not computable."""
+  if start_time is None or end_time is None:
+    return None
+  try:
+    return max(0.0, (end_time - start_time).total_seconds())
+  except Exception:
+    return None
+
+
+def _effective_prewarm_drain_batch_budget_s(n_successful):
+  """Scaled time budget for draining async prewarm after each metrics batch."""
+  n = max(0, int(n_successful))
+  base = float(cfg.get_metrics_prewarm_drain_batch_budget_base_s())
+  per_job = float(cfg.get_metrics_prewarm_drain_budget_per_successful_job_s())
+  ceiling = float(cfg.get_metrics_prewarm_drain_batch_budget_max_s())
+  raw = base + float(n) * per_job
+  if ceiling <= 0.0:
+    return max(0.0, raw)
+  return max(0.0, min(ceiling, raw))
+
+
+def _batch_window_cost_pair_for_ref(ref):
+  """Return (sum_budget_delta, per_job_runtime_for_max_cap) for cost-aware batching."""
+  if bool(getattr(ref, "artifact_only", False)):
+    return 0.0, 0.0
+  rt = getattr(ref, "runtime_s", None)
+  if rt is None:
+    rt = float(cfg.get_metrics_compute_batch_unknown_runtime_seconds())
+  else:
+    rt = float(rt)
+  return rt, rt
+
+
+def _pop_candidates_for_compute_batch_locked(ready_queue, cap):
+  """Pop up to ``cap`` candidates using optional window / per-job runtime caps (0 = off)."""
+  max_window = float(cfg.get_metrics_compute_batch_max_window_seconds())
+  max_single = float(cfg.get_metrics_compute_batch_max_single_job_runtime_seconds())
+  out = []
+  sum_w = 0.0
+  max_rt = 0.0
+  while ready_queue and len(out) < cap:
+    ref = ready_queue[0]
+    add_sum, add_max = _batch_window_cost_pair_for_ref(ref)
+    new_sum = sum_w + add_sum
+    new_max_rt = max(max_rt, add_max)
+    if max_window > 0.0 and new_sum > max_window and out:
+      break
+    if max_window > 0.0 and new_sum > max_window and not out:
+      out.append(ready_queue.popleft())
+      break
+    if max_single > 0.0 and new_max_rt > max_single and out:
+      break
+    if max_single > 0.0 and new_max_rt > max_single and not out:
+      out.append(ready_queue.popleft())
+      break
+    out.append(ready_queue.popleft())
+    sum_w = new_sum
+    max_rt = new_max_rt
+  return out
+
+
+def _chunk_rows_to_candidate_refs(rows):
+  """Map queryset ``values_list`` rows to candidate refs (supports test stubs)."""
+  if not rows:
+    return []
+  first = rows[0]
+  if not isinstance(first, (tuple, list)):
+    return [_candidate_ref(row) for row in rows]
+  refs = []
+  for row in rows:
+    n = len(row)
+    if n >= 4:
+      jid, end_time, start_time, artifact_only = row[0], row[1], row[2], row[3]
+      refs.append(_candidate_ref(
+          jid,
+          bool(artifact_only),
+          runtime_s=_job_window_runtime_seconds(start_time, end_time),
+      ))
+    elif n == 3:
+      jid, end_time, artifact_only = row[0], row[1], row[2]
+      refs.append(_candidate_ref(
+          jid,
+          bool(artifact_only),
+          runtime_s=_job_window_runtime_seconds(None, end_time),
+      ))
+    elif n == 2:
+      jid, artifact_only = row[0], row[1]
+      refs.append(_candidate_ref(jid, bool(artifact_only)))
+    else:
+      refs.append(_candidate_ref(row[0]))
+  return refs
 
 
 def _new_jid_telemetry():
@@ -1011,14 +1099,16 @@ def _iter_chunked_pks(queryset, chunk_size):
             )
         )
       rows = list(
-          page_qs.values_list("jid", "end_time", "artifact_only_candidate")[:chunk_size]
+          page_qs.values_list(
+              "jid", "end_time", "start_time", "artifact_only_candidate",
+          )[:chunk_size]
       )
       if not rows:
         break
-      chunk = [_candidate_ref(jid, artifact_only) for jid, _end_time, artifact_only in rows]
+      chunk = _chunk_rows_to_candidate_refs(rows)
       total += len(chunk)
       yield chunk, total
-      last_jid, last_end_time, _artifact_only = rows[-1]
+      last_jid, last_end_time, _start_time, _artifact_only = rows[-1]
     return
   except (OperationalError, DatabaseError):
     # Do not fall back to offset slicing: same expensive SQL and masks timeouts.
@@ -1029,26 +1119,32 @@ def _iter_chunked_pks(queryset, chunk_size):
 
   offset = 0
   try:
-    pk_values = queryset.values_list("jid", "artifact_only_candidate")
-    use_artifact_flag = True
+    pk_values = queryset.values_list(
+        "jid", "end_time", "start_time", "artifact_only_candidate",
+    )
   except Exception:
-    pk_values = queryset.values_list("jid", flat=True)
-    use_artifact_flag = False
+    try:
+      pk_values = queryset.values_list("jid", "end_time", "artifact_only_candidate")
+    except Exception:
+      try:
+        pk_values = queryset.values_list("jid", "artifact_only_candidate")
+      except Exception:
+        pk_values = queryset.values_list("jid", flat=True)
   while True:
     rows = list(pk_values[offset:offset + chunk_size])
     if not rows:
       break
-    if use_artifact_flag:
-      chunk = [_candidate_ref(jid, artifact_only) for jid, artifact_only in rows]
-    else:
-      chunk = [_candidate_ref(jid) for jid in rows]
+    chunk = _chunk_rows_to_candidate_refs(rows)
     total += len(chunk)
     yield chunk, total
     offset += chunk_size
 
 
-def _candidate_ref(jid, artifact_only=False):
-  return SimpleNamespace(jid=jid, artifact_only=bool(artifact_only))
+def _candidate_ref(jid, artifact_only=False, runtime_s=None):
+  ns = SimpleNamespace(jid=jid, artifact_only=bool(artifact_only))
+  if runtime_s is not None:
+    ns.runtime_s = float(runtime_s)
+  return ns
 
 
 def _job_refs_from_jids(jids):
@@ -1061,7 +1157,12 @@ def _job_refs_from_jids(jids):
   refs = []
   for item in jids:
     if hasattr(item, "jid"):
-      refs.append(_candidate_ref(item.jid, getattr(item, "artifact_only", False)))
+      rt = getattr(item, "runtime_s", None)
+      refs.append(_candidate_ref(
+          item.jid,
+          getattr(item, "artifact_only", False),
+          runtime_s=rt,
+      ))
     else:
       refs.append(_candidate_ref(item))
   return refs
@@ -1342,7 +1443,11 @@ def _fill_ready_queue(
     on_not_ready_jid=None,
     on_candidate_jid=None,
 ):
-  now = time.monotonic()
+  """Fill ``ready_queue`` from date iterators and strict readiness.
+
+  ``on_not_ready_jid`` when provided is called as ``(jid, candidate=None)`` where
+  ``candidate`` is the scheduler ref object when known (for deferred metadata).
+  """
 
   def _resume_or_next_pk_chunk(state):
     """Return ``(pk_list_or_none, is_new_iter_chunk)``."""
@@ -1435,7 +1540,7 @@ def _fill_ready_queue(
       if jid not in reject_set:
         continue
       if on_not_ready_jid is not None:
-        on_not_ready_jid(jid)
+        on_not_ready_jid(jid, candidate)
       with scheduler_shared_lock:
         stats["proxy_not_ready_jids"] += 1
         stats["proxy_rejected_jids"] += 1
@@ -1453,16 +1558,17 @@ def _fill_ready_queue(
       sub_end = min(pos + bs, len(unknown_ordered))
       sub = unknown_ordered[pos:sub_end]
       batch_mono = time.monotonic()
-      cooldown_jids = []
+      cooldown_candidates = []
       for candidate in sub:
         jid = candidate.jid
         with scheduler_shared_lock:
           if strict_check_cooldown_until.get(jid, 0.0) > batch_mono:
-            cooldown_jids.append(jid)
-      work = [candidate for candidate in sub if candidate.jid not in cooldown_jids]
-      for jid in cooldown_jids:
+            cooldown_candidates.append(candidate)
+      cooldown_jid_set = {c.jid for c in cooldown_candidates}
+      work = [candidate for candidate in sub if candidate.jid not in cooldown_jid_set]
+      for candidate in cooldown_candidates:
         if on_not_ready_jid is not None:
-          on_not_ready_jid(jid)
+          on_not_ready_jid(candidate.jid, candidate)
         with scheduler_shared_lock:
           stats["strict_not_ready_jids"] += 1
           stats["strict_cooldown_skips"] += 1
@@ -1491,11 +1597,11 @@ def _fill_ready_queue(
               strict_check_cooldown_until=strict_check_cooldown_until,
               cooldown_jids=work,
           )
-        for jid in work:
-          ready_jid = _strict_ready_fallback_one(jid.jid)
+        for candidate in work:
+          ready_jid = _strict_ready_fallback_one(candidate.jid)
           if ready_jid is None:
             if on_not_ready_jid is not None:
-              on_not_ready_jid(jid.jid)
+              on_not_ready_jid(candidate.jid, candidate)
             with scheduler_shared_lock:
               stats["strict_not_ready_jids"] += 1
               stats["skipped_not_ready"] += 1
@@ -1533,7 +1639,7 @@ def _fill_ready_queue(
             return True
         else:
           if on_not_ready_jid is not None:
-            on_not_ready_jid(candidate.jid)
+            on_not_ready_jid(candidate.jid, candidate)
           with scheduler_shared_lock:
             stats["strict_not_ready_jids"] += 1
             stats["skipped_not_ready"] += 1
@@ -1603,18 +1709,33 @@ def _start_candidate_rescan_thread(
           try:
             qs = _jobs_queryset(d, min_time, rerun)
             candidates = list(
-                qs.values_list("jid", "artifact_only_candidate")[:RESCAN_FETCH_LIMIT]
+                qs.values_list(
+                    "jid", "start_time", "end_time", "artifact_only_candidate",
+                )[:RESCAN_FETCH_LIMIT]
             )
           except Exception:
             continue
           if not candidates:
             continue
           with rescan_lock:
-            for jid, artifact_only in candidates:
+            for row in candidates:
+              if len(row) >= 4:
+                jid, st, et, artifact_only = row[0], row[1], row[2], row[3]
+              elif len(row) >= 2:
+                jid, artifact_only = row[0], row[1]
+                st, et = None, None
+              else:
+                continue
               if jid in rescan_seen_jids:
                 continue
               rescan_seen_jids.add(jid)
-              rescan_candidate_jids.append(_candidate_ref(jid, artifact_only))
+              rescan_candidate_jids.append(
+                  _candidate_ref(
+                      jid,
+                      bool(artifact_only),
+                      runtime_s=_job_window_runtime_seconds(st, et),
+                  )
+              )
               added_any = True
         if added_any:
           idle_rounds = 0
@@ -1735,10 +1856,10 @@ def _start_readiness_producer(
     last_progress_at = time.monotonic()
 
     def _remember_candidate(candidate):
-      ref = _candidate_ref(
-          getattr(candidate, "jid", candidate),
-          getattr(candidate, "artifact_only", False),
-      )
+      jid = getattr(candidate, "jid", candidate)
+      ao = getattr(candidate, "artifact_only", False)
+      rt = getattr(candidate, "runtime_s", None)
+      ref = _candidate_ref(jid, ao, runtime_s=rt)
       jid = ref.jid
       with rescan_lock:
         rescan_seen_jids.add(jid)
@@ -1747,22 +1868,30 @@ def _start_readiness_producer(
           {"first_seen": time.monotonic(), "attempts": 0, "artifact_only": False},
       )
       meta["artifact_only"] = bool(ref.artifact_only)
+      if rt is not None:
+        meta["runtime_s"] = float(rt)
 
-    def _defer_not_ready_jid(jid):
+    def _defer_not_ready_jid(jid, runtime_s=None):
       now = time.monotonic()
-      meta = deferred_meta.setdefault(jid, {"first_seen": now, "attempts": 0})
+      meta = deferred_meta.setdefault(
+          jid,
+          {"first_seen": now, "attempts": 0, "artifact_only": False},
+      )
       meta["attempts"] += 1
+      if runtime_s is not None:
+        meta["runtime_s"] = float(runtime_s)
       age_s = max(0.0, now - float(meta["first_seen"]))
+      max_retries = int(cfg.get_metrics_deferred_not_ready_max_retries())
       use_quarantine = (
-          meta["attempts"] >= DEFERRED_NOT_READY_MAX_RETRIES
-          or age_s >= DEFERRED_NOT_READY_MAX_AGE_SECONDS
+          meta["attempts"] >= max_retries
+          or age_s >= float(cfg.get_metrics_deferred_not_ready_max_age_seconds())
       )
       if use_quarantine:
-        retry_after = DEFERRED_NOT_READY_QUARANTINE_SECONDS
+        retry_after = float(cfg.get_metrics_deferred_not_ready_quarantine_seconds())
         with scheduler_shared_lock:
           stats["deferred_quarantined_jids"] += 1
       else:
-        retry_after = DEFERRED_NOT_READY_RETRY_SECONDS
+        retry_after = float(cfg.get_metrics_deferred_not_ready_retry_seconds())
       deferred_not_ready[jid] = now + retry_after
 
     try:
@@ -1783,6 +1912,11 @@ def _start_readiness_producer(
           probe_cap = readiness_probe_target["value"]
         local_ready = deque()
         deferred_hits = []
+
+        def _defer_hit(jid, candidate=None):
+          rt = getattr(candidate, "runtime_s", None) if candidate is not None else None
+          deferred_hits.append((jid, rt))
+
         now = time.monotonic()
         deferred_due = [
             jid for jid, retry_at in deferred_not_ready.items()
@@ -1796,7 +1930,11 @@ def _start_readiness_producer(
         extra_candidates = []
         seen_extra = set()
         deferred_candidate_refs = [
-            _candidate_ref(jid, deferred_meta.get(jid, {}).get("artifact_only", False))
+            _candidate_ref(
+                jid,
+                deferred_meta.get(jid, {}).get("artifact_only", False),
+                runtime_s=deferred_meta.get(jid, {}).get("runtime_s"),
+            )
             for jid in deferred_due
         ]
         for candidate in deferred_candidate_refs + rescan_due:
@@ -1827,11 +1965,11 @@ def _start_readiness_producer(
               strict_check_cooldown_until=strict_check_cooldown_until,
               rr_cursor={"idx": 0},
               scheduler_shared_lock=scheduler_shared_lock,
-              on_not_ready_jid=deferred_hits.append,
+              on_not_ready_jid=_defer_hit,
               on_candidate_jid=_remember_candidate,
           )
-          for jid in deferred_hits:
-            _defer_not_ready_jid(jid)
+          for jid, rt in deferred_hits:
+            _defer_not_ready_jid(jid, runtime_s=rt)
           if len(local_ready) >= probe_target:
             with scheduler_shared_lock:
               readiness_probe_target["value"] = _adjust_readiness_probe_target(
@@ -1857,11 +1995,11 @@ def _start_readiness_producer(
             strict_check_cooldown_until=strict_check_cooldown_until,
             rr_cursor=rr_cursor,
             scheduler_shared_lock=scheduler_shared_lock,
-            on_not_ready_jid=deferred_hits.append,
+            on_not_ready_jid=_defer_hit,
             on_candidate_jid=_remember_candidate,
         )
-        for jid in deferred_hits:
-          _defer_not_ready_jid(jid)
+        for jid, rt in deferred_hits:
+          _defer_not_ready_jid(jid, runtime_s=rt)
         with scheduler_shared_lock:
           readiness_probe_target["value"] = _adjust_readiness_probe_target(
               current_target=readiness_probe_target["value"],
@@ -2135,6 +2273,7 @@ def _compute_jid_outcomes_batch(
     metrics_manager,
     prewarm_pipeline,
     shared_pool,
+    batch_timing=None,
 ):
   """Run one batched ``Metrics.run`` then optional prewarm (submit/drain).
 
@@ -2145,6 +2284,9 @@ def _compute_jid_outcomes_batch(
   or runs inline when configured. Set ``[DEFAULT] metrics_scheduler_skip_prewarm``
   (or env ``HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM``) to skip plot/detail
   persistence for catch-up runs.
+
+  When ``batch_timing`` is a dict, it is populated with ``metrics_wall_s``,
+  ``prewarm_wall_s``, and ``batch_wall_s`` for scheduler watchdogs.
   """
   if not job_refs:
     return []
@@ -2164,6 +2306,7 @@ def _compute_jid_outcomes_batch(
       ref for ref in job_refs if bool(getattr(ref, "artifact_only", False))
   ]
   t_batch = time.monotonic()
+  timing = {} if batch_timing is None else batch_timing
   if cfg.get_metrics_per_jid_phase_diagnostics_enabled():
     n = len(job_refs)
     head = min(24, n)
@@ -2179,8 +2322,10 @@ def _compute_jid_outcomes_batch(
       flush=True,
     )
   metrics_run_outcomes = []
+  t_metrics_start = None
   try:
     if metrics_job_refs:
+      t_metrics_start = time.monotonic()
       metrics_run_outcomes = metrics_manager.run(
           metrics_job_refs,
           pool=metrics_manager.ensure_pool(),
@@ -2346,8 +2491,15 @@ def _compute_jid_outcomes_batch(
           error_message=None,
           persist_s=0.0,
       ))
+    timing["metrics_wall_s"] = max(0.0, time.monotonic() - t_batch)
+    timing["prewarm_wall_s"] = 0.0
+    timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
     return outcomes
-  metrics_elapsed = time.monotonic() - t_batch
+  if t_metrics_start is not None:
+    timing["metrics_wall_s"] = max(0.0, time.monotonic() - t_metrics_start)
+  else:
+    timing["metrics_wall_s"] = 0.0
+  metrics_elapsed = timing["metrics_wall_s"]
   n = max(1, len(metrics_job_refs))
   per_metrics = metrics_elapsed / n if metrics_job_refs else 0.0
   telem = _empty_jid_outcome_telemetry()
@@ -2383,6 +2535,8 @@ def _compute_jid_outcomes_batch(
     if base_outcome.get("ok"):
       successful_refs.append(ref)
   if skip_prewarm:
+    timing["prewarm_wall_s"] = 0.0
+    timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
     ordered = sorted(normalized, key=lambda item: item[0].jid)
     return [
         _scheduler_jid_outcome(
@@ -2407,26 +2561,31 @@ def _compute_jid_outcomes_batch(
       break
     prewarm_pipeline.submit(job_ref.jid)
   drain_started = time.monotonic()
+  drain_budget_s = _effective_prewarm_drain_batch_budget_s(len(successful_refs))
   while prewarm_pipeline.has_pending():
     if shutdown_requested[0]:
       break
-    if (time.monotonic() - drain_started) >= PREWARM_DRAIN_BATCH_BUDGET_SECONDS:
+    if (time.monotonic() - drain_started) >= drain_budget_s:
       prewarm_snapshot = prewarm_pipeline.stats()
       pending = prewarm_snapshot.get("prewarm_backlog_jobs", 0)
       oldest_age_s = prewarm_snapshot.get("prewarm_oldest_pending_age_s", 0.0)
       log_print(
-          "metrics scheduler: prewarm drain budget hit after {0:.1f}s size={1} pending={2} "
+          "metrics scheduler: prewarm drain budget hit after {0:.1f}s "
+          "(budget_s={4:.2f}) size={1} pending={2} "
           "oldest_pending_age_s={3:.3f}; remaining work deferred".format(
               time.monotonic() - drain_started,
               len(job_refs),
               int(pending),
               float(oldest_age_s),
+              float(drain_budget_s),
           ),
           flush=True,
       )
       break
     prewarm_pipeline.drain_some()
   prewarm_elapsed = time.monotonic() - t_prewarm
+  timing["prewarm_wall_s"] = max(0.0, prewarm_elapsed)
+  timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
   per_prewarm = prewarm_elapsed / n
   ordered = sorted(normalized, key=lambda item: item[0].jid)
   return [
@@ -2621,9 +2780,10 @@ def update_metrics_for_dates(dates, rerun=False):
         while not shutdown_requested[0]:
           with ready_queue_lock:
             if ready_queue:
-              jobs_this_round = []
-              while ready_queue and len(jobs_this_round) < effective_batch_cap:
-                jobs_this_round.append(ready_queue.popleft())
+              jobs_this_round = _pop_candidates_for_compute_batch_locked(
+                  ready_queue,
+                  effective_batch_cap,
+              )
             else:
               jobs_this_round = []
           with scheduler_shared_lock:
@@ -2684,6 +2844,7 @@ def update_metrics_for_dates(dates, rerun=False):
               flush=True,
           )
           batch_start = time.monotonic()
+          batch_phase_timing = {}
           with phase_timer.phase("metrics_compute_s"):
             succeeded_jids = []
             failed_count = 0
@@ -2692,6 +2853,7 @@ def update_metrics_for_dates(dates, rerun=False):
                 metrics_manager,
                 prewarm_pipeline,
                 shared_pool,
+                batch_timing=batch_phase_timing,
             )
             for jid_outcome in jid_outcomes:
               if jid_outcome["ok"]:
@@ -2734,6 +2896,16 @@ def update_metrics_for_dates(dates, rerun=False):
               else:
                 failed_count += 1
           batch_elapsed = time.monotonic() - batch_start
+          metrics_watchdog_s = float(cfg.get_metrics_compute_watchdog_seconds())
+          total_watchdog_s = float(cfg.get_metrics_compute_total_watchdog_seconds())
+          metrics_phase_s = float(batch_phase_timing.get("metrics_wall_s", batch_elapsed))
+          prewarm_phase_s = float(batch_phase_timing.get("prewarm_wall_s", 0.0))
+          batch_wall_s = float(batch_phase_timing.get("batch_wall_s", batch_elapsed))
+          downshift = False
+          if metrics_phase_s >= metrics_watchdog_s:
+            downshift = True
+          if total_watchdog_s > 0.0 and batch_wall_s >= total_watchdog_s:
+            downshift = True
           has_batch_exception = any(bool(o.get("_batch_exception")) for o in jid_outcomes)
           fallback_failed = sum(1 for o in jid_outcomes if bool(o.get("_fallback_failed")))
           worker_failed_outcomes = sum(
@@ -2769,7 +2941,7 @@ def update_metrics_for_dates(dates, rerun=False):
                 stats["stall_reason"] = "compute_all_failed"
           completion_reporter.sync_completed_total(proc_total)
           compute_batches += 1
-          if batch_elapsed >= COMPUTE_BATCH_WATCHDOG_SECONDS:
+          if downshift:
             new_cap = max(
                 COMPUTE_BATCH_MIN_CAP,
                 int(max(COMPUTE_BATCH_MIN_CAP, effective_batch_cap) * COMPUTE_BATCH_DOWNSHIFT_FACTOR),
@@ -2777,9 +2949,15 @@ def update_metrics_for_dates(dates, rerun=False):
             if new_cap < effective_batch_cap:
               effective_batch_cap = new_cap
             log_print(
-                "metrics scheduler: compute watchdog elapsed_s={0:.1f} size={1} attempted_total={2} "
-                "new_compute_batch_cap={3}".format(
-                    batch_elapsed,
+                "metrics scheduler: compute watchdog metrics_phase_elapsed_s={0:.1f} "
+                "prewarm_phase_elapsed_s={1:.1f} batch_wall_s={2:.1f} "
+                "metrics_watchdog_s={3:.1f} total_watchdog_s={4:.1f} size={5} attempted_total={6} "
+                "new_compute_batch_cap={7}".format(
+                    metrics_phase_s,
+                    prewarm_phase_s,
+                    batch_wall_s,
+                    metrics_watchdog_s,
+                    total_watchdog_s,
                     len(job_refs),
                     attempted_total,
                     effective_batch_cap,

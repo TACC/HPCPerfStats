@@ -569,6 +569,18 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_prewarm_retry_attempts() == 2
   assert cfg.get_metrics_proxy_reject_jid_batch_size() == 48
   assert cfg.get_metrics_scheduler_skip_prewarm() is False
+  assert cfg.get_metrics_prewarm_drain_batch_budget_base_s() == 2.0
+  assert cfg.get_metrics_prewarm_drain_batch_budget_max_s() == 60.0
+  assert cfg.get_metrics_prewarm_drain_budget_per_successful_job_s() == 0.5
+  assert cfg.get_metrics_compute_batch_max_window_seconds() == 0.0
+  assert cfg.get_metrics_compute_batch_max_single_job_runtime_seconds() == 0.0
+  assert cfg.get_metrics_compute_batch_unknown_runtime_seconds() == 172800.0
+  assert cfg.get_metrics_compute_watchdog_seconds() == 120.0
+  assert cfg.get_metrics_compute_total_watchdog_seconds() == 0.0
+  assert cfg.get_metrics_deferred_not_ready_retry_seconds() == 10.0
+  assert cfg.get_metrics_deferred_not_ready_max_retries() == 30
+  assert cfg.get_metrics_deferred_not_ready_max_age_seconds() == 900.0
+  assert cfg.get_metrics_deferred_not_ready_quarantine_seconds() == 300.0
 
   with open(temp_ini) as f:
     content = f.read()
@@ -617,6 +629,10 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S", "45")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_PERSIST_STATEMENT_TIMEOUT_MS", "9000")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_PERSIST_LOCK_TIMEOUT_MS", "3000")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_S", "3.5")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_COMPUTE_WATCHDOG_S", "90")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_COMPUTE_TOTAL_WATCHDOG_S", "600")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_RETRY_S", "15")
   assert cfg.get_metrics_scheduler_mode() == "strict_date"
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
   assert cfg.get_metrics_prewarm_backlog_cap() == 9
@@ -625,6 +641,10 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_run_stall_timeout_s() == 45.0
   assert cfg.get_metrics_persist_statement_timeout_ms() == 9000
   assert cfg.get_metrics_persist_lock_timeout_ms() == 3000
+  assert cfg.get_metrics_prewarm_drain_batch_budget_base_s() == 3.5
+  assert cfg.get_metrics_compute_watchdog_seconds() == 90.0
+  assert cfg.get_metrics_compute_total_watchdog_seconds() == 600.0
+  assert cfg.get_metrics_deferred_not_ready_retry_seconds() == 15.0
 
 
 def test_get_metrics_per_jid_phase_diagnostics_enabled_env(monkeypatch):

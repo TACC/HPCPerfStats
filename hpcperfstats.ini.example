@@ -54,6 +54,22 @@ total_cores = 40
 # metrics_scheduler_ready_queue_target = 500
 # metrics_prewarm_workers = 2
 # metrics_scheduler_compute_threads = 2
+# Cost-aware compute batching (0 disables): cap sum of job window seconds and/or one job's window per batch
+# metrics_compute_batch_max_window_s = 0
+# metrics_compute_batch_max_single_job_s = 0
+# metrics_compute_batch_unknown_runtime_s = 172800
+# Prewarm drain budget after each Metrics.run batch (base + per-successful-job, optional ceiling)
+# metrics_prewarm_drain_batch_budget_s = 2.0
+# metrics_prewarm_drain_per_job_s = 0.5
+# metrics_prewarm_drain_batch_budget_max_s = 60
+# Watchdog downshift for adaptive batch cap (total 0 = metrics-only)
+# metrics_compute_watchdog_s = 120
+# metrics_compute_total_watchdog_s = 0
+# Deferred not-ready backoff (strict readiness)
+# metrics_deferred_not_ready_retry_s = 10
+# metrics_deferred_not_ready_max_retries = 30
+# metrics_deferred_not_ready_max_age_s = 900
+# metrics_deferred_not_ready_quarantine_s = 300
 # sync_ingest_queue_max_size = 500
 # sync_archive_queue_max_size = 250
 # sync_checkpoint_flush_batch_size = 50
