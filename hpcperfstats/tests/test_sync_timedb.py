@@ -60,11 +60,11 @@ def test_load_stats_file_lines_from_contents():
 
 
 def test_load_stats_file_lines_from_contents_string():
-  """When contents is a list of lines, each element is a line."""
-  contents = ["line1\n", "line2\n"]
+  """When contents is a plain string it is split into lines (not iterated as chars)."""
+  contents = "12345 job1 node1\n! amd64_pmc a b\n"
   lines, err = load_stats_file_lines("/any/path", stats_file_contents=contents)
-  assert lines == contents
   assert err is None
+  assert lines == ["12345 job1 node1\n", "! amd64_pmc a b\n"]
 
 
 def test_load_stats_file_lines_file_not_found():

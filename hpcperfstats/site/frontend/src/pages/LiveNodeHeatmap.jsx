@@ -3,7 +3,9 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import LoadingMessage from "../components/LoadingMessage";
 import { aggregateLiveJobsByHost } from "../utils/aggregateLiveJobsByHost";
+import { fetchHeatmapKnownHosts } from "../utils/fetchHeatmapKnownHosts";
 import { formatMinsAgo } from "../utils/formatRelativeTime";
+import { mergeHeatmapHostsWithLive } from "../utils/mergeHeatmapHostsWithLive";
 
 /** Map CPU utilisation 0–100% to a purple (low) → red (high) hue ramp. */
 function cpuToHeatColor(cpuPct) {
@@ -20,7 +22,7 @@ function shortHostname(fqdn) {
   return i === -1 ? fqdn : fqdn.slice(0, i);
 }
 
-/** Grey cell when a host is known from host_data (admin monitor) but has no live job row. */
+/** Grey cell when a host is known from host_data but has no live job row. */
 const IDLE_HEATMAP_CELL_BG = "hsl(220, 6%, 36%)";
 
 function buildCellTitle(entry) {
@@ -43,96 +45,47 @@ function buildCellTitle(entry) {
   ].join("\n");
 }
 
-/**
- * Known hosts from GET /api/admin_monitor/?section=hosts (host_data, last 8d),
- * merged with live /live/jobs/ aggregation. Idle hosts (no live row) are grey.
- * @param {Array<{host?: string, last_time?: string, age_bucket?: string}>} adminHostStats
- * @param {Array<{host: string, usage: number, maxCpu: number, maxMem: number, updatedTs: number, jids: string[]}>} liveByHost
- */
-function mergeAdminHostsWithLive(adminHostStats, liveByHost) {
-  const adminRows = (adminHostStats || []).filter(
-    (h) =>
-      h &&
-      typeof h.host === "string" &&
-      h.host.includes(".") &&
-      !h._debug_74ebbb,
-  );
-  const liveMap = new Map(
-    liveByHost.map((e) => [e.host, { ...e, isLive: true }]),
-  );
-  const consumedLiveFqdns = new Set();
-  const out = [];
-
-  function liveEntryForAdminFqdn(adminFqdn) {
-    const exact = liveMap.get(adminFqdn);
-    if (exact) {
-      return exact;
-    }
-    const short = shortHostname(adminFqdn);
-    const candidates = liveByHost.filter(
-      (e) => shortHostname(e.host) === short,
-    );
-    if (candidates.length === 1) {
-      return { ...candidates[0], isLive: true };
-    }
-    return null;
-  }
-
-  const sortedAdmin = [...adminRows].sort((a, b) =>
-    shortHostname(a.host).localeCompare(shortHostname(b.host)),
-  );
-  for (const a of sortedAdmin) {
-    const live = liveEntryForAdminFqdn(a.host);
-    if (live) {
-      consumedLiveFqdns.add(live.host);
-      out.push({ ...live, adminMeta: a });
-    } else {
-      out.push({
-        host: a.host,
-        usage: 0,
-        maxCpu: 0,
-        maxMem: 0,
-        updatedTs: 0,
-        jids: [],
-        isLive: false,
-        adminMeta: a,
-      });
-    }
-  }
-
-  const extras = liveByHost
-    .filter((e) => !consumedLiveFqdns.has(e.host))
-    .map((e) => ({ ...e, isLive: true }));
-  extras.sort((a, b) => b.maxCpu - a.maxCpu || b.usage - a.usage);
-  out.push(...extras);
-
-  return out;
-}
-
 export default function LiveNodeHeatmap() {
   const [rows, setRows] = useState([]);
-  const [adminHostStats, setAdminHostStats] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [knownHostStats, setKnownHostStats] = useState([]);
+  const [hostsReady, setHostsReady] = useState(false);
   const [error, setError] = useState(null);
   const [, bumpMins] = useState(0);
 
-  const load = () => {
-    setError(null);
-    Promise.all([
-      api.getLiveJobs(),
-      api.getAdminMonitorSection("hosts").catch(() => ({ host_stats: [] })),
-    ])
-      .then(([liveRes, adminRes]) => {
-        setRows(liveRes.results || []);
-        setAdminHostStats(adminRes.host_stats || []);
+  /** On mount: load all known hosts first so the grid appears immediately (grey if idle). */
+  useEffect(() => {
+    let cancelled = false;
+    fetchHeatmapKnownHosts({ refresh: true })
+      .then((stats) => {
+        if (!cancelled) {
+          setKnownHostStats(stats);
+        }
       })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (!cancelled) {
+          setError((prev) => prev || e.message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setHostsReady(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loadLiveJobs = () => {
+    api
+      .getLiveJobs()
+      .then((res) => setRows(res.results || []))
+      .catch((e) => setError(e.message));
   };
 
   useEffect(() => {
-    load();
-    const t = setInterval(load, 15000);
+    loadLiveJobs();
+    const t = setInterval(loadLiveJobs, 15000);
     return () => clearInterval(t);
   }, []);
 
@@ -143,11 +96,11 @@ export default function LiveNodeHeatmap() {
 
   const liveByHost = useMemo(() => aggregateLiveJobsByHost(rows), [rows]);
   const displayEntries = useMemo(
-    () => mergeAdminHostsWithLive(adminHostStats, liveByHost),
-    [adminHostStats, liveByHost],
+    () => mergeHeatmapHostsWithLive(knownHostStats, liveByHost),
+    [knownHostStats, liveByHost],
   );
 
-  if (loading && rows.length === 0 && adminHostStats.length === 0) {
+  if (!hostsReady) {
     return <LoadingMessage message="Loading node heatmap…" />;
   }
 
@@ -155,11 +108,10 @@ export default function LiveNodeHeatmap() {
     <>
       <h3>Live node usage heatmap</h3>
       <p className="text-muted">
-        Nodes with recent daemon snapshots (same source as{" "}
-        <Link to="/live_jobs">Live jobs</Link>). Color reflects{" "}
-        <strong>CPU utilization</strong> (0–100%): purple is idle, red is fully
-        loaded. Each job uses one node and 
-        cells are grey until live telemetry arrives.
+        All hosts seen in <code>host_data</code> over the last 8 days appear on
+        load (grey when no live job). Color reflects{" "}
+        <strong>CPU utilization</strong> (0–100%) from{" "}
+        <Link to="/live_jobs">Live jobs</Link> when a node is in use.
       </p>
       {error && (
         <div className="alert alert-danger" role="alert">
@@ -182,9 +134,21 @@ export default function LiveNodeHeatmap() {
             <span className="small">{u}%</span>
           </div>
         ))}
+        <span
+          className="rounded border ms-2"
+          style={{
+            width: 28,
+            height: 18,
+            backgroundColor: IDLE_HEATMAP_CELL_BG,
+          }}
+          aria-hidden
+        />
+        <span className="small text-muted">No live job</span>
       </div>
       {displayEntries.length === 0 ? (
-        <p className="text-muted">No live node data yet.</p>
+        <p className="text-muted">
+          No hosts in host_data for the last 8 days yet.
+        </p>
       ) : (
         <div
           className="live-node-heatmap-grid"

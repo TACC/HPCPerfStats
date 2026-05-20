@@ -93,6 +93,15 @@ export const api = {
     return request(`/job_monitor/${search}`);
   },
   getLiveJobs: () => request("/live/jobs/"),
+  /** host_data hosts (last 8d); same query as admin_monitor section=hosts */
+  getLiveKnownHosts: (options = {}) => {
+    const params = new URLSearchParams();
+    if (options.refresh) {
+      params.set("refresh", "1");
+    }
+    const qs = params.toString();
+    return request(qs ? `/live/hosts/?${qs}` : "/live/hosts/");
+  },
 };
 
 export default api;

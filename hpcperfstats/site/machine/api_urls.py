@@ -7,6 +7,7 @@ urlpatterns = [
     path("session/drop-staff/", api.drop_staff_for_session),
     path("home/", api.home_options),
     path("live/jobs/", api.live_jobs),
+    path("live/hosts/", api.live_hosts),
     path("search/", api.search_dispatch),
     path("jobs/", api.job_list),
     path("jobs/histograms/", api.job_list_histograms),

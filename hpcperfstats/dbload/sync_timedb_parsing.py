@@ -66,6 +66,8 @@ def parse_stats_file_path(stats_file):
 def load_stats_file_lines(stats_file, stats_file_contents=None):
   """Load stats file as list of lines. Uses stats_file_contents if provided, else reads from disk. Returns (lines, error_msg). error_msg is None on success."""
   if stats_file_contents is not None:
+    if isinstance(stats_file_contents, str):
+      return stats_file_contents.splitlines(True), None
     return stats_file_contents, None
   try:
     with file_read_lock_wait(stats_file):
