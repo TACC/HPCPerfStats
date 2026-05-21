@@ -1554,3 +1554,11 @@ def test_insert_host_data_individually_uses_force_insert():
     st._insert_host_data_individually(df)
 
   mock_inst.save.assert_called_once_with(force_insert=True)
+
+
+def test_sync_timedb_uses_fixed_batch_sizes_not_adaptive_helpers():
+  """Ingest uses fixed chunk and bulk_create batch sizes (no runtime tuning)."""
+  assert st.chunk_size == 200
+  assert st.bulk_create_batch_size == 10000
+  assert not hasattr(st, "_get_adaptive_bulk_create_batch_size")
+  assert not hasattr(st, "_record_adaptive_batch_feedback")

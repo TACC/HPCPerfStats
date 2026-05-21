@@ -102,9 +102,9 @@ archive_thread_count = cfg.get_sync_archive_pool_processes()
 days_to_process = 5
 
 # How many files to proccess and archive at once
-chunk_size = 100
+chunk_size = 200
 # Max paths per ``tar -T`` batch (limits list-file size; argv stays tiny).
-tar_append_batch_size = 32
+tar_append_batch_size = 256
 # Rescan stats directory after this many processed chunks
 rescan_every_chunks = 10
 # Bound processed-file tracking to avoid unbounded set growth in long runs.
@@ -136,7 +136,6 @@ def _sync_timedb_ingest_inline_requested():
 
 # Rows per bulk_create batch to limit peak memory per worker
 bulk_create_batch_size = 10000
-_adaptive_bulk_create_batch_size = bulk_create_batch_size
 _HEAD_TIMESTAMP_CACHE = {}
 _HEAD_TIMESTAMP_CACHE_REFRESH_SECONDS = 60
 _HEAD_TIMESTAMP_CACHE_MAX_ENTRIES = 20000
@@ -290,22 +289,6 @@ def _save_dead_letter_entries(path, entries):
   _save_json_atomic(path, payload)
 
 
-def _get_adaptive_bulk_create_batch_size():
-  return max(100, int(_adaptive_bulk_create_batch_size))
-
-
-def _record_adaptive_batch_feedback(duration_seconds, had_error=False):
-  global _adaptive_bulk_create_batch_size
-  current = _get_adaptive_bulk_create_batch_size()
-  if had_error:
-    _adaptive_bulk_create_batch_size = max(100, int(current * 0.8))
-    return
-  if duration_seconds < 0.25:
-    _adaptive_bulk_create_batch_size = min(50000, int(current * 1.1))
-  elif duration_seconds > 1.5:
-    _adaptive_bulk_create_batch_size = max(100, int(current * 0.9))
-
-
 def _head_timestamp_present_cached(hostname, timestamp_utc):
   key = (hostname, int(timestamp_utc.timestamp()))
   now = time.time()
@@ -392,13 +375,13 @@ def _invalidate_jid_caches(stats, proc_stats):
 
 
 def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archival=True):
-  """Persist parsed payload into DB using adaptive batching and lock sharding."""
+  """Persist parsed payload into DB using fixed-size batches and lock sharding."""
   write_lock = _pick_write_lock_for_path(lock, stats_file)
   try:
     try:
       proc_it = proc_stats.itertuples(index=False)
       while True:
-        batch = list(itertools.islice(proc_it, _get_adaptive_bulk_create_batch_size()))
+        batch = list(itertools.islice(proc_it, bulk_create_batch_size))
         if not batch:
           break
         proc_objs = [
@@ -409,9 +392,7 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
         lock_wait = time.time() - lock_wait_t0
         _log_db_lock_wait("proc", stats_file, lock_wait)
         try:
-          t0 = time.time()
           proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
-          _record_adaptive_batch_feedback(time.time() - t0, had_error=False)
         finally:
           write_lock.release()
     except Exception as e:
@@ -419,7 +400,6 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
         log_and_raise_database_unavailable(
             e, context="sync_timedb proc_data bulk_create"
         )
-      _record_adaptive_batch_feedback(2.0, had_error=True)
       if DEBUG:
         log_print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
       _insert_proc_data_individually(proc_stats)
@@ -435,7 +415,7 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
         )
         stats_it = stats.itertuples(index=False)
         while True:
-          batch = list(itertools.islice(stats_it, _get_adaptive_bulk_create_batch_size()))
+          batch = list(itertools.islice(stats_it, bulk_create_batch_size))
           if not batch:
             break
           host_objs = [host_data_instance_from_stats_row(row) for row in batch]
@@ -444,9 +424,7 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
           lock_wait = time.time() - lock_wait_t0
           _log_db_lock_wait("host", stats_file, lock_wait)
           try:
-            t0 = time.time()
             host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
-            _record_adaptive_batch_feedback(time.time() - t0, had_error=False)
           finally:
             write_lock.release()
     except Exception as e:
@@ -454,7 +432,6 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
         log_and_raise_database_unavailable(
             e, context="sync_timedb host_data bulk_create"
         )
-      _record_adaptive_batch_feedback(2.0, had_error=True)
       if DEBUG:
         log_print("error in host_data bulk_create:", str(e))
       need_archival = _insert_host_data_individually(stats)
@@ -1053,10 +1030,6 @@ def run_sync_timedb_supervisor_loop(
   archive_retry_backoff_base = max(0.0, float(cfg.get_sync_archive_retry_backoff_base_seconds()))
   archive_retry_backoff_max = max(0.0, float(cfg.get_sync_archive_retry_backoff_max_seconds()))
   ingest_first_durability = bool(cfg.get_sync_enable_ingest_first_durability_mode())
-  adaptive_dispatch_enabled = bool(cfg.get_sync_adaptive_dispatch_enabled())
-  dispatch_step_size = max(1, int(cfg.get_sync_dispatch_step_size()))
-  dispatch_burst_factor = max(1.0, float(cfg.get_sync_dispatch_burst_factor()))
-  dispatch_archive_backoff_ratio = max(0.1, float(cfg.get_sync_dispatch_archive_backoff_ratio()))
   last_archive_maint = time.time()
   ingest_t0 = time.time()
 
@@ -1360,7 +1333,6 @@ def run_sync_timedb_supervisor_loop(
   inflight_archive_paths = set()
   pending_stats_files = []
   chunk_counter = 0
-  dispatch_target_size = max(chunk_size, thread_count)
   checkpoint_path = os.path.join(directory, SYNC_TIMEDB_CHECKPOINT_BASENAME)
   dead_letter_path = os.path.join(directory, SYNC_TIMEDB_DEAD_LETTER_BASENAME)
 
@@ -1567,7 +1539,7 @@ def run_sync_timedb_supervisor_loop(
               % (len(pending_stats_files), ingest_queue_high),
               flush=True,
           )
-        target_chunk_size = min(int(dispatch_target_size), ingest_queue_high)
+        target_chunk_size = min(chunk_size, ingest_queue_high)
         stats_files_chunk = pending_stats_files[:target_chunk_size]
         if not stats_files_chunk:
           continue
@@ -1703,8 +1675,13 @@ def run_sync_timedb_supervisor_loop(
 
         log_print("loading time", time.time() - ingest_t0)
         log_print(
-            "Throughput telemetry: active_workers=%d backlog=%d adaptive_batch=%d"
-            % (active_workers, len(pending_stats_files), _get_adaptive_bulk_create_batch_size()),
+            "Throughput telemetry: active_workers=%d backlog=%d chunk_size=%d bulk_create_batch=%d"
+            % (
+                active_workers,
+                len(pending_stats_files),
+                chunk_size,
+                bulk_create_batch_size,
+            ),
             flush=True,
         )
         if len(pending_stats_files) > thread_count and active_workers < max(1, thread_count // 2):
@@ -1713,38 +1690,6 @@ def run_sync_timedb_supervisor_loop(
               % (len(pending_stats_files), active_workers, thread_count),
               flush=True,
           )
-        if adaptive_dispatch_enabled:
-          backlog = max(0, len(pending_stats_files) - len(stats_files_chunk))
-          archive_backlog = len(pending_archive_tasks)
-          burst_ceiling = max(
-              thread_count,
-              int(math.ceil(thread_count * dispatch_burst_factor)),
-          )
-          if archive_backlog >= archive_queue_high:
-            reduced = max(
-                thread_count,
-                int(math.floor(dispatch_target_size * dispatch_archive_backoff_ratio)),
-            )
-            dispatch_target_size = max(thread_count, reduced)
-            log_print(
-                "Adaptive dispatch backoff archive_backlog=%d target=%d"
-                % (archive_backlog, dispatch_target_size),
-                flush=True,
-            )
-          elif backlog > dispatch_target_size and active_workers >= max(1, thread_count // 2):
-            dispatch_target_size = min(burst_ceiling, dispatch_target_size + dispatch_step_size)
-            log_print(
-                "Adaptive dispatch increase backlog=%d target=%d"
-                % (backlog, dispatch_target_size),
-                flush=True,
-            )
-          elif backlog <= ingest_queue_low:
-            dispatch_target_size = max(thread_count, dispatch_target_size - dispatch_step_size)
-            log_print(
-                "Adaptive dispatch relax backlog=%d target=%d"
-                % (backlog, dispatch_target_size),
-                flush=True,
-            )
         log_print("Files marked for archival: %d" % len(files_to_be_archived))
 
         if files_to_be_archived:
