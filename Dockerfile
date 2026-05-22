@@ -1,5 +1,6 @@
 # Build frontend assets in a dedicated node stage.
-FROM node:22-bookworm-slim AS frontend-builder
+FROM node:26.2.0-alpine3.23 AS frontend-builder
+RUN apk add bash
 WORKDIR /home/hpcperfstats
 COPY --chown=node:node . .
 WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
