@@ -19,7 +19,7 @@ RUN /bin/bash -o pipefail -c "\
     rm -rf /home/hpcperfstats/hpcperfstats/site/frontend"
 
 # Runtime image.
-FROM python:3.12-trixie
+FROM python:3.12.13-trixie
 
 # Setup users, directories, and required runtime packages.
 RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
