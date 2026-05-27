@@ -9,8 +9,6 @@ include:
 
 services:
   web:
-    mem_limit: "12g"
-    mem_reservation: "8g"
     volumes:
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
@@ -18,8 +16,6 @@ services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "no", "--maxmemory", "8gb", "--maxmemory-policy", "allkeys-lru"]
-    mem_limit: "10g"
-    mem_reservation: "8g"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -37,8 +33,6 @@ services:
     image: hpcperfstats-proxy
     container_name: hpcperfstats_proxy_1
     restart: always
-    mem_limit: "1g"
-    mem_reservation: "512m"
     depends_on:
       web:
         condition: service_started
@@ -78,9 +72,7 @@ services:
     # workers + threads + pipeline pools, not permission to run 500 heavy queries at once.
     # Spike control: lower work_mem and parallel gather workers cap per-query RAM; slightly lower
     # shared_buffers frees container RAM for backends + OS cache (see README Postgres section).
-    shm_size: "8gb"
-    mem_limit: "56g"
-    mem_reservation: "40g"
+    #
     # statement_timeout / idle_in_transaction_session_timeout: align with Django OPTIONS in settings
     # (defaults 120s / 300s in ms). Shed runaway queries; tune bulk jobs if needed.
     # max_wal_size: reduce checkpoint churn under sustained write load.
@@ -147,8 +139,6 @@ services:
     image: rabbitmq:4-alpine
     container_name: hpcperfstats_rabbitmq_1
     restart: always
-    mem_limit: "2g"
-    mem_reservation: "1g"
     environment:
       - RABBITMQ_DEFAULT_USER=guest
       - RABBITMQ_DEFAULT_PASS=guest
