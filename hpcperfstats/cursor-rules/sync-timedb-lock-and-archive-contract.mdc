@@ -32,3 +32,4 @@ When changing ingest/archive paths under `hpcperfstats/dbload/archive_monitor_da
 ## Overlap
 
 - Complements `runtime-resource-and-metrics-safety.mdc` (resource limits) and `pipeline-metrics-e2e-maintenance.mdc` (pipeline-level regression coverage).
+- Complements **`sync-timedb-db-before-archive-contract.mdc`** — head-timestamp DB `exists()` gate before raw stats tar append or filesystem removal (when `sync_archive_require_db_head_ingest` is enabled).

@@ -168,6 +168,8 @@ daily_archive_dir  = %(data_dir)s/daily_archive
 # archive_pigz_threads = 8
 # archive_pigz_level = 8
 # archive_pigz_interval_seconds = 28800
+# Require first stats timestamp in DB before daily tar append or raw file removal (default yes).
+# sync_archive_require_db_head_ingest = yes
 
 # Django engine backend (pre-configured for container installation)
 engine_name        = django.db.backends.postgresql 

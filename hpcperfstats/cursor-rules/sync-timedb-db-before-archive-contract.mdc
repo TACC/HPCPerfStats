@@ -1,0 +1,56 @@
+---
+description: Require DB head-timestamp ingest check before sync_timedb tar append or raw file removal
+alwaysApply: true
+---
+
+# sync_timedb DB-before-archive contract
+
+When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/sync_timedb.py`, `sync_timedb_archive_helpers.py`, or `sync_timedb_ingest_readiness.py`, preserve the DB readiness gate.
+
+## Mandatory behavior (when enabled)
+
+- Default **`sync_archive_require_db_head_ingest`** is **on** (`conf_parser.get_sync_archive_require_db_head_ingest()`).
+- No production path may **append** a raw monitor stats file to a daily `.tar` or **delete** that raw file from the archive tree unless **`stats_file_head_ingested_in_db`** returns true.
+- Canonical implementation: **`hpcperfstats/dbload/sync_timedb_ingest_readiness.py`**.
+
+## Definition: head ingested
+
+- Read only until the first digit-leading stats line (minimal I/O).
+- **Head ingested** = that line's `(host, time)` exists in **`host_data`** (`exists()` on composite `(host, time)`).
+- **Limitation:** partial ingest (head in DB, tail missing) may still pass. Do not strengthen to full-file checks without an explicit product decision and performance review.
+
+## Performance
+
+- One cached `exists()` per `(host, unix_second)` (TTL ~60s, bounded cache).
+- Path result cache keyed by `(path, mtime, size)` (TTL ~60s) for maintenance rescans.
+- No full-file parse or `readlines()` for the gate.
+- Archive pool workers call `close_old_connections()` at gate entry.
+
+## Entry points (keep in sync when adding paths)
+
+| Entry point | Gate |
+|-------------|------|
+| `sync_timedb.archive_stats_files` | `filter_paths_head_ingested` before `filter_files_to_add_to_archive` |
+| `remove_verified_archived_raw_files` bootstrap | only `ingest_ready_fn`-true paths passed to `archive_stats_files_fn` |
+| `remove_verified_archived_raw_files` raw removal | `ingest_ready_fn` after archive member/size match |
+| Production wiring | `ingest_ready_fn=stats_file_head_ingested_in_db` from `sync_timedb` supervisor maintenance |
+
+Out of scope: `remove_verified_uncompressed_daily_tars` (`.tar` only), tar dedupe/seal/recovery without raw stats paths.
+
+## Ordering
+
+Startup or idle maintenance may run before ingest in the same process. With the gate enabled, not-yet-ingested files are skipped for tar/delete until a later pass after ingest inserts the head row.
+
+## Emergency override
+
+- **`sync_archive_require_db_head_ingest = no`** in ini disables the gate (log once). Use only for operator recovery; do not ship disabled by default.
+
+## Tests
+
+- Add or extend regression tests when changing gate semantics (`test_sync_timedb_ingest_readiness.py`, `test_sync_timedb_archive.py`).
+- Follow **`every-error-regression-test.mdc`**.
+
+## Overlap
+
+- Complements **`sync-timedb-lock-and-archive-contract.mdc`** (locks, pigz, corrupt-tar recovery).
+- Complements **`runtime-resource-and-metrics-safety.mdc`** for ingest/metrics paths.

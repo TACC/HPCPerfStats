@@ -69,6 +69,12 @@ from hpcperfstats.file_locking import (
     cleanup_stale_fnctl_lock_sidecars,
     file_write_lock,
 )
+from hpcperfstats.dbload.sync_timedb_ingest_readiness import (
+    filter_paths_head_ingested,
+    head_timestamp_present_in_db,
+    reset_sync_ingest_readiness_caches,
+    stats_file_head_ingested_in_db,
+)
 from hpcperfstats.dbload.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
     build_stats_dataframes,
@@ -136,9 +142,6 @@ def _sync_timedb_ingest_inline_requested():
 
 # Rows per bulk_create batch to limit peak memory per worker
 bulk_create_batch_size = 10000
-_HEAD_TIMESTAMP_CACHE = {}
-_HEAD_TIMESTAMP_CACHE_REFRESH_SECONDS = 60
-_HEAD_TIMESTAMP_CACHE_MAX_ENTRIES = 20000
 _HOST_ITIMES_CACHE = {}
 _HOST_ITIMES_CACHE_REFRESH_SECONDS = 20
 _HOST_ITIMES_CACHE_MAX_ENTRIES = 2000
@@ -341,25 +344,6 @@ def _save_dead_letter_entries(path, entries):
   _save_json_atomic(path, payload)
 
 
-def _head_timestamp_present_cached(hostname, timestamp_utc):
-  key = (hostname, int(timestamp_utc.timestamp()))
-  now = time.time()
-  cached = _HEAD_TIMESTAMP_CACHE.get(key)
-  if cached and (now - cached["checked_at"] <= _HEAD_TIMESTAMP_CACHE_REFRESH_SECONDS):
-    return bool(cached["present"])
-  present = host_data.objects.filter(host=hostname, time=timestamp_utc).exists()
-  _HEAD_TIMESTAMP_CACHE[key] = {"present": bool(present), "checked_at": now}
-  if len(_HEAD_TIMESTAMP_CACHE) > _HEAD_TIMESTAMP_CACHE_MAX_ENTRIES:
-    # Drop a small oldest slice to bound memory.
-    oldest_keys = sorted(
-        _HEAD_TIMESTAMP_CACHE.keys(),
-        key=lambda k: _HEAD_TIMESTAMP_CACHE[k]["checked_at"],
-    )[:1000]
-    for drop_key in oldest_keys:
-      _HEAD_TIMESTAMP_CACHE.pop(drop_key, None)
-  return present
-
-
 def _host_recent_timestamps_cached(hostname, ts_low, ts_high):
   """Return cached host timestamp set for duplicate detection window."""
   key = (hostname, int(ts_low.timestamp()), int(ts_high.timestamp()))
@@ -403,7 +387,7 @@ def _pick_write_lock_for_path(lock_or_locks, stats_file):
 
 def _reset_sync_runtime_caches():
   """Clear per-process ingest caches between sync_timedb sessions."""
-  _HEAD_TIMESTAMP_CACHE.clear()
+  reset_sync_ingest_readiness_caches()
   _HOST_ITIMES_CACHE.clear()
 
 
@@ -532,7 +516,7 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
     log_print("initial timestamp not found")
     return (stats_file, None, False, False, _parse_elapsed())
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
-  head_present = _head_timestamp_present_cached(hostname, timestamp_utc)
+  head_present = head_timestamp_present_in_db(hostname, timestamp_utc)
   if not head_present:
     # New file head is not in DB yet; it still needs archival post-ingest.
     start_idx, need_archival = 0, True
@@ -868,7 +852,13 @@ def archive_stats_files(archive_info):
   ``pigz`` sealing and removal of raw stats run on ``archive_pigz_interval_seconds``
   (see main loop), not after each append.
   """
+  from django.db import close_old_connections
+
+  close_old_connections()
   archive_fname, stats_files = archive_info
+  stats_files, _skipped = filter_paths_head_ingested(stats_files, log_fn=log_print)
+  if not stats_files:
+    return True
   archive_tar_fname = archive_fname[:-3]
   existing_members = {}
 
@@ -1156,7 +1146,12 @@ def run_sync_timedb_supervisor_loop(
         log_fn=log_print,
     )
     remove_verified_archived_raw_files(
-        directory, host_name_ext, tgz_archive_dir, log_fn=log_print)
+        directory,
+        host_name_ext,
+        tgz_archive_dir,
+        log_fn=log_print,
+        ingest_ready_fn=stats_file_head_ingested_in_db,
+    )
     if _should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
         force_full,
         run_verified_uncompressed_tar_removal,

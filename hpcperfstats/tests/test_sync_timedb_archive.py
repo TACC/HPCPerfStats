@@ -739,9 +739,100 @@ def test_remove_verified_archived_raw_files_bootstraps_missing_daily_archive(
       str(tgz_dir),
       log_fn=None,
       archive_stats_files_fn=fake_archive,
+      ingest_ready_fn=lambda _p: True,
   )
   assert archive_calls == [(gz_key, [str(seg)])]
   assert not seg.is_file()
+
+
+def test_remove_verified_archived_raw_files_skips_bootstrap_until_ingest_ready(
+    tmp_path, monkeypatch,
+):
+  """Bootstrap must not run when ingest_ready_fn rejects paths."""
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  arch_suffix = "cluster.integration.test"
+  host = tmp_path / ("n." + arch_suffix)
+  host.mkdir()
+  ts = int(datetime(2026, 4, 16, 12, 0, 0).timestamp())
+  seg = host / str(ts)
+  seg.write_text("%d job1 cn001\nline\n" % ts)
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  gz_key = str(tgz_dir / "2026-04-16.tar.gz")
+  archive_calls = []
+
+  def fake_archive(info):
+    archive_calls.append(info)
+    return True
+
+  monkeypatch.setattr(
+      helpers,
+      "validate_sealed_daily_archive_for_raw_removal",
+      lambda *_a, **_k: (True, {}),
+  )
+
+  remove_verified_archived_raw_files(
+      str(tmp_path),
+      arch_suffix,
+      str(tgz_dir),
+      log_fn=None,
+      archive_stats_files_fn=fake_archive,
+      ingest_ready_fn=lambda _p: False,
+  )
+  assert archive_calls == []
+  assert seg.is_file()
+
+
+def test_remove_verified_archived_raw_files_skips_removal_until_ingest_ready(
+    tmp_path,
+):
+  """Verified archive membership is not enough without ingest_ready_fn."""
+  arch_suffix = "cluster.integration.test"
+  host = tmp_path / ("n." + arch_suffix)
+  host.mkdir()
+  ts = int(datetime(2022, 5, 4, 15, 30, 0).timestamp())
+  seg = host / str(ts)
+  seg.write_text("%d job1 cn001\nline\n" % ts)
+  os.utime(seg, (ts, ts))
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  gz_key = str(tgz_dir / "2022-05-04.tar.gz")
+  tar_path = gz_key[:-len(".gz")]
+  arcname = get_tar_member_name(str(seg))
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(seg), arcname=arcname)
+  with tarfile.open(gz_key, "w:gz") as tf:
+    tf.add(str(seg), arcname=arcname)
+
+  remove_verified_archived_raw_files(
+      str(tmp_path),
+      arch_suffix,
+      str(tgz_dir),
+      log_fn=None,
+      ingest_ready_fn=lambda _p: False,
+  )
+  assert seg.is_file()
+
+
+def test_archive_stats_files_skips_append_when_not_head_ingested(monkeypatch, tmp_path):
+  """Paths failing the DB gate must not reach tar append."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-02.tar.gz")
+  append_calls = {"n": 0}
+
+  monkeypatch.setattr(
+      st,
+      "filter_paths_head_ingested",
+      lambda paths, **_: ([], list(paths)),
+  )
+  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1))
+
+  assert archive_stats_files((archive_key, [str(raw_file)])) is True
+  assert append_calls["n"] == 0
 
 
 def test_remove_verified_uncompressed_daily_tars_removes_when_tar_matches_gz(tmp_path):
@@ -1700,6 +1791,16 @@ def test_rescan_pending_stats_files_uses_hints_with_periodic_full_sweep(tmp_path
   assert len(third) == 1
 
 
+def _patch_archive_gate_pass(monkeypatch):
+  import hpcperfstats.dbload.sync_timedb as st
+
+  monkeypatch.setattr(
+      st,
+      "filter_paths_head_ingested",
+      lambda paths, **_: (list(paths), []),
+  )
+
+
 def test_archive_stats_files_does_not_raise_on_append_failure(monkeypatch, tmp_path):
   """Append failure keeps raw files in place and returns cleanly for retry."""
   raw_file = tmp_path / "1000"
@@ -1708,6 +1809,7 @@ def test_archive_stats_files_does_not_raise_on_append_failure(monkeypatch, tmp_p
 
   import hpcperfstats.dbload.sync_timedb as st
 
+  _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(st, "_decompress_gz", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
@@ -1724,7 +1826,7 @@ def test_archive_stats_files_does_not_raise_on_append_failure(monkeypatch, tmp_p
 
 
 @pytest.mark.skipif(not shutil.which("tar"), reason="tar binary required")
-def test_archive_stats_files_creates_new_tar_when_missing(tmp_path):
+def test_archive_stats_files_creates_new_tar_when_missing(monkeypatch, tmp_path):
   """Missing daily archive should be bootstrapped as a new .tar."""
   raw_file = tmp_path / "1000"
   raw_file.write_text("1709123456 job1 cn001\n")
@@ -1733,6 +1835,7 @@ def test_archive_stats_files_creates_new_tar_when_missing(tmp_path):
   assert not os.path.exists(archive_key)
   assert not os.path.exists(archive_tar)
 
+  _patch_archive_gate_pass(monkeypatch)
   assert archive_stats_files((archive_key, [str(raw_file)])) is True
   assert os.path.exists(archive_tar)
   members = get_existing_archive_members(archive_tar)
@@ -1747,6 +1850,7 @@ def test_archive_stats_files_skips_dedupe_in_append_path(monkeypatch, tmp_path):
 
   import hpcperfstats.dbload.sync_timedb as st
 
+  _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(st, "_decompress_gz", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)

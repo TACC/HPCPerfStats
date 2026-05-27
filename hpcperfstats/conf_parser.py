@@ -1571,6 +1571,14 @@ def get_sync_enable_ingest_first_durability_mode():
   )
 
 
+def get_sync_archive_require_db_head_ingest():
+  """Require head timestamp in host_data before tar append or raw stats removal."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      cfg.get("DEFAULT", "sync_archive_require_db_head_ingest", fallback="yes"),
+  )
+
+
 def get_redis_location():
   """Return the Redis URL for cache from CACHE config.
 

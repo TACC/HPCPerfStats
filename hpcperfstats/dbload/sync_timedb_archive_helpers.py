@@ -533,6 +533,7 @@ def remove_verified_archived_raw_files(
     *,
     log_fn=log_print,
     archive_stats_files_fn=None,
+    ingest_ready_fn=None,
 ):
   """Remove raw stats files only after tar + tar.gz validation and matching member maps.
 
@@ -540,6 +541,9 @@ def remove_verified_archived_raw_files(
   ``verify_tar_archive_readable`` and yields file member sizes; ``.tar.gz`` passes
   the same and yields sizes from the gzip archive only; the two maps must match.
   Then deletes raw paths that match a member name and size.
+
+  When ``ingest_ready_fn`` is set (production: head timestamp in ``host_data``),
+  bootstrap and removal apply only to paths for which it returns true.
 
   Scans all closed segments under ``archive_data_dir`` (same rules as ingest).
   Run after ``seal_dirty_daily_archives``. If only ``.tar.gz`` exists (no sibling
@@ -550,6 +554,11 @@ def remove_verified_archived_raw_files(
   this routine bootstraps the daily archive via ``archive_stats_files`` before
   validation and removal.
   """
+  def _path_ingest_ready(path):
+    if ingest_ready_fn is None:
+      return True
+    return bool(ingest_ready_fn(path))
+
   paths = collect_stats_files_in_range(
       archive_data_dir, "all", None, host_name_ext)
   if not paths:
@@ -564,15 +573,18 @@ def remove_verified_archived_raw_files(
   for gz_path, stats_paths in mapping.items():
     if gz_path.endswith(".tar.gz"):
       tar_path = gz_path[:-3]
+      bootstrap_ready = [
+          p for p in stats_paths if _path_ingest_ready(p)
+      ]
       if (not os.path.isfile(gz_path) and not os.path.isfile(tar_path)
-          and stats_paths):
+          and bootstrap_ready):
         if log_fn:
           log_fn(
               "Bootstrapping missing daily archive from %d raw stats file(s): %s"
-              % (len(stats_paths), gz_path),
+              % (len(bootstrap_ready), gz_path),
               flush=True,
           )
-        if not archive_stats_files_fn((gz_path, list(stats_paths))):
+        if not archive_stats_files_fn((gz_path, list(bootstrap_ready))):
           if log_fn:
             log_fn(
                 "Skipping removal: could not bootstrap daily archive: %s"
@@ -580,6 +592,13 @@ def remove_verified_archived_raw_files(
                 flush=True,
             )
           continue
+      elif (not os.path.isfile(gz_path) and not os.path.isfile(tar_path)
+            and stats_paths and not bootstrap_ready and log_fn):
+        log_fn(
+            "Skipping bootstrap for %s: %d path(s) without head timestamp in DB"
+            % (gz_path, len(stats_paths)),
+            flush=True,
+        )
     validation_targets.append((gz_path, list(stats_paths)))
 
   if validation_targets:
@@ -607,6 +626,8 @@ def remove_verified_archived_raw_files(
     success_count += 1
     for stats_path in stats_paths_by_gz.get(gz_path, []):
       for path in get_verified_files_to_remove([stats_path], members):
+        if not _path_ingest_ready(path):
+          continue
         if log_fn:
           log_fn(
               "removing stats file (scheduled pigz/removal): " + path,

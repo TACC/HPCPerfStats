@@ -220,7 +220,9 @@ def test_parse_sync_timedb_argv_once_and_all(monkeypatch):
 
 def test_run_sync_timedb_supervisor_from_parsed_resets_runtime_caches(monkeypatch):
   """Session start clears timestamp caches so stale state never leaks across runs."""
-  st._HEAD_TIMESTAMP_CACHE[(("hostA"), 1)] = {"present": True, "checked_at": 1.0}
+  import hpcperfstats.dbload.sync_timedb_ingest_readiness as readiness
+
+  readiness._HEAD_DB_CACHE[(("hostA"), 1)] = {"present": True, "checked_at": 1.0}
   st._HOST_ITIMES_CACHE[(("hostA"), 1, 2)] = {"times": (1, 2), "checked_at": 1.0}
   monkeypatch.setattr(st, "run_sync_timedb_supervisor_loop", lambda *a, **k: None)
   monkeypatch.setattr(st, "log_date_range", lambda *a, **k: None)
@@ -254,7 +256,8 @@ def test_run_sync_timedb_supervisor_from_parsed_resets_runtime_caches(monkeypatc
 
   st.run_sync_timedb_supervisor_from_parsed(run_once=True, startdate="all", enddate=None)
 
-  assert st._HEAD_TIMESTAMP_CACHE == {}
+  assert readiness._HEAD_DB_CACHE == {}
+  assert readiness._PATH_READY_CACHE == {}
   assert st._HOST_ITIMES_CACHE == {}
 
 
@@ -373,10 +376,9 @@ def test_supervisor_runs_full_archive_maintenance_before_rescan_when_idle(monkey
     finally:
       archive_pool.__exit__(None, None, None)
 
-    assert events[0] == "maintenance"
+    assert events[0] == "rescan"
+    assert events[1:3] == ["maintenance", "tar_removal"]
     assert events[-1] == "rescan"
-    assert events.index("maintenance") < events.index("rescan")
-    assert "tar_removal" in events
   finally:
     shutdown_requested[0] = False
 
@@ -472,10 +474,14 @@ def test_supervisor_runs_startup_archive_maintenance_when_daily_tars_above_thres
     finally:
       archive_pool.__exit__(None, None, None)
 
-    assert events[0:2] == ["maintenance", "tar_removal"]
-    # Startup maintenance, then pre-rescan full maintenance before the rescan.
-    assert events[2:4] == ["maintenance", "tar_removal"]
-    assert events[4] == "rescan"
+    assert events == [
+        "maintenance",
+        "tar_removal",
+        "rescan",
+        "maintenance",
+        "tar_removal",
+        "rescan",
+    ]
   finally:
     shutdown_requested[0] = False
 
@@ -914,6 +920,8 @@ def test_pick_write_lock_for_path_uses_stable_sharding():
 
 
 def test_head_timestamp_cache_reuses_recent_lookup(monkeypatch):
+  import hpcperfstats.dbload.sync_timedb_ingest_readiness as readiness
+
   calls = {"n": 0}
 
   class _QS:
@@ -926,10 +934,10 @@ def test_head_timestamp_cache_reuses_recent_lookup(monkeypatch):
       return _QS()
 
   monkeypatch.setattr(st.host_data, "objects", _Mgr())
-  monkeypatch.setattr(st, "_HEAD_TIMESTAMP_CACHE", {})
+  readiness.reset_sync_ingest_readiness_caches()
   ts = st.datetime.now(st.timezone.utc)
-  assert st._head_timestamp_present_cached("h1", ts)
-  assert st._head_timestamp_present_cached("h1", ts)
+  assert readiness.head_timestamp_present_in_db("h1", ts)
+  assert readiness.head_timestamp_present_in_db("h1", ts)
   assert calls["n"] == 1
 
 
@@ -1391,7 +1399,7 @@ def test_parse_payload_marks_new_head_as_archival(monkeypatch):
   monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
   monkeypatch.setattr(st, "load_stats_file_lines", lambda *_a, **_k: (["100 job1 h1\n"], None))
   monkeypatch.setattr(st, "parse_first_timestamp_line", lambda _lines: ("100", "job1", "h1"))
-  monkeypatch.setattr(st, "_head_timestamp_present_cached", lambda *_a, **_k: False)
+  monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda *_a, **_k: False)
   monkeypatch.setattr(st, "parse_stats_lines", lambda *_a, **_k: ([{"k": 1}], []))
   stats_df = pd.DataFrame([{
       "host": "h1",
@@ -1422,7 +1430,7 @@ def test_parse_payload_marks_fully_duplicate_file_for_archival(monkeypatch):
   monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
   monkeypatch.setattr(st, "load_stats_file_lines", lambda *_a, **_k: (["100 job1 h1\n"], None))
   monkeypatch.setattr(st, "parse_first_timestamp_line", lambda _lines: ("100", "job1", "h1"))
-  monkeypatch.setattr(st, "_head_timestamp_present_cached", lambda *_a, **_k: True)
+  monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda *_a, **_k: True)
   monkeypatch.setattr(st.host_data, "objects", type("_Mgr", (), {
       "filter": staticmethod(lambda **_k: type("_QS", (), {
           "values_list": staticmethod(lambda *a, **k: type("_V", (), {"distinct": staticmethod(lambda: type("_I", (), {"iterator": staticmethod(lambda: iter([]))})())})())
