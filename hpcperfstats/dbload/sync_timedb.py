@@ -514,19 +514,23 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
   if load_err is not None:
     log_print(load_err)
     return (stats_file, None, False, False, _parse_elapsed())
-  t, _jid, _host = parse_first_timestamp_line(lines)
+  t, _jid, host = parse_first_timestamp_line(lines)
   if t is None:
     log_print("initial timestamp not found")
     return (stats_file, None, False, False, _parse_elapsed())
+  if not host:
+    log_print("initial host not found in %s" % stats_file)
+    return (stats_file, None, False, False, _parse_elapsed())
+  host = str(host).strip()
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
-  head_present = head_timestamp_present_in_db(hostname, timestamp_utc)
+  head_present = head_timestamp_present_in_db(host, timestamp_utc)
   if not head_present:
     # New file head is not in DB yet; it still needs archival post-ingest.
     start_idx, need_archival = 0, True
   else:
     ts_low = timestamp_utc - timedelta(hours=48)
     ts_high = timestamp_utc + timedelta(hours=72)
-    itimes_set = _host_recent_timestamps_cached(hostname, ts_low, ts_high)
+    itimes_set = _host_recent_timestamps_cached(host, ts_low, ts_high)
     start_idx, need_archival = find_processing_start_index(lines, itimes_set)
   if start_idx == -1:
     log_print("No missing timestamps found for %s" % stats_file)

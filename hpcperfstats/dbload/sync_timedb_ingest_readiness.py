@@ -1,20 +1,16 @@
 """DB ingest-readiness checks before sync_timedb archives or deletes raw stats files.
 
-Head-ingested means the first stats timestamp line's (host, time) exists in host_data.
+Head-ingested means the first stats timestamp line's (host, time) exists in host_data,
+where ``host`` is the hostname token from file content (not the archive path dirname).
 This is a lightweight gate (one exists() per cache miss); partial ingest may still pass.
 """
 import os
 import time
-from datetime import datetime, timezone
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
-    _read_first_timestamp_from_stats_file,
+    read_stats_file_head_identity,
     stats_file_is_active_segment,
-)
-from hpcperfstats.dbload.sync_timedb_parsing import (
-    parse_first_timestamp_line,
-    parse_stats_file_path,
 )
 
 _HEAD_DB_CACHE = {}
@@ -118,12 +114,9 @@ def stats_file_head_ingested_in_db(path, *, log_fn=None):
   if stats_file_is_active_segment(path):
     ready = False
   else:
-    hostname, _ = parse_stats_file_path(path)
-    if hostname is not None:
-      t = _read_first_timestamp_from_stats_file(path, parse_first_timestamp_line)
-      if t is not None:
-        timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
-        ready = head_timestamp_present_in_db(hostname, timestamp_utc)
+    host, timestamp_utc = read_stats_file_head_identity(path)
+    if host is not None and timestamp_utc is not None:
+      ready = head_timestamp_present_in_db(host, timestamp_utc)
 
   _PATH_READY_CACHE[fp] = {"ready": bool(ready), "checked_at": now}
   _trim_path_ready_cache()

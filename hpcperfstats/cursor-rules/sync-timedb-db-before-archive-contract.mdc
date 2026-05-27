@@ -17,6 +17,8 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 
 - Read only until the first digit-leading stats line (minimal I/O).
 - **Head ingested** = that line's `(host, time)` exists in **`host_data`** (`exists()` on composite `(host, time)`).
+- **`host` must be the hostname token from the stats file line** (same field written to `host_data.host` during ingest). Do **not** use the archive path's parent directory name (often FQDN) for the DB lookup.
+- Canonical helper: `read_stats_file_head_identity` in `sync_timedb_archive_helpers.py` (used by ingest readiness and `sync_timedb_ingest_readiness.py`).
 - **Limitation:** partial ingest (head in DB, tail missing) may still pass. Do not strengthen to full-file checks without an explicit product decision and performance review.
 
 ## Performance

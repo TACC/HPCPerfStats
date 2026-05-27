@@ -90,10 +90,42 @@ def test_stats_file_head_ingested_true_with_db_row(monkeypatch, tmp_path):
       readiness,
       "head_timestamp_present_in_db",
       lambda hostname, timestamp_utc: (
-          hostname == "n." + arch_suffix and timestamp_utc == ts_dt
+          hostname == "cn001" and timestamp_utc == ts_dt
       ),
   )
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
+
+
+def test_stats_file_head_ingested_uses_host_from_file_not_path_dirname(
+    monkeypatch, tmp_path,
+):
+  """Regression: path dirname (FQDN) must not be used for host_data host lookup."""
+  fqdn_dir = "c641-072.vista.tacc.utexas.edu"
+  host_dir = tmp_path / fqdn_dir
+  host_dir.mkdir()
+  ts_dt = datetime(2026, 4, 22, 12, 0, 0, tzinfo=timezone.utc)
+  ts = int(ts_dt.timestamp())
+  seg = host_dir / str(ts)
+  short_host = "c641-072"
+  seg.write_text("%d job1 %s\nline\n" % (ts, short_host))
+
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  seen = {}
+
+  class _QS:
+    def exists(self):
+      return seen.get("host") == short_host
+
+  class _Mgr:
+    def filter(self, *, host, time):
+      seen["host"] = host
+      seen["time"] = time
+      return _QS()
+
+  monkeypatch.setattr(host_data, "objects", _Mgr())
+  assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
+  assert seen["host"] == short_host
+  assert seen["host"] != fqdn_dir
 
 
 def test_filter_paths_head_ingested_partitions(monkeypatch, tmp_path):

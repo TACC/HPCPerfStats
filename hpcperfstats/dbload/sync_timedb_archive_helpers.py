@@ -141,22 +141,42 @@ def _remove_read_lock_sidecar(target_path):
     pass
 
 
-def _read_first_timestamp_from_stats_file(stats_fname, parse_first_ts_fn):
-  """Read minimal file head and parse first stats timestamp."""
+def read_stats_file_head_identity(stats_fname, parse_first_ts_fn=None):
+  """Return ``(host, timestamp_utc)`` from the first stats timestamp line in the file.
+
+  ``host`` is the monitor hostname token from file content (same as ``host_data.host``
+  after ingest), not the archive subdirectory name in ``stats_fname``.
+  """
+  if parse_first_ts_fn is None:
+    parse_first_ts_fn = parse_first_timestamp_line
   try:
     with file_read_lock_wait(stats_fname):
       with open(stats_fname, "r") as f:
         head = []
         for line in f:
           head.append(line)
-          if head and head[-1] and head[-1][0].isdigit():
+          stripped = line.lstrip()
+          if stripped and stripped[0].isdigit():
             break
   except OSError:
-    return None
+    return None, None
   finally:
     _remove_read_lock_sidecar(stats_fname)
-  t, _jid, _host = parse_first_ts_fn(head)
-  return t
+  t, _jid, host = parse_first_ts_fn(head)
+  if t is None or not host:
+    return None, None
+  from datetime import datetime, timezone
+
+  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
+  return str(host).strip(), timestamp_utc
+
+
+def _read_first_timestamp_from_stats_file(stats_fname, parse_first_ts_fn):
+  """Read minimal file head and parse first stats timestamp string."""
+  _host, timestamp_utc = read_stats_file_head_identity(stats_fname, parse_first_ts_fn)
+  if timestamp_utc is None:
+    return None
+  return str(int(timestamp_utc.timestamp()))
 
 
 def collect_lock_sidecar_stats(directory, stale_after_seconds=LOCK_EXPIRY_SECONDS):
