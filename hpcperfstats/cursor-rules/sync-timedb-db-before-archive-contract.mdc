@@ -35,11 +35,17 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 | `remove_verified_archived_raw_files` raw removal | `ingest_ready_fn` after archive member/size match |
 | Production wiring | `ingest_ready_fn=stats_file_head_ingested_in_db` from `sync_timedb` supervisor maintenance |
 
-Out of scope: `remove_verified_uncompressed_daily_tars` (`.tar` only), tar dedupe/seal/recovery without raw stats paths.
+Out of scope for the DB gate: `remove_verified_uncompressed_daily_tars` (`.tar` only), tar dedupe/seal/recovery without raw stats paths.
+
+## Tar removal vs DB gate
+
+- **Append / raw delete:** `stats_file_head_ingested_in_db` (when `sync_archive_require_db_head_ingest` is on).
+- **Uncompressed `.tar` unlink:** filesystem gate via `build_remaining_raw_stats_by_daily_gz` — counts **all** closed raw segments mapped to that `YYYY-MM-DD.tar.gz`, including segments not yet head-ingested. Not-yet-ingested files therefore block `.tar` removal until they are gone from disk (typically after ingest + verified raw removal), even though the DB gate prevented earlier delete/append.
+- Maintenance order in `sync_timedb`: build `remaining_raw_by_gz` → seal (optional post-seal `.tar` drop only if no raw for day) → `remove_verified_archived_raw_files` (DB-gated) → rebuild `remaining_raw_by_gz` → `remove_verified_uncompressed_daily_tars` (filesystem-gated).
 
 ## Ordering
 
-Startup or idle maintenance may run before ingest in the same process. With the gate enabled, not-yet-ingested files are skipped for tar/delete until a later pass after ingest inserts the head row.
+Startup or idle maintenance may run before ingest in the same process. With the gate enabled, not-yet-ingested files are skipped for tar append and raw delete until a later pass after ingest inserts the head row; they still block `.tar` removal via `remaining_raw_by_gz`.
 
 ## Emergency override
 

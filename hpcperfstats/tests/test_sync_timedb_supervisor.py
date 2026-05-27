@@ -97,24 +97,98 @@ def _default_startup_daily_tar_count(monkeypatch):
   monkeypatch.setattr(st, "_count_daily_tars", lambda *_a, **_k: 0)
 
 
-def test_verified_daily_tar_removal_gate_matches_force_full_or_explicit_flag():
-  """Pigz-interval maintenance must not run remove_verified_uncompressed_daily_tars."""
-  assert not st._should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
-      False,
-      False,
-  )
-  assert st._should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
-      True,
-      False,
-  )
-  assert st._should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
-      False,
-      True,
-  )
-  assert st._should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
-      True,
-      True,
-  )
+def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch):
+  """Every archive maintenance pass invokes remove_verified_uncompressed_daily_tars."""
+  shutdown_requested[0] = False
+  try:
+    tar_removal_calls = []
+
+    def fake_rescan(*_a, **_k):
+      return []
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        st,
+        "build_remaining_raw_stats_by_daily_gz",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(
+        st,
+        "remove_verified_uncompressed_daily_tars",
+        lambda *a, **k: tar_removal_calls.append(1),
+    )
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+
+    archive_pool = _FakeArchivePool()
+    archive_pool.__enter__()
+    try:
+      st.run_sync_timedb_supervisor_loop(
+          "/tmp/archive",
+          "all",
+          None,
+          ".hpc",
+          object(),
+          archive_pool,
+          run_once=True,
+      )
+    finally:
+      archive_pool.__exit__(None, None, None)
+
+    assert len(tar_removal_calls) >= 1
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_maintenance_passes_ingest_ready_fn_to_raw_removal(monkeypatch):
+  shutdown_requested[0] = False
+  try:
+    captured = {}
+
+    def fake_raw_removal(*_a, **kwargs):
+      captured["ingest_ready_fn"] = kwargs.get("ingest_ready_fn")
+
+    def fake_rescan(*_a, **_k):
+      return []
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        st,
+        "build_remaining_raw_stats_by_daily_gz",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", fake_raw_removal)
+    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+
+    archive_pool = _FakeArchivePool()
+    archive_pool.__enter__()
+    try:
+      st.run_sync_timedb_supervisor_loop(
+          "/tmp/archive",
+          "all",
+          None,
+          ".hpc",
+          object(),
+          archive_pool,
+          run_once=True,
+      )
+    finally:
+      archive_pool.__exit__(None, None, None)
+
+    assert captured["ingest_ready_fn"] is st.stats_file_head_ingested_in_db
+  finally:
+    shutdown_requested[0] = False
 
 
 def test_normalize_archive_groups_by_tgz_sorts_and_copies_paths():

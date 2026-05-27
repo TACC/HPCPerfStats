@@ -13,6 +13,8 @@ from hpcperfstats.dbload.pigz_cli import pigz_executable
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     atomic_seal_tar_to_gz,
     build_archive_mapping,
+    build_remaining_raw_stats_by_daily_gz,
+    daily_gz_has_remaining_raw_stats,
     collect_lock_sidecar_stats,
     collect_stats_files_in_range,
     dedupe_tar_keep_largest_file_per_member,
@@ -352,9 +354,50 @@ def test_atomic_seal_tar_to_gz_can_drop_uncompressed(tmp_path):
       compress_level=6,
       keep_uncompressed_tar=False,
       log_fn=None,
+      remaining_raw_by_gz={},
   )
   assert gz_path.is_file()
   assert not tar_path.exists()
+
+
+@pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")
+def test_atomic_seal_tar_to_gz_retains_tar_when_raw_remains_for_day(tmp_path):
+  tar_path = tmp_path / "2021-03-05.tar"
+  gz_path = tmp_path / "2021-03-05.tar.gz"
+  member = tmp_path / "b.txt"
+  member.write_text("x")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="b.txt")
+  remaining = {str(gz_path): ["/archive/host/segment"]}
+  atomic_seal_tar_to_gz(
+      str(tar_path),
+      str(gz_path),
+      num_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=False,
+      log_fn=None,
+      remaining_raw_by_gz=remaining,
+  )
+  assert gz_path.is_file()
+  assert tar_path.is_file()
+
+
+def test_build_remaining_raw_stats_by_daily_gz_groups_closed_segments(tmp_path):
+  arch_suffix = "cluster.integration.test"
+  host = tmp_path / ("n." + arch_suffix)
+  host.mkdir()
+  ts = int(datetime(2026, 4, 20, 10, 0, 0).timestamp())
+  seg = host / str(ts)
+  seg.write_text("%d job1 cn001\nline\n" % ts)
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  gz_key = str(tgz_dir / "2026-04-20.tar.gz")
+  remaining = build_remaining_raw_stats_by_daily_gz(
+      str(tmp_path), arch_suffix, str(tgz_dir))
+  assert remaining == {gz_key: [str(seg)]}
+  assert daily_gz_has_remaining_raw_stats(gz_key, remaining)
+  assert not daily_gz_has_remaining_raw_stats(
+      str(tgz_dir / "2026-04-21.tar.gz"), remaining)
 
 
 def test_atomic_seal_tar_to_gz_passes_thread_count_to_test_and_compress(monkeypatch, tmp_path):
@@ -845,10 +888,72 @@ def test_remove_verified_uncompressed_daily_tars_removes_when_tar_matches_gz(tmp
   with tarfile.open(day_gz, "w:gz") as tf:
     tf.add(str(member), arcname="member.txt")
 
-  remove_verified_uncompressed_daily_tars(str(tmp_path), log_fn=None)
+  remove_verified_uncompressed_daily_tars(
+      str(tmp_path), log_fn=None, remaining_raw_by_gz={})
 
   assert not day_tar.exists()
   assert day_gz.is_file()
+
+
+def test_remove_verified_uncompressed_daily_tars_skips_when_raw_remains(tmp_path):
+  day_tar = tmp_path / "2026-04-23.tar"
+  day_gz = tmp_path / "2026-04-23.tar.gz"
+  member = tmp_path / "member.txt"
+  member.write_text("same-content")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(member), arcname="member.txt")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(member), arcname="member.txt")
+
+  remove_verified_uncompressed_daily_tars(
+      str(tmp_path),
+      log_fn=None,
+      remaining_raw_by_gz={str(day_gz): ["/raw/still-here"]},
+  )
+
+  assert day_tar.is_file()
+  assert day_gz.is_file()
+
+
+def test_not_ingested_raw_still_blocks_tar_removal_after_seal(tmp_path, monkeypatch):
+  """DB gate blocks delete; filesystem gate blocks .tar removal."""
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  arch_suffix = "cluster.integration.test"
+  host = tmp_path / ("n." + arch_suffix)
+  host.mkdir()
+  ts = int(datetime(2026, 4, 24, 12, 0, 0).timestamp())
+  seg = host / str(ts)
+  seg.write_text("%d job1 cn001\nline\n" % ts)
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  gz_key = str(tgz_dir / "2026-04-24.tar.gz")
+  tar_path = gz_key[:-3]
+  arcname = get_tar_member_name(str(seg))
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(seg), arcname=arcname)
+  with tarfile.open(gz_key, "w:gz") as tf:
+    tf.add(str(seg), arcname=arcname)
+
+  remaining = build_remaining_raw_stats_by_daily_gz(
+      str(tmp_path), arch_suffix, str(tgz_dir))
+  remove_verified_uncompressed_daily_tars(
+      str(tgz_dir), log_fn=None, remaining_raw_by_gz=remaining)
+  assert tar_path.is_file()
+
+  remove_verified_archived_raw_files(
+      str(tmp_path),
+      arch_suffix,
+      str(tgz_dir),
+      log_fn=None,
+      ingest_ready_fn=lambda _p: True,
+  )
+  assert not seg.is_file()
+  remaining_after = build_remaining_raw_stats_by_daily_gz(
+      str(tmp_path), arch_suffix, str(tgz_dir))
+  remove_verified_uncompressed_daily_tars(
+      str(tgz_dir), log_fn=None, remaining_raw_by_gz=remaining_after)
+  assert not os.path.isfile(tar_path)
 
 
 def test_validate_sealed_daily_archive_fails_on_tar_gz_mismatch(tmp_path):
@@ -1078,7 +1183,10 @@ def test_remove_verified_uncompressed_daily_tars_streaming_apply_order(
   )
   assert not tar_a.exists()
   assert not tar_b.exists()
-  removed_logs = [l for l in logs if "Final/exit maintenance removed verified uncompressed tar:" in l]
+  removed_logs = [
+      l for l in logs
+      if "Maintenance removed verified uncompressed tar:" in l
+  ]
   assert removed_logs
   assert str(tar_b) in removed_logs[0]
 

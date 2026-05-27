@@ -19,6 +19,7 @@ When changing ingest/archive paths under `hpcperfstats/dbload/archive_monitor_da
 - If archive reads fail due to known corruption/recovery scenarios, recover from paired compressed sources when available before hard failure.
 - Keep `pigz` use bounded by configured worker limits; compression/decompression thread counts must not scale unbounded with host cores.
 - If archival batching/chunking behavior changes, keep recovery semantics deterministic and test-covered.
+- **Daily `.tar` removal:** after seal, unlink `YYYY-MM-DD.tar` only when `build_remaining_raw_stats_by_daily_gz` reports no closed raw stats paths for that day (every archive maintenance pass: seal → verified raw removal → gated `.tar` removal). Require tar/tar.gz integrity validation before unlink. Do not remove `.tar` while closed raw segments for that calendar day still exist on disk.
 
 ## Required tests when behavior changes
 

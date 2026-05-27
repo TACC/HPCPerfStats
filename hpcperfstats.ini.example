@@ -162,6 +162,9 @@ daily_archive_dir  = %(data_dir)s/daily_archive
 
 # Deferred compression: sync_timedb appends to YYYY-MM-DD.tar; pigz seal + removal
 # of verified raw stats run on archive_pigz_interval_seconds (default 8 hours).
+# Uncompressed YYYY-MM-DD.tar is removed only when no closed raw stats remain for
+# that calendar day (.tar.gz is kept). Raw append/delete still require head timestamp
+# in DB when sync_archive_require_db_head_ingest is on (default).
 # Keep yes unless you accept re-decompressing on every append for that day.
 # archive_keep_uncompressed_tar = yes
 # archive_seal_idle_seconds = 60

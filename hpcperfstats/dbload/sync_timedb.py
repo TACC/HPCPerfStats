@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; ``pigz`` seal and raw-file removal on ``archive_pigz_interval_seconds``, default 8h). Runs in parallel with configurable chunk size.
 
-When the ingest queue is empty, runs a **full** archive maintenance pass (same as idle ``force_full``: dedupe cadence, seal dirty daily tars, verified raw cleanup, verified uncompressed-daily-tar removal when configured) **before** rescanning for new stats files. After a rescan still finds nothing pending, it sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exits the loop iteration (continuous mode repeats).
+Archive maintenance (on ``archive_pigz_interval_seconds`` and when idle) seals dirty daily tars, removes verified raw stats (DB head-ingest gate when enabled), then removes uncompressed ``.tar`` siblings only when no closed raw stats remain for that calendar day. Append and raw delete stay DB-gated; ``.tar`` unlink uses filesystem presence only.
+
+When the ingest queue is empty, runs a **full** archive maintenance pass (dedupe cadence on idle) **before** rescanning for new stats files. After a rescan still finds nothing pending, it sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exits the loop iteration (continuous mode repeats).
 
 CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once all``.
 
@@ -51,6 +53,7 @@ from hpcperfstats.shutdown_utils import (
 )
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
+    build_remaining_raw_stats_by_daily_gz,
     collect_lock_sidecar_stats,
     dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
@@ -1013,23 +1016,6 @@ def database_startup():
     raise
 
 
-def _should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
-    force_full,
-    run_verified_uncompressed_tar_removal,
-):
-  """Whether ``remove_verified_uncompressed_daily_tars`` should run for this pass.
-
-  ``sync_timedb`` enables it only for **idle / full** maintenance
-  (``force_full=True``). Pigz-interval maintenance passes both false so verified
-  daily ``.tar`` removal does not run on that cadence.
-
-  Note: when ``archive_keep_uncompressed_tar`` is disabled, ``atomic_seal_tar_to_gz``
-  may still unlink the daily ``.tar`` immediately after a successful seal; that
-  is independent of this helper.
-  """
-  return bool(force_full) or bool(run_verified_uncompressed_tar_removal)
-
-
 def _resolve_archive_pigz_interval_seconds(raw_value):
   """Normalize archive maintenance interval to a safe finite positive float."""
   default_interval = float(8 * 3600)
@@ -1082,7 +1068,6 @@ def run_sync_timedb_supervisor_loop(
   def _run_scheduled_archive_maintenance(
       force_full=False,
       *,
-      run_verified_uncompressed_tar_removal=False,
       reason="scheduled",
       elapsed_since_last_s=0.0,
   ):
@@ -1135,6 +1120,8 @@ def run_sync_timedb_supervisor_loop(
               "ERROR: tar dedupe failed during scheduled maintenance: %s" % tar_path,
               flush=True,
           )
+    remaining_raw_by_gz = build_remaining_raw_stats_by_daily_gz(
+        directory, host_name_ext, tgz_archive_dir)
     seal_dirty_daily_archives(
         tgz_archive_dir,
         local_tz=local_timezone,
@@ -1144,6 +1131,7 @@ def run_sync_timedb_supervisor_loop(
         idle_seconds=cfg.get_archive_seal_idle_seconds(),
         seal_immediately_if_dirty=True,
         log_fn=log_print,
+        remaining_raw_by_gz=remaining_raw_by_gz,
     )
     remove_verified_archived_raw_files(
         directory,
@@ -1152,11 +1140,13 @@ def run_sync_timedb_supervisor_loop(
         log_fn=log_print,
         ingest_ready_fn=stats_file_head_ingested_in_db,
     )
-    if _should_remove_verified_uncompressed_daily_tars_during_archive_maintenance(
-        force_full,
-        run_verified_uncompressed_tar_removal,
-    ):
-      remove_verified_uncompressed_daily_tars(tgz_archive_dir, log_fn=log_print)
+    remaining_raw_by_gz = build_remaining_raw_stats_by_daily_gz(
+        directory, host_name_ext, tgz_archive_dir)
+    remove_verified_uncompressed_daily_tars(
+        tgz_archive_dir,
+        log_fn=log_print,
+        remaining_raw_by_gz=remaining_raw_by_gz,
+    )
     maintenance_last_reason = reason
     log_print(
         "Archive maintenance done reason=%s cycle=%d duration_s=%.3f"
@@ -1418,7 +1408,6 @@ def run_sync_timedb_supervisor_loop(
       )
       _ensure_daily_archive_dir_exists()
       _run_scheduled_archive_maintenance(
-          run_verified_uncompressed_tar_removal=True,
           reason="startup",
           elapsed_since_last_s=0.0,
       )

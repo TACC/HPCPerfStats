@@ -650,20 +650,64 @@ def remove_verified_archived_raw_files(
   )
 
 
+def _normalize_daily_gz_path(path):
+  """Return ``YYYY-MM-DD.tar.gz`` path for a daily ``.tar`` or ``.tar.gz`` path."""
+  if path.endswith(".tar.gz"):
+    return path
+  if path.endswith(".tar"):
+    return "%s.gz" % path
+  return path
+
+
+def build_remaining_raw_stats_by_daily_gz(
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+):
+  """Map each daily ``.tar.gz`` to closed raw stats paths still on disk for that day.
+
+  Uses the same discovery and first-timestamp grouping as archival
+  (``collect_stats_files_in_range`` + ``build_archive_mapping``). Not filtered by
+  DB head-ingest readiness: not-yet-ingested closed segments still block ``.tar``
+  removal (see ``sync-timedb-db-before-archive-contract.mdc``).
+
+  Files with no parseable first timestamp are omitted from the mapping and do not
+  block removal (same as archival bootstrap).
+  """
+  paths = collect_stats_files_in_range(
+      archive_data_dir, "all", None, host_name_ext)
+  if not paths:
+    return {}
+  mapping = build_archive_mapping(paths, tgz_archive_dir)
+  return {
+      gz_path: list(stats_paths)
+      for gz_path, stats_paths in mapping.items()
+      if gz_path.endswith(".tar.gz") and stats_paths
+  }
+
+
+def daily_gz_has_remaining_raw_stats(gz_path, remaining_by_gz):
+  """True if ``remaining_by_gz`` lists any raw stats path for this daily archive."""
+  if not remaining_by_gz:
+    return False
+  key = _normalize_daily_gz_path(gz_path)
+  return bool(remaining_by_gz.get(key))
+
+
 def remove_verified_uncompressed_daily_tars(
     daily_archive_dir,
     *,
     log_fn=log_print,
+    remaining_raw_by_gz=None,
 ):
   """Remove ``YYYY-MM-DD.tar`` only after tar/tar.gz verification succeeds.
 
-  ``sync_timedb`` calls this from **idle / full** maintenance (after
-  ``remove_verified_archived_raw_files``), not from pigz-interval maintenance,
-  so verified sibling removal stays tied to that pass.
+  Called after ``remove_verified_archived_raw_files`` on every archive maintenance
+  pass. Skips a day when ``remaining_raw_by_gz`` still lists closed raw stats for
+  that calendar day (filesystem gate; not the DB head-ingest gate).
 
   When ``archive_keep_uncompressed_tar`` is false, ``atomic_seal_tar_to_gz`` may
-  remove the uncompressed ``.tar`` right after sealing; that path is separate
-  from this function.
+  also unlink the ``.tar`` after sealing when no raw stats remain for that day.
   """
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
     return
@@ -699,13 +743,21 @@ def remove_verified_uncompressed_daily_tars(
       continue
     success_count += 1
     tar_path = tar_by_gz[gz_path]
+    if daily_gz_has_remaining_raw_stats(gz_path, remaining_raw_by_gz):
+      if log_fn:
+        log_fn(
+            "Skipping removal of verified uncompressed tar (raw stats still "
+            "present for day): %s" % tar_path,
+            flush=True,
+        )
+      continue
     try:
       with file_write_lock(tar_path):
         if os.path.isfile(tar_path):
           os.remove(tar_path)
       if log_fn:
         log_fn(
-            "Final/exit maintenance removed verified uncompressed tar: %s" % tar_path,
+            "Maintenance removed verified uncompressed tar: %s" % tar_path,
             flush=True,
         )
     except OSError as exc:
@@ -963,10 +1015,14 @@ def atomic_seal_tar_to_gz(
     compress_level,
     keep_uncompressed_tar,
     log_fn=log_print,
+    remaining_raw_by_gz=None,
 ):
   """Compress ``tar_path`` to ``gz_path`` using a temp file, ``pigz -t``, and ``os.replace``.
 
   The previous ``gz_path`` (if any) stays valid until replace succeeds.
+
+  When ``keep_uncompressed_tar`` is false, the uncompressed ``.tar`` is removed only
+  if ``remaining_raw_by_gz`` has no closed raw stats paths for that calendar day.
   """
   if not os.path.isfile(tar_path):
     return
@@ -1032,6 +1088,13 @@ def atomic_seal_tar_to_gz(
   if keep_uncompressed_tar:
     if log_fn:
       log_fn("Sealed archive retaining uncompressed tar: %s" % tar_path, flush=True)
+  elif daily_gz_has_remaining_raw_stats(gz_path, remaining_raw_by_gz):
+    if log_fn:
+      log_fn(
+          "Sealed archive retaining uncompressed tar (raw stats still present "
+          "for day): %s" % tar_path,
+          flush=True,
+      )
   else:
     try:
       with file_write_lock(tar_path):
@@ -1052,6 +1115,7 @@ def seal_dirty_daily_archives(
     idle_seconds,
     seal_immediately_if_dirty=False,
     log_fn=log_print,
+    remaining_raw_by_gz=None,
 ):
   """Seal every dirty ``YYYY-MM-DD.tar`` under ``daily_archive_dir`` per policy."""
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
@@ -1075,6 +1139,7 @@ def seal_dirty_daily_archives(
           compress_level,
           keep_uncompressed_tar,
           log_fn=log_fn,
+          remaining_raw_by_gz=remaining_raw_by_gz,
       )
     except subprocess.CalledProcessError as exc:
       if log_fn:
