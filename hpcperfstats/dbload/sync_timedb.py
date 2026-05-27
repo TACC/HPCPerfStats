@@ -111,7 +111,7 @@ archive_thread_count = cfg.get_sync_archive_pool_processes()
 days_to_process = 5
 
 # How many files to proccess and archive at once
-chunk_size = 200
+chunk_size = 1000
 # Max paths per ``tar -T`` batch (limits list-file size; argv stays tiny).
 tar_append_batch_size = 256
 # Rescan stats directory after this many processed chunks

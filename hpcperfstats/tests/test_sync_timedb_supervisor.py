@@ -206,9 +206,9 @@ def test_normalize_archive_groups_by_tgz_sorts_and_copies_paths():
 
 
 def test_db_writer_stage_batch_size_is_bounded():
-  size = st._db_writer_stage_batch_size(target_chunk_size=200, ingest_queue_high=2000)
+  size = st._db_writer_stage_batch_size(target_chunk_size=1000, ingest_queue_high=2000)
   assert 1 <= size <= 32
-  assert size <= 200
+  assert size <= 1000
 
 
 def test_drain_db_write_tasks_clears_queue_and_updates_tracking(monkeypatch):
@@ -1731,7 +1731,7 @@ def test_insert_host_data_individually_uses_force_insert():
 
 def test_sync_timedb_uses_fixed_batch_sizes_not_adaptive_helpers():
   """Ingest uses fixed chunk and bulk_create batch sizes (no runtime tuning)."""
-  assert st.chunk_size == 200
+  assert st.chunk_size == 1000
   assert st.bulk_create_batch_size == 10000
   assert not hasattr(st, "_get_adaptive_bulk_create_batch_size")
   assert not hasattr(st, "_record_adaptive_batch_feedback")

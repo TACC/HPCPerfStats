@@ -928,9 +928,9 @@ def test_not_ingested_raw_still_blocks_tar_removal_after_seal(tmp_path, monkeypa
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
   gz_key = str(tgz_dir / "2026-04-24.tar.gz")
-  tar_path = gz_key[:-3]
+  tar_path = tgz_dir / "2026-04-24.tar"
   arcname = get_tar_member_name(str(seg))
-  with tarfile.open(tar_path, "w") as tf:
+  with tarfile.open(str(tar_path), "w") as tf:
     tf.add(str(seg), arcname=arcname)
   with tarfile.open(gz_key, "w:gz") as tf:
     tf.add(str(seg), arcname=arcname)
@@ -953,7 +953,7 @@ def test_not_ingested_raw_still_blocks_tar_removal_after_seal(tmp_path, monkeypa
       str(tmp_path), arch_suffix, str(tgz_dir))
   remove_verified_uncompressed_daily_tars(
       str(tgz_dir), log_fn=None, remaining_raw_by_gz=remaining_after)
-  assert not os.path.isfile(tar_path)
+  assert not tar_path.is_file()
 
 
 def test_validate_sealed_daily_archive_fails_on_tar_gz_mismatch(tmp_path):
