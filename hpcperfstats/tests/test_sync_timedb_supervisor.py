@@ -131,6 +131,46 @@ def test_normalize_archive_groups_by_tgz_sorts_and_copies_paths():
   assert mapping["/tmp/2026-03-01.tar.gz"] == ["/tmp/a"]
 
 
+def test_db_writer_stage_batch_size_is_bounded():
+  size = st._db_writer_stage_batch_size(target_chunk_size=200, ingest_queue_high=2000)
+  assert 1 <= size <= 32
+  assert size <= 200
+
+
+def test_drain_db_write_tasks_clears_queue_and_updates_tracking(monkeypatch):
+  monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+  monkeypatch.setattr(
+      st,
+      "_db_writer_worker",
+      lambda _lock, task: (task[0], task[2], True, float(task[3]) + 0.1),
+  )
+  file_states = {}
+  parse_tasks = deque(
+      [
+          st.DBWriteTask(path="/tmp/a", payload=("stats", "proc"), need_archival=True, parse_elapsed_s=0.2),
+          st.DBWriteTask(path="/tmp/b", payload=("stats", "proc"), need_archival=False, parse_elapsed_s=0.3),
+      ]
+  )
+  successful = []
+  to_archive = []
+  finished = st._drain_db_write_tasks(
+      parse_tasks=parse_tasks,
+      manager_lock=object(),
+      db_writer_pool=None,
+      file_states=file_states,
+      successful_paths=successful,
+      files_to_be_archived=to_archive,
+      chunk_ingest_finished=0,
+      pending_total=2,
+  )
+  assert finished == 2
+  assert parse_tasks == deque()
+  assert successful == ["/tmp/a", "/tmp/b"]
+  assert to_archive == ["/tmp/a"]
+  assert file_states["/tmp/a"] == st.SyncFileState.WRITTEN
+  assert file_states["/tmp/b"] == st.SyncFileState.WRITTEN
+
+
 def test_resolve_archive_pigz_interval_seconds_rejects_nonfinite_and_nonpositive():
   interval, warning = st._resolve_archive_pigz_interval_seconds(float("nan"))
   assert interval == 8 * 3600
@@ -285,10 +325,10 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
       archive_pool.__exit__(None, None, None)
 
     assert sleeps == [st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS]
-    # Empty-queue pre-rescan full maintenance runs when the queue first drains
-    # and again after the final empty rescan (no duplicate final_idle pass).
-    assert final_maintenance["calls"] == 2
-    assert final_maintenance["remove_verified_tars_calls"] == 2
+    # Maintenance now runs only after an empty rescan. A non-empty first rescan
+    # goes straight to ingest, then a single maintenance pass runs on final idle.
+    assert final_maintenance["calls"] == 1
+    assert final_maintenance["remove_verified_tars_calls"] == 1
   finally:
     shutdown_requested[0] = False
 
@@ -337,6 +377,57 @@ def test_supervisor_runs_full_archive_maintenance_before_rescan_when_idle(monkey
     assert events[-1] == "rescan"
     assert events.index("maintenance") < events.index("rescan")
     assert "tar_removal" in events
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_rescans_before_full_maintenance_when_queue_empty(monkeypatch):
+  shutdown_requested[0] = False
+  try:
+    events = []
+    rescans = deque([["/fake/stats0"], []])
+
+    def fake_rescan(*_a, **_k):
+      events.append("rescan")
+      if rescans:
+        return list(rescans.popleft())
+      return []
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
+    monkeypatch.setattr(st, "_count_daily_tars", lambda *_a, **_k: 0)
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: events.append("maintenance"))
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+
+    class _Ctx:
+      def Pool(self, processes=None):
+        del processes
+        return _FakeIngestPool()
+
+    monkeypatch.setattr(st.multiprocessing, "get_context", lambda _name: _Ctx())
+
+    archive_pool = _FakeArchivePool()
+    archive_pool.__enter__()
+    try:
+      st.run_sync_timedb_supervisor_loop(
+          "/tmp/archive",
+          "all",
+          None,
+          ".hpc",
+          object(),
+          archive_pool,
+      )
+    finally:
+      archive_pool.__exit__(None, None, None)
+
+    assert events[:2] == ["rescan", "rescan"]
+    assert "maintenance" in events
   finally:
     shutdown_requested[0] = False
 

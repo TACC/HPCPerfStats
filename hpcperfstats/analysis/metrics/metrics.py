@@ -878,7 +878,8 @@ def _host_data_metric_rows_batched(
         .values("host", "time", metric_column)
         .order_by("host", "time")
     )
-    rows.extend(list(qs))
+    for row in qs:
+      rows.append(row)
   if rows_cache is not None and cache_key is not None:
     rows_cache[cache_key] = rows
   return rows

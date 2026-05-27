@@ -249,6 +249,16 @@ def _open_tarfile_for_read(path, num_threads):
       yield tf
 
 
+def _iter_tar_members(tf):
+  """Yield tar members without forcing a full in-memory member list."""
+  try:
+    iterator = iter(tf)
+  except TypeError:
+    iterator = tf.getmembers()
+  for member in iterator:
+    yield member
+
+
 def verify_tar_archive_readable(tar_path):
   """Return True if ``tar_path`` is a readable archive (full scan via ``tar tf``).
 
@@ -278,7 +288,8 @@ def verify_tar_archive_readable(tar_path):
   try:
     with file_read_lock_wait(tar_path):
       with tarfile.open(tar_path, "r") as tf:
-        tf.getmembers()
+        for _member in _iter_tar_members(tf):
+          pass
     return True
   except (tarfile.TarError, OSError, EOFError):
     return False
@@ -320,7 +331,7 @@ def _scan_gzip_archive_members_and_readable(gz_path):
     with file_read_lock_wait(gz_path):
       with _open_tarfile_for_read(gz_path, pigz_thread_count) as tf:
         by_name = defaultdict(list)
-        for m in tf.getmembers():
+        for m in _iter_tar_members(tf):
           if m.isfile():
             by_name[m.name].append(m.size)
         return True, {name: max(sizes) for name, sizes in by_name.items()}
@@ -480,7 +491,7 @@ def get_existing_archive_members(tar_path):
     with file_read_lock_wait(tar_path):
       with _open_tarfile_for_read(tar_path, pigz_thread_count) as tf:
         by_name = defaultdict(list)
-        for m in tf.getmembers():
+        for m in _iter_tar_members(tf):
           if m.isfile():
             by_name[m.name].append(m.size)
         return {name: max(sizes) for name, sizes in by_name.items()}
@@ -507,7 +518,7 @@ def get_existing_archive_members_for_daily_archive(archive_gz_path):
     with file_read_lock_wait(archive_gz_path):
       with _open_tarfile_for_read(archive_gz_path, pigz_thread_count) as tf:
         by_name = defaultdict(list)
-        for m in tf.getmembers():
+        for m in _iter_tar_members(tf):
           if m.isfile():
             by_name[m.name].append(m.size)
         return {name: max(sizes) for name, sizes in by_name.items()}
@@ -698,7 +709,7 @@ def tar_has_duplicate_file_members(tar_path):
     with file_read_lock_wait(tar_path):
       with tarfile.open(tar_path, "r") as tf:
         seen = set()
-        for m in tf.getmembers():
+        for m in _iter_tar_members(tf):
           if not m.isfile():
             continue
           if m.name in seen:
@@ -741,21 +752,32 @@ def dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
     pass
   try:
     with file_write_lock(tar_path):
+      file_keep = {}
       with tarfile.open(tar_path, "r") as tin:
-        members = tin.getmembers()
-        keep = _dedupe_member_indices_keep_largest_file_per_name(members)
+        for idx, member in enumerate(_iter_tar_members(tin)):
+          if not member.isfile():
+            continue
+          prev = file_keep.get(member.name)
+          if prev is None or member.size > prev[0] or (
+              member.size == prev[0] and idx > prev[1]
+          ):
+            file_keep[member.name] = (member.size, idx)
+      with tarfile.open(tar_path, "r") as tin:
         with tarfile.open(tmp_path, "w") as tout:
-          for i, m in enumerate(members):
-            if i not in keep:
-              continue
-            if m.isfile():
-              fobj = tin.extractfile(m)
+          for idx, member in enumerate(_iter_tar_members(tin)):
+            if member.isfile():
+              keep = file_keep.get(member.name)
+              if keep is None or keep[1] != idx:
+                continue
+              fobj = tin.extractfile(member)
               if fobj is None:
                 continue
-              tout.addfile(m, fobj)
-              fobj.close()
-            else:
-              tout.addfile(m)
+              try:
+                tout.addfile(member, fobj)
+              finally:
+                fobj.close()
+              continue
+            tout.addfile(member)
       if not verify_tar_archive_readable(tmp_path):
         try:
           os.remove(tmp_path)

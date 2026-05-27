@@ -193,6 +193,58 @@ class ArchiveTask:
   attempt: int = 1
 
 
+def _db_write_task_tuple(task):
+  return (
+      task.path,
+      task.payload,
+      task.need_archival,
+      task.parse_elapsed_s,
+  )
+
+
+def _db_writer_stage_batch_size(target_chunk_size, ingest_queue_high):
+  """Bound parse->writer payload staging to limit peak memory."""
+  cap = max(1, int(ingest_queue_high) // 8)
+  return max(1, min(int(target_chunk_size), 32, cap))
+
+
+def _drain_db_write_tasks(
+    *,
+    parse_tasks,
+    manager_lock,
+    db_writer_pool,
+    file_states,
+    successful_paths,
+    files_to_be_archived,
+    chunk_ingest_finished,
+    pending_total,
+):
+  """Write queued parse payloads and return updated finished count."""
+  if not parse_tasks:
+    return chunk_ingest_finished
+  writer_fn = partial(_db_writer_worker, manager_lock)
+  task_batch = list(parse_tasks)
+  parse_tasks.clear()
+  if _sync_timedb_ingest_inline_requested() or db_writer_pool is None:
+    write_results_iter = (writer_fn(_db_write_task_tuple(task)) for task in task_batch)
+  else:
+    write_results_iter = db_writer_pool.imap_unordered(
+        writer_fn,
+        [_db_write_task_tuple(task) for task in task_batch],
+    )
+  for result in write_results_iter:
+    stats_fname, need_archival, ingest_ok, elapsed_s = result
+    if ingest_ok:
+      _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+      successful_paths.append(stats_fname)
+      if should_archive and need_archival:
+        files_to_be_archived.append(stats_fname)
+      remaining = pending_total - chunk_ingest_finished - 1
+      chunk_ingest_finished += 1
+      _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+  return chunk_ingest_finished
+
+
 class SyncFileState(str, Enum):
   DISCOVERED = "discovered"
   PARSED = "parsed"
@@ -1472,6 +1524,25 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         _finalize_archive_job_if_needed(force=True, context="pre_rescan")
+        pending_stats_files = rescan_pending_stats_files(
+            directory,
+            startdate,
+            enddate,
+            host_name_ext,
+            processed_files | inflight_archive_paths,
+            host_scan_hints=host_scan_hints,
+        )
+        if pending_stats_files:
+          for p in pending_stats_files:
+            _transition_file_state(file_states, p, SyncFileState.DISCOVERED)
+          log_print(
+              "Number of host stats files to process = ",
+              len(pending_stats_files),
+              flush=True,
+          )
+          chunk_counter = 0
+          worker_idle_loops = 0
+          continue
         log_print(
             "Full archive maintenance before rescan (ingest queue empty)",
             flush=True,
@@ -1552,6 +1623,10 @@ def run_sync_timedb_supervisor_loop(
         active_workers = 0
         if db_writer_enabled:
           parse_tasks = deque()
+          writer_stage_batch_size = _db_writer_stage_batch_size(
+              target_chunk_size,
+              ingest_queue_high,
+          )
           parse_envelopes = [ParseTask(path=path) for path in stats_files_chunk]
           if _sync_timedb_ingest_inline_requested():
             parse_results_iter = (
@@ -1589,6 +1664,17 @@ def run_sync_timedb_supervisor_loop(
                       parse_elapsed_s=parse_elapsed_s,
                   ))
               _transition_file_state(file_states, stats_fname, SyncFileState.PARSED)
+              if len(parse_tasks) >= writer_stage_batch_size:
+                chunk_ingest_finished = _drain_db_write_tasks(
+                    parse_tasks=parse_tasks,
+                    manager_lock=manager_lock,
+                    db_writer_pool=db_writer_pool,
+                    file_states=file_states,
+                    successful_paths=successful_paths,
+                    files_to_be_archived=files_to_be_archived,
+                    chunk_ingest_finished=chunk_ingest_finished,
+                    pending_total=len(pending_stats_files),
+                )
           except DatabaseUnavailableExit:
             raise
           except Exception as exc:
@@ -1598,36 +1684,17 @@ def run_sync_timedb_supervisor_loop(
             raise
 
           if parse_tasks:
-            writer_fn = partial(_db_writer_worker, manager_lock)
-
-            def _db_write_task_tuple(task):
-              return (
-                  task.path,
-                  task.payload,
-                  task.need_archival,
-                  task.parse_elapsed_s,
-              )
-
-            if _sync_timedb_ingest_inline_requested() or db_writer_pool is None:
-              write_results_iter = (
-                  writer_fn(_db_write_task_tuple(task)) for task in parse_tasks
-              )
-            else:
-              write_results_iter = db_writer_pool.imap_unordered(
-                  writer_fn,
-                  [_db_write_task_tuple(task) for task in parse_tasks],
-              )
             try:
-              for result in write_results_iter:
-                stats_fname, need_archival, ingest_ok, elapsed_s = result
-                if ingest_ok:
-                  _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
-                  successful_paths.append(stats_fname)
-                  if should_archive and need_archival:
-                    files_to_be_archived.append(stats_fname)
-                  remaining = len(pending_stats_files) - chunk_ingest_finished - 1
-                  chunk_ingest_finished += 1
-                  _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+              chunk_ingest_finished = _drain_db_write_tasks(
+                  parse_tasks=parse_tasks,
+                  manager_lock=manager_lock,
+                  db_writer_pool=db_writer_pool,
+                  file_states=file_states,
+                  successful_paths=successful_paths,
+                  files_to_be_archived=files_to_be_archived,
+                  chunk_ingest_finished=chunk_ingest_finished,
+                  pending_total=len(pending_stats_files),
+              )
             except DatabaseUnavailableExit:
               raise
             except Exception as exc:

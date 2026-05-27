@@ -51,6 +51,7 @@ from hpcperfstats.dbload.db_unavailable import (
     log_and_raise_database_unavailable,
     reraise_database_unavailable_chain,
 )
+from hpcperfstats.shutdown_utils import shutdown_requested
 
 
 def _archive_worker_process_count():

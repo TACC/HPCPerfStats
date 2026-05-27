@@ -126,6 +126,8 @@ COMPUTE_BATCH_WORKER_MULTIPLIER = 2
 COMPUTE_BATCH_ABSOLUTE_MAX = 64
 RESCAN_FETCH_LIMIT = CHUNK_SIZE
 TELEMETRY_SAMPLE_LIMIT = 2048
+RESCAN_SEEN_MULTIPLIER = 16
+RESCAN_SEEN_MIN_CAP = 4096
 STALL_RECOVERY_PER_JID_TIMEOUT_SECONDS = 60.0
 STALL_RECOVERY_PER_JID_POLL_TIMEOUT_SECONDS = 2.0
 STALL_RECOVERY_MAX_WALL_SECONDS = 300.0
@@ -239,6 +241,26 @@ def _chunk_rows_to_candidate_refs(rows):
     else:
       refs.append(_candidate_ref(row[0]))
   return refs
+
+
+def _add_bounded_seen_jid(seen_set, seen_order, jid, cap):
+  """Insert jid into seen structures, evicting oldest entries past cap."""
+  if jid in seen_set:
+    return False
+  seen_set.add(jid)
+  seen_order.append(jid)
+  limit = max(1, int(cap))
+  while len(seen_order) > limit:
+    old = seen_order.popleft()
+    seen_set.discard(old)
+  return True
+
+
+def _merge_deferred_retry_at(existing_retry_at, candidate_retry_at):
+  """Choose retry timestamp without pushing an existing defer farther out."""
+  if existing_retry_at is None:
+    return float(candidate_retry_at)
+  return min(float(existing_retry_at), float(candidate_retry_at))
 
 
 def _new_jid_telemetry():
@@ -409,7 +431,7 @@ class _PrewarmPipeline:
     self._failed = 0
     self._backpressure_events = 0
     self._inline_fallback_jobs = 0
-    self._lag_samples = []
+    self._lag_samples = deque(maxlen=TELEMETRY_SAMPLE_LIMIT)
     self._created_at = {}
     self._last_backpressure_log_at = 0.0
     if self._mode == "pipeline_required":
@@ -476,10 +498,14 @@ class _PrewarmPipeline:
       return 0.0
     if now is None:
       now = time.monotonic()
-    starts = [self._created_at.get(fut, now) for fut in self._pending]
-    if not starts:
+    oldest_start = None
+    for fut in self._pending:
+      start = self._created_at.get(fut, now)
+      if oldest_start is None or start < oldest_start:
+        oldest_start = start
+    if oldest_start is None:
       return 0.0
-    return max(0.0, now - min(starts))
+    return max(0.0, now - oldest_start)
 
   def _maybe_log_backpressure(self, *, jid, pending, oldest_age_s, inline_fallback):
     now = time.monotonic()
@@ -1690,6 +1716,8 @@ def _start_candidate_rescan_thread(
     rerun,
     rescan_candidate_jids,
     rescan_seen_jids,
+    rescan_seen_order,
+    rescan_seen_cap,
     rescan_lock,
     stop_event,
 ):
@@ -1728,7 +1756,12 @@ def _start_candidate_rescan_thread(
                 continue
               if jid in rescan_seen_jids:
                 continue
-              rescan_seen_jids.add(jid)
+              _add_bounded_seen_jid(
+                  rescan_seen_jids,
+                  rescan_seen_order,
+                  jid,
+                  cap=rescan_seen_cap,
+              )
               rescan_candidate_jids.append(
                   _candidate_ref(
                       jid,
@@ -1844,6 +1877,8 @@ def _start_readiness_producer(
     scheduler_shared_lock,
     rescan_candidate_jids,
     rescan_seen_jids,
+    rescan_seen_order,
+    rescan_seen_cap,
     rescan_lock,
 ):
   """Start background producer that fills ready_queue from readiness checks."""
@@ -1862,7 +1897,12 @@ def _start_readiness_producer(
       ref = _candidate_ref(jid, ao, runtime_s=rt)
       jid = ref.jid
       with rescan_lock:
-        rescan_seen_jids.add(jid)
+        _add_bounded_seen_jid(
+            rescan_seen_jids,
+            rescan_seen_order,
+            jid,
+            cap=rescan_seen_cap,
+        )
       meta = deferred_meta.setdefault(
           jid,
           {"first_seen": time.monotonic(), "attempts": 0, "artifact_only": False},
@@ -1892,7 +1932,11 @@ def _start_readiness_producer(
           stats["deferred_quarantined_jids"] += 1
       else:
         retry_after = float(cfg.get_metrics_deferred_not_ready_retry_seconds())
-      deferred_not_ready[jid] = now + retry_after
+      candidate_retry_at = now + retry_after
+      deferred_not_ready[jid] = _merge_deferred_retry_at(
+          deferred_not_ready.get(jid),
+          candidate_retry_at,
+      )
 
     try:
       while not shutdown_requested[0]:
@@ -1927,6 +1971,11 @@ def _start_readiness_producer(
         with rescan_lock:
           rescan_due = list(rescan_candidate_jids)
           rescan_candidate_jids.clear()
+        if deferred_not_ready:
+          rescan_due = [
+              candidate for candidate in rescan_due
+              if deferred_not_ready.get(candidate.jid, 0.0) <= now
+          ]
         extra_candidates = []
         seen_extra = set()
         deferred_candidate_refs = [
@@ -2011,6 +2060,9 @@ def _start_readiness_producer(
           err_chunks = stats["readiness_error_chunks"]
           stats["deferred_not_ready_queue_size"] = len(deferred_not_ready)
           stats["deferred_not_ready_due_now"] = len(deferred_due)
+        if local_ready:
+          for candidate in local_ready:
+            deferred_meta.pop(candidate.jid, None)
         if err_chunks > completion_reporter.readiness_errors_total():
           completion_reporter.record_readiness_error_chunk(
               err_chunks - completion_reporter.readiness_errors_total()
@@ -2631,6 +2683,7 @@ def update_metrics_for_dates(dates, rerun=False):
       rescan_lock = threading.Lock()
       rescan_candidate_jids = deque()
       rescan_seen_jids = set()
+      rescan_seen_order = deque()
       rescan_stop_event = threading.Event()
       prefetch_ready_cap = max(
           1, min(prefetch_target, prefetch_chunks * CHUNK_SIZE)
@@ -2642,6 +2695,10 @@ def update_metrics_for_dates(dates, rerun=False):
           "batch_size": STRICT_CHECK_BATCH_MIN,
           "max_batch_size": max(STRICT_CHECK_BATCH_MIN, min(prefetch_ready_cap, CHUNK_SIZE)),
       }
+      rescan_seen_cap = max(
+          RESCAN_SEEN_MIN_CAP,
+          prefetch_ready_cap * RESCAN_SEEN_MULTIPLIER,
+      )
       strict_check_cooldown_until = {}
       scheduler_shared_lock = threading.Lock()
       completion_reporter = _CompletionReporter()
@@ -2749,6 +2806,8 @@ def update_metrics_for_dates(dates, rerun=False):
           scheduler_shared_lock=scheduler_shared_lock,
           rescan_candidate_jids=rescan_candidate_jids,
           rescan_seen_jids=rescan_seen_jids,
+          rescan_seen_order=rescan_seen_order,
+          rescan_seen_cap=rescan_seen_cap,
           rescan_lock=rescan_lock,
       )
       rescan_thread = _start_candidate_rescan_thread(
@@ -2757,6 +2816,8 @@ def update_metrics_for_dates(dates, rerun=False):
           rerun=rerun,
           rescan_candidate_jids=rescan_candidate_jids,
           rescan_seen_jids=rescan_seen_jids,
+          rescan_seen_order=rescan_seen_order,
+          rescan_seen_cap=rescan_seen_cap,
           rescan_lock=rescan_lock,
           stop_event=rescan_stop_event,
       )

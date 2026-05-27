@@ -2007,12 +2007,49 @@ def test_rescan_thread_discovers_candidates_without_pub_refresh(monkeypatch):
       rerun=False,
       rescan_candidate_jids=deque(),
       rescan_seen_jids=set(),
+      rescan_seen_order=deque(),
+      rescan_seen_cap=8,
       rescan_lock=threading.Lock(),
       stop_event=stop_event,
   )
   assert thread is not None
   thread.join(timeout=1.0)
   assert events == ["query"]
+
+
+@pytest.mark.machine_unit_mock
+def test_add_bounded_seen_jid_evicts_oldest_entries():
+  seen = set()
+  order = deque()
+  assert update_metrics._add_bounded_seen_jid(seen, order, 101, cap=2)
+  assert update_metrics._add_bounded_seen_jid(seen, order, 102, cap=2)
+  assert update_metrics._add_bounded_seen_jid(seen, order, 103, cap=2)
+  assert seen == {102, 103}
+  assert list(order) == [102, 103]
+
+
+@pytest.mark.machine_unit_mock
+def test_prewarm_pipeline_lag_samples_are_capped(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.0)
+  pipe = update_metrics._PrewarmPipeline()
+  for i in range(update_metrics.TELEMETRY_SAMPLE_LIMIT + 5):
+    pipe._lag_samples.append(float(i))
+  assert len(pipe._lag_samples) == update_metrics.TELEMETRY_SAMPLE_LIMIT
+
+
+@pytest.mark.machine_unit_mock
+def test_merge_deferred_retry_at_never_pushes_retry_later():
+  now = 100.0
+  existing = now + 2.0
+  candidate_later = now + 10.0
+  candidate_earlier = now + 1.0
+  assert update_metrics._merge_deferred_retry_at(None, candidate_later) == candidate_later
+  assert update_metrics._merge_deferred_retry_at(existing, candidate_later) == existing
+  assert update_metrics._merge_deferred_retry_at(existing, candidate_earlier) == candidate_earlier
 
 
 @pytest.mark.django_db(databases=[])
