@@ -1,11 +1,13 @@
 """DB ingest-readiness checks before sync_timedb archives or deletes raw stats files.
 
-Head-ingested means the first stats timestamp line's (host, time) exists in host_data,
-where ``host`` is the hostname token from file content (not the archive path dirname).
-This is a lightweight gate (one exists() per cache miss); partial ingest may still pass.
+Head-ingested means the first stats timestamp line's host has at least one ``host_data``
+row in the same Unix second as that line. The monitor emits fractional seconds
+(``1773864970.470903``) but ingest stores subsecond ``time`` values; the gate must
+not use an exact ``time=`` match on the truncated second boundary.
 """
 import os
 import time
+from datetime import datetime, timedelta, timezone
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
@@ -61,16 +63,29 @@ def _trim_path_ready_cache():
     _PATH_READY_CACHE.pop(drop_key, None)
 
 
+def head_unix_second_window(timestamp_utc):
+  """Return ``(unix_second, inclusive_start, exclusive_end)`` for a head timestamp."""
+  ts_sec = int(timestamp_utc.timestamp())
+  ts_start = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
+  ts_end = ts_start + timedelta(seconds=1)
+  return ts_sec, ts_start, ts_end
+
+
 def head_timestamp_present_in_db(hostname, timestamp_utc):
-  """Return whether ``host_data`` has a row for ``(hostname, timestamp_utc)``."""
+  """Return whether ``host_data`` has any row for ``hostname`` in that Unix second."""
   from hpcperfstats.site.machine.models import host_data
 
-  key = (hostname, int(timestamp_utc.timestamp()))
+  _ts_sec, ts_start, ts_end = head_unix_second_window(timestamp_utc)
+  key = (hostname, _ts_sec)
   now = time.time()
   cached = _HEAD_DB_CACHE.get(key)
   if cached and (now - cached["checked_at"] <= _HEAD_DB_CACHE_REFRESH_SECONDS):
     return bool(cached["present"])
-  present = host_data.objects.filter(host=hostname, time=timestamp_utc).exists()
+  present = host_data.objects.filter(
+      host=hostname,
+      time__gte=ts_start,
+      time__lt=ts_end,
+  ).exists()
   _HEAD_DB_CACHE[key] = {"present": bool(present), "checked_at": now}
   _trim_head_db_cache()
   return present

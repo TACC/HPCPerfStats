@@ -70,7 +70,8 @@ def test_stats_file_head_ingested_false_without_db_row(monkeypatch, tmp_path):
       return False
 
   class _Mgr:
-    def filter(self, **_kwargs):
+    def filter(self, *, host, time__gte, time__lt):
+      del host, time__gte, time__lt
       return _QS()
 
   monkeypatch.setattr(host_data, "objects", _Mgr())
@@ -96,6 +97,61 @@ def test_stats_file_head_ingested_true_with_db_row(monkeypatch, tmp_path):
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
 
 
+def test_head_timestamp_present_matches_subsecond_rows_in_same_second(monkeypatch):
+  """Monitor head lines use fractional seconds; DB rows keep subsecond time."""
+  ts_line = 1773864970.470903
+  ts_sec = int(ts_line)
+  head_second = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
+  stored_time = datetime.fromtimestamp(ts_line, tz=timezone.utc)
+  seen = {}
+
+  class _QS:
+    def exists(self):
+      return bool(seen.get("in_window"))
+
+  class _Mgr:
+    def filter(self, *, host, time__gte=None, time__lt=None, time=None, **kwargs):
+      del host, kwargs
+      if time is not None:
+        seen["exact"] = time
+        seen["in_window"] = time == stored_time
+      else:
+        seen["in_window"] = time__gte <= stored_time < time__lt
+      return _QS()
+
+  monkeypatch.setattr(host_data, "objects", _Mgr())
+  assert readiness.head_timestamp_present_in_db("c571-001.stampede3.tacc.utexas.edu", head_second)
+  assert seen.get("in_window") is True
+  assert "exact" not in seen
+
+
+def test_stats_file_head_ingested_fractional_head_line_after_subsecond_ingest(
+    monkeypatch, tmp_path,
+):
+  arch_suffix = "cluster.readiness.test"
+  host_dir = tmp_path / ("n." + arch_suffix)
+  host_dir.mkdir()
+  ts_line = 1773864970.470903
+  seg = host_dir / str(int(ts_line))
+  seg.write_text("%f job1 cn001\nblock dev 1 2 3\n" % ts_line)
+  stored_time = datetime.fromtimestamp(ts_line, tz=timezone.utc)
+
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+
+  class _QS:
+    def exists(self):
+      return True
+
+  class _Mgr:
+    def filter(self, *, host, time__gte, time__lt):
+      assert host == "cn001"
+      assert time__gte <= stored_time < time__lt
+      return _QS()
+
+  monkeypatch.setattr(host_data, "objects", _Mgr())
+  assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
+
+
 def test_stats_file_head_ingested_uses_host_from_file_not_path_dirname(
     monkeypatch, tmp_path,
 ):
@@ -117,9 +173,10 @@ def test_stats_file_head_ingested_uses_host_from_file_not_path_dirname(
       return seen.get("host") == short_host
 
   class _Mgr:
-    def filter(self, *, host, time):
+    def filter(self, *, host, time__gte, time__lt):
       seen["host"] = host
-      seen["time"] = time
+      seen["time__gte"] = time__gte
+      seen["time__lt"] = time__lt
       return _QS()
 
   monkeypatch.setattr(host_data, "objects", _Mgr())

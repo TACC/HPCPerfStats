@@ -16,14 +16,14 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 ## Definition: head ingested
 
 - Read only until the first digit-leading stats line (minimal I/O).
-- **Head ingested** = that line's `(host, time)` exists in **`host_data`** (`exists()` on composite `(host, time)`).
+- **Head ingested** = at least one **`host_data`** row for that line's host with `time` in the **same Unix second** as the head line (monitor emits fractional seconds; ingest stores subsecond `time` values — do not use exact `time=` equality on the truncated second).
 - **`host` must be the hostname token from the stats file line** (same field written to `host_data.host` during ingest). Do **not** use the archive path's parent directory name (often FQDN) for the DB lookup.
 - Canonical helper: `read_stats_file_head_identity` in `sync_timedb_archive_helpers.py` (used by ingest readiness and `sync_timedb_ingest_readiness.py`).
 - **Limitation:** partial ingest (head in DB, tail missing) may still pass. Do not strengthen to full-file checks without an explicit product decision and performance review.
 
 ## Performance
 
-- One cached `exists()` per `(host, unix_second)` (TTL ~60s, bounded cache).
+- One cached `exists()` per `(host, unix_second)` using `time__gte` / `time__lt` on that second (TTL ~60s, bounded cache).
 - Path result cache keyed by `(path, mtime, size)` (TTL ~60s) for maintenance rescans.
 - No full-file parse or `readlines()` for the gate.
 - Archive pool workers call `close_old_connections()` at gate entry.

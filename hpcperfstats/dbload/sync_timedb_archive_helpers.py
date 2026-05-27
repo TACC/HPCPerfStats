@@ -167,6 +167,7 @@ def read_stats_file_head_identity(stats_fname, parse_first_ts_fn=None):
     return None, None
   from datetime import datetime, timezone
 
+  # Gate and duplicate detection bucket by Unix second; ingest may store subseconds.
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
   return str(host).strip(), timestamp_utc
 
