@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 from django.test import RequestFactory
 
-from hpcperfstats.analysis.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
+from hpcperfstats.analysis.gen.jid_table import TYPE_DETAIL_HOST_QUERY_BATCH
 
 
 @pytest.mark.django_db(databases=[])
@@ -39,7 +39,7 @@ def test_type_detail_get_aggregate_df_batches_large_host_list():
 
   st = datetime(2024, 1, 1, tzinfo=timezone.utc)
   et = datetime(2024, 1, 2, tzinfo=timezone.utc)
-  n = JID_TABLE_HOST_QUERY_BATCH + 1
+  n = TYPE_DETAIL_HOST_QUERY_BATCH + 1
   hosts = ["n{0}.example.com".format(i) for i in range(n)]
   provider = TypeDetailDataProvider(
       jid="job123",
@@ -52,6 +52,12 @@ def test_type_detail_get_aggregate_df_batches_large_host_list():
 
   class Qs:
     def values(self, *cols):
+      return self
+
+    def annotate(self, **kwargs):
+      return self
+
+    def order_by(self, *args):
       return self
 
     def __iter__(self):
@@ -72,7 +78,7 @@ def test_type_detail_get_aggregate_df_batches_large_host_list():
     ):
       provider.get_aggregate_df("some_event", metric="arc")
   assert len(chunk_sizes) == 2
-  assert chunk_sizes[0] == JID_TABLE_HOST_QUERY_BATCH
+  assert chunk_sizes[0] == TYPE_DETAIL_HOST_QUERY_BATCH
   assert chunk_sizes[1] == 1
 
 

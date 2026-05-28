@@ -1,7 +1,7 @@
 """Unit tests for analysis.gen.jid_table (_ensure_tz) and utils.queryset_to_dataframe.
 
 """
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 import pytest
@@ -848,3 +848,90 @@ def test_count_host_data_rows_retries_after_lost_sync(monkeypatch):
   assert out == 7
   assert calls["n"] == 2
   assert len(closed) == 2
+
+
+def test_is_statement_timeout_error_detects_operational_timeout():
+  from hpcperfstats.analysis.gen.jid_table import _is_statement_timeout_error
+
+  assert _is_statement_timeout_error(
+      OperationalError("canceling statement due to statement timeout")
+  )
+  assert not _is_statement_timeout_error(OperationalError("connection refused"))
+
+
+def test_queryset_to_dataframe_with_host_chunk_retry_splits_on_timeout(monkeypatch):
+  """On statement timeout, halve host__in and merge sub-chunk results."""
+  from hpcperfstats.analysis.gen.jid_table import (
+      _queryset_to_dataframe_with_host_chunk_retry,
+  )
+
+  hosts = ["h{0}.example.com".format(i) for i in range(8)]
+  chunk_sizes = []
+
+  def build_qs(chunk):
+    chunk_sizes.append(len(chunk))
+    return ("marker", len(chunk))
+
+  def fake_q2df(qs, columns=None):
+    _, size = qs
+    if size == 8:
+      raise OperationalError("canceling statement due to statement timeout")
+    return pd.DataFrame([{"host": "h0.example.com", "sum_val": float(size)}])
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table.queryset_to_dataframe",
+      fake_q2df,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.gen.jid_table.close_old_connections",
+      lambda: None,
+  )
+  out = _queryset_to_dataframe_with_host_chunk_retry(hosts, build_qs)
+  assert chunk_sizes == [8, 4, 4]
+  assert len(out) == 2
+  assert set(out["sum_val"].tolist()) == {4.0}
+
+
+def test_type_detail_get_aggregate_df_sql_fast_path(monkeypatch):
+  """SQL Sum/annotate path returns sum_val without pandas groupby on raw rows."""
+  st = datetime(2024, 6, 1, tzinfo=timezone.utc)
+  et = datetime(2024, 6, 2, tzinfo=timezone.utc)
+  provider = TypeDetailDataProvider(
+      jid="j-sql",
+      type_name="mdc",
+      start_time=st,
+      end_time=et,
+      host_list=["n1.example.com", "n2.example.com"],
+  )
+  filter_calls = []
+
+  class Qs:
+    def values(self, *cols):
+      return self
+
+    def annotate(self, **kwargs):
+      return self
+
+    def order_by(self, *args):
+      return self
+
+    def __iter__(self):
+      return iter([
+          {"host": "n1.example.com", "time": 1, "sum_val": 3.0},
+          {"host": "n2.example.com", "time": 2, "sum_val": 5.0},
+      ])
+
+  class Mgr:
+    def filter(self, **kwargs):
+      filter_calls.append(kwargs)
+      return Qs()
+
+  monkeypatch.setattr("hpcperfstats.analysis.gen.jid_table.host_data.objects", Mgr())
+  with patch(
+      "hpcperfstats.analysis.gen.jid_table.cached_orm",
+      lambda _k, _ttl, fn: fn(),
+  ):
+    out = provider.get_aggregate_df("ldlm_cancel", metric="arc")
+  assert len(filter_calls) == 1
+  assert filter_calls[0]["event"] == "ldlm_cancel"
+  assert out["sum_val"].tolist() == [3.0, 5.0]

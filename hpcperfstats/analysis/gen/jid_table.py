@@ -40,6 +40,14 @@ from hpcperfstats.site.machine.models import host_data, job_data
 # Chunk host__in on host_data for large jobs; single queries with thousands of
 # hosts often hit PostgreSQL statement_timeout during metrics and plots.
 JID_TABLE_HOST_QUERY_BATCH = 64
+# Smaller batches for type-detail plots (many events × long windows × mdc, etc.).
+TYPE_DETAIL_HOST_QUERY_BATCH = 8
+
+_STATEMENT_TIMEOUT_ERROR_MARKERS = (
+    "statement timeout",
+    "canceling statement due to statement timeout",
+    "querycanceled",
+)
 
 
 def _coerce_jid_table_host_query_batch_size(batch_size):
@@ -167,6 +175,110 @@ def _iter_acct_host_batches(acct_host_list, batch_size=None):
   bs = _coerce_jid_table_host_query_batch_size(batch_size)
   for i in range(0, len(hosts), bs):
     yield hosts[i:i + bs]
+
+
+def _is_statement_timeout_error(exc):
+  """True when PostgreSQL canceled the statement due to timeout (splittable)."""
+  if not isinstance(exc, OperationalError):
+    return False
+  msg = str(exc).lower()
+  return any(marker in msg for marker in _STATEMENT_TIMEOUT_ERROR_MARKERS)
+
+
+def _queryset_to_dataframe_with_host_chunk_retry(
+    host_chunk,
+    build_qs,
+    *,
+    min_hosts=1,
+    max_attempts=2,
+):
+  """Materialize ``build_qs(host_chunk)``; split hosts or retry on statement timeout."""
+  import pandas as pd
+
+  hosts = [str(h) for h in host_chunk if h]
+  if not hosts:
+    return pd.DataFrame()
+  last_exc = None
+  for attempt in range(max_attempts):
+    try:
+      close_old_connections()
+      return queryset_to_dataframe(build_qs(hosts))
+    except OperationalError as exc:
+      last_exc = exc
+      if not _is_statement_timeout_error(exc):
+        raise
+      if len(hosts) > min_hosts:
+        mid = max(1, len(hosts) // 2)
+        left = _queryset_to_dataframe_with_host_chunk_retry(
+            hosts[:mid],
+            build_qs,
+            min_hosts=min_hosts,
+            max_attempts=max_attempts,
+        )
+        right = _queryset_to_dataframe_with_host_chunk_retry(
+            hosts[mid:],
+            build_qs,
+            min_hosts=min_hosts,
+            max_attempts=max_attempts,
+        )
+        if left.empty:
+          return right
+        if right.empty:
+          return left
+        return pd.concat([left, right], ignore_index=True)
+      if attempt + 1 >= max_attempts:
+        raise
+      close_old_connections()
+  if last_exc is not None:
+    raise last_exc
+  return pd.DataFrame()
+
+
+def _fetch_host_data_values_frames(host_list, build_qs, batch_size=None):
+  """Run chunked ``host__in`` queries with timeout split/retry; concat row frames."""
+  import pandas as pd
+
+  frames = []
+  for host_chunk in _iter_acct_host_batches(host_list, batch_size):
+    chunk_df = _queryset_to_dataframe_with_host_chunk_retry(host_chunk, build_qs)
+    if chunk_df is not None and not chunk_df.empty:
+      frames.append(chunk_df)
+  if not frames:
+    return pd.DataFrame()
+  return pd.concat(frames, ignore_index=True)
+
+
+def _type_detail_group_metric_to_sum_val(df_raw, metric):
+  """Group raw host/time/metric rows into sum_val (pandas aggregate fallback)."""
+  import pandas as pd
+
+  if (
+      df_raw.empty
+      or "host" not in df_raw.columns
+      or "time" not in df_raw.columns
+      or metric not in df_raw.columns
+  ):
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+  return (
+      df_raw.groupby(["host", "time"], as_index=False)[metric]
+      .sum()
+      .rename(columns={metric: "sum_val"})
+      .sort_values(["host", "time"])
+  )
+
+
+def _type_detail_concat_sum_val_frames(frames):
+  """Concat SQL-aggregated per-chunk frames (host, time, sum_val)."""
+  import pandas as pd
+
+  if not frames:
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+  df = pd.concat(frames, ignore_index=True)
+  if df.empty or "sum_val" not in df.columns:
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+  if not {"host", "time"}.issubset(df.columns):
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+  return df.sort_values(["host", "time"]).reset_index(drop=True)
 
 
 def _unwrap_singleton_scalar(value):
@@ -1318,23 +1430,29 @@ class TypeDetailDataProvider:
             .order_by("host", "time")
         )
         return queryset_to_dataframe(qs)
-      frames = []
-      for host_chunk in _iter_acct_host_batches(self.host_list):
-        qs = (
+
+      type_name = self.type_name
+      start_time = self.start_time
+      end_time = self.end_time
+
+      def build_qs(host_chunk):
+        return (
             host_data.objects.filter(
-                type=self.type_name,
-                time__gte=self.start_time,
-                time__lte=self.end_time,
+                type=type_name,
+                time__gte=start_time,
+                time__lte=end_time,
                 host__in=host_chunk,
             )
             .values("host", "time")
             .distinct()
             .order_by("host", "time")
         )
-        frames.append(queryset_to_dataframe(qs))
-      if not frames:
-        return pd.DataFrame(columns=["host", "time"])
-      out = pd.concat(frames, ignore_index=True)
+
+      out = _fetch_host_data_values_frames(
+          self.host_list,
+          build_qs,
+          batch_size=TYPE_DETAIL_HOST_QUERY_BATCH,
+      )
       if out.empty or not {"host", "time"}.issubset(out.columns):
         return pd.DataFrame(columns=["host", "time"])
       return out.sort_values(["host", "time"]).reset_index(drop=True)
@@ -1377,47 +1495,76 @@ class TypeDetailDataProvider:
     import pandas as pd
 
     def _fn():
-      # Avoid DB-level GROUP BY here because some deployments have reported
-      # backend-specific grouping SQL errors for this query shape.
       if (
           not self.host_list
           or self.start_time is None
           or self.end_time is None
       ):
         qs = self._qs(event=event).values("host", "time", metric)
-        df_raw = queryset_to_dataframe(qs)
-      else:
-        frames = []
-        for host_chunk in _iter_acct_host_batches(self.host_list):
-          qs = (
-              host_data.objects.filter(
-                  type=self.type_name,
-                  time__gte=self.start_time,
-                  time__lte=self.end_time,
-                  host__in=host_chunk,
-                  event=event,
+        return _type_detail_group_metric_to_sum_val(queryset_to_dataframe(qs), metric)
+
+      type_name = self.type_name
+      start_time = self.start_time
+      end_time = self.end_time
+
+      try:
+        from django.db.models import Sum, Value
+        from django.db.models.functions import Coalesce
+
+        sql_frames = []
+        for host_chunk in _iter_acct_host_batches(
+            self.host_list,
+            TYPE_DETAIL_HOST_QUERY_BATCH,
+        ):
+          def build_qs_sql(host_subchunk, ev=event, met=metric):
+            return (
+                host_data.objects.filter(
+                    type=type_name,
+                    time__gte=start_time,
+                    time__lte=end_time,
+                    host__in=host_subchunk,
+                    event=ev,
+                )
+                .values("host", "time")
+                .annotate(sum_val=Coalesce(Sum(met), Value(0)))
+                .order_by("host", "time")
+            )
+
+          sql_frames.append(
+              _queryset_to_dataframe_with_host_chunk_retry(
+                  host_chunk,
+                  build_qs_sql,
               )
-              .values("host", "time", metric)
           )
-          frames.append(queryset_to_dataframe(qs))
-        df_raw = (
-            pd.concat(frames, ignore_index=True)
-            if frames
-            else pd.DataFrame(columns=["host", "time", metric])
+        return _type_detail_concat_sum_val_frames(sql_frames)
+      except Exception:
+        logging.getLogger(__name__).debug(
+            "TypeDetailDataProvider SQL aggregate failed jid=%s type=%s event=%s; "
+            "using pandas",
+            self.jid,
+            type_name,
+            event,
+            exc_info=True,
         )
-      if (
-          df_raw.empty
-          or "host" not in df_raw.columns
-          or "time" not in df_raw.columns
-          or metric not in df_raw.columns
-      ):
-        return pd.DataFrame(columns=["host", "time", "sum_val"])
-      return (
-          df_raw.groupby(["host", "time"], as_index=False)[metric]
-          .sum()
-          .rename(columns={metric: "sum_val"})
-          .sort_values(["host", "time"])
+
+      def build_qs_raw(host_chunk, ev=event, met=metric):
+        return (
+            host_data.objects.filter(
+                type=type_name,
+                time__gte=start_time,
+                time__lte=end_time,
+                host__in=host_chunk,
+                event=ev,
+            )
+            .values("host", "time", met)
+        )
+
+      df_raw = _fetch_host_data_values_frames(
+          self.host_list,
+          build_qs_raw,
+          batch_size=TYPE_DETAIL_HOST_QUERY_BATCH,
       )
+      return _type_detail_group_metric_to_sum_val(df_raw, metric)
 
     result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     if result is not None:
