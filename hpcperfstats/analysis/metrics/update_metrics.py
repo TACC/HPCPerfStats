@@ -32,7 +32,10 @@ from datetime import datetime, timedelta
 from collections import deque
 from concurrent.futures import CancelledError, FIRST_COMPLETED, ThreadPoolExecutor, wait
 from hpcperfstats.django_bootstrap import ensure_django
+from hpcperfstats.process_title import set_script_process_title
+
 ensure_django()
+set_script_process_title()
 
 from django.db import close_old_connections, connections, transaction
 from django.utils import timezone as django_timezone

@@ -41,6 +41,10 @@ def _configure_blas_thread_env():
 
 _configure_blas_thread_env()
 
+from hpcperfstats.process_title import set_script_process_title
+
+set_script_process_title()
+
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.file_locking import file_read_lock_wait
 from hpcperfstats.print_utils import log_print

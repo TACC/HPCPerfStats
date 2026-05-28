@@ -42,6 +42,7 @@ dependencies = [
   "redis",
   "djangorestframework",
   "django-cors-headers",
+  "setproctitle",
 ]
 
 [project.optional-dependencies]

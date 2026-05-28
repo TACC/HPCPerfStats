@@ -124,6 +124,9 @@ def run_loop(*, log_fn=print):
 
 
 def main(argv=None):
+  from hpcperfstats.process_title import set_script_process_title
+
+  set_script_process_title()
   argv = argv if argv is not None else sys.argv
   if len(argv) >= 3 and argv[1] == "--date":
     day = date.fromisoformat(argv[2])

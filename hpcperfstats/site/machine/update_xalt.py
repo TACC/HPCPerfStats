@@ -33,6 +33,9 @@ def run_update_xalt_for_range(start, end, log_fn=log_print):
 
 
 def main(argv=None):
+  from hpcperfstats.process_title import set_script_process_title
+
+  set_script_process_title()
   argv = argv if argv is not None else sys.argv
   default_start = datetime.now()
   default_end = default_start

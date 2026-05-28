@@ -8,7 +8,10 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone as dt_timezone
 from hpcperfstats.django_bootstrap import ensure_django
+from hpcperfstats.process_title import set_script_process_title
+
 ensure_django()
+set_script_process_title()
 
 import hostlist
 import pandas as pd

@@ -360,6 +360,9 @@ def _idle_monitor():
 
 
 def main():
+  from hpcperfstats.process_title import set_script_process_title
+
+  set_script_process_title()
   global _idle_thread_started
   global _recent_host_worker_thread_started
   # Use a mutable container so the SIGTERM handler can update state without

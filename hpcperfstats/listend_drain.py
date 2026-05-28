@@ -51,6 +51,9 @@ def drain_queue_to_archive():
 
 
 def main():
+  from hpcperfstats.process_title import set_script_process_title
+
+  set_script_process_title()
   drain_queue_to_archive()
 
 

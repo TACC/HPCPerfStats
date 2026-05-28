@@ -45,6 +45,9 @@ def render_syslog_ng_generated_text():
 
 
 def main(argv=None):
+  from hpcperfstats.process_title import set_script_process_title
+
+  set_script_process_title()
   argv = argv if argv is not None else sys.argv
   out_path = cfg.get_syslog_generated_config_path()
   os.makedirs(os.path.dirname(out_path), exist_ok=True)

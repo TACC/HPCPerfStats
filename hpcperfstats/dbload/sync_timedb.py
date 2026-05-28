@@ -30,7 +30,10 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from functools import partial
 from hpcperfstats.django_bootstrap import ensure_django
+from hpcperfstats.process_title import set_script_process_title
+
 ensure_django()
+set_script_process_title()
 
 from django.db import IntegrityError, close_old_connections, connections
 from django.db.utils import DatabaseError, OperationalError
