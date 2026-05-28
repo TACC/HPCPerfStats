@@ -1,6 +1,6 @@
 # Vendored axe-core (test-only)
 
-- **Version:** 4.11.2 (from npm package `axe-core`)
+- **Version:** 4.10.2 (from npm package `axe-core`)
 - **License:** MPL-2.0 (see <https://github.com/dequelabs/axe-core>)
 - **Purpose:** Playwright Python E2E loads `axe.min.js` from disk; Docker runtime images do not include `node_modules`, so this file is the supported injection path.
 
