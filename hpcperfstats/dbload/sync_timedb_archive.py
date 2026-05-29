@@ -55,6 +55,11 @@ from hpcperfstats.dbload.db_unavailable import (
     log_and_raise_database_unavailable,
     reraise_database_unavailable_chain,
 )
+from hpcperfstats.dbload.multiprocessing_pool_health import (
+    MultiprocessingWorkerExitError,
+    imap_unordered_watch_pool,
+    terminate_pool_bounded,
+)
 from hpcperfstats.shutdown_utils import shutdown_requested
 
 
@@ -131,10 +136,17 @@ def _iter_tar_tasks_chunked(tar_files, chunk_size=TAR_TASK_CHUNK_SIZE):
 def _process_tar_chunk_interruptibly(pool, worker, chunk, on_result):
   """Process one task chunk while allowing shutdown checks between completions."""
   try:
-    for result in pool.imap_unordered(worker, chunk, chunksize=1):
+    for result in imap_unordered_watch_pool(
+        pool,
+        worker,
+        chunk,
+        context="sync_timedb_archive pool",
+    ):
       on_result(result)
       if shutdown_requested[0]:
         break
+  except MultiprocessingWorkerExitError:
+    raise
   except DatabaseUnavailableExit:
     raise
   except Exception as exc:
@@ -185,7 +197,8 @@ if __name__ == '__main__':
             flush=True,
         )
       ctx = multiprocessing.get_context('spawn')
-      with ctx.Pool(processes=_archive_worker_process_count()) as pool:
+      pool = ctx.Pool(processes=_archive_worker_process_count())
+      try:
         # Process in chunks so SIGTERM can exit between chunks and memory stays bounded.
         for chunk in _iter_tar_tasks_chunked(tar_files, TAR_TASK_CHUNK_SIZE):
           if shutdown_requested[0]:
@@ -199,8 +212,16 @@ if __name__ == '__main__':
               lambda _result: None,
           )
           if shutdown_requested[0]:
-            pool.terminate()
             break
+      except MultiprocessingWorkerExitError:
+        terminate_pool_bounded(pool)
+        raise
+      finally:
+        terminate_pool_bounded(pool)
+        try:
+          pool.close()
+        except Exception:
+          pass
     finally:
       manager.shutdown()
     try:
@@ -209,5 +230,8 @@ if __name__ == '__main__':
       pass
   except DatabaseUnavailableExit:
     sys.exit(2)
+  except MultiprocessingWorkerExitError as exc:
+    log_print("sync_timedb_archive exiting after pool worker death: %s" % exc, flush=True)
+    sys.exit(exc.exit_code)
   if shutdown_requested[0]:
     sys.exit(143)

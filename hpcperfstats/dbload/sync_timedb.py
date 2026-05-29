@@ -47,6 +47,13 @@ from hpcperfstats.dbload.db_unavailable import (
     reraise_database_unavailable_chain,
 )
 from hpcperfstats.dbload.io_helpers import host_data_instance_from_stats_row
+from hpcperfstats.dbload.multiprocessing_pool_health import (
+    MultiprocessingWorkerExitError,
+    abort_if_pool_workers_dead,
+    async_result_get_watch_pool,
+    imap_unordered_watch_pool,
+    terminate_pool_bounded,
+)
 from hpcperfstats.dbload.pigz_cli import pigz_decompress_verbose
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.shutdown_utils import (
@@ -237,9 +244,11 @@ def _drain_db_write_tasks(
   if _sync_timedb_ingest_inline_requested() or db_writer_pool is None:
     write_results_iter = (writer_fn(_db_write_task_tuple(task)) for task in task_batch)
   else:
-    write_results_iter = db_writer_pool.imap_unordered(
+    write_results_iter = imap_unordered_watch_pool(
+        db_writer_pool,
         writer_fn,
         [_db_write_task_tuple(task) for task in task_batch],
+        context="sync_timedb ingest db_writer pool",
     )
   for result in write_results_iter:
     stats_fname, need_archival, ingest_ok, elapsed_s = result
@@ -1228,13 +1237,12 @@ def run_sync_timedb_supervisor_loop(
       except Exception:
         pass
     finalize_t0 = time.time()
-    wait_timeout_fn = getattr(archive_job, "wait", None)
-    if callable(wait_timeout_fn):
-      try:
-        wait_timeout_fn(FINALIZE_POLL_TIMEOUT_SECONDS)
-      except Exception:
-        pass
-    results = archive_job.get()
+    results = async_result_get_watch_pool(
+        archive_job,
+        archive_pool,
+        poll_timeout_s=FINALIZE_POLL_TIMEOUT_SECONDS,
+        context="archive_finalize",
+    )
     perf_stats["archive_finalize_wait_s"] += max(0.0, time.time() - finalize_t0)
     perf_stats["archive_finalize_calls"] += 1
     if not isinstance(results, list):

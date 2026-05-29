@@ -1173,6 +1173,24 @@ def get_metrics_run_poll_timeout_s():
     return 5.0
 
 
+def get_sync_pool_poll_timeout_s():
+  """Poll interval for sync_timedb pool waits (worker-death / OOM detection)."""
+  env = os.environ.get("HPCPERFSTATS_SYNC_POOL_POLL_TIMEOUT_S", "").strip()
+  if env:
+    try:
+      return max(0.05, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 5.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.05,
+        float(cfg.get("DEFAULT", "sync_pool_poll_timeout_s", fallback="5")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 5.0
+
+
 def get_metrics_run_stall_timeout_s():
   """Max no-progress seconds allowed in ``Metrics.run`` before aborting batch."""
   env = os.environ.get("HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S", "").strip()
