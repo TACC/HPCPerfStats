@@ -14,7 +14,7 @@ services:
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
 
   redis:
-    image: redis:7.4.8-alpine3.21
+    image: redis:7.4.9-alpine3.21
     command: ["redis-server", "--appendonly", "no", "--maxmemory", "8gb", "--maxmemory-policy", "allkeys-lru"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -63,7 +63,7 @@ services:
           - proxy
 
   db:
-    image: timescale/timescaledb:2.27.0-pg15
+    image: timescale/timescaledb:2.27.1-pg15
     container_name: hpcperfstats_db_1
     # Default container /dev/shm is 64MiB; Postgres dynamic shared memory exhausts it easily
     # under parallel workers. Keep shm_size generous for max_connections=500 + modest parallelism.
@@ -137,7 +137,7 @@ services:
           - db
 
   rabbitmq:
-    image: rabbitmq:4.3.0-alpine
+    image: rabbitmq:4.3.1-alpine
     container_name: hpcperfstats_rabbitmq_1
     restart: always
     environment:
