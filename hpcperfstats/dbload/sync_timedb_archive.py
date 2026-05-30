@@ -41,10 +41,12 @@ def _configure_blas_thread_env():
 
 _configure_blas_thread_env()
 
-from hpcperfstats.process_title import set_script_process_title
+SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE = "sync_timedb_archive.py"
 
-set_script_process_title()
-
+from hpcperfstats.process_title import (
+    apply_pool_worker_process_title,
+    set_daemon_process_title,
+)
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.file_locking import file_read_lock_wait
 from hpcperfstats.print_utils import log_print
@@ -168,6 +170,7 @@ if __name__ == '__main__':
   )
 
   try:
+    set_daemon_process_title(name=SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE, role="main")
     ensure_django()
     database_startup()
     _reset_sync_runtime_caches()
@@ -197,7 +200,11 @@ if __name__ == '__main__':
             flush=True,
         )
       ctx = multiprocessing.get_context('spawn')
-      pool = ctx.Pool(processes=_archive_worker_process_count())
+      pool = ctx.Pool(
+          processes=_archive_worker_process_count(),
+          initializer=apply_pool_worker_process_title,
+          initargs=(SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE, "tar-member-pool"),
+      )
       try:
         # Process in chunks so SIGTERM can exit between chunks and memory stays bounded.
         for chunk in _iter_tar_tasks_chunked(tar_files, TAR_TASK_CHUNK_SIZE):

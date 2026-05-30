@@ -31,10 +31,14 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from functools import partial
 from hpcperfstats.django_bootstrap import ensure_django
-from hpcperfstats.process_title import set_script_process_title
+from hpcperfstats.process_title import (
+    apply_pool_worker_process_title,
+    set_daemon_process_title,
+)
 
 ensure_django()
-set_script_process_title()
+
+SYNC_TIMEDB_PROCESS_TITLE = "sync_timedb.py"
 
 from django.db import IntegrityError, close_old_connections, connections
 from django.db.utils import DatabaseError, OperationalError
@@ -1515,13 +1519,22 @@ def run_sync_timedb_supervisor_loop(
     _enqueue_archive_task(entry)
 
   if not _sync_timedb_ingest_inline_requested():
+    ingest_pool_kind = (
+        "ingest-parse-pool" if db_writer_enabled else "ingest-pool"
+    )
     ingest_pool = multiprocessing.get_context('spawn').Pool(
-        processes=thread_count)
+        processes=thread_count,
+        initializer=apply_pool_worker_process_title,
+        initargs=(SYNC_TIMEDB_PROCESS_TITLE, ingest_pool_kind),
+    )
     if db_writer_enabled:
       db_writer_processes = cfg.get_sync_db_writer_pool_processes(
           ingest_processes=thread_count)
       db_writer_pool = multiprocessing.get_context('spawn').Pool(
-          processes=db_writer_processes)
+          processes=db_writer_processes,
+          initializer=apply_pool_worker_process_title,
+          initargs=(SYNC_TIMEDB_PROCESS_TITLE, "db-writer-pool"),
+      )
 
   try:
     startup_daily_tar_count = _count_daily_tars(tgz_archive_dir)
@@ -2120,7 +2133,10 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
       manager_lock = [manager.Lock() for _ in range(lock_shards)]
       log_print("Using %d sync_timedb write-lock shards" % lock_shards, flush=True)
     with multiprocessing.get_context('spawn').Pool(
-        processes=archive_thread_count) as archive_pool:
+        processes=archive_thread_count,
+        initializer=apply_pool_worker_process_title,
+        initargs=(SYNC_TIMEDB_PROCESS_TITLE, "archive-pool"),
+    ) as archive_pool:
       run_sync_timedb_supervisor_loop(
           directory,
           startdate,
@@ -2169,6 +2185,7 @@ if __name__ == '__main__':
   previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
   signal.signal(signal.SIGTERM, _sigterm_handler)
   try:
+    set_daemon_process_title(name=SYNC_TIMEDB_PROCESS_TITLE, role="main")
     database_startup()
     run_once, startdate, enddate = parse_sync_timedb_argv(sys.argv)
     run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate)

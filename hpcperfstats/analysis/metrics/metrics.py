@@ -10,6 +10,7 @@ import json
 import os
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.print_utils import log_print
+from hpcperfstats.process_title import apply_pool_worker_process_title
 
 import multiprocessing
 import sys
@@ -1011,17 +1012,21 @@ class Metrics():
         'avg_vector_width_64b', 'vecpercent_32b', 'avg_vector_width_32b'
     ]
     self._shared_pool = None
+    self._shared_pool_kind = None
 
   def __getstate__(self):
     """Exclude non-picklable runtime pool when sending self to workers."""
     state = dict(self.__dict__)
     state["_shared_pool"] = None
+    state["_shared_pool_kind"] = None
     return state
 
   def __setstate__(self, state):
     self.__dict__.update(state)
     if "_shared_pool" not in self.__dict__:
       self._shared_pool = None
+    if "_shared_pool_kind" not in self.__dict__:
+      self._shared_pool_kind = None
 
   def _worker_process_count(self):
     return cfg.get_metrics_pool_process_count()
@@ -1032,12 +1037,21 @@ class Metrics():
     # Balance IPC overhead and fairness.
     return max(1, job_count // (threads * 4))
 
-  def ensure_pool(self):
+  def ensure_pool(self, pool_kind="metrics-pool"):
     """Create and retain a shared worker pool for repeated run() calls."""
-    if self._shared_pool is None:
-      self._shared_pool = multiprocessing.Pool(
-          processes=self._worker_process_count()
-      )
+    if (
+        self._shared_pool is not None
+        and self._shared_pool_kind == pool_kind
+    ):
+      return self._shared_pool
+    if self._shared_pool is not None:
+      self.close_pool()
+    self._shared_pool_kind = pool_kind
+    self._shared_pool = multiprocessing.Pool(
+        processes=self._worker_process_count(),
+        initializer=apply_pool_worker_process_title,
+        initargs=("update_metrics.py", pool_kind),
+    )
     return self._shared_pool
 
   def close_pool(self):
@@ -1046,6 +1060,7 @@ class Metrics():
       return
     _close_pool_bounded(self._shared_pool, METRICS_POOL_JOIN_TIMEOUT_S)
     self._shared_pool = None
+    self._shared_pool_kind = None
 
   def reset_pool_hard(self):
     """Terminate retained worker pool immediately (used after compute stall)."""
@@ -1055,6 +1070,7 @@ class Metrics():
       _terminate_pool_bounded(self._shared_pool, METRICS_POOL_JOIN_TIMEOUT_S)
     finally:
       self._shared_pool = None
+      self._shared_pool_kind = None
 
   # Compute metrics in parallel (Shared memory only)
   def run(self, job_list, pool=None):
@@ -1070,7 +1086,11 @@ class Metrics():
     own_pool = pool is None
     active_pool = pool
     if active_pool is None:
-      active_pool = multiprocessing.Pool(processes=threads)
+      active_pool = multiprocessing.Pool(
+          processes=threads,
+          initializer=apply_pool_worker_process_title,
+          initargs=("update_metrics.py", "metrics-pool"),
+      )
     tasks = [(self, job) for job in job_list]
     poll_timeout_s = cfg.get_metrics_run_poll_timeout_s()
     stall_timeout_s = cfg.get_metrics_run_stall_timeout_s()

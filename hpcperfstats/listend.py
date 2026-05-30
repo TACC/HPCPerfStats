@@ -166,6 +166,9 @@ def _enqueue_recent_host_update(host):
 
 def _recent_host_worker():
   """Background worker that writes recent-host timestamps to Redis."""
+  from hpcperfstats.process_title import set_daemon_thread_title
+
+  set_daemon_thread_title("", script_name="listend.py", role="recent-host-worker")
   while not _recent_host_worker_stop_event.is_set():
     try:
       host = _recent_host_queue.get(timeout=1.0)
@@ -330,6 +333,9 @@ def _idle_monitor():
   Runs every IDLE_CHECK_INTERVAL seconds, but only logs once per
   MESSAGE_WINDOW_SECONDS window.
   """
+  from hpcperfstats.process_title import set_daemon_thread_title
+
+  set_daemon_thread_title("", script_name="listend.py", role="idle-monitor")
   global _last_idle_report_time
   while not _idle_monitor_stop_event.is_set():
     time.sleep(IDLE_CHECK_INTERVAL)
@@ -360,9 +366,9 @@ def _idle_monitor():
 
 
 def main():
-  from hpcperfstats.process_title import set_script_process_title
+  from hpcperfstats.process_title import set_daemon_process_title
 
-  set_script_process_title()
+  set_daemon_process_title(name="listend.py", role="main")
   global _idle_thread_started
   global _recent_host_worker_thread_started
   # Use a mutable container so the SIGTERM handler can update state without

@@ -32,10 +32,10 @@ from datetime import datetime, timedelta
 from collections import deque
 from concurrent.futures import CancelledError, FIRST_COMPLETED, ThreadPoolExecutor, wait
 from hpcperfstats.django_bootstrap import ensure_django
-from hpcperfstats.process_title import set_script_process_title
 
 ensure_django()
-set_script_process_title()
+
+UPDATE_METRICS_PROCESS_TITLE = "update_metrics.py"
 
 from django.db import close_old_connections, connections, transaction
 from django.utils import timezone as django_timezone
@@ -458,6 +458,13 @@ class _PrewarmPipeline:
     return detail_s, plots_s
 
   def _run_one(self, jid):
+    from hpcperfstats.process_title import set_daemon_thread_title
+
+    set_daemon_thread_title(
+        "",
+        script_name=UPDATE_METRICS_PROCESS_TITLE,
+        role="prewarm-pool",
+    )
     last_exc = None
     for _ in range(max(1, self._attempts)):
       try:
@@ -779,6 +786,13 @@ class _CompletionReporter:
       return self._readiness_error_total
 
   def _run(self):
+    from hpcperfstats.process_title import set_daemon_thread_title
+
+    set_daemon_thread_title(
+        "",
+        script_name=UPDATE_METRICS_PROCESS_TITLE,
+        role="completion-reporter",
+    )
     while not self._stop.wait(self._report_interval_s):
       extra = ""
       if callable(self._extra_stats_getter):
@@ -1729,6 +1743,13 @@ def _start_candidate_rescan_thread(
     return None
 
   def _rescan_loop():
+    from hpcperfstats.process_title import set_daemon_thread_title
+
+    set_daemon_thread_title(
+        "",
+        script_name=UPDATE_METRICS_PROCESS_TITLE,
+        role="candidate-rescan",
+    )
     close_old_connections()
     idle_rounds = 0
     try:
@@ -1886,6 +1907,13 @@ def _start_readiness_producer(
 ):
   """Start background producer that fills ready_queue from readiness checks."""
   def _producer_loop():
+    from hpcperfstats.process_title import set_daemon_thread_title
+
+    set_daemon_thread_title(
+        "",
+        script_name=UPDATE_METRICS_PROCESS_TITLE,
+        role="readiness-producer",
+    )
     close_old_connections()
     rr_cursor = {"idx": 0}
     deferred_not_ready = {}
@@ -2776,7 +2804,7 @@ def update_metrics_for_dates(dates, rerun=False):
           "queries may be slow on large databases.".format(len(date_states)),
           flush=True,
       )
-      shared_pool = metrics_manager.ensure_pool()
+      shared_pool = metrics_manager.ensure_pool(pool_kind="public-ef-pool")
       log_print("Metrics worker pool ready.", flush=True)
       pub_stats = _run_public_ef_artifacts_parallel_phase(shared_pool, phase_timer)
       with scheduler_shared_lock:
@@ -2789,7 +2817,7 @@ def update_metrics_for_dates(dates, rerun=False):
         )
         stats["public_ef_pending_tasks"] = int(pub_stats.get("pending_tasks", 0))
       _reset_metrics_pool_after_public_phase(metrics_manager)
-      shared_pool = metrics_manager.ensure_pool()
+      shared_pool = metrics_manager.ensure_pool(pool_kind="metrics-pool")
       log_print("Metrics worker pool recycled after /pub phase.", flush=True)
       ready_queue_lock = threading.Lock()
       producer_done = threading.Event()
@@ -3263,6 +3291,9 @@ def main(argv=None, sleep_after=None):
   Dates in the parsed range are processed **newest day first**; see module
   docstring for per-day job order.
   """
+  from hpcperfstats.process_title import set_daemon_process_title
+
+  set_daemon_process_title(name=UPDATE_METRICS_PROCESS_TITLE, role="main")
   if argv is None:
     argv = sys.argv
 

@@ -1,0 +1,58 @@
+---
+description: Process and thread titles for supervisor daemons and pool workers; never overwrite gunicorn titles
+alwaysApply: true
+---
+
+# Process Title And Pool Labels
+
+Supervisor/batch daemons (`sync_timedb`, `update_metrics`, `listend`, etc.) must label **main**, **process-pool worker**, and **helper thread** roles in `top`/`ps` without clobbering **gunicorn** worker titles.
+
+## Canonical module
+
+[`hpcperfstats/process_title.py`](hpcperfstats/process_title.py):
+
+- `running_under_gunicorn()` — detect gunicorn master/worker processes
+- `set_daemon_process_title(...)` — main or pool worker **process** title (no-op under gunicorn)
+- `apply_pool_worker_process_title` — picklable `multiprocessing.Pool` initializer for `spawn`
+- `set_daemon_thread_title(...)` — daemon **thread** title only (`setthreadtitle`)
+
+## Title format
+
+| Role | Example |
+|------|---------|
+| Main daemon | `sync_timedb.py [main]` |
+| Pool worker | `sync_timedb.py [worker:ingest-pool]` |
+| Helper thread (daemons only) | `update_metrics.py [thread:prewarm-pool]` |
+
+Use a **distinct, stable `pool_kind`** per pool type in the same script (e.g. `ingest-parse-pool`, `db-writer-pool`, `metrics-pool`, `public-ef-pool`).
+
+## Trigger conditions
+
+- New or changed supervisor/batch daemon entrypoint.
+- New `multiprocessing.Pool` or long-lived `ThreadPoolExecutor` / daemon `threading.Thread` under `hpcperfstats/` (excluding tests).
+- Library module imported from Django/gunicorn paths (`site/`, WSGI, DRF) that might call `setproctitle`.
+
+## Required behavior
+
+1. **Never** call `setproctitle` at **module import time**. Set the main title only in `main()` / `if __name__ == "__main__"`.
+2. **Never** call `setproctitle` under gunicorn — use `set_daemon_process_title()` (it no-ops when `running_under_gunicorn()` is true).
+3. **Process pools:** pass a picklable initializer:
+
+   ```python
+   Pool(
+       processes=n,
+       initializer=apply_pool_worker_process_title,
+       initargs=("sync_timedb.py", "ingest-pool"),
+   )
+   ```
+
+   Do not use nested closures for `initializer` (`spawn` must pickle it).
+
+4. **Daemon threads only:** `set_daemon_thread_title(..., script_name="….py", role="…")`. Never change the **process** title for threads.
+5. **Gunicorn request paths:** do not add process or thread titles in `site.machine.api`, plot builders invoked per-request under gunicorn, or other WSGI hot paths unless product explicitly revisits that policy.
+6. **Tests:** extend [`hpcperfstats/tests/test_process_title.py`](hpcperfstats/tests/test_process_title.py) when adding pools or import paths that could affect gunicorn titles.
+
+## Overlap
+
+- [`runtime-resource-and-metrics-safety.mdc`](runtime-resource-and-metrics-safety.mdc) — pool worker health and OOM debugging.
+- [`django-python-cursor-rules.mdc`](django-python-cursor-rules.mdc) — supervisor daemons vs web workers.

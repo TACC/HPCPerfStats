@@ -1,12 +1,18 @@
 """Tests for daemon process title resolution and setproctitle wiring."""
 
+import importlib
 import sys
 from types import SimpleNamespace
 
 import pytest
 
 from hpcperfstats.process_title import (
+    apply_pool_worker_process_title,
+    format_daemon_process_title,
+    format_daemon_thread_title,
     resolve_script_process_title_name,
+    running_under_gunicorn,
+    set_daemon_process_title,
     set_script_process_title,
 )
 
@@ -37,7 +43,124 @@ def test_resolve_interpreter_argv_returns_none():
   assert resolve_script_process_title_name(argv=["/usr/bin/python3.12"]) is None
 
 
+def test_format_daemon_process_title_main():
+  assert (
+      format_daemon_process_title("sync_timedb.py", role="main")
+      == "sync_timedb.py [main]"
+  )
+
+
+def test_format_daemon_process_title_worker():
+  assert (
+      format_daemon_process_title(
+          "sync_timedb.py",
+          role="worker",
+          pool_kind="ingest-pool",
+      )
+      == "sync_timedb.py [worker:ingest-pool]"
+  )
+
+
+def test_format_daemon_thread_title():
+  assert (
+      format_daemon_thread_title("listend.py", role="idle-monitor")
+      == "listend.py [thread:idle-monitor]"
+  )
+
+
+def test_running_under_gunicorn_server_software(monkeypatch):
+  monkeypatch.setenv("SERVER_SOFTWARE", "gunicorn/26.0.0")
+  assert running_under_gunicorn() is True
+
+
+def test_running_under_gunicorn_getproctitle(monkeypatch):
+  monkeypatch.delenv("SERVER_SOFTWARE", raising=False)
+  monkeypatch.setitem(
+      sys.modules,
+      "setproctitle",
+      SimpleNamespace(
+          getproctitle=lambda: "gunicorn: worker [hpcperfstats]",
+          setproctitle=lambda _title: None,
+      ),
+  )
+  assert running_under_gunicorn() is True
+
+
+def test_set_daemon_process_title_skips_under_gunicorn(monkeypatch):
+  calls = []
+
+  def fake_setproctitle(title):
+    calls.append(title)
+
+  monkeypatch.setenv("SERVER_SOFTWARE", "gunicorn/26.0.0")
+  monkeypatch.setitem(
+      sys.modules,
+      "setproctitle",
+      SimpleNamespace(
+          getproctitle=lambda: "gunicorn: worker [hpcperfstats]",
+          setproctitle=fake_setproctitle,
+      ),
+  )
+  assert set_daemon_process_title(name="sync_timedb.py", role="main") is None
+  assert calls == []
+
+
 def test_set_script_process_title_calls_setproctitle(monkeypatch):
+  calls = []
+
+  def fake_setproctitle(title):
+    calls.append(title)
+
+  monkeypatch.delenv("SERVER_SOFTWARE", raising=False)
+  monkeypatch.setitem(
+      sys.modules,
+      "setproctitle",
+      SimpleNamespace(
+          getproctitle=lambda: "",
+          setproctitle=fake_setproctitle,
+      ),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.process_title.running_under_gunicorn",
+      lambda: False,
+  )
+  result = set_script_process_title(name="sync_timedb.py")
+  assert result == "sync_timedb.py [main]"
+  assert calls == ["sync_timedb.py [main]"]
+
+
+def test_set_script_process_title_without_setproctitle(monkeypatch):
+  monkeypatch.delitem(sys.modules, "setproctitle", raising=False)
+  monkeypatch.setattr(
+      "hpcperfstats.process_title.running_under_gunicorn",
+      lambda: False,
+  )
+  assert set_script_process_title(name="listend.py") == "listend.py [main]"
+
+
+def test_apply_pool_worker_process_title(monkeypatch):
+  calls = []
+
+  def fake_setproctitle(title):
+    calls.append(title)
+
+  monkeypatch.setattr(
+      "hpcperfstats.process_title.running_under_gunicorn",
+      lambda: False,
+  )
+  monkeypatch.setitem(
+      sys.modules,
+      "setproctitle",
+      SimpleNamespace(
+          getproctitle=lambda: "",
+          setproctitle=fake_setproctitle,
+      ),
+  )
+  apply_pool_worker_process_title(("sync_timedb.py", "ingest-pool"))
+  assert calls == ["sync_timedb.py [worker:ingest-pool]"]
+
+
+def test_import_sync_acct_does_not_set_process_title(monkeypatch):
   calls = []
 
   def fake_setproctitle(title):
@@ -46,13 +169,17 @@ def test_set_script_process_title_calls_setproctitle(monkeypatch):
   monkeypatch.setitem(
       sys.modules,
       "setproctitle",
-      SimpleNamespace(setproctitle=fake_setproctitle),
+      SimpleNamespace(
+          getproctitle=lambda: "",
+          setproctitle=fake_setproctitle,
+      ),
   )
-  result = set_script_process_title(name="sync_timedb.py")
-  assert result == "sync_timedb.py"
-  assert calls == ["sync_timedb.py"]
-
-
-def test_set_script_process_title_without_setproctitle(monkeypatch):
-  monkeypatch.delitem(sys.modules, "setproctitle", raising=False)
-  assert set_script_process_title(name="listend.py") == "listend.py"
+  monkeypatch.setattr(
+      "hpcperfstats.process_title.running_under_gunicorn",
+      lambda: False,
+  )
+  if "hpcperfstats.dbload.sync_acct" in sys.modules:
+    importlib.reload(sys.modules["hpcperfstats.dbload.sync_acct"])
+  else:
+    importlib.import_module("hpcperfstats.dbload.sync_acct")
+  assert calls == []

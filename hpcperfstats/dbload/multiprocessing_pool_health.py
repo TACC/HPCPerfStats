@@ -2,8 +2,9 @@
 
 Linux OOM kills workers with SIGKILL; the parent can block forever on
 ``imap_unordered`` or ``AsyncResult.get()`` unless it polls worker liveness.
-Spawned workers inherit the same ``setproctitle`` name as the supervisor, so
-dmesg ``sync_timedb.py`` lines often refer to a worker, not the parent PID.
+Spawned workers should use distinct ``setproctitle`` names such as
+``sync_timedb.py [worker:ingest-pool]`` so ``top``/``ps`` and kernel OOM logs
+can be matched to the pool kind, not confused with the ``[main]`` supervisor.
 """
 
 from __future__ import annotations

@@ -88,6 +88,9 @@ def _iter_archive_validation_results_stream(
     return
 
   def _validate_one(gz_path):
+    from hpcperfstats.process_title import set_daemon_thread_title
+
+    set_daemon_thread_title("", script_name="sync_timedb.py", role="archive-validation")
     # Avoid shared mutable cache updates across threads.
     return validate_sealed_daily_archive_for_raw_removal(
         gz_path,
