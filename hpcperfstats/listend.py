@@ -146,10 +146,10 @@ def _set_recent_host_timestamp(redis_client, host):
   """Set `recent_host:<fqdn>` to current epoch seconds."""
   if not host or "." not in host:
     return
-  redis_client.setex(
+  redis_client.set(
       "recent_host:%s" % host,
-      RECENT_HOST_TTL_SECONDS,
       str(int(time.time())),
+      ex=RECENT_HOST_TTL_SECONDS,
   )
 
 

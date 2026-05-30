@@ -118,8 +118,8 @@ def test_set_recent_host_timestamp_writes_expected_redis_key(monkeypatch):
     def __init__(self):
       self.writes = []
 
-    def setex(self, key, ttl, value):
-      self.writes.append((key, ttl, value))
+    def set(self, key, value, ex=None):
+      self.writes.append((key, ex, value))
 
   monkeypatch.setattr(listend.time, "time", lambda: 1710000000.9)
   fake_redis = _FakeRedis()
