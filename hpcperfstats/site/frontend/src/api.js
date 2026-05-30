@@ -64,7 +64,6 @@ export const api = {
       body: JSON.stringify({ page_path: pagePath }),
     }),
   getHomeOptions: () => request(API_PATHS.home),
-  search: (params) => requestWithQuery(API_PATHS.search, params),
   getJobList: (params) => requestWithQuery(API_PATHS.jobs, params),
   /**
    * Single metric histogram (thumb + full) for a job list.

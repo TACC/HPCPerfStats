@@ -92,7 +92,6 @@ include = ["hpcperfstats*"]
 
 [tool.setuptools.package-data]
 hpcperfstats = [
-  "cfg.py",
   "tests/fixtures/axe-core/axe.min.js",
   "tests/fixtures/axe-core/README.md",
 ]

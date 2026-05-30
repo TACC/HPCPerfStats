@@ -14,7 +14,7 @@ alwaysApply: false
 
 ## What to do
 
-- Increase **`shm_size`** on the Timescale/Postgres service (e.g. in `docker-compose.yaml` under `db:`) until heavy queries and parallel workers stop failing. The repo may already set a large value (e.g. **4gb**); raise it further if workloads or `max_parallel_workers` grow.
+- Increase **`shm_size`** on the Timescale/Postgres service (e.g. in `docker-compose.yaml` under `db:`) until heavy queries and parallel workers stop failing. Default compose may only document the knob in comments—set an explicit value (for example **1gb**–**4gb** depending on workload) when parallel workers or large sorts fail with `/dev/shm` errors.
 - After changing **`shm_size`**, recreate the db container so the limit applies.
 
 ## Code interaction

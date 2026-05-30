@@ -34,7 +34,7 @@ intel_8pmc3_eventmap = {
     0x4320c7: 'FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE,W=48,U=8',
     0x4340c7: 'FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE,W=48,U=8',
     0x4380c7: 'FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE,W=48,U=16',
-    # SNB/IVB-style SSE/AVX double FLOP proxies (see intel_process cpu_event_map).
+    # SNB/IVB-style SSE/AVX double FLOP proxies (intel_8pmc3_eventmap below).
     0x438010: 'SSE_DOUBLE_SCALAR,W=48,U=1',
     0x431010: 'SSE_DOUBLE_PACKED,W=48,U=2',
     0x430211: 'SIMD_DOUBLE_256,W=48,U=4',
@@ -53,7 +53,7 @@ intel_skx_imc_eventmap = {
 
 # Older Intel IMC generations use different perf-event encodings for the same
 # logical CAS_* signals. Keep these mappings in sync with
-# dbload/hardware_counter_maps/intel_process.py so roofline/avg_mbw can rely on
+# intel_*_imc_eventmap tables below so roofline/avg_mbw can rely on
 # CAS_READS/CAS_WRITES across SNB/IVB/HSW/BDW/KNL/SKX.
 intel_snb_imc_eventmap = {
     # IMC_PERF_EVENT(0x04, 0x03)

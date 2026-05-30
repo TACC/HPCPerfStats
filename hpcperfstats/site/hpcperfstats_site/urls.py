@@ -13,7 +13,6 @@ allowlist or browsers will see **404** from nginx before Django runs. Project ru
 ``hpcperfstats/cursor-rules/nginx-django-route-allowlist-sync.mdc``.
 """
 
-from django.contrib import admin
 from django.http import HttpResponseRedirect
 from django.urls import include, path
 from django.views.generic import RedirectView
@@ -26,8 +25,6 @@ from hpcperfstats.site.machine.oauth2 import (
 from hpcperfstats.site.hpcperfstats_site.views import (
     csp_report,
 )
-
-admin.autodiscover()
 
 urlpatterns = [
     path("api/", include("hpcperfstats.site.machine.api_urls")),

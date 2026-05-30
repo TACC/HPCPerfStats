@@ -5,7 +5,6 @@ export const API_PATHS = {
   dropStaffForSession: "/session/drop-staff/",
   invalidateCacheForPage: "/cache/invalidate-page/",
   home: "/home/",
-  search: "/search/",
   jobs: "/jobs/",
   jobsHistograms: "/jobs/histograms/",
   hostPlot: "/host_plot/",

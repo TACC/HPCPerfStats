@@ -1,4 +1,4 @@
-"""Plot package: SummaryPlot, DevPlot, HeatMap for job/host metrics visualization (Bokeh).
+"""Plot package: SummaryPlot, DevPlot for job/host metrics visualization (Bokeh).
 
 Unavailable reasons are shown in the same placeholder UI (BokehEmbed) across all plots.
 """
@@ -9,11 +9,6 @@ MSG_NO_ROOFLINE_DATA = "No FLOPS/memory bandwidth data available for roofline."
 
 # Import plots to run on data
 from hpcperfstats.analysis.plot.devplot import DevPlot
-from hpcperfstats.analysis.plot.heatmap import (
-    HeatMap,
-    plot_and_reason_from_jid_table,
-    plot_from_jid_table,
-)
 from hpcperfstats.analysis.plot.roofline import (
     plot_and_reason_gpu_roofline_from_jid_table,
     plot_and_reason_roofline_from_jid_table,
@@ -31,10 +26,7 @@ from hpcperfstats.analysis.plot.summaryplot import plot_and_reason_summary_from_
 __all__ = [
     "SummaryPlot",
     "plot_and_reason_summary_from_jid_table",
-    "HeatMap",
     "DevPlot",
-    "plot_from_jid_table",
-    "plot_and_reason_from_jid_table",
     "plot_roofline_from_jid_table",
     "plot_and_reason_roofline_from_jid_table",
     "plot_gpu_roofline_from_jid_table",

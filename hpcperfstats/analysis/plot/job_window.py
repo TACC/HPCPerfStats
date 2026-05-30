@@ -1,4 +1,4 @@
-"""Parse job start/end from jid_table-like objects for plots (summary, heatmap)."""
+"""Parse job start/end from jid_table-like objects for plots (summary)."""
 from __future__ import annotations
 
 import hpcperfstats.conf_parser as cfg
@@ -32,7 +32,7 @@ def job_window_bounds_local(jt):
 
 
 def job_window_label_strings(jt):
-  """Return (start_label, end_label) as str(UTC timestamps) for heatmap axis, or (None, None)."""
+  """Return (start_label, end_label) as str(UTC timestamps) for plot axis, or (None, None)."""
   start_ts, end_ts = job_window_timestamps_utc(jt)
   if start_ts is None:
     return (None, None)

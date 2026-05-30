@@ -33,7 +33,6 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | Job metrics | Aggregate to `metrics_data` (avg/max/imbalance, etc.) | `analysis/metrics/metrics.py` |
 | Summary plots | Time-series subplots per job | `analysis/plot/summaryplot.py`, `summary_metric_descriptions.py` |
 | Roofline | DRAM CAS + FLOPs for arithmetic intensity | `analysis/plot/roofline.py`, `roofline_peaks.py` |
-| Heatmaps / PMC views | CPI-style columns when `INST_RETIRED` present | `analysis/plot/heatmap.py` |
 | Node power estimate | Combine RAPL / DCGM CPU / GPU power fields | `analysis/gen/node_power_est.py` |
 | API & type detail | JSON for job/host/type explorers | `site/machine/api.py` |
 | UI tooltips | Human-readable event text | `site/frontend/src/utils/variableMetadata.js` (`getDescriptionForVariable`), `variableMetadataMonitorEvents.js` |
@@ -121,7 +120,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Actual frequency clock ticks (MSR); with MPERF yields effective CPU frequency.
 - **Domain:** CPU cycles / frequency
 - **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/heatmap.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_heatmap_jid_table.py; hpcperfstats/analysis/plot/test_heatmap_pmc_columns.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 - **Tests:** hpcperfstats/analysis/gen/tests/test_utils_get_type.py; hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `ARM_DRAM_BW_BYTES`
@@ -479,7 +478,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Instructions retired (fixed counter or MSR alias aligned with IA32_FIXED_CTR0).
 - **Domain:** CPU core performance (PMC)
 - **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/plot/heatmap.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_heatmap_jid_table.py; hpcperfstats/analysis/plot/test_heatmap_pmc_columns.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 - **Tests:** hpcperfstats/analysis/gen/tests/test_utils_get_type.py; hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `Inactive`
@@ -551,7 +550,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Reference clock ticks while the core is active; pairs with APERF for frequency.
 - **Domain:** CPU cycles / frequency
 - **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/heatmap.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_heatmap_jid_table.py; hpcperfstats/analysis/plot/test_heatmap_pmc_columns.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `MSR_CORE_ENERGY_STAT`

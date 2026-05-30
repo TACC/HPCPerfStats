@@ -1,4 +1,4 @@
-"""Unit tests for shared job window parsing (summary + heatmap)."""
+"""Unit tests for shared job window parsing (summary plot)."""
 from __future__ import annotations
 
 from datetime import datetime, timezone

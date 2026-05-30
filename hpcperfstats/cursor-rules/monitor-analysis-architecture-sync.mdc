@@ -27,7 +27,7 @@ HPCPerfStats ingests **`host_data.type`** values produced by the monitor executa
 ## Rules when the monitor or schema changes
 
 1. **New or renamed `host_data.type` for CPU/memory** (monitor `stats_type.st_name`, ingest schema):  
-   - Update **`gen/utils.py`** lists (`INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, `INTEL_CORE_PMC_TYPES_ORDERED`, or `PMC_TYPENAME_PRIORITY`) so metrics, summary, heatmap, and roofline **try the same typenames in a consistent order**.  
+   - Update **`gen/utils.py`** lists (`INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, `INTEL_CORE_PMC_TYPES_ORDERED`, or `PMC_TYPENAME_PRIORITY`) so metrics, summary, and roofline **try the same typenames in a consistent order**.
    - Extend **`roofline.py`** (and tests) if new events or merge rules are required.  
    - For **Intel IMC** typenames: add a **`ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS`** entry whose key **exactly matches** the monitor typename, and insert the typename into **`INTEL_IMC_STATS_TYPES`** in the **same relative order** roofline/summary should probe (unless intentionally different—then document why).
 

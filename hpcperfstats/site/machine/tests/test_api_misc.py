@@ -3,7 +3,6 @@
 Covers:
 - session_info: authenticated vs unauthenticated behavior and session fields.
 - home_options: aggregation of dates/metrics/queues/states without hitting a real DB.
-- search_dispatch: jid and host branches, including 404 when jid not found.
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -425,103 +424,6 @@ class TestHomeOptions:
     assert data["metrics"] == sample_metrics
     assert data["queues"] == ["normal"]
     assert data["states"] == ["RUNNING"]
-
-
-@pytest.mark.django_db(databases=[])
-class TestSearchDispatch:
-  """Tests for the search_dispatch helper endpoint."""
-
-  def test_search_dispatch_redirects_to_job_when_jid_found(self):
-    """search_dispatch returns redirect JSON when jid exists."""
-    from hpcperfstats.site.machine import api
-
-    factory = RequestFactory()
-    request = factory.get("/api/search/", {"jid": "123"})
-
-    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
-        "hpcperfstats.site.machine.api.cached_orm", return_value="123"
-    ):
-      response = api.search_dispatch(request)
-
-    assert response.status_code == 200
-    assert response.data["redirect"] == "/machine/job/123/"
-
-  def test_search_dispatch_jid_probe_uses_distinct_cache_key_from_job_row(self):
-    """search_dispatch must not use KEY_JOB — that key caches full job_data for job_detail."""
-    from hpcperfstats.site.machine import api
-    from hpcperfstats.site.machine import cache_utils as cu
-
-    captured = {}
-
-    def _capture_cached_orm(key, ttl, fn):
-      captured["cache_key"] = key
-      return "12345"
-
-    factory = RequestFactory()
-    request = factory.get("/api/search/", {"jid": "12345"})
-
-    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
-        "hpcperfstats.site.machine.api.cached_orm", side_effect=_capture_cached_orm
-    ):
-      response = api.search_dispatch(request)
-
-    assert response.status_code == 200
-    assert captured.get("cache_key") == f"{cu.KEY_JOB_SEARCH_JID}:12345"
-    assert captured.get("cache_key") != f"{cu.KEY_JOB}:12345"
-
-  def test_search_dispatch_returns_404_when_jid_not_found(self):
-    """search_dispatch returns 404 JSON error when jid does not exist."""
-    from hpcperfstats.site.machine import api
-
-    factory = RequestFactory()
-    request = factory.get("/api/search/", {"jid": "999"})
-
-    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
-        "hpcperfstats.site.machine.api.cached_orm", return_value=None
-    ):
-      response = api.search_dispatch(request)
-
-    assert response.status_code == 404
-    assert "error" in response.data
-
-  def test_search_dispatch_redirects_to_host_plot_when_host_given(self):
-    """search_dispatch returns redirect JSON to host plot URL with remaining query params."""
-    from hpcperfstats.site.machine import api
-
-    factory = RequestFactory()
-    request = factory.get(
-        "/api/search/",
-        {"host": "node1", "start": "2024-01-01T00:00:00", "end": "2024-01-01T01:00:00"},
-    )
-
-    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None):
-      # job_list is not used when host is non-empty, but keep it patched to avoid DB.
-      with patch("hpcperfstats.site.machine.api.job_list") as mock_job_list:
-        response = api.search_dispatch(request)
-
-    mock_job_list.assert_not_called()
-    assert response.status_code == 200
-    redirect_path = response.data["redirect"]
-    assert redirect_path.startswith("/machine/host/node1/plot/")
-    assert "start=2024-01-01T00%3A00%3A00" in redirect_path
-    assert "end=2024-01-01T01%3A00%3A00" in redirect_path
-
-  def test_search_dispatch_falls_back_to_job_list_when_no_jid_or_host(self):
-    """search_dispatch delegates to job_list when no jid or host is provided."""
-    from hpcperfstats.site.machine import api
-
-    factory = RequestFactory()
-    request = factory.get("/api/search/")
-
-    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
-        "hpcperfstats.site.machine.api.job_list"
-    ) as mock_job_list:
-      mock_job_list.return_value = api.Response({"ok": True})
-      response = api.search_dispatch(request)
-
-    mock_job_list.assert_called_once()
-    assert response.status_code == 200
-    assert response.data["ok"] is True
 
 
 @pytest.mark.django_db(databases=[])

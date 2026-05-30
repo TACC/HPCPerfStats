@@ -1,13 +1,13 @@
 ---
 description: Cluster syslog ingest (syslog-ng, ini allowlist, daily seal, logs under data_dir)
-globs: HPCPerfStats/services-conf/syslog-ng.conf,HPCPerfStats/services-conf/syslog-ng.d/**,HPCPerfStats/services-conf/supervisord.conf*,HPCPerfStats/services-conf/supervisor_startup.sh,HPCPerfStats/hpcperfstats/conf_parser.py,HPCPerfStats/hpcperfstats/render_syslog_ng_generated.py,HPCPerfStats/hpcperfstats/seal_syslog_daily.py,HPCPerfStats/hpcperfstats.ini.example,HPCPerfStats/README.md,HPCPerfStats/docker-compose.app.yaml*
+globs: HPCPerfStats/services-conf/syslog-ng.conf,HPCPerfStats/services-conf/supervisord.conf*,HPCPerfStats/services-conf/supervisor_startup.sh,HPCPerfStats/hpcperfstats/conf_parser.py,HPCPerfStats/hpcperfstats/render_syslog_ng_generated.py,HPCPerfStats/hpcperfstats/seal_syslog_daily.py,HPCPerfStats/hpcperfstats.ini.example,HPCPerfStats/README.md,HPCPerfStats/docker-compose.app.yaml*
 alwaysApply: false
 ---
 
 # Syslog cluster ingest workflow
 
 - **Single data volume:** cluster syslog lives only under **`data_dir/logs/`** (`current/` for live files, `log_archive/` for sealed `YYYY-MM-DD-syslog.tar.gz`). Do not reintroduce a separate compose volume for `/hpcperfstatslog/`.
-- **Generated syslog-ng:** runtime file is **`/var/lib/hpcperfstats-syslog/generated.conf`** (see `get_syslog_generated_config_path()`), written by **`python -m hpcperfstats.render_syslog_ng_generated`** before supervisord and again before **syslog-ng** starts. The **source default** in git is [`services-conf/syslog-ng.d/10-hpcperfstats-generated.conf`](HPCPerfStats/services-conf/syslog-ng.d/10-hpcperfstats-generated.conf) (Dockerfile copies it into `/var/lib/...`). Do not put the live generated file only under `services-conf/` (bind-mounts can hide it). When changing allowlist behavior, update **render logic**, **ini example**, **README**, and **tests** together.
+- **Generated syslog-ng:** runtime file is **`/var/lib/hpcperfstats-syslog/generated.conf`** (see `get_syslog_generated_config_path()`), written by **`python -m hpcperfstats.render_syslog_ng_generated`** before supervisord and again before **syslog-ng** starts. The pipeline image may ship an inline-generated fallback at build time; live config always comes from **`render_syslog_ng_generated`** at container start. When changing allowlist behavior, update **render logic**, **ini example**, **README**, and **tests** together.
 - **Allowlist ↔ syslog-ng:** `conf_parser.get_syslog_allow_from_ipv4_networks()` drives **`netmask()`** filters (IPv4 only today). Empty list means **allow all IPv4** (`0.0.0.0/0`).
 - **Per-host filenames:** syslog-ng writes **`$HOST.$R_YEAR$R_MONTH$R_DAY.log`** under `logs/current/`. **`seal_syslog_daily`** must glob the same **`YYYYMMDD`** pattern when sealing.
 - **Supervisord:** `syslog-ng` runs **root** with a **bash -lc** prefix that runs render then **exec** syslog-ng. `seal_syslog_daily` runs as **`hpcperfstats`**; ensure `supervisor_startup.sh` creates **`logs/current`** and **`logs/log_archive`** with correct ownership.

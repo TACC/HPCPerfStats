@@ -396,7 +396,6 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | Job metrics | Aggregate to `metrics_data` (avg/max/imbalance, etc.) | `analysis/metrics/metrics.py` |
 | Summary plots | Time-series subplots per job | `analysis/plot/summaryplot.py`, `summary_metric_descriptions.py` |
 | Roofline | DRAM CAS + FLOPs for arithmetic intensity | `analysis/plot/roofline.py`, `roofline_peaks.py` |
-| Heatmaps / PMC views | CPI-style columns when `INST_RETIRED` present | `analysis/plot/heatmap.py` |
 | Node power estimate | Combine RAPL / DCGM CPU / GPU power fields | `analysis/gen/node_power_est.py` |
 | API & type detail | JSON for job/host/type explorers | `site/machine/api.py` |
 | UI tooltips | Human-readable event text | `site/frontend/src/utils/variableMetadata.js` (`getDescriptionForVariable`), `variableMetadataMonitorEvents.js` |

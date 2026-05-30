@@ -583,14 +583,6 @@ def replace_corrupt_tar_from_compressed_backup(
   )
 
 
-def replace_corrupt_tar_from_gzip_backup(tar_path, gz_path, zstd_threads):
-  """Deprecated wrapper: prefer :func:`replace_corrupt_tar_from_compressed_backup`."""
-  zst_path, _legacy_gz = compressed_sibling_paths(tar_path)
-  return replace_corrupt_tar_from_compressed_backup(
-      tar_path, zst_path, gz_path, zstd_threads,
-  )
-
-
 def get_existing_archive_members(tar_path):
   """Read tar at tar_path and return dict of member name -> size for **file** members.
 
@@ -765,11 +757,6 @@ def remove_verified_archived_raw_files(
   )
 
 
-def _normalize_daily_gz_path(path):
-  """Deprecated: use :func:`normalize_daily_compressed_path`."""
-  return normalize_daily_compressed_path(path)
-
-
 def build_remaining_raw_stats_by_daily_gz(
     archive_data_dir,
     host_name_ext,
@@ -801,7 +788,7 @@ def daily_gz_has_remaining_raw_stats(gz_path, remaining_by_gz):
   """True if ``remaining_by_gz`` lists any raw stats path for this daily archive."""
   if not remaining_by_gz:
     return False
-  key = _normalize_daily_gz_path(gz_path)
+  key = normalize_daily_compressed_path(gz_path)
   return bool(remaining_by_gz.get(key))
 
 
@@ -1004,15 +991,6 @@ def _compressed_backup_and_uncompressed_targets(open_path):
   return (zst_path, gz_path, tar_path)
 
 
-def _gzip_backup_and_uncompressed_targets(open_path):
-  """Deprecated: use :func:`_compressed_backup_and_uncompressed_targets`."""
-  zst_path, gz_path, tar_path = _compressed_backup_and_uncompressed_targets(
-      open_path,
-  )
-  backup = zst_path if os.path.isfile(zst_path) else gz_path
-  return (backup, tar_path)
-
-
 def iter_tar_file_tasks(tar_path):
   """Yield ``(tar_path, member_name)`` for file members only (no dirs).
 
@@ -1108,12 +1086,6 @@ def is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path):
     return os.path.getmtime(tar_path) > os.path.getmtime(zst_path)
   except OSError:
     return True
-
-
-def is_daily_tar_gz_dirty(tar_path, gz_path):
-  """Deprecated: use :func:`is_daily_tar_sealed_dirty`."""
-  zst_path, legacy_gz = compressed_sibling_paths(tar_path)
-  return is_daily_tar_sealed_dirty(tar_path, zst_path, legacy_gz)
 
 
 def should_seal_daily_tar(
@@ -1293,28 +1265,6 @@ def atomic_seal_tar_to_zst(
         log_fn("Sealed archive removed uncompressed tar: %s" % tar_path, flush=True)
     except OSError:
       pass
-
-
-def atomic_seal_tar_to_gz(
-    tar_path,
-    gz_path,
-    num_threads,
-    compress_level,
-    keep_uncompressed_tar,
-    log_fn=log_print,
-    remaining_raw_by_gz=None,
-):
-  """Deprecated: seals to ``.tar.zst`` at canonical sibling path."""
-  zst_path, _legacy_gz = compressed_sibling_paths(tar_path)
-  return atomic_seal_tar_to_zst(
-      tar_path,
-      zst_path,
-      num_threads,
-      cfg.get_archive_zstd_level(),
-      keep_uncompressed_tar,
-      log_fn=log_fn,
-      remaining_raw_by_gz=remaining_raw_by_gz,
-  )
 
 
 def seal_dirty_daily_archives(

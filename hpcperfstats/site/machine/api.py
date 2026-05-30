@@ -60,7 +60,6 @@ from .cache_utils import (
     KEY_GPU_COUNT,
     KEY_XALT,
     KEY_JOB,
-    KEY_JOB_SEARCH_JID,
     KEY_PROC_LIST,
     KEY_HOST_PLOT,
     cached_orm,
@@ -1391,50 +1390,6 @@ def home_options(request):
         "queues": [q for q in (queues or []) if q],
         "states": [s for s in (states or []) if s],
     })
-
-
-@dynamic_cache_page(site_response_cache_timeout)
-@api_view(["GET"])
-@throttle_classes([ExpensiveReadThrottle])
-def search_dispatch(request):
-    """
-    Dispatch search: if jid -> return redirect url; if host+times -> return host plot data; else return job list (index).
-    """
-    err = _require_auth(request)
-    if err is not None:
-        return err
-
-    site_ttl = get_site_content_cache_timeout()
-
-    if request.GET.get("jid"):
-        jid = request.GET["jid"]
-        base_qs = _apply_non_staff_job_visibility(job_data.objects.all(), request)
-        job_jid = cached_orm(
-            f"{KEY_JOB_SEARCH_JID}:{jid}",
-            site_ttl,
-            lambda: base_qs.filter(jid=jid).values_list("jid", flat=True).first(),
-        )
-        if job_jid:
-            return Response({"redirect": f"/machine/job/{job_jid}/"})
-        return Response(
-            {"error": "No result found in search"},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-
-    if request.GET.get("host"):
-        # Redirect to SPA host plot page with query params
-        host = request.GET.get("host", "").strip()
-        if host:
-            q = request.GET.copy()
-            q.pop("host", None)
-            query = q.urlencode()
-            path = f"/machine/host/{host}/plot/"
-            if query:
-                path = f"{path}?{query}"
-            return Response({"redirect": path})
-        return job_list(request)
-
-    return job_list(request)
 
 
 # Display titles for built-in job list histogram columns (column name -> UI title)

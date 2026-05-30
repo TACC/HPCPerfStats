@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Invoked inside the web container by tests/run_redis_cache_pytest_workflow.sh.
+set -euo pipefail
+cd /home/hpcperfstats
+
+export HPCPERFSTATS_COMPOSE_NETWORK=1
+export HPCPERFSTATS_PYTEST_LIVE_REDIS=1
+
+pip install -e ".[test]"
+
+ARGS=()
+if [[ -s /tmp/hpcperfstats_pytest_extra_args ]]; then
+  mapfile -t ARGS < /tmp/hpcperfstats_pytest_extra_args
+fi
+
+exec python -m pytest -q hpcperfstats/site/machine/tests/test_redis_cache_live.py "${ARGS[@]}"

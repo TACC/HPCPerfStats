@@ -257,8 +257,6 @@ def test_warm_job_cache_entries_sets_job_keys():
     from hpcperfstats.site.machine import cache_utils
 
     cache_utils.warm_job_cache_entries([mock_job], 3600)
-  delete_keys = [c.args[0] for c in mock_cache.delete.call_args_list if c.args]
-  assert f"{cache_utils.KEY_JOB_SEARCH_JID}:j1" in delete_keys
   mock_cache.set.assert_called_once()
   args, kwargs = mock_cache.set.call_args
   assert args[0] == f"{cache_utils.KEY_JOB}:j1"
@@ -266,8 +264,8 @@ def test_warm_job_cache_entries_sets_job_keys():
   assert kwargs.get("timeout") == 3600
 
 
-def test_invalidate_jid_derived_cache_keys_deletes_search_jid_probe():
-  """Ingest invalidation must drop search_dispatch probe rows for the same jids."""
+def test_invalidate_jid_derived_cache_keys_deletes_jid_table_window():
+  """Ingest invalidation must drop jid_table window cache rows for the same jids."""
   mock_cache = MagicMock()
   with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache), patch(
       "hpcperfstats.site.machine.models.job_data.objects.filter",
@@ -280,8 +278,8 @@ def test_invalidate_jid_derived_cache_keys_deletes_search_jid_probe():
 
     cache_utils.invalidate_jid_derived_cache_keys(["j1", "j2"])
   delete_keys = [c.args[0] for c in mock_cache.delete.call_args_list if c.args]
-  assert f"{cache_utils.KEY_JOB_SEARCH_JID}:j1" in delete_keys
-  assert f"{cache_utils.KEY_JOB_SEARCH_JID}:j2" in delete_keys
+  assert cache_utils.make_cache_key(cache_utils.KEY_JOB_JID_TABLE_WINDOW, "j1") in delete_keys
+  assert cache_utils.make_cache_key(cache_utils.KEY_JOB_JID_TABLE_WINDOW, "j2") in delete_keys
 
 
 def test_job_instance_cache_key_distinct_from_jid_table_window_key():

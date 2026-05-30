@@ -17,7 +17,6 @@ from hpcperfstats.dbload.archive_compress import (
 )
 from hpcperfstats.dbload.zstd_cli import zstd_executable, zstd_gzip_supported
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
-    atomic_seal_tar_to_gz,
     atomic_seal_tar_to_zst,
     compare_compressed_archive_members,
     drop_legacy_gz_if_equivalent_to_zst,
@@ -37,12 +36,11 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     get_tar_member_name,
     get_verified_files_to_remove,
     collect_first_timestamps_by_path,
-    is_daily_tar_gz_dirty,
+    is_daily_tar_sealed_dirty,
     parse_archive_date_from_daily_tar_path,
     remove_verified_archived_raw_files,
     remove_verified_uncompressed_daily_tars,
     replace_corrupt_tar_from_compressed_backup,
-    replace_corrupt_tar_from_gzip_backup,
     rescan_pending_stats_files,
     resolve_preferred_archive_path_for_read,
     should_seal_daily_tar,
@@ -102,7 +100,7 @@ def test_resolve_preferred_archive_path_plain_tar_unchanged(tmp_path):
   assert resolve_preferred_archive_path_for_read(str(p)) == str(p)
 
 
-# --- verify_tar_archive_readable / replace_corrupt_tar_from_gzip_backup ---
+# --- verify_tar_archive_readable / replace_corrupt_tar_from_compressed_backup ---
 
 
 def test_verify_tar_archive_readable_accepts_valid_tar(tmp_path):
@@ -210,7 +208,7 @@ def test_get_file_member_sizes_from_gzip_uses_zstd_pipe_when_zstd_present(
   assert "-T5" in zstd_cmds[0]
 
 
-def test_replace_corrupt_tar_from_gzip_backup_without_gz_removes_tar(tmp_path):
+def test_replace_corrupt_tar_from_compressed_backup_without_backup_removes_tar(tmp_path):
   tar_path = tmp_path / "2020-01-01.tar"
   tar_path.write_text("corrupt")
   zst, gz = str(tmp_path / "2020-01-01.tar.zst"), str(tmp_path / "2020-01-01.tar.gz")
@@ -254,25 +252,28 @@ def test_parse_archive_date_from_daily_tar_path_rejects_non_daily_name():
   assert parse_archive_date_from_daily_tar_path("/x/other.tar") is None
 
 
-# --- is_daily_tar_gz_dirty / should_seal_daily_tar ---
+# --- is_daily_tar_sealed_dirty / should_seal_daily_tar ---
 
 
-def test_is_daily_tar_gz_dirty_missing_gz(tmp_path):
+def test_is_daily_tar_sealed_dirty_missing_zst(tmp_path):
   tar_p = tmp_path / "2020-01-01.tar"
   tar_p.write_text("x")
-  assert is_daily_tar_gz_dirty(str(tar_p), str(tmp_path / "2020-01-01.tar.gz"))
+  zst_p = tmp_path / "2020-01-01.tar.zst"
+  gz_p = tmp_path / "2020-01-01.tar.gz"
+  assert is_daily_tar_sealed_dirty(str(tar_p), str(zst_p), str(gz_p))
 
 
-def test_is_daily_tar_gz_dirty_tar_newer(tmp_path):
+def test_is_daily_tar_sealed_dirty_tar_newer_than_zst(tmp_path):
   tar_p = tmp_path / "2020-01-01.tar"
+  zst_p = tmp_path / "2020-01-01.tar.zst"
   gz_p = tmp_path / "2020-01-01.tar.gz"
   tar_p.write_text("x")
-  gz_p.write_text("y")
+  zst_p.write_text("y")
   old = datetime(2010, 1, 1).timestamp()
-  os.utime(gz_p, (old, old))
+  os.utime(zst_p, (old, old))
   newer = datetime(2011, 1, 1).timestamp()
   os.utime(tar_p, (newer, newer))
-  assert is_daily_tar_gz_dirty(str(tar_p), str(gz_p))
+  assert is_daily_tar_sealed_dirty(str(tar_p), str(zst_p), str(gz_p))
 
 
 def test_should_seal_prior_calendar_day_without_waiting_idle(tmp_path, monkeypatch):

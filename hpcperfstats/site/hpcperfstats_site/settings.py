@@ -394,7 +394,6 @@ INSTALLED_APPS = (
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.postgres",  # Required for ArrayField and postgres ops (Django 6 system checks).
-    "django.contrib.admin",
 )
 INTERNAL_IPS = ["127.0.0.1"]
 

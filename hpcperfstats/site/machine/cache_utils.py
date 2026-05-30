@@ -234,10 +234,6 @@ def warm_job_cache_entries(job_instances, timeout):
     for obj in job_instances:
       jid = getattr(obj, "jid", None)
       if jid:
-        try:
-          cache.delete(f"{KEY_JOB_SEARCH_JID}:{jid}")
-        except Exception:
-          pass
         cache.set(f"{KEY_JOB}:{jid}", obj, timeout=timeout)
   except Exception:
     pass
@@ -260,10 +256,6 @@ def invalidate_jid_derived_cache_keys(jids):
     for jid in jids:
       if not jid:
         continue
-      try:
-        cache.delete(f"{KEY_JOB_SEARCH_JID}:{jid}")
-      except Exception:
-        pass
       cache.delete(make_cache_key(KEY_JOB_JID_TABLE_WINDOW, jid))
       cache.delete(f"{KEY_GPU_AGG}:v3:{jid}")
       cache.delete(f"{KEY_GPU_COUNT}:{jid}")
@@ -353,11 +345,6 @@ def invalidate_metrics_distinct_cache():
 
 # Key prefixes for namespacing
 KEY_JOB = "job"
-# ``search_dispatch`` caches a jid string (or ``None``) here — never reuse
-# ``KEY_JOB:{jid}``, which stores full ``job_data`` instances for job_detail /
-# ingest warmers. Sharing the key caused false "Job not found" after a prior
-# search cached a miss for the same jid.
-KEY_JOB_SEARCH_JID = "job_search_jid"
 # Pickle-safe (host_list, start_time, end_time) row for :class:`jid_table` only;
 # do not reuse ``KEY_JOB`` for this — that key holds full ``job_data`` instances
 # for the job detail API and ingest warmers.

@@ -181,10 +181,10 @@ SUMMARY_METRIC_RESEARCHER_USE: dict[str, str] = {
         "interconnect limits."
     ),
     "instr": (
-        "Pairs with cycles and the CPI heatmap for instruction throughput and stall stories."
+        "Pairs with cycles and CPI-style metrics for instruction throughput and stall stories."
     ),
     "amd_instr": (
-        "Pairs with AMD cycle counters and the CPI heatmap for throughput and stall stories."
+        "Pairs with AMD cycle counters and CPI-style metrics for throughput and stall stories."
     ),
     "mcycles": "Reference cycle rate for CPI-style reasoning with retired instructions.",
     "acycles": "Actual cycles for frequency-aware CPI and stall interpretation.",

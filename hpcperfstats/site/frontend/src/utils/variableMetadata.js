@@ -338,7 +338,7 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
     description:
       "CPU utilization imbalance across nodes: maximum relative shortfall of per-node mean CPU busy time versus the busiest node.",
     researcherUse:
-      "Classic load imbalance or a root process doing extra work; pair with the CPI heatmap for stragglers.",
+      "Classic load imbalance or a root process doing extra work; pair with per-node CPU and instruction metrics for stragglers.",
   },
   time_imbalance: {
     description:
@@ -529,13 +529,13 @@ const SUMMARY_PLOT_METRIC_METADATA = {
     description:
       "Retired instruction rate from core performance counters (INST_RETIRED), per second.",
     researcherUse:
-      "Pairs with cycles and the CPI heatmap for instruction throughput and stall stories.",
+      "Pairs with cycles and CPI-style metrics for instruction throughput and stall stories.",
   },
   amd_instr: {
     description:
       "Retired instruction rate from AMD core PMC (INST_RETIRED), per second.",
     researcherUse:
-      "Pairs with AMD cycle counters and the CPI heatmap for throughput and stall stories.",
+      "Pairs with AMD cycle counters and CPI-style metrics for throughput and stall stories.",
   },
   mcycles: {
     description: "Reference (fixed-frequency) core cycle rate from MPERF, per second.",

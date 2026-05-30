@@ -4,7 +4,7 @@ globs:
   - "**/hpcperfstats/site/frontend/src/Layout.jsx"
   - "**/hpcperfstats/site/frontend/src/PageLayoutMain.jsx"
   - "**/hpcperfstats/site/frontend/src/App.jsx"
-  - "**/hpcperfstats/site/frontend/src/PageAppMachine.jsx"
+  - "**/hpcperfstats/site/frontend/src/AppMachine.jsx"
   - "**/hpcperfstats/site/frontend/src/pages/JobList.jsx"
   - "**/hpcperfstats/site/frontend/src/pages/PageJobList.jsx"
   - "**/hpcperfstats/site/frontend/src/pages/JobDetail.jsx"
@@ -23,7 +23,7 @@ Apply this rule **only** when the current change already edits one of the paths 
 | Current path | Target component file |
 |-----|----|
 | `hpcperfstats/site/frontend/src/Layout.jsx` | `PageLayoutMain.jsx` |
-| `hpcperfstats/site/frontend/src/App.jsx` | `PageAppMachine.jsx` |
+| `hpcperfstats/site/frontend/src/App.jsx` | `AppMachine.jsx` (SPA entry; `App.jsx` remains a thin re-export until removed) |
 | `hpcperfstats/site/frontend/src/pages/JobList.jsx` | `PageJobList.jsx` |
 | `hpcperfstats/site/frontend/src/pages/JobDetail.jsx` | `PageJobDetail.jsx` |
 | `hpcperfstats/site/frontend/src/pages/Search.jsx` | `PageSearch.jsx` |

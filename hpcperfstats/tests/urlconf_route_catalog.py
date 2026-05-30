@@ -30,7 +30,6 @@ EXPECTED_ROUTE_TEMPLATES: FrozenSet[str] = frozenset({
     "api/jobs/histograms/",
     "api/pub/cluster-dashboard/",
     "api/sacct/ingest/",
-    "api/search/",
     "api/session/",
     "api/session/drop-staff/",
     "api/user-api-key/",
@@ -124,9 +123,6 @@ def build_pipeline_http_endpoint_specs(
   # --- APIRequestContext (JSON / API) ---
   add(PipelineHttpEndpointSpec(
       "api/home/", "GET", "/api/home/", 200, 299, "application/json", False))
-  add(PipelineHttpEndpointSpec(
-      "api/search/", "GET", "/api/search/?jid={}".format(jid_q),
-      200, 299, "application/json", False))
   add(PipelineHttpEndpointSpec(
       "api/jobs/", "GET", "/api/jobs/", 200, 299, "application/json", False))
   add(PipelineHttpEndpointSpec(

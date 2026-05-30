@@ -6,7 +6,7 @@ This note summarizes how CPU/GPU vendors are handled in `hpcperfstats/analysis` 
 
 - **`utils.utils`**: Logical `pmc` is chosen with `PMC_TYPENAME_PRIORITY` (AMD and 8/4-counter Intel before `cpu_counter_metrics`). IMC is the first entry in `INTEL_IMC_STATS_TYPES` present in the job schema. CHA uses `CHA_TYPENAME_PRIORITY`.
 - **Summary plot**: Intel core metrics (`flops64b`, `flops32b`, `instr`, `mcycles`, `acycles`) try `intel_8pmc3`, then `intel_4pmc3`, then `cpu_counter_metrics`. Intel DRAM `mbw` tries every IMC type in `INTEL_IMC_STATS_TYPES` (same idea as roofline).
-- **Intel CHA (optional)**: When `intel_skx_cha` or `intel_knl_cha` is in the job schema, the summary grid may include a combined `arc` rate over CHA counter events (evictions / LLC lookups / bypass-to-IMC) aggregated across all CHA boxes—useful as a coarse on-node coherence/LLC pressure signal for hybrid MPI+OpenMP. Event strings must match the post-ingest schema (see `cha_event_map` in `dbload/hardware_counter_maps/intel_process.py`).
+- **Intel CHA (optional)**: When `intel_skx_cha` or `intel_knl_cha` is in the job schema, the summary grid may include a combined `arc` rate over CHA counter events (evictions / LLC lookups / bypass-to-IMC) aggregated across all CHA boxes—useful as a coarse on-node coherence/LLC pressure signal for hybrid MPI+OpenMP. Event strings must match the post-ingest schema (see CHA mappings in `dbload/sync_timedb_parsing.py`).
 - **Roofline**: Intel FLOPS paths use `INTEL_CORE_PMC_TYPES_ORDERED` (includes `cpu_counter_metrics`). AMD needs `amd64_pmc` FLOPS plus `amd64_df` MBW channels (family 17h/19h when the monitor exposes them).
 - **Heatmap CPI**: Candidate list includes Intel PMC types, `amd64_pmc`, and `cpu_counter_metrics`.
 
@@ -45,7 +45,7 @@ When the monitor adds new `host_data.type` values:
 
 1. Add a nominal APERF/MPERF reference frequency to `_PMC_FREQ_BY_TYPENAME` in `gen/utils.py` if the type should act as PMC.
 2. Append the typename to `PMC_TYPENAME_PRIORITY` in the desired precedence order.
-3. Add summary/roofline/heatmap specs or event lists if the counter semantics match an existing path.
+3. Add summary/roofline specs or event lists if the counter semantics match an existing path.
 4. If the type is an **Intel IMC** DRAM counter source, append it to **`INTEL_IMC_STATS_TYPES`** (correct probe order) and add a matching row in **`roofline_peaks.py`**.
 5. If the type is **ARM IMC** (`arm_imc` pattern), update **`ARM_IMC_STATS_TYPES`** and roofline ARM paths as needed.
 6. Add unit tests with mocked `get_aggregate_df` / job schemas (including `test_roofline_peaks.py` when inference or peak keys change).
