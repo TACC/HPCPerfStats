@@ -17,9 +17,9 @@ When changing ingest/archive paths under `hpcperfstats/dbload/archive_monitor_da
 ## Archival recovery and compression behavior
 
 - If archive reads fail due to known corruption/recovery scenarios, recover from paired compressed sources when available before hard failure.
-- Keep `pigz` use bounded by configured worker limits; compression/decompression thread counts must not scale unbounded with host cores.
+- Keep **zstd** use bounded by configured worker limits (`archive_zstd_threads` / `-T`); compression/decompression thread counts must not scale unbounded with host cores. Legacy `.tar.gz` reads use `zstd -d --format=gzip` only.
 - If archival batching/chunking behavior changes, keep recovery semantics deterministic and test-covered.
-- **Daily `.tar` removal:** after seal, unlink `YYYY-MM-DD.tar` only when `build_remaining_raw_stats_by_daily_gz` reports no closed raw stats paths for that day (every archive maintenance pass: seal → verified raw removal → gated `.tar` removal). Require tar/tar.gz integrity validation before unlink. Do not remove `.tar` while closed raw segments for that calendar day still exist on disk.
+- **Daily `.tar` removal:** after seal, unlink `YYYY-MM-DD.tar` only when `build_remaining_raw_stats_by_daily_gz` reports no closed raw stats paths for that day (every archive maintenance pass: seal → verified raw removal → gated `.tar` removal). Require tar + sealed archive (`.tar.zst` or legacy `.tar.gz`) integrity validation before unlink. Do not remove `.tar` while closed raw segments for that calendar day still exist on disk.
 
 ## Required tests when behavior changes
 
@@ -28,7 +28,7 @@ When changing ingest/archive paths under `hpcperfstats/dbload/archive_monitor_da
  - lock file cleanup after success and exceptions
  - bulk stale `*.fnctl.lock` cleanup (safe removal vs active holder)
  - archive recovery/fallback paths
- - pigz thread-count selection for both gzip and gunzip operations
+ - zstd thread-count selection for native `.zst` and `--format=gzip` decompress paths
 
 ## Overlap
 

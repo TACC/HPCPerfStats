@@ -197,26 +197,48 @@ def get_archive_seal_idle_seconds():
   return float(cfg.get('PORTAL', 'archive_seal_idle_seconds', fallback='60'))
 
 
-def get_archive_pigz_level():
-  """pigz compression level (1--11) for sealing daily archives. Default 8."""
+def _ini_bool(value, default=False):
+  if value is None:
+    return default
+  return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def get_archive_zstd_level():
+  """Native zstd compression level (1--19) for sealing ``.tar.zst``. Default 7."""
   _ensure_cfg_loaded()
-  return int(cfg.get('PORTAL', 'archive_pigz_level', fallback='8'))
+  raw = cfg.get('PORTAL', 'archive_zstd_level', fallback='7')
+  level = int(raw)
+  return max(1, min(19, level))
 
 
-def get_archive_pigz_threads():
-  """pigz worker thread count (``-p``) for archive compress/decompress. Default 8."""
+def get_archive_zstd_threads():
+  """zstd ``-T`` thread count for archive compress/decompress. Default 8."""
   _ensure_cfg_loaded()
-  n = int(cfg.get('PORTAL', 'archive_pigz_threads', fallback='8'))
-  return max(1, n)
+  raw = cfg.get('PORTAL', 'archive_zstd_threads', fallback='8')
+  return max(1, int(raw))
 
 
-def get_archive_pigz_interval_seconds():
-  """Seconds between ``pigz`` seal runs and removal of verified raw stats (default 8h)."""
+def get_archive_zstd_long():
+  """When true, pass ``--long=31`` for tar/zst at or above 2 GiB. Default true."""
+  _ensure_cfg_loaded()
+  raw = cfg.get('PORTAL', 'archive_zstd_long', fallback='yes')
+  return _ini_bool(raw, default=True)
+
+
+def get_archive_gzip_level():
+  """Gzip format level (1--9) for ``zstd --format=gzip`` when needed."""
+  _ensure_cfg_loaded()
+  raw = cfg.get('PORTAL', 'archive_gzip_level', fallback='8')
+  return max(1, min(9, int(raw)))
+
+
+def get_archive_maintenance_interval_seconds():
+  """Seconds between zstd seal runs and verified raw removal (default 8h)."""
   _ensure_cfg_loaded()
   default_interval = float(8 * 3600)
   raw_value = cfg.get(
       'PORTAL',
-      'archive_pigz_interval_seconds',
+      'archive_maintenance_interval_seconds',
       fallback=str(default_interval),
   )
   try:

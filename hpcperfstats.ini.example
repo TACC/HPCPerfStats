@@ -162,17 +162,21 @@ dbname             = hpcperfstats
 # Path where all of the aggregate, raw Rabbit MQ data is stored, which can be used to potentially recreate the database. (pre-configured for container installation)
 daily_archive_dir  = %(data_dir)s/daily_archive
 
-# Deferred compression: sync_timedb appends to YYYY-MM-DD.tar; pigz seal + removal
-# of verified raw stats run on archive_pigz_interval_seconds (default 8 hours).
+# Deferred compression: sync_timedb appends to YYYY-MM-DD.tar; zstd seals to
+# YYYY-MM-DD.tar.zst. Verified raw removal runs on archive_maintenance_interval_seconds
+# (default 8 hours). Sealed archives are YYYY-MM-DD.tar.zst.
 # Uncompressed YYYY-MM-DD.tar is removed only when no closed raw stats remain for
-# that calendar day (.tar.gz is kept). Raw append/delete still require head timestamp
+# that calendar day. Legacy .tar.gz is read via zstd --format=gzip and dropped after
+# member-map equivalence with .tar.zst. Raw append/delete still require head timestamp
 # in DB when sync_archive_require_db_head_ingest is on (default).
-# Keep yes unless you accept re-decompressing on every append for that day.
 # archive_keep_uncompressed_tar = yes
 # archive_seal_idle_seconds = 60
-# archive_pigz_threads = 8
-# archive_pigz_level = 8
-# archive_pigz_interval_seconds = 28800
+# archive_zstd_threads = 8
+# archive_zstd_level = 7
+# archive_zstd_long = yes
+# archive_maintenance_interval_seconds = 28800
+# Before raising archive_zstd_level above 9, benchmark a representative daily .tar:
+# zstd -b3 -e12 -T0 -S -- ./YYYY-MM-DD.tar
 # Require first stats timestamp in DB before daily tar append or raw file removal (default yes).
 # sync_archive_require_db_head_ingest = yes
 

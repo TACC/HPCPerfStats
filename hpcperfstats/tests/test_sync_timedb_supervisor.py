@@ -120,7 +120,7 @@ def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch):
         "remove_verified_uncompressed_daily_tars",
         lambda *a, **k: tar_removal_calls.append(1),
     )
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
@@ -166,7 +166,7 @@ def test_maintenance_passes_ingest_ready_fn_to_raw_removal(monkeypatch):
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", fake_raw_removal)
     monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
@@ -245,20 +245,20 @@ def test_drain_db_write_tasks_clears_queue_and_updates_tracking(monkeypatch):
   assert file_states["/tmp/b"] == st.SyncFileState.WRITTEN
 
 
-def test_resolve_archive_pigz_interval_seconds_rejects_nonfinite_and_nonpositive():
-  interval, warning = st._resolve_archive_pigz_interval_seconds(float("nan"))
+def test_resolve_archive_maintenance_interval_seconds_rejects_nonfinite_and_nonpositive():
+  interval, warning = st._resolve_archive_maintenance_interval_seconds(float("nan"))
   assert interval == 8 * 3600
   assert warning == "non_finite_or_non_positive"
 
-  interval, warning = st._resolve_archive_pigz_interval_seconds(float("inf"))
+  interval, warning = st._resolve_archive_maintenance_interval_seconds(float("inf"))
   assert interval == 8 * 3600
   assert warning == "non_finite_or_non_positive"
 
-  interval, warning = st._resolve_archive_pigz_interval_seconds(0)
+  interval, warning = st._resolve_archive_maintenance_interval_seconds(0)
   assert interval == 8 * 3600
   assert warning == "non_finite_or_non_positive"
 
-  interval, warning = st._resolve_archive_pigz_interval_seconds("bad")
+  interval, warning = st._resolve_archive_maintenance_interval_seconds("bad")
   assert interval == 8 * 3600
   assert warning == "invalid"
 
@@ -383,7 +383,7 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st.multiprocessing, "get_context", fake_get_context)
     monkeypatch.setattr(
-        st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+        st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
 
@@ -433,7 +433,7 @@ def test_supervisor_runs_full_archive_maintenance_before_rescan_when_idle(monkey
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
 
     archive_pool = _FakeArchivePool()
     archive_pool.__enter__()
@@ -479,7 +479,7 @@ def test_supervisor_rescans_before_full_maintenance_when_queue_empty(monkeypatch
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
 
     class _Ctx:
       def Pool(self, processes=None):
@@ -531,7 +531,7 @@ def test_supervisor_runs_startup_archive_maintenance_when_daily_tars_above_thres
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
 
     archive_pool = _FakeArchivePool()
     archive_pool.__enter__()
@@ -575,7 +575,7 @@ def test_supervisor_run_once_exits_without_idle_sleep_when_empty(monkeypatch):
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", fake_sleep)
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(
         st, "remove_verified_archived_raw_files", lambda *a, **k: None)
@@ -609,7 +609,7 @@ def test_supervisor_logs_queue_watermarks(monkeypatch):
     logs = []
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", lambda *a, **k: [])
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st.cfg, "get_sync_ingest_queue_max_size", lambda: 10)
     monkeypatch.setattr(st.cfg, "get_sync_archive_queue_max_size", lambda: 8)
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
@@ -666,7 +666,7 @@ def test_supervisor_logs_completed_file_with_global_remaining(monkeypatch):
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
@@ -733,7 +733,7 @@ def test_periodic_maintenance_runs_with_backlog_and_logs_context(monkeypatch):
     monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (_a[1], True, True, 0.0))
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 0.5)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 0.5)
     monkeypatch.setattr(st, "chunk_size", 1)
     monkeypatch.setattr(st.time, "time", clock)
     monkeypatch.setattr(
@@ -836,7 +836,7 @@ def test_failed_ingest_is_not_marked_processed(monkeypatch):
         st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(st.multiprocessing, "get_context", fake_get_context)
     monkeypatch.setattr(
-        st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+        st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
@@ -900,7 +900,7 @@ def test_checkpoint_flush_is_coalesced(monkeypatch, tmp_path):
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st.multiprocessing, "get_context", fake_get_context)
     monkeypatch.setattr(
-        st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+        st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
 
@@ -960,7 +960,7 @@ def test_rescan_excludes_inflight_archive_paths(monkeypatch):
     monkeypatch.setattr(
         st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(
-        st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+        st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
     monkeypatch.setattr(st, "chunk_size", 1)
@@ -1056,7 +1056,7 @@ def test_db_writer_pipeline_flag_uses_separate_parse_and_write(monkeypatch):
     monkeypatch.setattr(
         st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(
-        st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+        st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
 
@@ -1101,7 +1101,7 @@ def test_archive_retry_backoff_requeues_failed_archive(monkeypatch):
     monkeypatch.setattr(st.cfg, "get_sync_archive_retry_max_attempts", lambda: 2)
     monkeypatch.setattr(st.cfg, "get_sync_archive_retry_backoff_base_seconds", lambda: 0.0)
     monkeypatch.setattr(st.cfg, "get_sync_archive_retry_backoff_max_seconds", lambda: 0.0)
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
@@ -1139,7 +1139,7 @@ def test_retry_queue_dispatch_uses_retry_at_order_not_insertion(monkeypatch):
     }
     monkeypatch.setattr(st, "_load_dead_letter_entries", lambda *_a, **_k: [future_entry, due_entry])
     monkeypatch.setattr(st, "rescan_pending_stats_files", lambda *_a, **_k: [])
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
@@ -1197,7 +1197,7 @@ def test_nonblocking_finalize_queues_new_archive_work_when_busy(monkeypatch):
     monkeypatch.setattr(st, "build_archive_mapping", lambda files, *_a, **_k: {
         "/tmp/%s.tar.gz" % files[0].split("/")[-1]: [files[0]]
     })
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
@@ -1287,7 +1287,7 @@ def test_archive_dispatch_by_tgz_groups_respects_archive_queue_max(monkeypatch):
     monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st.cfg, "get_sync_archive_queue_max_size", lambda: 2)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: mapping)
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
@@ -1363,7 +1363,7 @@ def test_periodic_maintenance_logs_deferred_when_archive_finalize_pending(monkey
     monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (_a[1], True, True, 0.0))
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 0.5)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 0.5)
     monkeypatch.setattr(st, "chunk_size", 1)
     monkeypatch.setattr(
         st,
@@ -1431,7 +1431,7 @@ def test_dead_letter_replay_runs_before_idle_sleep(monkeypatch):
     }])
     monkeypatch.setattr(st, "_save_dead_letter_entries", lambda *_a, **_k: None)
     monkeypatch.setattr(st, "rescan_pending_stats_files", lambda *_a, **_k: [])
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
@@ -1537,7 +1537,7 @@ def test_empty_primary_mapping_falls_back_to_mtime_archive(monkeypatch, tmp_path
     monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
@@ -1587,7 +1587,7 @@ def test_finally_path_finalizes_inflight_archive(monkeypatch, tmp_path):
     monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {str(tmp_path / "day.tar.gz"): [target]})
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
@@ -1646,7 +1646,7 @@ def test_archive_result_mismatch_retries_unmatched(monkeypatch, tmp_path):
     monkeypatch.setattr(st.cfg, "get_sync_archive_retry_max_attempts", lambda: 2)
     monkeypatch.setattr(st.cfg, "get_sync_archive_retry_backoff_base_seconds", lambda: 0.0)
     monkeypatch.setattr(st.cfg, "get_sync_archive_retry_backoff_max_seconds", lambda: 0.0)
-    monkeypatch.setattr(st.cfg, "get_archive_pigz_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)

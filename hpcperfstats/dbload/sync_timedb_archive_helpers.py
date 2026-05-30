@@ -11,10 +11,26 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload.pigz_cli import (
-    pigz_decompress_stdout,
-    pigz_decompress_verbose,
-    pigz_executable,
+from hpcperfstats.dbload.archive_compress import (
+    DAILY_ARCHIVE_GZ_SUFFIX,
+    DAILY_ARCHIVE_ZST_SUFFIX,
+    archive_member_maps_equivalent,
+    compressed_sibling_paths,
+    daily_compressed_path_for_date,
+    daily_tar_path_from_compressed,
+    detect_compressed_format,
+    normalize_daily_compressed_path,
+    sum_member_bytes,
+)
+from hpcperfstats.dbload.zstd_cli import (
+    zstd_decompress_stdout,
+    zstd_decompress_verbose,
+    zstd_executable,
+    zstd_gzip_decompress_stdout,
+    zstd_gzip_decompress_verbose,
+    zstd_gzip_supported,
+    zstd_compress_tar_to_file,
+    zstd_test,
 )
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
 from hpcperfstats.file_locking import (
@@ -25,7 +41,7 @@ from hpcperfstats.file_locking import (
 )
 from hpcperfstats.print_utils import log_print
 
-pigz_thread_count = cfg.get_archive_pigz_threads()
+archive_zstd_thread_count = cfg.get_archive_zstd_threads()
 
 _DAILY_TAR_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar$")
 
@@ -222,47 +238,82 @@ def _tar_list_executable():
   return shutil.which("tar") or "/bin/tar"
 
 
-def _tar_gz_readable_via_pigz_tar_pipe(gz_path, tar_bin, num_threads):
-  """Full list scan: ``pigz -d -c -p N | tar tf -`` (both must exit 0)."""
-  p_pigz = subprocess.Popen(
-      [
-          pigz_executable(),
-          "-d",
-          "-c",
-          "-p",
-          str(num_threads),
-          gz_path,
-      ],
+def _tar_readable_via_decompress_tar_pipe(decompress_cmd, tar_bin):
+  """Full list scan: ``decompress -c | tar tf -`` (both must exit 0)."""
+  p_decomp = subprocess.Popen(
+      decompress_cmd,
       stdout=subprocess.PIPE,
       stderr=subprocess.DEVNULL,
   )
   try:
     p_tar = subprocess.Popen(
         [tar_bin, "tf", "-"],
-        stdin=p_pigz.stdout,
+        stdin=p_decomp.stdout,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
     )
   except Exception:
-    p_pigz.kill()
+    p_decomp.kill()
     try:
-      p_pigz.wait(timeout=30)
+      p_decomp.wait(timeout=30)
     except (OSError, subprocess.SubprocessError):
       pass
     raise
-  if p_pigz.stdout is not None:
-    p_pigz.stdout.close()
+  if p_decomp.stdout is not None:
+    p_decomp.stdout.close()
   p_tar.communicate()
-  pigz_rc = p_pigz.wait()
-  return p_tar.returncode == 0 and pigz_rc == 0
+  decomp_rc = p_decomp.wait()
+  return p_tar.returncode == 0 and decomp_rc == 0
+
+
+def _tar_gz_readable_via_zstd_gzip_tar_pipe(gz_path, tar_bin, num_threads):
+  if not zstd_gzip_supported():
+    return False
+  cmd = [
+      zstd_executable(),
+      "-d",
+      "--format=gzip",
+      "-c",
+      "-T%d" % max(1, int(num_threads)),
+      "-q",
+      gz_path,
+  ]
+  return _tar_readable_via_decompress_tar_pipe(cmd, tar_bin)
+
+
+def _tar_zst_readable_via_zstd_tar_pipe(zst_path, tar_bin, num_threads):
+  if not shutil.which("zstd"):
+    return False
+  long_enabled = cfg.get_archive_zstd_long()
+  from hpcperfstats.dbload.archive_compress import zstd_use_long_for_path
+
+  cmd = [
+      zstd_executable(),
+      "-d",
+      "-c",
+      "-T%d" % max(1, int(num_threads)),
+      "-q",
+  ]
+  if zstd_use_long_for_path(zst_path, long_enabled):
+    cmd.append("--long=31")
+  cmd.append(zst_path)
+  return _tar_readable_via_decompress_tar_pipe(cmd, tar_bin)
 
 
 @contextlib.contextmanager
 def _open_tarfile_for_read(path, num_threads):
-  """Open a tar (or ``.tar.gz`` with pigz-decompressed stream) for sequential reads."""
-  if path.endswith(".tar.gz") and shutil.which("pigz"):
-    with pigz_decompress_stdout(path, num_threads) as stdout:
+  """Open a tar or compressed daily archive for sequential reads."""
+  if path.endswith(DAILY_ARCHIVE_ZST_SUFFIX) and shutil.which("zstd"):
+    with zstd_decompress_stdout(
+        path,
+        num_threads,
+        use_long=None,
+    ) as stdout:
+      with tarfile.open(fileobj=stdout, mode="r|") as tf:
+        yield tf
+  elif path.endswith(DAILY_ARCHIVE_GZ_SUFFIX) and zstd_gzip_supported():
+    with zstd_gzip_decompress_stdout(path, num_threads) as stdout:
       with tarfile.open(fileobj=stdout, mode="r|") as tf:
         yield tf
   else:
@@ -283,8 +334,8 @@ def _iter_tar_members(tf):
 def verify_tar_archive_readable(tar_path):
   """Return True if ``tar_path`` is a readable archive (full scan via ``tar tf``).
 
-  For ``.tar.gz``, uses ``pigz -d -c -p N | tar tf -`` when ``pigz`` is on
-  ``PATH``; otherwise ``tar tf`` on the file (or :mod:`tarfile` if ``tar`` is
+  For ``.tar.zst`` / ``.tar.gz``, uses ``zstd -d -c | tar tf -`` when zstd is
+  available; otherwise ``tar tf`` on the file (or :mod:`tarfile` if ``tar`` is
   missing).
   """
   if not os.path.isfile(tar_path):
@@ -292,9 +343,12 @@ def verify_tar_archive_readable(tar_path):
   tar_bin = _tar_list_executable()
   try:
     with file_read_lock_wait(tar_path):
-      if tar_path.endswith(".tar.gz") and shutil.which("pigz"):
-        return _tar_gz_readable_via_pigz_tar_pipe(
-            tar_path, tar_bin, pigz_thread_count)
+      if tar_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX) and shutil.which("zstd"):
+        return _tar_zst_readable_via_zstd_tar_pipe(
+            tar_path, tar_bin, archive_zstd_thread_count)
+      if tar_path.endswith(DAILY_ARCHIVE_GZ_SUFFIX) and zstd_gzip_supported():
+        return _tar_gz_readable_via_zstd_gzip_tar_pipe(
+            tar_path, tar_bin, archive_zstd_thread_count)
       result = subprocess.run(
           [tar_bin, "tf", tar_path],
           capture_output=True,
@@ -335,22 +389,26 @@ def _archive_file_identity(path):
   return (int(st.st_mtime_ns), int(st.st_size))
 
 
-def _build_archive_validation_cache_key(gz_path):
-  tar_path = gz_path[:-len(".gz")] if gz_path.endswith(".tar.gz") else None
+def _build_archive_validation_cache_key(compressed_path):
+  tar_path = daily_tar_path_from_compressed(compressed_path)
   return (
-      gz_path,
-      _archive_file_identity(gz_path),
-      _archive_file_identity(tar_path) if tar_path is not None else None,
+      compressed_path,
+      _archive_file_identity(compressed_path),
+      _archive_file_identity(tar_path),
   )
 
 
-def _scan_gzip_archive_members_and_readable(gz_path):
-  """Return ``(readable, members)`` from one streamed gzip pass."""
-  if not gz_path.endswith(".tar.gz") or not os.path.isfile(gz_path):
+def _scan_compressed_archive_members_and_readable(compressed_path):
+  """Return ``(readable, members)`` from one streamed zstd/gzip pass."""
+  if detect_compressed_format(compressed_path) is None or not os.path.isfile(
+      compressed_path,
+  ):
     return False, {}
   try:
-    with file_read_lock_wait(gz_path):
-      with _open_tarfile_for_read(gz_path, pigz_thread_count) as tf:
+    with file_read_lock_wait(compressed_path):
+      with _open_tarfile_for_read(
+          compressed_path, archive_zstd_thread_count,
+      ) as tf:
         by_name = defaultdict(list)
         for m in _iter_tar_members(tf):
           if m.isfile():
@@ -360,31 +418,38 @@ def _scan_gzip_archive_members_and_readable(gz_path):
     return False, {}
 
 
+def _scan_gzip_archive_members_and_readable(gz_path):
+  """Return ``(readable, members)`` from one streamed gzip pass."""
+  return _scan_compressed_archive_members_and_readable(gz_path)
+
+
 def validate_sealed_daily_archive_for_raw_removal(
-    archive_gz_path,
+    archive_compressed_path,
     log_fn=log_print,
     *,
     validation_cache=None,
 ):
-  """Validate uncompressed tar (if present) then ``.tar.gz``; member lists must match.
+  """Validate uncompressed tar (if present) then sealed ``.tar.zst`` (or legacy ``.tar.gz``).
 
   Order: (1) readable ``YYYY-MM-DD.tar`` and member sizes if it exists;
-  (2) readable ``YYYY-MM-DD.tar.gz`` and member sizes from gzip only;
+  (2) readable sealed archive and member sizes from compressed file only;
   (3) if both exist, dicts must be equal. Returns ``(True, members)`` for use
   with ``get_verified_files_to_remove``, or ``(False, None)``.
   """
-  if not archive_gz_path.endswith(".tar.gz"):
+  fmt = detect_compressed_format(archive_compressed_path)
+  if fmt not in ("zst", "gz"):
     if log_fn:
       log_fn(
-          "Skipping removal validation: not a .tar.gz path: %s" % archive_gz_path,
+          "Skipping removal validation: not a daily compressed archive: %s"
+          % archive_compressed_path,
           flush=True,
       )
     return False, None
-  gz_path = archive_gz_path
-  tar_path = gz_path[:-len(".gz")]
+  sealed_path = archive_compressed_path
+  tar_path = daily_tar_path_from_compressed(sealed_path)
   cache_key = None
   if validation_cache is not None:
-    cache_key = _build_archive_validation_cache_key(gz_path)
+    cache_key = _build_archive_validation_cache_key(sealed_path)
     cached = validation_cache.get(cache_key)
     if cached is not None:
       validation_cache["hits"] = int(validation_cache.get("hits", 0)) + 1
@@ -409,40 +474,48 @@ def validate_sealed_daily_archive_for_raw_removal(
         )
       return False, None
 
-  if not os.path.isfile(gz_path):
+  zst_path, _gz_path = compressed_sibling_paths(tar_path)
+  if not os.path.isfile(sealed_path):
     if members_tar is None:
       if log_fn:
-        log_fn("Skipping removal: sealed gzip missing: %s" % gz_path, flush=True)
+        log_fn(
+            "Skipping removal: sealed archive missing: %s" % sealed_path,
+            flush=True,
+        )
       return False, None
     if log_fn:
       log_fn(
-          "Sealed gzip missing; creating from valid uncompressed tar: %s"
+          "Sealed archive missing; creating from valid uncompressed tar: %s"
           % tar_path,
           flush=True,
       )
     try:
-      atomic_seal_tar_to_gz(
+      atomic_seal_tar_to_zst(
           tar_path,
-          gz_path,
-          num_threads=pigz_thread_count,
-          compress_level=cfg.get_archive_pigz_level(),
+          zst_path,
+          num_threads=archive_zstd_thread_count,
+          compress_level=cfg.get_archive_zstd_level(),
           keep_uncompressed_tar=cfg.get_archive_keep_uncompressed_tar(),
           log_fn=log_fn,
       )
+      sealed_path = zst_path
     except (OSError, subprocess.CalledProcessError) as exc:
       if log_fn:
         log_fn(
-            "Skipping removal: failed to seal tar into gzip for %s (%s)"
+            "Skipping removal: failed to seal tar into zstd for %s (%s)"
             % (tar_path, exc),
             flush=True,
         )
       return False, None
 
-  gz_readable, members_gz = _scan_gzip_archive_members_and_readable(gz_path)
-  if not gz_readable:
+  sealed_readable, members_sealed = _scan_compressed_archive_members_and_readable(
+      sealed_path,
+  )
+  if not sealed_readable:
     if log_fn:
       log_fn(
-          "Skipping removal: tar.gz failed integrity check: %s" % gz_path,
+          "Skipping removal: sealed archive failed integrity check: %s"
+          % sealed_path,
           flush=True,
       )
     result = (False, None)
@@ -451,12 +524,12 @@ def validate_sealed_daily_archive_for_raw_removal(
     return result
 
   if members_tar is not None:
-    if members_tar != members_gz:
+    if members_tar != members_sealed:
       if log_fn:
         log_fn(
-            "Skipping removal: tar vs tar.gz member mismatch for %s "
-            "(uncompressed count=%s gzip count=%s)"
-            % (gz_path, len(members_tar), len(members_gz)),
+            "Skipping removal: tar vs sealed member mismatch for %s "
+            "(uncompressed count=%s sealed count=%s)"
+            % (sealed_path, len(members_tar), len(members_sealed)),
             flush=True,
         )
       result = (False, None)
@@ -468,19 +541,23 @@ def validate_sealed_daily_archive_for_raw_removal(
       validation_cache[cache_key] = {"ok": result[0], "members": dict(result[1])}
     return result
 
-  result = (True, members_gz)
+  result = (True, members_sealed)
   if validation_cache is not None:
     validation_cache[cache_key] = {"ok": result[0], "members": dict(result[1])}
   return result
 
 
-def replace_corrupt_tar_from_gzip_backup(tar_path, gz_path, pigz_threads):
-  """Remove corrupt ``tar_path``, then restore from ``gz_path`` if it exists.
+def replace_corrupt_tar_from_compressed_backup(
+    tar_path,
+    zst_path,
+    gz_path,
+    zstd_threads,
+):
+  """Remove corrupt ``tar_path``, then restore from ``.zst`` or legacy ``.gz``.
 
   Returns True if the filesystem is in a consistent state for the caller to
-  append: either ``tar_path`` exists (restored from gzip) or both gzip and tar
-  are absent (cleared corrupt tar with no backup — next ``tar -r`` creates a
-  new archive). Returns False only if gzip restore was attempted but
+  append: either ``tar_path`` exists (restored from backup) or both backups
+  and tar are absent. Returns False only if restore was attempted but
   ``tar_path`` is still missing afterward.
   """
   try:
@@ -489,14 +566,26 @@ def replace_corrupt_tar_from_gzip_backup(tar_path, gz_path, pigz_threads):
         os.remove(tar_path)
   except OSError:
     return False
-  if not os.path.isfile(gz_path):
+  backup_path = zst_path if os.path.isfile(zst_path) else gz_path
+  if not backup_path or not os.path.isfile(backup_path):
     return True
   try:
-    with file_write_lock(gz_path):
-      pigz_decompress_verbose(gz_path, pigz_threads)
+    with file_write_lock(backup_path):
+      if backup_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX):
+        zstd_decompress_verbose(backup_path, zstd_threads)
+      else:
+        zstd_gzip_decompress_verbose(backup_path, zstd_threads)
     return os.path.isfile(tar_path)
   except (OSError, subprocess.CalledProcessError):
     return os.path.isfile(tar_path)
+
+
+def replace_corrupt_tar_from_gzip_backup(tar_path, gz_path, zstd_threads):
+  """Deprecated wrapper: prefer :func:`replace_corrupt_tar_from_compressed_backup`."""
+  zst_path, _legacy_gz = compressed_sibling_paths(tar_path)
+  return replace_corrupt_tar_from_compressed_backup(
+      tar_path, zst_path, gz_path, zstd_threads,
+  )
 
 
 def get_existing_archive_members(tar_path):
@@ -510,7 +599,7 @@ def get_existing_archive_members(tar_path):
     return {}
   try:
     with file_read_lock_wait(tar_path):
-      with _open_tarfile_for_read(tar_path, pigz_thread_count) as tf:
+      with _open_tarfile_for_read(tar_path, archive_zstd_thread_count) as tf:
         by_name = defaultdict(list)
         for m in _iter_tar_members(tf):
           if m.isfile():
@@ -522,22 +611,24 @@ def get_existing_archive_members(tar_path):
     _remove_read_lock_sidecar(tar_path)
 
 
-def get_existing_archive_members_for_daily_archive(archive_gz_path):
-  """File member sizes for a daily bundle given ``YYYY-MM-DD.tar.gz``.
+def get_existing_archive_members_for_daily_archive(archive_compressed_path):
+  """File member sizes for a daily ``.tar.zst`` or legacy ``.tar.gz``.
 
   Prefers sibling ``.tar`` when present (mutable / post-append). Otherwise
-  reads members directly from ``.tar.gz`` (e.g. after seal with no .tar left).
+  reads members directly from the sealed archive.
   """
-  if not archive_gz_path.endswith(".tar.gz"):
+  if detect_compressed_format(archive_compressed_path) is None:
     return {}
-  tar_path = archive_gz_path[:-len(".gz")]
+  tar_path = daily_tar_path_from_compressed(archive_compressed_path)
   if os.path.isfile(tar_path):
     return get_existing_archive_members(tar_path)
-  if not os.path.isfile(archive_gz_path):
+  if not os.path.isfile(archive_compressed_path):
     return {}
   try:
-    with file_read_lock_wait(archive_gz_path):
-      with _open_tarfile_for_read(archive_gz_path, pigz_thread_count) as tf:
+    with file_read_lock_wait(archive_compressed_path):
+      with _open_tarfile_for_read(
+          archive_compressed_path, archive_zstd_thread_count,
+      ) as tf:
         by_name = defaultdict(list)
         for m in _iter_tar_members(tf):
           if m.isfile():
@@ -556,9 +647,9 @@ def remove_verified_archived_raw_files(
     archive_stats_files_fn=None,
     ingest_ready_fn=None,
 ):
-  """Remove raw stats files only after tar + tar.gz validation and matching member maps.
+  """Remove raw stats files only after tar + sealed archive validation.
 
-  For each ``YYYY-MM-DD.tar.gz``, requires: sibling ``.tar`` (if present) passes
+  For each daily ``.tar.zst`` (or legacy ``.tar.gz``), requires: sibling ``.tar`` (if present) passes
   ``verify_tar_archive_readable`` and yields file member sizes; ``.tar.gz`` passes
   the same and yields sizes from the gzip archive only; the two maps must match.
   Then deletes raw paths that match a member name and size.
@@ -591,36 +682,36 @@ def remove_verified_archived_raw_files(
     archive_stats_files_fn = _sync_timedb_mod.archive_stats_files
   validation_cache = {"hits": 0, "misses": 0}
   validation_targets = []
-  for gz_path, stats_paths in mapping.items():
-    if gz_path.endswith(".tar.gz"):
-      tar_path = gz_path[:-3]
+  for archive_path, stats_paths in mapping.items():
+    if detect_compressed_format(archive_path) is not None:
+      tar_path = daily_tar_path_from_compressed(archive_path)
       bootstrap_ready = [
           p for p in stats_paths if _path_ingest_ready(p)
       ]
-      if (not os.path.isfile(gz_path) and not os.path.isfile(tar_path)
+      if (not os.path.isfile(archive_path) and not os.path.isfile(tar_path)
           and bootstrap_ready):
         if log_fn:
           log_fn(
               "Bootstrapping missing daily archive from %d raw stats file(s): %s"
-              % (len(bootstrap_ready), gz_path),
+              % (len(bootstrap_ready), archive_path),
               flush=True,
           )
-        if not archive_stats_files_fn((gz_path, list(bootstrap_ready))):
+        if not archive_stats_files_fn((archive_path, list(bootstrap_ready))):
           if log_fn:
             log_fn(
                 "Skipping removal: could not bootstrap daily archive: %s"
-                % gz_path,
+                % archive_path,
                 flush=True,
             )
           continue
-      elif (not os.path.isfile(gz_path) and not os.path.isfile(tar_path)
+      elif (not os.path.isfile(archive_path) and not os.path.isfile(tar_path)
             and stats_paths and not bootstrap_ready and log_fn):
         log_fn(
             "Skipping bootstrap for %s: %d path(s) without head timestamp in DB"
-            % (gz_path, len(stats_paths)),
+            % (archive_path, len(stats_paths)),
             flush=True,
         )
-    validation_targets.append((gz_path, list(stats_paths)))
+    validation_targets.append((archive_path, list(stats_paths)))
 
   if validation_targets:
     workers = _get_archive_validation_worker_count(len(validation_targets))
@@ -651,7 +742,7 @@ def remove_verified_archived_raw_files(
           continue
         if log_fn:
           log_fn(
-              "removing stats file (scheduled pigz/removal): " + path,
+              "removing stats file (scheduled archive maintenance): " + path,
               flush=True,
           )
         try:
@@ -672,12 +763,8 @@ def remove_verified_archived_raw_files(
 
 
 def _normalize_daily_gz_path(path):
-  """Return ``YYYY-MM-DD.tar.gz`` path for a daily ``.tar`` or ``.tar.gz`` path."""
-  if path.endswith(".tar.gz"):
-    return path
-  if path.endswith(".tar"):
-    return "%s.gz" % path
-  return path
+  """Deprecated: use :func:`normalize_daily_compressed_path`."""
+  return normalize_daily_compressed_path(path)
 
 
 def build_remaining_raw_stats_by_daily_gz(
@@ -685,7 +772,7 @@ def build_remaining_raw_stats_by_daily_gz(
     host_name_ext,
     tgz_archive_dir,
 ):
-  """Map each daily ``.tar.gz`` to closed raw stats paths still on disk for that day.
+  """Map each daily ``.tar.zst`` to closed raw stats paths still on disk for that day.
 
   Uses the same discovery and first-timestamp grouping as archival
   (``collect_stats_files_in_range`` + ``build_archive_mapping``). Not filtered by
@@ -701,9 +788,9 @@ def build_remaining_raw_stats_by_daily_gz(
     return {}
   mapping = build_archive_mapping(paths, tgz_archive_dir)
   return {
-      gz_path: list(stats_paths)
-      for gz_path, stats_paths in mapping.items()
-      if gz_path.endswith(".tar.gz") and stats_paths
+      normalize_daily_compressed_path(archive_path): list(stats_paths)
+      for archive_path, stats_paths in mapping.items()
+      if detect_compressed_format(archive_path) is not None and stats_paths
   }
 
 
@@ -727,7 +814,7 @@ def remove_verified_uncompressed_daily_tars(
   pass. Skips a day when ``remaining_raw_by_gz`` still lists closed raw stats for
   that calendar day (filesystem gate; not the DB head-ingest gate).
 
-  When ``archive_keep_uncompressed_tar`` is false, ``atomic_seal_tar_to_gz`` may
+  When ``archive_keep_uncompressed_tar`` is false, ``atomic_seal_tar_to_zst`` may
   also unlink the ``.tar`` after sealing when no raw stats remain for that day.
   """
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
@@ -736,11 +823,14 @@ def remove_verified_uncompressed_daily_tars(
   validation_targets = []
   tar_by_gz = {}
   for tar_path in sorted(iter_daily_tar_paths(daily_archive_dir)):
-    gz_path = "%s.gz" % tar_path
+    zst_path, _gz_path = compressed_sibling_paths(tar_path)
     if not os.path.isfile(tar_path):
       continue
-    validation_targets.append(gz_path)
-    tar_by_gz[gz_path] = tar_path
+    sealed_path = zst_path if os.path.isfile(zst_path) else (
+        _gz_path if os.path.isfile(_gz_path) else zst_path
+    )
+    validation_targets.append(sealed_path)
+    tar_by_gz[sealed_path] = tar_path
 
   if validation_targets:
     workers = _get_archive_validation_worker_count(len(validation_targets))
@@ -892,38 +982,43 @@ def dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
 
 
 def resolve_preferred_archive_path_for_read(path):
-  """Prefer mutable uncompressed ``.tar`` when both it and ``.tar.gz`` exist.
-
-  Callers may pass either ``YYYY-MM-DD.tar`` or ``YYYY-MM-DD.tar.gz``.
-  """
-  if path.endswith(".tar.gz"):
-    tar_alt = path[:-len(".gz")]
-    if os.path.isfile(tar_alt):
-      return tar_alt
+  """Prefer mutable uncompressed ``.tar`` when it and a compressed sibling exist."""
+  tar_path = daily_tar_path_from_compressed(path)
+  if os.path.isfile(tar_path):
+    return tar_path
   return path
 
 
+def _compressed_backup_and_uncompressed_targets(open_path):
+  """Return ``(zst_path, gz_path, uncompressed_tar_path)`` for restore."""
+  tar_path = daily_tar_path_from_compressed(open_path)
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  return (zst_path, gz_path, tar_path)
+
+
 def _gzip_backup_and_uncompressed_targets(open_path):
-  """Return (gz_path, uncompressed_tar_path) for restore from gzip."""
-  if open_path.endswith(".tar.gz"):
-    return (open_path, open_path[:-len(".gz")])
-  return ("%s.gz" % open_path, open_path)
+  """Deprecated: use :func:`_compressed_backup_and_uncompressed_targets`."""
+  zst_path, gz_path, tar_path = _compressed_backup_and_uncompressed_targets(
+      open_path,
+  )
+  backup = zst_path if os.path.isfile(zst_path) else gz_path
+  return (backup, tar_path)
 
 
 def iter_tar_file_tasks(tar_path):
   """Yield ``(tar_path, member_name)`` for file members only (no dirs).
 
-  If the tar is unreadable and a sibling ``.tar.gz`` exists, delete the
-  unreadable tar, restore it with pigz, and retry once.
+  If the tar is unreadable and a sibling ``.tar.zst`` / ``.tar.gz`` exists, delete the
+  unreadable tar, restore from compressed backup, and retry once.
 
-  When both ``.tar`` and ``.tar.gz`` exist (deferred compression), the
+  When both ``.tar`` and a compressed sibling exist (deferred compression), the
   uncompressed ``.tar`` is used so readers see the latest appends.
   """
   open_path = resolve_preferred_archive_path_for_read(tar_path)
 
   def _iter_members():
     with file_read_lock_wait(open_path):
-      with _open_tarfile_for_read(open_path, pigz_thread_count) as archive_tar:
+      with _open_tarfile_for_read(open_path, archive_zstd_thread_count) as archive_tar:
         try:
           member_infos = iter(archive_tar)
         except TypeError:
@@ -933,14 +1028,20 @@ def iter_tar_file_tasks(tar_path):
             continue
           yield (open_path, member_info.name)
 
-  def _restore_from_gzip():
-    gz_path, tar_out = _gzip_backup_and_uncompressed_targets(open_path)
-    if not os.path.exists(gz_path):
+  def _restore_from_compressed():
+    zst_path, gz_path, tar_out = _compressed_backup_and_uncompressed_targets(
+        open_path,
+    )
+    backup_path = zst_path if os.path.isfile(zst_path) else gz_path
+    if not backup_path or not os.path.exists(backup_path):
       return False
     try:
       if os.path.exists(tar_out):
         os.remove(tar_out)
-      pigz_decompress_verbose(gz_path, pigz_thread_count)
+      if backup_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX):
+        zstd_decompress_verbose(backup_path, archive_zstd_thread_count)
+      else:
+        zstd_gzip_decompress_verbose(backup_path, archive_zstd_thread_count)
       return True
     except (OSError, subprocess.CalledProcessError):
       return False
@@ -949,12 +1050,12 @@ def iter_tar_file_tasks(tar_path):
     yield from _iter_members()
   except (tarfile.TarError, OSError, EOFError):
     log_print(
-        "Unable to read archive %s (possible corruption); attempting restore from gzip"
-        % open_path
+        "Unable to read archive %s (possible corruption); attempting restore "
+        "from compressed backup" % open_path
     )
-    if not _restore_from_gzip():
+    if not _restore_from_compressed():
       log_print(
-          "Archive recovery failed for %s; no usable gzip backup or pigz failed"
+          "Archive recovery failed for %s; no usable compressed backup"
           % open_path
       )
       raise
@@ -982,32 +1083,48 @@ def parse_archive_date_from_daily_tar_path(tar_path):
     return None
 
 
-def is_daily_tar_gz_dirty(tar_path, gz_path):
-  """True if ``.tar`` should be re-sealed into ``.tar.gz`` (gz missing or stale)."""
+def is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path):
+  """True if ``.tar`` should be re-sealed to ``.tar.zst`` (zst missing/stale or only legacy gz)."""
   if not os.path.isfile(tar_path):
     return False
-  if not os.path.exists(gz_path):
+  if os.path.isfile(zst_path):
+    try:
+      return os.path.getmtime(tar_path) > os.path.getmtime(zst_path)
+    except OSError:
+      return True
+  if os.path.isfile(gz_path) and not os.path.isfile(zst_path):
+    return True
+  if not os.path.exists(zst_path):
     return True
   try:
-    return os.path.getmtime(tar_path) > os.path.getmtime(gz_path)
+    return os.path.getmtime(tar_path) > os.path.getmtime(zst_path)
   except OSError:
     return True
 
 
+def is_daily_tar_gz_dirty(tar_path, gz_path):
+  """Deprecated: use :func:`is_daily_tar_sealed_dirty`."""
+  zst_path, legacy_gz = compressed_sibling_paths(tar_path)
+  return is_daily_tar_sealed_dirty(tar_path, zst_path, legacy_gz)
+
+
 def should_seal_daily_tar(
     tar_path,
-    gz_path,
+    zst_path,
     idle_seconds,
     today_local_date,
     seal_immediately_if_dirty=False,
+    gz_path=None,
 ):
-  """Whether to seal now: dirty tar/gz pair and idle / prior-day rules.
+  """Whether to seal now: dirty tar/zst pair and idle / prior-day rules.
 
   If ``seal_immediately_if_dirty`` (e.g. end of a sync_timedb ingest pass), any
   dirty pair is sealed regardless of idle. Otherwise today's archive waits until
   ``idle_seconds`` after its last mtime (prior calendar days seal when dirty).
   """
-  if not is_daily_tar_gz_dirty(tar_path, gz_path):
+  if gz_path is None:
+    _zst, gz_path = compressed_sibling_paths(tar_path)
+  if not is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path):
     return False
   if seal_immediately_if_dirty:
     return True
@@ -1029,87 +1146,97 @@ def iter_daily_tar_paths(daily_archive_dir):
       yield os.path.join(daily_archive_dir, name)
 
 
-def atomic_seal_tar_to_gz(
+def compare_compressed_archive_members(gz_path, zst_path):
+  """Return ``(equal, gz_members, zst_members)`` for migration checks."""
+  gz_ok, gz_members = _scan_compressed_archive_members_and_readable(gz_path)
+  zst_ok, zst_members = _scan_compressed_archive_members_and_readable(zst_path)
+  if not gz_ok or not zst_ok:
+    return False, gz_members, zst_members
+  return archive_member_maps_equivalent(gz_members, zst_members), gz_members, zst_members
+
+
+def drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_print):
+  """Remove legacy ``.tar.gz`` when member maps match ``.tar.zst``."""
+  if not os.path.isfile(gz_path) or not os.path.isfile(zst_path):
+    return
+  equal, gz_members, zst_members = compare_compressed_archive_members(
+      gz_path, zst_path,
+  )
+  if equal:
+    try:
+      with file_write_lock(gz_path):
+        os.remove(gz_path)
+      if log_fn:
+        log_fn(
+            "Removed legacy gzip archive after zst equivalence: %s" % gz_path,
+            flush=True,
+        )
+    except OSError as exc:
+      if log_fn:
+        log_fn("Could not remove legacy gzip %s: %s" % (gz_path, exc), flush=True)
+    return
+  if log_fn:
+    log_fn(
+        "Keeping legacy gzip %s: member mismatch with %s "
+        "(gzip_bytes=%s zst_bytes=%s gzip_members=%s zst_members=%s)"
+        % (
+            gz_path,
+            zst_path,
+            sum_member_bytes(gz_members),
+            sum_member_bytes(zst_members),
+            len(gz_members),
+            len(zst_members),
+        ),
+        flush=True,
+    )
+
+
+def atomic_seal_tar_to_zst(
     tar_path,
-    gz_path,
+    zst_path,
     num_threads,
     compress_level,
     keep_uncompressed_tar,
     log_fn=log_print,
     remaining_raw_by_gz=None,
 ):
-  """Compress ``tar_path`` to ``gz_path`` using a temp file, ``pigz -t``, and ``os.replace``.
-
-  The previous ``gz_path`` (if any) stays valid until replace succeeds.
-
-  When ``keep_uncompressed_tar`` is false, the uncompressed ``.tar`` is removed only
-  if ``remaining_raw_by_gz`` has no closed raw stats paths for that calendar day.
-  """
+  """Compress ``tar_path`` to ``zst_path`` using temp file, ``zstd -t``, ``os.replace``."""
   if not os.path.isfile(tar_path):
     return
-  tmp_gz = "%s.tmp" % gz_path
+  if not shutil.which("zstd"):
+    raise RuntimeError("zstd executable not found on PATH")
+  tmp_zst = "%s.tmp" % zst_path
   try:
-    if os.path.exists(tmp_gz):
-      os.remove(tmp_gz)
+    if os.path.exists(tmp_zst):
+      os.remove(tmp_zst)
   except OSError:
     pass
   try:
     with file_write_lock(tar_path):
-      with open(tmp_gz, "wb") as out_f:
-        result = subprocess.run(
-            [
-                pigz_executable(),
-                "-c",
-                "-%d" % int(compress_level),
-                "-p",
-                str(num_threads),
-                tar_path,
-            ],
-            stdout=out_f,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-      if result.stderr and log_fn:
-        log_fn(result.stderr, flush=True)
-      if result.returncode != 0:
-        try:
-          os.remove(tmp_gz)
-        except OSError:
-          pass
-        raise subprocess.CalledProcessError(
-            result.returncode,
-            result.args,
-            stderr=result.stderr,
-        )
-      test = subprocess.run(
-          [pigz_executable(), "-t", "-p", str(num_threads), tmp_gz],
-          capture_output=True,
-          text=True,
-          check=False,
+      zstd_compress_tar_to_file(
+          tar_path,
+          tmp_zst,
+          num_threads,
+          compress_level,
+          long_enabled=cfg.get_archive_zstd_long(),
       )
-      if test.returncode != 0:
-        try:
-          os.remove(tmp_gz)
-        except OSError:
-          pass
-        raise subprocess.CalledProcessError(
-            test.returncode, test.args, stderr=test.stderr)
-      with file_write_lock(gz_path):
-        os.replace(tmp_gz, gz_path)
+      zstd_test(tmp_zst, num_threads)
+      with file_write_lock(zst_path):
+        os.replace(tmp_zst, zst_path)
   except BaseException:
     try:
-      if os.path.exists(tmp_gz):
-        os.remove(tmp_gz)
+      if os.path.exists(tmp_zst):
+        os.remove(tmp_zst)
     except OSError:
       pass
     raise
   if log_fn:
-    log_fn("Sealed archive %s -> %s" % (tar_path, gz_path), flush=True)
+    log_fn("Sealed archive %s -> %s" % (tar_path, zst_path), flush=True)
+  zst_key = normalize_daily_compressed_path(zst_path)
   if keep_uncompressed_tar:
     if log_fn:
       log_fn("Sealed archive retaining uncompressed tar: %s" % tar_path, flush=True)
-  elif daily_gz_has_remaining_raw_stats(gz_path, remaining_raw_by_gz):
+  elif daily_gz_has_remaining_raw_stats(zst_key, remaining_raw_by_gz):
     if log_fn:
       log_fn(
           "Sealed archive retaining uncompressed tar (raw stats still present "
@@ -1126,11 +1253,33 @@ def atomic_seal_tar_to_gz(
       pass
 
 
+def atomic_seal_tar_to_gz(
+    tar_path,
+    gz_path,
+    num_threads,
+    compress_level,
+    keep_uncompressed_tar,
+    log_fn=log_print,
+    remaining_raw_by_gz=None,
+):
+  """Deprecated: seals to ``.tar.zst`` at canonical sibling path."""
+  zst_path, _legacy_gz = compressed_sibling_paths(tar_path)
+  return atomic_seal_tar_to_zst(
+      tar_path,
+      zst_path,
+      num_threads,
+      cfg.get_archive_zstd_level(),
+      keep_uncompressed_tar,
+      log_fn=log_fn,
+      remaining_raw_by_gz=remaining_raw_by_gz,
+  )
+
+
 def seal_dirty_daily_archives(
     daily_archive_dir,
     *,
     local_tz,
-    pigz_threads,
+    zstd_threads,
     compress_level,
     keep_uncompressed_tar,
     idle_seconds,
@@ -1143,26 +1292,28 @@ def seal_dirty_daily_archives(
     return
   today_local = datetime.now(local_tz).date()
   for tar_path in sorted(iter_daily_tar_paths(daily_archive_dir)):
-    gz_path = "%s.gz" % tar_path
+    zst_path, gz_path = compressed_sibling_paths(tar_path)
     if not should_seal_daily_tar(
         tar_path,
-        gz_path,
+        zst_path,
         idle_seconds,
         today_local,
         seal_immediately_if_dirty=seal_immediately_if_dirty,
+        gz_path=gz_path,
     ):
       continue
     try:
-      atomic_seal_tar_to_gz(
+      atomic_seal_tar_to_zst(
           tar_path,
-          gz_path,
-          pigz_threads,
+          zst_path,
+          zstd_threads,
           compress_level,
           keep_uncompressed_tar,
           log_fn=log_fn,
           remaining_raw_by_gz=remaining_raw_by_gz,
       )
-    except subprocess.CalledProcessError as exc:
+      drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_fn)
+    except (subprocess.CalledProcessError, RuntimeError) as exc:
       if log_fn:
         log_fn("Seal failed for %s: %s" % (tar_path, exc), flush=True)
 
@@ -1352,7 +1503,7 @@ def build_archive_mapping(
     parse_first_ts_fn=None,
     first_timestamp_by_path=None,
 ):
-  """Group stats file paths by daily archive path (YYYY-MM-DD.tar.gz).
+  """Group stats file paths by daily archive path (``YYYY-MM-DD.tar.zst``).
 
   Uses parse_first_ts_fn to get timestamp from each file. Files with no
   parseable timestamp are skipped. Today's files are included (closed
@@ -1379,9 +1530,7 @@ def build_archive_mapping(
       skipped_no_ts += 1
       continue
     file_date = datetime.fromtimestamp(float(t))
-    archive_fname = os.path.join(
-        tgz_archive_dir, file_date.strftime("%Y-%m-%d.tar.gz")
-    )
+    archive_fname = daily_compressed_path_for_date(tgz_archive_dir, file_date)
     if archive_fname not in ar_file_mapping:
       ar_file_mapping[archive_fname] = []
     ar_file_mapping[archive_fname].append(stats_fname)

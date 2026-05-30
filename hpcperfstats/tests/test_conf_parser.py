@@ -75,33 +75,76 @@ def test_get_worker_thread_count(temp_ini, monkeypatch):
   assert cfg.get_worker_thread_count(8) == 1  # 4//8 = 0 -> clamped to 1
 
 
-def test_get_archive_pigz_threads_default_and_override(temp_ini, monkeypatch):
+def test_get_archive_zstd_threads_default_and_override(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_archive_pigz_threads() == 8
+  assert cfg.get_archive_zstd_threads() == 8
 
   with open(temp_ini) as f:
     content = f.read()
   content = content.replace(
       "daily_archive_dir = /tmp",
-      "daily_archive_dir = /tmp\narchive_pigz_threads = 12",
+      "daily_archive_dir = /tmp\narchive_zstd_threads = 12",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
   importlib.reload(cfg)
-  assert cfg.get_archive_pigz_threads() == 12
+  assert cfg.get_archive_zstd_threads() == 12
 
 
-def test_get_archive_pigz_interval_seconds_rejects_nonfinite_and_nonpositive(
+def test_get_archive_zstd_level_clamps(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_archive_zstd_level() == 7
+
+  with open(temp_ini) as f:
+    base = f.read()
+  for raw, expected in (("0", 1), ("99", 19), ("7", 7)):
+    content = base.replace(
+        "daily_archive_dir = /tmp",
+        "daily_archive_dir = /tmp\narchive_zstd_level = %s" % raw,
+    )
+    with open(temp_ini, "w") as f:
+      f.write(content)
+    importlib.reload(cfg)
+    assert cfg.get_archive_zstd_level() == expected
+
+
+def test_get_archive_zstd_threads_and_maintenance_interval(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_archive_zstd_threads() == 8
+  assert cfg.get_archive_maintenance_interval_seconds() == 8 * 3600
+
+  with open(temp_ini) as f:
+    base = f.read()
+  content = base.replace(
+      "daily_archive_dir = /tmp",
+      "daily_archive_dir = /tmp\n"
+      "archive_zstd_threads = 4\n"
+      "archive_maintenance_interval_seconds = 600",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_archive_zstd_threads() == 4
+  assert cfg.get_archive_maintenance_interval_seconds() == 600.0
+
+
+def test_get_archive_maintenance_interval_seconds_rejects_nonfinite_and_nonpositive(
     temp_ini, monkeypatch
 ):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_archive_pigz_interval_seconds() == 8 * 3600
+  assert cfg.get_archive_maintenance_interval_seconds() == 8 * 3600
 
   with open(temp_ini) as f:
     base = f.read()
@@ -109,21 +152,22 @@ def test_get_archive_pigz_interval_seconds_rejects_nonfinite_and_nonpositive(
   for raw in ("nan", "inf", "0", "-5", "not-a-number"):
     content = base.replace(
         "daily_archive_dir = /tmp",
-        "daily_archive_dir = /tmp\narchive_pigz_interval_seconds = %s" % raw,
+        "daily_archive_dir = /tmp\narchive_maintenance_interval_seconds = %s"
+        % raw,
     )
     with open(temp_ini, "w") as f:
       f.write(content)
     importlib.reload(cfg)
-    assert cfg.get_archive_pigz_interval_seconds() == 8 * 3600
+    assert cfg.get_archive_maintenance_interval_seconds() == 8 * 3600
 
   content = base.replace(
       "daily_archive_dir = /tmp",
-      "daily_archive_dir = /tmp\narchive_pigz_interval_seconds = 120",
+      "daily_archive_dir = /tmp\narchive_maintenance_interval_seconds = 120",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
   importlib.reload(cfg)
-  assert cfg.get_archive_pigz_interval_seconds() == 120.0
+  assert cfg.get_archive_maintenance_interval_seconds() == 120.0
 
 
 def test_get_effective_cores_caps_by_host(temp_ini, monkeypatch):

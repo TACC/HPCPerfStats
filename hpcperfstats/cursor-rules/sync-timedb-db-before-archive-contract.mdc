@@ -60,5 +60,5 @@ Startup or idle maintenance may run before ingest in the same process. With the 
 
 ## Overlap
 
-- Complements **`sync-timedb-lock-and-archive-contract.mdc`** (locks, pigz, corrupt-tar recovery).
+- Complements **`sync-timedb-lock-and-archive-contract.mdc`** (locks, zstd seal/read, corrupt-tar recovery).
 - Complements **`runtime-resource-and-metrics-safety.mdc`** for ingest/metrics paths.

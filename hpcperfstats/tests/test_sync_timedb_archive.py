@@ -9,9 +9,17 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from hpcperfstats.dbload.pigz_cli import pigz_executable
+from hpcperfstats.dbload.archive_compress import (
+    DAILY_ARCHIVE_ZST_SUFFIX,
+    daily_tar_path_from_compressed,
+    normalize_daily_compressed_path,
+)
+from hpcperfstats.dbload.zstd_cli import zstd_executable, zstd_gzip_supported
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     atomic_seal_tar_to_gz,
+    atomic_seal_tar_to_zst,
+    compare_compressed_archive_members,
+    drop_legacy_gz_if_equivalent_to_zst,
     build_archive_mapping,
     build_remaining_raw_stats_by_daily_gz,
     daily_gz_has_remaining_raw_stats,
@@ -32,6 +40,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     parse_archive_date_from_daily_tar_path,
     remove_verified_archived_raw_files,
     remove_verified_uncompressed_daily_tars,
+    replace_corrupt_tar_from_compressed_backup,
     replace_corrupt_tar_from_gzip_backup,
     rescan_pending_stats_files,
     resolve_preferred_archive_path_for_read,
@@ -125,9 +134,9 @@ def test_verify_tar_archive_readable_false_for_missing(tmp_path):
   assert not verify_tar_archive_readable(str(tmp_path / "nope.tar"))
 
 
-@pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
 @pytest.mark.skipif(not shutil.which("tar"), reason="tar not on PATH")
-def test_verify_tar_archive_readable_accepts_valid_tgz_via_pigz_pipe(tmp_path):
+def test_verify_tar_archive_readable_accepts_valid_tgz_via_zstd_gzip_pipe(tmp_path):
   gz = tmp_path / "ok.tar.gz"
   inner = tmp_path / "inner.txt"
   inner.write_text("hello")
@@ -136,10 +145,12 @@ def test_verify_tar_archive_readable_accepts_valid_tgz_via_pigz_pipe(tmp_path):
   assert verify_tar_archive_readable(str(gz))
 
 
-def test_verify_tar_gz_pigz_pipe_uses_helpers_pigz_thread_count(monkeypatch, tmp_path):
-  """Regression: pigz -p matches ``sync_timedb_archive_helpers.pigz_thread_count``."""
-  if not shutil.which("pigz") or not shutil.which("tar"):
-    pytest.skip("need pigz and tar on PATH")
+def test_verify_tar_gz_zstd_pipe_uses_helpers_thread_count(monkeypatch, tmp_path):
+  """Regression: zstd -T matches ``sync_timedb_archive_helpers.archive_zstd_thread_count``."""
+  if not shutil.which("zstd") or not shutil.which("tar"):
+    pytest.skip("need zstd and tar on PATH")
+  if not zstd_gzip_supported():
+    pytest.skip("zstd without gzip format support")
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 
   gz = tmp_path / "probe.tar.gz"
@@ -157,19 +168,21 @@ def test_verify_tar_gz_pigz_pipe_uses_helpers_pigz_thread_count(monkeypatch, tmp
     return orig_popen(*args, **kwargs)
 
   monkeypatch.setattr(helpers.subprocess, "Popen", _wrap_popen)
-  monkeypatch.setattr(helpers, "pigz_thread_count", 13)
+  monkeypatch.setattr(helpers, "archive_zstd_thread_count", 13)
   assert verify_tar_archive_readable(str(gz))
-  pigz_cmds = [c for c in recorded if len(c) >= 4 and c[1] == "-d" and c[2] == "-c"]
-  assert pigz_cmds, "expected pigz -d -c subprocess"
-  assert "-p" in pigz_cmds[0]
-  assert pigz_cmds[0][pigz_cmds[0].index("-p") + 1] == "13"
+  zstd_cmds = [
+      c for c in recorded
+      if len(c) >= 5 and c[1] == "-d" and c[2] == "--format=gzip" and c[3] == "-c"
+  ]
+  assert zstd_cmds, "expected zstd -d --format=gzip -c subprocess"
+  assert "-T13" in zstd_cmds[0]
 
 
-def test_get_file_member_sizes_from_gzip_uses_pigz_pipe_when_pigz_present(
+def test_get_file_member_sizes_from_gzip_uses_zstd_pipe_when_zstd_present(
     monkeypatch, tmp_path,
 ):
-  if not shutil.which("pigz"):
-    pytest.skip("pigz not on PATH")
+  if not shutil.which("zstd") or not zstd_gzip_supported():
+    pytest.skip("zstd gzip support required")
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 
   gz = tmp_path / "sizes.tar.gz"
@@ -187,38 +200,43 @@ def test_get_file_member_sizes_from_gzip_uses_pigz_pipe_when_pigz_present(
     return orig_popen(*args, **kwargs)
 
   monkeypatch.setattr(helpers.subprocess, "Popen", _wrap_popen)
-  monkeypatch.setattr(helpers, "pigz_thread_count", 5)
+  monkeypatch.setattr(helpers, "archive_zstd_thread_count", 5)
   assert get_file_member_sizes_from_gzip_archive(str(gz)) == {"only": 3}
-  pigz_cmds = [c for c in recorded if len(c) >= 4 and c[1] == "-d" and c[2] == "-c"]
-  assert pigz_cmds[0][pigz_cmds[0].index("-p") + 1] == "5"
+  zstd_cmds = [
+      c for c in recorded
+      if len(c) >= 5 and c[1] == "-d" and c[2] == "--format=gzip" and c[3] == "-c"
+  ]
+  assert "-T5" in zstd_cmds[0]
 
 
 def test_replace_corrupt_tar_from_gzip_backup_without_gz_removes_tar(tmp_path):
   tar_path = tmp_path / "2020-01-01.tar"
   tar_path.write_text("corrupt")
-  assert replace_corrupt_tar_from_gzip_backup(
-      str(tar_path), str(tmp_path / "2020-01-01.tar.gz"), 1)
+  zst, gz = str(tmp_path / "2020-01-01.tar.zst"), str(tmp_path / "2020-01-01.tar.gz")
+  assert replace_corrupt_tar_from_compressed_backup(
+      str(tar_path), zst, gz, 1)
   assert not tar_path.exists()
 
 
-def test_replace_corrupt_tar_from_gzip_backup_restores_via_pigz(monkeypatch, tmp_path):
+def test_replace_corrupt_tar_from_compressed_backup_restores_via_zstd(monkeypatch, tmp_path):
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2020-01-02.tar"
+  zst_path = tmp_path / "2020-01-02.tar.zst"
   gz_path = tmp_path / "2020-01-02.tar.gz"
   tar_path.write_text("bad")
-  gz_path.write_text("not-used")
+  zst_path.write_text("not-used")
 
-  def _fake_decomp(gz, threads):
-    assert gz == str(gz_path)
+  def _fake_decomp(path, threads):
+    assert path == str(zst_path)
     inner = tmp_path / "inn.txt"
     inner.write_text("ok")
     with tarfile.open(str(tar_path), "w") as tf:
       tf.add(str(inner), arcname="only.txt")
 
-  monkeypatch.setattr(helpers, "pigz_decompress_verbose", _fake_decomp)
-  assert replace_corrupt_tar_from_gzip_backup(
-      str(tar_path), str(gz_path), 1)
+  monkeypatch.setattr(helpers, "zstd_decompress_verbose", _fake_decomp)
+  assert replace_corrupt_tar_from_compressed_backup(
+      str(tar_path), str(zst_path), str(gz_path), 1)
   assert verify_tar_archive_readable(str(tar_path))
 
 
@@ -316,69 +334,69 @@ def test_should_seal_immediately_if_dirty_bypasses_idle(monkeypatch, tmp_path):
   )
 
 
-@pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")
-def test_atomic_seal_tar_to_gz_creates_valid_gzip(tmp_path):
-  """Integration: temp gzip + pigz -t + replace; keeps .tar when requested."""
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_atomic_seal_tar_to_zst_creates_valid_zstd(tmp_path):
+  """Integration: temp zst + zstd -t + replace; keeps .tar when requested."""
   tar_path = tmp_path / "2021-03-01.tar"
-  gz_path = tmp_path / "2021-03-01.tar.gz"
+  zst_path = tmp_path / "2021-03-01.tar.zst"
   member = tmp_path / "a.txt"
   member.write_text("hello")
   with tarfile.open(tar_path, "w") as tf:
     tf.add(str(member), arcname="a.txt")
-  atomic_seal_tar_to_gz(
+  atomic_seal_tar_to_zst(
       str(tar_path),
-      str(gz_path),
+      str(zst_path),
       num_threads=1,
       compress_level=6,
       keep_uncompressed_tar=True,
       log_fn=None,
   )
-  assert gz_path.is_file()
-  subprocess.run([pigz_executable(), "-t", "-p", "1", str(gz_path)], check=True)
+  assert zst_path.is_file()
+  subprocess.run([zstd_executable(), "-t", "-T1", "-q", str(zst_path)], check=True)
   assert tar_path.is_file()
-  assert not (tmp_path / "2021-03-01.tar.gz.tmp").exists()
+  assert not (tmp_path / "2021-03-01.tar.zst.tmp").exists()
 
 
-@pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")
-def test_atomic_seal_tar_to_gz_can_drop_uncompressed(tmp_path):
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_atomic_seal_tar_to_zst_can_drop_uncompressed(tmp_path):
   tar_path = tmp_path / "2021-03-02.tar"
-  gz_path = tmp_path / "2021-03-02.tar.gz"
+  zst_path = tmp_path / "2021-03-02.tar.zst"
   member = tmp_path / "b.txt"
   member.write_text("x")
   with tarfile.open(tar_path, "w") as tf:
     tf.add(str(member), arcname="b.txt")
-  atomic_seal_tar_to_gz(
+  atomic_seal_tar_to_zst(
       str(tar_path),
-      str(gz_path),
+      str(zst_path),
       num_threads=1,
       compress_level=6,
       keep_uncompressed_tar=False,
       log_fn=None,
       remaining_raw_by_gz={},
   )
-  assert gz_path.is_file()
+  assert zst_path.is_file()
   assert not tar_path.exists()
 
 
-@pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")
-def test_atomic_seal_tar_to_gz_retains_tar_when_raw_remains_for_day(tmp_path):
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_atomic_seal_tar_to_zst_retains_tar_when_raw_remains_for_day(tmp_path):
   tar_path = tmp_path / "2021-03-05.tar"
-  gz_path = tmp_path / "2021-03-05.tar.gz"
+  zst_path = tmp_path / "2021-03-05.tar.zst"
   member = tmp_path / "b.txt"
   member.write_text("x")
   with tarfile.open(tar_path, "w") as tf:
     tf.add(str(member), arcname="b.txt")
-  remaining = {str(gz_path): ["/archive/host/segment"]}
-  atomic_seal_tar_to_gz(
+  remaining = {str(zst_path): ["/archive/host/segment"]}
+  atomic_seal_tar_to_zst(
       str(tar_path),
-      str(gz_path),
+      str(zst_path),
       num_threads=1,
       compress_level=6,
       keep_uncompressed_tar=False,
       log_fn=None,
       remaining_raw_by_gz=remaining,
   )
-  assert gz_path.is_file()
+  assert zst_path.is_file()
   assert tar_path.is_file()
 
 
@@ -391,21 +409,21 @@ def test_build_remaining_raw_stats_by_daily_gz_groups_closed_segments(tmp_path):
   seg.write_text("%d job1 cn001\nline\n" % ts)
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
-  gz_key = str(tgz_dir / "2026-04-20.tar.gz")
+  zst_key = str(tgz_dir / "2026-04-20.tar.zst")
   remaining = build_remaining_raw_stats_by_daily_gz(
       str(tmp_path), arch_suffix, str(tgz_dir))
-  assert remaining == {gz_key: [str(seg)]}
-  assert daily_gz_has_remaining_raw_stats(gz_key, remaining)
+  assert remaining == {zst_key: [str(seg)]}
+  assert daily_gz_has_remaining_raw_stats(zst_key, remaining)
   assert not daily_gz_has_remaining_raw_stats(
-      str(tgz_dir / "2026-04-21.tar.gz"), remaining)
+      str(tgz_dir / "2026-04-21.tar.zst"), remaining)
 
 
-def test_atomic_seal_tar_to_gz_passes_thread_count_to_test_and_compress(monkeypatch, tmp_path):
-  """Both pigz compression and pigz -t validation should use the requested -p count."""
+def test_atomic_seal_tar_to_zst_passes_thread_count_to_compress_and_test(monkeypatch, tmp_path):
+  """zstd compress and zstd -t should use the requested -T count."""
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2021-03-04.tar"
-  gz_path = tmp_path / "2021-03-04.tar.gz"
+  zst_path = tmp_path / "2021-03-04.tar.zst"
   member = tmp_path / "d.txt"
   member.write_text("x")
   with tarfile.open(tar_path, "w") as tf:
@@ -413,27 +431,28 @@ def test_atomic_seal_tar_to_gz_passes_thread_count_to_test_and_compress(monkeypa
 
   calls = []
 
-  def _fake_run(cmd, stdout=None, stderr=None, text=None, check=False, capture_output=False):
-    calls.append(list(cmd))
-    if "-c" in cmd and stdout is not None:
-      stdout.write(b"fake-gzip-bytes")
-      stdout.flush()
-    return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+  def _fake_compress(tar, out, threads, level, long_enabled):
+    with open(out, "wb") as f:
+      f.write(b"fake-zst-bytes")
 
-  monkeypatch.setattr(helpers.subprocess, "run", _fake_run)
-  monkeypatch.setattr(helpers, "pigz_executable", lambda: "/usr/bin/pigz")
+  def _fake_test(path, threads, use_long=None):
+    calls.append([zstd_executable(), "-t", "-T%d" % threads, "-q", path])
 
-  atomic_seal_tar_to_gz(
+  monkeypatch.setattr(helpers, "zstd_compress_tar_to_file", _fake_compress)
+  monkeypatch.setattr(helpers, "zstd_test", _fake_test)
+  monkeypatch.setattr(helpers.shutil, "which", lambda name: "/usr/bin/zstd")
+
+  atomic_seal_tar_to_zst(
       str(tar_path),
-      str(gz_path),
+      str(zst_path),
       num_threads=3,
       compress_level=6,
       keep_uncompressed_tar=True,
       log_fn=None,
   )
 
-  assert ["/usr/bin/pigz", "-c", "-6", "-p", "3", str(tar_path)] in calls
-  assert ["/usr/bin/pigz", "-t", "-p", "3", str(gz_path) + ".tmp"] in calls
+  assert zst_path.is_file()
+  assert [zstd_executable(), "-t", "-T3", "-q", str(zst_path) + ".tmp"] in calls
 
 
 # --- get_tar_file_tasks ---
@@ -527,8 +546,7 @@ def test_archive_worker_process_count_halves_sync_ingest(monkeypatch):
 
 
 def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
-  """Corrupt tar with sibling .gz is restored via pigz and retried once."""
-  import hpcperfstats.dbload.pigz_cli as pigz_cli
+  """Corrupt tar with sibling .gz is restored via zstd gzip and retried once."""
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 
   tar_path = str(tmp_path / "broken.tar")
@@ -561,7 +579,7 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
 
   open_calls = {"count": 0}
   remove_calls = []
-  pigz_calls = []
+  zstd_calls = []
 
   def _open_mock(path, mode):
     assert path == tar_path
@@ -571,28 +589,30 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
       raise tarfile.ReadError("corrupt tar")
     return _FakeTar()
 
+  zst_path = "%s.zst" % tar_path[:-4]  # broken.tar.zst
   monkeypatch.setattr(helpers, "file_read_lock_wait", lambda _p: _NoOpLock())
   monkeypatch.setattr(helpers.tarfile, "open", _open_mock)
   monkeypatch.setattr(helpers.os.path, "exists", lambda p: p in (tar_path, gz_path))
+  monkeypatch.setattr(
+      helpers.os.path,
+      "isfile",
+      lambda p: p == gz_path,
+  )
   monkeypatch.setattr(
       helpers.os,
       "remove",
       lambda p: remove_calls.append(p),
   )
   monkeypatch.setattr(
-      pigz_cli.subprocess,
-      "run",
-      lambda cmd, capture_output, text, check: pigz_calls.append(cmd) or subprocess.CompletedProcess(
-          cmd, 0, stdout="", stderr=""
-      ),
+      helpers,
+      "zstd_gzip_decompress_verbose",
+      lambda path, threads: zstd_calls.append((path, threads)),
   )
 
   assert get_tar_file_tasks(tar_path) == [(tar_path, "a.txt")]
   assert open_calls["count"] == 2
   assert remove_calls == [tar_path]
-  assert pigz_calls == [[
-      pigz_executable(), "-v", "-d", "-p", str(helpers.pigz_thread_count), gz_path
-  ]]
+  assert zstd_calls == [(gz_path, helpers.archive_zstd_thread_count)]
 
 
 def test_get_tar_file_tasks_raises_when_corrupt_and_no_gz(monkeypatch, tmp_path):
@@ -620,9 +640,8 @@ def test_get_tar_file_tasks_raises_when_corrupt_and_no_gz(monkeypatch, tmp_path)
     get_tar_file_tasks(tar_path)
 
 
-def test_get_tar_file_tasks_raises_when_pigz_restore_fails(monkeypatch, tmp_path):
-  """Corrupt tar with .gz still raises when pigz restore fails."""
-  import hpcperfstats.dbload.pigz_cli as pigz_cli
+def test_get_tar_file_tasks_raises_when_zstd_restore_fails(monkeypatch, tmp_path):
+  """Corrupt tar with .gz still raises when zstd restore fails."""
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 
   tar_path = str(tmp_path / "broken.tar")
@@ -643,13 +662,11 @@ def test_get_tar_file_tasks_raises_when_pigz_restore_fails(monkeypatch, tmp_path
   )
   monkeypatch.setattr(helpers.os.path, "exists", lambda p: p == gz_path or p == tar_path)
   monkeypatch.setattr(helpers.os, "remove", lambda _p: None)
-  monkeypatch.setattr(
-      pigz_cli.subprocess,
-      "run",
-      lambda cmd, capture_output, text, check: subprocess.CompletedProcess(
-          cmd, 2, stdout="", stderr=""
-      ),
-  )
+
+  def _fail_gzip(path, threads):
+    raise subprocess.CalledProcessError(2, ["zstd"])
+
+  monkeypatch.setattr(helpers, "zstd_gzip_decompress_verbose", _fail_gzip)
 
   with pytest.raises(tarfile.ReadError):
     get_tar_file_tasks(tar_path)
@@ -726,7 +743,7 @@ def test_remove_verified_archived_raw_files_removes_when_verified(tmp_path):
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
   gz_key = str(tgz_dir / "2022-05-03.tar.gz")
-  tar_path = gz_key[:-len(".gz")]
+  tar_path = daily_tar_path_from_compressed(gz_key)
   arcname = get_tar_member_name(str(seg))
   with tarfile.open(tar_path, "w") as tf:
     tf.add(str(seg), arcname=arcname)
@@ -753,9 +770,10 @@ def test_remove_verified_archived_raw_files_bootstraps_missing_daily_archive(
   os.utime(seg, (ts, ts))
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
-  gz_key = str(tgz_dir / "2026-04-15.tar.gz")
-  assert not os.path.isfile(gz_key)
-  assert not os.path.isfile(gz_key[:-3])
+  zst_key = str(tgz_dir / "2026-04-15.tar.zst")
+  tar_path = daily_tar_path_from_compressed(zst_key)
+  assert not os.path.isfile(zst_key)
+  assert not os.path.isfile(tar_path)
 
   archive_calls = []
 
@@ -765,9 +783,9 @@ def test_remove_verified_archived_raw_files_bootstraps_missing_daily_archive(
 
   member_name = get_tar_member_name(str(seg))
 
-  def fake_validate(gz_path, log_fn=None, validation_cache=None):
+  def fake_validate(sealed_path, log_fn=None, validation_cache=None):
     del validation_cache
-    assert gz_path == gz_key
+    assert sealed_path == zst_key
     return True, {member_name: os.path.getsize(seg)}
 
   monkeypatch.setattr(
@@ -784,7 +802,7 @@ def test_remove_verified_archived_raw_files_bootstraps_missing_daily_archive(
       archive_stats_files_fn=fake_archive,
       ingest_ready_fn=lambda _p: True,
   )
-  assert archive_calls == [(gz_key, [str(seg)])]
+  assert archive_calls == [(zst_key, [str(seg)])]
   assert not seg.is_file()
 
 
@@ -802,7 +820,7 @@ def test_remove_verified_archived_raw_files_skips_bootstrap_until_ingest_ready(
   seg.write_text("%d job1 cn001\nline\n" % ts)
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
-  gz_key = str(tgz_dir / "2026-04-16.tar.gz")
+  zst_key = str(tgz_dir / "2026-04-16.tar.zst")
   archive_calls = []
 
   def fake_archive(info):
@@ -841,7 +859,7 @@ def test_remove_verified_archived_raw_files_skips_removal_until_ingest_ready(
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
   gz_key = str(tgz_dir / "2022-05-04.tar.gz")
-  tar_path = gz_key[:-len(".gz")]
+  tar_path = daily_tar_path_from_compressed(gz_key)
   arcname = get_tar_member_name(str(seg))
   with tarfile.open(tar_path, "w") as tf:
     tf.add(str(seg), arcname=arcname)
@@ -864,7 +882,7 @@ def test_archive_stats_files_skips_append_when_not_head_ingested(monkeypatch, tm
 
   raw_file = tmp_path / "1000"
   raw_file.write_text("1709123456 job1 cn001\n")
-  archive_key = str(tmp_path / "2024-03-02.tar.gz")
+  archive_key = str(tmp_path / "2024-03-02.tar.zst")
   append_calls = {"n": 0}
 
   monkeypatch.setattr(
@@ -908,7 +926,9 @@ def test_remove_verified_uncompressed_daily_tars_skips_when_raw_remains(tmp_path
   remove_verified_uncompressed_daily_tars(
       str(tmp_path),
       log_fn=None,
-      remaining_raw_by_gz={str(day_gz): ["/raw/still-here"]},
+      remaining_raw_by_gz={
+          normalize_daily_compressed_path(str(day_gz)): ["/raw/still-here"],
+      },
   )
 
   assert day_tar.is_file()
@@ -983,8 +1003,8 @@ def test_validate_sealed_daily_archive_gzip_only_ok(tmp_path):
   assert members["one.txt"] == 2
 
 
-def test_validate_sealed_daily_archive_seals_from_valid_tar_when_gz_missing(tmp_path, monkeypatch):
-  gz = tmp_path / "2022-01-03.tar.gz"
+def test_validate_sealed_daily_archive_seals_from_valid_tar_when_zst_missing(tmp_path, monkeypatch):
+  zst = tmp_path / "2022-01-03.tar.zst"
   tar_p = tmp_path / "2022-01-03.tar"
   f = tmp_path / "raw.txt"
   f.write_text("seal-me")
@@ -997,19 +1017,20 @@ def test_validate_sealed_daily_archive_seals_from_valid_tar_when_gz_missing(tmp_
 
   def _fake_atomic_seal(
       _tar_path,
-      _gz_path,
+      _zst_path,
       num_threads,
       compress_level,
       keep_uncompressed_tar,
       log_fn=None,
+      remaining_raw_by_gz=None,
   ):
-    del num_threads, compress_level, keep_uncompressed_tar, log_fn
+    del num_threads, compress_level, keep_uncompressed_tar, log_fn, remaining_raw_by_gz
     seal_calls["count"] += 1
-    with tarfile.open(_gz_path, "w:gz") as tf:
+    with tarfile.open(_zst_path, "w:gz") as tf:
       tf.add(str(f), arcname="raw.txt")
 
-  monkeypatch.setattr(helpers, "atomic_seal_tar_to_gz", _fake_atomic_seal)
-  ok, members = validate_sealed_daily_archive_for_raw_removal(str(gz), log_fn=None)
+  monkeypatch.setattr(helpers, "atomic_seal_tar_to_zst", _fake_atomic_seal)
+  ok, members = validate_sealed_daily_archive_for_raw_removal(str(zst), log_fn=None)
   assert ok
   assert seal_calls["count"] == 1
   assert members["raw.txt"] == len("seal-me")
@@ -1025,13 +1046,14 @@ def test_validate_sealed_daily_archive_validation_cache_hits(monkeypatch, tmp_pa
     tf.add(str(f), arcname="cache.txt")
 
   calls = {"n": 0}
-  real_scan = helpers._scan_gzip_archive_members_and_readable
+  real_scan = helpers._scan_compressed_archive_members_and_readable
 
   def wrapped_scan(path):
     calls["n"] += 1
     return real_scan(path)
 
-  monkeypatch.setattr(helpers, "_scan_gzip_archive_members_and_readable", wrapped_scan)
+  monkeypatch.setattr(
+      helpers, "_scan_compressed_archive_members_and_readable", wrapped_scan)
   cache = {"hits": 0, "misses": 0}
   first_ok, first_members = validate_sealed_daily_archive_for_raw_removal(
       str(gz), log_fn=None, validation_cache=cache
@@ -1059,13 +1081,14 @@ def test_validate_sealed_daily_archive_validation_cache_invalidates_on_mtime_cha
     tf.add(str(f), arcname="stale.txt")
 
   calls = {"n": 0}
-  real_scan = helpers._scan_gzip_archive_members_and_readable
+  real_scan = helpers._scan_compressed_archive_members_and_readable
 
   def wrapped_scan(path):
     calls["n"] += 1
     return real_scan(path)
 
-  monkeypatch.setattr(helpers, "_scan_gzip_archive_members_and_readable", wrapped_scan)
+  monkeypatch.setattr(
+      helpers, "_scan_compressed_archive_members_and_readable", wrapped_scan)
   cache = {"hits": 0, "misses": 0}
   ok1, _members1 = validate_sealed_daily_archive_for_raw_removal(
       str(gz), log_fn=None, validation_cache=cache
@@ -1152,7 +1175,9 @@ def test_remove_verified_archived_raw_files_streaming_apply_follows_completion_o
   )
   assert not seg_a.exists()
   assert not seg_b.exists()
-  removal_logs = [l for l in logs if "removing stats file (scheduled pigz/removal):" in l]
+  removal_logs = [
+      l for l in logs if "removing stats file (scheduled archive maintenance):" in l
+  ]
   assert removal_logs
   assert str(seg_b) in removal_logs[0]
 
@@ -1166,14 +1191,16 @@ def test_remove_verified_uncompressed_daily_tars_streaming_apply_order(
   tar_b = tmp_path / "2026-04-22.tar"
   tar_a.write_text("a")
   tar_b.write_text("b")
-  gz_a = "%s.gz" % tar_a
-  gz_b = "%s.gz" % tar_b
+  zst_a = tmp_path / "2026-04-21.tar.zst"
+  zst_b = tmp_path / "2026-04-22.tar.zst"
+  zst_a.write_bytes(b"sealed")
+  zst_b.write_bytes(b"sealed")
   monkeypatch.setattr(helpers, "iter_daily_tar_paths", lambda _d: [str(tar_a), str(tar_b)])
 
   def fake_stream(_gz_paths, *, log_fn=None, validation_cache=None):
     del log_fn, validation_cache
-    yield gz_b, True, {"x": 1}
-    yield gz_a, True, {"x": 1}
+    yield str(zst_b), True, {"x": 1}
+    yield str(zst_a), True, {"x": 1}
 
   monkeypatch.setattr(helpers, "_iter_archive_validation_results_stream", fake_stream)
   logs = []
@@ -1202,7 +1229,7 @@ def test_remove_verified_archived_raw_files_logs_cache_summary(tmp_path):
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
   gz_key = str(tgz_dir / "2022-05-04.tar.gz")
-  tar_path = gz_key[:-len(".gz")]
+  tar_path = daily_tar_path_from_compressed(gz_key)
   arcname = get_tar_member_name(str(seg))
   with tarfile.open(tar_path, "w") as tf:
     tf.add(str(seg), arcname=arcname)
@@ -1678,18 +1705,18 @@ def test_collect_stats_files_in_range_all_no_date_filter(tmp_path):
   assert basenames == [str(old_epoch), str(new_epoch)]
 
 
-@pytest.mark.skipif(not shutil.which("pigz"), reason="pigz not on PATH")
-def test_atomic_seal_tar_to_gz_logs_retention_mode(tmp_path):
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_atomic_seal_tar_to_zst_logs_retention_mode(tmp_path):
   tar_path = tmp_path / "2021-03-03.tar"
-  gz_path = tmp_path / "2021-03-03.tar.gz"
+  zst_path = tmp_path / "2021-03-03.tar.zst"
   member = tmp_path / "c.txt"
   member.write_text("x")
   with tarfile.open(tar_path, "w") as tf:
     tf.add(str(member), arcname="c.txt")
   logs = []
-  atomic_seal_tar_to_gz(
+  atomic_seal_tar_to_zst(
       str(tar_path),
-      str(gz_path),
+      str(zst_path),
       num_threads=1,
       compress_level=6,
       keep_uncompressed_tar=True,
@@ -1727,7 +1754,7 @@ def test_build_archive_mapping_groups_by_date(tmp_path):
   mapping = build_archive_mapping([str(f1), str(f2)], str(tgz_dir))
   assert len(mapping) == 1
   key = list(mapping.keys())[0]
-  assert key.endswith(".tar.gz")
+  assert key.endswith(DAILY_ARCHIVE_ZST_SUFFIX)
   assert os.path.basename(key).startswith("2024-02-")  # 1709123456 -> Feb 2024 (tz-dependent)
   assert len(mapping[key]) == 2
   assert not (tmp_path / "f1.fnctl.lock").exists()
@@ -1768,7 +1795,7 @@ def test_build_archive_mapping_includes_today(tmp_path):
   mapping = build_archive_mapping([str(f1)], str(tgz_dir))
   assert len(mapping) == 1
   key = list(mapping.keys())[0]
-  assert key.endswith(datetime.today().strftime("%Y-%m-%d.tar.gz"))
+  assert key.endswith(datetime.today().strftime("%Y-%m-%d") + DAILY_ARCHIVE_ZST_SUFFIX)
   assert str(f1) in mapping[key]
 
 
@@ -1805,7 +1832,7 @@ def test_build_archive_mapping_uses_real_sample_timestamp(monkeypatch, tmp_path)
   sample_file_date = _real_datetime.datetime.fromtimestamp(float(sample_t))
   expected_key = os.path.join(
       str(tmp_path / "tgz"),
-      sample_file_date.strftime("%Y-%m-%d.tar.gz"),
+      sample_file_date.strftime("%Y-%m-%d") + DAILY_ARCHIVE_ZST_SUFFIX,
   )
 
   tgz_dir = tmp_path / "tgz"
@@ -1832,7 +1859,7 @@ def test_build_archive_mapping_accepts_placeholder_jid(tmp_path):
   mapping = build_archive_mapping([str(stats_file)], str(tgz_dir))
   assert len(mapping) == 1
   only_key = next(iter(mapping.keys()))
-  assert only_key.endswith(".tar.gz")
+  assert only_key.endswith(DAILY_ARCHIVE_ZST_SUFFIX)
   assert mapping[only_key] == [str(stats_file)]
 
 
@@ -1913,12 +1940,12 @@ def test_archive_stats_files_does_not_raise_on_append_failure(monkeypatch, tmp_p
   """Append failure keeps raw files in place and returns cleanly for retry."""
   raw_file = tmp_path / "1000"
   raw_file.write_text("1709123456 job1 cn001\n")
-  archive_key = str(tmp_path / "2024-03-01.tar.gz")
+  archive_key = str(tmp_path / "2024-03-01.tar.zst")
 
   import hpcperfstats.dbload.sync_timedb as st
 
   _patch_archive_gate_pass(monkeypatch)
-  monkeypatch.setattr(st, "_decompress_gz", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "_decompress_compressed_archive", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
   monkeypatch.setattr(
@@ -1938,8 +1965,8 @@ def test_archive_stats_files_creates_new_tar_when_missing(monkeypatch, tmp_path)
   """Missing daily archive should be bootstrapped as a new .tar."""
   raw_file = tmp_path / "1000"
   raw_file.write_text("1709123456 job1 cn001\n")
-  archive_key = str(tmp_path / "2024-03-01.tar.gz")
-  archive_tar = archive_key[:-3]
+  archive_key = str(tmp_path / "2024-03-01.tar.zst")
+  archive_tar = daily_tar_path_from_compressed(archive_key)
   assert not os.path.exists(archive_key)
   assert not os.path.exists(archive_tar)
 
@@ -1954,12 +1981,12 @@ def test_archive_stats_files_skips_dedupe_in_append_path(monkeypatch, tmp_path):
   """Duplicate-member dedupe should run in maintenance, not per append."""
   raw_file = tmp_path / "1000"
   raw_file.write_text("1709123456 job1 cn001\n")
-  archive_key = str(tmp_path / "2024-03-01.tar.gz")
+  archive_key = str(tmp_path / "2024-03-01.tar.zst")
 
   import hpcperfstats.dbload.sync_timedb as st
 
   _patch_archive_gate_pass(monkeypatch)
-  monkeypatch.setattr(st, "_decompress_gz", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "_decompress_compressed_archive", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
   monkeypatch.setattr(

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; ``pigz`` seal and raw-file removal on ``archive_pigz_interval_seconds``, default 8h). Runs in parallel with configurable chunk size.
+"""Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; zstd seal to ``.tar.zst`` and raw-file removal on ``archive_maintenance_interval_seconds``, default 8h). Runs in parallel with configurable chunk size.
 
-Archive maintenance (on ``archive_pigz_interval_seconds`` and when idle) seals dirty daily tars, removes verified raw stats (DB head-ingest gate when enabled), then removes uncompressed ``.tar`` siblings only when no closed raw stats remain for that calendar day. Append and raw delete stay DB-gated; ``.tar`` unlink uses filesystem presence only.
+Archive maintenance (on maintenance interval and when idle) seals dirty daily tars to ``.tar.zst``, removes verified raw stats (DB head-ingest gate when enabled), then removes uncompressed ``.tar`` siblings only when no closed raw stats remain for that calendar day. Append and raw delete stay DB-gated; ``.tar`` unlink uses filesystem presence only.
 
 When the ingest queue is empty, runs a **full** archive maintenance pass (dedupe cadence on idle) **before** rescanning for new stats files. After a rescan still finds nothing pending, it sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exits the loop iteration (continuous mode repeats).
 
@@ -55,7 +55,16 @@ from hpcperfstats.dbload.multiprocessing_pool_health import (
     imap_unordered_watch_pool,
     terminate_pool_bounded,
 )
-from hpcperfstats.dbload.pigz_cli import pigz_decompress_verbose
+from hpcperfstats.dbload.archive_compress import (
+    compressed_sibling_paths,
+    daily_compressed_path_for_date,
+    daily_tar_path_from_compressed,
+    detect_compressed_format,
+)
+from hpcperfstats.dbload.zstd_cli import (
+    zstd_decompress_verbose,
+    zstd_gzip_decompress_verbose,
+)
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.shutdown_utils import (
     shutdown_requested,
@@ -72,7 +81,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     iter_daily_tar_paths,
     remove_verified_archived_raw_files,
     remove_verified_uncompressed_daily_tars,
-    replace_corrupt_tar_from_gzip_backup,
+    replace_corrupt_tar_from_compressed_backup,
     rescan_pending_stats_files,
     seal_dirty_daily_archives,
     stats_file_is_active_segment,
@@ -113,8 +122,8 @@ local_timezone = cfg.get_local_timezone()
 
 # Thread count for database loading and archival (optional ini caps; see conf_parser).
 thread_count = cfg.get_sync_ingest_pool_processes()
-# pigz ``-p`` for archive decompress/seal (``PORTAL`` / ``archive_pigz_threads``).
-pigz_thread_count = cfg.get_archive_pigz_threads()
+# zstd ``-T`` for archive decompress/seal (``PORTAL`` / ``archive_zstd_threads``).
+archive_zstd_thread_count = cfg.get_archive_zstd_threads()
 
 archive_thread_count = cfg.get_sync_archive_pool_processes()
 
@@ -824,13 +833,28 @@ def _insert_rows_individually(
 
 
 
-def _decompress_gz(gz_path):
-  """Decompress .tar.gz with pigz. No-op if path missing or on error."""
-  if not os.path.exists(gz_path):
-    return
+def _decompress_compressed_archive(archive_compressed_path):
+  """Decompress ``.tar.zst`` or legacy ``.tar.gz`` to sibling ``.tar``. No-op if missing."""
+  if not archive_compressed_path or not os.path.exists(archive_compressed_path):
+    zst_path, gz_path = compressed_sibling_paths(
+        daily_tar_path_from_compressed(archive_compressed_path or ""),
+    )
+    if os.path.exists(zst_path):
+      archive_compressed_path = zst_path
+    elif os.path.exists(gz_path):
+      archive_compressed_path = gz_path
+    else:
+      return
   try:
-    with file_write_lock(gz_path):
-      pigz_decompress_verbose(gz_path, pigz_thread_count)
+    with file_write_lock(archive_compressed_path):
+      if archive_compressed_path.endswith(".tar.zst"):
+        zstd_decompress_verbose(
+            archive_compressed_path, archive_zstd_thread_count,
+        )
+      elif archive_compressed_path.endswith(".tar.gz"):
+        zstd_gzip_decompress_verbose(
+            archive_compressed_path, archive_zstd_thread_count,
+        )
   except subprocess.CalledProcessError:
     pass
 
@@ -913,7 +937,7 @@ def _append_to_tar(tar_path, file_paths):
 def archive_stats_files(archive_info):
   """Append stats files to a daily ``.tar`` (verify, recover, dedupe).
 
-  ``pigz`` sealing and removal of raw stats run on ``archive_pigz_interval_seconds``
+  zstd sealing and removal of raw stats run on ``archive_maintenance_interval_seconds``
   (see main loop), not after each append.
   """
   with _sync_worker_db_task():
@@ -925,12 +949,17 @@ def _archive_stats_files_body(archive_info):
   stats_files, _skipped = filter_paths_head_ingested(stats_files, log_fn=log_print)
   if not stats_files:
     return True
-  archive_tar_fname = archive_fname[:-3]
+  archive_tar_fname = daily_tar_path_from_compressed(archive_fname)
   existing_members = {}
+  zst_path, gz_path = compressed_sibling_paths(archive_tar_fname)
 
   if not os.path.exists(archive_tar_fname):
-    if os.path.exists(archive_fname):
-      _decompress_gz(archive_fname)
+    if os.path.exists(zst_path):
+      _decompress_compressed_archive(zst_path)
+    elif os.path.exists(gz_path):
+      _decompress_compressed_archive(gz_path)
+    elif detect_compressed_format(archive_fname):
+      _decompress_compressed_archive(archive_fname)
   if os.path.exists(archive_tar_fname):
     existing_members = get_existing_archive_members(archive_tar_fname)
 
@@ -940,12 +969,13 @@ def _archive_stats_files_body(archive_info):
   if os.path.isfile(archive_tar_fname) and not verify_tar_archive_readable(
       archive_tar_fname):
     log_print(
-        "Daily tar unreadable before append; recovering from .tar.gz or "
+        "Daily tar unreadable before append; recovering from sealed archive or "
         "clearing: %s" % archive_tar_fname,
         flush=True,
     )
-    if not replace_corrupt_tar_from_gzip_backup(
-        archive_tar_fname, archive_fname, pigz_thread_count):
+    if not replace_corrupt_tar_from_compressed_backup(
+        archive_tar_fname, zst_path, gz_path, archive_zstd_thread_count,
+    ):
       log_print(
           "ERROR: could not restore daily tar before append; leaving raw stats "
           "files in place: %s" % archive_fname,
@@ -973,11 +1003,12 @@ def _archive_stats_files_body(archive_info):
     if not verify_tar_archive_readable(archive_tar_fname):
       log_print(
           "Daily tar failed integrity check after append; recovering from "
-          ".tar.gz or clearing for rebuild: %s" % archive_tar_fname,
+          "sealed archive or clearing for rebuild: %s" % archive_tar_fname,
           flush=True,
       )
-      if not replace_corrupt_tar_from_gzip_backup(
-          archive_tar_fname, archive_fname, pigz_thread_count):
+      if not replace_corrupt_tar_from_compressed_backup(
+          archive_tar_fname, zst_path, gz_path, archive_zstd_thread_count,
+      ):
         log_print(
             "ERROR: could not restore daily tar from %s; leaving raw stats "
             "files in place" % archive_fname,
@@ -1023,7 +1054,7 @@ def _build_fallback_archive_mapping_by_mtime(files_to_be_archived, tgz_dir):
       file_date = datetime.fromtimestamp(os.path.getmtime(path))
     except OSError:
       continue
-    archive_fname = os.path.join(tgz_dir, file_date.strftime("%Y-%m-%d.tar.gz"))
+    archive_fname = daily_compressed_path_for_date(tgz_dir, file_date)
     fallback[archive_fname].append(path)
   return dict(fallback)
 
@@ -1032,7 +1063,7 @@ def _normalize_archive_groups_by_tgz(archive_mapping):
   """Return stable per-tgz archive tasks as ``[(tgz_path, [paths...]), ...]``.
 
   The archival pipeline is intentionally threaded by tgz group (one task per
-  ``YYYY-MM-DD.tar.gz`` path) so each worker handles a complete archive group
+  ``YYYY-MM-DD.tar.zst`` path) so each worker handles a complete archive group
   rather than interleaving members across unrelated tgz files.
   """
   if not archive_mapping:
@@ -1079,7 +1110,7 @@ def database_startup():
     raise
 
 
-def _resolve_archive_pigz_interval_seconds(raw_value):
+def _resolve_archive_maintenance_interval_seconds(raw_value):
   """Normalize archive maintenance interval to a safe finite positive float."""
   default_interval = float(8 * 3600)
   try:
@@ -1100,16 +1131,16 @@ def run_sync_timedb_supervisor_loop(
     archive_pool,
     run_once=False,
 ):
-  """Rescan archive, ingest pending files in chunks, run pigz/removal on interval.
+  """Rescan archive, ingest pending files in chunks, run zstd seal/removal on interval.
 
   Whenever the ingest queue is empty, runs full archive maintenance before
   ``rescan_pending_stats_files``. If ``run_once`` is True, exit after the first
   rescan that finds no pending files (no ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS``
   idle wait). Used by pipeline E2E tests.
   """
-  pigz_interval_raw = cfg.get_archive_pigz_interval_seconds()
-  pigz_interval, pigz_interval_warning = _resolve_archive_pigz_interval_seconds(
-      pigz_interval_raw
+  maint_interval_raw = cfg.get_archive_maintenance_interval_seconds()
+  maint_interval, maint_interval_warning = (
+      _resolve_archive_maintenance_interval_seconds(maint_interval_raw)
   )
   ingest_queue_max = max(1, int(cfg.get_sync_ingest_queue_max_size()))
   archive_queue_max = max(1, int(cfg.get_sync_archive_queue_max_size()))
@@ -1140,7 +1171,7 @@ def run_sync_timedb_supervisor_loop(
     cycle_start = time.time()
     log_print(
         "Archive maintenance start reason=%s cycle=%d elapsed_since_last_s=%.1f interval_s=%.1f"
-        % (reason, maintenance_cycle, float(elapsed_since_last_s), float(pigz_interval)),
+        % (reason, maintenance_cycle, float(elapsed_since_last_s), float(maint_interval)),
         flush=True,
     )
     run_lock_stats = force_full or (maintenance_cycle % MAINTENANCE_LOCK_STATS_EVERY == 0)
@@ -1188,8 +1219,8 @@ def run_sync_timedb_supervisor_loop(
     seal_dirty_daily_archives(
         tgz_archive_dir,
         local_tz=local_timezone,
-        pigz_threads=pigz_thread_count,
-        compress_level=cfg.get_archive_pigz_level(),
+        zstd_threads=archive_zstd_thread_count,
+        compress_level=cfg.get_archive_zstd_level(),
         keep_uncompressed_tar=cfg.get_archive_keep_uncompressed_tar(),
         idle_seconds=cfg.get_archive_seal_idle_seconds(),
         seal_immediately_if_dirty=True,
@@ -1400,15 +1431,15 @@ def run_sync_timedb_supervisor_loop(
     except OSError:
       pass
 
-  if pigz_interval_warning is not None:
+  if maint_interval_warning is not None:
     log_print(
-        "Invalid archive_pigz_interval_seconds=%r reason=%s; using default %.1fs"
-        % (pigz_interval_raw, pigz_interval_warning, float(pigz_interval)),
+        "Invalid archive_maintenance_interval_seconds=%r reason=%s; using default %.1fs"
+        % (maint_interval_raw, maint_interval_warning, float(maint_interval)),
         flush=True,
     )
   log_print(
-      "sync_timedb continuous mode: pigz interval %.1f s; idle rescan sleep %s s"
-      % (float(pigz_interval), int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)),
+      "sync_timedb continuous mode: archive maintenance interval %.1f s; idle rescan sleep %s s"
+      % (float(maint_interval), int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)),
       flush=True,
   )
   log_print(
@@ -1490,11 +1521,11 @@ def run_sync_timedb_supervisor_loop(
     def _maintenance_overdue_warn_threshold():
       return max(
           MAINTENANCE_OVERDUE_WARN_MIN_SECONDS,
-          float(pigz_interval) * MAINTENANCE_OVERDUE_WARN_MULTIPLIER,
+          float(maint_interval) * MAINTENANCE_OVERDUE_WARN_MULTIPLIER,
       )
 
     def _is_maintenance_due():
-      return _maintenance_elapsed_s() >= pigz_interval
+      return _maintenance_elapsed_s() >= maint_interval
 
     def _run_periodic_maintenance_if_due(reason_label):
       nonlocal last_archive_maint
@@ -1523,7 +1554,7 @@ def run_sync_timedb_supervisor_loop(
         )
         return False
       log_print(
-          "Running scheduled daily-archive pigz and raw file removal context=%s elapsed_since_last_s=%.1f"
+          "Running scheduled daily-archive zstd seal and raw file removal context=%s elapsed_since_last_s=%.1f"
           % (reason_label, elapsed),
           flush=True,
       )

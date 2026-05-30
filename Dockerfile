@@ -32,7 +32,8 @@ RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
        netcat-openbsd supervisor rsync syslog-ng \
-       vim net-tools lsof pigz nano \
+       vim net-tools lsof zstd nano \
+    && zstd -vV | grep -q gzip \
     && rm -rf /var/lib/apt/lists/*"
 
 WORKDIR /home/hpcperfstats
