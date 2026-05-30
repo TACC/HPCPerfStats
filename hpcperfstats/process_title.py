@@ -115,9 +115,12 @@ def set_daemon_process_title(
   return _apply_setproctitle(title)
 
 
-def apply_pool_worker_process_title(init_args):
-  """Picklable ``multiprocessing.Pool`` initializer for spawn workers."""
-  script_name, pool_kind = init_args
+def apply_pool_worker_process_title(script_name, pool_kind):
+  """Picklable ``multiprocessing.Pool`` initializer for spawn/fork workers.
+
+  ``Pool`` invokes ``initializer(*initargs)``, so ``initargs`` must be a
+  ``(script_name, pool_kind)`` tuple of two positional arguments.
+  """
   set_daemon_process_title(name=script_name, role="worker", pool_kind=pool_kind)
 
 

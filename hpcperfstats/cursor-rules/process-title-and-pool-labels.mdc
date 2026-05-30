@@ -46,7 +46,7 @@ Use a **distinct, stable `pool_kind`** per pool type in the same script (e.g. `i
    )
    ```
 
-   Do not use nested closures for `initializer` (`spawn` must pickle it).
+   Do not use nested closures for `initializer` (`spawn` must pickle it). ``Pool`` calls ``initializer(*initargs)``, so pass two positional args in ``initargs``, not a single nested tuple.
 
 4. **Daemon threads only:** `set_daemon_thread_title(..., script_name="….py", role="…")`. Never change the **process** title for threads.
 5. **Gunicorn request paths:** do not add process or thread titles in `site.machine.api`, plot builders invoked per-request under gunicorn, or other WSGI hot paths unless product explicitly revisits that policy.

@@ -156,7 +156,8 @@ def test_apply_pool_worker_process_title(monkeypatch):
           setproctitle=fake_setproctitle,
       ),
   )
-  apply_pool_worker_process_title(("sync_timedb.py", "ingest-pool"))
+  # Pool calls initializer(*initargs), not initializer(initargs).
+  apply_pool_worker_process_title("sync_timedb.py", "ingest-pool")
   assert calls == ["sync_timedb.py [worker:ingest-pool]"]
 
 
