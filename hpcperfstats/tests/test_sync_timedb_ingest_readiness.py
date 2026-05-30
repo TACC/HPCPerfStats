@@ -224,3 +224,24 @@ def test_conf_parser_sync_archive_require_db_head_ingest_default(temp_ini, monke
     fh.write(content)
   importlib.reload(cfg)
   assert cfg.get_sync_archive_require_db_head_ingest() is False
+
+
+def test_stats_file_head_ingested_in_db_closes_connections(monkeypatch, tmp_path):
+  close_calls = []
+
+  class _FakeSyncWorkerDbTask:
+    def __enter__(self):
+      close_calls.append("enter")
+      return self
+
+    def __exit__(self, exc_type, exc, tb):
+      close_calls.append("exit")
+      return False
+
+  seg = tmp_path / "seg"
+  seg.write_text("not-a-stats-file\n")
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: False)
+  import hpcperfstats.dbload.sync_timedb as sync_timedb
+  monkeypatch.setattr(sync_timedb, "_sync_worker_db_task", lambda: _FakeSyncWorkerDbTask())
+  assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
+  assert close_calls == ["enter", "exit"]

@@ -1458,6 +1458,19 @@ def get_sync_checkpoint_flush_batch_size():
   return max(1, int(cfg.get("DEFAULT", "sync_checkpoint_flush_batch_size", fallback="100")))
 
 
+def get_sync_host_itimes_cache_max_timestamps_per_entry():
+  """Max distinct DB timestamps cached per host window in sync_timedb (default 100000)."""
+  _ensure_cfg_loaded()
+  return max(
+      1,
+      int(cfg.get(
+          "DEFAULT",
+          "sync_host_itimes_cache_max_timestamps_per_entry",
+          fallback="100000",
+      )),
+  )
+
+
 def get_sync_write_lock_shards():
   """Number of write-lock shards for sync_timedb ingest writes."""
   env = os.environ.get("SYNC_WRITE_LOCK_SHARDS", "").strip()
@@ -1573,6 +1586,7 @@ def get_conf_parser_defaults_audit_snapshot():
           "sync_archive_retry_backoff_base_seconds": 1.0,
           "sync_archive_retry_backoff_max_seconds": 60.0,
           "sync_checkpoint_flush_batch_size": 100,
+          "sync_host_itimes_cache_max_timestamps_per_entry": 100000,
           "parallel_db_prefetch_max": 4,
           "db_conn_max_age": 90,
           "db_statement_timeout_ms": 120000,

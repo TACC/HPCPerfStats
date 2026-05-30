@@ -1735,3 +1735,76 @@ def test_sync_timedb_uses_fixed_batch_sizes_not_adaptive_helpers():
   assert st.bulk_create_batch_size == 10000
   assert not hasattr(st, "_get_adaptive_bulk_create_batch_size")
   assert not hasattr(st, "_record_adaptive_batch_feedback")
+
+
+def test_sync_worker_db_task_closes_connections(monkeypatch):
+  close_calls = []
+  monkeypatch.setattr(st, "close_old_connections", lambda: close_calls.append("close_old"))
+  monkeypatch.setattr(st.connections, "close_all", lambda: close_calls.append("close_all"))
+  with st._sync_worker_db_task():
+    pass
+  assert close_calls == ["close_old", "close_all"]
+
+
+def test_host_recent_timestamps_cached_skips_oversized_cache_entry(monkeypatch):
+  from datetime import timezone
+
+  st._HOST_ITIMES_CACHE.clear()
+  monkeypatch.setattr(st.cfg, "get_sync_host_itimes_cache_max_timestamps_per_entry", lambda: 3)
+  host = "node1"
+  ts_low = datetime(2026, 1, 1, tzinfo=timezone.utc)
+  ts_high = datetime(2026, 1, 3, tzinfo=timezone.utc)
+  key = (host, int(ts_low.timestamp()), int(ts_high.timestamp()))
+
+  class _FakeQS:
+    def values_list(self, *_args, **_kwargs):
+      return self
+
+    def distinct(self):
+      return self
+
+    def iterator(self):
+      for i in range(5):
+        yield datetime(2026, 1, 2, 0, 0, i, tzinfo=timezone.utc)
+
+  filter_calls = {"count": 0}
+
+  def _fake_filter(**_kwargs):
+    filter_calls["count"] += 1
+    return _FakeQS()
+
+  monkeypatch.setattr(st.host_data.objects, "filter", _fake_filter)
+  result = st._host_recent_timestamps_cached(host, ts_low, ts_high)
+  assert len(result) == 5
+  assert key not in st._HOST_ITIMES_CACHE
+  st._host_recent_timestamps_cached(host, ts_low, ts_high)
+  assert filter_calls["count"] == 2
+  assert key not in st._HOST_ITIMES_CACHE
+
+
+def test_add_processed_path_prunes_file_states(monkeypatch, tmp_path):
+  monkeypatch.setattr(st, "processed_files_max_size", 2)
+  processed_files = set()
+  processed_files_order = deque()
+  checkpoint_entries = deque()
+  file_states = {}
+  checkpoint_path = str(tmp_path / "cp.json")
+  paths = []
+  for i in range(3):
+    path = str(tmp_path / ("file%d" % i))
+    Path(path).write_text("x", encoding="utf-8")
+    paths.append(path)
+    file_states[path] = st.SyncFileState.ARCHIVED
+    st._add_processed_path(
+        path,
+        processed_files,
+        processed_files_order,
+        checkpoint_entries,
+        checkpoint_path,
+        file_states=file_states,
+    )
+  assert len(processed_files) == 2
+  assert len(file_states) == 2
+  assert paths[0] not in file_states
+  assert paths[1] in file_states
+  assert paths[2] in file_states

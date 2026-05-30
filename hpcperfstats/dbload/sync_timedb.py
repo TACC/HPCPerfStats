@@ -7,7 +7,7 @@ When the ingest queue is empty, runs a **full** archive maintenance pass (dedupe
 
 CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once all``.
 
-DB access is process-safe: add_stats_file_to_db runs in multiprocessing workers and calls close_old_connections() at entry so each worker uses a fresh connection. Writes are serialized with a shared lock.
+DB access is process-safe: pool workers use close_old_connections() at task start and connections.close_all() at task end so connections do not linger between files. Writes are serialized with a shared lock.
 
 """
 import itertools
@@ -15,6 +15,7 @@ import heapq
 import json
 import math
 import multiprocessing
+from contextlib import contextmanager
 import os
 import shutil
 import signal
@@ -158,8 +159,22 @@ bulk_create_batch_size = 10000
 _HOST_ITIMES_CACHE = {}
 _HOST_ITIMES_CACHE_REFRESH_SECONDS = 20
 _HOST_ITIMES_CACHE_MAX_ENTRIES = 2000
+_HOST_ITIMES_CACHE_MAX_TIMESTAMPS_PER_ENTRY = 100000
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
+
+
+@contextmanager
+def _sync_worker_db_task():
+  """Refresh DB connections at worker task start and release them at end."""
+  close_old_connections()
+  try:
+    yield
+  finally:
+    try:
+      connections.close_all()
+    except Exception:
+      pass
 
 
 def _ensure_daily_archive_dir_exists():
@@ -382,7 +397,9 @@ def _host_recent_timestamps_cached(hostname, ts_low, ts_high):
     if dt.tzinfo is None:
       dt = dt.replace(tzinfo=timezone.utc)
     itimes_set.add(int(dt.timestamp()))
-  _HOST_ITIMES_CACHE[key] = {"times": tuple(itimes_set), "checked_at": now}
+  max_timestamps = cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
+  if len(itimes_set) <= max_timestamps:
+    _HOST_ITIMES_CACHE[key] = {"times": tuple(itimes_set), "checked_at": now}
   if len(_HOST_ITIMES_CACHE) > _HOST_ITIMES_CACHE_MAX_ENTRIES:
     oldest_keys = sorted(
         _HOST_ITIMES_CACHE.keys(),
@@ -508,66 +525,71 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
 
   Returns (stats_file, payload, need_archival, ingest_ok, parse_elapsed_s).
   """
-  close_old_connections()
+  lines = None
   parse_t0 = time.time()
 
   def _parse_elapsed():
     return time.time() - parse_t0
 
-  hostname, _ = parse_stats_file_path(stats_file)
-  if hostname is None:
-    log_print("Invalid stats file path: %s" % stats_file)
-    return (stats_file, None, False, False, _parse_elapsed())
-  if stats_file_is_active_segment(stats_file):
-    if DEBUG:
-      log_print("Skipping active segment (still linked to current): %s" % stats_file)
-    return (stats_file, None, False, False, _parse_elapsed())
-  lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)
-  if load_err is not None:
-    log_print(load_err)
-    return (stats_file, None, False, False, _parse_elapsed())
-  t, _jid, host = parse_first_timestamp_line(lines)
-  if t is None:
-    log_print("initial timestamp not found")
-    return (stats_file, None, False, False, _parse_elapsed())
-  if not host:
-    log_print("initial host not found in %s" % stats_file)
-    return (stats_file, None, False, False, _parse_elapsed())
-  host = str(host).strip()
-  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
-  head_present = head_timestamp_present_in_db(host, timestamp_utc)
-  if not head_present:
-    # New file head is not in DB yet; it still needs archival post-ingest.
-    start_idx, need_archival = 0, True
-  else:
-    ts_low = timestamp_utc - timedelta(hours=48)
-    ts_high = timestamp_utc + timedelta(hours=72)
-    itimes_set = _host_recent_timestamps_cached(host, ts_low, ts_high)
-    start_idx, need_archival = find_processing_start_index(lines, itimes_set)
-  if start_idx == -1:
-    log_print("No missing timestamps found for %s" % stats_file)
-    return (stats_file, None, True, True, _parse_elapsed())
-  lines = lines[start_idx:]
-  try:
-    stats_list, proc_stats_list = parse_stats_lines(
-        lines,
-        0,
-        eventmaps_by_type=EVENTMAPS_BY_TYPE,
-        exclude_types_list=exclude_types,
-    )
-  except Exception as e:
-    log_print("error: process data failed: ", str(e))
-    log_print("Possibly corrupt file: %s" % stats_file)
-    return (stats_file, None, False, False, _parse_elapsed())
-  stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
-  del stats_list
-  del proc_stats_list
-  if stats.empty and proc_stats.empty:
-    if DEBUG:
-      log_print("Unable to process stats file %s" % stats_file)
-    return (stats_file, None, False, False, _parse_elapsed())
-  stats = compute_deltas_and_arc(stats)
-  return (stats_file, (stats, proc_stats), need_archival, True, _parse_elapsed())
+  with _sync_worker_db_task():
+    try:
+      hostname, _ = parse_stats_file_path(stats_file)
+      if hostname is None:
+        log_print("Invalid stats file path: %s" % stats_file)
+        return (stats_file, None, False, False, _parse_elapsed())
+      if stats_file_is_active_segment(stats_file):
+        if DEBUG:
+          log_print("Skipping active segment (still linked to current): %s" % stats_file)
+        return (stats_file, None, False, False, _parse_elapsed())
+      lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)
+      if load_err is not None:
+        log_print(load_err)
+        return (stats_file, None, False, False, _parse_elapsed())
+      t, _jid, host = parse_first_timestamp_line(lines)
+      if t is None:
+        log_print("initial timestamp not found")
+        return (stats_file, None, False, False, _parse_elapsed())
+      if not host:
+        log_print("initial host not found in %s" % stats_file)
+        return (stats_file, None, False, False, _parse_elapsed())
+      host = str(host).strip()
+      timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
+      head_present = head_timestamp_present_in_db(host, timestamp_utc)
+      if not head_present:
+        # New file head is not in DB yet; it still needs archival post-ingest.
+        start_idx, need_archival = 0, True
+      else:
+        ts_low = timestamp_utc - timedelta(hours=48)
+        ts_high = timestamp_utc + timedelta(hours=72)
+        itimes_set = _host_recent_timestamps_cached(host, ts_low, ts_high)
+        start_idx, need_archival = find_processing_start_index(lines, itimes_set)
+      if start_idx == -1:
+        log_print("No missing timestamps found for %s" % stats_file)
+        return (stats_file, None, True, True, _parse_elapsed())
+      lines = lines[start_idx:]
+      try:
+        stats_list, proc_stats_list = parse_stats_lines(
+            lines,
+            0,
+            eventmaps_by_type=EVENTMAPS_BY_TYPE,
+            exclude_types_list=exclude_types,
+        )
+      except Exception as e:
+        log_print("error: process data failed: ", str(e))
+        log_print("Possibly corrupt file: %s" % stats_file)
+        return (stats_file, None, False, False, _parse_elapsed())
+      stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
+      del stats_list
+      del proc_stats_list
+      if stats.empty and proc_stats.empty:
+        if DEBUG:
+          log_print("Unable to process stats file %s" % stats_file)
+        return (stats_file, None, False, False, _parse_elapsed())
+      stats = compute_deltas_and_arc(stats)
+      return (stats_file, (stats, proc_stats), need_archival, True, _parse_elapsed())
+    finally:
+      if lines is not None:
+        del lines
 
 
 def _db_writer_worker(lock, db_task):
@@ -576,22 +598,30 @@ def _db_writer_worker(lock, db_task):
   db_task is (stats_file, payload, need_archival, parse_elapsed_s).
   Returns (stats_file, need_archival, ingest_ok, total_elapsed_s).
   """
-  close_old_connections()
-  stats_file, payload, need_archival, parse_elapsed_s = db_task
-  if payload is None:
-    return (stats_file, need_archival, True, float(parse_elapsed_s))
-  stats, proc_stats = payload
-  write_t0 = time.time()
-  stats_file, need_archival, ingest_ok = _write_stats_payload_to_db(
-      lock, stats_file, stats, proc_stats, need_archival
-  )
-  write_elapsed = time.time() - write_t0
-  return (
-      stats_file,
-      need_archival,
-      ingest_ok,
-      float(parse_elapsed_s) + write_elapsed,
-  )
+  stats = None
+  proc_stats = None
+  with _sync_worker_db_task():
+    try:
+      stats_file, payload, need_archival, parse_elapsed_s = db_task
+      if payload is None:
+        return (stats_file, need_archival, True, float(parse_elapsed_s))
+      stats, proc_stats = payload
+      write_t0 = time.time()
+      stats_file, need_archival, ingest_ok = _write_stats_payload_to_db(
+          lock, stats_file, stats, proc_stats, need_archival
+      )
+      write_elapsed = time.time() - write_t0
+      return (
+          stats_file,
+          need_archival,
+          ingest_ok,
+          float(parse_elapsed_s) + write_elapsed,
+      )
+    finally:
+      if stats is not None:
+        del stats
+      if proc_stats is not None:
+        del proc_stats
 
 
 # This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
@@ -602,26 +632,37 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   seconds for the attempted ingest path. Uses lock for DB writes.
 
     """
+  stats = None
+  proc_stats = None
+  payload = None
   t0 = time.time()
-  try:
-    stats_file, payload, need_archival, ingest_ok, _parse_elapsed = _parse_stats_file_payload(
-        stats_file, stats_file_contents=stats_file_contents
-    )
-    if not ingest_ok:
-      return (stats_file, need_archival, False, time.time() - t0)
-    if payload is None:
-      return (stats_file, need_archival, True, time.time() - t0)
-    stats, proc_stats = payload
-    stats_file, need_archival, ingest_ok = _write_stats_payload_to_db(
-        lock, stats_file, stats, proc_stats, need_archival=need_archival
-    )
-    return (stats_file, need_archival, ingest_ok, time.time() - t0)
-  except (OperationalError, DatabaseError) as exc:
-    if is_database_unavailable_error(exc):
-      log_and_raise_database_unavailable(
-          exc, context="sync_timedb add_stats_file_to_db"
+  with _sync_worker_db_task():
+    try:
+      stats_file, payload, need_archival, ingest_ok, _parse_elapsed = _parse_stats_file_payload(
+          stats_file, stats_file_contents=stats_file_contents
       )
-    raise
+      if not ingest_ok:
+        return (stats_file, need_archival, False, time.time() - t0)
+      if payload is None:
+        return (stats_file, need_archival, True, time.time() - t0)
+      stats, proc_stats = payload
+      stats_file, need_archival, ingest_ok = _write_stats_payload_to_db(
+          lock, stats_file, stats, proc_stats, need_archival=need_archival
+      )
+      return (stats_file, need_archival, ingest_ok, time.time() - t0)
+    except (OperationalError, DatabaseError) as exc:
+      if is_database_unavailable_error(exc):
+        log_and_raise_database_unavailable(
+            exc, context="sync_timedb add_stats_file_to_db"
+        )
+      raise
+    finally:
+      if stats is not None:
+        del stats
+      if proc_stats is not None:
+        del proc_stats
+      if payload is not None:
+        del payload
 
 
 def _load_sync_checkpoint(state_path):
@@ -693,6 +734,8 @@ def _add_processed_path(
     processed_files_order,
     checkpoint_entries,
     checkpoint_path,
+    *,
+    file_states=None,
 ):
   """Record processed path in memory and checkpoint buffer."""
   fp = _path_fingerprint(path)
@@ -704,6 +747,8 @@ def _add_processed_path(
   while len(processed_files_order) > processed_files_max_size:
     old_path = processed_files_order.popleft()
     processed_files.discard(old_path)
+    if file_states is not None:
+      file_states.pop(old_path, None)
   while len(checkpoint_entries) > processed_files_max_size:
     checkpoint_entries.popleft()
   return True
@@ -871,9 +916,11 @@ def archive_stats_files(archive_info):
   ``pigz`` sealing and removal of raw stats run on ``archive_pigz_interval_seconds``
   (see main loop), not after each append.
   """
-  from django.db import close_old_connections
+  with _sync_worker_db_task():
+    return _archive_stats_files_body(archive_info)
 
-  close_old_connections()
+
+def _archive_stats_files_body(archive_info):
   archive_fname, stats_files = archive_info
   stats_files, _skipped = filter_paths_head_ingested(stats_files, log_fn=log_print)
   if not stats_files:
@@ -1262,7 +1309,7 @@ def run_sync_timedb_supervisor_loop(
           _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
           added = _add_processed_path(
               p, processed_files, processed_files_order, checkpoint_entries,
-              checkpoint_path)
+              checkpoint_path, file_states=file_states)
           if added:
             checkpoint_dirty_count += 1
           inflight_archive_paths.discard(p)
@@ -1302,7 +1349,7 @@ def run_sync_timedb_supervisor_loop(
               _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
               added = _add_processed_path(
                   p, processed_files, processed_files_order, checkpoint_entries,
-                  checkpoint_path)
+                  checkpoint_path, file_states=file_states)
               if added:
                 checkpoint_dirty_count += 1
               inflight_archive_paths.discard(p)
@@ -1797,7 +1844,7 @@ def run_sync_timedb_supervisor_loop(
           _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
           added = _add_processed_path(
               p, processed_files, processed_files_order, checkpoint_entries,
-              checkpoint_path)
+              checkpoint_path, file_states=file_states)
           if added:
             checkpoint_dirty_count += 1
         _flush_checkpoint_if_needed()

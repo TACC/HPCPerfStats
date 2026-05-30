@@ -73,6 +73,8 @@ total_cores = 40
 # sync_ingest_queue_max_size = 500
 # sync_archive_queue_max_size = 250
 # sync_checkpoint_flush_batch_size = 50
+# Max distinct host_data timestamps cached per duplicate-detection window (sync_timedb)
+# sync_host_itimes_cache_max_timestamps_per_entry = 100000
 # sync_enable_cpuset_priority_budget = yes
 # pipeline_overlap_mode = balanced
 # metrics_ingest_priority_scale = 0.75

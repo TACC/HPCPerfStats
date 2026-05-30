@@ -763,6 +763,26 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_checkpoint_flush_batch_size() == 42
 
 
+def test_sync_host_itimes_cache_max_timestamps_per_entry(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_sync_host_itimes_cache_max_timestamps_per_entry() == 100000
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\nsync_host_itimes_cache_max_timestamps_per_entry = 50000",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_sync_host_itimes_cache_max_timestamps_per_entry() == 50000
+
+
 def test_sync_phase2_feature_flags_and_shards(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib

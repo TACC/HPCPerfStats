@@ -110,32 +110,32 @@ def _log_gate_disabled_once(log_fn):
 
 def stats_file_head_ingested_in_db(path, *, log_fn=None):
   """Return True when the file's head timestamp exists in host_data for its host."""
-  from django.db import close_old_connections
+  from hpcperfstats.dbload.sync_timedb import _sync_worker_db_task
 
-  close_old_connections()
-  if not archive_db_head_ingest_gate_enabled():
-    _log_gate_disabled_once(log_fn)
-    return True
+  with _sync_worker_db_task():
+    if not archive_db_head_ingest_gate_enabled():
+      _log_gate_disabled_once(log_fn)
+      return True
 
-  fp = path_ingest_ready_fingerprint(path)
-  if fp is None:
-    return False
-  now = time.time()
-  path_cached = _PATH_READY_CACHE.get(fp)
-  if path_cached and (now - path_cached["checked_at"] <= _PATH_READY_CACHE_REFRESH_SECONDS):
-    return bool(path_cached["ready"])
+    fp = path_ingest_ready_fingerprint(path)
+    if fp is None:
+      return False
+    now = time.time()
+    path_cached = _PATH_READY_CACHE.get(fp)
+    if path_cached and (now - path_cached["checked_at"] <= _PATH_READY_CACHE_REFRESH_SECONDS):
+      return bool(path_cached["ready"])
 
-  ready = False
-  if stats_file_is_active_segment(path):
     ready = False
-  else:
-    host, timestamp_utc = read_stats_file_head_identity(path)
-    if host is not None and timestamp_utc is not None:
-      ready = head_timestamp_present_in_db(host, timestamp_utc)
+    if stats_file_is_active_segment(path):
+      ready = False
+    else:
+      host, timestamp_utc = read_stats_file_head_identity(path)
+      if host is not None and timestamp_utc is not None:
+        ready = head_timestamp_present_in_db(host, timestamp_utc)
 
-  _PATH_READY_CACHE[fp] = {"ready": bool(ready), "checked_at": now}
-  _trim_path_ready_cache()
-  return ready
+    _PATH_READY_CACHE[fp] = {"ready": bool(ready), "checked_at": now}
+    _trim_path_ready_cache()
+    return ready
 
 
 def filter_paths_head_ingested(paths, *, log_fn=None):
