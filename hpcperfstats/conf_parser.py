@@ -218,14 +218,6 @@ def get_archive_zstd_threads():
   return max(1, int(raw))
 
 
-def get_archive_zstd_long():
-  """When true, pass ``--long=31`` for tar/zst at or above 2 GiB. Default true."""
-  _ensure_cfg_loaded()
-  raw = cfg.get('PORTAL', 'archive_zstd_long', fallback='yes')
-  return _ini_bool(raw, default=True)
-
-
-def get_archive_gzip_level():
   """Gzip format level (1--9) for ``zstd --format=gzip`` when needed."""
   _ensure_cfg_loaded()
   raw = cfg.get('PORTAL', 'archive_gzip_level', fallback='8')

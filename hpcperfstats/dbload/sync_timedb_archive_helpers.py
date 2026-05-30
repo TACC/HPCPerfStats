@@ -21,13 +21,13 @@ from hpcperfstats.dbload.archive_compress import (
     detect_compressed_format,
     normalize_daily_compressed_path,
     sum_member_bytes,
+    zstd_long_flags,
 )
 from hpcperfstats.dbload.zstd_cli import (
+    decompress_compressed_to_tar,
     zstd_decompress_stdout,
-    zstd_decompress_verbose,
     zstd_executable,
     zstd_gzip_decompress_stdout,
-    zstd_gzip_decompress_verbose,
     zstd_gzip_supported,
     zstd_compress_tar_to_file,
     zstd_test,
@@ -285,19 +285,15 @@ def _tar_gz_readable_via_zstd_gzip_tar_pipe(gz_path, tar_bin, num_threads):
 def _tar_zst_readable_via_zstd_tar_pipe(zst_path, tar_bin, num_threads):
   if not shutil.which("zstd"):
     return False
-  long_enabled = cfg.get_archive_zstd_long()
-  from hpcperfstats.dbload.archive_compress import zstd_use_long_for_path
-
   cmd = [
       zstd_executable(),
       "-d",
       "-c",
       "-T%d" % max(1, int(num_threads)),
       "-q",
+      *zstd_long_flags(),
+      zst_path,
   ]
-  if zstd_use_long_for_path(zst_path, long_enabled):
-    cmd.append("--long=31")
-  cmd.append(zst_path)
   return _tar_readable_via_decompress_tar_pipe(cmd, tar_bin)
 
 
@@ -308,7 +304,6 @@ def _open_tarfile_for_read(path, num_threads):
     with zstd_decompress_stdout(
         path,
         num_threads,
-        use_long=None,
     ) as stdout:
       with tarfile.open(fileobj=stdout, mode="r|") as tf:
         yield tf
@@ -499,6 +494,18 @@ def validate_sealed_daily_archive_for_raw_removal(
           log_fn=log_fn,
       )
       sealed_path = zst_path
+      sealed_readable, members_sealed = _scan_compressed_archive_members_and_readable(
+          sealed_path,
+      )
+      if not sealed_readable or members_sealed != members_tar:
+        if log_fn:
+          log_fn(
+              "Skipping removal: auto-seal member mismatch for %s "
+              "(tar count=%s sealed count=%s)"
+              % (sealed_path, len(members_tar), len(members_sealed)),
+              flush=True,
+          )
+        return False, None
     except (OSError, subprocess.CalledProcessError) as exc:
       if log_fn:
         log_fn(
@@ -569,15 +576,11 @@ def replace_corrupt_tar_from_compressed_backup(
   backup_path = zst_path if os.path.isfile(zst_path) else gz_path
   if not backup_path or not os.path.isfile(backup_path):
     return True
-  try:
-    with file_write_lock(backup_path):
-      if backup_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX):
-        zstd_decompress_verbose(backup_path, zstd_threads)
-      else:
-        zstd_gzip_decompress_verbose(backup_path, zstd_threads)
-    return os.path.isfile(tar_path)
-  except (OSError, subprocess.CalledProcessError):
-    return os.path.isfile(tar_path)
+  return decompress_compressed_to_tar(
+      backup_path,
+      tar_path,
+      zstd_threads,
+  )
 
 
 def replace_corrupt_tar_from_gzip_backup(tar_path, gz_path, zstd_threads):
@@ -807,12 +810,14 @@ def remove_verified_uncompressed_daily_tars(
     *,
     log_fn=log_print,
     remaining_raw_by_gz=None,
+    force_remove_uncompressed_tar=False,
 ):
   """Remove ``YYYY-MM-DD.tar`` only after tar/tar.gz verification succeeds.
 
   Called after ``remove_verified_archived_raw_files`` on every archive maintenance
   pass. Skips a day when ``remaining_raw_by_gz`` still lists closed raw stats for
-  that calendar day (filesystem gate; not the DB head-ingest gate).
+  that calendar day (filesystem gate; not the DB head-ingest gate), unless
+  ``force_remove_uncompressed_tar`` is true (startup maintenance only).
 
   When ``archive_keep_uncompressed_tar`` is false, ``atomic_seal_tar_to_zst`` may
   also unlink the ``.tar`` after sealing when no raw stats remain for that day.
@@ -854,7 +859,10 @@ def remove_verified_uncompressed_daily_tars(
       continue
     success_count += 1
     tar_path = tar_by_gz[gz_path]
-    if daily_gz_has_remaining_raw_stats(gz_path, remaining_raw_by_gz):
+    if (
+        not force_remove_uncompressed_tar
+        and daily_gz_has_remaining_raw_stats(gz_path, remaining_raw_by_gz)
+    ):
       if log_fn:
         log_fn(
             "Skipping removal of verified uncompressed tar (raw stats still "
@@ -1038,13 +1046,13 @@ def iter_tar_file_tasks(tar_path):
     try:
       if os.path.exists(tar_out):
         os.remove(tar_out)
-      if backup_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX):
-        zstd_decompress_verbose(backup_path, archive_zstd_thread_count)
-      else:
-        zstd_gzip_decompress_verbose(backup_path, archive_zstd_thread_count)
-      return True
-    except (OSError, subprocess.CalledProcessError):
+    except OSError:
       return False
+    return decompress_compressed_to_tar(
+        backup_path,
+        tar_out,
+        archive_zstd_thread_count,
+    )
 
   try:
     yield from _iter_members()
@@ -1162,7 +1170,10 @@ def drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_print):
   equal, gz_members, zst_members = compare_compressed_archive_members(
       gz_path, zst_path,
   )
-  if equal:
+  if (
+      equal
+      and sum_member_bytes(gz_members) == sum_member_bytes(zst_members)
+  ):
     try:
       with file_write_lock(gz_path):
         os.remove(gz_path)
@@ -1199,6 +1210,7 @@ def atomic_seal_tar_to_zst(
     keep_uncompressed_tar,
     log_fn=log_print,
     remaining_raw_by_gz=None,
+    force_remove_uncompressed_tar=False,
 ):
   """Compress ``tar_path`` to ``zst_path`` using temp file, ``zstd -t``, ``os.replace``."""
   if not os.path.isfile(tar_path):
@@ -1213,12 +1225,39 @@ def atomic_seal_tar_to_zst(
     pass
   try:
     with file_write_lock(tar_path):
+      if os.path.isfile(zst_path):
+        existing_ok, existing_members = _scan_compressed_archive_members_and_readable(
+            zst_path,
+        )
+        if existing_ok:
+          tar_members = get_existing_archive_members(tar_path)
+          if len(existing_members) > len(tar_members):
+            if log_fn:
+              log_fn(
+                  "Seal refused: existing zst has more members than tar "
+                  "(zst=%s tar=%s): %s"
+                  % (len(existing_members), len(tar_members), zst_path),
+                  flush=True,
+              )
+            return
+          if sum_member_bytes(existing_members) > sum_member_bytes(tar_members):
+            if log_fn:
+              log_fn(
+                  "Seal refused: existing zst byte sum exceeds tar "
+                  "(zst=%s tar=%s): %s"
+                  % (
+                      sum_member_bytes(existing_members),
+                      sum_member_bytes(tar_members),
+                      zst_path,
+                  ),
+                  flush=True,
+              )
+            return
       zstd_compress_tar_to_file(
           tar_path,
           tmp_zst,
           num_threads,
           compress_level,
-          long_enabled=cfg.get_archive_zstd_long(),
       )
       zstd_test(tmp_zst, num_threads)
       with file_write_lock(zst_path):
@@ -1236,7 +1275,10 @@ def atomic_seal_tar_to_zst(
   if keep_uncompressed_tar:
     if log_fn:
       log_fn("Sealed archive retaining uncompressed tar: %s" % tar_path, flush=True)
-  elif daily_gz_has_remaining_raw_stats(zst_key, remaining_raw_by_gz):
+  elif (
+      not force_remove_uncompressed_tar
+      and daily_gz_has_remaining_raw_stats(zst_key, remaining_raw_by_gz)
+  ):
     if log_fn:
       log_fn(
           "Sealed archive retaining uncompressed tar (raw stats still present "
@@ -1286,6 +1328,7 @@ def seal_dirty_daily_archives(
     seal_immediately_if_dirty=False,
     log_fn=log_print,
     remaining_raw_by_gz=None,
+    force_remove_uncompressed_tar=False,
 ):
   """Seal every dirty ``YYYY-MM-DD.tar`` under ``daily_archive_dir`` per policy."""
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
@@ -1311,6 +1354,7 @@ def seal_dirty_daily_archives(
           keep_uncompressed_tar,
           log_fn=log_fn,
           remaining_raw_by_gz=remaining_raw_by_gz,
+          force_remove_uncompressed_tar=force_remove_uncompressed_tar,
       )
       drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_fn)
     except (subprocess.CalledProcessError, RuntimeError) as exc:

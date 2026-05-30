@@ -512,22 +512,28 @@ def test_supervisor_runs_startup_archive_maintenance_when_daily_tars_above_thres
   shutdown_requested[0] = False
   try:
     events = []
+    seal_kwargs = []
+    tar_removal_kwargs = []
 
     def fake_rescan(*_a, **_k):
       events.append("rescan")
       return []
 
+    def fake_seal(*a, **k):
+      events.append("maintenance")
+      seal_kwargs.append(k)
+
+    def fake_tar_removal(*a, **k):
+      events.append("tar_removal")
+      tar_removal_kwargs.append(k)
+
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
     monkeypatch.setattr(st, "_count_daily_tars", lambda *_a, **_k: 4)
-    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: events.append("maintenance"))
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", fake_seal)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
-    monkeypatch.setattr(
-        st,
-        "remove_verified_uncompressed_daily_tars",
-        lambda *a, **k: events.append("tar_removal"),
-    )
+    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", fake_tar_removal)
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
@@ -556,6 +562,9 @@ def test_supervisor_runs_startup_archive_maintenance_when_daily_tars_above_thres
         "tar_removal",
         "rescan",
     ]
+    assert all(k.get("force_remove_uncompressed_tar") is True for k in seal_kwargs[:1])
+    assert all(k.get("force_remove_uncompressed_tar") is True for k in tar_removal_kwargs[:1])
+    assert seal_kwargs[1].get("force_remove_uncompressed_tar") is not True
   finally:
     shutdown_requested[0] = False
 

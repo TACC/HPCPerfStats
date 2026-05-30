@@ -10,10 +10,12 @@ from collections.abc import Iterator
 from typing import BinaryIO
 
 from hpcperfstats.dbload.archive_compress import (
-    ARCHIVE_ZSTD_LONG_FLAG,
-    zstd_long_flags_for_bytes,
-    zstd_use_long_for_path,
+    DAILY_ARCHIVE_GZ_SUFFIX,
+    DAILY_ARCHIVE_ZST_SUFFIX,
+    detect_compressed_format,
+    zstd_long_flags,
 )
+from hpcperfstats.file_locking import file_write_lock
 from hpcperfstats.print_utils import log_print
 
 _GZIP_FORMAT = ("--format=gzip",)
@@ -43,14 +45,103 @@ def _thread_args(thread_count: int) -> list[str]:
   return ["-T%d" % max(1, int(thread_count))]
 
 
-def _long_args_for_path(path: str, use_long: bool) -> list[str]:
-  if use_long and zstd_use_long_for_path(path, True):
-    return [ARCHIVE_ZSTD_LONG_FLAG]
-  return []
+def _verify_uncompressed_tar_readable(tar_path: str) -> bool:
+  tar_bin = shutil.which("tar") or "/bin/tar"
+  try:
+    result = subprocess.run(
+        [tar_bin, "tf", tar_path],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+  except (OSError, subprocess.SubprocessError):
+    return False
 
 
-def _long_args_for_bytes(byte_count: int, long_enabled: bool) -> list[str]:
-  return zstd_long_flags_for_bytes(byte_count, long_enabled)
+def _decompress_to_path(
+    compressed_path: str,
+    output_path: str,
+    thread_count: int,
+) -> None:
+  fmt = detect_compressed_format(compressed_path)
+  cmd = [
+      zstd_executable(),
+      "-d",
+      "-f",
+      *_thread_args(thread_count),
+      "-q",
+      "-o",
+      output_path,
+  ]
+  if fmt == "zst":
+    cmd.extend(zstd_long_flags())
+    cmd.append(compressed_path)
+  elif fmt == "gz":
+    cmd.extend(_GZIP_FORMAT)
+    cmd.append(compressed_path)
+  else:
+    raise ValueError("unsupported compressed archive format: %s" % compressed_path)
+  result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+  if result.returncode != 0:
+    raise subprocess.CalledProcessError(
+        result.returncode,
+        cmd,
+        output=result.stdout,
+        stderr=result.stderr,
+    )
+
+
+def decompress_compressed_to_tar(
+    compressed_path: str,
+    tar_path: str,
+    thread_count: int,
+    *,
+    remove_compressed: bool = True,
+) -> bool:
+  """Decompress to a verified sibling ``.tar``; unlink compressed only on success."""
+  if not compressed_path or not os.path.isfile(compressed_path):
+    return False
+  tmp_path = "%s.decomp.tmp" % tar_path
+  try:
+    if os.path.exists(tmp_path):
+      os.remove(tmp_path)
+  except OSError:
+    pass
+  try:
+    _decompress_to_path(compressed_path, tmp_path, thread_count)
+  except (OSError, subprocess.CalledProcessError, ValueError):
+    try:
+      if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    except OSError:
+      pass
+    return False
+  if not _verify_uncompressed_tar_readable(tmp_path):
+    try:
+      if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    except OSError:
+      pass
+    return False
+  try:
+    with file_write_lock(tar_path):
+      os.replace(tmp_path, tar_path)
+  except OSError:
+    try:
+      if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    except OSError:
+      pass
+    return False
+  if remove_compressed:
+    try:
+      with file_write_lock(compressed_path):
+        if os.path.isfile(compressed_path):
+          os.remove(compressed_path)
+    except OSError:
+      return False
+  return True
 
 
 def _wait_decompress_proc(proc: subprocess.Popen, args: list) -> None:
@@ -81,58 +172,28 @@ def _decompress_stdout(
 def zstd_decompress_verbose(
     zst_path: str,
     thread_count: int,
-    *,
-    use_long: bool | None = None,
 ) -> subprocess.CompletedProcess:
-  """In-place ``zstd -d`` on ``.zst``; log stdout/stderr."""
-  if use_long is None:
-    use_long = zstd_use_long_for_path(zst_path, True)
-  cmd = [
-      zstd_executable(),
-      "-d",
-      "-v",
-      "-f",
-      "--rm",
-      *_thread_args(thread_count),
-      *_long_args_for_path(zst_path, use_long),
-      "-q",
-      zst_path,
-  ]
-  result = subprocess.run(
-      cmd,
-      capture_output=True,
-      text=True,
-      check=False,
-  )
-  if result.stdout:
-    log_print(result.stdout)
-  if result.stderr:
-    log_print(result.stderr)
-  if result.returncode != 0:
-    raise subprocess.CalledProcessError(
-        result.returncode,
-        result.args,
-        output=result.stdout,
-        stderr=result.stderr,
-    )
-  return result
+  """Restore sibling ``.tar`` from ``.tar.zst`` using the safe decompress helper."""
+  if not zst_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX):
+    raise ValueError("expected .tar.zst path: %s" % zst_path)
+  tar_path = zst_path[: -len(DAILY_ARCHIVE_ZST_SUFFIX)] + ".tar"
+  ok = decompress_compressed_to_tar(zst_path, tar_path, thread_count)
+  if not ok:
+    raise subprocess.CalledProcessError(1, [zstd_executable(), "-d", zst_path])
+  return subprocess.CompletedProcess([zstd_executable(), "-d", zst_path], 0)
 
 
 @contextlib.contextmanager
 def zstd_decompress_stdout(
     zst_path: str,
     thread_count: int,
-    *,
-    use_long: bool | None = None,
 ) -> Iterator[BinaryIO]:
-  if use_long is None:
-    use_long = zstd_use_long_for_path(zst_path, True)
   cmd = [
       zstd_executable(),
       "-d",
       "-c",
       *_thread_args(thread_count),
-      *_long_args_for_path(zst_path, use_long),
+      *zstd_long_flags(),
       "-q",
       zst_path,
   ]
@@ -143,16 +204,12 @@ def zstd_decompress_stdout(
 def zstd_test(
     zst_path: str,
     thread_count: int,
-    *,
-    use_long: bool | None = None,
 ) -> subprocess.CompletedProcess:
-  if use_long is None:
-    use_long = zstd_use_long_for_path(zst_path, True)
   cmd = [
       zstd_executable(),
       "-t",
       *_thread_args(thread_count),
-      *_long_args_for_path(zst_path, use_long),
+      *zstd_long_flags(),
       "-q",
       zst_path,
   ]
@@ -170,30 +227,14 @@ def zstd_gzip_decompress_verbose(
     gz_path: str,
     thread_count: int,
 ) -> subprocess.CompletedProcess:
-  cmd = [
-      zstd_executable(),
-      "-d",
-      *_GZIP_FORMAT,
-      "-v",
-      "-f",
-      "--rm",
-      *_thread_args(thread_count),
-      "-q",
-      gz_path,
-  ]
-  result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-  if result.stdout:
-    log_print(result.stdout)
-  if result.stderr:
-    log_print(result.stderr)
-  if result.returncode != 0:
-    raise subprocess.CalledProcessError(
-        result.returncode,
-        result.args,
-        output=result.stdout,
-        stderr=result.stderr,
-    )
-  return result
+  """Restore sibling ``.tar`` from legacy ``.tar.gz`` using the safe decompress helper."""
+  if not gz_path.endswith(DAILY_ARCHIVE_GZ_SUFFIX):
+    raise ValueError("expected .tar.gz path: %s" % gz_path)
+  tar_path = gz_path[: -len(DAILY_ARCHIVE_GZ_SUFFIX)] + ".tar"
+  ok = decompress_compressed_to_tar(gz_path, tar_path, thread_count)
+  if not ok:
+    raise subprocess.CalledProcessError(1, [zstd_executable(), "-d", gz_path])
+  return subprocess.CompletedProcess([zstd_executable(), "-d", gz_path], 0)
 
 
 @contextlib.contextmanager
@@ -238,8 +279,6 @@ def zstd_compress_tar_to_file(
     zst_path: str,
     thread_count: int,
     compress_level: int,
-    *,
-    long_enabled: bool,
 ) -> None:
   """Compress ``tar_path`` to ``zst_path`` (caller manages temp/replace)."""
   try:
@@ -254,7 +293,7 @@ def zstd_compress_tar_to_file(
       "-o",
       zst_path,
       "--size-hint=%d" % int(tar_bytes),
-      *_long_args_for_bytes(tar_bytes, long_enabled),
+      *zstd_long_flags(),
       tar_path,
   ]
   result = subprocess.run(cmd, capture_output=True, text=True, check=False)

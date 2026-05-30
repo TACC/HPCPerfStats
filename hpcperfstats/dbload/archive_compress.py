@@ -1,36 +1,16 @@
 """Daily archive path suffixes and zstd long-mode helpers (no Django)."""
 from __future__ import annotations
 
-import os
-
 DAILY_ARCHIVE_ZST_SUFFIX = ".tar.zst"
 DAILY_ARCHIVE_GZ_SUFFIX = ".tar.gz"
 DAILY_ARCHIVE_TAR_SUFFIX = ".tar"
 
-ARCHIVE_ZSTD_LONG_MIN_BYTES = 2 * 1024**3
 ARCHIVE_ZSTD_LONG_FLAG = "--long=31"
 
 
-def zstd_long_flags_for_bytes(
-    byte_count: int,
-    long_enabled: bool,
-) -> list[str]:
-  """Return ``['--long=31']`` when long mode is enabled and size meets threshold."""
-  if not long_enabled:
-    return []
-  if byte_count < ARCHIVE_ZSTD_LONG_MIN_BYTES:
-    return []
+def zstd_long_flags() -> list[str]:
+  """Return ``['--long=31']`` for all native daily ``.tar.zst`` operations."""
   return [ARCHIVE_ZSTD_LONG_FLAG]
-
-
-def zstd_use_long_for_path(path: str, long_enabled: bool) -> bool:
-  """Whether decompress should pass ``--long=31`` for this archive path."""
-  if not long_enabled:
-    return False
-  try:
-    return os.path.getsize(path) >= ARCHIVE_ZSTD_LONG_MIN_BYTES
-  except OSError:
-    return False
 
 
 def detect_compressed_format(path: str) -> str | None:
@@ -66,6 +46,8 @@ def compressed_sibling_paths(tar_path: str) -> tuple[str, str]:
 
 def daily_compressed_path_for_date(tgz_archive_dir: str, file_date) -> str:
   """Canonical sealed path ``.../YYYY-MM-DD.tar.zst``."""
+  import os
+
   return os.path.join(
       tgz_archive_dir,
       file_date.strftime("%Y-%m-%d") + DAILY_ARCHIVE_ZST_SUFFIX,

@@ -173,7 +173,7 @@ daily_archive_dir  = %(data_dir)s/daily_archive
 # archive_seal_idle_seconds = 60
 # archive_zstd_threads = 8
 # archive_zstd_level = 7
-# archive_zstd_long = yes
+# Native .tar.zst always uses zstd --long=31 (not configurable).
 # archive_maintenance_interval_seconds = 28800
 # Before raising archive_zstd_level above 9, benchmark a representative daily .tar:
 # zstd -b3 -e12 -T0 -S -- ./YYYY-MM-DD.tar

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; zstd seal to ``.tar.zst`` and raw-file removal on ``archive_maintenance_interval_seconds``, default 8h). Runs in parallel with configurable chunk size.
 
-Archive maintenance (on maintenance interval and when idle) seals dirty daily tars to ``.tar.zst``, removes verified raw stats (DB head-ingest gate when enabled), then removes uncompressed ``.tar`` siblings only when no closed raw stats remain for that calendar day. Append and raw delete stay DB-gated; ``.tar`` unlink uses filesystem presence only.
+Archive maintenance (on maintenance interval and when idle) seals dirty daily tars to ``.tar.zst``, removes verified raw stats (DB head-ingest gate when enabled), then removes uncompressed ``.tar`` siblings when no closed raw stats remain for that calendar day (startup maintenance removes verified ``.tar`` after seal even when raw stats remain). Append and raw delete stay DB-gated; scheduled ``.tar`` unlink uses filesystem presence only.
 
 When the ingest queue is empty, runs a **full** archive maintenance pass (dedupe cadence on idle) **before** rescanning for new stats files. After a rescan still finds nothing pending, it sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exits the loop iteration (continuous mode repeats).
 
@@ -61,10 +61,7 @@ from hpcperfstats.dbload.archive_compress import (
     daily_tar_path_from_compressed,
     detect_compressed_format,
 )
-from hpcperfstats.dbload.zstd_cli import (
-    zstd_decompress_verbose,
-    zstd_gzip_decompress_verbose,
-)
+from hpcperfstats.dbload.zstd_cli import decompress_compressed_to_tar
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.shutdown_utils import (
     shutdown_requested,
@@ -834,29 +831,31 @@ def _insert_rows_individually(
 
 
 def _decompress_compressed_archive(archive_compressed_path):
-  """Decompress ``.tar.zst`` or legacy ``.tar.gz`` to sibling ``.tar``. No-op if missing."""
-  if not archive_compressed_path or not os.path.exists(archive_compressed_path):
+  """Decompress ``.tar.zst`` or legacy ``.tar.gz`` to sibling ``.tar``.
+
+  Returns True when a verified sibling ``.tar`` exists afterward.
+  """
+  if not archive_compressed_path or not os.path.isfile(archive_compressed_path):
     zst_path, gz_path = compressed_sibling_paths(
         daily_tar_path_from_compressed(archive_compressed_path or ""),
     )
-    if os.path.exists(zst_path):
+    if os.path.isfile(zst_path):
       archive_compressed_path = zst_path
-    elif os.path.exists(gz_path):
+    elif os.path.isfile(gz_path):
       archive_compressed_path = gz_path
     else:
-      return
-  try:
-    with file_write_lock(archive_compressed_path):
-      if archive_compressed_path.endswith(".tar.zst"):
-        zstd_decompress_verbose(
-            archive_compressed_path, archive_zstd_thread_count,
-        )
-      elif archive_compressed_path.endswith(".tar.gz"):
-        zstd_gzip_decompress_verbose(
-            archive_compressed_path, archive_zstd_thread_count,
-        )
-  except subprocess.CalledProcessError:
-    pass
+      return False
+  tar_path = daily_tar_path_from_compressed(archive_compressed_path)
+  if os.path.isfile(tar_path):
+    return True
+  fmt = detect_compressed_format(archive_compressed_path)
+  if fmt not in ("zst", "gz"):
+    return False
+  return decompress_compressed_to_tar(
+      archive_compressed_path,
+      tar_path,
+      archive_zstd_thread_count,
+  )
 
 
 def _append_to_tar(tar_path, file_paths):
@@ -869,13 +868,19 @@ def _append_to_tar(tar_path, file_paths):
   """
   if not file_paths:
     return
+  tar_exists = os.path.exists(tar_path)
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  if not tar_exists and (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
+    raise RuntimeError(
+        "refusing to create daily tar while sealed archive exists without "
+        "restored sibling: %s" % tar_path,
+    )
   # Amortize subprocess overhead for large archive bursts.
   batch = max(1, int(tar_append_batch_size))
   if len(file_paths) >= 512:
     batch = max(batch, 256)
   elif len(file_paths) >= 128:
     batch = max(batch, 128)
-  tar_exists = os.path.exists(tar_path)
   for off in range(0, len(file_paths), batch):
     chunk = file_paths[off : off + batch]
     present = [p for p in chunk if os.path.lexists(p)]
@@ -952,14 +957,40 @@ def _archive_stats_files_body(archive_info):
   archive_tar_fname = daily_tar_path_from_compressed(archive_fname)
   existing_members = {}
   zst_path, gz_path = compressed_sibling_paths(archive_tar_fname)
+  sealed_exists = os.path.isfile(zst_path) or os.path.isfile(gz_path)
 
   if not os.path.exists(archive_tar_fname):
-    if os.path.exists(zst_path):
-      _decompress_compressed_archive(zst_path)
-    elif os.path.exists(gz_path):
-      _decompress_compressed_archive(gz_path)
-    elif detect_compressed_format(archive_fname):
-      _decompress_compressed_archive(archive_fname)
+    if os.path.isfile(zst_path):
+      if not _decompress_compressed_archive(zst_path):
+        log_print(
+            "ERROR: could not restore daily tar from sealed zst before append; "
+            "leaving raw stats files in place: %s" % zst_path,
+            flush=True,
+        )
+        return False
+    elif os.path.isfile(gz_path):
+      if not _decompress_compressed_archive(gz_path):
+        log_print(
+            "ERROR: could not restore daily tar from sealed gzip before append; "
+            "leaving raw stats files in place: %s" % gz_path,
+            flush=True,
+        )
+        return False
+    elif os.path.isfile(archive_fname) and detect_compressed_format(archive_fname):
+      if not _decompress_compressed_archive(archive_fname):
+        log_print(
+            "ERROR: could not restore daily tar from sealed archive before append; "
+            "leaving raw stats files in place: %s" % archive_fname,
+            flush=True,
+        )
+        return False
+  if not os.path.exists(archive_tar_fname) and sealed_exists:
+    log_print(
+        "ERROR: sealed archive present but daily tar missing after decompress; "
+        "leaving raw stats files in place: %s" % archive_tar_fname,
+        flush=True,
+    )
+    return False
   if os.path.exists(archive_tar_fname):
     existing_members = get_existing_archive_members(archive_tar_fname)
 
@@ -1216,6 +1247,7 @@ def run_sync_timedb_supervisor_loop(
           )
     remaining_raw_by_gz = build_remaining_raw_stats_by_daily_gz(
         directory, host_name_ext, tgz_archive_dir)
+    force_remove_uncompressed_tar = reason == "startup"
     seal_dirty_daily_archives(
         tgz_archive_dir,
         local_tz=local_timezone,
@@ -1226,6 +1258,7 @@ def run_sync_timedb_supervisor_loop(
         seal_immediately_if_dirty=True,
         log_fn=log_print,
         remaining_raw_by_gz=remaining_raw_by_gz,
+        force_remove_uncompressed_tar=force_remove_uncompressed_tar,
     )
     remove_verified_archived_raw_files(
         directory,
@@ -1240,6 +1273,7 @@ def run_sync_timedb_supervisor_loop(
         tgz_archive_dir,
         log_fn=log_print,
         remaining_raw_by_gz=remaining_raw_by_gz,
+        force_remove_uncompressed_tar=force_remove_uncompressed_tar,
     )
     maintenance_last_reason = reason
     log_print(
