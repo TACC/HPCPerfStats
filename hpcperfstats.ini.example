@@ -1,217 +1,353 @@
-# The RMQ and Portal sections have been configured to work for the docker installation. You will only need to edit the Default section and the host_name_ext variable under the Portal section, and we recommend editing just these and performing the installation using our instructions. If you need to edit some variables, please note that a lot of them are tied to the docker yml file.
+# Copy to hpcperfstats.ini — see README Installation (cp hpcperfstats.ini.example hpcperfstats.ini).
 
 [DEFAULT]
-# Short name of your cluster i.e. frontera
-machine		          = cluster_name
+# Short cluster name (used in RMQ queue and host_name_ext interpolation).
+machine = cluster_name
 
-# FQDN suffix for cluster nodes (short-host.FQDN). sync_timedb and archive layout
-# use this: under archive_dir, only immediate subdirs whose names *end with* this
-# string (e.g. c123.frontera.tacc.utexas.edu when host_name_ext is frontera.tacc.utexas.edu) are scanned for stats files.
-host_name_ext      = %(machine)s.domain.edu
+# FQDN suffix for node dirs under archive_dir (dirname must end with this string).
+host_name_ext = %(machine)s.domain.edu
 
-# Path you would like all of HPCPerfStats' data to be stored. It will be the central location where all the file operations occur.
-data_dir 	          = /hpcperfstats/
+# Root directory for HPCPerfStats file data (archive, accounting, logs).
+data_dir = /hpcperfstats/
 
-# FQDN for the web server host, split with commas if multiple. The docker proxy image
-# reads this list at build time into /etc/nginx/hps-proxy-allowed-hosts.inc (included by
-# nginx.conf): nginx only terminates TLS / serves static files / proxies Django for these
-# Host names; other hosts get HTTP 404 (HTTPS mismatched SNI is rejected).
-server 		          = servername.domain.edu, stats.cluster.domain.edu
+# Comma-separated FQDNs for the web/proxy host (TLS allowlist and Django ALLOWED_HOSTS).
+server = servername.domain.edu, stats.cluster.domain.edu
 
-# Scheme used when building browser CORS Origin URLs from ``server`` (production /
-# debug=no only). Defaults to https (nginx TLS termination). Use http only for
-# TLS-off deployments.
+# http or https for CORS origins built from server when debug is off (default https).
 # cors_origin_scheme = https
 
-# Keywords from queues which should be ignored
+# Queue name substrings that exclude jobs from listings (Python list syntax).
 restricted_queue_keywords = ['secure', 'secret']
 
-# Debug Output in the docker logs
-debug                 = True
+# Verbose logging in container logs (yes/true/1 or no).
+debug = True
 
-# This is used to determine if a user (presumably a staff member) can see all jobs
-staff_email_domain   = lab.hpcisgreat.edu
+# Email domain suffix marking staff users who can see all jobs.
+staff_email_domain = lab.hpcisgreat.edu
 
-# The cluster and docker host need to share this timezone.
-# The timezone must come from this list:
-# http://en.wikipedia.org/wiki/List_of_tz_zones_by_name
+# IANA timezone for Django and cluster time alignment.
 timezone = America/Chicago
 
-# Total amount of cores that are available for this application (omit to default to 40).
+# Ini cap on parallel workers (effective cores = min(this, os.cpu_count()); default 40).
 total_cores = 40
 
-# Concurrency caps (optional; see docs/DEPLOY_CONCURRENCY_AND_NUMA.md).
-# Defaults: parallel_db_prefetch_max=4 (API ThreadPoolExecutor + ORM prefetch);
-# summary plot inner aggregate prefetch is hard-capped at 2 threads (summaryplot).
-# max_gunicorn_workers = 8
-# metrics_pool_process_cap = 4
-# (Compose diagnosis baseline: docs/update_metrics_speedup_followup.md — compute phase dominated at default UM_DIAG seed scale.)
-# parallel_db_prefetch_max = 2
-# api_small_executor_max_workers = 2
-# sync_pool_process_cap = 2
-# archive_pool_process_cap = 1
-# metrics_scheduler_prefetch_chunks = 4
-# metrics_scheduler_ready_queue_target = 500
-# metrics_prewarm_workers = 2
-# metrics_scheduler_compute_threads = 2
-# Cost-aware compute batching (0 disables): cap sum of job window seconds and/or one job's window per batch
-# metrics_compute_batch_max_window_s = 0
-# metrics_compute_batch_max_single_job_s = 0
-# metrics_compute_batch_unknown_runtime_s = 172800
-# Prewarm drain budget after each Metrics.run batch (base + per-successful-job, optional ceiling)
-# metrics_prewarm_drain_batch_budget_s = 2.0
-# metrics_prewarm_drain_per_job_s = 0.5
-# metrics_prewarm_drain_batch_budget_max_s = 60
-# Watchdog downshift for adaptive batch cap (total 0 = metrics-only)
-# metrics_compute_watchdog_s = 120
-# metrics_compute_total_watchdog_s = 0
-# Deferred not-ready backoff (strict readiness)
-# metrics_deferred_not_ready_retry_s = 10
-# metrics_deferred_not_ready_max_retries = 30
-# metrics_deferred_not_ready_max_age_s = 900
-# metrics_deferred_not_ready_quarantine_s = 300
-# sync_ingest_queue_max_size = 500
-# sync_archive_queue_max_size = 250
-# sync_checkpoint_flush_batch_size = 50
-# Max distinct host_data timestamps cached per duplicate-detection window (sync_timedb)
-# sync_host_itimes_cache_max_timestamps_per_entry = 100000
-# sync_enable_cpuset_priority_budget = yes
-# pipeline_overlap_mode = balanced
-# metrics_ingest_priority_scale = 0.75
-# metrics_min_processes = 1
-# sync_budget_ingest_ratio = 0.60
-# sync_budget_archive_ratio = 0.15
-# sync_budget_metrics_ratio = 0.20
-# sync_budget_reserve_ratio = 0.05
-# sync_budget_min_metrics_percent = 10
-# sync_budget_min_archive_percent = 10
-# sync_enable_overprovision_mode = no
-# sync_budget_overcommit_factor = 1.00
-# sync_overprovision_ingest_multiplier = 1.00
-# sync_overprovision_archive_multiplier = 1.00
-# sync_overprovision_metrics_multiplier = 1.00
-# sync_db_writer_pool_multiplier = 0.50
-# sync_db_writer_pool_cap =
-# sync_adaptive_dispatch_enabled = yes
-# sync_dispatch_burst_factor = 2.0
-# sync_dispatch_archive_backoff_ratio = 0.50
-# sync_dispatch_step_size = 8
-# Django DB: persistent connection lifetime (seconds) and PostgreSQL session timeouts (ms)
-# db_conn_max_age = 90
-# db_statement_timeout_ms = 120000
-# db_idle_in_transaction_session_timeout_ms = 300000
-# cpuset_pin_min_total_cores = 32
-# cpuset_pin_min_cores_per_node = 16
-# numa_pin_max_nodes_auto = 16
-# pin_proxy_in_compose = no
-# update_metrics readiness: max jids per proxy host_data aggregate (default 48, min 8)
-# metrics_proxy_reject_jid_batch_size = 48
-# Skip job detail / plot prewarm after metrics (catch-up / diagnosis only; job pages colder until prewarm elsewhere)
-# metrics_scheduler_skip_prewarm = no
-# web_numa_node =
-# pipeline_numa_node =
-
-# Django SECRET_KEY (do not commit real keys; set in ini or env for production)
+# Django SECRET_KEY; set a long random value in production.
 secret_key = change-me-to-a-long-random-string
 
-[OAUTH2]
-# oauth client id
-client_id =
+# Upper bound for Gunicorn workers when WEB_CONCURRENCY is unset (default 32).
+# max_gunicorn_workers = 32
 
-# oauth secret key
-client_key =
+# Cap on update_metrics multiprocessing pool size (default 32).
+# metrics_pool_process_cap = 32
 
-# Base OAUTH URL
-oauth_base_url = https://tacc.tapis.io/v3
+# Max threads for API prefetch and default small executor (default 4).
+# parallel_db_prefetch_max = 4
 
-# URL for authorization
-authorize_url     = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redirect_uri=%%s&response_type=code&state=%%s
+# Override API ThreadPoolExecutor size; else parallel_db_prefetch_max (default 4).
+# api_small_executor_max_workers = 4
 
+# Django CONN_MAX_AGE seconds; env DJANGO_CONN_MAX_AGE overrides (default 90).
+# db_conn_max_age = 90
 
-[RMQ]
-# Rabbit MQ server (pre-configured for container installation)
-rmq_server 	       = rabbitmq
+# PostgreSQL statement_timeout ms per session; 0 omits (default 120000).
+# db_statement_timeout_ms = 120000
 
-# Rabbit MQ queue (pre-configured for container installation)
-rmq_queue 	       = %(machine)s
+# PostgreSQL idle_in_transaction_session_timeout ms; 0 omits (default 300000).
+# db_idle_in_transaction_session_timeout_ms = 300000
 
+# Pipeline overlap: balanced or ingest_priority (default balanced).
+# pipeline_overlap_mode = balanced
 
-[SYSLOG]
-# Comma- or line-separated IPv4 CIDRs allowed to send syslog to the pipeline on
-# port 514 (TCP/UDP). When blank or [SYSLOG] omitted, all IPv4 sources are allowed
-# (backward compatible). IPv6-only entries are ignored until syslog-ng filter
-# support is extended.
-# allow_from = 10.0.0.0/8, 192.168.50.0/24
-#
-# listen_tcp = yes
-# listen_udp = yes
+# Metrics pool scale during ingest_priority overlap (default 0.75).
+# metrics_ingest_priority_scale = 0.75
 
+# Minimum metrics processes under ingest_priority (default 1).
+# metrics_min_processes = 1
 
-[PORTAL]
-# Path where all of the slurm logs for job accounting data will be stored (pre-configured for container installation)
-acct_path          = %(data_dir)s/accounting
+# Metrics scheduler: strict_date, global_fifo, or global_priority (default global_priority).
+# metrics_scheduler_mode = global_priority
 
-# Raw node stats: one subdirectory per host; dirname must end with DEFAULT.host_name_ext
-archive_dir	       = %(data_dir)s/archive
+# Prefetch chunk descriptors for global scheduler (default 8).
+# metrics_scheduler_prefetch_chunks = 8
 
+# Ready-jid queue depth target before compute (default 2000).
+# metrics_scheduler_ready_queue_target = 2000
 
+# Plot prewarm: inline or pipeline_required (default pipeline_required).
+# metrics_plot_prewarm_mode = pipeline_required
 
-# Name of the postgres database (pre-configured for container installation)
-dbname             = hpcperfstats
+# Skip job detail/plot prewarm after metrics for catch-up (default no).
+# metrics_scheduler_skip_prewarm = no
 
-# Path where all of the aggregate, raw Rabbit MQ data is stored, which can be used to potentially recreate the database. (pre-configured for container installation)
-daily_archive_dir  = %(data_dir)s/daily_archive
+# Thread workers for plot prewarm stage (default 4).
+# metrics_prewarm_workers = 4
 
-# Deferred compression: sync_timedb appends to YYYY-MM-DD.tar; zstd seals to
-# YYYY-MM-DD.tar.zst. Verified raw removal runs on archive_maintenance_interval_seconds
-# (default 8 hours). Sealed archives are YYYY-MM-DD.tar.zst.
-# Uncompressed YYYY-MM-DD.tar is removed only when no closed raw stats remain for
-# that calendar day. Legacy .tar.gz is read via zstd --format=gzip and dropped after
-# member-map equivalence with .tar.zst. Raw append/delete still require head timestamp
-# in DB when sync_archive_require_db_head_ingest is on (default).
-# archive_keep_uncompressed_tar = yes
-# archive_seal_idle_seconds = 60
-# archive_zstd_threads = 8
-# archive_zstd_level = 7
-# Native .tar.zst always uses zstd --long=31 (not configurable).
-# archive_maintenance_interval_seconds = 28800
-# Before raising archive_zstd_level above 9, benchmark a representative daily .tar:
-# zstd -b3 -e12 -T0 -S -- ./YYYY-MM-DD.tar
-# Require first stats timestamp in DB before daily tar append or raw file removal (default yes).
+# Max queued async prewarm jobs before backpressure (default 32).
+# metrics_prewarm_backlog_cap = 32
+
+# Seconds to wait for async prewarm slot before inline fallback (default 0.25).
+# metrics_prewarm_backpressure_wait_s = 0.25
+
+# Base seconds to drain prewarm after each metrics batch (default 2.0).
+# metrics_prewarm_drain_batch_budget_s = 2.0
+
+# Ceiling for scaled prewarm drain budget seconds (default 60).
+# metrics_prewarm_drain_batch_budget_max_s = 60
+
+# Extra drain seconds per successful jid in batch (default 0.5).
+# metrics_prewarm_drain_per_job_s = 0.5
+
+# Prewarm retry attempts per plot task (default 2).
+# metrics_prewarm_retry_attempts = 2
+
+# Threads for concurrent per-jid metrics+prewarm in scheduler (default 4).
+# metrics_scheduler_compute_threads = 4
+
+# imap_unordered poll timeout in Metrics.run seconds (default 5).
+# metrics_run_poll_timeout_s = 5
+
+# Max no-progress seconds in Metrics.run before abort (default 600).
+# metrics_run_stall_timeout_s = 600
+
+# statement_timeout ms for metrics persistence (default 120000).
+# metrics_persist_statement_timeout_ms = 120000
+
+# lock_timeout ms for metrics persistence (default 10000).
+# metrics_persist_lock_timeout_ms = 10000
+
+# Max jids per proxy host_data readiness batch on PostgreSQL (default 48).
+# metrics_proxy_reject_jid_batch_size = 48
+
+# Max sum of job window seconds per compute batch; 0 disables (default 0).
+# metrics_compute_batch_max_window_s = 0
+
+# Max seconds for one job in a batch; 0 disables (default 0).
+# metrics_compute_batch_max_single_job_s = 0
+
+# Assumed window seconds when job times unknown (default 172800).
+# metrics_compute_batch_unknown_runtime_s = 172800
+
+# Watchdog on metrics phase wall time per batch seconds (default 120).
+# metrics_compute_watchdog_s = 120
+
+# Watchdog on full batch wall; 0 uses metrics-only watchdog (default 0).
+# metrics_compute_total_watchdog_s = 0
+
+# Retry interval for deferred not-ready jids seconds (default 10).
+# metrics_deferred_not_ready_retry_s = 10
+
+# Max retries for deferred not-ready jids (default 30).
+# metrics_deferred_not_ready_max_retries = 30
+
+# Max age before giving up on deferred jid seconds (default 900).
+# metrics_deferred_not_ready_max_age_s = 900
+
+# Quarantine time for repeatedly deferred jid seconds (default 300).
+# metrics_deferred_not_ready_quarantine_s = 300
+
+# Cap sync_timedb ingest pool processes when set.
+# sync_pool_process_cap =
+
+# Cap sync_timedb archive pool processes when set.
+# archive_pool_process_cap =
+
+# Enable cpuset-aware S/A/M budget for sync and metrics (default yes).
+# sync_enable_cpuset_priority_budget = yes
+
+# Fraction of effective cores for sync ingest cap (default 0.60).
+# sync_budget_ingest_ratio = 0.60
+
+# Fraction for sync archive cap (default 0.15).
+# sync_budget_archive_ratio = 0.15
+
+# Fraction for metrics cap (default 0.20).
+# sync_budget_metrics_ratio = 0.20
+
+# Reserve fraction for maintenance jitter (default 0.05).
+# sync_budget_reserve_ratio = 0.05
+
+# Minimum metrics percent floor (default 10).
+# sync_budget_min_metrics_percent = 10
+
+# Minimum archive percent floor (default 10).
+# sync_budget_min_archive_percent = 10
+
+# Bounded overprovision mode for budget derivation (default no).
+# sync_enable_overprovision_mode = no
+
+# Overcommit factor for S+A+M+R cap (default 1.00).
+# sync_budget_overcommit_factor = 1.00
+
+# Ingest multiplier when overprovision on (default 1.00).
+# sync_overprovision_ingest_multiplier = 1.00
+
+# Archive multiplier when overprovision on (default 1.00).
+# sync_overprovision_archive_multiplier = 1.00
+
+# Metrics multiplier when overprovision on (default 1.00).
+# sync_overprovision_metrics_multiplier = 1.00
+
+# Max in-memory ingest work queue size (default 2000).
+# sync_ingest_queue_max_size = 2000
+
+# Max in-memory archive work queue size (default 1000).
+# sync_archive_queue_max_size = 1000
+
+# Archive task retries before dead-letter behavior (default 5).
+# sync_archive_retry_max_attempts = 5
+
+# Base archive retry backoff seconds (default 1).
+# sync_archive_retry_backoff_base_seconds = 1
+
+# Max archive retry backoff seconds (default 60).
+# sync_archive_retry_backoff_max_seconds = 60
+
+# Processed-file checkpoint writes per batch (default 100).
+# sync_checkpoint_flush_batch_size = 100
+
+# Max DB timestamps cached per duplicate-detection window (default 100000).
+# sync_host_itimes_cache_max_timestamps_per_entry = 100000
+
+# Poll interval for sync_timedb pool waits seconds (default 5).
+# sync_pool_poll_timeout_s = 5
+
+# Write-lock shard count for sync ingest; auto if unset.
+# sync_write_lock_shards =
+
+# Parse-worker to DB-writer queue pipeline (default no).
+# sync_enable_db_writer_pipeline = no
+
+# DB-writer pool size as fraction of ingest pool (default 0.50).
+# sync_db_writer_pool_multiplier = 0.50
+
+# Hard cap on DB-writer pool processes when set.
+# sync_db_writer_pool_cap =
+
+# Adaptive burst dispatch for sync queues (default yes).
+# sync_adaptive_dispatch_enabled = yes
+
+# Dispatch burst factor (default 2.0).
+# sync_dispatch_burst_factor = 2.0
+
+# Archive dispatch backoff ratio (default 0.50).
+# sync_dispatch_archive_backoff_ratio = 0.50
+
+# Dispatch step size (default 8).
+# sync_dispatch_step_size = 8
+
+# Ingest-first durability semantics (default no).
+# sync_enable_ingest_first_durability_mode = no
+
+# Require head host_data row before tar append or raw delete (default yes).
 # sync_archive_require_db_head_ingest = yes
 
-# Django engine backend (pre-configured for container installation)
-engine_name        = django.db.backends.postgresql 
+# Minimum total_cores before auto NUMA pinning in compose (default 32).
+# cpuset_pin_min_total_cores = 32
 
-# Postgres username (pre-configured for container installation)
-username           = hpcperfstats
+# Minimum cores per node for auto NUMA pinning (default 16).
+# cpuset_pin_min_cores_per_node = 16
 
-# Postgres password (pre-configured for container installation)
-password           = hpcperfstats
+# Max NUMA nodes for auto pin without explicit ids (default 16).
+# numa_pin_max_nodes_auto = 16
 
-# Database host (pre-configured for container installation)
-host               = db
+# Also pin proxy container to web NUMA node (default no).
+# pin_proxy_in_compose = no
 
-# Database port (pre-configured for container installation)
-port               = 5432
+# Explicit sysfs NUMA node id for web+proxy when set.
+# web_numa_node =
 
+# Explicit sysfs NUMA node id for pipeline when set.
+# pipeline_numa_node =
+
+[OAUTH2]
+# OAuth2 client id from your identity provider.
+client_id =
+
+# OAuth2 client secret.
+client_key =
+
+# Tenant base URL for token and API calls.
+oauth_base_url = https://tacc.tapis.io/v3
+
+# Browser authorization URL template (uses client_id and redirect placeholders).
+authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redirect_uri=%%s&response_type=code&state=%%s
+
+[RMQ]
+# RabbitMQ hostname (compose service name in default install).
+rmq_server = rabbitmq
+
+# Queue name for monitor payloads (interpolates machine).
+rmq_queue = %(machine)s
+
+[SYSLOG]
+# Comma-separated IPv4 CIDRs allowed on port 514; empty allows all IPv4.
+# allow_from = 10.0.0.0/8, 192.168.50.0/24
+
+# Listen for remote syslog on TCP 514 (default yes).
+# listen_tcp = yes
+
+# Listen for remote syslog on UDP 514 (default yes).
+# listen_udp = yes
+
+[PORTAL]
+# Directory for Slurm accounting logs.
+acct_path = %(data_dir)s/accounting
+
+# Per-host raw stats tree; subdir names must end with host_name_ext.
+archive_dir = %(data_dir)s/archive
+
+# PostgreSQL database name.
+dbname = hpcperfstats
+
+# Daily sealed monitor archive directory.
+daily_archive_dir = %(data_dir)s/daily_archive
+
+# Keep uncompressed YYYY-MM-DD.tar after sealing to .tar.zst (default yes).
+# archive_keep_uncompressed_tar = yes
+
+# Seconds idle before sealing today's tar; prior days seal immediately (default 60).
+# archive_seal_idle_seconds = 60
+
+# zstd -T thread count for seal and decompress (default 8).
+# archive_zstd_threads = 8
+
+# zstd compression level 1-19 for .tar.zst (default 7; benchmark before raising above 9).
+# archive_zstd_level = 7
+
+# Seconds between seal maintenance and verified raw removal (default 28800).
+# archive_maintenance_interval_seconds = 28800
+
+# Django database engine backend.
+engine_name = django.db.backends.postgresql
+
+# PostgreSQL username.
+username = hpcperfstats
+
+# PostgreSQL password.
+password = hpcperfstats
+
+# PostgreSQL host (compose service name in default install).
+host = db
+
+# PostgreSQL port.
+port = 5432
 
 [CACHE]
-# Redis URL for ORM/view caching (e.g. redis://host:port/db)
+# Redis URL for Django cache (compose default uses redis service).
 redis_location = redis://redis:6379/1
 
 [XALT]
-# Name of XALT engine
-xalt_engine        = 
+# XALT database engine when XALT integration is enabled.
+xalt_engine =
 
-# XALT name
-xalt_name          =
+# XALT database name.
+xalt_name =
 
-# XALT username
-xalt_user          =
+# XALT database user.
+xalt_user =
 
-# XALT password
-xalt_password      =
+# XALT database password.
+xalt_password =
 
-# XALT host
-xalt_host          =
+# XALT database host.
+xalt_host =

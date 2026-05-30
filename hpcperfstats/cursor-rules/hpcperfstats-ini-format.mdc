@@ -1,0 +1,55 @@
+---
+description: Format and wiring contract for hpcperfstats.ini and hpcperfstats.ini.example
+globs: HPCPerfStats/hpcperfstats.ini.example,HPCPerfStats/hpcperfstats.ini,HPCPerfStats/hpcperfstats/conf_parser.py
+alwaysApply: false
+---
+
+# hpcperfstats.ini Format And Wiring
+
+Canonical example: **`HPCPerfStats/hpcperfstats.ini.example`**. Runtime path is **`/home/hpcperfstats/hpcperfstats.ini`** (image build or operator copy); see **`immutable-image-ini-policy.mdc`**.
+
+## Layout (mandatory)
+
+- One **`#` comment line** immediately above each key (active or commented optional).
+- **Blank line** between each comment+key block.
+- Use **`key = value`** with single spaces (no wide tab alignment).
+- **No** multi-paragraph essays, install walkthroughs, or external URLs in the ini file. Put prose in **`README.md`** or **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**.
+
+Example:
+
+```ini
+# One-line description of this key (include default when helpful).
+option_name = value
+
+# Next key comment.
+next_option = value
+```
+
+## Section placement
+
+- Each option must live in the **same `[section]`** as its `conf_parser` reader (`cfg.get(section, option)` or `_get(section, option)`).
+- Example: **`sync_archive_require_db_head_ingest`** is **`[DEFAULT]`**, not `[PORTAL]`.
+
+## Registry and drift tests
+
+- **`hpcperfstats/conf_parser.py`** → **`INI_OPTION_REGISTRY`**: every ini-backed `(section, option)` pair.
+- **`hpcperfstats/tests/test_hpcperfstats_ini_example.py`**: example must document every registry entry (active or `# key =`) and must not document unknown keys.
+
+## When adding or changing a tunable
+
+In the **same task**:
+
+1. Add or update the getter in **`conf_parser.py`** (or extend an existing reader).
+2. Append **`(section, option)`** to **`INI_OPTION_REGISTRY`**.
+3. Document the key in **`hpcperfstats.ini.example`** (uncommented if required for deploy; `# key = default` if optional).
+4. Run **`pytest hpcperfstats/tests/test_hpcperfstats_ini_example.py`** and relevant **`test_conf_parser.py`** cases.
+
+## Env-only overrides (not ini keys)
+
+Do **not** add ini entries for knobs that are **environment-only** unless you also wire a `conf_parser` reader. Document env vars in **`docs/TESTING.md`** or **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** (for example `HPCPERFSTATS_LARGE_JOB_*`, `WEB_CONCURRENCY`, `HPCPERFSTATS_METRICS_*` overrides).
+
+## Overlap
+
+- **`readme-installation-sync.mdc`** — Installation copy/edit steps for `hpcperfstats.ini`.
+- **`immutable-image-ini-policy.mdc`** — no runtime bind-mount of ini in compose.
+- **`sync-timedb-db-before-archive-contract.mdc`** — `sync_archive_require_db_head_ingest` semantics.

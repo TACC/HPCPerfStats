@@ -13,6 +13,139 @@ _DEFAULT_TOTAL_CORES = "40"
 cfg = None
 _ACTIVE_CONFIG_PATH = None
 
+# Canonical (section, option) pairs read from hpcperfstats.ini. Used by
+# test_hpcperfstats_ini_example drift guards; keep in sync when adding getters.
+INI_OPTION_REGISTRY = (
+    # [DEFAULT] — required for minimal deploy
+    ("DEFAULT", "machine"),
+    ("DEFAULT", "host_name_ext"),
+    ("DEFAULT", "data_dir"),
+    ("DEFAULT", "server"),
+    ("DEFAULT", "restricted_queue_keywords"),
+    ("DEFAULT", "debug"),
+    ("DEFAULT", "staff_email_domain"),
+    ("DEFAULT", "timezone"),
+    ("DEFAULT", "total_cores"),
+    ("DEFAULT", "secret_key"),
+    # [DEFAULT] — optional tuning
+    ("DEFAULT", "cors_origin_scheme"),
+    ("DEFAULT", "max_gunicorn_workers"),
+    ("DEFAULT", "metrics_pool_process_cap"),
+    ("DEFAULT", "parallel_db_prefetch_max"),
+    ("DEFAULT", "api_small_executor_max_workers"),
+    ("DEFAULT", "db_conn_max_age"),
+    ("DEFAULT", "db_statement_timeout_ms"),
+    ("DEFAULT", "db_idle_in_transaction_session_timeout_ms"),
+    ("DEFAULT", "cpuset_pin_min_total_cores"),
+    ("DEFAULT", "cpuset_pin_min_cores_per_node"),
+    ("DEFAULT", "numa_pin_max_nodes_auto"),
+    ("DEFAULT", "pin_proxy_in_compose"),
+    ("DEFAULT", "web_numa_node"),
+    ("DEFAULT", "pipeline_numa_node"),
+    ("DEFAULT", "pipeline_overlap_mode"),
+    ("DEFAULT", "metrics_ingest_priority_scale"),
+    ("DEFAULT", "metrics_min_processes"),
+    ("DEFAULT", "metrics_scheduler_mode"),
+    ("DEFAULT", "metrics_scheduler_prefetch_chunks"),
+    ("DEFAULT", "metrics_scheduler_ready_queue_target"),
+    ("DEFAULT", "metrics_plot_prewarm_mode"),
+    ("DEFAULT", "metrics_scheduler_skip_prewarm"),
+    ("DEFAULT", "metrics_prewarm_workers"),
+    ("DEFAULT", "metrics_prewarm_backlog_cap"),
+    ("DEFAULT", "metrics_prewarm_backpressure_wait_s"),
+    ("DEFAULT", "metrics_prewarm_drain_batch_budget_s"),
+    ("DEFAULT", "metrics_prewarm_drain_batch_budget_max_s"),
+    ("DEFAULT", "metrics_prewarm_drain_per_job_s"),
+    ("DEFAULT", "metrics_prewarm_retry_attempts"),
+    ("DEFAULT", "metrics_scheduler_compute_threads"),
+    ("DEFAULT", "metrics_run_poll_timeout_s"),
+    ("DEFAULT", "metrics_run_stall_timeout_s"),
+    ("DEFAULT", "metrics_persist_statement_timeout_ms"),
+    ("DEFAULT", "metrics_persist_lock_timeout_ms"),
+    ("DEFAULT", "metrics_proxy_reject_jid_batch_size"),
+    ("DEFAULT", "metrics_compute_batch_max_window_s"),
+    ("DEFAULT", "metrics_compute_batch_max_single_job_s"),
+    ("DEFAULT", "metrics_compute_batch_unknown_runtime_s"),
+    ("DEFAULT", "metrics_compute_watchdog_s"),
+    ("DEFAULT", "metrics_compute_total_watchdog_s"),
+    ("DEFAULT", "metrics_deferred_not_ready_retry_s"),
+    ("DEFAULT", "metrics_deferred_not_ready_max_retries"),
+    ("DEFAULT", "metrics_deferred_not_ready_max_age_s"),
+    ("DEFAULT", "metrics_deferred_not_ready_quarantine_s"),
+    ("DEFAULT", "sync_pool_process_cap"),
+    ("DEFAULT", "archive_pool_process_cap"),
+    ("DEFAULT", "sync_enable_cpuset_priority_budget"),
+    ("DEFAULT", "sync_budget_ingest_ratio"),
+    ("DEFAULT", "sync_budget_archive_ratio"),
+    ("DEFAULT", "sync_budget_metrics_ratio"),
+    ("DEFAULT", "sync_budget_reserve_ratio"),
+    ("DEFAULT", "sync_budget_min_metrics_percent"),
+    ("DEFAULT", "sync_budget_min_archive_percent"),
+    ("DEFAULT", "sync_enable_overprovision_mode"),
+    ("DEFAULT", "sync_budget_overcommit_factor"),
+    ("DEFAULT", "sync_overprovision_ingest_multiplier"),
+    ("DEFAULT", "sync_overprovision_archive_multiplier"),
+    ("DEFAULT", "sync_overprovision_metrics_multiplier"),
+    ("DEFAULT", "sync_ingest_queue_max_size"),
+    ("DEFAULT", "sync_archive_queue_max_size"),
+    ("DEFAULT", "sync_archive_retry_max_attempts"),
+    ("DEFAULT", "sync_archive_retry_backoff_base_seconds"),
+    ("DEFAULT", "sync_archive_retry_backoff_max_seconds"),
+    ("DEFAULT", "sync_checkpoint_flush_batch_size"),
+    ("DEFAULT", "sync_host_itimes_cache_max_timestamps_per_entry"),
+    ("DEFAULT", "sync_pool_poll_timeout_s"),
+    ("DEFAULT", "sync_write_lock_shards"),
+    ("DEFAULT", "sync_enable_db_writer_pipeline"),
+    ("DEFAULT", "sync_db_writer_pool_multiplier"),
+    ("DEFAULT", "sync_db_writer_pool_cap"),
+    ("DEFAULT", "sync_adaptive_dispatch_enabled"),
+    ("DEFAULT", "sync_dispatch_burst_factor"),
+    ("DEFAULT", "sync_dispatch_archive_backoff_ratio"),
+    ("DEFAULT", "sync_dispatch_step_size"),
+    ("DEFAULT", "sync_enable_ingest_first_durability_mode"),
+    ("DEFAULT", "sync_archive_require_db_head_ingest"),
+    # [PORTAL]
+    ("PORTAL", "acct_path"),
+    ("PORTAL", "archive_dir"),
+    ("PORTAL", "dbname"),
+    ("PORTAL", "daily_archive_dir"),
+    ("PORTAL", "archive_keep_uncompressed_tar"),
+    ("PORTAL", "archive_seal_idle_seconds"),
+    ("PORTAL", "archive_zstd_threads"),
+    ("PORTAL", "archive_zstd_level"),
+    ("PORTAL", "archive_maintenance_interval_seconds"),
+    ("PORTAL", "engine_name"),
+    ("PORTAL", "username"),
+    ("PORTAL", "password"),
+    ("PORTAL", "host"),
+    ("PORTAL", "port"),
+    # [OAUTH2]
+    ("OAUTH2", "client_id"),
+    ("OAUTH2", "client_key"),
+    ("OAUTH2", "oauth_base_url"),
+    ("OAUTH2", "authorize_url"),
+    # [RMQ]
+    ("RMQ", "rmq_server"),
+    ("RMQ", "rmq_queue"),
+    # [SYSLOG] — section optional; keys documented when section is used
+    ("SYSLOG", "allow_from"),
+    ("SYSLOG", "listen_tcp"),
+    ("SYSLOG", "listen_udp"),
+    # [CACHE] — section optional
+    ("CACHE", "redis_location"),
+    # [XALT]
+    ("XALT", "xalt_engine"),
+    ("XALT", "xalt_name"),
+    ("XALT", "xalt_user"),
+    ("XALT", "xalt_password"),
+    ("XALT", "xalt_host"),
+)
+
+
+def ini_option_registry_set():
+  """Return the set of (section, option) tuples in INI_OPTION_REGISTRY."""
+  return set(INI_OPTION_REGISTRY)
+
 
 def _candidate_config_paths():
   """Return candidate config paths in lookup order.
@@ -216,12 +349,6 @@ def get_archive_zstd_threads():
   _ensure_cfg_loaded()
   raw = cfg.get('PORTAL', 'archive_zstd_threads', fallback='8')
   return max(1, int(raw))
-
-
-  """Gzip format level (1--9) for ``zstd --format=gzip`` when needed."""
-  _ensure_cfg_loaded()
-  raw = cfg.get('PORTAL', 'archive_gzip_level', fallback='8')
-  return max(1, min(9, int(raw)))
 
 
 def get_archive_maintenance_interval_seconds():
