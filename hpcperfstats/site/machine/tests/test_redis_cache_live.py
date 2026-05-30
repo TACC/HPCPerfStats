@@ -43,6 +43,16 @@ def test_redis_cache_roundtrip_dict():
 
 
 @pytest.mark.live_redis
+def test_redis_server_major_version_at_least_8():
+  client = api_module._get_redis_cache_client()
+  assert client is not None
+  info = client.info(section="server")
+  version = info.get("redis_version") or ""
+  major = int(version.split(".", maxsplit=1)[0])
+  assert major >= 8, f"expected Redis 8.x, got redis_version={version!r}"
+
+
+@pytest.mark.live_redis
 def test_get_redis_cache_client_supports_scan():
   client = api_module._get_redis_cache_client()
   assert client is not None

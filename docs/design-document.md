@@ -115,7 +115,7 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 | **web** | Builds from repo `Dockerfile`; runs Django via `services-conf/django_startup.sh`; exposes app port (default host `8000` via `HPCPERFSTATS_WEB_PORT`). Depends on healthy `db` and `redis`. |
 | **pipeline** | Same image as `web`; runs `supervisor_startup.sh` to supervise long-running ingest/processing programs (see §6.2). Uses the **`hpcperfstatsdata`** bind for archive, accounting, daily archive, and **cluster syslog** under **`/hpcperfstats/logs/`** (`docker-compose.app.yaml`). |
 | **db** | TimescaleDB/PostgreSQL 15 image; primary system of record for ingested and derived data. |
-| **redis** | Django cache backend and auxiliary keys (e.g. listend recent-host tracking). |
+| **redis** | Redis Open Source **8.8** (`redis:8.8.0-alpine3.23` in Compose); Django cache backend and auxiliary keys (e.g. listend recent-host tracking). Ephemeral cache only (`appendonly no`). |
 | **rabbitmq** | Broker for monitor→site message delivery. |
 | **proxy** | Nginx TLS/front door; **`docker-compose.yaml`** mounts **`services-conf/nginx.conf`** as **`default.conf`**; image build **`cp`**s **`nginx.conf`** or **`nginx.conf.example`** plus generated **`hps-proxy-allowed-hosts.inc`** from INI (see workspace guardrails). |
 

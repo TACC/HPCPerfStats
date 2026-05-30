@@ -199,6 +199,17 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    Alternatively, add **`vm.overcommit_memory = 1`** to **`/etc/sysctl.conf`** and reboot (or run the **`sysctl -w`** command once). On Docker Desktop for macOS, host **`sysctl`** does not apply to the inner Linux VM; tune there only if your setup exposes it, or treat the warning as informational for small dev stacks.
 
+   **Upgrading the Compose Redis server:** `docker-compose.yaml` pins **Redis Open Source 8.8** (`redis:8.8.0-alpine3.23`). Redis holds only **ephemeral cache** (no persistence volume; `appendonly no`), so upgrading clears cached pages/plots until they are recomputed. On the deployment host:
+
+   ```bash
+   docker compose pull redis
+   docker compose up -d redis
+   docker compose exec redis redis-cli INFO server | grep redis_version
+   docker compose restart web pipeline
+   ```
+
+   Expect `redis_version:8.8.x`. Roll back by restoring the previous image tag in `docker-compose.yaml`, then `pull` / `up -d redis` and restart **web** and **pipeline**. If **`[CACHE] redis_location`** in `hpcperfstats.ini` points at an **external** Redis host (not the Compose service), upgrade that server separately per [Redis OSS standalone upgrade](https://redis.io/docs/latest/operate/oss_and_stack/install/upgrade/standalone/) (supported path: 7.x → 8.x), then restart app services that use the cache.
+
 2. **Enable container restart after reboot:**
 
    ```bash

@@ -322,6 +322,14 @@ tests/run_redis_cache_pytest_workflow.sh
 
 Without that env var, the live Redis tests are **skipped** so normal `python scripts/run_tests.py` on a laptop does not require Redis.
 
+After changing the Compose **redis** image tag, confirm the running server is Redis 8.x:
+
+```bash
+docker compose exec redis redis-cli INFO server | grep redis_version
+```
+
+`test_redis_cache_live.py` also asserts major version `>= 8` when the live Redis workflow runs.
+
 Options: `--keep-env`, `--skip-build`. Forward pytest args the same way as the DB workflow (`-- -vv`).
 
 ## Accessibility (WCAG 2.2 AA target)
