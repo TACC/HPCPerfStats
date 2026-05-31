@@ -6,7 +6,7 @@ COPY --chown=node:node . .
 WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
 # Vite and @vitejs/plugin-react are devDependencies; they must be present to build.
 # After `npm run build`, drop dev packages with the same effect as `npm ci --omit=dev`.
-RUN /bin/bash -o pipefail -c "npm ci && npm run build && npm prune --omit=dev"
+RUN /bin/bash -o pipefail -c "npm ci && npm run build"
 WORKDIR /home/hpcperfstats
 RUN /bin/bash -o pipefail -c "\
     mkdir -p /tmp/frontend-static && \
