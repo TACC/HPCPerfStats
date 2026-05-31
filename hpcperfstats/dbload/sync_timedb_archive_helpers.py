@@ -49,6 +49,15 @@ def get_archive_zstd_thread_count():
 
 
 _DAILY_TAR_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar$")
+_DAILY_GZ_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar\.gz$")
+
+MIGRATE_GZ_STATUS_CONVERTED = "converted"
+MIGRATE_GZ_STATUS_DROPPED_ONLY = "dropped_only"
+MIGRATE_GZ_STATUS_SKIPPED_LOCKED = "skipped_locked"
+MIGRATE_GZ_STATUS_SKIPPED_NO_GZ = "skipped_no_gz"
+MIGRATE_GZ_STATUS_FAILED = "failed"
+MIGRATE_GZ_STATUS_KEPT_MISMATCH = "kept_mismatch"
+MIGRATE_GZ_STATUS_PLANNED = "planned"
 
 
 def _get_archive_validation_worker_count(total_items):
@@ -1133,6 +1142,50 @@ def iter_daily_tar_paths(daily_archive_dir):
       yield os.path.join(daily_archive_dir, name)
 
 
+def _is_migration_scratch_name(name):
+  """True for transient seal/decompress artifacts in ``daily_archive_dir``."""
+  return (
+      name.endswith(".tmp")
+      or name.endswith(".decomp.tmp")
+  )
+
+
+def iter_daily_gz_paths(daily_archive_dir):
+  """Yield paths to legacy ``YYYY-MM-DD.tar.gz`` under ``daily_archive_dir``."""
+  if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
+    return
+  try:
+    names = os.listdir(daily_archive_dir)
+  except OSError:
+    return
+  for name in sorted(names):
+    if _is_lock_file_name(name) or _is_migration_scratch_name(name):
+      continue
+    if _DAILY_GZ_BASENAME_RE.match(name):
+      yield os.path.join(daily_archive_dir, name)
+
+
+def parse_archive_date_from_daily_gz_path(gz_path):
+  """Return date from ``YYYY-MM-DD.tar.gz`` basename, or None if not matched."""
+  base = os.path.basename(gz_path)
+  if not _DAILY_GZ_BASENAME_RE.match(base):
+    return None
+  try:
+    return datetime.strptime(base[:10], "%Y-%m-%d").date()
+  except ValueError:
+    return None
+
+
+def check_archive_migration_prerequisites():
+  """Raise ``RuntimeError`` when zstd or gzip-via-zstd support is unavailable."""
+  if not shutil.which("zstd"):
+    raise RuntimeError("zstd executable not found on PATH")
+  if not zstd_gzip_supported():
+    raise RuntimeError(
+        "zstd does not report gzip format support (required for legacy .tar.gz)",
+    )
+
+
 def compare_compressed_archive_members(gz_path, zst_path):
   """Return ``(gz_contained_in_zst, gz_members, zst_members)`` for migration checks."""
   gz_ok, gz_members = _scan_compressed_archive_members_and_readable(gz_path)
@@ -1376,6 +1429,257 @@ def seal_dirty_daily_archives(
     ]
     for future in as_completed(futures):
       future.result()
+
+
+def _planned_migrate_action_for_legacy_gz(gz_path, tar_path, zst_path):
+  """Return the action ``migrate_one_daily_legacy_gz`` would take (no I/O locks)."""
+  if not os.path.isfile(gz_path):
+    return MIGRATE_GZ_STATUS_SKIPPED_NO_GZ
+  if os.path.isfile(zst_path) and os.path.isfile(gz_path):
+    gz_contained, _, _ = compare_compressed_archive_members(gz_path, zst_path)
+    if gz_contained:
+      return MIGRATE_GZ_STATUS_DROPPED_ONLY
+    if (
+        os.path.isfile(tar_path)
+        and is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path)
+    ):
+      return MIGRATE_GZ_STATUS_CONVERTED
+    return MIGRATE_GZ_STATUS_KEPT_MISMATCH
+  if os.path.isfile(tar_path):
+    return MIGRATE_GZ_STATUS_CONVERTED
+  if os.path.isfile(gz_path):
+    return MIGRATE_GZ_STATUS_CONVERTED
+  return MIGRATE_GZ_STATUS_SKIPPED_NO_GZ
+
+
+def _migrate_one_daily_legacy_gz_locked(
+    gz_path,
+    tar_path,
+    zst_path,
+    *,
+    zstd_threads,
+    compress_level,
+    keep_uncompressed_tar,
+    remaining_raw_by_gz,
+    force_remove_uncompressed_tar,
+    log_fn,
+):
+  """Migrate one day while the caller holds the write lock on tar or gz."""
+  if not os.path.isfile(gz_path):
+    return MIGRATE_GZ_STATUS_SKIPPED_NO_GZ
+
+  def _seal_and_drop():
+    if not os.path.isfile(tar_path):
+      return MIGRATE_GZ_STATUS_FAILED
+    try:
+      atomic_seal_tar_to_zst(
+          tar_path,
+          zst_path,
+          zstd_threads,
+          compress_level,
+          keep_uncompressed_tar,
+          log_fn=log_fn,
+          remaining_raw_by_gz=remaining_raw_by_gz,
+          force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+      )
+    except (subprocess.CalledProcessError, RuntimeError) as exc:
+      if log_fn:
+        log_fn(
+            "Migration seal failed for %s: %s" % (tar_path, exc),
+            flush=True,
+        )
+      return MIGRATE_GZ_STATUS_FAILED
+    if os.path.isfile(gz_path):
+      drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_fn)
+    if os.path.isfile(gz_path):
+      return MIGRATE_GZ_STATUS_KEPT_MISMATCH
+    return MIGRATE_GZ_STATUS_CONVERTED
+
+  if os.path.isfile(zst_path):
+    gz_contained, _, _ = compare_compressed_archive_members(gz_path, zst_path)
+    if gz_contained and os.path.isfile(gz_path):
+      drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_fn)
+      if os.path.isfile(gz_path):
+        return MIGRATE_GZ_STATUS_KEPT_MISMATCH
+      return MIGRATE_GZ_STATUS_DROPPED_ONLY
+    if (
+        os.path.isfile(tar_path)
+        and is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path)
+    ):
+      return _seal_and_drop()
+    if log_fn:
+      log_fn(
+          "Keeping legacy gzip (zst member mismatch or no re-sealable tar): %s"
+          % gz_path,
+          flush=True,
+      )
+    return MIGRATE_GZ_STATUS_KEPT_MISMATCH
+
+  if os.path.isfile(tar_path):
+    return _seal_and_drop()
+
+  if os.path.isfile(gz_path):
+    if not decompress_compressed_to_tar(gz_path, tar_path, zstd_threads):
+      if log_fn:
+        log_fn(
+            "Migration decompress failed for legacy gzip: %s" % gz_path,
+            flush=True,
+        )
+      return MIGRATE_GZ_STATUS_FAILED
+    return _seal_and_drop()
+
+  return MIGRATE_GZ_STATUS_SKIPPED_NO_GZ
+
+
+def migrate_one_daily_legacy_gz(
+    gz_path,
+    *,
+    zstd_threads,
+    compress_level,
+    keep_uncompressed_tar,
+    remaining_raw_by_gz=None,
+    force_remove_uncompressed_tar=False,
+    log_fn=log_print,
+    lock_timeout_seconds=0,
+    dry_run=False,
+):
+  """Convert one legacy ``.tar.gz`` to canonical ``.tar.zst`` (or drop redundant gzip).
+
+  Returns a status string (see ``MIGRATE_GZ_STATUS_*``). When ``lock_timeout_seconds``
+  is 0 and the advisory lock is contended, returns ``skipped_locked`` without waiting.
+  """
+  tar_path = daily_tar_path_from_compressed(gz_path)
+  zst_path, _gz_path = compressed_sibling_paths(tar_path)
+
+  if dry_run:
+    action = _planned_migrate_action_for_legacy_gz(gz_path, tar_path, zst_path)
+    if log_fn and action != MIGRATE_GZ_STATUS_SKIPPED_NO_GZ:
+      log_fn(
+          "Dry-run %s: %s -> %s" % (action, gz_path, zst_path),
+          flush=True,
+      )
+    return action
+
+  if not os.path.isfile(gz_path):
+    return MIGRATE_GZ_STATUS_SKIPPED_NO_GZ
+
+  primary_path = tar_path if os.path.isfile(tar_path) else gz_path
+  try:
+    with file_write_lock(primary_path, timeout_seconds=lock_timeout_seconds):
+      return _migrate_one_daily_legacy_gz_locked(
+          gz_path,
+          tar_path,
+          zst_path,
+          zstd_threads=zstd_threads,
+          compress_level=compress_level,
+          keep_uncompressed_tar=keep_uncompressed_tar,
+          remaining_raw_by_gz=remaining_raw_by_gz,
+          force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+          log_fn=log_fn,
+      )
+  except TimeoutError:
+    if log_fn:
+      log_fn(
+          "Skipping migration (lock contended): %s" % primary_path,
+          flush=True,
+      )
+    return MIGRATE_GZ_STATUS_SKIPPED_LOCKED
+
+
+def _migrate_summary_init():
+  return {
+      MIGRATE_GZ_STATUS_CONVERTED: 0,
+      MIGRATE_GZ_STATUS_DROPPED_ONLY: 0,
+      MIGRATE_GZ_STATUS_SKIPPED_LOCKED: 0,
+      MIGRATE_GZ_STATUS_SKIPPED_NO_GZ: 0,
+      MIGRATE_GZ_STATUS_FAILED: 0,
+      MIGRATE_GZ_STATUS_KEPT_MISMATCH: 0,
+      MIGRATE_GZ_STATUS_PLANNED: 0,
+  }
+
+
+def _migrate_summary_bump(summary, status):
+  if status in summary:
+    summary[status] = summary.get(status, 0) + 1
+
+
+def migrate_legacy_daily_gz_archives(
+    daily_archive_dir,
+    *,
+    zstd_threads=None,
+    compress_level=None,
+    keep_uncompressed_tar=None,
+    remaining_raw_by_gz=None,
+    force_remove_uncompressed_tar=False,
+    log_fn=log_print,
+    lock_timeout_seconds=0,
+    dry_run=False,
+    since_date=None,
+    limit=None,
+    workers=None,
+):
+  """Migrate all legacy ``.tar.gz`` files under ``daily_archive_dir`` to ``.tar.zst``.
+
+  Returns a summary dict keyed by ``MIGRATE_GZ_STATUS_*`` counts plus ``gz_remaining``.
+  """
+  check_archive_migration_prerequisites()
+  if zstd_threads is None:
+    zstd_threads = get_archive_zstd_thread_count()
+  if compress_level is None:
+    compress_level = cfg.get_archive_zstd_level()
+  if keep_uncompressed_tar is None:
+    keep_uncompressed_tar = cfg.get_archive_keep_uncompressed_tar()
+
+  gz_paths = []
+  for gz_path in iter_daily_gz_paths(daily_archive_dir):
+    archive_date = parse_archive_date_from_daily_gz_path(gz_path)
+    if since_date is not None and archive_date is not None:
+      if archive_date < since_date:
+        continue
+    gz_paths.append(gz_path)
+    if limit is not None and len(gz_paths) >= int(limit):
+      break
+
+  summary = _migrate_summary_init()
+  if not gz_paths:
+    summary["gz_remaining"] = 0
+    return summary
+
+  migrate_kwargs = dict(
+      zstd_threads=zstd_threads,
+      compress_level=compress_level,
+      keep_uncompressed_tar=keep_uncompressed_tar,
+      remaining_raw_by_gz=remaining_raw_by_gz,
+      force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+      log_fn=log_fn,
+      lock_timeout_seconds=lock_timeout_seconds,
+      dry_run=dry_run,
+  )
+
+  worker_count = workers
+  if worker_count is None:
+    worker_count = _get_archive_seal_worker_count(len(gz_paths))
+  worker_count = max(1, min(int(worker_count), len(gz_paths)))
+
+  def _run_one(path):
+    if dry_run:
+      tar_path = daily_tar_path_from_compressed(path)
+      zst_path, _ = compressed_sibling_paths(tar_path)
+      return _planned_migrate_action_for_legacy_gz(path, tar_path, zst_path)
+    return migrate_one_daily_legacy_gz(path, **migrate_kwargs)
+
+  if worker_count <= 1 or len(gz_paths) <= 1:
+    for gz_path in gz_paths:
+      _migrate_summary_bump(summary, _run_one(gz_path))
+  else:
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+      futures = [executor.submit(_run_one, p) for p in gz_paths]
+      for future in as_completed(futures):
+        _migrate_summary_bump(summary, future.result())
+
+  remaining = sum(1 for _ in iter_daily_gz_paths(daily_archive_dir))
+  summary["gz_remaining"] = remaining
+  return summary
 
 
 def filter_files_to_add_to_archive(stats_files, existing_members, debug=False):

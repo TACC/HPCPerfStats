@@ -2331,3 +2331,156 @@ def test_configure_blas_thread_env_idempotent():
   """Caps BLAS/OpenMP threads before numpy (avoids pthread EAGAIN under spawn)."""
   sta._configure_blas_thread_env()
   sta._configure_blas_thread_env()
+
+
+# --- legacy daily .tar.gz -> .tar.zst migration ---
+
+
+def test_iter_daily_gz_paths_skips_locks_and_scratch(tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  (tmp_path / "2024-01-01.tar.gz").write_bytes(b"g")
+  (tmp_path / "2024-01-02.tar.gz.tmp").write_bytes(b"t")
+  (tmp_path / "2024-01-03.tar.decomp.tmp").write_bytes(b"d")
+  (tmp_path / "2024-01-04.tar.gz.fnctl.lock").write_bytes(b"l")
+  (tmp_path / "not-a-date.tar.gz").write_bytes(b"x")
+  found = list(helpers.iter_daily_gz_paths(str(tmp_path)))
+  assert found == [str(tmp_path / "2024-01-01.tar.gz")]
+
+
+def test_migrate_one_dropped_only_when_zst_is_superset(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-10.tar.gz"
+  zst_path = tmp_path / "2024-03-10.tar.zst"
+  gz_path.write_bytes(b"gz")
+  zst_path.write_bytes(b"zst")
+
+  def _scan(path):
+    if str(path).endswith(".tar.gz"):
+      return True, {"a.txt": 10}
+    return True, {"a.txt": 10, "b.txt": 5}
+
+  monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
+  drop_calls = []
+
+  def _drop(gz, zst, log_fn=None):
+    drop_calls.append((gz, zst))
+    gz_path.unlink()
+
+  monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", _drop)
+  status = helpers.migrate_one_daily_legacy_gz(
+      str(gz_path),
+      zstd_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  assert status == helpers.MIGRATE_GZ_STATUS_DROPPED_ONLY
+  assert not gz_path.exists()
+  assert drop_calls
+
+
+def test_migrate_one_kept_mismatch_when_zst_missing_gz_member(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-11.tar.gz"
+  zst_path = tmp_path / "2024-03-11.tar.zst"
+  gz_path.write_bytes(b"gz")
+  zst_path.write_bytes(b"zst")
+
+  def _scan(path):
+    if str(path).endswith(".tar.gz"):
+      return True, {"a.txt": 10, "b.txt": 20}
+    return True, {"a.txt": 10}
+
+  monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
+  status = helpers.migrate_one_daily_legacy_gz(
+      str(gz_path),
+      zstd_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  assert status == helpers.MIGRATE_GZ_STATUS_KEPT_MISMATCH
+  assert gz_path.exists()
+
+
+def test_migrate_one_skipped_locked_on_write_lock_timeout(monkeypatch, tmp_path):
+  import contextlib
+
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-12.tar.gz"
+  gz_path.write_bytes(b"gz")
+
+  @contextlib.contextmanager
+  def _timeout_lock(_path, timeout_seconds=0, expiry_seconds=None):
+    del timeout_seconds, expiry_seconds
+    raise TimeoutError("contended")
+
+  monkeypatch.setattr(helpers, "file_write_lock", _timeout_lock)
+  status = helpers.migrate_one_daily_legacy_gz(
+      str(gz_path),
+      zstd_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  assert status == helpers.MIGRATE_GZ_STATUS_SKIPPED_LOCKED
+  assert gz_path.exists()
+
+
+def test_migrate_one_gz_only_converts_via_decompress_and_seal(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-13.tar.gz"
+  tar_path = tmp_path / "2024-03-13.tar"
+  zst_path = tmp_path / "2024-03-13.tar.zst"
+  gz_path.write_bytes(b"gz")
+
+  def _decompress(gz, tar, threads):
+    del threads
+    assert gz == str(gz_path)
+    tar_path.write_bytes(b"tar-bytes")
+    if gz_path.exists():
+      gz_path.unlink()
+    return True
+
+  seal_calls = []
+
+  def _seal(tar, zst, *args, **kwargs):
+    del args, kwargs
+    seal_calls.append((tar, zst))
+    zst_path.write_bytes(b"zst")
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _decompress)
+  monkeypatch.setattr(helpers, "atomic_seal_tar_to_zst", _seal)
+  monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", lambda *a, **k: None)
+  status = helpers.migrate_one_daily_legacy_gz(
+      str(gz_path),
+      zstd_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  assert status == helpers.MIGRATE_GZ_STATUS_CONVERTED
+  assert not gz_path.exists()
+  assert zst_path.exists()
+  assert seal_calls
+
+
+def test_migrate_legacy_dry_run_does_not_mutate(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-14.tar.gz"
+  gz_path.write_bytes(b"gz")
+  monkeypatch.setattr(helpers, "check_archive_migration_prerequisites", lambda: None)
+  summary = helpers.migrate_legacy_daily_gz_archives(
+      str(tmp_path),
+      dry_run=True,
+      log_fn=None,
+  )
+  assert gz_path.exists()
+  assert summary.get("gz_remaining") == 1
+  assert summary.get(helpers.MIGRATE_GZ_STATUS_CONVERTED, 0) >= 0
