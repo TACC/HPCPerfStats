@@ -308,8 +308,20 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Seconds idle before sealing today's tar; prior days seal immediately (default 60).
 # archive_seal_idle_seconds = 60
 
-# zstd -T thread count for seal and decompress (default 8).
-# archive_zstd_threads = 8
+# zstd -T thread count for seal and decompress; 0 uses -T0 (all cores per job, default).
+# archive_zstd_threads = 0
+
+# Added nice for archive zstd subprocesses; 0 disables (default 10).
+# archive_zstd_nice = 10
+
+# ionice class for archive zstd: 0=none, 2=best-effort, 3=idle (default 2).
+# archive_zstd_ionice_class = 2
+
+# ionice level within class for archive zstd, 0-7 (default 6).
+# archive_zstd_ionice_level = 6
+
+# Max concurrent daily tar seals during maintenance (default 4).
+# archive_seal_parallel_workers = 4
 
 # zstd compression level 1-19 for .tar.zst (default 7; benchmark before raising above 9).
 # archive_zstd_level = 7

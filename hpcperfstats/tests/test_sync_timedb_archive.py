@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tarfile
+import threading
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -43,6 +44,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     replace_corrupt_tar_from_compressed_backup,
     rescan_pending_stats_files,
     resolve_preferred_archive_path_for_read,
+    seal_dirty_daily_archives,
     should_seal_daily_tar,
     stats_file_is_active_segment,
     validate_sealed_daily_archive_for_raw_removal,
@@ -145,7 +147,7 @@ def test_verify_tar_archive_readable_accepts_valid_tgz_via_zstd_gzip_pipe(tmp_pa
 
 
 def test_verify_tar_gz_zstd_pipe_uses_helpers_thread_count(monkeypatch, tmp_path):
-  """Regression: zstd -T matches ``sync_timedb_archive_helpers.archive_zstd_thread_count``."""
+  """Regression: zstd -T matches ``get_archive_zstd_thread_count()``."""
   if not shutil.which("zstd") or not shutil.which("tar"):
     pytest.skip("need zstd and tar on PATH")
   if not zstd_gzip_supported():
@@ -167,11 +169,14 @@ def test_verify_tar_gz_zstd_pipe_uses_helpers_thread_count(monkeypatch, tmp_path
     return orig_popen(*args, **kwargs)
 
   monkeypatch.setattr(helpers.subprocess, "Popen", _wrap_popen)
-  monkeypatch.setattr(helpers, "archive_zstd_thread_count", 13)
+  monkeypatch.setattr(helpers, "get_archive_zstd_thread_count", lambda: 13)
   assert verify_tar_archive_readable(str(gz))
   zstd_cmds = [
       c for c in recorded
-      if len(c) >= 5 and c[1] == "-d" and c[2] == "--format=gzip" and c[3] == "-c"
+      if any("zstd" in part for part in c)
+      and "-d" in c
+      and "--format=gzip" in c
+      and "-c" in c
   ]
   assert zstd_cmds, "expected zstd -d --format=gzip -c subprocess"
   assert "-T13" in zstd_cmds[0]
@@ -199,11 +204,14 @@ def test_get_file_member_sizes_from_gzip_uses_zstd_pipe_when_zstd_present(
     return orig_popen(*args, **kwargs)
 
   monkeypatch.setattr(helpers.subprocess, "Popen", _wrap_popen)
-  monkeypatch.setattr(helpers, "archive_zstd_thread_count", 5)
+  monkeypatch.setattr(helpers, "get_archive_zstd_thread_count", lambda: 5)
   assert get_file_member_sizes_from_gzip_archive(str(gz)) == {"only": 3}
   zstd_cmds = [
       c for c in recorded
-      if len(c) >= 5 and c[1] == "-d" and c[2] == "--format=gzip" and c[3] == "-c"
+      if any("zstd" in part for part in c)
+      and "-d" in c
+      and "--format=gzip" in c
+      and "-c" in c
   ]
   assert "-T5" in zstd_cmds[0]
 
@@ -462,6 +470,94 @@ def test_atomic_seal_tar_to_zst_passes_thread_count_to_compress_and_test(monkeyp
   assert [zstd_executable(), "-t", "-T3", "-q", str(zst_path) + ".tmp"] in calls
 
 
+def test_seal_dirty_daily_archives_seals_multiple_days_in_parallel(monkeypatch, tmp_path):
+  """Regression: maintenance seals more than one day concurrently when workers > 1."""
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from zoneinfo import ZoneInfo
+
+  archive_dir = tmp_path / "daily"
+  archive_dir.mkdir()
+  sealed = []
+  lock = threading.Lock()
+  active = {"count": 0, "max": 0}
+
+  def _fake_atomic_seal(
+      tar_path,
+      zst_path,
+      num_threads,
+      compress_level,
+      keep_uncompressed_tar,
+      log_fn=None,
+      remaining_raw_by_gz=None,
+      force_remove_uncompressed_tar=False,
+  ):
+    del num_threads, compress_level, keep_uncompressed_tar, log_fn
+    del remaining_raw_by_gz, force_remove_uncompressed_tar
+    with lock:
+      active["count"] += 1
+      active["max"] = max(active["max"], active["count"])
+    time.sleep(0.05)
+    with lock:
+      active["count"] -= 1
+    sealed.append(tar_path)
+    Path(zst_path).write_bytes(b"fake-zst")
+
+  monkeypatch.setattr(helpers, "atomic_seal_tar_to_zst", _fake_atomic_seal)
+  monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", lambda *a, **k: None)
+  monkeypatch.setattr(helpers, "_get_archive_seal_worker_count", lambda n: min(3, n))
+  monkeypatch.setattr(helpers, "should_seal_daily_tar", lambda *a, **k: True)
+
+  for day in (1, 2, 3, 4):
+    (archive_dir / ("2024-01-%02d.tar" % day)).write_bytes(b"tar")
+
+  seal_dirty_daily_archives(
+      str(archive_dir),
+      local_tz=ZoneInfo("UTC"),
+      zstd_threads=0,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      idle_seconds=60,
+  )
+
+  assert len(sealed) == 4
+  assert active["max"] >= 2
+
+
+def test_seal_dirty_daily_archives_isolates_per_day_failures(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from zoneinfo import ZoneInfo
+
+  archive_dir = tmp_path / "daily"
+  archive_dir.mkdir()
+  ok_tar = str(archive_dir / "2024-02-01.tar")
+  bad_tar = str(archive_dir / "2024-02-02.tar")
+  Path(ok_tar).write_bytes(b"tar")
+  Path(bad_tar).write_bytes(b"tar")
+  sealed = []
+
+  def _fake_atomic_seal(tar_path, zst_path, *args, **kwargs):
+    del args, kwargs
+    if tar_path == bad_tar:
+      raise RuntimeError("boom")
+    sealed.append(tar_path)
+    Path(zst_path).write_bytes(b"zst")
+
+  monkeypatch.setattr(helpers, "atomic_seal_tar_to_zst", _fake_atomic_seal)
+  monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", lambda *a, **k: None)
+  monkeypatch.setattr(helpers, "should_seal_daily_tar", lambda *a, **k: True)
+
+  seal_dirty_daily_archives(
+      str(archive_dir),
+      local_tz=ZoneInfo("UTC"),
+      zstd_threads=0,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      idle_seconds=60,
+  )
+
+  assert sealed == [ok_tar]
+
+
 # --- get_tar_file_tasks ---
 
 
@@ -619,7 +715,7 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
   assert get_tar_file_tasks(tar_path) == [(tar_path, "a.txt")]
   assert open_calls["count"] == 2
   assert remove_calls == [tar_path]
-  assert restore_calls == [(gz_path, tar_path, helpers.archive_zstd_thread_count)]
+  assert restore_calls == [(gz_path, tar_path, helpers.get_archive_zstd_thread_count())]
 
 
 def test_get_tar_file_tasks_raises_when_corrupt_and_no_gz(monkeypatch, tmp_path):

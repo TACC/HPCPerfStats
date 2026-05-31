@@ -19,6 +19,7 @@ from hpcperfstats.file_locking import file_write_lock
 from hpcperfstats.print_utils import log_print
 
 _GZIP_FORMAT = ("--format=gzip",)
+_PRIORITY_TOOLS_WARNED = False
 
 
 def zstd_executable() -> str:
@@ -42,7 +43,70 @@ def zstd_gzip_supported() -> bool:
 
 def _thread_args(thread_count: int) -> list[str]:
   # Combined ``-T#`` form: separate ``-T`` and ``N`` makes zstd treat ``N`` as a path.
+  # ``0`` means zstd auto (all logical cores for this process).
+  if int(thread_count) == 0:
+    return ["-T0"]
   return ["-T%d" % max(1, int(thread_count))]
+
+
+def _archive_zstd_priority_settings():
+  from hpcperfstats import conf_parser as cfg_mod
+
+  return (
+      cfg_mod.get_archive_zstd_nice(),
+      cfg_mod.get_archive_zstd_ionice_class(),
+      cfg_mod.get_archive_zstd_ionice_level(),
+  )
+
+
+def zstd_thread_cli_args(thread_count: int) -> list[str]:
+  return _thread_args(thread_count)
+
+
+def _wrap_zstd_cmd(cmd: list[str]) -> list[str]:
+  """Prefix archive zstd with ionice/nice when configured and tools exist."""
+  global _PRIORITY_TOOLS_WARNED
+  nice_inc, ionice_class, ionice_level = _archive_zstd_priority_settings()
+  prefix: list[str] = []
+  if ionice_class in (1, 2, 3):
+    ionice_bin = shutil.which("ionice")
+    if ionice_bin:
+      prefix.extend([
+          ionice_bin,
+          "-c%d" % int(ionice_class),
+          "-n%d" % max(0, min(7, int(ionice_level))),
+      ])
+    elif not _PRIORITY_TOOLS_WARNED:
+      log_print(
+          "archive zstd: ionice not on PATH; skipping I/O priority wrapper",
+          flush=True,
+      )
+      _PRIORITY_TOOLS_WARNED = True
+  if nice_inc > 0:
+    nice_bin = shutil.which("nice")
+    if nice_bin:
+      prefix.extend([nice_bin, "-n%d" % int(nice_inc)])
+    elif not _PRIORITY_TOOLS_WARNED:
+      log_print(
+          "archive zstd: nice not on PATH; skipping CPU priority wrapper",
+          flush=True,
+      )
+      _PRIORITY_TOOLS_WARNED = True
+  if prefix:
+    return prefix + list(cmd)
+  return list(cmd)
+
+
+def wrap_archive_zstd_cmd(cmd: list[str]) -> list[str]:
+  return _wrap_zstd_cmd(cmd)
+
+
+def _run_zstd(cmd: list[str], **kwargs):
+  return subprocess.run(_wrap_zstd_cmd(cmd), **kwargs)
+
+
+def _popen_zstd(cmd: list[str], **kwargs) -> subprocess.Popen:
+  return subprocess.Popen(_wrap_zstd_cmd(cmd), **kwargs)
 
 
 def _verify_uncompressed_tar_readable(tar_path: str) -> bool:
@@ -82,7 +146,7 @@ def _decompress_to_path(
     cmd.append(compressed_path)
   else:
     raise ValueError("unsupported compressed archive format: %s" % compressed_path)
-  result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+  result = _run_zstd(cmd, capture_output=True, text=True, check=False)
   if result.returncode != 0:
     raise subprocess.CalledProcessError(
         result.returncode,
@@ -156,7 +220,7 @@ def _wait_decompress_proc(proc: subprocess.Popen, args: list) -> None:
 def _decompress_stdout(
     cmd: list[str],
 ) -> Iterator[BinaryIO]:
-  proc = subprocess.Popen(
+  proc = _popen_zstd(
       cmd,
       stdout=subprocess.PIPE,
       stderr=subprocess.DEVNULL,
@@ -213,7 +277,7 @@ def zstd_test(
       "-q",
       zst_path,
   ]
-  result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+  result = _run_zstd(cmd, capture_output=True, text=True, check=False)
   if result.returncode != 0:
     raise subprocess.CalledProcessError(
         result.returncode,
@@ -264,7 +328,7 @@ def zstd_gzip_test(gz_path: str, thread_count: int) -> subprocess.CompletedProce
       "-q",
       gz_path,
   ]
-  result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+  result = _run_zstd(cmd, capture_output=True, text=True, check=False)
   if result.returncode != 0:
     raise subprocess.CalledProcessError(
         result.returncode,
@@ -296,7 +360,7 @@ def zstd_compress_tar_to_file(
       *zstd_long_flags(),
       tar_path,
   ]
-  result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+  result = _run_zstd(cmd, capture_output=True, text=True, check=False)
   if result.returncode != 0:
     raise subprocess.CalledProcessError(
         result.returncode,

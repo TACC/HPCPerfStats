@@ -123,8 +123,7 @@ local_timezone = cfg.get_local_timezone()
 
 # Thread count for database loading and archival (optional ini caps; see conf_parser).
 thread_count = cfg.get_sync_ingest_pool_processes()
-# zstd ``-T`` for archive decompress/seal (``PORTAL`` / ``archive_zstd_threads``).
-archive_zstd_thread_count = cfg.get_archive_zstd_threads()
+# zstd ``-T`` for archive decompress/seal (``PORTAL`` / ``archive_zstd_threads``; 0 → ``-T0``).
 
 archive_thread_count = cfg.get_sync_archive_pool_processes()
 
@@ -858,7 +857,7 @@ def _decompress_compressed_archive(archive_compressed_path):
   return decompress_compressed_to_tar(
       archive_compressed_path,
       tar_path,
-      archive_zstd_thread_count,
+      cfg.get_archive_zstd_threads(),
   )
 
 
@@ -1009,7 +1008,7 @@ def _archive_stats_files_body(archive_info):
         flush=True,
     )
     if not replace_corrupt_tar_from_compressed_backup(
-        archive_tar_fname, zst_path, gz_path, archive_zstd_thread_count,
+        archive_tar_fname, zst_path, gz_path, cfg.get_archive_zstd_threads(),
     ):
       log_print(
           "ERROR: could not restore daily tar before append; leaving raw stats "
@@ -1042,7 +1041,7 @@ def _archive_stats_files_body(archive_info):
           flush=True,
       )
       if not replace_corrupt_tar_from_compressed_backup(
-          archive_tar_fname, zst_path, gz_path, archive_zstd_thread_count,
+          archive_tar_fname, zst_path, gz_path, cfg.get_archive_zstd_threads(),
       ):
         log_print(
             "ERROR: could not restore daily tar from %s; leaving raw stats "
@@ -1255,7 +1254,7 @@ def run_sync_timedb_supervisor_loop(
     seal_dirty_daily_archives(
         tgz_archive_dir,
         local_tz=local_timezone,
-        zstd_threads=archive_zstd_thread_count,
+        zstd_threads=cfg.get_archive_zstd_threads(),
         compress_level=cfg.get_archive_zstd_level(),
         keep_uncompressed_tar=cfg.get_archive_keep_uncompressed_tar(),
         idle_seconds=cfg.get_archive_seal_idle_seconds(),

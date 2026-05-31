@@ -25,12 +25,14 @@ from hpcperfstats.dbload.archive_compress import (
 )
 from hpcperfstats.dbload.zstd_cli import (
     decompress_compressed_to_tar,
+    wrap_archive_zstd_cmd,
     zstd_decompress_stdout,
     zstd_executable,
     zstd_gzip_decompress_stdout,
     zstd_gzip_supported,
     zstd_compress_tar_to_file,
     zstd_test,
+    zstd_thread_cli_args,
 )
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
 from hpcperfstats.file_locking import (
@@ -41,7 +43,11 @@ from hpcperfstats.file_locking import (
 )
 from hpcperfstats.print_utils import log_print
 
-archive_zstd_thread_count = cfg.get_archive_zstd_threads()
+
+def get_archive_zstd_thread_count():
+  """Current zstd ``-T`` setting (0 → ``-T0``). Read at call time for ini freshness."""
+  return cfg.get_archive_zstd_threads()
+
 
 _DAILY_TAR_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar$")
 
@@ -273,30 +279,30 @@ def _tar_readable_via_decompress_tar_pipe(decompress_cmd, tar_bin):
 def _tar_gz_readable_via_zstd_gzip_tar_pipe(gz_path, tar_bin, num_threads):
   if not zstd_gzip_supported():
     return False
-  cmd = [
+  cmd = wrap_archive_zstd_cmd([
       zstd_executable(),
       "-d",
       "--format=gzip",
       "-c",
-      "-T%d" % max(1, int(num_threads)),
+      *zstd_thread_cli_args(num_threads),
       "-q",
       gz_path,
-  ]
+  ])
   return _tar_readable_via_decompress_tar_pipe(cmd, tar_bin)
 
 
 def _tar_zst_readable_via_zstd_tar_pipe(zst_path, tar_bin, num_threads):
   if not shutil.which("zstd"):
     return False
-  cmd = [
+  cmd = wrap_archive_zstd_cmd([
       zstd_executable(),
       "-d",
       "-c",
-      "-T%d" % max(1, int(num_threads)),
+      *zstd_thread_cli_args(num_threads),
       "-q",
       *zstd_long_flags(),
       zst_path,
-  ]
+  ])
   return _tar_readable_via_decompress_tar_pipe(cmd, tar_bin)
 
 
@@ -343,10 +349,10 @@ def verify_tar_archive_readable(tar_path):
     with file_read_lock_wait(tar_path):
       if tar_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX) and shutil.which("zstd"):
         return _tar_zst_readable_via_zstd_tar_pipe(
-            tar_path, tar_bin, archive_zstd_thread_count)
+            tar_path, tar_bin, get_archive_zstd_thread_count())
       if tar_path.endswith(DAILY_ARCHIVE_GZ_SUFFIX) and zstd_gzip_supported():
         return _tar_gz_readable_via_zstd_gzip_tar_pipe(
-            tar_path, tar_bin, archive_zstd_thread_count)
+            tar_path, tar_bin, get_archive_zstd_thread_count())
       result = subprocess.run(
           [tar_bin, "tf", tar_path],
           capture_output=True,
@@ -405,7 +411,7 @@ def _scan_compressed_archive_members_and_readable(compressed_path):
   try:
     with file_read_lock_wait(compressed_path):
       with _open_tarfile_for_read(
-          compressed_path, archive_zstd_thread_count,
+          compressed_path, get_archive_zstd_thread_count(),
       ) as tf:
         by_name = defaultdict(list)
         for m in _iter_tar_members(tf):
@@ -491,7 +497,7 @@ def validate_sealed_daily_archive_for_raw_removal(
       atomic_seal_tar_to_zst(
           tar_path,
           zst_path,
-          num_threads=archive_zstd_thread_count,
+          num_threads=get_archive_zstd_thread_count(),
           compress_level=cfg.get_archive_zstd_level(),
           keep_uncompressed_tar=cfg.get_archive_keep_uncompressed_tar(),
           log_fn=log_fn,
@@ -597,7 +603,7 @@ def get_existing_archive_members(tar_path):
     return {}
   try:
     with file_read_lock_wait(tar_path):
-      with _open_tarfile_for_read(tar_path, archive_zstd_thread_count) as tf:
+      with _open_tarfile_for_read(tar_path, get_archive_zstd_thread_count()) as tf:
         by_name = defaultdict(list)
         for m in _iter_tar_members(tf):
           if m.isfile():
@@ -625,7 +631,7 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
   try:
     with file_read_lock_wait(archive_compressed_path):
       with _open_tarfile_for_read(
-          archive_compressed_path, archive_zstd_thread_count,
+          archive_compressed_path, get_archive_zstd_thread_count(),
       ) as tf:
         by_name = defaultdict(list)
         for m in _iter_tar_members(tf):
@@ -1007,7 +1013,7 @@ def iter_tar_file_tasks(tar_path):
 
   def _iter_members():
     with file_read_lock_wait(open_path):
-      with _open_tarfile_for_read(open_path, archive_zstd_thread_count) as archive_tar:
+      with _open_tarfile_for_read(open_path, get_archive_zstd_thread_count()) as archive_tar:
         try:
           member_infos = iter(archive_tar)
         except TypeError:
@@ -1032,7 +1038,7 @@ def iter_tar_file_tasks(tar_path):
     return decompress_compressed_to_tar(
         backup_path,
         tar_out,
-        archive_zstd_thread_count,
+        get_archive_zstd_thread_count(),
     )
 
   try:
@@ -1270,6 +1276,53 @@ def atomic_seal_tar_to_zst(
       pass
 
 
+def _get_archive_seal_worker_count(total_candidates):
+  """Bounded worker count for parallel daily tar sealing."""
+  if total_candidates <= 0:
+    return 1
+  env = os.environ.get("SYNC_ARCHIVE_SEAL_WORKERS", "").strip()
+  if env:
+    try:
+      configured = max(1, int(env))
+    except ValueError:
+      configured = max(1, int(cfg.get_archive_seal_parallel_workers()))
+  else:
+    configured = max(1, int(cfg.get_archive_seal_parallel_workers()))
+  return max(1, min(total_candidates, configured))
+
+
+def _seal_one_daily_tar(
+    tar_path,
+    zst_path,
+    gz_path,
+    *,
+    zstd_threads,
+    compress_level,
+    keep_uncompressed_tar,
+    log_fn,
+    remaining_raw_by_gz,
+    force_remove_uncompressed_tar,
+):
+  from hpcperfstats.process_title import set_daemon_thread_title
+
+  set_daemon_thread_title("", script_name="sync_timedb.py", role="archive-seal")
+  try:
+    atomic_seal_tar_to_zst(
+        tar_path,
+        zst_path,
+        zstd_threads,
+        compress_level,
+        keep_uncompressed_tar,
+        log_fn=log_fn,
+        remaining_raw_by_gz=remaining_raw_by_gz,
+        force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+    )
+    drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_fn)
+  except (subprocess.CalledProcessError, RuntimeError) as exc:
+    if log_fn:
+      log_fn("Seal failed for %s: %s" % (tar_path, exc), flush=True)
+
+
 def seal_dirty_daily_archives(
     daily_archive_dir,
     *,
@@ -1287,6 +1340,7 @@ def seal_dirty_daily_archives(
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
     return
   today_local = datetime.now(local_tz).date()
+  candidates = []
   for tar_path in sorted(iter_daily_tar_paths(daily_archive_dir)):
     zst_path, gz_path = compressed_sibling_paths(tar_path)
     if not should_seal_daily_tar(
@@ -1298,21 +1352,31 @@ def seal_dirty_daily_archives(
         gz_path=gz_path,
     ):
       continue
-    try:
-      atomic_seal_tar_to_zst(
-          tar_path,
-          zst_path,
-          zstd_threads,
-          compress_level,
-          keep_uncompressed_tar,
-          log_fn=log_fn,
-          remaining_raw_by_gz=remaining_raw_by_gz,
-          force_remove_uncompressed_tar=force_remove_uncompressed_tar,
-      )
-      drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_fn)
-    except (subprocess.CalledProcessError, RuntimeError) as exc:
-      if log_fn:
-        log_fn("Seal failed for %s: %s" % (tar_path, exc), flush=True)
+    candidates.append((tar_path, zst_path, gz_path))
+  if not candidates:
+    return
+
+  seal_kwargs = dict(
+      zstd_threads=zstd_threads,
+      compress_level=compress_level,
+      keep_uncompressed_tar=keep_uncompressed_tar,
+      log_fn=log_fn,
+      remaining_raw_by_gz=remaining_raw_by_gz,
+      force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+  )
+  workers = _get_archive_seal_worker_count(len(candidates))
+  if workers <= 1 or len(candidates) <= 1:
+    for tar_path, zst_path, gz_path in candidates:
+      _seal_one_daily_tar(tar_path, zst_path, gz_path, **seal_kwargs)
+    return
+
+  with ThreadPoolExecutor(max_workers=workers) as executor:
+    futures = [
+        executor.submit(_seal_one_daily_tar, tar_path, zst_path, gz_path, **seal_kwargs)
+        for tar_path, zst_path, gz_path in candidates
+    ]
+    for future in as_completed(futures):
+      future.result()
 
 
 def filter_files_to_add_to_archive(stats_files, existing_members, debug=False):

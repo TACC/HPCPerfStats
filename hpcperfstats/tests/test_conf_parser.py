@@ -75,12 +75,23 @@ def test_get_worker_thread_count(temp_ini, monkeypatch):
   assert cfg.get_worker_thread_count(8) == 1  # 4//8 = 0 -> clamped to 1
 
 
+def test_get_archive_zstd_priority_defaults(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_archive_zstd_nice() == 10
+  assert cfg.get_archive_zstd_ionice_class() == 2
+  assert cfg.get_archive_zstd_ionice_level() == 6
+  assert cfg.get_archive_seal_parallel_workers() == 4
+
+
 def test_get_archive_zstd_threads_default_and_override(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_archive_zstd_threads() == 8
+  assert cfg.get_archive_zstd_threads() == 0
 
   with open(temp_ini) as f:
     content = f.read()
@@ -119,7 +130,7 @@ def test_get_archive_zstd_threads_and_maintenance_interval(temp_ini, monkeypatch
   import importlib
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_archive_zstd_threads() == 8
+  assert cfg.get_archive_zstd_threads() == 0
   assert cfg.get_archive_maintenance_interval_seconds() == 8 * 3600
 
   with open(temp_ini) as f:

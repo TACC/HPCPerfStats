@@ -10,13 +10,29 @@ This document summarizes how **thread/process counts** and **Docker Compose CPU 
 | **web** | `api.py` | `ThreadPoolExecutor` size = **`api_small_executor_max_workers`**, or **`parallel_db_prefetch_max`** (default **4**) when the API key is unset | Extra concurrent ORM work per worker |
 | **web** | `summaryplot.py` | Aggregate prefetch uses **`compute_summary_aggregate_prefetch_pool_size()`**: at most **2** inner threads, then **`parallel_db_prefetch_max`** (default **4**) | Prevents nested pools from multiplying against `api.py` under `job_plots` |
 | **pipeline** | `update_metrics.py` | `multiprocessing.Pool` size = **`get_metrics_pool_process_count()`** (≤ **`metrics_pool_process_cap`**) | Many concurrent readers during metrics passes |
-| **pipeline** | `sync_timedb.py` / archive | Ingest pool = **`get_sync_ingest_pool_processes()`** (same base as `get_worker_thread_count(2)`, optional **`sync_pool_process_cap`**); archive pool = **`get_sync_archive_pool_processes()`** (half of ingest, optional **`archive_pool_process_cap`**) | Load spikes + **zstd** seal CPU (`archive_zstd_threads` / `archive_zstd_level`); `sync_timedb` is a long-lived loop (rescans archive after each wave; sleeps 5 minutes when no pending files) |
+| **pipeline** | `sync_timedb.py` / archive | Ingest pool = **`get_sync_ingest_pool_processes()`**; archive pool = **`get_sync_archive_pool_processes()`**; daily seal uses up to **`archive_seal_parallel_workers`** (default **4**) concurrent **`atomic_seal_tar_to_zst`** jobs, each zstd **`-T0`** when **`archive_zstd_threads=0`** (default), with **`nice`/`ionice`** wrappers | Load spikes during seal maintenance; see **Archive zstd priority** below |
 | **pipeline** | `listend.py` | Pika + a few daemon threads; no Django DB in this module | Low |
 | **db** | PostgreSQL | `max_connections=500`; lowered `work_mem`, parallel worker caps, and maintenance buffers in `docker-compose.yaml` to limit RAM spikes | Hard slot ceiling; per-query memory bounded by GUCs |
 
 **Sizing rule:** **`effective_cores = min(ini total_cores, os.cpu_count())`**. If **`[DEFAULT] total_cores`** is **missing** in `hpcperfstats.ini`, the code uses **40** as the ini budget. If the host has more CPUs than **`total_cores`**, the ini value **caps** app parallelism. If **ini > host**, **`os.cpu_count()`** (including cgroup/cpuset limits) wins.
 
 **Ini reference:** optional tuning keys and defaults are documented in **`hpcperfstats.ini.example`** (one comment per key). The canonical list of wired options is **`INI_OPTION_REGISTRY`** in **`hpcperfstats/conf_parser.py`**; drift tests in **`hpcperfstats/tests/test_hpcperfstats_ini_example.py`** keep the example aligned.
+
+## Archive zstd priority (unpinned hosts)
+
+Daily monitor archives are sealed inside the **`pipeline`** container. On hosts **without** Docker CPU pinning, **`web`**, **`db`**, and **`pipeline`** share the same CPU scheduler and often the same physical disk (`postgres_data` vs `/opt/hpcperfstats_data/`).
+
+| `[PORTAL]` key | Default | Role |
+|----------------|---------|------|
+| **`archive_zstd_threads`** | **`0`** | **`0`** → zstd **`-T0`** (all logical cores per zstd process); **`N>0`** → explicit **`-TN`** override |
+| **`archive_seal_parallel_workers`** | **`4`** | Max concurrent daily tar seals during maintenance |
+| **`archive_zstd_nice`** | **`10`** | CPU deprioritization for zstd children (`0` disables) |
+| **`archive_zstd_ionice_class`** / **`archive_zstd_ionice_level`** | **`2`** / **`6`** | Best-effort I/O class; higher level yields disk to Postgres |
+| **`archive_zstd_level`** | **`7`** | Compression level; benchmark before raising above **9** |
+
+**Tuning:** If seals are too slow, raise **`archive_seal_parallel_workers`** slightly. If web/API or Postgres latency spikes during maintenance, lower parallel workers first, then raise **`archive_zstd_nice`** or **`archive_zstd_ionice_level`**. Override env **`SYNC_ARCHIVE_SEAL_WORKERS`** mirrors validation fanout.
+
+**Hard isolation (recommended long-term):** run [`scripts/apply_compose_cpu_pinning.py`](../scripts/apply_compose_cpu_pinning.py) so **`pipeline`** gets a dedicated cpuset; you can then run zstd at lower nice/ionice and/or raise parallel workers with less impact on **`web`**/**`db`**.
 
 ## PostgreSQL connection budget (operator)
 

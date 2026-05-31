@@ -12,13 +12,67 @@ import pytest
 
 from hpcperfstats.dbload.zstd_cli import (
     decompress_compressed_to_tar,
+    wrap_archive_zstd_cmd,
     zstd_compress_tar_to_file,
     zstd_decompress_stdout,
     zstd_decompress_verbose,
     zstd_gzip_decompress_verbose,
     zstd_gzip_supported,
     zstd_test,
+    zstd_thread_cli_args,
 )
+
+
+def test_zstd_thread_cli_args_zero_uses_t0():
+  assert zstd_thread_cli_args(0) == ["-T0"]
+
+
+def test_zstd_thread_cli_args_positive():
+  assert zstd_thread_cli_args(4) == ["-T4"]
+
+
+def test_wrap_archive_zstd_cmd_adds_ionice_and_nice(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.zstd_cli._archive_zstd_priority_settings",
+      lambda: (10, 2, 6),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.zstd_cli.shutil.which",
+      lambda name: "/usr/bin/%s" % name if name in ("ionice", "nice", "zstd") else None,
+  )
+  wrapped = wrap_archive_zstd_cmd(["/usr/bin/zstd", "-T0", "-q", "x.zst"])
+  assert wrapped[0:8] == [
+      "/usr/bin/ionice", "-c2", "-n6",
+      "/usr/bin/nice", "-n10",
+      "/usr/bin/zstd", "-T0", "-q",
+  ]
+  assert wrapped[8] == "x.zst"
+
+
+def test_wrap_archive_zstd_cmd_skips_when_disabled(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.zstd_cli._archive_zstd_priority_settings",
+      lambda: (0, 0, 0),
+  )
+  base = ["/usr/bin/zstd", "-d", "x.zst"]
+  assert wrap_archive_zstd_cmd(base) == base
+
+
+def test_zstd_compress_tar_to_file_uses_t0_when_thread_count_zero(monkeypatch, tmp_path):
+  captured = []
+
+  def _fake_run(cmd, capture_output, text, check):
+    captured.append(cmd)
+    return subprocess.CompletedProcess(cmd, 0)
+
+  tar_path = tmp_path / "day.tar"
+  zst_path = tmp_path / "day.tar.zst"
+  tar_path.write_bytes(b"payload")
+
+  with patch("hpcperfstats.dbload.zstd_cli.subprocess.run", side_effect=_fake_run):
+    zstd_compress_tar_to_file(str(tar_path), str(zst_path), 0, 6)
+
+  assert "-T0" in captured[0]
 
 
 def test_zstd_gzip_decompress_verbose_invokes_zstd_gzip_format(monkeypatch):

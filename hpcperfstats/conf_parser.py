@@ -113,6 +113,10 @@ INI_OPTION_REGISTRY = (
     ("PORTAL", "archive_seal_idle_seconds"),
     ("PORTAL", "archive_zstd_threads"),
     ("PORTAL", "archive_zstd_level"),
+    ("PORTAL", "archive_zstd_nice"),
+    ("PORTAL", "archive_zstd_ionice_class"),
+    ("PORTAL", "archive_zstd_ionice_level"),
+    ("PORTAL", "archive_seal_parallel_workers"),
     ("PORTAL", "archive_maintenance_interval_seconds"),
     ("PORTAL", "engine_name"),
     ("PORTAL", "username"),
@@ -345,9 +349,37 @@ def get_archive_zstd_level():
 
 
 def get_archive_zstd_threads():
-  """zstd ``-T`` thread count for archive compress/decompress. Default 8."""
+  """zstd ``-T`` thread count for archive compress/decompress. Default 0 (-T0)."""
   _ensure_cfg_loaded()
-  raw = cfg.get('PORTAL', 'archive_zstd_threads', fallback='8')
+  raw = cfg.get('PORTAL', 'archive_zstd_threads', fallback='0')
+  return max(0, int(raw))
+
+
+def get_archive_zstd_nice():
+  """Added nice for archive zstd child processes (0 disables). Default 10."""
+  _ensure_cfg_loaded()
+  raw = cfg.get('PORTAL', 'archive_zstd_nice', fallback='10')
+  return max(0, int(raw))
+
+
+def get_archive_zstd_ionice_class():
+  """I/O scheduling class for archive zstd (0=none, 2=best-effort, 3=idle). Default 2."""
+  _ensure_cfg_loaded()
+  raw = cfg.get('PORTAL', 'archive_zstd_ionice_class', fallback='2')
+  return max(0, min(3, int(raw)))
+
+
+def get_archive_zstd_ionice_level():
+  """I/O priority level within class for archive zstd (0-7). Default 6."""
+  _ensure_cfg_loaded()
+  raw = cfg.get('PORTAL', 'archive_zstd_ionice_level', fallback='6')
+  return max(0, min(7, int(raw)))
+
+
+def get_archive_seal_parallel_workers():
+  """Max concurrent daily tar seals during maintenance. Default 4."""
+  _ensure_cfg_loaded()
+  raw = cfg.get('PORTAL', 'archive_seal_parallel_workers', fallback='4')
   return max(1, int(raw))
 
 
