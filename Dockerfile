@@ -5,7 +5,6 @@ WORKDIR /home/hpcperfstats
 COPY --chown=node:node . .
 WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
 # Vite and @vitejs/plugin-react are devDependencies; they must be present to build.
-# After `npm run build`, drop dev packages with the same effect as `npm ci --omit=dev`.
 RUN /bin/bash -o pipefail -c "npm ci && npm run build"
 WORKDIR /home/hpcperfstats
 RUN /bin/bash -o pipefail -c "\
@@ -33,6 +32,7 @@ RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && apt-get install -y --no-install-recommends \
        netcat-openbsd supervisor rsync syslog-ng util-linux \
        vim net-tools lsof zstd nano \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*"
 
 WORKDIR /home/hpcperfstats
@@ -59,7 +59,7 @@ RUN /bin/bash -o pipefail -c "printf '%s\n' \
     > /var/lib/hpcperfstats-syslog/generated.conf \
     && chmod 644 /var/lib/hpcperfstats-syslog/generated.conf"
 
-# Set python install variables.
+# Set install variables.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_ROOT_USER_ACTION=ignore \
