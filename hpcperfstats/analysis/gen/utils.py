@@ -318,6 +318,35 @@ def clean_dataframe(df):
   return df
 
 
+def _tz_aware_bokeh_local_time_js(input_var):
+  """JS snippet: format Bokeh UTC epoch ms as local 12-hour time using ``tz`` arg."""
+  return f"""
+// Bokeh datetimes are milliseconds since epoch. Render labels in tz.
+const dt = new Date({input_var})
+
+function pad2(n) {{ return (n < 10) ? ("0" + n) : ("" + n) }}
+
+try {{
+  const parts = new Intl.DateTimeFormat('en-CA', {{
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }}).formatToParts(dt)
+
+  const out = {{}}
+  for (const p of parts) out[p.type] = p.value
+  return `${{out.hour}}:${{out.minute}} ${{out.dayPeriod}}`
+}} catch (e) {{
+  // Fallback: UTC without Intl timezone support or invalid tz name.
+  return `${{pad2(dt.getUTCHours())}}:${{pad2(dt.getUTCMinutes())}}`
+}}
+""".strip()
+
+
 def tz_aware_bokeh_tick_formatter():
   """Return a fresh CustomJSTickFormatter that renders datetime ticks in the configured timezone. Must return a new instance per plot/document.
 
@@ -326,31 +355,15 @@ def tz_aware_bokeh_tick_formatter():
   # across documents, e.g. across separate web requests).
   return CustomJSTickFormatter(
       args={"tz": local_timezone},
-      code="""
-// Bokeh datetimes are milliseconds since epoch. Render tick labels in tz.
-const dt = new Date(tick)
+      code=_tz_aware_bokeh_local_time_js("tick"),
+  )
 
-function pad2(n) { return (n < 10) ? ("0" + n) : ("" + n) }
 
-try {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  }).formatToParts(dt)
-
-  const out = {}
-  for (const p of parts) out[p.type] = p.value
-  return `${out.hour}:${out.minute} ${out.dayPeriod}`
-} catch (e) {
-  // Fallback: UTC without Intl timezone support or invalid tz name.
-  return `${pad2(dt.getUTCHours())}:${pad2(dt.getUTCMinutes())}`
-}
-""",
+def new_tz_aware_bokeh_datetime_hover_formatter():
+  """Hover tooltip time fields in configured tz, 12-hour am/pm (new instance per HoverTool)."""
+  return CustomJSHover(
+      args={"tz": local_timezone},
+      code=_tz_aware_bokeh_local_time_js("value"),
   )
 
 

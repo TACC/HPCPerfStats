@@ -93,6 +93,22 @@ def test_tz_aware_bokeh_tick_formatter_returns_formatter():
   assert "tz" in formatter.args
   assert formatter.code is not None
   assert "tick" in formatter.code
+  assert "hour12: true" in formatter.code
+
+
+def test_tz_aware_bokeh_datetime_hover_formatter_returns_formatter():
+  """Hover time formatter uses configured tz and 12-hour am/pm like axis ticks."""
+  from bokeh.models.tools import CustomJSHover
+
+  from hpcperfstats.analysis.gen.utils import new_tz_aware_bokeh_datetime_hover_formatter
+
+  formatter = new_tz_aware_bokeh_datetime_hover_formatter()
+  assert isinstance(formatter, CustomJSHover)
+  assert "tz" in formatter.args
+  assert formatter.code is not None
+  assert "value" in formatter.code
+  assert "hour12: true" in formatter.code
+  assert "timeZone: tz" in formatter.code
 
 
 def test_plain_linear_tick_formatter_disables_scientific():

@@ -32,6 +32,7 @@ from hpcperfstats.analysis.gen.utils import (
     INTEL_IMC_STATS_TYPES,
     non_degenerate_y_range_for_series,
     new_plain_number_hover_formatter,
+    new_tz_aware_bokeh_datetime_hover_formatter,
     set_linear_axes_plain_numeric,
     tz_aware_bokeh_tick_formatter,
 )
@@ -45,7 +46,7 @@ from bokeh.transform import factor_cmap
 from hpcperfstats.analysis.plot import MSG_NO_METRIC_DATA
 from hpcperfstats.analysis.bokeh_job_embed import figure_embed_kw
 from hpcperfstats.analysis.plot.hover_html import hover_tooltip_html_host_time_value
-from hpcperfstats.analysis.plot.job_window import job_window_bounds_local
+from hpcperfstats.analysis.plot.job_window import job_window_timestamps_utc
 from hpcperfstats.analysis.plot.summary_metric_descriptions import (
     description_for_summary_metric,
     researcher_use_for_summary_metric,
@@ -53,8 +54,6 @@ from hpcperfstats.analysis.plot.summary_metric_descriptions import (
 from hpcperfstats.analysis.plot.bokeh_job_detail_help_marker import (
     add_job_detail_bokeh_help_marker,
 )
-
-local_timezone = cfg.get_local_timezone()
 
 # Hard cap for nested aggregate prefetch threads (see job_plots + api ThreadPoolExecutor).
 # Keeps DB connection and work_mem spikes bounded when summaryplot runs inside a worker thread.
@@ -807,7 +806,6 @@ def plot_hardware_error_rates_figure(jt, x_range):
     return None
 
   merged["time"] = to_datetime(merged["time"], utc=True)
-  merged["time"] = merged["time"].dt.tz_convert(local_timezone)
 
   plot_kwargs = figure_embed_kw(
       150,
@@ -825,6 +823,7 @@ def plot_hardware_error_rates_figure(jt, x_range):
 
   palette = d3["Category10"][10]
   num_hover = new_plain_number_hover_formatter()
+  time_hover = new_tz_aware_bokeh_datetime_hover_formatter()
   line_renderers = []
   for i, col in enumerate(value_cols):
     sub = merged[["time", col]].dropna()
@@ -840,10 +839,10 @@ def plot_hardware_error_rates_figure(jt, x_range):
             renderers=[ln],
             tooltips=[
                 ("Series", col),
-                ("Time", "@x{%F %T}"),
+                ("Time", "@x{custom}"),
                 ("Rate [#/s]", "@y{0.000}"),
             ],
-            formatters={"@x": "datetime", "@y": num_hover},
+            formatters={"@x": time_hover, "@y": num_hover},
         )
     )
   if line_renderers:
@@ -953,11 +952,12 @@ class SummaryPlot():
     )
 
     num_hover = new_plain_number_hover_formatter()
+    time_hover = new_tz_aware_bokeh_datetime_hover_formatter()
     plot.add_tools(
         HoverTool(
             tooltips=hover_tooltip_html_host_time_value(label_text, metric),
             formatters={
-                "@time": "datetime",
+                "@time": time_hover,
                 f"@{metric}": num_hover,
             },
             renderers=[scatter],
@@ -1048,7 +1048,6 @@ class SummaryPlot():
     df = df.reset_index()
 
     df["time"] = to_datetime(df["time"], utc=True)
-    df["time"] = df["time"].dt.tz_convert(local_timezone)
 
     render_specs = []
     for typ, val, events, name, conv, label in metrics:
@@ -1071,7 +1070,7 @@ class SummaryPlot():
 
     render_specs.sort(key=lambda item: _summary_plot_order_key(item[0]))
 
-    x_start, x_end = job_window_bounds_local(self.jt)
+    x_start, x_end = job_window_timestamps_utc(self.jt)
     x_range = Range1d(x_start, x_end) if x_start is not None and x_end is not None else None
 
     plots = []

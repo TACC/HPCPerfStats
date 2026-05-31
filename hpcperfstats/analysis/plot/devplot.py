@@ -13,17 +13,17 @@ from bokeh.models.glyphs import Step
 from bokeh.palettes import d3
 from bokeh.plotting import figure
 
-import hpcperfstats.conf_parser as cfg
+from pandas import to_datetime
+
 from hpcperfstats.analysis.gen.utils import (
     clean_dataframe,
     non_degenerate_y_range_for_series,
     new_plain_number_hover_formatter,
+    new_tz_aware_bokeh_datetime_hover_formatter,
     set_linear_axes_plain_numeric,
     tz_aware_bokeh_tick_formatter,
 )
 from hpcperfstats.analysis.plot.hover_html import hover_tooltip_html_host_time_value
-
-local_timezone = cfg.get_local_timezone()
 
 
 class DevPlot:
@@ -61,6 +61,7 @@ class DevPlot:
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
     num_hover = new_plain_number_hover_formatter()
+    time_hover = new_tz_aware_bokeh_datetime_hover_formatter()
     circle_renderers = []
     for h in self.host_list:
       source = ColumnDataSource(df[df.host == h])
@@ -85,7 +86,7 @@ class DevPlot:
         HoverTool(
             tooltips=hover_tooltip_html_host_time_value(event, event),
             formatters={
-                "@time": "datetime",
+                "@time": time_hover,
                 f"@{event}": num_hover,
             },
             renderers=circle_renderers,
@@ -134,7 +135,7 @@ class DevPlot:
 
     df = df.reset_index()
     if not df.empty and "time" in df.columns:
-      df["time"] = df["time"].dt.tz_convert(local_timezone)
+      df["time"] = to_datetime(df["time"], utc=True)
 
     df = clean_dataframe(df)
 

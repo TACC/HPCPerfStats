@@ -6,7 +6,7 @@ def hover_tooltip_html_host_time_value(value_label, value_field):
   return f"""
     <div style="padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #d0d7de;">
       <div><strong>host:</strong> @host</div>
-      <div><strong>time:</strong> @time{{%F %T}}</div>
+      <div><strong>time:</strong> @time{{custom}}</div>
       <div><strong>{value_label}:</strong> @{value_field}{{custom}}</div>
     </div>
   """

@@ -508,6 +508,56 @@ def test_summaryplot_uses_job_window_for_x_range():
   assert seen_x_ranges
   assert pd.Timestamp(seen_x_ranges[0].start).tz_convert("UTC") == job_start
   assert pd.Timestamp(seen_x_ranges[0].end).tz_convert("UTC") == job_end
+  assert str(pd.Timestamp(seen_x_ranges[0].start).tz) in ("UTC", "+00:00")
+
+
+def test_summaryplot_plot_metric_keeps_utc_epoch_for_data_and_x_range():
+  """Summary metric plots pass UTC instants to Bokeh for both data and x_range."""
+  from bokeh.models import HoverTool, Range1d
+  from bokeh.models.tools import CustomJSHover
+  from bokeh.util.serialization import convert_datetime_type
+
+  t0 = pd.Timestamp("2024-06-01 10:00:00+00:00")
+  t1 = pd.Timestamp("2024-06-01 10:05:00+00:00")
+  job_start = pd.Timestamp("2024-06-01 09:55:00+00:00")
+  job_end = pd.Timestamp("2024-06-01 10:10:00+00:00")
+  x_range = Range1d(job_start, job_end)
+
+  class _Jt:
+    jid = 1
+    host_list = ["h1"]
+
+  sp = SummaryPlot(_Jt())
+  sp.hc = {"h1": "#111111"}
+  df = pd.DataFrame({
+      "time": [t0, t1],
+      "host": ["h1", "h1"],
+      "cpu": [1.0, 2.0],
+  })
+
+  plot = sp.plot_metric(df, "cpu", "CPU Usage [#cores]", x_range=x_range)
+  assert convert_datetime_type(plot.x_range.start) == convert_datetime_type(job_start)
+  assert convert_datetime_type(plot.x_range.end) == convert_datetime_type(job_end)
+
+  scatter = [
+      r
+      for r in plot.renderers
+      if getattr(r, "glyph", None) is not None
+      and getattr(r.glyph, "y", None) == "cpu"
+  ][0]
+  data_times = scatter.data_source.data["time"]
+  assert convert_datetime_type(data_times[0]) == convert_datetime_type(t0)
+  assert convert_datetime_type(data_times[1]) == convert_datetime_type(t1)
+
+  hover = [
+      tool
+      for tool in plot.tools
+      if isinstance(tool, HoverTool)
+      and isinstance(tool.tooltips, str)
+      and "@cpu{custom}" in tool.tooltips
+  ][0]
+  assert isinstance(hover.formatters["@time"], CustomJSHover)
+  assert "@time{custom}" in hover.tooltips
 
 
 def test_summaryplot_orders_cpu_then_gpu_then_ibbw():

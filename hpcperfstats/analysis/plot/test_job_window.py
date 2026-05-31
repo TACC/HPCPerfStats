@@ -62,6 +62,6 @@ def test_hover_tooltip_html_host_time_value_contains_fields():
 
   html = hover_tooltip_html_host_time_value("CPU", "cpu")
   assert "@host" in html
-  assert "@time{%F %T}" in html
+  assert "@time{custom}" in html
   assert "<strong>CPU:</strong>" in html
   assert "@cpu{custom}" in html

@@ -43,9 +43,9 @@ def test_summaryplot_hover_uses_html_with_separators():
 
   assert isinstance(hover.tooltips, str)
   assert "border-bottom" in hover.tooltips
-  assert "@time{%F %T}" in hover.tooltips
+  assert "@time{custom}" in hover.tooltips
   assert "@cpu{custom}" in hover.tooltips
-  assert hover.formatters["@time"] == "datetime"
+  assert isinstance(hover.formatters["@time"], CustomJSHover)
   assert isinstance(hover.formatters["@cpu"], CustomJSHover)
   assert len(hover.renderers) == 1
 
@@ -109,9 +109,9 @@ def test_devplot_hover_uses_html_with_separators():
 
   assert isinstance(hover.tooltips, str)
   assert "border-bottom" in hover.tooltips
-  assert "@time{%F %T}" in hover.tooltips
+  assert "@time{custom}" in hover.tooltips
   assert "@MBW_CHANNEL_0{custom}" in hover.tooltips
-  assert hover.formatters["@time"] == "datetime"
+  assert isinstance(hover.formatters["@time"], CustomJSHover)
   assert isinstance(hover.formatters["@MBW_CHANNEL_0"], CustomJSHover)
   assert len(hover.renderers) == 2
 
