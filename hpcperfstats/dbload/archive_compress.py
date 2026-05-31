@@ -58,6 +58,17 @@ def archive_member_maps_equivalent(map_a: dict, map_b: dict) -> bool:
   return map_a == map_b
 
 
+def archive_gz_members_contained_in_zst(gz_members: dict, zst_members: dict) -> bool:
+  """True when every gzip member exists in zst with the same byte size.
+
+  Extra members present only in ``zst_members`` are allowed.
+  """
+  for name, size in gz_members.items():
+    if zst_members.get(name) != size:
+      return False
+  return True
+
+
 def sum_member_bytes(members: dict) -> int:
   return int(sum(members.values()))
 

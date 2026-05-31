@@ -19,6 +19,7 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
 - If archive reads fail due to known corruption/recovery scenarios, recover from paired compressed sources when available before hard failure.
 - Keep **zstd** parallelism bounded by **`archive_seal_parallel_workers`** (default **4** concurrent daily seals) and per-process **`-T`**: **`archive_zstd_threads=0`** (default) → **`-T0`**; **`N>0`** → **`-TN`**. All archive zstd subprocesses may be wrapped with configured **`nice`/`ionice`**. Legacy `.tar.gz` reads use `zstd -d --format=gzip` only.
 - **Parallel multi-day seal:** `seal_dirty_daily_archives` collects all seal-ready days, then seals via a bounded `ThreadPoolExecutor`; per-day failures must not abort other days. Do not seal the same path from two workers.
+- **Legacy ``.tar.gz`` drop:** after sealing to ``.tar.zst``, remove the gzip sibling when every gzip member path exists in the zst archive with the same byte size (extra zst-only members are allowed).
 - **Native `.tar.zst`:** always pass **`--long=31`** on compress, decompress, test, and stream paths (no size threshold or INI toggle).
 - **Safe decompress:** `decompress_compressed_to_tar` writes to a temp tar, verifies with `tar tf`, replaces the sibling `.tar`, and only then unlinks the compressed file. Do not use in-place `zstd -d --rm` on archive paths.
 - **Fail-closed append:** when a sealed sibling exists but `.tar` is missing, abort append if decompress/restore fails; never `tar -c` over a missing tar when `.tar.zst` / `.tar.gz` is present.

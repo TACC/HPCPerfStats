@@ -14,7 +14,7 @@ import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.archive_compress import (
     DAILY_ARCHIVE_GZ_SUFFIX,
     DAILY_ARCHIVE_ZST_SUFFIX,
-    archive_member_maps_equivalent,
+    archive_gz_members_contained_in_zst,
     compressed_sibling_paths,
     daily_compressed_path_for_date,
     daily_tar_path_from_compressed,
@@ -1136,25 +1136,26 @@ def iter_daily_tar_paths(daily_archive_dir):
 
 
 def compare_compressed_archive_members(gz_path, zst_path):
-  """Return ``(equal, gz_members, zst_members)`` for migration checks."""
+  """Return ``(gz_contained_in_zst, gz_members, zst_members)`` for migration checks."""
   gz_ok, gz_members = _scan_compressed_archive_members_and_readable(gz_path)
   zst_ok, zst_members = _scan_compressed_archive_members_and_readable(zst_path)
   if not gz_ok or not zst_ok:
     return False, gz_members, zst_members
-  return archive_member_maps_equivalent(gz_members, zst_members), gz_members, zst_members
+  return (
+      archive_gz_members_contained_in_zst(gz_members, zst_members),
+      gz_members,
+      zst_members,
+  )
 
 
 def drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_print):
-  """Remove legacy ``.tar.gz`` when member maps match ``.tar.zst``."""
+  """Remove legacy ``.tar.gz`` when all gzip members match in ``.tar.zst``."""
   if not os.path.isfile(gz_path) or not os.path.isfile(zst_path):
     return
-  equal, gz_members, zst_members = compare_compressed_archive_members(
+  gz_contained_in_zst, gz_members, zst_members = compare_compressed_archive_members(
       gz_path, zst_path,
   )
-  if (
-      equal
-      and sum_member_bytes(gz_members) == sum_member_bytes(zst_members)
-  ):
+  if gz_contained_in_zst:
     try:
       with file_write_lock(gz_path):
         os.remove(gz_path)

@@ -13,6 +13,7 @@ import pytest
 
 from hpcperfstats.dbload.archive_compress import (
     DAILY_ARCHIVE_ZST_SUFFIX,
+    archive_gz_members_contained_in_zst,
     daily_tar_path_from_compressed,
     normalize_daily_compressed_path,
 )
@@ -258,6 +259,77 @@ def test_parse_archive_date_from_daily_tar_path_ok():
 
 def test_parse_archive_date_from_daily_tar_path_rejects_non_daily_name():
   assert parse_archive_date_from_daily_tar_path("/x/other.tar") is None
+
+
+# --- drop_legacy_gz / gz vs zst member compare ---
+
+
+def test_archive_gz_members_contained_in_zst_allows_extra_zst_files():
+  gz_members = {"a.txt": 10, "b.txt": 20}
+  zst_members = {"a.txt": 10, "b.txt": 20, "c.txt": 5}
+  assert archive_gz_members_contained_in_zst(gz_members, zst_members)
+
+
+def test_archive_gz_members_contained_in_zst_rejects_missing_or_wrong_size():
+  gz_members = {"a.txt": 10}
+  assert not archive_gz_members_contained_in_zst(gz_members, {})
+  assert not archive_gz_members_contained_in_zst(gz_members, {"a.txt": 11})
+
+
+def test_drop_legacy_gz_removes_when_zst_is_superset(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-01.tar.gz"
+  zst_path = tmp_path / "2024-03-01.tar.zst"
+  gz_path.write_bytes(b"gz")
+  zst_path.write_bytes(b"zst")
+  gz_members = {"a.txt": 10, "b.txt": 20}
+  zst_members = {"a.txt": 10, "b.txt": 20, "c.txt": 5}
+
+  def _scan(path):
+    if str(path).endswith(".tar.gz"):
+      return True, dict(gz_members)
+    return True, dict(zst_members)
+
+  monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
+  drop_legacy_gz_if_equivalent_to_zst(str(gz_path), str(zst_path), log_fn=None)
+  assert not gz_path.exists()
+
+
+def test_drop_legacy_gz_keeps_when_zst_missing_gz_member(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-02.tar.gz"
+  zst_path = tmp_path / "2024-03-02.tar.zst"
+  gz_path.write_bytes(b"gz")
+  zst_path.write_bytes(b"zst")
+
+  def _scan(path):
+    if str(path).endswith(".tar.gz"):
+      return True, {"a.txt": 10, "b.txt": 20}
+    return True, {"a.txt": 10}
+
+  monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
+  drop_legacy_gz_if_equivalent_to_zst(str(gz_path), str(zst_path), log_fn=None)
+  assert gz_path.exists()
+
+
+def test_drop_legacy_gz_keeps_when_zst_member_size_differs(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-03.tar.gz"
+  zst_path = tmp_path / "2024-03-03.tar.zst"
+  gz_path.write_bytes(b"gz")
+  zst_path.write_bytes(b"zst")
+
+  def _scan(path):
+    if str(path).endswith(".tar.gz"):
+      return True, {"a.txt": 10, "b.txt": 20}
+    return True, {"a.txt": 10, "b.txt": 21, "c.txt": 5}
+
+  monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
+  drop_legacy_gz_if_equivalent_to_zst(str(gz_path), str(zst_path), log_fn=None)
+  assert gz_path.exists()
 
 
 # --- is_daily_tar_sealed_dirty / should_seal_daily_tar ---
