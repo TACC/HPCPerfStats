@@ -21,7 +21,6 @@ from hpcperfstats.dbload.archive_compress import (
     detect_compressed_format,
     normalize_daily_compressed_path,
     sum_member_bytes,
-    zstd_long_flags,
 )
 from hpcperfstats.dbload.zstd_cli import (
     decompress_compressed_to_tar,
@@ -300,7 +299,6 @@ def _tar_zst_readable_via_zstd_tar_pipe(zst_path, tar_bin, num_threads):
       "-c",
       *zstd_thread_cli_args(num_threads),
       "-q",
-      *zstd_long_flags(),
       zst_path,
   ])
   return _tar_readable_via_decompress_tar_pipe(cmd, tar_bin)

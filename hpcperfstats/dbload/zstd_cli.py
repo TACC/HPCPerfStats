@@ -13,7 +13,6 @@ from hpcperfstats.dbload.archive_compress import (
     DAILY_ARCHIVE_GZ_SUFFIX,
     DAILY_ARCHIVE_ZST_SUFFIX,
     detect_compressed_format,
-    zstd_long_flags,
 )
 from hpcperfstats.file_locking import file_write_lock
 from hpcperfstats.print_utils import log_print
@@ -139,7 +138,6 @@ def _decompress_to_path(
       output_path,
   ]
   if fmt == "zst":
-    cmd.extend(zstd_long_flags())
     cmd.append(compressed_path)
   elif fmt == "gz":
     cmd.extend(_GZIP_FORMAT)
@@ -257,7 +255,6 @@ def zstd_decompress_stdout(
       "-d",
       "-c",
       *_thread_args(thread_count),
-      *zstd_long_flags(),
       "-q",
       zst_path,
   ]
@@ -273,7 +270,6 @@ def zstd_test(
       zstd_executable(),
       "-t",
       *_thread_args(thread_count),
-      *zstd_long_flags(),
       "-q",
       zst_path,
   ]
@@ -357,7 +353,6 @@ def zstd_compress_tar_to_file(
       "-o",
       zst_path,
       "--size-hint=%d" % int(tar_bytes),
-      *zstd_long_flags(),
       tar_path,
   ]
   result = _run_zstd(cmd, capture_output=True, text=True, check=False)

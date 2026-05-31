@@ -437,7 +437,7 @@ def test_atomic_seal_tar_to_zst_creates_valid_zstd(tmp_path):
   )
   assert zst_path.is_file()
   subprocess.run(
-      [zstd_executable(), "-t", "-T1", "--long=31", "-q", str(zst_path)],
+      [zstd_executable(), "-t", "-T1", "-q", str(zst_path)],
       check=True,
   )
   assert tar_path.is_file()

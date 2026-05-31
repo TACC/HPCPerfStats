@@ -1,16 +1,9 @@
-"""Daily archive path suffixes and zstd long-mode helpers (no Django)."""
+"""Daily archive path suffixes and helpers (no Django)."""
 from __future__ import annotations
 
 DAILY_ARCHIVE_ZST_SUFFIX = ".tar.zst"
 DAILY_ARCHIVE_GZ_SUFFIX = ".tar.gz"
 DAILY_ARCHIVE_TAR_SUFFIX = ".tar"
-
-ARCHIVE_ZSTD_LONG_FLAG = "--long=31"
-
-
-def zstd_long_flags() -> list[str]:
-  """Return ``['--long=31']`` for all native daily ``.tar.zst`` operations."""
-  return [ARCHIVE_ZSTD_LONG_FLAG]
 
 
 def detect_compressed_format(path: str) -> str | None:

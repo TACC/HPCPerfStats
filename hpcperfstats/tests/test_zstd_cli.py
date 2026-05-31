@@ -94,7 +94,7 @@ def test_zstd_gzip_decompress_verbose_invokes_zstd_gzip_format(monkeypatch):
   assert captured == []
 
 
-def test_zstd_decompress_verbose_native_always_includes_long(monkeypatch):
+def test_zstd_decompress_verbose_native_decompress_path(monkeypatch):
   captured = []
 
   def _fake_decomp(compressed_path, tar_path, thread_count, *, remove_compressed=True):
@@ -110,7 +110,7 @@ def test_zstd_decompress_verbose_native_always_includes_long(monkeypatch):
   assert captured == [("/tmp/small.tar.zst", "/tmp/small.tar", 2, True)]
 
 
-def test_zstd_compress_tar_to_file_always_includes_long(monkeypatch, tmp_path):
+def test_zstd_compress_tar_to_file_command_shape(monkeypatch, tmp_path):
   captured = []
 
   def _fake_run(cmd, capture_output, text, check):
@@ -124,10 +124,12 @@ def test_zstd_compress_tar_to_file_always_includes_long(monkeypatch, tmp_path):
   with patch("hpcperfstats.dbload.zstd_cli.subprocess.run", side_effect=_fake_run):
     zstd_compress_tar_to_file(str(tar_path), str(zst_path), 2, 6)
 
-  assert "--long=31" in captured[0]
+  assert "-T2" in captured[0]
+  assert "-6" in captured[0]
+  assert "--long" not in " ".join(captured[0])
 
 
-def test_zstd_test_always_includes_long(monkeypatch):
+def test_zstd_test_command_shape(monkeypatch):
   captured = []
 
   def _fake_run(cmd, capture_output, text, check):
@@ -137,7 +139,8 @@ def test_zstd_test_always_includes_long(monkeypatch):
   with patch("hpcperfstats.dbload.zstd_cli.subprocess.run", side_effect=_fake_run):
     zstd_test("/tmp/day.tar.zst", 3)
 
-  assert "--long=31" in captured[0]
+  assert "-T3" in captured[0]
+  assert "--long" not in " ".join(captured[0])
 
 
 def test_decompress_compressed_to_tar_keeps_compressed_on_verify_failure(
