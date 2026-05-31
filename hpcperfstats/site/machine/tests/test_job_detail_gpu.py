@@ -497,6 +497,26 @@ def test_multiprecision_mix_payload_staff_reasons_align_with_plot_tabs():
   assert payload["gpu_plot_item"] is None
 
 
+def test_multiprecision_pie_uses_category10_colors_and_inset_layout():
+  """Regression: wedges use d3 Category10 colors and fit inside the frame."""
+  import json
+
+  item, reason = job_detail_artifacts_mod._pie_item_from_precision_mix(
+      precision_mix={"FP32": 60.0, "FP64": 40.0},
+      title="CPU Multiprecision Mix",
+      empty_reason="empty",
+      help_plot_key="jobDetailPlot_multiprecision_cpu",
+      label_order=job_detail_artifacts_mod._CPU_PRECISION_LABEL_ORDER,
+  )
+  assert reason is None
+  assert item is not None
+  doc = json.dumps(item)
+  assert "#1f77b4" in doc
+  assert "#ff7f0e" in doc
+  assert str(job_detail_artifacts_mod._MULTIPRECISION_PIE_RADIUS) in doc
+  assert "min_border_bottom" in doc
+
+
 def test_multiprecision_mix_payload_does_not_query_host_data(monkeypatch):
   """Regression: GPU multiprecision pie must come from metrics_data only.
 

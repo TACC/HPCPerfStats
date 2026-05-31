@@ -508,7 +508,7 @@ body {
 .job-detail-single-plot-host .job-detail-plot-embed.bokeh-embed-wrapper {
   width: 100%;
   min-width: 0;
-  min-height: 320px;
+  min-height: 340px;
 }
 
 /* Job list pagination: react-paginate + First/Last */

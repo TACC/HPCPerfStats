@@ -11,7 +11,9 @@ from typing import Any, Dict, Optional
 
 from bokeh.embed import json_item
 from bokeh.models import ColumnDataSource, HoverTool
+from bokeh.palettes import d3
 from bokeh.plotting import figure
+from bokeh.transform import factor_cmap
 
 from hpcperfstats.analysis.plot.bokeh_job_detail_help_marker import (
     add_job_detail_bokeh_help_marker,
@@ -49,7 +51,7 @@ _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
     "Missing GPU precision-width mix metrics in job metrics "
     "(need positive avg_*_active shares)."
 )
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 4
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 5
 
 
 def _compress_payload(payload: Dict[str, Any]) -> tuple[bytes, str]:
@@ -232,6 +234,26 @@ _GPU_PRECISION_METRIC_TO_LABEL = {
     "avg_fp64_active": "FP64",
 }
 
+_CPU_PRECISION_LABEL_ORDER = ("FP64", "FP32", "FP16", "FP8")
+_GPU_PRECISION_LABEL_ORDER = ("Tensor", "FP16", "FP32", "FP64")
+
+# Inset pie so title + bottom legend do not clip wedges (match summaryplot d3 Category10).
+_MULTIPRECISION_PIE_RADIUS = 0.75
+_MULTIPRECISION_PLOT_RANGE = 1.0
+
+
+def _ordered_precision_labels(
+    labels: list[str],
+    label_order: tuple[str, ...],
+) -> list[str]:
+  order_idx = {name: idx for idx, name in enumerate(label_order)}
+  return sorted(labels, key=lambda name: order_idx.get(name, len(label_order)))
+
+
+def _category10_palette_for_factors(factors: list[str]) -> list[str]:
+  base = d3["Category10"][10]
+  return [base[i % len(base)] for i in range(len(factors))]
+
 
 def _precision_mix_from_metric_values(
     metric_values: Dict[str, Optional[float]],
@@ -256,14 +278,16 @@ def _pie_item_from_precision_mix(
     title: str,
     empty_reason: str,
     help_plot_key: str,
+    label_order: tuple[str, ...],
 ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
   if not precision_mix:
     return None, empty_reason
   total = sum(float(v) for v in precision_mix.values() if float(v) > 0.0)
   if total <= 0.0:
     return None, empty_reason
-  labels = list(precision_mix.keys())
+  labels = _ordered_precision_labels(list(precision_mix.keys()), label_order)
   values = [float(precision_mix[label]) for label in labels]
+  palette = _category10_palette_for_factors(labels)
   starts = []
   ends = []
   theta = 0.0
@@ -280,14 +304,18 @@ def _pie_item_from_precision_mix(
           "end": ends,
       }
   )
+  plot_span = _MULTIPRECISION_PLOT_RANGE
   p = figure(
       title=title,
-      height=320,
+      height=340,
       width=320,
       toolbar_location=None,
       tools="hover",
-      x_range=(-1.3, 1.3),
-      y_range=(-1.3, 1.3),
+      x_range=(-plot_span, plot_span),
+      y_range=(-plot_span, plot_span),
+      min_border_top=50,
+      min_border_bottom=72,
+      match_aspect=True,
   )
   p.axis.visible = False
   p.grid.visible = False
@@ -295,13 +323,14 @@ def _pie_item_from_precision_mix(
   p.wedge(
       x=0,
       y=0,
-      radius=1.0,
+      radius=_MULTIPRECISION_PIE_RADIUS,
       start_angle="start",
       end_angle="end",
       source=source,
       legend_field="label",
       line_color="white",
       fill_alpha=0.9,
+      color=factor_cmap("label", palette=palette, factors=labels),
   )
   hover = p.select_one(HoverTool)
   if hover is not None:
@@ -333,12 +362,14 @@ def _multiprecision_mix_payload(
       title="CPU Multiprecision Mix",
       empty_reason=_CPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON,
       help_plot_key="jobDetailPlot_multiprecision_cpu",
+      label_order=_CPU_PRECISION_LABEL_ORDER,
   )
   gpu_plot_item, gpu_reason = _pie_item_from_precision_mix(
       precision_mix=gpu_mix,
       title="GPU Multiprecision Mix",
       empty_reason=_GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON,
       help_plot_key="jobDetailPlot_multiprecision_gpu",
+      label_order=_GPU_PRECISION_LABEL_ORDER,
   )
   return {
       "cpu_plot_item": cpu_plot_item,
