@@ -1653,8 +1653,8 @@ def get_sync_write_lock_shards():
   if cfg.has_option("DEFAULT", "sync_write_lock_shards"):
     return max(1, int(cfg.get("DEFAULT", "sync_write_lock_shards")))
   # Default scales modestly with cores to reduce write serialization without
-  # exploding contention on smaller systems.
-  return max(1, min(8, get_effective_cores() // 8))
+  # exploding contention on smaller systems (40 effective cores -> 8 shards).
+  return max(1, min(8, get_effective_cores() // 5))
 
 
 def get_sync_enable_db_writer_pipeline():
@@ -1668,7 +1668,7 @@ def get_sync_db_writer_pool_multiplier():
   _ensure_cfg_loaded()
   return max(
       0.10,
-      min(2.00, float(cfg.get("DEFAULT", "sync_db_writer_pool_multiplier", fallback="0.50"))),
+      min(2.00, float(cfg.get("DEFAULT", "sync_db_writer_pool_multiplier", fallback="0.80"))),
   )
 
 
@@ -1679,7 +1679,7 @@ def get_sync_db_writer_pool_cap():
   _ensure_cfg_loaded()
   if cfg.has_option("DEFAULT", "sync_db_writer_pool_cap"):
     return max(1, int(cfg.get("DEFAULT", "sync_db_writer_pool_cap")))
-  return None
+  return 8
 
 
 def get_sync_db_writer_pool_processes(ingest_processes=None):
@@ -1735,7 +1735,7 @@ def get_conf_parser_defaults_audit_snapshot():
           "sync_budget_archive_ratio": 0.15,
           "sync_budget_metrics_ratio": 0.20,
           "sync_budget_reserve_ratio": 0.05,
-          "sync_write_lock_shards_auto_rule": "max(1,min(8,effective_cores//8))",
+          "sync_write_lock_shards_auto_rule": "max(1,min(8,effective_cores//5))",
           "sync_ingest_queue_max_size": 2000,
           "sync_archive_queue_max_size": 1000,
       },

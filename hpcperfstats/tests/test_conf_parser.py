@@ -838,6 +838,21 @@ def test_sync_host_itimes_cache_max_timestamps_per_entry(temp_ini, monkeypatch):
   assert cfg.get_sync_host_itimes_cache_max_timestamps_per_entry() == 50000
 
 
+def test_sync_write_lock_shards_auto_scales_to_eight_at_forty_cores(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace("total_cores = 4", "total_cores = 40")
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 40)
+  assert cfg.get_sync_write_lock_shards() == 8
+
+
 def test_sync_phase2_feature_flags_and_shards(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
@@ -871,7 +886,7 @@ def test_sync_db_writer_pool_defaults_and_cap(temp_ini, monkeypatch):
   import importlib
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_sync_db_writer_pool_processes(ingest_processes=8) == 4
+  assert cfg.get_sync_db_writer_pool_processes(ingest_processes=8) == 6
 
   with open(temp_ini) as f:
     content = f.read()

@@ -217,8 +217,8 @@ secret_key = change-me-to-a-long-random-string
 # Parse-worker to DB-writer queue pipeline (default no).
 # sync_enable_db_writer_pipeline = no
 
-# DB-writer pool size as fraction of ingest pool (default 0.50).
-# sync_db_writer_pool_multiplier = 0.50
+# DB-writer pool size as fraction of ingest pool (default 0.80).
+# sync_db_writer_pool_multiplier = 0.80
 
 # Hard cap on DB-writer pool processes when set.
 # sync_db_writer_pool_cap =
