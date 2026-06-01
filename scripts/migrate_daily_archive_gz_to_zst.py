@@ -110,6 +110,14 @@ def _build_arg_parser():
       action="store_true",
       help="Print per-day migration log lines.",
   )
+  parser.add_argument(
+      "--decompress-tmp-dir",
+      default="/tmp",
+      help=(
+          "Directory for temporary decompressed tar files when migrating gz-only "
+          "days (default: /tmp)."
+      ),
+  )
   return parser
 
 
@@ -176,6 +184,7 @@ def main(argv=None):
         daily_archive_dir,
         remaining_raw_by_gz=remaining_raw_by_gz,
         force_remove_uncompressed_tar=args.force_remove_tar,
+        decompress_tmp_dir=args.decompress_tmp_dir,
         log_fn=log_fn,
         lock_timeout_seconds=args.lock_timeout,
         dry_run=args.dry_run,

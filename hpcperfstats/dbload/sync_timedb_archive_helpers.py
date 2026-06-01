@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -1462,18 +1463,21 @@ def _migrate_one_daily_legacy_gz_locked(
     keep_uncompressed_tar,
     remaining_raw_by_gz,
     force_remove_uncompressed_tar,
+    decompress_tmp_dir,
     log_fn,
 ):
   """Migrate one day while the caller holds the write lock on tar or gz."""
   if not os.path.isfile(gz_path):
     return MIGRATE_GZ_STATUS_SKIPPED_NO_GZ
 
-  def _seal_and_drop():
-    if not os.path.isfile(tar_path):
+  def _seal_and_drop(seal_tar_path=None):
+    if seal_tar_path is None:
+      seal_tar_path = tar_path
+    if not os.path.isfile(seal_tar_path):
       return MIGRATE_GZ_STATUS_FAILED
     try:
       atomic_seal_tar_to_zst(
-          tar_path,
+          seal_tar_path,
           zst_path,
           zstd_threads,
           compress_level,
@@ -1485,7 +1489,7 @@ def _migrate_one_daily_legacy_gz_locked(
     except (subprocess.CalledProcessError, RuntimeError) as exc:
       if log_fn:
         log_fn(
-            "Migration seal failed for %s: %s" % (tar_path, exc),
+            "Migration seal failed for %s: %s" % (seal_tar_path, exc),
             flush=True,
         )
       return MIGRATE_GZ_STATUS_FAILED
@@ -1522,9 +1526,29 @@ def _migrate_one_daily_legacy_gz_locked(
     # We already hold a write lock on gz_path in migrate_one_daily_legacy_gz().
     # Avoid re-locking gz_path inside decompress_compressed_to_tar(remove_compressed=True),
     # which can fail under non-reentrant advisory lock semantics.
+    temp_tar_path = tar_path
+    remove_temp_tar_after = False
+    if decompress_tmp_dir:
+      try:
+        os.makedirs(decompress_tmp_dir, exist_ok=True)
+      except OSError as exc:
+        if log_fn:
+          log_fn(
+              "Migration temp directory unavailable %s: %s"
+              % (decompress_tmp_dir, exc),
+              flush=True,
+          )
+        return MIGRATE_GZ_STATUS_FAILED
+      fd, temp_tar_path = tempfile.mkstemp(
+          prefix="%s.migrate." % os.path.basename(tar_path),
+          suffix=".tar",
+          dir=decompress_tmp_dir,
+      )
+      os.close(fd)
+      remove_temp_tar_after = True
     if not decompress_compressed_to_tar(
         gz_path,
-        tar_path,
+        temp_tar_path,
         zstd_threads,
         remove_compressed=False,
     ):
@@ -1533,6 +1557,12 @@ def _migrate_one_daily_legacy_gz_locked(
             "Migration decompress failed for legacy gzip: %s" % gz_path,
             flush=True,
         )
+      if remove_temp_tar_after:
+        try:
+          if os.path.exists(temp_tar_path):
+            os.remove(temp_tar_path)
+        except OSError:
+          pass
       return MIGRATE_GZ_STATUS_FAILED
     try:
       if os.path.isfile(gz_path):
@@ -1544,8 +1574,21 @@ def _migrate_one_daily_legacy_gz_locked(
             % (gz_path, exc),
             flush=True,
         )
+      if remove_temp_tar_after:
+        try:
+          if os.path.exists(temp_tar_path):
+            os.remove(temp_tar_path)
+        except OSError:
+          pass
       return MIGRATE_GZ_STATUS_FAILED
-    return _seal_and_drop()
+    status = _seal_and_drop(temp_tar_path)
+    if remove_temp_tar_after:
+      try:
+        if os.path.exists(temp_tar_path):
+          os.remove(temp_tar_path)
+      except OSError:
+        pass
+    return status
 
   return MIGRATE_GZ_STATUS_SKIPPED_NO_GZ
 
@@ -1558,6 +1601,7 @@ def migrate_one_daily_legacy_gz(
     keep_uncompressed_tar,
     remaining_raw_by_gz=None,
     force_remove_uncompressed_tar=False,
+    decompress_tmp_dir=None,
     log_fn=log_print,
     lock_timeout_seconds=0,
     dry_run=False,
@@ -1594,6 +1638,7 @@ def migrate_one_daily_legacy_gz(
           keep_uncompressed_tar=keep_uncompressed_tar,
           remaining_raw_by_gz=remaining_raw_by_gz,
           force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+          decompress_tmp_dir=decompress_tmp_dir,
           log_fn=log_fn,
       )
   except TimeoutError:
@@ -1630,6 +1675,7 @@ def migrate_legacy_daily_gz_archives(
     keep_uncompressed_tar=None,
     remaining_raw_by_gz=None,
     force_remove_uncompressed_tar=False,
+    decompress_tmp_dir=None,
     log_fn=log_print,
     lock_timeout_seconds=0,
     dry_run=False,
@@ -1670,6 +1716,7 @@ def migrate_legacy_daily_gz_archives(
       keep_uncompressed_tar=keep_uncompressed_tar,
       remaining_raw_by_gz=remaining_raw_by_gz,
       force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+      decompress_tmp_dir=decompress_tmp_dir,
       log_fn=log_fn,
       lock_timeout_seconds=lock_timeout_seconds,
       dry_run=dry_run,
