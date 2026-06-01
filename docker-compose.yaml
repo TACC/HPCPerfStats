@@ -2,6 +2,8 @@
 # all app components are in the docker-compose.app.yaml file
 # Optional cpuset fragments (default empty services): cpu-pinning.infra + cpu-pinning.app
 
+name: hpcperfstats
+
 include:
   - docker-compose.app.yaml
   - docker-compose.cpu-pinning.infra.yaml
@@ -31,7 +33,6 @@ services:
       context: ./
       dockerfile: services-conf/proxy.Dockerfile
     image: hpcperfstats-proxy
-    container_name: hpcperfstats_proxy_1
     restart: always
     depends_on:
       web:
@@ -64,7 +65,6 @@ services:
 
   db:
     image: timescale/timescaledb:2.27.1-pg15
-    container_name: hpcperfstats_db_1
     # Default container /dev/shm is 64MiB; Postgres dynamic shared memory exhausts it easily
     # under parallel workers. Keep shm_size generous for max_connections=500 + modest parallelism.
     #
@@ -138,7 +138,6 @@ services:
 
   rabbitmq:
     image: rabbitmq:4.3.1-alpine
-    container_name: hpcperfstats_rabbitmq_1
     restart: always
     environment:
       - RABBITMQ_DEFAULT_USER=guest

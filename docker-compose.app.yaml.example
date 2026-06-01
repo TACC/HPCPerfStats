@@ -4,7 +4,6 @@ services:
   web:
     build: ./
     image: hpcperfstats
-    container_name: hpcperfstats_web_1
     restart: always
     command: /home/hpcperfstats/services-conf/django_startup.sh
     environment:
@@ -21,7 +20,6 @@ services:
 
   pipeline:
     image: hpcperfstats
-    container_name: hpcperfstats_pipeline_1
     restart: always
     depends_on:
       - web
