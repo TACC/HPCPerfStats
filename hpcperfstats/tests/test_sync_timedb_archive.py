@@ -2438,13 +2438,13 @@ def test_migrate_one_gz_only_converts_via_decompress_and_seal(monkeypatch, tmp_p
   tar_path = tmp_path / "2024-03-13.tar"
   zst_path = tmp_path / "2024-03-13.tar.zst"
   gz_path.write_bytes(b"gz")
+  remove_compressed_values = []
 
-  def _decompress(gz, tar, threads):
+  def _decompress(gz, tar, threads, remove_compressed=True):
     del threads
     assert gz == str(gz_path)
+    remove_compressed_values.append(remove_compressed)
     tar_path.write_bytes(b"tar-bytes")
-    if gz_path.exists():
-      gz_path.unlink()
     return True
 
   seal_calls = []
@@ -2468,6 +2468,7 @@ def test_migrate_one_gz_only_converts_via_decompress_and_seal(monkeypatch, tmp_p
   assert not gz_path.exists()
   assert zst_path.exists()
   assert seal_calls
+  assert remove_compressed_values == [False]
 
 
 def test_migrate_legacy_dry_run_does_not_mutate(monkeypatch, tmp_path):
@@ -2484,3 +2485,45 @@ def test_migrate_legacy_dry_run_does_not_mutate(monkeypatch, tmp_path):
   assert gz_path.exists()
   assert summary.get("gz_remaining") == 1
   assert summary.get(helpers.MIGRATE_GZ_STATUS_CONVERTED, 0) >= 0
+
+
+def test_migrate_one_gz_only_avoids_nested_lock_failure(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-15.tar.gz"
+  tar_path = tmp_path / "2024-03-15.tar"
+  zst_path = tmp_path / "2024-03-15.tar.zst"
+  gz_path.write_bytes(b"gz")
+
+  def _decompress(gz, tar, threads, remove_compressed=True):
+    del threads
+    assert gz == str(gz_path)
+    assert tar == str(tar_path)
+    # This assertion documents the production failure mode:
+    # if remove_compressed=True here, helper-level gzip removal re-locks gz_path
+    # while migrate_one_daily_legacy_gz already holds its write lock.
+    assert remove_compressed is False
+    tar_path.write_bytes(b"tar-bytes")
+    return True
+
+  def _seal(tar, zst, *args, **kwargs):
+    del args, kwargs
+    assert tar == str(tar_path)
+    assert zst == str(zst_path)
+    zst_path.write_bytes(b"zst")
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _decompress)
+  monkeypatch.setattr(helpers, "atomic_seal_tar_to_zst", _seal)
+  monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", lambda *a, **k: None)
+
+  status = helpers.migrate_one_daily_legacy_gz(
+      str(gz_path),
+      zstd_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+
+  assert status == helpers.MIGRATE_GZ_STATUS_CONVERTED
+  assert not gz_path.exists()
+  assert zst_path.exists()

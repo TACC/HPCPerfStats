@@ -1519,10 +1519,29 @@ def _migrate_one_daily_legacy_gz_locked(
     return _seal_and_drop()
 
   if os.path.isfile(gz_path):
-    if not decompress_compressed_to_tar(gz_path, tar_path, zstd_threads):
+    # We already hold a write lock on gz_path in migrate_one_daily_legacy_gz().
+    # Avoid re-locking gz_path inside decompress_compressed_to_tar(remove_compressed=True),
+    # which can fail under non-reentrant advisory lock semantics.
+    if not decompress_compressed_to_tar(
+        gz_path,
+        tar_path,
+        zstd_threads,
+        remove_compressed=False,
+    ):
       if log_fn:
         log_fn(
             "Migration decompress failed for legacy gzip: %s" % gz_path,
+            flush=True,
+        )
+      return MIGRATE_GZ_STATUS_FAILED
+    try:
+      if os.path.isfile(gz_path):
+        os.remove(gz_path)
+    except OSError as exc:
+      if log_fn:
+        log_fn(
+            "Migration failed removing legacy gzip after decompress %s: %s"
+            % (gz_path, exc),
             flush=True,
         )
       return MIGRATE_GZ_STATUS_FAILED
