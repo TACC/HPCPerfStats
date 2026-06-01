@@ -118,6 +118,7 @@ INI_OPTION_REGISTRY = (
     ("PORTAL", "archive_zstd_ionice_level"),
     ("PORTAL", "archive_seal_parallel_workers"),
     ("PORTAL", "archive_maintenance_interval_seconds"),
+    ("PORTAL", "archive_maintenance_max_defer_seconds"),
     ("PORTAL", "engine_name"),
     ("PORTAL", "username"),
     ("PORTAL", "password"),
@@ -399,6 +400,24 @@ def get_archive_maintenance_interval_seconds():
   if (not math.isfinite(interval)) or interval <= 0:
     return default_interval
   return interval
+
+
+def get_archive_maintenance_max_defer_seconds():
+  """Max seconds to defer scheduled maintenance while archive append is in flight (default 1h)."""
+  _ensure_cfg_loaded()
+  default_max_defer = float(3600)
+  raw_value = cfg.get(
+      'PORTAL',
+      'archive_maintenance_max_defer_seconds',
+      fallback=str(default_max_defer),
+  )
+  try:
+    max_defer = float(raw_value)
+  except (TypeError, ValueError):
+    return default_max_defer
+  if (not math.isfinite(max_defer)) or max_defer <= 0:
+    return default_max_defer
+  return max_defer
 
 
 def get_rmq_server():
@@ -1679,7 +1698,7 @@ def get_sync_db_writer_pool_cap():
   _ensure_cfg_loaded()
   if cfg.has_option("DEFAULT", "sync_db_writer_pool_cap"):
     return max(1, int(cfg.get("DEFAULT", "sync_db_writer_pool_cap")))
-  return 8
+  return None
 
 
 def get_sync_db_writer_pool_processes(ingest_processes=None):

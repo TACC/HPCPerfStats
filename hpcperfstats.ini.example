@@ -329,6 +329,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Seconds between seal maintenance and verified raw removal (default 28800).
 # archive_maintenance_interval_seconds = 28800
 
+# Max seconds to defer scheduled maintenance while archive append is in flight (default 3600).
+# archive_maintenance_max_defer_seconds = 3600
+
 # Django database engine backend.
 engine_name = django.db.backends.postgresql
 

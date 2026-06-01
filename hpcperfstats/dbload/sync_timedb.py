@@ -3,6 +3,8 @@
 
 Archive maintenance (on maintenance interval and when idle) seals dirty daily tars to ``.tar.zst``, removes verified raw stats (DB head-ingest gate when enabled), then removes uncompressed ``.tar`` siblings when no closed raw stats remain for that calendar day (startup maintenance removes verified ``.tar`` after seal even when raw stats remain). Append and raw delete stay DB-gated; scheduled ``.tar`` unlink uses filesystem presence only.
 
+Scheduled maintenance defers while an in-flight ``archive_pool`` append job is not ready, but not longer than ``archive_maintenance_max_defer_seconds`` (default 1h): then a two-phase partial pass seals/cleans all days except in-flight daily ``.tar`` paths, retries once on those paths, without waiting for finalize.
+
 When the ingest queue is empty, runs a **full** archive maintenance pass (dedupe cadence on idle) **before** rescanning for new stats files. After a rescan still finds nothing pending, it sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exits the loop iteration (continuous mode repeats).
 
 CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once all``.
@@ -76,6 +78,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
     build_remaining_raw_stats_by_daily_gz,
     collect_lock_sidecar_stats,
+    daily_tar_paths_for_archive_job_tasks,
     dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
@@ -1176,6 +1179,7 @@ def run_sync_timedb_supervisor_loop(
   maint_interval, maint_interval_warning = (
       _resolve_archive_maintenance_interval_seconds(maint_interval_raw)
   )
+  maint_max_defer = float(cfg.get_archive_maintenance_max_defer_seconds())
   ingest_queue_max = max(1, int(cfg.get_sync_ingest_queue_max_size()))
   archive_queue_max = max(1, int(cfg.get_sync_archive_queue_max_size()))
   ingest_queue_high = ingest_queue_max
@@ -1192,65 +1196,39 @@ def run_sync_timedb_supervisor_loop(
   maintenance_cycle = 0
   maintenance_overdue_warned = False
   maintenance_last_reason = "init"
+  maintenance_due_since = None
 
-  def _run_scheduled_archive_maintenance(
-      force_full=False,
-      *,
-      reason="scheduled",
-      elapsed_since_last_s=0.0,
-  ):
-    nonlocal maintenance_cycle
-    nonlocal maintenance_last_reason
-    maintenance_cycle += 1
-    cycle_start = time.time()
-    log_print(
-        "Archive maintenance start reason=%s cycle=%d elapsed_since_last_s=%.1f interval_s=%.1f"
-        % (reason, maintenance_cycle, float(elapsed_since_last_s), float(maint_interval)),
-        flush=True,
+  def _maintenance_elapsed_s():
+    return max(0.0, time.time() - last_archive_maint)
+
+  def _is_maintenance_due():
+    return _maintenance_elapsed_s() >= maint_interval
+
+  def _maintenance_overdue_warn_threshold():
+    return max(
+        MAINTENANCE_OVERDUE_WARN_MIN_SECONDS,
+        float(maint_interval) * MAINTENANCE_OVERDUE_WARN_MULTIPLIER,
     )
-    run_lock_stats = force_full or (maintenance_cycle % MAINTENANCE_LOCK_STATS_EVERY == 0)
-    run_dedupe = force_full or (maintenance_cycle % MAINTENANCE_DEDUPE_EVERY == 0)
-    removed_raw = cleanup_stale_fnctl_lock_sidecars(directory)
-    removed_arch = cleanup_stale_fnctl_lock_sidecars(tgz_archive_dir)
-    if removed_raw or removed_arch:
-      log_print(
-          "Removed stale advisory lock sidecars: raw_dir=%d daily_archive=%d"
-          % (removed_raw, removed_arch),
-          flush=True,
-      )
-    if run_lock_stats:
-      lock_stats_raw = collect_lock_sidecar_stats(directory)
-      lock_stats_archive = collect_lock_sidecar_stats(tgz_archive_dir)
-      log_print(
-          "Lock sidecar diagnostics raw=(count=%d stale=%d oldest_age_s=%.1f) "
-          "archive=(count=%d stale=%d oldest_age_s=%.1f)"
-          % (
-              lock_stats_raw["lock_files"],
-              lock_stats_raw["stale_lock_files"],
-              lock_stats_raw["oldest_lock_age_seconds"],
-              lock_stats_archive["lock_files"],
-              lock_stats_archive["stale_lock_files"],
-              lock_stats_archive["oldest_lock_age_seconds"],
-          ),
-          flush=True,
-      )
-    if run_dedupe:
-      for tar_path in sorted(iter_daily_tar_paths(tgz_archive_dir)):
-        if not tar_has_duplicate_file_members(tar_path):
-          continue
-        log_print(
-            "Duplicate member paths in daily tar; rewriting (keep largest per path): "
-            "%s" % tar_path,
-            flush=True,
-        )
-        if not dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
-          log_print(
-              "ERROR: tar dedupe failed during scheduled maintenance: %s" % tar_path,
-              flush=True,
-          )
+
+  def _complete_maintenance_timer_reset():
+    nonlocal last_archive_maint
+    nonlocal maintenance_due_since
+    nonlocal maintenance_overdue_warned
+    last_archive_maint = time.time()
+    maintenance_due_since = None
+    maintenance_overdue_warned = False
+    close_old_connections()
+    connections.close_all()
+
+  def _archive_maintenance_pipeline(
+      *,
+      reason,
+      skip_daily_tar_paths=None,
+      only_daily_tar_paths=None,
+      force_remove_uncompressed_tar=False,
+  ):
     remaining_raw_by_gz = build_remaining_raw_stats_by_daily_gz(
         directory, host_name_ext, tgz_archive_dir)
-    force_remove_uncompressed_tar = reason == "startup"
     seal_dirty_daily_archives(
         tgz_archive_dir,
         local_tz=local_timezone,
@@ -1262,6 +1240,8 @@ def run_sync_timedb_supervisor_loop(
         log_fn=log_print,
         remaining_raw_by_gz=remaining_raw_by_gz,
         force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+        skip_daily_tar_paths=skip_daily_tar_paths,
+        only_daily_tar_paths=only_daily_tar_paths,
     )
     remove_verified_archived_raw_files(
         directory,
@@ -1269,6 +1249,8 @@ def run_sync_timedb_supervisor_loop(
         tgz_archive_dir,
         log_fn=log_print,
         ingest_ready_fn=stats_file_head_ingested_in_db,
+        skip_daily_tar_paths=skip_daily_tar_paths,
+        only_daily_tar_paths=only_daily_tar_paths,
     )
     remaining_raw_by_gz = build_remaining_raw_stats_by_daily_gz(
         directory, host_name_ext, tgz_archive_dir)
@@ -1277,6 +1259,76 @@ def run_sync_timedb_supervisor_loop(
         log_fn=log_print,
         remaining_raw_by_gz=remaining_raw_by_gz,
         force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+        skip_daily_tar_paths=skip_daily_tar_paths,
+        only_daily_tar_paths=only_daily_tar_paths,
+    )
+
+  def _run_scheduled_archive_maintenance(
+      force_full=False,
+      *,
+      reason="scheduled",
+      elapsed_since_last_s=0.0,
+      skip_daily_tar_paths=None,
+      only_daily_tar_paths=None,
+      run_prep_steps=True,
+  ):
+    nonlocal maintenance_cycle
+    nonlocal maintenance_last_reason
+    maintenance_cycle += 1
+    cycle_start = time.time()
+    log_print(
+        "Archive maintenance start reason=%s cycle=%d elapsed_since_last_s=%.1f interval_s=%.1f"
+        % (reason, maintenance_cycle, float(elapsed_since_last_s), float(maint_interval)),
+        flush=True,
+    )
+    if run_prep_steps:
+      run_lock_stats = force_full or (maintenance_cycle % MAINTENANCE_LOCK_STATS_EVERY == 0)
+      run_dedupe = force_full or (maintenance_cycle % MAINTENANCE_DEDUPE_EVERY == 0)
+      removed_raw = cleanup_stale_fnctl_lock_sidecars(directory)
+      removed_arch = cleanup_stale_fnctl_lock_sidecars(tgz_archive_dir)
+      if removed_raw or removed_arch:
+        log_print(
+            "Removed stale advisory lock sidecars: raw_dir=%d daily_archive=%d"
+            % (removed_raw, removed_arch),
+            flush=True,
+        )
+      if run_lock_stats:
+        lock_stats_raw = collect_lock_sidecar_stats(directory)
+        lock_stats_archive = collect_lock_sidecar_stats(tgz_archive_dir)
+        log_print(
+            "Lock sidecar diagnostics raw=(count=%d stale=%d oldest_age_s=%.1f) "
+            "archive=(count=%d stale=%d oldest_age_s=%.1f)"
+            % (
+                lock_stats_raw["lock_files"],
+                lock_stats_raw["stale_lock_files"],
+                lock_stats_raw["oldest_lock_age_seconds"],
+                lock_stats_archive["lock_files"],
+                lock_stats_archive["stale_lock_files"],
+                lock_stats_archive["oldest_lock_age_seconds"],
+            ),
+            flush=True,
+        )
+      if run_dedupe:
+        for tar_path in sorted(iter_daily_tar_paths(tgz_archive_dir)):
+          if not tar_has_duplicate_file_members(tar_path):
+            continue
+          log_print(
+              "Duplicate member paths in daily tar; rewriting (keep largest per path): "
+              "%s" % tar_path,
+              flush=True,
+          )
+          if not dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
+            log_print(
+                "ERROR: tar dedupe failed during scheduled maintenance: %s" % tar_path,
+                flush=True,
+            )
+    force_remove_uncompressed_tar = reason == "startup"
+    _ensure_daily_archive_dir_exists()
+    _archive_maintenance_pipeline(
+        reason=reason,
+        skip_daily_tar_paths=skip_daily_tar_paths,
+        only_daily_tar_paths=only_daily_tar_paths,
+        force_remove_uncompressed_tar=force_remove_uncompressed_tar,
     )
     maintenance_last_reason = reason
     log_print(
@@ -1284,6 +1336,49 @@ def run_sync_timedb_supervisor_loop(
         % (reason, maintenance_cycle, max(0.0, time.time() - cycle_start)),
         flush=True,
     )
+
+  def _run_forced_two_phase_archive_maintenance(in_flight, *, elapsed_since_last_s, context):
+    """Seal/cleanup when scheduled maintenance exceeded max defer (continuous ingest)."""
+    log_print(
+        "Running forced two-phase archive maintenance context=%s in_flight_days=%d "
+        "elapsed_since_last_s=%.1f max_defer_s=%.1f"
+        % (context, len(in_flight), float(elapsed_since_last_s), float(maint_max_defer)),
+        flush=True,
+    )
+    _run_scheduled_archive_maintenance(
+        reason="scheduled_forced",
+        elapsed_since_last_s=elapsed_since_last_s,
+        skip_daily_tar_paths=in_flight,
+    )
+    if in_flight:
+      log_print(
+          "Forced archive maintenance phase 2 retry on %d in-flight daily tar(s)"
+          % len(in_flight),
+          flush=True,
+      )
+      _run_scheduled_archive_maintenance(
+          reason="scheduled_forced_retry",
+          elapsed_since_last_s=elapsed_since_last_s,
+          only_daily_tar_paths=in_flight,
+          run_prep_steps=False,
+      )
+
+  def _maintenance_force_due():
+    if maintenance_due_since is None:
+      return False
+    return (time.time() - float(maintenance_due_since)) >= float(maint_max_defer)
+
+  def _maybe_run_forced_maintenance_before_archive_dispatch(context):
+    if not _maintenance_force_due() or not _is_maintenance_due():
+      return False
+    in_flight = daily_tar_paths_for_archive_job_tasks(archive_job_deferred_paths)
+    _run_forced_two_phase_archive_maintenance(
+        in_flight,
+        elapsed_since_last_s=_maintenance_elapsed_s(),
+        context=context,
+    )
+    _complete_maintenance_timer_reset()
+    return True
 
   pending_archive_tasks = []
   dead_letter_dirty = False
@@ -1475,8 +1570,13 @@ def run_sync_timedb_supervisor_loop(
         flush=True,
     )
   log_print(
-      "sync_timedb continuous mode: archive maintenance interval %.1f s; idle rescan sleep %s s"
-      % (float(maint_interval), int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)),
+      "sync_timedb continuous mode: archive maintenance interval %.1f s; "
+      "max defer %.1f s; idle rescan sleep %s s"
+      % (
+          float(maint_interval),
+          float(maint_max_defer),
+          int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS),
+      ),
       flush=True,
   )
   log_print(
@@ -1561,21 +1661,8 @@ def run_sync_timedb_supervisor_loop(
           flush=True,
       )
 
-    def _maintenance_elapsed_s():
-      return max(0.0, time.time() - last_archive_maint)
-
-    def _maintenance_overdue_warn_threshold():
-      return max(
-          MAINTENANCE_OVERDUE_WARN_MIN_SECONDS,
-          float(maint_interval) * MAINTENANCE_OVERDUE_WARN_MULTIPLIER,
-      )
-
-    def _is_maintenance_due():
-      return _maintenance_elapsed_s() >= maint_interval
-
     def _run_periodic_maintenance_if_due(reason_label):
-      nonlocal last_archive_maint
-      nonlocal maintenance_overdue_warned
+      nonlocal maintenance_due_since
       elapsed = _maintenance_elapsed_s()
       overdue_threshold = _maintenance_overdue_warn_threshold()
       if elapsed >= overdue_threshold and not maintenance_overdue_warned:
@@ -1593,26 +1680,37 @@ def run_sync_timedb_supervisor_loop(
           context=reason_label,
       )
       if not finalized and archive_job is not None:
+        if maintenance_due_since is None:
+          maintenance_due_since = time.time()
+        defer_elapsed = max(0.0, time.time() - float(maintenance_due_since))
+        if defer_elapsed >= float(maint_max_defer):
+          in_flight = daily_tar_paths_for_archive_job_tasks(
+              archive_job_deferred_paths)
+          _run_forced_two_phase_archive_maintenance(
+              in_flight,
+              elapsed_since_last_s=elapsed,
+              context=reason_label,
+          )
+          _complete_maintenance_timer_reset()
+          return True
         log_print(
-            "Archive maintenance due but deferred reason=archive_finalize_pending elapsed_s=%.1f context=%s"
-            % (elapsed, reason_label),
+            "Archive maintenance due but deferred reason=archive_finalize_pending "
+            "elapsed_since_last_s=%.1f defer_elapsed_s=%.1f max_defer_s=%.1f context=%s"
+            % (elapsed, defer_elapsed, float(maint_max_defer), reason_label),
             flush=True,
         )
         return False
+      maintenance_due_since = None
       log_print(
           "Running scheduled daily-archive zstd seal and raw file removal context=%s elapsed_since_last_s=%.1f"
           % (reason_label, elapsed),
           flush=True,
       )
-      _ensure_daily_archive_dir_exists()
       _run_scheduled_archive_maintenance(
           reason="scheduled",
           elapsed_since_last_s=elapsed,
       )
-      last_archive_maint = time.time()
-      maintenance_overdue_warned = False
-      close_old_connections()
-      connections.close_all()
+      _complete_maintenance_timer_reset()
       return True
 
     while not shutdown_requested[0]:
@@ -1938,6 +2036,9 @@ def run_sync_timedb_supervisor_loop(
           for p in deferred_paths:
             _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
           if archive_job is None:
+            _maybe_run_forced_maintenance_before_archive_dispatch(
+                "pre_archive_dispatch",
+            )
             archive_items = archive_items_all[:archive_queue_max]
             overflow_items = archive_items_all[archive_queue_max:]
             dispatch_t0 = time.time()

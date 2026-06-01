@@ -49,6 +49,49 @@ def get_archive_zstd_thread_count():
   return cfg.get_archive_zstd_threads()
 
 
+def _normalize_daily_tar_path_set(paths):
+  """Return a frozenset of normalized daily ``.tar`` paths (empty for None)."""
+  if not paths:
+    return frozenset()
+  return frozenset(os.path.normpath(p) for p in paths)
+
+
+def daily_tar_path_in_maintenance_scope(
+    tar_path,
+    *,
+    skip_daily_tar_paths=None,
+    only_daily_tar_paths=None,
+):
+  """True when ``tar_path`` should be included in a scoped maintenance pass."""
+  normalized = os.path.normpath(tar_path)
+  only_set = _normalize_daily_tar_path_set(only_daily_tar_paths)
+  if only_set and normalized not in only_set:
+    return False
+  skip_set = _normalize_daily_tar_path_set(skip_daily_tar_paths)
+  if skip_set and normalized in skip_set:
+    return False
+  return True
+
+
+def daily_tar_paths_for_archive_job_tasks(deferred_paths):
+  """Daily ``.tar`` paths for an in-flight ``archive_pool`` job (``archive_job_deferred_paths``)."""
+  if not deferred_paths:
+    return frozenset()
+  tar_paths = set()
+  for item in deferred_paths:
+    task = item.get("task") if isinstance(item, dict) else None
+    if task is None:
+      continue
+    archive_info = getattr(task, "archive_info", None)
+    if not archive_info or len(archive_info) < 1:
+      continue
+    compressed_path = archive_info[0]
+    if not compressed_path:
+      continue
+    tar_paths.add(os.path.normpath(daily_tar_path_from_compressed(compressed_path)))
+  return frozenset(tar_paths)
+
+
 _DAILY_TAR_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar$")
 _DAILY_GZ_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar\.gz$")
 
@@ -658,6 +701,8 @@ def remove_verified_archived_raw_files(
     log_fn=log_print,
     archive_stats_files_fn=None,
     ingest_ready_fn=None,
+    skip_daily_tar_paths=None,
+    only_daily_tar_paths=None,
 ):
   """Remove raw stats files only after tar + sealed archive validation.
 
@@ -697,6 +742,12 @@ def remove_verified_archived_raw_files(
   for archive_path, stats_paths in mapping.items():
     if detect_compressed_format(archive_path) is not None:
       tar_path = daily_tar_path_from_compressed(archive_path)
+      if not daily_tar_path_in_maintenance_scope(
+          tar_path,
+          skip_daily_tar_paths=skip_daily_tar_paths,
+          only_daily_tar_paths=only_daily_tar_paths,
+      ):
+        continue
       bootstrap_ready = [
           p for p in stats_paths if _path_ingest_ready(p)
       ]
@@ -815,6 +866,8 @@ def remove_verified_uncompressed_daily_tars(
     log_fn=log_print,
     remaining_raw_by_gz=None,
     force_remove_uncompressed_tar=False,
+    skip_daily_tar_paths=None,
+    only_daily_tar_paths=None,
 ):
   """Remove ``YYYY-MM-DD.tar`` only after tar/tar.gz verification succeeds.
 
@@ -832,6 +885,12 @@ def remove_verified_uncompressed_daily_tars(
   validation_targets = []
   tar_by_gz = {}
   for tar_path in sorted(iter_daily_tar_paths(daily_archive_dir)):
+    if not daily_tar_path_in_maintenance_scope(
+        tar_path,
+        skip_daily_tar_paths=skip_daily_tar_paths,
+        only_daily_tar_paths=only_daily_tar_paths,
+    ):
+      continue
     zst_path, _gz_path = compressed_sibling_paths(tar_path)
     if not os.path.isfile(tar_path):
       continue
@@ -1371,7 +1430,7 @@ def _seal_one_daily_tar(
         force_remove_uncompressed_tar=force_remove_uncompressed_tar,
     )
     drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_fn)
-  except (subprocess.CalledProcessError, RuntimeError) as exc:
+  except (subprocess.CalledProcessError, RuntimeError, TimeoutError) as exc:
     if log_fn:
       log_fn("Seal failed for %s: %s" % (tar_path, exc), flush=True)
 
@@ -1388,6 +1447,8 @@ def seal_dirty_daily_archives(
     log_fn=log_print,
     remaining_raw_by_gz=None,
     force_remove_uncompressed_tar=False,
+    skip_daily_tar_paths=None,
+    only_daily_tar_paths=None,
 ):
   """Seal every dirty ``YYYY-MM-DD.tar`` under ``daily_archive_dir`` per policy."""
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
@@ -1395,6 +1456,12 @@ def seal_dirty_daily_archives(
   today_local = datetime.now(local_tz).date()
   candidates = []
   for tar_path in sorted(iter_daily_tar_paths(daily_archive_dir)):
+    if not daily_tar_path_in_maintenance_scope(
+        tar_path,
+        skip_daily_tar_paths=skip_daily_tar_paths,
+        only_daily_tar_paths=only_daily_tar_paths,
+    ):
+      continue
     zst_path, gz_path = compressed_sibling_paths(tar_path)
     if not should_seal_daily_tar(
         tar_path,

@@ -1373,12 +1373,16 @@ def test_periodic_maintenance_logs_deferred_when_archive_finalize_pending(monkey
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
     monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 0.5)
+    monkeypatch.setattr(
+        st.cfg, "get_archive_maintenance_max_defer_seconds", lambda: 86400.0)
     monkeypatch.setattr(st, "chunk_size", 1)
     monkeypatch.setattr(
         st,
         "build_archive_mapping",
         lambda files, *_a, **_k: {"/tmp/day.tar.gz": list(files)},
     )
+    monkeypatch.setattr(
+        st, "build_remaining_raw_stats_by_daily_gz", lambda *_a, **_k: {})
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
@@ -1403,6 +1407,165 @@ def test_periodic_maintenance_logs_deferred_when_archive_finalize_pending(monkey
     )
 
     assert any("Archive finalize deferred" in line for line in logs)
+    assert any("Archive maintenance due but deferred" in line for line in logs)
+    assert not any("forced two-phase archive maintenance" in line for line in logs)
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_periodic_maintenance_runs_forced_two_phase_when_defer_cap_exceeded(
+    monkeypatch,
+):
+  shutdown_requested[0] = False
+  try:
+    logs = []
+    clock = {"t": 1000.0, "frozen": True, "n": 0}
+
+    def fake_time():
+      clock["n"] += 1
+      if clock["frozen"]:
+        if clock["n"] > 50:
+          clock["frozen"] = False
+        return clock["t"]
+      clock["t"] += 1.0
+      return clock["t"]
+
+    def fake_rescan(*_a, **_k):
+      if fake_rescan.calls < 3:
+        fake_rescan.calls += 1
+        return ["/tmp/stats-a", "/tmp/stats-b"]
+      return []
+
+    fake_rescan.calls = 0
+
+    class _NeverReady:
+      def ready(self):
+        return False
+
+      def get(self):
+        return [True]
+
+    class _ArchivePoolNeverReady:
+      def map_async(self, _fn, _items):
+        return _NeverReady()
+
+    monkeypatch.setattr(st.time, "time", fake_time)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (_a[1], True, True, 0.0))
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 0.5)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_max_defer_seconds", lambda: 0.001)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(
+        st,
+        "build_archive_mapping",
+        lambda files, *_a, **_k: {"/tmp/day.tar.zst": list(files)},
+    )
+    monkeypatch.setattr(
+        st, "build_remaining_raw_stats_by_daily_gz", lambda *_a, **_k: {})
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(
+        st,
+        "sleep_until_shutdown",
+        lambda _seconds: shutdown_requested.__setitem__(0, True),
+    )
+
+    def log_print_capture(*args, **kwargs):
+      line = " ".join(str(a) for a in args)
+      logs.append(line)
+      if "forced two-phase archive maintenance" in line:
+        shutdown_requested[0] = True
+
+    monkeypatch.setattr(st, "log_print", log_print_capture)
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive",
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _ArchivePoolNeverReady(),
+        run_once=False,
+    )
+
+    assert any("reason=scheduled_forced cycle=" in line for line in logs)
+    assert any("reason=scheduled_forced_retry cycle=" in line for line in logs)
+    assert any("forced two-phase archive maintenance" in line for line in logs)
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_continuous_backlog_triggers_forced_maintenance(monkeypatch):
+  shutdown_requested[0] = False
+  try:
+    logs = []
+    clock = {"t": 2000.0}
+    backlog = ["/tmp/stats-%d" % i for i in range(100)]
+
+    def fake_time():
+      clock["t"] += 0.03
+      return clock["t"]
+
+    def fake_rescan(*_a, **_k):
+      return list(backlog)
+
+    class _NeverReady:
+      def ready(self):
+        return False
+
+      def get(self):
+        return [True]
+
+    class _ArchivePoolNeverReady:
+      def map_async(self, _fn, _items):
+        return _NeverReady()
+
+    monkeypatch.setattr(st.time, "time", fake_time)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (_a[1], True, True, 0.0))
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 0.5)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_max_defer_seconds", lambda: 0.05)
+    monkeypatch.setattr(st, "chunk_size", 5)
+    monkeypatch.setattr(
+        st,
+        "build_archive_mapping",
+        lambda files, *_a, **_k: {"/tmp/day.tar.zst": list(files[:1])},
+    )
+    monkeypatch.setattr(
+        st, "build_remaining_raw_stats_by_daily_gz", lambda *_a, **_k: {})
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    def log_print_capture(*args, **kwargs):
+      line = " ".join(str(a) for a in args)
+      logs.append(line)
+      if "forced two-phase archive maintenance" in line:
+        shutdown_requested[0] = True
+
+    monkeypatch.setattr(st, "log_print", log_print_capture)
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive",
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _ArchivePoolNeverReady(),
+        run_once=False,
+    )
+
+    assert any("forced two-phase archive maintenance" in line for line in logs)
     assert any("Archive maintenance due but deferred" in line for line in logs)
   finally:
     shutdown_requested[0] = False

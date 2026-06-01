@@ -181,6 +181,51 @@ def test_get_archive_maintenance_interval_seconds_rejects_nonfinite_and_nonposit
   assert cfg.get_archive_maintenance_interval_seconds() == 120.0
 
 
+def test_get_archive_maintenance_max_defer_seconds_defaults_and_override(
+    temp_ini, monkeypatch
+):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_archive_maintenance_max_defer_seconds() == 3600.0
+
+  with open(temp_ini) as f:
+    base = f.read()
+  content = base.replace(
+      "daily_archive_dir = /tmp",
+      "daily_archive_dir = /tmp\narchive_maintenance_max_defer_seconds = 90",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_archive_maintenance_max_defer_seconds() == 90.0
+
+
+def test_get_archive_maintenance_max_defer_seconds_rejects_nonfinite_and_nonpositive(
+    temp_ini, monkeypatch
+):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_archive_maintenance_max_defer_seconds() == 3600.0
+
+  with open(temp_ini) as f:
+    base = f.read()
+
+  for raw in ("nan", "inf", "0", "-5", "not-a-number"):
+    content = base.replace(
+        "daily_archive_dir = /tmp",
+        "daily_archive_dir = /tmp\narchive_maintenance_max_defer_seconds = %s"
+        % raw,
+    )
+    with open(temp_ini, "w") as f:
+      f.write(content)
+    importlib.reload(cfg)
+    assert cfg.get_archive_maintenance_max_defer_seconds() == 3600.0
+
+
 def test_get_effective_cores_caps_by_host(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib

@@ -38,6 +38,8 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     get_tar_member_name,
     get_verified_files_to_remove,
     collect_first_timestamps_by_path,
+    daily_tar_path_in_maintenance_scope,
+    daily_tar_paths_for_archive_job_tasks,
     is_daily_tar_sealed_dirty,
     parse_archive_date_from_daily_tar_path,
     remove_verified_archived_raw_files,
@@ -396,6 +398,33 @@ def test_should_seal_today_respects_idle(monkeypatch, tmp_path):
       str(tar_p), str(gz_p), idle_seconds=60, today_local_date=today)
 
 
+def test_daily_tar_path_in_maintenance_scope_skip_and_only(tmp_path):
+  tar_a = os.path.normpath(str(tmp_path / "2024-01-10.tar"))
+  tar_b = os.path.normpath(str(tmp_path / "2024-01-11.tar"))
+  assert daily_tar_path_in_maintenance_scope(tar_a)
+  assert not daily_tar_path_in_maintenance_scope(
+      tar_a, skip_daily_tar_paths=frozenset([tar_a]))
+  assert daily_tar_path_in_maintenance_scope(
+      tar_b, skip_daily_tar_paths=frozenset([tar_a]))
+  assert not daily_tar_path_in_maintenance_scope(
+      tar_b, only_daily_tar_paths=frozenset([tar_a]))
+  assert daily_tar_path_in_maintenance_scope(
+      tar_a, only_daily_tar_paths=frozenset([tar_a]))
+
+
+def test_daily_tar_paths_for_archive_job_tasks():
+  import hpcperfstats.dbload.sync_timedb as st_mod
+
+  zst_path = "/daily/2024-03-01.tar.zst"
+  tar_path = os.path.normpath(daily_tar_path_from_compressed(zst_path))
+  deferred = [{
+      "task": st_mod.ArchiveTask(archive_info=(zst_path, ["/raw/a"]), attempt=1),
+      "paths": ["/raw/a"],
+  }]
+  assert daily_tar_paths_for_archive_job_tasks(deferred) == frozenset([tar_path])
+  assert daily_tar_paths_for_archive_job_tasks([]) == frozenset()
+
+
 def test_should_seal_immediately_if_dirty_bypasses_idle(monkeypatch, tmp_path):
   base = 1_700_000_000
   monkeypatch.setattr(
@@ -416,6 +445,113 @@ def test_should_seal_immediately_if_dirty_bypasses_idle(monkeypatch, tmp_path):
       today_local_date=today,
       seal_immediately_if_dirty=True,
   )
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_seal_dirty_daily_archives_continues_after_timeout_on_first_day(
+    monkeypatch, tmp_path
+):
+  """TimeoutError on one day must not abort sealing other days."""
+  from zoneinfo import ZoneInfo
+
+  calls = []
+
+  def fake_atomic_seal(tar_path, zst_path, *_a, **_k):
+    calls.append(os.path.normpath(tar_path))
+    if tar_path.endswith("2024-01-10.tar"):
+      raise TimeoutError("Timed out waiting for write lock: %s" % tar_path)
+    member = tmp_path / "member.txt"
+    member.write_text("x")
+    with tarfile.open(tar_path, "w") as tf:
+      tf.add(str(member), arcname="member.txt")
+    atomic_seal_tar_to_zst(
+        tar_path,
+        zst_path,
+        num_threads=1,
+        compress_level=6,
+        keep_uncompressed_tar=True,
+        log_fn=None,
+    )
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_helpers.atomic_seal_tar_to_zst",
+      fake_atomic_seal,
+  )
+  for day in ("2024-01-10", "2024-01-11"):
+    tar_p = tmp_path / ("%s.tar" % day)
+    zst_p = tmp_path / ("%s.tar.zst" % day)
+    tar_p.write_text("dirty")
+    if zst_p.exists():
+      zst_p.unlink()
+  seal_dirty_daily_archives(
+      str(tmp_path),
+      local_tz=ZoneInfo("UTC"),
+      zstd_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      idle_seconds=0,
+      seal_immediately_if_dirty=True,
+      log_fn=None,
+  )
+  assert len(calls) == 2
+  assert (tmp_path / "2024-01-11.tar.zst").is_file()
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_seal_dirty_daily_archives_respects_skip_and_only_scope(
+    monkeypatch, tmp_path
+):
+  from zoneinfo import ZoneInfo
+
+  sealed = []
+
+  def fake_atomic_seal(tar_path, zst_path, *_a, **_k):
+    sealed.append(os.path.normpath(tar_path))
+    member = tmp_path / "m.txt"
+    member.write_text("x")
+    with tarfile.open(tar_path, "w") as tf:
+      tf.add(str(member), arcname="m.txt")
+    atomic_seal_tar_to_zst(
+        tar_path, zst_path, num_threads=1, compress_level=6,
+        keep_uncompressed_tar=True, log_fn=None,
+    )
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_helpers.atomic_seal_tar_to_zst",
+      fake_atomic_seal,
+  )
+  tar_skip = tmp_path / "2024-01-10.tar"
+  tar_only = tmp_path / "2024-01-11.tar"
+  for tar_p in (tar_skip, tar_only):
+    tar_p.write_text("d")
+    zst_p = tmp_path / (tar_p.name + ".zst")
+    if zst_p.exists():
+      zst_p.unlink()
+  seal_dirty_daily_archives(
+      str(tmp_path),
+      local_tz=ZoneInfo("UTC"),
+      zstd_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      idle_seconds=0,
+      seal_immediately_if_dirty=True,
+      log_fn=None,
+      skip_daily_tar_paths=frozenset([os.path.normpath(str(tar_skip))]),
+  )
+  assert sealed == [os.path.normpath(str(tar_only))]
+  sealed.clear()
+  seal_dirty_daily_archives(
+      str(tmp_path),
+      local_tz=ZoneInfo("UTC"),
+      zstd_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      idle_seconds=0,
+      seal_immediately_if_dirty=True,
+      log_fn=None,
+      only_daily_tar_paths=frozenset([os.path.normpath(str(tar_skip))]),
+  )
+  assert sealed == [os.path.normpath(str(tar_skip))]
 
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
