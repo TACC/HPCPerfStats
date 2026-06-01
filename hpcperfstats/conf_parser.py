@@ -104,6 +104,8 @@ INI_OPTION_REGISTRY = (
     ("DEFAULT", "sync_dispatch_step_size"),
     ("DEFAULT", "sync_enable_ingest_first_durability_mode"),
     ("DEFAULT", "sync_archive_require_db_head_ingest"),
+    ("DEFAULT", "sync_archive_maint_hints"),
+    ("PORTAL", "sync_archive_discovery_workers"),
     # [PORTAL]
     ("PORTAL", "acct_path"),
     ("PORTAL", "archive_dir"),
@@ -1801,6 +1803,26 @@ def get_sync_archive_require_db_head_ingest():
   return _parse_bool(
       cfg.get("DEFAULT", "sync_archive_require_db_head_ingest", fallback="yes"),
   )
+
+
+def get_sync_archive_maint_hints():
+  """Persist host-dir/path hints for faster archive maintenance restarts (default on)."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      cfg.get("DEFAULT", "sync_archive_maint_hints", fallback="yes"),
+  )
+
+
+def get_sync_archive_discovery_workers():
+  """Max concurrent raw stats head-line reads during maintenance snapshot."""
+  _ensure_cfg_loaded()
+  raw = cfg.get("PORTAL", "sync_archive_discovery_workers", fallback="")
+  if str(raw).strip():
+    try:
+      return max(1, int(raw))
+    except (TypeError, ValueError):
+      pass
+  return max(1, int(get_sync_archive_pool_processes()))
 
 
 def get_redis_location():

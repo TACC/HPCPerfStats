@@ -138,8 +138,57 @@ def stats_file_head_ingested_in_db(path, *, log_fn=None):
     return ready
 
 
-def filter_paths_head_ingested(paths, *, log_fn=None):
-  """Return ``(ready_paths, skipped_paths)`` using ``stats_file_head_ingested_in_db``."""
+def build_head_ingest_ready_set(closed_paths, head_identity_by_path, *, log_fn=None):
+  """Return paths whose ``(host, unix_second)`` head identity exists in ``host_data``."""
+  from hpcperfstats.dbload.sync_timedb import _sync_worker_db_task
+
+  with _sync_worker_db_task():
+    if not archive_db_head_ingest_gate_enabled():
+      _log_gate_disabled_once(log_fn)
+      return set(closed_paths or [])
+
+    unique_keys = set()
+    path_by_key = {}
+    for path in closed_paths or []:
+      if stats_file_is_active_segment(path):
+        continue
+      ident = head_identity_by_path.get(path)
+      if ident is None:
+        continue
+      host, unix_second = ident
+      key = (host, unix_second)
+      unique_keys.add(key)
+      path_by_key.setdefault(key, []).append(path)
+
+    ready_keys = set()
+    for host, unix_second in unique_keys:
+      ts_start = datetime.fromtimestamp(unix_second, tz=timezone.utc)
+      ts_end = ts_start + timedelta(seconds=1)
+      if head_timestamp_present_in_db(host, ts_start):
+        ready_keys.add((host, unix_second))
+
+    ready_paths = set()
+    for key in ready_keys:
+      for path in path_by_key.get(key, []):
+        ready_paths.add(path)
+    return ready_paths
+
+
+def filter_paths_head_ingested(paths, *, log_fn=None, head_identity_by_path=None):
+  """Return ``(ready_paths, skipped_paths)`` using batched or per-path gate."""
+  if head_identity_by_path is not None:
+    ready_set = build_head_ingest_ready_set(
+        paths, head_identity_by_path, log_fn=log_fn)
+    ready = [p for p in paths if p in ready_set]
+    skipped = [p for p in paths if p not in ready_set]
+    if skipped and log_fn is not None:
+      log_fn(
+          "Archive/delete gate: skipped %d path(s) without head timestamp in DB"
+          % len(skipped),
+          flush=True,
+      )
+    return ready, skipped
+
   ready = []
   skipped = []
   for path in paths:

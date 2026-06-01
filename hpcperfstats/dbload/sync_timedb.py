@@ -96,6 +96,14 @@ from hpcperfstats.file_locking import (
     cleanup_stale_fnctl_lock_sidecars,
     file_write_lock,
 )
+from hpcperfstats.dbload.sync_timedb_archive_maint import (
+    build_archive_maintenance_snapshot,
+    load_archive_maint_hints,
+    log_archive_maintenance_snapshot_summary,
+    save_archive_maint_hints,
+    snapshot_host_dirs_from_paths,
+    snapshot_paths_hint_entries,
+)
 from hpcperfstats.dbload.sync_timedb_ingest_readiness import (
     filter_paths_head_ingested,
     head_timestamp_present_in_db,
@@ -1227,8 +1235,19 @@ def run_sync_timedb_supervisor_loop(
       only_daily_tar_paths=None,
       force_remove_uncompressed_tar=False,
   ):
-    remaining_raw_by_gz = build_remaining_raw_stats_by_daily_gz(
-        directory, host_name_ext, tgz_archive_dir)
+    snapshot = build_archive_maintenance_snapshot(
+        directory,
+        host_name_ext,
+        tgz_archive_dir,
+        log_fn=log_print,
+    )
+    if reason == "startup":
+      log_archive_maintenance_snapshot_summary(snapshot, log_fn=log_print)
+    validation_cache = {"hits": 0, "misses": 0}
+    validated_days = {}
+    if cfg.get_sync_archive_maint_hints():
+      prior = load_archive_maint_hints(directory) or {}
+      validated_days.update(prior.get("validated_days") or {})
     seal_dirty_daily_archives(
         tgz_archive_dir,
         local_tz=local_timezone,
@@ -1238,7 +1257,7 @@ def run_sync_timedb_supervisor_loop(
         idle_seconds=cfg.get_archive_seal_idle_seconds(),
         seal_immediately_if_dirty=True,
         log_fn=log_print,
-        remaining_raw_by_gz=remaining_raw_by_gz,
+        remaining_raw_by_gz=snapshot.remaining_raw_by_gz,
         force_remove_uncompressed_tar=force_remove_uncompressed_tar,
         skip_daily_tar_paths=skip_daily_tar_paths,
         only_daily_tar_paths=only_daily_tar_paths,
@@ -1249,18 +1268,31 @@ def run_sync_timedb_supervisor_loop(
         tgz_archive_dir,
         log_fn=log_print,
         ingest_ready_fn=stats_file_head_ingested_in_db,
+        maintenance_snapshot=snapshot,
+        validation_cache=validation_cache,
+        validated_days_out=validated_days,
         skip_daily_tar_paths=skip_daily_tar_paths,
         only_daily_tar_paths=only_daily_tar_paths,
     )
-    remaining_raw_by_gz = build_remaining_raw_stats_by_daily_gz(
-        directory, host_name_ext, tgz_archive_dir)
     remove_verified_uncompressed_daily_tars(
         tgz_archive_dir,
         log_fn=log_print,
-        remaining_raw_by_gz=remaining_raw_by_gz,
+        remaining_raw_by_gz=snapshot.remaining_raw_by_gz,
         force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+        validation_cache=validation_cache,
+        validated_days_out=validated_days,
         skip_daily_tar_paths=skip_daily_tar_paths,
         only_daily_tar_paths=only_daily_tar_paths,
+    )
+    save_archive_maint_hints(
+        directory,
+        host_dirs=snapshot_host_dirs_from_paths(snapshot.closed_paths),
+        paths=snapshot_paths_hint_entries(
+            snapshot.closed_paths,
+            snapshot.first_timestamp_by_path,
+            snapshot.head_identity_by_path,
+        ),
+        validated_days=validated_days,
     )
 
   def _run_scheduled_archive_maintenance(

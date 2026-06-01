@@ -91,10 +91,28 @@ class _FakeArchivePoolRetry:
     return _R(result)
 
 
+def _empty_maintenance_snapshot(*_a, **_k):
+  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  return ArchiveMaintenanceSnapshot(
+      closed_paths=[],
+      remaining_raw_by_gz={},
+      mapping={},
+      ready_paths=set(),
+  )
+
+
 @pytest.fixture(autouse=True)
 def _default_startup_daily_tar_count(monkeypatch):
   """Keep startup archival gating deterministic unless a test overrides it."""
   monkeypatch.setattr(st, "_count_daily_tars", lambda *_a, **_k: 0)
+  monkeypatch.setattr(st.cfg, "get_sync_archive_maint_hints", lambda: False)
+  monkeypatch.setattr(
+      st,
+      "build_archive_maintenance_snapshot",
+      _empty_maintenance_snapshot,
+  )
+  monkeypatch.setattr(st, "save_archive_maint_hints", lambda *_a, **_k: None)
 
 
 def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch):
@@ -108,11 +126,6 @@ def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch):
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
-    monkeypatch.setattr(
-        st,
-        "build_remaining_raw_stats_by_daily_gz",
-        lambda *_a, **_k: {},
-    )
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(
@@ -158,11 +171,6 @@ def test_maintenance_passes_ingest_ready_fn_to_raw_removal(monkeypatch):
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
-    monkeypatch.setattr(
-        st,
-        "build_remaining_raw_stats_by_daily_gz",
-        lambda *_a, **_k: {},
-    )
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", fake_raw_removal)
     monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
@@ -321,7 +329,7 @@ def test_run_sync_timedb_supervisor_from_parsed_resets_runtime_caches(monkeypatc
       return False
 
   class _Context:
-    def Pool(self, processes=None):
+    def Pool(self, processes=None, **kwargs):
       del processes
       return _Pool()
 
@@ -355,7 +363,7 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
       assert name == "spawn"
 
       class _Ctx:
-        def Pool(self, processes=None):
+        def Pool(self, processes=None, **kwargs):
           del processes
           return _FakeIngestPool()
 
@@ -482,7 +490,7 @@ def test_supervisor_rescans_before_full_maintenance_when_queue_empty(monkeypatch
     monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
 
     class _Ctx:
-      def Pool(self, processes=None):
+      def Pool(self, processes=None, **kwargs):
         del processes
         return _FakeIngestPool()
 
@@ -831,7 +839,7 @@ def test_failed_ingest_is_not_marked_processed(monkeypatch):
       assert name == "spawn"
 
       class _Ctx:
-        def Pool(self, processes=None):
+        def Pool(self, processes=None, **kwargs):
           del processes
           return _FakeFailedIngestPool()
 
@@ -887,7 +895,7 @@ def test_checkpoint_flush_is_coalesced(monkeypatch, tmp_path):
       assert name == "spawn"
 
       class _Ctx:
-        def Pool(self, processes=None):
+        def Pool(self, processes=None, **kwargs):
           del processes
           return _FakeIngestPool()
 
@@ -1381,8 +1389,6 @@ def test_periodic_maintenance_logs_deferred_when_archive_finalize_pending(monkey
         "build_archive_mapping",
         lambda files, *_a, **_k: {"/tmp/day.tar.gz": list(files)},
     )
-    monkeypatch.setattr(
-        st, "build_remaining_raw_stats_by_daily_gz", lambda *_a, **_k: {})
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
@@ -1462,8 +1468,6 @@ def test_periodic_maintenance_runs_forced_two_phase_when_defer_cap_exceeded(
         "build_archive_mapping",
         lambda files, *_a, **_k: {"/tmp/day.tar.zst": list(files)},
     )
-    monkeypatch.setattr(
-        st, "build_remaining_raw_stats_by_daily_gz", lambda *_a, **_k: {})
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
@@ -1539,8 +1543,6 @@ def test_continuous_backlog_triggers_forced_maintenance(monkeypatch):
         "build_archive_mapping",
         lambda files, *_a, **_k: {"/tmp/day.tar.zst": list(files[:1])},
     )
-    monkeypatch.setattr(
-        st, "build_remaining_raw_stats_by_daily_gz", lambda *_a, **_k: {})
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)

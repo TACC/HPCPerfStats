@@ -241,6 +241,9 @@ secret_key = change-me-to-a-long-random-string
 # Require head host_data row before tar append or raw delete (default yes).
 # sync_archive_require_db_head_ingest = yes
 
+# Persist archive maintenance hints for faster restarts (default yes).
+# sync_archive_maint_hints = yes
+
 # Minimum total_cores before auto NUMA pinning in compose (default 32).
 # cpuset_pin_min_total_cores = 32
 
@@ -322,6 +325,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 
 # Max concurrent daily tar seals during maintenance (default 4).
 # archive_seal_parallel_workers = 4
+
+# Max concurrent raw stats head-line reads during maintenance snapshot (default sync_archive_pool_processes).
+# sync_archive_discovery_workers = 8
 
 # zstd compression level 1-19 for .tar.zst (default 7; benchmark before raising above 9).
 # archive_zstd_level = 7

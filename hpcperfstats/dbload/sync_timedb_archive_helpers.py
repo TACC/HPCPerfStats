@@ -693,6 +693,21 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
     return {}
 
 
+def _record_validated_day_hint(validated_days_out, gz_path, members):
+  if validated_days_out is None or members is None:
+    return
+  identity = _archive_file_identity(gz_path)
+  if identity is None:
+    return
+  validated_days_out[normalize_daily_compressed_path(gz_path)] = {
+      "mtime_ns": identity[0],
+      "size": identity[1],
+      "ok": True,
+      "member_count": len(members),
+      "member_byte_sum": sum_member_bytes(members),
+  }
+
+
 def remove_verified_archived_raw_files(
     archive_data_dir,
     host_name_ext,
@@ -701,6 +716,9 @@ def remove_verified_archived_raw_files(
     log_fn=log_print,
     archive_stats_files_fn=None,
     ingest_ready_fn=None,
+    maintenance_snapshot=None,
+    validation_cache=None,
+    validated_days_out=None,
     skip_daily_tar_paths=None,
     only_daily_tar_paths=None,
 ):
@@ -723,21 +741,33 @@ def remove_verified_archived_raw_files(
   this routine bootstraps the daily archive via ``archive_stats_files`` before
   validation and removal.
   """
+  ready_paths_set = None
+  if maintenance_snapshot is not None:
+    ready_paths_set = maintenance_snapshot.ready_paths
+    paths = maintenance_snapshot.closed_paths
+    mapping = maintenance_snapshot.mapping
+  else:
+    paths = collect_stats_files_in_range(
+        archive_data_dir, "all", None, host_name_ext)
+    if not paths:
+      return
+    mapping = build_archive_mapping(paths, tgz_archive_dir)
+
   def _path_ingest_ready(path):
+    if ready_paths_set is not None:
+      return path in ready_paths_set
     if ingest_ready_fn is None:
       return True
     return bool(ingest_ready_fn(path))
 
-  paths = collect_stats_files_in_range(
-      archive_data_dir, "all", None, host_name_ext)
   if not paths:
     return
-  mapping = build_archive_mapping(paths, tgz_archive_dir)
   if archive_stats_files_fn is None:
     import hpcperfstats.dbload.sync_timedb as _sync_timedb_mod
 
     archive_stats_files_fn = _sync_timedb_mod.archive_stats_files
-  validation_cache = {"hits": 0, "misses": 0}
+  if validation_cache is None:
+    validation_cache = {"hits": 0, "misses": 0}
   validation_targets = []
   for archive_path, stats_paths in mapping.items():
     if detect_compressed_format(archive_path) is not None:
@@ -799,6 +829,7 @@ def remove_verified_archived_raw_files(
       failed_count += 1
       continue
     success_count += 1
+    _record_validated_day_hint(validated_days_out, gz_path, members)
     for stats_path in stats_paths_by_gz.get(gz_path, []):
       for path in get_verified_files_to_remove([stats_path], members):
         if not _path_ingest_ready(path):
@@ -840,16 +871,13 @@ def build_remaining_raw_stats_by_daily_gz(
   Files with no parseable first timestamp are omitted from the mapping and do not
   block removal (same as archival bootstrap).
   """
-  paths = collect_stats_files_in_range(
-      archive_data_dir, "all", None, host_name_ext)
-  if not paths:
-    return {}
-  mapping = build_archive_mapping(paths, tgz_archive_dir)
-  return {
-      normalize_daily_compressed_path(archive_path): list(stats_paths)
-      for archive_path, stats_paths in mapping.items()
-      if detect_compressed_format(archive_path) is not None and stats_paths
-  }
+  from hpcperfstats.dbload.sync_timedb_archive_maint import (
+      build_archive_maintenance_snapshot,
+  )
+
+  snapshot = build_archive_maintenance_snapshot(
+      archive_data_dir, host_name_ext, tgz_archive_dir, log_fn=None)
+  return snapshot.remaining_raw_by_gz
 
 
 def daily_gz_has_remaining_raw_stats(gz_path, remaining_by_gz):
@@ -866,6 +894,8 @@ def remove_verified_uncompressed_daily_tars(
     log_fn=log_print,
     remaining_raw_by_gz=None,
     force_remove_uncompressed_tar=False,
+    validation_cache=None,
+    validated_days_out=None,
     skip_daily_tar_paths=None,
     only_daily_tar_paths=None,
 ):
@@ -881,7 +911,8 @@ def remove_verified_uncompressed_daily_tars(
   """
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
     return
-  validation_cache = {"hits": 0, "misses": 0}
+  if validation_cache is None:
+    validation_cache = {"hits": 0, "misses": 0}
   validation_targets = []
   tar_by_gz = {}
   for tar_path in sorted(iter_daily_tar_paths(daily_archive_dir)):
@@ -921,6 +952,7 @@ def remove_verified_uncompressed_daily_tars(
       failed_count += 1
       continue
     success_count += 1
+    _record_validated_day_hint(validated_days_out, gz_path, members)
     tar_path = tar_by_gz[gz_path]
     if (
         not force_remove_uncompressed_tar
@@ -1295,6 +1327,47 @@ def drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_print):
     )
 
 
+def _seal_skip_existing_zst_equivalent(
+    tar_path,
+    zst_path,
+    num_threads,
+    log_fn,
+):
+  """Return True when ``zst_path`` is valid and already matches ``tar_path`` (or tar absent)."""
+  if not os.path.isfile(zst_path):
+    return False
+  try:
+    zstd_test(zst_path, num_threads)
+  except (OSError, subprocess.CalledProcessError, RuntimeError):
+    return False
+  if not os.path.isfile(tar_path):
+    if log_fn:
+      log_fn(
+          "Seal skipped: sealed archive valid and uncompressed tar absent: %s"
+          % zst_path,
+          flush=True,
+      )
+    return True
+  existing_ok, existing_members = _scan_compressed_archive_members_and_readable(
+      zst_path,
+  )
+  if not existing_ok:
+    return False
+  tar_members = get_existing_archive_members(tar_path)
+  if (
+      len(existing_members) == len(tar_members)
+      and sum_member_bytes(existing_members) == sum_member_bytes(tar_members)
+  ):
+    if log_fn:
+      log_fn(
+          "Seal skipped: tar and zst already equivalent (members=%d): %s"
+          % (len(tar_members), zst_path),
+          flush=True,
+      )
+    return True
+  return False
+
+
 def atomic_seal_tar_to_zst(
     tar_path,
     zst_path,
@@ -1307,9 +1380,13 @@ def atomic_seal_tar_to_zst(
 ):
   """Compress ``tar_path`` to ``zst_path`` using temp file, ``zstd -t``, ``os.replace``."""
   if not os.path.isfile(tar_path):
+    if os.path.isfile(zst_path):
+      _seal_skip_existing_zst_equivalent(tar_path, zst_path, num_threads, log_fn)
     return
   if not shutil.which("zstd"):
     raise RuntimeError("zstd executable not found on PATH")
+  if _seal_skip_existing_zst_equivalent(tar_path, zst_path, num_threads, log_fn):
+    return
   tmp_zst = "%s.tmp" % zst_path
   try:
     if os.path.exists(tmp_zst):
