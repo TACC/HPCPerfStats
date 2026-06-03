@@ -2149,7 +2149,7 @@ def run_sync_timedb_supervisor_loop(
               host_scan_hints=host_scan_hints,
           )
           log_print(
-              "Rescanned after %d chunks; pending files (newest first): %d"
+              "Rescanned after %d chunks; pending files (oldest first): %d"
               % (rescan_every_chunks, len(pending_stats_files)))
 
       _finalize_archive_job_if_needed(force=True)
