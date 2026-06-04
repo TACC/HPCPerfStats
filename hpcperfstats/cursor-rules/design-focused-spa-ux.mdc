@@ -1,0 +1,65 @@
+---
+description: Design-focused SPA UX contracts (labels, search recap, loading, overlays, wayfinding)
+globs:
+  - hpcperfstats/site/frontend/src/**/*
+  - hpcperfstats/site/machine/api.py
+  - hpcperfstats/site/machine/job_list_filter_summary.py
+---
+
+# Design-Focused SPA UX
+
+HPCPerfStats serves researchers and operators who expect clear hierarchy, honest loading states, and labels that match data contracts.
+
+## Search results
+
+- Filtered job lists (`/jobs` and equivalent query-driven lists) must show a human-readable **active filter summary** and a **Modify search** affordance that opens extended search.
+- API `qname` / page titles must not stay generic **Jobs** when non-trivial filters are applied; use `filter_summary` from the job list API or frontend `buildJobListFilterSummaryLines`.
+- Empty result sets return **200** with `nj: 0` and an explicit empty-table message—not a silent error.
+
+## Label integrity
+
+- Job **end time** filters must be labeled as end time (not “start date” for `end_time__gte`).
+- Use **`PROJECT_FIELD_LABEL`** from `site-field-labels.js` (currently **Project**) for the charge account field everywhere (extended search, tables, breadcrumbs).
+- Table headers use `JOB_LIST_TABLE_HEADERS` where applicable.
+
+## Loading vs unavailable vs error
+
+- Do not show Bokeh **Unavailable** while a section is still loading; pass `isLoading` / `detailsLoading` into `BokehEmbed`.
+- Distinguish **no data** (`unavailableReason`), **loading** (`LoadingMessage` / skeleton), and **transient failure** (warning + **Retry** when async fetch fails).
+- Job list pagination: avoid full-page skeleton when only `page` or `order_by` changes; use `tableBusy` overlay.
+
+## Overlays (extended search)
+
+- Panel uses `role="dialog"`, `aria-modal="true"`, semi-transparent **backdrop**, click-outside and **Escape** close, focus return to toggle.
+- Call **`onClose`** after successful navigate from extended search.
+- Collapse mobile `navOpen` / `extendedSearchOpen` on route change.
+
+## Wayfinding
+
+- Deep pages include **breadcrumbs** (`PageBreadcrumbs`) or explicit **Back to job** links on type/host drill-downs.
+- Shareable primary tabs sync to **`?tab=`** or **`?view=`** (`sync-tab-search-param.js`).
+- Unknown SPA routes render **`PageNotFound`**, not a silent redirect home.
+
+## Forms
+
+- Validation: `aria-invalid` plus Bootstrap **`is-invalid`** and field feedback.
+- Primary actions (Find Job, Search) must not fail silently on empty input.
+
+## Feedback components
+
+- Prefer **`LoadingMessage`** and **`BannerErrorMessage`** over ad hoc text/alerts.
+- **No toast library** for production SPA; use inline status, banners, and button labels (`Working…`). See `docs/SPA_UI_FEEDBACK.md`.
+
+## Navigation affordances
+
+- Prefer **`Link` / `NavLink`** for route destinations; `<button>` for actions.
+- Staff destructive menu items use **`text-danger`**; confirmations stay on the action.
+
+## Tests
+
+- Extend Vitest when changing the above contracts (`JobList.test.jsx`, `ExtendedSearch.test.jsx`, `Layout.test.jsx`, `job-list-filter-summary.test.js`).
+- Backend: `test_job_list_filter_summary.py` when changing `build_job_list_qname_and_filter_summary`.
+
+## Overlap
+
+- `react-js-cursor-rule.mdc`, `wcag-aa-mobile-web.mdc`, `search-metric-artifact-sync.mdc`, `researcher-job-detail-doc-sync.mdc` when user-visible copy changes.

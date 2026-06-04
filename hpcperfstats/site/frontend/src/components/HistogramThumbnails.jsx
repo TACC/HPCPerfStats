@@ -147,13 +147,12 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
   return (
     <div ref={wrapperRef} className="histogram-thumbnail-wrapper" style={{ position: "relative" }}>
       <div className="histogram-desktop-title">{title}</div>
-      <div
+      <button
         ref={thumbActivatorRef}
-        role="button"
-        tabIndex={0}
-        aria-label={`${title}: enlarge chart (click, Enter, or Space to open or close)`}
+        type="button"
+        aria-label={`${title}: enlarge chart`}
         aria-expanded={expanded}
-        className="histogram-thumbnail histogram-thumbnail-shell"
+        className="histogram-thumbnail histogram-thumbnail-shell border-0 p-0"
         style={{
           width: THUMB_SIZE.width,
           height: THUMB_SIZE.height,
@@ -176,7 +175,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
           wrapperClassName="histogram-thumbnail-bokeh"
           intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
         />
-      </div>
+      </button>
       {showPopover && (
         <div
           ref={popoverRef}

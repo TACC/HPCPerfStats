@@ -35,7 +35,9 @@ describe("HostDetail", () => {
     renderHostDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("Host: node1.cluster")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { level: 1, name: /node1\.cluster utilization/i }),
+      ).toBeInTheDocument();
     });
     expect(screen.getByText("Unavailable — Data not available.")).toBeInTheDocument();
 

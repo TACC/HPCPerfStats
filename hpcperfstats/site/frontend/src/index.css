@@ -99,9 +99,9 @@ body {
 }
 /* Centered title */
 .navbar-brand.navbar-brand-center {
-  pointer-events: none;
   min-width: 0;
   text-align: center;
+  color: inherit;
 }
 @media (min-width: 992px) {
   .navbar-expand-lg .container-fluid {
@@ -265,13 +265,60 @@ body {
   min-height: 34px;
 }
 
+.extended-search-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1040;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 0.5rem 0 0;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.35);
+}
+
 .extended-search-collapse {
   position: relative;
-  z-index: 1030;
+  z-index: 1041;
+  width: 100%;
+  max-width: 100%;
   background: #f8f9fa;
   border-bottom: 1px solid #dee2e6;
   padding: 1rem 1.5rem;
   margin-bottom: 0;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+}
+
+.extended-search-panel .extended-search-actions {
+  position: sticky;
+  bottom: 0;
+  background: #f8f9fa;
+  padding-top: 0.75rem;
+  margin-top: 0.5rem;
+  border-top: 1px solid #dee2e6;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.variable-info-help {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.job-list-table-busy {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.job-detail-tab-scroll {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scrollbar-width: thin;
 }
 
 .extended-search-panel .extended-search-header {

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { formatDecimalStandard } from "../utils/formatDecimal";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehEmbed from "../components/BokehEmbed";
 import LoadingMessage from "../components/LoadingMessage";
+import PageBreadcrumbs from "../components/PageBreadcrumbs";
 import { buildAsyncPageTitle } from "../utils/async-page-title";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 
@@ -49,6 +50,16 @@ export default function TypeDetail() {
 
   return (
     <>
+      <PageBreadcrumbs
+        items={[
+          { label: "Browse", to: "/" },
+          { label: `Job ${jobid}`, to: `/job/${jobid}` },
+          { label: type_name },
+        ]}
+      />
+      <p className="mb-2">
+        <Link to={`/job/${jobid}`}>Back to job {jobid}</Link>
+      </p>
       <h1 className="h2 mb-3">
         Job {jobid} / Type {type_name}
       </h1>
@@ -61,9 +72,11 @@ export default function TypeDetail() {
           unavailableReason={tplot_unavailable_reason}
         />
       </div>
-      {stats_data.length > 0 && (
+      <h2 className="h5 mb-2 mt-4">Counts Aggregated over devices and hosts</h2>
+      {stats_data.length === 0 ? (
+        <p className="text-muted">No counter samples for this type on this job.</p>
+      ) : (
         <>
-          <h2 className="h5 mb-2 mt-4">Counts Aggregated over devices and hosts</h2>
           <div className="table-responsive">
             <table className="table table-sm table-bordered">
               <caption className="visually-hidden">

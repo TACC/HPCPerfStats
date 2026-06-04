@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useRouteFocusMain } from "../utils/useRouteFocusMain";
 
@@ -8,6 +8,9 @@ export default function LayoutPub({ machineName, children }) {
   const location = useLocation();
   const [navOpen, setNavOpen] = useState(false);
   useRouteFocusMain(location.pathname);
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
 
   return (
     <div className="container-fluid">
@@ -19,7 +22,7 @@ export default function LayoutPub({ machineName, children }) {
         aria-label="Primary"
       >
         <div className="container-fluid">
-          <Link to="/" className="navbar-brand navbar-header-logo">
+          <Link to="/cluster-dashboard" className="navbar-brand navbar-header-logo">
             <img
               src="/media/logo.png"
               alt="TACC — HPCPerfStats home"

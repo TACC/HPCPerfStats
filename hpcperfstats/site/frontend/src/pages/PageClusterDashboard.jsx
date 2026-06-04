@@ -1,5 +1,7 @@
 import { useId, useState } from "react";
+import BannerErrorMessage from "../components/BannerErrorMessage.jsx";
 import BokehEmbed from "../components/BokehEmbed.jsx";
+import LoadingMessage from "../components/LoadingMessage.jsx";
 import { usePubDashboardBundle } from "../pub-dashboard-bundle-context.js";
 import { useDocumentTitle } from "../utils/useDocumentTitle.js";
 import { formatDecimalStandard } from "../utils/formatDecimal.js";
@@ -185,14 +187,10 @@ export default function PageClusterDashboard() {
         <h1 className="h3">Dashboard</h1>
       </header>
 
-      {error ? (
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-      ) : null}
+      {error ? <BannerErrorMessage message={error} /> : null}
 
       {loading ? (
-        <p className="text-muted">Loading…</p>
+        <LoadingMessage message="Loading cluster dashboard…" />
       ) : bundle == null ? null : bundle.status !== "ready" ? (
         <div className="alert alert-info" role="status">
           <div className="fw-semibold">Dashboard warming</div>

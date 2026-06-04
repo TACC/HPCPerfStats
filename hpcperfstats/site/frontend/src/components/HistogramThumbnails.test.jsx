@@ -57,7 +57,7 @@ describe("HistogramThumbnails", () => {
     expect(screen.getAllByText("Jobs by queue").length).toBeGreaterThanOrEqual(1);
     expect(
       screen.getByRole("button", {
-        name: "Jobs by queue: enlarge chart (click, Enter, or Space to open or close)",
+        name: "Jobs by queue: enlarge chart",
       }),
     ).toBeInTheDocument();
   });
@@ -97,7 +97,7 @@ describe("HistogramThumbnails", () => {
     await waitFor(() => expect(embedItem).toHaveBeenCalledTimes(1));
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Jobs by queue: enlarge chart (click, Enter, or Space to open or close)",
+        name: "Jobs by queue: enlarge chart",
       }),
     );
     await waitFor(() => expect(embedItem).toHaveBeenCalledTimes(2));

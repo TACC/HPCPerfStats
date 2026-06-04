@@ -79,6 +79,7 @@ export default function ExtendedSearch({ onClose }) {
 
     if (params.jid) {
       navigate(`/job/${params.jid}`);
+      onClose?.();
       return;
     }
     if (params.host && params.end_time__gte) {
@@ -87,10 +88,12 @@ export default function ExtendedSearch({ onClose }) {
         end_time__lte: params.end_time__lte || "now()",
       }).toString();
       navigate(`/host/${encodeURIComponent(params.host)}/plot?${qs}`);
+      onClose?.();
       return;
     }
     const qs = new URLSearchParams(params).toString();
     navigate(`/jobs?${qs}`);
+    onClose?.();
   };
 
   if (loading) {
@@ -120,8 +123,30 @@ export default function ExtendedSearch({ onClose }) {
     if (!invalidFieldIds.has(htmlId)) return {};
     return {
       "aria-invalid": true,
-      "aria-describedby": EXTENDED_SEARCH_ERROR_SUMMARY_ID,
+      "aria-describedby": `${EXTENDED_SEARCH_ERROR_SUMMARY_ID} ${htmlId}-feedback`,
     };
+  }
+
+  function fieldClass(htmlId, base = "form-control form-control-sm") {
+    return invalidFieldIds.has(htmlId) ? `${base} is-invalid` : base;
+  }
+
+  function fieldFeedback(htmlId) {
+    if (!invalidFieldIds.has(htmlId)) return null;
+    return (
+      <div id={`${htmlId}-feedback`} className="invalid-feedback d-block">
+        Check this value.
+      </div>
+    );
+  }
+
+  function handleClearForm() {
+    const form = document.getElementById("extended-search-form");
+    if (form instanceof HTMLFormElement) {
+      form.reset();
+    }
+    setSubmitErrors([]);
+    setInvalidFieldIds(new Set());
   }
 
   return (
@@ -141,7 +166,9 @@ export default function ExtendedSearch({ onClose }) {
             </ul>
           </div>
         ) : null}
-        <p className="text-muted small">Search fields are combined.</p>
+        <p className="text-muted small mb-1">
+          Search fields are combined (AND). Job ID opens one job (same as Find Job in the header).
+        </p>
         <div className="row mb-2">
           <div className="col-12 col-md-2">
             <SearchFieldLabel parameterName="jid" />
@@ -150,16 +177,21 @@ export default function ExtendedSearch({ onClose }) {
             <input
               id="ext-jid"
               type="text"
-              className="form-control form-control-sm"
+              className={fieldClass("ext-jid")}
               name="jid"
-              placeholder="Jump directly to a job"
+              placeholder="Same as Find Job in header"
               autoComplete="off"
               {...ariaLabelledBy("ext-jid")}
+              {...ariaErrorProps("ext-jid")}
             />
+            {fieldFeedback("ext-jid")}
           </div>
         </div>
         <fieldset className="border-0 p-0 mb-3">
-          <legend className="h6">Time range</legend>
+          <legend className="h6">Job end time</legend>
+          <p className="text-muted small">
+            Filters use when the job finished (end time), not when it started.
+          </p>
           <div className="row">
             <div className="col-12 col-md-2">
               <SearchFieldLabel parameterName="end_time__gte" />
@@ -168,11 +200,12 @@ export default function ExtendedSearch({ onClose }) {
               <input
                 id="ext-end-time-gte"
                 type="date"
-                className="form-control form-control-sm"
+                className={fieldClass("ext-end-time-gte")}
                 name="end_time__gte"
                 {...ariaLabelledBy("ext-end-time-gte")}
                 {...ariaErrorProps("ext-end-time-gte")}
               />
+              {fieldFeedback("ext-end-time-gte")}
             </div>
             <div className="col-12 col-md-2">
               <SearchFieldLabel parameterName="end_time__lte" />
@@ -181,11 +214,12 @@ export default function ExtendedSearch({ onClose }) {
               <input
                 id="ext-end-time-lte"
                 type="date"
-                className="form-control form-control-sm"
+                className={fieldClass("ext-end-time-lte")}
                 name="end_time__lte"
                 {...ariaLabelledBy("ext-end-time-lte")}
                 {...ariaErrorProps("ext-end-time-lte")}
               />
+              {fieldFeedback("ext-end-time-lte")}
             </div>
           </div>
         </fieldset>
@@ -193,14 +227,17 @@ export default function ExtendedSearch({ onClose }) {
           <div className="col-12 col-md-2">
             <SearchFieldLabel parameterName="host" />
           </div>
-          <div className="col-12 col-md-2">
+          <div className="col-12 col-md-6">
             <input
               type="text"
-              className="form-control form-control-sm"
+              className={fieldClass("ext-host")}
               name="host"
               id="ext-host"
               {...ariaLabelledBy("ext-host")}
             />
+            <p className="text-muted small mb-0 mt-1">
+              Host plus earliest job end date opens the host time-series plot, not the job list.
+            </p>
           </div>
         </div>
         <div className="row">
@@ -237,12 +274,12 @@ export default function ExtendedSearch({ onClose }) {
           </div>
           <div className="col-12 col-md-2">
             <select
-              className="form-control"
+              className="form-select form-select-sm"
               id="ext-state"
               name="state"
               {...ariaLabelledBy("ext-state")}
             >
-              <option value="">--</option>
+              <option value="">Any state</option>
               {states.map((s) => (
                 <option key={s}>{s}</option>
               ))}
@@ -255,12 +292,12 @@ export default function ExtendedSearch({ onClose }) {
           </div>
           <div className="col-12 col-md-2">
             <select
-              className="form-control"
+              className="form-select form-select-sm"
               id="ext-queue"
               name="queue"
               {...ariaLabelledBy("ext-queue")}
             >
-              <option value="">--</option>
+              <option value="">Any queue</option>
               {queues.map((q) => (
                 <option key={q}>{q}</option>
               ))}
@@ -405,9 +442,14 @@ export default function ExtendedSearch({ onClose }) {
             </div>
           ))}
         </fieldset>
-        <button type="submit" className="btn btn-primary btn-sm">
-          Search
-        </button>
+        <div className="extended-search-actions">
+          <button type="submit" className="btn btn-primary btn-sm">
+            Search
+          </button>
+          <button type="button" className="btn btn-outline-secondary btn-sm" onClick={handleClearForm}>
+            Clear all
+          </button>
+        </div>
       </form>
     </div>
   );

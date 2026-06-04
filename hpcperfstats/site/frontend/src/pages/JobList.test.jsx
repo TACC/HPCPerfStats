@@ -86,13 +86,13 @@ describe("JobList", () => {
     const view = renderJobList();
 
     await waitFor(() => {
-      expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+      expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
     });
     expect(await axeSeriousViolations(view.container)).toEqual([]);
     expect(screen.getByRole("heading", { name: /distributions for this job selection/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /jump to histograms/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /continue to job table/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Performance Data" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Performance data/i })).toBeInTheDocument();
     const tableHeaders = within(screen.getByRole("table")).getAllByRole("columnheader");
     expect(tableHeaders[tableHeaders.length - 1].textContent.trim()).toBe("name");
     expect(screen.getByText("job1")).toBeInTheDocument();
@@ -136,10 +136,10 @@ describe("JobList", () => {
     renderJobList(["/jobs"], { is_staff: true });
 
     await waitFor(() => {
-      expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+      expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
     });
     const tableHeaders = within(screen.getByRole("table")).getAllByRole("columnheader");
-    expect(tableHeaders[1].textContent.trim()).toBe("Sample Count");
+    expect(tableHeaders[1].textContent.trim()).toBe("Sample count");
     expect(screen.getByText("1,234.00")).toBeInTheDocument();
   });
 
@@ -225,7 +225,7 @@ describe("JobList", () => {
     renderJobList(["/jobs"], { is_staff: false });
 
     await waitFor(() => {
-      expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+      expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
     });
     expect(screen.queryByText(/Mean queue wait \(all matching jobs\):/)).not.toBeInTheDocument();
   });
@@ -265,7 +265,7 @@ describe("JobList", () => {
     renderJobList(["/jobs"], { is_staff: false });
 
     await waitFor(() => {
-      expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+      expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
     });
     expect(screen.queryByRole("columnheader", { name: "Sample Count" })).not.toBeInTheDocument();
   });
@@ -432,7 +432,7 @@ describe("JobList", () => {
     renderJobList();
 
     await waitFor(() => {
-      expect(screen.getByText("#Jobs = 0")).toBeInTheDocument();
+      expect(screen.getByText("Jobs = 0")).toBeInTheDocument();
     });
     expect(
       screen.queryByRole("navigation", { name: /Job list pagination/i }),
@@ -488,7 +488,7 @@ describe("JobList", () => {
       renderJobList(["/jobs"], { is_staff: true });
 
       await waitFor(() => {
-        expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+        expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
       });
 
       const link = screen.getByRole("link", { name: /Sample Count/i });
@@ -500,7 +500,7 @@ describe("JobList", () => {
       renderJobList(["/jobs"], { is_staff: false });
 
       await waitFor(() => {
-        expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+        expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
       });
 
       const link = screen.getByRole("link", { name: /Performance Data/i });
@@ -512,7 +512,7 @@ describe("JobList", () => {
       renderJobList(["/jobs?order_by=performance_sort_rank"], { is_staff: false });
 
       await waitFor(() => {
-        expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+        expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
       });
 
       const link = screen.getByRole("link", { name: /Performance Data/i });
@@ -524,7 +524,7 @@ describe("JobList", () => {
       renderJobList(["/jobs?order_by=-sample_count"], { is_staff: true });
 
       await waitFor(() => {
-        expect(screen.getByText("#Jobs = 1")).toBeInTheDocument();
+        expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
       });
 
       const link = screen.getByRole("link", { name: /Sample Count/i });
@@ -553,7 +553,7 @@ describe("JobList", () => {
     renderJobList();
 
     await waitFor(() => {
-      expect(screen.getByText("#Jobs = 0")).toBeInTheDocument();
+      expect(screen.getByText("Jobs = 0")).toBeInTheDocument();
     });
     expect(
       screen.getAllByText("Unavailable — Data not available.").length,
@@ -592,7 +592,7 @@ describe("JobList", () => {
     renderJobList();
 
     await waitFor(() => {
-      expect(screen.getByText("#Jobs = 0")).toBeInTheDocument();
+      expect(screen.getByText("Jobs = 0")).toBeInTheDocument();
     });
     expect(
       screen.queryByRole("button", { name: "Show plot error details" }),

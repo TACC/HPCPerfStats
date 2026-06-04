@@ -165,6 +165,6 @@ describe("PageClusterDashboard", () => {
       bundle: null,
       error: null,
     });
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.getByText("Loading cluster dashboard…")).toBeInTheDocument();
   });
 });

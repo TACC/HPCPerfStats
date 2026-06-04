@@ -14,6 +14,7 @@ const HostDetail = lazy(() => import("./pages/HostDetail"));
 const AdminMonitor = lazy(() => import("./pages/AdminMonitor"));
 const JobMonitor = lazy(() => import("./pages/JobMonitor"));
 const PageApiKey = lazy(() => import("./pages/PageApiKey"));
+const PageNotFound = lazy(() => import("./pages/PageNotFound"));
 
 function RouteLoadingFallback() {
   return <LoadingMessage message="Loading page…" />;
@@ -87,7 +88,7 @@ export default function AppMachine() {
             <Route path="admin_monitor" element={<AdminMonitor />} />
             <Route path="job_monitor" element={<JobMonitor />} />
             <Route path="api-key" element={<PageApiKey />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<PageNotFound />} />
           </Routes>
         </Suspense>
       </Layout>

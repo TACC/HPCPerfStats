@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import PageBreadcrumbs from "../components/PageBreadcrumbs";
 import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehEmbed from "../components/BokehEmbed";
@@ -50,9 +51,23 @@ export default function HostDetail() {
 
   return (
     <>
-      <h1 className="h2 mb-3">Host: {hostName}</h1>
-      <p className="text-muted mb-3">
-        Time range: {formatDateTime(data.end_time__gte)} — {data.end_time__lte === "now()" ? "Now" : formatDateTime(data.end_time__lte)}
+      <PageBreadcrumbs
+        items={[
+          { label: "Browse", to: "/" },
+          {
+            label: `Jobs on ${hostName}`,
+            to: `/host/${encodeURIComponent(hostName)}`,
+          },
+          { label: `${hostName} utilization` },
+        ]}
+      />
+      <h1 className="h2 mb-3">{hostName} utilization</h1>
+      <p className="text-muted mb-2">
+        Time range: {formatDateTime(data.end_time__gte)} —{" "}
+        {data.end_time__lte === "now()" ? "Now" : formatDateTime(data.end_time__lte)}
+      </p>
+      <p className="mb-3">
+        <Link to={`/host/${encodeURIComponent(hostName)}`}>View jobs that ran on this host</Link>
       </p>
       <div className="graphs">
         <BokehEmbed

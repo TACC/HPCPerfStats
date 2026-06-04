@@ -51,6 +51,8 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
   const tooltipBody = enableHelp ? getVariableTooltipContent(variableName) : null;
   const panelId = useId();
   const [open, setOpen] = useState(false);
+  const [hoverOpen, setHoverOpen] = useState(false);
+  const showTooltip = open || hoverOpen;
   const buttonRef = useRef(null);
   const tooltipRef = useRef(null);
 
@@ -68,7 +70,7 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
   }, [open]);
 
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!showTooltip) return;
     const btnEl = buttonRef.current;
     const tipEl = tooltipRef.current;
     if (!btnEl || !tipEl) return;
@@ -84,7 +86,7 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
       window.removeEventListener("scroll", updatePosition, true);
       window.removeEventListener("resize", updatePosition);
     };
-  }, [open, variableName, enableHelp]);
+  }, [showTooltip, variableName, enableHelp]);
 
   if (!tooltipBody) {
     return <>{text}</>;
@@ -92,7 +94,7 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
 
   const { description, researcherUse } = tooltipBody;
 
-  const tooltipNode = open ? (
+  const tooltipNode = showTooltip ? (
     <span
       ref={tooltipRef}
       id={panelId}
@@ -114,14 +116,20 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
   return (
     <>
       {text}
-      <span className="variable-info-help-wrap">
+      <span
+        className="variable-info-help-wrap"
+        onMouseEnter={() => setHoverOpen(true)}
+        onMouseLeave={() => setHoverOpen(false)}
+        onFocus={() => setHoverOpen(true)}
+        onBlur={() => setHoverOpen(false)}
+      >
         <button
           ref={buttonRef}
           type="button"
           className="variable-info-help"
           data-testid="variable-info-help"
-          aria-expanded={open}
-          aria-controls={open ? panelId : undefined}
+          aria-expanded={showTooltip}
+          aria-controls={showTooltip ? panelId : undefined}
           aria-label={`Help: ${variableName}`}
           onClick={() => setOpen((o) => !o)}
         >

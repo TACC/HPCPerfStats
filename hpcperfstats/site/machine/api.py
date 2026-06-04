@@ -104,6 +104,7 @@ from .query_utils import (
     normalize_job_list_query_params,
     partition_job_list_acct_filters,
 )
+from .job_list_filter_summary import build_job_list_qname_and_filter_summary
 from .job_list_performance import annotate_job_list_performance_fields
 from .job_list_queue_wait import aggregate_queue_wait_seconds_stats, queue_wait_hours_series
 from .serializers import JobListSerializer
@@ -1695,11 +1696,26 @@ def job_list(request):
             status=status.HTTP_404_NOT_FOUND,
         )
 
+    qname, filter_summary = build_job_list_qname_and_filter_summary(fields)
+
     if nj == 0:
-        return Response(
-            {"error": "No data found for this search request"},
-            status=status.HTTP_404_NOT_FOUND,
-        )
+        return Response({
+            "job_list": [],
+            "nj": 0,
+            "aggregates": {"total_node_hours": 0},
+            "current_path": request.get_full_path() if "?" in request.get_full_path() else None,
+            "qname": qname,
+            "filter_summary": filter_summary,
+            "order_by": order_by,
+            "pagination": {
+                "page": 1,
+                "num_pages": 1,
+                "has_previous": False,
+                "has_next": False,
+                "previous_page_number": None,
+                "next_page_number": None,
+            },
+        })
 
     # Aggregate over full filtered list (non-paginated) for listing-page metrics
     # Use node_hrs directly from the database to compute total node hours.
@@ -1726,14 +1742,6 @@ def job_list(request):
         page = paginator.page(paginator.num_pages)
 
     current_path = request.get_full_path() if "?" in request.get_full_path() else None
-    qname = "Jobs"
-    date_param = request.GET.get("end_time__date", "").strip()
-    if date_param and len(date_param) == 4 and date_param.isdigit():
-        qname = f"Jobs for year {date_param}"
-    elif date_param:
-        qname = f"Jobs for date {date_param}"
-    elif fields.get("queue"):
-        qname = f"Jobs in queue {fields['queue']}"
 
     serialized_jobs = JobListSerializer(page.object_list, many=True).data
     if not request.session.get("is_staff", False):
@@ -1746,6 +1754,7 @@ def job_list(request):
         "aggregates": aggregates,
         "current_path": current_path,
         "qname": qname,
+        "filter_summary": filter_summary,
         "order_by": order_by,
         "pagination": {
             "page": page.number,

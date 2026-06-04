@@ -1,7 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api";
 import LoadingMessage from "./components/LoadingMessage";
+import { ExtendedSearchLayoutContext } from "./context/extended-search-layout-context";
 import { useFocusTrap } from "./hooks/useFocusTrap";
 
 const ExtendedSearch = lazy(() => import("./components/ExtendedSearch"));
@@ -14,9 +15,13 @@ export default function Layout({ session, onSessionChange, children }) {
   useRouteFocusMain(location.pathname);
   useEffect(() => {
     setMoreMenuOpen(false);
+    setNavOpen(false);
+    setExtendedSearchOpen(false);
+    setFindJobError("");
   }, [location.pathname]);
   const [extendedSearchOpen, setExtendedSearchOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [findJobError, setFindJobError] = useState("");
   const [staffMessage, setStaffMessage] = useState("");
   const [isDroppingStaff, setIsDroppingStaff] = useState(false);
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
@@ -32,6 +37,22 @@ export default function Layout({ session, onSessionChange, children }) {
       extendedSearchToggleRef.current?.focus();
     });
   }, []);
+
+  const openExtendedSearch = useCallback(() => {
+    setExtendedSearchOpen(true);
+    setNavOpen(false);
+  }, []);
+
+  const extendedSearchLayoutValue = useMemo(
+    () => ({ openExtendedSearch }),
+    [openExtendedSearch],
+  );
+
+  function handleExtendedSearchBackdropClick(event) {
+    if (event.target === event.currentTarget) {
+      closeExtendedSearch();
+    }
+  }
 
   useEffect(() => {
     if (!staffMenuOpen) return;
@@ -141,12 +162,6 @@ export default function Layout({ session, onSessionChange, children }) {
     }
   }
 
-  function navigateStaff(path) {
-    navigate(path);
-    setStaffMenuOpen(false);
-    setMoreMenuOpen(false);
-  }
-
   const staffMenuBusy = isDroppingStaff || isInvalidatingCache;
 
   return (
@@ -180,7 +195,10 @@ export default function Layout({ session, onSessionChange, children }) {
             id="navbar-main"
             className={`collapse navbar-collapse ${navOpen ? "show" : ""}`}
           >
-            <div className="navbar-brand flex-grow-1 text-center navbar-brand-center">
+            <Link
+              to="/"
+              className="navbar-brand flex-grow-1 text-center navbar-brand-center text-decoration-none"
+            >
               <div style={{ fontSize: "1.1em", fontWeight: 600, color: "black" }}>
                 HPCPerfStats
               </div>
@@ -188,7 +206,7 @@ export default function Layout({ session, onSessionChange, children }) {
               {session?.machine_name && (
                 <div className="navbar-brand-cluster">{session.machine_name}</div>
               )}
-            </div>
+            </Link>
             <div className="navbar-actions ms-auto">
               <div className="navbar-actions-row navbar-actions-row-priority">
                 <button
@@ -217,7 +235,12 @@ export default function Layout({ session, onSessionChange, children }) {
                   onSubmit={(e) => {
                     e.preventDefault();
                     const jid = e.target.jid?.value?.trim();
-                    if (jid) navigate(`/job/${jid}`);
+                    if (!jid) {
+                      setFindJobError("Enter a job ID.");
+                      return;
+                    }
+                    setFindJobError("");
+                    navigate(`/job/${jid}`);
                   }}
                 >
                   <div className="form-group">
@@ -227,11 +250,19 @@ export default function Layout({ session, onSessionChange, children }) {
                     <input
                       id="navbar-jid-search"
                       type="text"
-                      className="form-control form-control-sm"
+                      className={`form-control form-control-sm${findJobError ? " is-invalid" : ""}`}
                       name="jid"
                       placeholder="Job ID"
+                      title="Quick open by job ID (use Extended search for filters)"
                       autoComplete="off"
+                      aria-invalid={findJobError ? true : undefined}
+                      aria-describedby={findJobError ? "navbar-jid-error" : undefined}
                     />
+                    {findJobError ? (
+                      <div id="navbar-jid-error" className="invalid-feedback d-block small">
+                        {findJobError}
+                      </div>
+                    ) : null}
                   </div>
                   <button type="submit" className="btn btn-outline-secondary btn-sm">
                     Find Job
@@ -261,24 +292,30 @@ export default function Layout({ session, onSessionChange, children }) {
                         style={{ position: "absolute", zIndex: 1080 }}
                       >
                         <li>
-                          <button
-                            type="button"
+                          <NavLink
+                            to="/job_monitor"
                             className="dropdown-item"
                             role="menuitem"
-                            onClick={() => navigateStaff("/job_monitor")}
+                            onClick={() => {
+                              setStaffMenuOpen(false);
+                              setMoreMenuOpen(false);
+                            }}
                           >
                             Job Failure Monitor
-                          </button>
+                          </NavLink>
                         </li>
                         <li>
-                          <button
-                            type="button"
+                          <NavLink
+                            to="/admin_monitor"
                             className="dropdown-item"
                             role="menuitem"
-                            onClick={() => navigateStaff("/admin_monitor")}
+                            onClick={() => {
+                              setStaffMenuOpen(false);
+                              setMoreMenuOpen(false);
+                            }}
                           >
                             HPCPerfStats Monitor
-                          </button>
+                          </NavLink>
                         </li>
                         <li>
                           <hr className="dropdown-divider" />
@@ -286,7 +323,7 @@ export default function Layout({ session, onSessionChange, children }) {
                         <li>
                           <button
                             type="button"
-                            className="dropdown-item"
+                            className="dropdown-item text-danger"
                             role="menuitem"
                             disabled={staffMenuBusy}
                             onClick={() => void handleDropStaffForSession()}
@@ -309,9 +346,14 @@ export default function Layout({ session, onSessionChange, children }) {
                     ) : null}
                   </div>
                 )}
-                <Link to="/api-key" className="btn btn-outline-secondary btn-sm">
+                <NavLink
+                  to="/api-key"
+                  className={({ isActive }) =>
+                    `btn btn-outline-secondary btn-sm${isActive ? " active" : ""}`
+                  }
+                >
                   API key
-                </Link>
+                </NavLink>
                 <a href="/logout/" className="btn btn-outline-secondary btn-sm">
                   Logout
                 </a>
@@ -335,25 +377,23 @@ export default function Layout({ session, onSessionChange, children }) {
                   >
                     {session?.is_staff ? (
                       <>
-                        <button
-                          type="button"
+                        <NavLink
+                          to="/job_monitor"
                           className="btn btn-outline-secondary btn-sm text-start"
-                          disabled={staffMenuBusy}
-                          onClick={() => navigateStaff("/job_monitor")}
+                          onClick={() => setMoreMenuOpen(false)}
                         >
                           Job Failure Monitor
-                        </button>
-                        <button
-                          type="button"
+                        </NavLink>
+                        <NavLink
+                          to="/admin_monitor"
                           className="btn btn-outline-secondary btn-sm text-start"
-                          disabled={staffMenuBusy}
-                          onClick={() => navigateStaff("/admin_monitor")}
+                          onClick={() => setMoreMenuOpen(false)}
                         >
                           HPCPerfStats Monitor
-                        </button>
+                        </NavLink>
                         <button
                           type="button"
-                          className="btn btn-outline-secondary btn-sm text-start"
+                          className="btn btn-outline-danger btn-sm text-start"
                           disabled={staffMenuBusy}
                           onClick={() => void handleDropStaffForSession()}
                         >
@@ -402,20 +442,32 @@ export default function Layout({ session, onSessionChange, children }) {
       </nav>
       {extendedSearchOpen ? (
         <div
-          ref={extendedSearchPanelRef}
-          id="extended-search-collapse"
-          className="extended-search-collapse"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="extended-search-dialog-title"
+          className="extended-search-backdrop"
+          role="presentation"
+          onClick={handleExtendedSearchBackdropClick}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") closeExtendedSearch();
+          }}
         >
-          <Suspense fallback={<LoadingMessage message="Loading search…" />}>
-            <ExtendedSearch onClose={closeExtendedSearch} />
-          </Suspense>
+          <div
+            ref={extendedSearchPanelRef}
+            id="extended-search-collapse"
+            className="extended-search-collapse"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="extended-search-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Suspense fallback={<LoadingMessage message="Loading search…" />}>
+              <ExtendedSearch onClose={closeExtendedSearch} />
+            </Suspense>
+          </div>
         </div>
       ) : null}
       <main id="main-content" className="mt-4" tabIndex={-1}>
-        {children}
+        <ExtendedSearchLayoutContext.Provider value={extendedSearchLayoutValue}>
+          {children}
+        </ExtendedSearchLayoutContext.Provider>
       </main>
     </div>
   );

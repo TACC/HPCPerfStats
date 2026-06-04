@@ -1,3 +1,5 @@
+import { PROJECT_FIELD_LABEL } from "./site-field-labels";
+
 export const EXTENDED_SEARCH_PARAMETER_DEFINITIONS = [
   {
     name: "jid",
@@ -9,7 +11,7 @@ export const EXTENDED_SEARCH_PARAMETER_DEFINITIONS = [
   {
     name: "end_time__gte",
     htmlId: "ext-end-time-gte",
-    label: "Start Date",
+    label: "Earliest job end date",
     metadataKey: "end_time",
     navigation: "jobs",
     rangeGroup: "end_time",
@@ -19,7 +21,7 @@ export const EXTENDED_SEARCH_PARAMETER_DEFINITIONS = [
   {
     name: "end_time__lte",
     htmlId: "ext-end-time-lte",
-    label: "End Date",
+    label: "Latest job end date",
     metadataKey: "end_time",
     navigation: "jobs",
     rangeGroup: "end_time",
@@ -43,7 +45,7 @@ export const EXTENDED_SEARCH_PARAMETER_DEFINITIONS = [
   {
     name: "account__icontains",
     htmlId: "ext-account",
-    label: "Account",
+    label: PROJECT_FIELD_LABEL,
     metadataKey: "account",
     navigation: "jobs",
   },

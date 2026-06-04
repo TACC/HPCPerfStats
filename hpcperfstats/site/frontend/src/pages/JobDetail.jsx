@@ -1,5 +1,5 @@
-import { useEffect, memo, useId, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useCallback, useEffect, memo, useId, useRef, useState } from "react";
+import { useParams, Link, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehEmbed from "../components/BokehEmbed";
@@ -10,7 +10,22 @@ import { useSession } from "../session-context";
 import { VariableInfoLabel } from "../components/VariableInfoLabel";
 import { scheduleJobPlotsRetry } from "../utils/job-plots-polling";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
+import PageBreadcrumbs from "../components/PageBreadcrumbs";
 import { getJobMetricShortLabel } from "../utils/jobMetricDisplayLabels";
+import {
+  readTabFromSearchParams,
+  searchParamsWithTab,
+} from "../utils/sync-tab-search-param";
+
+const JOB_DETAIL_ANALYSIS_TABS = new Set([
+  "metrics",
+  "summary",
+  "roofline",
+  "multiprecisionMix",
+  "processes",
+  "execHosts",
+  "device",
+]);
 
 function formatJobMetricCell(obj, isStaff) {
   if (obj.value != null && obj.value !== "") {
@@ -167,13 +182,30 @@ export default function JobDetail() {
   const session = useSession();
   const isStaff = !!session?.is_staff;
   const { pk } = useParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [data, setData] = useState(null);
   const [plots, setPlots] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [plotsLoading, setPlotsLoading] = useState(true);
   const [detailsLoading, setDetailsLoading] = useState(false);
-  const [analysisTab, setAnalysisTab] = useState("metrics");
+  const [detailFetchWarning, setDetailFetchWarning] = useState(false);
+  const [plotsFetchFailed, setPlotsFetchFailed] = useState(false);
+  const plotsFetchGenRef = useRef(0);
+  const rawTab = readTabFromSearchParams(searchParams, "tab", "metrics");
+  const analysisTab = JOB_DETAIL_ANALYSIS_TABS.has(rawTab) ? rawTab : "metrics";
+
+  function setAnalysisTab(tab) {
+    const next = searchParamsWithTab(
+      searchParams,
+      "tab",
+      tab === "metrics" ? null : tab,
+    );
+    const qs = next.toString();
+    navigate(qs ? `${location.pathname}?${qs}` : location.pathname, { replace: true });
+  }
   const tabMetricsId = useId();
   const tabProcessesId = useId();
   const tabExecHostsId = useId();
@@ -189,10 +221,77 @@ export default function JobDetail() {
 
   useDocumentTitle(buildJobDetailTitle({ error, loading, data, pk }));
 
+  const fetchAllJobPlotsWithPolling = useCallback(
+    async (cancelledCheck) => {
+      let keepLoading = false;
+      try {
+        const plotResponse = await api.getJobPlots(pk, null, false, true);
+        if (cancelledCheck()) return;
+
+        if (plotResponse?.status === "loading") {
+          keepLoading = true;
+          scheduleJobPlotsRetry(
+            () => fetchAllJobPlotsWithPolling(cancelledCheck),
+            plotResponse.retry_after_seconds,
+            cancelledCheck,
+          );
+          return;
+        }
+
+        if (plotResponse?.status === "partial" && plotResponse?.progressive) {
+          keepLoading = true;
+          setPlotsFetchFailed(false);
+          setPlots((prev) => {
+            const merged = mergeProgressiveJobPlotsState(prev, plotResponse);
+            return jobPlotStatesEqual(prev, merged) ? prev : merged;
+          });
+          scheduleJobPlotsRetry(
+            () => fetchAllJobPlotsWithPolling(cancelledCheck),
+            plotResponse.retry_after_seconds,
+            cancelledCheck,
+          );
+          return;
+        }
+
+        if (
+          plotResponse &&
+          typeof plotResponse === "object" &&
+          Object.hasOwn(plotResponse, "mplot_item")
+        ) {
+          setPlotsFetchFailed(false);
+          setPlots((prev) => {
+            const next = plotsStateFromBatchResponse(plotResponse);
+            return jobPlotStatesEqual(prev, next) ? prev : next;
+          });
+        } else {
+          setPlots(createEmptyJobPlotsState(false));
+        }
+      } catch {
+        if (cancelledCheck()) return;
+        setPlotsFetchFailed(true);
+        setPlots(createEmptyJobPlotsState(false));
+      } finally {
+        if (cancelledCheck() || keepLoading) return;
+        setPlotsLoading(false);
+      }
+    },
+    [pk],
+  );
+
+  const retryJobPlots = useCallback(() => {
+    setPlotsFetchFailed(false);
+    setPlotsLoading(true);
+    setPlots(createEmptyJobPlotsState(true));
+    plotsFetchGenRef.current += 1;
+    const gen = plotsFetchGenRef.current;
+    void fetchAllJobPlotsWithPolling(() => plotsFetchGenRef.current !== gen);
+  }, [fetchAllJobPlotsWithPolling]);
+
   useEffect(() => {
     if (!pk) return;
 
     let cancelled = false;
+    const cancelledCheck = () => cancelled;
 
     setError(null);
     setData(null);
@@ -200,83 +299,30 @@ export default function JobDetail() {
     setLoading(true);
     setPlotsLoading(true);
     setDetailsLoading(false);
+    setDetailFetchWarning(false);
+    setPlotsFetchFailed(false);
 
-    // 1) Render quickly with a lightweight job_detail response.
     api
       .getJobDetailLight(pk)
       .then((jobLightData) => {
         if (cancelled) return;
         setData(jobLightData);
         setLoading(false);
-
-        // 2) Fetch full job detail in the background to fill heavy fields.
         setDetailsLoading(true);
-
         setPlots(createEmptyJobPlotsState(true));
         setPlotsLoading(true);
-
-        const fetchAllJobPlotsWithPolling = async () => {
-          let keepLoading = false;
-          try {
-            const plotResponse = await api.getJobPlots(pk, null, false, true);
-            if (cancelled) return;
-
-            if (plotResponse?.status === "loading") {
-              keepLoading = true;
-              scheduleJobPlotsRetry(
-                fetchAllJobPlotsWithPolling,
-                plotResponse.retry_after_seconds,
-                () => cancelled
-              );
-              return;
-            }
-
-            if (plotResponse?.status === "partial" && plotResponse?.progressive) {
-              keepLoading = true;
-              setPlots((prev) => {
-                const merged = mergeProgressiveJobPlotsState(prev, plotResponse);
-                return jobPlotStatesEqual(prev, merged) ? prev : merged;
-              });
-              scheduleJobPlotsRetry(
-                fetchAllJobPlotsWithPolling,
-                plotResponse.retry_after_seconds,
-                () => cancelled
-              );
-              return;
-            }
-
-            if (
-              plotResponse &&
-              typeof plotResponse === "object" &&
-              Object.hasOwn(plotResponse, "mplot_item")
-            ) {
-              setPlots((prev) => {
-                const next = plotsStateFromBatchResponse(plotResponse);
-                return jobPlotStatesEqual(prev, next) ? prev : next;
-              });
-            } else {
-              setPlots(createEmptyJobPlotsState(false));
-            }
-          } catch {
-            if (cancelled) return;
-            // eslint-disable-next-line no-console
-            console.warn(`Failed to load job plots for job ${pk}`);
-            setPlots(createEmptyJobPlotsState(false));
-          } finally {
-            if (cancelled || keepLoading) return;
-          }
-        };
-
-        fetchAllJobPlotsWithPolling();
+        void fetchAllJobPlotsWithPolling(cancelledCheck);
 
         api
           .getJobDetail(pk)
           .then((jobFullData) => {
             if (cancelled) return;
             setData(jobFullData);
+            setDetailFetchWarning(false);
           })
           .catch(() => {
-            // If the full detail fetch fails, keep the lightweight data.
+            if (cancelled) return;
+            setDetailFetchWarning(true);
           })
           .finally(() => {
             if (cancelled) return;
@@ -293,7 +339,7 @@ export default function JobDetail() {
     return () => {
       cancelled = true;
     };
-  }, [pk]);
+  }, [pk, fetchAllJobPlotsWithPolling]);
 
   useEffect(() => {
     if (!plots) return;
@@ -446,7 +492,18 @@ export default function JobDetail() {
 
   return (
     <>
+      <PageBreadcrumbs
+        items={[
+          { label: "Browse", to: "/" },
+          { label: `Job ${job.jid}` },
+        ]}
+      />
       <h1 className="h2 mb-3">Job {job.jid}</h1>
+      {detailFetchWarning ? (
+        <div className="alert alert-warning small" role="status">
+          Some job details could not be loaded. Showing partial data from a quick load.
+        </div>
+      ) : null}
 
       <section id="job-detail-glance" className="mb-4" aria-labelledby="job-detail-glance-heading">
         <h2 id="job-detail-glance-heading" className="h5">
@@ -457,9 +514,7 @@ export default function JobDetail() {
             <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-3 small">
               <div>
                 <div className="text-muted">Job ID</div>
-                <div>
-                  <Link to={`/job/${job.jid}`}>{job.jid}</Link>
-                </div>
+                <div>{job.jid}</div>
               </div>
               <div>
                 <div className="text-muted">Status</div>
@@ -723,7 +778,7 @@ export default function JobDetail() {
           Job data
         </h2>
         <ul
-          className="nav nav-tabs flex-wrap job-detail-analysis-tabs mb-0"
+          className="nav nav-tabs job-detail-analysis-tabs job-detail-tab-scroll mb-0"
           role="tablist"
           aria-label="Job data views"
         >
@@ -832,6 +887,14 @@ export default function JobDetail() {
               Loading job plots…
             </p>
           ) : null}
+          {plotsFetchFailed ? (
+            <div className="alert alert-warning small py-2" role="alert">
+              <p className="mb-2">Job plots could not be loaded. The table and metrics below are unchanged.</p>
+              <button type="button" className="btn btn-outline-secondary btn-sm" onClick={retryJobPlots}>
+                Retry plots
+              </button>
+            </div>
+          ) : null}
           <div
             id="job-detail-panel-plot-summary"
             role="tabpanel"
@@ -851,6 +914,7 @@ export default function JobDetail() {
             className="job-detail-single-plot-pane"
             hidden={analysisTab !== "roofline"}
           >
+            <p className="text-muted small mb-2">CPU and GPU roofline charts for this job.</p>
             {renderSinglePlotPanel(
               plotConfigByKey.roofline,
               analysisTab === "roofline",
@@ -916,7 +980,11 @@ export default function JobDetail() {
                       id={`job-multiprecision-cpu-${pk}`}
                       plotName="CPU Multiprecision Mix"
                       unavailableReason={multiprecision_cpu_unavailable_reason}
-                      isLoading={false}
+                      isLoading={
+                        detailsLoading &&
+                        !multiprecision_cpu_plot_item &&
+                        !multiprecision_cpu_unavailable_reason
+                      }
                     />
                   ) : null}
                 </div>
@@ -934,7 +1002,11 @@ export default function JobDetail() {
                       id={`job-multiprecision-gpu-${pk}`}
                       plotName="GPU Multiprecision Mix"
                       unavailableReason={multiprecision_gpu_unavailable_reason}
-                      isLoading={false}
+                      isLoading={
+                        detailsLoading &&
+                        !multiprecision_gpu_plot_item &&
+                        !multiprecision_gpu_unavailable_reason
+                      }
                     />
                   ) : null}
                 </div>

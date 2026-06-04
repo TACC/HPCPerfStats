@@ -167,7 +167,7 @@ describe("ExtendedSearch", () => {
     renderExtendedSearch(<ExtendedSearch onClose={vi.fn()} />);
 
     await user.type(screen.getByLabelText("Host?"), "n001.cluster.example");
-    await user.type(screen.getByLabelText("Start Date?"), "2024-01-01");
+    await user.type(screen.getByLabelText(/Earliest job end date/i), "2024-01-01");
     await user.click(screen.getByRole("button", { name: /^search$/i }));
 
     const url = parsedLocation();

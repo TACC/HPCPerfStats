@@ -1,16 +1,29 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useSearchParams, useParams, useLocation, Link, useNavigate } from "react-router-dom";
 import ReactPaginate from "react-paginate";
 import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import HistogramThumbnails from "../components/HistogramThumbnails";
+import JobListFilterSummary from "../components/JobListFilterSummary";
 import LoadingMessage from "../components/LoadingMessage";
+import PageBreadcrumbs from "../components/PageBreadcrumbs";
+import { useExtendedSearchLayout } from "../context/extended-search-layout-context";
 import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { buildJobListApiParams } from "../utils/build-job-list-api-params";
+import {
+  buildJobListFilterSummaryLines,
+  isExtendedSearchJobsRoute,
+} from "../utils/job-list-filter-summary";
+import { buildJobListBreadcrumbs } from "../utils/job-list-breadcrumbs";
 import { normalizeJobListHistogramEntry } from "../utils/normalize-job-list-histogram-entry";
 import { useSession } from "../session-context";
+import { JOB_LIST_TABLE_HEADERS } from "../utils/site-field-labels";
 import { tableSortAriaSort } from "../utils/table-sort-a11y";
+import {
+  readTabFromSearchParams,
+  searchParamsWithTab,
+} from "../utils/sync-tab-search-param";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import {
   jobListPageHumanSummary,
@@ -34,6 +47,10 @@ function buildJobListTitle({ error, loading, data, routeCtx }) {
 }
 
 async function loadHistogramForMetric({ metric, params, setMetricHistStatus }) {
+  setMetricHistStatus((prev) => ({
+    ...prev,
+    [metric]: { loading: true, error: null },
+  }));
   try {
     const metricData = await api.getJobMetricHistogram(params, metric);
     if (!metricData) return null;
@@ -79,9 +96,12 @@ export default function JobList() {
     createInitialMetricStatus
   );
   const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [tableBusy, setTableBusy] = useState(false);
   const [histogramReloadKey, setHistogramReloadKey] = useState(0);
-  const [listViewTab, setListViewTab] = useState("jobs");
+  const prevSearchKeyRef = useRef("");
+  const { openExtendedSearch } = useExtendedSearchLayout();
+  const listViewTab = readTabFromSearchParams(searchParams, "view", "jobs");
   const [isLgUp, setIsLgUp] = useState(() =>
     typeof window !== "undefined" && window.matchMedia("(min-width: 992px)").matches,
   );
@@ -98,11 +118,33 @@ export default function JobList() {
     return () => mq.removeEventListener("change", syncLg);
   }, []);
 
+  function setListViewTab(tab) {
+    const next = searchParamsWithTab(searchParams, "view", tab === "jobs" ? null : tab);
+    const qs = next.toString();
+    navigate(qs ? `${location.pathname}?${qs}` : location.pathname, { replace: true });
+  }
+
   useEffect(() => {
     const params = buildJobListApiParams(searchParams, paramsFromRoute);
-    setLoading(true);
+    const curr = new URLSearchParams(searchParams);
+    const prev = new URLSearchParams(prevSearchKeyRef.current);
+    curr.delete("page");
+    curr.delete("view");
+    prev.delete("page");
+    prev.delete("view");
+    const pageOnly =
+      prevSearchKeyRef.current !== "" &&
+      curr.toString() === prev.toString() &&
+      data != null;
+    prevSearchKeyRef.current = searchParams.toString();
+
+    if (pageOnly) {
+      setTableBusy(true);
+    } else {
+      setInitialLoading(true);
+      setData(null);
+    }
     setError(null);
-    setData(null);
     // Load job list first so the table renders quickly
     api
       .getJobList(params)
@@ -110,7 +152,10 @@ export default function JobList() {
         setData(listData);
       })
       .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setInitialLoading(false);
+        setTableBusy(false);
+      });
 
     // Then load histograms separately so they don't block the list
     setHistograms(null);
@@ -131,10 +176,21 @@ export default function JobList() {
   }, [searchParams, paramsFromRoute, histogramReloadKey]);
 
   const routeCtx = jobListRouteTitleContext(paramsFromRoute, searchParams);
-  const documentTitleSegment = buildJobListTitle({ error, loading, data, routeCtx });
+  const documentTitleSegment = buildJobListTitle({
+    error,
+    loading: initialLoading,
+    data,
+    routeCtx,
+  });
   useDocumentTitle(documentTitleSegment);
 
-  if (loading) {
+  const filterSummaryLines = isExtendedSearchJobsRoute(location.pathname)
+    ? buildJobListFilterSummaryLines(searchParams)
+    : data?.filter_summary?.length
+      ? data.filter_summary
+      : [];
+
+  if (initialLoading && !data) {
     return (
       <div className="job-list-skeleton" aria-busy="true">
         <span className="visually-hidden" role="status" aria-label="Loading job list">
@@ -185,13 +241,18 @@ export default function JobList() {
     new URLSearchParams({ ...paginationParams, page: String(pageNum) }).toString();
 
   const columns = [
-    { label: "Job ID", field: "jid", sortable: true },
+    { label: JOB_LIST_TABLE_HEADERS.jid, field: "jid", sortable: true },
     ...(isStaff
-      ? [{ label: "Sample Count", field: "sample_count", sortable: true, defaultSortDirection: "desc" }]
+      ? [{ label: "Sample count", field: "sample_count", sortable: true, defaultSortDirection: "desc" }]
       : []),
-    { label: "Performance Data", field: "performance_sort_rank", sortable: true, defaultSortDirection: "asc" },
-    { label: "user", field: "username", sortable: true },
-    { label: "Account", field: "account", sortable: true },
+    {
+      label: JOB_LIST_TABLE_HEADERS.performanceData,
+      field: "performance_sort_rank",
+      sortable: true,
+      defaultSortDirection: "asc",
+    },
+    { label: JOB_LIST_TABLE_HEADERS.user, field: "username", sortable: true },
+    { label: JOB_LIST_TABLE_HEADERS.project, field: "account", sortable: true },
     { label: "start time", field: "start_time", sortable: true },
     { label: "end time", field: "end_time", sortable: true },
     { label: "run time (s)", field: "runtime", sortable: true },
@@ -344,13 +405,22 @@ export default function JobList() {
     );
   };
 
+  const breadcrumbItems = buildJobListBreadcrumbs(paramsFromRoute, qname);
+
   return (
     <>
+      <PageBreadcrumbs items={breadcrumbItems} />
       <h1 className="h2 mb-3">{qname}</h1>
       {pageSummary ? (
         <p className="text-muted small mb-2 job-list-page-summary">{pageSummary}</p>
       ) : null}
-      <h2 className="h5 mb-1">#Jobs = {nj}</h2>
+      <JobListFilterSummary lines={filterSummaryLines} />
+      <h2 className="h5 mb-1">{JOB_LIST_TABLE_HEADERS.jobCount} = {nj}</h2>
+      {tableBusy ? (
+        <p className="text-muted small" role="status" aria-live="polite">
+          Updating job list…
+        </p>
+      ) : null}
       {totalNodeHours != null && (
         <p className="mb-3 text-muted small">
           Total node hours (all matching jobs): {formatDecimalStandard(totalNodeHours)}
@@ -408,6 +478,9 @@ export default function JobList() {
               </button>
             </div>
           ) : null}
+          {distributionPlotsVisible && histogramsFinishedLoading && histograms?.length === 0 ? (
+            <p className="text-muted small">No distribution data for this selection.</p>
+          ) : null}
           {distributionPlotsVisible ? (
             <HistogramThumbnails histograms={histograms} />
           ) : null}
@@ -421,7 +494,11 @@ export default function JobList() {
 
       {!isLgUp && (
         <div className="job-list-view-tabs mb-2">
-          <ul className="nav nav-tabs" role="tablist" aria-label="Jobs list and charts">
+          <ul
+            className="nav nav-tabs job-detail-tab-scroll"
+            role="tablist"
+            aria-label="Jobs list and charts"
+          >
             <li className="nav-item" role="presentation">
               <button
                 type="button"
@@ -462,7 +539,11 @@ export default function JobList() {
       >
       {renderPaginationNav("top")}
 
-      <div className="table-responsive job-list-table-wrapper" id="job-list-table">
+      <div
+        className={`table-responsive job-list-table-wrapper${tableBusy ? " job-list-table-busy" : ""}`}
+        id="job-list-table"
+        aria-busy={tableBusy}
+      >
         <table className="table table-sm table-bordered">
           <caption className="visually-hidden">
             Job list for {qname}. {nj} jobs.
@@ -484,10 +565,26 @@ export default function JobList() {
           </tr>
         </thead>
         <tbody>
+          {job_list.length === 0 ? (
+            <tr>
+              <td colSpan={columns.length} className="text-center text-muted py-4">
+                No jobs match these filters.{" "}
+                {filterSummaryLines.length > 0 ? (
+                  <button
+                    type="button"
+                    className="btn btn-link btn-sm p-0 align-baseline"
+                    onClick={openExtendedSearch}
+                  >
+                    Modify search
+                  </button>
+                ) : null}
+              </td>
+            </tr>
+          ) : null}
           {job_list.map((job) => (
             <tr key={job.jid} style={{ backgroundColor: job.color || "#fff" }}>
               <td>
-                <Link to={`/job/${job.jid}/`}>{job.jid}</Link>
+                <Link to={`/job/${job.jid}`}>{job.jid}</Link>
               </td>
               {isStaff ? (
                 <td>{formatDecimalStandard(job.sample_count)}</td>
@@ -510,14 +607,14 @@ export default function JobList() {
               </td>
               <td>
                 {job.username ? (
-                  <Link to={`/username/${job.username}/`}>{job.username}</Link>
+                  <Link to={`/username/${encodeURIComponent(job.username)}`}>{job.username}</Link>
                 ) : (
                   "unknown"
                 )}
               </td>
               <td>
                 {job.account ? (
-                  <Link to={`/account/${job.account}/`}>{job.account}</Link>
+                  <Link to={`/account/${encodeURIComponent(job.account)}`}>{job.account}</Link>
                 ) : (
                   "None"
                 )}
@@ -527,7 +624,7 @@ export default function JobList() {
               <td>{formatDecimalStandard(job.runtime)}</td>
               <td>
                 {job.queue ? (
-                  <Link to={`/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</Link>
+                  <Link to={`/queue/${encodeURIComponent(job.queue)}`}>{job.queue}</Link>
                 ) : (
                   ""
                 )}
