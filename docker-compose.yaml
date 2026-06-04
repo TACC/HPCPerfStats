@@ -64,7 +64,7 @@ services:
           - proxy
 
   db:
-    image: timescale/timescaledb:2.27.1-pg15
+    image: timescale/timescaledb:2.27.2-pg15
     # Default container /dev/shm is 64MiB; Postgres dynamic shared memory exhausts it easily
     # under parallel workers. Keep shm_size generous for max_connections=500 + modest parallelism.
     #
