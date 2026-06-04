@@ -437,11 +437,13 @@ class TestNonStaffJobVisibility:
     filtered_qs = MagicMock()
     qs.filter.return_value = filtered_qs
 
-    account_qs = MagicMock()
-    account_qs.exclude.return_value = account_qs
-    account_qs.values_list.return_value.distinct.return_value = ["proj-a", "proj-b"]
-
-    with patch("hpcperfstats.site.machine.api.job_data.objects.filter", return_value=account_qs):
+    with patch(
+        "hpcperfstats.site.machine.api.cached_non_staff_visible_accounts",
+        return_value=["proj-a", "proj-b"],
+    ), patch(
+        "hpcperfstats.site.machine.api.get_site_content_cache_timeout",
+        return_value=3600,
+    ):
       out = api._apply_non_staff_job_visibility(qs, request)
 
     assert out == filtered_qs

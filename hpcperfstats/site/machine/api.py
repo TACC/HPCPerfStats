@@ -63,7 +63,10 @@ from .cache_utils import (
     KEY_PROC_LIST,
     KEY_HOST_PLOT,
     cached_orm,
+    cached_non_staff_visible_accounts,
+    ensure_job_metrics_data_prefetched,
     get_site_content_cache_timeout,
+    make_job_detail_cache_key,
     invalidate_home_options_query_cache,
     make_cache_key,
     register_job_plot_cache_key,
@@ -484,13 +487,8 @@ def _apply_non_staff_job_visibility(queryset, request):
     if not username:
         return queryset.none()
 
-    account_list = list(
-        job_data.objects.filter(username=username)
-        .exclude(account__isnull=True)
-        .exclude(account="")
-        .values_list("account", flat=True)
-        .distinct()
-    )
+    site_ttl = get_site_content_cache_timeout()
+    account_list = cached_non_staff_visible_accounts(username, site_ttl)
     if account_list:
         return queryset.filter(Q(username=username) | Q(account__in=account_list))
     return queryset.filter(username=username)
@@ -500,7 +498,7 @@ def _get_visible_job_or_error_response(request, pk, queryset_builder):
     """Return (job, None) if visible, else (None, Response)."""
     site_ttl = get_site_content_cache_timeout()
     job = cached_orm(
-        f"{KEY_JOB}:{pk}",
+        make_job_detail_cache_key(pk),
         site_ttl,
         queryset_builder,
     )
@@ -509,6 +507,7 @@ def _get_visible_job_or_error_response(request, pk, queryset_builder):
             {"error": "Job not found"},
             status=status.HTTP_404_NOT_FOUND,
         )
+    ensure_job_metrics_data_prefetched(job)
     if not _apply_non_staff_job_visibility(job_data.objects.filter(jid=pk), request).exists():
         return None, Response(
             {"error": "Not allowed to view this job"},

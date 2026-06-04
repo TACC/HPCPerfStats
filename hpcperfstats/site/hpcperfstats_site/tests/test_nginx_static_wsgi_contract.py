@@ -69,6 +69,7 @@ def test_nginx_static_files_conf_allowlists_django_prefixes_and_default_404():
   conf = (repo_root / "services-conf" / "nginx-static-files.conf").read_text(encoding="utf-8")
   proxy_inc = "/etc/nginx/nginx-django-proxy-common.inc"
   assert proxy_inc in conf
+  assert "try_files /frontend/pub.html =503" in conf
   for needle in (
       "\nlocation = / {\n",
       "location ^~ /api/",

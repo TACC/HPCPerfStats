@@ -9,12 +9,16 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 /** When set to `"1"`, also emit `bokeh-playwright-smoke.html` for Playwright (see package.json script). */
 const buildBokehPlaywrightSmoke = process.env.BUILD_BOKEH_SMOKE === "1";
 
+const spaBuildInputs = {
+  main: resolve(__dirname, "index.html"),
+  pub: resolve(__dirname, "pub.html"),
+};
 const rolldownBuildInput = buildBokehPlaywrightSmoke
   ? {
-      main: resolve(__dirname, "index.html"),
+      ...spaBuildInputs,
       bokehPlaywrightSmoke: resolve(__dirname, "bokeh-playwright-smoke.html"),
     }
-  : resolve(__dirname, "index.html");
+  : spaBuildInputs;
 
 /**
  * Rolldown warns on direct `eval`; indirect `(0, eval)(...)` keeps semantics but satisfies the checker.
@@ -29,7 +33,7 @@ function pubSpaIndexFallbackPlugin() {
       server.middlewares.use((req, _res, next) => {
         const pathname = (req.url || "").split("?")[0];
         if (pathname === "/pub" || pathname.startsWith("/pub/")) {
-          req.url = "/index.html";
+          req.url = "/pub.html";
         }
         next();
       });

@@ -253,13 +253,16 @@ def test_warm_job_cache_entries_sets_job_keys():
   mock_cache = MagicMock()
   mock_job = MagicMock()
   mock_job.jid = "j1"
-  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache):
+  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache), patch(
+      "hpcperfstats.site.machine.cache_utils.prefetch_related_objects",
+  ) as mock_prefetch:
     from hpcperfstats.site.machine import cache_utils
 
     cache_utils.warm_job_cache_entries([mock_job], 3600)
+  mock_prefetch.assert_called_once()
   mock_cache.set.assert_called_once()
   args, kwargs = mock_cache.set.call_args
-  assert args[0] == f"{cache_utils.KEY_JOB}:j1"
+  assert args[0] == cache_utils.make_job_detail_cache_key("j1")
   assert args[1] is mock_job
   assert kwargs.get("timeout") == 3600
 
@@ -313,3 +316,41 @@ def test_make_cache_key_bounded_hashes_long_event_list():
   )
   assert len(k) < 250
   assert long_ev not in k
+
+
+def test_make_job_detail_cache_key_versioned():
+  from hpcperfstats.site.machine.cache_utils import KEY_JOB, KEY_JOB_CACHE_VERSION, make_job_detail_cache_key
+
+  assert make_job_detail_cache_key("42") == f"{KEY_JOB}:{KEY_JOB_CACHE_VERSION}:42"
+
+
+def test_ensure_job_metrics_data_prefetched_skips_non_job_data_instances():
+  mock_job = MagicMock()
+  with patch("hpcperfstats.site.machine.cache_utils.prefetch_related_objects") as mock_prefetch:
+    from hpcperfstats.site.machine.cache_utils import ensure_job_metrics_data_prefetched
+
+    out = ensure_job_metrics_data_prefetched(mock_job)
+  mock_prefetch.assert_not_called()
+  assert out is mock_job
+
+
+def test_cached_non_staff_visible_accounts_uses_cached_orm():
+  stored = {}
+  mock_cache = MagicMock()
+  mock_cache.get.side_effect = lambda key, default=None: stored.get(key, default)
+  mock_cache.set.side_effect = lambda key, value, timeout=None: stored.update({key: value})
+
+  with patch("hpcperfstats.site.machine.cache_utils.cache", mock_cache), patch(
+      "hpcperfstats.site.machine.models.job_data.objects",
+  ) as mock_objects:
+    qs = MagicMock()
+    qs.exclude.return_value = qs
+    qs.values_list.return_value.distinct.return_value = ["acct1"]
+    mock_objects.filter.return_value = qs
+    from hpcperfstats.site.machine.cache_utils import cached_non_staff_visible_accounts
+
+    first = cached_non_staff_visible_accounts("alice", 60)
+    second = cached_non_staff_visible_accounts("alice", 60)
+  assert first == ["acct1"]
+  assert second == ["acct1"]
+  mock_objects.filter.assert_called_once()

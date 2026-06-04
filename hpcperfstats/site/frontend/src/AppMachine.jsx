@@ -1,18 +1,23 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { api } from "./api";
 import Layout from "./Layout";
 import LoadingMessage from "./components/LoadingMessage";
 import { useDocumentTitle } from "./utils/useDocumentTitle";
 import Search from "./pages/Search";
-import JobList from "./pages/JobList";
-import JobDetail from "./pages/JobDetail";
-import TypeDetail from "./pages/TypeDetail";
-import HostDetail from "./pages/HostDetail";
-import AdminMonitor from "./pages/AdminMonitor";
-import JobMonitor from "./pages/JobMonitor";
-import PageApiKey from "./pages/PageApiKey";
 import { SessionContext } from "./session-context";
+
+const JobList = lazy(() => import("./pages/JobList"));
+const JobDetail = lazy(() => import("./pages/JobDetail"));
+const TypeDetail = lazy(() => import("./pages/TypeDetail"));
+const HostDetail = lazy(() => import("./pages/HostDetail"));
+const AdminMonitor = lazy(() => import("./pages/AdminMonitor"));
+const JobMonitor = lazy(() => import("./pages/JobMonitor"));
+const PageApiKey = lazy(() => import("./pages/PageApiKey"));
+
+function RouteLoadingFallback() {
+  return <LoadingMessage message="Loading page…" />;
+}
 
 function SessionGateLayout({ message, title }) {
   useDocumentTitle(title);
@@ -66,23 +71,25 @@ export default function AppMachine() {
   return (
     <SessionContext.Provider value={session}>
       <Layout session={session} onSessionChange={setSession}>
-        <Routes>
-          <Route index element={<Search />} />
-          <Route path="job/:pk" element={<JobDetail />} />
-          <Route path="year/:year" element={<JobList />} />
-          <Route path="date/:date" element={<JobList />} />
-          <Route path="username/:username" element={<JobList />} />
-          <Route path="account/:account" element={<JobList />} />
-          <Route path="queue/:queue" element={<JobList />} />
-          <Route path="host/:host" element={<JobList />} />
-          <Route path="jobs" element={<JobList />} />
-          <Route path="job/:jid/:typeName" element={<TypeDetail />} />
-          <Route path="host/:host/plot" element={<HostDetail />} />
-          <Route path="admin_monitor" element={<AdminMonitor />} />
-          <Route path="job_monitor" element={<JobMonitor />} />
-          <Route path="api-key" element={<PageApiKey />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <Suspense fallback={<RouteLoadingFallback />}>
+          <Routes>
+            <Route index element={<Search />} />
+            <Route path="job/:pk" element={<JobDetail />} />
+            <Route path="year/:year" element={<JobList />} />
+            <Route path="date/:date" element={<JobList />} />
+            <Route path="username/:username" element={<JobList />} />
+            <Route path="account/:account" element={<JobList />} />
+            <Route path="queue/:queue" element={<JobList />} />
+            <Route path="host/:host" element={<JobList />} />
+            <Route path="jobs" element={<JobList />} />
+            <Route path="job/:jid/:typeName" element={<TypeDetail />} />
+            <Route path="host/:host/plot" element={<HostDetail />} />
+            <Route path="admin_monitor" element={<AdminMonitor />} />
+            <Route path="job_monitor" element={<JobMonitor />} />
+            <Route path="api-key" element={<PageApiKey />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </Layout>
     </SessionContext.Provider>
   );

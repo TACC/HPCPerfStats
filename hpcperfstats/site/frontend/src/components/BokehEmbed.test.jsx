@@ -3,6 +3,10 @@ import { vi, afterEach, describe, expect, it } from "vitest";
 import BokehEmbed from "./BokehEmbed";
 import { SessionContext } from "../session-context";
 
+vi.mock("../bokehInit", () => ({
+  ensureBokehLoaded: vi.fn(() => Promise.resolve(globalThis.window?.Bokeh)),
+}));
+
 function renderBokehEmbed(ui, session = null) {
   return render(<SessionContext.Provider value={session}>{ui}</SessionContext.Provider>);
 }

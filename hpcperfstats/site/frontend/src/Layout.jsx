@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api";
-import ExtendedSearch from "./components/ExtendedSearch";
+import LoadingMessage from "./components/LoadingMessage";
 import { useFocusTrap } from "./hooks/useFocusTrap";
+
+const ExtendedSearch = lazy(() => import("./components/ExtendedSearch"));
 import { useRouteFocusMain } from "./utils/useRouteFocusMain";
 
 export default function Layout({ session, onSessionChange, children }) {
@@ -407,7 +409,9 @@ export default function Layout({ session, onSessionChange, children }) {
           aria-modal="true"
           aria-labelledby="extended-search-dialog-title"
         >
-          <ExtendedSearch onClose={closeExtendedSearch} />
+          <Suspense fallback={<LoadingMessage message="Loading search…" />}>
+            <ExtendedSearch onClose={closeExtendedSearch} />
+          </Suspense>
         </div>
       ) : null}
       <main id="main-content" className="mt-4" tabIndex={-1}>

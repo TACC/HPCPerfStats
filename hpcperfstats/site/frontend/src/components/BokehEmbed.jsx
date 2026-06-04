@@ -10,6 +10,7 @@ import {
 } from "../utils/bokeh-embed-defaults";
 import { prepareBokehJsonItemForEmbed } from "../utils/remap-bokeh-json-item-ids";
 import { waitForBokehEmbedDocumentIdle } from "../utils/bokeh-when-document-idle";
+import { ensureBokehLoaded } from "../bokehInit";
 
 /**
  * Poll until window.Bokeh is defined (Bokeh JS loaded), then resolve.
@@ -381,7 +382,8 @@ export default function BokehEmbed({
     let cancelled = false;
     const bokehWait = new AbortController();
     withBokehEmbedLock(() =>
-      whenBokehReady(10000, { signal: bokehWait.signal })
+      ensureBokehLoaded()
+        .then(() => whenBokehReady(10000, { signal: bokehWait.signal }))
         .then(() => {
           if (cancelled || !containerRef.current) return;
           const el = document.getElementById(id);

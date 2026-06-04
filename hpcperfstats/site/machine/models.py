@@ -2,6 +2,7 @@
 
 """
 from django.contrib.postgres.fields import ArrayField
+from django.contrib.postgres.indexes import GinIndex
 import hashlib
 import hmac
 import secrets
@@ -66,6 +67,7 @@ class job_data(models.Model):
         models.Index(fields=["end_time", "username"], name="job_data_end_time_username_idx"),
         models.Index(fields=["queue", "end_time"], name="job_data_queue_end_time_idx"),
         models.Index(fields=["end_time", "state"], name="job_data_end_time_state_idx"),
+        GinIndex(fields=["host_list"], name="job_data_host_list_gin_idx"),
     ]
 
   def __str__(self):
@@ -112,6 +114,7 @@ class metrics_data(models.Model):
     indexes = [
         models.Index(fields=["metric"], name="metrics_data_metric_idx"),
         models.Index(fields=["jid", "metric"], name="metrics_data_jid_metric_idx"),
+        models.Index(fields=["metric", "value"], name="metrics_data_metric_value_idx"),
         models.Index(
             fields=["jid"],
             name="metrics_data_stale_jid_idx",

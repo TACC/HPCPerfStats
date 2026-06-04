@@ -16,6 +16,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db import close_old_connections
 from django.db.models import Max
+from django.db.models.query import prefetch_related_objects
 from django.utils import timezone
 
 # Sentinel so we can cache None (e.g. "job not found")
@@ -226,15 +227,56 @@ def invalidate_after_job_data_ingest(inserted_count, inserted_jids=None):
     pass
 
 
+def make_job_detail_cache_key(jid):
+  """Redis key for cached job_data rows used by job detail (versioned for prefetch shape)."""
+  return f"{KEY_JOB}:{KEY_JOB_CACHE_VERSION}:{jid}"
+
+
+def ensure_job_metrics_data_prefetched(job):
+  """Reattach metrics_data_set after Redis unpickle (prefetch cache does not survive pickle)."""
+  if job is None:
+    return job
+  from hpcperfstats.site.machine.models import job_data
+
+  if not isinstance(job, job_data):
+    return job
+  prefetched = getattr(job, "_prefetched_objects_cache", None)
+  if isinstance(prefetched, dict) and "metrics_data_set" in prefetched:
+    return job
+  prefetch_related_objects([job], "metrics_data_set")
+  return job
+
+
+def cached_non_staff_visible_accounts(username, timeout):
+  """Distinct accounts for jobs owned by username (non-staff list visibility)."""
+  username = str(username or "").strip()
+  if not username:
+    return []
+  from hpcperfstats.site.machine.models import job_data
+
+  return cached_orm(
+      f"{KEY_NONSTAFF_ACCOUNTS}:{username}",
+      timeout,
+      lambda: list(
+          job_data.objects.filter(username=username)
+          .exclude(account__isnull=True)
+          .exclude(account="")
+          .values_list("account", flat=True)
+          .distinct()
+      ),
+  )
+
+
 def warm_job_cache_entries(job_instances, timeout):
-  """Seed KEY_JOB:{jid} from in-memory job_data instances (e.g. post bulk_create)."""
+  """Seed versioned KEY_JOB cache rows from in-memory job_data (e.g. post bulk_create)."""
   if not job_instances:
     return
   try:
+    prefetch_related_objects(job_instances, "metrics_data_set")
     for obj in job_instances:
       jid = getattr(obj, "jid", None)
       if jid:
-        cache.set(f"{KEY_JOB}:{jid}", obj, timeout=timeout)
+        cache.set(make_job_detail_cache_key(jid), obj, timeout=timeout)
   except Exception:
     pass
 
@@ -345,6 +387,9 @@ def invalidate_metrics_distinct_cache():
 
 # Key prefixes for namespacing
 KEY_JOB = "job"
+# Bumped when cached job_data shape/relations change (e.g. metrics prefetch on read).
+KEY_JOB_CACHE_VERSION = "v2"
+KEY_NONSTAFF_ACCOUNTS = "nonstaff_accounts_v1"
 # Pickle-safe (host_list, start_time, end_time) row for :class:`jid_table` only;
 # do not reuse ``KEY_JOB`` for this — that key holds full ``job_data`` instances
 # for the job detail API and ingest warmers.

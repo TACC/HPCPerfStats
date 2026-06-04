@@ -5,11 +5,12 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe("open-sans self-host entry", () => {
-  it("pulls Spacelab-aligned weights and latin + latin-ext subsets from fontsource", () => {
+  it("declares latin woff2 faces only (no latin-ext or woff fallbacks)", () => {
     const text = readFileSync(join(__dirname, "open-sans.css"), "utf8");
-    expect(text).toContain("@fontsource/open-sans/latin-400.css");
-    expect(text).toContain("@fontsource/open-sans/latin-700-italic.css");
-    expect(text).toContain("@fontsource/open-sans/latin-ext-400.css");
-    expect(text).toContain("@fontsource/open-sans/latin-ext-700-italic.css");
+    expect(text).toContain("open-sans-latin-400-normal.woff2");
+    expect(text).toContain("open-sans-latin-700-italic.woff2");
+    expect(text).not.toContain("latin-ext");
+    expect(text).not.toContain("format(\"woff\")");
+    expect(text).not.toContain("@import");
   });
 });
