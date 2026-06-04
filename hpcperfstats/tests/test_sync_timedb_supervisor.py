@@ -1982,3 +1982,117 @@ def test_add_processed_path_prunes_file_states(monkeypatch, tmp_path):
   assert paths[0] not in file_states
   assert paths[1] in file_states
   assert paths[2] in file_states
+
+
+class _CapturingHygieneExecutor:
+  """Records submitted callables instead of running them in a thread."""
+
+  def __init__(self, *args, **kwargs):
+    del args, kwargs
+    self.submitted = []
+
+  def submit(self, fn, *args, **kwargs):
+    del args, kwargs
+    self.submitted.append(fn)
+
+    class _Future:
+      def done(self):
+        return True
+
+      def result(self, timeout=None):
+        del timeout
+        return None
+
+    return _Future()
+
+  def shutdown(self, *args, **kwargs):
+    del args, kwargs
+
+
+def test_post_chunk_hygiene_scheduled_and_runs_seal_before_delete(monkeypatch):
+  """A chunk that appends to tars schedules single-flight hygiene that runs the
+  canonical seal -> remove-raw -> remove-tar pipeline, skips disqualified days,
+  and disables auto-seal so only the dedicated seal step compresses."""
+  shutdown_requested[0] = False
+  try:
+    target = "/fake/statsA"
+    holder = {}
+    events = []
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      if not holder.get("served"):
+        holder["served"] = True
+        return [target]
+      shutdown_requested[0] = True
+      return []
+
+    def fake_add(_lock, path, _contents=None):
+      return (path, True, True, 0.0)
+
+    class _NeverDone:
+      def get(self):
+        return None
+
+    class _ArchivePool:
+      def map_async(self, _fn, _items):
+        return _NeverDone()
+
+    def _factory(*_a, **_k):
+      ex = _CapturingHygieneExecutor()
+      holder["executor"] = ex
+      return ex
+
+    monkeypatch.setattr(st, "ThreadPoolExecutor", _factory)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(
+        st, "build_archive_mapping",
+        lambda *_a, **_k: {"/tmp/2024-01-01.tar.gz": [target]})
+    monkeypatch.setattr(
+        st, "seal_dirty_daily_archives",
+        lambda *a, **k: events.append(("seal", k)))
+    monkeypatch.setattr(
+        st, "remove_verified_archived_raw_files",
+        lambda *a, **k: events.append(("raw", k)))
+    monkeypatch.setattr(
+        st, "remove_verified_uncompressed_daily_tars",
+        lambda *a, **k: events.append(("tar", k)))
+    monkeypatch.setattr(
+        st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 1)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _ArchivePool())
+
+    executor = holder["executor"]
+    assert executor.submitted, "post-chunk hygiene was not scheduled"
+
+    # Preflight skip: no dirty-sealable day and no removable raw -> the body must
+    # return before any seal/raw/.tar mutation (no redundant zstd).
+    monkeypatch.setattr(st, "iter_daily_tar_paths", lambda *_a, **_k: [])
+    monkeypatch.setattr(st, "should_seal_daily_tar", lambda *a, **k: False)
+    events.clear()
+    executor.submitted[0]()
+    assert events == [], "hygiene mutated archives despite no eligible work"
+
+    # Force the hygiene preflight to find a sealable, non-disqualified day, then
+    # run the captured hygiene body in isolation and assert pipeline order.
+    monkeypatch.setattr(st, "iter_daily_tar_paths", lambda *_a, **_k: ["/tmp/2024-01-02.tar"])
+    monkeypatch.setattr(st, "should_seal_daily_tar", lambda *a, **k: True)
+    events.clear()
+    executor.submitted[0]()
+
+    assert [name for name, _ in events] == ["seal", "raw", "tar"]
+    seal_kwargs = events[0][1]
+    raw_kwargs = events[1][1]
+    assert "skip_daily_tar_paths" in seal_kwargs
+    assert raw_kwargs.get("allow_auto_seal") is False
+  finally:
+    shutdown_requested[0] = False

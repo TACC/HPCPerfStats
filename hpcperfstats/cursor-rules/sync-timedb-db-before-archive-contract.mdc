@@ -35,9 +35,17 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 | `sync_timedb.archive_stats_files` | `filter_paths_head_ingested` before `filter_files_to_add_to_archive` |
 | `remove_verified_archived_raw_files` bootstrap | only `ingest_ready_fn`-true paths passed to `archive_stats_files_fn` |
 | `remove_verified_archived_raw_files` raw removal | `ingest_ready_fn` after archive member/size match |
+| Post-chunk hygiene raw removal (`_run_post_chunk_hygiene_body`) | same `ingest_ready_fn=stats_file_head_ingested_in_db`; runs with `allow_auto_seal=False` (the dedicated seal step already ran), so validation never triggers a second `atomic_seal_tar_to_zst` |
 | Production wiring | `ingest_ready_fn=stats_file_head_ingested_in_db` from `sync_timedb` supervisor maintenance |
 
 Out of scope for the DB gate: `remove_verified_uncompressed_daily_tars` (`.tar` only), tar dedupe/seal/recovery without raw stats paths.
+
+## Unmapped closed raw (no parseable first timestamp)
+
+Closed raw segments whose first timestamp cannot be parsed are omitted from `build_archive_mapping` and from `remaining_raw_by_gz`, yet still exist on disk. They must not make a day look empty:
+
+- Scheduled `.tar` removal already counts them via the filesystem gate footnote below.
+- **Post-chunk hygiene** disqualifies any such day from seal, raw removal, and `.tar` drop via `collect_days_with_unmapped_closed_raw` (bucketed by filename epoch / mtime fallback) folded into `build_seal_disqualified_daily_tars`, even though those files are absent from `remaining_raw_by_gz`. This is the same data-loss class as the scheduled `.tar` gate.
 
 ## Tar removal vs DB gate
 
@@ -49,6 +57,8 @@ Out of scope for the DB gate: `remove_verified_uncompressed_daily_tars` (`.tar` 
 ## Ordering
 
 Startup or idle maintenance may run before ingest in the same process. With the gate enabled, not-yet-ingested files are skipped for tar append and raw delete until a later pass after ingest inserts the head row; they still block scheduled `.tar` removal via `remaining_raw_by_gz` (startup maintenance may still drop verified `.tar` after seal).
+
+Post-chunk hygiene matches the maintenance seal-before-delete order (seal → DB-gated raw removal → rebuild `remaining_raw_by_gz` → `.tar` unlink) and **never** sets `force_remove_uncompressed_tar=True`. The interval-maintenance table above is unchanged.
 
 ## Emergency override
 
@@ -63,3 +73,4 @@ Startup or idle maintenance may run before ingest in the same process. With the 
 
 - Complements **`sync-timedb-lock-and-archive-contract.mdc`** (locks, zstd seal/read, corrupt-tar recovery).
 - Complements **`runtime-resource-and-metrics-safety.mdc`** for ingest/metrics paths.
+- Complements **`sync-timedb-post-chunk-archive-hygiene.mdc`** (non-blocking post-chunk seal/raw/`.tar` pass and its day disqualification union).

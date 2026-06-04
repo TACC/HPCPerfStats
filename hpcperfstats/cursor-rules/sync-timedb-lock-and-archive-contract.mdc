@@ -31,6 +31,16 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
 - **Maintenance snapshot:** `_archive_maintenance_pipeline` builds one `ArchiveMaintenanceSnapshot` per pass (`sync_timedb_archive_maint.py`): single `collect_stats_files_in_range`, bounded parallel head reads (`sync_archive_discovery_workers` / `SYNC_ARCHIVE_DISCOVERY_WORKERS`), optional `.sync_archive_maint_hints.json` under `archive_dir`. Do not rescan the raw tree between seal, raw removal, and `.tar` removal in the same pass.
 - **Idempotent seal:** `atomic_seal_tar_to_zst` skips recompress when `zstd -t` passes and tar/zst member count and byte-sum match (or tar absent with valid zst).
 
+## Post-chunk archive hygiene (non-blocking)
+
+- **Entry points:** `_schedule_post_chunk_hygiene` / `_run_post_chunk_hygiene_body` (closures in `run_sync_timedb_supervisor_loop`). Scheduled at chunk end whenever the chunk produced archival/finalize work; runs in a single-flight `ThreadPoolExecutor(max_workers=1)` and **never** blocks ingest (the supervisor advances to the next chunk without waiting on `post_chunk_hygiene_future`).
+- **Pipeline order (canonical, loss-safe):** one `build_archive_maintenance_snapshot` per pass → `seal_dirty_daily_archives` → `remove_verified_archived_raw_files` → `remove_verified_uncompressed_daily_tars`. Same seal-before-delete order as `_archive_maintenance_pipeline`; do not rescan the raw tree between steps (reuse the snapshot).
+- **Seal once per pass:** exactly **one** `seal_dirty_daily_archives` call (the only step that may run zstd). Raw removal passes **`allow_auto_seal=False`** so `validate_sealed_daily_archive_for_raw_removal` does not invoke a second `atomic_seal_tar_to_zst`. Interval maintenance stays the backstop and hits `_seal_skip_existing_zst_equivalent` / non-dirty checks (no recompress) for days hygiene already sealed.
+- **Preflight skip:** `_post_chunk_hygiene_has_work` returns early (no seal/raw/`.tar` mutation) when no non-disqualified day is dirty-sealable and no removable raw exists.
+- **Today policy:** post-chunk seal uses `seal_immediately_if_dirty=False`; calendar-today waits `archive_seal_idle_seconds` since `.tar` mtime, prior days seal when dirty. **Never** sets `force_remove_uncompressed_tar=True`; **never** resets `last_archive_maint`; **never** `finalize(force=True)`.
+- **Locks / re-disqualify:** shared supervisor state (`pending_stats_files`, `inflight_archive_paths`, `pending_append_by_daily_tar`, `pending_archive_tasks`) is read/mutated under `archive_state_lock`; `build_seal_disqualified_daily_tars` is recomputed under the lock immediately before each mutating step. `skip_daily_tar_paths=disqualified` is passed to seal, raw removal, and `.tar` removal, so no seal/verify/lock/delete touches a day with pending ingest, in-flight or queued append, a non-empty append cache, or unmapped closed raw.
+- **Parallel seal safety:** the post-chunk `seal_dirty_daily_archives` still uses the bounded multi-day workers; disqualification (in-flight `archive_job` + `pending_archive_tasks` heap + `pending_append_by_daily_tar`) guarantees a `tar_path` is never sealed by hygiene and an `archive_pool` append at the same time.
+
 ## Required tests when behavior changes
 
 - Extend/add focused tests around:
@@ -43,8 +53,10 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
  - safe decompress, fail-closed append, seal shrink guard, startup vs scheduled `.tar` removal
  - scheduled maintenance max defer cap and two-phase forced partial pass
  - seal `TimeoutError` isolation during multi-day maintenance
+ - post-chunk hygiene: canonical seal-before-delete order, preflight skip with no eligible work, `allow_auto_seal=False`, disqualified day passed as `skip_daily_tar_paths`, single-flight scheduling that does not block the next chunk
 
 ## Overlap
 
 - Complements `runtime-resource-and-metrics-safety.mdc` (resource limits) and `pipeline-metrics-e2e-maintenance.mdc` (pipeline-level regression coverage).
 - Complements **`sync-timedb-db-before-archive-contract.mdc`** — head-timestamp DB `exists()` gate before raw stats tar append or filesystem removal (when `sync_archive_require_db_head_ingest` is enabled).
+- Complements **`sync-timedb-post-chunk-archive-hygiene.mdc`** — per-day append cache, disqualification union, and non-blocking supervisor scheduling for the post-chunk pass.

@@ -24,7 +24,11 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     drop_legacy_gz_if_equivalent_to_zst,
     build_archive_mapping,
     build_remaining_raw_stats_by_daily_gz,
+    build_seal_disqualified_daily_tars,
+    collect_days_with_unmapped_closed_raw,
     daily_gz_has_remaining_raw_stats,
+    daily_tar_paths_for_stats_paths,
+    daily_tar_paths_from_pending_archive_tasks,
     collect_lock_sidecar_stats,
     collect_stats_files_in_range,
     dedupe_tar_keep_largest_file_per_member,
@@ -1578,8 +1582,8 @@ def test_remove_verified_archived_raw_files_streaming_apply_follows_completion_o
       lambda *_a, **_k: {gz_a: [str(seg_a)], gz_b: [str(seg_b)]},
   )
 
-  def fake_stream(_gz_paths, *, log_fn=None, validation_cache=None):
-    del log_fn, validation_cache
+  def fake_stream(_gz_paths, *, log_fn=None, validation_cache=None, allow_auto_seal=True):
+    del log_fn, validation_cache, allow_auto_seal
     members_b = {helpers.get_tar_member_name(str(seg_b)): seg_b.stat().st_size}
     members_a = {helpers.get_tar_member_name(str(seg_a)): seg_a.stat().st_size}
     yield gz_b, True, members_b
@@ -2709,3 +2713,148 @@ def test_migrate_one_gz_only_uses_tmp_decompress_dir(monkeypatch, tmp_path):
   for path in seen_tar_targets:
     assert path.startswith(str(temp_dir))
     assert not Path(path).exists()
+
+
+# ---------------------------------------------------------------------------
+# Post-chunk hygiene helpers (seal flag, auto-seal gate, day disqualification).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_seal_dirty_only_when_no_remaining_raw_defers_day_with_raw(
+    monkeypatch, tmp_path
+):
+  """only_when_no_remaining_raw skips a dirty day while raw stats remain on disk."""
+  from zoneinfo import ZoneInfo
+
+  sealed = []
+
+  def fake_atomic_seal(tar_path, zst_path, *_a, **_k):
+    sealed.append(os.path.normpath(tar_path))
+    member = tmp_path / "m.txt"
+    member.write_text("x")
+    with tarfile.open(tar_path, "w") as tf:
+      tf.add(str(member), arcname="m.txt")
+    atomic_seal_tar_to_zst(
+        tar_path, zst_path, num_threads=1, compress_level=6,
+        keep_uncompressed_tar=True, log_fn=None,
+    )
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_helpers.atomic_seal_tar_to_zst",
+      fake_atomic_seal,
+  )
+  tar_with_raw = tmp_path / "2024-01-10.tar"
+  tar_clean = tmp_path / "2024-01-11.tar"
+  for tar_p in (tar_with_raw, tar_clean):
+    tar_p.write_text("dirty")
+    zst_p = tmp_path / (tar_p.name + ".zst")
+    if zst_p.exists():
+      zst_p.unlink()
+  remaining = {
+      normalize_daily_compressed_path(str(tar_with_raw)): ["/raw/seg1"],
+  }
+  seal_dirty_daily_archives(
+      str(tmp_path),
+      local_tz=ZoneInfo("UTC"),
+      zstd_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      idle_seconds=0,
+      seal_immediately_if_dirty=True,
+      log_fn=None,
+      remaining_raw_by_gz=remaining,
+      only_when_no_remaining_raw=True,
+  )
+  assert sealed == [os.path.normpath(str(tar_clean))]
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_validate_for_raw_removal_skips_auto_seal_when_disabled(tmp_path):
+  """allow_auto_seal=False must not create a missing sealed archive."""
+  tar_path = tmp_path / "2024-02-01.tar"
+  member = tmp_path / "a.txt"
+  member.write_text("hello")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="a.txt")
+  zst_path = tmp_path / "2024-02-01.tar.zst"
+
+  ok, members = validate_sealed_daily_archive_for_raw_removal(
+      str(zst_path), log_fn=None, allow_auto_seal=False)
+  assert ok is False
+  assert members is None
+  assert not zst_path.exists()
+
+  ok, members = validate_sealed_daily_archive_for_raw_removal(
+      str(zst_path), log_fn=None, allow_auto_seal=True)
+  assert ok is True
+  assert members and "a.txt" in members
+  assert zst_path.exists()
+
+
+def test_daily_tar_paths_from_pending_archive_tasks_handles_heap_and_items():
+  import types
+
+  task = types.SimpleNamespace(archive_info=("/arch/2024-03-01.tar.zst", ["/raw/a"]))
+  heap_entry = (0.0, 1, 123.0, {"task": task, "paths": ["/raw/a"]})
+  plain_item = {"task": types.SimpleNamespace(
+      archive_info=("/arch/2024-03-02.tar.gz", ["/raw/b"]))}
+  result = daily_tar_paths_from_pending_archive_tasks([heap_entry, plain_item])
+  assert result == frozenset({
+      os.path.normpath("/arch/2024-03-01.tar"),
+      os.path.normpath("/arch/2024-03-02.tar"),
+  })
+  assert daily_tar_paths_from_pending_archive_tasks([]) == frozenset()
+
+
+def test_daily_tar_paths_for_stats_paths_uses_first_ts_then_filename_epoch():
+  archive_dir = "/arch"
+  epoch_day = datetime(2024, 4, 5, 1, 0, 0)
+  other_day = datetime(2024, 4, 6, 1, 0, 0)
+  epoch_path = "/raw/host/%d" % int(epoch_day.timestamp())
+  named_path = "/raw/host/not-an-epoch"
+  first_ts = {named_path: int(other_day.timestamp())}
+  result = daily_tar_paths_for_stats_paths(
+      [epoch_path, named_path], archive_dir, first_ts)
+  assert os.path.normpath("/arch/2024-04-05.tar") in result
+  assert os.path.normpath("/arch/2024-04-06.tar") in result
+
+
+def test_collect_days_with_unmapped_closed_raw_buckets_unmapped_only():
+  archive_dir = "/arch"
+  mapped_day = datetime(2024, 5, 1, 2, 0, 0)
+  unmapped_day = datetime(2024, 5, 2, 2, 0, 0)
+  mapped_path = "/raw/host/%d" % int(mapped_day.timestamp())
+  unmapped_path = "/raw/host/%d" % int(unmapped_day.timestamp())
+  closed_paths = [mapped_path, unmapped_path]
+  mapping = {"/arch/2024-05-01.tar.zst": [mapped_path]}
+  result = collect_days_with_unmapped_closed_raw(closed_paths, mapping, archive_dir)
+  assert os.path.normpath("/arch/2024-05-02.tar") in result
+  assert os.path.normpath("/arch/2024-05-01.tar") not in result
+
+
+def test_build_seal_disqualified_daily_tars_unions_all_sources():
+  archive_dir = "/arch"
+  d = lambda day: os.path.normpath("/arch/2024-06-%02d.tar" % day)
+  pending_day = datetime(2024, 6, 1, 3, 0, 0)
+  inflight_day = datetime(2024, 6, 2, 3, 0, 0)
+  pending_path = "/raw/host/%d" % int(pending_day.timestamp())
+  inflight_path = "/raw/host/%d" % int(inflight_day.timestamp())
+  disqualified = build_seal_disqualified_daily_tars(
+      tgz_archive_dir=archive_dir,
+      remaining_raw_by_gz={"/arch/2024-06-03.tar.zst": ["/raw/x"]},
+      pending_stats_paths=[pending_path],
+      inflight_paths=[inflight_path],
+      pending_append_by_daily_tar={d(4): {"/raw/y"}, d(9): set()},
+      in_flight_archive_tars=[d(5)],
+      pending_archive_task_tars=[d(6)],
+      unmapped_closed_raw_tars=[d(7)],
+  )
+  assert d(1) in disqualified  # pending ingest
+  assert d(2) in disqualified  # inflight append
+  assert d(3) in disqualified  # remaining raw on disk
+  assert d(4) in disqualified  # non-empty append cache
+  assert d(5) in disqualified  # in-flight archive job
+  assert d(6) in disqualified  # queued archive task
+  assert d(7) in disqualified  # unmapped closed raw
+  assert d(9) not in disqualified  # empty append-cache bucket ignored

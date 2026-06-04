@@ -92,6 +92,145 @@ def daily_tar_paths_for_archive_job_tasks(deferred_paths):
   return frozenset(tar_paths)
 
 
+def daily_tar_paths_from_pending_archive_tasks(pending_archive_tasks):
+  """Daily ``.tar`` paths for every queued archive task (heap entries or item dicts).
+
+  Accepts the supervisor ``pending_archive_tasks`` heap (tuples of
+  ``(retry_at, attempt, seq, item)``) or a plain iterable of item dicts.
+  """
+  if not pending_archive_tasks:
+    return frozenset()
+  tar_paths = set()
+  for entry in pending_archive_tasks:
+    if isinstance(entry, (tuple, list)) and len(entry) >= 4:
+      item = entry[3]
+    else:
+      item = entry
+    task = item.get("task") if isinstance(item, dict) else None
+    if task is None:
+      continue
+    archive_info = getattr(task, "archive_info", None)
+    if not archive_info or len(archive_info) < 1:
+      continue
+    compressed_path = archive_info[0]
+    if not compressed_path:
+      continue
+    tar_paths.add(os.path.normpath(daily_tar_path_from_compressed(compressed_path)))
+  return frozenset(tar_paths)
+
+
+def _derive_stats_path_date(stats_path, first_ts=None):
+  """Best-effort calendar date for a raw stats file.
+
+  Prefers the parsed first timestamp (same value archival buckets by), then the
+  numeric filename epoch, then file mtime. Returns ``None`` if none resolve.
+  """
+  if first_ts is not None:
+    try:
+      return datetime.fromtimestamp(float(first_ts)).date()
+    except (TypeError, ValueError, OSError, OverflowError):
+      pass
+  try:
+    return datetime.fromtimestamp(int(os.path.basename(stats_path))).date()
+  except (TypeError, ValueError, OSError, OverflowError):
+    pass
+  try:
+    return datetime.fromtimestamp(int(os.path.getmtime(stats_path))).date()
+  except (OSError, OverflowError, ValueError):
+    return None
+
+
+def _daily_tar_path_for_date(tgz_archive_dir, file_date):
+  """Normalized ``YYYY-MM-DD.tar`` path for ``file_date`` under ``tgz_archive_dir``."""
+  return os.path.normpath(
+      daily_tar_path_from_compressed(
+          daily_compressed_path_for_date(tgz_archive_dir, file_date),
+      )
+  )
+
+
+def daily_tar_paths_for_stats_paths(
+    paths, tgz_archive_dir, first_timestamp_by_path=None,
+):
+  """Map raw stats paths to the daily ``.tar`` path each would archive into."""
+  if not paths:
+    return frozenset()
+  fmap = first_timestamp_by_path or {}
+  tar_paths = set()
+  for path in paths:
+    file_date = _derive_stats_path_date(path, fmap.get(path))
+    if file_date is None:
+      continue
+    tar_paths.add(_daily_tar_path_for_date(tgz_archive_dir, file_date))
+  return frozenset(tar_paths)
+
+
+def collect_days_with_unmapped_closed_raw(closed_paths, mapping, tgz_archive_dir):
+  """Daily ``.tar`` paths for closed raw stats not present in ``mapping``.
+
+  Files with no parseable first timestamp are omitted from ``build_archive_mapping``
+  yet may still be on disk. They must not let a day look empty: bucket each by
+  filename epoch / mtime and disqualify that day from seal / ``.tar`` removal.
+  """
+  if not closed_paths:
+    return frozenset()
+  mapped = set()
+  for stats_paths in (mapping or {}).values():
+    mapped.update(stats_paths)
+  tar_paths = set()
+  for path in closed_paths:
+    if path in mapped:
+      continue
+    file_date = _derive_stats_path_date(path, None)
+    if file_date is None:
+      continue
+    tar_paths.add(_daily_tar_path_for_date(tgz_archive_dir, file_date))
+  return frozenset(tar_paths)
+
+
+def build_seal_disqualified_daily_tars(
+    *,
+    tgz_archive_dir,
+    remaining_raw_by_gz=None,
+    pending_stats_paths=None,
+    inflight_paths=None,
+    pending_append_by_daily_tar=None,
+    in_flight_archive_tars=None,
+    pending_archive_task_tars=None,
+    unmapped_closed_raw_tars=None,
+    first_timestamp_by_path=None,
+):
+  """Union of daily ``.tar`` paths post-chunk hygiene must not seal/verify/remove.
+
+  See plan ``Per-day disqualification (complete set)``. Pure function over already
+  snapshotted supervisor state so it can be recomputed cheaply before each
+  mutating step under ``archive_state_lock``.
+  """
+  disqualified = set()
+  disqualified |= _normalize_daily_tar_path_set(in_flight_archive_tars)
+  disqualified |= _normalize_daily_tar_path_set(pending_archive_task_tars)
+  disqualified |= daily_tar_paths_for_stats_paths(
+      inflight_paths, tgz_archive_dir, first_timestamp_by_path,
+  )
+  if pending_append_by_daily_tar:
+    disqualified |= {
+        os.path.normpath(tar_path)
+        for tar_path, paths in pending_append_by_daily_tar.items()
+        if paths
+    }
+  disqualified |= daily_tar_paths_for_stats_paths(
+      pending_stats_paths, tgz_archive_dir, first_timestamp_by_path,
+  )
+  if remaining_raw_by_gz:
+    for gz_key, stats_paths in remaining_raw_by_gz.items():
+      if stats_paths:
+        disqualified.add(
+            os.path.normpath(daily_tar_path_from_compressed(gz_key))
+        )
+  disqualified |= _normalize_daily_tar_path_set(unmapped_closed_raw_tars)
+  return frozenset(disqualified)
+
+
 _DAILY_TAR_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar$")
 _DAILY_GZ_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar\.gz$")
 
@@ -124,6 +263,7 @@ def _iter_archive_validation_results_stream(
     *,
     log_fn=log_print,
     validation_cache=None,
+    allow_auto_seal=True,
 ):
   """Yield ``(gz_path, ok, members)`` as validations complete.
 
@@ -141,6 +281,7 @@ def _iter_archive_validation_results_stream(
           gz_path,
           log_fn=log_fn,
           validation_cache=validation_cache,
+          allow_auto_seal=allow_auto_seal,
       )
       yield gz_path, ok, members
     return
@@ -154,6 +295,7 @@ def _iter_archive_validation_results_stream(
         gz_path,
         log_fn=log_fn,
         validation_cache=None,
+        allow_auto_seal=allow_auto_seal,
     )
 
   with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -483,6 +625,7 @@ def validate_sealed_daily_archive_for_raw_removal(
     log_fn=log_print,
     *,
     validation_cache=None,
+    allow_auto_seal=True,
 ):
   """Validate uncompressed tar (if present) then sealed ``.tar.zst`` (or legacy ``.tar.gz``).
 
@@ -490,6 +633,10 @@ def validate_sealed_daily_archive_for_raw_removal(
   (2) readable sealed archive and member sizes from compressed file only;
   (3) if both exist, dicts must be equal. Returns ``(True, members)`` for use
   with ``get_verified_files_to_remove``, or ``(False, None)``.
+
+  When ``allow_auto_seal`` is false (post-chunk hygiene, which already ran a seal
+  pass), a missing sealed archive is not created here; the day is skipped instead,
+  so a single hygiene invocation never triggers a second zstd compress.
   """
   fmt = detect_compressed_format(archive_compressed_path)
   if fmt not in ("zst", "gz"):
@@ -535,6 +682,14 @@ def validate_sealed_daily_archive_for_raw_removal(
       if log_fn:
         log_fn(
             "Skipping removal: sealed archive missing: %s" % sealed_path,
+            flush=True,
+        )
+      return False, None
+    if not allow_auto_seal:
+      if log_fn:
+        log_fn(
+            "Skipping removal: sealed archive missing and auto-seal disabled "
+            "(post-chunk hygiene seal already ran): %s" % tar_path,
             flush=True,
         )
       return False, None
@@ -721,6 +876,7 @@ def remove_verified_archived_raw_files(
     validated_days_out=None,
     skip_daily_tar_paths=None,
     only_daily_tar_paths=None,
+    allow_auto_seal=True,
 ):
   """Remove raw stats files only after tar + sealed archive validation.
 
@@ -824,6 +980,7 @@ def remove_verified_archived_raw_files(
       [gz_path for gz_path, _stats_paths in validation_targets],
       log_fn=log_fn,
       validation_cache=validation_cache if workers <= 1 else None,
+      allow_auto_seal=allow_auto_seal,
   ):
     if not ok or members is None:
       failed_count += 1
@@ -1526,8 +1683,14 @@ def seal_dirty_daily_archives(
     force_remove_uncompressed_tar=False,
     skip_daily_tar_paths=None,
     only_daily_tar_paths=None,
+    only_when_no_remaining_raw=False,
 ):
-  """Seal every dirty ``YYYY-MM-DD.tar`` under ``daily_archive_dir`` per policy."""
+  """Seal every dirty ``YYYY-MM-DD.tar`` under ``daily_archive_dir`` per policy.
+
+  When ``only_when_no_remaining_raw`` is true (post-chunk hygiene), a dirty day is
+  skipped while ``remaining_raw_by_gz`` still lists closed raw stats for that day,
+  so the expensive zstd seal runs only once the day's raw stats are gone.
+  """
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
     return
   today_local = datetime.now(local_tz).date()
@@ -1548,6 +1711,16 @@ def seal_dirty_daily_archives(
         seal_immediately_if_dirty=seal_immediately_if_dirty,
         gz_path=gz_path,
     ):
+      continue
+    if only_when_no_remaining_raw and daily_gz_has_remaining_raw_stats(
+        zst_path, remaining_raw_by_gz,
+    ):
+      if log_fn:
+        log_fn(
+            "Post-chunk seal deferred (raw stats still present for day): %s"
+            % tar_path,
+            flush=True,
+        )
       continue
     candidates.append((tar_path, zst_path, gz_path))
   if not candidates:

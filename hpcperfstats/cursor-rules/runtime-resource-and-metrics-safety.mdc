@@ -12,6 +12,7 @@ alwaysApply: true
 - After service config changes, verify startup and basic health behavior end-to-end.
 - At minimum, verify config syntax/parsing and confirm services reach a healthy/running state before considering the change complete.
 - When runtime tuning changes behavior, add or update tests that validate correctness and guard against regressions.
+- Background daemon threads that touch the ORM (for example the `sync_timedb` post-chunk archive hygiene thread) must call `close_old_connections()` at entry and in their `finally` so they never reuse a stale or cross-thread connection. See **`sync-timedb-post-chunk-archive-hygiene.mdc`**.
 
 ## Metrics/Ingestion Regression Gate
 - Trigger: changes under ingestion/metrics paths (for example dbload, update_metrics, metric aggregation, invalidation/recompute checks).
