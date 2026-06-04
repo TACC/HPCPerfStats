@@ -96,6 +96,11 @@ INI_OPTION_REGISTRY = (
     ("DEFAULT", "sync_pool_poll_timeout_s"),
     ("DEFAULT", "sync_write_lock_shards"),
     ("DEFAULT", "sync_enable_db_writer_pipeline"),
+    ("DEFAULT", "sync_db_writer_combined_task"),
+    ("DEFAULT", "sync_db_writer_stage_max_batch"),
+    ("DEFAULT", "sync_ingest_chunk_size"),
+    ("DEFAULT", "sync_supervisor_rss_limit_mb"),
+    ("DEFAULT", "sync_supervisor_rss_check_every_n_chunks"),
     ("DEFAULT", "sync_db_writer_pool_multiplier"),
     ("DEFAULT", "sync_db_writer_pool_cap"),
     ("DEFAULT", "sync_adaptive_dispatch_enabled"),
@@ -1682,6 +1687,43 @@ def get_sync_enable_db_writer_pipeline():
   """Feature flag for optional parse-worker -> DB-writer queue pipeline (default disabled)."""
   _ensure_cfg_loaded()
   return _parse_bool(cfg.get("DEFAULT", "sync_enable_db_writer_pipeline", fallback="no"))
+
+
+def get_sync_db_writer_combined_task():
+  """Parse+write in one ingest worker (no parent DataFrame staging; default no)."""
+  _ensure_cfg_loaded()
+  return _parse_bool(cfg.get("DEFAULT", "sync_db_writer_combined_task", fallback="no"))
+
+
+def get_sync_db_writer_stage_max_batch():
+  """Max parse payloads staged in supervisor before db-writer drain (default 8)."""
+  _ensure_cfg_loaded()
+  return max(
+      1,
+      int(cfg.get("DEFAULT", "sync_db_writer_stage_max_batch", fallback="8")),
+  )
+
+
+def get_sync_ingest_chunk_size():
+  """Stats files processed per ingest chunk (default 1000)."""
+  _ensure_cfg_loaded()
+  return max(1, int(cfg.get("DEFAULT", "sync_ingest_chunk_size", fallback="1000")))
+
+
+def get_sync_supervisor_rss_limit_mb():
+  """Supervisor RSS limit in MiB; 0 disables fail-fast exit (default 0)."""
+  _ensure_cfg_loaded()
+  return max(0, int(cfg.get("DEFAULT", "sync_supervisor_rss_limit_mb", fallback="0")))
+
+
+def get_sync_supervisor_rss_check_every_n_chunks():
+  """Check supervisor RSS every N processed chunks (default 1)."""
+  _ensure_cfg_loaded()
+  return max(1, int(cfg.get(
+      "DEFAULT",
+      "sync_supervisor_rss_check_every_n_chunks",
+      fallback="1",
+  )))
 
 
 def get_sync_db_writer_pool_multiplier():

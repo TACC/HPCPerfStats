@@ -61,11 +61,12 @@ from hpcperfstats.dbload.db_unavailable import (
 from hpcperfstats.dbload.io_helpers import host_data_instance_from_stats_row
 from hpcperfstats.dbload.multiprocessing_pool_health import (
     MultiprocessingWorkerExitError,
-    abort_if_pool_workers_dead,
     async_result_get_watch_pool,
+    close_pool_bounded,
     imap_unordered_watch_pool,
     terminate_pool_bounded,
 )
+from hpcperfstats.process_memory import read_process_rss_bytes
 from hpcperfstats.dbload.archive_compress import (
     compressed_sibling_paths,
     daily_compressed_path_for_date,
@@ -94,6 +95,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     remove_verified_archived_raw_files,
     remove_verified_uncompressed_daily_tars,
     replace_corrupt_tar_from_compressed_backup,
+    cap_pending_stats_file_list,
     rescan_pending_stats_files,
     seal_dirty_daily_archives,
     should_seal_daily_tar,
@@ -264,8 +266,48 @@ def _db_write_task_tuple(task):
 
 def _db_writer_stage_batch_size(target_chunk_size, ingest_queue_high):
   """Bound parse->writer payload staging to limit peak memory."""
-  cap = max(1, int(ingest_queue_high) // 8)
-  return max(1, min(int(target_chunk_size), 32, cap))
+  queue_cap = max(1, int(ingest_queue_high) // 8)
+  stage_max = cfg.get_sync_db_writer_stage_max_batch()
+  return max(1, min(int(target_chunk_size), stage_max, queue_cap))
+
+
+def _shutdown_ingest_pools(ingest_pool, db_writer_pool, *, force_terminate=False):
+  """Bounded shutdown for ingest pools (terminate after worker OOM/SIGKILL)."""
+  close_pool_bounded(ingest_pool, force_terminate=force_terminate)
+  close_pool_bounded(db_writer_pool, force_terminate=force_terminate)
+
+
+def _cap_pending_stats_files_list(paths, ingest_queue_max):
+  return cap_pending_stats_file_list(paths, ingest_queue_max, log_fn=log_print)
+
+
+def _maybe_exit_on_supervisor_rss_limit(chunk_counter):
+  """Fail fast with exit 137 when supervisor RSS exceeds configured limit."""
+  limit_mb = cfg.get_sync_supervisor_rss_limit_mb()
+  if limit_mb <= 0:
+    return
+  every_n = cfg.get_sync_supervisor_rss_check_every_n_chunks()
+  if int(chunk_counter) % every_n != 0:
+    return
+  rss_bytes = read_process_rss_bytes()
+  limit_bytes = int(limit_mb) * 1024 * 1024
+  if rss_bytes <= 0 or rss_bytes <= limit_bytes:
+    return
+  log_print(
+      "ERROR: sync_timedb supervisor RSS %.1f MiB exceeds limit %d MiB; exiting"
+      % (rss_bytes / (1024.0 * 1024.0), limit_mb),
+      flush=True,
+  )
+  raise SystemExit(137)
+
+
+def _reraise_or_handle_pool_worker_exit(exc, *, ingest_pool, db_writer_pool):
+  """Terminate ingest pools and re-raise worker death."""
+  if isinstance(exc, MultiprocessingWorkerExitError):
+    terminate_pool_bounded(ingest_pool)
+    terminate_pool_bounded(db_writer_pool)
+    raise
+  raise exc
 
 
 def _drain_db_write_tasks(
@@ -294,16 +336,19 @@ def _drain_db_write_tasks(
         [_db_write_task_tuple(task) for task in task_batch],
         context="sync_timedb ingest db_writer pool",
     )
-  for result in write_results_iter:
-    stats_fname, need_archival, ingest_ok, elapsed_s = result
-    if ingest_ok:
-      _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
-      successful_paths.append(stats_fname)
-      if should_archive and need_archival:
-        files_to_be_archived.append(stats_fname)
-      remaining = pending_total - chunk_ingest_finished - 1
-      chunk_ingest_finished += 1
-      _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+  try:
+    for result in write_results_iter:
+      stats_fname, need_archival, ingest_ok, elapsed_s = result
+      if ingest_ok:
+        _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+        successful_paths.append(stats_fname)
+        if should_archive and need_archival:
+          files_to_be_archived.append(stats_fname)
+        remaining = pending_total - chunk_ingest_finished - 1
+        chunk_ingest_finished += 1
+        _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+  except MultiprocessingWorkerExitError:
+    raise
   return chunk_ingest_finished
 
 
@@ -651,6 +696,13 @@ def _db_writer_worker(lock, db_task):
         del stats
       if proc_stats is not None:
         del proc_stats
+
+
+def _ingest_parse_and_write_file(lock, stats_file, stats_file_contents=None):
+  """Combined ingest worker: parse and DB write in one pool task (small parent tuple)."""
+  return add_stats_file_to_db(
+      lock, stats_file, stats_file_contents=stats_file_contents
+  )
 
 
 # This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
@@ -1795,7 +1847,15 @@ def run_sync_timedb_supervisor_loop(
   worker_idle_loops = 0
   ingest_pool = None
   db_writer_pool = None
+  pool_worker_exit = False
   db_writer_enabled = cfg.get_sync_enable_db_writer_pipeline()
+  db_writer_combined_task = (
+      db_writer_enabled and cfg.get_sync_db_writer_combined_task()
+  )
+  use_split_db_writer_pipeline = (
+      db_writer_enabled and not db_writer_combined_task
+  )
+  chunk_size = cfg.get_sync_ingest_chunk_size()
   processed_files = set()
   file_states = {}
   processed_files_order = deque()
@@ -1835,21 +1895,28 @@ def run_sync_timedb_supervisor_loop(
     _enqueue_archive_task(entry)
 
   if not _sync_timedb_ingest_inline_requested():
-    ingest_pool_kind = (
-        "ingest-parse-pool" if db_writer_enabled else "ingest-pool"
-    )
+    if use_split_db_writer_pipeline:
+      ingest_pool_kind = "ingest-parse-pool"
+    else:
+      ingest_pool_kind = "ingest-pool"
     ingest_pool = multiprocessing.get_context('spawn').Pool(
         processes=thread_count,
         initializer=apply_pool_worker_process_title,
         initargs=(SYNC_TIMEDB_PROCESS_TITLE, ingest_pool_kind),
     )
-    if db_writer_enabled:
+    if use_split_db_writer_pipeline:
       db_writer_processes = cfg.get_sync_db_writer_pool_processes(
           ingest_processes=thread_count)
       db_writer_pool = multiprocessing.get_context('spawn').Pool(
           processes=db_writer_processes,
           initializer=apply_pool_worker_process_title,
           initargs=(SYNC_TIMEDB_PROCESS_TITLE, "db-writer-pool"),
+      )
+    elif db_writer_combined_task:
+      log_print(
+          "sync_db_writer_combined_task is enabled; parse and DB write run in "
+          "one ingest worker per file (no split staging in supervisor).",
+          flush=True,
       )
 
   try:
@@ -1963,13 +2030,16 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         _finalize_archive_job_if_needed(force=True, context="pre_rescan")
-        pending_stats_files = rescan_pending_stats_files(
-            directory,
-            startdate,
-            enddate,
-            host_name_ext,
-            processed_files | inflight_archive_paths,
-            host_scan_hints=host_scan_hints,
+        pending_stats_files = _cap_pending_stats_files_list(
+            rescan_pending_stats_files(
+                directory,
+                startdate,
+                enddate,
+                host_name_ext,
+                processed_files | inflight_archive_paths,
+                host_scan_hints=host_scan_hints,
+            ),
+            ingest_queue_max,
         )
         if pending_stats_files:
           for p in pending_stats_files:
@@ -1996,13 +2066,16 @@ def run_sync_timedb_supervisor_loop(
         maintenance_overdue_warned = False
         close_old_connections()
         connections.close_all()
-        pending_stats_files = rescan_pending_stats_files(
-            directory,
-            startdate,
-            enddate,
-            host_name_ext,
-            processed_files | inflight_archive_paths,
-            host_scan_hints=host_scan_hints,
+        pending_stats_files = _cap_pending_stats_files_list(
+            rescan_pending_stats_files(
+                directory,
+                startdate,
+                enddate,
+                host_name_ext,
+                processed_files | inflight_archive_paths,
+                host_scan_hints=host_scan_hints,
+            ),
+            ingest_queue_max,
         )
         if pending_stats_files:
           for p in pending_stats_files:
@@ -2060,26 +2133,27 @@ def run_sync_timedb_supervisor_loop(
 
         k = 0
         active_workers = 0
-        if db_writer_enabled:
+        if use_split_db_writer_pipeline:
           parse_tasks = deque()
           writer_stage_batch_size = _db_writer_stage_batch_size(
               target_chunk_size,
               ingest_queue_high,
           )
           parse_envelopes = [ParseTask(path=path) for path in stats_files_chunk]
-          if _sync_timedb_ingest_inline_requested():
-            parse_results_iter = (
-                _parse_stats_file_payload(task.path) for task in parse_envelopes
-            )
-          else:
-            if ingest_pool is None:
+          try:
+            if _sync_timedb_ingest_inline_requested():
+              parse_results_iter = (
+                  _parse_stats_file_payload(task.path) for task in parse_envelopes
+              )
+            elif ingest_pool is None:
               parse_results_iter = iter(())
             else:
-              parse_results_iter = ingest_pool.imap_unordered(
+              parse_results_iter = imap_unordered_watch_pool(
+                  ingest_pool,
                   _parse_stats_file_payload,
                   [task.path for task in parse_envelopes],
+                  context="sync_timedb ingest parse pool",
               )
-          try:
             for parsed in parse_results_iter:
               stats_fname, payload, need_archival, ingest_ok, parse_elapsed_s = parsed
               k += 1
@@ -2114,6 +2188,11 @@ def run_sync_timedb_supervisor_loop(
                     chunk_ingest_finished=chunk_ingest_finished,
                     pending_total=len(pending_stats_files),
                 )
+          except MultiprocessingWorkerExitError:
+            pool_worker_exit = True
+            terminate_pool_bounded(ingest_pool)
+            terminate_pool_bounded(db_writer_pool)
+            raise
           except DatabaseUnavailableExit:
             raise
           except Exception as exc:
@@ -2134,6 +2213,11 @@ def run_sync_timedb_supervisor_loop(
                   chunk_ingest_finished=chunk_ingest_finished,
                   pending_total=len(pending_stats_files),
               )
+            except MultiprocessingWorkerExitError:
+              pool_worker_exit = True
+              terminate_pool_bounded(ingest_pool)
+              terminate_pool_bounded(db_writer_pool)
+              raise
             except DatabaseUnavailableExit:
               raise
             except Exception as exc:
@@ -2141,17 +2225,22 @@ def run_sync_timedb_supervisor_loop(
                   exc, context="sync_timedb ingest db_writer pool"
               )
               raise
-        else:
-          add_stats_file = partial(add_stats_file_to_db, manager_lock)
-          if _sync_timedb_ingest_inline_requested():
-            results_iter = (add_stats_file(path) for path in stats_files_chunk)
-          else:
-            if ingest_pool is None:
+        elif db_writer_combined_task:
+          add_combined = partial(_ingest_parse_and_write_file, manager_lock)
+          try:
+            if _sync_timedb_ingest_inline_requested():
+              results_iter = (
+                  add_combined(path) for path in stats_files_chunk
+              )
+            elif ingest_pool is None:
               results_iter = iter(())
             else:
-              results_iter = ingest_pool.imap_unordered(
-                  add_stats_file, stats_files_chunk)
-          try:
+              results_iter = imap_unordered_watch_pool(
+                  ingest_pool,
+                  add_combined,
+                  stats_files_chunk,
+                  context="sync_timedb ingest pool",
+              )
             for result in results_iter:
               ingest_ok = True
               elapsed_s = 0.0
@@ -2171,6 +2260,54 @@ def run_sync_timedb_supervisor_loop(
                 remaining = len(pending_stats_files) - chunk_ingest_finished - 1
                 chunk_ingest_finished += 1
                 _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+          except MultiprocessingWorkerExitError:
+            pool_worker_exit = True
+            terminate_pool_bounded(ingest_pool)
+            raise
+          except DatabaseUnavailableExit:
+            raise
+          except Exception as exc:
+            reraise_database_unavailable_chain(
+                exc, context="sync_timedb ingest pool"
+            )
+            raise
+        else:
+          add_stats_file = partial(add_stats_file_to_db, manager_lock)
+          try:
+            if _sync_timedb_ingest_inline_requested():
+              results_iter = (add_stats_file(path) for path in stats_files_chunk)
+            elif ingest_pool is None:
+              results_iter = iter(())
+            else:
+              results_iter = imap_unordered_watch_pool(
+                  ingest_pool,
+                  add_stats_file,
+                  stats_files_chunk,
+                  context="sync_timedb ingest pool",
+              )
+            for result in results_iter:
+              ingest_ok = True
+              elapsed_s = 0.0
+              if len(result) >= 4:
+                stats_fname, need_archival, ingest_ok, elapsed_s = result[:4]
+              elif len(result) >= 3:
+                stats_fname, need_archival, ingest_ok = result[:3]
+              else:
+                stats_fname, need_archival = result
+              k += 1
+              active_workers = max(active_workers, min(thread_count, k))
+              if ingest_ok:
+                _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+                successful_paths.append(stats_fname)
+                if should_archive and need_archival:
+                  files_to_be_archived.append(stats_fname)
+                remaining = len(pending_stats_files) - chunk_ingest_finished - 1
+                chunk_ingest_finished += 1
+                _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+          except MultiprocessingWorkerExitError:
+            pool_worker_exit = True
+            terminate_pool_bounded(ingest_pool)
+            raise
           except DatabaseUnavailableExit:
             raise
           except Exception as exc:
@@ -2321,6 +2458,7 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         chunk_counter += 1
+        _maybe_exit_on_supervisor_rss_limit(chunk_counter)
 
         # Non-blocking: after files were added to their tars this chunk, kick a
         # single-flight background pass to seal completed days and remove their
@@ -2335,13 +2473,16 @@ def run_sync_timedb_supervisor_loop(
               allow_defer=True,
               context="rescan_every_chunks",
           )
-          pending_stats_files = rescan_pending_stats_files(
-              directory,
-              startdate,
-              enddate,
-              host_name_ext,
-              processed_files | inflight_archive_paths,
-              host_scan_hints=host_scan_hints,
+          pending_stats_files = _cap_pending_stats_files_list(
+              rescan_pending_stats_files(
+                  directory,
+                  startdate,
+                  enddate,
+                  host_name_ext,
+                  processed_files | inflight_archive_paths,
+                  host_scan_hints=host_scan_hints,
+              ),
+              ingest_queue_max,
           )
           log_print(
               "Rescanned after %d chunks; pending files (newest first): %d"
@@ -2371,16 +2512,11 @@ def run_sync_timedb_supervisor_loop(
       _finalize_archive_job_if_needed(force=True)
     _persist_dead_letters_if_needed(force=True)
     _flush_checkpoint_if_needed(force=True)
-    if ingest_pool is not None:
-      if hasattr(ingest_pool, "close"):
-        ingest_pool.close()
-      if hasattr(ingest_pool, "join"):
-        ingest_pool.join()
-    if db_writer_pool is not None:
-      if hasattr(db_writer_pool, "close"):
-        db_writer_pool.close()
-      if hasattr(db_writer_pool, "join"):
-        db_writer_pool.join()
+    _shutdown_ingest_pools(
+        ingest_pool,
+        db_writer_pool,
+        force_terminate=pool_worker_exit,
+    )
 
 
 def parse_sync_timedb_argv(argv):
@@ -2450,11 +2586,18 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
           flush=True,
       )
     if cfg.get_sync_enable_db_writer_pipeline():
-      log_print(
-          "sync_enable_db_writer_pipeline is enabled; using separated parse "
-          "workers and DB-writer workers.",
-          flush=True,
-      )
+      if cfg.get_sync_db_writer_combined_task():
+        log_print(
+            "sync_enable_db_writer_pipeline with sync_db_writer_combined_task: "
+            "parse and DB write in one ingest worker per file.",
+            flush=True,
+        )
+      else:
+        log_print(
+            "sync_enable_db_writer_pipeline is enabled; using separated parse "
+            "workers and DB-writer workers.",
+            flush=True,
+        )
     lock_shards = max(1, int(cfg.get_sync_write_lock_shards()))
     if lock_shards == 1:
       manager_lock = manager.Lock()
@@ -2522,6 +2665,8 @@ if __name__ == '__main__':
       sys.exit(143)
   except DatabaseUnavailableExit:
     sys.exit(2)
+  except MultiprocessingWorkerExitError as exc:
+    sys.exit(exc.exit_code)
   finally:
     # Best-effort cleanup + parent notification when SIGTERM is received.
     if sigterm_received["value"]:

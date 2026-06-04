@@ -2245,8 +2245,24 @@ def rescan_pending_stats_files(
       host_scan_hints=host_scan_hints,
       force_full_scan=should_force_full,
   )
-  processed_set = set(processed_files or [])
-  return [path for path in discovered_files if path not in processed_set]
+  if isinstance(processed_files, set):
+    exclude = processed_files
+  else:
+    exclude = set(processed_files or [])
+  return [path for path in discovered_files if path not in exclude]
+
+
+def cap_pending_stats_file_list(paths, max_size, log_fn=log_print):
+  """Return newest-first pending paths capped to ``max_size`` (memory bound)."""
+  max_size = max(1, int(max_size))
+  if len(paths) <= max_size:
+    return paths
+  log_fn(
+      "Pending stats file list truncated pending=%d max=%d"
+      % (len(paths), max_size),
+      flush=True,
+  )
+  return list(paths[:max_size])
 
 
 def build_archive_mapping(

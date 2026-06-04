@@ -1067,6 +1067,7 @@ def test_db_writer_pipeline_flag_uses_separate_parse_and_write(monkeypatch):
     monkeypatch.setattr(st, "_db_writer_worker", fake_write)
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_db_writer_combined_task", lambda: False)
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
@@ -1909,6 +1910,222 @@ def test_sync_timedb_uses_fixed_batch_sizes_not_adaptive_helpers():
   assert st.bulk_create_batch_size == 10000
   assert not hasattr(st, "_get_adaptive_bulk_create_batch_size")
   assert not hasattr(st, "_record_adaptive_batch_feedback")
+
+
+def test_sync_timedb_supervisor_source_uses_watch_pool_not_raw_imap():
+  """Ingest pool loops must use imap_unordered_watch_pool (OOM-safe)."""
+  source_path = Path(st.__file__)
+  text = source_path.read_text(encoding="utf-8")
+  assert "ingest_pool.imap_unordered" not in text
+  assert "imap_unordered_watch_pool" in text
+
+
+def test_db_writer_stage_batch_size_uses_ini_cap(monkeypatch):
+  monkeypatch.setattr(st.cfg, "get_sync_db_writer_stage_max_batch", lambda: 8)
+  assert st._db_writer_stage_batch_size(1000, 2000) == 8
+  monkeypatch.setattr(st.cfg, "get_sync_db_writer_stage_max_batch", lambda: 3)
+  assert st._db_writer_stage_batch_size(1000, 2000) == 3
+
+
+def test_cap_pending_stats_files_list_truncates():
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      cap_pending_stats_file_list,
+  )
+
+  paths = ["/a/%d" % i for i in range(10)]
+  capped = cap_pending_stats_file_list(paths, 4, log_fn=lambda *_a, **_k: None)
+  assert capped == paths[:4]
+
+
+def test_rescan_pending_stats_files_reuses_set_without_copy(monkeypatch):
+  from hpcperfstats.dbload import sync_timedb_archive_helpers as helpers
+
+  discovered = ["/pending/1", "/pending/2", "/done/1"]
+  monkeypatch.setattr(
+      helpers,
+      "collect_stats_files_in_range",
+      lambda *_a, **_k: list(discovered),
+  )
+  processed = {"/done/1"}
+  result = helpers.rescan_pending_stats_files(
+      "/arc", "all", None, ".hpc", processed)
+  assert result == ["/pending/1", "/pending/2"]
+  assert processed == {"/done/1"}
+
+
+def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
+  from hpcperfstats.dbload.multiprocessing_pool_health import (
+      MultiprocessingWorkerExitError,
+  )
+
+  shutdown_requested[0] = False
+  target = "/fake/stats-oom"
+
+  def fake_rescan(*_a, **_k):
+    if fake_rescan.calls == 0:
+      fake_rescan.calls += 1
+      return [target]
+    return []
+  fake_rescan.calls = 0
+
+  def failing_watch_pool(pool, fn, iterable, *, context="", poll_timeout_s=None):
+    del pool, fn, iterable, context, poll_timeout_s
+    raise MultiprocessingWorkerExitError(
+        "worker dead",
+        dead_pids=(999,),
+        context="test",
+    )
+
+  monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+  monkeypatch.setattr(st, "imap_unordered_watch_pool", failing_watch_pool)
+  monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
+  monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_db_writer_combined_task", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1000)
+  monkeypatch.setattr(st.cfg, "get_sync_supervisor_rss_limit_mb", lambda: 0)
+  monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+  monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
+  monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+  monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+  monkeypatch.setattr(
+      st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.connections, "close_all", lambda: None)
+  terminate_calls = []
+  monkeypatch.setattr(
+      st,
+      "terminate_pool_bounded",
+      lambda pool: terminate_calls.append(pool) or True,
+  )
+
+  class _Pool:
+    pass
+
+  ingest_pool = _Pool()
+
+  class _SpawnCtx:
+    def Pool(self, *args, **kwargs):
+      del args, kwargs
+      return ingest_pool
+
+  monkeypatch.setattr(
+      st.multiprocessing,
+      "get_context",
+      lambda _name: _SpawnCtx(),
+  )
+
+  archive_pool = _FakeArchivePool()
+  archive_pool.__enter__()
+  try:
+    with pytest.raises(MultiprocessingWorkerExitError) as excinfo:
+      st.run_sync_timedb_supervisor_loop(
+          "/tmp/archive",
+          "all",
+          None,
+          ".hpc",
+          object(),
+          archive_pool,
+          run_once=True,
+      )
+  finally:
+    archive_pool.__exit__(None, None, None)
+  assert excinfo.value.exit_code == 137
+  assert terminate_calls
+
+
+def test_combined_db_writer_task_uses_single_pool_path(monkeypatch):
+  shutdown_requested[0] = False
+  target = "/fake/stats-combined"
+
+  def fake_rescan(*_a, **_k):
+    if fake_rescan.calls == 0:
+      fake_rescan.calls += 1
+      return [target]
+    return []
+  fake_rescan.calls = 0
+
+  watch_calls = []
+
+  def capture_watch(pool, fn, iterable, *, context="", poll_timeout_s=None):
+    del pool, poll_timeout_s
+    paths = list(iterable)
+    watch_calls.append((fn, context, paths))
+    return (fn(path) for path in paths)
+
+  combined_calls = {"n": 0}
+
+  def fake_combined(_lock, path, stats_file_contents=None):
+    del _lock, stats_file_contents
+    combined_calls["n"] += 1
+    return (path, True, True, 0.01)
+
+  monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+  monkeypatch.setattr(st, "imap_unordered_watch_pool", capture_watch)
+  monkeypatch.setattr(st, "_ingest_parse_and_write_file", fake_combined)
+  monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_sync_db_writer_combined_task", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1000)
+  monkeypatch.setattr(st.cfg, "get_sync_supervisor_rss_limit_mb", lambda: 0)
+  monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+  monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
+  monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+  monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+  monkeypatch.setattr(
+      st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.connections, "close_all", lambda: None)
+
+  pool_count = {"n": 0}
+
+  class _Pool:
+    pass
+
+  def fake_pool(*_a, **_k):
+    pool_count["n"] += 1
+    return _Pool()
+
+  class _SpawnCtx:
+    def Pool(self, *args, **kwargs):
+      del args, kwargs
+      return fake_pool()
+
+  monkeypatch.setattr(
+      st.multiprocessing,
+      "get_context",
+      lambda _name: _SpawnCtx(),
+  )
+
+  archive_pool = _FakeArchivePool()
+  archive_pool.__enter__()
+  try:
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive",
+        "all",
+        None,
+        ".hpc",
+        object(),
+        archive_pool,
+        run_once=True,
+    )
+  finally:
+    archive_pool.__exit__(None, None, None)
+
+  assert combined_calls["n"] == 1
+  assert watch_calls[0][1] == "sync_timedb ingest pool"
+  assert pool_count["n"] == 1
+
+
+def test_maybe_exit_on_supervisor_rss_limit_exits_137(monkeypatch, tmp_path):
+  monkeypatch.setattr(st.cfg, "get_sync_supervisor_rss_limit_mb", lambda: 1)
+  monkeypatch.setattr(st.cfg, "get_sync_supervisor_rss_check_every_n_chunks", lambda: 1)
+  status = tmp_path / "status"
+  status.write_text("VmRSS:\t2048 kB\n", encoding="utf-8")
+  monkeypatch.setattr(st, "read_process_rss_bytes", lambda: 2048 * 1024)
+  with pytest.raises(SystemExit) as excinfo:
+    st._maybe_exit_on_supervisor_rss_limit(1)
+  assert excinfo.value.code == 137
 
 
 def test_sync_worker_db_task_closes_connections(monkeypatch):

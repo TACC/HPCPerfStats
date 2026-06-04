@@ -107,6 +107,26 @@ def terminate_pool_bounded(active_pool, timeout_s=30.0):
   return all_done
 
 
+def close_pool_bounded(active_pool, timeout_s=30.0, *, force_terminate=False):
+  """Close a pool with a bounded join; terminate when workers already exited."""
+  if active_pool is None:
+    return True
+  if force_terminate or dead_pool_worker_pids(active_pool):
+    return terminate_pool_bounded(active_pool, timeout_s)
+  try:
+    active_pool.close()
+  except Exception:
+    pass
+  all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
+  if not all_done:
+    log_print(
+        "Pool close join timeout; terminating lingering_workers=%s" % alive,
+        flush=True,
+    )
+    return terminate_pool_bounded(active_pool, timeout_s)
+  return all_done
+
+
 def imap_unordered_watch_pool(
     pool,
     fn,

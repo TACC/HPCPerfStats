@@ -217,6 +217,21 @@ secret_key = change-me-to-a-long-random-string
 # Parse-worker to DB-writer queue pipeline (default no).
 # sync_enable_db_writer_pipeline = no
 
+# Parse+write in one ingest worker; no parent DataFrame staging (default no).
+# sync_db_writer_combined_task = no
+
+# Max parse payloads staged before db-writer drain when split pipeline (default 8).
+# sync_db_writer_stage_max_batch = 8
+
+# Stats files per ingest chunk (default 1000).
+# sync_ingest_chunk_size = 1000
+
+# Supervisor RSS limit MiB; 0 disables fail-fast exit (default 0).
+# sync_supervisor_rss_limit_mb = 0
+
+# Check supervisor RSS every N ingest chunks (default 1).
+# sync_supervisor_rss_check_every_n_chunks = 1
+
 # DB-writer pool size as fraction of ingest pool (default 0.80).
 # sync_db_writer_pool_multiplier = 0.80
 

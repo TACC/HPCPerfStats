@@ -19,8 +19,15 @@ class _DeadWorker:
 class _AliveWorker:
   pid = 4243
 
+  def __init__(self):
+    self._joined = False
+
   def is_alive(self):
-    return True
+    return not self._joined
+
+  def join(self, timeout=None):
+    del timeout
+    self._joined = True
 
 
 class _BlockingPool:
@@ -114,3 +121,30 @@ def test_async_result_get_watch_pool_returns_when_ready():
       poll_timeout_s=0.05,
       context="test_ready",
   ) == [True, False]
+
+
+class _CloseablePool:
+  closed = False
+  terminated = False
+
+  def __init__(self, workers):
+    self._pool = workers
+
+  def close(self):
+    self.closed = True
+
+  def terminate(self):
+    self.terminated = True
+
+
+def test_close_pool_bounded_terminates_when_worker_dead():
+  pool = _CloseablePool([_DeadWorker()])
+  assert mph.close_pool_bounded(pool, timeout_s=0.1, force_terminate=False) is True
+  assert pool.terminated is True
+
+
+def test_close_pool_bounded_closes_alive_workers():
+  pool = _CloseablePool([_AliveWorker()])
+  assert mph.close_pool_bounded(pool, timeout_s=0.1) is True
+  assert pool.closed is True
+  assert pool.terminated is False
