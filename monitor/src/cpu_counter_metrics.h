@@ -2,32 +2,33 @@
 #define _CPU_COUNTER_METRICS_H_
 
 #define CPU_COUNTER_METRICS_KEYS \
-  X(CTL0, "C", ""), \
-  X(CTL1, "C", ""), \
-  X(CTL2, "C", ""), \
-  X(CTL3, "C", ""), \
-  X(CTL4, "C", ""), \
-  X(CTL5, "C", ""), \
-  X(CTL6, "C", ""), \
-  X(CTL7, "C", ""), \
-  X(CTR0, "E,W=48", ""), \
-  X(CTR1, "E,W=48", ""), \
-  X(CTR2, "E,W=48", ""), \
-  X(CTR3, "E,W=48", ""), \
-  X(CTR4, "E,W=48", ""), \
-  X(CTR5, "E,W=48", ""), \
-  X(CTR6, "E,W=48", ""), \
-  X(CTR7, "E,W=48", ""), \
+  X(CPU_UTIL_TOTAL_ACCUM_US, "E,W=64", ""), \
+  X(CPU_UTIL_USER_ACCUM_US, "E,W=64", ""), \
+  X(CPU_UTIL_SYS_ACCUM_US, "E,W=64", ""), \
+  X(CPU_UTIL_IRQ_ACCUM_US, "E,W=64", ""), \
+  X(CPU_UTIL_NICE_ACCUM_US, "E,W=64", ""), \
+  X(CPU_CLOCK_EST_CYCLES, "E,W=64", ""), \
+  X(INSTR_RETIRED_ANY, "E,W=48", ""), \
+  X(CPU_CLK_UNHALTED_CORE, "E,W=48", ""), \
+  X(CPU_CLK_UNHALTED_REF, "E,W=48", ""), \
+  X(MEM_LOAD_UOPS_RETIRED_L1_HIT, "E,W=48", ""), \
+  X(MEM_LOAD_UOPS_RETIRED_L2_HIT, "E,W=48", ""), \
+  X(MEM_LOAD_UOPS_RETIRED_LLC_HIT, "E,W=48", ""), \
+  X(L1D_REPLACEMENT, "E,W=48", ""), \
+  X(RETIRED_INSTRUCTIONS, "E,W=48", ""), \
+  X(RETIRED_BRANCH_INSTR, "E,W=48", ""), \
+  X(RETIRED_MISP_BRANCH_INSTR, "E,W=48", ""), \
+  X(LS_DISPATCH, "E,W=48", ""), \
   X(FIXED_CTR0, "E,W=48", ""), \
   X(FIXED_CTR1, "E,W=48", ""), \
   X(FIXED_CTR2, "E,W=48", ""), \
   X(INST_RETIRED, "E,W=48", ""), \
   X(APERF, "E,W=48", ""), \
   X(MPERF, "E,W=48", ""), \
-  X(DF_CTR0, "E,W=48", ""), \
-  X(DF_CTR1, "E,W=48", ""), \
-  X(DF_CTR2, "E,W=48", ""), \
-  X(DF_CTR3, "E,W=48", ""), \
+  X(EVENT_DRAM_CHANNEL_0, "E,W=48", ""), \
+  X(EVENT_DRAM_CHANNEL_1, "E,W=48", ""), \
+  X(EVENT_DRAM_CHANNEL_2, "E,W=48", ""), \
+  X(EVENT_DRAM_CHANNEL_3, "E,W=48", ""), \
   X(FP_ARITH_INST_RETIRED_SCALAR_DOUBLE, "E,W=48", ""), \
   X(FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE, "E,W=48", ""), \
   X(FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE, "E,W=48", ""), \

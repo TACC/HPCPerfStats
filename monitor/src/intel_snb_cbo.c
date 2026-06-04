@@ -6,14 +6,10 @@
 #include "intel_topology_walk.h"
 
 #define KEYS                                                                 \
-  X(CTL0, "C", ""),                                                          \
-      X(CTL1, "C", ""),                                                      \
-      X(CTL2, "C", ""),                                                      \
-      X(CTL3, "C", ""),                                                      \
-      X(CTR0, "E,W=44", ""),                                                 \
-      X(CTR1, "E,W=44", ""),                                                 \
-      X(CTR2, "E,W=44", ""),                                                 \
-      X(CTR3, "E,W=44", "")
+  X(LLC_LOOKUP_DATA_READ, "E,W=44", ""),                                    \
+      X(LLC_LOOKUP_WRITE, "E,W=44", ""),                                    \
+      X(RING_IV_USED, "E,W=44", ""),                                        \
+      X(COUNTER0_OCCUPANCY, "E,W=44", "")
 
 #define CBOX_PERF_EVENT(event, umask)                                        \
   ((event) | (umask << 8) | (0ULL << 17) | (0ULL << 18) | (0ULL << 19)        \
@@ -29,6 +25,12 @@ static uint64_t events[] = {
     LLC_LOOKUP_WRITE,
     RING_IV_USED,
     COUNTER0_OCCUPANCY,
+};
+static const char *const counter_keys[4] = {
+    "LLC_LOOKUP_DATA_READ",
+    "LLC_LOOKUP_WRITE",
+    "RING_IV_USED",
+    "COUNTER0_OCCUPANCY",
 };
 
 struct snb_cbo_begin_ctx {
@@ -74,7 +76,7 @@ static void snb_cbo_collect_visit(void *ctx, char *cpu, int pkg_id,
   int j;
 
   for (j = 0; j < nr_cores; j++)
-    intel_uncore_cbo_snb_ivb_collect_box(c->type, cpu, pkg_id, j);
+    intel_uncore_cbo_snb_ivb_collect_box(c->type, cpu, pkg_id, j, counter_keys);
 }
 
 static void intel_snb_cbo_collect(struct stats_type *type)

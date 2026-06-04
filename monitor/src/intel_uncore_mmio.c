@@ -33,23 +33,16 @@ void intel_uncore_mmio_bank_collect(struct stats_type *type,
 				    const char *stats_dev_key,
 				    uint32_t pci_cfg_base,
 				    uint32_t *map_dev,
+				    const char *const ctr_keys[4],
 				    unsigned ctrctl0_byte_off,
 				    const unsigned ctr_lo_byte_off[4],
 				    const unsigned ctr_hi_byte_off[4])
 {
-	static const char *ctl_names[] = {"CTL0", "CTL1", "CTL2", "CTL3"};
-	static const char *ctr_names[] = {"CTR0", "CTR1", "CTR2", "CTR3"};
 	struct stats *stats = get_current_stats(type, stats_dev_key);
 	int i;
 
 	if (stats == NULL)
 		return;
-
-	for (i = 0; i < 4; i++) {
-		unsigned wi = intel_uncore_mmio_word_index(
-		    pci_cfg_base, ctrctl0_byte_off + (unsigned)i * 4u);
-		stats_set(stats, ctl_names[i], (uint64_t)map_dev[wi]);
-	}
 
 	for (i = 0; i < 4; i++) {
 		unsigned lo =
@@ -58,6 +51,7 @@ void intel_uncore_mmio_bank_collect(struct stats_type *type,
 		    intel_uncore_mmio_word_index(pci_cfg_base, ctr_hi_byte_off[i]);
 		uint64_t v =
 		    ((uint64_t)map_dev[hi] << 32) | (uint64_t)map_dev[lo];
-		stats_set(stats, ctr_names[i], v);
+		if (ctr_keys != NULL && ctr_keys[i] != NULL)
+			stats_set(stats, ctr_keys[i], v);
 	}
 }

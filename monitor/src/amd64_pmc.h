@@ -60,31 +60,21 @@
 #define DISPATCH_STALL_CYCLES0   PERF_EVENT(0xAE, 0xFF) 
 
 #define KEYS \
-  X(CTL0, "C", ""), \
-  X(CTL1, "C", ""), \
-  X(CTL2, "C", ""), \
-  X(CTL3, "C", ""), \
-  X(CTL4, "C", ""), \
-  X(CTL5, "C", ""), \
-  X(CTR0, "E,W=48", ""), \
-  X(CTR1, "E,W=48", ""), \
-  X(CTR2, "E,W=48", ""), \
-  X(CTR3, "E,W=48", ""), \
-  X(CTR4, "E,W=48", ""), \
-  X(CTR5, "E,W=48", ""), \
+  X(FLOPS, "E,W=48", ""), \
+  X(MERGE, "E,W=48", ""), \
+  X(BRANCH_INST_RETIRED, "E,W=48", ""), \
+  X(BRANCH_INST_RETIRED_MISS, "E,W=48", ""), \
+  X(DISPATCH_STALL_CYCLES1, "E,W=48", ""), \
+  X(DISPATCH_STALL_CYCLES0, "E,W=48", ""), \
   X(INST_RETIRED, "E,W=48", ""), \
   X(APERF, "E,W=48", ""), \
   X(MPERF, "E,W=48", "")
 
 #define DF_KEYS \
-  X(CTL0, "C", ""), \
-  X(CTL1, "C", ""), \
-  X(CTL2, "C", ""), \
-  X(CTL3, "C", ""), \
-  X(CTR0, "E,W=48", ""), \
-  X(CTR1, "E,W=48", ""), \
-  X(CTR2, "E,W=48", ""), \
-  X(CTR3, "E,W=48", "")
+  X(EVENT_DRAM_CHANNEL_0, "E,W=48", ""), \
+  X(EVENT_DRAM_CHANNEL_1, "E,W=48", ""), \
+  X(EVENT_DRAM_CHANNEL_2, "E,W=48", ""), \
+  X(EVENT_DRAM_CHANNEL_3, "E,W=48", "")
 
 
 #define PERF_EVENT(event_select, unit_mask) \

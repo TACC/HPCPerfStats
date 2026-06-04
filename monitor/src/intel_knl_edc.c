@@ -47,14 +47,10 @@
 
 #define ECLK_PMON_CTRCTL0_REG   0xA20
 
-#define CTL_KEYS                                                              \
-	X(CTL0, "C", ""),                                                     \
-	    X(CTL1, "C", ""), X(CTL2, "C", ""), X(CTL3, "C", "")
-#define CTR_KEYS                                                              \
-	X(CTR0, "E,W=48", ""),                                                \
-	    X(CTR1, "E,W=48", ""), X(CTR2, "E,W=48", ""), X(CTR3, "E,W=48", "")
-
-#define KEYS CTL_KEYS CTR_KEYS
+#define KEYS                                                              \
+	X(EDC_HIT_CLEAN, "E,W=48", ""),                                                \
+	    X(EDC_HIT_DIRTY, "E,W=48", ""), X(EDC_MISS_CLEAN, "E,W=48", ""), X(EDC_MISS_DIRTY, "E,W=48", ""), \
+	    X(RPQ_INSERTS, "E,W=48", ""), X(WPQ_INSERTS, "E,W=48", ""), X(ECLK_CYCLES, "E,W=48", "")
 
 #define PERF_EVENT(event, umask)                                              \
 	((event) | ((umask) << 8) | (0UL << 17) | (0UL << 18) /* Edge */       \
@@ -96,6 +92,12 @@ static const unsigned knl_eclk_ctr_hi[] = {
 	ECLK_PMON_CTR2_HIGH_REG,
 	ECLK_PMON_CTR3_HIGH_REG,
 };
+static const char *const knl_edc_uclk_keys[4] = {
+	"EDC_HIT_CLEAN", "EDC_HIT_DIRTY", "EDC_MISS_CLEAN", "EDC_MISS_DIRTY"
+};
+static const char *const knl_edc_eclk_keys[4] = {
+	"RPQ_INSERTS", "WPQ_INSERTS", "ECLK_CYCLES", NULL
+};
 
 static void intel_knl_edc_uclk_begin_dev(uint32_t dev, uint32_t *map_dev,
 					 uint32_t *events, int nr_events)
@@ -129,7 +131,7 @@ static void intel_knl_edc_uclk_collect_dev(struct stats_type *type,
 	TRACE("dev %s\n", dev_str);
 
 	intel_uncore_mmio_bank_collect(type, dev_str, pci, map_dev,
-				       UCLK_PMON_CTRCTL0_REG, knl_uclk_ctr_lo,
+				       knl_edc_uclk_keys, UCLK_PMON_CTRCTL0_REG, knl_uclk_ctr_lo,
 				       knl_uclk_ctr_hi);
 }
 
@@ -143,7 +145,7 @@ static void intel_knl_edc_eclk_collect_dev(struct stats_type *type,
 	TRACE("dev %s\n", dev_str);
 
 	intel_uncore_mmio_bank_collect(type, dev_str, pci, map_dev,
-				       ECLK_PMON_CTRCTL0_REG, knl_eclk_ctr_lo,
+				       knl_edc_eclk_keys, ECLK_PMON_CTRCTL0_REG, knl_eclk_ctr_lo,
 				       knl_eclk_ctr_hi);
 }
 

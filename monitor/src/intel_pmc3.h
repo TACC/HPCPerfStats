@@ -84,44 +84,36 @@
 */
 
 #define KEYS \
-    X(CTL0, "C", ""), \
-    X(CTL1, "C", ""), \
-    X(CTL2, "C", ""), \
-    X(CTL3, "C", ""), \
-    X(CTL4, "C", ""), \
-    X(CTL5, "C", ""), \
-    X(CTL6, "C", ""), \
-    X(CTL7, "C", ""),	   \
-    X(CTR0, "E,W=48", ""), \
-    X(CTR1, "E,W=48", ""), \
-    X(CTR2, "E,W=48", ""), \
-    X(CTR3, "E,W=48", ""), \
-    X(CTR4, "E,W=48", ""), \
-    X(CTR5, "E,W=48", ""), \
-    X(CTR6, "E,W=48", ""), \
-    X(CTR7, "E,W=48", ""),	 \
+    X(FP_ARITH_INST_RETIRED_SCALAR_DOUBLE, "E,W=48", ""), \
+    X(FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE, "E,W=48", ""), \
+    X(FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE, "E,W=48", ""), \
+    X(FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE, "E,W=48", ""), \
+    X(FP_ARITH_INST_RETIRED_SCALAR_SINGLE, "E,W=48", ""), \
+    X(FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE, "E,W=48", ""), \
+    X(FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE, "E,W=48", ""), \
+    X(FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE, "E,W=48", ""),	 \
+    X(MEM_UOPS_RETIRED_ALL_LOADS, "E,W=48", ""), \
+    X(MEM_LOAD_UOPS_RETIRED_L1_HIT, "E,W=48", ""), \
+    X(MEM_LOAD_UOPS_RETIRED_L2_HIT, "E,W=48", ""), \
+    X(MEM_LOAD_UOPS_RETIRED_LLC_HIT, "E,W=48", ""), \
+    X(L1D_REPLACEMENT, "E,W=48", ""), \
+    X(DTLB_LOAD_MISSES_MISS_CAUSES_A_WALK, "E,W=48", ""), \
+    X(RESOURCE_STALLS_ANY, "E,W=48", ""), \
+    X(L2_LINES_IN_ALL, "E,W=48", ""), \
+    X(MEM_UNCORE_RETIRED_REMOTE_DRAM, "E,W=48", ""), \
+    X(MEM_UNCORE_RETIRED_LOCAL_DRAM, "E,W=48", ""), \
+    X(FP_COMP_OPS_EXE_SSE_FP_PACKED, "E,W=48", ""), \
+    X(FP_COMP_OPS_EXE_SSE_FP_SCALAR, "E,W=48", ""), \
+    X(SIMD_FP_256_PACKED_DOUBLE, "E,W=48", ""), \
     X(FIXED_CTR0, "E,W=48", ""), \
     X(FIXED_CTR1, "E,W=48", ""), \
     X(FIXED_CTR2, "E,W=48", "")
 
-#define HT_KEYS \
-    X(CTL0, "C", ""), \
-    X(CTL1, "C", ""), \
-    X(CTL2, "C", ""), \
-    X(CTL3, "C", ""), \
-    X(CTR0, "C", ""), \
-    X(CTR1, "C", ""), \
-    X(CTR2, "C", ""), \
-    X(CTR3, "C", ""), \
-    X(FIXED_CTR0, "E,W=48", ""), \
-    X(FIXED_CTR1, "E,W=48", ""), \
-    X(FIXED_CTR2, "E,W=48", "")
+#define HT_KEYS KEYS
 
 #define KNL_KEYS		 \
-  X(CTL0, "C", ""),		 \
-    X(CTL1, "C", ""),		 \
-    X(CTR0, "E,W=40", ""),	 \
-    X(CTR1, "E,W=40", ""),	 \
+  X(MEM_UOPS_RETIRED_ALL_LOADS_KNL, "E,W=40", ""),	 \
+    X(MEM_UOPS_RETIRED_L2_HIT_LOADS_KNL, "E,W=40", ""),	 \
     X(FIXED_CTR0, "E,W=40", ""), \
     X(FIXED_CTR1, "E,W=40", ""), \
     X(FIXED_CTR2, "E,W=40", "")
@@ -237,6 +229,74 @@ static  uint64_t nhm_events[] = {
   FP_COMP_OPS_EXE_SSE_FP_PACKED,
   FP_COMP_OPS_EXE_SSE_FP_SCALAR
 };
+
+static const char *const skx_event_keys[] = {
+  "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",
+  "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE",
+  "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE",
+  "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE",
+  "FP_ARITH_INST_RETIRED_SCALAR_SINGLE",
+  "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE",
+  "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE",
+  "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
+};
+static const char *const knl_event_keys[] = {
+  "MEM_UOPS_RETIRED_ALL_LOADS_KNL",
+  "MEM_UOPS_RETIRED_L2_HIT_LOADS_KNL",
+};
+static const char *const hsw_event_keys[] = {
+  "MEM_UOPS_RETIRED_ALL_LOADS",
+  "MEM_LOAD_UOPS_RETIRED_L1_HIT",
+  "MEM_LOAD_UOPS_RETIRED_L2_HIT",
+  "L1D_REPLACEMENT",
+  "MEM_LOAD_UOPS_RETIRED_LLC_HIT",
+  "DTLB_LOAD_MISSES_MISS_CAUSES_A_WALK",
+  "RESOURCE_STALLS_ANY",
+  "L2_LINES_IN_ALL",
+};
+static const char *const snb_event_keys[] = {
+  "MEM_UOPS_RETIRED_ALL_LOADS",
+  "MEM_LOAD_UOPS_RETIRED_L1_HIT",
+  "MEM_LOAD_UOPS_RETIRED_L2_HIT",
+  "MEM_LOAD_UOPS_RETIRED_LLC_HIT",
+  "L1D_REPLACEMENT",
+  "FP_COMP_OPS_EXE_SSE_FP_SCALAR",
+  "FP_COMP_OPS_EXE_SSE_FP_PACKED",
+  "SIMD_FP_256_PACKED_DOUBLE",
+};
+static const char *const nhm_event_keys[] = {
+  "MEM_UNCORE_RETIRED_REMOTE_DRAM",
+  "MEM_UNCORE_RETIRED_LOCAL_DRAM",
+  "FP_COMP_OPS_EXE_SSE_FP_PACKED",
+  "FP_COMP_OPS_EXE_SSE_FP_SCALAR",
+};
+
+static const char *const *intel_pmc3_event_keys(size_t *nkeys)
+{
+  const char *const *keys = NULL;
+  size_t n = 0;
+
+  switch (processor) {
+  case NEHALEM:
+  case WESTMERE:
+    keys = nhm_event_keys; n = sizeof(nhm_event_keys) / sizeof(nhm_event_keys[0]); break;
+  case SANDYBRIDGE:
+  case IVYBRIDGE:
+    keys = snb_event_keys; n = sizeof(snb_event_keys) / sizeof(snb_event_keys[0]); break;
+  case HASWELL:
+  case BROADWELL:
+    keys = hsw_event_keys; n = sizeof(hsw_event_keys) / sizeof(hsw_event_keys[0]); break;
+  case KNL:
+    keys = knl_event_keys; n = sizeof(knl_event_keys) / sizeof(knl_event_keys[0]); break;
+  case SKYLAKE:
+    keys = skx_event_keys; n = sizeof(skx_event_keys) / sizeof(skx_event_keys[0]); break;
+  default:
+    break;
+  }
+  if (nkeys != NULL)
+    *nkeys = n;
+  return keys;
+}
 
 //! Generate bitmask of n 1s
 #define BIT_MASK(n) (~( ((~0ULL) << ((n)-1)) << 1 ))

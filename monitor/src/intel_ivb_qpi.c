@@ -2,19 +2,13 @@
 #include "JOIN.h"
 #include "intel_uncore_pci.h"
 
-#define CTL_KEYS                                                             \
-  X(CTL0, "C", ""),                                                          \
-      X(CTL1, "C", ""),                                                      \
-      X(CTL2, "C", ""),                                                      \
-      X(CTL3, "C", "")
-
 #define CTR_KEYS                                                             \
-  X(CTR0, "E,W=48,U=flt", ""),                                               \
-      X(CTR1, "E,W=48,U=flt", ""),                                           \
-      X(CTR2, "E,W=48,U=flt", ""),                                           \
-      X(CTR3, "E,W=48,U=flt", "")
+  X(TxL_FLITS_G1_SNP, "E,W=48,U=flt", ""),                                    \
+      X(TxL_FLITS_G1_HOM, "E,W=48,U=flt", ""),                                \
+      X(G1_DRS_DATA, "E,W=48,U=flt", ""),                                     \
+      X(G2_NCB_DATA, "E,W=48,U=flt", "")
 
-#define KEYS CTL_KEYS, CTR_KEYS
+#define KEYS CTR_KEYS
 
 #define PERF_EVENT(event, umask)                                             \
   ((event) | (umask << 8) | (0UL << 18) | (1UL << 21) | (1UL << 22)           \
@@ -31,12 +25,20 @@ static uint32_t events[] = {
     G1_DRS_DATA,
     G2_NCB_DATA,
 };
+static const char *const event_keys[] = {
+    "TxL_FLITS_G1_SNP",
+    "TxL_FLITS_G1_HOM",
+    "G1_DRS_DATA",
+    "G2_NCB_DATA",
+};
 static int dids[] = {0x0e32, 0x0e33, 0x0e3a};
 
 static const struct intel_uncore_pci_cfg intel_ivb_qpi_pci_cfg = {
     .pci_dids = dids,
     .nr_pci_dids = 3,
     .events = events,
+    .event_keys = event_keys,
+    .fixed_ctr_key = NULL,
     .nr_events = 4,
 };
 

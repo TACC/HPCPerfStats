@@ -37,14 +37,9 @@
 #define DCLK_PMON_CTRCTL0_REG   0xD8
 #define U_MSR_PMON_GLOBAL_CTL   0x0700
 
-#define CTL_KEYS                                                              \
-	X(CTL0, "C", ""),                                                     \
-	    X(CTL1, "C", ""), X(CTL2, "C", ""), X(CTL3, "C", "")
-#define CTR_KEYS                                                              \
-	X(CTR0, "E,W=48", ""),                                                \
-	    X(CTR1, "E,W=48", ""), X(CTR2, "E,W=48", ""), X(CTR3, "E,W=48", "")
-
-#define KEYS CTL_KEYS CTR_KEYS
+#define KEYS                                                              \
+	X(CAS_READS, "E,W=48", ""),                                                \
+	    X(CAS_WRITES, "E,W=48", ""), X(ACT_COUNT, "E,W=48", ""), X(PRE_COUNT_MISS, "E,W=48", "")
 
 #define PERF_EVENT(event, umask)                                              \
 	((event) | ((umask) << 8) | (0UL << 17) /* Clear counter */           \
@@ -68,6 +63,16 @@ static const unsigned skx_ctr_hi[] = {
 	DCLK_PMON_CTR1_HIGH_REG,
 	DCLK_PMON_CTR2_HIGH_REG,
 	DCLK_PMON_CTR3_HIGH_REG,
+};
+static const char *const skx_counter_keys[4] = {
+	"CAS_READS", "CAS_WRITES", "ACT_COUNT", "PRE_COUNT_MISS"
+};
+
+static const char *const counter_keys[4] = {
+	"CAS_READS",
+	"CAS_WRITES",
+	"ACT_COUNT",
+	"PRE_COUNT_MISS",
 };
 
 static int intel_skx_imc_begin_dev(uint32_t bus, uint32_t dev, uint32_t fun,
@@ -111,7 +116,7 @@ static void intel_skx_imc_collect_dev(struct stats_type *type, uint32_t bus,
 	TRACE("dev %s\n", dev_str);
 
 	intel_uncore_mmio_bank_collect(type, dev_str, pci, map_dev,
-				       DCLK_PMON_CTRCTL0_REG, skx_ctr_lo,
+				       skx_counter_keys, DCLK_PMON_CTRCTL0_REG, skx_ctr_lo,
 				       skx_ctr_hi);
 }
 

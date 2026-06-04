@@ -13,6 +13,8 @@ struct intel_uncore_pci_cfg {
   const int *pci_dids;
   int nr_pci_dids;
   const uint32_t *events;
+  const char *const *event_keys;
+  const char *fixed_ctr_key;
   int nr_events;
 };
 

@@ -163,37 +163,10 @@ static const struct intel_pcu_msr_layout pcu_layout_v3 = {
   -# Fixed registers in order
 */
 #define KEYS \
-    X(CTL0,"C",""),	\
-    X(CTL1,"C",""),	\
-    X(CTL2,"C",""),	\
-    X(CTL3,"C",""),	\
-    X(CTR0,"E,W=48",""), \
-    X(CTR1,"E,W=48",""), \
-    X(CTR2,"E,W=48",""), \
-    X(CTR3,"E,W=48",""), \
-    X(FIXED_CTR0,"E,W=48",""), \
-    X(FIXED_CTR1,"E,W=48","")
-
-#define V1_KEYS \
-    X(V1_CTL0,"C",""),	\
-    X(V1_CTL1,"C",""),	\
-    X(V1_CTL2,"C",""),	\
-    X(V1_CTL3,"C",""),	\
-    X(V1_CTR0,"E,W=48",""), \
-    X(V1_CTR1,"E,W=48",""), \
-    X(V1_CTR2,"E,W=48",""), \
-    X(V1_CTR3,"E,W=48",""), \
-    X(FIXED_CTR0,"E,W=48",""), \
-    X(FIXED_CTR1,"E,W=48","")
-#define V3_KEYS \
-    X(V3_CTL0,"C",""),	\
-    X(V3_CTL1,"C",""),	\
-    X(V3_CTL2,"C",""),	\
-    X(V3_CTL3,"C",""),	\
-    X(V3_CTR0,"E,W=48",""), \
-    X(V3_CTR1,"E,W=48",""), \
-    X(V3_CTR2,"E,W=48",""), \
-    X(V3_CTR3,"E,W=48",""), \
+    X(FREQ_MAX_TEMP_CYCLES,"E,W=48",""), \
+    X(FREQ_MAX_POWER_CYCLES,"E,W=48",""), \
+    X(FREQ_MIN_IO_CYCLES,"E,W=48",""), \
+    X(FREQ_MIN_SNOOP_CYCLES,"E,W=48",""), \
     X(FIXED_CTR0,"E,W=48",""), \
     X(FIXED_CTR1,"E,W=48","")
 
@@ -353,29 +326,23 @@ static void intel_pcu_collect_socket(struct stats_type *type, char *cpu, int pkg
     goto out;
 
   if (p == SANDYBRIDGE || p == IVYBRIDGE) {
-#define X(k,r...) \
-  ({ \
-    uint64_t val = 0; \
-    if (msr_read_u64(msr_fd, k, &val) < 0) \
-      ERROR("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, k, cpu); \
-    else \
-      stats_set(stats, #k, val); \
-  })
-  V1_KEYS;
-#undef X
+    uint64_t val = 0;
+    if (msr_read_u64(msr_fd, V1_CTR0, &val) == 0) stats_set(stats, "FREQ_MAX_TEMP_CYCLES", val);
+    if (msr_read_u64(msr_fd, V1_CTR1, &val) == 0) stats_set(stats, "FREQ_MAX_POWER_CYCLES", val);
+    if (msr_read_u64(msr_fd, V1_CTR2, &val) == 0) stats_set(stats, "FREQ_MIN_IO_CYCLES", val);
+    if (msr_read_u64(msr_fd, V1_CTR3, &val) == 0) stats_set(stats, "FREQ_MIN_SNOOP_CYCLES", val);
+    if (msr_read_u64(msr_fd, FIXED_CTR0, &val) == 0) stats_set(stats, "FIXED_CTR0", val);
+    if (msr_read_u64(msr_fd, FIXED_CTR1, &val) == 0) stats_set(stats, "FIXED_CTR1", val);
   }
 
   if (p == HASWELL || p == BROADWELL) {
-#define X(k,r...) \
-  ({ \
-    uint64_t val = 0; \
-    if (msr_read_u64(msr_fd, k, &val) < 0) \
-      ERROR("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, k, cpu); \
-    else \
-      stats_set(stats, #k, val); \
-  })
-  V3_KEYS;
-#undef X
+    uint64_t val = 0;
+    if (msr_read_u64(msr_fd, V3_CTR0, &val) == 0) stats_set(stats, "FREQ_MAX_TEMP_CYCLES", val);
+    if (msr_read_u64(msr_fd, V3_CTR1, &val) == 0) stats_set(stats, "FREQ_MAX_POWER_CYCLES", val);
+    if (msr_read_u64(msr_fd, V3_CTR2, &val) == 0) stats_set(stats, "FREQ_MIN_IO_CYCLES", val);
+    if (msr_read_u64(msr_fd, V3_CTR3, &val) == 0) stats_set(stats, "FREQ_MIN_SNOOP_CYCLES", val);
+    if (msr_read_u64(msr_fd, FIXED_CTR0, &val) == 0) stats_set(stats, "FIXED_CTR0", val);
+    if (msr_read_u64(msr_fd, FIXED_CTR1, &val) == 0) stats_set(stats, "FIXED_CTR1", val);
   }
 
  out:

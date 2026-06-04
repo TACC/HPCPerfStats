@@ -6,14 +6,10 @@
 #include "intel_topology_walk.h"
 
 #define KEYS                                                                 \
-  X(CTL0, "C", ""),                                                          \
-      X(CTL1, "C", ""),                                                      \
-      X(CTL2, "C", ""),                                                      \
-      X(CTL3, "C", ""),                                                      \
-      X(CTR0, "E,W=48", ""),                                                 \
-      X(CTR1, "E,W=48", ""),                                                 \
-      X(CTR2, "E,W=48", ""),                                                 \
-      X(CTR3, "E,W=48", "")
+  X(RxR_OCCUPANCY, "E,W=48", ""),                                                 \
+      X(LLC_LOOKUP_DATA_READ, "E,W=48", ""),                                                 \
+      X(RING_IV_USED, "E,W=48", ""),                                                 \
+      X(LLC_LOOKUP_WRITE, "E,W=48", "")
 
 #define CBOX_PERF_EVENT(event, umask)                                        \
   ((event) | (umask << 8) | (0ULL << 17) | (0ULL << 18) | (0ULL << 19)        \
@@ -29,6 +25,12 @@ static uint64_t events[] = {
     LLC_LOOKUP_DATA_READ,
     RING_IV_USED,
     LLC_LOOKUP_WRITE,
+};
+static const char *const counter_keys[4] = {
+    "RxR_OCCUPANCY",
+    "LLC_LOOKUP_DATA_READ",
+    "RING_IV_USED",
+    "LLC_LOOKUP_WRITE",
 };
 
 struct bdw_cbo_begin_ctx {
@@ -73,7 +75,7 @@ static void bdw_cbo_collect_visit(void *ctx, char *cpu, int pkg_id,
   int j;
 
   for (j = 0; j < nr_cores; j++)
-    intel_uncore_cbo_hsw_bdw_collect_box(c->type, cpu, pkg_id, j);
+    intel_uncore_cbo_hsw_bdw_collect_box(c->type, cpu, pkg_id, j, counter_keys);
 }
 
 static void intel_bdw_cbo_collect(struct stats_type *type)

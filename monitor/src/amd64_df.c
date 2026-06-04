@@ -33,6 +33,16 @@ static void amd64_df_collect_cpu(struct stats_type *type, char *cpu)
 {
 	int msr_fd = -1;
 	struct stats *stats = NULL;
+	static const uint64_t ctr_msrs[4] = {
+		MSR_DF_CTR0, MSR_DF_CTR1, MSR_DF_CTR2, MSR_DF_CTR3
+	};
+	static const char *const keys[4] = {
+		"EVENT_DRAM_CHANNEL_0",
+		"EVENT_DRAM_CHANNEL_1",
+		"EVENT_DRAM_CHANNEL_2",
+		"EVENT_DRAM_CHANNEL_3"
+	};
+	int i;
 
 	stats = get_current_stats(type, cpu);
 	if (stats == NULL)
@@ -42,17 +52,14 @@ static void amd64_df_collect_cpu(struct stats_type *type, char *cpu)
 	if (msr_fd < 0)
 		goto out;
 
-#define X(k, r...)                                                              \
-	({                                                                      \
-		uint64_t val = 0;                                               \
-		if (msr_read_u64(msr_fd, MSR_DF_##k, &val) < 0)                 \
-			TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, \
-			      MSR_DF_##k, cpu);                                 \
-		else                                                            \
-			stats_set(stats, #k, val);                              \
-	})
-	KEYS;
-#undef X
+	for (i = 0; i < 4; i++) {
+		uint64_t val = 0;
+		if (msr_read_u64(msr_fd, ctr_msrs[i], &val) < 0)
+			TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n",
+			      keys[i], (unsigned int)ctr_msrs[i], cpu);
+		else
+			stats_set(stats, keys[i], val);
+	}
 
 out:
 	if (msr_fd >= 0)

@@ -54,14 +54,10 @@
 
 
 #define KEYS \
-  X(CTL0, "C", ""), \
-  X(CTL1, "C", ""), \
-  X(CTL2, "C", ""), \
-  X(CTL3, "C", ""), \
-  X(CTR0, "E,W=48", ""), \
-  X(CTR1, "E,W=48", ""), \
-  X(CTR2, "E,W=48", ""), \
-  X(CTR3, "E,W=48", "")
+  X(EVENT_DRAM_CHANNEL_0, "E,W=48", ""), \
+  X(EVENT_DRAM_CHANNEL_1, "E,W=48", ""), \
+  X(EVENT_DRAM_CHANNEL_2, "E,W=48", ""), \
+  X(EVENT_DRAM_CHANNEL_3, "E,W=48", "")
 
 
 #define PERF_EVENT(event_select, unit_mask) \

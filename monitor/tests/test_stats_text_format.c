@@ -27,7 +27,7 @@ int main(void)
 	se_control->se_type = SE_CONTROL;
 	se_control->se_unit = NULL;
 	se_control->se_width = 0;
-	strcpy(se_control->se_key, "CTL0");
+	strcpy(se_control->se_key, "FREQ_MAX_TEMP_CYCLES");
 
 	{
 		char suf[32];

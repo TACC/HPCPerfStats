@@ -43,6 +43,22 @@ static void amd64_pmc_collect_cpu(struct stats_type *type, char *cpu)
 {
 	int msr_fd = -1;
 	struct stats *stats = NULL;
+	static const uint64_t ctr_msrs[6] = {
+		MSR_PERF_CTR0, MSR_PERF_CTR1, MSR_PERF_CTR2,
+		MSR_PERF_CTR3, MSR_PERF_CTR4, MSR_PERF_CTR5
+	};
+	static const char *const zen_ctr_keys[6] = {
+		"FLOPS", "MERGE", "BRANCH_INST_RETIRED",
+		"BRANCH_INST_RETIRED_MISS", "DISPATCH_STALL_CYCLES1",
+		"DISPATCH_STALL_CYCLES0"
+	};
+	static const char *const legacy_ctr_keys[4] = {
+		"FLOPS", "MERGE", "DISPATCH_STALL_CYCLES1",
+		"DISPATCH_STALL_CYCLES0"
+	};
+	const char *const *ctr_keys = zen_ctr_keys;
+	int n_ctr_keys = 6;
+	int i;
 
 	stats = get_current_stats(type, cpu);
 	if (stats == NULL)
@@ -52,17 +68,29 @@ static void amd64_pmc_collect_cpu(struct stats_type *type, char *cpu)
 	if (msr_fd < 0)
 		goto out;
 
-#define X(k, r...)                                                              \
-	({                                                                      \
-		uint64_t val = 0;                                               \
-		if (msr_read_u64(msr_fd, MSR_PERF_##k, &val) < 0)               \
-			TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, \
-			      MSR_PERF_##k, cpu);                                 \
-		else                                                            \
-			stats_set(stats, #k, val);                              \
-	})
-	KEYS;
-#undef X
+	if (processor == AMD_10H) {
+		ctr_keys = legacy_ctr_keys;
+		n_ctr_keys = 4;
+	}
+	for (i = 0; i < n_ctr_keys; i++) {
+		uint64_t val = 0;
+		if (msr_read_u64(msr_fd, ctr_msrs[i], &val) < 0)
+			TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n",
+			      ctr_keys[i], (unsigned int)ctr_msrs[i], cpu);
+		else
+			stats_set(stats, ctr_keys[i], val);
+	}
+	for (; i < 6; i++)
+		stats_set(stats, zen_ctr_keys[i], 0);
+	{
+		uint64_t val = 0;
+		if (msr_read_u64(msr_fd, MSR_PERF_INST_RETIRED, &val) == 0)
+			stats_set(stats, "INST_RETIRED", val);
+		if (msr_read_u64(msr_fd, MSR_PERF_APERF, &val) == 0)
+			stats_set(stats, "APERF", val);
+		if (msr_read_u64(msr_fd, MSR_PERF_MPERF, &val) == 0)
+			stats_set(stats, "MPERF", val);
+	}
 
 out:
 	if (msr_fd >= 0)

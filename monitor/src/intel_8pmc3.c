@@ -17,6 +17,9 @@ static void intel_8pmc3_collect_cpu(struct stats_type *type, char *cpu)
 {
   struct stats *stats = NULL;
   int msr_fd = -1;
+  size_t nkeys = 0;
+  const char *const *event_keys = intel_pmc3_event_keys(&nkeys);
+  int i;
 
   stats = get_current_stats(type, cpu);
   if (stats == NULL)
@@ -28,17 +31,20 @@ static void intel_8pmc3_collect_cpu(struct stats_type *type, char *cpu)
   if (msr_fd < 0)
     goto out;
 
-#define X(k, r...)                                                             \
-  ({                                                                         \
-    uint64_t val = 0;                                                        \
-    if (msr_read_u64(msr_fd, IA32_##k, &val) < 0)                            \
-      TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n", #k, IA32_##k,      \
-	    cpu);                                                            \
-    else                                                                     \
-      stats_set(stats, #k, val);                                             \
-  })
-    KEYS;
-#undef X
+  for (i = 0; event_keys != NULL && i < (int)nkeys && i < 8; i++) {
+    uint64_t val = 0;
+    uint32_t msr = IA32_CTR0 + (uint32_t)i;
+    if (msr_read_u64(msr_fd, msr, &val) < 0)
+      TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n", event_keys[i], msr, cpu);
+    else
+      stats_set(stats, event_keys[i], val);
+  }
+  {
+    uint64_t val = 0;
+    if (msr_read_u64(msr_fd, IA32_FIXED_CTR0, &val) == 0) stats_set(stats, "FIXED_CTR0", val);
+    if (msr_read_u64(msr_fd, IA32_FIXED_CTR1, &val) == 0) stats_set(stats, "FIXED_CTR1", val);
+    if (msr_read_u64(msr_fd, IA32_FIXED_CTR2, &val) == 0) stats_set(stats, "FIXED_CTR2", val);
+  }
 
 out:
   if (msr_fd >= 0)

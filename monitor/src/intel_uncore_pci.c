@@ -44,7 +44,8 @@ void intel_uncore_pci_collect(const struct intel_uncore_pci_cfg *cfg,
     TRACE("Failed to identify pci devices");
 
   for (i = 0; i < nr_devs; i++)
-    intel_pmc_uncore_collect_dev(type, dev_paths[i]);
+    intel_pmc_uncore_collect_dev(type, dev_paths[i], cfg->event_keys,
+				 cfg->nr_events, cfg->fixed_ctr_key);
 
   pci_map_destroy(&dev_paths, nr_devs);
 }

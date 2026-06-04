@@ -162,22 +162,8 @@ static void set_counter_by_name(struct stats *stats, const char *counter_name,
     stats_set(stats, "FIXED_CTR1", value);
   else if (strcmp(counter_name, "FIXC2") == 0)
     stats_set(stats, "FIXED_CTR2", value);
-  else if (strcmp(counter_name, "PMC0") == 0)
-    stats_set(stats, "CTR0", value);
-  else if (strcmp(counter_name, "PMC1") == 0)
-    stats_set(stats, "CTR1", value);
-  else if (strcmp(counter_name, "PMC2") == 0)
-    stats_set(stats, "CTR2", value);
-  else if (strcmp(counter_name, "PMC3") == 0)
-    stats_set(stats, "CTR3", value);
-  else if (strcmp(counter_name, "PMC4") == 0)
-    stats_set(stats, "CTR4", value);
-  else if (strcmp(counter_name, "PMC5") == 0)
-    stats_set(stats, "CTR5", value);
-  else if (strcmp(counter_name, "PMC6") == 0)
-    stats_set(stats, "CTR6", value);
-  else if (strcmp(counter_name, "PMC7") == 0)
-    stats_set(stats, "CTR7", value);
+  else
+    (void)value;
 }
 
 static int read_msr_u64_cpu(int cpu, uint64_t reg, unsigned long long *val)
@@ -250,6 +236,7 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events,
       have_mperf = 1;
     }
     if (event_name != NULL) {
+      stats_set(stats, event_name, val);
       if (strcmp(event_name, "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE") == 0)
         stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", val);
       else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE") == 0)
@@ -306,11 +293,8 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events,
     if (!have_fixed2)
       stats_set(stats, "FIXED_CTR2", mperf);
   }
-  for (i = 0; i < nr_events; i++) {
-    char key[16];
-    snprintf(key, sizeof(key), "CTL%d", i);
-    stats_set(stats, key, events[i]);
-  }
+  (void)events;
+  (void)nr_events;
   return 0;
 #else
   (void) stats;

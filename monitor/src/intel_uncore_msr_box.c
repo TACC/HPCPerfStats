@@ -89,15 +89,14 @@ out:
 }
 
 void intel_uncore_cbo_snb_ivb_collect_box(struct stats_type *type, char *cpu,
-					  int pkg_id, int box)
+					  int pkg_id, int box,
+					  const char *const ctr_keys[4])
 {
   struct stats *stats = NULL;
   char msr_path[80];
   int msr_fd = -1;
   int offset = 32 * box;
   char pkg_box[80];
-  static const char *ctl_key[] = {"CTL0", "CTL1", "CTL2", "CTL3"};
-  static const char *ctr_key[] = {"CTR0", "CTR1", "CTR2", "CTR3"};
   int i;
 
   snprintf(pkg_box, sizeof(pkg_box), "%d/%d", pkg_id, box);
@@ -118,23 +117,14 @@ void intel_uncore_cbo_snb_ivb_collect_box(struct stats_type *type, char *cpu,
 
   for (i = 0; i < 4; i++) {
     uint64_t val = 0;
-    unsigned addr = SNB_CTL0 + offset + i;
-
-    if (pread(msr_fd, &val, sizeof(val), addr) < 0)
-      ERROR("cannot read `%s' (%08X) through `%s': %m\n", ctl_key[i], addr,
-	    msr_path);
-    else
-      stats_set(stats, ctl_key[i], val);
-  }
-  for (i = 0; i < 4; i++) {
-    uint64_t val = 0;
     unsigned addr = SNB_CTR0 + offset + i;
+    const char *key = (ctr_keys != NULL) ? ctr_keys[i] : NULL;
 
     if (pread(msr_fd, &val, sizeof(val), addr) < 0)
-      ERROR("cannot read `%s' (%08X) through `%s': %m\n", ctr_key[i], addr,
+      ERROR("cannot read `%s' (%08X) through `%s': %m\n", key, addr,
 	    msr_path);
-    else
-      stats_set(stats, ctr_key[i], val);
+    else if (key != NULL)
+      stats_set(stats, key, val);
   }
 
 out:
@@ -231,15 +221,14 @@ out:
 }
 
 void intel_uncore_cbo_hsw_bdw_collect_box(struct stats_type *type, char *cpu,
-					   int pkg_id, int box)
+					   int pkg_id, int box,
+					   const char *const ctr_keys[4])
 {
   struct stats *stats = NULL;
   char msr_path[80];
   int msr_fd = -1;
   int offset = 16 * box;
   char pkg_box[80];
-  static const char *ctl_key[] = {"CTL0", "CTL1", "CTL2", "CTL3"};
-  static const char *ctr_key[] = {"CTR0", "CTR1", "CTR2", "CTR3"};
   int i;
 
   snprintf(pkg_box, sizeof(pkg_box), "%d/%d", pkg_id, box);
@@ -260,23 +249,14 @@ void intel_uncore_cbo_hsw_bdw_collect_box(struct stats_type *type, char *cpu,
 
   for (i = 0; i < 4; i++) {
     uint64_t val = 0;
-    unsigned addr = HSW_CTL0 + offset + i;
-
-    if (pread(msr_fd, &val, sizeof(val), addr) < 0)
-      ERROR("cannot read `%s' (%08X) through `%s': %m\n", ctl_key[i], addr,
-	    msr_path);
-    else
-      stats_set(stats, ctl_key[i], val);
-  }
-  for (i = 0; i < 4; i++) {
-    uint64_t val = 0;
     unsigned addr = HSW_CTR0 + offset + i;
+    const char *key = (ctr_keys != NULL) ? ctr_keys[i] : NULL;
 
     if (pread(msr_fd, &val, sizeof(val), addr) < 0)
-      ERROR("cannot read `%s' (%08X) through `%s': %m\n", ctr_key[i], addr,
+      ERROR("cannot read `%s' (%08X) through `%s': %m\n", key, addr,
 	    msr_path);
-    else
-      stats_set(stats, ctr_key[i], val);
+    else if (key != NULL)
+      stats_set(stats, key, val);
   }
 
 out:
@@ -368,15 +348,14 @@ out:
 }
 
 void intel_uncore_cha_skx_collect_box(struct stats_type *type, char *cpu,
-				       int pkg_id, int box)
+				       int pkg_id, int box,
+				       const char *const ctr_keys[4])
 {
   struct stats *stats = NULL;
   char msr_path[80];
   int msr_fd = -1;
   int offset = 16 * box;
   char pkg_box[80];
-  static const char *ctl_key[] = {"CTL0", "CTL1", "CTL2", "CTL3"};
-  static const char *ctr_key[] = {"CTR0", "CTR1", "CTR2", "CTR3"};
   int i;
 
   snprintf(pkg_box, sizeof(pkg_box), "%d/%d", pkg_id, box);
@@ -397,23 +376,14 @@ void intel_uncore_cha_skx_collect_box(struct stats_type *type, char *cpu,
 
   for (i = 0; i < 4; i++) {
     uint64_t val = 0;
-    unsigned addr = SKX_CTL0 + offset + i;
-
-    if (pread(msr_fd, &val, sizeof(val), addr) < 0)
-      ERROR("cannot read `%s' (%08X) through `%s': %m\n", ctl_key[i], addr,
-	    msr_path);
-    else
-      stats_set(stats, ctl_key[i], val);
-  }
-  for (i = 0; i < 4; i++) {
-    uint64_t val = 0;
     unsigned addr = SKX_CTR0 + offset + i;
+    const char *key = (ctr_keys != NULL) ? ctr_keys[i] : NULL;
 
     if (pread(msr_fd, &val, sizeof(val), addr) < 0)
-      ERROR("cannot read `%s' (%08X) through `%s': %m\n", ctr_key[i], addr,
+      ERROR("cannot read `%s' (%08X) through `%s': %m\n", key, addr,
 	    msr_path);
-    else
-      stats_set(stats, ctr_key[i], val);
+    else if (key != NULL)
+      stats_set(stats, key, val);
   }
 
 out:

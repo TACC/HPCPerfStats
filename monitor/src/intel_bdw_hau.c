@@ -2,19 +2,13 @@
 #include "JOIN.h"
 #include "intel_uncore_pci.h"
 
-#define CTL_KEYS                                                             \
-  X(CTL0, "C", ""),                                                          \
-      X(CTL1, "C", ""),                                                      \
-      X(CTL2, "C", ""),                                                      \
-      X(CTL3, "C", "")
-
 #define CTR_KEYS                                                             \
-  X(CTR0, "E,W=48", ""),                                                     \
-      X(CTR1, "E,W=48", ""),                                                 \
-      X(CTR2, "E,W=48", ""),                                                 \
-      X(CTR3, "E,W=48", "")
+  X(REQUESTS_READS, "E,W=48", ""),                                             \
+      X(REQUESTS_WRITES, "E,W=48", ""),                                       \
+      X(CLOCKTICKS, "E,W=48", ""),                                            \
+      X(IMC_WRITES, "E,W=48", "")
 
-#define KEYS CTL_KEYS, CTR_KEYS
+#define KEYS CTR_KEYS
 
 #define PERF_EVENT(event, umask)                                             \
   ((event) | (umask << 8) | (0UL << 18) | (1UL << 22) | (0UL << 23)           \
@@ -31,12 +25,20 @@ static uint32_t events[] = {
     CLOCKTICKS,
     IMC_WRITES,
 };
+static const char *const event_keys[] = {
+    "REQUESTS_READS",
+    "REQUESTS_WRITES",
+    "CLOCKTICKS",
+    "IMC_WRITES",
+};
 static int dids[] = {0x6F30, 0x6F38};
 
 static const struct intel_uncore_pci_cfg intel_bdw_hau_pci_cfg = {
     .pci_dids = dids,
     .nr_pci_dids = 2,
     .events = events,
+    .event_keys = event_keys,
+    .fixed_ctr_key = NULL,
     .nr_events = 4,
 };
 

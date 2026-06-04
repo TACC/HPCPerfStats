@@ -2,19 +2,13 @@
 #include "JOIN.h"
 #include "intel_uncore_pci.h"
 
-#define CTL_KEYS                                                             \
-  X(CTL0, "C", ""),                                                          \
-      X(CTL1, "C", ""),                                                      \
-      X(CTL2, "C", ""),                                                      \
-      X(CTL3, "C", "")
-
 #define CTR_KEYS                                                             \
-  X(CTR0, "E,W=44", ""),                                                     \
-      X(CTR1, "E,W=44", ""),                                                 \
-      X(CTR2, "E,W=44", ""),                                                 \
-      X(CTR3, "E,W=44", "")
+  X(TxR_INSERTS, "E,W=44", ""),                                                \
+      X(RING_BL_USED_ALL, "E,W=44", ""),                                      \
+      X(RING_AD_USED_ALL, "E,W=44", ""),                                      \
+      X(RING_AK_USED_ALL, "E,W=44", "")
 
-#define KEYS CTL_KEYS, CTR_KEYS
+#define KEYS CTR_KEYS
 
 #define PERF_EVENT(event, umask)                                             \
   ((event) | (umask << 8) | (0UL << 18) | (1UL << 22) | (0UL << 23)           \
@@ -31,12 +25,20 @@ static uint32_t events[] = {
     RING_AD_USED_ALL,
     RING_AK_USED_ALL,
 };
+static const char *const event_keys[] = {
+    "TxR_INSERTS",
+    "RING_BL_USED_ALL",
+    "RING_AD_USED_ALL",
+    "RING_AK_USED_ALL",
+};
 static int dids[] = {0x3c43};
 
 static const struct intel_uncore_pci_cfg intel_snb_r2pci_pci_cfg = {
     .pci_dids = dids,
     .nr_pci_dids = 1,
     .events = events,
+    .event_keys = event_keys,
+    .fixed_ctr_key = NULL,
     .nr_events = 4,
 };
 

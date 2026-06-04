@@ -47,14 +47,9 @@
 
 #define DCLK_PMON_CTRCTL0_REG   0xB20
 
-#define CTL_KEYS                                                              \
-	X(CTL0, "C", ""),                                                     \
-	    X(CTL1, "C", ""), X(CTL2, "C", ""), X(CTL3, "C", "")
-#define CTR_KEYS                                                              \
-	X(CTR0, "E,W=48", ""),                                                \
-	    X(CTR1, "E,W=48", ""), X(CTR2, "E,W=48", ""), X(CTR3, "E,W=48", "")
-
-#define KEYS CTL_KEYS CTR_KEYS
+#define KEYS                                                              \
+	X(CAS_READS, "E,W=48", ""),                                                \
+	    X(CAS_WRITES, "E,W=48", ""), X(DCLK_CYCLES, "E,W=48", ""), X(UCLK_CYCLES, "E,W=48", "")
 
 #define PERF_EVENT(event, umask)                                              \
 	((event) | ((umask) << 8) | (0UL << 17) | (0UL << 18)                  \
@@ -91,6 +86,12 @@ static const unsigned knl_mc_dclk_ctr_hi[] = {
 	DCLK_PMON_CTR2_HIGH_REG,
 	DCLK_PMON_CTR3_HIGH_REG,
 };
+static const char *const knl_mc_uclk_keys[4] = {
+	"UCLK_CYCLES", NULL, NULL, NULL
+};
+static const char *const knl_mc_dclk_keys[4] = {
+	"CAS_READS", "CAS_WRITES", "DCLK_CYCLES", NULL
+};
 
 static void intel_knl_mc_uclk_begin_dev(uint32_t dev, uint32_t *map_dev,
 					uint32_t *events, int nr_events)
@@ -125,7 +126,7 @@ static void intel_knl_mc_uclk_collect_dev(struct stats_type *type,
 	TRACE("dev %s\n", dev_str);
 
 	intel_uncore_mmio_bank_collect(type, dev_str, pci, map_dev,
-				       UCLK_PMON_CTRCTL0_REG, knl_mc_uclk_ctr_lo,
+				       knl_mc_uclk_keys, UCLK_PMON_CTRCTL0_REG, knl_mc_uclk_ctr_lo,
 				       knl_mc_uclk_ctr_hi);
 }
 
@@ -140,7 +141,7 @@ static void intel_knl_mc_dclk_collect_dev(struct stats_type *type,
 	TRACE("dev %s\n", dev_str);
 
 	intel_uncore_mmio_bank_collect(type, dev_str, pci, map_dev,
-				       DCLK_PMON_CTRCTL0_REG, knl_mc_dclk_ctr_lo,
+				       knl_mc_dclk_keys, DCLK_PMON_CTRCTL0_REG, knl_mc_dclk_ctr_lo,
 				       knl_mc_dclk_ctr_hi);
 }
 

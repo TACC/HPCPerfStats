@@ -6,14 +6,10 @@
 #include "intel_topology_walk.h"
 
 #define KEYS                                                                   \
-  X(CTL0, "C", ""),                                                            \
-      X(CTL1, "C", ""),                                                      \
-      X(CTL2, "C", ""),                                                      \
-      X(CTL3, "C", ""),                                                      \
-      X(CTR0, "E,W=48", ""),                                                 \
-      X(CTR1, "E,W=48", ""),                                                 \
-      X(CTR2, "E,W=48", ""),                                                 \
-      X(CTR3, "E,W=48", "")
+  X(SF_EVICTIONS_MES, "E,W=48", ""),                                                 \
+      X(LLC_LOOKUP_DATA_READ_LOCAL, "E,W=48", ""),                                                 \
+      X(BYPASS_CHA_IMC_ALL, "E,W=48", ""),                                                 \
+      X(LLC_LOOKUP_WRITE, "E,W=48", "")
 
 #define CHA_PERF_EVENT(event, umask)                                           \
   ((event) | (umask << 8) | (0x4 << 20))
@@ -28,6 +24,12 @@ static uint64_t skx_cha_events[] = {
     LLC_LOOKUP_DATA_READ_LOCAL,
     BYPASS_CHA_IMC_ALL,
     LLC_LOOKUP_WRITE,
+};
+static const char *const counter_keys[4] = {
+    "SF_EVICTIONS_MES",
+    "LLC_LOOKUP_DATA_READ_LOCAL",
+    "BYPASS_CHA_IMC_ALL",
+    "LLC_LOOKUP_WRITE",
 };
 
 struct skx_cha_begin_ctx {
@@ -72,7 +74,7 @@ static void skx_cha_collect_visit(void *ctx, char *cpu, int pkg_id,
   int j;
 
   for (j = 0; j < nr_cores; j++)
-    intel_uncore_cha_skx_collect_box(c->type, cpu, pkg_id, j);
+    intel_uncore_cha_skx_collect_box(c->type, cpu, pkg_id, j, counter_keys);
 }
 
 static void intel_skx_cha_collect(struct stats_type *type)
