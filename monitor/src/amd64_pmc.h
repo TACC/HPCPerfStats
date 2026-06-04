@@ -60,21 +60,21 @@
 #define DISPATCH_STALL_CYCLES0   PERF_EVENT(0xAE, 0xFF) 
 
 #define KEYS \
-  X(FLOPS, "E,W=48", ""), \
-  X(MERGE, "E,W=48", ""), \
-  X(BRANCH_INST_RETIRED, "E,W=48", ""), \
-  X(BRANCH_INST_RETIRED_MISS, "E,W=48", ""), \
-  X(DISPATCH_STALL_CYCLES1, "E,W=48", ""), \
-  X(DISPATCH_STALL_CYCLES0, "E,W=48", ""), \
-  X(INST_RETIRED, "E,W=48", ""), \
-  X(APERF, "E,W=48", ""), \
-  X(MPERF, "E,W=48", "")
+  X(fp_ops_retired, "E,W=48", ""), \
+  X(fp_ops_merge, "E,W=48", ""), \
+  X(branch_inst_retired, "E,W=48", ""), \
+  X(branch_inst_retired_miss, "E,W=48", ""), \
+  X(dispatch_stall_cycles1, "E,W=48", ""), \
+  X(dispatch_stall_cycles0, "E,W=48", ""), \
+  X(instr_retired, "E,W=48", ""), \
+  X(aperf, "E,W=48", ""), \
+  X(mperf, "E,W=48", "")
 
 #define DF_KEYS \
-  X(EVENT_DRAM_CHANNEL_0, "E,W=48", ""), \
-  X(EVENT_DRAM_CHANNEL_1, "E,W=48", ""), \
-  X(EVENT_DRAM_CHANNEL_2, "E,W=48", ""), \
-  X(EVENT_DRAM_CHANNEL_3, "E,W=48", "")
+  X(dram_chan0_bytes, "E,W=48", ""), \
+  X(dram_chan1_bytes, "E,W=48", ""), \
+  X(dram_chan2_bytes, "E,W=48", ""), \
+  X(dram_chan3_bytes, "E,W=48", "")
 
 
 #define PERF_EVENT(event_select, unit_mask) \

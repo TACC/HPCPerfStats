@@ -11,8 +11,8 @@ static const char cpu_counter_schema_def[] = JOIN(CPU_COUNTER_METRICS_KEYS);
 
 int main(void)
 {
-  assert(strstr(cpu_counter_schema_def, " DCGM_CPU_POWER_UTIL_W,U=W") != NULL);
-  assert(strstr(cpu_counter_schema_def, " DCGM_CPU_POWER_LIMIT_W,U=W") != NULL);
+  assert(strstr(cpu_counter_schema_def, " dcgm_cpu_power_util_w,U=W") != NULL);
+  assert(strstr(cpu_counter_schema_def, " dcgm_cpu_power_limit_w,U=W") != NULL);
   printf("test_cpu_counter_metrics_schema passed\n");
   return 0;
 }

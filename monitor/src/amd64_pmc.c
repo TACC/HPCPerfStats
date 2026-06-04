@@ -48,13 +48,13 @@ static void amd64_pmc_collect_cpu(struct stats_type *type, char *cpu)
 		MSR_PERF_CTR3, MSR_PERF_CTR4, MSR_PERF_CTR5
 	};
 	static const char *const zen_ctr_keys[6] = {
-		"FLOPS", "MERGE", "BRANCH_INST_RETIRED",
-		"BRANCH_INST_RETIRED_MISS", "DISPATCH_STALL_CYCLES1",
-		"DISPATCH_STALL_CYCLES0"
+		"fp_ops_retired", "fp_ops_merge", "branch_inst_retired",
+		"branch_inst_retired_miss", "dispatch_stall_cycles1",
+		"dispatch_stall_cycles0"
 	};
 	static const char *const legacy_ctr_keys[4] = {
-		"FLOPS", "MERGE", "DISPATCH_STALL_CYCLES1",
-		"DISPATCH_STALL_CYCLES0"
+		"fp_ops_retired", "fp_ops_merge", "dispatch_stall_cycles1",
+		"dispatch_stall_cycles0"
 	};
 	const char *const *ctr_keys = zen_ctr_keys;
 	int n_ctr_keys = 6;
@@ -85,11 +85,11 @@ static void amd64_pmc_collect_cpu(struct stats_type *type, char *cpu)
 	{
 		uint64_t val = 0;
 		if (msr_read_u64(msr_fd, MSR_PERF_INST_RETIRED, &val) == 0)
-			stats_set(stats, "INST_RETIRED", val);
+			stats_set(stats, "instr_retired", val);
 		if (msr_read_u64(msr_fd, MSR_PERF_APERF, &val) == 0)
-			stats_set(stats, "APERF", val);
+			stats_set(stats, "aperf", val);
 		if (msr_read_u64(msr_fd, MSR_PERF_MPERF, &val) == 0)
-			stats_set(stats, "MPERF", val);
+			stats_set(stats, "mperf", val);
 	}
 
 out:
@@ -128,7 +128,7 @@ static int amd64_pmc_begin(struct stats_type *type)
 }
 
 struct stats_type amd64_pmc_stats_type = {
-    .st_name = "amd64_pmc",
+    .st_name = "amd_x86_pmc",
     .st_begin = &amd64_pmc_begin,
     .st_collect = &amd64_pmc_collect,
 #define X SCHEMA_DEF

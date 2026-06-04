@@ -79,6 +79,8 @@ hpcperfstatsd_SOURCES = \
 	fileio.h \
 	hwdetect.h \
 	hwdetect.c \
+	host_key_alias.h \
+	host_key_alias.c \
 	intel_pmc3.h \
 	intel_pmc_uncore.h \
 	JOIN.h \

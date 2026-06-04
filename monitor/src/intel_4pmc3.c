@@ -41,9 +41,9 @@ static void intel_4pmc3_collect_cpu(struct stats_type *type, char *cpu)
   }
   {
     uint64_t val = 0;
-    if (msr_read_u64(msr_fd, IA32_FIXED_CTR0, &val) == 0) stats_set(stats, "FIXED_CTR0", val);
-    if (msr_read_u64(msr_fd, IA32_FIXED_CTR1, &val) == 0) stats_set(stats, "FIXED_CTR1", val);
-    if (msr_read_u64(msr_fd, IA32_FIXED_CTR2, &val) == 0) stats_set(stats, "FIXED_CTR2", val);
+    if (msr_read_u64(msr_fd, IA32_FIXED_CTR0, &val) == 0) stats_set(stats, "instr_retired", val);
+    if (msr_read_u64(msr_fd, IA32_FIXED_CTR1, &val) == 0) stats_set(stats, "aperf", val);
+    if (msr_read_u64(msr_fd, IA32_FIXED_CTR2, &val) == 0) stats_set(stats, "mperf", val);
   }
 
 out:
@@ -62,7 +62,7 @@ static int intel_4pmc3_begin(struct stats_type *type)
 }
 
 struct stats_type intel_4pmc3_stats_type = {
-    .st_name = "intel_4pmc3",
+    .st_name = "intel_x86_pmc_gpr4",
     .st_begin = &intel_4pmc3_begin,
     .st_collect = &intel_4pmc3_collect,
 #define X SCHEMA_DEF

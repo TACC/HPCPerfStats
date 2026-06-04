@@ -11,12 +11,12 @@
 /* All X_ticks members and time_in_queue are in ms. */
 
 #define KEYS \
-  X(rd_ios,        "E",        "read requests processed"), \
-  X(rd_merges,     "E",        "read requests merged with in-queue requests"), \
+  X(rd_ios,        "e",        "read requests processed"), \
+  X(rd_merges,     "e",        "read requests merged with in-queue requests"), \
   X(rd_sectors,    "E,U=512B", "sectors read"), \
   X(rd_ticks,      "E,U=ms",   "wait time for read requests"), \
-  X(wr_ios,        "E",        "write requests processed"), \
-  X(wr_merges,     "E",        "write requests merged with in-queue requests"), \
+  X(wr_ios,        "e",        "write requests processed"), \
+  X(wr_merges,     "e",        "write requests merged with in-queue requests"), \
   X(wr_sectors,    "E,U=512B", "sectors written"), \
   X(wr_ticks,      "E,U=ms",   "wait time for write requests"), \
   X(in_flight,     "",         "requests in flight"), \
@@ -53,7 +53,7 @@ static void block_collect(struct stats_type *type)
 }
 
 struct stats_type block_stats_type = {
-  .st_name = "block",
+  .st_name = "host_block",
   .st_collect = &block_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

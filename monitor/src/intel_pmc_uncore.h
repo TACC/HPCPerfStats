@@ -118,7 +118,7 @@ static void intel_pmc_uncore_collect_dev(struct stats_type *type, char *bus_dev,
     unsigned int reg_high = A_CTR0 + (unsigned int) i * 8U;
     const char *key = (event_keys != NULL && event_keys[i] != NULL)
 			  ? event_keys[i]
-			  : "UNNAMED_COUNTER";
+			  : "unnamed_counter";
 
     if (pread(pci_fd, &val_a, sizeof(val_a), reg_high) < 0
 	|| pread(pci_fd, &val_b, sizeof(val_b), reg_low) < 0) {

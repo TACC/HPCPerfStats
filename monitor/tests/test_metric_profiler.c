@@ -15,9 +15,9 @@ int main(void)
 
   for (int i = 0; i < 130; i++) {
     metric_profiler_cycle_begin();
-    metric_profiler_collect_begin("cpu");
-    metric_profiler_record_metric("cpu", "cpu0", "cycles", 1000ULL, 250ULL);
-    metric_profiler_collect_end("cpu");
+    metric_profiler_collect_begin("host_cpu");
+    metric_profiler_record_metric("host_cpu", "cpu0", "cycles", 1000ULL, 250ULL);
+    metric_profiler_collect_end("host_cpu");
     metric_profiler_cycle_end(f);
   }
 

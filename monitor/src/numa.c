@@ -48,7 +48,7 @@ static void numa_collect(struct stats_type *type)
 }
 
 struct stats_type numa_stats_type = {
-  .st_name = "numa",
+  .st_name = "host_numa",
   .st_collect = &numa_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

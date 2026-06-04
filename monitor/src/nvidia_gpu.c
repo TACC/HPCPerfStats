@@ -694,9 +694,9 @@ static int nvidia_gpu_collect_dev(struct stats *stats,
 
   stats_set(stats, "temperature", I64_TO_LLU(row->temperature));
   stats_set(stats, "gpu_util", I64_TO_LLU(row->gpu_util));
-  stats_set(stats, "mem_util", I64_TO_LLU(row->mem_util));
-  stats_set(stats, "mem_total_mb", I64_TO_LLU(row->fb_total_mb));
-  stats_set(stats, "mem_used_mb", I64_TO_LLU(row->fb_used_mb));
+  stats_set(stats, "gpu_mem_util", I64_TO_LLU(row->mem_util));
+  stats_set(stats, "gpu_mem_total_mb", I64_TO_LLU(row->fb_total_mb));
+  stats_set(stats, "gpu_mem_used_mb", I64_TO_LLU(row->fb_used_mb));
   stats_set(stats, "power_usage", DBL_TO_LLU(row->power_usage));
   stats_set(stats, "sysio_power_usage", DBL_TO_LLU(row->sysio_power_usage));
   stats_set(stats, "module_power_usage", DBL_TO_LLU(row->module_power_usage));

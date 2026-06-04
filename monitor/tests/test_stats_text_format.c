@@ -27,7 +27,7 @@ int main(void)
 	se_control->se_type = SE_CONTROL;
 	se_control->se_unit = NULL;
 	se_control->se_width = 0;
-	strcpy(se_control->se_key, "FREQ_MAX_TEMP_CYCLES");
+	strcpy(se_control->se_key, "freq_max_temp_cycles");
 
 	{
 		char suf[32];
@@ -47,7 +47,7 @@ int main(void)
 		se_ev->se_type = SE_EVENT;
 		se_ev->se_unit = (char *)"mJ";
 		se_ev->se_width = 32;
-		strcpy(se_ev->se_key, "E");
+		strcpy(se_ev->se_key, "pkg_energy");
 
 		char suf[64];
 		size_t n = stats_format_schema_entry_suffix(suf, sizeof(suf),

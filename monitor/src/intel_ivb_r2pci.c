@@ -3,10 +3,10 @@
 #include "intel_uncore_pci.h"
 
 #define CTR_KEYS                                                             \
-  X(TxR_INSERTS, "E,W=44", ""),                                                \
-      X(RING_BL_USED_ALL, "E,W=44", ""),                                      \
-      X(RING_AD_USED_ALL, "E,W=44", ""),                                      \
-      X(RING_AK_USED_ALL, "E,W=44", "")
+  X(tx_r_inserts, "E,W=44", ""),                                                \
+      X(ring_bl_used_all, "E,W=44", ""),                                      \
+      X(ring_ad_used_all, "E,W=44", ""),                                      \
+      X(ring_ak_used_all, "E,W=44", "")
 
 #define KEYS CTR_KEYS
 
@@ -26,10 +26,10 @@ static uint32_t events[] = {
     RING_AK_USED_ALL,
 };
 static const char *const event_keys[] = {
-    "TxR_INSERTS",
-    "RING_BL_USED_ALL",
-    "RING_AD_USED_ALL",
-    "RING_AK_USED_ALL",
+    "tx_r_inserts",
+    "ring_bl_used_all",
+    "ring_ad_used_all",
+    "ring_ak_used_all",
 };
 static int dids[] = {0x0e34};
 
@@ -53,7 +53,7 @@ static void intel_ivb_r2pci_collect(struct stats_type *type)
 }
 
 struct stats_type intel_ivb_r2pci_stats_type = {
-    .st_name = "intel_ivb_r2pci",
+    .st_name = "intel_x86_uncore_r2pci_ivb",
     .st_begin = &intel_ivb_r2pci_begin,
     .st_collect = &intel_ivb_r2pci_collect,
 #define X SCHEMA_DEF

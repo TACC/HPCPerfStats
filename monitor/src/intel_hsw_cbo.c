@@ -6,10 +6,10 @@
 #include "intel_topology_walk.h"
 
 #define KEYS                                                                 \
-  X(RxR_OCCUPANCY, "E,W=48", ""),                                                 \
-      X(LLC_LOOKUP_DATA_READ, "E,W=48", ""),                                                 \
-      X(RING_IV_USED, "E,W=48", ""),                                                 \
-      X(LLC_LOOKUP_WRITE, "E,W=48", "")
+  X(rx_r_occupancy, "E,W=48", ""),                                                 \
+      X(llc_lookup_data_read, "E,W=48", ""),                                                 \
+      X(ring_iv_used, "E,W=48", ""),                                                 \
+      X(llc_lookup_write, "E,W=48", "")
 
 #define CBOX_PERF_EVENT(event, umask)                                        \
   ((event) | (umask << 8) | (0ULL << 17) | (0ULL << 18) | (0ULL << 19)        \
@@ -27,10 +27,10 @@ static uint64_t events[] = {
     LLC_LOOKUP_WRITE,
 };
 static const char *const counter_keys[4] = {
-    "RxR_OCCUPANCY",
-    "LLC_LOOKUP_DATA_READ",
-    "RING_IV_USED",
-    "LLC_LOOKUP_WRITE",
+    "rx_r_occupancy",
+    "llc_lookup_data_read",
+    "ring_iv_used",
+    "llc_lookup_write",
 };
 
 struct hsw_cbo_begin_ctx {
@@ -86,7 +86,7 @@ static void intel_hsw_cbo_collect(struct stats_type *type)
 }
 
 struct stats_type intel_hsw_cbo_stats_type = {
-    .st_name = "intel_hsw_cbo",
+    .st_name = "intel_x86_uncore_cbo_hsw",
     .st_begin = &intel_hsw_cbo_begin,
     .st_collect = &intel_hsw_cbo_collect,
 #define X SCHEMA_DEF

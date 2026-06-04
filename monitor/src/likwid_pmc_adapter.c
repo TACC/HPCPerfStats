@@ -23,8 +23,8 @@ static int likwid_env_setup_quiet(void)
   const char *v = getenv("HPCPERFSTATS_LIKWID_SETUP_QUIET");
   if (v == NULL || *v == '\0')
     return 1;
-  if (strcmp(v, "0") == 0 || strcmp(v, "false") == 0 || strcmp(v, "FALSE") == 0 ||
-      strcmp(v, "no") == 0 || strcmp(v, "NO") == 0)
+  if (strcmp(v, "0") == 0 || strcmp(v, "false") == 0 || strcmp(v, "false") == 0 ||
+      strcmp(v, "no") == 0 || strcmp(v, "no") == 0)
     return 0;
   return 1;
 }
@@ -156,12 +156,12 @@ static void set_counter_by_name(struct stats *stats, const char *counter_name,
 {
   if (counter_name == NULL || stats == NULL)
     return;
-  if (strcmp(counter_name, "FIXC0") == 0)
-    stats_set(stats, "FIXED_CTR0", value);
-  else if (strcmp(counter_name, "FIXC1") == 0)
-    stats_set(stats, "FIXED_CTR1", value);
-  else if (strcmp(counter_name, "FIXC2") == 0)
-    stats_set(stats, "FIXED_CTR2", value);
+  if (strcmp(counter_name, "fixc0") == 0)
+    stats_set(stats, "instr_retired", value);
+  else if (strcmp(counter_name, "fixc1") == 0)
+    stats_set(stats, "aperf", value);
+  else if (strcmp(counter_name, "fixc2") == 0)
+    stats_set(stats, "mperf", value);
   else
     (void)value;
 }
@@ -206,14 +206,14 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events,
   (void) max_ctrs;
   if (!g_initialized || g_group < 0 || stats == NULL || cpu < 0)
     return -1;
-  stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_SINGLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE", 0);
+  stats_set(stats, "fp_arith_inst_retired_scalar_double", 0);
+  stats_set(stats, "fp_arith_inst_retired_128b_packed_double", 0);
+  stats_set(stats, "fp_arith_inst_retired_256b_packed_double", 0);
+  stats_set(stats, "fp_arith_inst_retired_512b_packed_double", 0);
+  stats_set(stats, "fp_arith_inst_retired_scalar_single", 0);
+  stats_set(stats, "fp_arith_inst_retired_128b_packed_single", 0);
+  stats_set(stats, "fp_arith_inst_retired_256b_packed_single", 0);
+  stats_set(stats, "fp_arith_inst_retired_512b_packed_single", 0);
   if (perfmon_readCounters() < 0)
     return -1;
   n_events = perfmon_getNumberOfEvents(g_group);
@@ -222,45 +222,45 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events,
     const char *event_name = perfmon_getEventName(g_group, i);
     unsigned long long val = (unsigned long long) perfmon_getResult(g_group, i, cpu);
     set_counter_by_name(stats, counter_name, val);
-    if (counter_name != NULL && strcmp(counter_name, "FIXC0") == 0) {
+    if (counter_name != NULL && strcmp(counter_name, "fixc0") == 0) {
       inst_retired = val;
       have_fixed0 = 1;
       have_inst = 1;
-    } else if (counter_name != NULL && strcmp(counter_name, "FIXC1") == 0) {
+    } else if (counter_name != NULL && strcmp(counter_name, "fixc1") == 0) {
       aperf = val;
       have_fixed1 = 1;
       have_aperf = 1;
-    } else if (counter_name != NULL && strcmp(counter_name, "FIXC2") == 0) {
+    } else if (counter_name != NULL && strcmp(counter_name, "fixc2") == 0) {
       mperf = val;
       have_fixed2 = 1;
       have_mperf = 1;
     }
     if (event_name != NULL) {
       stats_set(stats, event_name, val);
-      if (strcmp(event_name, "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE") == 0)
-        stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", val);
-      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE") == 0)
-        stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE", val);
-      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE") == 0)
-        stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE", val);
-      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE") == 0)
-        stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE", val);
-      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_SCALAR_SINGLE") == 0)
-        stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_SINGLE", val);
-      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE") == 0)
-        stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE", val);
-      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE") == 0)
-        stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE", val);
-      else if (strcmp(event_name, "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE") == 0)
-        stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE", val);
-      if (strcmp(event_name, "INSTR_RETIRED_ANY") == 0 ||
-          strcmp(event_name, "RETIRED_INSTRUCTIONS") == 0) {
+      if (strcmp(event_name, "fp_arith_inst_retired_scalar_double") == 0)
+        stats_set(stats, "fp_arith_inst_retired_scalar_double", val);
+      else if (strcmp(event_name, "fp_arith_inst_retired_128b_packed_double") == 0)
+        stats_set(stats, "fp_arith_inst_retired_128b_packed_double", val);
+      else if (strcmp(event_name, "fp_arith_inst_retired_256b_packed_double") == 0)
+        stats_set(stats, "fp_arith_inst_retired_256b_packed_double", val);
+      else if (strcmp(event_name, "fp_arith_inst_retired_512b_packed_double") == 0)
+        stats_set(stats, "fp_arith_inst_retired_512b_packed_double", val);
+      else if (strcmp(event_name, "fp_arith_inst_retired_scalar_single") == 0)
+        stats_set(stats, "fp_arith_inst_retired_scalar_single", val);
+      else if (strcmp(event_name, "fp_arith_inst_retired_128b_packed_single") == 0)
+        stats_set(stats, "fp_arith_inst_retired_128b_packed_single", val);
+      else if (strcmp(event_name, "fp_arith_inst_retired_256b_packed_single") == 0)
+        stats_set(stats, "fp_arith_inst_retired_256b_packed_single", val);
+      else if (strcmp(event_name, "fp_arith_inst_retired_512b_packed_single") == 0)
+        stats_set(stats, "fp_arith_inst_retired_512b_packed_single", val);
+      if (strcmp(event_name, "instr_retired_any") == 0 ||
+          strcmp(event_name, "retired_instructions") == 0) {
         inst_retired = val;
         have_inst = 1;
-      } else if (strcmp(event_name, "CPU_CLK_UNHALTED_CORE") == 0) {
+      } else if (strcmp(event_name, "cycles_unhalted_core") == 0) {
         aperf = val;
         have_aperf = 1;
-      } else if (strcmp(event_name, "CPU_CLK_UNHALTED_REF") == 0) {
+      } else if (strcmp(event_name, "cycles_unhalted_ref") == 0) {
         mperf = val;
         have_mperf = 1;
       }
@@ -279,19 +279,19 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events,
     have_mperf = 1;
 
   if (have_inst) {
-    stats_set(stats, "INST_RETIRED", inst_retired);
+    stats_set(stats, "instr_retired", inst_retired);
     if (!have_fixed0)
-      stats_set(stats, "FIXED_CTR0", inst_retired);
+      stats_set(stats, "instr_retired", inst_retired);
   }
   if (have_aperf) {
-    stats_set(stats, "APERF", aperf);
+    stats_set(stats, "aperf", aperf);
     if (!have_fixed1)
-      stats_set(stats, "FIXED_CTR1", aperf);
+      stats_set(stats, "aperf", aperf);
   }
   if (have_mperf) {
-    stats_set(stats, "MPERF", mperf);
+    stats_set(stats, "mperf", mperf);
     if (!have_fixed2)
-      stats_set(stats, "FIXED_CTR2", mperf);
+      stats_set(stats, "mperf", mperf);
   }
   (void)events;
   (void)nr_events;

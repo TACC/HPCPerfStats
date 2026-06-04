@@ -48,8 +48,8 @@
 #define DCLK_PMON_CTRCTL0_REG   0xB20
 
 #define KEYS                                                              \
-	X(CAS_READS, "E,W=48", ""),                                                \
-	    X(CAS_WRITES, "E,W=48", ""), X(DCLK_CYCLES, "E,W=48", ""), X(UCLK_CYCLES, "E,W=48", "")
+	X(dram_cas_reads, "E,W=48", ""),                                                \
+	    X(dram_cas_writes, "E,W=48", ""), X(dclk_cycles, "E,W=48", ""), X(uclk_cycles, "E,W=48", "")
 
 #define PERF_EVENT(event, umask)                                              \
 	((event) | ((umask) << 8) | (0UL << 17) | (0UL << 18)                  \
@@ -87,10 +87,10 @@ static const unsigned knl_mc_dclk_ctr_hi[] = {
 	DCLK_PMON_CTR3_HIGH_REG,
 };
 static const char *const knl_mc_uclk_keys[4] = {
-	"UCLK_CYCLES", NULL, NULL, NULL
+	"uclk_cycles", NULL, NULL, NULL
 };
 static const char *const knl_mc_dclk_keys[4] = {
-	"CAS_READS", "CAS_WRITES", "DCLK_CYCLES", NULL
+	"dram_cas_reads", "dram_cas_writes", "dclk_cycles", NULL
 };
 
 static void intel_knl_mc_uclk_begin_dev(uint32_t dev, uint32_t *map_dev,
@@ -218,7 +218,7 @@ out:
 }
 
 struct stats_type intel_knl_mc_stats_type = {
-    .st_name = "intel_knl_mc",
+    .st_name = "intel_x86_uncore_mc_knl",
     .st_begin = &intel_knl_mc_begin,
     .st_collect = &intel_knl_mc_collect,
 #define X SCHEMA_DEF

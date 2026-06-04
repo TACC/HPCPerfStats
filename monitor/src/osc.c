@@ -119,7 +119,7 @@ static void osc_collect(struct stats_type *type)
 }
 
 struct stats_type osc_stats_type = {
-  .st_name = "osc",
+  .st_name = "lustre_osc",
   .st_collect = &osc_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

@@ -83,7 +83,7 @@ static void ps_collect(struct stats_type *type)
 }
 
 struct stats_type ps_stats_type = {
-  .st_name = "ps",
+  .st_name = "host_ps",
   .st_collect = &ps_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

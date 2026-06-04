@@ -2,125 +2,134 @@
 
 Static code-derived comparison between monitor-emitted schema keys in `monitor/src` and explicit quoted-key usage in `hpcperfstats/` + `tests/` (excluding `monitor/`).
 
-*Regenerated: 2026-05-22 via `docs/regenerate_monitor_variable_usage_gap_analysis.py`.*
+*Regenerated: 2026-06-04 via `docs/regenerate_monitor_variable_usage_gap_analysis.py`.*
 
 ## 1) Total emitted variables (by type)
 
-- `amd64_df`: emitted **18**, used **8**, unused **10**
-- `amd64_pmc`: emitted **23**, used **4**, unused **19**
-- `amd64_rapl`: emitted **2**, used **1**, unused **1**
-- `amd_gpu`: emitted **20**, used **16**, unused **4**
-- `arm_imc`: emitted **2**, used **2**, unused **0**
-- `block`: emitted **11**, used **3**, unused **8**
-- `cpu`: emitted **7**, used **5**, unused **2**
-- `cpu_counter_metrics`: emitted **53**, used **18**, unused **35**
-- `ib`: emitted **17**, used **13**, unused **4**
-- `ib_ext`: emitted **10**, used **4**, unused **6**
-- `ib_sw`: emitted **4**, used **4**, unused **0**
-- `intel_4pmc3`: emitted **39**, used **18**, unused **21**
-- `intel_8pmc3`: emitted **47**, used **18**, unused **29**
-- `intel_bdw_cbo`: emitted **10**, used **1**, unused **9**
-- `intel_bdw_hau`: emitted **10**, used **0**, unused **10**
-- `intel_bdw_imc`: emitted **12**, used **3**, unused **9**
-- `intel_bdw_qpi`: emitted **10**, used **0**, unused **10**
-- `intel_bdw_r2pci`: emitted **10**, used **0**, unused **10**
-- `intel_hsw_cbo`: emitted **10**, used **1**, unused **9**
-- `intel_hsw_hau`: emitted **10**, used **0**, unused **10**
-- `intel_hsw_imc`: emitted **12**, used **3**, unused **9**
-- `intel_hsw_qpi`: emitted **10**, used **0**, unused **10**
-- `intel_hsw_r2pci`: emitted **10**, used **0**, unused **10**
-- `intel_ivb_cbo`: emitted **10**, used **1**, unused **9**
-- `intel_ivb_hau`: emitted **10**, used **0**, unused **10**
-- `intel_ivb_imc`: emitted **12**, used **3**, unused **9**
-- `intel_ivb_qpi`: emitted **10**, used **0**, unused **10**
-- `intel_ivb_r2pci`: emitted **10**, used **0**, unused **10**
-- `intel_knl`: emitted **7**, used **3**, unused **4**
-- `intel_knl_edc`: emitted **3**, used **0**, unused **3**
-- `intel_knl_mc`: emitted **2**, used **2**, unused **0**
+- `amd64_df`: emitted **8**, used **8**, unused **0**
+- `amd64_pmc`: emitted **5**, used **1**, unused **4**
+- `amd_gpu`: emitted **20**, used **13**, unused **7**
+- `amd_x86_pmc`: emitted **13**, used **0**, unused **13**
+- `amd_x86_rapl`: emitted **2**, used **0**, unused **2**
+- `amd_x86_uncore_df`: emitted **4**, used **0**, unused **4**
+- `arm_aarch64_imc`: emitted **2**, used **0**, unused **2**
+- `host_block`: emitted **11**, used **3**, unused **8**
+- `host_cpu`: emitted **7**, used **5**, unused **2**
+- `host_cpu_hw`: emitted **36**, used **0**, unused **36**
+- `host_ib`: emitted **17**, used **13**, unused **4**
+- `host_ib_ext`: emitted **10**, used **4**, unused **6**
+- `host_ib_sw`: emitted **4**, used **4**, unused **0**
+- `host_lnet`: emitted **11**, used **3**, unused **8**
+- `host_mem`: emitted **17**, used **2**, unused **15**
+- `host_mic`: emitted **7**, used **0**, unused **7**
+- `host_net`: emitted **23**, used **17**, unused **6**
+- `host_nfs`: emitted **18**, used **6**, unused **12**
+- `host_numa`: emitted **6**, used **3**, unused **3**
+- `host_opa`: emitted **16**, used **4**, unused **12**
+- `host_proc`: emitted **13**, used **0**, unused **13**
+- `host_ps`: emitted **7**, used **1**, unused **6**
+- `host_roofline_peak`: emitted **8**, used **5**, unused **3**
+- `host_sysv_shm`: emitted **2**, used **0**, unused **2**
+- `host_tmpfs`: emitted **3**, used **0**, unused **3**
+- `host_vfs`: emitted **3**, used **0**, unused **3**
+- `host_vm`: emitted **27**, used **0**, unused **27**
+- `intel_8pmc3`: emitted **15**, used **14**, unused **1**
+- `intel_hsw_imc`: emitted **2**, used **2**, unused **0**
 - `intel_knl_mc_dclk`: emitted **2**, used **2**, unused **0**
-- `intel_pcu`: emitted **6**, used **2**, unused **4**
-- `intel_rapl`: emitted **4**, used **1**, unused **3**
-- `intel_skx_cha`: emitted **10**, used **1**, unused **9**
 - `intel_skx_imc`: emitted **4**, used **2**, unused **2**
-- `intel_snb_cbo`: emitted **10**, used **1**, unused **9**
-- `intel_snb_hau`: emitted **10**, used **0**, unused **10**
-- `intel_snb_imc`: emitted **12**, used **3**, unused **9**
-- `intel_snb_qpi`: emitted **10**, used **0**, unused **10**
-- `intel_snb_r2pci`: emitted **10**, used **0**, unused **10**
-- `llite`: emitted **37**, used **27**, unused **10**
-- `lnet`: emitted **11**, used **2**, unused **9**
-- `mdc`: emitted **10**, used **1**, unused **9**
-- `mem`: emitted **17**, used **5**, unused **12**
-- `mic`: emitted **7**, used **0**, unused **7**
-- `net`: emitted **23**, used **17**, unused **6**
-- `nfs`: emitted **18**, used **8**, unused **10**
-- `numa`: emitted **6**, used **3**, unused **3**
-- `nvidia_gpu`: emitted **25**, used **19**, unused **6**
-- `opa`: emitted **16**, used **9**, unused **7**
+- `intel_snb_imc`: emitted **2**, used **2**, unused **0**
+- `intel_x86_pcu`: emitted **6**, used **0**, unused **6**
+- `intel_x86_pmc_gpr4`: emitted **26**, used **0**, unused **26**
+- `intel_x86_pmc_gpr8`: emitted **26**, used **0**, unused **26**
+- `intel_x86_pmc_knl`: emitted **5**, used **0**, unused **5**
+- `intel_x86_rapl`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_cbo_bdw`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_cbo_hsw`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_cbo_ivb`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_cbo_snb`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_cha_skx`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_edc_knl`: emitted **3**, used **0**, unused **3**
+- `intel_x86_uncore_hau_bdw`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_hau_hsw`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_hau_ivb`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_hau_snb`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_imc_bdw`: emitted **5**, used **0**, unused **5**
+- `intel_x86_uncore_imc_hsw`: emitted **5**, used **0**, unused **5**
+- `intel_x86_uncore_imc_ivb`: emitted **5**, used **0**, unused **5**
+- `intel_x86_uncore_imc_skx`: emitted **2**, used **0**, unused **2**
+- `intel_x86_uncore_imc_snb`: emitted **5**, used **0**, unused **5**
+- `intel_x86_uncore_mc_knl`: emitted **2**, used **0**, unused **2**
+- `intel_x86_uncore_qpi_bdw`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_qpi_hsw`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_qpi_ivb`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_qpi_snb`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_r2pci_bdw`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_r2pci_hsw`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_r2pci_ivb`: emitted **4**, used **0**, unused **4**
+- `intel_x86_uncore_r2pci_snb`: emitted **4**, used **0**, unused **4**
+- `lustre_llite`: emitted **37**, used **28**, unused **9**
+- `lustre_mdc`: emitted **10**, used **2**, unused **8**
+- `lustre_osc`: emitted **10**, used **3**, unused **7**
+- `nvidia_gpu`: emitted **25**, used **16**, unused **9**
 - `osc`: emitted **10**, used **3**, unused **7**
-- `proc`: emitted **13**, used **0**, unused **13**
-- `ps`: emitted **7**, used **1**, unused **6**
-- `roofline_hw_peak`: emitted **8**, used **5**, unused **3**
-- `sysv_shm`: emitted **2**, used **0**, unused **2**
-- `tmpfs`: emitted **3**, used **0**, unused **3**
-- `vfs`: emitted **3**, used **0**, unused **3**
-- `vm`: emitted **27**, used **0**, unused **27**
 
 **Totals**
-- Total monitor types: **59**
-- Total emitted variables: **742**
-- Total explicitly used variables (quoted literals, global): **243**
-- Total unused variables: **499**
+- Total monitor types: **66**
+- Total emitted variables: **579**
+- Total explicitly used variables (quoted literals, global): **166**
+- Total unused variables: **413**
 
 ## 2) Total used variables
 
-- Explicitly used monitor variable keys (quoted literal match in usage scope): **153**
+- Explicitly used monitor variable keys (quoted literal match in usage scope): **127**
 
 ## 3) Exhaustive unused variables grouped by type
 
-### `amd64_df` (10)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `EVENT_DRAM_CHANNEL_0`: raw AMD DF DRAM channel counter before ingest decode. **Usefulness:** Low / other
-- `EVENT_DRAM_CHANNEL_1`: raw AMD DF DRAM channel counter before ingest decode. **Usefulness:** Low / other
-- `EVENT_DRAM_CHANNEL_2`: raw AMD DF DRAM channel counter before ingest decode. **Usefulness:** Low / other
-- `EVENT_DRAM_CHANNEL_3`: raw AMD DF DRAM channel counter before ingest decode. **Usefulness:** Low / other
-
-### `amd64_pmc` (19)
+### `amd64_pmc` (4)
 - `BRANCH_INST_RETIRED`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `BRANCH_INST_RETIRED_MISS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL4`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL5`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR4`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR5`: raw hardware counter value. **Usefulness:** Medium / compute
 - `DISPATCH_STALL_CYCLES0`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `DISPATCH_STALL_CYCLES1`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `EVENT_DRAM_CHANNEL_0`: raw AMD DF DRAM channel counter before ingest decode. **Usefulness:** Low / other
-- `EVENT_DRAM_CHANNEL_1`: raw AMD DF DRAM channel counter before ingest decode. **Usefulness:** Low / other
-- `EVENT_DRAM_CHANNEL_2`: raw AMD DF DRAM channel counter before ingest decode. **Usefulness:** Low / other
-- `EVENT_DRAM_CHANNEL_3`: raw AMD DF DRAM channel counter before ingest decode. **Usefulness:** Low / other
-- `MERGE`: hardware performance counter for floating-point or retirement. **Usefulness:** Low / other
 
-### `amd64_rapl` (1)
-- `MSR_CORE_ENERGY_STAT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `amd_gpu` (4)
+### `amd_gpu` (7)
 - `gpu_flops_rate`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_mem_read_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_mem_total_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
+- `gpu_mem_total_mb`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
+- `gpu_mem_used_mb`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
+- `gpu_mem_util`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_mem_write_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 
-### `block` (8)
+### `amd_x86_pmc` (13)
+- `aperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `branch_inst_retired`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `branch_inst_retired_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dispatch_stall_cycles0`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dispatch_stall_cycles1`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_chan0_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_chan1_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_chan2_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_chan3_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_ops_merge`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_ops_retired`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `instr_retired`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `amd_x86_rapl` (2)
+- `core_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `pkg_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `amd_x86_uncore_df` (4)
+- `dram_chan0_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_chan1_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_chan2_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_chan3_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `arm_aarch64_imc` (2)
+- `dram_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `host_block` (8)
 - `io_ticks`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `rd_ios`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `rd_merges`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -130,54 +139,55 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `wr_merges`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `wr_ticks`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `cpu` (2)
+### `host_cpu` (2)
 - `iowait`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `softirq`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `cpu_counter_metrics` (35)
-- `CPU_CLK_UNHALTED_CORE`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CPU_CLK_UNHALTED_REF`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CPU_CLOCK_EST_CYCLES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CPU_UTIL_IRQ_ACCUM_US`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CPU_UTIL_NICE_ACCUM_US`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CPU_UTIL_SYS_ACCUM_US`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CPU_UTIL_TOTAL_ACCUM_US`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CPU_UTIL_USER_ACCUM_US`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL4`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL5`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL6`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL7`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR4`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR5`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR6`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR7`: raw hardware counter value. **Usefulness:** Medium / compute
-- `EVENT_DRAM_CHANNEL_0`: raw AMD DF DRAM channel counter before ingest decode. **Usefulness:** Low / other
-- `EVENT_DRAM_CHANNEL_1`: raw AMD DF DRAM channel counter before ingest decode. **Usefulness:** Low / other
-- `EVENT_DRAM_CHANNEL_2`: raw AMD DF DRAM channel counter before ingest decode. **Usefulness:** Low / other
-- `EVENT_DRAM_CHANNEL_3`: raw AMD DF DRAM channel counter before ingest decode. **Usefulness:** Low / other
-- `INSTR_RETIRED_ANY`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `L1D_REPLACEMENT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `LS_DISPATCH`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_LOAD_UOPS_RETIRED_L1_HIT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_LOAD_UOPS_RETIRED_L2_HIT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_LOAD_UOPS_RETIRED_LLC_HIT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RETIRED_BRANCH_INSTR`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RETIRED_INSTRUCTIONS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RETIRED_MISP_BRANCH_INSTR`: monitor-emitted telemetry field. **Usefulness:** Low / other
+### `host_cpu_hw` (36)
+- `aperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `arm_dram_bw_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `arm_est_flops`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `cpu_clock_est_cycles`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `cpu_util_irq_accum_us`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `cpu_util_nice_accum_us`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `cpu_util_sys_accum_us`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `cpu_util_total_accum_us`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `cpu_util_user_accum_us`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `cycles_unhalted_core`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `cycles_unhalted_ref`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dcgm_cpu_power_limit_w`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dcgm_cpu_power_util_w`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_chan0_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_chan1_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_chan2_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_chan3_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_128b_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_128b_packed_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_256b_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_256b_packed_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_512b_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_512b_packed_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_scalar_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_scalar_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `instr_retired`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `instr_retired_any`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `l1d_replacement`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ls_dispatch`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_load_uops_retired_l1_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_load_uops_retired_l2_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_load_uops_retired_llc_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `retired_branch_instr`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `retired_instructions`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `retired_misp_branch_instr`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `ib` (4)
-- `VL15_dropped`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+### `host_ib` (4)
 - `port_rcv_packets`: monitor-emitted telemetry field. **Usefulness:** Medium / network
 - `port_xmit_packets`: monitor-emitted telemetry field. **Usefulness:** Medium / network
 - `port_xmit_wait`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `vl15_dropped`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `ib_ext` (6)
+### `host_ib_ext` (6)
 - `counter_select`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `port_multicast_rcv_pkts`: monitor-emitted telemetry field. **Usefulness:** Medium / network
 - `port_multicast_xmit_pkts`: monitor-emitted telemetry field. **Usefulness:** Medium / network
@@ -185,343 +195,7 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `port_unicast_rcv_pkts`: monitor-emitted telemetry field. **Usefulness:** Medium / network
 - `port_unicast_xmit_pkts`: monitor-emitted telemetry field. **Usefulness:** Medium / network
 
-### `intel_4pmc3` (21)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `DTLB_LOAD_MISSES_MISS_CAUSES_A_WALK`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `FP_COMP_OPS_EXE_SSE_FP_PACKED`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `FP_COMP_OPS_EXE_SSE_FP_SCALAR`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `L1D_REPLACEMENT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `L2_LINES_IN_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_LOAD_UOPS_RETIRED_L1_HIT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_LOAD_UOPS_RETIRED_L2_HIT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_LOAD_UOPS_RETIRED_LLC_HIT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_UNCORE_RETIRED_LOCAL_DRAM`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_UNCORE_RETIRED_REMOTE_DRAM`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_UOPS_RETIRED_ALL_LOADS_KNL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_UOPS_RETIRED_L2_HIT_LOADS_KNL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RESOURCE_STALLS_ANY`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `SIMD_FP_256_PACKED_DOUBLE`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `SSE_DOUBLE_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_8pmc3` (29)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL4`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL5`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL6`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL7`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR4`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR5`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR6`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR7`: raw hardware counter value. **Usefulness:** Medium / compute
-- `DTLB_LOAD_MISSES_MISS_CAUSES_A_WALK`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `FP_COMP_OPS_EXE_SSE_FP_PACKED`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `FP_COMP_OPS_EXE_SSE_FP_SCALAR`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `L1D_REPLACEMENT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `L2_LINES_IN_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_LOAD_UOPS_RETIRED_L1_HIT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_LOAD_UOPS_RETIRED_L2_HIT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_LOAD_UOPS_RETIRED_LLC_HIT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_UNCORE_RETIRED_LOCAL_DRAM`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_UNCORE_RETIRED_REMOTE_DRAM`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_UOPS_RETIRED_ALL_LOADS_KNL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_UOPS_RETIRED_L2_HIT_LOADS_KNL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RESOURCE_STALLS_ANY`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `SIMD_FP_256_PACKED_DOUBLE`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `SSE_DOUBLE_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_bdw_cbo` (9)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `LLC_LOOKUP_DATA_READ`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RING_IV_USED`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RxR_OCCUPANCY`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_bdw_hau` (10)
-- `CLOCKTICKS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `IMC_WRITES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `REQUESTS_READS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `REQUESTS_WRITES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_bdw_imc` (9)
-- `0xD8`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `0xDC`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `0xE0`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `0xE4`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `ACT_COUNT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `PRE_COUNT_MISS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_bdw_qpi` (10)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `G1_DRS_DATA`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `G2_NCB_DATA`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `TxL_FLITS_G1_HOM`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `TxL_FLITS_G1_SNP`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_bdw_r2pci` (10)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `RING_AD_USED_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RING_AK_USED_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RING_BL_USED_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `TxR_INSERTS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_hsw_cbo` (9)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `LLC_LOOKUP_DATA_READ`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RING_IV_USED`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RxR_OCCUPANCY`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_hsw_hau` (10)
-- `CLOCKTICKS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `IMC_WRITES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `REQUESTS_READS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `REQUESTS_WRITES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_hsw_imc` (9)
-- `0xD8`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `0xDC`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `0xE0`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `0xE4`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `ACT_COUNT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `PRE_COUNT_MISS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_hsw_qpi` (10)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `G1_DRS_DATA`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `G2_NCB_DATA`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `TxL_FLITS_G1_HOM`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `TxL_FLITS_G1_SNP`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_hsw_r2pci` (10)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `RING_AD_USED_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RING_AK_USED_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RING_BL_USED_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `TxR_INSERTS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_ivb_cbo` (9)
-- `COUNTER0_OCCUPANCY`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `LLC_LOOKUP_DATA_READ`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RING_IV_USED`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_ivb_hau` (10)
-- `CLOCKTICKS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `IMC_WRITES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `REQUESTS_READS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `REQUESTS_WRITES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_ivb_imc` (9)
-- `0xD8`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `0xDC`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `0xE0`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `0xE4`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `ACT_COUNT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `PRE_COUNT_MISS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_ivb_qpi` (10)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `G1_DRS_DATA`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `G2_NCB_DATA`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `TxL_FLITS_G1_HOM`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `TxL_FLITS_G1_SNP`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_ivb_r2pci` (10)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `RING_AD_USED_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RING_AK_USED_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RING_BL_USED_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `TxR_INSERTS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_knl` (4)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `MEM_UOPS_RETIRED_ALL_LOADS_KNL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MEM_UOPS_RETIRED_L2_HIT_LOADS_KNL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_knl_edc` (3)
-- `EDC_HIT_CLEAN`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `EDC_HIT_DIRTY`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RPQ_INSERTS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_pcu` (4)
-- `FREQ_MAX_POWER_CYCLES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `FREQ_MAX_TEMP_CYCLES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `FREQ_MIN_IO_CYCLES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `FREQ_MIN_SNOOP_CYCLES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_rapl` (3)
-- `MSR_DRAM_ENERGY_STATUS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MSR_PP0_ENERGY_STATUS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `MSR_PP1_ENERGY_STATUS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_skx_cha` (9)
-- `BYPASS_CHA_IMC_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `LLC_LOOKUP_DATA_READ_LOCAL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `SF_EVICTIONS_MES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_skx_imc` (2)
-- `ACT_COUNT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `PRE_COUNT_MISS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_snb_cbo` (9)
-- `COUNTER0_OCCUPANCY`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `LLC_LOOKUP_DATA_READ`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RING_IV_USED`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_snb_hau` (10)
-- `CLOCKTICKS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `IMC_WRITES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `REQUESTS_READS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `REQUESTS_WRITES`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_snb_imc` (9)
-- `0xD8`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `0xDC`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `0xE0`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `0xE4`: raw uncore event-select register value. **Usefulness:** Medium / memory
-- `ACT_COUNT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `PRE_COUNT_MISS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_snb_qpi` (10)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `G1_DRS_DATA`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `G2_NCB_DATA`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `TxL_FLITS_G1_HOM`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `TxL_FLITS_G1_SNP`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_snb_r2pci` (10)
-- `CTL1`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL2`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTL3`: control register selector for configured hardware counter. **Usefulness:** Low / compute
-- `CTR1`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR2`: raw hardware counter value. **Usefulness:** Medium / compute
-- `CTR3`: raw hardware counter value. **Usefulness:** Medium / compute
-- `RING_AD_USED_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RING_AK_USED_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `RING_BL_USED_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `TxR_INSERTS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `llite` (10)
-- `dirty_pages_hits`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dirty_pages_misses`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `getxattr`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `inode_permission`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ioctl`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `osc_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `osc_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `read`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `seek`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `write`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `lnet` (9)
-- `errors`: monitor-emitted telemetry field. **Usefulness:** Low / other
+### `host_lnet` (8)
 - `msgs_alloc`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `msgs_alloc_max`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `route_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -531,32 +205,24 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `rx_msgs_dropped`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `tx_msgs`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `mdc` (9)
-- `ldlm_cancel`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mds_close`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mds_getattr`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mds_getattr_lock`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mds_getxattr`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mds_readpage`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mds_statfs`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mds_sync`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `reqs`: monitor-emitted telemetry field. **Usefulness:** Low / other
+### `host_mem` (15)
+- `anon_huge_pages`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `anon_pages`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `bounce`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `file_pages`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `huge_pages_free`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `huge_pages_total`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `inactive`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mapped`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_free`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_total`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `nfs_unstable`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `page_tables`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `slab`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `writeback`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `mem` (12)
-- `Active`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `AnonHugePages`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `AnonPages`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `Bounce`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `Dirty`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `HugePages_Free`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `HugePages_Total`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `Inactive`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `Mapped`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `NFS_Unstable`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `PageTables`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `Writeback`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `mic` (7)
+### `host_mic` (7)
 - `idle_sum`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `jiffy_counter`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `nice_sum`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -565,7 +231,7 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `threads_core`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `user_sum`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `net` (6)
+### `host_net` (6)
 - `collisions`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `multicast`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `rx_compressed`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -573,65 +239,55 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `tx_compressed`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `tx_dropped`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `nfs` (10)
-- `READ_queue`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `READ_rtt`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `READ_timeouts`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `WRITE_queue`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `WRITE_rtt`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `WRITE_timeouts`: monitor-emitted telemetry field. **Usefulness:** Low / other
+### `host_nfs` (12)
 - `delay`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `read_ops`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `read_queue`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `read_rtt`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `read_timeouts`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `write_ops`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `write_queue`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `write_rtt`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `write_timeouts`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `xprt_bad_xids`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `xprt_bklog_u`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `xprt_req_u`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `numa` (3)
+### `host_numa` (3)
 - `interleave_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `local_node`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `numa_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `nvidia_gpu` (6)
-- `gpu_flops_rate`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
-- `gpu_mem_read_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
-- `gpu_mem_total_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
-- `gpu_mem_write_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
-- `tensor_hmma_active`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tensor_imma_active`: monitor-emitted telemetry field. **Usefulness:** Low / other
+### `host_opa` (12)
+- `port_error_counter_summary`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_mark_fecn`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_multicast_rcv_pkts`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_multicast_xmit_pkts`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_rcv_becn`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_rcv_bubble`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_rcv_fecn`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_xmit_time_cong`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_xmit_wait`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_xmit_wait_data`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_xmit_wasted_bw`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `sw_port_congestion`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `opa` (7)
-- `PortMarkFECN`: monitor-emitted telemetry field. **Usefulness:** Medium / network
-- `PortMulticastRcvPkts`: monitor-emitted telemetry field. **Usefulness:** Medium / network
-- `PortMulticastXmitPkts`: monitor-emitted telemetry field. **Usefulness:** Medium / network
-- `PortRcvBubble`: monitor-emitted telemetry field. **Usefulness:** Medium / network
-- `PortXmitTimeCong`: monitor-emitted telemetry field. **Usefulness:** Medium / network
-- `PortXmitWaitData`: monitor-emitted telemetry field. **Usefulness:** Medium / network
-- `PortXmitWastedBW`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+### `host_proc` (13)
+- `threads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `uid`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `vm_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `vm_exe`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `vm_hwm`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `vm_lck`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `vm_lib`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `vm_peak`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `vm_pte`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `vm_rss`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `vm_size`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `vm_stk`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `vm_swap`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `osc` (7)
-- `ost_destroy`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ost_punch`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ost_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ost_setattr`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ost_statfs`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ost_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `reqs`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `proc` (13)
-- `Threads`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `Uid`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `VmData`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `VmExe`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `VmHWM`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `VmLck`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `VmLib`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `VmPTE`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `VmPeak`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `VmRSS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `VmSize`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `VmStk`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `VmSwap`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `ps` (6)
+### `host_ps` (6)
 - `ctxt`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `load_1`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `load_15`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -639,26 +295,26 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `nr_running`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `nr_threads`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `roofline_hw_peak` (3)
+### `host_roofline_peak` (3)
 - `cpu_peak_source`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `gpu_peak_source`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `peak_calc_version`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `sysv_shm` (2)
+### `host_sysv_shm` (2)
 - `mem_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `segs_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `tmpfs` (3)
+### `host_tmpfs` (3)
 - `bytes_avail`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `bytes_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `files_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `vfs` (3)
+### `host_vfs` (3)
 - `dentry_use`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `file_use`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `inode_use`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `vm` (27)
+### `host_vm` (27)
 - `allocstall`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `kswapd_inodesteal`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `kswapd_steal`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -687,14 +343,291 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `thp_fault_fallback`: monitor-emitted telemetry field. **Usefulness:** Low / memory
 - `thp_split`: monitor-emitted telemetry field. **Usefulness:** Low / memory
 
+### `intel_8pmc3` (1)
+- `SSE_DOUBLE_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_skx_imc` (2)
+- `ACT_COUNT`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `PRE_COUNT_MISS`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_pcu` (6)
+- `freq_max_power_cycles`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `freq_max_temp_cycles`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `freq_min_io_cycles`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `freq_min_snoop_cycles`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `pcu_ctr0`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `pcu_ctr1`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_pmc_gpr4` (26)
+- `aperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dtlb_load_misses_miss_causes_a_walk`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_128b_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_128b_packed_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_256b_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_256b_packed_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_512b_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_512b_packed_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_scalar_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_scalar_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_comp_ops_exe_sse_fp_packed`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_comp_ops_exe_sse_fp_scalar`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `instr_retired`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `l1d_replacement`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `l2_lines_in_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_load_uops_retired_l1_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_load_uops_retired_l2_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_load_uops_retired_llc_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_uncore_retired_local_dram`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_uncore_retired_remote_dram`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_uops_retired_all_loads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_uops_retired_all_loads_knl`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_uops_retired_l2_hit_loads_knl`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `resource_stalls_any`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `simd_fp_256_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_pmc_gpr8` (26)
+- `aperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dtlb_load_misses_miss_causes_a_walk`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_128b_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_128b_packed_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_256b_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_256b_packed_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_512b_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_512b_packed_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_scalar_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_arith_inst_retired_scalar_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_comp_ops_exe_sse_fp_packed`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `fp_comp_ops_exe_sse_fp_scalar`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `instr_retired`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `l1d_replacement`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `l2_lines_in_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_load_uops_retired_l1_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_load_uops_retired_l2_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_load_uops_retired_llc_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_uncore_retired_local_dram`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_uncore_retired_remote_dram`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_uops_retired_all_loads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_uops_retired_all_loads_knl`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_uops_retired_l2_hit_loads_knl`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `resource_stalls_any`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `simd_fp_256_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_pmc_knl` (5)
+- `aperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `instr_retired`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_uops_retired_all_loads_knl`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mem_uops_retired_l2_hit_loads_knl`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_rapl` (4)
+- `dram_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `pkg_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `pp0_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `pp1_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_cbo_bdw` (4)
+- `llc_lookup_data_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `llc_lookup_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ring_iv_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `rx_r_occupancy`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_cbo_hsw` (4)
+- `llc_lookup_data_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `llc_lookup_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ring_iv_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `rx_r_occupancy`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_cbo_ivb` (4)
+- `counter0_occupancy`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `llc_lookup_data_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `llc_lookup_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ring_iv_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_cbo_snb` (4)
+- `counter0_occupancy`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `llc_lookup_data_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `llc_lookup_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ring_iv_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_cha_skx` (4)
+- `bypass_cha_imc_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `llc_lookup_data_read_local`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `llc_lookup_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `sf_evictions_mes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_edc_knl` (3)
+- `edc_hit_clean`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `edc_hit_dirty`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `rpq_inserts`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_hau_bdw` (4)
+- `clockticks`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `imc_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `requests_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `requests_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_hau_hsw` (4)
+- `clockticks`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `imc_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `requests_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `requests_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_hau_ivb` (4)
+- `clockticks`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `imc_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `requests_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `requests_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_hau_snb` (4)
+- `clockticks`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `imc_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `requests_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `requests_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_imc_bdw` (5)
+- `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_fixed_ctr`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_imc_hsw` (5)
+- `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_fixed_ctr`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_imc_ivb` (5)
+- `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_fixed_ctr`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_imc_skx` (2)
+- `dram_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_imc_snb` (5)
+- `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_fixed_ctr`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_mc_knl` (2)
+- `dram_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dram_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_qpi_bdw` (4)
+- `g1_drs_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `g2_ncb_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tx_l_flits_g1_hom`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tx_l_flits_g1_snp`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_qpi_hsw` (4)
+- `g1_drs_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `g2_ncb_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tx_l_flits_g1_hom`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tx_l_flits_g1_snp`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_qpi_ivb` (4)
+- `g1_drs_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `g2_ncb_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tx_l_flits_g1_hom`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tx_l_flits_g1_snp`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_qpi_snb` (4)
+- `g1_drs_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `g2_ncb_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tx_l_flits_g1_hom`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tx_l_flits_g1_snp`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_r2pci_bdw` (4)
+- `ring_ad_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ring_ak_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ring_bl_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tx_r_inserts`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_r2pci_hsw` (4)
+- `ring_ad_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ring_ak_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ring_bl_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tx_r_inserts`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_r2pci_ivb` (4)
+- `ring_ad_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ring_ak_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ring_bl_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tx_r_inserts`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `intel_x86_uncore_r2pci_snb` (4)
+- `ring_ad_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ring_ak_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ring_bl_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tx_r_inserts`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `lustre_llite` (9)
+- `dirty_pages_hits`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `dirty_pages_misses`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `getxattr`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `inode_permission`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ioctl`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `osc_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `osc_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `seek`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `write`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `lustre_mdc` (8)
+- `mds_close`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mds_getattr`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mds_getattr_lock`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mds_getxattr`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mds_readpage`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mds_statfs`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `mds_sync`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `reqs`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `lustre_osc` (7)
+- `ost_destroy`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ost_punch`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ost_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ost_setattr`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ost_statfs`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ost_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `reqs`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `nvidia_gpu` (9)
+- `gpu_flops_rate`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
+- `gpu_mem_read_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
+- `gpu_mem_total_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
+- `gpu_mem_total_mb`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
+- `gpu_mem_used_mb`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
+- `gpu_mem_util`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
+- `gpu_mem_write_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
+- `tensor_hmma_active`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `tensor_imma_active`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
+### `osc` (7)
+- `ost_destroy`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ost_punch`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ost_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ost_setattr`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ost_statfs`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `ost_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `reqs`: monitor-emitted telemetry field. **Usefulness:** Low / other
+
 ## 4) Methodology and caveats
 
-- Emitted keys = monitor `KEYS` macros per `st_name`, plus ingest-decoded aliases from `sync_timedb_parsing.EVENTMAPS_BY_TYPE`, plus synthetic `CTL*`/`CTR*` (and Intel IMC `0xD8`…`0xE4`) where raw schema lines carry them before decode.
+- Emitted keys = monitor `KEYS` / `stats_set` literals per `st_name` (post naming migration; no synthetic `CTL*`/`CTR*` or hex control tokens).
 - Usage matching scans explicit quoted key literals in `hpcperfstats/` and `tests/`; dynamically generated keys or indirect mappings can be undercounted.
+- Downstream still references **legacy** type/event strings until updated; section 5 lists pre-rename keys used by metrics/plots.
 - This is static source analysis, not runtime coverage.
 - Compile-time gated monitor drivers may exist in source but be disabled in a given deployment.
-- NFS runtime-composed keys are included: `READ_ops`, `READ_timeouts`, `READ_queue`, `READ_rtt`, `WRITE_ops`, `WRITE_timeouts`, `WRITE_queue`, `WRITE_rtt`.
-- Reused raw key names (`CTL*`, `CTR*`, `0xD8`, etc.) are treated per monitor type context.
+- NFS runtime-composed keys are included: `read_ops`, `read_timeouts`, `read_queue`, `read_rtt`, `write_ops`, `write_timeouts`, `write_queue`, `write_rtt`.
 - `osc` is parsed from `osc.c` for completeness but is **not** registered in `stats_registry.c` (not emitted by the daemon).
 - See also `artifacts/monitor-emitted-variables-by-architecture.md` for a subsystem/architecture inventory.
 

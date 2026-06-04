@@ -72,7 +72,7 @@ static void vfs_collect(struct stats_type *type)
 }
 
 struct stats_type vfs_stats_type = {
-  .st_name = "vfs",
+  .st_name = "host_vfs",
   .st_collect = &vfs_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

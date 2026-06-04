@@ -84,7 +84,7 @@ static void mdc_collect(struct stats_type *type)
 }
 
 struct stats_type mdc_stats_type = {
-  .st_name = "mdc",
+  .st_name = "lustre_mdc",
   .st_collect = &mdc_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

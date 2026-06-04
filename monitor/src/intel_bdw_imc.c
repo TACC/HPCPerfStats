@@ -4,11 +4,11 @@
 #include "intel_pmc_uncore.h"
 
 #define CTR_KEYS                                                             \
-  X(CAS_READS, "E,W=48", ""),                                                \
-      X(CAS_WRITES, "E,W=48", ""),                                           \
-      X(ACT_COUNT, "E,W=48", ""),                                            \
-      X(PRE_COUNT_MISS, "E,W=48", ""),                                       \
-      X(FIXED_CTR, "E,W=48", "")
+  X(dram_cas_reads, "E,W=48", ""),                                                \
+      X(dram_cas_writes, "E,W=48", ""),                                           \
+      X(dram_act_count, "E,W=48", ""),                                            \
+      X(dram_pre_count_miss, "E,W=48", ""),                                       \
+      X(dram_fixed_ctr, "E,W=48", "")
 
 #define KEYS CTR_KEYS
 
@@ -28,10 +28,10 @@ static uint32_t events[] = {
     PRE_COUNT_MISS,
 };
 static const char *const event_keys[] = {
-    "CAS_READS",
-    "CAS_WRITES",
-    "ACT_COUNT",
-    "PRE_COUNT_MISS",
+    "dram_cas_reads",
+    "dram_cas_writes",
+    "dram_act_count",
+    "dram_pre_count_miss",
 };
 static int dids[] = {0x6fb0, 0x6fb1, 0x6fb4, 0x6fb5,
 		     0x6fd0, 0x6fd1, 0x6fd4, 0x6fd5};
@@ -41,7 +41,7 @@ static const struct intel_uncore_pci_cfg intel_bdw_imc_pci_cfg = {
     .nr_pci_dids = 8,
     .events = events,
     .event_keys = event_keys,
-    .fixed_ctr_key = "FIXED_CTR",
+    .fixed_ctr_key = "dram_fixed_ctr",
     .nr_events = 4,
 };
 
@@ -56,7 +56,7 @@ static void intel_bdw_imc_collect(struct stats_type *type)
 }
 
 struct stats_type intel_bdw_imc_stats_type = {
-    .st_name = "intel_bdw_imc",
+    .st_name = "intel_x86_uncore_imc_bdw",
     .st_begin = &intel_bdw_imc_begin,
     .st_collect = &intel_bdw_imc_collect,
 #define X SCHEMA_DEF

@@ -44,7 +44,7 @@ static void vm_collect(struct stats_type *type)
 }
 
 struct stats_type vm_stats_type = {
-  .st_name = "vm",
+  .st_name = "host_vm",
   .st_collect = &vm_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

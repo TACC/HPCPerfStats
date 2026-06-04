@@ -33,13 +33,13 @@ void rapl_likwid_intel_collect_pkg(struct stats_type *type,
 	}
 
 	if (has_pkg)
-		stats_set(stats, "MSR_PKG_ENERGY_STATUS", pkg_mj);
+		stats_set(stats, "pkg_energy", pkg_mj);
 	if (has_core)
-		stats_set(stats, "MSR_PP0_ENERGY_STATUS", core_mj);
+		stats_set(stats, "pp0_energy", core_mj);
 	if (has_pp1)
-		stats_set(stats, "MSR_PP1_ENERGY_STATUS", pp1_mj);
+		stats_set(stats, "pp1_energy", pp1_mj);
 	if (has_dram)
-		stats_set(stats, "MSR_DRAM_ENERGY_STATUS", dram_mj);
+		stats_set(stats, "dram_energy", dram_mj);
 }
 
 void rapl_likwid_amd_collect_socket_cpu(struct stats_type *type,
@@ -71,8 +71,8 @@ void rapl_likwid_amd_collect_socket_cpu(struct stats_type *type,
 
 	if (topology_core_id == 0) {
 		if (has_core)
-			stats_inc(stats, "MSR_CORE_ENERGY_STAT", core_mj);
+			stats_inc(stats, "core_energy", core_mj);
 		if (has_pkg)
-			stats_inc(stats, "MSR_PKG_ENERGY_STAT", pkg_mj);
+			stats_inc(stats, "pkg_energy", pkg_mj);
 	}
 }

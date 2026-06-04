@@ -756,49 +756,49 @@ static void dcgm_cpu_refresh_socket_power(void)
 
 static void publish_dcgm_cpu_stats(struct stats *stats, int i)
 {
-  stats_set(stats, "CPU_UTIL_TOTAL_ACCUM_US", g_dcgm_ctr0[i]);
-  stats_set(stats, "CPU_UTIL_USER_ACCUM_US", g_dcgm_ctr1[i]);
-  stats_set(stats, "CPU_UTIL_SYS_ACCUM_US", g_dcgm_ctr2[i]);
-  stats_set(stats, "CPU_UTIL_IRQ_ACCUM_US", g_dcgm_ctr3[i]);
-  stats_set(stats, "CPU_UTIL_NICE_ACCUM_US", g_dcgm_ctr4[i]);
-  stats_set(stats, "CPU_CLOCK_EST_CYCLES", g_dcgm_ctr5[i]);
+  stats_set(stats, "cpu_util_total_accum_us", g_dcgm_ctr0[i]);
+  stats_set(stats, "cpu_util_user_accum_us", g_dcgm_ctr1[i]);
+  stats_set(stats, "cpu_util_sys_accum_us", g_dcgm_ctr2[i]);
+  stats_set(stats, "cpu_util_irq_accum_us", g_dcgm_ctr3[i]);
+  stats_set(stats, "cpu_util_nice_accum_us", g_dcgm_ctr4[i]);
+  stats_set(stats, "cpu_clock_est_cycles", g_dcgm_ctr5[i]);
   /* Match Intel LIKWID FIXC0..2 mapping (INSTR_RETIRED / core unhalted / ref). */
-  stats_set(stats, "FIXED_CTR0", g_dcgm_inst[i]);
-  stats_set(stats, "FIXED_CTR1", g_dcgm_aperf[i]);
-  stats_set(stats, "FIXED_CTR2", g_dcgm_mperf[i]);
-  stats_set(stats, "INST_RETIRED", g_dcgm_inst[i]);
-  stats_set(stats, "APERF", g_dcgm_aperf[i]);
-  stats_set(stats, "MPERF", g_dcgm_mperf[i]);
-  stats_set(stats, "EVENT_DRAM_CHANNEL_0", 0);
-  stats_set(stats, "EVENT_DRAM_CHANNEL_1", 0);
-  stats_set(stats, "EVENT_DRAM_CHANNEL_2", 0);
-  stats_set(stats, "EVENT_DRAM_CHANNEL_3", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", g_dcgm_fp_sca_d[i]);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE", g_dcgm_fp_128_d[i]);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE", g_dcgm_fp_256_d[i]);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE", g_dcgm_fp_512_d[i]);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_SINGLE", g_dcgm_fp_sca_s[i]);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE", g_dcgm_fp_128_s[i]);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE", g_dcgm_fp_256_s[i]);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE", g_dcgm_fp_512_s[i]);
-  stats_set(stats, "ARM_EST_FLOPS", g_dcgm_arm_est_flops[i]);
-  stats_set(stats, "ARM_DRAM_BW_BYTES", g_dcgm_arm_dram_bytes[i]);
+  stats_set(stats, "instr_retired", g_dcgm_inst[i]);
+  stats_set(stats, "aperf", g_dcgm_aperf[i]);
+  stats_set(stats, "mperf", g_dcgm_mperf[i]);
+  stats_set(stats, "instr_retired", g_dcgm_inst[i]);
+  stats_set(stats, "aperf", g_dcgm_aperf[i]);
+  stats_set(stats, "mperf", g_dcgm_mperf[i]);
+  stats_set(stats, "dram_chan0_bytes", 0);
+  stats_set(stats, "dram_chan1_bytes", 0);
+  stats_set(stats, "dram_chan2_bytes", 0);
+  stats_set(stats, "dram_chan3_bytes", 0);
+  stats_set(stats, "fp_arith_inst_retired_scalar_double", g_dcgm_fp_sca_d[i]);
+  stats_set(stats, "fp_arith_inst_retired_128b_packed_double", g_dcgm_fp_128_d[i]);
+  stats_set(stats, "fp_arith_inst_retired_256b_packed_double", g_dcgm_fp_256_d[i]);
+  stats_set(stats, "fp_arith_inst_retired_512b_packed_double", g_dcgm_fp_512_d[i]);
+  stats_set(stats, "fp_arith_inst_retired_scalar_single", g_dcgm_fp_sca_s[i]);
+  stats_set(stats, "fp_arith_inst_retired_128b_packed_single", g_dcgm_fp_128_s[i]);
+  stats_set(stats, "fp_arith_inst_retired_256b_packed_single", g_dcgm_fp_256_s[i]);
+  stats_set(stats, "fp_arith_inst_retired_512b_packed_single", g_dcgm_fp_512_s[i]);
+  stats_set(stats, "arm_est_flops", g_dcgm_arm_est_flops[i]);
+  stats_set(stats, "arm_dram_bw_bytes", g_dcgm_arm_dram_bytes[i]);
   if (g_dcgm_logical_to_power_slot != NULL && i >= 0 && i < nr_cpus) {
     int slot = g_dcgm_logical_to_power_slot[i];
 
     if (slot >= 0 && slot < g_dcgm_ncpu_entities && g_dcgm_sock_power_util != NULL
 	&& g_dcgm_sock_power_limit != NULL) {
-      stats_set(stats, "DCGM_CPU_POWER_UTIL_W",
+      stats_set(stats, "dcgm_cpu_power_util_w",
 		dcgm_watts_dbl_to_ull(g_dcgm_sock_power_util[slot]));
-      stats_set(stats, "DCGM_CPU_POWER_LIMIT_W",
+      stats_set(stats, "dcgm_cpu_power_limit_w",
 		dcgm_watts_dbl_to_ull(g_dcgm_sock_power_limit[slot]));
     } else {
-      stats_set(stats, "DCGM_CPU_POWER_UTIL_W", 0ULL);
-      stats_set(stats, "DCGM_CPU_POWER_LIMIT_W", 0ULL);
+      stats_set(stats, "dcgm_cpu_power_util_w", 0ULL);
+      stats_set(stats, "dcgm_cpu_power_limit_w", 0ULL);
     }
   } else {
-    stats_set(stats, "DCGM_CPU_POWER_UTIL_W", 0ULL);
-    stats_set(stats, "DCGM_CPU_POWER_LIMIT_W", 0ULL);
+    stats_set(stats, "dcgm_cpu_power_util_w", 0ULL);
+    stats_set(stats, "dcgm_cpu_power_limit_w", 0ULL);
   }
 }
 
@@ -1122,40 +1122,40 @@ static void fallback_fill(struct stats *stats, const char *cpu)
 {
   uint64_t v = 0;
 #ifdef MONITOR_ARCH_INTEL
-  if (read_msr_u64(cpu, IA32_CTR0, &v) == 0) stats_set(stats, "MEM_LOAD_UOPS_RETIRED_L1_HIT", v);
-  if (read_msr_u64(cpu, IA32_CTR1, &v) == 0) stats_set(stats, "MEM_LOAD_UOPS_RETIRED_L2_HIT", v);
-  if (read_msr_u64(cpu, IA32_CTR2, &v) == 0) stats_set(stats, "MEM_LOAD_UOPS_RETIRED_LLC_HIT", v);
-  if (read_msr_u64(cpu, IA32_CTR3, &v) == 0) stats_set(stats, "L1D_REPLACEMENT", v);
-  if (read_msr_u64(cpu, IA32_FIXED_CTR0, &v) == 0) stats_set(stats, "FIXED_CTR0", v);
-  if (read_msr_u64(cpu, IA32_FIXED_CTR1, &v) == 0) stats_set(stats, "FIXED_CTR1", v);
-  if (read_msr_u64(cpu, IA32_FIXED_CTR2, &v) == 0) stats_set(stats, "FIXED_CTR2", v);
+  if (read_msr_u64(cpu, IA32_CTR0, &v) == 0) stats_set(stats, "mem_load_uops_retired_l1_hit", v);
+  if (read_msr_u64(cpu, IA32_CTR1, &v) == 0) stats_set(stats, "mem_load_uops_retired_l2_hit", v);
+  if (read_msr_u64(cpu, IA32_CTR2, &v) == 0) stats_set(stats, "mem_load_uops_retired_llc_hit", v);
+  if (read_msr_u64(cpu, IA32_CTR3, &v) == 0) stats_set(stats, "l1d_replacement", v);
+  if (read_msr_u64(cpu, IA32_FIXED_CTR0, &v) == 0) stats_set(stats, "instr_retired", v);
+  if (read_msr_u64(cpu, IA32_FIXED_CTR1, &v) == 0) stats_set(stats, "aperf", v);
+  if (read_msr_u64(cpu, IA32_FIXED_CTR2, &v) == 0) stats_set(stats, "mperf", v);
 #else
-  if (read_msr_u64(cpu, MSR_PERF_CTR0, &v) == 0) stats_set(stats, "FLOPS", v);
-  if (read_msr_u64(cpu, MSR_PERF_CTR1, &v) == 0) stats_set(stats, "MERGE", v);
-  if (read_msr_u64(cpu, MSR_PERF_CTR2, &v) == 0) stats_set(stats, "BRANCH_INST_RETIRED", v);
-  if (read_msr_u64(cpu, MSR_PERF_CTR3, &v) == 0) stats_set(stats, "BRANCH_INST_RETIRED_MISS", v);
-  if (read_msr_u64(cpu, MSR_PERF_CTR4, &v) == 0) stats_set(stats, "DISPATCH_STALL_CYCLES1", v);
-  if (read_msr_u64(cpu, MSR_PERF_CTR5, &v) == 0) stats_set(stats, "DISPATCH_STALL_CYCLES0", v);
-  if (read_msr_u64(cpu, MSR_PERF_INST_RETIRED, &v) == 0) stats_set(stats, "INST_RETIRED", v);
-  if (read_msr_u64(cpu, MSR_PERF_APERF, &v) == 0) stats_set(stats, "APERF", v);
-  if (read_msr_u64(cpu, MSR_PERF_MPERF, &v) == 0) stats_set(stats, "MPERF", v);
-  if (read_msr_u64(cpu, MSR_DF_CTR0, &v) == 0) stats_set(stats, "EVENT_DRAM_CHANNEL_0", v);
-  if (read_msr_u64(cpu, MSR_DF_CTR1, &v) == 0) stats_set(stats, "EVENT_DRAM_CHANNEL_1", v);
-  if (read_msr_u64(cpu, MSR_DF_CTR2, &v) == 0) stats_set(stats, "EVENT_DRAM_CHANNEL_2", v);
-  if (read_msr_u64(cpu, MSR_DF_CTR3, &v) == 0) stats_set(stats, "EVENT_DRAM_CHANNEL_3", v);
+  if (read_msr_u64(cpu, MSR_PERF_CTR0, &v) == 0) stats_set(stats, "fp_ops_retired", v);
+  if (read_msr_u64(cpu, MSR_PERF_CTR1, &v) == 0) stats_set(stats, "fp_ops_merge", v);
+  if (read_msr_u64(cpu, MSR_PERF_CTR2, &v) == 0) stats_set(stats, "branch_inst_retired", v);
+  if (read_msr_u64(cpu, MSR_PERF_CTR3, &v) == 0) stats_set(stats, "branch_inst_retired_miss", v);
+  if (read_msr_u64(cpu, MSR_PERF_CTR4, &v) == 0) stats_set(stats, "dispatch_stall_cycles1", v);
+  if (read_msr_u64(cpu, MSR_PERF_CTR5, &v) == 0) stats_set(stats, "dispatch_stall_cycles0", v);
+  if (read_msr_u64(cpu, MSR_PERF_INST_RETIRED, &v) == 0) stats_set(stats, "instr_retired", v);
+  if (read_msr_u64(cpu, MSR_PERF_APERF, &v) == 0) stats_set(stats, "aperf", v);
+  if (read_msr_u64(cpu, MSR_PERF_MPERF, &v) == 0) stats_set(stats, "mperf", v);
+  if (read_msr_u64(cpu, MSR_DF_CTR0, &v) == 0) stats_set(stats, "dram_chan0_bytes", v);
+  if (read_msr_u64(cpu, MSR_DF_CTR1, &v) == 0) stats_set(stats, "dram_chan1_bytes", v);
+  if (read_msr_u64(cpu, MSR_DF_CTR2, &v) == 0) stats_set(stats, "dram_chan2_bytes", v);
+  if (read_msr_u64(cpu, MSR_DF_CTR3, &v) == 0) stats_set(stats, "dram_chan3_bytes", v);
 #endif
-  stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_SCALAR_SINGLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE", 0);
-  stats_set(stats, "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE", 0);
-  stats_set(stats, "ARM_EST_FLOPS", 0);
-  stats_set(stats, "ARM_DRAM_BW_BYTES", 0);
-  stats_set(stats, "DCGM_CPU_POWER_UTIL_W", 0ULL);
-  stats_set(stats, "DCGM_CPU_POWER_LIMIT_W", 0ULL);
+  stats_set(stats, "fp_arith_inst_retired_scalar_double", 0);
+  stats_set(stats, "fp_arith_inst_retired_128b_packed_double", 0);
+  stats_set(stats, "fp_arith_inst_retired_256b_packed_double", 0);
+  stats_set(stats, "fp_arith_inst_retired_512b_packed_double", 0);
+  stats_set(stats, "fp_arith_inst_retired_scalar_single", 0);
+  stats_set(stats, "fp_arith_inst_retired_128b_packed_single", 0);
+  stats_set(stats, "fp_arith_inst_retired_256b_packed_single", 0);
+  stats_set(stats, "fp_arith_inst_retired_512b_packed_single", 0);
+  stats_set(stats, "arm_est_flops", 0);
+  stats_set(stats, "arm_dram_bw_bytes", 0);
+  stats_set(stats, "dcgm_cpu_power_util_w", 0ULL);
+  stats_set(stats, "dcgm_cpu_power_limit_w", 0ULL);
 }
 #endif
 
@@ -1291,5 +1291,5 @@ struct stats_type cpu_counter_metrics_stats_type = {
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(CPU_COUNTER_METRICS_KEYS),
 #undef X
-  .st_name = "cpu_counter_metrics",
+  .st_name = "host_cpu_hw",
 };

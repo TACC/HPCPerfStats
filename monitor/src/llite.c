@@ -124,7 +124,7 @@ static void llite_collect(struct stats_type *type)
 }
 
 struct stats_type llite_stats_type = {
-  .st_name = "llite",
+  .st_name = "lustre_llite",
   .st_collect = &llite_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

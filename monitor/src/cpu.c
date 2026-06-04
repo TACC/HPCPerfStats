@@ -88,7 +88,7 @@ static void cpu_collect(struct stats_type *type)
 }
 
 struct stats_type cpu_stats_type = {
-  .st_name = "cpu",
+  .st_name = "host_cpu",
   .st_collect = &cpu_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

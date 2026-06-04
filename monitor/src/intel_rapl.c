@@ -16,10 +16,10 @@
 #include "rapl_likwid_stats.h"
 
 #define KEYS                                                                  \
-	X(MSR_PKG_ENERGY_STATUS, "E,W=32,U=mJ", ""),                          \
-	    X(MSR_PP0_ENERGY_STATUS, "E,W=32,U=mJ", ""),                      \
-	    X(MSR_PP1_ENERGY_STATUS, "E,W=32,U=mJ", ""),                      \
-	    X(MSR_DRAM_ENERGY_STATUS, "E,W=32,U=mJ", "")
+	X(pkg_energy, "E,W=32,U=mJ", ""),                          \
+	    X(pp0_energy, "E,W=32,U=mJ", ""),                      \
+	    X(pp1_energy, "E,W=32,U=mJ", ""),                      \
+	    X(dram_energy, "E,W=32,U=mJ", "")
 
 static int intel_rapl_begin(struct stats_type *type)
 {
@@ -56,7 +56,7 @@ static void intel_rapl_collect(struct stats_type *type)
 }
 
 struct stats_type intel_rapl_stats_type = {
-    .st_name = "intel_rapl",
+    .st_name = "intel_x86_rapl",
     .st_begin = &intel_rapl_begin,
     .st_collect = &intel_rapl_collect,
 #define X SCHEMA_DEF

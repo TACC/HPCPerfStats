@@ -6,6 +6,7 @@
 #include "procfile_parse.h"
 #include "sys_iter.h"
 #include "trace.h"
+#include "host_key_alias.h"
 
 // i182-101# cat /sys/devices/system/node/node0/meminfo
 //
@@ -18,23 +19,23 @@
    nodeN/meminfo and as Cached in /proc/meminfo. */
 
 #define KEYS \
-  X(MemTotal, "U=KB", ""), \
-  X(MemFree, "U=KB", ""), \
-  X(MemUsed, "U=KB", ""), \
-  X(Active, "U=KB", ""), \
-  X(Inactive, "U=KB", ""), \
-  X(Dirty, "U=KB", ""), \
-  X(Writeback, "U=KB", ""), \
-  X(FilePages, "U=KB", ""), \
-  X(Mapped, "U=KB", ""), \
-  X(AnonPages, "U=KB", ""), \
-  X(PageTables, "U=KB", ""), \
-  X(NFS_Unstable, "U=KB", ""), \
-  X(Bounce, "U=KB", ""), \
-  X(Slab, "U=KB", ""), \
-  X(AnonHugePages, "U=KB", ""), \
-  X(HugePages_Total, "", ""), \
-  X(HugePages_Free, "", "")
+  X(mem_total, "U=KB", ""), \
+  X(mem_free, "U=KB", ""), \
+  X(mem_used, "U=KB", ""), \
+  X(active, "U=KB", ""), \
+  X(inactive, "U=KB", ""), \
+  X(dirty, "U=KB", ""), \
+  X(writeback, "U=KB", ""), \
+  X(file_pages, "U=KB", ""), \
+  X(mapped, "U=KB", ""), \
+  X(anon_pages, "U=KB", ""), \
+  X(page_tables, "U=KB", ""), \
+  X(nfs_unstable, "U=KB", ""), \
+  X(bounce, "U=KB", ""), \
+  X(slab, "U=KB", ""), \
+  X(anon_huge_pages, "U=KB", ""), \
+  X(huge_pages_total, "", ""), \
+  X(huge_pages_free, "", "")
 
 static int mem_meminfo_line_cb(char *line, void *ctx)
 {
@@ -47,7 +48,7 @@ static int mem_meminfo_line_cb(char *line, void *ctx)
     return 0;
   if (key[0] == 0)
     return 0;
-  stats_set(stats, key, val);
+  host_key_alias_emit(stats, key, val);
   return 0;
 }
 
@@ -81,7 +82,7 @@ static void mem_collect(struct stats_type *type)
 }
 
 struct stats_type mem_stats_type = {
-  .st_name = "mem",
+  .st_name = "host_mem",
   .st_collect = &mem_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

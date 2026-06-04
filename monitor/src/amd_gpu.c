@@ -48,9 +48,9 @@ static void amd_gpu_collect(struct stats_type *type)
   }
 
   stats_set(stats, "gpu_util", 0);
-  stats_set(stats, "mem_util", 0);
-  stats_set(stats, "mem_total_mb", 0);
-  stats_set(stats, "mem_used_mb", 0);
+  stats_set(stats, "gpu_mem_util", 0);
+  stats_set(stats, "gpu_mem_total_mb", 0);
+  stats_set(stats, "gpu_mem_used_mb", 0);
   stats_set(stats, "power_usage", 0);
   stats_set(stats, "temperature", 0);
   stats_set(stats, "fp64_active", 0);

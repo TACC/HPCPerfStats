@@ -17,21 +17,22 @@
 #include "trace.h"
 #include "string1.h"
 #include "monitor_log.h"
+#include "host_key_alias.h"
 
 #define KEYS                                                            \
-  X(Uid, "", "user id"),						\
-    X(VmPeak, "U=kB", "Peak vm size"),					\
-    X(VmSize, "U=kB", "Current vm size"),				\
-    X(VmLck, "U=kB", "Locked mem size"),				\
-    X(VmHWM, "U=kB", "Peak resident set size"),				\
-    X(VmRSS, "U=kB", "Current resident set size"),			\
-    X(VmData, "U=kB", "size of data"),					\
-    X(VmStk, "U=kB", "size of stack"),					\
-    X(VmExe, "U=kB", "size of text"),					\
-    X(VmLib, "U=kB", "shared lib code size"),				\
-    X(VmPTE, "U=kB", "page table entry size"),				\
-    X(VmSwap, "U=kB", "swapped vm size"),				\
-    X(Threads, "", "number of threads"),				\
+  X(uid, "", "user id"),						\
+    X(vm_peak, "U=kB", "Peak vm size"),					\
+    X(vm_size, "U=kB", "Current vm size"),				\
+    X(vm_lck, "U=kB", "Locked mem size"),				\
+    X(vm_hwm, "U=kB", "Peak resident set size"),				\
+    X(vm_rss, "U=kB", "Current resident set size"),			\
+    X(vm_data, "U=kB", "size of data"),					\
+    X(vm_stk, "U=kB", "size of stack"),					\
+    X(vm_exe, "U=kB", "size of text"),					\
+    X(vm_lib, "U=kB", "shared lib code size"),				\
+    X(vm_pte, "U=kB", "page table entry size"),				\
+    X(vm_swap, "U=kB", "swapped vm size"),				\
+    X(threads, "", "number of threads"),				\
 
 static unsigned long g_proc_collect_failures;
 static time_t g_proc_collect_skip_until;
@@ -129,7 +130,7 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
       {
 	unsigned long long val = strtoull(rest, NULL, 0);
 	if (errno == 0)
-	  stats_set(stats, key, val);
+	  host_key_alias_emit(stats, key, val);
       }
     }
   }
@@ -207,7 +208,7 @@ static void proc_collect(struct stats_type *type)
 }
 
 struct stats_type proc_stats_type = {
-  .st_name = "proc",
+  .st_name = "host_proc",
   .st_collect = &proc_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

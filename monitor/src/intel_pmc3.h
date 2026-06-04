@@ -84,39 +84,39 @@
 */
 
 #define KEYS \
-    X(FP_ARITH_INST_RETIRED_SCALAR_DOUBLE, "E,W=48", ""), \
-    X(FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE, "E,W=48", ""), \
-    X(FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE, "E,W=48", ""), \
-    X(FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE, "E,W=48", ""), \
-    X(FP_ARITH_INST_RETIRED_SCALAR_SINGLE, "E,W=48", ""), \
-    X(FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE, "E,W=48", ""), \
-    X(FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE, "E,W=48", ""), \
-    X(FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE, "E,W=48", ""),	 \
-    X(MEM_UOPS_RETIRED_ALL_LOADS, "E,W=48", ""), \
-    X(MEM_LOAD_UOPS_RETIRED_L1_HIT, "E,W=48", ""), \
-    X(MEM_LOAD_UOPS_RETIRED_L2_HIT, "E,W=48", ""), \
-    X(MEM_LOAD_UOPS_RETIRED_LLC_HIT, "E,W=48", ""), \
-    X(L1D_REPLACEMENT, "E,W=48", ""), \
-    X(DTLB_LOAD_MISSES_MISS_CAUSES_A_WALK, "E,W=48", ""), \
-    X(RESOURCE_STALLS_ANY, "E,W=48", ""), \
-    X(L2_LINES_IN_ALL, "E,W=48", ""), \
-    X(MEM_UNCORE_RETIRED_REMOTE_DRAM, "E,W=48", ""), \
-    X(MEM_UNCORE_RETIRED_LOCAL_DRAM, "E,W=48", ""), \
-    X(FP_COMP_OPS_EXE_SSE_FP_PACKED, "E,W=48", ""), \
-    X(FP_COMP_OPS_EXE_SSE_FP_SCALAR, "E,W=48", ""), \
-    X(SIMD_FP_256_PACKED_DOUBLE, "E,W=48", ""), \
-    X(FIXED_CTR0, "E,W=48", ""), \
-    X(FIXED_CTR1, "E,W=48", ""), \
-    X(FIXED_CTR2, "E,W=48", "")
+    X(fp_arith_inst_retired_scalar_double, "E,W=48", ""), \
+    X(fp_arith_inst_retired_128b_packed_double, "E,W=48", ""), \
+    X(fp_arith_inst_retired_256b_packed_double, "E,W=48", ""), \
+    X(fp_arith_inst_retired_512b_packed_double, "E,W=48", ""), \
+    X(fp_arith_inst_retired_scalar_single, "E,W=48", ""), \
+    X(fp_arith_inst_retired_128b_packed_single, "E,W=48", ""), \
+    X(fp_arith_inst_retired_256b_packed_single, "E,W=48", ""), \
+    X(fp_arith_inst_retired_512b_packed_single, "E,W=48", ""),	 \
+    X(mem_uops_retired_all_loads, "E,W=48", ""), \
+    X(mem_load_uops_retired_l1_hit, "E,W=48", ""), \
+    X(mem_load_uops_retired_l2_hit, "E,W=48", ""), \
+    X(mem_load_uops_retired_llc_hit, "E,W=48", ""), \
+    X(l1d_replacement, "E,W=48", ""), \
+    X(dtlb_load_misses_miss_causes_a_walk, "E,W=48", ""), \
+    X(resource_stalls_any, "E,W=48", ""), \
+    X(l2_lines_in_all, "E,W=48", ""), \
+    X(mem_uncore_retired_remote_dram, "E,W=48", ""), \
+    X(mem_uncore_retired_local_dram, "E,W=48", ""), \
+    X(fp_comp_ops_exe_sse_fp_packed, "E,W=48", ""), \
+    X(fp_comp_ops_exe_sse_fp_scalar, "E,W=48", ""), \
+    X(simd_fp_256_packed_double, "E,W=48", ""), \
+    X(instr_retired, "E,W=48", ""), \
+    X(aperf, "E,W=48", ""), \
+    X(mperf, "E,W=48", "")
 
 #define HT_KEYS KEYS
 
 #define KNL_KEYS		 \
-  X(MEM_UOPS_RETIRED_ALL_LOADS_KNL, "E,W=40", ""),	 \
-    X(MEM_UOPS_RETIRED_L2_HIT_LOADS_KNL, "E,W=40", ""),	 \
-    X(FIXED_CTR0, "E,W=40", ""), \
-    X(FIXED_CTR1, "E,W=40", ""), \
-    X(FIXED_CTR2, "E,W=40", "")
+  X(mem_uops_retired_all_loads_knl, "E,W=40", ""),	 \
+    X(mem_uops_retired_l2_hit_loads_knl, "E,W=40", ""),	 \
+    X(instr_retired, "E,W=40", ""), \
+    X(aperf, "E,W=40", ""), \
+    X(mperf, "E,W=40", "")
 
 /*! \brief Event select */
 // IA32_PERFEVTSELx MSR layout
@@ -231,44 +231,44 @@ static  uint64_t nhm_events[] = {
 };
 
 static const char *const skx_event_keys[] = {
-  "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",
-  "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE",
-  "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE",
-  "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE",
-  "FP_ARITH_INST_RETIRED_SCALAR_SINGLE",
-  "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE",
-  "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE",
-  "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
+  "fp_arith_inst_retired_scalar_double",
+  "fp_arith_inst_retired_128b_packed_double",
+  "fp_arith_inst_retired_256b_packed_double",
+  "fp_arith_inst_retired_512b_packed_double",
+  "fp_arith_inst_retired_scalar_single",
+  "fp_arith_inst_retired_128b_packed_single",
+  "fp_arith_inst_retired_256b_packed_single",
+  "fp_arith_inst_retired_512b_packed_single",
 };
 static const char *const knl_event_keys[] = {
-  "MEM_UOPS_RETIRED_ALL_LOADS_KNL",
-  "MEM_UOPS_RETIRED_L2_HIT_LOADS_KNL",
+  "mem_uops_retired_all_loads_knl",
+  "mem_uops_retired_l2_hit_loads_knl",
 };
 static const char *const hsw_event_keys[] = {
-  "MEM_UOPS_RETIRED_ALL_LOADS",
-  "MEM_LOAD_UOPS_RETIRED_L1_HIT",
-  "MEM_LOAD_UOPS_RETIRED_L2_HIT",
-  "L1D_REPLACEMENT",
-  "MEM_LOAD_UOPS_RETIRED_LLC_HIT",
-  "DTLB_LOAD_MISSES_MISS_CAUSES_A_WALK",
-  "RESOURCE_STALLS_ANY",
-  "L2_LINES_IN_ALL",
+  "mem_uops_retired_all_loads",
+  "mem_load_uops_retired_l1_hit",
+  "mem_load_uops_retired_l2_hit",
+  "l1d_replacement",
+  "mem_load_uops_retired_llc_hit",
+  "dtlb_load_misses_miss_causes_a_walk",
+  "resource_stalls_any",
+  "l2_lines_in_all",
 };
 static const char *const snb_event_keys[] = {
-  "MEM_UOPS_RETIRED_ALL_LOADS",
-  "MEM_LOAD_UOPS_RETIRED_L1_HIT",
-  "MEM_LOAD_UOPS_RETIRED_L2_HIT",
-  "MEM_LOAD_UOPS_RETIRED_LLC_HIT",
-  "L1D_REPLACEMENT",
-  "FP_COMP_OPS_EXE_SSE_FP_SCALAR",
-  "FP_COMP_OPS_EXE_SSE_FP_PACKED",
-  "SIMD_FP_256_PACKED_DOUBLE",
+  "mem_uops_retired_all_loads",
+  "mem_load_uops_retired_l1_hit",
+  "mem_load_uops_retired_l2_hit",
+  "mem_load_uops_retired_llc_hit",
+  "l1d_replacement",
+  "fp_comp_ops_exe_sse_fp_scalar",
+  "fp_comp_ops_exe_sse_fp_packed",
+  "simd_fp_256_packed_double",
 };
 static const char *const nhm_event_keys[] = {
-  "MEM_UNCORE_RETIRED_REMOTE_DRAM",
-  "MEM_UNCORE_RETIRED_LOCAL_DRAM",
-  "FP_COMP_OPS_EXE_SSE_FP_PACKED",
-  "FP_COMP_OPS_EXE_SSE_FP_SCALAR",
+  "mem_uncore_retired_remote_dram",
+  "mem_uncore_retired_local_dram",
+  "fp_comp_ops_exe_sse_fp_packed",
+  "fp_comp_ops_exe_sse_fp_scalar",
 };
 
 static const char *const *intel_pmc3_event_keys(size_t *nkeys)

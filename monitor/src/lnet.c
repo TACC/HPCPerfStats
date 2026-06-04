@@ -36,7 +36,7 @@ static void lnet_collect(struct stats_type *type)
 }
 
 struct stats_type lnet_stats_type = {
-  .st_name = "lnet",
+  .st_name = "host_lnet",
   .st_collect = &lnet_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

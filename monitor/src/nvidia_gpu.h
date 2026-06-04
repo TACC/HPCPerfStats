@@ -11,9 +11,9 @@
 
 #define KEYS \
   X(gpu_util, "", "GPU utilization in %"), \
-  X(mem_util, "", "Memory utilization in %"), \
-  X(mem_total_mb, "U=MB", "Total GPU framebuffer memory (device-reported MB)"), \
-  X(mem_used_mb, "U=MB", "Used GPU framebuffer memory (device-reported MB)"), \
+  X(gpu_mem_util, "", "Memory utilization in %"), \
+  X(gpu_mem_total_mb, "U=MB", "Total GPU framebuffer memory (device-reported MB)"), \
+  X(gpu_mem_used_mb, "U=MB", "Used GPU framebuffer memory (device-reported MB)"), \
   X(power_usage, "U=W", "Power draw in Watts"), \
   X(sysio_power_usage, "U=W", "DCGM SysIO instantaneous power (W) when exposed; do not sum with power_usage/module without vendor guidance"), \
   X(module_power_usage, "U=W", "DCGM module-scope power (W) on superchips when exposed; may overlap GPU+Grace readings—avoid double-counting in totals"), \

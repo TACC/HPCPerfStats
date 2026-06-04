@@ -66,7 +66,7 @@ struct schema_entry *parse_schema_entry(char *str)
 
   TRACE("se_key `%s', se_type %u, se_width %u, se_unit %s, se_desc `%s'\n",
 	se->se_key, se->se_type, se->se_width,
-	se->se_unit ? : "NONE", se->se_desc ? : "NONE");
+	se->se_unit ? : "none", se->se_desc ? : "none");
 
   return se;
 }

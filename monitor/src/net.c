@@ -195,7 +195,7 @@ static void net_collect(struct stats_type *type)
 }
 
 struct stats_type net_stats_type = {
-  .st_name = "net",
+  .st_name = "host_net",
   .st_collect = &net_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

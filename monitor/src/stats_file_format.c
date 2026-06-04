@@ -65,7 +65,7 @@ int stats_file_validate_program_header(const char *path, char *line_buf)
 
 	if (vers == NULL || strverscmp(vers, STATS_VERSION) > 0) {
 		ERROR("file `%s' is has unsupported version `%s'\n", path,
-		      vers != NULL ? vers : "NULL");
+		      vers != NULL ? vers : "null");
 		return -1;
 	}
 

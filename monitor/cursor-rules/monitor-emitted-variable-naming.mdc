@@ -1,0 +1,20 @@
+---
+description: Enforce monitor emitted variable naming (st_name + event keys)
+globs:
+  - HPCPerfStats/monitor/**/*.c
+  - HPCPerfStats/monitor/**/*.h
+  - HPCPerfStats/monitor/tests/**
+alwaysApply: false
+---
+
+# Monitor emitted variable naming
+
+- **Canonical spec:** `HPCPerfStats/docs/MONITOR_NAMING_SCHEME.md` and `HPCPerfStats/docs/monitor_variable_rename_map.yaml`.
+- **Level 1 (`st_name`):** lowercase snake `{origin}_{domain}[_{variant}]`; architecture/generation in the type, not the key.
+- **Level 2 (event keys):** lowercase snake `{resource}_{signal}[_{qualifier}]`; units in schema suffix (`U=`), not key text when avoidable.
+- **Kernel mirrors:** map `/proc`/`/sys` fields to snake_case at emit time (`host_key_alias_emit` for mem/proc).
+- **Portable semantics:** reuse `instr_retired`, `dram_cas_reads`, `pkg_energy`, etc. across backends.
+- **Forbidden in emission:** `CTL*`, `CTR*`, `FIXED_CTR*`, `MSR_*`, hex control tokens, schema `,C`, PascalCase in `KEYS`/`stats_set`.
+- **Do not rename:** environment variables (`HPCPERFSTATS_*`), `dlsym` symbol strings, CPUID vendor strings (`GenuineIntel`), `/proc/stat` `cpuN` prefix checks.
+- **New collector:** (1) name type, (2) matching `KEYS`/`stats_set`, (3) `stats_registry.c`, (4) schema contract test, (5) update rename map if new keys, (6) run `scripts/check_emitted_variable_names.py`.
+- Cross-links: **monitor-c-conventions**, **monitor-c-new-function-unittests**.

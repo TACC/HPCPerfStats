@@ -38,8 +38,8 @@
 #define U_MSR_PMON_GLOBAL_CTL   0x0700
 
 #define KEYS                                                              \
-	X(CAS_READS, "E,W=48", ""),                                                \
-	    X(CAS_WRITES, "E,W=48", ""), X(ACT_COUNT, "E,W=48", ""), X(PRE_COUNT_MISS, "E,W=48", "")
+	X(dram_cas_reads, "E,W=48", ""),                                                \
+	    X(dram_cas_writes, "E,W=48", ""), X(dram_act_count, "E,W=48", ""), X(dram_pre_count_miss, "E,W=48", "")
 
 #define PERF_EVENT(event, umask)                                              \
 	((event) | ((umask) << 8) | (0UL << 17) /* Clear counter */           \
@@ -65,14 +65,14 @@ static const unsigned skx_ctr_hi[] = {
 	DCLK_PMON_CTR3_HIGH_REG,
 };
 static const char *const skx_counter_keys[4] = {
-	"CAS_READS", "CAS_WRITES", "ACT_COUNT", "PRE_COUNT_MISS"
+	"dram_cas_reads", "dram_cas_writes", "dram_act_count", "dram_pre_count_miss"
 };
 
 static const char *const counter_keys[4] = {
-	"CAS_READS",
-	"CAS_WRITES",
-	"ACT_COUNT",
-	"PRE_COUNT_MISS",
+	"dram_cas_reads",
+	"dram_cas_writes",
+	"dram_act_count",
+	"dram_pre_count_miss",
 };
 
 static int intel_skx_imc_begin_dev(uint32_t bus, uint32_t dev, uint32_t fun,
@@ -204,7 +204,7 @@ out:
 }
 
 struct stats_type intel_skx_imc_stats_type = {
-    .st_name = "intel_skx_imc",
+    .st_name = "intel_x86_uncore_imc_skx",
     .st_begin = &intel_skx_imc_begin,
     .st_collect = &intel_skx_imc_collect,
 #define X SCHEMA_DEF

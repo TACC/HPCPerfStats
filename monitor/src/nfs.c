@@ -25,7 +25,7 @@ static void nfs_collect_mnt_events(struct stats *stats, char *str)
 #undef X
 }
 
-/* "Bytes" counters, also from nfs_show_stats(). */
+/* "bytes" counters, also from nfs_show_stats(). */
 /* TODO Add U=P for page sized units. */
 
 #define BYTE_KEYS \
@@ -91,8 +91,8 @@ static void nfs_collect_mnt_xprt(struct stats *stats, char *str)
   X(o##_rtt,        "E,U=ms", "RTT for "#o" RPC")
 
 #define OP_KEYS \
-  _OP_DIAG_KEYS(READ),  \
-  _OP_DIAG_KEYS(WRITE)
+  _OP_DIAG_KEYS(read),  \
+  _OP_DIAG_KEYS(write)
 
 /* /proc/self/mountstats per-op line order:
  * ops, ntrans, timeouts, bytes_sent, bytes_recv, queue, rtt, execute. */
@@ -117,18 +117,21 @@ static void nfs_collect_mnt_op(struct stats *stats, const char *op, char *str)
   unsigned long long v[8];
   char key[64];
 
+  const char *op_key;
+
   if (strcmp(op, "READ") != 0 && strcmp(op, "WRITE") != 0)
     return;
+  op_key = (strcmp(op, "READ") == 0) ? "read" : "write";
   if (nfs_collect_parse_op_values(str, v) < 0)
     return;
 
-  snprintf(key, sizeof(key), "%s_timeouts", op);
+  snprintf(key, sizeof(key), "%s_timeouts", op_key);
   stats_set(stats, key, v[2]);
-  snprintf(key, sizeof(key), "%s_ops", op);
+  snprintf(key, sizeof(key), "%s_ops", op_key);
   stats_set(stats, key, v[1]);
-  snprintf(key, sizeof(key), "%s_queue", op);
+  snprintf(key, sizeof(key), "%s_queue", op_key);
   stats_set(stats, key, v[5]);
-  snprintf(key, sizeof(key), "%s_rtt", op);
+  snprintf(key, sizeof(key), "%s_rtt", op_key);
   stats_set(stats, key, v[6]);
 }
 
@@ -279,7 +282,7 @@ static void nfs_collect(struct stats_type *type)
 }
 
 struct stats_type nfs_stats_type = {
-  .st_name = "nfs",
+  .st_name = "host_nfs",
   .st_collect = &nfs_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

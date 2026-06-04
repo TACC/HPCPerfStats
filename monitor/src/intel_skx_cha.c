@@ -6,10 +6,10 @@
 #include "intel_topology_walk.h"
 
 #define KEYS                                                                   \
-  X(SF_EVICTIONS_MES, "E,W=48", ""),                                                 \
-      X(LLC_LOOKUP_DATA_READ_LOCAL, "E,W=48", ""),                                                 \
-      X(BYPASS_CHA_IMC_ALL, "E,W=48", ""),                                                 \
-      X(LLC_LOOKUP_WRITE, "E,W=48", "")
+  X(sf_evictions_mes, "E,W=48", ""),                                                 \
+      X(llc_lookup_data_read_local, "E,W=48", ""),                                                 \
+      X(bypass_cha_imc_all, "E,W=48", ""),                                                 \
+      X(llc_lookup_write, "E,W=48", "")
 
 #define CHA_PERF_EVENT(event, umask)                                           \
   ((event) | (umask << 8) | (0x4 << 20))
@@ -26,10 +26,10 @@ static uint64_t skx_cha_events[] = {
     LLC_LOOKUP_WRITE,
 };
 static const char *const counter_keys[4] = {
-    "SF_EVICTIONS_MES",
-    "LLC_LOOKUP_DATA_READ_LOCAL",
-    "BYPASS_CHA_IMC_ALL",
-    "LLC_LOOKUP_WRITE",
+    "sf_evictions_mes",
+    "llc_lookup_data_read_local",
+    "bypass_cha_imc_all",
+    "llc_lookup_write",
 };
 
 struct skx_cha_begin_ctx {
@@ -85,7 +85,7 @@ static void intel_skx_cha_collect(struct stats_type *type)
 }
 
 struct stats_type intel_skx_cha_stats_type = {
-    .st_name = "intel_skx_cha",
+    .st_name = "intel_x86_uncore_cha_skx",
     .st_begin = &intel_skx_cha_begin,
     .st_collect = &intel_skx_cha_collect,
 #define X SCHEMA_DEF

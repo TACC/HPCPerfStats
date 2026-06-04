@@ -37,7 +37,7 @@ static void stats_runtime_apply_profile_and_disables(void)
 	const char *env_csv = getenv("HPCPERFSTATS_DISABLE_TYPES");
 
 	if (g_type_profile != NULL && strcmp(g_type_profile, "minimal") == 0)
-		stats_runtime_disable_one_type("proc");
+		stats_runtime_disable_one_type("host_proc");
 
 	if (g_disabled_types_csv != NULL && g_disabled_types_csv[0] != '\0') {
 		list = strdup(g_disabled_types_csv);

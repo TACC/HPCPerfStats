@@ -66,8 +66,8 @@ static void reset_state(void)
 	memset(g_types, 0, sizeof(g_types));
 	memset(g_init_calls, 0, sizeof(g_init_calls));
 	memset(g_destroy_calls, 0, sizeof(g_destroy_calls));
-	snprintf(g_types[0].st_name, sizeof(g_types[0].st_name), "%s", "proc");
-	snprintf(g_types[1].st_name, sizeof(g_types[1].st_name), "%s", "net");
+	snprintf(g_types[0].st_name, sizeof(g_types[0].st_name), "%s", "host_proc");
+	snprintf(g_types[1].st_name, sizeof(g_types[1].st_name), "%s", "host_net");
 	unsetenv("HPCPERFSTATS_DISABLE_TYPES");
 	stats_runtime_daemon_set_type_controls("default", NULL);
 	stats_runtime_daemon_reset_types();
@@ -88,7 +88,7 @@ static void test_minimal_profile_disables_proc(void)
 static void test_disable_csv_disables_named_type(void)
 {
 	reset_state();
-	stats_runtime_daemon_set_type_controls("default", " net ");
+	stats_runtime_daemon_set_type_controls("default", " host_net ");
 	stats_runtime_daemon_prepare_types();
 	assert(g_types[0].st_enabled == 1);
 	assert(g_types[1].st_enabled == 0);
@@ -100,7 +100,7 @@ static void test_disable_csv_disables_named_type(void)
 static void test_env_disable_types_applies(void)
 {
 	reset_state();
-	assert(setenv("HPCPERFSTATS_DISABLE_TYPES", "proc,net", 1) == 0);
+	assert(setenv("HPCPERFSTATS_DISABLE_TYPES", "host_proc,host_net", 1) == 0);
 	stats_runtime_daemon_prepare_types();
 	assert(g_types[0].st_enabled == 0);
 	assert(g_types[1].st_enabled == 0);

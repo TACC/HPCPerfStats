@@ -37,10 +37,10 @@ static void amd64_df_collect_cpu(struct stats_type *type, char *cpu)
 		MSR_DF_CTR0, MSR_DF_CTR1, MSR_DF_CTR2, MSR_DF_CTR3
 	};
 	static const char *const keys[4] = {
-		"EVENT_DRAM_CHANNEL_0",
-		"EVENT_DRAM_CHANNEL_1",
-		"EVENT_DRAM_CHANNEL_2",
-		"EVENT_DRAM_CHANNEL_3"
+		"dram_chan0_bytes",
+		"dram_chan1_bytes",
+		"dram_chan2_bytes",
+		"dram_chan3_bytes"
 	};
 	int i;
 
@@ -106,7 +106,7 @@ static int amd64_df_begin(struct stats_type *type)
 }
 
 struct stats_type amd64_df_stats_type = {
-    .st_name = "amd64_df",
+    .st_name = "amd_x86_uncore_df",
     .st_begin = &amd64_df_begin,
     .st_collect = &amd64_df_collect,
 #define X SCHEMA_DEF

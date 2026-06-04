@@ -3,10 +3,10 @@
 #include "intel_uncore_pci.h"
 
 #define CTR_KEYS                                                             \
-  X(REQUESTS_READS, "E,W=48", ""),                                             \
-      X(REQUESTS_WRITES, "E,W=48", ""),                                       \
-      X(CLOCKTICKS, "E,W=48", ""),                                            \
-      X(IMC_WRITES, "E,W=48", "")
+  X(requests_reads, "E,W=48", ""),                                             \
+      X(requests_writes, "E,W=48", ""),                                       \
+      X(clockticks, "E,W=48", ""),                                            \
+      X(imc_writes, "E,W=48", "")
 
 #define KEYS CTR_KEYS
 
@@ -26,10 +26,10 @@ static uint32_t events[] = {
     IMC_WRITES,
 };
 static const char *const event_keys[] = {
-    "REQUESTS_READS",
-    "REQUESTS_WRITES",
-    "CLOCKTICKS",
-    "IMC_WRITES",
+    "requests_reads",
+    "requests_writes",
+    "clockticks",
+    "imc_writes",
 };
 static int dids[] = {0x2F30, 0x2F38};
 
@@ -53,7 +53,7 @@ static void intel_hsw_hau_collect(struct stats_type *type)
 }
 
 struct stats_type intel_hsw_hau_stats_type = {
-    .st_name = "intel_hsw_hau",
+    .st_name = "intel_x86_uncore_hau_hsw",
     .st_begin = &intel_hsw_hau_begin,
     .st_collect = &intel_hsw_hau_collect,
 #define X SCHEMA_DEF

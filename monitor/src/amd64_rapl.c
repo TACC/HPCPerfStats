@@ -10,8 +10,8 @@
 #include "rapl_likwid_stats.h"
 
 #define KEYS                                                                  \
-	X(MSR_CORE_ENERGY_STAT, "E,W=32,U=mJ", ""),                           \
-	    X(MSR_PKG_ENERGY_STAT, "E,W=32,U=mJ", "")
+	X(core_energy, "E,W=32,U=mJ", ""),                           \
+	    X(pkg_energy, "E,W=32,U=mJ", "")
 
 static int amd64_rapl_begin_cpu(char *cpu)
 {
@@ -70,7 +70,7 @@ static int amd64_rapl_begin(struct stats_type *type)
 }
 
 struct stats_type amd64_rapl_stats_type = {
-    .st_name = "amd64_rapl",
+    .st_name = "amd_x86_rapl",
     .st_begin = &amd64_rapl_begin,
     .st_collect = &amd64_rapl_collect,
 #define X SCHEMA_DEF

@@ -3,9 +3,9 @@
 
 #define KEYS \
   X(gpu_util, "", "GPU utilization in %"), \
-  X(mem_util, "", "Memory utilization in %"), \
-  X(mem_total_mb, "U=MB", "Total GPU framebuffer memory (device-reported MB)"), \
-  X(mem_used_mb, "U=MB", "Used GPU framebuffer memory (device-reported MB)"), \
+  X(gpu_mem_util, "", "Memory utilization in %"), \
+  X(gpu_mem_total_mb, "U=MB", "Total GPU framebuffer memory (device-reported MB)"), \
+  X(gpu_mem_used_mb, "U=MB", "Used GPU framebuffer memory (device-reported MB)"), \
   X(power_usage, "U=W", "Power draw in Watts"), \
   X(temperature, "U=C", "GPU temperature in C"), \
   X(fp64_active, "", "Ratio of cycles fp64 pipes are active (in %)"), \

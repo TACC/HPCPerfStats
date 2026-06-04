@@ -17,8 +17,8 @@
 /* CHECKME Is unit 4B for extended counters as well? */
 
 #define KEYS \
-  X(port_select, "C", ""), \
-  X(counter_select, "C", ""), \
+  X(port_select, "c", ""), \
+  X(counter_select, "c", ""), \
   X(port_xmit_data, "E,U=4B", ""), \
   X(port_rcv_data, "E,U=4B", ""), \
   X(port_xmit_pkts, "E", ""), \
@@ -175,7 +175,7 @@ static void collect_ib_ext(struct stats_type *type)
 }
 
 struct stats_type ib_ext_stats_type = {
-  .st_name = "ib_ext",
+  .st_name = "host_ib_ext",
   .st_collect = &collect_ib_ext,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

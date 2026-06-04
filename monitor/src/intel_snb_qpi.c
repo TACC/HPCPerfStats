@@ -3,10 +3,10 @@
 #include "intel_uncore_pci.h"
 
 #define CTR_KEYS                                                             \
-  X(TxL_FLITS_G1_SNP, "E,W=48,U=flt", ""),                                    \
-      X(TxL_FLITS_G1_HOM, "E,W=48,U=flt", ""),                                \
-      X(G1_DRS_DATA, "E,W=48,U=flt", ""),                                     \
-      X(G2_NCB_DATA, "E,W=48,U=flt", "")
+  X(tx_l_flits_g1_snp, "E,W=48,U=flt", ""),                                    \
+      X(tx_l_flits_g1_hom, "E,W=48,U=flt", ""),                                \
+      X(g1_drs_data, "E,W=48,U=flt", ""),                                     \
+      X(g2_ncb_data, "E,W=48,U=flt", "")
 
 #define KEYS CTR_KEYS
 
@@ -27,10 +27,10 @@ static uint32_t events[] = {
     G2_NCB_DATA,
 };
 static const char *const event_keys[] = {
-    "TxL_FLITS_G1_SNP",
-    "TxL_FLITS_G1_HOM",
-    "G1_DRS_DATA",
-    "G2_NCB_DATA",
+    "tx_l_flits_g1_snp",
+    "tx_l_flits_g1_hom",
+    "g1_drs_data",
+    "g2_ncb_data",
 };
 
 static const struct intel_uncore_pci_cfg intel_snb_qpi_pci_cfg = {
@@ -53,7 +53,7 @@ static void intel_snb_qpi_collect(struct stats_type *type)
 }
 
 struct stats_type intel_snb_qpi_stats_type = {
-    .st_name = "intel_snb_qpi",
+    .st_name = "intel_x86_uncore_qpi_snb",
     .st_begin = &intel_snb_qpi_begin,
     .st_collect = &intel_snb_qpi_collect,
 #define X SCHEMA_DEF

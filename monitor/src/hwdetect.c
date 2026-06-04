@@ -23,7 +23,7 @@ static void to_lower_ascii(char *s)
   }
 }
 
-/* lspci can omit the word "Infiniband" for some Mellanox lines; class 0207 is InfiniBand. */
+/* lspci can omit the word "infiniband" for some Mellanox lines; class 0207 is InfiniBand. */
 static int infiniband_sysfs_has_devices(void)
 {
   DIR *d;
@@ -72,9 +72,9 @@ static int env_truthy(const char *name)
   const char *v = getenv(name);
   if (v == NULL)
     return 0;
-  return strcmp(v, "1") == 0 || strcmp(v, "true") == 0 || strcmp(v, "TRUE") == 0
-      || strcmp(v, "yes") == 0 || strcmp(v, "YES") == 0 || strcmp(v, "on") == 0
-      || strcmp(v, "ON") == 0;
+  return strcmp(v, "1") == 0 || strcmp(v, "true") == 0 || strcmp(v, "true") == 0
+      || strcmp(v, "yes") == 0 || strcmp(v, "yes") == 0 || strcmp(v, "on") == 0
+      || strcmp(v, "on") == 0;
 }
 
 static int env_int_or_default(const char *name, int fallback)
@@ -263,10 +263,10 @@ void auto_disable_optional_stats_by_lspci(void)
   if (!has_amd_gpu)
     disable_type_if_present("amd_gpu");
   if (!has_ib) {
-    disable_type_if_present("ib");
-    disable_type_if_present("ib_ext");
-    disable_type_if_present("ib_sw");
+    disable_type_if_present("host_ib");
+    disable_type_if_present("host_ib_ext");
+    disable_type_if_present("host_ib_sw");
   }
   if (!has_opa)
-    disable_type_if_present("opa");
+    disable_type_if_present("host_opa");
 }

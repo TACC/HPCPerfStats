@@ -314,8 +314,8 @@ static void arm_imc_collect(struct stats_type *type)
     s = get_current_stats(type, dev->name);
     if (s == NULL)
       continue;
-    stats_set(s, "CAS_READS", dev->acc_read);
-    stats_set(s, "CAS_WRITES", dev->acc_write);
+    stats_set(s, "dram_cas_reads", dev->acc_read);
+    stats_set(s, "dram_cas_writes", dev->acc_write);
   }
 }
 
@@ -325,5 +325,5 @@ struct stats_type arm_imc_stats_type = {
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(ARM_IMC_KEYS),
 #undef X
-  .st_name = "arm_imc",
+  .st_name = "arm_aarch64_imc",
 };

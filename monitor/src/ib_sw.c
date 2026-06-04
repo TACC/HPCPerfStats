@@ -179,7 +179,7 @@ static void collect_ib_sw(struct stats_type *type)
 }
 
 struct stats_type ib_sw_stats_type = {
-  .st_name = "ib_sw",
+  .st_name = "host_ib_sw",
   .st_collect = &collect_ib_sw,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

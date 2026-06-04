@@ -43,43 +43,6 @@ SKIP_USAGE_FILES = frozenset(
     }
 )
 
-# Types that publish CTL/CTR (or hex CTL) columns in raw schema lines before ingest decode.
-PMC_CTL_CTR_COUNTS: dict[str, tuple[int, int]] = {
-    "amd64_df": (3, 3),
-    "amd64_pmc": (5, 5),
-    "cpu_counter_metrics": (7, 7),
-    "intel_4pmc3": (3, 3),
-    "intel_8pmc3": (7, 7),
-    "intel_knl": (1, 1),
-    "intel_bdw_cbo": (3, 3),
-    "intel_hsw_cbo": (3, 3),
-    "intel_ivb_cbo": (3, 3),
-    "intel_snb_cbo": (3, 3),
-    "intel_skx_cha": (3, 3),
-    "intel_bdw_hau": (3, 3),
-    "intel_hsw_hau": (3, 3),
-    "intel_ivb_hau": (3, 3),
-    "intel_snb_hau": (3, 3),
-    "intel_bdw_qpi": (3, 3),
-    "intel_hsw_qpi": (3, 3),
-    "intel_ivb_qpi": (3, 3),
-    "intel_snb_qpi": (3, 3),
-    "intel_bdw_r2pci": (3, 3),
-    "intel_hsw_r2pci": (3, 3),
-    "intel_ivb_r2pci": (3, 3),
-    "intel_snb_r2pci": (3, 3),
-}
-
-INTEL_IMC_HEX_CTL = ("0xD8", "0xDC", "0xE0", "0xE4")
-INTEL_IMC_TYPES = frozenset(
-    {
-        "intel_snb_imc",
-        "intel_ivb_imc",
-        "intel_hsw_imc",
-        "intel_bdw_imc",
-    }
-)
-
 USEFULNESS: dict[str, tuple[str, str]] = {
     "CTL": ("control register selector for configured hardware counter", "Low / compute"),
     "CTR": ("raw hardware counter value", "Medium / compute"),
@@ -186,7 +149,7 @@ def keys_in_file(path: Path, macro_cache: dict[tuple[str, str], set[str]]) -> se
     return keys
 
 
-def collect_emitted_by_type() -> dict[str, set[str]]:
+def collect_emitted_by_type(*, include_ingest_aliases: bool = True) -> dict[str, set[str]]:
     by_type: dict[str, set[str]] = defaultdict(set)
     macro_cache: dict[tuple[str, str], set[str]] = {}
 
@@ -203,44 +166,34 @@ def collect_emitted_by_type() -> dict[str, set[str]]:
         if hdr.is_file():
             by_type[st_name] |= keys_in_file(hdr, macro_cache)
 
-    # NFS composed op keys
-    for op in ("READ", "WRITE"):
+    # NFS composed op keys (lowercase after naming migration)
+    for op in ("read", "write"):
         for suf in ("ops", "timeouts", "queue", "rtt"):
-            by_type["nfs"].add(f"{op}_{suf}")
+            by_type["host_nfs"].add(f"{op}_{suf}")
 
-    # Ingest-decoded aliases (post-$ schema) from sync_timedb_parsing eventmaps
-    stp = REPO / "hpcperfstats/dbload/sync_timedb_parsing.py"
-    stp_text = stp.read_text(encoding="utf-8", errors="replace")
-    for m in re.finditer(
-        r'^([a-z0-9_]+_eventmap)\s*=\s*\{([^}]+)\}',
-        stp_text,
-        re.MULTILINE | re.DOTALL,
-    ):
-        typ = m.group(1).removesuffix("_eventmap")
-        for ev_m in re.finditer(
-            r'["\']([A-Za-z0-9_]+)(?:,W=|=)',
-            m.group(2),
-        ):
-            by_type[typ].add(ev_m.group(1))
-        for ev_m in re.finditer(
-            r':\s*["\']([A-Za-z0-9_]+),',
-            m.group(2),
-        ):
-            by_type[typ].add(ev_m.group(1))
-    # intel_4pmc3 shares intel_8pmc3 map
-    if "intel_8pmc3" in by_type:
-        by_type["intel_4pmc3"] |= by_type["intel_8pmc3"]
-
-    for typ, (n_ctl, n_ctr) in PMC_CTL_CTR_COUNTS.items():
-        for i in range(1, n_ctl + 1):
-            by_type[typ].add(f"CTL{i}")
-        for i in range(1, n_ctr + 1):
-            by_type[typ].add(f"CTR{i}")
-
-    for typ in INTEL_IMC_TYPES:
-        by_type[typ].update(INTEL_IMC_HEX_CTL)
-        for i in range(1, 4):
-            by_type[typ].add(f"CTR{i}")
+    if include_ingest_aliases:
+        # Legacy ingest-decoded aliases (pre-rename downstream); omit for pure monitor inventory.
+        stp = REPO / "hpcperfstats/dbload/sync_timedb_parsing.py"
+        if stp.is_file():
+            stp_text = stp.read_text(encoding="utf-8", errors="replace")
+            for m in re.finditer(
+                r'^([a-z0-9_]+_eventmap)\s*=\s*\{([^}]+)\}',
+                stp_text,
+                re.MULTILINE | re.DOTALL,
+            ):
+                typ = m.group(1).removesuffix("_eventmap")
+                for ev_m in re.finditer(
+                    r'["\']([A-Za-z0-9_]+)(?:,W=|=)',
+                    m.group(2),
+                ):
+                    by_type[typ].add(ev_m.group(1))
+                for ev_m in re.finditer(
+                    r':\s*["\']([A-Za-z0-9_]+),',
+                    m.group(2),
+                ):
+                    by_type[typ].add(ev_m.group(1))
+            if "intel_x86_pmc_gpr8" in by_type:
+                by_type["intel_x86_pmc_gpr4"] |= by_type["intel_x86_pmc_gpr8"]
 
     # osc exists in source but is not registered in stats_registry
     if (MONITOR_SRC / "osc.c").is_file():
@@ -545,19 +498,18 @@ def main() -> int:
         [
             "## 4) Methodology and caveats",
             "",
-            "- Emitted keys = monitor `KEYS` macros per `st_name`, plus ingest-decoded "
-            "aliases from `sync_timedb_parsing.EVENTMAPS_BY_TYPE`, plus synthetic `CTL*`/`CTR*` "
-            "(and Intel IMC `0xD8`…`0xE4`) where raw schema lines carry them before decode.",
+            "- Emitted keys = monitor `KEYS` / `stats_set` literals per `st_name` (post naming "
+            "migration; no synthetic `CTL*`/`CTR*` or hex control tokens).",
             "- Usage matching scans explicit quoted key literals in `hpcperfstats/` and "
             "`tests/`; dynamically generated keys or indirect mappings can be undercounted.",
+            "- Downstream still references **legacy** type/event strings until updated; section 5 "
+            "lists pre-rename keys used by metrics/plots.",
             "- This is static source analysis, not runtime coverage.",
             "- Compile-time gated monitor drivers may exist in source but be disabled in a "
             "given deployment.",
-            "- NFS runtime-composed keys are included: `READ_ops`, `READ_timeouts`, "
-            "`READ_queue`, `READ_rtt`, `WRITE_ops`, `WRITE_timeouts`, `WRITE_queue`, "
-            "`WRITE_rtt`.",
-            "- Reused raw key names (`CTL*`, `CTR*`, `0xD8`, etc.) are treated per monitor "
-            "type context.",
+            "- NFS runtime-composed keys are included: `read_ops`, `read_timeouts`, "
+            "`read_queue`, `read_rtt`, `write_ops`, `write_timeouts`, `write_queue`, "
+            "`write_rtt`.",
             "- `osc` is parsed from `osc.c` for completeness but is **not** registered in "
             "`stats_registry.c` (not emitted by the daemon).",
             "- See also `artifacts/monitor-emitted-variables-by-architecture.md` for a "

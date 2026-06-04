@@ -30,9 +30,9 @@
   X(port_xmit_packets, "E,W=32", "packets transmitted"), \
   X(port_xmit_wait, "E,W=32,U=ms", "wait time for credits or arbitration"), \
   X(symbol_error, "E,W=32", "minor link errors"), \
-  X(VL15_dropped, "E,W=32", "")
+  X(vl15_dropped, "E,W=32", "")
 
-/* IB_PORT_ACTIVE == 4; sysfs may print "4: ACTIVE", "ACTIVE", or "Active". */
+/* IB_PORT_ACTIVE == 4; sysfs may print "4: ACTIVE", "active", or "active". */
 static int ib_port_logic_active(const char *state_line)
 {
   const char *p = state_line;
@@ -44,9 +44,9 @@ static int ib_port_logic_active(const char *state_line)
   v = strtoul(p, &endp, 10);
   if (endp != p && v == 4)
     return 1;
-  if (strstr(state_line, "ACTIVE") != NULL)
+  if (strstr(state_line, "active") != NULL)
     return 1;
-  if (strstr(state_line, "Active") != NULL && strstr(state_line, "Inactive") == NULL)
+  if (strstr(state_line, "active") != NULL && strstr(state_line, "inactive") == NULL)
     return 1;
   return 0;
 }
@@ -63,7 +63,7 @@ static int ib_port_phys_link_up(const char *phys_line)
   v = strtoul(p, &endp, 10);
   if (endp != p && v == 5)
     return 1;
-  if (strstr(phys_line, "LinkUp") != NULL || strstr(phys_line, "linkup") != NULL)
+  if (strstr(phys_line, "link_up") != NULL || strstr(phys_line, "linkup") != NULL)
     return 1;
   return 0;
 }
@@ -180,7 +180,7 @@ static void ib_collect(struct stats_type *type)
 }
 
 struct stats_type ib_stats_type = {
-  .st_name = "ib",
+  .st_name = "host_ib",
   .st_collect = &ib_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

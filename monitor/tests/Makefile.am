@@ -48,6 +48,7 @@ TESTS = $(check_PROGRAMS)
 # Run from source (not generated): avoids Automake distdir-am needing a built .sh on some versions.
 check-local:
 	$(SHELL) '$(srcdir)/test_monitor_configure_help.sh.in'
+	python3 '$(top_srcdir)/scripts/check_emitted_variable_names.py'
 if RABBITMQ
 	@if test "x$${RUN_RMQ_INTEGRATION:-0}" = "x1"; then \
 	  $(MAKE) check-rabbitmq-integration; \

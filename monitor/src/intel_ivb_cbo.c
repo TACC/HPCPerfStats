@@ -6,10 +6,10 @@
 #include "intel_topology_walk.h"
 
 #define KEYS                                                                 \
-  X(LLC_LOOKUP_DATA_READ, "E,W=44", ""),                                    \
-      X(LLC_LOOKUP_WRITE, "E,W=44", ""),                                    \
-      X(RING_IV_USED, "E,W=44", ""),                                        \
-      X(COUNTER0_OCCUPANCY, "E,W=44", "")
+  X(llc_lookup_data_read, "E,W=44", ""),                                    \
+      X(llc_lookup_write, "E,W=44", ""),                                    \
+      X(ring_iv_used, "E,W=44", ""),                                        \
+      X(counter0_occupancy, "E,W=44", "")
 
 #define CBOX_PERF_EVENT(event, umask)                                        \
   ((event) | (umask << 8) | (0ULL << 17) | (0ULL << 18) | (0ULL << 19)        \
@@ -27,10 +27,10 @@ static uint64_t events[] = {
     COUNTER0_OCCUPANCY,
 };
 static const char *const counter_keys[4] = {
-    "LLC_LOOKUP_DATA_READ",
-    "LLC_LOOKUP_WRITE",
-    "RING_IV_USED",
-    "COUNTER0_OCCUPANCY",
+    "llc_lookup_data_read",
+    "llc_lookup_write",
+    "ring_iv_used",
+    "counter0_occupancy",
 };
 
 struct ivb_cbo_begin_ctx {
@@ -86,7 +86,7 @@ static void intel_ivb_cbo_collect(struct stats_type *type)
 }
 
 struct stats_type intel_ivb_cbo_stats_type = {
-    .st_name = "intel_ivb_cbo",
+    .st_name = "intel_x86_uncore_cbo_ivb",
     .st_begin = &intel_ivb_cbo_begin,
     .st_collect = &intel_ivb_cbo_collect,
 #define X SCHEMA_DEF

@@ -13,22 +13,22 @@
 #include "iba/stl_sm.h"
 
 #define KEYS \
-  X(PortXmitData, "E", ""),			\
-    X(PortRcvData, "E", ""),			\
-    X(PortXmitPkts, "E", ""),			\
-    X(PortRcvPkts, "E", ""),			\
-    X(PortMulticastXmitPkts, "E", ""),		\
-    X(PortMulticastRcvPkts, "E", ""),		\
-    X(PortXmitWait, "E", ""),			\
-    X(SwPortCongestion, "E", ""),		\
-    X(PortRcvFECN, "E", ""),			\
-    X(PortRcvBECN, "E", ""),			\
-    X(PortXmitTimeCong, "E", ""),		\
-    X(PortXmitWastedBW, "E", ""),		\
-    X(PortXmitWaitData, "E", ""),		\
-    X(PortRcvBubble, "E", ""),			\
-    X(PortMarkFECN, "E", ""),			\
-    X(PortErrorCounterSummary, "E", "")
+  X(port_xmit_data, "E", ""),			\
+    X(port_rcv_data, "E", ""),			\
+    X(port_xmit_pkts, "E", ""),			\
+    X(port_rcv_pkts, "E", ""),			\
+    X(port_multicast_xmit_pkts, "E", ""),		\
+    X(port_multicast_rcv_pkts, "E", ""),		\
+    X(port_xmit_wait, "E", ""),			\
+    X(sw_port_congestion, "E", ""),		\
+    X(port_rcv_fecn, "E", ""),			\
+    X(port_rcv_becn, "E", ""),			\
+    X(port_xmit_time_cong, "E", ""),		\
+    X(port_xmit_wasted_bw, "E", ""),		\
+    X(port_xmit_wait_data, "E", ""),		\
+    X(port_rcv_bubble, "E", ""),			\
+    X(port_mark_fecn, "E", ""),			\
+    X(port_error_counter_summary, "E", "")
 
 uint64_t g_transactID = 0xffffffff12340000;
 #define RESP_WAIT_TIME (1000)   // 1000 milliseconds for receive response
@@ -122,7 +122,7 @@ static int collect_hfi_port(struct stats *stats, uint32_t port)
 #define X(n, r...)						\
   ({								\
     stats_set(stats, #n, pStlDataPortCountersRsp->Port[0].n);	\
-    TRACE(#n"%20"PRIu64"\n");					\
+    TRACE(#n"%20"pr_iu64"\n");					\
   })
   KEYS;
 #undef X
@@ -176,7 +176,7 @@ static void collect_opa(struct stats_type *type)
 }
 
 struct stats_type opa_stats_type = {
-  .st_name = "opa",
+  .st_name = "host_opa",
   .st_collect = &collect_opa,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

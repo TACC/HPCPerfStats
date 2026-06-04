@@ -2,7 +2,9 @@
 
 Inventory of variables emitted by **hpcperfstatsd** (`HPCPerfStats/monitor/`), organized by **host architecture** and **subsystem**.
 
-**Source of truth:** `KEYS` / `SCHEMA_DEF` macros in `monitor/src/` (`stats.h`), registered in `stats_registry.c`. Consumer contract for message shape: `HPCPerfStats/hpcperfstats/listend.py`.
+**Source of truth:** `KEYS` / `SCHEMA_DEF` macros in `monitor/src/` (`stats.h`), registered in `stats_registry.c`. Naming rules: `HPCPerfStats/docs/MONITOR_NAMING_SCHEME.md`.
+
+Generated: 2026-06-04 (`docs/regenerate_monitor_emitted_variables_by_architecture.py`).
 
 **Sample row format:**
 
@@ -19,14 +21,14 @@ Schema rotation messages (`$…`) list the same field names per stats type.
 | Architecture | CPU counter backend | Hardware PMC/RAPL/uncore | ARM memory controller |
 |--------------|---------------------|--------------------------|------------------------|
 | **x86_64 / i?86** | LIKWID (default) | Yes (`--enable-hardware`, default on) | No |
-| **aarch64 / arm\*** | DCGM (default off x86) | No Intel/AMD uncore types | Yes (`arm_imc`) |
+| **aarch64 / arm\*** | DCGM (default off x86) | No Intel/AMD uncore types | Yes (`arm_aarch64_imc`) |
 | **ppc64 / riscv64 / other non-x86** | DCGM | No x86 hardware types | No (unless ARM host) |
 
 Optional types (GPU, extended IB, Lustre, OPA, MIC) depend on `./configure` flags and runtime hardware detection, not CPU family alone.
 
 **Runtime note:** Many Intel types are always **compiled** on x86+LIKWID builds but only **emit** when CPUID/PCI/MSR probes enable that type (`st_begin`).
 
-**Not emitted:** `osc` is implemented in `osc.c` but is **not** registered in `stats_registry.c` or `Makefile.am`.
+**Not emitted:** `lustre_osc` is implemented in `osc.c` but is **not** registered in `stats_registry.c` or `Makefile.am`.
 
 ---
 
@@ -34,116 +36,116 @@ Optional types (GPU, extended IB, Lustre, OPA, MIC) depend on `./configure` flag
 
 Present in every normal daemon build (`stats_registry.c`).
 
-### CPU / scheduler — `cpu` (per logical CPU)
+### CPU / scheduler — `host_cpu` (per logical CPU)
 
-- `user`
-- `nice`
-- `system`
 - `idle`
 - `iowait`
 - `irq`
+- `nice`
 - `softirq`
+- `system`
+- `user`
 
-### System — `ps` (device `NULL`)
+### System — `host_ps` (device `NULL`)
 
 - `ctxt`
-- `processes`
 - `load_1`
-- `load_5`
 - `load_15`
+- `load_5`
 - `nr_running`
 - `nr_threads`
+- `processes`
 
-### Per-process — `proc` (per PID)
+### Per-process — `host_proc` (per PID)
 
-- `Uid`
-- `VmPeak`
-- `VmSize`
-- `VmLck`
-- `VmHWM`
-- `VmRSS`
-- `VmData`
-- `VmStk`
-- `VmExe`
-- `VmLib`
-- `VmPTE`
-- `VmSwap`
-- `Threads`
+- `threads`
+- `uid`
+- `vm_data`
+- `vm_exe`
+- `vm_hwm`
+- `vm_lck`
+- `vm_lib`
+- `vm_peak`
+- `vm_pte`
+- `vm_rss`
+- `vm_size`
+- `vm_stk`
+- `vm_swap`
 
-### Memory (NUMA node) — `mem` (per node)
+### Memory (NUMA node) — `host_mem` (per node)
 
-- `MemTotal`
-- `MemFree`
-- `MemUsed`
-- `Active`
-- `Inactive`
-- `Dirty`
-- `Writeback`
-- `FilePages`
-- `Mapped`
-- `AnonPages`
-- `PageTables`
-- `NFS_Unstable`
-- `Bounce`
-- `Slab`
-- `AnonHugePages`
-- `HugePages_Total`
-- `HugePages_Free`
+- `active`
+- `anon_huge_pages`
+- `anon_pages`
+- `bounce`
+- `dirty`
+- `file_pages`
+- `huge_pages_free`
+- `huge_pages_total`
+- `inactive`
+- `mapped`
+- `mem_free`
+- `mem_total`
+- `mem_used`
+- `nfs_unstable`
+- `page_tables`
+- `slab`
+- `writeback`
 
-### Virtual memory — `vm`
+### Virtual memory — `host_vm`
 
+- `allocstall`
+- `kswapd_inodesteal`
+- `kswapd_steal`
 - `nr_anon_transparent_hugepages`
-- `pgpgin`
-- `pgpgout`
-- `pswpin`
-- `pswpout`
-- `pgalloc_normal`
-- `pgfree`
+- `pageoutrun`
 - `pgactivate`
+- `pgalloc_normal`
 - `pgdeactivate`
 - `pgfault`
-- `pgmajfault`
-- `pgrefill_normal`
-- `pgsteal_normal`
-- `pgscan_kswapd_normal`
-- `pgscan_direct_normal`
+- `pgfree`
 - `pginodesteal`
-- `slabs_scanned`
-- `kswapd_steal`
-- `kswapd_inodesteal`
-- `pageoutrun`
-- `allocstall`
+- `pgmajfault`
+- `pgpgin`
+- `pgpgout`
+- `pgrefill_normal`
 - `pgrotated`
-- `thp_fault_alloc`
-- `thp_fault_fallback`
+- `pgscan_direct_normal`
+- `pgscan_kswapd_normal`
+- `pgsteal_normal`
+- `pswpin`
+- `pswpout`
+- `slabs_scanned`
 - `thp_collapse_alloc`
 - `thp_collapse_alloc_failed`
+- `thp_fault_alloc`
+- `thp_fault_fallback`
 - `thp_split`
 
-### NUMA — `numa` (per node)
+### NUMA — `host_numa` (per node)
 
-- `numa_hit`
-- `numa_miss`
-- `numa_foreign`
 - `interleave_hit`
 - `local_node`
+- `numa_foreign`
+- `numa_hit`
+- `numa_miss`
 - `other_node`
 
-### Block I/O — `block` (per block device)
+### Block I/O — `host_block` (per block device)
 
+- `in_flight`
+- `io_ticks`
 - `rd_ios`
 - `rd_merges`
 - `rd_sectors`
 - `rd_ticks`
+- `time_in_queue`
 - `wr_ios`
 - `wr_merges`
 - `wr_sectors`
 - `wr_ticks`
-- `in_flight`
-- `io_ticks`
-- `time_in_queue`
 
-### Network — `net` (per interface)
+### Network — `host_net` (per interface)
 
 - `collisions`
 - `multicast`
@@ -169,47 +171,59 @@ Present in every normal daemon build (`stats_registry.c`).
 - `tx_packets`
 - `tx_window_errors`
 
-### NFS — `nfs` (per mount)
+### NFS — `host_nfs` (per mount)
 
-| Subgroup | Variables |
-|----------|-----------|
-| Events | `delay` |
-| Bytes | `normal_read`, `normal_write`, `direct_read`, `direct_write`, `server_read`, `server_write` |
-| Transport | `xprt_bad_xids`, `xprt_req_u`, `xprt_bklog_u` |
-| Per-op | `READ_ops`, `READ_timeouts`, `READ_queue`, `READ_rtt`, `WRITE_ops`, `WRITE_timeouts`, `WRITE_queue`, `WRITE_rtt` |
+- `delay`
+- `direct_read`
+- `direct_write`
+- `normal_read`
+- `normal_write`
+- `read_ops`
+- `read_queue`
+- `read_rtt`
+- `read_timeouts`
+- `server_read`
+- `server_write`
+- `write_ops`
+- `write_queue`
+- `write_rtt`
+- `write_timeouts`
+- `xprt_bad_xids`
+- `xprt_bklog_u`
+- `xprt_req_u`
 
-### VFS — `vfs`
+### VFS — `host_vfs`
 
 - `dentry_use`
 - `file_use`
 - `inode_use`
 
-### SysV SHM — `sysv_shm`
+### SysV SHM — `host_sysv_shm`
 
 - `mem_used`
 - `segs_used`
 
-### tmpfs — `tmpfs`
+### tmpfs — `host_tmpfs`
 
-- `bytes_used`
 - `bytes_avail`
+- `bytes_used`
 - `files_used`
 
-### LNet — `lnet`
+### LNet — `host_lnet`
 
+- `errors`
 - `msgs_alloc`
 - `msgs_alloc_max`
-- `errors`
-- `tx_msgs`
-- `rx_msgs`
+- `route_bytes`
 - `route_msgs`
+- `rx_bytes`
+- `rx_bytes_dropped`
+- `rx_msgs`
 - `rx_msgs_dropped`
 - `tx_bytes`
-- `rx_bytes`
-- `route_bytes`
-- `rx_bytes_dropped`
+- `tx_msgs`
 
-### InfiniBand (sysfs port) — `ib` (per IB port)
+### InfiniBand (sysfs port) — `host_ib` (per IB port)
 
 - `excessive_buffer_overrun_errors`
 - `link_downed`
@@ -227,16 +241,16 @@ Present in every normal daemon build (`stats_registry.c`).
 - `port_xmit_packets`
 - `port_xmit_wait`
 - `symbol_error`
-- `VL15_dropped`
+- `vl15_dropped`
 
-### Roofline peaks — `roofline_hw_peak` (host-level)
+### Roofline peaks — `host_roofline_peak` (host-level)
 
-- `cpu_peak_fp64_flops_per_s`
 - `cpu_peak_dram_bw_bytes_per_s`
-- `gpu_peak_fp64_flops_per_s`
-- `gpu_peak_mem_bw_bytes_per_s`
-- `gpu_peak_io_link_bw_bytes_per_s`
+- `cpu_peak_fp64_flops_per_s`
 - `cpu_peak_source`
+- `gpu_peak_fp64_flops_per_s`
+- `gpu_peak_io_link_bw_bytes_per_s`
+- `gpu_peak_mem_bw_bytes_per_s`
 - `gpu_peak_source`
 - `peak_calc_version`
 
@@ -246,166 +260,320 @@ Present in every normal daemon build (`stats_registry.c`).
 
 Requires `--with-cpu-counter-backend=likwid` (x86 default) and `--enable-hardware`.
 
-### CPU counters — `cpu_counter_metrics` (per CPU)
+### CPU counters — `host_cpu_hw` (per CPU)
 
-- `CPU_UTIL_TOTAL_ACCUM_US`
-- `CPU_UTIL_USER_ACCUM_US`
-- `CPU_UTIL_SYS_ACCUM_US`
-- `CPU_UTIL_IRQ_ACCUM_US`
-- `CPU_UTIL_NICE_ACCUM_US`
-- `CPU_CLOCK_EST_CYCLES`
-- `INSTR_RETIRED_ANY`
-- `CPU_CLK_UNHALTED_CORE`
-- `CPU_CLK_UNHALTED_REF`
-- `MEM_LOAD_UOPS_RETIRED_L1_HIT`
-- `MEM_LOAD_UOPS_RETIRED_L2_HIT`
-- `MEM_LOAD_UOPS_RETIRED_LLC_HIT`
-- `L1D_REPLACEMENT`
-- `RETIRED_INSTRUCTIONS`
-- `RETIRED_BRANCH_INSTR`
-- `RETIRED_MISP_BRANCH_INSTR`
-- `LS_DISPATCH`
-- `FIXED_CTR0`
-- `FIXED_CTR1`
-- `FIXED_CTR2`
-- `INST_RETIRED`
-- `APERF`
-- `MPERF`
-- `EVENT_DRAM_CHANNEL_0`
-- `EVENT_DRAM_CHANNEL_1`
-- `EVENT_DRAM_CHANNEL_2`
-- `EVENT_DRAM_CHANNEL_3`
-- `FP_ARITH_INST_RETIRED_SCALAR_DOUBLE`
-- `FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE`
-- `FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE`
-- `FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE`
-- `FP_ARITH_INST_RETIRED_SCALAR_SINGLE`
-- `FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE`
-- `FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE`
-- `FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE`
-- `ARM_EST_FLOPS`
-- `ARM_DRAM_BW_BYTES`
-- `DCGM_CPU_POWER_UTIL_W`
-- `DCGM_CPU_POWER_LIMIT_W`
+*LIKWID x86 path; schema includes ARM/DCGM placeholders.*
 
-*Last three are schema placeholders on pure LIKWID x86; populated on DCGM paths.*
+- `aperf`
+- `arm_dram_bw_bytes`
+- `arm_est_flops`
+- `cpu_clock_est_cycles`
+- `cpu_util_irq_accum_us`
+- `cpu_util_nice_accum_us`
+- `cpu_util_sys_accum_us`
+- `cpu_util_total_accum_us`
+- `cpu_util_user_accum_us`
+- `cycles_unhalted_core`
+- `cycles_unhalted_ref`
+- `dcgm_cpu_power_limit_w`
+- `dcgm_cpu_power_util_w`
+- `dram_chan0_bytes`
+- `dram_chan1_bytes`
+- `dram_chan2_bytes`
+- `dram_chan3_bytes`
+- `fp_arith_inst_retired_128b_packed_double`
+- `fp_arith_inst_retired_128b_packed_single`
+- `fp_arith_inst_retired_256b_packed_double`
+- `fp_arith_inst_retired_256b_packed_single`
+- `fp_arith_inst_retired_512b_packed_double`
+- `fp_arith_inst_retired_512b_packed_single`
+- `fp_arith_inst_retired_scalar_double`
+- `fp_arith_inst_retired_scalar_single`
+- `instr_retired`
+- `instr_retired_any`
+- `l1d_replacement`
+- `ls_dispatch`
+- `mem_load_uops_retired_l1_hit`
+- `mem_load_uops_retired_l2_hit`
+- `mem_load_uops_retired_llc_hit`
+- `mperf`
+- `retired_branch_instr`
+- `retired_instructions`
+- `retired_misp_branch_instr`
 
-### Energy — `intel_rapl` (per socket, Intel)
+### Energy — `intel_x86_rapl` (per socket, Intel)
 
-- `MSR_PKG_ENERGY_STATUS`
-- `MSR_PP0_ENERGY_STATUS`
-- `MSR_PP1_ENERGY_STATUS`
-- `MSR_DRAM_ENERGY_STATUS`
+- `dram_energy`
+- `pkg_energy`
+- `pp0_energy`
+- `pp1_energy`
 
-### Energy — `amd64_rapl` (per socket, AMD)
+### Energy — `amd_x86_rapl` (per socket, AMD)
 
-- `MSR_CORE_ENERGY_STAT`
-- `MSR_PKG_ENERGY_STAT`
+- `core_energy`
+- `pkg_energy`
 
-### AMD core PMC — `amd64_pmc` (per CPU)
+### AMD core PMC — `amd_x86_pmc` (per CPU)
 
-- `FLOPS`
-- `MERGE`
-- `BRANCH_INST_RETIRED`
-- `BRANCH_INST_RETIRED_MISS`
-- `DISPATCH_STALL_CYCLES1`
-- `DISPATCH_STALL_CYCLES0`
-- `INST_RETIRED`
-- `APERF`
-- `MPERF`
+- `aperf`
+- `branch_inst_retired`
+- `branch_inst_retired_miss`
+- `dispatch_stall_cycles0`
+- `dispatch_stall_cycles1`
+- `dram_chan0_bytes`
+- `dram_chan1_bytes`
+- `dram_chan2_bytes`
+- `dram_chan3_bytes`
+- `fp_ops_merge`
+- `fp_ops_retired`
+- `instr_retired`
+- `mperf`
 
-*Family 10h with `--enable-legacy-pmcs`: subset — `FLOPS`, `MERGE`, `DISPATCH_STALL_CYCLES1`, `DISPATCH_STALL_CYCLES0` plus `INST_RETIRED`, `APERF`, `MPERF`.*
+### AMD Data Fabric — `amd_x86_uncore_df` (per CPU; Zen 17h/19h)
 
-### AMD Data Fabric — `amd64_df` (per CPU; Zen 17h/19h)
+- `dram_chan0_bytes`
+- `dram_chan1_bytes`
+- `dram_chan2_bytes`
+- `dram_chan3_bytes`
 
-- `EVENT_DRAM_CHANNEL_0`
-- `EVENT_DRAM_CHANNEL_1`
-- `EVENT_DRAM_CHANNEL_2`
-- `EVENT_DRAM_CHANNEL_3`
+### Intel core PMC (4 GPR) — `intel_x86_pmc_gpr4` (per CPU)
 
-### Intel core PMC — `intel_4pmc3` / `intel_8pmc3` (per CPU)
+*Full schema in `intel_pmc3.h`.*
 
-Full schema (`intel_pmc3.h` **KEYS**); active subset varies by microarchitecture:
+- `aperf`
+- `instr_retired`
+- `mem_uops_retired_all_loads_knl`
+- `mem_uops_retired_l2_hit_loads_knl`
+- `mperf`
 
-- `FP_ARITH_INST_RETIRED_SCALAR_DOUBLE`
-- `FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE`
-- `FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE`
-- `FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE`
-- `FP_ARITH_INST_RETIRED_SCALAR_SINGLE`
-- `FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE`
-- `FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE`
-- `FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE`
-- `MEM_UOPS_RETIRED_ALL_LOADS`
-- `MEM_LOAD_UOPS_RETIRED_L1_HIT`
-- `MEM_LOAD_UOPS_RETIRED_L2_HIT`
-- `MEM_LOAD_UOPS_RETIRED_LLC_HIT`
-- `L1D_REPLACEMENT`
-- `DTLB_LOAD_MISSES_MISS_CAUSES_A_WALK`
-- `RESOURCE_STALLS_ANY`
-- `L2_LINES_IN_ALL`
-- `MEM_UNCORE_RETIRED_REMOTE_DRAM`
-- `MEM_UNCORE_RETIRED_LOCAL_DRAM`
-- `FP_COMP_OPS_EXE_SSE_FP_PACKED`
-- `FP_COMP_OPS_EXE_SSE_FP_SCALAR`
-- `SIMD_FP_256_PACKED_DOUBLE`
-- `FIXED_CTR0`
-- `FIXED_CTR1`
-- `FIXED_CTR2`
+### Intel core PMC (8 GPR) — `intel_x86_pmc_gpr8` (per CPU)
 
-### Intel KNL core — `intel_knl` (per CPU)
+*Full schema in `intel_pmc3.h`.*
 
-- `MEM_UOPS_RETIRED_ALL_LOADS_KNL`
-- `MEM_UOPS_RETIRED_L2_HIT_LOADS_KNL`
-- `FIXED_CTR0`
-- `FIXED_CTR1`
-- `FIXED_CTR2`
+- `aperf`
+- `dtlb_load_misses_miss_causes_a_walk`
+- `fp_arith_inst_retired_128b_packed_double`
+- `fp_arith_inst_retired_128b_packed_single`
+- `fp_arith_inst_retired_256b_packed_double`
+- `fp_arith_inst_retired_256b_packed_single`
+- `fp_arith_inst_retired_512b_packed_double`
+- `fp_arith_inst_retired_512b_packed_single`
+- `fp_arith_inst_retired_scalar_double`
+- `fp_arith_inst_retired_scalar_single`
+- `fp_comp_ops_exe_sse_fp_packed`
+- `fp_comp_ops_exe_sse_fp_scalar`
+- `instr_retired`
+- `l1d_replacement`
+- `l2_lines_in_all`
+- `mem_load_uops_retired_l1_hit`
+- `mem_load_uops_retired_l2_hit`
+- `mem_load_uops_retired_llc_hit`
+- `mem_uncore_retired_local_dram`
+- `mem_uncore_retired_remote_dram`
+- `mem_uops_retired_all_loads`
+- `mem_uops_retired_all_loads_knl`
+- `mem_uops_retired_l2_hit_loads_knl`
+- `mperf`
+- `resource_stalls_any`
+- `simd_fp_256_packed_double`
 
-### Intel CBO (cache box) — per core index
+### Intel KNL core — `intel_x86_pmc_knl` (per CPU)
 
-| Type | Variables |
-|------|-----------|
-| `intel_snb_cbo`, `intel_ivb_cbo` | `LLC_LOOKUP_DATA_READ`, `LLC_LOOKUP_WRITE`, `RING_IV_USED`, `COUNTER0_OCCUPANCY` |
-| `intel_hsw_cbo`, `intel_bdw_cbo` | `RxR_OCCUPANCY`, `LLC_LOOKUP_DATA_READ`, `RING_IV_USED`, `LLC_LOOKUP_WRITE` |
-| `intel_skx_cha` | `SF_EVICTIONS_MES`, `LLC_LOOKUP_DATA_READ_LOCAL`, `BYPASS_CHA_IMC_ALL`, `LLC_LOOKUP_WRITE` |
+- `aperf`
+- `instr_retired`
+- `mem_uops_retired_all_loads_knl`
+- `mem_uops_retired_l2_hit_loads_knl`
+- `mperf`
 
-### Intel memory controller (PCI) — per device
+### Intel CBO SNB/IVB — `intel_x86_uncore_cbo_snb` (per core index)
 
-| Type | Variables |
-|------|-----------|
-| `intel_snb_imc`, `intel_ivb_imc`, `intel_hsw_imc`, `intel_bdw_imc` | `CAS_READS`, `CAS_WRITES`, `ACT_COUNT`, `PRE_COUNT_MISS`, `FIXED_CTR` |
-| `intel_skx_imc` | `CAS_READS`, `CAS_WRITES`, `ACT_COUNT`, `PRE_COUNT_MISS` |
-| `intel_knl_mc` | `CAS_READS`, `CAS_WRITES`, `DCLK_CYCLES`, `UCLK_CYCLES` |
-| `intel_knl_edc` | `EDC_HIT_CLEAN`, `EDC_HIT_DIRTY`, `EDC_MISS_CLEAN`, `EDC_MISS_DIRTY`, `RPQ_INSERTS`, `WPQ_INSERTS`, `ECLK_CYCLES` |
+*Same keys as `intel_x86_uncore_cbo_ivb`.*
 
-### Intel QPI — `intel_{snb,ivb,hsw,bdw}_qpi`
+- `counter0_occupancy`
+- `llc_lookup_data_read`
+- `llc_lookup_write`
+- `ring_iv_used`
 
-- `TxL_FLITS_G1_SNP`
-- `TxL_FLITS_G1_HOM`
-- `G1_DRS_DATA`
-- `G2_NCB_DATA`
+### Intel CBO SNB/IVB — `intel_x86_uncore_cbo_ivb` (per core index)
 
-### Intel HA — `intel_{snb,ivb,hsw,bdw}_hau`
+- `counter0_occupancy`
+- `llc_lookup_data_read`
+- `llc_lookup_write`
+- `ring_iv_used`
 
-- `REQUESTS_READS`
-- `REQUESTS_WRITES`
-- `CLOCKTICKS`
-- `IMC_WRITES`
+### Intel CBO HSW/BDW — `intel_x86_uncore_cbo_hsw` (per core index)
 
-### Intel R2PCI — `intel_{snb,ivb,hsw,bdw}_r2pci`
+*Same keys as `intel_x86_uncore_cbo_bdw`.*
 
-- `TxR_INSERTS`
-- `RING_BL_USED_ALL`
-- `RING_AD_USED_ALL`
-- `RING_AK_USED_ALL`
+- `llc_lookup_data_read`
+- `llc_lookup_write`
+- `ring_iv_used`
+- `rx_r_occupancy`
 
-### Intel PCU — `intel_pcu` (per socket; SNB–BDW)
+### Intel CBO HSW/BDW — `intel_x86_uncore_cbo_bdw` (per core index)
 
-- `FREQ_MAX_TEMP_CYCLES`
-- `FREQ_MAX_POWER_CYCLES`
-- `FREQ_MIN_IO_CYCLES`
-- `FREQ_MIN_SNOOP_CYCLES`
-- `FIXED_CTR0`
-- `FIXED_CTR1`
+- `llc_lookup_data_read`
+- `llc_lookup_write`
+- `ring_iv_used`
+- `rx_r_occupancy`
+
+### Intel CHA SKX — `intel_x86_uncore_cha_skx` (per core index)
+
+- `bypass_cha_imc_all`
+- `llc_lookup_data_read_local`
+- `llc_lookup_write`
+- `sf_evictions_mes`
+
+### Intel IMC SNB — `intel_x86_uncore_imc_snb` (per PCI device)
+
+*Same keys as IVB/HSW/BDW IMC variants.*
+
+- `dram_act_count`
+- `dram_cas_reads`
+- `dram_cas_writes`
+- `dram_fixed_ctr`
+- `dram_pre_count_miss`
+
+### Intel IMC IVB — `intel_x86_uncore_imc_ivb` (per PCI device)
+
+- `dram_act_count`
+- `dram_cas_reads`
+- `dram_cas_writes`
+- `dram_fixed_ctr`
+- `dram_pre_count_miss`
+
+### Intel IMC HSW — `intel_x86_uncore_imc_hsw` (per PCI device)
+
+- `dram_act_count`
+- `dram_cas_reads`
+- `dram_cas_writes`
+- `dram_fixed_ctr`
+- `dram_pre_count_miss`
+
+### Intel IMC BDW — `intel_x86_uncore_imc_bdw` (per PCI device)
+
+- `dram_act_count`
+- `dram_cas_reads`
+- `dram_cas_writes`
+- `dram_fixed_ctr`
+- `dram_pre_count_miss`
+
+### Intel IMC SKX — `intel_x86_uncore_imc_skx` (per PCI device)
+
+- `dram_cas_reads`
+- `dram_cas_writes`
+
+### Intel KNL MC — `intel_x86_uncore_mc_knl` (per PCI device)
+
+- `dram_cas_reads`
+- `dram_cas_writes`
+
+### Intel KNL EDC — `intel_x86_uncore_edc_knl` (per PCI device)
+
+- `edc_hit_clean`
+- `edc_hit_dirty`
+- `rpq_inserts`
+
+### Intel QPI SNB — `intel_x86_uncore_qpi_snb`
+
+*Same keys across SNB/IVB/HSW/BDW QPI types.*
+
+- `g1_drs_data`
+- `g2_ncb_data`
+- `tx_l_flits_g1_hom`
+- `tx_l_flits_g1_snp`
+
+### Intel QPI IVB — `intel_x86_uncore_qpi_ivb`
+
+- `g1_drs_data`
+- `g2_ncb_data`
+- `tx_l_flits_g1_hom`
+- `tx_l_flits_g1_snp`
+
+### Intel QPI HSW — `intel_x86_uncore_qpi_hsw`
+
+- `g1_drs_data`
+- `g2_ncb_data`
+- `tx_l_flits_g1_hom`
+- `tx_l_flits_g1_snp`
+
+### Intel QPI BDW — `intel_x86_uncore_qpi_bdw`
+
+- `g1_drs_data`
+- `g2_ncb_data`
+- `tx_l_flits_g1_hom`
+- `tx_l_flits_g1_snp`
+
+### Intel HA SNB — `intel_x86_uncore_hau_snb`
+
+*Same keys across SNB/IVB/HSW/BDW HA types.*
+
+- `clockticks`
+- `imc_writes`
+- `requests_reads`
+- `requests_writes`
+
+### Intel HA IVB — `intel_x86_uncore_hau_ivb`
+
+- `clockticks`
+- `imc_writes`
+- `requests_reads`
+- `requests_writes`
+
+### Intel HA HSW — `intel_x86_uncore_hau_hsw`
+
+- `clockticks`
+- `imc_writes`
+- `requests_reads`
+- `requests_writes`
+
+### Intel HA BDW — `intel_x86_uncore_hau_bdw`
+
+- `clockticks`
+- `imc_writes`
+- `requests_reads`
+- `requests_writes`
+
+### Intel R2PCI SNB — `intel_x86_uncore_r2pci_snb`
+
+*Same keys across SNB/IVB/HSW/BDW R2PCI types.*
+
+- `ring_ad_used_all`
+- `ring_ak_used_all`
+- `ring_bl_used_all`
+- `tx_r_inserts`
+
+### Intel R2PCI IVB — `intel_x86_uncore_r2pci_ivb`
+
+- `ring_ad_used_all`
+- `ring_ak_used_all`
+- `ring_bl_used_all`
+- `tx_r_inserts`
+
+### Intel R2PCI HSW — `intel_x86_uncore_r2pci_hsw`
+
+- `ring_ad_used_all`
+- `ring_ak_used_all`
+- `ring_bl_used_all`
+- `tx_r_inserts`
+
+### Intel R2PCI BDW — `intel_x86_uncore_r2pci_bdw`
+
+- `ring_ad_used_all`
+- `ring_ak_used_all`
+- `ring_bl_used_all`
+- `tx_r_inserts`
+
+### Intel PCU — `intel_x86_pcu` (per socket; SNB–BDW)
+
+*Uses `pcu_ctr0`/`pcu_ctr1` for fixed PCU counters.*
+
+- `freq_max_power_cycles`
+- `freq_max_temp_cycles`
+- `freq_min_io_cycles`
+- `freq_min_snoop_cycles`
+- `pcu_ctr0`
+- `pcu_ctr1`
 
 ---
 
@@ -413,30 +581,59 @@ Full schema (`intel_pmc3.h` **KEYS**); active subset varies by microarchitecture
 
 Requires `--with-cpu-counter-backend=dcgm` (non-x86 default) and `--enable-hardware`.
 
-### CPU counters — `cpu_counter_metrics` (per CPU)
+### CPU counters — `host_cpu_hw` (per CPU)
 
-Same **schema** as x86 (see §2). On ARM/Grace, typically populated:
+*DCGM backend; many x86 PMU schema slots may be zero.*
 
-- Util accumulators (`CPU_UTIL_*`)
-- `ARM_EST_FLOPS`
-- `ARM_DRAM_BW_BYTES`
-- `DCGM_CPU_POWER_UTIL_W`
-- `DCGM_CPU_POWER_LIMIT_W`
+- `aperf`
+- `arm_dram_bw_bytes`
+- `arm_est_flops`
+- `cpu_clock_est_cycles`
+- `cpu_util_irq_accum_us`
+- `cpu_util_nice_accum_us`
+- `cpu_util_sys_accum_us`
+- `cpu_util_total_accum_us`
+- `cpu_util_user_accum_us`
+- `cycles_unhalted_core`
+- `cycles_unhalted_ref`
+- `dcgm_cpu_power_limit_w`
+- `dcgm_cpu_power_util_w`
+- `dram_chan0_bytes`
+- `dram_chan1_bytes`
+- `dram_chan2_bytes`
+- `dram_chan3_bytes`
+- `fp_arith_inst_retired_128b_packed_double`
+- `fp_arith_inst_retired_128b_packed_single`
+- `fp_arith_inst_retired_256b_packed_double`
+- `fp_arith_inst_retired_256b_packed_single`
+- `fp_arith_inst_retired_512b_packed_double`
+- `fp_arith_inst_retired_512b_packed_single`
+- `fp_arith_inst_retired_scalar_double`
+- `fp_arith_inst_retired_scalar_single`
+- `instr_retired`
+- `instr_retired_any`
+- `l1d_replacement`
+- `ls_dispatch`
+- `mem_load_uops_retired_l1_hit`
+- `mem_load_uops_retired_l2_hit`
+- `mem_load_uops_retired_llc_hit`
+- `mperf`
+- `retired_branch_instr`
+- `retired_instructions`
+- `retired_misp_branch_instr`
 
-Many x86 PMU names remain in schema but may be zero/unused.
+### ARM memory controller — `arm_aarch64_imc` (per PMU device)
 
-### ARM memory controller — `arm_imc` (per PMU device)
-
-- `CAS_READS`
-- `CAS_WRITES`
+- `dram_cas_reads`
+- `dram_cas_writes`
 
 ---
 
 ## 4. ppc64 / riscv64 / other non-x86 (DCGM, non-ARM)
 
 - **Common** types (§1)
-- **`cpu_counter_metrics`** with DCGM backend (same schema as §2/§3; no `arm_imc`)
-- **No** LIKWID, Intel uncore, AMD PMC/RAPL/DF, or `arm_imc`
+- **`host_cpu_hw`** with DCGM backend (same schema as §2/§3; no `arm_aarch64_imc` on non-ARM)
+- **No** LIKWID, Intel uncore, AMD PMC/RAPL/DF, or `arm_aarch64_imc`
 - **No** architecture-specific metric names for Power
 
 ---
@@ -445,84 +642,97 @@ Many x86 PMU names remain in schema but may be zero/unused.
 
 ### NVIDIA GPU — `nvidia_gpu` (`--enable-gpu`)
 
-- `gpu_util`
-- `mem_util`
-- `mem_total_mb`
-- `mem_used_mb`
-- `power_usage`
-- `sysio_power_usage`
-- `module_power_usage`
-- `temperature`
+- `clocks_event_reasons`
+- `fp16_active`
+- `fp32_active`
 - `fp64_active`
+- `gpu_count`
+- `gpu_flops`
+- `gpu_flops_rate`
+- `gpu_io_link_total_bytes`
+- `gpu_mem_bw_bytes_rate`
+- `gpu_mem_read_bytes`
+- `gpu_mem_total_bytes`
+- `gpu_mem_total_mb`
+- `gpu_mem_used_mb`
+- `gpu_mem_util`
+- `gpu_mem_write_bytes`
+- `gpu_util`
+- `module_power_usage`
+- `power_usage`
 - `sm_active`
 - `sm_occupancy`
-- `fp32_active`
-- `fp16_active`
+- `sysio_power_usage`
+- `temperature`
 - `tensor_active`
-- `tensor_imma_active`
 - `tensor_hmma_active`
-- `clocks_event_reasons`
-- `gpu_flops_rate`
-- `gpu_mem_bw_bytes_rate`
-- `gpu_flops`
-- `gpu_mem_read_bytes`
-- `gpu_mem_write_bytes`
-- `gpu_mem_total_bytes`
-- `gpu_io_link_total_bytes`
-- `gpu_count`
+- `tensor_imma_active`
 
 ### AMD GPU — `amd_gpu` (`--enable-amd-gpu`)
 
-Same as NVIDIA except **omits**:
+*Omits some NVIDIA-only keys.*
 
-- `sysio_power_usage`
-- `module_power_usage`
-- `tensor_imma_active`
-- `tensor_hmma_active`
-- `gpu_io_link_total_bytes`
+- `clocks_event_reasons`
+- `fp16_active`
+- `fp32_active`
+- `fp64_active`
+- `gpu_count`
+- `gpu_flops`
+- `gpu_flops_rate`
+- `gpu_mem_bw_bytes_rate`
+- `gpu_mem_read_bytes`
+- `gpu_mem_total_bytes`
+- `gpu_mem_total_mb`
+- `gpu_mem_used_mb`
+- `gpu_mem_util`
+- `gpu_mem_write_bytes`
+- `gpu_util`
+- `power_usage`
+- `sm_active`
+- `sm_occupancy`
+- `temperature`
+- `tensor_active`
 
-### InfiniBand extended — `ib_ext` (`--enable-infiniband`)
+### InfiniBand extended — `host_ib_ext` (`--enable-infiniband`)
 
-- `port_select`
 - `counter_select`
-- `port_xmit_data`
-- `port_rcv_data`
-- `port_xmit_pkts`
-- `port_rcv_pkts`
-- `port_unicast_xmit_pkts`
-- `port_unicast_rcv_pkts`
-- `port_multicast_xmit_pkts`
 - `port_multicast_rcv_pkts`
+- `port_multicast_xmit_pkts`
+- `port_rcv_data`
+- `port_rcv_pkts`
+- `port_select`
+- `port_unicast_rcv_pkts`
+- `port_unicast_xmit_pkts`
+- `port_xmit_data`
+- `port_xmit_pkts`
 
-### IB switch 64-bit — `ib_sw`
+### IB switch 64-bit — `host_ib_sw`
 
 - `rx_bytes`
 - `rx_packets`
 - `tx_bytes`
 - `tx_packets`
 
-### Intel OPA — `opa` (`--enable-opa`)
+### Intel OPA — `host_opa` (`--enable-opa`)
 
-- `PortXmitData`
-- `PortRcvData`
-- `PortXmitPkts`
-- `PortRcvPkts`
-- `PortMulticastXmitPkts`
-- `PortMulticastRcvPkts`
-- `PortXmitWait`
-- `SwPortCongestion`
-- `PortRcvFECN`
-- `PortRcvBECN`
-- `PortXmitTimeCong`
-- `PortXmitWastedBW`
-- `PortXmitWaitData`
-- `PortRcvBubble`
-- `PortMarkFECN`
-- `PortErrorCounterSummary`
+- `port_error_counter_summary`
+- `port_mark_fecn`
+- `port_multicast_rcv_pkts`
+- `port_multicast_xmit_pkts`
+- `port_rcv_becn`
+- `port_rcv_bubble`
+- `port_rcv_data`
+- `port_rcv_fecn`
+- `port_rcv_pkts`
+- `port_xmit_data`
+- `port_xmit_pkts`
+- `port_xmit_time_cong`
+- `port_xmit_wait`
+- `port_xmit_wait_data`
+- `port_xmit_wasted_bw`
+- `sw_port_congestion`
 
-### Lustre — `mdc`, `llite` (`--enable-lustre`)
-
-**`mdc`:**
+### Lustre MDC — `lustre_mdc` (`--enable-lustre`)
 
 - `ldlm_cancel`
 - `mds_close`
@@ -535,55 +745,55 @@ Same as NVIDIA except **omits**:
 - `reqs`
 - `wait`
 
-**`llite`:**
+### Lustre llite — `lustre_llite` (`--enable-lustre`)
 
-- `read`
-- `write`
-- `read_bytes`
-- `write_bytes`
+- `alloc_inode`
+- `close`
+- `create`
 - `direct_read`
 - `direct_write`
-- `osc_read`
-- `osc_write`
 - `dirty_pages_hits`
 - `dirty_pages_misses`
-- `ioctl`
-- `open`
-- `close`
-- `mmap`
-- `seek`
-- `fsync`
-- `setattr`
-- `truncate`
 - `flock`
+- `fsync`
 - `getattr`
-- `statfs`
-- `alloc_inode`
-- `setxattr`
 - `getxattr`
-- `listxattr`
-- `removexattr`
 - `inode_permission`
-- `readdir`
-- `create`
-- `lookup`
+- `ioctl`
 - `link`
-- `unlink`
-- `symlink`
+- `listxattr`
+- `lookup`
 - `mkdir`
-- `rmdir`
 - `mknod`
+- `mmap`
+- `open`
+- `osc_read`
+- `osc_write`
+- `read`
+- `read_bytes`
+- `readdir`
+- `removexattr`
 - `rename`
+- `rmdir`
+- `seek`
+- `setattr`
+- `setxattr`
+- `statfs`
+- `symlink`
+- `truncate`
+- `unlink`
+- `write`
+- `write_bytes`
 
-### Intel MIC — `mic` (`--enable-mic`)
+### Intel MIC — `host_mic` (`--enable-mic`)
 
-- `num_cores`
-- `threads_core`
-- `user_sum`
-- `nice_sum`
-- `sys_sum`
 - `idle_sum`
 - `jiffy_counter`
+- `nice_sum`
+- `num_cores`
+- `sys_sum`
+- `threads_core`
+- `user_sum`
 
 ---
 
@@ -592,27 +802,23 @@ Same as NVIDIA except **omits**:
 | Subsystem | Common | x86 LIKWID+HW | ARM DCGM+HW | ppc/riscv DCGM | Optional flags |
 |-----------|--------|---------------|-------------|----------------|----------------|
 | OS / proc / mem / vm / numa / block / net / nfs / vfs / shm / tmpfs / lnet / ib sysfs / roofline | ✓ | ✓ | ✓ | ✓ | — |
-| `cpu_counter_metrics` | — | ✓ | ✓ | ✓ | `--enable-hardware` |
+| `host_cpu_hw` | — | ✓ | ✓ | ✓ | `--enable-hardware` |
 | Intel/AMD PMC, RAPL, uncore | — | ✓ | — | — | `--enable-hardware` |
-| `arm_imc` | — | — | ✓ | — | ARM host + DCGM |
+| `arm_aarch64_imc` | — | — | ✓ | — | ARM host + DCGM |
 | GPU / IB ext / Lustre / OPA / MIC | — | if configured | if configured | if configured | respective `--enable-*` |
 
-**Approximate scale:** ~120+ variables in common types; x86 with full hardware can add ~100+ more across Intel/AMD types (many generation-specific, only one variant active per machine); optional GPU/IB/Lustre adds ~60+.
+**Approximate scale:** ~173 keys in common types; x86 hardware adds ~196 more across Intel/AMD types (generation-specific; one variant active per machine); optional subsystems add ~129 more.
 
 ---
 
 ## Related artifacts
 
+- `monitor-variable-rename-table.md` — old→new migration table
 - `monitor-variable-usage-gap-analysis.md` — downstream usage of emitted keys vs `hpcperfstats/`
 
 ## Code references
 
-| Item | Path |
-|------|------|
-| Schema macro | `monitor/src/stats.h` |
-| Type registry | `monitor/src/stats_registry.c` |
-| CPU counter schema | `monitor/src/cpu_counter_metrics.h` |
-| Intel PMC schema | `monitor/src/intel_pmc3.h` |
-| Configure / backends | `monitor/configure.ac` |
+- `HPCPerfStats/monitor/src/stats_registry.c` — registered types
+- `HPCPerfStats/monitor/scripts/check_emitted_variable_names.py` — naming lint
+- `HPCPerfStats/hpcperfstats/listend.py` — consumer message contract
 
-*Generated from static analysis of monitor sources.*

@@ -149,7 +149,7 @@ static double detect_cpu_fp64_flops_per_cycle(void)
   if (f == NULL)
     return 2.0;
   while (fgets(line, sizeof(line), f) != NULL) {
-    if (strncmp(line, "flags", 5) == 0 || strncmp(line, "Features", 8) == 0) {
+    if (strncmp(line, "flags", 5) == 0 || strncmp(line, "features", 8) == 0) {
       has_avx512 |= line_contains_token(line, "avx512f");
       has_avx |= line_contains_token(line, "avx2") || line_contains_token(line, "avx");
       has_fma |= line_contains_token(line, "fma") || line_contains_token(line, "asimdfhm");
@@ -562,7 +562,7 @@ static double detect_amd_fp64_peak_via_rocminfo(void)
   if (fp == NULL)
     return 0.0;
   while (fgets(line, sizeof(line), fp) != NULL) {
-    if (strstr(line, "Name:") != NULL && strstr(line, "gfx") != NULL) {
+    if (strstr(line, "name:") != NULL && strstr(line, "gfx") != NULL) {
       char *g = strstr(line, "gfx");
       if (g != NULL) {
         size_t n = 0;
@@ -700,5 +700,5 @@ struct stats_type roofline_hw_peak_stats_type = {
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),
 #undef X
-  .st_name = "roofline_hw_peak",
+  .st_name = "host_roofline_peak",
 };

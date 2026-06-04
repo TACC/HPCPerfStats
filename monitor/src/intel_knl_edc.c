@@ -48,9 +48,9 @@
 #define ECLK_PMON_CTRCTL0_REG   0xA20
 
 #define KEYS                                                              \
-	X(EDC_HIT_CLEAN, "E,W=48", ""),                                                \
-	    X(EDC_HIT_DIRTY, "E,W=48", ""), X(EDC_MISS_CLEAN, "E,W=48", ""), X(EDC_MISS_DIRTY, "E,W=48", ""), \
-	    X(RPQ_INSERTS, "E,W=48", ""), X(WPQ_INSERTS, "E,W=48", ""), X(ECLK_CYCLES, "E,W=48", "")
+	X(edc_hit_clean, "E,W=48", ""),                                                \
+	    X(edc_hit_dirty, "E,W=48", ""), X(edc_miss_clean, "E,W=48", ""), X(edc_miss_dirty, "E,W=48", ""), \
+	    X(rpq_inserts, "E,W=48", ""), X(wpq_inserts, "E,W=48", ""), X(eclk_cycles, "E,W=48", "")
 
 #define PERF_EVENT(event, umask)                                              \
 	((event) | ((umask) << 8) | (0UL << 17) | (0UL << 18) /* Edge */       \
@@ -93,10 +93,10 @@ static const unsigned knl_eclk_ctr_hi[] = {
 	ECLK_PMON_CTR3_HIGH_REG,
 };
 static const char *const knl_edc_uclk_keys[4] = {
-	"EDC_HIT_CLEAN", "EDC_HIT_DIRTY", "EDC_MISS_CLEAN", "EDC_MISS_DIRTY"
+	"edc_hit_clean", "edc_hit_dirty", "edc_miss_clean", "edc_miss_dirty"
 };
 static const char *const knl_edc_eclk_keys[4] = {
-	"RPQ_INSERTS", "WPQ_INSERTS", "ECLK_CYCLES", NULL
+	"rpq_inserts", "wpq_inserts", "eclk_cycles", NULL
 };
 
 static void intel_knl_edc_uclk_begin_dev(uint32_t dev, uint32_t *map_dev,
@@ -223,7 +223,7 @@ out:
 }
 
 struct stats_type intel_knl_edc_stats_type = {
-    .st_name = "intel_knl_edc",
+    .st_name = "intel_x86_uncore_edc_knl",
     .st_begin = &intel_knl_edc_begin,
     .st_collect = &intel_knl_edc_collect,
 #define X SCHEMA_DEF

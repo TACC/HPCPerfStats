@@ -163,12 +163,12 @@ static const struct intel_pcu_msr_layout pcu_layout_v3 = {
   -# Fixed registers in order
 */
 #define KEYS \
-    X(FREQ_MAX_TEMP_CYCLES,"E,W=48",""), \
-    X(FREQ_MAX_POWER_CYCLES,"E,W=48",""), \
-    X(FREQ_MIN_IO_CYCLES,"E,W=48",""), \
-    X(FREQ_MIN_SNOOP_CYCLES,"E,W=48",""), \
-    X(FIXED_CTR0,"E,W=48",""), \
-    X(FIXED_CTR1,"E,W=48","")
+    X(freq_max_temp_cycles,"E,W=48",""), \
+    X(freq_max_power_cycles,"E,W=48",""), \
+    X(freq_min_io_cycles,"E,W=48",""), \
+    X(freq_min_snoop_cycles,"E,W=48",""), \
+    X(pcu_ctr0,"E,W=48",""), \
+    X(pcu_ctr1,"E,W=48","")
 
 /*! \brief Filter 
   
@@ -327,22 +327,22 @@ static void intel_pcu_collect_socket(struct stats_type *type, char *cpu, int pkg
 
   if (p == SANDYBRIDGE || p == IVYBRIDGE) {
     uint64_t val = 0;
-    if (msr_read_u64(msr_fd, V1_CTR0, &val) == 0) stats_set(stats, "FREQ_MAX_TEMP_CYCLES", val);
-    if (msr_read_u64(msr_fd, V1_CTR1, &val) == 0) stats_set(stats, "FREQ_MAX_POWER_CYCLES", val);
-    if (msr_read_u64(msr_fd, V1_CTR2, &val) == 0) stats_set(stats, "FREQ_MIN_IO_CYCLES", val);
-    if (msr_read_u64(msr_fd, V1_CTR3, &val) == 0) stats_set(stats, "FREQ_MIN_SNOOP_CYCLES", val);
-    if (msr_read_u64(msr_fd, FIXED_CTR0, &val) == 0) stats_set(stats, "FIXED_CTR0", val);
-    if (msr_read_u64(msr_fd, FIXED_CTR1, &val) == 0) stats_set(stats, "FIXED_CTR1", val);
+    if (msr_read_u64(msr_fd, V1_CTR0, &val) == 0) stats_set(stats, "freq_max_temp_cycles", val);
+    if (msr_read_u64(msr_fd, V1_CTR1, &val) == 0) stats_set(stats, "freq_max_power_cycles", val);
+    if (msr_read_u64(msr_fd, V1_CTR2, &val) == 0) stats_set(stats, "freq_min_io_cycles", val);
+    if (msr_read_u64(msr_fd, V1_CTR3, &val) == 0) stats_set(stats, "freq_min_snoop_cycles", val);
+    if (msr_read_u64(msr_fd, FIXED_CTR0, &val) == 0) stats_set(stats, "pcu_ctr0", val);
+    if (msr_read_u64(msr_fd, FIXED_CTR1, &val) == 0) stats_set(stats, "pcu_ctr1", val);
   }
 
   if (p == HASWELL || p == BROADWELL) {
     uint64_t val = 0;
-    if (msr_read_u64(msr_fd, V3_CTR0, &val) == 0) stats_set(stats, "FREQ_MAX_TEMP_CYCLES", val);
-    if (msr_read_u64(msr_fd, V3_CTR1, &val) == 0) stats_set(stats, "FREQ_MAX_POWER_CYCLES", val);
-    if (msr_read_u64(msr_fd, V3_CTR2, &val) == 0) stats_set(stats, "FREQ_MIN_IO_CYCLES", val);
-    if (msr_read_u64(msr_fd, V3_CTR3, &val) == 0) stats_set(stats, "FREQ_MIN_SNOOP_CYCLES", val);
-    if (msr_read_u64(msr_fd, FIXED_CTR0, &val) == 0) stats_set(stats, "FIXED_CTR0", val);
-    if (msr_read_u64(msr_fd, FIXED_CTR1, &val) == 0) stats_set(stats, "FIXED_CTR1", val);
+    if (msr_read_u64(msr_fd, V3_CTR0, &val) == 0) stats_set(stats, "freq_max_temp_cycles", val);
+    if (msr_read_u64(msr_fd, V3_CTR1, &val) == 0) stats_set(stats, "freq_max_power_cycles", val);
+    if (msr_read_u64(msr_fd, V3_CTR2, &val) == 0) stats_set(stats, "freq_min_io_cycles", val);
+    if (msr_read_u64(msr_fd, V3_CTR3, &val) == 0) stats_set(stats, "freq_min_snoop_cycles", val);
+    if (msr_read_u64(msr_fd, FIXED_CTR0, &val) == 0) stats_set(stats, "pcu_ctr0", val);
+    if (msr_read_u64(msr_fd, FIXED_CTR1, &val) == 0) stats_set(stats, "pcu_ctr1", val);
   }
 
  out:
@@ -372,7 +372,7 @@ static void intel_pcu_collect(struct stats_type *type)
 
 //! Definition of stats for this type
 struct stats_type intel_pcu_stats_type = {
-  .st_name = "intel_pcu",
+  .st_name = "intel_x86_pcu",
   .st_begin = &intel_pcu_begin,
   .st_collect = &intel_pcu_collect,
 #define X SCHEMA_DEF

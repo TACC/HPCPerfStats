@@ -33,7 +33,7 @@ static void tmpfs_collect(struct stats_type *type)
     struct stats *stats = NULL;
     struct statfs sfs;
 
-    if (strcmp(me.mnt_type, "tmpfs") != 0)
+    if (strcmp(me.mnt_type, "host_tmpfs") != 0)
       continue;
     if (strcmp(me.mnt_dir, "/tmp") != 0)
       continue;
@@ -62,7 +62,7 @@ static void tmpfs_collect(struct stats_type *type)
 }
 
 struct stats_type tmpfs_stats_type = {
-  .st_name = "tmpfs",
+  .st_name = "host_tmpfs",
   .st_collect = &tmpfs_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

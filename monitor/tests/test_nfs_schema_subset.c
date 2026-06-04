@@ -61,12 +61,12 @@ int main(void)
   assert_present(schema, " xprt_bad_xids,E");
   assert_present(schema, " xprt_req_u,E");
   assert_present(schema, " xprt_bklog_u,E");
-  assert_present(schema, " READ_timeouts,E");
-  assert_present(schema, " WRITE_timeouts,E");
-  assert_present(schema, " READ_queue,E,U=ms");
-  assert_present(schema, " WRITE_queue,E,U=ms");
-  assert_present(schema, " READ_rtt,E,U=ms");
-  assert_present(schema, " WRITE_rtt,E,U=ms");
+  assert_present(schema, " read_timeouts,E");
+  assert_present(schema, " write_timeouts,E");
+  assert_present(schema, " read_queue,E,U=ms");
+  assert_present(schema, " write_queue,E,U=ms");
+  assert_present(schema, " read_rtt,E,U=ms");
+  assert_present(schema, " write_rtt,E,U=ms");
   assert_present(schema, " delay,E");
 
   assert_absent(schema, " inode_revalidate,E");

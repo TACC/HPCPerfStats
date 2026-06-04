@@ -11,8 +11,8 @@
 #include "string1.h"
 
 #define KEYS								\
-  X(num_cores,   "C", "Number of cores"),				\
-    X(threads_core, "C", "Number of threads per core"),			\
+  X(num_cores,   "c", "Number of cores"),				\
+    X(threads_core, "c", "Number of threads per core"),			\
     X(user_sum,    "E,U=cs", "aggregate time in user mode"),			\
     X(nice_sum,    "E,U=cs", "aggregate time in user mode with low priority"),	\
     X(sys_sum,  "E,U=cs", "aggregate time in system mode"),		\
@@ -204,7 +204,7 @@ static void mic_collect(struct stats_type *type)
 
 
 struct stats_type mic_stats_type = {
-  .st_name = "mic",
+  .st_name = "host_mic",
   .st_collect = &mic_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),

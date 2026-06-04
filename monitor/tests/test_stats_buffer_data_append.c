@@ -23,8 +23,8 @@ int main(void)
   assert(len == 4u + 100u);
   assert(d[len] == '\0');
 
-  assert(stats_buffer_data_append_bytes(&d, &len, &cap, "Z", 1) == 0);
-  assert(len == 4u + 100u + 1u && d[len] == '\0' && d[len - 1] == 'Z');
+  assert(stats_buffer_data_append_bytes(&d, &len, &cap, "z", 1) == 0);
+  assert(len == 4u + 100u + 1u && d[len] == '\0' && d[len - 1] == 'z');
 
   free(d);
   printf("test_stats_buffer_data_append passed\n");

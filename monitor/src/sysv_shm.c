@@ -49,7 +49,7 @@ static void sysv_shm_collect(struct stats_type *type)
 }
 
 struct stats_type sysv_shm_stats_type = {
-  .st_name = "sysv_shm",
+  .st_name = "host_sysv_shm",
   .st_collect = &sysv_shm_collect,
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),
