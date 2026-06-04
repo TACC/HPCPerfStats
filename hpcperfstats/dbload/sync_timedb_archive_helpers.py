@@ -1033,7 +1033,12 @@ def build_remaining_raw_stats_by_daily_gz(
   )
 
   snapshot = build_archive_maintenance_snapshot(
-      archive_data_dir, host_name_ext, tgz_archive_dir, log_fn=None)
+      archive_data_dir,
+      host_name_ext,
+      tgz_archive_dir,
+      build_ready_set=False,
+      log_fn=None,
+  )
   return snapshot.remaining_raw_by_gz
 
 

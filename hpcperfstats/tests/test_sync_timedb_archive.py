@@ -1095,8 +1095,8 @@ def test_remove_verified_archived_raw_files_bootstraps_missing_daily_archive(
 
   member_name = get_tar_member_name(str(seg))
 
-  def fake_validate(sealed_path, log_fn=None, validation_cache=None):
-    del validation_cache
+  def fake_validate(sealed_path, log_fn=None, validation_cache=None, allow_auto_seal=True):
+    del validation_cache, allow_auto_seal
     assert sealed_path == zst_key
     return True, {member_name: os.path.getsize(seg)}
 
@@ -1622,8 +1622,8 @@ def test_remove_verified_uncompressed_daily_tars_streaming_apply_order(
   zst_b.write_bytes(b"sealed")
   monkeypatch.setattr(helpers, "iter_daily_tar_paths", lambda _d: [str(tar_a), str(tar_b)])
 
-  def fake_stream(_gz_paths, *, log_fn=None, validation_cache=None):
-    del log_fn, validation_cache
+  def fake_stream(_gz_paths, *, log_fn=None, validation_cache=None, allow_auto_seal=True):
+    del log_fn, validation_cache, allow_auto_seal
     yield str(zst_b), True, {"x": 1}
     yield str(zst_a), True, {"x": 1}
 
@@ -2045,8 +2045,8 @@ def test_collect_lock_sidecar_stats_counts_stale_and_age(tmp_path):
   assert stats["oldest_lock_age_seconds"] >= 100
 
 
-def test_collect_stats_files_in_range_sorted_oldest_first(tmp_path):
-  """Results are sorted by effective timestamp, oldest first."""
+def test_collect_stats_files_in_range_sorted_newest_first(tmp_path):
+  """Results are sorted by effective timestamp, newest first (supervisor ingest order)."""
   cn = tmp_path / ("cn001." + _ARCH_HOST_SUFFIX)
   cn.mkdir()
   # Three files: base names are epoch seconds one minute apart.
@@ -2064,12 +2064,12 @@ def test_collect_stats_files_in_range_sorted_oldest_first(tmp_path):
   result = collect_stats_files_in_range(
       str(tmp_path), start, end, _ARCH_HOST_SUFFIX)
   basenames = [os.path.basename(p) for p in result]
-  # Expect oldest (smallest epoch) first.
-  assert basenames == [str(epochs[0]), str(epochs[1]), str(epochs[2])]
+  # Expect newest (largest epoch) first.
+  assert basenames == [str(epochs[2]), str(epochs[1]), str(epochs[0])]
 
 
-def test_rescan_pending_stats_files_excludes_processed_and_keeps_oldest_first(tmp_path):
-  """Rescan excludes already processed files and keeps oldest-first ordering."""
+def test_rescan_pending_stats_files_excludes_processed_and_keeps_newest_first(tmp_path):
+  """Rescan excludes already processed files and keeps newest-first ordering."""
   cn = tmp_path / ("cn001." + _ARCH_HOST_SUFFIX)
   cn.mkdir()
   base_ts = datetime(2020, 6, 15, 12, 0, 0)
@@ -2087,7 +2087,7 @@ def test_rescan_pending_stats_files_excludes_processed_and_keeps_oldest_first(tm
   pending = rescan_pending_stats_files(
       str(tmp_path), start, end, _ARCH_HOST_SUFFIX, processed)
 
-  assert [os.path.basename(p) for p in pending] == [str(old_epoch), str(mid_epoch)]
+  assert [os.path.basename(p) for p in pending] == [str(mid_epoch), str(old_epoch)]
 
 
 def test_collect_stats_files_in_range_uses_filename_epoch_when_mtime_outside(tmp_path):
