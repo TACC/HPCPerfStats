@@ -29,8 +29,8 @@ dependencies = [
   "numexpr",
   "psycopg==3.3.4",
   "pandas==3.0.3",
-  "bokeh==3.9.0",
-  "Django>=6.0.5,<7.0",
+  "bokeh==3.9.1",
+  "Django>=6.0.6,<7.0",
   "python-hostlist",
   "pika==1.4.1",
   "mysqlclient",
@@ -54,7 +54,7 @@ test = [
   "psycopg[binary]",
 ]
 dev = [
-  "ruff>=0.15.15",
+  "ruff>=0.15.16",
   "pylint>=4.0.5",  # optional; Ruff is the primary linter (see docs/TESTING.md)
 ]
 

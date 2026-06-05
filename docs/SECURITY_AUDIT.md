@@ -27,7 +27,7 @@ HPCPerfStats combines a Django + DRF backend, session-based OAuth (Tapis) and ha
 | pillow       | 12.2.0          | Clean |
 | gunicorn     | 26.0.0          | Clean |
 
-`pyproject.toml` runtime floors: `Django>=6.0.5,<7`, `requests>=2.34.2`, `cryptography>=48.0.0`, `pillow>=12.2.0`.
+`pyproject.toml` runtime floors: `Django>=6.0.6,<7`, `requests>=2.34.2`, `cryptography>=48.0.0`, `pillow>=12.2.0`.
 
 **Host dev venv** (not shipped): `idna` 3.13 (CVE-2026-45409 → 3.15+), `pip` 26.1.1 (PYSEC-2026-196 → 26.1.2+). Treat as developer-workstation hygiene only.
 

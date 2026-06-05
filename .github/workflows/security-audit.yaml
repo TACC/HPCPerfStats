@@ -16,7 +16,7 @@ jobs:
   audits:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build web image for production-context pip-audit
         run: docker-compose build web

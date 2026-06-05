@@ -13,14 +13,14 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@bokeh/bokehjs": "3.9.0",
+    "@bokeh/bokehjs": "3.9.1",
     "@fontsource/open-sans": "^5.2.7",
     "bootstrap": "^5.3.8",
     "bootswatch": "^5.3.8",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-paginate": "^8.3.0",
-    "react-router-dom": "^7.16.0"
+    "react-router-dom": "^7.17.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",

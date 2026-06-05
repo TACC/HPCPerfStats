@@ -6,7 +6,7 @@ set -euo pipefail
 
 pip_compose_test_extras_fallback() {
   pip install -q \
-    "Django>=6.0.5,<7.0" \
+    "Django>=6.0.6,<7.0" \
     "pytest>=9.0" \
     "pytest-django>=4.12.0" \
     "pytest-cov>=7.1.0"
