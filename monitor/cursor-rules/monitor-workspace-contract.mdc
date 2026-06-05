@@ -30,7 +30,7 @@ alwaysApply: true
 ## Change Validation Expectation
 
 - For monitor-side message format changes, validate compatibility against `listend.py` parsing logic before finalizing edits.
-- If a monitor change would require consumer changes, stop and call out the contract break clearly.
+- If a monitor change would require consumer changes, produce a **secondary consumer plan** (what + why) per **monitor-consumer-side-plan** — do not only mention a vague “contract break.”
 
 ## Precedence and overrides
 

@@ -22,6 +22,7 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [monitor-collect-tier-gating.mdc](monitor-collect-tier-gating.mdc) | Two-tier collect/emit: `stats_set` gate, daemon phase, SIGHUP slot reset. |
 | [monitor-schema-keys-headers.mdc](monitor-schema-keys-headers.mdc) | Shared `KEYS` headers; contract tests include headers, no macro duplication. |
 | [monitor-consumer-schema-migration.mdc](monitor-consumer-schema-migration.mdc) | Breaking output: rename map, README rollout, contract tests. |
+| [monitor-consumer-side-plan.mdc](monitor-consumer-side-plan.mdc) | Monitor changes needing consumer work: secondary plan (what + why) before/during implement. |
 | [monitor-debug-shm.mdc](monitor-debug-shm.mdc) | DEBUG `/dev/shm` mirror: permissions, gating, tests. |
 | [monitor-ib-sysfs-parsing.mdc](monitor-ib-sysfs-parsing.mdc) | IB port state parsers; inactive/active substring traps. |
 | [monitor-ci-workflow.mdc](monitor-ci-workflow.mdc) | GitHub `monitor-verify.yaml` vs local dual-verify. |
@@ -44,6 +45,8 @@ Break the problem down step-by-step. In the response (or in thinking for trivial
 - **Logical steps** — ordered actions from inputs to the desired outcome.
 
 Only after this breakdown, implement. Skip the written plan only for truly trivial edits (typo, comment-only) where the change is obvious and risk-free.
+
+If the monitor plan implies consumer changes, add the **Consumer follow-up plan** section per **monitor-consumer-side-plan** (even when implementing monitor-only in this session).
 
 ## 3. Implement
 

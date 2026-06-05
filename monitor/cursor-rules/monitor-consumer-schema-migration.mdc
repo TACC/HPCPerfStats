@@ -26,7 +26,7 @@ Any change that breaks **historical** ingest or queries:
    - `removed_legacy:` for retired typenames/keys
 2. **`monitor/README.md`** — migration table or rollout note (deploy monitor + consumer together when needed).
 3. **Contract tests** — `test_*_schema_contract.c` or golden tests for new shape.
-4. Call out if **`listend.py`** / **`sync_timedb_parsing.py`** need a separate authorized consumer edit (**monitor-workspace-contract**).
+4. **Consumer secondary plan** — structured what/why/rollout/verify section per **monitor-consumer-side-plan** (implementation still requires explicit user authorization).
 
 ## Two-tier rollout
 

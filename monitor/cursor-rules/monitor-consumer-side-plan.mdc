@@ -1,0 +1,35 @@
+---
+description: When monitor output changes need consumer work, produce a secondary consumer plan (what + why)
+alwaysApply: true
+---
+
+# Monitor: consumer-side secondary plan
+
+When a **monitor** change would require updates outside `HPCPerfStats/monitor/` (ingest, dbload, analysis, dashboards), produce a **secondary consumer plan** in the same turn — **before** or **alongside** monitor implementation. Do **not** implement consumer code unless the user explicitly authorizes that path (**monitor-workspace-contract**, **out-of-monitor-hpcperfstats-rules**).
+
+## Trigger (any of these)
+
+- New or changed sample/schema shape (`@fast`/`@full`, `,R=S`, column count, host token position).
+- `st_name`, device id, or event key rename/retirement that breaks historical ingest or queries.
+- Semantics change (gauge vs cumulative `E`, MAD vs sysfs counter source).
+- Consumer parser would mis-align, drop, or mis-label columns without a matching change.
+
+Read **`HPCPerfStats/hpcperfstats/listend.py`** (and relevant parsers such as **`sync_timedb_parsing.py`**) to confirm impact — do not guess.
+
+## Required secondary plan content
+
+Use a clearly labeled section, e.g. **Consumer follow-up plan**, with:
+
+1. **Why** — what monitor behavior changed and why the current consumer cannot handle it.
+2. **What** — concrete tasks (files/functions/tests) on the consumer side.
+3. **Rollout** — deploy order (consumer first vs together vs monitor escape hatch e.g. `enable_slow_tier 0`).
+4. **Verification** — consumer tests or manual checks to run after both sides land.
+5. **Rename/migration** — YAML map entries, dashboard/query updates if applicable (**monitor-consumer-schema-migration**).
+
+Keep the plan actionable for a separate session or authorized consumer edit; it is not a substitute for **`monitor_variable_rename_map.yaml`** or **`monitor/README.md`** migration notes when those apply.
+
+## Monitor-only handoff
+
+In the monitor implementation summary, state explicitly: **consumer plan attached** or **no consumer changes required**, with one sentence of rationale.
+
+Cross-links: **monitor-workspace-contract**, **monitor-consumer-schema-migration**, **implementation-workflow-discipline**.
