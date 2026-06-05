@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "collect_tier.h"
 #include "dict.h"
 #include "metric_profiler.h"
 #include "schema.h"
@@ -232,6 +233,8 @@ void stats_set(struct stats *stats, const char *key, unsigned long long val)
         (unsigned long long) val, i);
 
   if (i >= 0) {
+    if (!collect_tier_key_active(stats->s_type, i))
+      return;
     stats->s_val[i] = val;
     if (stats->s_val_present != NULL)
       stats->s_val_present[i] = 1;
@@ -259,6 +262,8 @@ void stats_inc(struct stats *stats, const char *key, unsigned long long val)
         (unsigned long long) val, i);
 
   if (i >= 0) {
+    if (!collect_tier_key_active(stats->s_type, i))
+      return;
     stats->s_val[i] += val;
     if (stats->s_val_present != NULL)
       stats->s_val_present[i] = 1;

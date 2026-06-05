@@ -49,6 +49,28 @@ static void test_mem_util_scales_bandwidth(void)
   assert(fabs(mem_bw - 0.5 * 1000000000000.0) < 1.0);
 }
 
+static void test_link_u64_delta_monotonic(void)
+{
+  uint64_t prev = 100ULL;
+
+  assert(nvidia_gpu_link_u64_delta(250ULL, &prev) == 150ULL);
+  assert(prev == 250ULL);
+  assert(nvidia_gpu_link_u64_delta(300ULL, &prev) == 50ULL);
+}
+
+static void test_link_u64_delta_reset(void)
+{
+  uint64_t prev = 500ULL;
+
+  assert(nvidia_gpu_link_u64_delta(100ULL, &prev) == 100ULL);
+  assert(prev == 100ULL);
+}
+
+static void test_link_u64_delta_null_prev(void)
+{
+  assert(nvidia_gpu_link_u64_delta(100ULL, NULL) == 0ULL);
+}
+
 static void test_over_one_mix_clamped(void)
 {
   struct nvidia_gpu_estimate_input in = {
@@ -72,6 +94,9 @@ int main(void)
   test_fp_mix_clamped_and_scaled();
   test_mem_util_scales_bandwidth();
   test_over_one_mix_clamped();
+  test_link_u64_delta_monotonic();
+  test_link_u64_delta_reset();
+  test_link_u64_delta_null_prev();
   printf("test_nvidia_gpu_estimate passed\n");
   return 0;
 }

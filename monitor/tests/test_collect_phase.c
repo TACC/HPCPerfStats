@@ -100,6 +100,7 @@ static void test_runtime_collect_phase_for_tick(void)
   long long last_slot = -1;
   enum collect_phase phase;
 
+  collect_tier_set_enabled(1);
   phase = stats_runtime_collect_phase_for_tick(0.0, &last_slot, 600.0);
   assert(phase == COLLECT_FULL);
   assert(last_slot == 0);
@@ -120,6 +121,18 @@ static void test_runtime_collect_phase_for_tick(void)
   assert(collect_tier_get_phase() == COLLECT_FULL);
 }
 
+static void test_tier_disabled_stays_full(void)
+{
+  long long last_slot = 5;
+
+  collect_tier_set_enabled(0);
+  assert(stats_runtime_collect_phase_for_tick(30.0, &last_slot, 600.0)
+         == COLLECT_FULL);
+  assert(collect_tier_get_phase() == COLLECT_FULL);
+  assert(last_slot == 5);
+  collect_tier_set_enabled(1);
+}
+
 int main(void)
 {
   test_slow_slot_math();
@@ -127,6 +140,7 @@ int main(void)
   test_alignment_with_fast_ticks();
   test_phase_get_set_and_effective();
   test_runtime_collect_phase_for_tick();
+  test_tier_disabled_stays_full();
   printf("test_collect_phase passed\n");
   return 0;
 }

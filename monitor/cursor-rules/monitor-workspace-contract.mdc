@@ -25,6 +25,7 @@ alwaysApply: true
   - Stats sample message: whitespace-separated fields where host is the 3rd token (`<timestamp> <jobid> <host> ...`).
 - Host extraction must remain stable because consumer writes to `archive_dir/<host>/current`.
 - `$` messages trigger rotation semantics on the consumer side; non-`$` messages append to the active `current` file.
+- **Two-tier samples** (when `enable_slow_tier 1`): rows may include `@fast` or `@full` after the device field; schema lines may include `,R=S` on slow keys. `$`/schema payloads remain **full** always (**monitor-collect-tier-gating**). Coordinate consumer deploy with **monitor-consumer-schema-migration**.
 
 ## Change Validation Expectation
 

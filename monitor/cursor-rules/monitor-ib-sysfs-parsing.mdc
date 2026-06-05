@@ -1,0 +1,27 @@
+---
+description: IB sysfs line parsers — avoid substring false positives
+globs:
+  - HPCPerfStats/monitor/src/ib_port_state.*
+  - HPCPerfStats/monitor/tests/test_ib_port_state.c
+alwaysApply: false
+---
+
+# Monitor: IB port sysfs parsing
+
+## `ib_port_logic_active`
+
+- Prefer **numeric prefix** (`strtoul` → value `4` == ACTIVE).
+- Before substring checks: if line contains **`inactive`**, return **not active** (`"inactive"` contains `"active"`).
+- Text fallback `strstr(..., "active")` only after ruling out inactive.
+- **Numeric 4 wins**: `"4: INACTIVE"` may still be active if the prefix parses as 4 — document in tests.
+
+## Tests (`test_ib_port_state.c`)
+
+- Cover: `"4"`, `"4: ACTIVE"`, `"inactive"`, `"3: DOWN"`, NULL/empty.
+- Regression: `"inactive"` must **not** be treated as active.
+
+## MAD eligibility
+
+Port collectibility uses these parsers — false positives cause extra MAD I/O. Fix parsers at source, not only in `ib_mad.c`.
+
+Cross-links: **monitor-c-new-function-unittests**, **traceback-fix-discipline**.

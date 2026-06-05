@@ -11,6 +11,7 @@
 #include "path_open_fail_once.h"
 #include "trace.h"
 #include "string1.h"
+#include "host_cpu.h"
 
 /* One stdio stream for /proc/stat: rewind each sample instead of open/fclose. */
 static FILE *g_cpu_proc_stat;
@@ -28,15 +29,6 @@ void cpu_stats_invalidate_file_caches(void)
    seconds.  sysconf(_SC_CLK_TCK) seems to always be 100. */
 
 /* We ignore steal and guest. */
-
-#define KEYS \
-  X(user,    "E,U=cs", "time in user mode"), \
-  X(nice,    "E,U=cs", "time in user mode with low priority"), \
-  X(system,  "E,U=cs", "time in system mode"), \
-  X(idle,    "E,U=cs", "time in idle task"), \
-  X(iowait,  "E,U=cs", "time in I/O wait"), \
-  X(irq,     "E,U=cs", "time in IRQ"), \
-  X(softirq, "E,U=cs", "time in softIRQ")
 
 static void cpu_collect(struct stats_type *type)
 {

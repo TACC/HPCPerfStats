@@ -19,6 +19,13 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [monitor-c-testing-standards.mdc](monitor-c-testing-standards.mdc) | Monitor unit/contract tests: pyramid, fixtures, `make check` expectations. |
 | [monitor-workspace-contract.mdc](monitor-workspace-contract.mdc) | Scope, RabbitMQ/listend message contract, monitor-only edit boundary. |
 | [monitor-static-build-verification.mdc](monitor-static-build-verification.mdc) | Monitor build/packaging changes: canonical `build_static_bundle.sh` path. |
+| [monitor-collect-tier-gating.mdc](monitor-collect-tier-gating.mdc) | Two-tier collect/emit: `stats_set` gate, daemon phase, SIGHUP slot reset. |
+| [monitor-schema-keys-headers.mdc](monitor-schema-keys-headers.mdc) | Shared `KEYS` headers; contract tests include headers, no macro duplication. |
+| [monitor-consumer-schema-migration.mdc](monitor-consumer-schema-migration.mdc) | Breaking output: rename map, README rollout, contract tests. |
+| [monitor-debug-shm.mdc](monitor-debug-shm.mdc) | DEBUG `/dev/shm` mirror: permissions, gating, tests. |
+| [monitor-ib-sysfs-parsing.mdc](monitor-ib-sysfs-parsing.mdc) | IB port state parsers; inactive/active substring traps. |
+| [monitor-ci-workflow.mdc](monitor-ci-workflow.mdc) | GitHub `monitor-verify.yaml` vs local dual-verify. |
+| [monitor-cursor-rules-sync.mdc](monitor-cursor-rules-sync.mdc) | Edit both `.cursor/rules/` and `monitor/cursor-rules/`. |
 | [python-venv-enforcement.mdc](python-venv-enforcement.mdc) | Python tooling: use repo `.venv`, not system `python`/`pip`. |
 
 ## 1. Clarify — do not guess

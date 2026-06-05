@@ -42,9 +42,9 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_opa_schema_contract test_lnet_schema_contract test_arm_aarch64_imc_schema test_amd_x86_pmc_schema test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_dict test_host_key_alias test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_daemonize
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_opa_schema_contract test_lnet_schema_contract test_arm_aarch64_imc_schema test_amd_x86_pmc_schema test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_stats_set_tier_gate test_dict test_host_key_alias test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_daemonize
 if INFINIBAND
-check_PROGRAMS += test_ib_mad_backoff test_ib_mad_decode
+check_PROGRAMS += test_ib_mad_backoff test_ib_mad_decode test_ib_mad_sw_swap
 endif
 if CPU_BACKEND_DCGM
 check_PROGRAMS += test_dcgm_pkg_uniq test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish
@@ -66,7 +66,7 @@ if RABBITMQ
 	fi
 endif
 
-EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_stats_buffer_collect.c test_stats_buffer_collect_stubs.c test_stats_buffer_collect_stubs.h test_debug_shm_emit_fixture.c test_debug_shm_emit_fixture.h test_debug_shm_emit_validate.c test_debug_shm_emit_validate.h test_debug_shm_emit_golden.c expected/debug_shm_fast.txt expected/debug_shm_full.txt test_stats_buffer_rows.c test_stats_runtime_collect.c test_ib_family.c test_ib_mad_backoff.c test_ib_mad_decode.c test_ib_mad_stubs.c test_nvidia_gpu_estimate.c test_roofline_detect_fixture.c test_daemonize.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_arm_aarch64_imc_schema.c test_amd_x86_pmc_schema.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh scripts/check_unsafe_c_patterns.sh scripts/check_unsafe_c_patterns.allowlist
+EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_stats_buffer_collect.c test_stats_buffer_collect_stubs.c test_stats_buffer_collect_stubs.h test_debug_shm_emit_fixture.c test_debug_shm_emit_fixture.h test_debug_shm_emit_validate.c test_debug_shm_emit_validate.h test_debug_shm_emit_golden.c expected/debug_shm_fast.txt expected/debug_shm_full.txt test_stats_buffer_rows.c test_stats_runtime_collect.c test_ib_family.c test_ib_mad_backoff.c test_ib_mad_decode.c test_ib_mad_stubs.c test_ib_mad_sw_swap.c test_nvidia_gpu_estimate.c test_roofline_detect_fixture.c test_daemonize.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_arm_aarch64_imc_schema.c test_amd_x86_pmc_schema.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh scripts/check_unsafe_c_patterns.sh scripts/check_unsafe_c_patterns.allowlist $(top_srcdir)/scripts/check_emitted_variable_names.py
 
 if RABBITMQ
 .PHONY: check-rabbitmq-integration
@@ -304,6 +304,12 @@ test_ib_mad_decode_SOURCES = \
 	test_ib_mad_stubs.c \
 	test_stats_stub.c \
 	$(top_srcdir)/src/ib_mad.c
+
+test_ib_mad_sw_swap_SOURCES = \
+	test_ib_mad_sw_swap.c \
+	test_ib_mad_stubs.c \
+	test_stats_stub.c \
+	$(top_srcdir)/src/ib_mad.c
 endif
 
 test_stats_runtime_type_controls_SOURCES = \
@@ -353,6 +359,31 @@ test_collect_tier_gate_SOURCES = \
 	$(top_srcdir)/src/path_read.c \
 	$(top_srcdir)/src/path_open_fail_once.c
 
+test_stats_set_tier_gate_SOURCES = \
+	test_stats_set_tier_gate.c \
+	$(top_srcdir)/src/stats.c \
+	$(top_srcdir)/src/collect.c \
+	$(top_srcdir)/src/collect_tier.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/dict.c \
+	$(top_srcdir)/src/path_read.c \
+	$(top_srcdir)/src/path_open_fail_once.c
+
+stats_buffer_test_core_sources = \
+	$(top_srcdir)/src/stats_buffer.c \
+	$(top_srcdir)/src/stats_buffer_rmq.c \
+	$(top_srcdir)/src/stats_buffer_rows.c \
+	$(top_srcdir)/src/stats_buffer_uts.c \
+	$(top_srcdir)/src/stats_buffer_data_append.c \
+	$(top_srcdir)/src/stats_text_format.c \
+	$(top_srcdir)/src/collect_tier.c \
+	$(top_srcdir)/src/monitor_log.c \
+	$(top_srcdir)/src/path_open_fail_once.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/dict.c
+
 if RABBITMQ
 test_monitor_cli_SOURCES = \
 	test_monitor_cli.c \
@@ -364,72 +395,28 @@ test_monitor_cli_SOURCES = \
 test_ring_buffer_SOURCES = \
 	test_ring_buffer.c \
 	test_stats_buffer_collect_stubs.c \
-	$(top_srcdir)/src/stats_buffer.c \
-	$(top_srcdir)/src/stats_buffer_rmq.c \
-	$(top_srcdir)/src/stats_buffer_rows.c \
-	$(top_srcdir)/src/stats_buffer_uts.c \
-	$(top_srcdir)/src/stats_buffer_data_append.c \
-	$(top_srcdir)/src/stats_text_format.c \
-	$(top_srcdir)/src/collect_tier.c \
-	$(top_srcdir)/src/monitor_log.c \
-	$(top_srcdir)/src/path_open_fail_once.c \
-	$(top_srcdir)/src/schema.c \
-	$(top_srcdir)/src/schema_entry_parse.c \
-	$(top_srcdir)/src/dict.c
+	$(stats_buffer_test_core_sources)
 test_ring_buffer_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
 
 test_stats_buffer_collect_SOURCES = \
 	test_stats_buffer_collect.c \
 	test_stats_buffer_collect_stubs.c \
-	$(top_srcdir)/src/stats_buffer.c \
-	$(top_srcdir)/src/stats_buffer_rmq.c \
-	$(top_srcdir)/src/stats_buffer_rows.c \
-	$(top_srcdir)/src/stats_buffer_uts.c \
-	$(top_srcdir)/src/stats_buffer_data_append.c \
-	$(top_srcdir)/src/stats_text_format.c \
-	$(top_srcdir)/src/collect_tier.c \
-	$(top_srcdir)/src/monitor_log.c \
-	$(top_srcdir)/src/path_open_fail_once.c \
-	$(top_srcdir)/src/schema.c \
-	$(top_srcdir)/src/schema_entry_parse.c \
-	$(top_srcdir)/src/dict.c
+	$(stats_buffer_test_core_sources)
 test_stats_buffer_collect_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
 
 test_stats_buffer_debug_shm_SOURCES = \
 	test_stats_buffer_debug_shm.c \
 	test_stats_buffer_collect_stubs.c \
-	$(top_srcdir)/src/stats_buffer.c \
-	$(top_srcdir)/src/stats_buffer_debug_shm.c \
-	$(top_srcdir)/src/stats_buffer_rmq.c \
-	$(top_srcdir)/src/stats_buffer_rows.c \
-	$(top_srcdir)/src/stats_buffer_uts.c \
-	$(top_srcdir)/src/stats_buffer_data_append.c \
-	$(top_srcdir)/src/stats_text_format.c \
-	$(top_srcdir)/src/collect_tier.c \
-	$(top_srcdir)/src/monitor_log.c \
-	$(top_srcdir)/src/path_open_fail_once.c \
-	$(top_srcdir)/src/schema.c \
-	$(top_srcdir)/src/schema_entry_parse.c \
-	$(top_srcdir)/src/dict.c
+	$(stats_buffer_test_core_sources) \
+	$(top_srcdir)/src/stats_buffer_debug_shm.c
 test_stats_buffer_debug_shm_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
 
 test_debug_shm_emit_golden_SOURCES = \
 	test_debug_shm_emit_golden.c \
 	test_debug_shm_emit_fixture.c \
 	test_debug_shm_emit_validate.c \
-	$(top_srcdir)/src/stats_buffer.c \
-	$(top_srcdir)/src/stats_buffer_debug_shm.c \
-	$(top_srcdir)/src/stats_buffer_rmq.c \
-	$(top_srcdir)/src/stats_buffer_rows.c \
-	$(top_srcdir)/src/stats_buffer_uts.c \
-	$(top_srcdir)/src/stats_buffer_data_append.c \
-	$(top_srcdir)/src/stats_text_format.c \
-	$(top_srcdir)/src/collect_tier.c \
-	$(top_srcdir)/src/monitor_log.c \
-	$(top_srcdir)/src/path_open_fail_once.c \
-	$(top_srcdir)/src/schema.c \
-	$(top_srcdir)/src/schema_entry_parse.c \
-	$(top_srcdir)/src/dict.c
+	$(stats_buffer_test_core_sources) \
+	$(top_srcdir)/src/stats_buffer_debug_shm.c
 test_debug_shm_emit_golden_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK -DSTATS_BUFFER_TEST_TIME_HOOK -DSTATS_BUFFER_TEST_UTS_HOOK
 
 test_monitor_timing_SOURCES = \
@@ -491,6 +478,7 @@ test_ib_family_LDADD = $(LDADD)
 if INFINIBAND
 test_ib_mad_backoff_LDADD = $(LDADD)
 test_ib_mad_decode_LDADD = $(LDADD)
+test_ib_mad_sw_swap_LDADD = $(LDADD)
 endif
 test_stats_runtime_type_controls_LDADD = $(LDADD) -lm
 test_stats_runtime_collect_LDADD = $(LDADD) -lm
@@ -499,6 +487,7 @@ test_daemonize_LDADD = $(LDADD)
 test_collect_tier_table_LDADD = $(LDADD)
 test_collect_phase_LDADD = $(LDADD) -lm
 test_collect_tier_gate_LDADD = $(LDADD)
+test_stats_set_tier_gate_LDADD = $(LDADD)
 if RABBITMQ
 test_monitor_cli_LDADD = $(LDADD)
 test_ring_buffer_LDADD = $(LDADD)

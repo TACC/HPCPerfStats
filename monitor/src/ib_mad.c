@@ -126,6 +126,7 @@ void ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
 
   snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%i/lid", hca, port);
   if (pscanf(path, "%x", &lid) != 1) {
+    g_ib_mad_ext_fail_streak++;
     ERROR("cannot read lid of IB HCA `%s' port %d: %m\n", hca, port);
     return;
   }
@@ -177,7 +178,7 @@ static int ib_mad_sw_query_switch_counters(struct ibmad_port *mad_port, int mad_
   return 0;
 }
 
-static void ib_mad_sw_publish_tx_rx_swap(struct stats *stats, uint64_t sw_rx_bytes,
+void ib_mad_sw_publish_tx_rx_swap(struct stats *stats, uint64_t sw_rx_bytes,
                                          uint64_t sw_rx_packets, uint64_t sw_tx_bytes,
                                          uint64_t sw_tx_packets)
 {
@@ -225,4 +226,22 @@ void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
  out:
   if (mad_port != NULL)
     mad_rpc_close_port(mad_port);
+}
+
+void ib_mad_test_reset_backoff(void)
+{
+  g_ib_mad_ext_fail_streak = 0;
+  g_ib_mad_ext_skip_until = 0;
+  g_ib_mad_sw_fail_streak = 0;
+  g_ib_mad_sw_skip_until = 0;
+}
+
+void ib_mad_test_set_ext_fail_streak(unsigned long n)
+{
+  g_ib_mad_ext_fail_streak = n;
+}
+
+void ib_mad_test_set_sw_fail_streak(unsigned long n)
+{
+  g_ib_mad_sw_fail_streak = n;
 }

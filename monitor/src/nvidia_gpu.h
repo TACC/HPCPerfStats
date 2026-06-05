@@ -30,11 +30,11 @@
   X(tensor_hmma_active, "", "DCGM tensor HMMA pipe duty cycle (in %); overlaps tensor_active (1004) on some stacks — excluded from gpu_flops fp_mix with tensor_imma_active"), \
   X(tensor_dfma_active, "", "DCGM tensor DFMA pipe duty cycle (in %); FP64 tensor path — excluded from gpu_flops fp_mix"), \
   X(gpu_dram_active, "", "Ratio of cycles device memory interface is active (in %)"), \
-  X(gpu_pcie_tx_bytes, "U=B", "DCGM PROF PCIe transmit byte counter (GPU perspective)"), \
-  X(gpu_pcie_rx_bytes, "U=B", "DCGM PROF PCIe receive byte counter (GPU perspective)"), \
-  X(gpu_nvlink_tx_bytes, "U=B", "DCGM PROF NvLink transmit byte counter"), \
-  X(gpu_nvlink_rx_bytes, "U=B", "DCGM PROF NvLink receive byte counter"), \
-  X(gpu_pcie_replay_counter, "", "DCGM PCIe replay counter"), \
+  X(gpu_pcie_tx_bytes, "E,W=64,U=B", "DCGM PROF PCIe transmit byte counter (monotonic)"), \
+  X(gpu_pcie_rx_bytes, "E,W=64,U=B", "DCGM PROF PCIe receive byte counter (monotonic)"), \
+  X(gpu_nvlink_tx_bytes, "E,W=64,U=B", "DCGM PROF NvLink transmit byte counter (monotonic)"), \
+  X(gpu_nvlink_rx_bytes, "E,W=64,U=B", "DCGM PROF NvLink receive byte counter (monotonic)"), \
+  X(gpu_pcie_replay_counter, "E,W=64", "DCGM PCIe replay counter (monotonic)"), \
   X(clocks_event_reasons, "", "Bitmask of GPU clock slowdown reasons"), \
   X(gpu_flops_rate, "U=FLOP/s", "Estimated GPU floating-point rate (FLOP/s)"), \
   X(gpu_mem_bw_bytes_rate, "U=B/s", "Estimated GPU memory bandwidth (bytes/s)"), \

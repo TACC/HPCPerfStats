@@ -26,6 +26,13 @@ Every driver must be **Fast** (no `sleep`, no live IB/GPU/DCGM), **Independent**
 
 Structure each `static void test_*()` as **Arrange → Act → Assert**. Reset module globals in `main()` between groups (`collect_tier_set_enabled(0)`, cache invalidation helpers).
 
+## Module-specific test hygiene
+
+- **`collect_tier`**: default is **disabled** (`collect_tier_set_enabled(0)`). Phase/tier gating tests must **`collect_tier_set_enabled(1)`** in Arrange — see **monitor-collect-tier-gating**.
+- **Linking `ib_mad.c`**: use **`test_ib_mad_stubs.c`** + **`test_stats_stub.c`**; do not redefine `stats_set` in the driver. One stub set per `check_PROGRAMS` target.
+- **RabbitMQ stats_buffer tests**: reuse **`stats_buffer_test_core_sources`** in `tests/Makefile.am` — do not duplicate the long `*_SOURCES` block.
+- **`struct stats`**: `s_dev[]` is flexible — use `char buf[sizeof(struct stats) + N]` + cast, not stack `struct stats` with `snprintf` to `s_dev`.
+
 ## Link production code
 
 - Register drivers in **`tests/Makefile.am`**: `check_PROGRAMS`, `*_SOURCES`, `*_LDADD`.

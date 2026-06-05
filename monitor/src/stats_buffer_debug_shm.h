@@ -6,6 +6,12 @@
 
 struct stats_buffer;
 
+/* Mirrors monitor_daemon_collect_to_ring: routine samples only, not schema/$ hdr. */
+static inline int stats_buffer_debug_shm_sample_wanted(int write_hdr, int payload_ok)
+{
+  return payload_ok && !write_hdr;
+}
+
 #ifdef DEBUG
 void stats_buffer_debug_shm_init(void);
 void stats_buffer_debug_shm_write_sample(const struct stats_buffer *sf,

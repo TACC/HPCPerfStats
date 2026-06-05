@@ -67,6 +67,7 @@ static double sample_timer_period = 300.0;
 static unsigned long g_payload_build_drop_count;
 static unsigned long g_ring_insert_fail_count;
 static unsigned long g_dumpfile_save_fail_count;
+static long long monitor_daemon_last_slow_slot = -1;
 
 char jobid[80] = "-";
 int nr_cpus;
@@ -702,14 +703,15 @@ void monitor_daemon_sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
 {
   (void)revents;
   static double last_sample_fire;
-  static long long last_slow_slot = -1;
   double now_s = monitor_daemon_get_realtime_now();
   /* jobid: refreshed on ev_stat (JOBID file) and at startup; avoids fopen/fclose each tick. */
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
   monitor_daemon_log_timer_drift("sample", now_s, sample_timer_period, &last_sample_fire);
   /* Fast ticks collect only fast-tier keys; every sample_freq_slow seconds a
-   * full sample (fast + slow) is taken. No-op unless the slow tier is enabled. */
-  stats_runtime_collect_phase_for_tick(now_s, &last_slow_slot, sample_freq_slow);
+   * full sample (fast + slow) is taken. When enable_slow_tier is off, phase
+   * stays COLLECT_FULL (legacy single-tier behavior). */
+  stats_runtime_collect_phase_for_tick(now_s, &monitor_daemon_last_slow_slot,
+                                       sample_freq_slow);
   monitor_daemon_collect_to_ring(w, 0, NULL);
   monitor_daemon_reanchor_sample_timer(loop, sample_timer_period);
   print_buffer_status(w);
@@ -811,6 +813,7 @@ void monitor_daemon_signal_cb_hup(struct ev_loop *loop, ev_signal *sig, int reve
   (void)revents;
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)sig->data;
   monitor_log_info( "Reloading hpcperfstatsd config file %s\n", conf_file_name);
+  monitor_daemon_last_slow_slot = -1;
   stats_runtime_daemon_reset_types();
   stats_buffer_runtime_caches_reset();
   hwdetect_invalidate_probe_cache();

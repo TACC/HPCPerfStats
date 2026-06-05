@@ -19,6 +19,8 @@ int ib_port_logic_active(const char *state_line)
   v = strtoul(p, &endp, 10);
   if (endp != p && v == 4)
     return 1;
+  if (strstr(state_line, "inactive") != NULL)
+    return 0;
   if (strstr(state_line, "active") != NULL)
     return 1;
   return 0;

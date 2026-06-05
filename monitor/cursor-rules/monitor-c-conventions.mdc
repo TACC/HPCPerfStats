@@ -24,5 +24,7 @@ alwaysApply: false
 - **Config**: `read_conf_file()` must return `0` on success and `-1` on open/parse failure; use `monitor_cli_heap_dup_setting` with `monitor_cli_lit_*` for settings that use default sentinel pointers (`queue`, `port`, `user`, `password`).
 - **Unit tests** (`make check` from the configured build tree root, e.g. `.build-static`): drivers and `Makefile.am` live under `tests/` (`test_schema_parse`, `test_stats_file_format`, `test_monitor_cli`, `test_likwid_rapl_scale`, `test_monitor_configure_help.sh.in` (run by `tests/Makefile.am` `check-local`)). Use `tests/run_tests.sh` as a thin wrapper. New or extracted C helpers should follow **monitor-c-new-function-unittests** (register in `tests/Makefile.am`).
 - **Output contract**: Payloads must stay compatible with `HPCPerfStats/hpcperfstats/listend.py` (see workspace monitor-workspace-contract rule). Emitted **`st_name`** and event keys must follow **monitor-emitted-variable-naming** (`HPCPerfStats/docs/MONITOR_NAMING_SCHEME.md`).
+- **Schema KEYS**: define in shared `src/*.h` per collector; see **monitor-schema-keys-headers**. Breaking renames require **monitor-consumer-schema-migration**.
+- **Two-tier collection**: gate at `stats_set` / collect hooks; see **monitor-collect-tier-gating**.
 - **RAPL / energy**: Use `likwid_rapl.c` and LIKWID `power_*` APIs; do not add Variorum or JSON energy parsing for `intel_rapl` / `amd64_rapl` without an explicit design change.
 - **Safety**: No `gets`/`strcpy`/`sprintf` on untrusted data; prefer `snprintf`, bounded copies, and checked returns.

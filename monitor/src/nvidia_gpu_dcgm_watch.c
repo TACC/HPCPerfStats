@@ -99,6 +99,10 @@ static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
   DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT
 };
 
+_Static_assert(sizeof(g_dcgm_field_ids) / sizeof(g_dcgm_field_ids[0])
+               == NVIDIA_GPU_NFIELDS,
+               "g_dcgm_field_ids length must match NVIDIA_GPU_NFIELDS");
+
 static int g_last_watch_profile = -1;
 
 unsigned long g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_STAGE_NR];

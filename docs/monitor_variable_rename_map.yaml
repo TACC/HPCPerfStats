@@ -140,6 +140,10 @@ events:
   nvlink_tx_bytes: gpu_nvlink_tx_bytes
   pcie_rx_bytes: gpu_pcie_rx_bytes
   pcie_tx_bytes: gpu_pcie_tx_bytes
+  rx_bytes: sw_rx_bytes
+  tx_bytes: sw_tx_bytes
+  rx_packets: sw_rx_packets
+  tx_packets: sw_tx_packets
 file_event_overrides:
   intel_pcu.c:
     instr_retired: pcu_ctr0

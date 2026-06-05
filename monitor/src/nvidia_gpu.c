@@ -87,23 +87,6 @@ static void dcgm_field_value_u64(const dcgmFieldValue_v1 *v, uint64_t *out)
   *out = 0;
 }
 
-/*
- * DCGM PROF link byte metrics are documented as byte counts; GetLatestValues returns monotonic
- * hardware-style counters on typical stacks. If values decrease (counter reset), treat current as
- * delta since reset. First sample after monitor start establishes baseline (no backlog).
- */
-static unsigned long long nvidia_gpu_link_u64_delta(uint64_t cur, uint64_t *prev)
-{
-  if (cur >= *prev) {
-    unsigned long long d = (unsigned long long) (cur - *prev);
-
-    *prev = cur;
-    return d;
-  }
-  *prev = cur;
-  return (unsigned long long) cur;
-}
-
 static void nvidia_gpu_io_link_accumulate(unsigned int gid, const dcgm_data_t *row)
 {
   if (gid >= DCGM_MAX_NUM_DEVICES)

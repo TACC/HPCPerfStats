@@ -170,7 +170,8 @@ int str_collect_key_list(const char *str, struct stats *stats, ...)
       goto out;
     }
 
-    stats_set(stats, key, val);
+    if (collect_key_is_active(g_key_active_hook, g_key_active_hook_ctx, stats, key))
+      stats_set(stats, key, val);
     str = end;
     rc++;
   }
@@ -247,7 +248,8 @@ int str_collect_prefix_key_list(const char *str, struct stats *stats,
       goto out;
     }
 
-    stats_set(stats, key, val);
+    if (collect_key_is_active(g_key_active_hook, g_key_active_hook_ctx, stats, key))
+      stats_set(stats, key, val);
     str = end;
     rc++;
   }

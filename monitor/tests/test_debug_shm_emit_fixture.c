@@ -11,6 +11,8 @@
 #include "schema.h"
 #include "stats.h"
 
+void test_debug_shm_emit_fixture_teardown(void);
+
 #define EMIT_FIXTURE_N_TYPES 6
 
 struct emit_fixture_type {

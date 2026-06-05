@@ -1,0 +1,38 @@
+---
+description: Shared KEYS headers and schema contract tests (no duplicated macros)
+globs:
+  - HPCPerfStats/monitor/src/*_*.h
+  - HPCPerfStats/monitor/src/ib.h
+  - HPCPerfStats/monitor/src/nvidia_gpu.h
+  - HPCPerfStats/monitor/tests/test_*_schema_contract.c
+alwaysApply: false
+---
+
+# Monitor: schema KEYS headers
+
+## Single source of truth
+
+- Collector **`KEYS`** macros belong in a dedicated **`src/<type>.h`** (pattern: `ib.h`, `host_cpu.h`, `host_mem.h`, `nvidia_gpu.h`).
+- The matching **`.c`** includes that header; do **not** duplicate `KEYS` in both files.
+- New host collectors (`host_*`): add `host_<domain>.h` when adding or extending contract-tested keys.
+
+## Contract tests
+
+- **`test_*_schema_contract.c`** must **`#include`** the production KEYS header, then:
+
+```c
+#include "host_cpu.h"
+#define X SCHEMA_DEF
+static const char host_cpu_schema_def[] = JOIN(KEYS);
+#undef X
+#undef KEYS
+```
+
+- **`#undef KEYS`** before including the next header — never include two KEYS headers without undefining between them.
+- Do **not** paste a copy of `KEYS` into contract tests (drift risk).
+
+## When KEYS change
+
+Same change set: update header, registry if needed, contract test (automatic if including header), **`check_emitted_variable_names.py`**, and rename map if consumers need migration (**monitor-consumer-schema-migration**).
+
+Cross-links: **monitor-emitted-variable-naming**, **monitor-c-new-function-unittests**.

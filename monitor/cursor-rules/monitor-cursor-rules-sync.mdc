@@ -1,0 +1,30 @@
+---
+description: Keep workspace and package cursor-rules trees identical
+globs:
+  - .cursor/rules/**
+  - HPCPerfStats/monitor/cursor-rules/**
+alwaysApply: false
+---
+
+# Monitor cursor-rules sync
+
+This workspace **hard-links** monitor cursor rules between:
+
+| Tree | Role |
+|------|------|
+| **`.cursor/rules/`** | Active for Cursor in this workspace |
+| **`HPCPerfStats/monitor/cursor-rules/`** | Shipped with the monitor package / full-stack checkout |
+
+In **this** checkout, editing either path updates the same inode. In other checkouts they may be separate copies — then you must update **both** trees in one commit.
+
+## When creating or editing rules
+
+1. Use the same filename in both trees (or rely on hard-links here).
+2. After editing, `diff .cursor/rules/<f> HPCPerfStats/monitor/cursor-rules/<f>` in unfamiliar checkouts.
+3. New monitor-themed rules belong in **both** locations unless workspace-only meta rules.
+
+## Related rules index
+
+After adding a rule, add a one-line cross-link in **implementation-workflow-discipline.mdc** (Related rules table) when agents should consult it during implement/verify.
+
+Cross-links: **cursor-rules-maker**, **chat-analysis-for-rules**.

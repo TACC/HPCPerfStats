@@ -1,0 +1,40 @@
+---
+description: Two-tier collection — central gating, daemon phase, and test setup
+globs:
+  - HPCPerfStats/monitor/src/stats.c
+  - HPCPerfStats/monitor/src/collect.c
+  - HPCPerfStats/monitor/src/collect_tier.*
+  - HPCPerfStats/monitor/src/stats_runtime.c
+  - HPCPerfStats/monitor/src/monitor_daemon.c
+  - HPCPerfStats/monitor/tests/test_collect*
+  - HPCPerfStats/monitor/tests/test_stats_set_tier*
+alwaysApply: false
+---
+
+# Monitor: two-tier collection gating
+
+Sparse `@fast`/`@full` rows are not enough — **slow keys must be skipped at collection time** when the phase is `COLLECT_FAST_ONLY`.
+
+## Central gate (required)
+
+- **`stats_set` / `stats_inc`** in `stats.c` must call `collect_tier_key_active()` before storing. Do not add per-collector one-offs when this path covers the emit.
+- **`str_collect_key_list` / `str_collect_prefix_key_list`** must honor `collect_set_key_active_hook` (same pattern as `path_collect_*`).
+- **`host_key_alias_emit`** relies on `stats_set` — no separate gate needed once `stats.c` is correct.
+
+## Daemon / runtime
+
+- **`stats_runtime_collect_phase_for_tick`**: when `!collect_tier_enabled()`, set phase `COLLECT_FULL` and return without slow-slot math.
+- **`monitor_daemon_last_slow_slot`**: reset to `-1` on **SIGHUP** so `sample_freq_slow` reload gets a clean boundary.
+- **`write_hdr=1`**: always force `COLLECT_FULL` before collect (schema/`$` invariant).
+
+## Tests
+
+- `g_slow_tier_enabled` defaults **off** in `collect_tier.c`. Any test of phase scheduling or `stats_set` gating must call **`collect_tier_set_enabled(1)`** in Arrange (and reset in teardown if needed).
+- Add/extend **`test_stats_set_tier_gate.c`** when changing gating — assert slow keys are not stored on `COLLECT_FAST_ONLY`.
+- Tier-disabled path: phase stays `COLLECT_FULL`, `last_slow_slot` unchanged.
+
+## Docs
+
+- Keep **`monitor/README.md`** two-tier section aligned with consumer rollout (not “deferred” if consumer parses tiers). See **monitor-consumer-schema-migration**.
+
+Cross-links: **monitor-jitter-and-fidelity-priority**, **monitor-workspace-contract**, **monitor-c-testing-standards**.

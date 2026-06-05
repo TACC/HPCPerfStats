@@ -16,5 +16,6 @@ alwaysApply: false
 - **Portable semantics:** reuse `instr_retired`, `dram_cas_reads`, `pkg_energy`, etc. across backends.
 - **Forbidden in emission:** `CTL*`, `CTR*`, `FIXED_CTR*`, `MSR_*`, hex control tokens, schema `,C`, PascalCase in `KEYS`/`stats_set`.
 - **Do not rename:** environment variables (`HPCPERFSTATS_*`), `dlsym` symbol strings, CPUID vendor strings (`GenuineIntel`), `/proc/stat` `cpuN` prefix checks.
-- **New collector:** (1) name type, (2) matching `KEYS`/`stats_set`, (3) `stats_registry.c`, (4) schema contract test, (5) update rename map if new keys, (6) run `scripts/check_emitted_variable_names.py`.
+- **New collector:** (1) KEYS in shared header (**monitor-schema-keys-headers**), (2) matching `stats_set`, (3) `stats_registry.c`, (4) schema contract test, (5) update rename map if new or **renamed** keys, (6) run `scripts/check_emitted_variable_names.py`.
+- **Renamed/retired keys:** add **`events:`** entries in `monitor_variable_rename_map.yaml` for every consumer-visible key change (not only `types:`). Retired keys: `removed_legacy` + negative contract test when applicable (**monitor-consumer-schema-migration**).
 - Cross-links: **monitor-c-conventions**, **monitor-c-new-function-unittests**.

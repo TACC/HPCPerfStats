@@ -10,8 +10,9 @@ static void test_ib_port_logic_active_cases(void)
   assert(ib_port_logic_active("4") == 1);
   assert(ib_port_logic_active("4: ACTIVE") == 1);
 
-  /* "inactive" matches strstr(..., "active") substring in current implementation. */
-  assert(ib_port_logic_active("inactive") == 1);
+  assert(ib_port_logic_active("inactive") == 0);
+  /* Numeric prefix 4 (ACTIVE) wins over trailing INACTIVE text. */
+  assert(ib_port_logic_active("4: INACTIVE") == 1);
 
   assert(ib_port_logic_active(NULL) == 0);
   assert(ib_port_logic_active("3: DOWN") == 0);

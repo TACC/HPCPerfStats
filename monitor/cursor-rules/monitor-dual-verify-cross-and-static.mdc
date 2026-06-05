@@ -28,6 +28,10 @@ Run **`HPCPerfStats/monitor/scripts/cross_compile_test.sh`** so that **at least 
 
 Handoffs must state that **both** the static bundle path **and** **`cross_compile_test.sh`** completed successfully (mention **`SKIP_DEPS`**, **`TARGETS`**, and **`--force-foreign`** when relevant).
 
+## CI mirror
+
+**`HPCPerfStats/.github/workflows/monitor-verify.yaml`** runs the same gates on `monitor/**` pushes/PRs. Local verification is still required on the agent runner (**monitor-ci-workflow**).
+
 ## Relation to other rules
 
 - This **adds** the cross script requirement alongside the static bundle; it does **not** replace **`monitor-static-build-verification`** or **`monitor-workspace-contract`** (still monitor-only edits unless the user overrides).

@@ -43,6 +43,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Schema text parsing | `schema_entry_parse.c` (`parse_schema_entry`); `schema.c` builds full schemas for types. |
 | Archive header / schema suffix / directive class / marks (file mode) | `stats_file_format.c`, `stats_file_format.h` (`stats_file_classify_header_directive`, `stats_file_fprint_mark_multiline`, …); orchestration in `stats_file.c`. |
 | RMQ text payloads | `stats_buffer.c` + `stats_buffer_data_append.c` (persistent AMQP; cached `uname` for header + sample lines; batched rows; declare `syslog` INFO in `DEBUG` only). |
+| DEBUG shm mirror (`@fast`/`@full` snapshots) | `stats_buffer_debug_shm.c`, `stats_buffer_debug_shm.h` (`DEBUG` builds only). |
 
 ## Two-tier collection (fast/slow) and sparse rows
 
@@ -81,23 +82,50 @@ in `stats_buffer_row_tier_decide()` (`stats_buffer_rows.c`) and by forcing
 `COLLECT_FULL` on every `write_hdr=1` collect in `monitor_daemon.c`, preserving
 the `current`-file rotation semantics that `listend.py` relies on.
 
-### Consumer contract break (deferred follow-up)
+### Consumer rollout
 
 `@fast`/`@full` sample rows and the `,R=S` schema suffix are a **new monitor
-output contract**. Downstream parsers such as
-`HPCPerfStats/hpcperfstats/dbload/sync_timedb_parsing.py` currently assume a
-fixed column count (`dict(zip(schema[typ], vals))`) and will **mis-align**
-columns on sparse rows. Until the consumer is updated, set `enable_slow_tier 0`
-in production. A separate consumer-side plan covers updating
-`sync_timedb_parsing.py`, `listend.py`, and rate/delta metrics to parse the tier
-marker and zip values against the matching schema subset.
+output contract**. Downstream ingestion in
+`HPCPerfStats/hpcperfstats/dbload/sync_timedb_parsing.py` now strips tier
+markers and zips values against the fast vs full schema subset. Deploy monitor
+and consumer updates together on clusters that ingest sparse rows.
+
+Set `enable_slow_tier 0` only as an escape hatch for sites still running an
+older consumer stack (restores legacy full-width rows with no `@` tokens).
+
+Collection gating skips slow-key `stats_set`/`stats_inc` on fast ticks when the
+slow tier is enabled, reducing host CPU as well as wire volume.
+
+### IB driver merge (`host_ib`)
+
+The former `host_ib_ext` and `host_ib_sw` typenames are merged into **`host_ib`**
+with a single sysfs walk per cycle. Migration notes for historical archives:
+
+| Legacy | Current |
+|--------|---------|
+| `host_ib_ext` / `host_ib_sw` typename | `host_ib` |
+| Device id `mlx5_0/1` | `mlx5_0.1` |
+| Switch keys `rx_bytes`, `tx_bytes`, … | `sw_rx_bytes`, `sw_tx_bytes`, … |
+
+See `HPCPerfStats/docs/monitor_variable_rename_map.yaml` for rename-map entries.
+
+### DEBUG `/dev/shm` mirror (daemon only)
+
+When built with **`--enable-debug`**, the RabbitMQ daemon overwrites the latest
+`@fast` and `@full` sample payloads under **`/dev/shm/hpcperfstatsd-debug/`**
+(files `fast` and `full`). Override the base directory with
+**`HPCPERFSTATS_DEBUG_SHM_DIR`**. Schema/`$` rotation payloads (`write_hdr=1`)
+do not update shm.
+
+Payloads contain job id, hostname, and workload metrics — treat as sensitive on
+shared nodes. Files are created mode `0600` under a `0700` directory.
 
 ## Power telemetry (DCGM, RAPL, and interpretation)
 
 - **`cpu_counter_metrics` (DCGM CPU backend on Grace)**: publishes **`DCGM_CPU_POWER_UTIL_W`** and **`DCGM_CPU_POWER_LIMIT_W`** (DCGM fields 1130/1131 on **`DCGM_FE_CPU`**). Values are **per NVIDIA CPU entity** (socket); the monitor repeats the same watts on every **logical CPU row** belonging to that socket. Mapping pairs sorted **Linux `physical_package_id`** values from sysfs with sorted **`DCGM_FE_CPU`** entity IDs when counts match; otherwise these columns stay zero.
 - **`nvidia_gpu`**: adds **`sysio_power_usage`** and **`module_power_usage`** when the host engine exposes DCGM fields **1132** and **1133**. **`power_usage`** remains the per-GPU draw. On superchips, **module** / **SysIO** readings can **overlap** GPU and Grace CPU DCGM power—do not add them blindly into a single “node total” without NVIDIA/platform documentation.
 - **`nvidia_gpu` profiling splits**: when the DCGM stack supports them, **`tensor_imma_active`**, **`tensor_hmma_active`**, and **`tensor_dfma_active`** mirror **`DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE` / `TENSOR_HMMA_ACTIVE` / `TENSOR_DFMA_ACTIVE`** (tensor pipe duty cycles, 0–100). IMMA is a **low-precision tensor / FP8-adjacent signal only**, not a dedicated FP8 FLOP counter. **`gpu_flops_rate`** / **`fp_mix`** still use **`tensor_active`** plus FP64/32/16 pipes only, so IMMA/HMMA/DFMA are **not** folded into the lumped FLOP estimate (avoids double-counting with legacy **`tensor_active`**). If **`dcgmWatchFields`** rejects optional tensor split field IDs (common on older embedded DCGM builds), the monitor automatically retries with the smaller core PROF field set so **`nvidia_gpu`** rows still publish on GH/Hopper clusters.
-- **`nvidia_gpu` DCGM extras**: per-direction link counters (**`gpu_pcie_*_bytes`**, **`gpu_nvlink_*_bytes`**), **`gpu_mem_free_mb`**, **`gpu_sm_clock`**, **`gpu_pcie_replay_counter`**, and **`gpu_dram_active`** when the active watch profile includes those fields.
+- **`nvidia_gpu` DCGM extras**: per-direction link counters (**`gpu_pcie_*_bytes`**, **`gpu_nvlink_*_bytes`**, schema suffix **`E`** — monotonic hardware counters), **`gpu_mem_free_mb`**, **`gpu_sm_clock`**, **`gpu_pcie_replay_counter`**, and **`gpu_dram_active`** when the active watch profile includes those fields. **`gpu_io_link_total_bytes`** is a separate delta-accumulated event counter built from those PROF byte fields.
 - **DCGM watch fallback ladder** for `nvidia_gpu`: `full-prof` (IMMA/HMMA/DFMA) → `core-prof` (legacy FP/SM/tensor/DRAM pipes) → `basic-nonprof` (power/temp/util/fb/clock/replay). This prevents complete row loss when DCGM profiling fields are unsupported or permissioned off; PROF-derived values become zero while base GPU rows continue emitting.
 - **Hardware sniff (`lspci`) gaps**: optional **`nvidia_gpu`** stays enabled when **`lspci`** is unavailable (prior behavior). When **`lspci`** is present but omits vendor prose, **`/proc/driver/nvidia/version`**, **`/dev/nvidia0`**, or **`lspci -nn`** lines matching **`[10de:`** plus usual GPU PCI classes still defeat disabling **`nvidia_gpu`** before DCGM runs.
 - Runtime override: set **`HPCPERFSTATS_FORCE_NVIDIA_GPU=1`** to keep `nvidia_gpu` enabled even if runtime hardware sniffing misses NVIDIA.

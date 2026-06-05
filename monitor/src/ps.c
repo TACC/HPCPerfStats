@@ -6,6 +6,7 @@
 #include "procfile_kv.h"
 #include "trace.h"
 #include "pscanf.h"
+#include "host_ps.h"
 
 // $ cat /proc/stat
 // cpu ...
@@ -16,15 +17,6 @@
 // processes 2591587 /* nr_forks */
 // procs_running 17
 // procs_blocked 0
-
-#define KEYS \
-  X(ctxt, "E", "context switches"), \
-  X(processes, "E", "forks"), \
-  X(load_1, "", "1 minute load average (* 100)"), \
-  X(load_5, "", "5 minute load average (* 100)"), \
-  X(load_15, "", "15 minute load average (* 100)"), \
-  X(nr_running, "", ""), \
-  X(nr_threads, "", "")
 
 static int ps_stat_line_cb(char *line, void *ctx)
 {

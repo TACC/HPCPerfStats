@@ -27,6 +27,7 @@ int main(void)
   assert_present(ib_schema_def, " sw_tx_bytes,E,U=4B");
   assert_present(ib_schema_def, " port_xmit_pkts,E");
   assert_present(ib_schema_def, " port_rcv_pkts,E");
+  assert(strstr(ib_schema_def, "vl15_dropped") == NULL);
   printf("test_ib_schema_contract passed\n");
   return 0;
 }

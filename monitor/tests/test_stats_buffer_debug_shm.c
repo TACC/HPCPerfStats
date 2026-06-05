@@ -189,12 +189,22 @@ static void test_second_write_overwrites(void)
 
 #endif /* DEBUG */
 
+static void test_daemon_write_hdr_gate(void)
+{
+  assert(stats_buffer_debug_shm_sample_wanted(0, 1) == 1);
+  assert(stats_buffer_debug_shm_sample_wanted(1, 1) == 0);
+  assert(stats_buffer_debug_shm_sample_wanted(0, 0) == 0);
+  assert(stats_buffer_debug_shm_sample_wanted(1, 0) == 0);
+}
+
 int main(void)
 {
 #ifndef DEBUG
+  test_daemon_write_hdr_gate();
   printf("test_stats_buffer_debug_shm: skipped (not a DEBUG build)\n");
   return 0;
 #else
+  test_daemon_write_hdr_gate();
   assert(setup_shm_dir() == 0);
   test_second_write_overwrites();
   test_fast_writes_fast_only();

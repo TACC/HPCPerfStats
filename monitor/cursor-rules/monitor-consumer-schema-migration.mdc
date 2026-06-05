@@ -1,0 +1,37 @@
+---
+description: Breaking monitor output changes — rename map, README, coordinated rollout
+globs:
+  - HPCPerfStats/monitor/**
+  - HPCPerfStats/docs/monitor_variable_rename_map.yaml
+alwaysApply: false
+---
+
+# Monitor: consumer schema migration
+
+## When this applies
+
+Any change that breaks **historical** ingest or queries:
+
+- `st_name` consolidation (e.g. `host_ib_sw` → `host_ib`)
+- **Device id** format (`mlx5_0/1` → `mlx5_0.1`)
+- **Event key** renames (`rx_bytes` → `sw_rx_bytes`)
+- New sparse row shape (`@fast`/`@full`) or schema suffix (`,R=S`)
+- Retired keys (e.g. `vl15_dropped`) — add **negative** contract assertion
+
+## Required artifacts (monitor change set)
+
+1. **`HPCPerfStats/docs/monitor_variable_rename_map.yaml`**
+   - `types:` for typename moves
+   - `events:` for **per-key** renames (not only typename)
+   - `removed_legacy:` for retired typenames/keys
+2. **`monitor/README.md`** — migration table or rollout note (deploy monitor + consumer together when needed).
+3. **Contract tests** — `test_*_schema_contract.c` or golden tests for new shape.
+4. Call out if **`listend.py`** / **`sync_timedb_parsing.py`** need a separate authorized consumer edit (**monitor-workspace-contract**).
+
+## Two-tier rollout
+
+- Default `enable_slow_tier 1` is valid when consumer parses tier markers.
+- Document **`enable_slow_tier 0`** only as escape hatch for old stacks.
+- Do not leave README claiming consumers “will mis-align” after consumer tier support ships.
+
+Cross-links: **monitor-workspace-contract**, **monitor-readme-maintenance**, **monitor-emitted-variable-naming**.

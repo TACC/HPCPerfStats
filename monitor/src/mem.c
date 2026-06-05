@@ -8,6 +8,7 @@
 #include "sys_iter.h"
 #include "trace.h"
 #include "host_key_alias.h"
+#include "host_mem.h"
 
 // i182-101# cat /sys/devices/system/node/node0/meminfo
 //
@@ -18,25 +19,6 @@
 
 /* On 2.6.18-194.32.1 files in /dev/shm show up as FilePages in
    nodeN/meminfo and as Cached in /proc/meminfo. */
-
-#define KEYS \
-  X(mem_total, "U=KB", ""), \
-  X(mem_free, "U=KB", ""), \
-  X(mem_used, "U=KB", ""), \
-  X(active, "U=KB", ""), \
-  X(inactive, "U=KB", ""), \
-  X(dirty, "U=KB", ""), \
-  X(writeback, "U=KB", ""), \
-  X(file_pages, "U=KB", ""), \
-  X(mapped, "U=KB", ""), \
-  X(anon_pages, "U=KB", ""), \
-  X(page_tables, "U=KB", ""), \
-  X(nfs_unstable, "U=KB", ""), \
-  X(bounce, "U=KB", ""), \
-  X(slab, "U=KB", ""), \
-  X(anon_huge_pages, "U=KB", ""), \
-  X(huge_pages_total, "", ""), \
-  X(huge_pages_free, "", "")
 
 static int mem_meminfo_line_cb(char *line, void *ctx)
 {

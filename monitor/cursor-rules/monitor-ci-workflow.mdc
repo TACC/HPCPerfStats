@@ -1,0 +1,26 @@
+---
+description: GitHub Actions monitor verify workflow (static bundle + cross-compile)
+globs:
+  - HPCPerfStats/.github/workflows/**
+  - HPCPerfStats/monitor/scripts/build_static_bundle.sh
+  - HPCPerfStats/monitor/scripts/cross_compile_test.sh
+alwaysApply: false
+---
+
+# Monitor CI workflow
+
+Canonical local verification remains **monitor-dual-verify-cross-and-static** and **monitor-static-build-verification**.
+
+## GitHub Actions
+
+**`HPCPerfStats/.github/workflows/monitor-verify.yaml`** runs on `monitor/**` changes:
+
+1. **static-bundle-and-tests** — `build_static_bundle.sh` → `make check` → `make distclean`
+2. **cross-compile-smoke** — `cross_compile_test.sh --force-foreign --fail-fast` with a foreign `TARGETS`
+
+## When touching monitor build/test scripts
+
+- Keep the workflow consistent with script flags and build dirs (`.build-static`, foreign qemu tree).
+- If you add a new **required** local gate (new linter in `check-local`), consider adding it to the workflow job that runs `make check`.
+
+Agents still run local verification even when CI exists — do not skip **monitor-dual-verify-cross-and-static** on the runner.

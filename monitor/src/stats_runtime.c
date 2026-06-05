@@ -273,6 +273,11 @@ enum collect_phase stats_runtime_collect_phase_for_tick(double now_sec,
   enum collect_phase phase = COLLECT_FAST_ONLY;
   long long prev = (last_slow_slot != NULL) ? *last_slow_slot : -1;
 
+  if (!collect_tier_enabled()) {
+    collect_tier_set_phase(COLLECT_FULL);
+    return COLLECT_FULL;
+  }
+
   if (monitor_collect_should_run_slow(now_sec, prev, sample_freq_slow)) {
     phase = COLLECT_FULL;
     if (last_slow_slot != NULL)

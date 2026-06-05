@@ -1,6 +1,21 @@
 #include <stddef.h>
+#include <stdint.h>
 
 #include "nvidia_gpu_estimate.h"
+
+unsigned long long nvidia_gpu_link_u64_delta(uint64_t cur, uint64_t *prev)
+{
+  if (prev == NULL)
+    return 0;
+  if (cur >= *prev) {
+    unsigned long long d = (unsigned long long) (cur - *prev);
+
+    *prev = cur;
+    return d;
+  }
+  *prev = cur;
+  return (unsigned long long) cur;
+}
 
 #define NVIDIA_GPU_APPROX_PEAK_FLOPS_PER_S 60000000000000.0
 #define NVIDIA_GPU_APPROX_PEAK_MEM_BW_BYTES_PER_S 1000000000000.0

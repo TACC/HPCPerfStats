@@ -1,0 +1,30 @@
+---
+description: DEBUG /dev/shm sample mirror — security, gating, and tests
+globs:
+  - HPCPerfStats/monitor/src/stats_buffer_debug_shm.*
+  - HPCPerfStats/monitor/src/monitor_daemon.c
+  - HPCPerfStats/monitor/tests/test_*debug_shm*
+alwaysApply: false
+---
+
+# Monitor: DEBUG shm mirror
+
+## Scope
+
+- **DEBUG builds only** (`--enable-debug`); release uses inline no-ops in `stats_buffer_debug_shm.h`.
+- Updates **`fast`** and **`full`** under `HPCPERFSTATS_DEBUG_SHM_DIR` (default `/dev/shm/hpcperfstatsd-debug`).
+
+## Implementation
+
+- **Permissions**: directory `0700`, files `0600` (payloads contain jobid, host, metrics).
+- **Atomic write**: tmp + `rename`; log failures via `monitor_log_debug` (do not `(void)` discard).
+- **Env**: copy `HPCPERFSTATS_DEBUG_SHM_DIR` into owned storage — do not retain `getenv()` pointer.
+- **Gating**: use `stats_buffer_debug_shm_sample_wanted(write_hdr, payload_ok)` — only routine samples (`!write_hdr`), not schema/`$` paths.
+
+## Tests
+
+- Unit + golden tests under `tests/test_stats_buffer_debug_shm.c`, `test_debug_shm_emit_*`.
+- Assert **`stats_buffer_debug_shm_sample_wanted`** matches daemon behavior.
+- Document DEBUG requirement in **`monitor/README.md`** (**monitor-readme-maintenance**).
+
+Cross-links: **monitor-debug-vs-symbols**, **monitor-readme-maintenance**.
