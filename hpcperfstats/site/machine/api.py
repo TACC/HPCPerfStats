@@ -2591,8 +2591,6 @@ def _get_xalt_jid_coverage(days=3, missing_limit=200, chunk_size=1000):
                 yield seq[i : i + size]
 
         for chunk in _chunks(jids, chunk_size):
-            if not chunk:
-                continue
             qs = (
                 run.objects.using("xalt")
                 .filter(job_id__in=chunk)

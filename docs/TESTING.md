@@ -266,7 +266,13 @@ Split monolithic functions when it materially reduces mock surface—lock behavi
 
 ### `api.py` coverage
 
-Host-side modules: `test_api_helpers.py`, `test_api_view_matrix.py`, `test_api_coverage_gaps.py`, `test_api_misc.py`. Baseline and gap notes: **`artifacts/api_py_coverage_baseline.md`**.
+**100% line coverage** on `hpcperfstats.site.machine.api` is enforced by host-side mock tests (LocMem cache, `django_db(databases=[])`):
+
+- `test_api_helpers.py`
+- `test_api_view_matrix.py`
+- `test_api_coverage_gaps.py`
+- `test_api_misc.py`
+- `test_api_coverage_closure.py`
 
 ```bash
 cd HPCPerfStats && PYTHONPATH=. ../.venv/bin/python -m pytest \
@@ -274,8 +280,15 @@ cd HPCPerfStats && PYTHONPATH=. ../.venv/bin/python -m pytest \
   hpcperfstats/site/machine/tests/test_api_view_matrix.py \
   hpcperfstats/site/machine/tests/test_api_coverage_gaps.py \
   hpcperfstats/site/machine/tests/test_api_misc.py \
-  --cov=hpcperfstats.site.machine.api --cov-report=term-missing -q
+  hpcperfstats/site/machine/tests/test_api_coverage_closure.py \
+  --cov=hpcperfstats.site.machine.api \
+  --cov-config=tests/coverage_api_py_line_only.ini \
+  --cov-report=term-missing:skip-covered \
+  --cov-fail-under=100 \
+  -q
 ```
+
+The dedicated `--cov-config` disables branch measurement so the gate tracks **line** coverage only (project-wide `[tool.coverage.run] branch = true` remains unchanged).
 
 ### Frontend coverage inventory (Vitest)
 
@@ -300,6 +313,7 @@ npm run test:coverage -- --run
 
 | Date | Change |
 |------|--------|
+| 2026-06-05 | `api.py` line coverage complete (100% gate); removed `artifacts/api_py_coverage_baseline.md`; added `test_api_coverage_closure.py` and `tests/coverage_api_py_line_only.ini` |
 | 2026-06-05 | Added best-practices section, frontend inventory, `api.py` coverage modules, new dbload/API/frontend unit tests |
 | 2026-06-05 | Colima post-test cleanup: `tests/colima_docker_cleanup.sh`, `tests/colima_compose_teardown.sh`; wired into all `tests/run_*_workflow.sh` scripts |
 
