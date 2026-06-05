@@ -20,3 +20,15 @@ export function tableSortColumnArrow(column, sortColumn, sortDirection, options 
   const sym = sortDirection === "asc" ? "▲" : "▼";
   return leadingSpace ? ` ${sym}` : sym;
 }
+
+/**
+ * @param {string} label - Visible column label
+ * @param {string} column
+ * @param {string} sortColumn
+ * @param {"asc"|"desc"} sortDirection
+ */
+export function tableSortButtonAriaLabel(label, column, sortColumn, sortDirection) {
+  const base = `Sort by ${label}`;
+  if (sortColumn !== column) return base;
+  return `${base}, ${sortDirection === "asc" ? "ascending" : "descending"}`;
+}

@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import BannerErrorMessage from "../components/BannerErrorMessage.jsx";
-import BokehEmbed from "../components/BokehEmbed.jsx";
+import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation.jsx";
 import LoadingMessage from "../components/LoadingMessage.jsx";
 import { usePubDashboardBundle } from "../pub-dashboard-bundle-context.js";
 import { useDocumentTitle } from "../utils/useDocumentTitle.js";
@@ -43,7 +43,7 @@ function SectionExpansionFactor({ bundle }) {
               </div>
               {block.bokeh_histogram_json_item ? (
                 <div className="mb-3">
-                  <BokehEmbed
+                  <BokehPlotWithLimitation
                     item={block.bokeh_histogram_json_item}
                     id={`pub-expansion-factor-${groupingKey}-${safeDomId}`}
                     plotName={`Expansion factor histogram for ${k}`}
@@ -77,6 +77,7 @@ function SectionExpansionFactor({ bundle }) {
                               aria-valuenow={cnt}
                               aria-valuemin={0}
                               aria-valuemax={maxCount}
+                              aria-label={`${labelRight}: ${cnt} jobs`}
                             />
                           </div>
                         </div>

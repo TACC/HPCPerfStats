@@ -11,7 +11,7 @@ Canonical testing guidance for backend (pytest), frontend (Vitest/RTL), and E2E 
 
 | Layer | When to use | Runner | Speed |
 |-------|-------------|--------|-------|
-| **Unit** | Pure functions, mocked I/O, API views with `django_db(databases=[])` | Host: `scripts/run_tests.py --no-django` or Vitest `npm test -- --run` | Seconds |
+| **Unit** | Pure functions, mocked I/O, API views with `django_db(databases=[])`; SPA page shells with **jest-axe** (`axeSeriousViolations`) | Host: `scripts/run_tests.py --no-django` or Vitest `npm test -- --run` | Seconds |
 | **Integration** | Real Postgres/Redis/Timescale, ORM, cache semantics | Compose: `tests/run_db_pytest_workflow.sh`, `tests/run_redis_cache_pytest_workflow.sh` | Minutes |
 | **E2E / contract** | Browser UX, nginx allowlist, full ingest pipeline | `tests/run_web_e2e_workflow.sh`, `tests/run_pipeline_e2e_workflow.sh` | Tens of minutes |
 
@@ -85,6 +85,7 @@ Examples: `urlconf_route_catalog.py`, `extended-search-validation.test.js`, `job
 ## Overlap
 
 - `test-first-discipline.mdc` — test-first workflow
+- `frontend-a11y-regression.mdc` — jest-axe and Playwright axe on page shells
 - `every-error-regression-test.mdc` — mandatory regression on fixes
 - `docker-compose-non-unit-testing.mdc` / `full-test-with-db-redis.mdc` — compose runners
 - `web-pages-full-e2e-completion-gate.mdc` — web-facing completion bar

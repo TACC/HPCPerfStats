@@ -27,9 +27,11 @@ export default function Layout({ session, onSessionChange, children }) {
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
   const [staffMenuOpen, setStaffMenuOpen] = useState(false);
   const staffMenuRef = useRef(null);
+  const staffMenuPanelRef = useRef(null);
   const extendedSearchPanelRef = useRef(null);
   const extendedSearchToggleRef = useRef(null);
   useFocusTrap(extendedSearchPanelRef, extendedSearchOpen);
+  useFocusTrap(staffMenuPanelRef, staffMenuOpen);
 
   const closeExtendedSearch = useCallback(() => {
     setExtendedSearchOpen(false);
@@ -92,13 +94,14 @@ export default function Layout({ session, onSessionChange, children }) {
   useEffect(() => {
     if (!extendedSearchOpen) return;
     const id = window.requestAnimationFrame(() => {
-      const root = extendedSearchPanelRef.current;
-      if (!root) return;
-      const first = root.querySelector(
-        "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])",
-      );
-      if (first instanceof HTMLElement) {
-        first.focus();
+      const jidInput = document.getElementById("ext-jid");
+      if (jidInput instanceof HTMLElement) {
+        jidInput.focus();
+        return;
+      }
+      const title = document.getElementById("extended-search-dialog-title");
+      if (title instanceof HTMLElement) {
+        title.focus();
       }
     });
     return () => window.cancelAnimationFrame(id);
@@ -286,6 +289,7 @@ export default function Layout({ session, onSessionChange, children }) {
                     </button>
                     {staffMenuOpen ? (
                       <ul
+                        ref={staffMenuPanelRef}
                         className="dropdown-menu dropdown-menu-end show"
                         role="menu"
                         aria-labelledby="staff-actions-menu-button"

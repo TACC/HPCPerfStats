@@ -9,6 +9,7 @@ import JobDetail, {
 } from "./JobDetail";
 import * as apiModule from "../api";
 import { SessionContext } from "../session-context";
+import { axeSeriousViolations } from "../axe-test-utils";
 
 const minimalJobDetailResponse = {
   job_data: {
@@ -105,6 +106,17 @@ describe("JobDetail", () => {
         screen.getByRole("columnheader", { name: "Shared File System" }),
       ).toBeInTheDocument();
     });
+  });
+
+  it("has no serious axe violations when job detail is loaded", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(minimalJobDetailResponse);
+    mockAllPlotCallsReady();
+    const view = renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /job 12345/i })).toBeInTheDocument();
+    });
+    expect(await axeSeriousViolations(view.container)).toEqual([]);
   });
 
   it("shows Sample Count for staff when API includes staff_metrics_distinct_time_count", async () => {

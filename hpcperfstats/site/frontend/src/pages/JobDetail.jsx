@@ -1,4 +1,4 @@
-import { useCallback, useEffect, memo, useId, useRef, useState } from "react";
+import { useCallback, useEffect, memo, useId, useMemo, useRef, useState } from "react";
 import { useParams, Link, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
@@ -16,6 +16,7 @@ import {
   readTabFromSearchParams,
   searchParamsWithTab,
 } from "../utils/sync-tab-search-param";
+import { useArrowKeyTabs } from "../hooks/useArrowKeyTabs";
 
 const JOB_DETAIL_ANALYSIS_TABS = new Set([
   "metrics",
@@ -218,6 +219,62 @@ export default function JobDetail() {
     summary: tabPlotSummaryId,
     roofline: tabPlotRooflineId,
   };
+
+  const analysisTabButtonIds = useMemo(
+    () => [
+      tabMetricsId,
+      tabPlotSummaryId,
+      tabPlotRooflineId,
+      tabMultiprecisionMixId,
+      tabProcessesId,
+      tabExecHostsId,
+      tabDeviceId,
+    ],
+    [
+      tabMetricsId,
+      tabPlotSummaryId,
+      tabPlotRooflineId,
+      tabMultiprecisionMixId,
+      tabProcessesId,
+      tabExecHostsId,
+      tabDeviceId,
+    ],
+  );
+
+  const analysisTabIdToKey = useMemo(
+    () => ({
+      [tabMetricsId]: "metrics",
+      [tabPlotSummaryId]: "summary",
+      [tabPlotRooflineId]: "roofline",
+      [tabMultiprecisionMixId]: "multiprecisionMix",
+      [tabProcessesId]: "processes",
+      [tabExecHostsId]: "execHosts",
+      [tabDeviceId]: "device",
+    }),
+    [
+      tabMetricsId,
+      tabPlotSummaryId,
+      tabPlotRooflineId,
+      tabMultiprecisionMixId,
+      tabProcessesId,
+      tabExecHostsId,
+      tabDeviceId,
+    ],
+  );
+
+  const activeAnalysisTabButtonId = useMemo(() => {
+    const entry = Object.entries(analysisTabIdToKey).find(([, key]) => key === analysisTab);
+    return entry ? entry[0] : tabMetricsId;
+  }, [analysisTab, analysisTabIdToKey, tabMetricsId]);
+
+  const handleAnalysisTabKeyDown = useArrowKeyTabs(
+    analysisTabButtonIds,
+    activeAnalysisTabButtonId,
+    (nextTabButtonId) => {
+      const nextKey = analysisTabIdToKey[nextTabButtonId];
+      if (nextKey) setAnalysisTab(nextKey);
+    },
+  );
 
   useDocumentTitle(buildJobDetailTitle({ error, loading, data, pk }));
 
@@ -596,48 +653,51 @@ export default function JobDetail() {
           </summary>
           <div className="table-responsive mt-2">
             <table className="table table-sm table-bordered">
+              <caption className="visually-hidden">
+                Full scheduling record for job {job.jid}
+              </caption>
               <thead>
                 <tr>
-                  <th>
+                  <th scope="col">
                     <VariableInfoLabel variableName="jid" labelText="Job ID" enableHelp />
                   </th>
-                  <th>
+                  <th scope="col">
                     <VariableInfoLabel variableName="username" labelText="user" enableHelp />
                   </th>
-                  <th>
+                  <th scope="col">
                     <VariableInfoLabel variableName="account" labelText="project" enableHelp />
                   </th>
-                  <th>
+                  <th scope="col">
                     <VariableInfoLabel variableName="start_time" labelText="start time" enableHelp />
                   </th>
-                  <th>
+                  <th scope="col">
                     <VariableInfoLabel variableName="end_time" labelText="end time" enableHelp />
                   </th>
-                  <th>
+                  <th scope="col">
                     <VariableInfoLabel variableName="runtime" labelText="run time (s)" enableHelp />
                   </th>
-                  <th>
+                  <th scope="col">
                     <VariableInfoLabel variableName="timelimit" labelText="requested time (s)" enableHelp />
                   </th>
-                  <th>
+                  <th scope="col">
                     <VariableInfoLabel variableName="queue" labelText="queue" enableHelp />
                   </th>
-                  <th>
+                  <th scope="col">
                     <VariableInfoLabel variableName="jobname" labelText="name" enableHelp />
                   </th>
-                  <th>
+                  <th scope="col">
                     <VariableInfoLabel variableName="state" labelText="status" enableHelp />
                   </th>
-                  <th>
+                  <th scope="col">
                     <VariableInfoLabel variableName="ncores" labelText="ncores" enableHelp />
                   </th>
-                  <th>
+                  <th scope="col">
                     <VariableInfoLabel variableName="nhosts" labelText="nnodes" enableHelp />
                   </th>
                 </tr>
               </thead>
               <tbody>
-                <tr style={{ backgroundColor: job.color || "#fff" }}>
+                <tr>
                   <td>
                     <Link to={`/job/${job.jid}`}>{job.jid}</Link>
                   </td>
@@ -677,13 +737,16 @@ export default function JobDetail() {
           <div className="col-lg-8">
             <div className="table-responsive">
               <table className="table table-sm table-bordered">
+                <caption className="visually-hidden">
+                  Shared file system I/O for job {job.jid}
+                </caption>
                 <thead>
                   <tr>
-                    <th>Shared File System</th>
-                    <th>MB Read</th>
-                    <th>MB Written</th>
-                    <th>Peak MB/s</th>
-                    <th>Peak IOPS</th>
+                    <th scope="col">Shared File System</th>
+                    <th scope="col">MB Read</th>
+                    <th scope="col">MB Written</th>
+                    <th scope="col">Peak MB/s</th>
+                    <th scope="col">Peak IOPS</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -792,6 +855,7 @@ export default function JobDetail() {
               aria-controls="job-detail-panel-metrics"
               tabIndex={analysisTab === "metrics" ? 0 : -1}
               onClick={() => setAnalysisTab("metrics")}
+              onKeyDown={(e) => handleAnalysisTabKeyDown(e, tabMetricsId)}
             >
               Metrics
             </button>
@@ -806,6 +870,7 @@ export default function JobDetail() {
               aria-controls="job-detail-panel-plot-summary"
               tabIndex={analysisTab === "summary" ? 0 : -1}
               onClick={() => setAnalysisTab("summary")}
+              onKeyDown={(e) => handleAnalysisTabKeyDown(e, plotTabDomIds.summary)}
             >
               Summary plot
             </button>
@@ -820,6 +885,7 @@ export default function JobDetail() {
               aria-controls="job-detail-panel-plot-roofline"
               tabIndex={analysisTab === "roofline" ? 0 : -1}
               onClick={() => setAnalysisTab("roofline")}
+              onKeyDown={(e) => handleAnalysisTabKeyDown(e, plotTabDomIds.roofline)}
             >
               Roofline
             </button>
@@ -834,6 +900,7 @@ export default function JobDetail() {
               aria-controls="job-detail-panel-multiprecision-mix"
               tabIndex={analysisTab === "multiprecisionMix" ? 0 : -1}
               onClick={() => setAnalysisTab("multiprecisionMix")}
+              onKeyDown={(e) => handleAnalysisTabKeyDown(e, tabMultiprecisionMixId)}
             >
               Multiprecision Mix
             </button>
@@ -848,6 +915,7 @@ export default function JobDetail() {
               aria-controls="job-detail-panel-processes"
               tabIndex={analysisTab === "processes" ? 0 : -1}
               onClick={() => setAnalysisTab("processes")}
+              onKeyDown={(e) => handleAnalysisTabKeyDown(e, tabProcessesId)}
             >
               Processes
             </button>
@@ -862,6 +930,7 @@ export default function JobDetail() {
               aria-controls="job-detail-panel-exec-hosts"
               tabIndex={analysisTab === "execHosts" ? 0 : -1}
               onClick={() => setAnalysisTab("execHosts")}
+              onKeyDown={(e) => handleAnalysisTabKeyDown(e, tabExecHostsId)}
             >
               Execution and hosts
             </button>
@@ -876,6 +945,7 @@ export default function JobDetail() {
               aria-controls="job-detail-panel-device"
               tabIndex={analysisTab === "device" ? 0 : -1}
               onClick={() => setAnalysisTab("device")}
+              onKeyDown={(e) => handleAnalysisTabKeyDown(e, tabDeviceId)}
             >
               Device data
             </button>
@@ -937,6 +1007,7 @@ export default function JobDetail() {
             ) : metricsTableRight.length === 0 ? (
               <div className="table-responsive">
                 <table className="table table-sm table-bordered job-detail-metrics-table mb-0">
+                  <caption className="visually-hidden">Job-level metrics for job {job.jid}</caption>
                   <tbody>{metricTableRows(metricsTableLeft)}</tbody>
                 </table>
               </div>
@@ -945,6 +1016,9 @@ export default function JobDetail() {
                 <div className="col-12 col-lg-6">
                   <div className="table-responsive">
                     <table className="table table-sm table-bordered job-detail-metrics-table mb-0">
+                      <caption className="visually-hidden">
+                        Job-level metrics for job {job.jid} (column 1)
+                      </caption>
                       <tbody>{metricTableRows(metricsTableLeft)}</tbody>
                     </table>
                   </div>
@@ -952,6 +1026,9 @@ export default function JobDetail() {
                 <div className="col-12 col-lg-6">
                   <div className="table-responsive">
                     <table className="table table-sm table-bordered job-detail-metrics-table mb-0">
+                      <caption className="visually-hidden">
+                        Job-level metrics for job {job.jid} (column 2)
+                      </caption>
                       <tbody>{metricTableRows(metricsTableRight)}</tbody>
                     </table>
                   </div>
@@ -1026,6 +1103,14 @@ export default function JobDetail() {
             ) : (
               <div className="table-responsive">
                 <table className="table table-sm table-bordered">
+                  <caption className="visually-hidden">
+                    Processes recorded for job {job.jid}
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Process</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {(proc_list || []).map((proc, i) => (
                       <tr key={i}>
@@ -1049,9 +1134,12 @@ export default function JobDetail() {
             ) : (
               <>
                 <table className="table table-sm table-bordered">
+                  <caption className="visually-hidden">
+                    Execution parameters for job {job.jid}
+                  </caption>
                   <tbody>
                     <tr>
-                      <td>Executable Path</td>
+                      <th scope="row">Executable Path</th>
                       <td>
                         {(xalt_data.exec_path || []).length === 0 ? (
                           <span className="text-muted">Data not available.</span>
@@ -1066,7 +1154,7 @@ export default function JobDetail() {
                       </td>
                     </tr>
                     <tr>
-                      <td>Working Directory</td>
+                      <th scope="row">Working Directory</th>
                       <td>
                         {(xalt_data.cwd || []).length === 0 ? (
                           <span className="text-muted">Data not available.</span>
@@ -1083,10 +1171,13 @@ export default function JobDetail() {
                   </tbody>
                 </table>
                 <table className="table table-sm table-bordered mt-2">
+                  <caption className="visually-hidden">
+                    Modules and libraries for job {job.jid}
+                  </caption>
                   <thead>
                     <tr>
-                      <th>Module</th>
-                      <th>Library</th>
+                      <th scope="col">Module</th>
+                      <th scope="col">Library</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1114,6 +1205,14 @@ export default function JobDetail() {
             ) : (
               <div className="table-responsive">
                 <table className="table table-sm table-bordered">
+                  <caption className="visually-hidden">
+                    Execution hosts for job {job.jid}
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Host</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {host_list.map((host, i) => (
                       <tr key={i}>
@@ -1143,10 +1242,13 @@ export default function JobDetail() {
               ) : (
                 <div className="table-responsive">
                   <table className="table table-sm table-bordered">
+                    <caption className="visually-hidden">
+                      Device types and events for job {job.jid}
+                    </caption>
                     <thead>
                       <tr>
-                        <th>Type Name</th>
-                        <th>Recorded Performance Events</th>
+                        <th scope="col">Type Name</th>
+                        <th scope="col">Recorded Performance Events</th>
                       </tr>
                     </thead>
                     <tbody>

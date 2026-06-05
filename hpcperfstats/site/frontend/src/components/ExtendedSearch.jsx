@@ -40,7 +40,11 @@ export default function ExtendedSearch({ onClose }) {
   const header =
     onClose ? (
       <div className="extended-search-header">
-        <span className="extended-search-title" id="extended-search-dialog-title">
+        <span
+          className="extended-search-title"
+          id="extended-search-dialog-title"
+          tabIndex={-1}
+        >
           Extended search
         </span>
         <button
@@ -314,12 +318,13 @@ export default function ExtendedSearch({ onClose }) {
               <input
                 id="ext-runtime-gte"
                 type="text"
-                className="form-control form-control-sm"
+                className={fieldClass("ext-runtime-gte")}
                 name="runtime__gte"
                 placeholder="min seconds"
                 {...ariaLabelledBy("ext-runtime-gte")}
                 {...ariaErrorProps("ext-runtime-gte")}
               />
+              {fieldFeedback("ext-runtime-gte")}
             </div>
             <div className="col-12 col-md-2">
               <SearchFieldLabel parameterName="runtime__lte" />
@@ -328,12 +333,13 @@ export default function ExtendedSearch({ onClose }) {
               <input
                 id="ext-runtime-lte"
                 type="text"
-                className="form-control form-control-sm"
+                className={fieldClass("ext-runtime-lte")}
                 name="runtime__lte"
                 placeholder="max seconds"
                 {...ariaLabelledBy("ext-runtime-lte")}
                 {...ariaErrorProps("ext-runtime-lte")}
               />
+              {fieldFeedback("ext-runtime-lte")}
             </div>
           </div>
           <div className="row">
@@ -344,12 +350,13 @@ export default function ExtendedSearch({ onClose }) {
               <input
                 id="ext-nhosts-gte"
                 type="text"
-                className="form-control form-control-sm"
+                className={fieldClass("ext-nhosts-gte")}
                 name="nhosts__gte"
                 placeholder="min nodes"
                 {...ariaLabelledBy("ext-nhosts-gte")}
                 {...ariaErrorProps("ext-nhosts-gte")}
               />
+              {fieldFeedback("ext-nhosts-gte")}
             </div>
             <div className="col-12 col-md-2">
               <SearchFieldLabel parameterName="nhosts__lte" />
@@ -358,12 +365,13 @@ export default function ExtendedSearch({ onClose }) {
               <input
                 id="ext-nhosts-lte"
                 type="text"
-                className="form-control form-control-sm"
+                className={fieldClass("ext-nhosts-lte")}
                 name="nhosts__lte"
                 placeholder="max nodes"
                 {...ariaLabelledBy("ext-nhosts-lte")}
                 {...ariaErrorProps("ext-nhosts-lte")}
               />
+              {fieldFeedback("ext-nhosts-lte")}
             </div>
           </div>
           <div className="row">
@@ -374,12 +382,13 @@ export default function ExtendedSearch({ onClose }) {
               <input
                 id="ext-node-hrs-gte"
                 type="text"
-                className="form-control form-control-sm"
+                className={fieldClass("ext-node-hrs-gte")}
                 name="node_hrs__gte"
                 placeholder="min node-hrs"
                 {...ariaLabelledBy("ext-node-hrs-gte")}
                 {...ariaErrorProps("ext-node-hrs-gte")}
               />
+              {fieldFeedback("ext-node-hrs-gte")}
             </div>
             <div className="col-12 col-md-2">
               <SearchFieldLabel parameterName="node_hrs__lte" />
@@ -388,12 +397,13 @@ export default function ExtendedSearch({ onClose }) {
               <input
                 id="ext-node-hrs-lte"
                 type="text"
-                className="form-control form-control-sm"
+                className={fieldClass("ext-node-hrs-lte")}
                 name="node_hrs__lte"
                 placeholder="max node-hrs"
                 {...ariaLabelledBy("ext-node-hrs-lte")}
                 {...ariaErrorProps("ext-node-hrs-lte")}
               />
+              {fieldFeedback("ext-node-hrs-lte")}
             </div>
           </div>
         </fieldset>
@@ -414,30 +424,42 @@ export default function ExtendedSearch({ onClose }) {
                 </span>
               </div>
               <div className="col-12 col-md-2">
-                <label htmlFor={`ext-metric-${idx}-gte`} className="visually-hidden">
+                <label
+                  id={`ext-metric-${idx}-gte-label`}
+                  htmlFor={`ext-metric-${idx}-gte`}
+                  className="visually-hidden"
+                >
                   {m.metric} minimum ({m.units})
                 </label>
                 <input
                   id={`ext-metric-${idx}-gte`}
                   type="text"
-                  className="form-control form-control-sm"
+                  className={fieldClass(`ext-metric-${idx}-gte`)}
                   name={`metrics_${m.metric}__gte`}
                   placeholder={`Min ${m.units}`}
+                  aria-labelledby={`ext-metric-name-${idx} ext-metric-${idx}-gte-label`}
                   {...ariaErrorProps(`ext-metric-${idx}-gte`)}
                 />
+                {fieldFeedback(`ext-metric-${idx}-gte`)}
               </div>
               <div className="col-12 col-md-2">
-                <label htmlFor={`ext-metric-${idx}-lte`} className="visually-hidden">
+                <label
+                  id={`ext-metric-${idx}-lte-label`}
+                  htmlFor={`ext-metric-${idx}-lte`}
+                  className="visually-hidden"
+                >
                   {m.metric} maximum ({m.units})
                 </label>
                 <input
                   id={`ext-metric-${idx}-lte`}
                   type="text"
-                  className="form-control form-control-sm"
+                  className={fieldClass(`ext-metric-${idx}-lte`)}
                   name={`metrics_${m.metric}__lte`}
                   placeholder={`Max ${m.units}`}
+                  aria-labelledby={`ext-metric-name-${idx} ext-metric-${idx}-lte-label`}
                   {...ariaErrorProps(`ext-metric-${idx}-lte`)}
                 />
+                {fieldFeedback(`ext-metric-${idx}-lte`)}
               </div>
             </div>
           ))}

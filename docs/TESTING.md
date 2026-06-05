@@ -461,7 +461,7 @@ The SPA and standalone HTML pages aim for **WCAG 2.2 Level AA** for in-app flows
 
 `jest-axe` and `axe-core` are **devDependencies** only. They are imported from `*.test.{js,jsx}`, [`src/setupTests.js`](hpcperfstats/site/frontend/src/setupTests.js), and [`src/axe-test-utils.js`](hpcperfstats/site/frontend/src/axe-test-utils.js); they are **not** part of the Vite production bundle. The Docker **runtime** image does not run `npm install` for the app and excludes `node_modules/` from the build context; the frontend builder runs `npm prune --omit=dev` after `vite build`, so axe is not shipped with production static assets.
 
-Selected component tests call `axeSeriousViolations()` (WCAG 2.x / 2.1 AA tag scope, asserting **no serious or critical** violations) alongside existing RTL checks.
+Colocated page/component tests call `axeSeriousViolations()` (WCAG 2.x / 2.1 AA tag scope, asserting **no serious or critical** violations) for: `Layout` (including Extended Search open), `JobList` (including charts tab with histograms), `JobDetail`, `Search`, `PageApiKey`, `ExtendedSearch` (dialog shell), and `HistogramThumbnails` (thumbnail + open popover). New or materially changed page shells must extend this set per **`frontend-a11y-regression.mdc`**.
 
 ```bash
 cd hpcperfstats/site/frontend && npm test -- --run
@@ -471,8 +471,8 @@ cd hpcperfstats/site/frontend && npm test -- --run
 
 A **vendored** [`axe.min.js`](hpcperfstats/tests/fixtures/axe-core/axe.min.js) (pinned version in that folder’s `README.md`) is injected at test time by [`hpcperfstats/tests/playwright_axe.py`](hpcperfstats/tests/playwright_axe.py). This avoids relying on `node_modules` inside the `web` container, where Node dev dependencies are not installed.
 
-- Stub server browser flow: [`hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py`](hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py) runs axe after key navigations.
-- Compose pipeline browser phase (`tests/run_pipeline_e2e_workflow.sh --with-browser`): [`tests/pipeline_e2e/test_a11y_axe_browser.py`](tests/pipeline_e2e/test_a11y_axe_browser.py) scans a **small curated route list** (extend `_AXE_SMOKE_PATHS` there as needed); [`tests/pipeline_e2e/test_job_detail_browser.py`](tests/pipeline_e2e/test_job_detail_browser.py) runs axe on the live job detail SPA.
+- **Harness only:** [`hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py`](hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py) runs axe on a minimal empty HTML document (validates the Playwright helper after `robots.txt` checks). It does **not** scan the React SPA.
+- **Real SPA axe (compose):** pipeline browser phase (`tests/run_pipeline_e2e_workflow.sh --with-browser`) — [`tests/pipeline_e2e/test_a11y_axe_browser.py`](tests/pipeline_e2e/test_a11y_axe_browser.py) scans `_AXE_SMOKE_PATHS` (`/machine/`, `/machine/jobs/`, `/machine/home/`, `/machine/api-key`, plus one job detail URL) and Extended Search open on the job list; [`tests/pipeline_e2e/test_job_detail_browser.py`](tests/pipeline_e2e/test_job_detail_browser.py) runs axe on the live job detail SPA.
 
 **Manual / optional**
 

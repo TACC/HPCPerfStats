@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { tableSortAriaSort, tableSortColumnArrow } from "./table-sort-a11y";
+import {
+  tableSortAriaSort,
+  tableSortButtonAriaLabel,
+  tableSortColumnArrow,
+} from "./table-sort-a11y";
 
 describe("tableSortAriaSort", () => {
   it("returns undefined when column is not the active sort column", () => {
@@ -26,5 +30,14 @@ describe("tableSortColumnArrow", () => {
   it("omits leading space when leadingSpace is false", () => {
     expect(tableSortColumnArrow("c", "c", "asc", { leadingSpace: false })).toBe("▲");
     expect(tableSortColumnArrow("c", "c", "desc", { leadingSpace: false })).toBe("▼");
+  });
+});
+
+describe("tableSortButtonAriaLabel", () => {
+  it("includes sort direction when column is active", () => {
+    expect(tableSortButtonAriaLabel("Host", "host", "host", "asc")).toBe(
+      "Sort by Host, ascending",
+    );
+    expect(tableSortButtonAriaLabel("Host", "host", "runtime", "desc")).toBe("Sort by Host");
   });
 });

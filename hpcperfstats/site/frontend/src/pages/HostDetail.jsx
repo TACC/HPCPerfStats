@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import PageBreadcrumbs from "../components/PageBreadcrumbs";
 import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
-import BokehEmbed from "../components/BokehEmbed";
+import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
 import { buildAsyncPageTitle } from "../utils/async-page-title";
@@ -70,7 +70,7 @@ export default function HostDetail() {
         <Link to={`/host/${encodeURIComponent(hostName)}`}>View jobs that ran on this host</Link>
       </p>
       <div className="graphs">
-        <BokehEmbed
+        <BokehPlotWithLimitation
           item={plot_item}
           id="host-bokeh"
           plotName="Host plot"

@@ -379,11 +379,11 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 |------|---------|
 | Build and start container stack | `sudo docker compose up --build -d` |
 | Stop and remove containers | `sudo docker compose down` |
-| Rebuild just the app and keep persistent services running | `docker compose -f docker-compose.app.yaml down &&  docker stop -t 120 hpcperfstats_db_1 && docker stop hpcperfstats_proxy_1 && docker start hpcperfstats_db_1 && docker compose -f docker-compose.app.yaml up --build -d && docker start hpcperfstats_proxy_1`
+| Rebuild just the app and keep persistent services running | `docker compose -f docker-compose.app.yaml down && docker compose stop -t 120 db proxy && docker compose start db && docker compose -f docker-compose.app.yaml up --build -d && docker compose start proxy` |
 | View logs  | `sudo docker compose logs` |
-| PostgreSQL shell | `docker exec -it hpcperfstats_db_1 psql -h localhost -U hpcperfstats` |
-| Pipeline shell (data/processing) | `docker exec -it hpcperfstats_pipeline_1 su hpcperfstats` |
-| Get queues and message counts from rabbitmq | `docker exec -it hpcperfstats_rabbitmq_1 rabbitmqctl list_queues` |
+| PostgreSQL shell | `docker compose exec db psql -h localhost -U hpcperfstats` |
+| Pipeline shell (data/processing) | `docker compose exec pipeline su hpcperfstats` |
+| Get queues and message counts from rabbitmq | `docker compose exec rabbitmq rabbitmqctl list_queues` |
 
 ---
 

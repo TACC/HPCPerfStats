@@ -35,6 +35,7 @@ _AXE_SMOKE_PATHS = (
     "/machine/",
     "/machine/jobs/",
     "/machine/home/",
+    "/machine/api-key",
 )
 
 
@@ -71,6 +72,11 @@ def test_axe_wcag_smoke_selected_routes():
       assert resp is not None, path
       assert 200 <= resp.status <= 399, (path, resp.status)
       assert_no_serious_axe_violations(page, wait_ms=250)
+
+    page.goto(base + "/machine/jobs/", wait_until="domcontentloaded", timeout=120000)
+    page.get_by_role("button", name="Extended search").click()
+    page.wait_for_selector("#extended-search-collapse", state="visible", timeout=30000)
+    assert_no_serious_axe_violations(page, wait_ms=500)
 
     context.close()
     browser.close()

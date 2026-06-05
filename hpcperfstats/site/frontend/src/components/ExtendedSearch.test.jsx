@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ExtendedSearch from "./ExtendedSearch";
 import * as useHomeOptionsModule from "../hooks/use-home-options";
+import { axeSeriousViolations } from "../axe-test-utils";
 import { EXTENDED_SEARCH_PARAMETER_DEFINITIONS } from "../utils/extended-search-parameters";
 
 vi.mock("../hooks/use-home-options", () => ({
@@ -160,6 +161,19 @@ describe("ExtendedSearch", () => {
     expect(url.pathname).toBe("/jobs");
     expect(url.searchParams.get("metrics_avg_freq__gte")).toBe("1.5");
     expect(url.searchParams.get("metrics_avg_freq__lte")).toBe("3.2");
+  });
+
+  it("has no serious axe violations inside dialog shell", async () => {
+    const view = renderExtendedSearch(
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="extended-search-dialog-title"
+      >
+        <ExtendedSearch onClose={vi.fn()} />
+      </div>,
+    );
+    expect(await axeSeriousViolations(view.container)).toEqual([]);
   });
 
   it("routes host plus start date to the host plot", async () => {

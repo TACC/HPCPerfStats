@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Search from "./Search";
 import * as useHomeOptionsModule from "../hooks/use-home-options";
+import { axeSeriousViolations } from "../axe-test-utils";
 
 vi.mock("../hooks/use-home-options", () => ({
   useHomeOptions: vi.fn(),
@@ -30,8 +31,8 @@ describe("Search", () => {
     setHomeOptions();
   });
 
-  it("frames browse by time with tabs and intro", () => {
-    render(
+  it("frames browse by time with tabs and intro", async () => {
+    const view = render(
       <MemoryRouter>
         <Search />
       </MemoryRouter>,
@@ -41,6 +42,7 @@ describe("Search", () => {
     expect(screen.getByText(/Extended search/i)).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /^calendar$/i })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: /by year/i })).toBeInTheDocument();
+    expect(await axeSeriousViolations(view.container)).toEqual([]);
   });
 
   it("shows loading while home options are fetched", () => {

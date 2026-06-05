@@ -354,6 +354,46 @@ describe("JobList", () => {
     });
   });
 
+  it("has no serious axe violations on charts tab with histograms", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: query.includes("min-width: 992px") ? false : true,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+      job_list: [],
+      nj: 0,
+      aggregates: {},
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    });
+    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue({
+      metric: "runtime",
+      title: "Runtime",
+      plot_item_thumb: { doc: {}, root_ids: ["thumb-root"] },
+      plot_item_full: { doc: {}, root_ids: ["full-root"] },
+      plot_unavailable_reason: null,
+    });
+
+    const view = renderJobList(["/jobs?view=charts"]);
+
+    await waitFor(() => {
+      expect(document.querySelector(".histogram-thumbnails-grid")).toBeTruthy();
+    });
+    expect(await axeSeriousViolations(view.container)).toEqual([]);
+  });
+
   it("shows human summary for year route", async () => {
     vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
       job_list: [],

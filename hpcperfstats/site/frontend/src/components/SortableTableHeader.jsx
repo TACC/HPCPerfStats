@@ -1,4 +1,8 @@
-import { tableSortAriaSort, tableSortColumnArrow } from "../utils/table-sort-a11y";
+import {
+  tableSortAriaSort,
+  tableSortButtonAriaLabel,
+  tableSortColumnArrow,
+} from "../utils/table-sort-a11y";
 
 export default function SortableTableHeader({
   column,
@@ -13,6 +17,12 @@ export default function SortableTableHeader({
       <button
         type="button"
         className={buttonClassName}
+        aria-label={tableSortButtonAriaLabel(
+          typeof children === "string" ? children : column,
+          column,
+          sortKey,
+          sortDir,
+        )}
         onClick={() => onSort(column)}
       >
         {children}

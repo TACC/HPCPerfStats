@@ -164,7 +164,7 @@ body {
 
 .navbar-brand-cluster {
   font-size: 0.95em;
-  color: #555;
+  color: #495057;
   margin-bottom: 0;
   padding-bottom: 0.5rem;
   line-height: 1.35;
@@ -430,12 +430,21 @@ body {
 }
 
 /* Histogram thumbnails: popover shows full plot on hover */
-.histogram-thumbnail-popover {
+.histogram-thumbnail-backdrop {
   position: fixed;
+  inset: 0;
+  z-index: 1040;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.histogram-thumbnail-popover {
+  position: relative;
   z-index: 1050;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  max-width: calc(100vw - 2rem);
   padding: 12px;
   background: #fff;
   border: 1px solid #dee2e6;
@@ -473,6 +482,14 @@ body {
 .histogram-thumbnail-shell {
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+.histogram-thumbnail-enlarge {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 2;
+  min-height: 34px;
 }
 .histogram-thumbnail-shell .histogram-thumbnail-bokeh {
   /* Avoid flex min-height:0 shrinking the plot slot to an unpaintable box */

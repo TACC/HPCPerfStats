@@ -1,15 +1,16 @@
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import { useHomeOptions } from "../hooks/use-home-options";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
+import { useArrowKeyTabs } from "../hooks/useArrowKeyTabs";
 
 function toMonthSlug(value) {
   return String(value || "").replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
-function BrowseTabButton({ isActive, id, panelId, onClick, children }) {
+function BrowseTabButton({ isActive, id, panelId, onClick, onKeyDown, children }) {
   return (
     <button
       type="button"
@@ -20,6 +21,7 @@ function BrowseTabButton({ isActive, id, panelId, onClick, children }) {
       aria-controls={panelId}
       tabIndex={isActive ? 0 : -1}
       onClick={onClick}
+      onKeyDown={onKeyDown}
     >
       {children}
     </button>
@@ -34,6 +36,18 @@ export default function Search() {
   const tabCalendarId = useId();
   const panelYearId = useId();
   const panelCalendarId = useId();
+  const browseTabButtonIds = useMemo(
+    () => [tabCalendarId, tabYearId],
+    [tabCalendarId, tabYearId],
+  );
+  const activeBrowseTabButtonId = browseTab === "year" ? tabYearId : tabCalendarId;
+  const handleBrowseTabKeyDown = useArrowKeyTabs(
+    browseTabButtonIds,
+    activeBrowseTabButtonId,
+    (nextTabButtonId) => {
+      setBrowseTab(nextTabButtonId === tabYearId ? "year" : "calendar");
+    },
+  );
 
   useDocumentTitle(loading ? "Loading browse" : "Browse jobs by time");
 
@@ -194,6 +208,7 @@ export default function Search() {
               id={tabCalendarId}
               panelId={panelCalendarId}
               onClick={() => setBrowseTab("calendar")}
+              onKeyDown={(e) => handleBrowseTabKeyDown(e, tabCalendarId)}
             >
               Calendar
             </BrowseTabButton>
@@ -204,6 +219,7 @@ export default function Search() {
               id={tabYearId}
               panelId={panelYearId}
               onClick={() => setBrowseTab("year")}
+              onKeyDown={(e) => handleBrowseTabKeyDown(e, tabYearId)}
             >
               By year
             </BrowseTabButton>

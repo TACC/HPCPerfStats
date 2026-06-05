@@ -3,7 +3,7 @@ import { formatDecimalStandard } from "../utils/formatDecimal";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
-import BokehEmbed from "../components/BokehEmbed";
+import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation";
 import LoadingMessage from "../components/LoadingMessage";
 import PageBreadcrumbs from "../components/PageBreadcrumbs";
 import { buildAsyncPageTitle } from "../utils/async-page-title";
@@ -65,7 +65,7 @@ export default function TypeDetail() {
       </h1>
       <h2 className="h5 mb-2">Rates Aggregated over devices</h2>
       <div className="graphs">
-        <BokehEmbed
+        <BokehPlotWithLimitation
           item={tplot_item}
           id="type-bokeh"
           plotName="Type detail"

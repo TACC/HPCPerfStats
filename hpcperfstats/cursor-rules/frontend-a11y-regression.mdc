@@ -1,0 +1,53 @@
+---
+description: jest-axe and Playwright axe regression for SPA page shells and overlays
+globs:
+  - "hpcperfstats/site/frontend/**/*.jsx"
+  - "hpcperfstats/site/frontend/**/*.js"
+  - "hpcperfstats/site/frontend/src/axe-test-utils.js"
+  - "tests/pipeline_e2e/test_a11y_axe_browser.py"
+  - "hpcperfstats/tests/playwright_axe.py"
+alwaysApply: false
+---
+
+# Frontend Accessibility Regression (jest-axe + Playwright)
+
+## Canonical helpers
+
+| Layer | Module |
+|-------|--------|
+| Vitest | [`axe-test-utils.js`](hpcperfstats/site/frontend/src/axe-test-utils.js) → `axeSeriousViolations()` (WCAG 2.x / 2.1 AA tags; **serious/critical** only) |
+| Playwright | [`playwright_axe.py`](hpcperfstats/tests/playwright_axe.py) → `assert_no_serious_axe_violations()` |
+
+## Trigger conditions
+
+- New or materially changed **page shell**, **route layout**, or **modal/overlay** under `hpcperfstats/site/frontend/src/pages/` or `Layout*.jsx`.
+- New top-level SPA route that should appear in Playwright smoke (`_AXE_SMOKE_PATHS` in [`test_a11y_axe_browser.py`](tests/pipeline_e2e/test_a11y_axe_browser.py)).
+- Overlay states users can open (Extended Search, histogram popover, staff menus with focus traps).
+
+## Required behavior (Vitest)
+
+1. Add or extend colocated `*.test.jsx` / `*.test.js` calling `expect(await axeSeriousViolations(container)).toEqual([])`.
+2. Cover the **default loaded state** of the page or component.
+3. When the component owns an overlay, also axe-scan with the overlay **open** (dialog shell for `ExtendedSearch` when tested outside `Layout`).
+4. Run `npm test -- --run` under `hpcperfstats/site/frontend`.
+
+## Required behavior (Playwright compose)
+
+1. Add new primary routes to `_AXE_SMOKE_PATHS` when they are user-facing SPA entrypoints.
+2. For lazy Bokeh or modal flows, wait for a stable selector (`role="region"`, `#extended-search-collapse`, etc.) before `assert_no_serious_axe_violations`.
+3. **`test_web_pages_browser_e2e.py`** axe on an empty HTML probe is **harness-only** (validates the Playwright helper); **real SPA axe** runs via compose modules such as `test_a11y_axe_browser.py` and `test_job_detail_browser.py`.
+
+## UX contracts (see also `wcag-aa-mobile-web.mdc`)
+
+- **Bokeh:** never wrap `BokehEmbed` in `<button>`; use [`BokehPlotWithLimitation.jsx`](hpcperfstats/site/frontend/src/components/BokehPlotWithLimitation.jsx) or Job Detail `PlotPanel` (`ariaDescribedBy` + visually-hidden limitation prose).
+- **Dialogs:** match Extended Search in [`Layout.jsx`](hpcperfstats/site/frontend/src/Layout.jsx) — `role="dialog"`, `aria-modal`, `aria-labelledby`, backdrop or `inert` on `#main-content`, `useFocusTrap`, Escape, restore focus; initial focus on primary field or title, not dismiss-only control.
+- **Forms:** `aria-invalid` / `aria-describedby` must reference DOM nodes that exist (`ariaErrorProps` + `fieldFeedback` in Extended Search).
+- **Tables:** `<caption>` (visually-hidden OK) and `scope` on `<th>`.
+- **Color:** row/cell tint must not be the only cue; duplicate meaning in visible text or `aria-label`.
+
+## Overlap
+
+- **`wcag-aa-mobile-web.mdc`** — WCAG 2.2 AA and mobile layout when touching UI.
+- **`testing-best-practices.mdc`** — pyramid layer selection; axe on page shells.
+- **`web-pages-e2e-test-maintenance.mdc`** — web E2E assertion updates; WSGI probe disclaimer.
+- **`bokeh-layout-surface-split.mdc`** — Bokeh embed timing and layout (not a substitute for limitation prose).

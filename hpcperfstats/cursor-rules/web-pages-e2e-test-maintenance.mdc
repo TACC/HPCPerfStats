@@ -46,6 +46,12 @@ Also follow **`pub-surface-and-robots-sync.mdc`** when changing anonymous **`/pu
 - `test_web_pages_browser_e2e.py` uses Playwright and requires browser binaries.
 - If Playwright is unavailable, the browser E2E module may be skipped; this is acceptable only in environments where browser tooling cannot be installed.
 
+## Playwright axe (SPA vs harness)
+
+- **`test_web_pages_browser_e2e.py`** runs axe on a **minimal empty HTML document** after `robots.txt` checks — this validates the Playwright axe harness only; it does **not** scan the React SPA (WSGI direct hits do not serve `/machine/` shells per production contract).
+- **Real SPA axe** runs in compose-backed modules: [`test_a11y_axe_browser.py`](tests/pipeline_e2e/test_a11y_axe_browser.py) (`_AXE_SMOKE_PATHS` + Extended Search open) and [`test_job_detail_browser.py`](tests/pipeline_e2e/test_job_detail_browser.py).
+- When adding a new primary SPA route, extend `_AXE_SMOKE_PATHS` in the same task (see **`frontend-a11y-regression.mdc`**).
+
 ## Bokeh job-list `json_item` fixtures (Playwright embed regression)
 
 `HPCPerfStats/hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py`

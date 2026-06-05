@@ -7,6 +7,14 @@ import { axeSeriousViolations } from "./axe-test-utils";
 import Layout from "./Layout";
 import { api } from "./api";
 
+vi.mock("./hooks/use-home-options", () => ({
+  useHomeOptions: vi.fn(() => ({
+    options: { metrics: [], queues: [], states: [] },
+    error: null,
+    loading: false,
+  })),
+}));
+
 function renderLayout(session, onSessionChange = vi.fn()) {
   return render(
     <MemoryRouter>
@@ -101,5 +109,13 @@ describe("Layout", () => {
   it("links to API key management page", () => {
     renderLayout({ logged_in: true, username: "alice", is_staff: false });
     expect(screen.getByRole("link", { name: "API key" })).toHaveAttribute("href", "/api-key");
+  });
+
+  it("has no serious axe violations with extended search open", async () => {
+    const user = userEvent.setup();
+    const view = renderLayout({ logged_in: true, username: "alice", is_staff: false });
+    await user.click(screen.getByRole("button", { name: /extended search/i }));
+    expect(await screen.findByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+    expect(await axeSeriousViolations(view.container)).toEqual([]);
   });
 });

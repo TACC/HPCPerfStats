@@ -26,6 +26,22 @@ Documented limitations (e.g. Bokeh canvas for screen readers, OAuth IdP UI) do n
 - **Titles**: Keep **`useDocumentTitle`** (or equivalent) accurate for the view after your change.
 - **Verification**: Run frontend tests (`npm test -- --run` under `hpcperfstats/site/frontend`). Follow **Accessibility** in [`docs/TESTING.md`](docs/TESTING.md) for manual checks on substantive UX changes.
 
+## Bokeh plots (app-controlled mitigation)
+
+- **Never** place `BokehEmbed` inside `<button>` or another interactive control (use a separate enlarge/open control).
+- Every user-facing `BokehEmbed` must expose limitation prose via `aria-describedby` (canonical: [`BokehPlotWithLimitation.jsx`](hpcperfstats/site/frontend/src/components/BokehPlotWithLimitation.jsx) or Job Detail `PlotPanel`).
+
+## Custom dialogs and overlays
+
+- Match Extended Search in [`Layout.jsx`](hpcperfstats/site/frontend/src/Layout.jsx): `role="dialog"`, `aria-modal="true"`, `aria-labelledby`, backdrop or `inert` on page content behind, `useFocusTrap`, Escape closes, restore focus to activator.
+- Initial focus: title or primary field — not dismiss-only control.
+
+## Forms, tables, and color
+
+- If a field sets `aria-invalid` or `aria-describedby`, referenced ids **must exist** in the DOM (pair error props with visible or `invalid-feedback` nodes).
+- Data tables: `<caption>` (visually-hidden OK) and `scope` on `<th>`; single-column lists need a header or caption.
+- Do not rely on **color alone** (row `backgroundColor`, badges without text, etc.); provide a non-visual equivalent.
+
 ## Mobile view (when touching any webpage)
 
 Any edit to a **page, route-level layout, or component that affects layout** must **preserve or improve small-screen behavior**:
@@ -39,4 +55,5 @@ Any edit to a **page, route-level layout, or component that affects layout** mus
 - Complements **`react-js-cursor-rule.mdc`** (component style and tests on touch).
 - Complements **`web-pages-e2e-test-maintenance.mdc`** when routes or visible behavior changes.
 - Complements **`no-scientific-notation-web.mdc`** for numeric display; accessibility rules do not override it.
+- Complements **`frontend-a11y-regression.mdc`** for jest-axe / Playwright smoke requirements.
 - Django **admin** HTML: keep keyboard behavior and upstream admin patterns intact; add minimal chrome (e.g. back link) without breaking admin templates.

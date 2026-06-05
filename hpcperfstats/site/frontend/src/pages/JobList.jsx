@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useSearchParams, useParams, useLocation, Link, useNavigate } from "react-router-dom";
 import ReactPaginate from "react-paginate";
 import { api } from "../api";
@@ -25,6 +25,7 @@ import {
   searchParamsWithTab,
 } from "../utils/sync-tab-search-param";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
+import { useArrowKeyTabs } from "../hooks/useArrowKeyTabs";
 import {
   jobListPageHumanSummary,
   jobListRouteTitleContext,
@@ -107,6 +108,15 @@ export default function JobList() {
   );
   const tabJobsId = useId();
   const tabChartsId = useId();
+  const listViewTabButtonIds = useMemo(() => [tabJobsId, tabChartsId], [tabJobsId, tabChartsId]);
+  const activeListViewTabButtonId = listViewTab === "charts" ? tabChartsId : tabJobsId;
+  const handleListViewTabKeyDown = useArrowKeyTabs(
+    listViewTabButtonIds,
+    activeListViewTabButtonId,
+    (nextTabButtonId) => {
+      setListViewTab(nextTabButtonId === tabChartsId ? "charts" : "jobs");
+    },
+  );
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 992px)");
@@ -509,6 +519,7 @@ export default function JobList() {
                 aria-controls="job-list-tabpanel-jobs"
                 tabIndex={listViewTab === "jobs" ? 0 : -1}
                 onClick={() => setListViewTab("jobs")}
+                onKeyDown={(e) => handleListViewTabKeyDown(e, tabJobsId)}
               >
                 Jobs
               </button>
@@ -520,9 +531,10 @@ export default function JobList() {
                 role="tab"
                 className={`nav-link ${listViewTab === "charts" ? "active" : ""}`}
                 aria-selected={listViewTab === "charts"}
-                aria-controls="job-list-tabpanel-charts"
+                aria-controls="job-list-distributions"
                 tabIndex={listViewTab === "charts" ? 0 : -1}
                 onClick={() => setListViewTab("charts")}
+                onKeyDown={(e) => handleListViewTabKeyDown(e, tabChartsId)}
               >
                 Charts
               </button>
@@ -582,7 +594,7 @@ export default function JobList() {
             </tr>
           ) : null}
           {job_list.map((job) => (
-            <tr key={job.jid} style={{ backgroundColor: job.color || "#fff" }}>
+            <tr key={job.jid}>
               <td>
                 <Link to={`/job/${job.jid}`}>{job.jid}</Link>
               </td>
