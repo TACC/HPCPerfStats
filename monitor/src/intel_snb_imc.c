@@ -1,3 +1,7 @@
+/*! \file intel_snb_imc.c
+ *  Intel Sandy Bridge DRAM IMC (intel_x86_uncore_imc_snb).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"

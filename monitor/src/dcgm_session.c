@@ -1,12 +1,16 @@
+/* dcgm_session — obtain a DCGM host-engine handle (embedded or loopback). */
 #include <string.h>
 #include "dcgm_agent.h"
 #include "dcgm_structs.h"
+#include "dcgm_session.h"
 
 static dcgmReturn_t monitor_dcgm_try_embedded(dcgmHandle_t *outh)
 {
   dcgmReturn_t rc;
   dcgmStartEmbeddedV2Params_v1 ep;
 
+  if (outh == NULL)
+    return DCGM_ST_BADPARAM;
   memset(&ep, 0, sizeof(ep));
   ep.version = dcgmStartEmbeddedV2Params_version1;
   ep.opMode = DCGM_OPERATION_MODE_AUTO;
@@ -14,7 +18,7 @@ static dcgmReturn_t monitor_dcgm_try_embedded(dcgmHandle_t *outh)
   ep.severity = DcgmLoggingSeverityNone;
 
   rc = dcgmStartEmbedded_v2(&ep);
-  if (rc == DCGM_ST_OK && ep.dcgmHandle != (dcgmHandle_t)0) {
+  if (rc == DCGM_ST_OK && ep.dcgmHandle != (dcgmHandle_t) 0) {
     *outh = ep.dcgmHandle;
     return DCGM_ST_OK;
   }
@@ -27,6 +31,8 @@ static dcgmReturn_t monitor_dcgm_connect_loopback(dcgmHandle_t *outh)
   dcgmConnectV2Params_v2 cp;
   char localhost[] = "127.0.0.1";
 
+  if (outh == NULL)
+    return DCGM_ST_BADPARAM;
   memset(&cp, 0, sizeof(cp));
   cp.version = dcgmConnectV2Params_version2;
   cp.persistAfterDisconnect = 0;
@@ -40,11 +46,14 @@ dcgmReturn_t monitor_dcgm_attach_for_process(dcgmHandle_t *outh, int *use_discon
 {
   dcgmReturn_t rc;
 
+  if (outh == NULL || use_disconnect == NULL)
+    return DCGM_ST_BADPARAM;
+
   *use_disconnect = 0;
-  *outh = (dcgmHandle_t)0;
+  *outh = (dcgmHandle_t) 0;
 
   rc = monitor_dcgm_try_embedded(outh);
-  if (rc == DCGM_ST_OK && *outh != (dcgmHandle_t)0)
+  if (rc == DCGM_ST_OK && *outh != (dcgmHandle_t) 0)
     return DCGM_ST_OK;
 
   (void) dcgmShutdown();
@@ -53,7 +62,7 @@ dcgmReturn_t monitor_dcgm_attach_for_process(dcgmHandle_t *outh, int *use_discon
     return rc;
 
   rc = monitor_dcgm_connect_loopback(outh);
-  if (rc == DCGM_ST_OK && *outh != (dcgmHandle_t)0) {
+  if (rc == DCGM_ST_OK && *outh != (dcgmHandle_t) 0) {
     *use_disconnect = 1;
     return DCGM_ST_OK;
   }

@@ -1,3 +1,4 @@
+/* amd_gpu — AMD GPU metrics via GPUPerfAPI (schema-compatible stub when unavailable). */
 #include <dlfcn.h>
 #include <stddef.h>
 #include "amd_gpu.h"
@@ -14,12 +15,16 @@ static int try_gpa_initialize(void)
     NULL
   };
   int i;
+
   for (i = 0; libs[i] != NULL; i++) {
     void *h = dlopen(libs[i], RTLD_LAZY | RTLD_LOCAL);
+
     if (h != NULL) {
       gpa_init_fn_t init_fn = (gpa_init_fn_t) dlsym(h, "GpaInitialize");
+
       if (init_fn != NULL) {
         int rc = init_fn();
+
         dlclose(h);
         if (rc == 0)
           return 0;
@@ -31,22 +36,10 @@ static int try_gpa_initialize(void)
   return -1;
 }
 
-static void amd_gpu_collect(struct stats_type *type)
+static void amd_gpu_publish_zeros(struct stats *stats)
 {
-  /* Mirror nvidia_gpu execution branch: only stay enabled when backend is usable.
-     Metric plumbing is present and schema-compatible; unavailable counters default to zero. */
-  struct stats *stats = get_current_stats(type, "0");
-  if (stats == NULL) {
-    type->st_enabled = 0;
+  if (stats == NULL)
     return;
-  }
-
-  if (try_gpa_initialize() != 0) {
-    TRACE("GPUPerfAPI not available at runtime; disabling amd_gpu type\n");
-    type->st_enabled = 0;
-    return;
-  }
-
   stats_set(stats, "gpu_util", 0);
   stats_set(stats, "gpu_mem_util", 0);
   stats_set(stats, "gpu_mem_total_mb", 0);
@@ -67,6 +60,27 @@ static void amd_gpu_collect(struct stats_type *type)
   stats_set(stats, "gpu_mem_write_bytes", 0);
   stats_set(stats, "gpu_mem_total_bytes", 0);
   stats_set(stats, "gpu_count", 1);
+}
+
+static void amd_gpu_collect(struct stats_type *type)
+{
+  struct stats *stats;
+
+  if (type == NULL)
+    return;
+  stats = get_current_stats(type, "0");
+  if (stats == NULL) {
+    type->st_enabled = 0;
+    return;
+  }
+
+  if (try_gpa_initialize() != 0) {
+    TRACE("GPUPerfAPI not available at runtime; disabling amd_gpu type\n");
+    type->st_enabled = 0;
+    return;
+  }
+
+  amd_gpu_publish_zeros(stats);
 }
 
 struct stats_type amd_gpu_stats_type = {

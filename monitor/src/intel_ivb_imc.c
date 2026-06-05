@@ -1,3 +1,7 @@
+/*! \file intel_ivb_imc.c
+ *  Intel Ivy Bridge DRAM IMC (intel_x86_uncore_imc_ivb).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"

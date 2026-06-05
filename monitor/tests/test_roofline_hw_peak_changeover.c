@@ -44,6 +44,8 @@ void stats_set(struct stats *stats, const char *key, unsigned long long val)
 int main(void)
 {
   struct stats_type type = roofline_hw_peak_stats_type;
+
+  assert(strcmp(type.st_name, ROOFLINE_HW_PEAK_ST_NAME) == 0);
   setenv("HPCPERFSTATS_SKIP_HW_PROBE", "1", 1);
   unsetenv("HPCPERFSTATS_ROOFLINE_MODE");
   unsetenv("HPCPERFSTATS_ROOFLINE_PERIOD_SAMPLES");

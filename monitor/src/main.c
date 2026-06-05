@@ -1,3 +1,4 @@
+/* Batch stats client: lock, collect enabled types, append to archive current file. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

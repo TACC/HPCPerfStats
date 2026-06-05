@@ -1,3 +1,7 @@
+/*! \file intel_snb_cbo.c
+ *  Intel Sandy Bridge CBo uncore (intel_x86_uncore_cbo_snb).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "trace.h"
@@ -70,7 +74,7 @@ struct snb_cbo_collect_ctx {
 };
 
 static void snb_cbo_collect_visit(void *ctx, char *cpu, int pkg_id,
-				  int nr_cores)
+          int nr_cores)
 {
   struct snb_cbo_collect_ctx *c = ctx;
   int j;

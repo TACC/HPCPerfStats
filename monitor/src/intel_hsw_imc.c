@@ -1,3 +1,7 @@
+/*! \file intel_hsw_imc.c
+ *  Intel Haswell DRAM IMC (intel_x86_uncore_imc_hsw).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"
@@ -34,7 +38,7 @@ static const char *const event_keys[] = {
     "dram_pre_count_miss",
 };
 static int dids[] = {0x2fb0, 0x2fb1, 0x2fb4, 0x2fb5,
-		     0x2fd0, 0x2fd1, 0x2fd4, 0x2fd5};
+         0x2fd0, 0x2fd1, 0x2fd4, 0x2fd5};
 
 static const struct intel_uncore_pci_cfg intel_hsw_imc_pci_cfg = {
     .pci_dids = dids,

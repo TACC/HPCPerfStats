@@ -1,0 +1,4 @@
+# Temporary allowlist for check_unsafe_c_patterns.sh — remove lines as files are refactored.
+# Format: relative/path/from/src:line_number  (optional trailing comment)
+#
+# All known strcpy/gets/sprintf violations have been refactored (Phase 0–8).

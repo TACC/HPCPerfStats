@@ -1,3 +1,7 @@
+/*! \file intel_hsw_cbo.c
+ *  Intel Haswell CBo uncore (intel_x86_uncore_cbo_hsw).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "trace.h"
@@ -69,7 +73,7 @@ struct hsw_cbo_collect_ctx {
 };
 
 static void hsw_cbo_collect_visit(void *ctx, char *cpu, int pkg_id,
-				  int nr_cores)
+          int nr_cores)
 {
   struct hsw_cbo_collect_ctx *c = ctx;
   int j;

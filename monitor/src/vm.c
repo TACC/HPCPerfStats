@@ -1,3 +1,4 @@
+/* host_vm — virtual memory counters from /proc/vmstat. */
 #include <stddef.h>
 #include "stats.h"
 #include "trace.h"

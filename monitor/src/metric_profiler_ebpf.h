@@ -1,3 +1,4 @@
+/* metric_profiler_ebpf.h — /proc self I/O and context-switch deltas for profiler. */
 #ifndef METRIC_PROFILER_EBPF_H
 #define METRIC_PROFILER_EBPF_H
 

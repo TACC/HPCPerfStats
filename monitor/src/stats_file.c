@@ -1,3 +1,4 @@
+/* On-disk stats archive client: header ingest, property banner, sample append. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +31,8 @@ static void stats_file_emit(void *opaque, const char *fmt, ...)
   struct stats_file *sf = opaque;
   va_list ap;
 
+  if (sf == NULL || sf->sf_file == NULL)
+    return;
   va_start(ap, fmt);
   vfprintf(sf->sf_file, fmt, ap);
   va_end(ap);
@@ -40,21 +43,27 @@ static void stats_file_write_property_banner(struct stats_file *sf)
   struct utsname uts_buf;
   unsigned long long uptime = 0;
 
+  if (sf == NULL || sf->sf_file == NULL)
+    return;
   uname(&uts_buf);
   pscanf("/proc/uptime", "%llu", &uptime);
 
   stats_format_emit_property_banner(stats_file_emit, sf, SF_PROPERTY_CHAR,
-				    STATS_PROGRAM, STATS_VERSION,
-				    uts_buf.nodename, uts_buf.sysname,
-				    uts_buf.machine, uts_buf.release,
-				    uts_buf.version, uptime);
+                                    STATS_PROGRAM, STATS_VERSION,
+                                    uts_buf.nodename, uts_buf.sysname,
+                                    uts_buf.machine, uts_buf.release,
+                                    uts_buf.version, uptime);
 }
 
-static int sf_rd_dispatch_header_line(struct stats_file *sf, char *first, char *line, int line_nr)
+static int sf_rd_dispatch_header_line(struct stats_file *sf, char *first,
+                                      char *line, int line_nr)
 {
   struct stats_type *type;
-  stats_file_header_directive_kind_t kind =
-      stats_file_classify_header_directive((unsigned char)*first);
+  stats_file_header_directive_kind_t kind;
+
+  if (sf == NULL || first == NULL)
+    return -1;
+  kind = stats_file_classify_header_directive((unsigned char)*first);
 
   TRACE("%s:%d: first `%s', rest `%s'\n", sf->sf_path, line_nr, first, line);
   switch (kind) {
@@ -92,8 +101,12 @@ static int sf_rd_dispatch_header_line(struct stats_file *sf, char *first, char *
 static int sf_rd_hdr(struct stats_file *sf)
 {
   int rc = 0;
-  char *line_buf = NULL, *line;
+  char *line_buf = NULL;
+  char *line;
   size_t line_buf_size = 0;
+
+  if (sf == NULL || sf->sf_file == NULL)
+    return -1;
 
   if (getline(&line_buf, &line_buf_size, sf->sf_file) <= 0) {
     if (feof(sf->sf_file)) {
@@ -136,10 +149,14 @@ static int sf_rd_hdr(struct stats_file *sf)
 
 static int sf_wr_hdr(struct stats_file *sf)
 {
-  stats_file_write_property_banner(sf);
-
   size_t i = 0;
   struct stats_type *type;
+
+  if (sf == NULL || sf->sf_file == NULL)
+    return -1;
+
+  stats_file_write_property_banner(sf);
+
   while ((type = stats_type_for_each(&i)) != NULL) {
     if (!type->st_enabled)
       continue;
@@ -149,12 +166,14 @@ static int sf_wr_hdr(struct stats_file *sf)
   }
 
   fflush(sf->sf_file);
-
   return 0;
 }
 
 int stats_file_open(struct stats_file *sf, const char *path)
 {
+  if (sf == NULL || path == NULL)
+    return -1;
+
   memset(sf, 0, sizeof(*sf));
 
   sf->sf_path = strdup(path);
@@ -184,6 +203,9 @@ int stats_file_open(struct stats_file *sf, const char *path)
 int stats_file_mark(struct stats_file *sf, const char *fmt, ...)
 {
   va_list args;
+
+  if (sf == NULL || fmt == NULL)
+    return -1;
   va_start(args, fmt);
   (void)stats_format_append_mark_va(&sf->sf_mark, fmt, args);
   va_end(args);
@@ -193,14 +215,16 @@ int stats_file_mark(struct stats_file *sf, const char *fmt, ...)
 
 int stats_file_close(struct stats_file *sf)
 {
-
   int rc = 0;
+  struct utsname uts_buf;
+
+  if (sf == NULL || sf->sf_file == NULL)
+    return -1;
+
   if (sf->sf_empty)
     sf_wr_hdr(sf);
 
   fseek(sf->sf_file, 0, SEEK_END);
-
-  struct utsname uts_buf;
   uname(&uts_buf);
 
   sf_printf(sf, "\n%f %s %s\n", current_time, jobid, uts_buf.nodename);

@@ -38,7 +38,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_pscanf test_schema_parse test_stats_file_format test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_metric_profiler test_hwdetect_policy test_stats_runtime_type_controls
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_pscanf test_schema_parse test_stats_file_format test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_arm_aarch64_imc_schema test_amd_x86_pmc_schema test_metric_profiler test_hwdetect_policy test_stats_runtime_type_controls
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer test_monitor_timing
 endif
@@ -49,13 +49,14 @@ TESTS = $(check_PROGRAMS)
 check-local:
 	$(SHELL) '$(srcdir)/test_monitor_configure_help.sh.in'
 	python3 '$(top_srcdir)/scripts/check_emitted_variable_names.py'
+	$(SHELL) '$(top_srcdir)/scripts/check_unsafe_c_patterns.sh'
 if RABBITMQ
 	@if test "x$${RUN_RMQ_INTEGRATION:-0}" = "x1"; then \
 	  $(MAKE) check-rabbitmq-integration; \
 	fi
 endif
 
-EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh
+EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_arm_aarch64_imc_schema.c test_amd_x86_pmc_schema.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh scripts/check_unsafe_c_patterns.sh scripts/check_unsafe_c_patterns.allowlist
 
 if RABBITMQ
 .PHONY: check-rabbitmq-integration
@@ -143,11 +144,16 @@ test_roofline_hw_peak_schema_SOURCES = \
 
 test_roofline_hw_peak_changeover_SOURCES = \
 	test_roofline_hw_peak_changeover.c \
-	$(top_srcdir)/src/roofline_hw_peak.c
+	$(top_srcdir)/src/roofline_hw_peak.c \
+	$(top_srcdir)/src/roofline_hw_peak_detect.c
 
 test_nfs_schema_subset_SOURCES = \
 	test_nfs_schema_subset.c \
 	$(top_srcdir)/src/nfs.c
+
+test_arm_aarch64_imc_schema_SOURCES = test_arm_aarch64_imc_schema.c
+
+test_amd_x86_pmc_schema_SOURCES = test_amd_x86_pmc_schema.c
 
 test_metric_profiler_SOURCES = \
 	test_metric_profiler.c \
@@ -177,6 +183,9 @@ test_ring_buffer_SOURCES = \
 	test_ring_buffer.c \
 	test_ring_buffer_stubs.c \
 	$(top_srcdir)/src/stats_buffer.c \
+	$(top_srcdir)/src/stats_buffer_rmq.c \
+	$(top_srcdir)/src/stats_buffer_rows.c \
+	$(top_srcdir)/src/stats_buffer_uts.c \
 	$(top_srcdir)/src/stats_buffer_data_append.c \
 	$(top_srcdir)/src/stats_text_format.c \
 	$(top_srcdir)/src/monitor_log.c \
@@ -210,6 +219,8 @@ test_cpu_counter_metrics_schema_LDADD = $(LDADD)
 test_roofline_hw_peak_schema_LDADD = $(LDADD)
 test_roofline_hw_peak_changeover_LDADD = $(LDADD)
 test_nfs_schema_subset_LDADD = $(LDADD)
+test_arm_aarch64_imc_schema_LDADD = $(LDADD)
+test_amd_x86_pmc_schema_LDADD = $(LDADD)
 test_metric_profiler_LDADD = $(LDADD)
 test_hwdetect_policy_LDADD = $(LDADD)
 test_stats_runtime_type_controls_LDADD = $(LDADD)

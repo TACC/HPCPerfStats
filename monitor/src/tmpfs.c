@@ -1,3 +1,4 @@
+/* host_tmpfs — /tmp tmpfs space and inode usage from /proc/mounts + statfs. */
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -33,7 +34,7 @@ static void tmpfs_collect(struct stats_type *type)
     struct stats *stats = NULL;
     struct statfs sfs;
 
-    if (strcmp(me.mnt_type, "host_tmpfs") != 0)
+    if (strcmp(me.mnt_type, "tmpfs") != 0)
       continue;
     if (strcmp(me.mnt_dir, "/tmp") != 0)
       continue;

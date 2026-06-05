@@ -1,116 +1,116 @@
-//#include "daemonize.h"
+/* Daemon double-fork, stdio redirect, and optional PID lock file. */
 #include <fcntl.h>
-#include <string.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
-#include <unistd.h>
+#include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "monitor_log.h"
 
 int pid_fd;
 char *pid_file_name;
 
-void daemonize()
+#define DAEMON_PID_BUF 32
+
+static void daemonize_exit_on_failure(void)
 {
-  pid_t pid = 0;
+  exit(EXIT_FAILURE);
+}
+
+static void daemonize_first_fork(void)
+{
+  pid_t pid = fork();
+
+  if (pid < 0)
+    daemonize_exit_on_failure();
+  if (pid > 0)
+    exit(EXIT_SUCCESS);
+}
+
+static void daemonize_setup_session(void)
+{
+  if (setsid() < 0)
+    daemonize_exit_on_failure();
+  signal(SIGCHLD, SIG_IGN);
+}
+
+static void daemonize_close_fds(void)
+{
   int fd;
 
-  /* Fork off the parent process */
-  pid = fork();
-
-  /* An error occurred */
-  if (pid < 0) {
-    exit(EXIT_FAILURE);
-  }
-
-  /* Success: Let the parent terminate */
-  if (pid > 0) {
-    exit(EXIT_SUCCESS);
-  }
-
-  /* On success: The child process becomes session leader */
-  if (setsid() < 0) {
-    exit(EXIT_FAILURE);
-  }
-
-  /* Ignore signal sent from child to parent process */
-  signal(SIGCHLD, SIG_IGN);
-
-  /* Fork off for the second time*/
-  pid = fork();
-
-  /* An error occurred */
-  if (pid < 0) {
-    exit(EXIT_FAILURE);
-  }
-
-  /* Success: Let the parent terminate */
-  if (pid > 0) {
-    exit(EXIT_SUCCESS);
-  }
-
-  /* Set new file permissions */
-  umask(0);
-
-  /* Change the working directory to the root directory */
-  /* or another appropriated directory */
-  if (chdir("/") != 0)
-    exit(EXIT_FAILURE);
-
-  /* Close all open file descriptors */
-  for (fd = sysconf(_SC_OPEN_MAX); fd > 0; fd--) {
+  for (fd = (int)sysconf(_SC_OPEN_MAX); fd > 0; fd--)
     close(fd);
-  }
-  /* Reopen stdin (fd = 0), stdout (fd = 1), stderr (fd = 2) */
-  {
-    int n;
+}
 
-    n = open("/dev/null", O_RDONLY);
-    if (n < 0)
-      exit(EXIT_FAILURE);
-    stdin = fdopen(n, "r");
-    if (stdin == NULL)
-      exit(EXIT_FAILURE);
-    n = open("/dev/null", O_RDWR);
-    if (n < 0)
-      exit(EXIT_FAILURE);
-    stdout = fdopen(n, "w+");
-    if (stdout == NULL)
-      exit(EXIT_FAILURE);
-    n = open("/dev/null", O_RDWR);
-    if (n < 0)
-      exit(EXIT_FAILURE);
-    stderr = fdopen(n, "w+");
-    if (stderr == NULL)
-      exit(EXIT_FAILURE);
-  }
-  /* Try to write PID of daemon to lockfile */
-  if (pid_file_name != NULL)
-    {
-      monitor_log_info("%s\n", pid_file_name);
-      pid_fd = open(pid_file_name, O_RDWR|O_CREAT, 0640);
-      if (pid_fd < 0) {
-	/* Can't open lockfile */
-	exit(EXIT_FAILURE);
-      }
-      if (lockf(pid_fd, F_TLOCK, 0) < 0) {
-	/* Can't lock file */
-	monitor_log_error("%s already found. Abort second instance.\n",
-			  pid_file_name);
-	exit(EXIT_FAILURE);
-      }
-      if (ftruncate(pid_fd, 0) != 0)
-	exit(EXIT_FAILURE);
-      {
-	char pidbuf[32];
-	int len = snprintf(pidbuf, sizeof(pidbuf), "%ld\n", (long)getpid());
+static int daemonize_open_devnull(int flags)
+{
+  int n = open("/dev/null", flags);
 
-	if (len < 0 || (size_t)len >= sizeof(pidbuf))
-	  exit(EXIT_FAILURE);
-	if (write(pid_fd, pidbuf, (size_t)len) != (ssize_t)len)
-	  exit(EXIT_FAILURE);
-      }
-    }
+  if (n < 0)
+    daemonize_exit_on_failure();
+  return n;
+}
+
+static void daemonize_reopen_stdio(void)
+{
+  int n;
+
+  n = daemonize_open_devnull(O_RDONLY);
+  stdin = fdopen(n, "r");
+  if (stdin == NULL)
+    daemonize_exit_on_failure();
+
+  n = daemonize_open_devnull(O_RDWR);
+  stdout = fdopen(n, "w+");
+  if (stdout == NULL)
+    daemonize_exit_on_failure();
+
+  n = daemonize_open_devnull(O_RDWR);
+  stderr = fdopen(n, "w+");
+  if (stderr == NULL)
+    daemonize_exit_on_failure();
+}
+
+static void daemonize_write_pid_lock(void)
+{
+  char pidbuf[DAEMON_PID_BUF];
+  int len;
+
+  if (pid_file_name == NULL)
+    return;
+
+  monitor_log_info("%s\n", pid_file_name);
+  pid_fd = open(pid_file_name, O_RDWR | O_CREAT, 0640);
+  if (pid_fd < 0)
+    daemonize_exit_on_failure();
+  if (lockf(pid_fd, F_TLOCK, 0) < 0) {
+    monitor_log_error("%s already found. Abort second instance.\n",
+                      pid_file_name);
+    daemonize_exit_on_failure();
+  }
+  if (ftruncate(pid_fd, 0) != 0)
+    daemonize_exit_on_failure();
+
+  len = snprintf(pidbuf, sizeof(pidbuf), "%ld\n", (long)getpid());
+  if (len < 0 || (size_t)len >= sizeof(pidbuf))
+    daemonize_exit_on_failure();
+  if (write(pid_fd, pidbuf, (size_t)len) != (ssize_t)len)
+    daemonize_exit_on_failure();
+}
+
+void daemonize(void)
+{
+  daemonize_first_fork();
+  daemonize_setup_session();
+  daemonize_first_fork();
+
+  umask(0);
+  if (chdir("/") != 0)
+    daemonize_exit_on_failure();
+
+  daemonize_close_fds();
+  daemonize_reopen_stdio();
+  daemonize_write_pid_lock();
 }

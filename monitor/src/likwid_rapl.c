@@ -1,3 +1,7 @@
+/*! \file likwid_rapl.c
+ *  LIKWID power_read helpers for intel_x86_rapl / amd_x86_rapl collectors.
+ */
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -137,7 +141,7 @@ likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id,
   return -1;
 #endif
   return (*has_pkg || *has_core || *has_dram
-	  || (has_pp1 != NULL && *has_pp1)) ? 0 : -1;
+          || (has_pp1 != NULL && *has_pp1)) ? 0 : -1;
 #else
   (void)cpu_id;
   (void)socket_id;

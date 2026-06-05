@@ -1,3 +1,7 @@
+/*! \file intel_hsw_hau.c
+ *  Intel Haswell HA uncore (intel_x86_uncore_hau_hsw).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"

@@ -1,0 +1,52 @@
+---
+description: Behavior-preserving C refactor standards for HPCPerfStats monitor
+globs:
+  - HPCPerfStats/monitor/**/*.c
+  - HPCPerfStats/monitor/**/*.h
+alwaysApply: false
+---
+
+# Monitor C refactor standards
+
+Applies when modernizing code under `HPCPerfStats/monitor/src/`. See **C_REFACTOR_CHECKLIST.md** for the per-file workflow.
+
+## Non-negotiables
+
+- **No behavior change**: preserve logic, sampling cadence, and listend.py payload contract (**monitor-workspace-contract**).
+- **Hot paths**: no new allocations, syscalls, or verbose logging in `st_collect`, `sample_timer`, or `send_timer` (**monitor-jitter-and-fidelity-priority**).
+
+## Safety (mandatory on touched code)
+
+| Forbidden | Use instead |
+|-----------|-------------|
+| `gets()` | bounded read + NUL terminate |
+| `strcpy()` | `snprintf(buf, sizeof buf, "%s", src)` or `memcpy` + explicit `\0` |
+| `sprintf()` | `snprintf()` with size |
+| bare `strncpy()` without NUL | `snprintf()` or NUL at `size - 1` |
+
+- NULL-check pointer parameters when NULL is plausible before dereference.
+- Check `snprintf`/`read` return values; treat truncation as error when it would corrupt semantics.
+
+## Structure
+
+- Functions **≤50 lines**; extract `static` helpers with verb-led `snake_case` names.
+- Prefer linkable `.c`/`.h` for testable helpers (**monitor-c-new-function-unittests**).
+- Magic numbers → `#define` or `enum` at file top or shared header.
+- `const` on read-only parameters and non-mutating pointers.
+
+## Style (full-file pass on refactored files)
+
+- **2-space** indent, **K&R** braces, **snake_case** functions.
+- File banner: purpose and `#ifdef` hardware gates.
+- Document non-obvious public/static helpers (`@param`, `@return`); skip noise on one-liners.
+
+## Renames (bundled per collector file)
+
+When editing a collector, apply **monitor_variable_rename_map.yaml** for that type’s `st_name` and event keys; run `scripts/check_emitted_variable_names.py`.
+
+## Verification (each PR)
+
+1. `scripts/build_static_bundle.sh` (or `SKIP_DEPS=1` when prefix is warm)
+2. `make check` in `.build-static`
+3. `make distclean` in `.build-static`
+4. `scripts/cross_compile_test.sh --force-foreign --fail-fast` with a foreign `TARGETS` triplet

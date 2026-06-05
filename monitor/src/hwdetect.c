@@ -1,3 +1,4 @@
+/* hwdetect — optional hardware stack probe via lspci; disables absent types. */
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -238,7 +239,7 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
     elapsed_us = hwdetect_monotonic_us() - started_us;
     if (elapsed_us > 50000LL) {
       TRACE("hwdetect probe slow: elapsed_us=%lld cache_hits=%lu cache_misses=%lu\n",
-	    elapsed_us, g_probe_cache_hits, g_probe_cache_misses);
+            elapsed_us, g_probe_cache_hits, g_probe_cache_misses);
     }
   }
 }

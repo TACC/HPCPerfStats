@@ -1,3 +1,6 @@
+/*
+ * RabbitMQ daemon command-line and configuration key handling.
+ */
 #ifndef MONITOR_OPTIONS_H
 #define MONITOR_OPTIONS_H
 
@@ -9,6 +12,6 @@ void monitor_options_print_daemon_usage(FILE *stream);
 void monitor_options_parse_daemon_argv(int argc, char *argv[], int *daemonmode_out);
 
 /*! Dispatch one trimmed daemon configuration assignment (`value_line` is the RHS). */
-void monitor_options_apply_daemon_conf_kv(const char *key, char *value_line);
+void monitor_options_apply_daemon_conf_kv(const char *key, const char *value_line);
 
 #endif

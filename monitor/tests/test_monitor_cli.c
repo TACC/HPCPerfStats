@@ -98,11 +98,11 @@ static void test_parse_collection_profile_option(void)
 static void test_parse_disable_types_option(void)
 {
   next_cli_test();
-  char *argv[] = { "prog", "--disable-types", "proc,nvidia_gpu", NULL };
+  char *argv[] = { "prog", "--disable-types", "host_proc,nvidia_gpu", NULL };
   int dm = 0;
   monitor_cli_parse_args(3, argv, &dm);
   assert(disable_types != NULL);
-  assert(strcmp(disable_types, "proc,nvidia_gpu") == 0);
+  assert(strcmp(disable_types, "host_proc,nvidia_gpu") == 0);
 }
 
 static void test_help_invokes_usage_and_exits_zero(void)

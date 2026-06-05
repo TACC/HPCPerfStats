@@ -1,3 +1,4 @@
+/* metric_profiler.h — optional per-collect timing profiler (MONITOR_METRIC_PROFILER). */
 #ifndef METRIC_PROFILER_H
 #define METRIC_PROFILER_H
 

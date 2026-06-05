@@ -15,44 +15,44 @@
 #include "likwid_rapl.h"
 #include "rapl_likwid_stats.h"
 
-#define KEYS                                                                  \
-	X(pkg_energy, "E,W=32,U=mJ", ""),                          \
-	    X(pp0_energy, "E,W=32,U=mJ", ""),                      \
-	    X(pp1_energy, "E,W=32,U=mJ", ""),                      \
-	    X(dram_energy, "E,W=32,U=mJ", "")
+#define KEYS \
+  X(pkg_energy, "E,W=32,U=mJ", ""), \
+  X(pp0_energy, "E,W=32,U=mJ", ""), \
+  X(pp1_energy, "E,W=32,U=mJ", ""), \
+  X(dram_energy, "E,W=32,U=mJ", "")
 
 static int intel_rapl_begin(struct stats_type *type)
 {
-	if (!likwid_rapl_is_supported_processor()) {
-		TRACE("intel_rapl disabled because processor is not LIKWID RAPL capable\n");
-		type->st_enabled = 0;
-		return -1;
-	}
-	return 0;
+  if (!likwid_rapl_is_supported_processor()) {
+    TRACE("intel_rapl disabled because processor is not LIKWID RAPL capable\n");
+    type->st_enabled = 0;
+    return -1;
+  }
+  return 0;
 }
 
 static void intel_rapl_collect(struct stats_type *type)
 {
-	int i;
+  int i;
 
-	for (i = 0; i < nr_cpus; i++) {
-		char cpu[80];
-		int pkg_id = -1;
-		int core_id = -1;
-		int smt_id = -1;
-		int nr_cores = 0;
-		char pkg[80];
+  for (i = 0; i < nr_cpus; i++) {
+    char cpu[80];
+    int pkg_id = -1;
+    int core_id = -1;
+    int smt_id = -1;
+    int nr_cores = 0;
+    char pkg[80];
 
-		snprintf(cpu, sizeof(cpu), "%d", i);
-		cpuid_read_cpu_topology(cpu, &pkg_id, &core_id, &smt_id,
-					&nr_cores);
+    snprintf(cpu, sizeof(cpu), "%d", i);
+    cpuid_read_cpu_topology(cpu, &pkg_id, &core_id, &smt_id,
+          &nr_cores);
 
-		if (core_id == 0 && smt_id == 0) {
-			snprintf(pkg, sizeof(pkg), "%d", pkg_id);
-			rapl_likwid_intel_collect_pkg(type, pkg, atoi(cpu),
-							(unsigned)pkg_id);
-		}
-	}
+    if (core_id == 0 && smt_id == 0) {
+      snprintf(pkg, sizeof(pkg), "%d", pkg_id);
+      rapl_likwid_intel_collect_pkg(type, pkg, atoi(cpu),
+              (unsigned)pkg_id);
+    }
+  }
 }
 
 struct stats_type intel_rapl_stats_type = {

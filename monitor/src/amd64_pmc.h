@@ -1,3 +1,11 @@
+/*! \file amd64_pmc.h
+ *  AMD x86 core PMU MSR definitions and emitted KEYS for amd_x86_pmc.
+ *  DF uncore channel keys (DF_KEYS) are consumed by amd_x86_uncore_df.
+ *
+ *  MSR_PERF_* symbols name hardware registers; emitted schema keys use the
+ *  portable names in KEYS / DF_KEYS (instr_retired, dram_chan0_bytes, etc.).
+ */
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>

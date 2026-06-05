@@ -18,6 +18,8 @@
 #include "dcgm_fields.h"
 #include "dcgm_structs.h"
 #include "dcgm_session.h"
+#include "cpu_counter_metrics_dcgm_state.h"
+#include "cpu_counter_metrics_dcgm_publish.h"
 #else
 #include "amd64_pmc.h"
 #undef KEYS
@@ -25,6 +27,7 @@
 #undef KEYS
 #include "likwid_pmc_adapter.h"
 #include "likwid_arch_map.h"
+#include "cpu_counter_metrics_likwid_begin.h"
 #endif
 #include "cpu_counter_metrics.h"
 
@@ -73,25 +76,25 @@ static int g_dcgm_cpu_nchunks = 0;
 static int g_dcgm_watch_active = 0;
 static struct dcgm_cpu_sample *g_dcgm_sample_cache = NULL;
 static unsigned char *g_dcgm_sample_valid = NULL;
-static unsigned long long *g_dcgm_ctr0 = NULL;
-static unsigned long long *g_dcgm_ctr1 = NULL;
-static unsigned long long *g_dcgm_ctr2 = NULL;
-static unsigned long long *g_dcgm_ctr3 = NULL;
-static unsigned long long *g_dcgm_ctr4 = NULL;
-static unsigned long long *g_dcgm_ctr5 = NULL;
-static unsigned long long *g_dcgm_inst = NULL;
-static unsigned long long *g_dcgm_aperf = NULL;
-static unsigned long long *g_dcgm_mperf = NULL;
-static unsigned long long *g_dcgm_arm_est_flops = NULL;
-static unsigned long long *g_dcgm_arm_dram_bytes = NULL;
-static unsigned long long *g_dcgm_fp_sca_d = NULL;
-static unsigned long long *g_dcgm_fp_128_d = NULL;
-static unsigned long long *g_dcgm_fp_256_d = NULL;
-static unsigned long long *g_dcgm_fp_512_d = NULL;
-static unsigned long long *g_dcgm_fp_sca_s = NULL;
-static unsigned long long *g_dcgm_fp_128_s = NULL;
-static unsigned long long *g_dcgm_fp_256_s = NULL;
-static unsigned long long *g_dcgm_fp_512_s = NULL;
+unsigned long long *g_dcgm_ctr0 = NULL;
+unsigned long long *g_dcgm_ctr1 = NULL;
+unsigned long long *g_dcgm_ctr2 = NULL;
+unsigned long long *g_dcgm_ctr3 = NULL;
+unsigned long long *g_dcgm_ctr4 = NULL;
+unsigned long long *g_dcgm_ctr5 = NULL;
+unsigned long long *g_dcgm_inst = NULL;
+unsigned long long *g_dcgm_aperf = NULL;
+unsigned long long *g_dcgm_mperf = NULL;
+unsigned long long *g_dcgm_arm_est_flops = NULL;
+unsigned long long *g_dcgm_arm_dram_bytes = NULL;
+unsigned long long *g_dcgm_fp_sca_d = NULL;
+unsigned long long *g_dcgm_fp_128_d = NULL;
+unsigned long long *g_dcgm_fp_256_d = NULL;
+unsigned long long *g_dcgm_fp_512_d = NULL;
+unsigned long long *g_dcgm_fp_sca_s = NULL;
+unsigned long long *g_dcgm_fp_128_s = NULL;
+unsigned long long *g_dcgm_fp_256_s = NULL;
+unsigned long long *g_dcgm_fp_512_s = NULL;
 static long long *g_dcgm_last_ts = NULL;
 static long long g_dcgm_mono_prev_us = 0;
 
@@ -99,10 +102,10 @@ static long long g_dcgm_mono_prev_us = 0;
 static dcgmGpuGrp_t g_dcgm_sock_group = (dcgmGpuGrp_t) NULL;
 static dcgmFieldGrp_t g_dcgm_sock_fg = (dcgmFieldGrp_t) NULL;
 static int *g_dcgm_cpu_entity_list = NULL;
-static int g_dcgm_ncpu_entities = 0;
-static int *g_dcgm_logical_to_power_slot = NULL;
-static double *g_dcgm_sock_power_util = NULL;
-static double *g_dcgm_sock_power_limit = NULL;
+int g_dcgm_ncpu_entities = 0;
+int *g_dcgm_logical_to_power_slot = NULL;
+double *g_dcgm_sock_power_util = NULL;
+double *g_dcgm_sock_power_limit = NULL;
 static int g_dcgm_sock_map_mismatch_logged = 0;
 static const unsigned short g_dcgm_cpu_power_field_ids[] = {
   DCGM_FI_DEV_CPU_POWER_UTIL_CURRENT,
@@ -143,16 +146,6 @@ static const unsigned short g_dcgm_cpu_field_ids[] = {
 };
 
 #define DCGM_CPU_NFIELDS ((unsigned int) (sizeof(g_dcgm_cpu_field_ids) / sizeof(g_dcgm_cpu_field_ids[0])))
-
-struct dcgm_cpu_sample {
-  double util_total;
-  double util_user;
-  double util_nice;
-  double util_sys;
-  double util_irq;
-  double clock_khz;
-  long long ts;
-};
 
 static double clamp_percent(double v)
 {
@@ -528,7 +521,7 @@ static int dcgm_sysfs_physical_package_id(int cpu_idx, int *pkg_out)
   return 0;
 }
 
-static unsigned long long dcgm_watts_dbl_to_ull(double v)
+unsigned long long dcgm_watts_dbl_to_ull(double v)
 {
   if (v <= 0.0)
     return 0ULL;
@@ -754,90 +747,6 @@ static void dcgm_cpu_refresh_socket_power(void)
   }
 }
 
-static void publish_dcgm_cpu_stats(struct stats *stats, int i)
-{
-  stats_set(stats, "cpu_util_total_accum_us", g_dcgm_ctr0[i]);
-  stats_set(stats, "cpu_util_user_accum_us", g_dcgm_ctr1[i]);
-  stats_set(stats, "cpu_util_sys_accum_us", g_dcgm_ctr2[i]);
-  stats_set(stats, "cpu_util_irq_accum_us", g_dcgm_ctr3[i]);
-  stats_set(stats, "cpu_util_nice_accum_us", g_dcgm_ctr4[i]);
-  stats_set(stats, "cpu_clock_est_cycles", g_dcgm_ctr5[i]);
-  /* Match Intel LIKWID FIXC0..2 mapping (INSTR_RETIRED / core unhalted / ref). */
-  stats_set(stats, "instr_retired", g_dcgm_inst[i]);
-  stats_set(stats, "aperf", g_dcgm_aperf[i]);
-  stats_set(stats, "mperf", g_dcgm_mperf[i]);
-  stats_set(stats, "instr_retired", g_dcgm_inst[i]);
-  stats_set(stats, "aperf", g_dcgm_aperf[i]);
-  stats_set(stats, "mperf", g_dcgm_mperf[i]);
-  stats_set(stats, "dram_chan0_bytes", 0);
-  stats_set(stats, "dram_chan1_bytes", 0);
-  stats_set(stats, "dram_chan2_bytes", 0);
-  stats_set(stats, "dram_chan3_bytes", 0);
-  stats_set(stats, "fp_arith_inst_retired_scalar_double", g_dcgm_fp_sca_d[i]);
-  stats_set(stats, "fp_arith_inst_retired_128b_packed_double", g_dcgm_fp_128_d[i]);
-  stats_set(stats, "fp_arith_inst_retired_256b_packed_double", g_dcgm_fp_256_d[i]);
-  stats_set(stats, "fp_arith_inst_retired_512b_packed_double", g_dcgm_fp_512_d[i]);
-  stats_set(stats, "fp_arith_inst_retired_scalar_single", g_dcgm_fp_sca_s[i]);
-  stats_set(stats, "fp_arith_inst_retired_128b_packed_single", g_dcgm_fp_128_s[i]);
-  stats_set(stats, "fp_arith_inst_retired_256b_packed_single", g_dcgm_fp_256_s[i]);
-  stats_set(stats, "fp_arith_inst_retired_512b_packed_single", g_dcgm_fp_512_s[i]);
-  stats_set(stats, "arm_est_flops", g_dcgm_arm_est_flops[i]);
-  stats_set(stats, "arm_dram_bw_bytes", g_dcgm_arm_dram_bytes[i]);
-  if (g_dcgm_logical_to_power_slot != NULL && i >= 0 && i < nr_cpus) {
-    int slot = g_dcgm_logical_to_power_slot[i];
-
-    if (slot >= 0 && slot < g_dcgm_ncpu_entities && g_dcgm_sock_power_util != NULL
-	&& g_dcgm_sock_power_limit != NULL) {
-      stats_set(stats, "dcgm_cpu_power_util_w",
-		dcgm_watts_dbl_to_ull(g_dcgm_sock_power_util[slot]));
-      stats_set(stats, "dcgm_cpu_power_limit_w",
-		dcgm_watts_dbl_to_ull(g_dcgm_sock_power_limit[slot]));
-    } else {
-      stats_set(stats, "dcgm_cpu_power_util_w", 0ULL);
-      stats_set(stats, "dcgm_cpu_power_limit_w", 0ULL);
-    }
-  } else {
-    stats_set(stats, "dcgm_cpu_power_util_w", 0ULL);
-    stats_set(stats, "dcgm_cpu_power_limit_w", 0ULL);
-  }
-}
-
-static void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *sample,
-					     long long delta_us)
-{
-  if (delta_us <= 0 || sample->clock_khz <= 0.0)
-    return;
-  double ref_cycles = (sample->clock_khz * (double) delta_us) / 1000.0;
-  double act_cycles = ref_cycles * (sample->util_total / 100.0);
-  g_dcgm_mperf[i] += (unsigned long long) (ref_cycles + 0.5);
-  g_dcgm_aperf[i] += (unsigned long long) (act_cycles + 0.5);
-  g_dcgm_inst[i] += (unsigned long long) ((ref_cycles * (sample->util_user / 100.0)) + 0.5);
-  g_dcgm_ctr0[i] += (unsigned long long) ((sample->util_total * (double) delta_us) + 0.5);
-  g_dcgm_ctr1[i] += (unsigned long long) ((sample->util_user * (double) delta_us) + 0.5);
-  g_dcgm_ctr2[i] += (unsigned long long) ((sample->util_sys * (double) delta_us) + 0.5);
-  g_dcgm_ctr3[i] += (unsigned long long) ((sample->util_irq * (double) delta_us) + 0.5);
-  g_dcgm_ctr4[i] += (unsigned long long) ((sample->util_nice * (double) delta_us) + 0.5);
-  g_dcgm_ctr5[i] += (unsigned long long) ((sample->clock_khz * (double) delta_us) / 1000.0 + 0.5);
-  g_dcgm_arm_est_flops[i] +=
-      (unsigned long long) ((act_cycles * ARM_APPROX_FLOPS_PER_ACTIVE_CYCLE) + 0.5);
-  g_dcgm_arm_dram_bytes[i] +=
-      (unsigned long long) ((act_cycles * ARM_APPROX_DRAM_BYTES_PER_ACTIVE_CYCLE) + 0.5);
-  {
-    double total_flops = act_cycles * ARM_APPROX_FLOPS_PER_ACTIVE_CYCLE;
-    double flops64 = total_flops * ARM_APPROX_FP64_FLOP_SHARE;
-    double flops32 = total_flops - flops64;
-    double flops64_vec = flops64 * ARM_APPROX_FP64_VECTOR_FLOP_SHARE;
-    double flops64_sca = flops64 - flops64_vec;
-    double flops32_vec = flops32 * ARM_APPROX_FP32_VECTOR_FLOP_SHARE;
-    double flops32_sca = flops32 - flops32_vec;
-    /* Map vector FLOPs to 128b packed buckets by default (2x64b, 4x32b). */
-    g_dcgm_fp_sca_d[i] += (unsigned long long) (flops64_sca + 0.5);
-    g_dcgm_fp_128_d[i] += (unsigned long long) (flops64_vec / 2.0 + 0.5);
-    g_dcgm_fp_sca_s[i] += (unsigned long long) (flops32_sca + 0.5);
-    g_dcgm_fp_128_s[i] += (unsigned long long) (flops32_vec / 4.0 + 0.5);
-  }
-}
-
 static void dcgm_cpu_watch_cleanup(void)
 {
   int c;
@@ -1049,23 +958,6 @@ static int dcgm_backend_begin(struct stats_type *type)
   g_dcgm_retry_after = 0;
   return 0;
 }
-#else
-static int g_likwid_ready = 0;
-
-static int likwid_backend_begin(struct stats_type *type)
-{
-  (void)type;
-  if (likwid_pmc_adapter_init(nr_cpus) == 0 &&
-      likwid_pmc_adapter_setup_events(likwid_arch_eventset()) == 0) {
-    g_likwid_ready = 1;
-    return 0;
-  }
-  /* LIKWID PMCs unavailable/busy: use direct-MSR fallback path for collection. */
-  likwid_pmc_adapter_finalize();
-  g_likwid_ready = 0;
-  type->st_enabled = 1;
-  return 0;
-}
 #endif
 
 #ifndef MONITOR_CPU_BACKEND_DCGM
@@ -1230,7 +1122,7 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
 #ifdef MONITOR_CPU_BACKEND_DCGM
         g_dcgm_ready
 #else
-        g_likwid_ready
+        cpu_counter_metrics_likwid_ready()
 #endif
     ) {
 #ifdef MONITOR_CPU_BACKEND_DCGM
@@ -1291,5 +1183,5 @@ struct stats_type cpu_counter_metrics_stats_type = {
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(CPU_COUNTER_METRICS_KEYS),
 #undef X
-  .st_name = "host_cpu_hw",
+  .st_name = CPU_COUNTER_METRICS_ST_NAME,
 };

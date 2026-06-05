@@ -1,3 +1,4 @@
+/* Schema dictionary: parse metric keys/options and resolve indices by name. */
 #ifndef _SCHEMA_H_
 #define _SCHEMA_H_
 #include <stddef.h>
@@ -23,7 +24,7 @@ struct schema {
 
 static inline struct schema_entry *key_to_schema_entry(const char *key)
 {
-  /* Cannot be replaced with sizeof(*se), (due to alignment) at least with 3.4.6. */
+  /* Cannot use sizeof(*se): flexible se_key offset varies by alignment (e.g. gcc 3.4.6). */
   size_t se_key_offset = (((struct schema_entry *) NULL)->se_key) - (char *) NULL;
   return (struct schema_entry *) (key - se_key_offset);
 }
@@ -35,11 +36,16 @@ void schema_destroy(struct schema *sc);
 
 static inline int schema_ref(struct schema *sc, const char *key)
 {
-  char *sk = dict_ref(&sc->sc_dict, key);
+  char *sk;
+
+  if (sc == NULL || key == NULL)
+    return -1;
+
+  sk = dict_ref(&sc->sc_dict, key);
   if (sk == NULL)
     return -1;
 
-  return key_to_schema_entry(sk)->se_index;
+  return (int) key_to_schema_entry(sk)->se_index;
 }
 
 #endif

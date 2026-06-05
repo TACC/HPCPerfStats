@@ -1,3 +1,4 @@
+/* RabbitMQ daemon CLI: shared literals, argv parsing, and heap cleanup. */
 #include <stdlib.h>
 #include <string.h>
 
@@ -14,58 +15,64 @@ const char monitor_cli_lit_dumpfile_dir[] = "/tmp/hpcperfstats";
 const char monitor_cli_lit_jobid_file_path[] = "/var/run/stats_jobid";
 
 void monitor_cli_heap_dup_setting(char **slot, const char *default_literal,
-				  const char *value)
+                                  const char *value)
 {
-	if (*slot != NULL && *slot != (char *)default_literal)
-		free(*slot);
-	*slot = strdup(value);
+  if (slot == NULL || default_literal == NULL || value == NULL)
+    return;
+  if (*slot != NULL && *slot != (char *)default_literal)
+    free(*slot);
+  *slot = strdup(value);
 }
 
 void monitor_cli_print_usage(FILE *stream)
 {
-	monitor_options_print_daemon_usage(stream);
+  if (stream == NULL)
+    return;
+  monitor_options_print_daemon_usage(stream);
 }
 
 void monitor_cli_parse_args(int argc, char *argv[], int *daemonmode_out)
 {
-	monitor_options_parse_daemon_argv(argc, argv, daemonmode_out);
+  if (daemonmode_out == NULL)
+    return;
+  monitor_options_parse_daemon_argv(argc, argv, daemonmode_out);
 }
 
 void monitor_cli_free_heap(void)
 {
-	free(conf_file_name);
-	conf_file_name = NULL;
+  free(conf_file_name);
+  conf_file_name = NULL;
 
-	free(pid_file_name);
-	pid_file_name = NULL;
+  free(pid_file_name);
+  pid_file_name = NULL;
 
-	free(server);
-	server = NULL;
+  free(server);
+  server = NULL;
 
-	if (queue != NULL && queue != (char *)monitor_cli_lit_queue)
-		free(queue);
-	queue = (char *)monitor_cli_lit_queue;
+  if (queue != NULL && queue != (char *)monitor_cli_lit_queue)
+    free(queue);
+  queue = (char *)monitor_cli_lit_queue;
 
-	if (port != NULL && port != (char *)monitor_cli_lit_port)
-		free(port);
-	port = (char *)monitor_cli_lit_port;
+  if (port != NULL && port != (char *)monitor_cli_lit_port)
+    free(port);
+  port = (char *)monitor_cli_lit_port;
 
-	if (rmq_user != NULL && rmq_user != (char *)monitor_cli_lit_rmq_user)
-		free(rmq_user);
-	rmq_user = (char *)monitor_cli_lit_rmq_user;
+  if (rmq_user != NULL && rmq_user != (char *)monitor_cli_lit_rmq_user)
+    free(rmq_user);
+  rmq_user = (char *)monitor_cli_lit_rmq_user;
 
-	if (rmq_password != NULL &&
-	    rmq_password != (char *)monitor_cli_lit_rmq_password)
-		free(rmq_password);
-	rmq_password = (char *)monitor_cli_lit_rmq_password;
+  if (rmq_password != NULL &&
+      rmq_password != (char *)monitor_cli_lit_rmq_password)
+    free(rmq_password);
+  rmq_password = (char *)monitor_cli_lit_rmq_password;
 
-	if (dumpfile_dir != NULL &&
-	    dumpfile_dir != (char *)monitor_cli_lit_dumpfile_dir)
-		free(dumpfile_dir);
-	dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
+  if (dumpfile_dir != NULL &&
+      dumpfile_dir != (char *)monitor_cli_lit_dumpfile_dir)
+    free(dumpfile_dir);
+  dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
 
-	if (jobid_file_path != NULL &&
-	    jobid_file_path != (char *)monitor_cli_lit_jobid_file_path)
-		free(jobid_file_path);
-	jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
+  if (jobid_file_path != NULL &&
+      jobid_file_path != (char *)monitor_cli_lit_jobid_file_path)
+    free(jobid_file_path);
+  jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
 }

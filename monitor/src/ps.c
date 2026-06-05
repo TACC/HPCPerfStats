@@ -1,3 +1,4 @@
+/* host_ps — process scheduler stats from /proc/stat and /proc/loadavg. */
 #include <stddef.h>
 #include <string.h>
 #include "stats.h"

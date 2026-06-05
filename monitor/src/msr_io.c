@@ -44,7 +44,13 @@ int msr_open_cpu(const char *cpu, int flags)
 
 int msr_read_u64(int fd, unsigned int offset, uint64_t *val)
 {
-  ssize_t n = pread(fd, val, sizeof(*val), (off_t)offset);
+  ssize_t n;
+
+  if (val == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+  n = pread(fd, val, sizeof(*val), (off_t)offset);
 
   if (n < 0)
     return -1;

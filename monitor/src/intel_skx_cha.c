@@ -1,3 +1,7 @@
+/*! \file intel_skx_cha.c
+ *  Intel Skylake-X CHA uncore (intel_x86_uncore_cha_skx).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "trace.h"
@@ -68,7 +72,7 @@ struct skx_cha_collect_ctx {
 };
 
 static void skx_cha_collect_visit(void *ctx, char *cpu, int pkg_id,
-				  int nr_cores)
+          int nr_cores)
 {
   struct skx_cha_collect_ctx *c = ctx;
   int j;

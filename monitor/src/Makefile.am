@@ -126,7 +126,13 @@ hpcperfstatsd_SOURCES += \
 	stats_buffer_data_append.c \
 	stats_buffer_data_append.h \
 	stats_buffer.c \
-	stats_buffer.h
+	stats_buffer.h \
+	stats_buffer_rmq.c \
+	stats_buffer_rmq_internal.h \
+	stats_buffer_rows.c \
+	stats_buffer_rows.h \
+	stats_buffer_uts.c \
+	stats_buffer_uts.h
 hpcperfstatsd_CPPFLAGS += \
 	-DRABBITMQ \
 	$(MONITOR_AMQP_TIMEOUT_CPPFLAGS)
@@ -155,6 +161,8 @@ TYPES 	= \
 	nfs.c \
 	numa.c \
 	roofline_hw_peak.c \
+	roofline_hw_peak_detect.c \
+	roofline_hw_peak_detect.h \
 	proc.c \
 	ps.c \
 	sysv_shm.c \
@@ -168,6 +176,11 @@ hpcperfstatsd_SOURCES += \
 if CPU_BACKEND_LIKWID
 TYPES 	+= \
 	cpu_counter_metrics.c \
+	cpu_counter_metrics_dcgm_publish.c \
+	cpu_counter_metrics_dcgm_publish.h \
+	cpu_counter_metrics_dcgm_state.h \
+	cpu_counter_metrics_likwid_begin.c \
+	cpu_counter_metrics_likwid_begin.h \
 	amd64_rapl.c \
 	intel_rapl.c \
 	amd64_pmc.c \
@@ -220,7 +233,10 @@ hpcperfstatsd_SOURCES += \
 endif
 if CPU_BACKEND_DCGM
 TYPES += \
-	cpu_counter_metrics.c
+	cpu_counter_metrics.c \
+	cpu_counter_metrics_dcgm_publish.c \
+	cpu_counter_metrics_dcgm_publish.h \
+	cpu_counter_metrics_dcgm_state.h
 if MONITOR_ARCH_ARM
 TYPES += \
 	arm_imc.c
@@ -273,6 +289,7 @@ TYPES += \
 endif
 
 hpcperfstatsd_SOURCES += \
+	ib.h \
 	$(TYPES)
 
 hpcperfstatsd_LDFLAGS += \
@@ -280,7 +297,10 @@ hpcperfstatsd_LDFLAGS += \
 
 if GPU
 TYPES += \
-	nvidia_gpu.c
+	nvidia_gpu.c \
+	nvidia_gpu_dcgm_watch.c \
+	nvidia_gpu_dcgm_watch.h \
+	nvidia_gpu_dcgm_compat.h
 hpcperfstatsd_SOURCES += \
 	nvidia_gpu.h
 endif

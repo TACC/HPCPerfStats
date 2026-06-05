@@ -5,8 +5,8 @@
 
 /*
  * After dcgmInit(), obtain a host-engine handle: embedded v2/legacy, or loopback
- * nv-hostengine. Sets *use_disconnect when the session used dcgmConnect_v2 (teardown
- * with dcgmDisconnect rather than dcgmStopEmbedded).
+ * nv-hostengine. Sets *use_disconnect when the session used dcgmConnect_v2
+ * (teardown with dcgmDisconnect rather than dcgmStopEmbedded).
  */
 dcgmReturn_t monitor_dcgm_attach_for_process(dcgmHandle_t *outh, int *use_disconnect);
 

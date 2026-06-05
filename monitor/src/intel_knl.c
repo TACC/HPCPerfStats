@@ -1,3 +1,7 @@
+/*! \file intel_knl.c
+ *  Intel KNL core PMU (intel_x86_pmc_knl).
+ */
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>

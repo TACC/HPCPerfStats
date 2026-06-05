@@ -1,3 +1,4 @@
+/* host_numa — NUMA hit/miss counters from /sys/.../nodeN/numastat. */
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>

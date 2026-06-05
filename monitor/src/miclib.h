@@ -40,6 +40,18 @@
  * intellectual property rights is granted herein.
  */
 
+/*! \file miclib.h
+ *  Vendored Intel MPSS (Knights Corner) management library API.
+ *
+ *  Used only by the host_mic collector (mic.c). This is not monitor schema
+ *  output: emitted MIC stats use host_mic and lowercase snake_case KEYS there.
+ *
+ *  Unless documented otherwise for a specific call, output pointer parameters
+ *  must be non-NULL; mic_device handles from mic_open_device must be passed to
+ *  mic_close_device. mic_get_error_string() returns a static message string and
+ *  is never NULL.
+ */
+
 #ifndef MICLIB_INCLUDE_MICLIB_H_
 #define MICLIB_INCLUDE_MICLIB_H_
 

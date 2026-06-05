@@ -16,12 +16,12 @@ static void free_entry(struct schema_entry *se)
 
 static void test_parse_event_unit_width(void)
 {
-  char *line = strdup("  cpu,E,U=sec,W=8");
+  char *line = strdup("  host_cpu,E,U=sec,W=8");
   struct schema_entry *se = parse_schema_entry(line);
   free(line);
 
   assert(se != NULL);
-  assert(strcmp(se->se_key, "cpu") == 0);
+  assert(strcmp(se->se_key, "host_cpu") == 0);
   assert(se->se_type == SE_EVENT);
   assert(se->se_unit != NULL && strcmp(se->se_unit, "sec") == 0);
   assert(se->se_width == 8u);
@@ -136,7 +136,7 @@ static void test_schema_init_aborts_cleanly_on_second_invalid_token(void)
 
   memset(&sc, 0, sizeof(sc));
   /* First token parses; second token ",E" has empty key -> parse_schema_entry NULL. */
-  assert(schema_init(&sc, "cpu,E ,E") < 0);
+  assert(schema_init(&sc, "host_cpu,E ,E") < 0);
   schema_destroy(&sc);
 }
 

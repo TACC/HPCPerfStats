@@ -1,3 +1,7 @@
+/*! \file intel_ivb_qpi.c
+ *  Intel Ivy Bridge QPI uncore (intel_x86_uncore_qpi_ivb).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"

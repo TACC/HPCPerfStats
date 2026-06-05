@@ -1,3 +1,4 @@
+/* metric_profiler.c — aggregate collect timing and top metrics (debug builds). */
 #include "metric_profiler.h"
 
 #ifdef MONITOR_METRIC_PROFILER

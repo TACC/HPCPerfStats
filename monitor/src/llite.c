@@ -1,3 +1,4 @@
+/* lustre_llite — Lustre lite (VFS client) opcode stats from /proc/fs/lustre/llite. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <dirent.h>
@@ -11,21 +12,6 @@
 #include "sys_iter.h"
 
 #define LLITE_DIR_PATH "/proc/fs/lustre/llite"
-
-/* Based on llite_opcode_table in lustre-1.8.5/lustre/llite/lproc_llite.c.
-
-   In read_bytes, count is based on argument to read(), not return value.
-   direct_{read,write} are not counted in {read,write}_bytes.
-   direct_{read,write} are tallied in bytes not pages.
-   brw_read is tallied in bytes not pages, and is only used in
-   ll_prepare_write() when the write is not a complete page.
-   brw_write is not used.
-   lockless_{read,write}_bytes values seem to be same as direct_{read,write}.
-   The writeback_* stats are unused.
-   lockless_truncates are a subset of truncates.
-
-   If you find out what 'regs' are then please let me know.
-*/
 
 #define KEYS \
   X(read, "E", ""), \
@@ -68,13 +54,14 @@
 
 static int llite_stats_line_cb(char *line, void *ctx)
 {
-  struct stats *stats = (struct stats *)ctx;
+  struct stats *stats = (struct stats *) ctx;
   char *rest = line;
   char *key = wsep(&rest);
-  unsigned long long count = 0, sum = 0;
+  unsigned long long count = 0;
+  unsigned long long sum = 0;
   int n;
 
-  if (key == NULL || rest == NULL)
+  if (stats == NULL || key == NULL || rest == NULL)
     return 0;
 
   n = sscanf(rest, "%llu samples %*s %*u %*u %llu", &count, &sum);
@@ -89,6 +76,8 @@ static void llite_collect_fs(struct stats *stats, const char *d_name)
 {
   char *path = NULL;
 
+  if (stats == NULL || d_name == NULL)
+    return;
   if (asprintf(&path, "%s/%s/stats", LLITE_DIR_PATH, d_name) < 0) {
     ERROR("cannot create path: %m\n");
     return;
@@ -99,13 +88,15 @@ static void llite_collect_fs(struct stats *stats, const char *d_name)
 
 static void llite_each(const char *base, const char *name, void *ctx)
 {
-  struct stats_type *type = (struct stats_type *)ctx;
-  const char *mnt = lustre_obd_to_mnt(name);
+  struct stats_type *type = (struct stats_type *) ctx;
+  const char *mnt;
   struct stats *stats;
 
-  (void)base;
-  /* lustre_obd_to_mnt returns NULL for non-OBD entries (e.g. files like
-   * "blocked_locks" if any), which serves as our type filter. */
+  (void) base;
+  if (type == NULL || name == NULL)
+    return;
+
+  mnt = lustre_obd_to_mnt(name);
   if (mnt == NULL)
     return;
 
@@ -120,6 +111,8 @@ static void llite_each(const char *base, const char *name, void *ctx)
 
 static void llite_collect(struct stats_type *type)
 {
+  if (type == NULL)
+    return;
   sys_iter_for_each(LLITE_DIR_PATH, llite_each, type);
 }
 

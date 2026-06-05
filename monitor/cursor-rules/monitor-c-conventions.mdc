@@ -10,7 +10,8 @@ alwaysApply: false
 
 - **Package docs**: Keep **`README.md`** (and **`tests/README.md`** when test workflow changes) aligned with the tree; see **monitor-readme-maintenance**.
 - **Language**: C (GNU C11 as used by the project). No C++ in `HPCPerfStats/monitor/src/`.
-- **Style**: Match surrounding files for indentation and braces; prefer `snake_case` for new functions and file-local `static` helpers.
+- **Style canon** (refactored files — see **monitor-c-refactor-standards**, **C_REFACTOR_CHECKLIST.md**): **2-space** indent, **K&R** braces, **snake_case** functions; full-file pass when modernizing a unit. Untouched legacy files may keep older formatting until their phase.
+- **Style** (incremental edits): Prefer matching the file you touch; new helpers use `snake_case`.
 - **Structure**: Prefer small, single-purpose functions; keep RabbitMQ daemon logic in `monitor_daemon.c` with `monitor_daemon.h` for internal declarations shared with `monitor.c`.
 - **RabbitMQ daemon entry** (`monitor.c` + `monitor_cli.c`): Keep `main` thin; implement argv parsing, shared default-string literals, and heap teardown in `monitor_cli.c` (`monitor_cli_parse_args`, `monitor_cli_heap_dup_setting`, `monitor_cli_print_usage`, `monitor_cli_free_heap`). Use `extern const char monitor_cli_lit_*[]` for sentinel pointers so `monitor_daemon.c` and the CLI agree. Bootstrap in `monitor.c` with `monitor_try_mk_dumpdir`, `monitor_install_ev_handlers`, `monitor_require_server_or_exit`, and `monitor_start_timers_and_jobid_watcher`.
 - **Batch / file client** (`main.c`, non-RabbitMQ): Factor command parsing, lock acquisition, type selection, init/collect loop, marks, and teardown into small `static` helpers (`main_parse_command_word`, `main_refresh_time_and_topology`, `main_select_types_named_in_argv`, `main_init_enable_and_collect_types`, `main_apply_mark_or_jobid`, `main_destroy_all_types`). Keep `open_lock_timeout()` with a single clear error path (no `if (0)` tricks).

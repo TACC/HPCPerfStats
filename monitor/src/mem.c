@@ -1,3 +1,4 @@
+/* host_mem — NUMA node memory counters from /sys/.../nodeN/meminfo. */
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>

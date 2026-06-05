@@ -1,3 +1,7 @@
+/*! \file likwid_rapl.h
+ *  LIKWID RAPL millijoule sampling for Intel/AMD socket energy MSRs.
+ */
+
 #ifndef _LIKWID_RAPL_H_
 #define _LIKWID_RAPL_H_
 

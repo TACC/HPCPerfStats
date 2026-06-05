@@ -1,3 +1,4 @@
+/* lustre_mdc — Lustre metadata client stats from /proc/fs/lustre/mdc. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,12 +28,13 @@
 
 static int mdc_stats_line_cb(char *line, void *ctx)
 {
-  struct stats *stats = (struct stats *)ctx;
+  struct stats *stats = (struct stats *) ctx;
   char *rest = line;
   char *key = wsep(&rest);
-  unsigned long long count = 0, sum = 0;
+  unsigned long long count = 0;
+  unsigned long long sum = 0;
 
-  if (key == NULL || rest == NULL)
+  if (stats == NULL || key == NULL || rest == NULL)
     return 0;
 
   if (sscanf(rest, "%llu samples %*s %*u %*u %llu", &count, &sum) != 2)
@@ -51,6 +53,8 @@ static void mdc_collect_fs(struct stats *stats, const char *d_name)
 {
   char *path = NULL;
 
+  if (stats == NULL || d_name == NULL)
+    return;
   if (asprintf(&path, "%s/%s/stats", MDC_DIR_PATH, d_name) < 0) {
     ERROR("cannot create path: %m\n");
     return;
@@ -61,11 +65,15 @@ static void mdc_collect_fs(struct stats *stats, const char *d_name)
 
 static void mdc_each(const char *base, const char *name, void *ctx)
 {
-  struct stats_type *type = (struct stats_type *)ctx;
-  const char *mnt = lustre_obd_to_mnt(name);
+  struct stats_type *type = (struct stats_type *) ctx;
+  const char *mnt;
   struct stats *stats;
 
-  (void)base;
+  (void) base;
+  if (type == NULL || name == NULL)
+    return;
+
+  mnt = lustre_obd_to_mnt(name);
   if (mnt == NULL)
     return;
 
@@ -80,6 +88,8 @@ static void mdc_each(const char *base, const char *name, void *ctx)
 
 static void mdc_collect(struct stats_type *type)
 {
+  if (type == NULL)
+    return;
   sys_iter_for_each(MDC_DIR_PATH, mdc_each, type);
 }
 

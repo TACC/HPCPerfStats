@@ -1,5 +1,9 @@
+/*
+ * On-disk stats archive client: open, deferred marks, append sample on close.
+ */
 #ifndef _STATS_FILE_H_
 #define _STATS_FILE_H_
+
 #include <stdio.h>
 
 struct stats_file {
@@ -13,7 +17,8 @@ struct stats_file {
 };
 
 int stats_file_open(struct stats_file *sf, const char *path);
-int stats_file_mark(struct stats_file *sf, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+int stats_file_mark(struct stats_file *sf, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
 int stats_file_close(struct stats_file *sf);
 
 #endif

@@ -1,3 +1,4 @@
+/* host_block — block device I/O counters from /sys/block/<dev>/stat. */
 #include <stddef.h>
 #include <string.h>
 #include "stats.h"

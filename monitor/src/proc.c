@@ -1,3 +1,4 @@
+/* host_proc — per-user process VM stats from /proc/<pid>/status. */
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -7,7 +8,6 @@
 #include <fnmatch.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/param.h>
 #include <unistd.h>
 #include <pwd.h>
 #include <time.h>
@@ -19,20 +19,20 @@
 #include "monitor_log.h"
 #include "host_key_alias.h"
 
-#define KEYS                                                            \
-  X(uid, "", "user id"),						\
-    X(vm_peak, "U=kB", "Peak vm size"),					\
-    X(vm_size, "U=kB", "Current vm size"),				\
-    X(vm_lck, "U=kB", "Locked mem size"),				\
-    X(vm_hwm, "U=kB", "Peak resident set size"),				\
-    X(vm_rss, "U=kB", "Current resident set size"),			\
-    X(vm_data, "U=kB", "size of data"),					\
-    X(vm_stk, "U=kB", "size of stack"),					\
-    X(vm_exe, "U=kB", "size of text"),					\
-    X(vm_lib, "U=kB", "shared lib code size"),				\
-    X(vm_pte, "U=kB", "page table entry size"),				\
-    X(vm_swap, "U=kB", "swapped vm size"),				\
-    X(threads, "", "number of threads"),				\
+#define KEYS \
+  X(uid, "", "user id"), \
+  X(vm_peak, "U=kB", "Peak vm size"), \
+  X(vm_size, "U=kB", "Current vm size"), \
+  X(vm_lck, "U=kB", "Locked mem size"), \
+  X(vm_hwm, "U=kB", "Peak resident set size"), \
+  X(vm_rss, "U=kB", "Current resident set size"), \
+  X(vm_data, "U=kB", "size of data"), \
+  X(vm_stk, "U=kB", "size of stack"), \
+  X(vm_exe, "U=kB", "size of text"), \
+  X(vm_lib, "U=kB", "shared lib code size"), \
+  X(vm_pte, "U=kB", "page table entry size"), \
+  X(vm_swap, "U=kB", "swapped vm size"), \
+  X(threads, "", "number of threads")
 
 static unsigned long g_proc_collect_failures;
 static time_t g_proc_collect_skip_until;
@@ -65,6 +65,27 @@ static int proc_collect_skip_active(void)
   }
   return 1;
 }
+
+static int proc_status_skip_process_name(const char *name)
+{
+  if (name == NULL)
+    return 1;
+  return !strcmp(name, "bash") || !strcmp(name, "ssh")
+      || !strcmp(name, "sshd") || !strcmp(name, "metacity");
+}
+
+static int proc_status_copy_field(char *dst, size_t dst_size, const char *src)
+{
+  int n;
+
+  if (dst == NULL || dst_size == 0 || src == NULL)
+    return -1;
+  n = snprintf(dst, dst_size, "%s", src);
+  if (n < 0 || (size_t)n >= dst_size)
+    return -1;
+  return 0;
+}
+
 static void proc_collect_pid(struct stats_type *type, const char *pid)
 {
   struct stats *stats = NULL;
@@ -74,7 +95,6 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
   char file_buf[4096];
   char *line = NULL;
   size_t line_size = 0;
-
   char name[16];
   char cmask[512];
   char mmask[32];
@@ -89,35 +109,35 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
   if (file == NULL)
     goto out;
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
-  
+
   name[0] = '\0';
   cmask[0] = '\0';
   mmask[0] = '\0';
   while (getline(&line, &line_size, file) >= 0) {
-    char *key, *rest = line;
+    char *key;
+    char *rest = line;
     size_t rest_len;
+
     key = wsep(&rest);
-    
     if (key == NULL || rest == NULL)
-	continue;
+      continue;
 
     rest_len = strlen(rest);
     if (rest_len > 0 && rest[rest_len - 1] == '\n')
       rest[rest_len - 1] = '\0';
-    if (strcmp(key, "Name:") == 0) {     
-      if (!strcmp("bash", rest) || !strcmp("ssh", rest) || 
-	  !strcmp("sshd", rest) || !strcmp("metacity", rest))
-	goto out;
-      
-      strcpy(name, rest);
+    if (strcmp(key, "Name:") == 0) {
+      if (proc_status_skip_process_name(rest))
+        goto out;
+      if (proc_status_copy_field(name, sizeof(name), rest) < 0)
+        goto out;
       name_ready = 1;
-    }
-    else if (strcmp(key, "Cpus_allowed_list:") == 0) {
-      strcpy(cmask, rest);
+    } else if (strcmp(key, "Cpus_allowed_list:") == 0) {
+      if (proc_status_copy_field(cmask, sizeof(cmask), rest) < 0)
+        goto out;
       cmask_ready = 1;
-    }
-    else if (strcmp(key, "Mems_allowed_list:") == 0) {
-      strcpy(mmask, rest);
+    } else if (strcmp(key, "Mems_allowed_list:") == 0) {
+      if (proc_status_copy_field(mmask, sizeof(mmask), rest) < 0)
+        goto out;
       mmask_ready = 1;
     }
     if (stats == NULL && name_ready && cmask_ready && mmask_ready) {
@@ -128,50 +148,48 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
       errno = 0;
       key[strlen(key) - 1] = '\0';
       {
-	unsigned long long val = strtoull(rest, NULL, 0);
-	if (errno == 0)
-	  host_key_alias_emit(stats, key, val);
+        unsigned long long val = strtoull(rest, NULL, 0);
+        if (errno == 0)
+          host_key_alias_emit(stats, key, val);
       }
     }
   }
-  
+
  out:
   free(line);
   if (file != NULL)
     fclose(file);
-
 }
 
-int filter(const struct dirent *dir)
+static int proc_filter_pid(const struct dirent *dir)
 {
+  char path[32];
+  struct stat dirinfo;
+  struct passwd *pwd;
+
   if (fnmatch("[1-9]*", dir->d_name, 0))
     return 0;
 
-  struct stat dirinfo;
-
-  int len = strlen(dir->d_name) + 7; 
-  char path[len];
-
-  strcpy(path, "/proc/");
-  strcat(path, dir->d_name);
+  if (snprintf(path, sizeof(path), "/proc/%s", dir->d_name) >= (int)sizeof(path))
+    return 0;
 
   if (stat(path, &dirinfo) < 0 || dirinfo.st_uid == 0) {
     TRACE("Do not include this proc entry %s", path);
     return 0;
   }
 
-  struct passwd *pwd;
   pwd = getpwuid(dirinfo.st_uid);
-  if (pwd == NULL || !strcmp("postfix", pwd->pw_name) || !strcmp("rpc", pwd->pw_name) || !strcmp("rpcuser", pwd->pw_name) || !strcmp("dbus", pwd->pw_name) || 
-      !strcmp("daemon", pwd->pw_name) || !strcmp("ntp", pwd->pw_name))
+  if (pwd == NULL || !strcmp("postfix", pwd->pw_name)
+      || !strcmp("rpc", pwd->pw_name) || !strcmp("rpcuser", pwd->pw_name)
+      || !strcmp("dbus", pwd->pw_name) || !strcmp("daemon", pwd->pw_name)
+      || !strcmp("ntp", pwd->pw_name))
     return 0;
-  
+
   return 1;
 }
 
-static void proc_collect(struct stats_type *type) 
+static void proc_collect(struct stats_type *type)
 {
-
   struct dirent **namelist;
   int n;
   int n_scanned = 0;
@@ -182,14 +200,14 @@ static void proc_collect(struct stats_type *type)
   if (proc_collect_skip_active())
     return;
 
-  n = scandir("/proc", &namelist, filter, 0);
+  n = scandir("/proc", &namelist, proc_filter_pid, 0);
   if (n < 0) {
     g_proc_collect_failures++;
     g_proc_collect_skip_until = time(NULL) + cooldown_sec;
     ERROR("Not enough memory.");
   } else {
     n_scanned = n;
-    while(n--) {
+    while (n--) {
       proc_collect_pid(type, namelist[n]->d_name);
       free(namelist[n]);
     }
@@ -198,10 +216,10 @@ static void proc_collect(struct stats_type *type)
       time_t elapsed = time(NULL) - started;
 
       if (elapsed >= warn_sec) {
-	monitor_log_warn(
-	    "proc collector: long cycle elapsed=%lds scanned=%d; cooling down %ds\n",
-	    (long)elapsed, n_scanned, cooldown_sec);
-	g_proc_collect_skip_until = time(NULL) + cooldown_sec;
+        monitor_log_warn(
+            "proc collector: long cycle elapsed=%lds scanned=%d; cooling down %ds\n",
+            (long)elapsed, n_scanned, cooldown_sec);
+        g_proc_collect_skip_until = time(NULL) + cooldown_sec;
       }
     }
   }
@@ -213,5 +231,4 @@ struct stats_type proc_stats_type = {
 #define X SCHEMA_DEF
   .st_schema_def = JOIN(KEYS),
 #undef X
-
 };

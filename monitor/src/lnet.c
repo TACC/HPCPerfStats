@@ -1,15 +1,11 @@
+/* host_lnet — Lustre LNET router/client counters from /proc/sys/lnet/stats. */
 #include <stddef.h>
 #include "stats.h"
 #include "collect.h"
 #include "trace.h"
 
-// # cat /proc/sys/lnet/stats
-// # cat /sys/kernel/debug/lnet/stats -> Lustre Client > 2.6
-// 0 1172 0 195805494 204125982 0 16957 216828482753 708781379083 0 3268048
-//
-// See lustre-1.8.5/lnet/lnet/router_proc.c
+/* Field order matches lustre lnet/router_proc.c; see kernel comment in tree. */
 
-/* Keys match /proc/sys/lnet/stats field order (see comment above). */
 #define KEYS \
   X(msgs_alloc, "E", ""), \
   X(msgs_alloc_max, "E", ""), \
@@ -25,12 +21,15 @@
 
 static void lnet_collect(struct stats_type *type)
 {
-  struct stats *stats = get_current_stats(type, NULL);
+  struct stats *stats;
 
+  if (type == NULL)
+    return;
+  stats = get_current_stats(type, NULL);
   if (stats == NULL)
     return;
 
-#define X(k,r...) #k
+#define X(k, r...) #k
   path_collect_key_list("/proc/sys/lnet/stats", stats, KEYS, NULL);
 #undef X
 }

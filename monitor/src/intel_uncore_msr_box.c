@@ -1,3 +1,7 @@
+/*! \file intel_uncore_msr_box.c
+ *  MSR-based Intel CBo/CHA uncore box programming and collect.
+ */
+
 #include "intel_uncore_msr_box.h"
 
 #include <errno.h>
@@ -23,11 +27,11 @@
 static uint64_t snb_ivb_cbox_filter(void)
 {
   return (uint64_t)((0x0ULL << 0) | (0x00ULL << 10) | (0x1FULL << 18)
-		    | (0x000ULL << 23));
+        | (0x000ULL << 23));
 }
 
 int intel_uncore_cbo_snb_ivb_begin_box(char *cpu, int box, uint64_t *events,
-				       size_t nr_events)
+               size_t nr_events)
 {
   int rc = -1;
   char msr_path[80];
@@ -61,14 +65,14 @@ int intel_uncore_cbo_snb_ivb_begin_box(char *cpu, int box, uint64_t *events,
 
   for (i = 0; i < nr_events; i++) {
     TRACE("MSR %08X, event %016llX\n",
-	  SNB_CTL0 + offset + (int)i,
-	  (unsigned long long)events[i]);
+    SNB_CTL0 + offset + (int)i,
+    (unsigned long long)events[i]);
     if (pwrite(msr_fd, &events[i], sizeof(events[i]),
-	       SNB_CTL0 + offset + (int)i)
-	< 0) {
+         SNB_CTL0 + offset + (int)i)
+  < 0) {
       ERROR("cannot write event %016llX to MSR %08X through `%s': %m\n",
-	    (unsigned long long)events[i],
-	    (unsigned)(SNB_CTL0 + offset + (int)i), msr_path);
+      (unsigned long long)events[i],
+      (unsigned)(SNB_CTL0 + offset + (int)i), msr_path);
       goto out;
     }
   }
@@ -89,8 +93,8 @@ out:
 }
 
 void intel_uncore_cbo_snb_ivb_collect_box(struct stats_type *type, char *cpu,
-					  int pkg_id, int box,
-					  const char *const ctr_keys[4])
+            int pkg_id, int box,
+            const char *const ctr_keys[4])
 {
   struct stats *stats = NULL;
   char msr_path[80];
@@ -122,7 +126,7 @@ void intel_uncore_cbo_snb_ivb_collect_box(struct stats_type *type, char *cpu,
 
     if (pread(msr_fd, &val, sizeof(val), addr) < 0)
       ERROR("cannot read `%s' (%08X) through `%s': %m\n", key, addr,
-	    msr_path);
+      msr_path);
     else if (key != NULL)
       stats_set(stats, key, val);
   }
@@ -143,17 +147,17 @@ out:
 static uint64_t hsw_bdw_cbox_filter0(void)
 {
   return (uint64_t)((0x0ULL << 0) | (0x00ULL << 10) | (0x3FULL << 18)
-		    | (0x000ULL << 23));
+        | (0x000ULL << 23));
 }
 
 static uint64_t hsw_bdw_cbox_filter1(void)
 {
   return (uint64_t)((0x0000ULL << 0) | (0x00ULL << 20) | (0x0ULL << 30)
-		    | (0x0ULL << 31));
+        | (0x0ULL << 31));
 }
 
 int intel_uncore_cbo_hsw_bdw_begin_box(char *cpu, int box, uint64_t *events,
-				       size_t nr_events)
+               size_t nr_events)
 {
   int rc = -1;
   char msr_path[80];
@@ -193,14 +197,14 @@ int intel_uncore_cbo_hsw_bdw_begin_box(char *cpu, int box, uint64_t *events,
 
   for (i = 0; i < nr_events; i++) {
     TRACE("MSR %08X, event %016llX\n",
-	  HSW_CTL0 + offset + (int)i,
-	  (unsigned long long)events[i]);
+    HSW_CTL0 + offset + (int)i,
+    (unsigned long long)events[i]);
     if (pwrite(msr_fd, &events[i], sizeof(events[i]),
-	       HSW_CTL0 + offset + (int)i)
-	< 0) {
+         HSW_CTL0 + offset + (int)i)
+  < 0) {
       ERROR("cannot write event %016llX to MSR %08X through `%s': %m\n",
-	    (unsigned long long)events[i],
-	    (unsigned)(HSW_CTL0 + offset + (int)i), msr_path);
+      (unsigned long long)events[i],
+      (unsigned)(HSW_CTL0 + offset + (int)i), msr_path);
       goto out;
     }
   }
@@ -221,8 +225,8 @@ out:
 }
 
 void intel_uncore_cbo_hsw_bdw_collect_box(struct stats_type *type, char *cpu,
-					   int pkg_id, int box,
-					   const char *const ctr_keys[4])
+             int pkg_id, int box,
+             const char *const ctr_keys[4])
 {
   struct stats *stats = NULL;
   char msr_path[80];
@@ -254,7 +258,7 @@ void intel_uncore_cbo_hsw_bdw_collect_box(struct stats_type *type, char *cpu,
 
     if (pread(msr_fd, &val, sizeof(val), addr) < 0)
       ERROR("cannot read `%s' (%08X) through `%s': %m\n", key, addr,
-	    msr_path);
+      msr_path);
     else if (key != NULL)
       stats_set(stats, key, val);
   }
@@ -274,7 +278,7 @@ out:
 #define SKX_CTR0		      0xE08
 
 int intel_uncore_cha_skx_begin_box(char *cpu, int box, uint64_t *events,
-				   size_t nr_events)
+           size_t nr_events)
 {
   int rc = -1;
   char msr_path[80];
@@ -320,14 +324,14 @@ int intel_uncore_cha_skx_begin_box(char *cpu, int box, uint64_t *events,
 
   for (i = 0; i < nr_events; i++) {
     TRACE("MSR %08X, event %016llX\n",
-	  SKX_CTL0 + offset + (int)i,
-	  (unsigned long long)events[i]);
+    SKX_CTL0 + offset + (int)i,
+    (unsigned long long)events[i]);
     if (pwrite(msr_fd, &events[i], sizeof(events[i]),
-	       SKX_CTL0 + offset + (int)i)
-	< 0) {
+         SKX_CTL0 + offset + (int)i)
+  < 0) {
       ERROR("cannot write event %016llX to MSR %08X through `%s': %m\n",
-	    (unsigned long long)events[i],
-	    (unsigned)(SKX_CTL0 + offset + (int)i), msr_path);
+      (unsigned long long)events[i],
+      (unsigned)(SKX_CTL0 + offset + (int)i), msr_path);
       goto out;
     }
   }
@@ -348,8 +352,8 @@ out:
 }
 
 void intel_uncore_cha_skx_collect_box(struct stats_type *type, char *cpu,
-				       int pkg_id, int box,
-				       const char *const ctr_keys[4])
+               int pkg_id, int box,
+               const char *const ctr_keys[4])
 {
   struct stats *stats = NULL;
   char msr_path[80];
@@ -381,7 +385,7 @@ void intel_uncore_cha_skx_collect_box(struct stats_type *type, char *cpu,
 
     if (pread(msr_fd, &val, sizeof(val), addr) < 0)
       ERROR("cannot read `%s' (%08X) through `%s': %m\n", key, addr,
-	    msr_path);
+      msr_path);
     else if (key != NULL)
       stats_set(stats, key, val);
   }

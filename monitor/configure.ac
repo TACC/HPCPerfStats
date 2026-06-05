@@ -1,7 +1,5 @@
 AC_INIT([hpcperfstats], [3.0], [sharrell@tacc.utexas.edu])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror -Wno-portability])
-dnl Avoid Makefile rules that re-run autoconf/automake during make dist / normal builds.
-AM_MAINTAINER_MODE([disable])
 AC_CANONICAL_HOST
 AC_PROG_CC
 AM_PROG_CC_C_O
@@ -104,15 +102,6 @@ esac],
 [hardware=true])
 AM_CONDITIONAL([HARDWARE], [test x$hardware = xtrue])
 
-AC_ARG_ENABLE([legacy-pmcs],
-[AS_HELP_STRING([--enable-legacy-pmcs], [Enable legacy monitoring paths (AMD Family 10h PMC programming; Intel MIC / Xeon Phi requires this together with --enable-mic). Default is disabled.])],
-[case "${enableval}" in
-  yes) legacy_pmcs=true ;;
-  no)  legacy_pmcs=false ;;
-  *) AC_MSG_ERROR([bad value ${enableval} for --enable-legacy-pmcs]) ;;
-esac],
-[legacy_pmcs=false])
-
 AC_ARG_WITH([cpu-counter-backend],
 [AS_HELP_STRING([--with-cpu-counter-backend={auto|likwid|dcgm}], [CPU counter backend selection (default: auto)])],
 [cpu_counter_backend="$withval"],
@@ -141,23 +130,24 @@ if test "x$cpu_counter_backend" = "xlikwid" && test "x$is_x86" != "xtrue"; then
 fi
 
 if test "x$cpu_counter_backend" = "xlikwid"; then
-  dnl liblikwid.a pulls symbols from nested archives; AC_SEARCH_LIBS([-llikwid]) alone fails.
-  dnl Use a grouped probe for both --enable-all-static and builds that still link LIKWID as .a.
-  LIKWID_PROBE_LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm -lpthread -ldl -lrt"
-  save_LIBS=$LIBS
-  LIBS="${LIKWID_PROBE_LIBS} $LIBS"
-  AC_LINK_IFELSE(
-    [AC_LANG_PROGRAM([[#include <likwid.h>]], [[perfmon_init(0, NULL);]])],
-    [have_likwid=yes],
-    [have_likwid=no]
-  )
-  LIBS=$save_LIBS
-  AS_IF([test "x$have_likwid" != xyes], [AC_MSG_ERROR([Unable to find liblikwid!])])
-  dnl Do not append -lm here: fully-static links fold -lm inside -Wl,-Bstatic groups elsewhere.
-  LIBS="$LIBS -llikwid -llikwid-hwloc -llikwid-lua -lrt"
+  dnl Static liblikwid.a needs hwloc/lua archives and -lm on the same link line; AC_SEARCH_LIBS
+  dnl probes with -llikwid only unless we pass other libs for the try link.
+  if test "x$enable_all_static" = xyes; then
+    AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
+      [AC_MSG_ERROR([Unable to find liblikwid!])],
+      [-llikwid-hwloc -llikwid-lua -lm])
+  else
+    AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
+      [AC_MSG_ERROR([Unable to find liblikwid!])])
+  fi
   if test "x${have_likwid}" = xyes; then
     AC_CHECK_HEADERS([likwid.h], [likwid=true],
       [AC_MSG_ERROR([Unable to find likwid.h!])])
+  fi
+  dnl Static LIKWID: nested liblikwid-hwloc.a provides likwid_hwloc_*; liblikwid-lua.a for Lua.
+  dnl Do not append -lm here: final link uses shared libm outside -Wl,-Bstatic; probe above used -lm only for the try link.
+  if test "x$enable_all_static" = xyes; then
+    LIBS="$LIBS -llikwid-hwloc -llikwid-lua"
   fi
 fi
 AM_CONDITIONAL([LIKWID], [test x$likwid = xtrue])
@@ -206,17 +196,7 @@ esac
 
 if test "x$monitor_arch" = "xauto"; then
   case "$host_cpu" in
-    x86_64|i?86)
-      if test -r /proc/cpuinfo; then
-        if grep -Eiq 'vendor_id.*(AuthenticAMD|HygonGenuine)' /proc/cpuinfo; then
-          monitor_arch="amd"
-        else
-          monitor_arch="intel"
-        fi
-      else
-        monitor_arch="intel"
-      fi
-      ;;
+    x86_64|i?86) monitor_arch="intel" ;;
     aarch64|arm*|ppc64*|riscv64) monitor_arch="intel" ;;
     *) monitor_arch="intel" ;;
   esac
@@ -232,11 +212,11 @@ fi
 AC_SUBST([MONITOR_ARCH_CPPFLAG])
 AM_CONDITIONAL([MONITOR_ARCH_INTEL], [test "x$monitor_arch" = "xintel"])
 AM_CONDITIONAL([MONITOR_ARCH_AMD], [test "x$monitor_arch" = "xamd"])
+monitor_arch_arm=false
 case "$host_cpu" in
   aarch64|arm*) monitor_arch_arm=true ;;
-  *) monitor_arch_arm=false ;;
 esac
-AM_CONDITIONAL([MONITOR_ARCH_ARM], [test "x$monitor_arch_arm" = "xtrue"])
+AM_CONDITIONAL([MONITOR_ARCH_ARM], [test x$monitor_arch_arm = xtrue])
 
 AC_MSG_NOTICE([CPU counter backend: ${cpu_counter_backend} (host_cpu=${host_cpu})])
 
@@ -272,9 +252,6 @@ AC_ARG_ENABLE([mic],
 esac],
 [mic=false])
 AM_CONDITIONAL([MIC], [test x$mic = xtrue])
-if test "x$mic" = xtrue && test "x$legacy_pmcs" != xtrue; then
-  AC_MSG_ERROR([--enable-mic requires --enable-legacy-pmcs (Intel MIC / Xeon Phi support is legacy-only)])
-fi
 
 AC_ARG_ENABLE([gpu],
 [  --enable-gpu		Enable Nvidia GPU support (default is auto-detect)],
@@ -291,9 +268,10 @@ if test "x$gpu" = "xauto"; then
   gpu_autodetect_result="no-nvidia"
   AC_PATH_PROG([LSPCI], [lspci], [no])
   if test "x$LSPCI" != "xno"; then
-    dnl Use match() not index(): m4 treats index() as a macro and corrupts configure.
-    dnl Match common PCI classes for NVIDIA GPUs (3D, Display, Processing accelerators, VGA).
-    if $LSPCI -nn 2>/dev/null | awk '{ l=tolower($0); if ((match(l,/vga compatible controller/) || match(l,/3d controller/) || match(l,/display controller/) || match(l,/processing accelerators/)) && match(l,/nvidia/)) found=1 } END { exit(found ? 0 : 1) }'; then
+    if $LSPCI -nn 2>/dev/null | awk '{
+      l=tolower($0);
+      if ((index(l, "vga compatible controller") || index(l, "3d controller")) && index(l, "nvidia")) found=1
+    } END { exit(found ? 0 : 1) }'; then
       gpu=true
       gpu_autodetect_result="nvidia-found"
     fi
@@ -353,7 +331,11 @@ if test "x$amd_gpu" = "xauto"; then
   amd_gpu_autodetect_result="no-amd"
   AC_PATH_PROG([LSPCI], [lspci], [no])
   if test "x$LSPCI" != "xno"; then
-    if $LSPCI -nn 2>/dev/null | awk '{ l=tolower($0); if ((match(l,/vga compatible controller/) || match(l,/3d controller/) || match(l,/display controller/) || match(l,/processing accelerators/)) && (match(l,/advanced micro devices/) || match(l,/ amd\/ati /))) found=1 } END { exit(found ? 0 : 1) }'; then
+    if $LSPCI -nn 2>/dev/null | awk '{
+      l=tolower($0);
+      if ((index(l, "vga compatible controller") || index(l, "3d controller")) &&
+          (index(l, "advanced micro devices") || index(l, " amd/ati "))) found=1
+    } END { exit(found ? 0 : 1) }'; then
       amd_gpu=true
       amd_gpu_autodetect_result="amd-found"
     fi
@@ -386,6 +368,55 @@ esac],
 [opa=false])
 AM_CONDITIONAL([OPA], [test x$opa = xtrue])
 
+AC_ARG_ENABLE([metric-profiler],
+[AS_HELP_STRING([--enable-metric-profiler], [Enable per-collect timing profiler (default: no)])],
+[case "${enableval}" in
+  yes) metric_profiler=true ;;
+  no)  metric_profiler=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable-metric-profiler]) ;;
+esac],
+[metric_profiler=false])
+
+AC_ARG_WITH([metric-profiler-backend],
+[AS_HELP_STRING([--with-metric-profiler-backend={none,ebpf}],
+  [Metric profiler backend (default: none)])],
+[metric_profiler_backend="$withval"],
+[metric_profiler_backend="none"])
+
+case "$metric_profiler_backend" in
+  none|ebpf) ;;
+  *) AC_MSG_ERROR([bad value ${metric_profiler_backend} for --with-metric-profiler-backend]) ;;
+esac
+
+METRIC_PROFILER_CPPFLAG=""
+METRIC_PROFILER_BACKEND_CPPFLAG=""
+if test "x$metric_profiler" = xtrue; then
+  METRIC_PROFILER_CPPFLAG="-DMONITOR_METRIC_PROFILER"
+  if test "x$metric_profiler_backend" = xebpf; then
+    METRIC_PROFILER_BACKEND_CPPFLAG="-DMONITOR_METRIC_PROFILER_EBPF"
+  fi
+fi
+AC_SUBST([METRIC_PROFILER_CPPFLAG])
+AC_SUBST([METRIC_PROFILER_BACKEND_CPPFLAG])
+AM_CONDITIONAL([METRIC_PROFILER], [test x$metric_profiler = xtrue])
+AM_CONDITIONAL([METRIC_PROFILER_BACKEND_EBPF],
+  [test x$metric_profiler = xtrue && test x$metric_profiler_backend = xebpf])
+
+AC_ARG_ENABLE([legacy-pmcs],
+[AS_HELP_STRING([--enable-legacy-pmcs],
+  [Enable legacy monitoring paths (AMD Family 10h PMC programming; required for --enable-mic)])],
+[case "${enableval}" in
+  yes) legacy_pmcs=true ;;
+  no)  legacy_pmcs=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable-legacy-pmcs]) ;;
+esac],
+[legacy_pmcs=false])
+AM_CONDITIONAL([LEGACY_PMCS], [test x$legacy_pmcs = xtrue])
+
+if test "x$mic" = xtrue && test "x$legacy_pmcs" != xtrue; then
+  AC_MSG_ERROR([--enable-mic requires --enable-legacy-pmcs (Intel MIC / Xeon Phi support is legacy-only)])
+fi
+
 AC_ARG_ENABLE([debug],
 [  --enable-debug	Turn on debugging (default is false)],
 [case "${enableval}" in
@@ -396,51 +427,7 @@ esac],
 [debug=false])
 AM_CONDITIONAL([DEBUG], [test x$debug = xtrue])
 
-AC_ARG_ENABLE([metric-profiler],
-[AS_HELP_STRING([--enable-metric-profiler], [Enable compile-time metric profiling instrumentation (default: no)])],
-[case "${enableval}" in
-  yes) metric_profiler=true ;;
-  no)  metric_profiler=false ;;
-  *) AC_MSG_ERROR([bad value ${enableval} for --enable-metric-profiler]) ;;
-esac],
-[metric_profiler=false])
-AM_CONDITIONAL([METRIC_PROFILER], [test x$metric_profiler = xtrue])
-if test "x$metric_profiler" = "xtrue"; then
-  METRIC_PROFILER_CPPFLAG="-DMONITOR_METRIC_PROFILER"
-else
-  METRIC_PROFILER_CPPFLAG=""
-fi
-AC_SUBST([METRIC_PROFILER_CPPFLAG])
-
-AC_ARG_WITH([metric-profiler-backend],
-[AS_HELP_STRING([--with-metric-profiler-backend={none,ebpf}], [Metric profiler attribution backend (default: none)])],
-[metric_profiler_backend="$withval"],
-[metric_profiler_backend="none"])
-case "$metric_profiler_backend" in
-  none|ebpf) ;;
-  *) AC_MSG_ERROR([bad value ${metric_profiler_backend} for --with-metric-profiler-backend]) ;;
-esac
-if test "x$metric_profiler" != "xtrue" && test "x$metric_profiler_backend" != "xnone"; then
-  AC_MSG_ERROR([--with-metric-profiler-backend requires --enable-metric-profiler])
-fi
-METRIC_PROFILER_BACKEND_CPPFLAG=""
-if test "x$metric_profiler_backend" = "xebpf"; then
-  AC_CHECK_HEADERS([bpf/libbpf.h linux/bpf.h], [],
-    [AC_MSG_ERROR([Unable to find bpf/libbpf.h and linux/bpf.h for eBPF metric profiler backend])])
-  AC_SEARCH_LIBS([bpf_object__open], [bpf], [have_libbpf=yes],
-    [AC_MSG_ERROR([Unable to find libbpf for eBPF metric profiler backend])], [-lelf -lz])
-  METRIC_PROFILER_BACKEND_CPPFLAG="-DMONITOR_METRIC_PROFILER_EBPF"
-fi
-AM_CONDITIONAL([METRIC_PROFILER_BACKEND_EBPF], [test x$metric_profiler_backend = xebpf])
-AC_SUBST([METRIC_PROFILER_BACKEND_CPPFLAG])
-
-dnl Static libev.a calls libm (e.g. floor). Probe libm without leaving -lm in LIBS:
-dnl --enable-all-static wraps LIBS in -Wl,-Bstatic; static libm.a is often unavailable.
-save_LIBS=$LIBS
-LIBS=
-AC_SEARCH_LIBS([floor], [m], [], [AC_MSG_ERROR([Unable to find libm (floor)])])
-LIBS=$save_LIBS
-AC_SEARCH_LIBS([ev_run], [ev], [libev=yes], [AC_MSG_ERROR([Failed to find libev])], [-lm])
+AC_SEARCH_LIBS([ev_run], [ev], [libev=yes], [AC_MSG_ERROR([Failed to find libev])])
 AC_CHECK_HEADERS([ev.h], [ev=true], [AC_MSG_ERROR([Failed to find header ev.h])])
 
 if test "x$enable_all_static" = xyes; then
@@ -464,21 +451,6 @@ AS_IF([test "x$with_systemduserunitdir" = "xyes" -o "x$with_systemduserunitdir" 
 AS_IF([test "x$with_systemduserunitdir" != "xno"],
       [AC_SUBST([systemduserunitdir], [$with_systemduserunitdir])])
 AM_CONDITIONAL([HAVE_SYSTEMD], [test "x$with_systemduserunitdir" != "xno"])
-
-dnl Optional stats modules: must stay aligned with src/Makefile.am TYPES (+ stats_registry.c).
-AM_COND_IF([HARDWARE], [AC_DEFINE([MONITOR_WITH_HARDWARE], [1], [Hardware counter stats modules])])
-AM_COND_IF([INFINIBAND], [AC_DEFINE([MONITOR_WITH_INFINIBAND], [1], [Extended InfiniBand stats])])
-AM_COND_IF([LUSTRE], [AC_DEFINE([MONITOR_WITH_LUSTRE], [1], [Lustre mdc/llite stats])])
-AM_COND_IF([MIC], [AC_DEFINE([MONITOR_WITH_MIC], [1], [Intel MIC stats])])
-AM_COND_IF([OPA], [AC_DEFINE([MONITOR_WITH_OPA], [1], [Intel OPA stats])])
-AM_COND_IF([GPU], [AC_DEFINE([MONITOR_WITH_GPU], [1], [NVIDIA GPU stats])])
-AM_COND_IF([AMD_GPU], [AC_DEFINE([MONITOR_WITH_AMD_GPU], [1], [AMD GPU stats])])
-AM_COND_IF([MONITOR_ARCH_ARM],
-  [AC_DEFINE([MONITOR_HOST_IS_ARM], [1], [ARM/aarch64-only stats modules (e.g. arm_imc)])])
-
-AS_IF([test "x$legacy_pmcs" = xtrue],
-  [AC_DEFINE([MONITOR_LEGACY_PMCS], [1],
-    [Legacy PMC programming paths (AMD Family 10h) and related knobs])])
 
 AC_CONFIG_FILES([Makefile src/Makefile tests/Makefile])
 AC_OUTPUT

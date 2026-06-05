@@ -1,3 +1,7 @@
+/*! \file intel_uncore_pci.h
+ *  PCI uncore configuration for intel_x86_uncore_* types.
+ */
+
 #ifndef INTEL_UNCORE_PCI_H_
 #define INTEL_UNCORE_PCI_H_
 
@@ -19,9 +23,9 @@ struct intel_uncore_pci_cfg {
 };
 
 int intel_uncore_pci_begin(const struct intel_uncore_pci_cfg *cfg,
-			   struct stats_type *type);
+         struct stats_type *type);
 
 void intel_uncore_pci_collect(const struct intel_uncore_pci_cfg *cfg,
-			      struct stats_type *type);
+            struct stats_type *type);
 
 #endif

@@ -1,16 +1,18 @@
+/* Path and string collectors that parse kernel text into stats metrics. */
+#include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <dirent.h>
-#include <stdarg.h>
-#include <errno.h>
-#include <ctype.h>
 #include <string.h>
-#include "stats.h"
-#include "trace.h"
+
 #include "collect.h"
 #include "path_open_fail_once.h"
 #include "path_read.h"
+#include "stats.h"
 #include "string1.h"
+#include "trace.h"
 
 #define COLLECT_SMALL_BUF 4096
 
@@ -30,28 +32,56 @@ static char *collect_slurp_file(const char *path)
   char *buf = NULL;
   size_t len = 0;
 
+  if (path == NULL)
+    return NULL;
+
   if (path_read_alloc(path, &buf, &len, &collect_read_opts) < 0)
     return NULL;
   return buf;
+}
+
+static const char *collect_skip_ws(const char *p)
+{
+  while (*p != '\0' && isspace((unsigned char) *p))
+    p++;
+  return p;
+}
+
+static int collect_parse_one_ull(const char **p, unsigned long long *out)
+{
+  char *end = NULL;
+  unsigned long long v;
+
+  *p = collect_skip_ws(*p);
+  if (**p == '\0')
+    return 0;
+
+  errno = 0;
+  v = strtoull(*p, &end, 0);
+  if (errno != 0 || end == *p)
+    return 0;
+
+  *out = v;
+  *p = end;
+  return 1;
 }
 
 int path_collect_single(const char *path, unsigned long long *dest)
 {
   char buf[COLLECT_SMALL_BUF];
   size_t n;
-  unsigned long long val;
-  char *end = NULL;
+  const char *p;
+
+  if (path == NULL || dest == NULL)
+    return -1;
 
   if (collect_read_small(path, buf, sizeof(buf), &n) < 0)
     return -1;
 
-  errno = 0;
-  val = strtoull(buf, &end, 0);
-  if (errno != 0 || end == buf) {
+  p = buf;
+  if (!collect_parse_one_ull(&p, dest))
     return 0;
-  }
 
-  *dest = val;
   return 1;
 }
 
@@ -61,6 +91,10 @@ int path_collect_list(const char *path, ...)
   size_t n;
   va_list dest_list;
   int rc = 0;
+  const char *p;
+
+  if (path == NULL)
+    return -1;
 
   va_start(dest_list, path);
 
@@ -69,24 +103,17 @@ int path_collect_list(const char *path, ...)
     goto out;
   }
 
-  const char *p = buf;
-  unsigned long long *dest;
-  while ((dest = va_arg(dest_list, unsigned long long *)) != NULL) {
-    while (*p != '\0' && isspace((unsigned char)*p))
-      p++;
-    if (*p == '\0') {
+  p = buf;
+  for (;;) {
+    unsigned long long *dest = va_arg(dest_list, unsigned long long *);
+
+    if (dest == NULL)
+      break;
+
+    if (!collect_parse_one_ull(&p, dest)) {
       ERROR("%s: no value\n", path);
       goto out;
     }
-    errno = 0;
-    char *end = NULL;
-    unsigned long long v = strtoull(p, &end, 0);
-    if (errno != 0 || end == p) {
-      ERROR("%s: no value\n", path);
-      goto out;
-    }
-    *dest = v;
-    p = end;
     rc++;
   }
 
@@ -100,12 +127,19 @@ int str_collect_key_list(const char *str, struct stats *stats, ...)
   int rc = 0;
   int errno_saved = errno;
   va_list key_list;
+
+  if (str == NULL || stats == NULL)
+    return -1;
+
   va_start(key_list, stats);
 
-  const char *key;
-  while ((key = va_arg(key_list, const char *)) != NULL) {
+  for (;;) {
+    const char *key = va_arg(key_list, const char *);
     char *end = NULL;
     unsigned long long val;
+
+    if (key == NULL)
+      break;
 
     errno = 0;
     val = strtoull(str, &end, 0);
@@ -125,40 +159,64 @@ int str_collect_key_list(const char *str, struct stats *stats, ...)
   }
 
  out:
+  va_end(key_list);
   if (errno == 0)
     errno = errno_saved;
 
   return rc;
 }
 
+static char *collect_build_prefixed_key(const char *pre, const char *suf,
+                                        char *key, size_t *key_cap)
+{
+  size_t pre_len = strlen(pre);
+  size_t suf_len = strlen(suf);
+  size_t need = pre_len + suf_len + 1;
+  char *tmp;
+
+  if (need > *key_cap) {
+    tmp = (char *) realloc(key, need);
+    if (tmp == NULL)
+      return NULL;
+    key = tmp;
+    *key_cap = need;
+  }
+
+  if (snprintf(key, need, "%s%s", pre, suf) >= (int) need)
+    return NULL;
+
+  return key;
+}
+
 int str_collect_prefix_key_list(const char *str, struct stats *stats,
-				const char *pre, ...)
+                                const char *pre, ...)
 {
   int rc = 0;
   int errno_saved = errno;
-  size_t pre_len = strlen(pre);
   char *key = NULL;
+  size_t key_cap = 0;
   va_list suf_list;
+
+  if (str == NULL || stats == NULL || pre == NULL)
+    return -1;
+
   va_start(suf_list, pre);
 
-  const char *suf;
-  while ((suf = va_arg(suf_list, const char *)) != NULL) {
-    size_t suf_len = strlen(suf);
-    char *tmp = (char *)realloc(key, pre_len + suf_len + 1);
-    if (tmp == NULL) {
+  for (;;) {
+    const char *suf = va_arg(suf_list, const char *);
+    char *end = NULL;
+    unsigned long long val;
+
+    if (suf == NULL)
+      break;
+
+    key = collect_build_prefixed_key(pre, suf, key, &key_cap);
+    if (key == NULL) {
       ERROR("cannot allocate key string: %m\n");
       goto out;
     }
-    key = tmp;
-
-    memcpy(key, pre, pre_len);
-    memcpy(key + pre_len, suf, suf_len);
-    key[pre_len + suf_len] = 0;
 
     TRACE("pre `%s', suf `%s', key `%s'\n", pre, suf, key);
-
-    char *end = NULL;
-    unsigned long long val;
 
     errno = 0;
     val = strtoull(str, &end, 0);
@@ -179,6 +237,7 @@ int str_collect_prefix_key_list(const char *str, struct stats *stats,
 
  out:
   free(key);
+  va_end(suf_list);
   if (errno == 0)
     errno = errno_saved;
 
@@ -193,6 +252,9 @@ int path_collect_key_list(const char *path, struct stats *stats, ...)
   int rc = 0;
   const char *p;
 
+  if (path == NULL || stats == NULL)
+    return -1;
+
   va_start(key_list, stats);
 
   if (collect_read_small(path, buf, sizeof(buf), &n) < 0) {
@@ -201,22 +263,17 @@ int path_collect_key_list(const char *path, struct stats *stats, ...)
   }
 
   p = buf;
-  const char *key;
-  while ((key = va_arg(key_list, const char *)) != NULL) {
-    while (*p != '\0' && isspace((unsigned char)*p))
-      p++;
-    if (*p == '\0') {
+  for (;;) {
+    const char *key = va_arg(key_list, const char *);
+    unsigned long long val;
+
+    if (key == NULL)
+      break;
+
+    if (!collect_parse_one_ull(&p, &val)) {
       ERROR("%s: no value for key `%s'\n", path, key);
       goto out;
     }
-    errno = 0;
-    char *end = NULL;
-    unsigned long long val = strtoull(p, &end, 0);
-    if (errno != 0 || end == p) {
-      ERROR("%s: no value for key `%s'\n", path, key);
-      goto out;
-    }
-    p = end;
     stats_set(stats, key, val);
     rc++;
   }
@@ -226,20 +283,38 @@ int path_collect_key_list(const char *path, struct stats *stats, ...)
   return rc;
 }
 
+static void collect_apply_key_value_line(char *line, struct stats *stats)
+{
+  char *rest;
+  char *key;
+  unsigned long long val;
+
+  rest = line;
+  key = wsep(&rest);
+  if (key == NULL || rest == NULL)
+    return;
+
+  errno = 0;
+  val = strtoull(rest, NULL, 0);
+  if (errno == 0)
+    stats_set(stats, key, val);
+}
+
 int path_collect_key_value(const char *path, struct stats *stats)
 {
-  char *content = collect_slurp_file(path);
+  char *content;
   char *ptr;
 
+  if (path == NULL || stats == NULL)
+    return -1;
+
+  content = collect_slurp_file(path);
   if (content == NULL)
     return -1;
 
   for (ptr = content; *ptr != '\0'; ) {
     char *line = ptr;
     char *nl = strchr(ptr, '\n');
-    char *key;
-    char *rest;
-    unsigned long long val;
 
     if (nl != NULL) {
       *nl = '\0';
@@ -248,18 +323,31 @@ int path_collect_key_value(const char *path, struct stats *stats)
       ptr = line + strlen(line);
     }
 
-    rest = line;
-    key = wsep(&rest);
-    if (key == NULL || rest == NULL)
-      continue;
-
-    errno = 0;
-    val = strtoull(rest, NULL, 0);
-    if (errno == 0)
-      stats_set(stats, key, val);
+    collect_apply_key_value_line(line, stats);
   }
 
   free(content);
+  return 0;
+}
+
+static int collect_one_dir_entry(const char *dir_path, struct dirent *ent,
+                                 struct stats *stats)
+{
+  char *path = NULL;
+  unsigned long long val = 0;
+
+  if (ent->d_name[0] == '.')
+    return 0;
+
+  if (asprintf(&path, "%s/%s", dir_path, ent->d_name) < 0) {
+    ERROR("cannot allocate path: %m\n");
+    return 0;
+  }
+
+  if (path_collect_single(path, &val) == 1)
+    stats_set(stats, ent->d_name, val);
+
+  free(path);
   return 0;
 }
 
@@ -267,38 +355,18 @@ int path_collect_key_value_dir(const char *dir_path, struct stats *stats)
 {
   int rc = 0;
   DIR *dir = NULL;
+  struct dirent *ent;
+
+  if (dir_path == NULL || stats == NULL)
+    return -1;
 
   dir = path_opendir_or_record_fail(dir_path);
-  if (dir == NULL) {
-    rc = -1;
-    goto out;
-  }
+  if (dir == NULL)
+    return -1;
 
-  struct dirent *ent;
-  while ((ent = readdir(dir)) != NULL) {
-    char *path = NULL;
-    unsigned long long val = 0;
+  while ((ent = readdir(dir)) != NULL)
+    (void) collect_one_dir_entry(dir_path, ent, stats);
 
-    if (ent->d_name[0] == '.')
-      goto next;
-
-    if (asprintf(&path, "%s/%s", dir_path, ent->d_name) < 0) {
-      ERROR("cannot allocate path: %m\n");
-      goto next;
-    }
-
-    if (path_collect_single(path, &val) != 1)
-      goto next;
-
-    stats_set(stats, ent->d_name, val);
-
-  next:
-    free(path);
-  }
-
- out:
-  if (dir != NULL)
-    closedir(dir);
-
+  closedir(dir);
   return rc;
 }

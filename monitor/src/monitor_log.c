@@ -33,7 +33,11 @@ static void monitor_log_va_diag(const char *fmt, va_list ap)
 void monitor_log_info(const char *fmt, ...)
 {
   va_list ap;
-  FILE *out = monitor_log_get_stream();
+  FILE *out;
+
+  if (fmt == NULL)
+    return;
+  out = monitor_log_get_stream();
 
   va_start(ap, fmt);
   vfprintf(out, fmt, ap);
@@ -44,6 +48,8 @@ void monitor_log_warn(const char *fmt, ...)
 {
   va_list ap;
 
+  if (fmt == NULL)
+    return;
   va_start(ap, fmt);
 #ifdef DEBUG
 # ifdef RABBITMQ
@@ -71,6 +77,8 @@ void monitor_log_error(const char *fmt, ...)
 {
   va_list ap;
 
+  if (fmt == NULL)
+    return;
   va_start(ap, fmt);
 #ifdef DEBUG
 # ifdef RABBITMQ

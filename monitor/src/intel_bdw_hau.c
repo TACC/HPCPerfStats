@@ -1,3 +1,7 @@
+/*! \file intel_bdw_hau.c
+ *  Intel Broadwell HA uncore (intel_x86_uncore_hau_bdw).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"

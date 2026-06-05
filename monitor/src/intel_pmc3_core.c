@@ -1,3 +1,7 @@
+/*! \file intel_pmc3_core.c
+ *  Shared Intel PMC3 begin/foreach helpers.
+ */
+
 #include "intel_pmc3_core.h"
 
 #include <stdio.h>
@@ -27,8 +31,8 @@ out:
 }
 
 void intel_pmc3_core_foreach_cpu(struct stats_type *type,
-				 void (*collect_cpu)(struct stats_type *,
-						     char *))
+         void (*collect_cpu)(struct stats_type *,
+                 char *))
 {
   int i;
 

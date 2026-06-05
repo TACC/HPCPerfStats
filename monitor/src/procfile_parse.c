@@ -1,3 +1,4 @@
+/* Line-at-a-time iteration over proc/sys text files. */
 #include "procfile_parse.h"
 
 #include <stdio.h>
@@ -17,6 +18,9 @@ int procfile_for_each_line_skip(const char *path, size_t skip,
   char *line = NULL;
   size_t line_size = 0;
   size_t skipped = 0;
+
+  if (path == NULL)
+    return -1;
 
   file = path_file_fopen_read(path);
   if (file == NULL)

@@ -1,3 +1,7 @@
+/*! \file intel_8pmc3.c
+ *  Intel 8-wide GPR PMC (intel_x86_pmc_gpr8).
+ */
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>

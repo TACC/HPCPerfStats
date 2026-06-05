@@ -1,3 +1,4 @@
+/* metric_profiler_ebpf.c — capture /proc/self/io and status for profiler cycles. */
 #include "metric_profiler_ebpf.h"
 
 #include <stdio.h>

@@ -1,3 +1,7 @@
+/*! \file likwid_arch_map.c
+ *  Resolve HPCPERFSTATS_MONITOR_ARCH / cpuinfo to a LIKWID event string.
+ */
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>

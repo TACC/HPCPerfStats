@@ -1,3 +1,7 @@
+/*! \file intel_4pmc3.c
+ *  Intel 4-wide GPR PMC (intel_x86_pmc_gpr4).
+ */
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>

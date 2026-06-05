@@ -1,3 +1,4 @@
+/* host_vfs — VFS dentry/file/inode usage from procfs sys/fs. */
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,7 +36,7 @@ static void vfs_collect(struct stats_type *type)
 
   unsigned long long dentry_alloc = 0, dentry_free = 0;
   if (path_collect_list("/proc/sys/fs/dentry-state",
-			&dentry_alloc, &dentry_free, NULL) == 2)
+                        &dentry_alloc, &dentry_free, NULL) == 2)
     dentry_use = dentry_alloc - dentry_free;
 
 /* $ cat /proc/sys/fs/file-nr
@@ -63,7 +64,7 @@ static void vfs_collect(struct stats_type *type)
 
   unsigned long long inode_alloc = 0, inode_free = 0;
   if (path_collect_list("/proc/sys/fs/inode-state",
-			&inode_alloc, &inode_free, NULL) == 2)
+                        &inode_alloc, &inode_free, NULL) == 2)
     inode_use = inode_alloc - inode_free;
 
 #define X(k,r...) stats_set(stats, #k, k)

@@ -131,8 +131,8 @@
 //@}
 
 struct intel_pcu_msr_layout {
-	uint32_t ctl_global;
-	uint32_t ctl0;
+  uint32_t ctl_global;
+  uint32_t ctl0;
 };
 
 static const struct intel_pcu_msr_layout pcu_layout_v1 = {
@@ -248,10 +248,10 @@ static int intel_pcu_begin_socket(char *cpu, uint64_t *events)
     uint32_t ctl_msr = lay->ctl0 + (uint32_t)i;
 
     TRACE("MSR %08X, event %016llX\n", ctl_msr,
-	  (unsigned long long)events[i]);
+    (unsigned long long)events[i]);
     if (msr_write_u64(msr_fd, ctl_msr, events[i]) < 0) {
       ERROR("cannot write event %016llX to MSR %08X for cpu `%s': %m\n",
-	    (unsigned long long)events[i], ctl_msr, cpu);
+      (unsigned long long)events[i], ctl_msr, cpu);
       goto out;
     }
     if (msr_write_u64(msr_fd, lay->ctl_global, ctl) < 0) {
@@ -305,16 +305,54 @@ static int intel_pcu_begin(struct stats_type *type)
   return ctx.nr > 0 ? 0 : -1;
 }
 
-//! Collect values of counters for PCU
+static void intel_pcu_emit_v1_counters(int msr_fd, struct stats *stats)
+{
+  uint64_t val = 0;
+
+  if (stats == NULL || msr_fd < 0)
+    return;
+  if (msr_read_u64(msr_fd, V1_CTR0, &val) == 0)
+    stats_set(stats, "freq_max_temp_cycles", val);
+  if (msr_read_u64(msr_fd, V1_CTR1, &val) == 0)
+    stats_set(stats, "freq_max_power_cycles", val);
+  if (msr_read_u64(msr_fd, V1_CTR2, &val) == 0)
+    stats_set(stats, "freq_min_io_cycles", val);
+  if (msr_read_u64(msr_fd, V1_CTR3, &val) == 0)
+    stats_set(stats, "freq_min_snoop_cycles", val);
+  if (msr_read_u64(msr_fd, FIXED_CTR0, &val) == 0)
+    stats_set(stats, "pcu_ctr0", val);
+  if (msr_read_u64(msr_fd, FIXED_CTR1, &val) == 0)
+    stats_set(stats, "pcu_ctr1", val);
+}
+
+static void intel_pcu_emit_v3_counters(int msr_fd, struct stats *stats)
+{
+  uint64_t val = 0;
+
+  if (stats == NULL || msr_fd < 0)
+    return;
+  if (msr_read_u64(msr_fd, V3_CTR0, &val) == 0)
+    stats_set(stats, "freq_max_temp_cycles", val);
+  if (msr_read_u64(msr_fd, V3_CTR1, &val) == 0)
+    stats_set(stats, "freq_max_power_cycles", val);
+  if (msr_read_u64(msr_fd, V3_CTR2, &val) == 0)
+    stats_set(stats, "freq_min_io_cycles", val);
+  if (msr_read_u64(msr_fd, V3_CTR3, &val) == 0)
+    stats_set(stats, "freq_min_snoop_cycles", val);
+  if (msr_read_u64(msr_fd, FIXED_CTR0, &val) == 0)
+    stats_set(stats, "pcu_ctr0", val);
+  if (msr_read_u64(msr_fd, FIXED_CTR1, &val) == 0)
+    stats_set(stats, "pcu_ctr1", val);
+}
+
 static void intel_pcu_collect_socket(struct stats_type *type, char *cpu, int pkg_id)
 {
   struct stats *stats = NULL;
   int msr_fd = -1;
   processor_t p = processor;
-
   char pkg[80];
-  snprintf(pkg, sizeof(pkg), "%d", pkg_id);
 
+  snprintf(pkg, sizeof(pkg), "%d", pkg_id);
   TRACE("cpu %s pkg %s\n", cpu, pkg);
 
   stats = get_current_stats(type, pkg);
@@ -325,25 +363,10 @@ static void intel_pcu_collect_socket(struct stats_type *type, char *cpu, int pkg
   if (msr_fd < 0)
     goto out;
 
-  if (p == SANDYBRIDGE || p == IVYBRIDGE) {
-    uint64_t val = 0;
-    if (msr_read_u64(msr_fd, V1_CTR0, &val) == 0) stats_set(stats, "freq_max_temp_cycles", val);
-    if (msr_read_u64(msr_fd, V1_CTR1, &val) == 0) stats_set(stats, "freq_max_power_cycles", val);
-    if (msr_read_u64(msr_fd, V1_CTR2, &val) == 0) stats_set(stats, "freq_min_io_cycles", val);
-    if (msr_read_u64(msr_fd, V1_CTR3, &val) == 0) stats_set(stats, "freq_min_snoop_cycles", val);
-    if (msr_read_u64(msr_fd, FIXED_CTR0, &val) == 0) stats_set(stats, "pcu_ctr0", val);
-    if (msr_read_u64(msr_fd, FIXED_CTR1, &val) == 0) stats_set(stats, "pcu_ctr1", val);
-  }
-
-  if (p == HASWELL || p == BROADWELL) {
-    uint64_t val = 0;
-    if (msr_read_u64(msr_fd, V3_CTR0, &val) == 0) stats_set(stats, "freq_max_temp_cycles", val);
-    if (msr_read_u64(msr_fd, V3_CTR1, &val) == 0) stats_set(stats, "freq_max_power_cycles", val);
-    if (msr_read_u64(msr_fd, V3_CTR2, &val) == 0) stats_set(stats, "freq_min_io_cycles", val);
-    if (msr_read_u64(msr_fd, V3_CTR3, &val) == 0) stats_set(stats, "freq_min_snoop_cycles", val);
-    if (msr_read_u64(msr_fd, FIXED_CTR0, &val) == 0) stats_set(stats, "pcu_ctr0", val);
-    if (msr_read_u64(msr_fd, FIXED_CTR1, &val) == 0) stats_set(stats, "pcu_ctr1", val);
-  }
+  if (p == SANDYBRIDGE || p == IVYBRIDGE)
+    intel_pcu_emit_v1_counters(msr_fd, stats);
+  if (p == HASWELL || p == BROADWELL)
+    intel_pcu_emit_v3_counters(msr_fd, stats);
 
  out:
   if (msr_fd >= 0)

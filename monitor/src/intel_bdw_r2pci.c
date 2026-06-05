@@ -1,3 +1,7 @@
+/*! \file intel_bdw_r2pci.c
+ *  Intel Broadwell R2PCI uncore (intel_x86_uncore_r2pci_bdw).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"

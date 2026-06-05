@@ -10,33 +10,15 @@
 #define DICT_TABLE_LEN_MAX (((size_t) 1) << (8 * sizeof(size_t) - 1))
 #define PERTURB_SHIFT 5
 
-/* Stolen from Python's stringobject.c.  GPL. */
-// static long
-// string_hash(PyStringObject *a)
-// {
-//   register Py_ssize_t len;
-//   register unsigned char *p;
-//   register long x;
-//
-//   if (a->ob_shash != -1)
-//     return a->ob_shash;
-//   len = Py_SIZE(a);
-//   p = (unsigned char *) a->ob_sval;
-//   x = *p << 7;
-//   while (--len >= 0)
-//     x = (1000003*x) ^ *p++;
-//   x ^= Py_SIZE(a);
-//   if (x == -1)
-//     x = -2;
-//   a->ob_shash = x;
-//   return x;
-// }
-
-/* dict_strhash() will never return DICT_HASH_DUMMY. */
 hash_t dict_strhash(const char *s)
 {
-  const unsigned char *p = (const unsigned char *) s;
-  hash_t x = *p << 7;
+  const unsigned char *p;
+  hash_t x;
+
+  if (s == NULL)
+    return 0;
+  p = (const unsigned char *) s;
+  x = *p << 7;
 
   for (; *p != 0; p++)
     x = (1000003 * x) ^ *p;
@@ -49,6 +31,9 @@ hash_t dict_strhash(const char *s)
 int dict_init(struct dict *dict, size_t count)
 {
   size_t table_len = DICT_TABLE_LEN_MIN;
+
+  if (dict == NULL)
+    return -1;
 
   /* Need count < 2/3 of table_size. */
   while (3 * count >= 2 * table_len && table_len < DICT_TABLE_LEN_MAX)
@@ -237,15 +222,25 @@ char *dict_remv(struct dict *dict, const char *key)
 
 char *dict_ref(struct dict *dict, const char *key)
 {
-  hash_t hash = dict_strhash(key);
-  struct dict_entry *ent = dict_entry_ref(dict, hash, key);
+  hash_t hash;
+  struct dict_entry *ent;
+
+  if (dict == NULL || key == NULL)
+    return NULL;
+  hash = dict_strhash(key);
+  ent = dict_entry_ref(dict, hash, key);
   return ent->d_key;
 }
 
 int dict_set(struct dict *dict, char *key)
 {
-  hash_t hash = dict_strhash(key);
-  struct dict_entry *ent = dict_entry_ref(dict, hash, key);
+  hash_t hash;
+  struct dict_entry *ent;
+
+  if (dict == NULL || key == NULL)
+    return -1;
+  hash = dict_strhash(key);
+  ent = dict_entry_ref(dict, hash, key);
 
   if (ent->d_key != NULL) {
     TRACE("overwriting old key `%s', hash %zu, with new key `%s' hash %zu\n",

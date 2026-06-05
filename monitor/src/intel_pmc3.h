@@ -1,3 +1,31 @@
+/*! \file intel_pmc3.h
+ *  Intel x86 core PMU version 3: MSR layout, event macros, and emitted KEYS for
+ *  intel_x86_pmc_gpr4, intel_x86_pmc_gpr8, and intel_x86_pmc_knl collectors.
+ *
+ *  \author Todd Evans
+ *  \brief Counters for Intel Performance Monitoring Version 3
+ *
+ *  \par Location of cpu info and monitoring register files:
+
+  ex) Display cpuid and msr file for cpu 0:
+
+      $ ls -l /dev/cpu/0
+      total 0
+      crw-------  1 root root 203, 0 Oct 28 18:47 cpuid
+      crw-------  1 root root 202, 0 Oct 28 18:47 msr
+
+
+  \par MSR address layout of registers:
+
+ *  IA32_PMCx (CTRx) MSRs start at address 0C1H and occupy a contiguous block of MSR
+ *  address space; the number of MSRs per logical processor is reported using
+ *  CPUID.0AH:EAX[15:8].
+ *
+ *  IA32_PERFEVTSELx (CTLx) MSRs start at address 186H and occupy a contiguous block
+ *  of MSR address space. Each performance event select register is paired with a
+ *  corresponding performance counter in the 0C1H address block.
+ */
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -13,32 +41,6 @@
 #include "trace.h"
 #include "msr_io.h"
 #include "cpuid.h"
-
-/*! 
- \file intel_pmc3.h
- \author Todd Evans 
- \brief Counters for Intel Performance Monitoring Version 3
-
-  \par Location of cpu info and monitoring register files:
-
-  ex) Display cpuid and msr file for cpu 0:
-
-      $ ls -l /dev/cpu/0
-      total 0
-      crw-------  1 root root 203, 0 Oct 28 18:47 cpuid
-      crw-------  1 root root 202, 0 Oct 28 18:47 msr
-
-
-  \par MSR address layout of registers:
-
-  IA32_PMCx (CTRx) MSRs start at address 0C1H and occupy a contiguous block of MSR
-  address space; the number of MSRs per logical processor is reported using
-  CPUID.0AH:EAX[15:8].  
-
-  IA32_PERFEVTSELx (CTLx) MSRs start at address 186H and occupy a contiguous block
-  of MSR address space. Each performance event select register is paired with a
-  corresponding performance counter in the 0C1H address block.
-*/
 
 #define IA32_CTR0 0xC1 /* CPUID.0AH: EAX[15:8] > 0 */
 #define IA32_CTR1 0xC2 /* CPUID.0AH: EAX[15:8] > 1 */
@@ -271,6 +273,10 @@ static const char *const nhm_event_keys[] = {
   "fp_comp_ops_exe_sse_fp_scalar",
 };
 
+/*! Event key names for the active processor family (parallel to event arrays).
+ *  @param nkeys if non-NULL, receives the key count on success
+ *  @return key table, or NULL when the processor is unsupported
+ */
 static const char *const *intel_pmc3_event_keys(size_t *nkeys)
 {
   const char *const *keys = NULL;
@@ -301,7 +307,10 @@ static const char *const *intel_pmc3_event_keys(size_t *nkeys)
 //! Generate bitmask of n 1s
 #define BIT_MASK(n) (~( ((~0ULL) << ((n)-1)) << 1 ))
 
-//! Configure and start counters for a pmc3 cpu counters
+/*! Configure and start PMCv3 counters on one logical CPU.
+ *  @param cpu numeric CPU id string (e.g. "0"); must not be NULL
+ *  @return 0 on success, -1 on MSR or unsupported-processor failure
+ */
 static int intel_pmc3_begin_cpu(char *cpu)
 {
   int rc = -1;
@@ -373,6 +382,10 @@ static int intel_pmc3_begin_cpu(char *cpu)
   return rc;
 }
 
+/*! Enable PMCv3 on all host CPUs; disables @p type when none succeed.
+ *  @param type collector being started; must not be NULL
+ *  @return 0 if at least one CPU was programmed, else -1
+ */
 static int intel_pmc3_begin(struct stats_type *type)
 {
   int nr = 0;

@@ -1,6 +1,8 @@
 #ifndef _CPU_COUNTER_METRICS_H_
 #define _CPU_COUNTER_METRICS_H_
 
+#define CPU_COUNTER_METRICS_ST_NAME "host_cpu_hw"
+
 #define CPU_COUNTER_METRICS_KEYS \
   X(cpu_util_total_accum_us, "E,W=64", ""), \
   X(cpu_util_user_accum_us, "E,W=64", ""), \

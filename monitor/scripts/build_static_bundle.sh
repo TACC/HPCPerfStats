@@ -422,8 +422,15 @@ build_monitor() {
   fi
   mkdir -p "${MONITOR_DIR}/.build-static"
   cd "${MONITOR_DIR}/.build-static"
-  echo "Regenerating monitor Autotools files: autoreconf -fi (${MONITOR_DIR})" >&2
-  (cd "${MONITOR_DIR}" && autoreconf -fi)
+  if test -f "${MONITOR_DIR}/configure.ac" || test -f "${MONITOR_DIR}/configure.in"; then
+    echo "Regenerating monitor Autotools files: autoreconf -fi (${MONITOR_DIR})" >&2
+    (cd "${MONITOR_DIR}" && autoreconf -fi)
+  elif test ! -x "${MONITOR_DIR}/configure"; then
+    echo "error: ${MONITOR_DIR}/configure.ac missing and no executable configure script" >&2
+    return 1
+  else
+    echo "Using existing ${MONITOR_DIR}/configure (no configure.ac; skipped autoreconf)" >&2
+  fi
   export CPPFLAGS="-I${PREFIX}/include ${CPPFLAGS:-}"
   export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
   # Prefer static archives from our tree (no RPATH to PREFIX for runtime).

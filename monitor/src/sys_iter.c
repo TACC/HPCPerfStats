@@ -1,15 +1,23 @@
+/* Directory iteration helper skipping dot entries. */
 #include "sys_iter.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <stddef.h>
 
 #include "path_open_fail_once.h"
 
 int sys_iter_for_each(const char *base, sys_iter_cb_fn cb, void *ctx)
 {
-  DIR *dir = path_opendir_or_record_fail(base);
+  DIR *dir;
   struct dirent *ent;
 
+  if (base == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+
+  dir = path_opendir_or_record_fail(base);
   if (dir == NULL)
     return -1;
 

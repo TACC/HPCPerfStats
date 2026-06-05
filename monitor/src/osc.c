@@ -1,3 +1,4 @@
+/* lustre_osc — Lustre object storage client stats from /proc/fs/lustre/osc. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <dirent.h>
@@ -7,6 +8,7 @@
 #include "string1.h"
 #include "lustre_obd_to_mnt.h"
 #include "path_open_fail_once.h"
+#include "sys_iter.h"
 
 #define OSC_DIR_PATH "/proc/fs/lustre/osc"
 
@@ -22,6 +24,26 @@
   X(reqs, "E", ""), \
   X(wait, "E,U=us", "")
 
+static void osc_apply_stats_line(struct stats *stats, const char *key, const char *line)
+{
+  unsigned long long count = 0;
+  unsigned long long sum = 0;
+
+  if (stats == NULL || key == NULL || line == NULL)
+    return;
+  if (sscanf(line, "%llu samples %*s %*u %*u %llu", &count, &sum) != 2)
+    return;
+
+  if (strcmp(key, "req_waittime") == 0) {
+    stats_inc(stats, "reqs", count);
+    stats_inc(stats, "wait", sum);
+  } else if (strcmp(key, "read_bytes") == 0 || strcmp(key, "write_bytes") == 0) {
+    stats_inc(stats, key, sum);
+  } else {
+    stats_inc(stats, key, count);
+  }
+}
+
 static void osc_collect_fs(struct stats *stats, const char *d_name)
 {
   char *path = NULL;
@@ -30,9 +52,12 @@ static void osc_collect_fs(struct stats *stats, const char *d_name)
   char *line_buf = NULL;
   size_t line_buf_size = 0;
 
+  if (stats == NULL || d_name == NULL)
+    return;
+
   if (asprintf(&path, "%s/%s/stats", OSC_DIR_PATH, d_name) < 0) {
     ERROR("cannot create path: %m\n");
-    goto out;
+    return;
   }
 
   file = path_file_fopen_read(path);
@@ -40,40 +65,13 @@ static void osc_collect_fs(struct stats *stats, const char *d_name)
     goto out;
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
 
-  // $ cat /proc/fs/lustre/osc/work-OST0000-osc-ffff81032792f800/stats
-  // snapshot_time             1315506558.236162 secs.usecs
-  // req_waittime              2193784 samples [usec] 31 19323671 22792548119 2825876578353643
-  // req_active                2193784 samples [reqs] 1 19 4197043 17147705
-  // read_bytes                591036 samples [bytes] 4096 1048576 452705124352 458909478532677632
-  // write_bytes               298332 samples [bytes] 1 1048576 249338619646 258272714735050642
-  // ost_setattr               29934 samples [usec] 53 821747 66185440 8729086271842
-  // ost_read                  591567 samples [usec] 58 2298702 10257217364 690745503006198
-  // ost_write                 298332 samples [usec] 327 1999739 6699685897 755869697207251
-  // ost_destroy               112511 samples [usec] 86 19323671 1538924188 1014647386873938
-  // ost_connect               1 samples [usec] 13811 13811 13811 190743721
-  // ost_punch                 5224 samples [usec] 111 631412 35035618 3480932441880
-  // ost_statfs                156 samples [usec] 125 1071 42072 13441240
-  // ldlm_cancel               266738 samples [usec] 31 215570 57640045 563159939987
-  // obd_ping                  114215 samples [usec] 43 63021 130531843 219411737307
-
   while (getline(&line_buf, &line_buf_size, file) >= 0) {
     char *line = line_buf;
     char *key = wsep(&line);
+
     if (key == NULL || line == NULL)
       continue;
-
-    unsigned long long count = 0, sum = 0;
-    if (sscanf(line, "%llu samples %*s %*u %*u %llu", &count, &sum) != 2)
-      continue;
-
-    if (strcmp(key, "req_waittime") == 0) {
-      stats_inc(stats, "reqs", count);
-      stats_inc(stats, "wait", sum);
-    } else if (strcmp(key, "read_bytes") == 0 || strcmp(key, "write_bytes") == 0) {
-      stats_inc(stats, key, sum);
-    } else {
-      stats_inc(stats, key, count);
-    }
+    osc_apply_stats_line(stats, key, line);
   }
 
  out:
@@ -83,39 +81,34 @@ static void osc_collect_fs(struct stats *stats, const char *d_name)
   free(path);
 }
 
+static void osc_each(const char *base, const char *name, void *ctx)
+{
+  struct stats_type *type = (struct stats_type *) ctx;
+  const char *mnt;
+  struct stats *stats;
+
+  (void) base;
+  if (type == NULL || name == NULL)
+    return;
+
+  mnt = lustre_obd_to_mnt(name);
+  if (mnt == NULL)
+    return;
+
+  TRACE("d_name `%s', mnt `%s'\n", name, mnt);
+
+  stats = get_current_stats(type, mnt);
+  if (stats == NULL)
+    return;
+
+  osc_collect_fs(stats, name);
+}
+
 static void osc_collect(struct stats_type *type)
 {
-  const char *osc_dir_path = OSC_DIR_PATH;
-  DIR *osc_dir = NULL;
-
-  osc_dir = path_opendir_or_record_fail(osc_dir_path);
-  if (osc_dir == NULL)
-    goto out;
-
-  struct dirent *de;
-  while ((de = readdir(osc_dir)) != NULL) {
-    struct stats *stats = NULL;
-    const char *mnt;
-
-    if (de->d_type != DT_DIR || *de->d_name == '.')
-      continue;
-
-    mnt = lustre_obd_to_mnt(de->d_name);
-    if (mnt == NULL)
-      continue;
-
-    TRACE("d_name `%s', mnt `%s'\n", de->d_name, mnt);
-
-    stats = get_current_stats(type, mnt);
-    if (stats == NULL)
-      continue;
-
-    osc_collect_fs(stats, de->d_name);
-  }
-
- out:
-  if (osc_dir != NULL)
-    closedir(osc_dir);
+  if (type == NULL)
+    return;
+  sys_iter_for_each(OSC_DIR_PATH, osc_each, type);
 }
 
 struct stats_type osc_stats_type = {

@@ -1,3 +1,7 @@
+/*! \file intel_snb_hau.c
+ *  Intel Sandy Bridge HA uncore (intel_x86_uncore_hau_snb).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"

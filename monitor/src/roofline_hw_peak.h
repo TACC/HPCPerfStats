@@ -1,6 +1,8 @@
 #ifndef _ROOFLINE_HW_PEAK_H_
 #define _ROOFLINE_HW_PEAK_H_
 
+#define ROOFLINE_HW_PEAK_ST_NAME "host_roofline_peak"
+
 #define KEYS \
   X(cpu_peak_fp64_flops_per_s, "U=FLOP/s", "Host-level CPU FP64 peak throughput (FLOP/s)"), \
   X(cpu_peak_dram_bw_bytes_per_s, "U=B/s", "Host-level CPU DRAM peak bandwidth (bytes/s)"), \

@@ -1,3 +1,4 @@
+/* host_sysv_shm — System V shared memory usage from /proc/sysvipc/shm. */
 #include <stdio.h>
 #include "stats.h"
 #include "procfile_parse.h"

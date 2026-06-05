@@ -1,3 +1,7 @@
+/*! \file intel_snb_r2pci.c
+ *  Intel Sandy Bridge R2PCI uncore (intel_x86_uncore_r2pci_snb).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"

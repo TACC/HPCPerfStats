@@ -1,3 +1,7 @@
+/*! \file amd64_df.h
+ *  AMD data-fabric uncore PMU (amd_x86_uncore_df).
+ */
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>

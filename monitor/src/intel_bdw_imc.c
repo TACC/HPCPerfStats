@@ -1,3 +1,7 @@
+/*! \file intel_bdw_imc.c
+ *  Intel Broadwell DRAM IMC (intel_x86_uncore_imc_bdw).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"
@@ -34,7 +38,7 @@ static const char *const event_keys[] = {
     "dram_pre_count_miss",
 };
 static int dids[] = {0x6fb0, 0x6fb1, 0x6fb4, 0x6fb5,
-		     0x6fd0, 0x6fd1, 0x6fd4, 0x6fd5};
+         0x6fd0, 0x6fd1, 0x6fd4, 0x6fd5};
 
 static const struct intel_uncore_pci_cfg intel_bdw_imc_pci_cfg = {
     .pci_dids = dids,

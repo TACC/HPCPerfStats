@@ -21,6 +21,10 @@ processor_t signature(int *n_pmcs) {
   uint32_t eax = 0, ebx = 0, ecx = 0, edx = 0;
   char vendor[13];
   processor_t rc = (processor_t)-1;
+
+  if (n_pmcs == NULL)
+    return rc;
+  *n_pmcs = 0;
   cpuid(0, eax, ebx, ecx, edx);
   snprintf(vendor, sizeof(vendor), "%c%c%c%c%c%c%c%c%c%c%c%c",
            ebx & 0xff, (ebx >> 8) & 0xff, (ebx >> 16) & 0xff, (ebx >> 24) & 0xff,

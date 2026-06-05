@@ -1,3 +1,7 @@
+/*! \file intel_snb_qpi.c
+ *  Intel Sandy Bridge QPI uncore (intel_x86_uncore_qpi_snb).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"

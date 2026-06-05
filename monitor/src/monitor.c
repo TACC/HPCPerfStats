@@ -1,3 +1,4 @@
+/* RabbitMQ daemon entry: libev timers, schema rotation, jobid watcher bootstrap. */
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -56,6 +57,14 @@ static void monitor_rmq_io_tick_cb(struct ev_loop *loop, ev_timer *w, int revent
   stats_buffer_rmq_service_io();
 }
 
+static void monitor_load_initial_jobid(void)
+{
+  if (jobid_file_path == NULL)
+    snprintf(jobid, sizeof jobid, "%s", "-");
+  else if (pscanf(jobid_file_path, "%79s", jobid) < 1)
+    snprintf(jobid, sizeof jobid, "%s", "-");
+}
+
 static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
 {
   static ev_stat fd_watcher;
@@ -97,8 +106,7 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   monitor_log_info("Setting hpcperfstatsd buffer capacity to %d samples (%.2fh)\n",
                    max_buffer_size, buffer_hours);
 
-  if (pscanf(jobid_file_path, "%79s", jobid) < 1)
-    strcpy(jobid, "-");
+  monitor_load_initial_jobid();
 }
 
 static void monitor_require_server_or_exit(void)

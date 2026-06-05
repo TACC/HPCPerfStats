@@ -1,3 +1,4 @@
+/* Map /proc field names to emitted snake_case stat keys (mem, proc). */
 #include <string.h>
 #include "host_key_alias.h"
 #include "stats.h"
@@ -82,8 +83,11 @@ const char *host_key_alias_lookup(const char *kernel_key)
 void host_key_alias_emit(struct stats *stats, const char *kernel_key,
                          unsigned long long val)
 {
-  const char *emit = host_key_alias_lookup(kernel_key);
+  const char *emit;
 
+  if (stats == NULL)
+    return;
+  emit = host_key_alias_lookup(kernel_key);
   if (emit == NULL)
     return;
   stats_set(stats, emit, val);

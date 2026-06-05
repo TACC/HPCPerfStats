@@ -11,9 +11,10 @@ alwaysApply: false
 Applies only under `HPCPerfStats/monitor/`. For scope and consumer contracts, see the monitor-workspace-contract rule.
 
 1. **Safety**: Do not use `gets()`, `strcpy()`, or `sprintf()` on potentially unbounded input. Prefer `snprintf`, bounded copies with explicit NUL termination, and checked return values. Treat `strncpy` as error-prone (padding semantics); prefer patterns that guarantee a trailing `\0` within the buffer size.
-2. **Consistency**: Match the surrounding indentation and brace style of the file you edit.
+2. **Consistency**: Match the surrounding indentation and brace style for small edits. A deliberate refactor pass must apply the full-file style canon (**monitor-c-refactor-standards**) — no mixed old/new indentation in one file.
 3. **Pointers**: Initialize pointers where the surrounding style does; check for NULL before dereferencing when failure is plausible.
-4. **Headers**: Avoid changing exported function signatures or struct layouts in `.h` files unless all call sites are updated in the same change set and the edit is intentional (breaking API changes need a clear reason and usually align with a version or migration note).
-5. **Types**: Prefer `<stdint.h>` fixed-width types for new code where it matches the codebase.
+4. **Headers**: Avoid changing exported function signatures or struct layouts in `.h` files unless all call sites are updated in the same change set. Prefer extracting testable logic into new `.c`/`.h` pairs over growing public structs.
+5. **strncpy**: Only with explicit NUL at `size - 1`, or prefer `snprintf` / bounded copy patterns from **monitor-c-refactor-standards**.
+6. **Types**: Prefer `<stdint.h>` fixed-width types for new code where it matches the codebase.
 
-6. **Comments**: For temporary hacks or workarounds, use a clear tag in C comments, e.g. `/* TODO(AI): reason */` (not `//` if the project uses C89-style comments in that file).
+7. **Comments**: For temporary hacks or workarounds, use a clear tag in C comments, e.g. `/* TODO(AI): reason */` (not `//` if the project uses C89-style comments in that file).

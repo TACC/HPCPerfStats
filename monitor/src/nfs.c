@@ -1,3 +1,4 @@
+/* host_nfs — NFS client mountstats from /proc/self/mountstats. */
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -116,7 +117,6 @@ static void nfs_collect_mnt_op(struct stats *stats, const char *op, char *str)
 {
   unsigned long long v[8];
   char key[64];
-
   const char *op_key;
 
   if (strcmp(op, "READ") != 0 && strcmp(op, "WRITE") != 0)
@@ -140,7 +140,7 @@ static void nfs_collect_mnt_op(struct stats *stats, const char *op, char *str)
 /* Return 0 if nfs_collect() should re-read *p_line, -1 on EOF / parse error. */
 
 static int nfs_collect_mnt_read_events_xprt_section(struct stats *stats, FILE *file,
-						    char **p_line, size_t *p_line_size)
+                                                    char **p_line, size_t *p_line_size)
 {
   while (1) {
     if (getline(p_line, p_line_size, file) < 0)
@@ -169,7 +169,7 @@ static int nfs_collect_mnt_read_events_xprt_section(struct stats *stats, FILE *f
 }
 
 static int nfs_collect_mnt_read_per_op_section(struct stats *stats, FILE *file,
-					       char **p_line, size_t *p_line_size)
+                                               char **p_line, size_t *p_line_size)
 {
   while (1) {
     if (getline(p_line, p_line_size, file) < 0)
@@ -192,7 +192,7 @@ static int nfs_collect_mnt_read_per_op_section(struct stats *stats, FILE *file,
 }
 
 static int nfs_collect_mnt(struct stats *stats, FILE *file,
-			   char **p_line, size_t *p_line_size)
+                           char **p_line, size_t *p_line_size)
 {
   int rc = nfs_collect_mnt_read_events_xprt_section(stats, file, p_line, p_line_size);
   if (rc <= 0)
@@ -210,6 +210,49 @@ static inline int strip_crud(char **str, const char *crud)
   *str += crud_len;
 
   return 0;
+}
+
+/* Parse one mountstats header line; return stats row or NULL to skip. */
+static struct stats *nfs_collect_mount_stats(struct stats_type *type, char *line,
+                                             char **dev_out, char **mnt_out)
+{
+  char *rest;
+  char *dev;
+  char *mnt;
+  char *ver;
+
+  rest = line;
+  if (strip_crud(&rest, "device ") < 0)
+    return NULL;
+
+  dev = wsep(&rest);
+  if (dev == NULL || rest == NULL)
+    return NULL;
+
+  if (strip_crud(&rest, "mounted on ") < 0)
+    return NULL;
+
+  /* People who put spaces in their paths deserve what they get. */
+  mnt = wsep(&rest);
+  if (mnt == NULL || rest == NULL)
+    return NULL;
+
+  if (strip_crud(&rest, "with fstype nfs statvers=") < 0)
+    return NULL;
+
+  ver = wsep(&rest);
+  if (strcmp(ver, "1.0") != 0 && strcmp(ver, "1.1") != 0) {
+    TRACE("nfs: mount `%s', device `%s' has unknown statvers `%s' (skip)\n",
+          mnt, dev, ver);
+    return NULL;
+  }
+
+  TRACE("dev `%s', mnt `%s', ver `%s'\n", dev, mnt, ver);
+  if (dev_out != NULL)
+    *dev_out = dev;
+  if (mnt_out != NULL)
+    *mnt_out = mnt;
+  return get_current_stats(type, mnt);
 }
 
 static void nfs_collect(struct stats_type *type)
@@ -236,38 +279,10 @@ static void nfs_collect(struct stats_type *type)
   /* device HOST:EXPORT mounted on MNT with fstype nfs statvers=1.0 */
 
   while (getline(&line, &line_size, file) >= 0) {
-    char *rest, *dev, *mnt, *ver;
+    struct stats *stats;
+
   skip_getline:
-    rest = line;
-
-    if (strip_crud(&rest, "device ") < 0)
-      continue;
-
-    dev = wsep(&rest);
-    if (dev == NULL || rest == NULL)
-      continue;
-
-    if (strip_crud(&rest, "mounted on ") < 0)
-      continue;
-
-    /* People who put spaces in their paths deserve what they get. */
-    mnt = wsep(&rest);
-    if (mnt == NULL || rest == NULL)
-      continue;
-
-    if (strip_crud(&rest, "with fstype nfs statvers=") < 0)
-      continue;
-
-    ver = wsep(&rest);
-    if (strcmp(ver, "1.0") != 0 && strcmp(ver, "1.1") != 0) {
-      TRACE("nfs: mount `%s', device `%s' has unknown statvers `%s' (skip)\n",
-	    mnt, dev, ver);
-      continue;
-    }
-
-    TRACE("dev `%s', mnt `%s', ver `%s'\n", dev, mnt, ver);
-
-    struct stats *stats = get_current_stats(type, mnt);
+    stats = nfs_collect_mount_stats(type, line, NULL, NULL);
     if (stats == NULL)
       continue;
 

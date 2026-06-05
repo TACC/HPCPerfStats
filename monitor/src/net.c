@@ -1,3 +1,4 @@
+/* host_net — network interface statistics from /sys/class/net/<dev>/statistics. */
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -158,7 +159,7 @@ static void net_iface_cache_rebuild(struct stats_type *type)
     elapsed_us = net_monotonic_us() - started_us;
     if (elapsed_us > (long long)slow_warn_ms * 1000LL) {
       monitor_log_warn("net cache rebuild slow: elapsed_us=%lld ifaces=%zu; skip rebuild %ds\n",
-		       elapsed_us, net_n_cached, skip_sec);
+                       elapsed_us, net_n_cached, skip_sec);
       net_rebuild_skip_until = time(NULL) + skip_sec;
     }
   }

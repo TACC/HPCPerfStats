@@ -1,3 +1,7 @@
+/*! \file intel_ivb_r2pci.c
+ *  Intel Ivy Bridge R2PCI uncore (intel_x86_uncore_r2pci_ivb).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"

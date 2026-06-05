@@ -1,3 +1,7 @@
+/*! \file likwid_pmc_adapter.c
+ *  LIKWID HPMinit/perfmon bridge; maps fixc* counters to instr_retired/aperf/mperf.
+ */
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -166,6 +170,92 @@ static void set_counter_by_name(struct stats *stats, const char *counter_name,
     (void)value;
 }
 
+#ifdef HAVE_LIKWID
+static void likwid_pmc_adapter_zero_fp_arith_stats(struct stats *stats)
+{
+  if (stats == NULL)
+    return;
+  stats_set(stats, "fp_arith_inst_retired_scalar_double", 0);
+  stats_set(stats, "fp_arith_inst_retired_128b_packed_double", 0);
+  stats_set(stats, "fp_arith_inst_retired_256b_packed_double", 0);
+  stats_set(stats, "fp_arith_inst_retired_512b_packed_double", 0);
+  stats_set(stats, "fp_arith_inst_retired_scalar_single", 0);
+  stats_set(stats, "fp_arith_inst_retired_128b_packed_single", 0);
+  stats_set(stats, "fp_arith_inst_retired_256b_packed_single", 0);
+  stats_set(stats, "fp_arith_inst_retired_512b_packed_single", 0);
+}
+
+static void likwid_pmc_adapter_apply_one_event(struct stats *stats,
+                                                const char *counter_name,
+                                                const char *event_name,
+                                                unsigned long long val,
+                                                unsigned long long *inst_retired,
+                                                unsigned long long *aperf,
+                                                unsigned long long *mperf,
+                                                int *have_inst, int *have_aperf,
+                                                int *have_mperf,
+                                                int *have_fixed0,
+                                                int *have_fixed1,
+                                                int *have_fixed2)
+{
+  set_counter_by_name(stats, counter_name, val);
+  if (counter_name != NULL && strcmp(counter_name, "fixc0") == 0) {
+    *inst_retired = val;
+    *have_fixed0 = 1;
+    *have_inst = 1;
+  } else if (counter_name != NULL && strcmp(counter_name, "fixc1") == 0) {
+    *aperf = val;
+    *have_fixed1 = 1;
+    *have_aperf = 1;
+  } else if (counter_name != NULL && strcmp(counter_name, "fixc2") == 0) {
+    *mperf = val;
+    *have_fixed2 = 1;
+    *have_mperf = 1;
+  }
+  if (event_name == NULL)
+    return;
+  stats_set(stats, event_name, val);
+  if (strcmp(event_name, "instr_retired_any") == 0 ||
+      strcmp(event_name, "retired_instructions") == 0) {
+    *inst_retired = val;
+    *have_inst = 1;
+  } else if (strcmp(event_name, "cycles_unhalted_core") == 0) {
+    *aperf = val;
+    *have_aperf = 1;
+  } else if (strcmp(event_name, "cycles_unhalted_ref") == 0) {
+    *mperf = val;
+    *have_mperf = 1;
+  }
+}
+
+static void likwid_pmc_adapter_publish_semantic_counters(struct stats *stats,
+                                                         unsigned long long inst,
+                                                         unsigned long long aperf_val,
+                                                         unsigned long long mperf_val,
+                                                         int have_inst, int have_aperf,
+                                                         int have_mperf,
+                                                         int have_fixed0,
+                                                         int have_fixed1,
+                                                         int have_fixed2)
+{
+  if (have_inst) {
+    stats_set(stats, "instr_retired", inst);
+    if (!have_fixed0)
+      stats_set(stats, "instr_retired", inst);
+  }
+  if (have_aperf) {
+    stats_set(stats, "aperf", aperf_val);
+    if (!have_fixed1)
+      stats_set(stats, "aperf", aperf_val);
+  }
+  if (have_mperf) {
+    stats_set(stats, "mperf", mperf_val);
+    if (!have_fixed2)
+      stats_set(stats, "mperf", mperf_val);
+  }
+}
+#endif /* HAVE_LIKWID */
+
 static int read_msr_u64_cpu(int cpu, uint64_t reg, unsigned long long *val)
 {
   char cpubuf[16];
@@ -203,98 +293,40 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events,
   int have_inst = 0;
   int have_aperf = 0;
   int have_mperf = 0;
-  (void) max_ctrs;
+
+  (void)max_ctrs;
+  (void)events;
+  (void)nr_events;
   if (!g_initialized || g_group < 0 || stats == NULL || cpu < 0)
     return -1;
-  stats_set(stats, "fp_arith_inst_retired_scalar_double", 0);
-  stats_set(stats, "fp_arith_inst_retired_128b_packed_double", 0);
-  stats_set(stats, "fp_arith_inst_retired_256b_packed_double", 0);
-  stats_set(stats, "fp_arith_inst_retired_512b_packed_double", 0);
-  stats_set(stats, "fp_arith_inst_retired_scalar_single", 0);
-  stats_set(stats, "fp_arith_inst_retired_128b_packed_single", 0);
-  stats_set(stats, "fp_arith_inst_retired_256b_packed_single", 0);
-  stats_set(stats, "fp_arith_inst_retired_512b_packed_single", 0);
+  likwid_pmc_adapter_zero_fp_arith_stats(stats);
   if (perfmon_readCounters() < 0)
     return -1;
   n_events = perfmon_getNumberOfEvents(g_group);
   for (i = 0; i < n_events; i++) {
     const char *counter_name = perfmon_getCounterName(g_group, i);
     const char *event_name = perfmon_getEventName(g_group, i);
-    unsigned long long val = (unsigned long long) perfmon_getResult(g_group, i, cpu);
-    set_counter_by_name(stats, counter_name, val);
-    if (counter_name != NULL && strcmp(counter_name, "fixc0") == 0) {
-      inst_retired = val;
-      have_fixed0 = 1;
-      have_inst = 1;
-    } else if (counter_name != NULL && strcmp(counter_name, "fixc1") == 0) {
-      aperf = val;
-      have_fixed1 = 1;
-      have_aperf = 1;
-    } else if (counter_name != NULL && strcmp(counter_name, "fixc2") == 0) {
-      mperf = val;
-      have_fixed2 = 1;
-      have_mperf = 1;
-    }
-    if (event_name != NULL) {
-      stats_set(stats, event_name, val);
-      if (strcmp(event_name, "fp_arith_inst_retired_scalar_double") == 0)
-        stats_set(stats, "fp_arith_inst_retired_scalar_double", val);
-      else if (strcmp(event_name, "fp_arith_inst_retired_128b_packed_double") == 0)
-        stats_set(stats, "fp_arith_inst_retired_128b_packed_double", val);
-      else if (strcmp(event_name, "fp_arith_inst_retired_256b_packed_double") == 0)
-        stats_set(stats, "fp_arith_inst_retired_256b_packed_double", val);
-      else if (strcmp(event_name, "fp_arith_inst_retired_512b_packed_double") == 0)
-        stats_set(stats, "fp_arith_inst_retired_512b_packed_double", val);
-      else if (strcmp(event_name, "fp_arith_inst_retired_scalar_single") == 0)
-        stats_set(stats, "fp_arith_inst_retired_scalar_single", val);
-      else if (strcmp(event_name, "fp_arith_inst_retired_128b_packed_single") == 0)
-        stats_set(stats, "fp_arith_inst_retired_128b_packed_single", val);
-      else if (strcmp(event_name, "fp_arith_inst_retired_256b_packed_single") == 0)
-        stats_set(stats, "fp_arith_inst_retired_256b_packed_single", val);
-      else if (strcmp(event_name, "fp_arith_inst_retired_512b_packed_single") == 0)
-        stats_set(stats, "fp_arith_inst_retired_512b_packed_single", val);
-      if (strcmp(event_name, "instr_retired_any") == 0 ||
-          strcmp(event_name, "retired_instructions") == 0) {
-        inst_retired = val;
-        have_inst = 1;
-      } else if (strcmp(event_name, "cycles_unhalted_core") == 0) {
-        aperf = val;
-        have_aperf = 1;
-      } else if (strcmp(event_name, "cycles_unhalted_ref") == 0) {
-        mperf = val;
-        have_mperf = 1;
-      }
-    }
-  }
+    unsigned long long val =
+        (unsigned long long)perfmon_getResult(g_group, i, cpu);
 
-  /* Backfill cross-arch semantic counters from AMD MSRs if LIKWID group did not provide them. */
+    likwid_pmc_adapter_apply_one_event(stats, counter_name, event_name, val,
+                                       &inst_retired, &aperf, &mperf,
+                                       &have_inst, &have_aperf, &have_mperf,
+                                       &have_fixed0, &have_fixed1, &have_fixed2);
+  }
   if (!have_inst &&
-      read_msr_u64_cpu(cpu, (uint64_t) MSR_PERF_INST_RETIRED, &inst_retired) == 0)
+      read_msr_u64_cpu(cpu, (uint64_t)MSR_PERF_INST_RETIRED, &inst_retired) == 0)
     have_inst = 1;
   if (!have_aperf &&
-      read_msr_u64_cpu(cpu, (uint64_t) MSR_PERF_APERF, &aperf) == 0)
+      read_msr_u64_cpu(cpu, (uint64_t)MSR_PERF_APERF, &aperf) == 0)
     have_aperf = 1;
   if (!have_mperf &&
-      read_msr_u64_cpu(cpu, (uint64_t) MSR_PERF_MPERF, &mperf) == 0)
+      read_msr_u64_cpu(cpu, (uint64_t)MSR_PERF_MPERF, &mperf) == 0)
     have_mperf = 1;
-
-  if (have_inst) {
-    stats_set(stats, "instr_retired", inst_retired);
-    if (!have_fixed0)
-      stats_set(stats, "instr_retired", inst_retired);
-  }
-  if (have_aperf) {
-    stats_set(stats, "aperf", aperf);
-    if (!have_fixed1)
-      stats_set(stats, "aperf", aperf);
-  }
-  if (have_mperf) {
-    stats_set(stats, "mperf", mperf);
-    if (!have_fixed2)
-      stats_set(stats, "mperf", mperf);
-  }
-  (void)events;
-  (void)nr_events;
+  likwid_pmc_adapter_publish_semantic_counters(stats, inst_retired, aperf, mperf,
+                                               have_inst, have_aperf, have_mperf,
+                                               have_fixed0, have_fixed1,
+                                               have_fixed2);
   return 0;
 #else
   (void) stats;

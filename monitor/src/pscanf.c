@@ -1,3 +1,4 @@
+/* Bounded path scan: read file via path_read, then vsscanf. */
 #include "pscanf.h"
 
 #include <stdarg.h>
@@ -6,7 +7,6 @@
 
 #include "path_read.h"
 
-/* Match collect.c COLLECT_SMALL_BUF: stack read avoids malloc on tiny JOBID/sysfs files. */
 #define PSCANF_SMALL_BUF 4096
 
 static const struct path_read_opts pscanf_read_opts = {
@@ -23,6 +23,10 @@ int pscanf(const char *path, const char *fmt, ...)
   va_list ap;
   int n;
   int small_rc;
+
+  if (path == NULL || fmt == NULL) {
+    return -1;
+  }
 
   small_rc = path_read_small(path, sbuf, sizeof(sbuf), &len, &pscanf_read_opts);
   if (small_rc < 0)

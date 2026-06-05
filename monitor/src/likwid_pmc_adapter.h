@@ -1,3 +1,7 @@
+/*! \file likwid_pmc_adapter.h
+ *  LIKWID perfmon adapter for host_cpu_hw / amd_x86_pmc sampling.
+ */
+
 #ifndef _LIKWID_PMC_ADAPTER_H_
 #define _LIKWID_PMC_ADAPTER_H_
 

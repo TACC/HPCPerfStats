@@ -1,3 +1,6 @@
+/*
+ * On-disk stats archive header parsing and mark/schema suffix helpers.
+ */
 #ifndef STATS_FILE_FORMAT_H
 #define STATS_FILE_FORMAT_H
 

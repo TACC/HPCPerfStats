@@ -1,3 +1,4 @@
+/* Unified small-buffer and heap file reads for collect and pscanf paths. */
 #include "path_read.h"
 
 #include <errno.h>
@@ -12,9 +13,16 @@
 #define O_CLOEXEC 0
 #endif
 
+#define PATH_READ_ALLOC_INITIAL 8192u
+
 static int path_read_open(const char *path, const struct path_read_opts *opts)
 {
   int fd;
+
+  if (path == NULL || opts == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
 
   if (opts->skip_known_bad && path_open_is_skipped(path)) {
     errno = ENOENT;
@@ -34,11 +42,46 @@ static int path_read_open(const char *path, const struct path_read_opts *opts)
   return fd;
 }
 
+static int path_read_grow(char **buf, size_t *cap,
+                          const char *path, const struct path_read_opts *opts)
+{
+  size_t ncap;
+  char *nb;
+
+  if (*cap >= PATH_READ_ALLOC_MAX) {
+    if (opts->report_errors)
+      ERROR("file `%s' exceeds PATH_READ_ALLOC_MAX\n", path);
+    errno = EFBIG;
+    return -1;
+  }
+  ncap = *cap * 2;
+  if (ncap > PATH_READ_ALLOC_MAX)
+    ncap = PATH_READ_ALLOC_MAX;
+  nb = realloc(*buf, ncap);
+  if (nb == NULL) {
+    if (opts->report_errors)
+      ERROR("cannot grow read buffer for `%s': %m\n", path);
+    errno = ENOMEM;
+    return -1;
+  }
+  *buf = nb;
+  *cap = ncap;
+  return 0;
+}
+
 int path_read_small(const char *path, char *buf, size_t bufsz, size_t *out_len,
                     const struct path_read_opts *opts)
 {
   int fd;
   size_t total;
+
+  if (path == NULL || buf == NULL || out_len == NULL || opts == NULL) {
+    if (opts != NULL && opts->report_errors)
+      ERROR("path_read_small: invalid arguments for `%s'\n",
+            path != NULL ? path : "(null)");
+    errno = EINVAL;
+    return -1;
+  }
 
   if (bufsz < 2) {
     if (opts->report_errors)
@@ -96,9 +139,14 @@ int path_read_alloc(const char *path, char **out_buf, size_t *out_len,
                     const struct path_read_opts *opts)
 {
   int fd;
-  size_t cap = 8192;
+  size_t cap = PATH_READ_ALLOC_INITIAL;
   size_t len = 0;
   char *buf;
+
+  if (path == NULL || out_buf == NULL || out_len == NULL || opts == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
 
   buf = malloc(cap);
   if (buf == NULL) {
@@ -116,47 +164,29 @@ int path_read_alloc(const char *path, char **out_buf, size_t *out_len,
 
   for (;;) {
     if (len + 1 >= cap) {
-      size_t ncap;
-      char *nb;
-
-      if (cap >= PATH_READ_ALLOC_MAX) {
-        if (opts->report_errors)
-          ERROR("file `%s' exceeds PATH_READ_ALLOC_MAX\n", path);
+      if (path_read_grow(&buf, &cap, path, opts) < 0) {
         free(buf);
         close(fd);
-        errno = EFBIG;
         return -1;
       }
-      ncap = cap * 2;
-      if (ncap > PATH_READ_ALLOC_MAX)
-        ncap = PATH_READ_ALLOC_MAX;
-      nb = realloc(buf, ncap);
-      if (nb == NULL) {
+    }
+
+    {
+      ssize_t n = read(fd, buf + len, cap - len - 1);
+      if (n < 0) {
+        int saved = errno;
+
         if (opts->report_errors)
-          ERROR("cannot grow read buffer for `%s': %m\n", path);
+          ERROR("cannot read `%s': %m\n", path);
         free(buf);
         close(fd);
-        errno = ENOMEM;
+        errno = saved;
         return -1;
       }
-      buf = nb;
-      cap = ncap;
+      if (n == 0)
+        break;
+      len += (size_t)n;
     }
-
-    ssize_t n = read(fd, buf + len, cap - len - 1);
-    if (n < 0) {
-      int saved = errno;
-
-      if (opts->report_errors)
-        ERROR("cannot read `%s': %m\n", path);
-      free(buf);
-      close(fd);
-      errno = saved;
-      return -1;
-    }
-    if (n == 0)
-      break;
-    len += (size_t)n;
   }
 
   close(fd);

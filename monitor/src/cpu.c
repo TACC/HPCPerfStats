@@ -1,3 +1,4 @@
+/* host_cpu — per-CPU jiffies from /proc/stat. */
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>

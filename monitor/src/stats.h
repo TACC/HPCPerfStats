@@ -1,19 +1,21 @@
+/* Per-type schema, device instances, and metric get/set helpers. */
 #ifndef _STATS_H_
 #define _STATS_H_
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
-#include "dict.h"
-#include "trace.h"
-#include "schema.h"
-#include "JOIN.h"
+
 #include "cpuid.h"
+#include "dict.h"
+#include "JOIN.h"
+#include "schema.h"
+#include "trace.h"
 
 #define SCHEMA_DEF(k,o,d,r...) " " #k "," o
 
 /* Fixed size avoids a trailing flexible array in static struct stats_type objects.
- * NVC++/LLVM mis-sized st_name[] for some names (e.g. "host_sysv_shm"); longest current
- * name is cpu_counter_metrics (19 chars). */
+ * NVC++/LLVM mis-sized st_name[] for some names (e.g. host_sysv_shm); longest current
+ * emitted name is host_cpu_hw (12 chars). */
 #define STATS_TYPE_NAME_MAX 40
 
 extern double current_time;
@@ -53,7 +55,7 @@ struct stats_type *stats_type_for_each(size_t *i);
 struct stats_type *stats_type_get(const char *name);
 
 struct stats *get_current_stats(struct stats_type *type, const char *dev);
-void stats_set(struct stats *s, const char *key, unsigned long long val);
-void stats_inc(struct stats *s, const char *key, unsigned long long val);
+void stats_set(struct stats *stats, const char *key, unsigned long long val);
+void stats_inc(struct stats *stats, const char *key, unsigned long long val);
 
 #endif

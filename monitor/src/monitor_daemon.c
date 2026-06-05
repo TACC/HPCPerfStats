@@ -1,3 +1,4 @@
+/* RabbitMQ daemon core: ring buffer, dumpfiles, timers, jobid transitions, config reload. */
 #include <dirent.h>
 #include <errno.h>
 #include <malloc.h>
@@ -69,6 +70,10 @@ int n_pmcs;
 processor_t processor = (processor_t) 0;
 
 static void send_dumpfile_stats(struct sf_ring_buffer *w);
+static void monitor_daemon_jobid_assign(char *dest, size_t dest_len, const char *src);
+static void monitor_daemon_free_dumpfile_paths(char **file_list, int n_files);
+static int monitor_daemon_replay_one_dumpfile(const char *path,
+                                              struct sf_ring_buffer *w);
 static int save_file_stats_buffer(struct stats_buffer *sf);
 static long monitor_daemon_monotonic_us(void);
 static void monitor_daemon_log_resend_stats(int q_before, int processed_entries, long elapsed_us,
@@ -230,8 +235,15 @@ static void monitor_daemon_maybe_send_dumpfiles_after_sample_timer(struct sf_rin
 
 void monitor_daemon_conf_set_buffer_max(int value)
 {
-	max_buffer_size = value;
-	max_buffer_size_explicit = 1;
+  max_buffer_size = value;
+  max_buffer_size_explicit = 1;
+}
+
+static void monitor_daemon_jobid_assign(char *dest, size_t dest_len, const char *src)
+{
+  if (dest == NULL || dest_len == 0)
+    return;
+  snprintf(dest, dest_len, "%s", (src != NULL && src[0] != '\0') ? src : "-");
 }
 
 static void monitor_daemon_maybe_send_dumpfiles_after_jobid_cleared(struct sf_ring_buffer *w,
@@ -358,13 +370,15 @@ void monitor_daemon_prime_file_mode_from_dumpdir(void)
 
 static int monitor_daemon_sink_finalize_stats_buffer(void *opaque)
 {
-	struct stats_buffer *sf = opaque;
+  struct stats_buffer *sf = opaque;
 
-	return stats_buffer_collect(sf);
+  if (sf == NULL)
+    return -1;
+  return stats_buffer_collect(sf);
 }
 
 static const struct stats_sink_ops monitor_daemon_stats_collect_sink = {
-    .finalize = monitor_daemon_sink_finalize_stats_buffer,
+  .finalize = monitor_daemon_sink_finalize_stats_buffer,
 };
 
 static int send_stats_buffer(struct stats_buffer *sf)
@@ -374,9 +388,14 @@ static int send_stats_buffer(struct stats_buffer *sf)
 					   0);
 }
 
-static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_hdr, const char *mark_line)
+static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_hdr,
+                                           const char *mark_line)
 {
-  struct stats_buffer *sf = monitor_daemon_alloc_stats_buffer();
+  struct stats_buffer *sf;
+
+  if (w == NULL)
+    return;
+  sf = monitor_daemon_alloc_stats_buffer();
   int rc;
   if (sf == NULL)
     return;
@@ -537,56 +556,86 @@ static int save_file_ring_buffer(struct sf_ring_buffer *w)
   return 0;
 }
 
-static void send_dumpfile_stats(struct sf_ring_buffer *w)
+static void monitor_daemon_free_dumpfile_paths(char **file_list, int n_files)
+{
+  int i;
+
+  if (file_list == NULL)
+    return;
+  for (i = 0; i < n_files; i++)
+    free(file_list[i]);
+  free(file_list);
+}
+
+/*
+ * Load one dumpfile into the ring and drain over RMQ.
+ * Returns 0 when replay finished with an empty ring, 1 when the ring still has
+ * samples, -1 on open/load failure.
+ */
+static int monitor_daemon_replay_one_dumpfile(const char *path, struct sf_ring_buffer *w)
 {
   int rc;
+  FILE *f;
+
+  if (path == NULL || w == NULL)
+    return -1;
+  f = file_fopen_read(path);
+  if (f == NULL)
+    return -1;
+  rc = ring_buffer_load_file(f, w, server, port, queue, rmq_user, rmq_password,
+                             max_buffer_size, allow_ring_buffer_overwrite);
+  fclose(f);
+  if (rc != 0)
+    return -1;
+  remove(path);
+  monitor_daemon_log_ring_resend_line();
+  ring_buffer_resend_limited(w, MONITOR_DUMPFILE_REPLAY_MAX_BATCHES_PER_FILE,
+                             MONITOR_DUMPFILE_REPLAY_MAX_RUNTIME_US, NULL);
+  if (w->q_count != 0) {
+#ifdef DEBUG
+    monitor_log_info("w_q_count = %d\n", w->q_count);
+#endif
+    return 1;
+  }
+  return 0;
+}
+
+static void send_dumpfile_stats(struct sf_ring_buffer *w)
+{
   int n_files = get_dumpfile_number();
   int n_files_attempted = 0;
-  if (n_files <= 0)
+  int n_files_deleted = 0;
+  char **file_list;
+  int i;
+
+  if (w == NULL || n_files <= 0)
     return;
-  char **file_list = get_dumpfile_list();
+  file_list = get_dumpfile_list();
   if (file_list == NULL) {
     ERROR("Error listing dumpfiles in `%s'\n", dumpfile_dir);
     return;
   }
-  int n_files_deleted = 0;
-  for (int i = 0; i < n_files; i++) {
+  for (i = 0; i < n_files; i++) {
+    int replay_rc;
+
     if (n_files_attempted >= MONITOR_DUMPFILE_MAX_FILES_PER_CALL)
       break;
-    FILE *f = file_fopen_read(file_list[i]);
-    if (f == NULL) {
-      monitor_log_info( "Error opening stats file %s\n", file_list[i]);
+    replay_rc = monitor_daemon_replay_one_dumpfile(file_list[i], w);
+    if (replay_rc < 0) {
+      monitor_log_info("Error opening or loading stats file %s\n", file_list[i]);
       send_success_count = 0;
       break;
     }
-    rc = ring_buffer_load_file(f, w, server, port, queue, rmq_user, rmq_password,
-                               max_buffer_size, allow_ring_buffer_overwrite);
-    fclose(f);
-    if (rc == 0) {
-      remove(file_list[i]);
-      n_files_deleted++;
-      monitor_daemon_log_ring_resend_line();
-      ring_buffer_resend_limited(w, MONITOR_DUMPFILE_REPLAY_MAX_BATCHES_PER_FILE,
-                                 MONITOR_DUMPFILE_REPLAY_MAX_RUNTIME_US, NULL);
-      if (w->q_count != 0) {
-#ifdef DEBUG
-	monitor_log_info( "w_q_count = %d\n", w->q_count);
-#endif
-        send_success_count = 0;
-        break;
-      }
-      n_files_attempted++;
-    } else {
-      monitor_log_info( "Error loading stats file %s\n", file_list[i]);
+    n_files_deleted++;
+    if (replay_rc > 0) {
       send_success_count = 0;
       break;
     }
+    n_files_attempted++;
   }
   if (n_files_deleted == n_files)
     file_mode_enabled = 0;
-  for (int i = 0; i < n_files; i++)
-    free(file_list[i]);
-  free(file_list);
+  monitor_daemon_free_dumpfile_paths(file_list, n_files);
 }
 
 void monitor_daemon_replay_dumpfiles_if_present(struct sf_ring_buffer *w)
@@ -665,40 +714,55 @@ void monitor_daemon_send_timer_cb(struct ev_loop *loop, ev_timer *w_, int revent
   print_buffer_status(w);
 }
 
+static void monitor_daemon_fd_apply_jobid_change(struct sf_ring_buffer *w,
+                                                 const char *new_jobid)
+{
+  char *mark_line = NULL;
+  int write_hdr = 0;
+
+  if (w == NULL || new_jobid == NULL)
+    return;
+  if (strcmp(new_jobid, "-") != 0) {
+    monitor_daemon_jobid_assign(jobid, sizeof jobid, new_jobid);
+    monitor_log_info("Loading jobid %s from %s\n", jobid, jobid_file_path);
+    sample_timer_period = sample_freq;
+    mark_line = strf("begin %s", jobid);
+  } else {
+    monitor_log_info("Unloading jobid %s from %s\n", jobid, jobid_file_path);
+    mark_line = strf("end %s", jobid);
+    /*
+     * Idle (`-`) must keep the same sampling cadence as a cold start with no job.
+     * Historic code used 3600s here; that left q_count at 0 for up to an hour while send_timer
+     * still ran, so archives looked “stalled” and broker traffic was only from other hosts.
+     */
+    sample_timer_period = sample_freq;
+    write_hdr = 1;
+  }
+  monitor_daemon_reanchor_sample_timer(EV_DEFAULT, sample_timer_period);
+  monitor_daemon_collect_to_ring(w, write_hdr, mark_line);
+  if (mark_line != NULL)
+    free(mark_line);
+  monitor_daemon_maybe_send_dumpfiles_after_jobid_cleared(w, new_jobid);
+}
+
 void monitor_daemon_fd_cb(struct ev_loop *loop, ev_stat *w_, int revents)
 {
+  char new_jobid[80];
+
   (void)loop;
   (void)revents;
+  if (w_ == NULL)
+    return;
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
-  char new_jobid[80] = "-";
-  pscanf(jobid_file_path, "%79s", new_jobid);
 
-  const char *mark_line = NULL;
-  int write_hdr = 0;
+  monitor_daemon_jobid_assign(new_jobid, sizeof new_jobid, "-");
+  if (jobid_file_path != NULL)
+    pscanf(jobid_file_path, "%79s", new_jobid);
+
   if (strcmp(jobid, new_jobid) != 0) {
-    if (strcmp(new_jobid, "-") != 0) {
-      strcpy(jobid, new_jobid);
-      monitor_log_info( "Loading jobid %s from %s\n", jobid, jobid_file_path);
-      sample_timer_period = sample_freq;
-      mark_line = strf("begin %s", jobid);
-    } else {
-      monitor_log_info( "Unloading jobid %s from %s\n", jobid, jobid_file_path);
-      mark_line = strf("end %s", jobid);
-      /*
-       * Idle (`-`) must keep the same sampling cadence as a cold start with no job.
-       * Historic code used 3600s here; that left q_count at 0 for up to an hour while send_timer
-       * still ran, so archives looked “stalled” and broker traffic was only from other hosts.
-       */
-      sample_timer_period = sample_freq;
-      write_hdr = 1;
-    }
-    monitor_daemon_reanchor_sample_timer(EV_DEFAULT, sample_timer_period);
-    monitor_daemon_collect_to_ring(w, write_hdr, mark_line);
-    if (mark_line != NULL)
-      free((void *) mark_line);
-    monitor_daemon_maybe_send_dumpfiles_after_jobid_cleared(w, new_jobid);
+    monitor_daemon_fd_apply_jobid_change(w, new_jobid);
+    monitor_daemon_jobid_assign(jobid, sizeof jobid, new_jobid);
   }
-  strcpy(jobid, new_jobid);
   print_buffer_status(w);
 }
 

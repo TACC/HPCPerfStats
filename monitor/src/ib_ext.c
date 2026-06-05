@@ -1,3 +1,4 @@
+/* host_ib_ext — IB extended port counters via MAD (GSI performance class). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,8 +14,6 @@
 #include "pscanf.h"
 #include "sys_iter.h"
 #include "monitor_log.h"
-
-/* CHECKME Is unit 4B for extended counters as well? */
 
 #define KEYS \
   X(port_select, "c", ""), \
@@ -56,13 +55,28 @@ static int ib_ext_skip_active(void)
   return 1;
 }
 
-static void collect_lid_port(struct stats *stats, char* hca, int lid, int port)
+static void ib_ext_decode_counters(struct stats *stats, uint8_t *mad_buf)
+{
+#define X(t, m, f) \
+  do { \
+    t m; \
+    mad_decode_field(mad_buf, f, &m); \
+    stats_set(stats, #m, m); \
+  } while (0);
+  IB_PC_EXT_F;
+#undef X
+}
+
+static void ib_ext_query_lid_port(struct stats *stats, char *hca, int lid, int port)
 {
   struct ibmad_port *mad_port = NULL;
   int mgmt_class = IB_PERFORMANCE_CLASS;
   ib_portid_t portid = { .lid = lid };
   uint8_t mad_buf[1024];
   int timeout = 0;
+
+  if (stats == NULL || hca == NULL)
+    return;
 
   mad_port = mad_rpc_open_port(hca, port, &mgmt_class, 1);
   if (mad_port == NULL) {
@@ -72,66 +86,62 @@ static void collect_lid_port(struct stats *stats, char* hca, int lid, int port)
   }
 
   memset(mad_buf, 0, sizeof(mad_buf));
-
   if (pma_query_via(mad_buf, &portid, port, timeout, IB_GSI_PORT_COUNTERS_EXT, mad_port) == NULL) {
     g_ib_ext_fail_streak++;
     ERROR("cannot query performance counters: %m\n");
     goto out;
   }
   g_ib_ext_fail_streak = 0;
-
-#define X(t, m, f)                    \
-  do {                                \
-    t m;                              \
-    mad_decode_field(mad_buf, f, &m); \
-    stats_set(stats, #m, m);          \
-  } while (0);
-  IB_PC_EXT_F;
-#undef X
+  ib_ext_decode_counters(stats, mad_buf);
 
  out:
   if (mad_port != NULL)
     mad_rpc_close_port(mad_port);
 }
 
-static void collect_hca_port(struct stats_type *type, char *hca, int port)
+static int ib_ext_port_active(char *hca, int port)
+{
+  char path[80];
+  int state = -1;
+
+  if (hca == NULL)
+    return 0;
+  snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/state", hca, port);
+  if (pscanf(path, "%d", &state) != 1) {
+    ERROR("cannot read state of IB HCA `%s' port %d: %m\n", hca, port);
+    return 0;
+  }
+  return state == 4;
+}
+
+static void ib_ext_collect_hca_port(struct stats_type *type, char *hca, int port)
 {
   struct stats *stats = NULL;
   char dev[80];
   char path[80];
-  int state = -1;
-  unsigned int lid = -1;
+  unsigned int lid = 0;
 
-  /* Check that device is active. .../state should read "4: ACTIVE." */
-  snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/state", hca, port);
-  if (pscanf(path, "%d", &state) != 1) {
-    ERROR("cannot read state of IB HCA `%s' port %d: %m\n", hca, port);
-    goto out;
+  if (type == NULL || hca == NULL)
+    return;
+  if (!ib_ext_port_active(hca, port)) {
+    TRACE("skipping inactive IB HCA `%s', port %d\n", hca, port);
+    return;
   }
 
-  if (state != 4) {
-    TRACE("skipping inactive IB HCA `%s', port %d, state %d\n", hca, port, state);
-    goto out;
-  }
-
-  /* Get the lid. */
   snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%i/lid", hca, port);
   if (pscanf(path, "%x", &lid) != 1) {
     ERROR("cannot read lid of IB HCA `%s' port %d: %m\n", hca, port);
-    goto out;
+    return;
   }
 
-  TRACE("IB HCA %s, port %d, lid %x, state %d\n", hca, port, lid, state);
+  TRACE("IB HCA %s, port %d, lid %x\n", hca, port, lid);
 
   snprintf(dev, sizeof(dev), "%s/%d", hca, port);
   stats = get_current_stats(type, dev);
   if (stats == NULL)
-    goto out;
+    return;
 
-  collect_lid_port(stats, hca, lid, port);
-
- out:
-  (void) 0;
+  ib_ext_query_lid_port(stats, hca, lid, port);
 }
 
 struct ib_ext_port_ctx {
@@ -141,20 +151,24 @@ struct ib_ext_port_ctx {
 
 static void ib_ext_port_each(const char *base, const char *name, void *ctx)
 {
-  struct ib_ext_port_ctx *pc = (struct ib_ext_port_ctx *)ctx;
+  struct ib_ext_port_ctx *pc = (struct ib_ext_port_ctx *) ctx;
 
-  (void)base;
-  if (!isdigit((unsigned char)name[0]))
+  (void) base;
+  if (pc == NULL || name == NULL)
     return;
-  collect_hca_port(pc->type, (char *)pc->hca, atoi(name));
+  if (!isdigit((unsigned char) name[0]))
+    return;
+  ib_ext_collect_hca_port(pc->type, (char *) pc->hca, atoi(name));
 }
 
 static void ib_ext_hca_each(const char *base, const char *name, void *ctx)
 {
-  struct stats_type *type = (struct stats_type *)ctx;
+  struct stats_type *type = (struct stats_type *) ctx;
   char ports_path[160];
   struct ib_ext_port_ctx pc = { type, name };
 
+  if (type == NULL || name == NULL)
+    return;
   snprintf(ports_path, sizeof(ports_path), "%s/%s/ports", base, name);
   sys_iter_for_each(ports_path, ib_ext_port_each, &pc);
 }
@@ -163,12 +177,14 @@ static void collect_ib_ext(struct stats_type *type)
 {
   enum { fail_threshold = 8, cooldown_sec = 120 };
 
+  if (type == NULL)
+    return;
   if (ib_ext_skip_active())
     return;
   if (g_ib_ext_fail_streak >= fail_threshold) {
     g_ib_ext_skip_until = time(NULL) + cooldown_sec;
     monitor_log_warn("ib_ext: too many failures (%lu), skipping for %ds\n",
-		     g_ib_ext_fail_streak, cooldown_sec);
+                     g_ib_ext_fail_streak, cooldown_sec);
     return;
   }
   sys_iter_for_each("/sys/class/infiniband", ib_ext_hca_each, type);

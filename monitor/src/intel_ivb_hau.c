@@ -1,3 +1,7 @@
+/*! \file intel_ivb_hau.c
+ *  Intel Ivy Bridge HA uncore (intel_x86_uncore_hau_ivb).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"

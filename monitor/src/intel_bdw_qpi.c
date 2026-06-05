@@ -1,3 +1,7 @@
+/*! \file intel_bdw_qpi.c
+ *  Intel Broadwell QPI uncore (intel_x86_uncore_qpi_bdw).
+ */
+
 #include "stats.h"
 #include "JOIN.h"
 #include "intel_uncore_pci.h"
