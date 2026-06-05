@@ -186,7 +186,6 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 
 - `Threads` → `threads`
 - `Uid` → `uid`
-- `VL15_dropped` → `vl15_dropped`
 - `VmData` → `vm_data`
 - `VmExe` → `vm_exe`
 - `VmHWM` → `vm_hwm`

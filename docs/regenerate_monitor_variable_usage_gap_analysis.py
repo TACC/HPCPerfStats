@@ -308,7 +308,7 @@ This section is a strict `host_data.type` inventory for variables actively wired
 - **Figures/metrics/displays:** Job Detail Metrics (FLOP/vector/frequency/memory/power-derived rows), CPU roofline, Summary power/frequency/counter panels
 
 ### `host_ib`
-- **Used variables:** `port_xmit_data`, `port_rcv_data`, `port_xmit_pkts`, `port_rcv_pkts`, sysfs error counters, `sw_rx_bytes`, `sw_tx_bytes`, `sw_rx_packets`, `sw_tx_packets`, `vl15_dropped`
+- **Used variables:** `port_xmit_data`, `port_rcv_data`, `port_xmit_pkts`, `port_rcv_pkts`, sysfs error counters, `sw_rx_bytes`, `sw_tx_bytes`, `sw_rx_packets`, `sw_tx_packets`
 - **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_ibbw`, `avg_packetsize`, `max_fabricbw`, `max_packetrate`, `fabric_node_imbalance`), summary plot hardware error overlay
 - **Figures/metrics/displays:** Job Detail Metrics (fabric averages/peaks/imbalance/ratios), Summary plot (`ibbw`, IB error rates)
 

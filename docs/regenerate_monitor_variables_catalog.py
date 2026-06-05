@@ -7,6 +7,7 @@ Run from repo root (HPCPerfStats/) with .venv:
 from __future__ import annotations
 
 import codecs
+import importlib.util
 import re
 import sys
 from collections import defaultdict
@@ -15,8 +16,19 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 DOC = Path(__file__).resolve().parent / "MONITOR_VARIABLES.md"
 JS = REPO / "hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.js"
+GENERATOR = REPO / "hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py"
 
 sys.path.insert(0, str(REPO))
+
+
+def _historical_event_names() -> frozenset[str]:
+    """Events removed from current monitor KEYS but kept in SPA metadata for old host_data."""
+    spec = importlib.util.spec_from_file_location("gen_monitor_event_metadata", GENERATOR)
+    if spec is None or spec.loader is None:
+        return frozenset()
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return getattr(mod, "HISTORICAL_EVENT_NAMES", frozenset())
 
 
 def _parse_js() -> tuple[dict[str, str], list[str]]:
@@ -175,7 +187,7 @@ def _domain(k: str) -> str:
         "gpu_count",
     ):
         return "GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)"
-    if k.startswith("port_") or k.startswith("Port") or k in ("symbol_error", "VL15_dropped", "counter_select", "port_select"):
+    if k.startswith("port_") or k.startswith("Port") or k in ("symbol_error", "counter_select", "port_select"):
         return "InfiniBand / Omni-Path / HFI"
     if k in (
         "rx_bytes",
@@ -358,6 +370,10 @@ def main() -> int:
         print("Missing", JS, file=sys.stderr)
         return 1
     desc_map, keys = _parse_js()
+    historical = _historical_event_names()
+    if historical:
+        keys = [k for k in keys if k not in historical]
+        desc_map = {k: v for k, v in desc_map.items() if k not in historical}
     event_to_types = _event_to_types()
     refs = _scan_refs(keys)
 

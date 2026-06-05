@@ -253,7 +253,6 @@ Present in every normal daemon build (`stats_registry.c`).
 - `sw_tx_bytes`
 - `sw_tx_packets`
 - `symbol_error`
-- `vl15_dropped`
 
 ### Roofline peaks — `host_roofline_peak` (host-level)
 
@@ -682,7 +681,7 @@ Requires `--with-cpu-counter-backend=dcgm` (non-x86 default) and `--enable-hardw
 | `arm_aarch64_imc` | — | — | ✓ | — | ARM host + DCGM |
 | GPU / IB ext / Lustre / OPA / MIC | — | if configured | if configured | if configured | respective `--enable-*` |
 
-**Approximate scale:** ~185 keys in common types; x86 hardware adds ~145 more across Intel/AMD types (generation-specific; one variant active per machine); optional subsystems add ~117 more.
+**Approximate scale:** ~184 keys in common types; x86 hardware adds ~145 more across Intel/AMD types (generation-specific; one variant active per machine); optional subsystems add ~117 more.
 
 ---
 

@@ -176,7 +176,6 @@ host_proc_aliases:
   VmPTE: vm_pte
   VmSwap: vm_swap
   Threads: threads
-  VL15_dropped: vl15_dropped
 removed_legacy:
 - host_ib_ext
 - host_ib_sw

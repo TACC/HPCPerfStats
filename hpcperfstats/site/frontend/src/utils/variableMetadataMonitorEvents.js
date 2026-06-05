@@ -343,7 +343,7 @@ export const MONITOR_EVENT_METADATA = {
   uid: { description: "Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type)." },
   unlink: { description: "Lustre llite: `unlink` operation count." },
   user: { description: "Cumulative CPU time in user mode (per-core counter; units per Linux /proc/stat, typically jiffies)." },
-  vl15_dropped: { description: "InfiniBand VL 15 dropped frames." },
+  vl15_dropped: { description: "Retired InfiniBand VL 15 dropped-frame counter (historical host_data only; no longer emitted by the monitor)." },
   vm_data: { description: "Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type)." },
   vm_exe: { description: "Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type)." },
   vm_hwm: { description: "Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type)." },

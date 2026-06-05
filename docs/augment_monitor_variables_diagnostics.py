@@ -399,9 +399,9 @@ def diagnostic_for_key(key: str, definition: str) -> str:
         )
 
     # --- IB symbol / VL ---
-    if k in ("symbol_error", "VL15_dropped"):
+    if k == "symbol_error":
         return (
-            "Physical-layer and VL15 drop counters warrant link quality checks; intermittent spikes "
+            "Physical-layer symbol-error counters warrant link quality checks; intermittent spikes "
             "often correlate with cable wear or switch port errors."
         )
 

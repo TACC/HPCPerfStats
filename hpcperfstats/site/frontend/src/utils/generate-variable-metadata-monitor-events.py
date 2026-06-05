@@ -10,11 +10,15 @@ REPO = Path(__file__).resolve().parents[5]
 MONITOR_SRC = REPO / "monitor" / "src"
 OUT = Path(__file__).resolve().parent / "variableMetadataMonitorEvents.js"
 SKIP_NAMES = frozenset({"uint32_t", "uint64_t", "k", "t", "m", "f", "n"})
-# Retired monitor collectors (KNL/MIC); omit from canonical MONITOR_EVENT_METADATA.
+# Retired monitor collectors (KNL/MIC, legacy PascalCase aliases); omitted from MONITOR_EVENT_METADATA.
 RETIRED_EVENT_NAMES = frozenset({
     "mem_uops_retired_all_loads_knl",
     "mem_uops_retired_l2_hit_loads_knl",
     "VL15_dropped",
+})
+# Removed from current monitor KEYS but still present in historical host_data; keep UI tooltips.
+HISTORICAL_EVENT_NAMES = frozenset({
+    "vl15_dropped",
 })
 
 MARKERS = (
@@ -130,7 +134,7 @@ DESC: dict[str, str] = {
     "port_xmit_discards": "Packets not transmitted because the port was down or congested.",
     "port_xmit_wait": "Time waiting for credits or arbitration (vendor-specific units).",
     "symbol_error": "Minor link symbol errors on InfiniBand.",
-    "vl15_dropped": "InfiniBand VL 15 dropped frames.",
+    "vl15_dropped": "Retired InfiniBand VL 15 dropped-frame counter (historical host_data only; no longer emitted by the monitor).",
     "sw_rx_bytes": "IB switch-port received payload bytes (MAD extended 64-bit counters).",
     "sw_rx_packets": "IB switch-port received packets.",
     "sw_tx_bytes": "IB switch-port transmitted payload bytes.",
@@ -426,6 +430,7 @@ def main() -> int:
         print("monitor/src not found at", MONITOR_SRC, file=sys.stderr)
         return 1
     names = {n for n in collect_all_names() if n not in RETIRED_EVENT_NAMES}
+    names |= HISTORICAL_EVENT_NAMES
     lines = [
         "/**",
         " * Monitor `host_data.event` names: definitions align with HPCPerfStats/monitor schema KEYS.",
