@@ -11,10 +11,10 @@ readonly REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
 
 # Keep pins aligned with scripts/build_static_bundle.sh where applicable.
 LIBEV_VER="${LIBEV_VER:-4.33}"
-RABBITMQ_VER="${RABBITMQ_VER:-0.14.0}"
-LIKWID_TAG="${LIKWID_TAG:-5.3.0}"
-LIBBPF_VER="${LIBBPF_VER:-1.5.0}"
-QEMU_VER="${QEMU_VER:-9.1.0}"
+RABBITMQ_VER="${RABBITMQ_VER:-0.15.0}"
+LIKWID_TAG="${LIKWID_TAG:-5.5.1}"
+LIBBPF_VER="${LIBBPF_VER:-1.7.0}"
+QEMU_VER="${QEMU_VER:-11.0.1}"
 
 LIBEV_URL_FMT="${LIBEV_URL_FMT:-http://dist.schmorp.de/libev/libev-%s.tar.gz}"
 RABBITMQ_C_URL_FMT="${RABBITMQ_C_URL_FMT:-https://github.com/alanxz/rabbitmq-c/archive/refs/tags/v%s.tar.gz}"
@@ -748,7 +748,7 @@ ensure_local_qemu_user() {
     fetch_url "$(printf "${QEMU_URL_FMT}" "${QEMU_VER}")" "${tarball}"
     tar -C "${srcroot}" -xf "${tarball}"
   fi
-  # Newer host headers may define struct sched_attr; qemu 9.1.0 assumes otherwise.
+  # Newer host headers may define struct sched_attr; older qemu assumes otherwise.
   python3 - "${srcdir}" <<'PY'
 import pathlib, sys
 srcdir = pathlib.Path(sys.argv[1])
