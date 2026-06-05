@@ -2675,8 +2675,9 @@ class max_gpu_clock_event_reasons():
       j = schema["clocks_event_reasons"].index
       for hostname, stats in _stats.items():
         col = stats[:, j].astype(np.float64)
-        if col.size:
-          cmax = int(amax(col))
+        fin = col[np.isfinite(col)]
+        if fin.size:
+          cmax = int(amax(fin))
           if cmax > mx:
             mx = cmax
             used = typename

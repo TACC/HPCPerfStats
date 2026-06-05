@@ -27,6 +27,7 @@ from hpcperfstats.analysis.metrics.metrics import (
     expected_job_metric_row_count,
     job_metrics_catalog_entries,
     max_fabricbw,
+    max_gpu_clock_event_reasons,
     max_mds,
     max_packetrate,
 )
@@ -584,6 +585,43 @@ def test_avg_gpuutil_nvidia_legacy_utilization_only():
   value, typename, units = avg_gpuutil().compute_metric(u)
   assert typename == "nvidia_gpu"
   assert value == pytest.approx(30.0)
+
+
+@pytest.mark.machine_unit_mock
+def test_max_gpu_clock_event_reasons_all_nan_returns_none():
+  """All-NaN clocks_event_reasons must not raise int(NaN) during metrics compute."""
+  schema = _Schema(["clocks_event_reasons"])
+  stats = np.array([[np.nan], [np.nan]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = max_gpu_clock_event_reasons().compute_metric(MockU())
+  assert value is None
+  assert typename == "nvidia_gpu"
+  assert units == "#"
+
+
+@pytest.mark.machine_unit_mock
+def test_max_gpu_clock_event_reasons_skips_nan_hosts_uses_finite_max():
+  """Finite clocks_event_reasons on one host win when another host is all-NaN."""
+  schema = _Schema(["clocks_event_reasons"])
+  nan_stats = np.array([[np.nan], [np.nan]], dtype=np.float64)
+  good_stats = np.array([[0.0], [7.0], [3.0]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema, {"nan_host": nan_stats, "good_host": good_stats}
+      return None, {}
+
+  value, typename, units = max_gpu_clock_event_reasons().compute_metric(MockU())
+  assert value == 7.0
+  assert typename == "nvidia_gpu"
+  assert units == "#"
 
 
 def test_avg_ethbw_mean_across_hosts():
