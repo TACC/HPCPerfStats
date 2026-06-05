@@ -253,8 +253,8 @@ def test_metrics_run_stall_with_owned_pool_confirms_reset(monkeypatch):
       return False
 
   class _OwnedPool:
-    def __init__(self, processes=None):
-      del processes
+    def __init__(self, processes=None, initializer=None, initargs=None, **kwargs):
+      del processes, initializer, initargs, kwargs
       self._pool = [_Proc()]
 
     def terminate(self):

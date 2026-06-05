@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from django.test import RequestFactory, override_settings
+from django.test import override_settings
 
 
 @override_settings(
@@ -24,14 +24,19 @@ from django.test import RequestFactory, override_settings
     },
 )
 def test_sacct_ingest_throttles_repeated_staff_posts():
+    from django.core.cache import cache
+    from rest_framework.test import APIRequestFactory
+
     from hpcperfstats.site.machine import api
 
-    request1 = RequestFactory().post(
+    cache.clear()
+    factory = APIRequestFactory()
+    request1 = factory.post(
         "/api/sacct/ingest/?date=2024-01-02",
         data=b"x",
         content_type="text/plain",
     )
-    request2 = RequestFactory().post(
+    request2 = factory.post(
         "/api/sacct/ingest/?date=2024-01-02",
         data=b"x",
         content_type="text/plain",

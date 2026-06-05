@@ -156,6 +156,7 @@ class TestHostPlotApi:
 
     factory = APIRequestFactory()
     request = factory.get("/api/host_plot/", {"end_time__gte": "2024-01-01"})
+    request.session = {"is_staff": True}
     with patch.object(api, "_require_auth", return_value=None):
       response = api.host_plot(request)
     assert response.status_code == 400
@@ -172,6 +173,7 @@ class TestHostPlotApi:
             "end_time__lte": "now()",
         },
     )
+    request.session = {"is_staff": True}
     fake_item = {"type": "object", "name": "test_plot"}
     with patch.object(api, "_require_auth", return_value=None), patch.object(
         api, "cached_orm", return_value=fake_item

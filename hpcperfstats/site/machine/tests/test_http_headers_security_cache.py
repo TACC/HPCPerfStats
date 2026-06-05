@@ -8,18 +8,12 @@ from hpcperfstats.site.hpcperfstats_site.middleware import (
 )
 
 
-def test_spa_index_keeps_explicit_cache_control_from_view():
+def test_spa_shell_not_served_by_wsgi():
+  """Production serves /machine/ from nginx; Gunicorn must not answer the SPA shell."""
   client = Client()
   response = client.get("/machine/", secure=True)
 
-  assert response.status_code == 200
-  assert response["Cache-Control"] == "public, max-age=300"
-  assert response["X-Frame-Options"] == "SAMEORIGIN"
-  assert "Strict-Transport-Security" in response
-  assert response["Permissions-Policy"] == DEFAULT_PERMISSIONS_POLICY
-  assert response["Cross-Origin-Opener-Policy"] == DEFAULT_COOP
-  assert response["Content-Security-Policy"] == DEFAULT_CSP
-  assert response["Content-Security-Policy-Report-Only"] == DEFAULT_CSP_REPORT_ONLY
+  assert response.status_code == 404
 
 
 def test_security_headers_are_not_overwritten_if_already_set_by_view():

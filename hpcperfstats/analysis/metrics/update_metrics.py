@@ -40,6 +40,7 @@ UPDATE_METRICS_PROCESS_TITLE = "update_metrics.py"
 from django.db import close_old_connections, connections, transaction
 from django.utils import timezone as django_timezone
 from django.db.models import BooleanField, Case, Count, Exists, F, IntegerField, Max, OuterRef, Q, Subquery, Value, When
+from django.db.models.query import QuerySet
 from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, DatabaseError
 
@@ -1129,8 +1130,8 @@ def _iter_chunked_pks(queryset, chunk_size):
   objects (e.g. unit-test stubs), we transparently fall back to offset slicing.
   """
   total = 0
-  # Primary path: keyset pagination for ORM querysets.
-  try:
+  # Primary path: keyset pagination for real ORM querysets only (test doubles use offset).
+  if isinstance(queryset, QuerySet):
     last_end_time = None
     last_jid = None
     while True:
@@ -1153,12 +1154,6 @@ def _iter_chunked_pks(queryset, chunk_size):
       yield chunk, total
       last_jid, last_end_time, _start_time, _artifact_only = rows[-1]
     return
-  except (OperationalError, DatabaseError):
-    # Do not fall back to offset slicing: same expensive SQL and masks timeouts.
-    raise
-  except Exception:
-    # Fall back to bounded offset slicing for test doubles/non-ORM objects.
-    pass
 
   offset = 0
   try:

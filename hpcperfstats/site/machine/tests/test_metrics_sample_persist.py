@@ -10,6 +10,17 @@ from hpcperfstats.analysis.metrics import metrics as metrics_module
 from hpcperfstats.analysis.metrics.metrics import _persist_metrics_batch
 
 
+def _mock_default_connection_sqlite(monkeypatch):
+  mock_conn = MagicMock()
+  mock_conn.vendor = "sqlite"
+  orig_get = metrics_module.connections.__getitem__
+  monkeypatch.setattr(
+      metrics_module.connections,
+      "__getitem__",
+      lambda alias: mock_conn if alias == "default" else orig_get(alias),
+  )
+
+
 @pytest.fixture
 def sample_metric_row():
   job = MagicMock()
@@ -25,8 +36,9 @@ def sample_metric_row():
 
 
 @pytest.mark.django_db(databases=[])
-def test_persist_metrics_batch_sets_metrics_distinct_time_count(sample_metric_row):
+def test_persist_metrics_batch_sets_metrics_distinct_time_count(sample_metric_row, monkeypatch):
   """bulk_update job_data with metrics_distinct_time_count after metrics write."""
+  _mock_default_connection_sqlite(monkeypatch)
   job_row = MagicMock()
   job_row.jid = "j1"
 
@@ -64,8 +76,9 @@ def test_persist_metrics_batch_sets_metrics_distinct_time_count(sample_metric_ro
 
 
 @pytest.mark.django_db(databases=[])
-def test_persist_metrics_batch_skips_job_update_when_distinct_none(sample_metric_row):
+def test_persist_metrics_batch_skips_job_update_when_distinct_none(sample_metric_row, monkeypatch):
   """distinct_time_count=None does not call job_data.bulk_update for sample count."""
+  _mock_default_connection_sqlite(monkeypatch)
   with patch.object(
       metrics_module.metrics_data.objects,
       "bulk_create",
@@ -90,8 +103,9 @@ def test_persist_metrics_batch_skips_job_update_when_distinct_none(sample_metric
 
 
 @pytest.mark.django_db(databases=[])
-def test_persist_metrics_batch_coerces_list_metric_fields(sample_metric_row):
+def test_persist_metrics_batch_coerces_list_metric_fields(sample_metric_row, monkeypatch):
   """List-like type/metric/units should be coerced to stable strings."""
+  _mock_default_connection_sqlite(monkeypatch)
   row = dict(sample_metric_row)
   row["type"] = ["cpu", "agg"]
   row["metric"] = ["avg_cpuusage", "peak_cpuusage"]
@@ -118,8 +132,9 @@ def test_persist_metrics_batch_coerces_list_metric_fields(sample_metric_row):
 
 
 @pytest.mark.django_db(databases=[])
-def test_persist_metrics_batch_coerces_list_like_jid(sample_metric_row):
+def test_persist_metrics_batch_coerces_list_like_jid(sample_metric_row, monkeypatch):
   """List-like jid payloads should not crash set/dict key construction."""
+  _mock_default_connection_sqlite(monkeypatch)
   row = dict(sample_metric_row)
   bad_job = MagicMock()
   bad_job.jid = ["j1", "part"]

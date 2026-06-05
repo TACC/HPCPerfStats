@@ -14,6 +14,10 @@ def _dummy_django_settings(monkeypatch):
     DEBUG = False
 
   monkeypatch.setattr("hpcperfstats.site.machine.cache_utils.settings", DummySettings())
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.cache_utils.close_old_connections",
+      lambda: None,
+  )
 
 
 def test_cached_orm_miss_returns_query_result():

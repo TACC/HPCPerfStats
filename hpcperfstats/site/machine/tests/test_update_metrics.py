@@ -113,6 +113,21 @@ def test_iter_chunked_pks_multiple_chunks():
   assert ([r.jid for r in chunks[2][0]], chunks[2][1]) == ([50], 5)
 
 
+def test_iter_chunked_pks_non_queryset_does_not_double_yield():
+  """Test doubles without QuerySet.filter must use offset path only (no keyset tail)."""
+
+  class Qs:
+    def values_list(self, *args, **kwargs):
+      return self
+
+    def __getitem__(self, item):
+      return [1, 2, 3][item]
+
+  chunks = list(_iter_chunked_pks(Qs(), 10))
+  assert len(chunks) == 1
+  assert [r.jid for r in chunks[0][0]] == [1, 2, 3]
+
+
 def test_iter_chunked_pks_reraises_operational_error():
   """Keyset pagination must not fall back to offset slicing on DB timeout/cancel."""
   class BadQs:
@@ -319,8 +334,28 @@ def test_install_sigterm_handler_sets_flag_and_returns(monkeypatch):
   update_metrics.shutdown_requested[0] = False
 
 
+@pytest.mark.machine_unit_mock
 def test_update_metrics_stops_between_chunks_on_shutdown(monkeypatch):
   """When SIGTERM sets shutdown_requested, metrics processing should stop."""
+  monkeypatch.setattr(update_metrics, "run_with_db_retry", lambda func, **kwargs: func())
+  monkeypatch.setattr(
+      update_metrics,
+      "_pg_session_statement_timeout_for_metrics_batch",
+      contextlib.nullcontext,
+  )
+  monkeypatch.setattr(update_metrics, "_pg_local_readiness_timeouts", contextlib.nullcontext)
+  monkeypatch.setattr(
+      update_metrics,
+      "_run_public_ef_artifacts_parallel_phase",
+      lambda shared_pool, phase_timer: {
+          "degraded": 0,
+          "worker_exceptions": 0,
+          "watchdog_timeouts": 0,
+          "pending_tasks": 0,
+          "tasks_completed": 0,
+          "tasks_total": 0,
+      },
+  )
   monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
   monkeypatch.setattr(
       update_metrics,
@@ -338,7 +373,7 @@ def test_update_metrics_stops_between_chunks_on_shutdown(monkeypatch):
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -365,6 +400,7 @@ def test_job_refs_from_jids_are_lightweight():
   assert all(not hasattr(r, "_state") for r in refs)
 
 
+@pytest.mark.machine_unit_mock
 def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
   """update_metrics should not re-query job_data rows per chunk."""
   monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
@@ -390,7 +426,7 @@ def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -406,6 +442,7 @@ def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
   assert seen == [[101], [102], [103]]
 
 
+@pytest.mark.machine_unit_mock
 def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
   """Jobs without host latest sample strictly after end_time are skipped."""
   monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
@@ -428,7 +465,7 @@ def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -444,6 +481,7 @@ def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
   assert seen == [[101], [103]]
 
 
+@pytest.mark.machine_unit_mock
 def test_update_metrics_reuses_shared_pool_per_date(monkeypatch):
   """update_metrics should initialize one shared pool and reuse it per jid run."""
   monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
@@ -463,7 +501,7 @@ def test_update_metrics_reuses_shared_pool_per_date(monkeypatch):
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       pool_calls.append("ensure")
       return pool_token
 
@@ -714,7 +752,7 @@ def test_compute_jid_outcomes_batch_calls_metrics_run_once(monkeypatch):
   batches = []
 
   class _M:
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return None
 
     def run(self, job_refs, pool=None):
@@ -740,7 +778,7 @@ def test_compute_jid_outcomes_batch_skip_prewarm_skips_plot_submit(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
 
   class _M:
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return None
 
     def run(self, job_refs, pool=None):
@@ -762,7 +800,7 @@ def test_compute_jid_outcomes_batch_prewarm_submits_each_jid(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: False)
 
   class _M:
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return None
 
     def run(self, job_refs, pool=None):
@@ -793,7 +831,7 @@ def test_compute_jid_outcomes_batch_skips_prewarm_for_explicit_failed_outcomes(m
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: False)
 
   class _M:
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return None
 
     def run(self, job_refs, pool=None):
@@ -850,7 +888,7 @@ def test_compute_jid_outcomes_batch_prewarm_drain_budget_defers_backlog(monkeypa
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_budget_per_successful_job_s", lambda: 0.0)
 
   class _M:
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return None
 
     def run(self, job_refs, pool=None):
@@ -921,7 +959,7 @@ def test_compute_jid_outcomes_batch_skips_metrics_run_for_artifact_only_candidat
   calls = []
 
   class _M:
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return None
 
     def run(self, job_refs, pool=None):
@@ -975,7 +1013,7 @@ def test_compute_jid_outcomes_batch_falls_back_per_jid_after_batch_failure(monke
   calls = []
 
   class _M:
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return None
 
     def run(self, job_refs, pool=None):
@@ -1013,7 +1051,7 @@ def test_compute_jid_outcomes_batch_stall_recovery_budget_marks_remaining_failed
   calls = []
 
   class _M:
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return None
 
     def run(self, job_refs, pool=None):
@@ -1522,7 +1560,7 @@ def test_update_metrics_for_dates_global_scheduler_interleaves_dates(monkeypatch
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -1574,7 +1612,7 @@ def test_update_metrics_for_dates_exhausts_when_readiness_filters_all(monkeypatc
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -1622,7 +1660,7 @@ def test_update_metrics_for_dates_sets_stall_diagnostics_on_no_progress(monkeypa
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -1672,7 +1710,7 @@ def test_update_metrics_for_dates_records_queue_and_attempt_counters(monkeypatch
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -1745,7 +1783,7 @@ def test_update_metrics_for_dates_records_explicit_worker_and_parent_persist_fai
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -1864,7 +1902,7 @@ def test_update_metrics_for_dates_rescan_picks_up_new_mid_run_jid(monkeypatch):
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -1925,7 +1963,7 @@ def test_update_metrics_refreshes_pub_dashboards_before_first_compute(monkeypatc
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -2101,7 +2139,7 @@ def test_update_metrics_for_dates_rechecks_deferred_not_ready_jid_until_ready(mo
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -2178,7 +2216,7 @@ def test_update_metrics_pub_parallel_once_then_safe_in_finally(monkeypatch):
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -2247,7 +2285,7 @@ def test_update_metrics_scheduler_runs_real_detail_prewarm_with_jid_table_stub(m
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -2333,7 +2371,7 @@ def test_update_metrics_for_dates_empty_date_list_returns(monkeypatch):
     simple_metrics_list = {}
     complex_metrics_list = {}
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -2411,7 +2449,7 @@ def test_update_metrics_for_dates_per_jid_failure_does_not_stop_progress(monkeyp
     simple_metrics_list = {}
     complex_metrics_list = []
 
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return object()
 
     def close_pool(self):
@@ -2633,7 +2671,7 @@ def test_compute_and_prewarm_jid_logs_when_full_pipeline_succeeds(monkeypatch):
   monkeypatch.setattr(update_metrics, "log_print", _capture)
 
   class _M:
-    def ensure_pool(self):
+    def ensure_pool(self, pool_kind="metrics-pool"):
       return None
 
     def run(self, job_list, pool=None):
@@ -2648,6 +2686,7 @@ def test_compute_and_prewarm_jid_logs_when_full_pipeline_succeeds(monkeypatch):
   assert "metrics=" in joined and "job_detail=" in joined and "job_plots=" in joined
 
 
+@pytest.mark.machine_unit_mock
 def test_main_sleep_after_waits_60_seconds(monkeypatch):
   """sleep_after mode should wait exactly 60s after metrics completion."""
   monkeypatch.setattr(update_metrics, "_default_metrics_date_range", lambda: (
@@ -2675,6 +2714,7 @@ def test_main_sleep_after_waits_60_seconds(monkeypatch):
   assert sleeps == [60]
 
 
+@pytest.mark.machine_unit_mock
 def test_main_default_sleep_after_waits_60_seconds(monkeypatch):
   """Default behavior should sleep after completion when not overridden."""
   monkeypatch.delenv("HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER", raising=False)

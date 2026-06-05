@@ -89,8 +89,23 @@ def pytest_collection_modifyitems(config, items):
     path = str(item.fspath).replace("\\", "/")
     if "/site/machine/tests/" in path and not list(item.iter_markers("django_db")):
       if item.get_closest_marker("machine_unit_mock"):
+        item.add_marker(pytest.mark.django_db(databases=[]))
         continue
       item.add_marker(pytest.mark.django_db)
+
+  # Unit tests under hpcperfstats/tests/ import Django models or call
+  # close_old_connections. On the host use django_db(databases=[]) (mocks only).
+  # Under compose, allow the default database for integration-style dbload tests.
+  for item in items:
+    path = str(item.fspath).replace("\\", "/")
+    if "/hpcperfstats/tests/" not in path:
+      continue
+    if list(item.iter_markers("django_db")):
+      continue
+    if _compose_network_enabled():
+      item.add_marker(pytest.mark.django_db)
+    else:
+      item.add_marker(pytest.mark.django_db(databases=[]))
 
   if _compose_network_enabled():
     return

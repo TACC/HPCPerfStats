@@ -165,12 +165,13 @@ describe("JobDetail", () => {
     const getJobDetailSpy = vi
       .spyOn(apiModule.api, "getJobDetail")
       .mockResolvedValue(minimalJobDetailResponse);
-    const getJobPlotsSpy = vi.spyOn(apiModule.api, "getJobPlots").mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(() => resolve(minimalBatchPlotsResponse), 100);
-        })
-    );
+    let resolvePlots;
+    const plotsPending = new Promise((resolve) => {
+      resolvePlots = resolve;
+    });
+    const getJobPlotsSpy = vi
+      .spyOn(apiModule.api, "getJobPlots")
+      .mockReturnValue(plotsPending);
 
     renderJobDetail("12345");
 
@@ -185,12 +186,10 @@ describe("JobDetail", () => {
 
     expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
 
-    await waitFor(
-      () => {
-        expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
-      },
-      { timeout: 200 }
-    );
+    resolvePlots(minimalBatchPlotsResponse);
+    await waitFor(() => {
+      expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
+    });
   });
 
   it("does not call getJobPlots when getJobDetail fails", async () => {

@@ -2,7 +2,7 @@
 from unittest.mock import ANY, MagicMock, patch
 
 import pandas as pd
-from django.test import RequestFactory
+from django.test import RequestFactory, override_settings
 
 class TestJobListHistogramsView:
     """Tests for the metric-only job_list_histograms API view."""
@@ -228,7 +228,9 @@ class TestJobListNoHistogramsInResponse:
 
         # With empty DB we may get 404 (no data) or 200 (empty list)
         if response.status_code == 200:
-            data = response.json()
+            data = getattr(response, "data", None)
+            if data is None:
+                data = response.json()
             assert "script" not in data, "job_list must not return script (use histograms endpoint)"
             assert "div" not in data, "job_list must not return div (use histograms endpoint)"
             assert "job_list" in data

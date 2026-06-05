@@ -94,18 +94,23 @@ class PlotArtifactInputFingerprintHex(Expression):
         f"FILTER (WHERE trim(elem) <> '')::text "
         f"FROM unnest({jt}.{hl}) AS t(elem)), '[]')"
     )
+    iso_ts = (
+        "CASE WHEN {tbl}.{col} IS NULL THEN to_json(''::text)::text "
+        "ELSE to_json(to_char({tbl}.{col} AT TIME ZONE 'UTC', "
+        "'YYYY-MM-DD\"T\"HH24:MI:SS.USOF'))::text END"
+    )
+    et_iso = iso_ts.format(tbl=jt, col=et)
+    st_iso = iso_ts.format(tbl=jt, col=st)
     inner = (
         f"'{{\"artifact_schema\":' || %s::text || "
         f"',\"bokeh\":' || to_json(%s::text)::text || "
-        f"',\"et\":' || (CASE WHEN {jt}.{et} IS NULL THEN to_json(''::text)::text "
-        f"ELSE to_json({jt}.{et})::text END) || "
+        f"',\"et\":' || {et_iso} || "
         f"',\"hosts\":' || {hosts_json} || "
         f"',\"jid\":' || to_json(trim(both from {jt}.{jcol}::text))::text || "
         f"',\"live_distinct\":' || ({live_sql})::text || "
         f"',\"mdc\":' || (CASE WHEN {jt}.{mdc} IS NULL THEN 'null' "
         f"ELSE {jt}.{mdc}::text END) || "
-        f"',\"st\":' || (CASE WHEN {jt}.{st} IS NULL THEN to_json(''::text)::text "
-        f"ELSE to_json({jt}.{st})::text END) || '}}'"
+        f"',\"st\":' || {st_iso} || '}}'"
     )
     sql = "encode(sha256(convert_to(({})::text, 'UTF8')), 'hex')".format(inner)
     params = [plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION, bokeh.__version__]

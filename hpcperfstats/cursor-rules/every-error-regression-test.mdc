@@ -21,6 +21,13 @@ This is **non-negotiable project law** for the whole codebase: **no fix or behav
 3. **Apply the fix**; keep the test green.
 4. **Run** the relevant test scope (host unit vs compose-backed per `docker-compose-non-unit-testing.mdc` / `full-test-with-db-redis.mdc`).
 
+## Regression examples (chat audit 2026-06)
+
+- **Supervisor maintenance defer/forced:** `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_periodic_maintenance_logs_deferred_when_archive_finalize_pending`, `test_periodic_maintenance_runs_forced_two_phase_when_defer_cap_exceeded`) — use `get_sync_ingest_chunk_size=1` and frozen `time.time()` until first archive dispatch; do not patch `st.chunk_size` (supervisor reads config getter).
+- **Keyset chunking on test doubles:** `hpcperfstats/site/machine/tests/test_update_metrics.py::test_iter_chunked_pks_non_queryset_does_not_double_yield` — `_iter_chunked_pks` must not mix keyset and offset paths for non-`QuerySet` objects.
+- **Bokeh queue bar embed contract:** `hpcperfstats/site/machine/api.py::_job_list_queue_bar_chart` + `test_job_hist_bokeh_ranges.py` even when job-list API omits queue histograms.
+- **Prefetch guard:** `hpcperfstats/tests/test_cache_utils.py::test_ensure_job_metrics_data_prefetched_skips_non_job_data_instances`.
+
 ## Narrow exceptions (not excuses to skip tests)
 
 - **Pure documentation**, **comments only**, or **non-executable config samples** with no behavior change: no new test required.

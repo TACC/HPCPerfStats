@@ -37,7 +37,7 @@ def test_docker_compose_rabbitmq_allows_large_monitor_messages():
 
   assert "rabbitmq_max_message_size.conf:/etc/rabbitmq/conf.d/20-max_message_size.conf" in content
   conf_text = conf_path.read_text()
-  assert "max_message_size = 67108864" in conf_text
+  assert "max_message_size = 134217728" in conf_text
 
 
 def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():

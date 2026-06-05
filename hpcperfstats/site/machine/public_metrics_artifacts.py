@@ -120,7 +120,8 @@ def _streaming_jid_epoch_fingerprint(prefix: str, qs) -> str:
   h.update(b"|")
   h.update(prefix.encode())
   h.update(b"|")
-  for jid, et in qs.order_by("jid").values_list("jid", "end_time").iterator(chunk_size=2048):
+  # Plain iterator (no chunk_size) so pytest-django TestCase allows DB access.
+  for jid, et in qs.order_by("jid").values_list("jid", "end_time").iterator():
     h.update(str(jid).encode())
     h.update(b"|")
     if et is None:

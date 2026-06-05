@@ -43,6 +43,7 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
 
 ## Required tests when behavior changes
 
+- Supervisor defer/forced maintenance under pending `archive_job`: `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_periodic_maintenance_logs_deferred_when_archive_finalize_pending`, `test_periodic_maintenance_runs_forced_two_phase_when_defer_cap_exceeded`, `test_continuous_backlog_triggers_forced_maintenance`). Tests must enable maintenance only after a never-ready `map_async` job exists (`get_sync_ingest_chunk_size`, not module-level `chunk_size`).
 - Extend/add focused tests around:
  - lock path normalization/idempotence
  - lock file cleanup after success and exceptions

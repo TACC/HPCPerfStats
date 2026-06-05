@@ -22,9 +22,9 @@ def test_job_plots_uses_l2_without_jid_table():
   plot_item = {"type": "model", "id": "plot123"}
 
   def cached_se(key, timeout, fn):
-    if key.startswith(f"{cu.KEY_JOB}:j1"):
+    if key == cu.make_job_detail_cache_key("j1"):
       return job
-    return None
+    return fn()
 
   vis = MagicMock()
   vis.exists.return_value = True
@@ -72,9 +72,9 @@ def test_job_plots_zoom_reads_fingerprinted_data_cache_key():
   observed_get_keys = []
 
   def cached_se(key, timeout, fn):
-    if key.startswith(f"{cu.KEY_JOB}:j1"):
+    if key == cu.make_job_detail_cache_key("j1"):
       return job
-    return None
+    return fn()
 
   def cache_get_side_effect(key):
     observed_get_keys.append(key)

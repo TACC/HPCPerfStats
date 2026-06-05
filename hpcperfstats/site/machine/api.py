@@ -17,6 +17,7 @@ from rest_framework.decorators import api_view, throttle_classes
 from rest_framework.response import Response
 
 from django.conf import settings
+from django.views.decorators.csrf import csrf_protect
 from django.core.cache import cache
 from django.db import connection, close_old_connections, transaction
 from django.test import RequestFactory
@@ -1193,6 +1194,7 @@ def user_api_key_status(request):
     })
 
 
+@csrf_protect
 @api_view(["POST"])
 def user_api_key_rotate(request):
     """Revoke active keys for this user and return a newly minted raw key."""
@@ -1390,6 +1392,92 @@ def home_options(request):
         "queues": [q for q in (queues or []) if q],
         "states": [s for s in (states or []) if s],
     })
+
+
+def _queue_histogram_display_label(raw_queue):
+    """Stable label for one queue bucket (Bokeh FactorRange factors must be unique)."""
+    s = (raw_queue or "").strip()
+    return s if s else "(no queue)"
+
+
+def _merge_queue_bar_rows(rows, *, metric):
+    """Merge ORM rows that map to the same display label (e.g. NULL vs '' → '(no queue)')."""
+    from collections import defaultdict
+
+    if metric == "jobs":
+        acc = defaultdict(int)
+        for q, c in rows:
+            acc[_queue_histogram_display_label(q)] += int(c or 0)
+    elif metric == "node_hours":
+        acc = defaultdict(float)
+        for q, v in rows:
+            acc[_queue_histogram_display_label(q)] += float(v or 0.0)
+    else:
+        raise ValueError(f"unknown queue bar metric: {metric!r}")
+    return sorted(acc.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="jobs"):
+    """Bokeh vbar of per-queue job count or summed node hours (full filtered job list).
+
+    Retained for unit tests and Playwright Bokeh embed fixtures even though the job
+    list API no longer ships queue histograms in responses.
+    """
+    from bokeh.models import ColumnDataSource
+
+    close_old_connections()
+    try:
+        if metric == "jobs":
+            rows = list(
+                job_list_qs.values("queue")
+                .annotate(_bar_top=Count("jid", distinct=True))
+                .order_by("-_bar_top")
+                .values_list("queue", "_bar_top")
+            )
+            title = "Jobs by queue"
+            y_label = "# jobs"
+        else:
+            rows = list(
+                job_list_qs.values("queue")
+                .annotate(_bar_top=Sum("node_hrs"))
+                .order_by("-_bar_top")
+                .values_list("queue", "_bar_top")
+            )
+            title = "Node hours by queue"
+            y_label = "node hours"
+        if not rows:
+            return None
+        merged = _merge_queue_bar_rows(rows, metric=metric)
+        queue_names = [str(q) for q, _ in merged]
+        tops = [float(v) for _, v in merged]
+        source = ColumnDataSource(dict(x=queue_names, top=tops))
+        max_top = max(tops) if tops else 0.0
+        y_high = max(1.0, float(max_top) * 1.05) if max_top > 0 else 1.0
+        p = new_spa_embedded_figure(
+            x_range=queue_names,
+            y_range=(0.0, y_high),
+            height=height,
+            width=width,
+            title=title,
+        )
+        p.vbar(
+            x="x",
+            top="top",
+            bottom=0,
+            width=0.7,
+            source=source,
+            fill_color="#3182bd",
+            line_color="#225ea8",
+        )
+        p.xaxis.axis_label = "queue"
+        p.yaxis.axis_label = y_label
+        p.xgrid.visible = False
+        p.xaxis.major_label_orientation = (
+            "vertical" if len(queue_names) > 5 else "horizontal"
+        )
+        return p
+    finally:
+        close_old_connections()
 
 
 # Display titles for built-in job list histogram columns (column name -> UI title)

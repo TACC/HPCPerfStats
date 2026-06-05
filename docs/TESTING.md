@@ -1,5 +1,19 @@
 # Testing hpcperfstats
 
+## Chat failure registry (maintainer)
+
+To mine parent agent transcripts for failure signatures and build **`docs/chat_failure_registry.json`**:
+
+```bash
+cd HPCPerfStats
+../.venv/bin/python scripts/extract_chat_failure_signatures.py \
+  --transcripts-dir "$HOME/.cursor/projects/<project-id>/agent-transcripts" \
+  --since 2026-01-04 --until 2026-06-04 \
+  --output docs/chat_failure_registry.json
+```
+
+P0 triage notes live in **`docs/chat_failure_registry_p0_triage.json`**. Run logs: **`docs/test_run_log_2026-06-04.md`**.
+
 ## Quick start
 
 From the project root (directory containing `pyproject.toml`):

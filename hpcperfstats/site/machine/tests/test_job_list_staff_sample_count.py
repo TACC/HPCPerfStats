@@ -30,7 +30,7 @@ def test_job_list_includes_sample_count_for_staff():
     request = RequestFactory().get("/api/job-list/")
     request.session = {"username": "u1", "is_staff": True}
 
-    with patch.object(
+    with patch.object(api, "check_for_tokens", return_value=True), patch.object(
         api,
         "_build_job_list_queryset_from_request",
         return_value=(job_data.objects.filter(pk=job.pk), {}, None, "-end_time"),
@@ -49,7 +49,7 @@ def test_job_list_omits_sample_count_for_non_staff():
     request = RequestFactory().get("/api/job-list/")
     request.session = {"username": "u1", "is_staff": False}
 
-    with patch.object(
+    with patch.object(api, "check_for_tokens", return_value=True), patch.object(
         api,
         "_build_job_list_queryset_from_request",
         return_value=(job_data.objects.filter(pk=job.pk), {}, None, "-end_time"),
