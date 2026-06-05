@@ -14,10 +14,22 @@ from hpcperfstats.monitor_naming.canonical import (
     INTEL_CORE_PMC_TYPES_ORDERED,
     INTEL_IMC_STATS_TYPES,
 )
-from hpcperfstats.monitor_naming.legacy import INGEST_LEGACY_KNL_IMC_TYPE
+from hpcperfstats.monitor_naming.legacy import (
+    INGEST_LEGACY_KNL_IMC_TYPE,
+    LEGACY_INTEL_IMC_STATS_TYPES,
+    MONITOR_LEGACY_KNL_IMC_TYPE,
+)
 from hpcperfstats.analysis.plot.roofline_peaks import ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS
 
+_RETIRED_KNL_CANONICAL_TYPES = frozenset({
+    "intel_x86_pmc_knl",
+    "intel_x86_uncore_mc_knl",
+    "intel_x86_uncore_edc_knl",
+    "intel_x86_uncore_cha_knl",
+})
+
 _ST_NAME_RE = re.compile(r'\.st_name\s*=\s*"([^"]+)"')
+_ST_NAME_DEFINE_RE = re.compile(r'#define\s+\w+_ST_NAME\s+"([^"]+)"')
 
 
 def _monitor_st_names_from_sources() -> set[str]:
@@ -29,6 +41,9 @@ def _monitor_st_names_from_sources() -> set[str]:
   for path in sorted(monitor_src.glob("*.c")):
     text = path.read_text(encoding="utf-8", errors="replace")
     names.update(_ST_NAME_RE.findall(text))
+  for path in sorted(monitor_src.glob("*.h")):
+    text = path.read_text(encoding="utf-8", errors="replace")
+    names.update(_ST_NAME_DEFINE_RE.findall(text))
   return names
 
 
@@ -63,11 +78,14 @@ def test_monitor_st_names_cover_intel_imc_stats_types():
     )
 
 
-def test_legacy_knl_imc_dclk_in_roofline_peaks_for_historical_host_data():
-  """Dual-read: old DB rows may still use ingest-normalized KNL typename."""
-  assert INGEST_LEGACY_KNL_IMC_TYPE not in INTEL_IMC_STATS_TYPES
-  row = ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS.get("intel_x86_uncore_mc_knl")
-  assert row is not None
+def test_knl_retired_from_canonical_lists_but_legacy_imc_remains():
+  """KNL no longer in canonical analysis lists; legacy IMC typenames stay for dual-read."""
+  for retired in _RETIRED_KNL_CANONICAL_TYPES:
+    assert retired not in INTEL_IMC_STATS_TYPES
+    assert retired not in INTEL_CORE_PMC_TYPES_ORDERED
+    assert retired not in ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS
+  assert INGEST_LEGACY_KNL_IMC_TYPE in LEGACY_INTEL_IMC_STATS_TYPES
+  assert MONITOR_LEGACY_KNL_IMC_TYPE in LEGACY_INTEL_IMC_STATS_TYPES
 
 
 def test_monitor_st_names_cover_amd_roofline_prerequisites():

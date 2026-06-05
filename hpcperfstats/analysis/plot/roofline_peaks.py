@@ -6,8 +6,8 @@ They are **not** guaranteed to match any specific SKU, socket count, or turbo st
 **Method (high level)**
 
 - **Intel:** Rows follow canonical IMC typenames in host_data. Numbers target **typical
-  dual-socket Xeon EP/SP-class** nodes for SNB→BDW; **single-socket** KNL; **dual-socket**
-  scalable for ``intel_x86_uncore_imc_skx``.
+  dual-socket Xeon EP/SP-class** nodes for SNB→BDW and **dual-socket** scalable for
+  ``intel_x86_uncore_imc_skx``.
 - **AMD:** Monitor does not encode Zen generation in ``host_data.type``; see
   ``amd64_epyc_2s_default`` and named Zen1–Zen5 rows for documentation/overrides.
 - **NVIDIA Grace:** Single-die vs Grace Superchip (two CPU dies) per NVIDIA public
@@ -39,7 +39,6 @@ ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS: Dict[str, Tuple[float, float]] = {
     "intel_x86_uncore_imc_ivb": (900.0, 102.0),
     "intel_x86_uncore_imc_hsw": (1400.0, 110.0),
     "intel_x86_uncore_imc_bdw": (1800.0, 140.0),
-    "intel_x86_uncore_mc_knl": (2700.0, 400.0),
     "intel_x86_uncore_imc_skx": (6400.0, 460.0),
     "nvidia_grace_cpu_chip": (7100.0, 500.0),
     "nvidia_grace_cpu_superchip": (14200.0, 1000.0),

@@ -322,7 +322,7 @@ This section is a strict `host_data.type` inventory for variables actively wired
 - **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, summary/roofline/heatmap plot modules
 - **Figures/metrics/displays:** Job Detail Metrics (FLOP/vector/frequency rows), Summary plot (`flops64b`, `flops32b`, `instr`, `mcycles`, `acycles`, `freq`), CPU roofline and CPU multiprecision
 
-### `intel_bdw_imc`, `intel_hsw_imc`, `intel_ivb_imc`, `intel_snb_imc`, `intel_skx_imc`, `intel_knl_mc_dclk`
+### `intel_bdw_imc`, `intel_hsw_imc`, `intel_ivb_imc`, `intel_snb_imc`, `intel_skx_imc`
 - **Used variables:** `CAS_READS`, `CAS_WRITES`
 - **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_mbw`, `dram_bw_node_imbalance`), roofline helpers
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_mbw`, `dram_bw_node_imbalance`), Summary (`mbw`), CPU roofline memory path
@@ -502,8 +502,8 @@ def main() -> int:
             "migration; no synthetic `CTL*`/`CTR*` or hex control tokens).",
             "- Usage matching scans explicit quoted key literals in `hpcperfstats/` and "
             "`tests/`; dynamically generated keys or indirect mappings can be undercounted.",
-            "- Downstream still references **legacy** type/event strings until updated; section 5 "
-            "lists pre-rename keys used by metrics/plots.",
+            "- Section 5 lists legacy type/event keys still probed for historical `host_data`; "
+            "retired KNL/MIC collectors are not in current monitor emission.",
             "- This is static source analysis, not runtime coverage.",
             "- Compile-time gated monitor drivers may exist in source but be disabled in a "
             "given deployment.",

@@ -43,7 +43,6 @@ X86: list[tuple[str, str, str | None]] = [
     ("AMD Data Fabric", "amd_x86_uncore_df", "per CPU; Zen 17h/19h", None),
     ("Intel core PMC (4 GPR)", "intel_x86_pmc_gpr4", "per CPU", "Full schema in `intel_pmc3.h`"),
     ("Intel core PMC (8 GPR)", "intel_x86_pmc_gpr8", "per CPU", "Full schema in `intel_pmc3.h`"),
-    ("Intel KNL core", "intel_x86_pmc_knl", "per CPU", None),
     ("Intel CBO SNB/IVB", "intel_x86_uncore_cbo_snb", "per core index", "Same keys as `intel_x86_uncore_cbo_ivb`"),
     ("Intel CBO SNB/IVB", "intel_x86_uncore_cbo_ivb", "per core index", None),
     ("Intel CBO HSW/BDW", "intel_x86_uncore_cbo_hsw", "per core index", "Same keys as `intel_x86_uncore_cbo_bdw`"),
@@ -54,8 +53,6 @@ X86: list[tuple[str, str, str | None]] = [
     ("Intel IMC HSW", "intel_x86_uncore_imc_hsw", "per PCI device", None),
     ("Intel IMC BDW", "intel_x86_uncore_imc_bdw", "per PCI device", None),
     ("Intel IMC SKX", "intel_x86_uncore_imc_skx", "per PCI device", None),
-    ("Intel KNL MC", "intel_x86_uncore_mc_knl", "per PCI device", None),
-    ("Intel KNL EDC", "intel_x86_uncore_edc_knl", "per PCI device", None),
     ("Intel QPI SNB", "intel_x86_uncore_qpi_snb", None, "Same keys across SNB/IVB/HSW/BDW QPI types"),
     ("Intel QPI IVB", "intel_x86_uncore_qpi_ivb", None, None),
     ("Intel QPI HSW", "intel_x86_uncore_qpi_hsw", None, None),
@@ -84,7 +81,6 @@ OPTIONAL: list[tuple[str, str, str | None]] = [
     ("Intel OPA", "host_opa", "`--enable-opa`", None),
     ("Lustre MDC", "lustre_mdc", "`--enable-lustre`", None),
     ("Lustre llite", "lustre_llite", "`--enable-lustre`", None),
-    ("Intel MIC", "host_mic", "`--enable-mic`", None),
 ]
 
 

@@ -198,6 +198,13 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 
 ## Removed legacy symbols (never re-emit)
 
+- `host_mic`
+- `intel_knl`
+- `intel_knl_edc`
+- `intel_knl_mc`
+- `intel_x86_pmc_knl`
+- `intel_x86_uncore_edc_knl`
+- `intel_x86_uncore_mc_knl`
 - `CTL0`
 - `CTL1`
 - `CTL2`

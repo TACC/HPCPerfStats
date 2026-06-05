@@ -64,6 +64,7 @@ intel_hsw_imc_eventmap = {
 
 intel_bdw_imc_eventmap = intel_hsw_imc_eventmap
 
+# Historical archives only: KNL IMC is no longer emitted by the monitor.
 intel_knl_mc_dclk_eventmap = {
     0x300301: "CAS_READS,W=48",
     0x300309: "CAS_WRITES,W=48",

@@ -7,7 +7,6 @@ INTEL_IMC_STATS_TYPES = (
     "intel_x86_uncore_imc_ivb",
     "intel_x86_uncore_imc_hsw",
     "intel_x86_uncore_imc_bdw",
-    "intel_x86_uncore_mc_knl",
     "intel_x86_uncore_imc_skx",
 )
 
@@ -29,7 +28,6 @@ PMC_TYPENAME_PRIORITY = (
     "intel_x86_pmc_gpr8",
     "intel_x86_pmc_gpr4",
     HOST_CPU_HW_TYPE,
-    "intel_x86_pmc_knl",
     "intel_x86_uncore_imc_skx",
     "intel_x86_uncore_imc_bdw",
     "intel_x86_uncore_imc_hsw",
@@ -37,10 +35,7 @@ PMC_TYPENAME_PRIORITY = (
     "intel_x86_uncore_imc_snb",
 )
 
-CHA_TYPENAME_PRIORITY = (
-    "intel_x86_uncore_cha_skx",
-    "intel_x86_uncore_cha_knl",
-)
+CHA_TYPENAME_PRIORITY = ("intel_x86_uncore_cha_skx",)
 
 # FP_ARITH events (unchanged monitor mnemonics).
 INTEL_FP_ARITH_DOUBLE_EVENTS = (
@@ -97,11 +92,9 @@ _PMC_FREQ_BY_TYPENAME = {
     "intel_ivb": 2.8,
     "intel_hsw": 2.3,
     "intel_bdw": 2.6,
-    "intel_knl": 1.4,
     "intel_skx": 2.1,
     "intel_x86_pmc_gpr8": 2.7,
     "intel_x86_pmc_gpr4": 2.7,
-    "intel_x86_pmc_knl": 1.4,
     AMD_PMC_TYPE: 2.7,
     HOST_CPU_HW_TYPE: 2.7,
     # Legacy keys still probed via resolve dual-read in utils._pick_pmc_typename

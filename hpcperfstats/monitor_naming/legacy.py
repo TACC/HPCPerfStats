@@ -13,7 +13,9 @@ INGEST_LEGACY_KNL_IMC_TYPE = "intel_knl_mc_dclk"
 MONITOR_LEGACY_KNL_IMC_TYPE = "intel_knl_mc"
 
 TYPE_LEGACY_TO_CANONICAL: dict[str, str] = dict(type_renames())
-TYPE_LEGACY_TO_CANONICAL[INGEST_LEGACY_KNL_IMC_TYPE] = "intel_x86_uncore_mc_knl"
+# KNL IMC retired from canonical emission; identity mapping for historical host_data.
+TYPE_LEGACY_TO_CANONICAL[INGEST_LEGACY_KNL_IMC_TYPE] = INGEST_LEGACY_KNL_IMC_TYPE
+TYPE_LEGACY_TO_CANONICAL[MONITOR_LEGACY_KNL_IMC_TYPE] = MONITOR_LEGACY_KNL_IMC_TYPE
 
 LEGACY_TYPENAMES: frozenset[str] = frozenset(TYPE_LEGACY_TO_CANONICAL.keys())
 

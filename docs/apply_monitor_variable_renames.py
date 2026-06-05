@@ -88,7 +88,6 @@ TYPE_RENAMES: dict[str, str] = {
     "roofline_hw_peak": "host_roofline_peak",
     "intel_8pmc3": "intel_x86_pmc_gpr8",
     "intel_4pmc3": "intel_x86_pmc_gpr4",
-    "intel_knl": "intel_x86_pmc_knl",
     "amd64_pmc": "amd_x86_pmc",
     "amd64_df": "amd_x86_uncore_df",
     "amd64_rapl": "amd_x86_rapl",
@@ -115,8 +114,6 @@ TYPE_RENAMES: dict[str, str] = {
     "intel_ivb_r2pci": "intel_x86_uncore_r2pci_ivb",
     "intel_hsw_r2pci": "intel_x86_uncore_r2pci_hsw",
     "intel_bdw_r2pci": "intel_x86_uncore_r2pci_bdw",
-    "intel_knl_mc": "intel_x86_uncore_mc_knl",
-    "intel_knl_edc": "intel_x86_uncore_edc_knl",
     "intel_pcu": "intel_x86_pcu",
     "arm_imc": "arm_aarch64_imc",
     "ib": "host_ib",
@@ -127,8 +124,17 @@ TYPE_RENAMES: dict[str, str] = {
     "llite": "lustre_llite",
     "mdc": "lustre_mdc",
     "osc": "lustre_osc",
-    "mic": "host_mic",
 }
+
+RETIRED_TYPES = frozenset({
+    "host_mic",
+    "intel_knl",
+    "intel_knl_edc",
+    "intel_knl_mc",
+    "intel_x86_pmc_knl",
+    "intel_x86_uncore_edc_knl",
+    "intel_x86_uncore_mc_knl",
+})
 
 # Per-file patches after global event renames (PCU fixed counters are not core instr/aperf).
 FILE_EVENT_OVERRIDES: dict[str, dict[str, str]] = {
@@ -266,11 +272,14 @@ def write_yaml(path: Path, events: dict[str, str]) -> None:
         "file_event_overrides": FILE_EVENT_OVERRIDES,
         "host_mem_aliases": HOST_MEM_EVENTS,
         "host_proc_aliases": HOST_PROC_EVENTS,
-        "removed_legacy": [
-            "CTL0", "CTL1", "CTL2", "CTL3", "CTL4", "CTL5", "CTL6", "CTL7",
-            "CTR0", "CTR1", "CTR2", "CTR3", "CTR4", "CTR5", "CTR6", "CTR7",
-            "FIXED_CTR", "FIXED_CTR0", "FIXED_CTR1", "FIXED_CTR2",
-        ],
+        "removed_legacy": sorted(
+            RETIRED_TYPES
+            | {
+                "CTL0", "CTL1", "CTL2", "CTL3", "CTL4", "CTL5", "CTL6", "CTL7",
+                "CTR0", "CTR1", "CTR2", "CTR3", "CTR4", "CTR5", "CTR6", "CTR7",
+                "FIXED_CTR", "FIXED_CTR0", "FIXED_CTR1", "FIXED_CTR2",
+            }
+        ),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     if yaml is None:

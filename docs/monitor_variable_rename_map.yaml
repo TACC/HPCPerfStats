@@ -16,7 +16,6 @@ types:
   roofline_hw_peak: host_roofline_peak
   intel_8pmc3: intel_x86_pmc_gpr8
   intel_4pmc3: intel_x86_pmc_gpr4
-  intel_knl: intel_x86_pmc_knl
   amd64_pmc: amd_x86_pmc
   amd64_df: amd_x86_uncore_df
   amd64_rapl: amd_x86_rapl
@@ -43,8 +42,6 @@ types:
   intel_ivb_r2pci: intel_x86_uncore_r2pci_ivb
   intel_hsw_r2pci: intel_x86_uncore_r2pci_hsw
   intel_bdw_r2pci: intel_x86_uncore_r2pci_bdw
-  intel_knl_mc: intel_x86_uncore_mc_knl
-  intel_knl_edc: intel_x86_uncore_edc_knl
   intel_pcu: intel_x86_pcu
   arm_imc: arm_aarch64_imc
   ib: host_ib
@@ -55,7 +52,6 @@ types:
   llite: lustre_llite
   mdc: lustre_mdc
   osc: lustre_osc
-  mic: host_mic
 events:
   ACT_COUNT: dram_act_count
   APERF: aperf
@@ -179,6 +175,13 @@ host_proc_aliases:
   VmSwap: vm_swap
   Threads: threads
 removed_legacy:
+- host_mic
+- intel_knl
+- intel_knl_edc
+- intel_knl_mc
+- intel_x86_pmc_knl
+- intel_x86_uncore_edc_knl
+- intel_x86_uncore_mc_knl
 - CTL0
 - CTL1
 - CTL2

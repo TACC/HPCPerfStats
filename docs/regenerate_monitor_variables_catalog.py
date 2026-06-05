@@ -418,7 +418,6 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `intel_4pmc3` | `intel_4pmc3.c` | Same decode map as `intel_8pmc3` |
 | `intel_8pmc3` | `intel_8pmc3.c` | FP_ARITH / fixed counters / legacy SSE FLOP proxies |
 | `intel_*_imc` | `intel_*_imc.c` | IMC generations → `CAS_READS` / `CAS_WRITES` |
-| `intel_knl_mc_dclk` | `intel_knl_mc.c + dbload normalization` | KNL DRAM CAS |
 | `intel_skx_cha` | `intel_skx_cha.c` | CHA uncore events (summary arc sum) |
 | `intel_rapl` | `intel_rapl.c` | RAPL MSRs |
 | `intel_pcu` | `intel_pcu.c` | Package control / uncore |
@@ -427,7 +426,6 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `lnet` | `lnet.c` | LNET counters |
 | `mdc` | `mdc.c` | Lustre MDC stats |
 | `mem` | `mem.c` | System memory |
-| `mic` | `mic.c` | Xeon Phi aggregate CPU |
 | `net` | `net.c` | Ethernet sysfs |
 | `nfs` | `nfs.c` | NFS mountstats |
 | `numa` | `numa.c` | NUMA hit/miss |
@@ -441,13 +439,13 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `vfs` | `vfs.c` | Skipped by default ingest |
 | `vm` | `vm.c` | VM stats |
 
-Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`). Some typenames are normalized during dbload (for example KNL memory controller).
+Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`). Historical archives may still use legacy KNL typenames decoded in `sync_timedb_parsing_legacy.py`.
 
 ### By functional domain (summary)
 
-- **CPU time & load:** `cpu`, `ps`, `mic` types — `user`, `system`, `load_*`, …
+- **CPU time & load:** `cpu`, `ps` types — `user`, `system`, `load_*`, …
 - **Core PMC / FLOPs / frequency:** `intel_*pmc3`, `amd64_pmc`, `cpu_counter_metrics` — `FP_ARITH_*`, `FLOPS`, `INST_RETIRED`, `APERF`, `MPERF`, …
-- **DRAM bandwidth:** `intel_*_imc`, `intel_knl_mc_dclk`, `arm_imc`, `amd64_df` — `CAS_READS` / `CAS_WRITES`, `MBW_CHANNEL_*`
+- **DRAM bandwidth:** `intel_*_imc`, `arm_imc`, `amd64_df` — `CAS_READS` / `CAS_WRITES`, `MBW_CHANNEL_*`
 - **GPU:** `nvidia_gpu`, `amd_gpu` — `gpu_util`, `tensor_active`, `power_usage`, …
 - **High-speed fabric:** `ib_ext`, `opa` — `port_*`, `Port*` counters
 - **Ethernet / LNET:** `net`, `lnet` — `rx_bytes`, `tx_bytes`, …

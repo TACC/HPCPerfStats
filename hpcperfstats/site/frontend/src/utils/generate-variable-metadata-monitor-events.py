@@ -10,6 +10,11 @@ REPO = Path(__file__).resolve().parents[5]
 MONITOR_SRC = REPO / "monitor" / "src"
 OUT = Path(__file__).resolve().parent / "variableMetadataMonitorEvents.js"
 SKIP_NAMES = frozenset({"uint32_t", "uint64_t", "k", "t", "m", "f", "n"})
+# Retired monitor collectors (KNL/MIC); omit from canonical MONITOR_EVENT_METADATA.
+RETIRED_EVENT_NAMES = frozenset({
+    "mem_uops_retired_all_loads_knl",
+    "mem_uops_retired_l2_hit_loads_knl",
+})
 
 MARKERS = (
     "#define KEYS",
@@ -415,7 +420,7 @@ def main() -> int:
     if not MONITOR_SRC.is_dir():
         print("monitor/src not found at", MONITOR_SRC, file=sys.stderr)
         return 1
-    names = collect_all_names()
+    names = {n for n in collect_all_names() if n not in RETIRED_EVENT_NAMES}
     lines = [
         "/**",
         " * Monitor `host_data.event` names: definitions align with HPCPerfStats/monitor schema KEYS.",

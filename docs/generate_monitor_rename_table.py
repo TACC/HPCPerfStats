@@ -57,7 +57,7 @@ Pattern: `{{origin}}_{{domain}}[{{variant}}]` — lowercase snake only.
 |---------|----------|
 | origin | `host`, `intel`, `amd`, `arm`, `nvidia`, `lustre` |
 | domain | `cpu`, `mem`, `pmc`, `uncore_imc`, `rapl`, `gpu`, `ib`, `roofline_peak` |
-| variant | `gpr8`, `snb`, `skx`, `knl` (generation or counter width) |
+| variant | `gpr8`, `snb`, `skx` (generation or counter width) |
 
 Architecture and CPU generation belong in the **type name**, not in event keys.
 
