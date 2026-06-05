@@ -10,9 +10,8 @@ When asked to run "full tests" for this workspace, use the Docker Compose networ
 ## Required process
 
 1. Ensure Docker runtime is available.
-2. From `HPCPerfStats/`, reset all Docker volumes/state before tests:
-   - `docker-compose down -v --remove-orphans`
-   - `docker volume prune -f`
+2. From `HPCPerfStats/`, reset compose state before tests (workflow scripts run **`docker-compose down -v --remove-orphans`** at startup):
+   - Prefer **`tests/run_db_pytest_workflow.sh`** or another **`tests/run_*_workflow.sh`** runner rather than ad-hoc compose commands.
 3. Rebuild runtime image and start dependencies:
    - `docker-compose build web`
    - `docker-compose up -d db redis`
@@ -22,8 +21,7 @@ When asked to run "full tests" for this workspace, use the Docker Compose networ
 6. Run the full suite inside the compose network (not host Python):
  - `docker-compose run --rm --entrypoint "sh -lc 'pip install \".[test]\" && python -m playwright install --with-deps chromium && python -m pytest -q'" web`
  - for web/browser E2E workflow specifically, use: `tests/run_web_e2e_workflow.sh`
-7. Always clean up containers and volumes after the test run (pass or fail):
-   - `docker-compose down -v`
+7. Always clean up after the test run (pass or fail). Workflow scripts call **`colima_compose_teardown`** (compose **`down -v --remove-orphans`** then **`tests/colima_docker_cleanup.sh`**: prune containers, images, build cache, volumes, networks) unless **`--keep-env`**. Set **`COLIMA_DOCKER_CLEANUP_SKIP=1`** to skip the prune step only.
 
 ## Why this is required
 
@@ -35,5 +33,5 @@ When asked to run "full tests" for this workspace, use the Docker Compose networ
 - Report service startup/health status.
 - Report test totals and pass/fail status.
 - If tests fail, fix root cause and re-run.
-- Confirm teardown was executed: containers stopped and compose volumes removed.
+- Confirm teardown was executed: compose services stopped, volumes removed, and Colima Docker prune completed (unless **`--keep-env`** or **`COLIMA_DOCKER_CLEANUP_SKIP=1`**).
 - Keep `monitor/` unchanged unless explicitly approved by the user.

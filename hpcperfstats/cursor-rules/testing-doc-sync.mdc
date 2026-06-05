@@ -19,6 +19,7 @@ When test behavior, test scope, or test execution workflow changes, update
 
 ## Required actions
 - Update `HPCPerfStats/docs/TESTING.md` to reflect the new commands, scope, and prerequisites.
+- When **`testing-best-practices.mdc`** changes, sync the **Best practices** section in `docs/TESTING.md` in the same task.
 - Keep examples copy-paste ready and consistent with current scripts/config.
 - Include both quick-start commands and any specialized runners when applicable.
 

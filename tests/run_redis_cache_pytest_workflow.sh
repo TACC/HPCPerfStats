@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+# shellcheck source=colima_compose_teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/colima_compose_teardown.sh"
+colima_export_docker_env
 
 KEEP_ENV=0
 SKIP_BUILD=0
@@ -72,8 +75,7 @@ cleanup() {
     echo "Keeping compose environment (--keep-env)."
     return
   fi
-  echo "Tearing down compose services and volumes..."
-  docker-compose down -v
+  colima_compose_teardown docker-compose
 }
 trap cleanup EXIT
 
@@ -92,7 +94,6 @@ fi
 
 echo "Resetting Docker compose state and volumes..."
 docker-compose down -v --remove-orphans
-docker volume prune -f
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   echo "Rebuilding web image..."

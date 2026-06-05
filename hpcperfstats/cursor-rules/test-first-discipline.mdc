@@ -17,10 +17,12 @@ Treat every non-trivial change as test-first work.
 
 ## Scope expectations
 - Apply this to backend, frontend, API contract, routing, ingestion/metrics, caching, and config/runtime changes.
-- Select the narrowest test level that proves correctness first (unit/component), then run required integration/E2E coverage when rules for that area require it.
+- Select the narrowest test level that proves correctness first (unit/component); see **`testing-best-practices.mdc`** for the pyramid and pre-merge matrix.
+- **New modules** (Python package files, React components, utils) require a **colocated test file** in the same task.
 - Do not mark work complete without running the relevant tests for touched behavior.
 
 ## Integration with existing testing rules
+- **`testing-best-practices.mdc`** — canonical pyramid, mock boundaries, drift guards, refactor-for-testability.
 - Follow compose-network workflows for non-unit tests per `docker-compose-non-unit-testing.mdc` and `full-test-with-db-redis.mdc`.
 - When web pages/routes change, also follow `web-pages-e2e-test-maintenance.mdc` and `pipeline-endpoint-matrix-drift-guard.mdc`.
 - When ingest/metrics behavior changes, also follow `pipeline-metrics-e2e-maintenance.mdc` and `runtime-resource-and-metrics-safety.mdc`.

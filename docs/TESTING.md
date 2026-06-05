@@ -177,7 +177,14 @@ tests/run_stress_host_data_workflow.sh --skip-build
 tests/run_pipeline_e2e_workflow.sh --skip-build
 ```
 
-Each workflow tears down containers and **named volumes** on exit unless you pass **`--keep-env`** (see per-script help).
+Each workflow tears down containers and **named volumes** on exit, then runs **Colima Docker cleanup** (prune unused images, build cache, volumes, and networks) unless you pass **`--keep-env`** (see per-script help). Set **`COLIMA_DOCKER_CLEANUP_SKIP=1`** to skip the prune step while still running compose teardown.
+
+Manual cleanup from `HPCPerfStats/`:
+
+```bash
+docker-compose down -v --remove-orphans
+bash tests/colima_docker_cleanup.sh
+```
 
 If a follow-up script fails with **`failed to resolve host 'db'`** inside the container, Docker networking may still be cleaning up from a previous run. Run `docker-compose down --remove-orphans` from `HPCPerfStats/` and retry, or wait a few seconds between workflows.
 
@@ -224,18 +231,95 @@ cd hpcperfstats/site/frontend && npm test -- --run src/components/BokehEmbed.tes
 cd hpcperfstats-tools && python -m pytest --cov=hpcperfstats_tools --cov-report=term-missing
 ```
 
+## Best practices
+
+Canonical guidance lives in **`hpcperfstats/cursor-rules/testing-best-practices.mdc`**. Summary:
+
+### Test pyramid
+
+| Layer | When | Runner |
+|-------|------|--------|
+| Unit | Pure helpers, mocked API views (`django_db(databases=[])`) | `python scripts/run_tests.py --no-django`, Vitest `npm test -- --run` |
+| Integration | Postgres, Redis, Timescale | `tests/run_db_pytest_workflow.sh`, `tests/run_redis_cache_pytest_workflow.sh` |
+| E2E | Browser UX, nginx, full pipeline | `tests/run_web_e2e_workflow.sh`, `tests/run_pipeline_e2e_workflow.sh` |
+
+Prove correctness at the **narrowest** layer first; escalate only when mocks cannot exercise the contract.
+
+### Colocation and drift guards
+
+- **Python:** `test_*.py` beside modules or under `hpcperfstats/tests/` for daemons. New modules need a test file in the same task.
+- **Frontend:** `*.test.{js,jsx}` colocated under `hpcperfstats/site/frontend/src/`.
+- Cross-layer registries (routes, metric labels, extended-search params) need **drift tests** that fail when source and consumer lists diverge.
+
+### Refactor for testability
+
+Split monolithic functions when it materially reduces mock surface—lock behavior with tests before extracting helpers (`testing-best-practices.mdc` + `refactor-dedup-priorities.mdc`).
+
+### Pre-merge matrix
+
+| Change | Minimum run |
+|--------|-------------|
+| dbload/utils | `python scripts/run_tests.py --no-django` |
+| Django API | Host API mock tests + `tests/run_db_pytest_workflow.sh` if DB semantics change |
+| Web UI | Vitest + `tests/run_web_e2e_workflow.sh` when user-visible behavior changes |
+| Metrics/ingest | Compose db pytest + pipeline E2E when payloads change |
+
+### `api.py` coverage
+
+Host-side modules: `test_api_helpers.py`, `test_api_view_matrix.py`, `test_api_coverage_gaps.py`, `test_api_misc.py`. Baseline and gap notes: **`artifacts/api_py_coverage_baseline.md`**.
+
+```bash
+cd HPCPerfStats && PYTHONPATH=. ../.venv/bin/python -m pytest \
+  hpcperfstats/site/machine/tests/test_api_helpers.py \
+  hpcperfstats/site/machine/tests/test_api_view_matrix.py \
+  hpcperfstats/site/machine/tests/test_api_coverage_gaps.py \
+  hpcperfstats/site/machine/tests/test_api_misc.py \
+  --cov=hpcperfstats.site.machine.api --cov-report=term-missing -q
+```
+
+### Frontend coverage inventory (Vitest)
+
+| Area | Status |
+|------|--------|
+| Pages | All pages have tests; JobDetail/JobList deepest |
+| Components | All components under `src/components/` |
+| Hooks | 100% (`useAsyncFetch`, `useTableSort`, `useFocusTrap`, `use-home-options`) |
+| Utils | Catalog/drift guards for search params, metric labels, monitor events, robots prefixes |
+| Config | `api-paths.js`, `publicRobotsAllowPrefixes.js` |
+
+Targeted runs:
+
+```bash
+cd hpcperfstats/site/frontend
+npm test -- --run src/components/PageBreadcrumbs.test.jsx
+npm test -- --run src/utils/extended-search-parameters.test.js
+npm run test:coverage -- --run
+```
+
+### Document history
+
+| Date | Change |
+|------|--------|
+| 2026-06-05 | Added best-practices section, frontend inventory, `api.py` coverage modules, new dbload/API/frontend unit tests |
+| 2026-06-05 | Colima post-test cleanup: `tests/colima_docker_cleanup.sh`, `tests/colima_compose_teardown.sh`; wired into all `tests/run_*_workflow.sh` scripts |
+
 ## Test layout
 
 | Location | Description |
 |---------|-------------|
+| `tests/colima_docker_cleanup.sh` | After compose workflows: prune stopped containers, unused images, build cache, volumes, and networks (Colima **`DOCKER_HOST`**). Skip with **`COLIMA_DOCKER_CLEANUP_SKIP=1`**. |
+| `tests/colima_compose_teardown.sh` | Shared helper sourced by **`tests/run_*_workflow.sh`**: **`colima_compose_teardown`** runs compose **`down -v --remove-orphans`** then invokes **`colima_docker_cleanup.sh`**. |
 | `tests/pip_compose_test_extras_fallback.sh` | When `pip install -e ".[test]"` fails on a bind mount, inner compose scripts source this helper so **Django 6.x** and **pytest 9+ / pytest-django 4.12+** match `pyproject.toml` (not legacy `pytest>=7` / `pytest-django>=4.5` floors). |
 | `hpcperfstats/tests/test_sync_timedb_parsing_canonical.py` | Canonical stats-line ingest (semantic PMC/IMC events, no CTL/CTR eventmaps). |
 | `hpcperfstats/tests/test_sync_timedb_parsing_legacy.py` | Legacy ingest path (`map_hardware_counter_vals`, hex eventmaps, KNL type aliases). |
 | `hpcperfstats/tests/test_monitor_naming_resolve.py` | Dual-read probe order for `monitor_naming/resolve.py`. |
 | `hpcperfstats/tests/test_monitor_analysis_typename_contract.py` | Monitor `.st_name` coverage vs `canonical.py` and roofline peak rows. |
+| `hpcperfstats/tests/test_archive_compress.py` | Pure path helpers in `archive_compress.py` (detect format, tar/zst/gz siblings, member maps). |
+| `hpcperfstats/tests/test_sync_acct.py` | Accounting ingest (`sync_acct_from_content`, restricted queues, bulk fallback, cache notify) with mocked ORM. |
+| `hpcperfstats/tests/test_listend_drain.py` | RabbitMQ drain loop (ack/nack, empty queue) with mocked pika. |
 | `hpcperfstats/tests/` | Non-Django unit/integration tests (config parsing, service startup/health, listend behavior, sync helpers, cache/date/print/file-locking helpers, XALT models, API key mobile checks, dbload `zstd`/row-builder helpers; Django’s `django.utils.timezone.utc` is restored in **`hpcperfstats_site/settings.py`** for Django 5+). `test_conf_parser.py` covers `get_effective_cores()`, `get_metrics_pool_process_count()`, default `total_cores=40`, `get_parallel_db_prefetch_max_workers()` / `get_api_small_executor_max_workers()` (defaults **4**), DB `CONN_MAX_AGE` and PostgreSQL `OPTIONS` builders, and `get_sync_ingest_pool_processes()` / `get_sync_archive_pool_processes()` caps. `test_pg_connection_stats_command.py` exercises the `pg_connection_stats` management command with a mocked DB connection (no live Postgres). `test_numa_topology.py`, `test_compose_cpu_layout.py`, and `test_apply_compose_numa_pinning.py` cover sysfs NUMA parsing, **single-node** topology, responsive linear CPU partitions, and `scripts/apply_compose_cpu_pinning.py --dry-run`. `test_sync_timedb_supervisor.py` exercises `run_sync_timedb_supervisor_loop` (empty-queue sleep, ingest wave, second empty sleep) with mocked multiprocessing pools and rescans. `test_sync_timedb_archive.py` includes deferred-archive / atomic-seal helpers, `tar tf` integrity checks, zstd gzip restore, tar dedupe (largest wins per path), and helpers used for scheduled archive maintenance + raw-file removal (`get_existing_archive_members_for_daily_archive`, `remove_verified_archived_raw_files`, `validate_sealed_daily_archive_for_raw_removal`); integration tests call real `zstd` and skip when `zstd` is not on `PATH`. `test_monitor_analysis_typename_contract.py` asserts monitor `stats_type.st_name` values stay aligned with `INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, and `INTEL_CORE_PMC_TYPES_ORDERED` (skips if `monitor/src` is absent). |
 | `hpcperfstats/analysis/**/test*.py` | Analysis/plot/metrics-focused tests (summary/roofline behavior, roofline peak inference from `host_data.type` schema keys, hover tooltips, shared job-window parsing, metrics helpers). `analysis/metrics/test_per_interval_rate.py` also covers node-imbalance variants (DRAM, LNET, GPU util/tensor) and GPU peak helpers. `analysis/metrics/test_job_for_metrics.py` and `analysis/plot/test_summaryplot_no_data.py` exercise metrics/summaryplot edge cases. `analysis/metrics/test_job_metric_display_labels.py` and `test_metrics_add_arrays.py` cover label maps and small `metrics.py` helpers. `analysis/test_bokeh_job_embed.py` is a pure-Python unit test for `bokeh_job_embed.figure_embed_kw` (no Django). |
-| `hpcperfstats/site/machine/tests/` | Django + web tests (ORM/query/update helpers, job detail file-system llite vs NFS fallback, security headers, API/misc endpoints, SPA rendering, page and browser E2E tests). Includes `test_type_detail_api.py`, which asserts type-detail `host_data` ORM SQL does not reference `jid` (job scope is start/end time + accounting hosts) with `django_db(databases=[])` so it does not need a live DB. `test_api_coverage_gaps.py` hits additional `api.py` branches (cache invalidation, `host_plot`, job monitor, `sacct_ingest`) with mocks and locmem cache—no Postgres host required. `test_oauth2.py`, `test_cache_middleware.py`, `test_renderers.py`, and `test_update_xalt.py` cover OAuth helpers, dynamic cache TTL middleware, JSON NaN sanitization, and the XALT log script loop. `test_metrics.py` includes `test_job_metric_short_labels_cover_catalog`, which asserts every `job_metrics_catalog_entries()` metric has a matching entry in `job_metric_display_labels.JOB_METRIC_SHORT_LABELS` (parity with the frontend short-label map). `test_job_plot_artifacts.py` covers gzip-serialized Bokeh `json_item` persistence (`job_plot_artifact`), fingerprinting, and invalidation (requires Postgres like other `django_db` machine tests). **`test_public_api.py`** covers anonymous **`GET/POST /api/pub/cluster-dashboard/`** with `django_db(databases=[])` + mocks so host pytest does not need Compose Postgres. **`test_public_metrics_artifacts.py`** runs EF formula checks under **`machine_unit_mock`** off Compose; refresh/invalidate integration rows still require Postgres (`HPCPERFSTATS_COMPOSE_NETWORK=1` via `tests/run_db_pytest_workflow.sh`). `test_job_list_performance_summary.py` covers job list `performance` labels / `sort_rank` and ORM `performance_sort_rank` ordering vs `summarize_performance()`. `test_redis_cache_live.py` hits Django `RedisCache` against a live Redis when `HPCPERFSTATS_PYTEST_LIVE_REDIS=1` (`tests/run_redis_cache_pytest_workflow.sh`); otherwise those tests skip. `test_query_utils.py` includes `get_job_list_order_by` allowlist (`performance_sort_rank`; legacy `has_metrics` is rejected). **API:** `/api/jobs/` list entries expose `performance` (not `has_metrics`); sort with `order_by=performance_sort_rank` or `-performance_sort_rank`. |
+| `hpcperfstats/site/machine/tests/` | Django + web tests (ORM/query/update helpers, job detail file-system llite vs NFS fallback, security headers, API/misc endpoints, SPA rendering, page and browser E2E tests). **`test_api_helpers.py`** and **`test_api_view_matrix.py`** add host-side `api.py` helper and view coverage with mocks. Includes `test_type_detail_api.py`, which asserts type-detail `host_data` ORM SQL does not reference `jid` (job scope is start/end time + accounting hosts) with `django_db(databases=[])` so it does not need a live DB. `test_api_coverage_gaps.py` hits additional `api.py` branches (cache invalidation, `host_plot`, job monitor, `sacct_ingest`, `job_detail`, `job_plots`) with mocks and locmem cache—no Postgres host required. `test_oauth2.py`, `test_cache_middleware.py`, `test_renderers.py`, and `test_update_xalt.py` cover OAuth helpers, dynamic cache TTL middleware, JSON NaN sanitization, and the XALT log script loop. `test_metrics.py` includes `test_job_metric_short_labels_cover_catalog`, which asserts every `job_metrics_catalog_entries()` metric has a matching entry in `job_metric_display_labels.JOB_METRIC_SHORT_LABELS` (parity with the frontend short-label map). `test_job_plot_artifacts.py` covers gzip-serialized Bokeh `json_item` persistence (`job_plot_artifact`), fingerprinting, and invalidation (requires Postgres like other `django_db` machine tests). **`test_public_api.py`** covers anonymous **`GET/POST /api/pub/cluster-dashboard/`** with `django_db(databases=[])` + mocks so host pytest does not need Compose Postgres. **`test_public_metrics_artifacts.py`** runs EF formula checks under **`machine_unit_mock`** off Compose; refresh/invalidate integration rows still require Postgres (`HPCPERFSTATS_COMPOSE_NETWORK=1` via `tests/run_db_pytest_workflow.sh`). `test_job_list_performance_summary.py` covers job list `performance` labels / `sort_rank` and ORM `performance_sort_rank` ordering vs `summarize_performance()`. `test_redis_cache_live.py` hits Django `RedisCache` against a live Redis when `HPCPERFSTATS_PYTEST_LIVE_REDIS=1` (`tests/run_redis_cache_pytest_workflow.sh`); otherwise those tests skip. `test_query_utils.py` includes `get_job_list_order_by` allowlist (`performance_sort_rank`; legacy `has_metrics` is rejected). **API:** `/api/jobs/` list entries expose `performance` (not `has_metrics`); sort with `order_by=performance_sort_rank` or `-performance_sort_rank`. |
 | `hpcperfstats/site/machine/tests/test_job_detail_staff_sample_count.py` | Staff-only `staff_metrics_distinct_time_count` on `job_detail` JSON (mocked ORM; no live DB required). |
 | `hpcperfstats/site/frontend` | React SPA unit tests (Vitest): `npm test` from that directory. Vitest picks up `*.test.jsx` / `*.test.js` under `src/` (pages, components, utils), including `api.test.js` (fetch/CSRF/401 paths), `components/ExtendedSearch.test.jsx`, `normalize-job-list-histogram-entry.test.js`, `table-sort-a11y.test.js`, `job-list-route-title-context.test.js`, `Search.test.jsx` (browse-by-time **Calendar** tab first and selected by default), `JobList.test.jsx` (includes narrow-viewport Jobs/Charts tab behavior), `JobDetail.test.jsx` (job detail **Job data** inner tabs—including per-plot tabs (Summary, Heatmap, rooflines) before Bokeh assertions—progressive plot loading, and metrics tab single- vs two-table layout), **`components/LayoutPub.test.jsx`** (public `/pub/` navbar: branding, cluster label, **Login to see individual job data** → `login_prompt?next=/machine/`), **`pages/PageClusterDashboard.test.jsx`** (`PubDashboardBundleContext`, expansion-factor tab panel, yearly-before-monthly anchors, `pub-expansion-factor-*` Bokeh ids), `src/utils/jobMetricDisplayLabels.test.js` (short labels for job-level metrics table), and `useDocumentTitle.test.js`. `src/setupTests.js` stubs `HTMLElement.prototype.scrollIntoView` for jsdom. |
 | `hpcperfstats-tools/tests/` | Client CLI/API helpers: `test_api_client.py`, `test_api_auth_headers.py`, `test_job_dataframe.py`, `test_sacct_gen_security.py`, plus `test_config.py` (INI `base_url`), `test_api_key_cache.py` (`~/.hpcperfstats-api` parsing), and `test_jobstats_cli.py` (`jobstats` formatting and `main()` exit codes). Run from the `hpcperfstats-tools` directory with `python -m pytest`. |

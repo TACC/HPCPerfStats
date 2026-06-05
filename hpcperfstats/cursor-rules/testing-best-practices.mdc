@@ -1,0 +1,90 @@
+---
+description: Canonical testing pyramid, patterns, and pre-merge verification for HPCPerfStats
+alwaysApply: true
+---
+
+# Testing Best Practices
+
+Canonical testing guidance for backend (pytest), frontend (Vitest/RTL), and E2E (Playwright/compose). Complements `test-first-discipline.mdc`, `every-error-regression-test.mdc`, and layer-specific rules below.
+
+## Test pyramid and layer selection
+
+| Layer | When to use | Runner | Speed |
+|-------|-------------|--------|-------|
+| **Unit** | Pure functions, mocked I/O, API views with `django_db(databases=[])` | Host: `scripts/run_tests.py --no-django` or Vitest `npm test -- --run` | Seconds |
+| **Integration** | Real Postgres/Redis/Timescale, ORM, cache semantics | Compose: `tests/run_db_pytest_workflow.sh`, `tests/run_redis_cache_pytest_workflow.sh` | Minutes |
+| **E2E / contract** | Browser UX, nginx allowlist, full ingest pipeline | `tests/run_web_e2e_workflow.sh`, `tests/run_pipeline_e2e_workflow.sh` | Tens of minutes |
+
+**Rule:** Prove correctness at the **narrowest** layer first; escalate only when the layer below cannot exercise the contract.
+
+## Colocation and naming
+
+- **Python:** `test_*.py` beside module (`analysis/metrics/test_*.py`) or `hpcperfstats/tests/` for cross-cutting daemons. **New modules must get a colocated or paired test file in the same task.**
+- **Frontend:** `*.test.{js,jsx}` colocated under `hpcperfstats/site/frontend/src/`.
+- Names describe **behavior + outcome**: `test_archive_gz_members_contained_in_zst_rejects_missing_or_wrong_size`.
+
+## Mock boundaries (backend)
+
+- `@pytest.mark.machine_unit_mock` + guards in `site/machine/tests/conftest.py`: no accidental PG on host.
+- `django_db(databases=[])` + LocMem cache: API/view tests without compose (see `test_api_coverage_gaps.py`).
+- `HPCPERFSTATS_COMPOSE_NETWORK=1`: real DB tests inside `web` container only.
+- Mock **ORM/querysets**, not business logic under test.
+
+## Refactor for testability
+
+Split large monolithic functions into smaller ones **when it materially improves unit testing**, without changing user-visible behavior.
+
+**Refactor when:** mock-heavy view tests; pure logic embedded in request glue; duplicated multi-step logic (see also `duplicate-threshold-helper-mandate.mdc`).
+
+**Do not refactor when:** extraction does not reduce mock surface; behavior is honestly integration-bound (use compose tests).
+
+**How:** lock boundary behavior with tests → extract smallest helper → add focused helper tests → re-run coverage (see `refactor-dedup-priorities.mdc`).
+
+**Frontend:** extract pure helpers/hooks from large pages when RTL would otherwise require excessive API/Bokeh mocking.
+
+## Contract / drift guards
+
+Any cross-layer registry (routes, metric labels, search params, monitor typenames) needs a drift test that fails when source and consumer lists diverge.
+
+Examples: `urlconf_route_catalog.py`, `extended-search-validation.test.js`, `jobMetricDisplayLabels.test.js`.
+
+## Frontend testing patterns
+
+- **RTL:** `MemoryRouter` + route fixtures; spy on `api.js`.
+- **Pure utils:** table-driven cases; no DOM when unnecessary.
+- **Bokeh:** mock `bokehInit.js` + `window.Bokeh`; use `bokeh-embed-defaults.js` test overrides.
+- **a11y:** `jest-axe` serious/critical on primary shells; Playwright for full-page regressions.
+- Test **user-visible outcomes**, not implementation details.
+
+## Test quality bar
+
+- Arrange–Act–Assert; one behavioral theme per test.
+- Deterministic: freeze time; no live network in unit tests.
+- Prefer semantic queries (`getByRole`) in RTL.
+- Coverage is a **gap-discovery signal**, not a global CI quota—except **`api.py`** maintains a phased **100% line** goal via `test_api_view_matrix.py`, `test_api_helpers.py`, and related modules.
+
+## Pre-merge verification matrix
+
+| Change touches | Minimum run |
+|----------------|-------------|
+| Pure Python utils / dbload helpers | `python scripts/run_tests.py --no-django` + targeted module |
+| Django API / machine models | Host mock tests + `tests/run_db_pytest_workflow.sh` if DB semantics change |
+| Ingest / archive / metrics | Compose db pytest + contract tests |
+| Web UI / routes | Vitest + `tests/run_web_e2e_workflow.sh` |
+| Metrics catalog / monitor types | Unit + pipeline E2E when payloads change |
+
+## Module priority for new tests
+
+1. Operational daemons: `sync_timedb`, `update_metrics`, `listend`
+2. User-facing API: `site/machine/api.py` (full line coverage goal)
+3. Cross-layer registries: search params, metric labels, routes
+4. Frontend job list/detail/search flows
+5. Secondary pages and chrome components
+
+## Overlap
+
+- `test-first-discipline.mdc` — test-first workflow
+- `every-error-regression-test.mdc` — mandatory regression on fixes
+- `docker-compose-non-unit-testing.mdc` / `full-test-with-db-redis.mdc` — compose runners
+- `web-pages-full-e2e-completion-gate.mdc` — web-facing completion bar
+- `testing-doc-sync.mdc` — keep `docs/TESTING.md` aligned

@@ -205,18 +205,18 @@ def test_dram_bw_node_imbalance_amd_df():
 
   class _Host:
     def __init__(self, arr):
-      self.stats = {"amd64_df": {"agg": arr}}
+      self.stats = {"amd_x86_uncore_df": {"agg": arr}}
 
   class _Job:
     def __init__(self):
       self.hosts = {"a": _Host(hi), "b": _Host(lo)}
-      self.schemas = {"amd64_df": schema}
+      self.schemas = {"amd_x86_uncore_df": schema}
       self.times = np.array([0.0, 1.0, 2.0], dtype=np.float64)
       self.acct = {"cores": 1, "nodes": 2}
 
   u = job_utils(_Job())
   val, typename, units = metrics.dram_bw_node_imbalance().compute_metric(u)
-  assert typename == "amd64_df"
+  assert typename == "amd_x86_uncore_df"
   assert units == "%"
   assert val is not None
   assert val > 40.0

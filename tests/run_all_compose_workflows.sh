@@ -5,8 +5,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:${PATH:-}"
-export DOCKER_HOST="${DOCKER_HOST:-unix://${HOME}/.colima/default/docker.sock}"
+# shellcheck source=colima_compose_teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/colima_compose_teardown.sh"
+colima_export_docker_env
 
 LOG="${1:-docs/test_run_log_colima_compose.md}"
 : >"$LOG"
@@ -58,4 +59,9 @@ if [[ "$FAIL" -eq 0 ]]; then
 else
   log "At least one workflow failed (last non-zero exit retained in FAIL=$FAIL)."
 fi
+
+log ""
+log "## Final Colima Docker cleanup"
+bash tests/colima_docker_cleanup.sh 2>&1 | tee -a "$LOG"
+
 exit "$FAIL"

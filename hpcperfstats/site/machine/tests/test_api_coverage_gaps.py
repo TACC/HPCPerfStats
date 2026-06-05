@@ -510,3 +510,123 @@ class TestJobListQueueWaitAggregates:
     assert response.data["aggregates"] == {"total_node_hours": 10.0}
 
 
+class TestJobDetailApi:
+  """job_detail not-found, forbidden, and light-mode fast path."""
+
+  def _job_mock(self):
+    job = MagicMock()
+    job.jid = "jid-99"
+    job.start_time = datetime(2024, 3, 1, tzinfo=dt_timezone.utc)
+    job.end_time = datetime(2024, 3, 2, tzinfo=dt_timezone.utc)
+    job.metrics_distinct_time_count = 3
+    return job
+
+  def test_not_found(self):
+    from hpcperfstats.site.machine import api
+
+    request = DjangoRequestFactory().get("/api/jobs/jid-99/")
+    request.session = {"username": "u", "is_staff": True}
+    err = api.Response({"error": "Job not found"}, status=404)
+    with patch.object(api, "_require_auth", return_value=None), patch.object(
+        api, "_get_visible_job_or_error_response", return_value=(None, err)
+    ):
+      response = api.job_detail(request, "jid-99")
+    assert response.status_code == 404
+
+  def test_forbidden(self):
+    from hpcperfstats.site.machine import api
+
+    request = DjangoRequestFactory().get("/api/jobs/jid-99/")
+    request.session = {"username": "u", "is_staff": False}
+    err = api.Response({"error": "Not allowed to view this job"}, status=403)
+    with patch.object(api, "_require_auth", return_value=None), patch.object(
+        api, "_get_visible_job_or_error_response", return_value=(None, err)
+    ):
+      response = api.job_detail(request, "jid-99")
+    assert response.status_code == 403
+
+  def test_light_mode_returns_quickly_without_xalt(self):
+    from hpcperfstats.site.machine import api
+
+    request = DjangoRequestFactory().get("/api/jobs/jid-99/", {"light": "true"})
+    request.session = {"username": "u", "is_staff": False}
+    job = self._job_mock()
+    jt = MagicMock()
+    jt.acct_host_list = []
+    jt.start_time = job.start_time
+    jt.end_time = job.end_time
+    with patch.object(api, "_require_auth", return_value=None), patch.object(
+        api, "_get_visible_job_or_error_response", return_value=(job, None)
+    ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
+        api.jid_table, "jid_table", return_value=jt
+    ), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
+        api, "compute_detail_input_fingerprint", return_value="fp"
+    ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
+        api, "JobListSerializer"
+    ) as mock_ser, patch.object(api, "_get_small_executor") as mock_exec:
+      mock_ser.return_value.data = {"jid": "jid-99"}
+      response = api.job_detail(request, "jid-99")
+    assert response.status_code == 200
+    assert response.data["gpu_count"] is None
+    assert response.data["schema"] == {}
+    mock_exec.return_value.submit.assert_not_called()
+
+
+class TestJobPlotsApi:
+  """job_plots validation and progressive partial responses."""
+
+  def test_invalid_plot_kind(self):
+    from hpcperfstats.site.machine import api
+
+    request = DjangoRequestFactory().get(
+        "/api/jobs/j1/plots/", {"plot": "not_a_plot"}
+    )
+    request.session = {"username": "u", "is_staff": True}
+    job = MagicMock(jid="j1")
+    with patch.object(api, "_require_auth", return_value=None), patch.object(
+        api, "_get_visible_job_or_error_response", return_value=(job, None)
+    ):
+      response = api.job_plots(request, "j1")
+    assert response.status_code == 400
+    assert "Invalid plot" in response.data["error"]
+
+  def test_progressive_partial_includes_completed_plot(self):
+    from hpcperfstats.site.machine import api
+
+    request = DjangoRequestFactory().get(
+        "/api/jobs/j1/plots/",
+        {"progressive": "true"},
+    )
+    request.session = {"username": "u", "is_staff": True}
+    job = MagicMock(jid="j1")
+    ready = {"plot_item": {"root_id": "x", "doc": {"roots": {"root_ids": ["x"]}}}, "unavailable_reason": None}
+
+    def _cache_get(key, default=None):
+      key_s = str(key)
+      if "JOB_PLOTS_JSON" in key_s and "roofline" in key_s:
+        return ready
+      return default
+
+    pending_future = MagicMock()
+    pending_future.done.return_value = False
+
+    with patch.object(api, "_require_auth", return_value=None), patch.object(
+        api, "_get_visible_job_or_error_response", return_value=(job, None)
+    ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
+        api, "get_live_distinct_time_count_for_jid", return_value=1
+    ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
+        api.cache, "get", side_effect=_cache_get
+    ), patch.object(api, "load_cached_job_plot_entry", return_value=None), patch.object(
+        api, "_get_small_executor"
+    ) as mock_exec:
+      mock_exec.return_value.submit.return_value = pending_future
+      response = api.job_plots(request, "j1")
+    assert response.status_code == 200
+    assert response.data["status"] == "partial"
+    assert response.data["progressive"] is True
+    assert response.data["rplot_item"] == ready["plot_item"]
+    assert "summary_plot" in response.data["loading_plots"] or len(
+        response.data["loading_plots"]
+    ) >= 1
+
+

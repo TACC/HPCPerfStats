@@ -10,7 +10,7 @@ Code Style and Structure
 - Use functional and declarative programming patterns; avoid classes.
 - Prefer iteration and modularization over code duplication. **Law:** three or more copies of substantive logic require a shared helper/component/hook—see `duplicate-threshold-helper-mandate.mdc` and `refactor-dedup-priorities.mdc`.
 - Use descriptive variable names with auxiliary verbs (e.g., isLoading, hasError).
-- Create unittests for all new code and any existing code that is missing unittests.
+- Create unittests for all new code and any existing code that is missing unittests. Follow **`testing-best-practices.mdc`** for layer selection (Vitest/RTL unit vs Playwright E2E), colocation (`*.test.jsx` beside source), drift guards, and refactor-for-testability.
 
 Naming Conventions
 - Use kebab-case for directories.
@@ -34,7 +34,7 @@ Performance Optimization
 - Optimize images: use Webp format, include size data, implement lazy loading.
 
 Key Conventions
-- Whenever a React/JavaScript file is touched or edited, proactively refactor that file to fully match these rules (style, component structure, naming, and performance patterns, unittests), without changing behavior unnecessarily.
+- Whenever a React/JavaScript file is touched or edited, proactively refactor that file to fully match these rules (style, component structure, naming, performance patterns, and unittests per **`testing-best-practices.mdc`**), without changing behavior unnecessarily.
 - Whenever a React/JavaScript/HTML page is touched, review CSP impacts and update CSP **minimally**:
   - Add only the specific origins required, scoped to the correct directive (`script-src`, `style-src`, `font-src`, `img-src`, `connect-src`, etc.).
   - Do **not** add broad allowlists like `*`, `https:`, or entire CDNs unless unavoidable; prefer self-hosting or nonces/hashes when feasible.

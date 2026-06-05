@@ -40,6 +40,13 @@ Older Colima builds also support `eval "$(colima docker-env)"`; if that command 
 
 Compose commands run from the git checkout directory that contains `docker-compose.yaml` (typically `HPCPerfStats/` inside the workspace).
 
+## Post-test Docker cleanup (Colima)
+
+After compose-backed test workflows finish, **`tests/colima_docker_cleanup.sh`** prunes stopped containers, unused images, build cache, volumes, and networks so the Colima VM disk does not fill up. Workflow scripts source **`tests/colima_compose_teardown.sh`** and call **`colima_compose_teardown`** on exit (unless **`--keep-env`**).
+
+- Skip cleanup: **`COLIMA_DOCKER_CLEANUP_SKIP=1`**
+- Manual cleanup: **`bash tests/colima_docker_cleanup.sh`** from `HPCPerfStats/`
+
 ## Install gap
 
 If `colima` exists but `docker` / `docker-compose` CLIs are missing, install them (this machine uses Homebrew arm64):

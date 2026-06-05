@@ -60,3 +60,46 @@ def test_job_data_instance_from_acct_row_maps_fields():
   assert j.host_list == ["a", "b"]
   assert j.nhosts == 2
   assert j.ncores == 64
+
+
+def test_job_data_instance_from_acct_row_nullable_fields():
+  row = SimpleNamespace(
+      jid="99",
+      username="bob",
+      account=pd.NA,
+      start_time=pd.NaT,
+      end_time=pd.Timestamp("2020-01-01 11:00:00"),
+      submit_time=pd.NA,
+      queue=pd.NA,
+      timelimit=pd.NA,
+      jobname=pd.NA,
+      state=pd.NA,
+      nhosts=pd.NA,
+      ncores=pd.NA,
+      host_list=[],
+      runtime=pd.NA,
+      node_hrs=pd.NA,
+  )
+  j = job_data_instance_from_acct_row(row)
+  assert j.jid == "99"
+  assert j.account is None
+  assert j.start_time is None
+  assert j.queue is None
+  assert j.host_list == []
+
+
+def test_host_data_instance_from_stats_row_jid_dash_becomes_none():
+  ts = pd.Timestamp("2020-06-01 12:00:00")
+  row = SimpleNamespace(
+      time=ts,
+      host="n.example.com",
+      jid="-",
+      type="cpu",
+      event="cycles",
+      unit="count",
+      value=None,
+      delta=None,
+      arc=None,
+  )
+  h = host_data_instance_from_stats_row(row)
+  assert h.jid is None

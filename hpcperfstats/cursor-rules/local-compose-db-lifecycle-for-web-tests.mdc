@@ -14,9 +14,8 @@ web/DB availability, keep local runtime and data lifecycle consistent for UI tes
 - Changes that affect migration order or DB readiness checks.
 
 ## Required actions
-- Before running each web E2E test, fully reset Docker state:
+- Before running each web E2E test, fully reset Docker state (handled by **`tests/run_web_e2e_workflow.sh`** at startup):
   - `docker-compose down -v --remove-orphans`
-  - `docker volume prune -f`
   - `docker-compose build web`
   - `docker-compose up -d db redis web`
 - Ensure local services are reachable:
@@ -29,6 +28,4 @@ web/DB availability, keep local runtime and data lifecycle consistent for UI tes
 - Prefer the single workflow runner:
   - `tests/run_web_e2e_workflow.sh`
   - or `tests/run_web_e2e_workflow.sh --seed-cmd "<seed command>"` when data recreation is required
-- After any test workflow that starts compose containers, always tear down and
-  remove volumes:
-  - `docker-compose down -v`
+- After any test workflow that starts compose containers, always tear down via **`colima_compose_teardown`** (compose down + Colima Docker prune) unless **`--keep-env`**.

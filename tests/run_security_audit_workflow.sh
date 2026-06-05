@@ -4,6 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+# shellcheck source=colima_compose_teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/colima_compose_teardown.sh"
+colima_export_docker_env
+
+cleanup() {
+  colima_compose_teardown docker-compose
+}
+trap cleanup EXIT
+
 echo "[security-audit] running pip-audit inside compose web image"
 docker-compose run --rm --entrypoint sh web -lc \
   "pip install --disable-pip-version-check pip-audit >/dev/null && pip-audit"

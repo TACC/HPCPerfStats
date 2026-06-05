@@ -25,12 +25,12 @@ Also follow **`pub-surface-and-robots-sync.mdc`** when changing anonymous **`/pu
   - Representative SPA deep links.
   - API-key page auth gate and key lifecycle UI behavior.
   - `robots.txt` and `csp-report` endpoints.
-- Before each E2E run, reset Docker runtime state:
+- Before each E2E run, reset Docker runtime state ( **`tests/run_web_e2e_workflow.sh`** does this at startup):
   - `docker-compose down -v --remove-orphans`
-  - `docker volume prune -f`
   - `docker-compose build web`
   - `docker-compose up -d db redis`
   - `docker-compose ps` and confirm `db`/`redis` are healthy
+- After the workflow, **`colima_compose_teardown`** prunes Colima Docker layers/images/cache unless **`--keep-env`**.
 - Recreate/seed any data required by the E2E scenario before running the tests.
 - Prefer the single workflow runner:
   - `tests/run_web_e2e_workflow.sh`
