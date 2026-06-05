@@ -82,7 +82,8 @@ def test_pmc_prefers_amd64_over_intel_when_both_in_schema():
   """PMC resolution must not depend on dict iteration order (AMD before Intel)."""
   job = _MockJob()
   job.schemas = OrderedDict([
-      ("intel_8pmc3", ["INST_RETIRED"]),
+      ("intel_x86_pmc_gpr8", ["instr_retired"]),
+      ("amd_x86_pmc", ["fp_ops_retired", "aperf"]),
       ("amd64_pmc", ["FLOPS", "APERF"]),
   ])
   job.hosts = {
@@ -93,27 +94,27 @@ def test_pmc_prefers_amd64_over_intel_when_both_in_schema():
       }),
   }
   u = utils(job)
-  assert u.pmc == "amd64_pmc"
+  assert u.pmc in ("amd_x86_pmc", "amd64_pmc")
   assert u.freq == 2.7
 
 
 def test_imc_first_match_follows_intel_imc_stats_order():
-  """First IMC typename in INTEL_IMC_STATS_TYPES that appears in schemas wins."""
-  from hpcperfstats.analysis.gen.utils import INTEL_IMC_STATS_TYPES
+  """First IMC typename in imc_types_probe_order() that appears in schemas wins."""
+  from hpcperfstats.monitor_naming.resolve import imc_types_probe_order
 
   job = _MockJob()
   job.schemas = OrderedDict([
-      ("intel_skx_imc", ["CAS_READS"]),
-      ("intel_hsw_imc", ["CAS_READS", "CAS_WRITES"]),
+      ("intel_x86_uncore_imc_skx", ["dram_cas_reads"]),
+      ("intel_x86_uncore_imc_hsw", ["dram_cas_reads", "dram_cas_writes"]),
   ])
   job.hosts = {"h1": _MockHost({})}
   u = utils(job)
-  expected_first = next(t for t in INTEL_IMC_STATS_TYPES if t in job.schemas)
+  expected_first = next(t for t in imc_types_probe_order() if t in job.schemas)
   assert u.imc == expected_first
-  assert u.imc == "intel_hsw_imc"
+  assert u.imc == "intel_x86_uncore_imc_hsw"
 
 
 def test_pick_pmc_typename_set_build_handles_sequence_typenames():
   """Iterable schema labels may stringify nested sequences; ``set()`` must not crash."""
-  keys = ["intel_8pmc3", ["legacy", "label"], "intel_4pmc3"]
-  assert utils_mod._pick_pmc_typename(keys) == "intel_8pmc3"
+  keys = ["intel_x86_pmc_gpr8", ["legacy", "label"], "intel_x86_pmc_gpr4"]
+  assert utils_mod._pick_pmc_typename(keys) == "intel_x86_pmc_gpr8"

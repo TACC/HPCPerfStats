@@ -12,12 +12,21 @@ from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.plotting import figure
 
 from hpcperfstats.analysis.gen.utils import (
-    ARM_IMC_STATS_TYPES,
     INTEL_CORE_PMC_TYPES_ORDERED,
     INTEL_FP_ARITH_ALL_EVENTS,
-    INTEL_IMC_STATS_TYPES,
     INTEL_LEGACY_SSE_FLOP_EVENTS,
     new_plain_number_hover_formatter,
+)
+from hpcperfstats.monitor_naming.resolve import (
+    amd_df_type_names,
+    amd_pmc_type_names,
+    arm_est_flops_event_names,
+    arm_imc_types_probe_order,
+    core_pmc_types_probe_order,
+    dram_cas_read_write_pairs,
+    fp_ops_retired_event_names,
+    host_cpu_hw_type_names,
+    imc_types_probe_order,
 )
 from hpcperfstats.analysis.bokeh_job_embed import figure_embed_kw
 from hpcperfstats.analysis.plot.roofline_peaks import (
@@ -107,9 +116,9 @@ def _merge_weighted_event_arcs(jt, intel_typ, event_weights, attempts, label):
 
 
 def _intel_fp_arith_flops_gf(jt, attempts):
-    """GFLOP/s from summed FP_ARITH_INST_RETIRED_* on Intel PMC or cpu_counter_metrics."""
+    """GFLOP/s from summed FP_ARITH_INST_RETIRED_* on Intel PMC or host_cpu_hw."""
     fp_events = list(INTEL_FP_ARITH_ALL_EVENTS)
-    for core_typ in INTEL_CORE_PMC_TYPES_ORDERED:
+    for core_typ in core_pmc_types_probe_order():
         cand, cand_src = _aggregate_arc(jt, core_typ, fp_events, 1e-9)
         attempts.append(
             f"intel_fp_arith:{core_typ} rows(flops={len(cand.index)}) src={cand_src}"
@@ -123,7 +132,7 @@ def _intel_fp_arith_flops_gf(jt, attempts):
 
 def _intel_legacy_sse_flops_gf(jt, attempts):
     """GFLOP/s from SNB/IVB-style SSE/AVX double events when FP_ARITH is absent."""
-    for core_typ in INTEL_CORE_PMC_TYPES_ORDERED:
+    for core_typ in core_pmc_types_probe_order():
         merged = _merge_weighted_event_arcs(
             jt,
             core_typ,
@@ -137,56 +146,63 @@ def _intel_legacy_sse_flops_gf(jt, attempts):
 
 
 def _intel_imc_bw_gb(jt, attempts):
-    """Memory bandwidth (GB/s) from first IMC type with CAS_READS+CAS_WRITES."""
+    """Memory bandwidth (GB/s) from first IMC type with dram CAS read/write events."""
     conv = 64 / (1024 ** 3)
-    for imc_typ in INTEL_IMC_STATS_TYPES:
-        agg_bw, bw_src = _aggregate_arc(
-            jt, imc_typ, ["CAS_READS", "CAS_WRITES"], conv
-        )
-        attempts.append(
-            f"{imc_typ} rows(bw={len(agg_bw.index)}) src(bw={bw_src})"
-        )
-        if not agg_bw.empty and "sum_val" in agg_bw.columns:
-            return agg_bw.rename(columns={"sum_val": "bw_gb"})[
-                ["host", "time", "bw_gb"]
-            ]
+    for imc_typ in imc_types_probe_order():
+        for read_ev, write_ev in dram_cas_read_write_pairs():
+            agg_bw, bw_src = _aggregate_arc(
+                jt, imc_typ, [read_ev, write_ev], conv
+            )
+            attempts.append(
+                f"{imc_typ} rows(bw={len(agg_bw.index)}) "
+                f"events=({read_ev},{write_ev}) src(bw={bw_src})"
+            )
+            if not agg_bw.empty and "sum_val" in agg_bw.columns:
+                return agg_bw.rename(columns={"sum_val": "bw_gb"})[
+                    ["host", "time", "bw_gb"]
+                ]
     return None
 
 
 def _arm_dcgm_flops_bw(jt, attempts):
-    """Approximate ARM roofline from cpu_counter_metrics synthetic counters."""
-    flops_agg, flops_src = _aggregate_arc(jt, "cpu_counter_metrics", ["ARM_EST_FLOPS"], 1e-9)
-    bw_agg, bw_src = _aggregate_arc(
-        jt, "cpu_counter_metrics", ["ARM_DRAM_BW_BYTES"], 1 / (1024 ** 3)
-    )
-    attempts.append(
-        f"arm_dcgm:cpu_counter_metrics rows(flops={len(flops_agg.index)}, bw={len(bw_agg.index)}) "
-        f"src(flops={flops_src}, bw={bw_src})"
-    )
-    if (
-        flops_agg.empty
-        or "sum_val" not in flops_agg.columns
-        or bw_agg.empty
-        or "sum_val" not in bw_agg.columns
-    ):
-        return None, None
-    flops = flops_agg.rename(columns={"sum_val": "flops_gf"})[["host", "time", "flops_gf"]]
-    bw = bw_agg.rename(columns={"sum_val": "bw_gb"})[["host", "time", "bw_gb"]]
-    return flops, bw
-
-
+    """Approximate ARM roofline from host_cpu_hw synthetic counters."""
+    for hw_typ in host_cpu_hw_type_names():
+        for flop_ev in arm_est_flops_event_names():
+            flops_agg, flops_src = _aggregate_arc(jt, hw_typ, [flop_ev], 1e-9)
+            bw_agg, bw_src = _aggregate_arc(
+                jt, hw_typ, ["ARM_DRAM_BW_BYTES"], 1 / (1024 ** 3)
+            )
+            attempts.append(
+                f"arm_dcgm:{hw_typ} rows(flops={len(flops_agg.index)}, "
+                f"bw={len(bw_agg.index)}) src(flops={flops_src}, bw={bw_src})"
+            )
+            if (
+                not flops_agg.empty
+                and "sum_val" in flops_agg.columns
+                and not bw_agg.empty
+                and "sum_val" in bw_agg.columns
+            ):
+                flops = flops_agg.rename(columns={"sum_val": "flops_gf"})[
+                    ["host", "time", "flops_gf"]
+                ]
+                bw = bw_agg.rename(columns={"sum_val": "bw_gb"})[
+                    ["host", "time", "bw_gb"]
+                ]
+                return flops, bw
+    return None, None
 def _arm_imc_bw_gb(jt, attempts):
-    """Memory bandwidth (GB/s) from ARM IMC CAS_READS+CAS_WRITES."""
+    """Memory bandwidth (GB/s) from ARM IMC dram CAS events."""
     conv = 64 / (1024 ** 3)
-    for imc_typ in ARM_IMC_STATS_TYPES:
-        agg_bw, bw_src = _aggregate_arc(jt, imc_typ, ["CAS_READS", "CAS_WRITES"], conv)
-        attempts.append(
-            f"arm_imc:{imc_typ} rows(bw={len(agg_bw.index)}) src(bw={bw_src})"
-        )
-        if not agg_bw.empty and "sum_val" in agg_bw.columns:
-            return agg_bw.rename(columns={"sum_val": "bw_gb"})[
-                ["host", "time", "bw_gb"]
-            ]
+    for imc_typ in arm_imc_types_probe_order():
+        for read_ev, write_ev in dram_cas_read_write_pairs():
+            agg_bw, bw_src = _aggregate_arc(jt, imc_typ, [read_ev, write_ev], conv)
+            attempts.append(
+                f"arm_imc:{imc_typ} rows(bw={len(agg_bw.index)}) src(bw={bw_src})"
+            )
+            if not agg_bw.empty and "sum_val" in agg_bw.columns:
+                return agg_bw.rename(columns={"sum_val": "bw_gb"})[
+                    ["host", "time", "bw_gb"]
+                ]
     return None
 
 
@@ -200,11 +216,7 @@ def _get_flops_bw_df_and_reason(jt):
     bw_gb = None
     attempts = []
 
-    # AMD: FLOPS and MBW channels
-    agg_flops, flops_src = _aggregate_arc(jt, "amd64_pmc", ["FLOPS"], 1e-9)
-    # Sum all available DRAM channel counters; keep 0–3 for backwards
-    # compatibility but include 4–7 when present so newer parts are not
-    # artificially bandwidth-limited in the plot.
+    # AMD: fp_ops_retired and MBW channels
     amd_bw_events = [
         "MBW_CHANNEL_0",
         "MBW_CHANNEL_1",
@@ -215,18 +227,37 @@ def _get_flops_bw_df_and_reason(jt):
         "MBW_CHANNEL_6",
         "MBW_CHANNEL_7",
     ]
-    agg_bw, bw_src = _aggregate_arc(
-        jt,
-        "amd64_df",
-        amd_bw_events,
-        2 / (1024 ** 3),
-    )
-    attempts.append(
-        f"amd rows(flops={len(agg_flops.index)}, bw={len(agg_bw.index)}) src(flops={flops_src}, bw={bw_src})"
-    )
-    if not agg_flops.empty and "sum_val" in agg_flops.columns and not agg_bw.empty and "sum_val" in agg_bw.columns:
-        flops_gf = agg_flops.rename(columns={"sum_val": "flops_gf"})[["host", "time", "flops_gf"]]
-        bw_gb = agg_bw.rename(columns={"sum_val": "bw_gb"})[["host", "time", "bw_gb"]]
+    for pmc_typ in amd_pmc_type_names():
+        for flop_ev in fp_ops_retired_event_names():
+            agg_flops, flops_src = _aggregate_arc(jt, pmc_typ, [flop_ev], 1e-9)
+            for df_typ in amd_df_type_names():
+                agg_bw, bw_src = _aggregate_arc(
+                    jt,
+                    df_typ,
+                    amd_bw_events,
+                    2 / (1024 ** 3),
+                )
+                attempts.append(
+                    f"amd rows(flops={len(agg_flops.index)}, bw={len(agg_bw.index)}) "
+                    f"src(flops={flops_src}, bw={bw_src})"
+                )
+                if (
+                    not agg_flops.empty
+                    and "sum_val" in agg_flops.columns
+                    and not agg_bw.empty
+                    and "sum_val" in agg_bw.columns
+                ):
+                    flops_gf = agg_flops.rename(columns={"sum_val": "flops_gf"})[
+                        ["host", "time", "flops_gf"]
+                    ]
+                    bw_gb = agg_bw.rename(columns={"sum_val": "bw_gb"})[
+                        ["host", "time", "bw_gb"]
+                    ]
+                    break
+            if flops_gf is not None and bw_gb is not None:
+                break
+        if flops_gf is not None and bw_gb is not None:
+            break
 
     # Intel: FP (FP_ARITH or legacy SSE) and IMC CAS_READS+CAS_WRITES
     if flops_gf is None or bw_gb is None:
@@ -259,7 +290,9 @@ def _get_flops_bw_df_and_reason(jt):
         # Heuristic: ARM/CPU via DCGM backends emit cpu_counter_metrics but may
         # lack any IMC/DF CAS/MBW sources. Do not silently claim generic
         # missing counters when only bandwidth is absent on ARM.
-        has_cpu_counter_metrics = any("cpu_counter_metrics" in a for a in attempts)
+        has_cpu_counter_metrics = any(
+            t in a for t in host_cpu_hw_type_names() for a in attempts
+        )
         has_any_imc_or_df = any(
             t.startswith("amd") or "imc" in t
             for t in [att.split(":")[0] for att in attempts if att]
@@ -268,7 +301,7 @@ def _get_flops_bw_df_and_reason(jt):
             reason = (
                 "Roofline not available on this job: cpu_counter_metrics FLOPS "
                 "are present (e.g. via DCGM backend), but no DRAM bandwidth "
-                "source (AMD DF or Intel IMC CAS_READS/CAS_WRITES) was found "
+                "source (AMD DF or Intel/ARM DRAM CAS counters) was found "
                 "in host_data for these hosts."
             )
         return (None, reason)

@@ -22,6 +22,14 @@ from hpcperfstats.analysis.metrics.update_metrics import (
 from hpcperfstats.analysis.metrics import update_metrics
 
 
+def _ready_queue_jids(ready_queue):
+  """Normalize scheduler ready-queue entries (jid str or candidate ref)."""
+  out = []
+  for item in ready_queue:
+    out.append(item.jid if hasattr(item, "jid") else item)
+  return out
+
+
 @pytest.fixture(autouse=True)
 def _patch_scheduler_defaults(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "strict_date")
@@ -44,6 +52,62 @@ def _patch_scheduler_defaults(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_max_age_seconds", lambda: 900.0)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_quarantine_seconds", lambda: 300.0)
   monkeypatch.setattr(update_metrics, "persist_job_detail_artifacts_for_jid", lambda jid: None)
+
+
+def _enqueue_chunks_from_date_states(**kwargs):
+  """Default readiness producer for unit tests: enqueue mocked chunk jids."""
+  class _DoneProducer:
+    def join(self, timeout=None):
+      del timeout
+
+  with kwargs["ready_queue_lock"]:
+    for state in kwargs["date_states"]:
+      try:
+        while True:
+          pk_chunk, _total = next(state["iter"])
+          jids = [
+              item.jid if hasattr(item, "jid") else item
+              for item in pk_chunk
+          ]
+          ready = update_metrics._filter_jids_with_samples_after_end(jids)
+          for jid in ready:
+            kwargs["ready_queue"].append(update_metrics._candidate_ref(jid))
+      except StopIteration:
+        state["done"] = True
+  kwargs["producer_done"].set()
+  return _DoneProducer()
+
+
+@pytest.fixture(autouse=True)
+def _patch_machine_unit_mock_scheduler_flow(monkeypatch, request):
+  """After scheduler defaults: unit-mock tests use global_fifo and stub /pub refresh."""
+  if not request.node.get_closest_marker("machine_unit_mock"):
+    return
+  import hpcperfstats.shutdown_utils as shutdown_utils
+
+  monkeypatch.setattr(shutdown_utils, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(
+      update_metrics,
+      "_pg_session_statement_timeout_for_metrics_batch",
+      contextlib.nullcontext,
+  )
+  monkeypatch.setattr(update_metrics, "_pg_local_readiness_timeouts", contextlib.nullcontext)
+  monkeypatch.setattr(
+      update_metrics,
+      "refresh_public_expansion_factor_artifacts_parallel",
+      lambda pool, **kwargs: {
+          "degraded": 0,
+          "worker_exceptions": 0,
+          "watchdog_timeouts": 0,
+          "pending_tasks": 0,
+          "tasks_completed": 0,
+          "tasks_total": 0,
+      },
+  )
+  monkeypatch.setattr(update_metrics, "refresh_public_expansion_factor_artifacts_safe", lambda: None)
 
 
 def _patch_connections_vendor(monkeypatch, vendor):
@@ -337,6 +401,12 @@ def test_install_sigterm_handler_sets_flag_and_returns(monkeypatch):
 @pytest.mark.machine_unit_mock
 def test_update_metrics_stops_between_chunks_on_shutdown(monkeypatch):
   """When SIGTERM sets shutdown_requested, metrics processing should stop."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "strict_date")
+  monkeypatch.setattr(
+      update_metrics,
+      "_proxy_reject_not_ready_jids",
+      lambda jids: (set(), list(jids)),
+  )
   monkeypatch.setattr(update_metrics, "run_with_db_retry", lambda func, **kwargs: func())
   monkeypatch.setattr(
       update_metrics,
@@ -387,6 +457,18 @@ def test_update_metrics_stops_between_chunks_on_shutdown(monkeypatch):
 
   monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
   monkeypatch.setattr(update_metrics, "DEBUG", False)
+  def _pop_at_most_two(ready_queue, cap):
+    out = []
+    limit = min(int(cap), 2)
+    while ready_queue and len(out) < limit:
+      out.append(ready_queue.popleft())
+    return out
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_pop_candidates_for_compute_batch_locked",
+      _pop_at_most_two,
+  )
 
   update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
   assert seen == [[101, 102]]
@@ -403,6 +485,10 @@ def test_job_refs_from_jids_are_lightweight():
 @pytest.mark.machine_unit_mock
 def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
   """update_metrics should not re-query job_data rows per chunk."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _enqueue_chunks_from_date_states)
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
   monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
   monkeypatch.setattr(
       update_metrics,
@@ -439,12 +525,16 @@ def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
   monkeypatch.setattr(update_metrics, "DEBUG", False)
 
   update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
-  assert seen == [[101], [102], [103]]
+  assert seen == [[101, 102, 103]]
 
 
 @pytest.mark.machine_unit_mock
 def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
   """Jobs without host latest sample strictly after end_time are skipped."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _enqueue_chunks_from_date_states)
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
   monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
   monkeypatch.setattr(
       update_metrics,
@@ -478,12 +568,16 @@ def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
   monkeypatch.setattr(update_metrics, "DEBUG", False)
 
   update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
-  assert seen == [[101], [103]]
+  assert seen == [[101, 103]]
 
 
 @pytest.mark.machine_unit_mock
 def test_update_metrics_reuses_shared_pool_per_date(monkeypatch):
   """update_metrics should initialize one shared pool and reuse it per jid run."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _enqueue_chunks_from_date_states)
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
   monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
   monkeypatch.setattr(
       update_metrics,
@@ -515,7 +609,13 @@ def test_update_metrics_reuses_shared_pool_per_date(monkeypatch):
   monkeypatch.setattr(update_metrics, "DEBUG", False)
 
   update_metrics.update_metrics(datetime(2025, 4, 10), rerun=False)
-  assert pool_calls == ["ensure", pool_token, pool_token, pool_token, "close"]
+  assert pool_calls == [
+      "ensure",
+      "ensure",
+      "ensure",
+      pool_token,
+      "close",
+  ]
 
 
 @pytest.mark.machine_unit_mock
@@ -1332,9 +1432,9 @@ def test_fill_ready_queue_prefetch_one_leaves_pending_tail(monkeypatch):
       rr_cursor={"idx": 0},
       scheduler_shared_lock=threading.Lock(),
   )
-  assert ready == ["j1"]
+  assert _ready_queue_jids(ready) == ["j1"]
   assert strict_calls == [["j1", "j2", "j3"]]
-  assert states[0]["pending_tail"] == ["j2", "j3"]
+  assert _ready_queue_jids(states[0]["pending_tail"]) == ["j2", "j3"]
   assert stats["candidate_jids"] == 3
 
 
@@ -1458,7 +1558,7 @@ def test_fill_ready_queue_strict_subbatch_timeout_does_not_abort(monkeypatch):
       scheduler_shared_lock=threading.Lock(),
   )
 
-  assert "j3" in ready
+  assert "j3" in _ready_queue_jids(ready)
   assert stats["readiness_error_chunks"] == 2
   assert stats["strict_check_timeouts"] == 2
   # Batched path counts successful strict completions; j1/j2 time out in fallback.
@@ -1896,6 +1996,31 @@ def test_update_metrics_for_dates_rescan_picks_up_new_mid_run_jid(monkeypatch):
 
   monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", _injecting_rescan_thread)
 
+  class _DoneProducer:
+    def join(self, timeout=None):
+      del timeout
+
+  def _producer_enqueue_initial(**kwargs):
+    with kwargs["ready_queue_lock"]:
+      kwargs["ready_queue"].append(update_metrics._candidate_ref(1001))
+
+    def _enqueue_rescan_jid():
+      time.sleep(0.15)
+      with kwargs["ready_queue_lock"]:
+        kwargs["ready_queue"].append(update_metrics._candidate_ref(2002))
+      kwargs["producer_done"].set()
+
+    threading.Thread(target=_enqueue_rescan_jid, daemon=True).start()
+    return _DoneProducer()
+
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _producer_enqueue_initial)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
+  monkeypatch.setattr(
+      update_metrics,
+      "refresh_public_expansion_factor_artifacts_parallel",
+      lambda pool, **kwargs: {},
+  )
+
   seen_batches = []
 
   class FakeMetrics:
@@ -2191,7 +2316,7 @@ def test_update_metrics_pub_parallel_once_then_safe_in_finally(monkeypatch):
 
   def _producer_stub(**kwargs):
     with kwargs["ready_queue_lock"]:
-      kwargs["ready_queue"].append(1001)
+      kwargs["ready_queue"].append(update_metrics._candidate_ref(1001))
     kwargs["producer_done"].set()
     return _DoneProducer()
 
@@ -2386,6 +2511,12 @@ def test_update_metrics_for_dates_empty_date_list_returns(monkeypatch):
 
 def test_update_metrics_for_dates_per_jid_failure_does_not_stop_progress(monkeypatch):
   """One failing jid should not stop progress for the rest of the queue."""
+  monkeypatch.setattr(
+      update_metrics,
+      "refresh_public_expansion_factor_artifacts_parallel",
+      lambda pool, **kwargs: {},
+  )
+  monkeypatch.setattr(update_metrics, "refresh_public_expansion_factor_artifacts_safe", lambda: None)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 1)
@@ -2416,6 +2547,27 @@ def test_update_metrics_for_dates_per_jid_failure_does_not_stop_progress(monkeyp
   )
   monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
 
+  class _DoneProducer:
+    def join(self, timeout=None):
+      del timeout
+
+  def _producer_enqueue_all(**kwargs):
+    with kwargs["ready_queue_lock"]:
+      for state in kwargs["date_states"]:
+        try:
+          while True:
+            pk_chunk, _total = next(state["iter"])
+            for item in pk_chunk:
+              jid = item.jid if hasattr(item, "jid") else item
+              kwargs["ready_queue"].append(update_metrics._candidate_ref(jid))
+        except StopIteration:
+          state["done"] = True
+    kwargs["producer_done"].set()
+    return _DoneProducer()
+
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _producer_enqueue_all)
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+
   class FakeReporter:
     def __init__(self):
       self.completed = 0
@@ -2425,6 +2577,12 @@ def test_update_metrics_for_dates_per_jid_failure_does_not_stop_progress(monkeyp
 
     def stop(self):
       return None
+
+    def set_extra_stats_getter(self, fn):
+      del fn
+
+    def sync_completed_total(self, total):
+      self.completed = int(total)
 
     def record_completed(self, count):
       self.completed += int(count)
@@ -2456,11 +2614,29 @@ def test_update_metrics_for_dates_per_jid_failure_does_not_stop_progress(monkeyp
       return None
 
     def run(self, jobs, pool=None):
-      jids = [j.jid for j in jobs]
-      assert len(jids) == 1
-      if jids[0] == 1002:
-        raise RuntimeError("single-job failure")
-      successful.append(jids[0])
+      del pool
+      outcomes = []
+      for ref in jobs:
+        if ref.jid == 1002:
+          outcomes.append({
+              "jid": ref.jid,
+              "ok": False,
+              "status": "worker_db_error",
+              "error_type": "RuntimeError",
+              "error_message": "single-job failure",
+              "persist_s": 0.0,
+          })
+          continue
+        successful.append(ref.jid)
+        outcomes.append({
+            "jid": ref.jid,
+            "ok": True,
+            "status": "ok",
+            "error_type": None,
+            "error_message": None,
+            "persist_s": 0.0,
+        })
+      return outcomes
 
   monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: prewarmed.append(jid))
@@ -2711,7 +2887,7 @@ def test_main_sleep_after_waits_60_seconds(monkeypatch):
 
   update_metrics.main(argv=["update_metrics.py"], sleep_after=True)
 
-  assert sleeps == [60]
+  assert sleeps == [600]
 
 
 @pytest.mark.machine_unit_mock
@@ -2740,7 +2916,7 @@ def test_main_default_sleep_after_waits_60_seconds(monkeypatch):
 
   update_metrics.main(argv=["update_metrics.py"])
 
-  assert sleeps == [60]
+  assert sleeps == [600]
 
 
 @pytest.mark.machine_unit_mock

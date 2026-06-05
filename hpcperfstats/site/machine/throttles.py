@@ -2,7 +2,18 @@
 
 import hashlib
 
-from rest_framework.throttling import ScopedRateThrottle
+from django.core.exceptions import ImproperlyConfigured
+from rest_framework.settings import api_settings
+from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
+
+
+def _scope_throttle_rate(scope: str) -> str:
+    try:
+        return api_settings.DEFAULT_THROTTLE_RATES[scope]
+    except KeyError:
+        raise ImproperlyConfigured(
+            "No default throttle rate set for '%s' scope" % scope
+        )
 
 
 def _request_api_key_fingerprint(request):
@@ -17,8 +28,11 @@ def _request_api_key_fingerprint(request):
     return ""
 
 
-class AuthenticatedUserOrApiKeyThrottle(ScopedRateThrottle):
+class AuthenticatedUserOrApiKeyThrottle(SimpleRateThrottle):
     scope = "authenticated_user_or_api_key"
+
+    def get_rate(self):
+        return _scope_throttle_rate(self.scope)
 
     def get_cache_key(self, request, view):
         if not getattr(request, "session", None):
@@ -34,8 +48,11 @@ class AuthenticatedUserOrApiKeyThrottle(ScopedRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": ident}
 
 
-class ExpensiveReadThrottle(ScopedRateThrottle):
+class ExpensiveReadThrottle(SimpleRateThrottle):
     scope = "expensive_read"
+
+    def get_rate(self):
+        return _scope_throttle_rate(self.scope)
 
     def get_cache_key(self, request, view):
         ident = self.get_ident(request)
@@ -44,8 +61,11 @@ class ExpensiveReadThrottle(ScopedRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": ident}
 
 
-class StaffIngestThrottle(ScopedRateThrottle):
+class StaffIngestThrottle(SimpleRateThrottle):
     scope = "staff_ingest"
+
+    def get_rate(self):
+        return _scope_throttle_rate(self.scope)
 
     def get_cache_key(self, request, view):
         if not getattr(request, "session", None):

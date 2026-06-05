@@ -55,6 +55,7 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `intel_4pmc3` | `intel_4pmc3.c` | Same decode map as `intel_8pmc3` |
 | `intel_8pmc3` | `intel_8pmc3.c` | FP_ARITH / fixed counters / legacy SSE FLOP proxies |
 | `intel_*_imc` | `intel_*_imc.c` | IMC generations → `CAS_READS` / `CAS_WRITES` |
+| `intel_knl_mc_dclk` | `intel_knl_mc.c + dbload normalization` | KNL DRAM CAS |
 | `intel_skx_cha` | `intel_skx_cha.c` | CHA uncore events (summary arc sum) |
 | `intel_rapl` | `intel_rapl.c` | RAPL MSRs |
 | `intel_pcu` | `intel_pcu.c` | Package control / uncore |
@@ -63,6 +64,7 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `lnet` | `lnet.c` | LNET counters |
 | `mdc` | `mdc.c` | Lustre MDC stats |
 | `mem` | `mem.c` | System memory |
+| `mic` | `mic.c` | Xeon Phi aggregate CPU |
 | `net` | `net.c` | Ethernet sysfs |
 | `nfs` | `nfs.c` | NFS mountstats |
 | `numa` | `numa.c` | NUMA hit/miss |
@@ -76,13 +78,13 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `vfs` | `vfs.c` | Skipped by default ingest |
 | `vm` | `vm.c` | VM stats |
 
-Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`).
+Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`). Some typenames are normalized during dbload (for example KNL memory controller).
 
 ### By functional domain (summary)
 
-- **CPU time & load:** `cpu`, `ps` types — `user`, `system`, `load_*`, …
+- **CPU time & load:** `cpu`, `ps`, `mic` types — `user`, `system`, `load_*`, …
 - **Core PMC / FLOPs / frequency:** `intel_*pmc3`, `amd64_pmc`, `cpu_counter_metrics` — `FP_ARITH_*`, `FLOPS`, `INST_RETIRED`, `APERF`, `MPERF`, …
-- **DRAM bandwidth:** `intel_*_imc`, `arm_imc`, `amd64_df` — `CAS_READS` / `CAS_WRITES`, `MBW_CHANNEL_*`
+- **DRAM bandwidth:** `intel_*_imc`, `intel_knl_mc_dclk`, `arm_imc`, `amd64_df` — `CAS_READS` / `CAS_WRITES`, `MBW_CHANNEL_*`
 - **GPU:** `nvidia_gpu`, `amd_gpu` — `gpu_util`, `tensor_active`, `power_usage`, …
 - **High-speed fabric:** `ib_ext`, `opa` — `port_*`, `Port*` counters
 - **Ethernet / LNET:** `net`, `lnet` — `rx_bytes`, `tx_bytes`, …
@@ -173,7 +175,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS READ RPC operation count (mountstats).
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** `nfs`
-- **Application / library code:** hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `READ_queue`
@@ -181,7 +183,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS READ time queued before transmission (milliseconds).
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Mountstats `delay` and RPC timing fields expose client-perceived NFS latency; compare timeouts and queue times with server or network events. Asymmetric read/write behavior helps separate metadata from data path problems.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `READ_rtt`
@@ -189,7 +190,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS READ round-trip time (milliseconds).
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Mountstats `delay` and RPC timing fields expose client-perceived NFS latency; compare timeouts and queue times with server or network events. Asymmetric read/write behavior helps separate metadata from data path problems.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `READ_timeouts`
@@ -197,7 +197,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS READ major timeouts.
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Mountstats `delay` and RPC timing fields expose client-perceived NFS latency; compare timeouts and queue times with server or network events. Asymmetric read/write behavior helps separate metadata from data path problems.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `SIMD_DOUBLE_256`
@@ -205,7 +204,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Intel core PMU: retired 256-bit packed double-precision SIMD FP operations (legacy FLOP proxy).
 - **Domain:** CPU core performance (PMC)
 - **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/gen/utils.py; hpcperfstats/analysis/metrics/metrics.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `SSE_DOUBLE_PACKED`
@@ -213,7 +212,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Intel core PMU: retired SSE/AVX packed double-precision FP operations (legacy FLOP proxy).
 - **Domain:** CPU core performance (PMC)
 - **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/gen/utils.py; hpcperfstats/analysis/metrics/metrics.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `SSE_DOUBLE_SCALAR`
@@ -221,7 +220,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Intel core PMU: retired SSE/AVX double-precision scalar FP operations (legacy FLOP proxy).
 - **Domain:** CPU core performance (PMC)
 - **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/gen/utils.py; hpcperfstats/analysis/metrics/metrics.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `WRITE_ops`
@@ -229,7 +228,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS WRITE RPC operation count.
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `WRITE_queue`
@@ -237,7 +236,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS WRITE time queued before transmission (milliseconds).
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Mountstats `delay` and RPC timing fields expose client-perceived NFS latency; compare timeouts and queue times with server or network events. Asymmetric read/write behavior helps separate metadata from data path problems.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `WRITE_rtt`
@@ -245,7 +243,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS WRITE round-trip time (milliseconds).
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Mountstats `delay` and RPC timing fields expose client-perceived NFS latency; compare timeouts and queue times with server or network events. Asymmetric read/write behavior helps separate metadata from data path problems.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `WRITE_timeouts`
@@ -253,7 +250,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS WRITE major timeouts.
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Mountstats `delay` and RPC timing fields expose client-perceived NFS latency; compare timeouts and queue times with server or network events. Asymmetric read/write behavior helps separate metadata from data path problems.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `active`
@@ -275,7 +271,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `anon_huge_pages`
@@ -283,7 +278,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `anon_pages`
@@ -291,7 +285,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `aperf`
@@ -299,15 +292,14 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Tests:** hpcperfstats/analysis/gen/tests/test_utils_get_type.py
 
 ### `arm_dram_bw_bytes`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `arm_est_flops`
@@ -315,15 +307,13 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `bounce`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `branch_inst_retired`
@@ -331,7 +321,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `branch_inst_retired_miss`
@@ -339,7 +328,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `bypass_cha_imc_all`
@@ -347,7 +335,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `bytes_avail`
@@ -355,7 +342,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `bytes_used`
@@ -363,7 +349,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Tmpfs: bytes used on the tmpfs mount.
 - **Domain:** tmpfs
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** tmpfs growth on compute nodes can exhaust RAM-backed `/dev/shm` or job-local buffers; relate to staging or MPI shared-memory use.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `clocks_event_reasons`
@@ -386,7 +371,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Ethernet collision counter (half-duplex legacy).
 - **Domain:** Ethernet (per-interface); LNET may reuse byte keys
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `core_energy`
@@ -394,7 +378,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `counter0_occupancy`
@@ -402,7 +385,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `counter_select`
@@ -410,7 +392,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** IB MAD extended counter query selector field.
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Configuration/metadata for counter queries rather than workload metrics. Use adjacent payload counters (`port_*`) for link health diagnosis.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `cpu_clock_est_cycles`
@@ -418,7 +399,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `cpu_peak_dram_bw_bytes_per_s`
@@ -440,7 +420,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `cpu_util_irq_accum_us`
@@ -448,7 +427,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `cpu_util_nice_accum_us`
@@ -456,7 +434,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `cpu_util_sys_accum_us`
@@ -464,7 +441,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `cpu_util_total_accum_us`
@@ -472,7 +448,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `cpu_util_user_accum_us`
@@ -480,7 +455,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `create`
@@ -495,7 +469,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Context switches (global, from /proc/stat via ps stats type).
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Load average and context-switch rates contextualize CPU contention: high `ctxt` with moderate CPU counters may indicate excessive threading or I/O wakeups.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `cycles_unhalted_core`
@@ -503,7 +476,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `cycles_unhalted_ref`
@@ -511,7 +483,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dcgm_cpu_power_limit_w`
@@ -519,7 +490,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dcgm_cpu_power_util_w`
@@ -527,15 +497,13 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/gen/node_power_est.py; hpcperfstats/analysis/gen/test_node_power_est.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `delay`
 
 - **Definition:** NFS client delay events from /proc/self/mountstats.
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Mountstats `delay` and RPC timing fields expose client-perceived NFS latency; compare timeouts and queue times with server or network events. Asymmetric read/write behavior helps separate metadata from data path problems.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dentry_use`
@@ -543,7 +511,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** VFS: directory cache entries in use (approximate from dentry-state).
 - **Domain:** VFS
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VFS cache pressure can precede slow path lookups under millions of small files; compare with Lustre metadata rates.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `direct_read`
@@ -565,7 +532,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dirty_pages_hits`
@@ -573,7 +539,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: dirty client-page cache hits (samples line in `/proc/fs/lustre/llite/*/stats`).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre dirty-page cache hits/misses on the client; low hit rates with heavy write loads can push more work to OSS and increase observed write latency.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dirty_pages_misses`
@@ -581,7 +546,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: dirty client-page cache misses; high misses vs hits can mean poor cache reuse.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre dirty-page cache hits/misses on the client; low hit rates with heavy write loads can push more work to OSS and increase observed write latency.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dispatch_stall_cycles0`
@@ -589,7 +553,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dispatch_stall_cycles1`
@@ -597,15 +560,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `dram_act_count`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dram_cas_reads`
@@ -613,23 +567,22 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/test_roofline_jid_table.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Tests:** hpcperfstats/analysis/gen/tests/test_utils_get_type.py; hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `dram_cas_writes`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/test_roofline_jid_table.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Tests:** hpcperfstats/analysis/gen/tests/test_utils_get_type.py; hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `dram_chan0_bytes`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dram_chan1_bytes`
@@ -637,7 +590,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dram_chan2_bytes`
@@ -645,7 +597,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dram_chan3_bytes`
@@ -653,7 +604,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dram_energy`
@@ -661,15 +611,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `dram_pre_count_miss`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dtlb_load_misses_miss_causes_a_walk`
@@ -677,7 +618,20 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `edc_hit_clean`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `edc_hit_dirty`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `errors`
@@ -685,7 +639,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** LNET error counter.
 - **Domain:** Lustre LNET
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** LNET message and drop counters isolate router or NIC issues on Lustre networks; correlate drops with application I/O phases and remote mount health.
 - **Application / library code:** hpcperfstats/dbload/sync_timedb_archive_maint.py
 
 ### `excessive_buffer_overrun_errors`
@@ -700,7 +653,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `file_use`
@@ -708,7 +660,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** VFS: open file handles in use (/proc/sys/fs/file-nr).
 - **Domain:** VFS
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VFS cache pressure can precede slow path lookups under millions of small files; compare with Lustre metadata rates.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `files_used`
@@ -716,7 +667,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Tmpfs: number of files in use on the mount.
 - **Domain:** tmpfs
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** tmpfs growth on compute nodes can exhaust RAM-backed `/dev/shm` or job-local buffers; relate to staging or MPI shared-memory use.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `flock`
@@ -755,7 +705,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fp_arith_inst_retired_128b_packed_single`
@@ -763,7 +712,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fp_arith_inst_retired_256b_packed_double`
@@ -771,7 +719,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fp_arith_inst_retired_256b_packed_single`
@@ -779,7 +726,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fp_arith_inst_retired_512b_packed_double`
@@ -787,7 +733,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fp_arith_inst_retired_512b_packed_single`
@@ -795,7 +740,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fp_arith_inst_retired_scalar_double`
@@ -803,7 +747,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fp_arith_inst_retired_scalar_single`
@@ -811,7 +754,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fp_comp_ops_exe_sse_fp_packed`
@@ -819,7 +761,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fp_comp_ops_exe_sse_fp_scalar`
@@ -827,7 +768,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fp_ops_merge`
@@ -835,7 +775,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fp_ops_retired`
@@ -843,15 +782,14 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py
+- **Tests:** hpcperfstats/analysis/gen/tests/test_utils_get_type.py
 
 ### `freq_max_power_cycles`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `freq_max_temp_cycles`
@@ -859,7 +797,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `freq_min_io_cycles`
@@ -867,7 +804,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `freq_min_snoop_cycles`
@@ -875,7 +811,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fsync`
@@ -897,7 +832,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: `getxattr` syscall count.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `gpu_count`
@@ -913,7 +847,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `gpu_flops`
@@ -928,7 +861,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Instantaneous estimated GPU FLOP/s (monitor model; both GPU types expose this KEY).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `gpu_io_link_total_bytes`
@@ -950,7 +882,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `gpu_mem_read_bytes`
@@ -958,7 +889,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative estimated GPU memory read bytes (model; shared `amd_gpu` / `nvidia_gpu` schema).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `gpu_mem_total_bytes`
@@ -966,7 +896,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative estimated GPU memory traffic bytes (model; shared schema).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `gpu_mem_total_mb`
@@ -974,71 +903,27 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/sync_timedb_parsing.py
 
 ### `gpu_mem_used_mb`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/sync_timedb_parsing.py
 
 ### `gpu_mem_util`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/sync_timedb_parsing.py
 
 ### `gpu_mem_write_bytes`
 
 - **Definition:** Cumulative estimated GPU memory write bytes (model; shared schema).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `gpu_nvlink_rx_bytes`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `gpu_nvlink_tx_bytes`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `gpu_pcie_replay_counter`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `gpu_pcie_rx_bytes`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `gpu_pcie_tx_bytes`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `gpu_peak_fp64_flops_per_s`
@@ -1067,15 +952,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `gpu_sm_clock`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `gpu_util`
@@ -1091,7 +967,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `huge_pages_total`
@@ -1099,7 +974,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `idle`
@@ -1107,7 +981,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative CPU idle time.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Diagnostic guidance:** Break down non-user CPU time to distinguish disk wait (`iowait`), interrupt storms (`irq`/`softirq`), and low-priority work (`nice`) from useful compute.
 - **Application / library code:** hpcperfstats/site/machine/management/commands/pg_connection_stats.py
 
 ### `in_flight`
@@ -1115,7 +988,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Number of I/O requests currently in flight to the device.
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `inactive`
@@ -1123,7 +995,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `inode_permission`
@@ -1131,7 +1002,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: inode permission check count (security / ACL path activity).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `inode_use`
@@ -1139,7 +1009,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** VFS: inodes in use (inode-state).
 - **Domain:** VFS
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VFS cache pressure can precede slow path lookups under millions of small files; compare with Lustre metadata rates.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `instr_retired`
@@ -1147,15 +1016,14 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Tests:** hpcperfstats/analysis/gen/tests/test_utils_get_type.py
 
 ### `instr_retired_any`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `interleave_hit`
@@ -1163,7 +1031,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NUMA interleave policy hits.
 - **Domain:** NUMA statistics
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** NUMA allocator and access counters guide process placement: rising `numa_miss` or `other_node` with compute-bound jobs suggests binding or first-touch policy tuning.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `io_ticks`
@@ -1171,7 +1038,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Time the disk queue was actively servicing I/O (milliseconds).
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `ioctl`
@@ -1179,7 +1045,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: `ioctl` operation count on this mount.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `iowait`
@@ -1187,7 +1052,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative CPU time waiting for block I/O.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Diagnostic guidance:** Break down non-user CPU time to distinguish disk wait (`iowait`), interrupt storms (`irq`/`softirq`), and low-priority work (`nice`) from useful compute.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `irq`
@@ -1195,7 +1059,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative CPU time handling hardware interrupts.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Diagnostic guidance:** Break down non-user CPU time to distinguish disk wait (`iowait`), interrupt storms (`irq`/`softirq`), and low-priority work (`nice`) from useful compute.
 - **Application / library code:** hpcperfstats/analysis/metrics/test_metrics_schema_guards.py
 
 ### `kswapd_inodesteal`
@@ -1203,7 +1066,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `kswapd_steal`
@@ -1211,7 +1073,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `l1d_replacement`
@@ -1219,7 +1080,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `l2_lines_in_all`
@@ -1227,7 +1087,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `ldlm_cancel`
@@ -1235,7 +1094,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Tests:** hpcperfstats/site/machine/tests/test_jid_table.py
 
 ### `link`
@@ -1271,7 +1129,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `llc_lookup_data_read_local`
@@ -1279,7 +1136,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `llc_lookup_write`
@@ -1287,7 +1143,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `load_1`
@@ -1295,7 +1150,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** One-minute load average (monitor often scales by 100; see unit metadata).
 - **Domain:** Load average (ps stats type)
 - **Typical `host_data.type` values:** `ps`
-- **Diagnostic guidance:** Load average and context-switch rates contextualize CPU contention: high `ctxt` with moderate CPU counters may indicate excessive threading or I/O wakeups.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `load_15`
@@ -1303,7 +1157,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Fifteen-minute load average.
 - **Domain:** Load average (ps stats type)
 - **Typical `host_data.type` values:** `ps`
-- **Diagnostic guidance:** Load average and context-switch rates contextualize CPU contention: high `ctxt` with moderate CPU counters may indicate excessive threading or I/O wakeups.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `load_5`
@@ -1311,7 +1164,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Five-minute load average.
 - **Domain:** Load average (ps stats type)
 - **Typical `host_data.type` values:** `ps`
-- **Diagnostic guidance:** Load average and context-switch rates contextualize CPU contention: high `ctxt` with moderate CPU counters may indicate excessive threading or I/O wakeups.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `local_link_integrity_errors`
@@ -1326,7 +1178,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Local-node memory accesses (numastat).
 - **Domain:** NUMA statistics
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** NUMA allocator and access counters guide process placement: rising `numa_miss` or `other_node` with compute-bound jobs suggests binding or first-touch policy tuning.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `lookup`
@@ -1341,7 +1192,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mapped`
@@ -1349,7 +1199,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mds_close`
@@ -1357,7 +1206,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mds_getattr`
@@ -1365,7 +1213,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mds_getattr_lock`
@@ -1373,7 +1220,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mds_getxattr`
@@ -1381,7 +1227,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mds_readpage`
@@ -1389,7 +1234,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mds_statfs`
@@ -1397,7 +1241,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mds_sync`
@@ -1405,7 +1248,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mem_free`
@@ -1413,7 +1255,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mem_load_uops_retired_l1_hit`
@@ -1421,7 +1262,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mem_load_uops_retired_l2_hit`
@@ -1429,7 +1269,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mem_load_uops_retired_llc_hit`
@@ -1437,7 +1276,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mem_total`
@@ -1445,7 +1283,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mem_uncore_retired_local_dram`
@@ -1453,7 +1290,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mem_uncore_retired_remote_dram`
@@ -1461,7 +1297,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mem_uops_retired_all_loads`
@@ -1469,7 +1304,20 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `mem_uops_retired_all_loads_knl`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `mem_uops_retired_l2_hit_loads_knl`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mem_used`
@@ -1477,8 +1325,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** System V shared memory: total bytes used across segments.
 - **Domain:** SysV shared memory
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** SysV shared memory usage can indicate legacy IPC or shared arrays; unexpected growth may leak segments across job steps.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `mkdir`
 
@@ -1513,15 +1360,13 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `msgs_alloc`
 
 - **Definition:** Lustre LNET: messages currently allocated.
 - **Domain:** Lustre LNET
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** LNET message and drop counters isolate router or NIC issues on Lustre networks; correlate drops with application I/O phases and remote mount health.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `msgs_alloc_max`
@@ -1529,7 +1374,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** LNET high-water mark of allocated messages.
 - **Domain:** Lustre LNET
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** LNET message and drop counters isolate router or NIC issues on Lustre networks; correlate drops with application I/O phases and remote mount health.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `multicast`
@@ -1537,7 +1381,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Multicast packet counter (receive path; naming varies by driver).
 - **Domain:** Ethernet (per-interface); LNET may reuse byte keys
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `nfs_unstable`
@@ -1545,7 +1388,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `nice`
@@ -1576,7 +1418,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `nr_running`
@@ -1584,7 +1425,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Runnable tasks on the run queue (ps/global stat).
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Load average and context-switch rates contextualize CPU contention: high `ctxt` with moderate CPU counters may indicate excessive threading or I/O wakeups.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `nr_threads`
@@ -1592,7 +1432,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Thread count from global /proc/stat-derived ps sample.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Load average and context-switch rates contextualize CPU contention: high `ctxt` with moderate CPU counters may indicate excessive threading or I/O wakeups.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `numa_foreign`
@@ -1607,7 +1446,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NUMA allocations satisfied on the preferred node (/sys/.../numastat).
 - **Domain:** NUMA statistics
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** NUMA allocator and access counters guide process placement: rising `numa_miss` or `other_node` with compute-bound jobs suggests binding or first-touch policy tuning.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `numa_miss`
@@ -1629,7 +1467,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: bytes attributed to OSC read path in llite stats (byte sum field; complements OSC counters).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `osc_write`
@@ -1637,7 +1474,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: bytes attributed to OSC write path in llite stats (byte sum field; complements OSC counters).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `ost_destroy`
@@ -1645,7 +1481,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `ost_punch`
@@ -1653,7 +1488,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `ost_read`
@@ -1661,7 +1495,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `ost_setattr`
@@ -1669,7 +1502,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `ost_statfs`
@@ -1677,7 +1509,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `ost_write`
@@ -1685,7 +1516,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `other_node`
@@ -1700,7 +1530,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pageoutrun`
@@ -1708,7 +1537,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pcu_ctr0`
@@ -1716,7 +1544,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pcu_ctr1`
@@ -1724,7 +1551,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `peak_calc_version`
@@ -1732,7 +1558,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgactivate`
@@ -1740,7 +1565,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgalloc_normal`
@@ -1748,7 +1572,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgdeactivate`
@@ -1756,7 +1579,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgfault`
@@ -1764,7 +1586,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgfree`
@@ -1772,7 +1593,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pginodesteal`
@@ -1780,7 +1600,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgmajfault`
@@ -1788,7 +1607,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgpgin`
@@ -1796,7 +1614,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgpgout`
@@ -1804,7 +1621,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgrefill_normal`
@@ -1812,7 +1628,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgrotated`
@@ -1820,7 +1635,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgscan_direct_normal`
@@ -1828,7 +1642,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgscan_kswapd_normal`
@@ -1836,7 +1649,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgsteal_normal`
@@ -1844,7 +1656,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pkg_energy`
@@ -1852,15 +1663,13 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/gen/node_power_est.py; hpcperfstats/analysis/gen/test_node_power_est.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `port_error_counter_summary`
 
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_mark_fecn`
@@ -1868,7 +1677,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_multicast_rcv_pkts`
@@ -1876,7 +1684,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Multicast packets received (IB extended).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_multicast_xmit_pkts`
@@ -1884,7 +1691,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Multicast packets transmitted (IB extended).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_rcv_becn`
@@ -1892,7 +1698,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_rcv_bubble`
@@ -1900,7 +1705,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_rcv_constraint_errors`
@@ -1929,7 +1733,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_rcv_packets`
@@ -1937,7 +1740,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_rcv_pkts`
@@ -1966,7 +1768,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** IB MAD extended counter query selector field (configuration metadata).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Configuration/metadata for counter queries rather than workload metrics. Use adjacent payload counters (`port_*`) for link health diagnosis.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_unicast_rcv_pkts`
@@ -1974,7 +1775,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Unicast packets received (IB extended).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_unicast_xmit_pkts`
@@ -1982,7 +1782,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Unicast packets transmitted (IB extended).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_xmit_constraint_errors`
@@ -2012,7 +1811,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_xmit_pkts`
@@ -2027,7 +1825,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_xmit_wait`
@@ -2035,7 +1832,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Time waiting for credits or arbitration (vendor-specific units).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_xmit_wait_data`
@@ -2043,7 +1839,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_xmit_wasted_bw`
@@ -2051,7 +1846,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `power_usage`
@@ -2066,7 +1860,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pp1_energy`
@@ -2074,7 +1867,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `processes`
@@ -2089,7 +1881,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pswpout`
@@ -2097,7 +1888,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `rd_ios`
@@ -2105,7 +1895,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Completed read I/O operations.
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `rd_merges`
@@ -2113,7 +1902,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Read requests merged with the in-queue I/O queue.
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `rd_sectors`
@@ -2128,7 +1916,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Time spent on read I/O (milliseconds).
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `read`
@@ -2136,7 +1923,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: `read(2)` syscall operation count (volume is in `read_bytes`, not return-value based in llite stats).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
 - **Application / library code:** hpcperfstats/dbload/sync_timedb_archive_maint.py
 
 ### `read_bytes`
@@ -2173,7 +1959,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre OSC: sample count taken from `req_waittime` lines in `/proc/fs/lustre/osc/*/stats` (paired with `wait`).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `resource_stalls_any`
@@ -2181,7 +1966,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `retired_branch_instr`
@@ -2189,7 +1973,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `retired_instructions`
@@ -2197,7 +1980,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `retired_misp_branch_instr`
@@ -2205,7 +1987,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `ring_iv_used`
@@ -2213,7 +1994,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `rmdir`
@@ -2228,7 +2008,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** LNET routed bytes.
 - **Domain:** Lustre LNET
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** LNET message and drop counters isolate router or NIC issues on Lustre networks; correlate drops with application I/O phases and remote mount health.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `route_msgs`
@@ -2236,7 +2015,13 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** LNET routed messages (routers).
 - **Domain:** Lustre LNET
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** LNET message and drop counters isolate router or NIC issues on Lustre networks; correlate drops with application I/O phases and remote mount health.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `rpq_inserts`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `rx_bytes`
@@ -2252,7 +2037,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** LNET receive bytes dropped.
 - **Domain:** Lustre LNET
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** LNET message and drop counters isolate router or NIC issues on Lustre networks; correlate drops with application I/O phases and remote mount health.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `rx_compressed`
@@ -2260,7 +2044,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Linux netdev: received compressed frames (per-interface sysfs statistics).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `rx_crc_errors`
@@ -2275,7 +2058,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Receive drops (kernel or driver).
 - **Domain:** Ethernet (per-interface); LNET may reuse byte keys
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `rx_errors`
@@ -2318,7 +2100,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** LNET messages received.
 - **Domain:** Lustre LNET
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** LNET message and drop counters isolate router or NIC issues on Lustre networks; correlate drops with application I/O phases and remote mount health.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `rx_msgs_dropped`
@@ -2326,7 +2107,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** LNET receive messages dropped.
 - **Domain:** Lustre LNET
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** LNET message and drop counters isolate router or NIC issues on Lustre networks; correlate drops with application I/O phases and remote mount health.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `rx_over_errors`
@@ -2349,7 +2129,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `seek`
@@ -2357,7 +2136,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: `seek` operation count.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `segs_used`
@@ -2365,7 +2143,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** System V shared memory: number of segments in use.
 - **Domain:** SysV shared memory
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** SysV shared memory usage can indicate legacy IPC or shared arrays; unexpected growth may leak segments across job steps.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `server_read`
@@ -2401,7 +2178,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `simd_fp_256_packed_double`
@@ -2409,7 +2185,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `slab`
@@ -2417,7 +2192,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `slabs_scanned`
@@ -2425,7 +2199,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `sm_active`
@@ -2433,7 +2206,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** SM (or CU) activity percent: DCGM PROF on `nvidia_gpu`; GPUPerfAPI-style on `amd_gpu`.
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
 - **Application / library code:** hpcperfstats/dbload/sync_timedb_parsing.py
 
 ### `sm_occupancy`
@@ -2448,7 +2220,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative CPU time in softirq bottom halves.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Diagnostic guidance:** Break down non-user CPU time to distinguish disk wait (`iowait`), interrupt storms (`irq`/`softirq`), and low-priority work (`nice`) from useful compute.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `statfs`
@@ -2463,7 +2234,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `symbol_error`
@@ -2485,7 +2255,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NVIDIA-only (`nvidia_gpu` / DCGM): SysIO instantaneous power (watts). Not present in the slimmer `amd_gpu` monitor schema.
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
 - **Application / library code:** hpcperfstats/dbload/sync_timedb_parsing.py
 
 ### `system`
@@ -2501,7 +2270,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** GPU temperature (degrees C). DCGM on `nvidia_gpu`; `amd_gpu` when GPUPerfAPI supplies it.
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
 - **Application / library code:** hpcperfstats/dbload/sync_timedb_parsing.py
 
 ### `tensor_active`
@@ -2511,20 +2279,11 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** `amd_gpu`, `nvidia_gpu`
 - **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/dbload/sync_timedb_parsing.py
 
-### `tensor_dfma_active`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
 ### `tensor_hmma_active`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `tensor_imma_active`
@@ -2532,7 +2291,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `thp_collapse_alloc`
@@ -2540,7 +2298,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Linux /proc/vmstat: successful collapse of page tables into a THP.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Transparent hugepage counters show THP allocation success vs fallback/split; high `thp_fault_fallback` or `thp_split` with memory-bound jobs can mean fragmentation or conflicting `madvise` behavior—compare with `pgmajfault` and RSS from `proc`.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `thp_collapse_alloc_failed`
@@ -2548,7 +2305,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Linux /proc/vmstat: failed attempts to collapse mappings into a THP.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Transparent hugepage counters show THP allocation success vs fallback/split; high `thp_fault_fallback` or `thp_split` with memory-bound jobs can mean fragmentation or conflicting `madvise` behavior—compare with `pgmajfault` and RSS from `proc`.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `thp_fault_alloc`
@@ -2556,7 +2312,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Linux /proc/vmstat: transparent hugepage allocations satisfied on fault.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Transparent hugepage counters show THP allocation success vs fallback/split; high `thp_fault_fallback` or `thp_split` with memory-bound jobs can mean fragmentation or conflicting `madvise` behavior—compare with `pgmajfault` and RSS from `proc`.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `thp_fault_fallback`
@@ -2564,7 +2319,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Linux /proc/vmstat: THP fault handling fell back to small pages.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Transparent hugepage counters show THP allocation success vs fallback/split; high `thp_fault_fallback` or `thp_split` with memory-bound jobs can mean fragmentation or conflicting `madvise` behavior—compare with `pgmajfault` and RSS from `proc`.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `thp_split`
@@ -2572,7 +2326,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Linux /proc/vmstat: transparent hugepage splits (e.g. unmap, compaction, or policy).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Transparent hugepage counters show THP allocation success vs fallback/split; high `thp_fault_fallback` or `thp_split` with memory-bound jobs can mean fragmentation or conflicting `madvise` behavior—compare with `pgmajfault` and RSS from `proc`.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `threads`
@@ -2580,7 +2333,13 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `threads_core`
+
+- **Definition:** MIC: hardware threads per core.
+- **Domain:** Intel Xeon Phi (MIC)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `time_in_queue`
@@ -2588,7 +2347,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Accumulated time requests spent in the I/O scheduler queue (milliseconds).
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `truncate`
@@ -2625,7 +2383,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Linux netdev: transmitted compressed frames.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `tx_dropped`
@@ -2633,7 +2390,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Transmit drops.
 - **Domain:** Ethernet (per-interface); LNET may reuse byte keys
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `tx_errors`
@@ -2662,7 +2418,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** LNET messages transmitted.
 - **Domain:** Lustre LNET
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** LNET message and drop counters isolate router or NIC issues on Lustre networks; correlate drops with application I/O phases and remote mount health.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `tx_packets`
@@ -2685,7 +2440,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `unlink`
@@ -2703,12 +2457,18 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_for_metrics.py; hpcperfstats/analysis/metrics/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/pages/JobDetail.jsx
 - **Tests:** hpcperfstats/site/machine/tests/test_job_detail_artifacts_prewarm.py; hpcperfstats/site/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/machine/tests/test_update_metrics_diagnosis_compose.py
 
+### `user_sum`
+
+- **Definition:** Intel Xeon Phi (MIC): aggregate user time across cores.
+- **Domain:** Intel Xeon Phi (MIC)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
 ### `vl15_dropped`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `vm_data`
@@ -2716,7 +2476,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `vm_exe`
@@ -2724,7 +2483,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `vm_hwm`
@@ -2732,7 +2490,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `vm_lck`
@@ -2740,7 +2497,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `vm_lib`
@@ -2748,7 +2504,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `vm_peak`
@@ -2756,7 +2511,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `vm_pte`
@@ -2764,7 +2518,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `vm_rss`
@@ -2772,7 +2525,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `vm_size`
@@ -2780,7 +2532,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `vm_stk`
@@ -2788,7 +2539,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `vm_swap`
@@ -2796,7 +2546,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `wait`
@@ -2804,7 +2553,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre OSC: cumulative microseconds from the `req_waittime` sum field in `/proc/fs/lustre/osc/*/stats` (use deltas with `reqs` for average wait in a window).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
 - **Tests:** hpcperfstats/site/machine/tests/test_update_metrics.py
 
 ### `wr_ios`
@@ -2812,7 +2560,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Completed write I/O operations.
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `wr_merges`
@@ -2820,7 +2567,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Write requests merged with the in-queue I/O queue.
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `wr_sectors`
@@ -2835,7 +2581,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Time spent on write I/O (milliseconds).
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `write`
@@ -2843,7 +2588,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: `write(2)` syscall operation count (byte volume in `write_bytes`).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `write_bytes`
@@ -2859,7 +2603,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `xprt_bad_xids`
@@ -2867,7 +2610,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS RPC transport bad XID count.
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Mountstats `delay` and RPC timing fields expose client-perceived NFS latency; compare timeouts and queue times with server or network events. Asymmetric read/write behavior helps separate metadata from data path problems.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `xprt_bklog_u`
@@ -2875,7 +2617,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS transport backlog utilization accumulator.
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Mountstats `delay` and RPC timing fields expose client-perceived NFS latency; compare timeouts and queue times with server or network events. Asymmetric read/write behavior helps separate metadata from data path problems.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `xprt_req_u`
@@ -2883,6 +2624,5 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS transport accumulated in-flight request measure (kernel xprt stats).
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Mountstats `delay` and RPC timing fields expose client-perceived NFS latency; compare timeouts and queue times with server or network events. Asymmetric read/write behavior helps separate metadata from data path problems.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 

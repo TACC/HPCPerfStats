@@ -11,6 +11,7 @@
  */
 
 import { MONITOR_EVENT_METADATA } from "./variableMetadataMonitorEvents.js";
+import { MONITOR_EVENT_METADATA_LEGACY } from "./variableMetadataMonitorEventsLegacy.js";
 
 const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   // ===== Job accounting fields (job_data model) =====
@@ -722,6 +723,7 @@ const JOB_DETAIL_BOKEH_PLOT_METADATA = {
 };
 
 export const VARIABLE_METADATA = {
+  ...MONITOR_EVENT_METADATA_LEGACY,
   ...MONITOR_EVENT_METADATA,
   ...JOB_ACCOUNTING_AND_DERIVED_METADATA,
   ...SUMMARY_PLOT_METRIC_METADATA,

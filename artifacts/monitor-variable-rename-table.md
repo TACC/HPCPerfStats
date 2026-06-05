@@ -6,10 +6,15 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 
 ## Downstream impact (document-only)
 
-- `hpcperfstats/dbload/sync_timedb_parsing.py (EVENTMAPS_BY_TYPE keys)`
+- `hpcperfstats/monitor_naming/canonical.py`
+- `hpcperfstats/monitor_naming/legacy.py`
+- `hpcperfstats/monitor_naming/resolve.py`
+- `hpcperfstats/dbload/sync_timedb_parsing.py`
+- `hpcperfstats/dbload/sync_timedb_parsing_legacy.py`
 - `hpcperfstats/analysis/metrics/metrics.py`
 - `tests/pipeline_e2e/monitor_payloads.py`
 - `hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.js`
+- `hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEventsLegacy.js`
 - `docs/MONITOR_VARIABLES.md`
 
 ## Type renames (`st_name`)

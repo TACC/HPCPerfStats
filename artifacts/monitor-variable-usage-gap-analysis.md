@@ -6,11 +6,9 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 
 ## 1) Total emitted variables (by type)
 
-- `amd64_df`: emitted **8**, used **8**, unused **0**
-- `amd64_pmc`: emitted **5**, used **1**, unused **4**
-- `amd_gpu`: emitted **20**, used **13**, unused **7**
-- `amd_x86_pmc`: emitted **13**, used **0**, unused **13**
-- `amd_x86_rapl`: emitted **2**, used **0**, unused **2**
+- `amd_gpu`: emitted **20**, used **16**, unused **4**
+- `amd_x86_pmc`: emitted **13**, used **4**, unused **9**
+- `amd_x86_rapl`: emitted **2**, used **1**, unused **1**
 - `amd_x86_uncore_df`: emitted **4**, used **0**, unused **4**
 - `host_block`: emitted **11**, used **3**, unused **8**
 - `host_cpu`: emitted **7**, used **5**, unused **2**
@@ -18,27 +16,22 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `host_ib_ext`: emitted **10**, used **4**, unused **6**
 - `host_ib_sw`: emitted **4**, used **4**, unused **0**
 - `host_lnet`: emitted **11**, used **3**, unused **8**
-- `host_mem`: emitted **17**, used **2**, unused **15**
+- `host_mem`: emitted **17**, used **5**, unused **12**
 - `host_net`: emitted **23**, used **17**, unused **6**
-- `host_nfs`: emitted **18**, used **6**, unused **12**
+- `host_nfs`: emitted **18**, used **8**, unused **10**
 - `host_numa`: emitted **6**, used **3**, unused **3**
 - `host_opa`: emitted **16**, used **4**, unused **12**
 - `host_proc`: emitted **13**, used **0**, unused **13**
 - `host_ps`: emitted **7**, used **1**, unused **6**
 - `host_roofline_peak`: emitted **8**, used **5**, unused **3**
-- `host_sysv_shm`: emitted **2**, used **0**, unused **2**
+- `host_sysv_shm`: emitted **2**, used **1**, unused **1**
 - `host_tmpfs`: emitted **3**, used **0**, unused **3**
 - `host_vfs`: emitted **3**, used **0**, unused **3**
 - `host_vm`: emitted **27**, used **0**, unused **27**
-- `intel_8pmc3`: emitted **15**, used **14**, unused **1**
-- `intel_hsw_imc`: emitted **2**, used **2**, unused **0**
-- `intel_knl_mc_dclk`: emitted **2**, used **2**, unused **0**
-- `intel_skx_imc`: emitted **4**, used **2**, unused **2**
-- `intel_snb_imc`: emitted **2**, used **2**, unused **0**
 - `intel_x86_pcu`: emitted **6**, used **0**, unused **6**
-- `intel_x86_pmc_gpr4`: emitted **24**, used **0**, unused **24**
-- `intel_x86_pmc_gpr8`: emitted **24**, used **0**, unused **24**
-- `intel_x86_rapl`: emitted **4**, used **0**, unused **4**
+- `intel_x86_pmc_gpr4`: emitted **24**, used **3**, unused **21**
+- `intel_x86_pmc_gpr8`: emitted **24**, used **3**, unused **21**
+- `intel_x86_rapl`: emitted **4**, used **1**, unused **3**
 - `intel_x86_uncore_cbo_bdw`: emitted **4**, used **0**, unused **4**
 - `intel_x86_uncore_cbo_hsw`: emitted **4**, used **0**, unused **4**
 - `intel_x86_uncore_cbo_ivb`: emitted **4**, used **0**, unused **4**
@@ -48,11 +41,11 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `intel_x86_uncore_hau_hsw`: emitted **4**, used **0**, unused **4**
 - `intel_x86_uncore_hau_ivb`: emitted **4**, used **0**, unused **4**
 - `intel_x86_uncore_hau_snb`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_imc_bdw`: emitted **5**, used **0**, unused **5**
-- `intel_x86_uncore_imc_hsw`: emitted **5**, used **0**, unused **5**
-- `intel_x86_uncore_imc_ivb`: emitted **5**, used **0**, unused **5**
-- `intel_x86_uncore_imc_skx`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_imc_snb`: emitted **5**, used **0**, unused **5**
+- `intel_x86_uncore_imc_bdw`: emitted **5**, used **2**, unused **3**
+- `intel_x86_uncore_imc_hsw`: emitted **5**, used **2**, unused **3**
+- `intel_x86_uncore_imc_ivb`: emitted **5**, used **2**, unused **3**
+- `intel_x86_uncore_imc_skx`: emitted **4**, used **2**, unused **2**
+- `intel_x86_uncore_imc_snb`: emitted **5**, used **2**, unused **3**
 - `intel_x86_uncore_qpi_bdw`: emitted **4**, used **0**, unused **4**
 - `intel_x86_uncore_qpi_hsw`: emitted **4**, used **0**, unused **4**
 - `intel_x86_uncore_qpi_ivb`: emitted **4**, used **0**, unused **4**
@@ -64,38 +57,28 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `lustre_llite`: emitted **37**, used **28**, unused **9**
 - `lustre_mdc`: emitted **10**, used **2**, unused **8**
 - `lustre_osc`: emitted **10**, used **3**, unused **7**
-- `nvidia_gpu`: emitted **34**, used **16**, unused **18**
+- `nvidia_gpu`: emitted **34**, used **19**, unused **15**
 - `osc`: emitted **10**, used **3**, unused **7**
 
 **Totals**
-- Total monitor types: **60**
-- Total emitted variables: **531**
-- Total explicitly used variables (quoted literals, global): **166**
-- Total unused variables: **365**
+- Total monitor types: **53**
+- Total emitted variables: **493**
+- Total explicitly used variables (quoted literals, global): **169**
+- Total unused variables: **324**
 
 ## 2) Total used variables
 
-- Explicitly used monitor variable keys (quoted literal match in usage scope): **127**
+- Explicitly used monitor variable keys (quoted literal match in usage scope): **117**
 
 ## 3) Exhaustive unused variables grouped by type
 
-### `amd64_pmc` (4)
-- `BRANCH_INST_RETIRED`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `BRANCH_INST_RETIRED_MISS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `DISPATCH_STALL_CYCLES0`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `DISPATCH_STALL_CYCLES1`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `amd_gpu` (7)
+### `amd_gpu` (4)
 - `gpu_flops_rate`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_mem_read_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_mem_total_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
-- `gpu_mem_total_mb`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
-- `gpu_mem_used_mb`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
-- `gpu_mem_util`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_mem_write_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 
-### `amd_x86_pmc` (13)
-- `aperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+### `amd_x86_pmc` (9)
 - `branch_inst_retired`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `branch_inst_retired_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dispatch_stall_cycles0`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -105,13 +88,9 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `dram_chan2_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dram_chan3_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `fp_ops_merge`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `fp_ops_retired`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `instr_retired`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `amd_x86_rapl` (2)
+### `amd_x86_rapl` (1)
 - `core_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `pkg_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
 ### `amd_x86_uncore_df` (4)
 - `dram_chan0_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -157,7 +136,7 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `rx_msgs_dropped`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `tx_msgs`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `host_mem` (15)
+### `host_mem` (12)
 - `anon_huge_pages`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `anon_pages`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `bounce`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -166,9 +145,6 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `huge_pages_total`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `inactive`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `mapped`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mem_free`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mem_total`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mem_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `nfs_unstable`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `page_tables`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `slab`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -182,13 +158,11 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `tx_compressed`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `tx_dropped`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `host_nfs` (12)
+### `host_nfs` (10)
 - `delay`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `read_ops`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `read_queue`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `read_rtt`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `read_timeouts`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `write_ops`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `write_queue`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `write_rtt`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `write_timeouts`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -243,8 +217,7 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `gpu_peak_source`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `peak_calc_version`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `host_sysv_shm` (2)
-- `mem_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
+### `host_sysv_shm` (1)
 - `segs_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
 ### `host_tmpfs` (3)
@@ -286,13 +259,6 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `thp_fault_fallback`: monitor-emitted telemetry field. **Usefulness:** Low / memory
 - `thp_split`: monitor-emitted telemetry field. **Usefulness:** Low / memory
 
-### `intel_8pmc3` (1)
-- `SSE_DOUBLE_ALL`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_skx_imc` (2)
-- `ACT_COUNT`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `PRE_COUNT_MISS`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
 ### `intel_x86_pcu` (6)
 - `freq_max_power_cycles`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `freq_max_temp_cycles`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -301,8 +267,7 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `pcu_ctr0`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `pcu_ctr1`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `intel_x86_pmc_gpr4` (24)
-- `aperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+### `intel_x86_pmc_gpr4` (21)
 - `dtlb_load_misses_miss_causes_a_walk`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `fp_arith_inst_retired_128b_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `fp_arith_inst_retired_128b_packed_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -314,7 +279,6 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `fp_arith_inst_retired_scalar_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `fp_comp_ops_exe_sse_fp_packed`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `fp_comp_ops_exe_sse_fp_scalar`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `instr_retired`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `l1d_replacement`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `l2_lines_in_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `mem_load_uops_retired_l1_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -323,12 +287,10 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `mem_uncore_retired_local_dram`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `mem_uncore_retired_remote_dram`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `mem_uops_retired_all_loads`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `resource_stalls_any`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `simd_fp_256_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `intel_x86_pmc_gpr8` (24)
-- `aperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
+### `intel_x86_pmc_gpr8` (21)
 - `dtlb_load_misses_miss_causes_a_walk`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `fp_arith_inst_retired_128b_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `fp_arith_inst_retired_128b_packed_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -340,7 +302,6 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `fp_arith_inst_retired_scalar_single`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `fp_comp_ops_exe_sse_fp_packed`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `fp_comp_ops_exe_sse_fp_scalar`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `instr_retired`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `l1d_replacement`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `l2_lines_in_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `mem_load_uops_retired_l1_hit`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -349,13 +310,11 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `mem_uncore_retired_local_dram`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `mem_uncore_retired_remote_dram`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `mem_uops_retired_all_loads`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `mperf`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `resource_stalls_any`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `simd_fp_256_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `intel_x86_rapl` (4)
+### `intel_x86_rapl` (3)
 - `dram_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `pkg_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `pp0_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `pp1_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
@@ -413,37 +372,27 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `requests_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `requests_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `intel_x86_uncore_imc_bdw` (5)
+### `intel_x86_uncore_imc_bdw` (3)
 - `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dram_fixed_ctr`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `intel_x86_uncore_imc_hsw` (5)
+### `intel_x86_uncore_imc_hsw` (3)
 - `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dram_fixed_ctr`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `intel_x86_uncore_imc_ivb` (5)
+### `intel_x86_uncore_imc_ivb` (3)
 - `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dram_fixed_ctr`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `intel_x86_uncore_imc_skx` (4)
+### `intel_x86_uncore_imc_skx` (2)
 - `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `intel_x86_uncore_imc_snb` (5)
+### `intel_x86_uncore_imc_snb` (3)
 - `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dram_fixed_ctr`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
@@ -525,15 +474,12 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `ost_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `reqs`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `nvidia_gpu` (18)
+### `nvidia_gpu` (15)
 - `gpu_dram_active`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_flops_rate`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_mem_free_mb`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_mem_read_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_mem_total_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
-- `gpu_mem_total_mb`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
-- `gpu_mem_used_mb`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
-- `gpu_mem_util`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_mem_write_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_nvlink_rx_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
 - `gpu_nvlink_tx_bytes`: monitor-emitted telemetry field. **Usefulness:** Medium / GPU
@@ -624,7 +570,7 @@ This section is a strict `host_data.type` inventory for variables actively wired
 - **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, summary/roofline/heatmap plot modules
 - **Figures/metrics/displays:** Job Detail Metrics (FLOP/vector/frequency rows), Summary plot (`flops64b`, `flops32b`, `instr`, `mcycles`, `acycles`, `freq`), CPU roofline and CPU multiprecision
 
-### `intel_bdw_imc`, `intel_hsw_imc`, `intel_ivb_imc`, `intel_snb_imc`, `intel_skx_imc`
+### `intel_bdw_imc`, `intel_hsw_imc`, `intel_ivb_imc`, `intel_snb_imc`, `intel_skx_imc`, `intel_knl_mc_dclk`
 - **Used variables:** `CAS_READS`, `CAS_WRITES`
 - **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_mbw`, `dram_bw_node_imbalance`), roofline helpers
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_mbw`, `dram_bw_node_imbalance`), Summary (`mbw`), CPU roofline memory path

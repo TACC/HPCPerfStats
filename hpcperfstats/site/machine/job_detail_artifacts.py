@@ -9,12 +9,15 @@ from math import pi
 from datetime import date, datetime
 from typing import Any, Dict, Optional
 
+from django.db import connection
+from django.db.models.base import ModelState
 from bokeh.embed import json_item
 from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.palettes import d3
 from bokeh.plotting import figure
 from bokeh.transform import factor_cmap
 
+from hpcperfstats.site.machine.job_plot_artifacts import _utc_iso_for_plot_fingerprint
 from hpcperfstats.analysis.plot.bokeh_job_detail_help_marker import (
     add_job_detail_bokeh_help_marker,
 )
@@ -66,13 +69,35 @@ def _decompress_payload(payload_compressed: bytes, payload_encoding: str) -> Dic
 
 
 def compute_detail_input_fingerprint(job: job_data) -> str:
+  job_state = getattr(job, "_state", None)
+  if (
+      connection.vendor == "postgresql"
+      and isinstance(job_state, ModelState)
+      and not job_state.adding
+      and job.pk is not None
+  ):
+    from hpcperfstats.site.machine.artifact_readiness_expressions import (
+        DetailArtifactInputFingerprintHex,
+    )
+
+    sql_fp = (
+        job_data.objects.filter(pk=job.pk)
+        .annotate(fp=DetailArtifactInputFingerprintHex())
+        .values_list("fp", flat=True)
+        .first()
+    )
+    if sql_fp is not None:
+      return sql_fp
+
   def _safe_text(v: Any) -> str:
     try:
       if v is None:
         return ""
       if isinstance(v, (str, int, float, bool)):
         return str(v)
-      if isinstance(v, (datetime, date)):
+      if isinstance(v, datetime):
+        return _utc_iso_for_plot_fingerprint(v)
+      if isinstance(v, date):
         return v.isoformat()
       if hasattr(v, "isoformat"):
         maybe = v.isoformat()

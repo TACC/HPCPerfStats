@@ -15,14 +15,14 @@ def build_node_power_est_dataframe(jt):
     return df
   df = df.copy()
   rows = [
-      ("intel_rapl", "arc", ["MSR_PKG_ENERGY_STATUS"], "watts", 0.00001526),
-      ("amd64_rapl", "arc", ["MSR_PKG_ENERGY_STAT"], "amd_pkg_w", 0.00001526),
+      ("intel_x86_rapl", "arc", ["pkg_energy"], "watts", 0.00001526),
+      ("amd_x86_rapl", "arc", ["pkg_energy"], "amd_pkg_w", 0.00001526),
       ("nvidia_gpu", "value", ["power_usage"], "nv_power_w", 1.0),
       ("nvidia_gpu", "value", ["module_power_usage"], "nv_module_power_w", 1.0),
       (
-          "cpu_counter_metrics",
+          "host_cpu_hw",
           "value",
-          ["DCGM_CPU_POWER_UTIL_W"],
+          ["dcgm_cpu_power_util_w"],
           "dcg_cpu_power_w",
           1.0,
       ),

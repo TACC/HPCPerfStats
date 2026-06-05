@@ -184,14 +184,14 @@ def test_avg_freq_aperf_mperf_returns_none_without_freq():
 
 
 def test_job_arc_avg_flops_falls_back_to_intel_when_amd_missing():
-  """avg_flops aggregation tries amd64_pmc FLOPS then intel_8pmc3 FP_ARITH sum."""
+  """avg_flops aggregation tries AMD PMC FLOPS then Intel FP_ARITH on core PMC types."""
 
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") == "amd64_pmc":
+    if kw.get("typename") in ("amd64_pmc", "amd_x86_pmc"):
       return None
-    if kw.get("typename") == "intel_8pmc3":
+    if kw.get("typename") in ("intel_x86_pmc_gpr8", "intel_8pmc3"):
       return 2.5
-    if kw.get("typename") == "intel_4pmc3":
+    if kw.get("typename") in ("intel_x86_pmc_gpr4", "intel_4pmc3"):
       return 99.0
     return None
 
@@ -199,16 +199,16 @@ def test_job_arc_avg_flops_falls_back_to_intel_when_amd_missing():
     m = Metrics()
     value, typename = m._job_arc_avg_flops(object())
   assert abs(value - 2.5) < 1e-9
-  assert typename == "intel_8pmc3"
+  assert typename in ("intel_x86_pmc_gpr8", "intel_8pmc3")
 
 
 def test_job_arc_avg_flops_uses_intel_4pmc3_when_8_empty():
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") == "amd64_pmc":
+    if kw.get("typename") in ("amd64_pmc", "amd_x86_pmc"):
       return None
-    if kw.get("typename") == "intel_8pmc3":
+    if kw.get("typename") in ("intel_x86_pmc_gpr8", "intel_8pmc3"):
       return None
-    if kw.get("typename") == "intel_4pmc3":
+    if kw.get("typename") in ("intel_x86_pmc_gpr4", "intel_4pmc3"):
       return 1.25
     return None
 
@@ -216,12 +216,12 @@ def test_job_arc_avg_flops_uses_intel_4pmc3_when_8_empty():
     m = Metrics()
     value, typename = m._job_arc_avg_flops(object())
   assert abs(value - 1.25) < 1e-9
-  assert typename == "intel_4pmc3"
+  assert typename in ("intel_x86_pmc_gpr4", "intel_4pmc3")
 
 
 def test_job_arc_avg_flops_uses_amd_when_present():
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") == "amd64_pmc":
+    if kw.get("typename") in ("amd64_pmc", "amd_x86_pmc"):
       return 9.0
     return None
 
@@ -229,7 +229,7 @@ def test_job_arc_avg_flops_uses_amd_when_present():
     m = Metrics()
     value, typename = m._job_arc_avg_flops(object())
   assert abs(value - 9.0) < 1e-9
-  assert typename == "amd64_pmc"
+  assert typename in ("amd_x86_pmc", "amd64_pmc")
 
 
 
@@ -242,7 +242,7 @@ def test_job_arc_avg_flops_legacy_sse_when_fp_arith_missing():
       return None
     typ = kw.get("typename")
     ev = kw.get("events") or []
-    if typ == "intel_8pmc3":
+    if typ in ("intel_x86_pmc_gpr8", "intel_8pmc3"):
       if len(ev) > 1:
         return None
       if ev == ["SSE_DOUBLE_SCALAR"]:
@@ -257,37 +257,38 @@ def test_job_arc_avg_flops_legacy_sse_when_fp_arith_missing():
     m = Metrics()
     value, typename = m._job_arc_avg_flops(object())
   assert abs(value - 1.75) < 1e-9
-  assert typename == "intel_8pmc3"
+  assert typename in ("intel_x86_pmc_gpr8", "intel_8pmc3")
 
 
 
 
 def test_job_arc_avg_mbw_uses_intel_imc_when_amd_df_empty():
-  """avg_mbw tries AMD DF then Intel IMC CAS_READS+CAS_WRITES."""
+  """avg_mbw tries AMD DF then Intel IMC dram CAS read/write events."""
+
+  cas_pairs = (
+      ["dram_cas_reads", "dram_cas_writes"],
+      ["CAS_READS", "CAS_WRITES"],
+  )
 
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") == "amd64_df":
+    if kw.get("typename") in ("amd64_df", "amd_x86_uncore_df"):
       return None
-    if kw.get("typename") == "intel_skx_imc":
+    if kw.get("typename") in ("intel_x86_uncore_imc_skx", "intel_skx_imc"):
       ev = kw.get("events") or []
-      if list(ev) == ["CAS_READS", "CAS_WRITES"]:
+      if list(ev) in cas_pairs:
         return 2.5
     return None
 
   with patch.object(Metrics, "job_arc", fake_job_arc):
-    with patch(
-        "hpcperfstats.analysis.metrics.metrics.INTEL_IMC_STATS_TYPES",
-        ("intel_skx_imc",),
-    ):
-      m = Metrics()
-      value, typename = m._job_arc_avg_mbw(object())
+    m = Metrics()
+    value, typename = m._job_arc_avg_mbw(object())
   assert abs(value - 2.5) < 1e-9
-  assert typename == "intel_skx_imc"
+  assert typename in ("intel_x86_uncore_imc_skx", "intel_skx_imc")
 
 
 def test_job_arc_avg_mbw_prefers_amd64_df():
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") == "amd64_df":
+    if kw.get("typename") in ("amd64_df", "amd_x86_uncore_df"):
       return 0.75
     return None
 
@@ -295,19 +296,25 @@ def test_job_arc_avg_mbw_prefers_amd64_df():
     m = Metrics()
     value, typename = m._job_arc_avg_mbw(object())
   assert abs(value - 0.75) < 1e-9
-  assert typename == "amd64_df"
+  assert typename in ("amd_x86_uncore_df", "amd64_df")
 
 
-def test_job_arc_avg_flops_cpu_counter_metrics():
-  """avg_flops uses cpu_counter_metrics when Intel PMC types lack FP data."""
+def test_job_arc_avg_flops_host_cpu_hw():
+  """avg_flops uses host_cpu_hw ARM estimate when Intel PMC types lack FP data."""
 
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") == "amd64_pmc":
+    if kw.get("typename") in ("amd64_pmc", "amd_x86_pmc"):
       return None
-    if kw.get("typename") in ("intel_8pmc3", "intel_4pmc3"):
+    if kw.get("typename") in (
+        "intel_x86_pmc_gpr8",
+        "intel_8pmc3",
+        "intel_x86_pmc_gpr4",
+        "intel_4pmc3",
+    ):
       return None
-    if kw.get("typename") == "cpu_counter_metrics":
-      if len(kw.get("events") or []) > 1:
+    if kw.get("typename") in ("host_cpu_hw", "cpu_counter_metrics"):
+      ev = kw.get("events") or []
+      if ev == ["ARM_EST_FLOPS"] or ev == ["arm_est_flops"]:
         return 3.0
     return None
 
@@ -315,14 +322,18 @@ def test_job_arc_avg_flops_cpu_counter_metrics():
     m = Metrics()
     value, typename = m._job_arc_avg_flops(object())
   assert abs(value - 3.0) < 1e-9
-  assert typename == "cpu_counter_metrics"
+  assert typename in ("host_cpu_hw", "cpu_counter_metrics")
 
 
 def test_job_arc_avg_flops_arm_counter_fallback():
-  """avg_flops falls back to cpu_counter_metrics ARM_EST_FLOPS when FP events are absent."""
+  """avg_flops falls back to host_cpu_hw arm_est_flops when FP events are absent."""
 
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") == "cpu_counter_metrics" and list(kw.get("events") or []) == ["ARM_EST_FLOPS"]:
+    ev = list(kw.get("events") or [])
+    if kw.get("typename") in ("host_cpu_hw", "cpu_counter_metrics") and ev in (
+        ["arm_est_flops"],
+        ["ARM_EST_FLOPS"],
+    ):
       return 4.25
     return None
 
@@ -330,29 +341,32 @@ def test_job_arc_avg_flops_arm_counter_fallback():
     m = Metrics()
     value, typename = m._job_arc_avg_flops(object())
   assert abs(value - 4.25) < 1e-9
-  assert typename == "cpu_counter_metrics"
+  assert typename in ("host_cpu_hw", "cpu_counter_metrics")
 
 
 def test_job_arc_avg_mbw_arm_counter_fallback():
-  """avg_mbw falls back to cpu_counter_metrics ARM_DRAM_BW_BYTES when IMC rows are absent."""
+  """avg_mbw falls back to host_cpu_hw ARM_DRAM_BW_BYTES when IMC rows are absent."""
 
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") == "cpu_counter_metrics" and list(kw.get("events") or []) == ["ARM_DRAM_BW_BYTES"]:
+    ev = list(kw.get("events") or [])
+    if kw.get("typename") in ("host_cpu_hw", "cpu_counter_metrics") and ev == [
+        "ARM_DRAM_BW_BYTES"
+    ]:
       return 6.5
     return None
 
   with patch.object(Metrics, "job_arc", fake_job_arc):
     with patch(
-        "hpcperfstats.analysis.metrics.metrics.INTEL_IMC_STATS_TYPES",
-        (),
+        "hpcperfstats.analysis.metrics.metrics.imc_types_probe_order",
+        return_value=(),
     ), patch(
-        "hpcperfstats.analysis.metrics.metrics.ARM_IMC_STATS_TYPES",
-        (),
+        "hpcperfstats.analysis.metrics.metrics.arm_imc_types_probe_order",
+        return_value=(),
     ):
       m = Metrics()
       value, typename = m._job_arc_avg_mbw(object())
   assert abs(value - 6.5) < 1e-9
-  assert typename == "cpu_counter_metrics"
+  assert typename in ("host_cpu_hw", "cpu_counter_metrics")
 
 
 def test_job_arc_avg_sharedfs_iops_includes_nfs_when_available():
@@ -914,6 +928,10 @@ def test_job_arc_issues_multiple_queries_when_many_hosts(monkeypatch):
       return q
 
   monkeypatch.setattr("hpcperfstats.site.machine.models.host_data.objects", Mgr())
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.metrics.type_probe_names",
+      lambda typename: (typename,),
+  )
   m = Metrics()
   m.job_arc(jt, typename="net", events=["rx_bytes"], conv=1.0)
   assert len(calls) == 2

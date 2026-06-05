@@ -58,6 +58,8 @@ def test_fingerprint_stable_for_same_job_fields():
   fp2 = compute_plot_input_fingerprint(j, 99)
   assert fp1 == fp2
   j.refresh_from_db()
+  j.host_list = ["n1", "n2", "n3"]
+  j.save(update_fields=["host_list"])
   fp3 = compute_plot_input_fingerprint(j, 100)
   assert fp3 != fp1
 
@@ -103,6 +105,8 @@ def test_load_cached_job_plot_entry_stale_fingerprint():
   upsert_job_plot_artifact(
       "stale1", "roofline", "normal", fp_old, {"a": 1}
   )
+  j.host_list = ["n1", "n2"]
+  j.save(update_fields=["host_list"])
   fp_new = compute_plot_input_fingerprint(j, 999)
   assert (
       load_cached_job_plot_entry("stale1", "roofline", "normal", fp_new) is None

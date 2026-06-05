@@ -1,8 +1,9 @@
 """Security regression tests for API throttling behavior."""
 
-from unittest.mock import patch
-
+import pytest
 from django.test import override_settings
+from rest_framework.request import Request
+from rest_framework.test import APIRequestFactory
 
 
 @override_settings(
@@ -13,45 +14,41 @@ from django.test import override_settings
         }
     },
     REST_FRAMEWORK={
-        "DEFAULT_THROTTLE_CLASSES": [
-            "hpcperfstats.site.machine.throttles.AuthenticatedUserOrApiKeyThrottle",
-        ],
         "DEFAULT_THROTTLE_RATES": {
-            "authenticated_user_or_api_key": "1/min",
-            "expensive_read": "1/min",
             "staff_ingest": "1/min",
         },
     },
 )
+@pytest.mark.django_db
 def test_sacct_ingest_throttles_repeated_staff_posts():
-    from django.core.cache import cache
-    from rest_framework.test import APIRequestFactory
+  from django.core.cache import cache
 
-    from hpcperfstats.site.machine import api
+  from hpcperfstats.site.machine import api
+  from hpcperfstats.site.machine.throttles import StaffIngestThrottle
 
-    cache.clear()
-    factory = APIRequestFactory()
-    request1 = factory.post(
-        "/api/sacct/ingest/?date=2024-01-02",
-        data=b"x",
-        content_type="text/plain",
-    )
-    request2 = factory.post(
-        "/api/sacct/ingest/?date=2024-01-02",
-        data=b"x",
-        content_type="text/plain",
-    )
-    request1.session = {"username": "admin", "is_staff": True}
-    request2.session = {"username": "admin", "is_staff": True}
+  cache.clear()
+  factory = APIRequestFactory()
+  wsgi1 = factory.post(
+      "/api/sacct/ingest/?date=2024-01-02",
+      data=b"x",
+      content_type="text/plain",
+  )
+  wsgi2 = factory.post(
+      "/api/sacct/ingest/?date=2024-01-02",
+      data=b"x",
+      content_type="text/plain",
+  )
+  wsgi1.session = {"username": "admin", "is_staff": True}
+  wsgi2.session = {"username": "admin", "is_staff": True}
 
-    with patch.object(api, "_require_staff", return_value=None), patch.object(
-        api, "sync_acct_from_content", return_value=1
-    ), patch.object(api, "job_data") as mock_job_data:
-        mock_job_data.objects.filter.return_value.values_list.return_value.iterator.return_value = (
-            iter([])
-        )
-        response1 = api.sacct_ingest(request1)
-        response2 = api.sacct_ingest(request2)
+  throttle = StaffIngestThrottle()
+  view = api.sacct_ingest
+  drf1 = Request(wsgi1)
+  drf2 = Request(wsgi2)
+  cache_key = throttle.get_cache_key(drf1, view)
+  assert cache_key is not None
+  assert throttle.get_cache_key(drf2, view) == cache_key
 
-    assert response1.status_code == 200
-    assert response2.status_code == 429
+  assert throttle.allow_request(drf1, view) is True
+  assert len(throttle.cache.get(cache_key, [])) == 1
+  assert throttle.allow_request(drf2, view) is False

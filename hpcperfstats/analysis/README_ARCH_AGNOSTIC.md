@@ -2,50 +2,49 @@
 
 This note summarizes how CPU/GPU vendors are handled in `hpcperfstats/analysis` and how to extend support.
 
-## CPU (AMD, Intel, LIKWID)
+## Naming (canonical + dual-read)
 
-- **`utils.utils`**: Logical `pmc` is chosen with `PMC_TYPENAME_PRIORITY` (AMD and 8/4-counter Intel before `cpu_counter_metrics`). IMC is the first entry in `INTEL_IMC_STATS_TYPES` present in the job schema. CHA uses `CHA_TYPENAME_PRIORITY`.
-- **Summary plot**: Intel core metrics (`flops64b`, `flops32b`, `instr`, `mcycles`, `acycles`) try `intel_8pmc3`, then `intel_4pmc3`, then `cpu_counter_metrics`. Intel DRAM `mbw` tries every IMC type in `INTEL_IMC_STATS_TYPES` (same idea as roofline).
-- **Intel CHA (optional)**: When `intel_skx_cha` or `intel_knl_cha` is in the job schema, the summary grid may include a combined `arc` rate over CHA counter events (evictions / LLC lookups / bypass-to-IMC) aggregated across all CHA boxes—useful as a coarse on-node coherence/LLC pressure signal for hybrid MPI+OpenMP. Event strings must match the post-ingest schema (see CHA mappings in `dbload/sync_timedb_parsing.py`).
-- **Roofline**: Intel FLOPS paths use `INTEL_CORE_PMC_TYPES_ORDERED` (includes `cpu_counter_metrics`). AMD needs `amd64_pmc` FLOPS plus `amd64_df` MBW channels (family 17h/19h when the monitor exposes them).
-- **Heatmap CPI**: Candidate list includes Intel PMC types, `amd64_pmc`, and `cpu_counter_metrics`.
+- **Canonical typenames/events** live in `hpcperfstats/monitor_naming/canonical.py` (from `docs/monitor_variable_rename_map.yaml`).
+- **Legacy names** (historical `host_data`, CTL/CTR ingest) live in `hpcperfstats/monitor_naming/legacy.py` and `hpcperfstats/dbload/sync_timedb_parsing_legacy.py`.
+- **Analysis probes** use `hpcperfstats/monitor_naming/resolve.py` (canonical first, then legacy).
+- **`analysis/gen/utils.py`** re-exports canonical lists (`INTEL_IMC_STATS_TYPES`, `INTEL_CORE_PMC_TYPES_ORDERED`, etc.).
+
+## CPU (AMD, Intel, Grace)
+
+- **`utils.utils`**: Logical `pmc` uses `pmc_typename_priority()` (AMD and Intel GPR PMC before `host_cpu_hw`). IMC uses `imc_types_probe_order()`. CHA uses `cha_typename_priority()`.
+- **Summary plot**: Intel core metrics try `intel_x86_pmc_gpr8`, then `intel_x86_pmc_gpr4`, then `host_cpu_hw`. DRAM `mbw` walks `imc_types_probe_order()` with `dram_cas_read_write_pairs()`.
+- **Intel CHA (optional)**: When `intel_x86_uncore_cha_skx` or `intel_x86_uncore_cha_knl` is in the job schema, the summary grid may include combined CHA `arc` rates.
+- **Roofline**: Intel FLOPS from `core_pmc_types_probe_order()` (FP_ARITH or legacy SSE proxies). AMD needs `amd_x86_pmc` + `amd_x86_uncore_df` MBW channels when exposed.
+- **Heatmap CPI**: Candidate list includes Intel PMC types, `amd_x86_pmc`, and `host_cpu_hw`.
 
 ### Monitor ↔ analysis contract (`host_data.type`)
 
-All of the typenames above are whatever the **monitor** publishes as `host_data.type` (see `HPCPerfStats/monitor/` `stats_type.st_name` and ingest). Analysis must **not** introduce parallel names: when adding Intel IMC generations, ARM IMC, or AMD paths, align `INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, roofline merge logic, and tests with the monitor’s actual schema.
+Typenames must match the **shipped** monitor `st_name` values for new ingest. Historical rows may still use legacy names; analysis dual-reads via `resolve.py` without a DB migration.
 
 ### Roofline nominal peaks (`roofline_peaks.py`)
 
-- **File**: `hpcperfstats/analysis/plot/roofline_peaks.py` defines `ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS`, `infer_cpu_roofline_peak_flops_and_bw_gbps(jt)`, and `infer_gpu_roofline_peak_flops_and_bw_gbps(jt)`.
-- **Optional true-roof contract**: if `host_data.type` includes **`roofline_hw_peak`**, analysis will use these events first:
-  - CPU: `cpu_peak_fp64_flops_per_s`, `cpu_peak_dram_bw_bytes_per_s`
-  - GPU: `gpu_peak_fp64_flops_per_s`, and bandwidth preferring `gpu_peak_io_link_bw_bytes_per_s` over `gpu_peak_mem_bw_bytes_per_s`
-  - Units are converted as FLOP/s -> GFLOP/s and B/s -> GB/s.
-- **Compatibility**: explicit plot args (`peak_flops_gf`, `peak_bw_gb`) remain highest priority, and missing/partial `roofline_hw_peak` data falls back to legacy inference.
-- **Intel**: One table row per entry in **`INTEL_IMC_STATS_TYPES`** (same strings as the monitor). Inference picks the **first** typename in that tuple present in the schema—matching roofline’s IMC bandwidth scan order.
-- **AMD**: `amd64_pmc` + `amd64_df` → default 2S EPYC-class peak row (`amd64_epyc_2s_default`); Zen generation is **not** in `host_data.type`, so optional per-generation rows are for documentation/overrides only until host metadata or config exists.
-- **ARM Grace-class**: `arm_imc` in schema → Grace single-die peak row; synthetic DCGM counters remain under `cpu_counter_metrics` (see monitor `cpu_counter_metrics.c`).
-- **Cursor rule**: `HPCPerfStats/hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc` summarizes how these pieces stay in sync when the monitor or analysis changes.
+- **File**: `hpcperfstats/analysis/plot/roofline_peaks.py` — `ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS`, `infer_cpu_roofline_peak_flops_and_bw_gbps(jt)`.
+- **Optional true-roof contract**: `host_roofline_peak` events (`cpu_peak_fp64_flops_per_s`, `cpu_peak_dram_bw_bytes_per_s`, GPU peaks) when present.
+- **Intel**: One table row per canonical IMC typename in `INTEL_IMC_STATS_TYPES` (e.g. `intel_x86_uncore_imc_hsw`, `intel_x86_uncore_mc_knl`).
+- **AMD**: `amd_x86_pmc` + `amd_x86_uncore_df` → `amd64_epyc_2s_default` peak row.
+- **ARM Grace-class**: `arm_aarch64_imc` and/or `host_cpu_hw` synthetic counters (`arm_est_flops`, `ARM_DRAM_BW_BYTES`).
+- **Cursor rule**: `hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc`.
 
 ## GPU (NVIDIA, AMD)
 
-- **`avg_gpuutil`**: Prefers `nvidia_gpu` `gpu_util`, then `utilization`, then `amd_gpu` `gpu_util`. Catalog placeholder type is `gpu` (not vendor-specific).
-- **Summary plot (NVIDIA DCGM)**: Beyond util and framebuffer usage, the job summary can plot tensor/SM/FP pipe activity (`tensor_active`, `sm_occupancy`, `fp16_active`, `fp32_active`), `mem_util`, `power_usage`, estimated HBM bandwidth rate (`gpu_mem_bw_bytes_rate`), and `arc` rate from `gpu_io_link_total_bytes` (PCIe + NVLink PROF bytes). **`amd_gpu`** uses the same schema names when GPUPerfAPI is available; many fields may be zero if the backend is inactive.
-- **Job metrics**: Additional catalog entries cover average tensor activity, GPU memory BW (GB/s), peak power, peak link throughput (GB/s), DCGM clock-throttle bitmask (opaque integer), GPU util / tensor **node imbalance** (snapshot columns), fabric MB/s per average tensor activity (heuristic for MPI+AI), plus CPU-side `dram_bw_node_imbalance` and `lnet_node_imbalance`. **Node power estimate** (`max_node_power_est_w`, `avg_node_power_est_w`) follows the same CPU/GPU/module merge as the summary plot’s `node_power_est_w` (Intel/AMD RAPL PKG arc→W, Grace `DCGM_CPU_POWER_UTIL_W`, `nvidia_gpu` `power_usage`, and **module-only** when `module_power_usage` is positive).
-- **Ingest**: `sync_timedb_parsing.compute_deltas_and_arc` clusters `cpu_counter_metrics` `DCGM_CPU_POWER_*_W` rows before insert (repeated per-core socket readings) and takes **max** across GPU devs for `module_power_usage` / `sysio_power_usage` so superchip module power is not summed twice.
-- **DevPlot**: Uses `value` (not `arc`) for type-detail when `mem`, `nvidia_gpu`, or `amd_gpu` is in the type list.
+- **`avg_gpuutil`**: Prefers `nvidia_gpu` `gpu_util`, then `utilization`, then `amd_gpu` `gpu_util`.
+- **Summary plot (NVIDIA DCGM)**: Tensor/SM/FP pipe activity, power, HBM BW rate, link `arc` bytes; **`amd_gpu`** when GPUPerfAPI is active.
+- **Job metrics**: Node power estimate (`max_node_power_est_w`, `avg_node_power_est_w`) merges Intel/AMD RAPL (`intel_x86_rapl` / `amd_x86_rapl`, `pkg_energy`), Grace `host_cpu_hw` `dcgm_cpu_power_util_w`, and NVIDIA `power_usage` / `module_power_usage`.
+- **Ingest**: `sync_timedb_parsing` clusters `host_cpu_hw` DCGM power rows and max-reduces multi-GPU module power.
 
 ## Vector / width metrics (`vecpercent_*`, `avg_vector_width_*`)
 
-These need **per-event** FP counters (Intel FP_ARITH and/or legacy SSE names). Aggregate AMD `FLOPS` does not decompose by vector width; see class docstrings in `metrics.py`.
+Need per-event FP counters (Intel FP_ARITH and/or legacy SSE names). Aggregate AMD `fp_ops_retired` does not decompose by width.
 
-## New CPU types (e.g. NVIDIA Grace / Neoverse)
+## New CPU types
 
-When the monitor adds new `host_data.type` values:
-
-1. Add a nominal APERF/MPERF reference frequency to `_PMC_FREQ_BY_TYPENAME` in `gen/utils.py` if the type should act as PMC.
-2. Append the typename to `PMC_TYPENAME_PRIORITY` in the desired precedence order.
-3. Add summary/roofline specs or event lists if the counter semantics match an existing path.
-4. If the type is an **Intel IMC** DRAM counter source, append it to **`INTEL_IMC_STATS_TYPES`** (correct probe order) and add a matching row in **`roofline_peaks.py`**.
-5. If the type is **ARM IMC** (`arm_imc` pattern), update **`ARM_IMC_STATS_TYPES`** and roofline ARM paths as needed.
-6. Add unit tests with mocked `get_aggregate_df` / job schemas (including `test_roofline_peaks.py` when inference or peak keys change).
+1. Update `docs/monitor_variable_rename_map.yaml`, then `canonical.py` / `legacy.py`.
+2. Add `_PMC_FREQ_BY_TYPENAME` entries in `gen/utils.py` when the type acts as PMC.
+3. Extend `resolve.py` probe orders if needed.
+4. Add roofline peak rows for new Intel IMC typenames.
+5. Add unit tests (including `test_monitor_analysis_typename_contract.py`, `test_roofline_peaks.py`).

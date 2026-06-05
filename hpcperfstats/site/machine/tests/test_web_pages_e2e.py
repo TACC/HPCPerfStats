@@ -110,7 +110,15 @@ class TestWebPagesEndToEnd:
       assert first_payload["raw_key"] is None
       assert first_payload["key_prefix"] == "abc123"
 
-      rotate_response = client.post("/api/user-api-key/rotate/")
+      from django.middleware.csrf import get_token
+      from django.test import RequestFactory
+
+      csrf_request = RequestFactory().get("/")
+      csrf_request.session = client.session
+      rotate_response = client.post(
+          "/api/user-api-key/rotate/",
+          HTTP_X_CSRFTOKEN=get_token(csrf_request),
+      )
       assert rotate_response.status_code == 200
       rotate_payload = rotate_response.json()
       assert rotate_payload["raw_key"] == "raw-new-api-key"

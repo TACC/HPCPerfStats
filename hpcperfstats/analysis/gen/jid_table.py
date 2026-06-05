@@ -35,6 +35,7 @@ from hpcperfstats.site.machine.cache_utils import (
     make_cache_key,
     make_cache_key_bounded,
 )
+from hpcperfstats.monitor_naming.resolve import type_probe_names
 from hpcperfstats.site.machine.models import host_data, job_data
 
 # Chunk host__in on host_data for large jobs; single queries with thousands of
@@ -1174,15 +1175,25 @@ class jid_table:
       tkw = self._host_data_time_filter_kwargs()
       frames = []
       for host_chunk in _iter_acct_host_batches(hosts):
-        qs = host_data.objects.filter(
-            host__in=host_chunk,
-            **tkw,
-            type=typ,
-            event__in=list(events),
-        ).values("host", "time", val_col)
-        df_raw = queryset_to_dataframe(qs)
+        df_raw = None
+        for candidate_typ in type_probe_names(typ):
+          qs = host_data.objects.filter(
+              host__in=host_chunk,
+              **tkw,
+              type=candidate_typ,
+              event__in=list(events),
+          ).values("host", "time", val_col)
+          df_raw = queryset_to_dataframe(qs)
+          if (
+              not df_raw.empty
+              and "host" in df_raw.columns
+              and "time" in df_raw.columns
+              and val_col in df_raw.columns
+          ):
+            break
         if (
-            df_raw.empty
+            df_raw is None
+            or df_raw.empty
             or "host" not in df_raw.columns
             or "time" not in df_raw.columns
             or val_col not in df_raw.columns
@@ -1301,11 +1312,15 @@ class jid_table:
     from django.db.models import Sum
 
     def _llite_fn():
-      qs = (self._host_data_qs(
-          type="llite",
-          event__in=["read_bytes", "write_bytes"],
-      ).values("event").annotate(delta_sum=Sum("delta")).order_by("event"))
-      return queryset_to_dataframe(qs)
+      for typ in type_probe_names("llite"):
+        qs = (self._host_data_qs(
+            type=typ,
+            event__in=["read_bytes", "write_bytes"],
+        ).values("event").annotate(delta_sum=Sum("delta")).order_by("event"))
+        df = queryset_to_dataframe(qs)
+        if not df.empty:
+          return df
+      return queryset_to_dataframe(None)
 
     key = make_cache_key(
         KEY_LLITE_DELTA, self.jid, self._large_job_plot_cache_token)
@@ -1326,12 +1341,16 @@ class jid_table:
     all_events = list(nfs_read_events) + list(nfs_write_events)
 
     def _nfs_fn():
-      qs = (
-          self._host_data_qs(
-              type="nfs",
-              event__in=all_events,
-          ).values("event").annotate(delta_sum=Sum("delta")).order_by("event"))
-      df = queryset_to_dataframe(qs)
+      df = queryset_to_dataframe(None)
+      for typ in type_probe_names("nfs"):
+        qs = (
+            self._host_data_qs(
+                type=typ,
+                event__in=all_events,
+            ).values("event").annotate(delta_sum=Sum("delta")).order_by("event"))
+        df = queryset_to_dataframe(qs)
+        if not df.empty:
+          break
       if df.empty or "delta_sum" not in df.columns:
         return None
       read_total = 0.0

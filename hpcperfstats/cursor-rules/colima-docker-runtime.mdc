@@ -1,0 +1,55 @@
+---
+description: This workspace uses Colima for Docker; use compose-backed tests when Colima is running.
+alwaysApply: true
+---
+
+# Colima Docker Runtime (this environment)
+
+On the **primary developer machine** for this workspace, container workloads run through **Colima** (macOS Virtualization.Framework), not Docker Desktop.
+
+## Required agent behavior
+
+- **Do not** conclude that Docker is unavailable because `docker` is missing from `PATH`, `docker info` fails once, or a prior session reported `docker_missing`. Check Colima first.
+- **Do** treat Docker as available when `colima status` reports **running** (or after starting Colima successfully).
+- **Do** run compose-backed validation required by project rules (`full-test-with-db-redis.mdc`, `compose-required-for-data-services-changes.mdc`, `docker-compose-non-unit-testing.mdc`, pipeline/web E2E workflows) when Colima is up—do not skip them solely based on an earlier failed probe.
+
+## Verify / start (copy-paste)
+
+From any shell:
+
+```bash
+colima status
+```
+
+If not running:
+
+```bash
+colima start
+```
+
+Wire the Docker CLI to Colima (required for `docker` / `docker-compose`):
+
+```bash
+export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
+export PATH="/opt/homebrew/bin:${PATH}"
+docker info
+docker-compose version
+```
+
+Older Colima builds also support `eval "$(colima docker-env)"`; if that command is unknown, use `DOCKER_HOST` above.
+
+Compose commands run from the git checkout directory that contains `docker-compose.yaml` (typically `HPCPerfStats/` inside the workspace).
+
+## Install gap
+
+If `colima` exists but `docker` / `docker-compose` CLIs are missing, install them (this machine uses Homebrew arm64):
+
+```bash
+arch -arm64 brew install docker docker-compose
+eval "$(colima docker-env)"
+```
+
+## Overlap
+
+- Complements **`docker-compose-non-unit-testing.mdc`** and **`full-test-with-db-redis.mdc`** (which workflows to run)—this rule states **that Colima supplies Docker here**, not that compose tests are optional.
+- Complements **`workspace-layout-and-python-env.mdc`** (host `.venv` vs compose `web` service).

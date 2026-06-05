@@ -8,6 +8,15 @@ from django.test import Client
 from hpcperfstats.site.machine.models import ApiKey
 
 
+def _csrf_headers(client):
+  from django.middleware.csrf import get_token
+  from django.test import RequestFactory
+
+  request = RequestFactory().get("/")
+  request.session = client.session
+  return {"HTTP_X_CSRFTOKEN": get_token(request)}
+
+
 class TestUserApiKeyApiSecurity:
   def test_rotate_requires_csrf_token_when_enforced(self):
     client = Client(enforce_csrf_checks=True)
@@ -88,7 +97,10 @@ class TestUserApiKeyApiSecurity:
         "hpcperfstats.site.machine.api.ApiKey.create_from_raw_key",
         return_value=(rotated, "raw-new-api-key"),
     ):
-      response = client.post("/api/user-api-key/rotate/")
+      response = client.post(
+          "/api/user-api-key/rotate/",
+          **_csrf_headers(client),
+      )
 
     assert response.status_code == 200
     assert response.json()["raw_key"] == "raw-new-api-key"

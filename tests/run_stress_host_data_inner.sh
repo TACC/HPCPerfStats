@@ -16,7 +16,9 @@ mkdir -p "${HPCPERFSTATS_STRESS_REPORT_DIR}"
 export PYTHONPATH="/home/hpcperfstats${PYTHONPATH:+:$PYTHONPATH}"
 if ! pip install -e ".[test]" -q 2>/dev/null; then
   echo "pip install -e failed on mount; using PYTHONPATH=/home/hpcperfstats and pip install test extras only."
-  pip install -q "pytest>=7.0" "pytest-django>=4.5" "pytest-cov>=4.0"
+  # shellcheck source=tests/pip_compose_test_extras_fallback.sh
+  source tests/pip_compose_test_extras_fallback.sh
+  pip_compose_test_extras_fallback
 fi
 
 cd /home/hpcperfstats

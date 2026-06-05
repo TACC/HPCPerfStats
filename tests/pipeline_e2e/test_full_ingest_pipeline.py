@@ -119,9 +119,9 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
 
   assert host_data.objects.filter(host=fqdn).exists()
   assert host_data.objects.filter(host=fqdn2).exists()
-  assert host_data.objects.filter(type="amd64_pmc").exists()
-  assert host_data.objects.filter(type="amd64_df").exists()
-  assert host_data.objects.filter(type="arm_imc").exists()
+  assert host_data.objects.filter(type="amd_x86_pmc").exists()
+  assert host_data.objects.filter(type="amd_x86_uncore_df").exists()
+  assert host_data.objects.filter(type="arm_aarch64_imc").exists()
   assert host_data.objects.filter(type="amd_gpu").exists()
   assert job_plot_artifact.objects.filter(jid_id=PIPELINE_E2E_JID).count() >= 1
 

@@ -17,7 +17,9 @@ def test_max_node_power_est_w_from_jt_mock():
 
   def get_aggregate_df(typ, val_col, events, conv=1.0):
     ev = list(events)
-    if typ == "intel_rapl" and ev == ["MSR_PKG_ENERGY_STATUS"]:
+    rapl_types = ("intel_x86_rapl", "intel_rapl")
+    pkg_hits = {"pkg_energy", "MSR_PKG_ENERGY_STATUS", "MSR_PKG_ENERGY_STAT"}
+    if typ in rapl_types and pkg_hits.intersection(ev):
       c = 0.00001526
       assert abs(conv - c) < 1e-12
       return pd.DataFrame(
@@ -31,10 +33,10 @@ def test_max_node_power_est_w_from_jt_mock():
 
   jt = MagicMock()
   jt.schema = {
-      "intel_rapl": ["MSR_PKG_ENERGY_STATUS"],
-      "amd64_rapl": ["MSR_PKG_ENERGY_STAT"],
+      "intel_x86_rapl": ["pkg_energy"],
+      "amd_x86_rapl": ["pkg_energy"],
       "nvidia_gpu": ["power_usage", "module_power_usage"],
-      "cpu_counter_metrics": ["DCGM_CPU_POWER_UTIL_W"],
+      "host_cpu_hw": ["dcgm_cpu_power_util_w"],
   }
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df

@@ -5,6 +5,7 @@ import pytest
 from rest_framework.test import APIRequestFactory
 
 from hpcperfstats.site.machine import cache_utils as cu
+from hpcperfstats.site.machine.throttles import ExpensiveReadThrottle
 
 pytestmark = pytest.mark.django_db(databases=[])
 
@@ -30,13 +31,13 @@ def test_job_plots_uses_l2_without_jid_table():
   vis.exists.return_value = True
   cache_set = MagicMock()
 
-  with patch.object(api, "_require_auth", return_value=None), patch.object(
-      api, "_apply_non_staff_job_visibility", return_value=vis
-  ), patch.object(api, "get_site_content_cache_timeout", return_value=3600), patch.object(
-      api, "cached_orm", side_effect=cached_se
-  ), patch.object(api.cache, "get", return_value=None), patch.object(
-      api.cache, "set", cache_set
-  ), patch.object(
+  with patch.object(ExpensiveReadThrottle, "allow_request", return_value=True), patch.object(
+      api, "_require_auth", return_value=None
+  ), patch.object(api, "_apply_non_staff_job_visibility", return_value=vis), patch.object(
+      api, "get_site_content_cache_timeout", return_value=3600
+  ), patch.object(api, "cached_orm", side_effect=cached_se), patch.object(
+      api.cache, "get", return_value=None
+  ), patch.object(api.cache, "set", cache_set), patch.object(
       api,
       "get_live_distinct_time_count_for_jid",
       return_value=5,
@@ -76,17 +77,17 @@ def test_job_plots_zoom_reads_fingerprinted_data_cache_key():
       return job
     return fn()
 
-  def cache_get_side_effect(key):
+  def cache_get_side_effect(key, default=None):
     observed_get_keys.append(key)
-    return None
+    return default
 
-  with patch.object(api, "_require_auth", return_value=None), patch.object(
-      api, "_apply_non_staff_job_visibility", return_value=vis
-  ), patch.object(api, "get_site_content_cache_timeout", return_value=3600), patch.object(
-      api, "cached_orm", side_effect=cached_se
-  ), patch.object(api.cache, "get", side_effect=cache_get_side_effect), patch.object(
-      api.cache, "set", return_value=None
-  ), patch.object(
+  with patch.object(ExpensiveReadThrottle, "allow_request", return_value=True), patch.object(
+      api, "_require_auth", return_value=None
+  ), patch.object(api, "_apply_non_staff_job_visibility", return_value=vis), patch.object(
+      api, "get_site_content_cache_timeout", return_value=3600
+  ), patch.object(api, "cached_orm", side_effect=cached_se), patch.object(
+      api.cache, "get", side_effect=cache_get_side_effect
+  ), patch.object(api.cache, "set", return_value=None), patch.object(
       api,
       "get_live_distinct_time_count_for_jid",
       return_value=5,

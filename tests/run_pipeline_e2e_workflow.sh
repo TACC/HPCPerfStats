@@ -120,7 +120,7 @@ $COMPOSE run --rm \
   -e HPCPERFSTATS_COMPOSE_NETWORK=1 \
   -v "$ROOT_DIR:/home/hpcperfstats:rw" \
   --entrypoint bash \
-  web -lc 'cd /home/hpcperfstats && if ! pip install -q -e ".[test]"; then echo "pip install -e failed; using PYTHONPATH fallback for pipeline e2e."; export PYTHONPATH=/home/hpcperfstats; pip install -q pytest pytest-django pika; fi; python -m pytest -q tests/pipeline_e2e/test_full_ingest_pipeline.py'
+  web -lc 'cd /home/hpcperfstats && if ! pip install -q -e ".[test]"; then echo "pip install -e failed; using PYTHONPATH fallback for pipeline e2e."; export PYTHONPATH=/home/hpcperfstats; source tests/pip_compose_test_extras_fallback.sh; pip_compose_test_extras_fallback; pip install -q pika; fi; python -m pytest -q tests/pipeline_e2e/test_full_ingest_pipeline.py'
 
 if [[ "$WITH_BROWSER" -eq 1 ]]; then
   echo "Seeding live DB records for browser/API phase..."
@@ -159,7 +159,7 @@ if [[ "$WITH_BROWSER" -eq 1 ]]; then
     -e HPCPERFSTATS_PIPELINE_E2E_BASE_URL=http://web:8000 \
     -v "$ROOT_DIR:/home/hpcperfstats:rw" \
     --entrypoint bash \
-    web -lc "cd /home/hpcperfstats && if ! pip install -q -e '.[test]'; then echo 'pip install -e failed; using PYTHONPATH fallback for pipeline browser phase.'; export PYTHONPATH=/home/hpcperfstats; pip install -q pytest pytest-django playwright; fi; ${PLAYWRIGHT_SETUP}python -m pytest -q tests/pipeline_e2e/test_job_detail_browser.py tests/pipeline_e2e/test_all_endpoints_browser.py tests/pipeline_e2e/test_a11y_axe_browser.py"
+    web -lc "cd /home/hpcperfstats && if ! pip install -q -e '.[test]'; then echo 'pip install -e failed; using PYTHONPATH fallback for pipeline browser phase.'; export PYTHONPATH=/home/hpcperfstats; source tests/pip_compose_test_extras_fallback.sh; pip_compose_test_extras_fallback; pip install -q 'playwright>=1.60.0'; fi; ${PLAYWRIGHT_SETUP}python -m pytest -q tests/pipeline_e2e/test_job_detail_browser.py tests/pipeline_e2e/test_all_endpoints_browser.py tests/pipeline_e2e/test_a11y_axe_browser.py"
 fi
 
 if [[ "$WITH_BROWSER" -eq 1 ]]; then

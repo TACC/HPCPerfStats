@@ -64,8 +64,8 @@ def _unit_test_database_guards(request, monkeypatch):
   )
   monkeypatch.setattr(
       update_metrics_module,
-      "_run_public_ef_artifacts_parallel_phase",
-      lambda shared_pool, phase_timer: {
+      "refresh_public_expansion_factor_artifacts_parallel",
+      lambda pool, **kwargs: {
           "degraded": 0,
           "worker_exceptions": 0,
           "watchdog_timeouts": 0,
@@ -74,4 +74,13 @@ def _unit_test_database_guards(request, monkeypatch):
           "tasks_total": 0,
       },
   )
+  monkeypatch.setattr(
+      update_metrics_module,
+      "refresh_public_expansion_factor_artifacts_safe",
+      lambda: None,
+  )
   monkeypatch.setattr(update_metrics_module, "run_with_db_retry", lambda func, **kwargs: func())
+  import hpcperfstats.shutdown_utils as shutdown_utils
+
+  monkeypatch.setattr(shutdown_utils, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics_module, "shutdown_requested", [False])

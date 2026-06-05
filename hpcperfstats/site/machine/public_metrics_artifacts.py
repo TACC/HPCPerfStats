@@ -113,6 +113,21 @@ def _eligible_jobs_filter() -> Q:
   return Q(runtime__gt=0, ncores__gt=0, start_time__gte=F("submit_time"))
 
 
+def _iter_queryset_rows(qs, *, chunk_size=2048):
+  """Iterate ``qs`` without server-side cursors when Django tests forbid them."""
+  from django.test.testcases import DatabaseOperationForbidden
+
+  try:
+    row_iter = qs.iterator(chunk_size=chunk_size)
+  except DatabaseOperationForbidden:
+    yield from qs
+    return
+  try:
+    yield from row_iter
+  except DatabaseOperationForbidden:
+    yield from qs
+
+
 def _streaming_jid_epoch_fingerprint(prefix: str, qs) -> str:
   """Stable fingerprint over sorted ``(jid, end_time)`` pairs."""
   h = hashlib.sha256()
@@ -120,8 +135,8 @@ def _streaming_jid_epoch_fingerprint(prefix: str, qs) -> str:
   h.update(b"|")
   h.update(prefix.encode())
   h.update(b"|")
-  # Plain iterator (no chunk_size) so pytest-django TestCase allows DB access.
-  for jid, et in qs.order_by("jid").values_list("jid", "end_time").iterator():
+  # Avoid QuerySet.iterator(): Django 6 test clients forbid server-side chunked_cursor.
+  for jid, et in qs.order_by("jid").values_list("jid", "end_time"):
     h.update(str(jid).encode())
     h.update(b"|")
     if et is None:
@@ -238,7 +253,7 @@ def _build_month_daily_payload(year_month: str) -> Dict[str, Any]:
   )
   day_sum: Dict[date, float] = defaultdict(float)
   day_cnt: Dict[date, int] = defaultdict(int)
-  for row in qs.iterator(chunk_size=2048):
+  for row in _iter_queryset_rows(qs):
     ef = compute_scheduler_expansion_factor_seconds(
         row.submit_time,
         row.start_time,
@@ -278,7 +293,7 @@ def _build_year_weekly_payload(year_str: str) -> Dict[str, Any]:
   )
   week_sum: Dict[Tuple[int, int], float] = defaultdict(float)
   week_cnt: Dict[Tuple[int, int], int] = defaultdict(int)
-  for row in qs.iterator(chunk_size=2048):
+  for row in _iter_queryset_rows(qs):
     ef = compute_scheduler_expansion_factor_seconds(
         row.submit_time,
         row.start_time,

@@ -7,11 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from hpcperfstats.analysis.gen.utils import (
+from hpcperfstats.monitor_naming.canonical import (
+    AMD_DF_TYPE,
+    AMD_PMC_TYPE,
     ARM_IMC_STATS_TYPES,
     INTEL_CORE_PMC_TYPES_ORDERED,
     INTEL_IMC_STATS_TYPES,
 )
+from hpcperfstats.monitor_naming.legacy import INGEST_LEGACY_KNL_IMC_TYPE
 from hpcperfstats.analysis.plot.roofline_peaks import ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS
 
 _ST_NAME_RE = re.compile(r'\.st_name\s*=\s*"([^"]+)"')
@@ -32,8 +35,7 @@ def _monitor_st_names_from_sources() -> set[str]:
 def test_intel_imc_stats_types_have_roofline_peak_rows():
   for typename in INTEL_IMC_STATS_TYPES:
     assert typename in ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS, (
-        f"Add ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS row for {typename!r} "
-        "(same string as job schema / INTEL_IMC_STATS_TYPES order)."
+        f"Add ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS row for {typename!r}."
     )
 
 
@@ -41,8 +43,7 @@ def test_monitor_st_names_cover_intel_core_pmc_types_ordered():
   monitor = _monitor_st_names_from_sources()
   for typename in INTEL_CORE_PMC_TYPES_ORDERED:
     assert typename in monitor, (
-        f"{typename!r} in INTEL_CORE_PMC_TYPES_ORDERED must match a monitor "
-        f"stats_type.st_name (found {len(monitor)} monitor types)."
+        f"{typename!r} in INTEL_CORE_PMC_TYPES_ORDERED must match monitor .st_name."
     )
 
 
@@ -54,22 +55,24 @@ def test_monitor_st_names_cover_arm_imc_stats_types():
     )
 
 
-def test_intel_imc_stats_types_match_monitor_or_documented_ingest_alias():
-  """KNL DRAM uses monitor `intel_knl_mc`; dbload emits `intel_knl_mc_dclk` (see utils.py)."""
+def test_monitor_st_names_cover_intel_imc_stats_types():
   monitor = _monitor_st_names_from_sources()
   for typename in INTEL_IMC_STATS_TYPES:
-    if typename == "intel_knl_mc_dclk":
-      assert "intel_knl_mc" in monitor
-      continue
     assert typename in monitor, (
-        f"{typename!r} in INTEL_IMC_STATS_TYPES must match monitor .st_name "
-        f"(or be documented ingest alias of a monitor type)."
+        f"{typename!r} in INTEL_IMC_STATS_TYPES must match monitor .st_name."
     )
+
+
+def test_legacy_knl_imc_dclk_in_roofline_peaks_for_historical_host_data():
+  """Dual-read: old DB rows may still use ingest-normalized KNL typename."""
+  assert INGEST_LEGACY_KNL_IMC_TYPE not in INTEL_IMC_STATS_TYPES
+  row = ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS.get("intel_x86_uncore_mc_knl")
+  assert row is not None
 
 
 def test_monitor_st_names_cover_amd_roofline_prerequisites():
   monitor = _monitor_st_names_from_sources()
-  for typename in ("amd64_pmc", "amd64_df"):
+  for typename in (AMD_PMC_TYPE, AMD_DF_TYPE):
     assert typename in monitor, (
         f"{typename!r} must be emitted by monitor for AMD roofline prerequisites."
     )

@@ -11,6 +11,7 @@ import bokeh
 from bokeh.embed import json_item
 from django.conf import settings
 from django.db import connection
+from django.utils import timezone as dj_tz
 
 import hpcperfstats.analysis.gen.jid_table as jid_table
 import hpcperfstats.analysis.plot as plots
@@ -105,6 +106,17 @@ def get_job_plot_redis_max_bytes() -> int:
   return int(getattr(settings, "JOB_PLOT_REDIS_MAX_BYTES", 512 * 1024))
 
 
+def _utc_iso_for_plot_fingerprint(dt) -> str:
+  """UTC ISO string matching PlotArtifactInputFingerprintHex SQL (US + OF)."""
+  if dt is None:
+    return ""
+  if dj_tz.is_naive(dt):
+    dt = dj_tz.make_aware(dt, dj_tz.utc)
+  dt = dt.astimezone(dj_tz.utc)
+  # PostgreSQL ``to_char(..., 'USOF')`` uses ISO 8601 basic offset (±HHMM), no colon.
+  return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond:06d}" + dt.strftime("%z")
+
+
 def get_live_distinct_time_count_for_jid(jid: str) -> int:
   """Live per-job distinct sample times (PostgreSQL); else metrics_distinct_time_count."""
   if connection.vendor != "postgresql":
@@ -130,16 +142,28 @@ def get_live_distinct_time_count_for_jid(jid: str) -> int:
 
 
 def compute_plot_input_fingerprint(job: job_data, live_distinct_time_count: int) -> str:
+  if connection.vendor == "postgresql":
+    suffix = "." + cfg.get_host_name_ext()
+    from hpcperfstats.site.machine.artifact_readiness_expressions import (
+        PlotArtifactInputFingerprintHex,
+    )
+
+    return (
+        job_data.objects.filter(pk=job.pk)
+        .annotate(fp=PlotArtifactInputFingerprintHex(suffix))
+        .values_list("fp", flat=True)
+        .get()
+    )
   hl = sorted(str(h) for h in (job.host_list or []) if str(h).strip())
   payload = {
       "artifact_schema": APP_PLOT_ARTIFACT_SCHEMA_VERSION,
       "bokeh": bokeh.__version__,
-      "et": job.end_time.isoformat() if job.end_time else "",
+      "et": _utc_iso_for_plot_fingerprint(job.end_time),
       "hosts": hl,
-      "jid": str(job.jid),
+      "jid": str(job.jid).strip(),
       "live_distinct": int(live_distinct_time_count),
       "mdc": job.metrics_distinct_time_count,
-      "st": job.start_time.isoformat() if job.start_time else "",
+      "st": _utc_iso_for_plot_fingerprint(job.start_time),
   }
   canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
   return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

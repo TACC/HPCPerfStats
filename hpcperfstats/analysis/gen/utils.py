@@ -25,82 +25,26 @@ jid_table = None
 
 local_timezone = cfg.get_timezone()
 
-# Intel IMC types that expose CAS_READS/CAS_WRITES (used by roofline and utils.imc).
-# For Knights Landing, the monitor stats type is "intel_knl_mc"; the dbload
-# sync_timedb_parsing maps monitor IMC typenames; KNL ingest normalizes to
-# "intel_knl_mc_dclk" (DRAM clock domain). INTEL_IMC_STATS_TYPES uses the
-# normalized typename so metric/roofline code can treat KNL like other IMC
-# generations.
-INTEL_IMC_STATS_TYPES = (
-    "intel_snb_imc",
-    "intel_ivb_imc",
-    "intel_hsw_imc",
-    "intel_bdw_imc",
-    "intel_knl_mc_dclk",
-    "intel_skx_imc",
+# Canonical monitor typenames (see hpcperfstats.monitor_naming); dual-read via resolve.
+from hpcperfstats.monitor_naming.canonical import (  # noqa: E402
+    ARM_IMC_STATS_TYPES,
+    CHA_TYPENAME_PRIORITY,
+    INTEL_CORE_PMC_TYPES_ORDERED,
+    INTEL_FP_ARITH_ALL_EVENTS,
+    INTEL_FP_ARITH_DOUBLE_EVENTS,
+    INTEL_FP_ARITH_SINGLE_EVENTS,
+    INTEL_IMC_STATS_TYPES,
+    INTEL_LEGACY_SSE_FLOP_EVENTS,
+    PMC_TYPENAME_PRIORITY,
+    pmc_freq_for_typename,
+)
+from hpcperfstats.monitor_naming.resolve import (  # noqa: E402
+    cha_typename_priority,
+    imc_types_probe_order,
+    pmc_typename_priority,
+    type_probe_names,
 )
 
-# ARM memory-controller types that expose CAS_READS/CAS_WRITES semantics.
-ARM_IMC_STATS_TYPES = ("arm_imc",)
-
-# FP_ARITH events for Intel/LIKWID core counters (roofline, summary first-win tries).
-INTEL_FP_ARITH_DOUBLE_EVENTS = (
-    "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",
-    "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE",
-    "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE",
-    "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE",
-)
-INTEL_FP_ARITH_SINGLE_EVENTS = (
-    "FP_ARITH_INST_RETIRED_SCALAR_SINGLE",
-    "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE",
-    "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE",
-    "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
-)
-INTEL_FP_ARITH_ALL_EVENTS = INTEL_FP_ARITH_DOUBLE_EVENTS + INTEL_FP_ARITH_SINGLE_EVENTS
-
-# Intel SSE/AVX double FLOP proxies when FP_ARITH is absent (metrics, roofline, vecpercent).
-INTEL_LEGACY_SSE_FLOP_EVENTS = (
-    ("SSE_DOUBLE_SCALAR", 1),
-    ("SSE_DOUBLE_PACKED", 2),
-    ("SIMD_DOUBLE_256", 4),
-)
-
-# Intel core PMC typenames tried in order (summary/roofline); LIKWID last when both exist.
-INTEL_CORE_PMC_TYPES_ORDERED = (
-    "intel_8pmc3",
-    "intel_4pmc3",
-    "cpu_counter_metrics",
-)
-
-# Nominal GHz for APERF/MPERF ratio in avg_freq when typename matches.
-_PMC_FREQ_BY_TYPENAME = {
-    "intel_snb": 2.7,
-    "intel_ivb": 2.8,
-    "intel_hsw": 2.3,
-    "intel_bdw": 2.6,
-    "intel_knl": 1.4,
-    "intel_skx": 2.1,
-    "intel_8pmc3": 2.7,
-    "intel_4pmc3": 2.7,
-    "amd64_pmc": 2.7,
-    "cpu_counter_metrics": 2.7,
-}
-
-# Prefer explicit order when multiple PMC-capable types appear in one job schema.
-PMC_TYPENAME_PRIORITY = (
-    "amd64_pmc",
-    "intel_8pmc3",
-    "intel_4pmc3",
-    "cpu_counter_metrics",
-    "intel_skx",
-    "intel_knl",
-    "intel_bdw",
-    "intel_hsw",
-    "intel_ivb",
-    "intel_snb",
-)
-
-CHA_TYPENAME_PRIORITY = ("intel_skx_cha", "intel_knl_cha")
 
 
 def _coerce_schema_typename_key(key):
@@ -120,13 +64,10 @@ def _coerce_schema_typename_key(key):
 
 
 def _pick_pmc_typename(schema_keys):
-  """First PMC typename present in schema_keys using PMC_TYPENAME_PRIORITY, else any known key."""
+  """First PMC typename present in schema_keys (canonical + legacy priority)."""
   keys = {_coerce_schema_typename_key(k) for k in schema_keys}
-  for typename in PMC_TYPENAME_PRIORITY:
+  for typename in pmc_typename_priority():
     if typename in keys:
-      return typename
-  for typename in keys:
-    if typename in _PMC_FREQ_BY_TYPENAME:
       return typename
   return None
 
@@ -140,8 +81,8 @@ class utils():
     """Initialize from a job object; set nhosts, hostnames, wayness, hours, t, nt, dt, and resolve pmc/imc/cha/freq from schemas.
 
         """
-    imc_list = list(INTEL_IMC_STATS_TYPES)
-    cha_list = list(CHA_TYPENAME_PRIORITY)
+    imc_list = list(imc_types_probe_order())
+    cha_list = list(cha_typename_priority())
     self.job = job
     self.nhosts = len(job.hosts.keys())
     self.hostnames = sorted(job.hosts.keys())
@@ -158,7 +99,7 @@ class utils():
     pmc_pick = _pick_pmc_typename(sk)
     if pmc_pick is not None:
       self.pmc = pmc_pick
-      self.freq = _PMC_FREQ_BY_TYPENAME.get(pmc_pick, 2.7)
+      self.freq = pmc_freq_for_typename(pmc_pick)
     for imc_typ in imc_list:
       if imc_typ in sk:
         self.imc = imc_typ
@@ -181,14 +122,20 @@ class utils():
     if not typename or typename is None:
       return None, {}
 
-    if typename not in self.job.schemas:
-      return None, {}
-    schema = self.job.schemas[typename]
+    resolved_typename = typename
+    if resolved_typename not in self.job.schemas:
+      for alt in type_probe_names(typename):
+        if alt in self.job.schemas:
+          resolved_typename = alt
+          break
+      else:
+        return None, {}
+    schema = self.job.schemas[resolved_typename]
     stats = {}
     for hostname, host in self.job.hosts.items():
       # Some hosts may not expose this stats type (e.g. GPU-less nodes when
       # aggregating "nvidia_gpu"). Skip those hosts instead of raising KeyError.
-      host_type_stats = host.stats.get(typename)
+      host_type_stats = host.stats.get(resolved_typename)
       if host_type_stats is None:
         continue
       if aggregate:

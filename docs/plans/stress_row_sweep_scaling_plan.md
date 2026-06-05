@@ -4,7 +4,7 @@ Compose workflow: `tests/run_stress_host_data_workflow.sh` (Docker `db` + `redis
 
 The stress test calls `update_metrics(django_timezone.localtime(job.end_time), rerun=True)` so `end_time__date` matches Django’s `TIME_ZONE` (§5).
 
-`tests/run_stress_host_data_inner.sh`: if `pip install -e ".[test]"` fails on the bind mount (e.g. ProtonDrive **Errno 35**), it sets **`PYTHONPATH=/home/hpcperfstats`** and installs only **pytest / pytest-django / pytest-cov** so nothing writes `egg-info` on the sync tree.
+`tests/run_stress_host_data_inner.sh`: if `pip install -e ".[test]"` fails on the bind mount (e.g. ProtonDrive **Errno 35**), it sets **`PYTHONPATH=/home/hpcperfstats`** and runs **`tests/pip_compose_test_extras_fallback.sh`** (pins match **`pyproject.toml`**: Django 6.x, pytest 9+, pytest-django 4.12+, pytest-cov 7.1+) so nothing writes `egg-info` on the sync tree.
 
 ## 1. Row-count sweep (single host, 1 s cadence, 40 metrics)
 

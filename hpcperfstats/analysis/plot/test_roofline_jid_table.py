@@ -64,20 +64,32 @@ def test_roofline_intel_succeeds_with_non_skx_imc_bandwidth():
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
-  hsw = "intel_hsw_imc"
+  hsw_canon = "intel_x86_uncore_imc_hsw"
+  hsw_legacy = "intel_hsw_imc"
+  cas_pairs = (
+      ("dram_cas_reads", "dram_cas_writes"),
+      ("CAS_READS", "CAS_WRITES"),
+  )
+  core_pmcs = (
+      "intel_x86_pmc_gpr8",
+      "intel_8pmc3",
+      "intel_4pmc3",
+  )
 
   def get_aggregate_df(typ, val_col, events, conv=1.0):
     del conv
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df"):
+    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df"):
       return empty
-    if typ in ("intel_8pmc3", "intel_4pmc3"):
+    if typ in core_pmcs:
       if len(events) > 3:
         return pd.DataFrame([("n1.cluster", t0, 3.0)], columns=["host", "time", "sum_val"])
       return empty
-    if typ == hsw and list(events) == ["CAS_READS", "CAS_WRITES"]:
-      return pd.DataFrame([("n1.cluster", t0, 0.5)], columns=["host", "time", "sum_val"])
+    if typ in (hsw_canon, hsw_legacy):
+      ev = list(events)
+      if any(ev == list(rw) for rw in cas_pairs):
+        return pd.DataFrame([("n1.cluster", t0, 0.5)], columns=["host", "time", "sum_val"])
     return empty
 
   jt = MagicMock()
@@ -90,7 +102,7 @@ def test_roofline_intel_succeeds_with_non_skx_imc_bandwidth():
   fig, reason = plot_and_reason_roofline_from_jid_table(jt)
   assert fig is not None
   assert reason is None
-  assert hsw in INTEL_IMC_STATS_TYPES
+  assert hsw_canon in INTEL_IMC_STATS_TYPES
 
 
 def test_roofline_succeeds_with_cpu_counter_metrics_flops_and_imc_bw():

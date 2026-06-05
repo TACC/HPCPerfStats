@@ -1633,7 +1633,7 @@ def _fill_ready_queue(
               batch_size_seen=len(work),
               exc=exc,
               strict_check_cooldown_until=strict_check_cooldown_until,
-              cooldown_jids=work,
+              cooldown_jids=[candidate.jid for candidate in work],
           )
         for candidate in work:
           ready_jid = _strict_ready_fallback_one(candidate.jid)

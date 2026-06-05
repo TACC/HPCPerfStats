@@ -182,15 +182,20 @@ class DetailArtifactInputFingerprintHex(Expression):
     jcol = ops.quote_name("jid")
     mdc = ops.quote_name("metrics_distinct_time_count")
     aschema = detail_cfg.APP_DETAIL_ARTIFACT_SCHEMA_VERSION
+    iso_ts = (
+        "CASE WHEN {tbl}.{col} IS NULL THEN to_json(''::text)::text "
+        "ELSE to_json(to_char({tbl}.{col} AT TIME ZONE 'UTC', "
+        "'YYYY-MM-DD\"T\"HH24:MI:SS.USOF'))::text END"
+    )
+    et_iso = iso_ts.format(tbl=jt, col=et)
+    st_iso = iso_ts.format(tbl=jt, col=st)
     inner = (
         f"'{{\"artifact_schema\":' || %s::text || "
-        f"',\"end_time\":' || (CASE WHEN {jt}.{et} IS NULL THEN to_json(''::text)::text "
-        f"ELSE to_json({jt}.{et})::text END) || "
+        f"',\"end_time\":' || {et_iso} || "
         f"',\"jid\":' || to_json(trim(both from {jt}.{jcol}::text))::text || "
         f"',\"metrics_distinct_time_count\":' || "
         f"to_json(COALESCE({jt}.{mdc}::text, ''))::text || "
-        f"',\"start_time\":' || (CASE WHEN {jt}.{st} IS NULL THEN to_json(''::text)::text "
-        f"ELSE to_json({jt}.{st})::text END) || '}}'"
+        f"',\"start_time\":' || {st_iso} || '}}'"
     )
     sql = "encode(sha256(convert_to(({})::text, 'UTF8')), 'hex')".format(inner)
     return sql, [aschema]

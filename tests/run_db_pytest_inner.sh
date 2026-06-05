@@ -5,7 +5,13 @@ cd /home/hpcperfstats
 
 export HPCPERFSTATS_COMPOSE_NETWORK=1
 
-pip install -e ".[test]"
+if ! pip install -q -e ".[test]"; then
+  echo "pip install -e failed on mount; using PYTHONPATH fallback and test extras only."
+  export PYTHONPATH=/home/hpcperfstats
+  # shellcheck source=tests/pip_compose_test_extras_fallback.sh
+  source tests/pip_compose_test_extras_fallback.sh
+  pip_compose_test_extras_fallback
+fi
 
 if [[ "${DOCKER_PYTEST_SKIP_BROWSER:-0}" != "1" ]]; then
   python -m playwright install --with-deps chromium

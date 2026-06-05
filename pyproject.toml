@@ -95,6 +95,9 @@ hpcperfstats = [
   "tests/fixtures/axe-core/axe.min.js",
   "tests/fixtures/axe-core/README.md",
 ]
+"hpcperfstats.monitor_naming" = [
+  "monitor_variable_rename_map.yaml",
+]
 "hpcperfstats.site.hpcperfstats_site" = [
   "static/**/*",
 ]

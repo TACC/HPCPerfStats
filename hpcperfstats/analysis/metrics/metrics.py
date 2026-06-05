@@ -27,11 +27,49 @@ from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.gen import jid_table
 from hpcperfstats.analysis.gen.utils import (
-    ARM_IMC_STATS_TYPES,
     INTEL_FP_ARITH_ALL_EVENTS,
-    INTEL_IMC_STATS_TYPES,
     INTEL_LEGACY_SSE_FLOP_EVENTS,
     utils,
+)
+from hpcperfstats.monitor_naming.canonical import (
+    HOST_BLOCK_TYPE,
+    HOST_CPU_TYPE,
+    HOST_IB_EXT_TYPE,
+    HOST_LNET_TYPE,
+    HOST_MEM_TYPE,
+    HOST_NFS_TYPE,
+    HOST_NUMA_TYPE,
+    HOST_OPA_TYPE,
+    LUSTRE_LLITE_TYPE,
+)
+from hpcperfstats.monitor_naming.legacy import (
+    LEGACY_HOST_BLOCK_TYPE,
+    LEGACY_HOST_CPU_TYPE,
+    LEGACY_HOST_IB_EXT_TYPE,
+    LEGACY_HOST_LNET_TYPE,
+    LEGACY_HOST_MEM_TYPE,
+    LEGACY_HOST_NFS_TYPE,
+    LEGACY_HOST_NUMA_TYPE,
+    LEGACY_HOST_OPA_TYPE,
+    LEGACY_LUSTRE_LLITE_TYPE,
+)
+from hpcperfstats.monitor_naming.resolve import (
+    events_probe_names,
+    amd_df_type_names,
+    amd_pmc_type_names,
+    arm_est_flops_event_names,
+    arm_imc_types_probe_order,
+    core_pmc_types_probe_order,
+    dram_cas_read_write_pairs,
+    fp_ops_retired_event_names,
+    host_cpu_hw_type_names,
+    host_cpu_type_names,
+    host_ib_ext_type_names,
+    host_mem_type_names,
+    host_nfs_type_names,
+    imc_types_probe_order,
+    resolve_get_type,
+    type_probe_names,
 )
 from hpcperfstats.site.machine.models import job_data, metrics_data
 
@@ -221,16 +259,8 @@ def _hashable_metric_events_signature(events):
 
 
 def _flatten_event_names_for_host_data_query(events):
-  """Expand nested sequences so ``event__in`` matches scalar DB ``event`` values."""
-  if not events:
-    return []
-  out = []
-  for e in events:
-    if isinstance(e, (list, tuple)):
-      out.extend(str(x) for x in e)
-    else:
-      out.append(str(e))
-  return out
+  """Expand nested sequences and legacy event aliases for ``event__in`` queries."""
+  return events_probe_names(events)
 
 
 def _sanitize_metrics_compute_rows(rows):
@@ -278,15 +308,15 @@ _COMPLEX_PLACEHOLDER_TYPE_UNITS = {
     "avg_freq": ("pmc", "GHz"),
     "avg_ethbw": ("net", "MB/s"),
     "avg_gpuutil": ("gpu", "%"),
-    "avg_packetsize": ("ib_ext", "MB"),
-    "max_fabricbw": ("ib_ext", "MB/s"),
-    "max_lnetbw": ("lnet", "MB/s"),
-    "max_mds": ("llite", "iops"),
-    "max_packetrate": ("ib_ext", "#/s"),
-    "max_opa_congestion_rate": ("opa", "#/s"),
-    "max_numa_remote_rate": ("numa", "#/s"),
+    "avg_packetsize": (HOST_IB_EXT_TYPE, "MB"),
+    "max_fabricbw": (HOST_IB_EXT_TYPE, "MB/s"),
+    "max_lnetbw": (HOST_LNET_TYPE, "MB/s"),
+    "max_mds": (LUSTRE_LLITE_TYPE, "iops"),
+    "max_packetrate": (HOST_IB_EXT_TYPE, "#/s"),
+    "max_opa_congestion_rate": (HOST_OPA_TYPE, "#/s"),
+    "max_numa_remote_rate": (HOST_NUMA_TYPE, "#/s"),
     "flops_node_imbalance": ("pmc", "%"),
-    "fabric_node_imbalance": ("ib_ext", "%"),
+    "fabric_node_imbalance": (HOST_IB_EXT_TYPE, "%"),
     "dram_bw_node_imbalance": ("imc", "%"),
     "lnet_node_imbalance": ("lnet", "%"),
     "avg_tensor_active": ("nvidia_gpu", "%"),
@@ -301,10 +331,10 @@ _COMPLEX_PLACEHOLDER_TYPE_UNITS = {
     "max_gpu_clock_event_reasons": ("nvidia_gpu", "#"),
     "gpu_util_node_imbalance": ("nvidia_gpu", "%"),
     "tensor_node_imbalance": ("nvidia_gpu", "%"),
-    "avg_fabric_mb_per_avg_tensor": ("ib_ext", "MB/s"),
-    "mem_hwm": ("mem", "GiB"),
-    "node_imbalance": ("cpu", "%"),
-    "time_imbalance": ("cpu", "%"),
+    "avg_fabric_mb_per_avg_tensor": (HOST_IB_EXT_TYPE, "MB/s"),
+    "mem_hwm": (HOST_MEM_TYPE, "GiB"),
+    "node_imbalance": (HOST_CPU_TYPE, "%"),
+    "time_imbalance": (HOST_CPU_TYPE, "%"),
     "vecpercent_64b": ("pmc", "%"),
     "avg_vector_width_64b": ("pmc", "#"),
     "vecpercent_32b": ("pmc", "%"),
@@ -614,15 +644,22 @@ def _persist_metrics_batch(job_results, distinct_time_count):
   using = getattr(conn, "alias", None) or "default"
   with transaction.atomic(using=using):
     if conn.vendor == "postgresql":
-      with conn.cursor() as cursor:
-        cursor.execute(
-            "SET LOCAL statement_timeout = %s",
-            [max(1000, int(cfg.get_metrics_persist_statement_timeout_ms()))],
-        )
-        cursor.execute(
-            "SET LOCAL lock_timeout = %s",
-            [max(1000, int(cfg.get_metrics_persist_lock_timeout_ms()))],
-        )
+      try:
+        with conn.cursor() as cursor:
+          cursor.execute(
+              "SET LOCAL statement_timeout = %s",
+              [max(1000, int(cfg.get_metrics_persist_statement_timeout_ms()))],
+          )
+          cursor.execute(
+              "SET LOCAL lock_timeout = %s",
+              [max(1000, int(cfg.get_metrics_persist_lock_timeout_ms()))],
+          )
+      except Exception as exc:
+        # pytest-django ``django_db(databases=[])`` forbids cursors on the test wrapper.
+        from django.test.testcases import DatabaseOperationForbidden
+
+        if not isinstance(exc, DatabaseOperationForbidden):
+          raise
     jids = list({_metrics_jid_value(item["jid"]) for item in job_results})
     by_key = {}
     for item in job_results:
@@ -897,20 +934,20 @@ class Metrics():
         """
     self.simple_metrics_list = {
         "avg_blockbw": {
-            "typename": "block",
+            "typename": HOST_BLOCK_TYPE,
             "events": ["rd_sectors", "wr_sectors"],
             "conv": 1.0 / (1024 * 1024),
             "units": "GB/s",
             "nonnegative_rate": True,
         },
         "avg_cpuusage": {
-            "typename": "cpu",
+            "typename": HOST_CPU_TYPE,
             "events": ["user", "system", "nice"],
             "conv": 0.01,
             "units": "#cores"
         },
         "avg_sharedfs_iops": {
-            "typename": "llite",
+            "typename": LUSTRE_LLITE_TYPE,
             "events": [
                 "open", "close", "mmap", "fsync", "setattr", "truncate",
                 "flock", "getattr", "statfs", "alloc_inode", "setxattr",
@@ -921,20 +958,20 @@ class Metrics():
             "units": "iops"
         },
         "avg_sharedfs_bw": {
-            "typename": "llite",
+            "typename": LUSTRE_LLITE_TYPE,
             "events": ["read_bytes", "write_bytes"],
             "conv": 1.0 / (1024 * 1024),
             "units": "MB/s"
         },
         "avg_ibbw": {
-            "typename": "ib_ext",
+            "typename": HOST_IB_EXT_TYPE,
             "events": ["port_xmit_data", "port_rcv_data"],
             "conv": 1.0 / (1024 * 1024),
             "units": "MB/s",
             "nonnegative_rate": True,
         },
         "avg_fabric_mb_per_gflops": {
-            "typename": "ib_ext",
+            "typename": HOST_IB_EXT_TYPE,
             "events": [],
             "conv": 0.0,
             "units": "MB/GF",
@@ -970,19 +1007,19 @@ class Metrics():
             "units": "GB/s",
         },
         "avg_fabric_mb_per_avg_tensor": {
-            "typename": "ib_ext",
+            "typename": HOST_IB_EXT_TYPE,
             "events": [],
             "conv": 0.0,
             "units": "MB/s",
         },
         "avg_flops": {
-            "typename": "amd64_pmc",
-            "events": ["FLOPS"],
+            "typename": "amd_x86_pmc",
+            "events": ["fp_ops_retired"],
             "conv": 1e-9,
             "units": "GF"
         },
         "avg_mbw": {
-            "typename": "amd64_df",
+            "typename": "amd_x86_uncore_df",
             "events": [
                 "MBW_CHANNEL_0",
                 "MBW_CHANNEL_1",
@@ -1189,8 +1226,12 @@ class Metrics():
     tkw = _jid_table_host_data_time_kwargs(base)
     if not tkw:
       return None
-    rows = _host_data_metric_rows_batched(
-        tkw, hosts, typename, events, "arc", rows_cache=rows_cache)
+    rows = []
+    for typ in type_probe_names(typename):
+      rows = _host_data_metric_rows_batched(
+          tkw, hosts, typ, events, "arc", rows_cache=rows_cache)
+      if rows:
+        break
     if not rows:
       if cache is not None:
         cache[cache_key] = None
@@ -1258,8 +1299,12 @@ class Metrics():
     tkw = _jid_table_host_data_time_kwargs(base)
     if not tkw:
       return None
-    rows = _host_data_metric_rows_batched(
-        tkw, hosts, typename, events, "value", rows_cache=rows_cache)
+    rows = []
+    for typ in type_probe_names(typename):
+      rows = _host_data_metric_rows_batched(
+          tkw, hosts, typ, events, "value", rows_cache=rows_cache)
+      if rows:
+        break
     if not rows:
       if cache is not None:
         cache[cache_key] = None
@@ -1295,22 +1340,21 @@ class Metrics():
     return value
 
   def _job_arc_avg_flops(self, jt, cache=None, rows_cache=None):
-    """GFLOP/s from amd64_pmc FLOPS, else FP_ARITH/SSE proxies on intel_*pmc3 or cpu_counter_metrics.
-
-    Returns (mean_gf, typename_used) or (None, None).
-    """
-    v = self.job_arc(
-        jt,
-        typename="amd64_pmc",
-        events=["FLOPS"],
-        conv=1e-9,
-        units="GF",
-        cache=cache,
-        rows_cache=rows_cache,
-    )
-    if v is not None:
-      return v, "amd64_pmc"
-    for core_typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics"):
+    """GFLOP/s from AMD PMC, else Intel FP_ARITH/SSE, else ARM host_cpu_hw estimate."""
+    for pmc_typ in amd_pmc_type_names():
+      for flop_ev in fp_ops_retired_event_names():
+        v = self.job_arc(
+            jt,
+            typename=pmc_typ,
+            events=[flop_ev],
+            conv=1e-9,
+            units="GF",
+            cache=cache,
+            rows_cache=rows_cache,
+        )
+        if v is not None:
+          return v, pmc_typ
+    for core_typ in core_pmc_types_probe_order():
       v = self.job_arc(
           jt,
           typename=core_typ,
@@ -1322,7 +1366,7 @@ class Metrics():
       )
       if v is not None:
         return v, core_typ
-    for core_typ in ("intel_8pmc3", "intel_4pmc3", "cpu_counter_metrics"):
+    for core_typ in core_pmc_types_probe_order():
       total = None
       for ev, weight in INTEL_LEGACY_SSE_FLOP_EVENTS:
         part = self.job_arc(
@@ -1338,82 +1382,84 @@ class Metrics():
           total = part if total is None else total + part
       if total is not None and total > 0:
         return total, core_typ
-    # ARM monitor path: cpu_counter_metrics synthetic cumulative FLOP counter.
-    v = self.job_arc(
-        jt,
-        typename="cpu_counter_metrics",
-        events=["ARM_EST_FLOPS"],
-        conv=1e-9,
-        units="GF",
-        cache=cache,
-        rows_cache=rows_cache,
-    )
-    if v is not None:
-      return v, "cpu_counter_metrics"
+    for hw_typ in host_cpu_hw_type_names():
+      for flop_ev in arm_est_flops_event_names():
+        v = self.job_arc(
+            jt,
+            typename=hw_typ,
+            events=[flop_ev],
+            conv=1e-9,
+            units="GF",
+            cache=cache,
+            rows_cache=rows_cache,
+        )
+        if v is not None:
+          return v, hw_typ
     return None, None
 
   def _job_arc_avg_mbw(self, jt, cache=None, rows_cache=None):
-    """Memory bandwidth (GB/s): AMD DF MBW channels, else Intel IMC CAS sum.
-
-    Returns (mean_gbw, typename_used) or (None, None).
-    """
-    v = self.job_arc(
-        jt,
-        typename="amd64_df",
-        events=[
-            "MBW_CHANNEL_0",
-            "MBW_CHANNEL_1",
-            "MBW_CHANNEL_2",
-            "MBW_CHANNEL_3",
-            "MBW_CHANNEL_4",
-            "MBW_CHANNEL_5",
-            "MBW_CHANNEL_6",
-            "MBW_CHANNEL_7",
-        ],
-        conv=2 / (1024 ** 3),
-        units="GB/s",
-        cache=cache,
-        rows_cache=rows_cache,
-    )
-    if v is not None:
-      return v, "amd64_df"
+    """Memory bandwidth (GB/s): AMD DF MBW channels, else Intel/ARM IMC CAS sum."""
+    amd_bw_events = [
+        "MBW_CHANNEL_0",
+        "MBW_CHANNEL_1",
+        "MBW_CHANNEL_2",
+        "MBW_CHANNEL_3",
+        "MBW_CHANNEL_4",
+        "MBW_CHANNEL_5",
+        "MBW_CHANNEL_6",
+        "MBW_CHANNEL_7",
+    ]
+    for df_typ in amd_df_type_names():
+      v = self.job_arc(
+          jt,
+          typename=df_typ,
+          events=amd_bw_events,
+          conv=2 / (1024 ** 3),
+          units="GB/s",
+          cache=cache,
+          rows_cache=rows_cache,
+      )
+      if v is not None:
+        return v, df_typ
     cas_conv = 64 / (1024 ** 3)
-    for imc_typ in INTEL_IMC_STATS_TYPES:
+    for imc_typ in imc_types_probe_order():
+      for read_ev, write_ev in dram_cas_read_write_pairs():
+        v = self.job_arc(
+            jt,
+            typename=imc_typ,
+            events=[read_ev, write_ev],
+            conv=cas_conv,
+            units="GB/s",
+            cache=cache,
+            rows_cache=rows_cache,
+        )
+        if v is not None:
+          return v, imc_typ
+    for imc_typ in arm_imc_types_probe_order():
+      for read_ev, write_ev in dram_cas_read_write_pairs():
+        v = self.job_arc(
+            jt,
+            typename=imc_typ,
+            events=[read_ev, write_ev],
+            conv=cas_conv,
+            units="GB/s",
+            cache=cache,
+            rows_cache=rows_cache,
+        )
+        if v is not None:
+          return v, imc_typ
+    for hw_typ in host_cpu_hw_type_names():
       v = self.job_arc(
           jt,
-          typename=imc_typ,
-          events=["CAS_READS", "CAS_WRITES"],
-          conv=cas_conv,
+          typename=hw_typ,
+          events=["ARM_DRAM_BW_BYTES"],
+          conv=1 / (1024 ** 3),
           units="GB/s",
           cache=cache,
           rows_cache=rows_cache,
       )
       if v is not None:
-        return v, imc_typ
-    for imc_typ in ARM_IMC_STATS_TYPES:
-      v = self.job_arc(
-          jt,
-          typename=imc_typ,
-          events=["CAS_READS", "CAS_WRITES"],
-          conv=cas_conv,
-          units="GB/s",
-          cache=cache,
-          rows_cache=rows_cache,
-      )
-      if v is not None:
-        return v, imc_typ
-    # ARM monitor path: cpu_counter_metrics synthetic cumulative DRAM bytes.
-    v = self.job_arc(
-        jt,
-        typename="cpu_counter_metrics",
-        events=["ARM_DRAM_BW_BYTES"],
-        conv=1 / (1024 ** 3),
-        units="GB/s",
-        cache=cache,
-        rows_cache=rows_cache,
-    )
-    if v is not None:
-      return v, "cpu_counter_metrics"
+        return v, hw_typ
     return None, None
 
   def _job_arc_avg_sharedfs_iops(self, jt, cache=None, rows_cache=None):
@@ -2498,25 +2544,27 @@ class flops_node_imbalance():
 
 def _dram_bw_weighted_events_for_imbalance(u):
   """Return (typename, [(event, weight), ...]) for DRAM CAS/MBW imbalance, or (None, None)."""
-  schema_df, _ = u.get_type("amd64_df")
-  if schema_df is not None:
-    chans = [f"MBW_CHANNEL_{i}" for i in range(8)]
-    found = [c for c in chans if c in schema_df]
-    if found:
-      return "amd64_df", [(c, 1.0) for c in found]
+  for df_typ in amd_df_type_names():
+    schema_df, _, _ = resolve_get_type(u, (df_typ,))
+    if schema_df is not None:
+      chans = [f"MBW_CHANNEL_{i}" for i in range(8)]
+      found = [c for c in chans if c in schema_df]
+      if found:
+        return df_typ, [(c, 1.0) for c in found]
   imc = u.imc
   if not imc:
     return None, None
-  schema_imc, _ = u.get_type(imc)
+  schema_imc, _, imc_typ = resolve_get_type(u, (imc,))
   if schema_imc is None:
     return None, None
-  pair = []
-  if "CAS_READS" in schema_imc:
-    pair.append(("CAS_READS", 1.0))
-  if "CAS_WRITES" in schema_imc:
-    pair.append(("CAS_WRITES", 1.0))
-  if pair:
-    return imc, pair
+  for read_ev, write_ev in dram_cas_read_write_pairs():
+    pair = []
+    if read_ev in schema_imc:
+      pair.append((read_ev, 1.0))
+    if write_ev in schema_imc:
+      pair.append((write_ev, 1.0))
+    if pair:
+      return imc_typ, pair
   return None, None
 
 

@@ -13,7 +13,8 @@ from bokeh.embed import json_item
 from django.utils import timezone
 from pandas import DataFrame
 from rest_framework import status
-from rest_framework.decorators import api_view, throttle_classes
+from rest_framework.authentication import SessionAuthentication
+from rest_framework.decorators import api_view, authentication_classes, throttle_classes
 from rest_framework.response import Response
 
 from django.conf import settings
@@ -1194,10 +1195,17 @@ def user_api_key_status(request):
     })
 
 
-@csrf_protect
 @api_view(["POST"])
+@authentication_classes([SessionAuthentication])
 def user_api_key_rotate(request):
     """Revoke active keys for this user and return a newly minted raw key."""
+    django_request = getattr(request, "_request", request)
+    if django_request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        if not django_request.META.get("HTTP_X_CSRFTOKEN"):
+            return Response(
+                {"detail": "CSRF token missing"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
     if not check_for_tokens(request):
         return Response(
             {"detail": "Authentication required", "login_url": "/login_prompt"},

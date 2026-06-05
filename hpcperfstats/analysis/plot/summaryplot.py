@@ -26,15 +26,24 @@ from pandas import to_datetime
 
 from hpcperfstats.analysis.gen.utils import (
     CHA_TYPENAME_PRIORITY,
-    INTEL_CORE_PMC_TYPES_ORDERED,
     INTEL_FP_ARITH_DOUBLE_EVENTS,
     INTEL_FP_ARITH_SINGLE_EVENTS,
-    INTEL_IMC_STATS_TYPES,
     non_degenerate_y_range_for_series,
     new_plain_number_hover_formatter,
     new_tz_aware_bokeh_datetime_hover_formatter,
     set_linear_axes_plain_numeric,
     tz_aware_bokeh_tick_formatter,
+)
+from hpcperfstats.monitor_naming.resolve import (
+    aperf_event_names,
+    core_pmc_types_probe_order,
+    dram_cas_read_write_pairs,
+    events_probe_names,
+    imc_types_probe_order,
+    instr_retired_event_names,
+    mperf_event_names,
+    pkg_energy_event_names,
+    type_probe_names,
 )
 
 from bokeh.layouts import gridplot
@@ -86,12 +95,15 @@ def _summary_type_events_feasible(schema, typ, events):
   """Return False when schema is known and no requested event exists for typ (skip ORM work)."""
   if not isinstance(schema, dict) or not schema:
     return True
-  if typ not in schema:
-    return False
   if not events:
-    return True
-  have = set(schema[typ])
-  return len(have.intersection(events)) > 0
+    return any(t in schema for t in type_probe_names(typ))
+  probed_events = set(events_probe_names(list(events)))
+  for t in type_probe_names(typ):
+    if t not in schema:
+      continue
+    if probed_events.intersection(schema[t]):
+      return True
+  return False
 
 
 def _empty_agg_df():
@@ -101,12 +113,19 @@ def _empty_agg_df():
 
 
 def _get_agg_if_feasible(jt, typ, val_col, events, conv):
-  """Like jt.get_aggregate_df but no-op when schema rules out this type/events."""
+  """Like jt.get_aggregate_df with canonical + legacy type/event dual-read."""
   raw_schema = getattr(jt, "schema", None)
   schema = raw_schema if isinstance(raw_schema, dict) else {}
   if not _summary_type_events_feasible(schema, typ, events):
     return _empty_agg_df()
-  return jt.get_aggregate_df(typ, val_col, list(events), conv)
+  ev = events_probe_names(list(events))
+  for t in type_probe_names(typ):
+    if not _summary_type_events_feasible(schema, t, events):
+      continue
+    agg = jt.get_aggregate_df(t, val_col, ev, conv)
+    if agg is not None and not agg.empty:
+      return agg
+  return _empty_agg_df()
 
 
 def _step_polyline_xy(times, values):
@@ -177,16 +196,16 @@ def _prefetch_single_spec_aggregates(jt, spec_rows):
 
 
 def _intel_core_tries(events, conv):
-  """(typename, events, conv) rows for intel_8pmc3, intel_4pmc3, cpu_counter_metrics."""
+  """(typename, events, conv) rows for Intel PMC and host_cpu_hw."""
   ev = list(events)
-  return [(t, ev, conv) for t in INTEL_CORE_PMC_TYPES_ORDERED]
+  return [(t, ev, conv) for t in core_pmc_types_probe_order()]
 
 
 # One aggregate per row (fixed typename); used for AMD, fabric, etc.
 _SUMMARY_SINGLE_SPECS = [
-    ("amd64_pmc", "arc", ["FLOPS"], "amd_flops", 1e-9, "CPU FLOPS32b+64b[GF]"),
+    ("amd_x86_pmc", "arc", ["fp_ops_retired"], "amd_flops", 1e-9, "CPU FLOPS32b+64b[GF]"),
     (
-        "amd64_df",
+        "amd_x86_uncore_df",
         "arc",
         [
             "MBW_CHANNEL_0",
@@ -199,33 +218,33 @@ _SUMMARY_SINGLE_SPECS = [
         "CPU DRAMBW[GB/s]",
     ),
     (
-        "amd64_pmc",
+        "amd_x86_pmc",
         "value",
-        ["INST_RETIRED"],
+        list(instr_retired_event_names()),
         "amd_instr",
         1,
         "CPU Instructions [#/s]",
     ),
-    ("amd64_pmc", "arc", ["MPERF"], "amd_mcycles", 1, "CPU Reference Cycles [#/s]"),
-    ("amd64_pmc", "arc", ["APERF"], "amd_acycles", 1, "CPU Actual Cycles [#/s]"),
+    ("amd_x86_pmc", "arc", list(mperf_event_names()), "amd_mcycles", 1, "CPU Reference Cycles [#/s]"),
+    ("amd_x86_pmc", "arc", list(aperf_event_names()), "amd_acycles", 1, "CPU Actual Cycles [#/s]"),
     (
-        "intel_rapl",
+        "intel_x86_rapl",
         "arc",
-        ["MSR_PKG_ENERGY_STATUS"],
+        list(pkg_energy_event_names()),
         "watts",
         0.00001526,
         "CPU package power [W]",
     ),
     (
-        "amd64_rapl",
+        "amd_x86_rapl",
         "arc",
-        ["MSR_PKG_ENERGY_STAT"],
+        list(pkg_energy_event_names()),
         "amd_pkg_w",
         0.00001526,
         "CPU package power (AMD) [W]",
     ),
     (
-        "ib_ext",
+        "host_ib_ext",
         "arc",
         ["port_rcv_data", "port_xmit_data"],
         "ibbw",
@@ -233,7 +252,7 @@ _SUMMARY_SINGLE_SPECS = [
         "FabricBW[MB/s]",
     ),
     (
-        "opa",
+        "host_opa",
         "arc",
         ["PortXmitWait", "SwPortCongestion"],
         "opa_wait_cong",
@@ -241,7 +260,7 @@ _SUMMARY_SINGLE_SPECS = [
         "OPA wait+switch congestion [#/s]",
     ),
     (
-        "opa",
+        "host_opa",
         "arc",
         ["PortRcvFECN", "PortRcvBECN"],
         "opa_ecn",
@@ -249,7 +268,7 @@ _SUMMARY_SINGLE_SPECS = [
         "OPA FECN+BECN [#/s]",
     ),
     (
-        "numa",
+        "host_numa",
         "arc",
         ["numa_miss", "numa_foreign", "other_node"],
         "numa_remote_refs",
@@ -257,17 +276,17 @@ _SUMMARY_SINGLE_SPECS = [
         "CPU NUMA remote refs [#/s]",
     ),
     (
-        "llite",
+        "lustre_llite",
         "arc",
         list(LLITE_METADATA_IOPS_EVENTS),
         "liops",
         1,
         "Lustre IOPS [#/s]",
     ),
-    ("llite", "arc", ["read_bytes"], "lustre_read_mb_s", _BYTES_TO_MB, "Lustre read [MB/s]"),
-    ("llite", "arc", ["write_bytes"], "lustre_write_mb_s", _BYTES_TO_MB, "Lustre write [MB/s]"),
+    ("lustre_llite", "arc", ["read_bytes"], "lustre_read_mb_s", _BYTES_TO_MB, "Lustre read [MB/s]"),
+    ("lustre_llite", "arc", ["write_bytes"], "lustre_write_mb_s", _BYTES_TO_MB, "Lustre write [MB/s]"),
     (
-        "nfs",
+        "host_nfs",
         "arc",
         ["normal_read", "direct_read", "server_read"],
         "nfs_read_mb_s",
@@ -275,15 +294,15 @@ _SUMMARY_SINGLE_SPECS = [
         "NFS read [MB/s]",
     ),
     (
-        "nfs",
+        "host_nfs",
         "arc",
         ["normal_write", "direct_write", "server_write"],
         "nfs_write_mb_s",
         _BYTES_TO_MB,
         "NFS write [MB/s]",
     ),
-    ("nfs", "arc", ["READ_ops", "WRITE_ops"], "nfs_iops", 1.0, "NFS IOPS [#/s]"),
-    ("cpu", "arc", ["user", "system", "nice"], "cpu", 0.01,
+    ("host_nfs", "arc", ["read_ops", "write_ops"], "nfs_iops", 1.0, "NFS IOPS [#/s]"),
+    ("host_cpu", "arc", ["user", "system", "nice"], "cpu", 0.01,
      "CPU Usage [#cores]"),
     ("nvidia_gpu", "value", ["gpu_util"], "nv_gpu_util", 1, "GPU util [%]"),
     ("nvidia_gpu", "value", ["mem_used_mb"], "nv_mem_used_mb", 1 / 1024, "GPU MemUsed [GB]"),
@@ -339,9 +358,9 @@ _SUMMARY_SINGLE_SPECS = [
         "GPU module power [W]",
     ),
     (
-        "cpu_counter_metrics",
+        "host_cpu_hw",
         "value",
-        ["DCGM_CPU_POWER_UTIL_W"],
+        ["dcgm_cpu_power_util_w"],
         "dcg_cpu_power_w",
         1.0,
         "Grace CPU power [W]",
@@ -362,7 +381,7 @@ _SUMMARY_SINGLE_SPECS = [
         _BYTES_TO_GB,
         "GPU PCIe+NVLink [GB/s]",
     ),
-    ("mem", "value", ["MemUsed"], "mem", 1 / (1024 * 1024), "CPU MemUsed[GB]"),
+    ("host_mem", "value", ["mem_used"], "mem", 1 / (1024 * 1024), "CPU MemUsed[GB]"),
 ]
 
 # Metrics that may be sampled on a sparse (host, time) grid vs the union grid from
@@ -422,19 +441,19 @@ _SUMMARY_FIRST_WIN_SPECS = (
         "name": "instr",
         "val_col": "arc",
         "label": "CPU Instructions [#/s]",
-        "tries": _intel_core_tries(["INST_RETIRED"], 1),
+        "tries": _intel_core_tries(list(instr_retired_event_names()), 1),
     },
     {
         "name": "mcycles",
         "val_col": "arc",
         "label": "CPU Reference Cycles [#/s]",
-        "tries": _intel_core_tries(["MPERF"], 1),
+        "tries": _intel_core_tries(list(mperf_event_names()), 1),
     },
     {
         "name": "acycles",
         "val_col": "arc",
         "label": "CPU Actual Cycles [#/s]",
-        "tries": _intel_core_tries(["APERF"], 1),
+        "tries": _intel_core_tries(list(aperf_event_names()), 1),
     },
 )
 
@@ -470,9 +489,12 @@ def _summary_nv_gpu_util_y_range_end(df):
 
 
 def _summary_intel_imc_bw_tries():
-  """Intel DRAM BW: first IMC type in INTEL_IMC_STATS_TYPES with usable CAS rows."""
-  cas = ["CAS_READS", "CAS_WRITES"]
-  return [(imc_typ, cas, _CAS_BW_CONV) for imc_typ in INTEL_IMC_STATS_TYPES]
+  """Intel DRAM BW: first IMC type with dram CAS read/write rows."""
+  tries = []
+  for imc_typ in imc_types_probe_order():
+    for read_ev, write_ev in dram_cas_read_write_pairs():
+      tries.append((imc_typ, [read_ev, write_ev], _CAS_BW_CONV))
+  return tries
 
 
 def _merge_first_full_coverage(df, jt, column_name, val_col, tries):
