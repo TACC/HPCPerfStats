@@ -34,7 +34,7 @@ from hpcperfstats.analysis.gen.utils import (
 from hpcperfstats.monitor_naming.canonical import (
     HOST_BLOCK_TYPE,
     HOST_CPU_TYPE,
-    HOST_IB_EXT_TYPE,
+    HOST_IB_TYPE,
     HOST_LNET_TYPE,
     HOST_MEM_TYPE,
     HOST_NFS_TYPE,
@@ -45,7 +45,6 @@ from hpcperfstats.monitor_naming.canonical import (
 from hpcperfstats.monitor_naming.legacy import (
     LEGACY_HOST_BLOCK_TYPE,
     LEGACY_HOST_CPU_TYPE,
-    LEGACY_HOST_IB_EXT_TYPE,
     LEGACY_HOST_LNET_TYPE,
     LEGACY_HOST_MEM_TYPE,
     LEGACY_HOST_NFS_TYPE,
@@ -64,7 +63,6 @@ from hpcperfstats.monitor_naming.resolve import (
     fp_ops_retired_event_names,
     host_cpu_hw_type_names,
     host_cpu_type_names,
-    host_ib_ext_type_names,
     host_mem_type_names,
     host_nfs_type_names,
     imc_types_probe_order,
@@ -308,15 +306,15 @@ _COMPLEX_PLACEHOLDER_TYPE_UNITS = {
     "avg_freq": ("pmc", "GHz"),
     "avg_ethbw": ("net", "MB/s"),
     "avg_gpuutil": ("gpu", "%"),
-    "avg_packetsize": (HOST_IB_EXT_TYPE, "MB"),
-    "max_fabricbw": (HOST_IB_EXT_TYPE, "MB/s"),
+    "avg_packetsize": (HOST_IB_TYPE, "MB"),
+    "max_fabricbw": (HOST_IB_TYPE, "MB/s"),
     "max_lnetbw": (HOST_LNET_TYPE, "MB/s"),
     "max_mds": (LUSTRE_LLITE_TYPE, "iops"),
-    "max_packetrate": (HOST_IB_EXT_TYPE, "#/s"),
+    "max_packetrate": (HOST_IB_TYPE, "#/s"),
     "max_opa_congestion_rate": (HOST_OPA_TYPE, "#/s"),
     "max_numa_remote_rate": (HOST_NUMA_TYPE, "#/s"),
     "flops_node_imbalance": ("pmc", "%"),
-    "fabric_node_imbalance": (HOST_IB_EXT_TYPE, "%"),
+    "fabric_node_imbalance": (HOST_IB_TYPE, "%"),
     "dram_bw_node_imbalance": ("imc", "%"),
     "lnet_node_imbalance": ("lnet", "%"),
     "avg_tensor_active": ("nvidia_gpu", "%"),
@@ -331,7 +329,7 @@ _COMPLEX_PLACEHOLDER_TYPE_UNITS = {
     "max_gpu_clock_event_reasons": ("nvidia_gpu", "#"),
     "gpu_util_node_imbalance": ("nvidia_gpu", "%"),
     "tensor_node_imbalance": ("nvidia_gpu", "%"),
-    "avg_fabric_mb_per_avg_tensor": (HOST_IB_EXT_TYPE, "MB/s"),
+    "avg_fabric_mb_per_avg_tensor": (HOST_IB_TYPE, "MB/s"),
     "mem_hwm": (HOST_MEM_TYPE, "GiB"),
     "node_imbalance": (HOST_CPU_TYPE, "%"),
     "time_imbalance": (HOST_CPU_TYPE, "%"),
@@ -964,14 +962,14 @@ class Metrics():
             "units": "MB/s"
         },
         "avg_ibbw": {
-            "typename": HOST_IB_EXT_TYPE,
+            "typename": HOST_IB_TYPE,
             "events": ["port_xmit_data", "port_rcv_data"],
             "conv": 1.0 / (1024 * 1024),
             "units": "MB/s",
             "nonnegative_rate": True,
         },
         "avg_fabric_mb_per_gflops": {
-            "typename": HOST_IB_EXT_TYPE,
+            "typename": HOST_IB_TYPE,
             "events": [],
             "conv": 0.0,
             "units": "MB/GF",
@@ -1007,7 +1005,7 @@ class Metrics():
             "units": "GB/s",
         },
         "avg_fabric_mb_per_avg_tensor": {
-            "typename": HOST_IB_EXT_TYPE,
+            "typename": HOST_IB_TYPE,
             "events": [],
             "conv": 0.0,
             "units": "MB/s",
@@ -1546,7 +1544,7 @@ class Metrics():
     """Fabric bandwidth from IB/OPA, with Ethernet fallback when unavailable."""
     v = self.job_arc(
         jt,
-        typename="ib_ext",
+        typename=HOST_IB_TYPE,
         events=["port_xmit_data", "port_rcv_data"],
         conv=1.0 / (1024 * 1024),
         units="MB/s",
@@ -1555,7 +1553,7 @@ class Metrics():
         nonnegative_rate=True,
     )
     if v is not None:
-      return v, "ib_ext"
+      return v, HOST_IB_TYPE
     v = self.job_arc(
         jt,
         typename="opa",
@@ -2124,12 +2122,12 @@ class avg_gpuutil():
 
 
 class avg_packetsize():
-  """Average packet size (MB) from ib_ext or opa port xmit/rcv data and packets.
+  """Average packet size (MB) from host_ib or opa port xmit/rcv data and packets.
 
     """
 
   def compute_metric(self, u):
-    ib_schema, ib_stats = u.get_type("ib_ext")
+    ib_schema, ib_stats = u.get_type(HOST_IB_TYPE)
     if ib_schema is not None and _schema_has_events(
         ib_schema,
         "port_xmit_pkts",
@@ -2137,7 +2135,7 @@ class avg_packetsize():
         "port_xmit_data",
         "port_rcv_data",
     ):
-      typename = "ib_ext"
+      typename = HOST_IB_TYPE
       schema, _stats = ib_schema, ib_stats
       tx, rx = schema["port_xmit_pkts"].index, schema["port_rcv_pkts"].index
       tb, rb = schema["port_xmit_data"].index, schema["port_rcv_data"].index
@@ -2165,7 +2163,7 @@ class avg_packetsize():
             "tx_bytes",
             "rx_bytes",
         ):
-          return None, "ib_ext", 'MB'
+          return None, HOST_IB_TYPE, 'MB'
         typename = "net"
         schema, _stats = net_schema, net_stats
         tx, rx = schema["tx_packets"].index, schema["rx_packets"].index
@@ -2190,16 +2188,16 @@ class avg_packetsize():
 
 
 class max_fabricbw():
-  """Maximum fabric bandwidth (MB/s) from ib_ext or opa port data.
+  """Maximum fabric bandwidth (MB/s) from host_ib or opa port data.
 
     """
 
   def compute_metric(self, u):
     max_bw = 0
-    ib_schema, ib_stats = u.get_type("ib_ext")
+    ib_schema, ib_stats = u.get_type(HOST_IB_TYPE)
     if ib_schema is not None and _schema_has_events(
         ib_schema, "port_xmit_data", "port_rcv_data"):
-      typename = "ib_ext"
+      typename = HOST_IB_TYPE
       schema, _stats = ib_schema, ib_stats
       tx, rx = schema["port_xmit_data"].index, schema["port_rcv_data"].index
       conv2mb = 1024 * 1024
@@ -2215,7 +2213,7 @@ class max_fabricbw():
         net_schema, net_stats = u.get_type("net")
         if net_schema is None or not _schema_has_events(
             net_schema, "tx_bytes", "rx_bytes"):
-          return None, "ib_ext", 'MB/s'
+          return None, HOST_IB_TYPE, 'MB/s'
         typename = "net"
         schema, _stats = net_schema, net_stats
         tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
@@ -2336,16 +2334,16 @@ class max_mds():
 
 
 class max_packetrate():
-  """Maximum packet rate (#/s) from ib_ext or opa port xmit/rcv packets.
+  """Maximum packet rate (#/s) from host_ib or opa port xmit/rcv packets.
 
     """
 
   def compute_metric(self, u):
     max_pr = 0
-    ib_schema, ib_stats = u.get_type("ib_ext")
+    ib_schema, ib_stats = u.get_type(HOST_IB_TYPE)
     if ib_schema is not None and _schema_has_events(
         ib_schema, "port_xmit_pkts", "port_rcv_pkts"):
-      typename = "ib_ext"
+      typename = HOST_IB_TYPE
       schema, _stats = ib_schema, ib_stats
       tx, rx = schema["port_xmit_pkts"].index, schema["port_rcv_pkts"].index
     else:
@@ -2359,7 +2357,7 @@ class max_packetrate():
         net_schema, net_stats = u.get_type("net")
         if net_schema is None or not _schema_has_events(
             net_schema, "tx_packets", "rx_packets"):
-          return None, "ib_ext", '#/s'
+          return None, HOST_IB_TYPE, '#/s'
         typename = "net"
         schema, _stats = net_schema, net_stats
         tx, rx = schema["tx_packets"].index, schema["rx_packets"].index
@@ -2717,11 +2715,11 @@ class tensor_node_imbalance():
 
 
 class fabric_node_imbalance():
-  """Fabric byte-rate imbalance across nodes (%); prefers ``ib_ext`` then ``opa``."""
+  """Fabric byte-rate imbalance across nodes (%); prefers ``host_ib`` then ``opa``."""
 
   def compute_metric(self, u):
     for typename, evw in (
-        ("ib_ext", [("port_xmit_data", 1.0), ("port_rcv_data", 1.0)]),
+        (HOST_IB_TYPE, [("port_xmit_data", 1.0), ("port_rcv_data", 1.0)]),
         ("opa", [("PortXmitData", 1.0), ("PortRcvData", 1.0)]),
     ):
       schema, _stats = u.get_type(typename)
@@ -2732,7 +2730,7 @@ class fabric_node_imbalance():
       v = _node_imbalance_percent_weighted(u, typename, evw)
       if v is not None:
         return v, typename, "%"
-    return None, "ib_ext", "%"
+    return None, HOST_IB_TYPE, "%"
 
 
 class node_imbalance():

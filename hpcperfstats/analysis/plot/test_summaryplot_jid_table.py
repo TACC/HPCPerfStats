@@ -23,7 +23,7 @@ from hpcperfstats.analysis.plot.summaryplot import (
 # Canonical monitor typenames (dual-read: legacy aliases still accepted in mocks).
 _HOST_CPU_TYPES = ("host_cpu", "cpu")
 _HOST_MEM_TYPES = ("host_mem", "mem")
-_IB_EXT_TYPES = ("host_ib_ext", "ib_ext")
+_IB_FABRIC_TYPES = ("host_ib", "host_ib_ext", "ib_ext")
 _INTEL_CORE_TYPES = (
     "intel_x86_pmc_gpr8",
     "intel_8pmc3",
@@ -170,7 +170,7 @@ def test_summaryplot_skips_freq_plot_when_ghz_never_exceeds_500():
     del conv
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_EXT_TYPES, "lustre_llite", "llite"):
+    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
       return empty
     if typ in _INTEL_CORE_TYPES:
       event_list = list(events)
@@ -241,7 +241,7 @@ def test_summaryplot_includes_nvidia_gpu_util_and_mem_used_mb_columns():
       )
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_EXT_TYPES, "lustre_llite", "llite"):
+    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
       return empty
     if typ in _INTEL_CORE_TYPES:
       event_list = list(events)
@@ -330,7 +330,7 @@ def test_summaryplot_nv_gpu_util_falls_back_to_utilization_event():
       )
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_EXT_TYPES, "lustre_llite", "llite"):
+    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
       return empty
     if typ in _INTEL_CORE_TYPES:
       event_list = list(events)
@@ -414,7 +414,7 @@ def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
       )
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_EXT_TYPES, "lustre_llite", "llite"):
+    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
       return empty
     if typ in _INTEL_CORE_TYPES:
       event_list = list(events)
@@ -623,7 +623,7 @@ def test_summaryplot_orders_cpu_then_gpu_then_ibbw():
       if ev == ["gpu_count"]:
         return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
       return empty
-    if typ in _IB_EXT_TYPES and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
+    if typ in _IB_FABRIC_TYPES and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
       return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
     if typ in _INTEL_CORE_TYPES and val_col == "arc":
       if ev == fp64:
@@ -678,7 +678,7 @@ def test_summaryplot_orders_buckets_cpu_memory_compute_gpu_subblocks_network():
       if ev == ["power_usage"]:
         return pd.DataFrame([("n1.cluster", t0, 180.0)], columns=["host", "time", "sum_val"])
       return empty
-    if typ in _IB_EXT_TYPES and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
+    if typ in _IB_FABRIC_TYPES and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
       return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
     if typ in _INTEL_CORE_TYPES and val_col == "arc":
       if ev == fp64:
@@ -752,7 +752,7 @@ def test_summaryplot_orders_lustre_nfs_before_network():
       if evset.intersection({"read_ops", "write_ops", "READ_ops", "WRITE_ops"}):
         return pd.DataFrame([("n1.cluster", t0, 128.0)], columns=["host", "time", "sum_val"])
       return empty
-    if typ in _IB_EXT_TYPES and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
+    if typ in _IB_FABRIC_TYPES and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
       return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
     if typ in _INTEL_CORE_TYPES and val_col == "arc":
       if ev == fp64:
@@ -986,7 +986,7 @@ def test_summaryplot_node_power_est_w_intel_plus_gpu():
       )
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_IB_EXT_TYPES, "lustre_llite", "llite"):
+    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
       return empty
     if typ in _INTEL_CORE_TYPES and ev == fp64:
       return pd.DataFrame(
@@ -1062,7 +1062,7 @@ def test_summaryplot_node_power_est_w_prefers_module_branch():
       )
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_IB_EXT_TYPES, "lustre_llite", "llite"):
+    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
       return empty
     if typ in _INTEL_CORE_TYPES and ev == fp64:
       return pd.DataFrame(

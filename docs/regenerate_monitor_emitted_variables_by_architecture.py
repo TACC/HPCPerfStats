@@ -31,7 +31,7 @@ COMMON: list[tuple[str, str, str | None]] = [
     ("SysV SHM", "host_sysv_shm", None, None),
     ("tmpfs", "host_tmpfs", None, None),
     ("LNet", "host_lnet", None, None),
-    ("InfiniBand (sysfs port)", "host_ib", "per IB port", None),
+    ("InfiniBand", "host_ib", "per IB port; sysfs + MAD + switch counters", None),
     ("Roofline peaks", "host_roofline_peak", "host-level", None),
 ]
 
@@ -76,8 +76,6 @@ ARM: list[tuple[str, str, str | None]] = [
 OPTIONAL: list[tuple[str, str, str | None]] = [
     ("NVIDIA GPU", "nvidia_gpu", "`--enable-gpu`", None),
     ("AMD GPU", "amd_gpu", "`--enable-amd-gpu`", "Omits some NVIDIA-only keys"),
-    ("InfiniBand extended", "host_ib_ext", "`--enable-infiniband`", None),
-    ("IB switch 64-bit", "host_ib_sw", None, None),
     ("Intel OPA", "host_opa", "`--enable-opa`", None),
     ("Lustre MDC", "lustre_mdc", "`--enable-lustre`", None),
     ("Lustre llite", "lustre_llite", "`--enable-lustre`", None),

@@ -94,3 +94,11 @@ def test_monitor_st_names_cover_amd_roofline_prerequisites():
     assert typename in monitor, (
         f"{typename!r} must be emitted by monitor for AMD roofline prerequisites."
     )
+
+
+def test_ib_merged_to_host_ib_retired_separate_collectors():
+  """IB ext/sw drivers merged into unified host_ib (monitor IB driver merge)."""
+  monitor = _monitor_st_names_from_sources()
+  assert "host_ib" in monitor
+  assert "host_ib_ext" not in monitor
+  assert "host_ib_sw" not in monitor

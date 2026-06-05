@@ -244,7 +244,7 @@ _SUMMARY_SINGLE_SPECS = [
         "CPU package power (AMD) [W]",
     ),
     (
-        "host_ib_ext",
+        "host_ib",
         "arc",
         ["port_rcv_data", "port_xmit_data"],
         "ibbw",
@@ -546,7 +546,7 @@ def _merge_nvidia_gpu_util_column(df, jt):
 
 
 def _merge_opa_fabric_if_no_ib_ext(df, jt):
-  """When ``ib_ext`` bytes are absent, fill ``ibbw`` from Omni-Path (same scaling as ``avg_ibbw`` OPA path)."""
+  """When ``host_ib`` bytes are absent, fill ``ibbw`` from Omni-Path (same scaling as ``avg_ibbw`` OPA path)."""
   if "ibbw" in df.columns and df["ibbw"].notna().any():
     return df
   agg = _get_agg_if_feasible(
@@ -791,7 +791,7 @@ def _collect_hardware_error_job_series(jt):
   parts = []
   for ev in _IB_SUMMARY_ERROR_EVENTS:
     leg = f"ib:{ev}"
-    s = _one_error_job_series(jt, "ib", ev)
+    s = _one_error_job_series(jt, "host_ib", ev)
     if s is not None:
       parts.append((leg, s))
   for ev in _NET_SUMMARY_ERROR_EVENTS:

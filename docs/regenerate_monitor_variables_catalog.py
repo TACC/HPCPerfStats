@@ -60,8 +60,8 @@ def _event_to_types():
         "tensor_active": {"nvidia_gpu", "amd_gpu"},
         "read_bytes": {"llite"},
         "write_bytes": {"llite"},
-        "port_rcv_data": {"ib_ext"},
-        "port_xmit_data": {"ib_ext"},
+        "port_rcv_data": {"host_ib"},
+        "port_xmit_data": {"host_ib"},
         "normal_read": {"nfs"},
         "READ_ops": {"nfs"},
         "VmHWM": {"proc"},
@@ -412,9 +412,7 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `block` | `block.c` | Block sysfs counters |
 | `cpu` | `cpu.c` | Per-CPU jiffies |
 | `cpu_counter_metrics` | `cpu_counter_metrics.c` | Intel/AMD/ARM paths; DCGM CPU power; synthetic ARM metrics |
-| `ib` | `ib.c` | Skipped by default ingest (`exclude_types`) |
-| `ib_ext` | `ib_ext.c` | Extended IB counters |
-| `ib_sw` | `ib_sw.c` | Skipped by default ingest |
+| `host_ib` | `ib.c` | Unified sysfs + MAD + switch IB counters (ingested) |
 | `intel_4pmc3` | `intel_4pmc3.c` | Same decode map as `intel_8pmc3` |
 | `intel_8pmc3` | `intel_8pmc3.c` | FP_ARITH / fixed counters / legacy SSE FLOP proxies |
 | `intel_*_imc` | `intel_*_imc.c` | IMC generations → `CAS_READS` / `CAS_WRITES` |
@@ -447,7 +445,7 @@ Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`). 
 - **Core PMC / FLOPs / frequency:** `intel_*pmc3`, `amd64_pmc`, `cpu_counter_metrics` — `FP_ARITH_*`, `FLOPS`, `INST_RETIRED`, `APERF`, `MPERF`, …
 - **DRAM bandwidth:** `intel_*_imc`, `arm_imc`, `amd64_df` — `CAS_READS` / `CAS_WRITES`, `MBW_CHANNEL_*`
 - **GPU:** `nvidia_gpu`, `amd_gpu` — `gpu_util`, `tensor_active`, `power_usage`, …
-- **High-speed fabric:** `ib_ext`, `opa` — `port_*`, `Port*` counters
+- **High-speed fabric:** `host_ib`, `opa` — `port_*`, `Port*` counters
 - **Ethernet / LNET:** `net`, `lnet` — `rx_bytes`, `tx_bytes`, …
 - **Local disk:** `block` — `rd_sectors`, `wr_sectors`, …
 - **Shared filesystem:** `llite`, `mdc`, `osc`, `nfs` — bytes, ops, Lustre `mds_*` / `ost_*`

@@ -26,9 +26,11 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 - `block` → `host_block`
 - `cpu` → `host_cpu`
 - `cpu_counter_metrics` → `host_cpu_hw`
+- `host_ib_ext` → `host_ib`
+- `host_ib_sw` → `host_ib`
 - `ib` → `host_ib`
-- `ib_ext` → `host_ib_ext`
-- `ib_sw` → `host_ib_sw`
+- `ib_ext` → `host_ib`
+- `ib_sw` → `host_ib`
 - `intel_4pmc3` → `intel_x86_pmc_gpr4`
 - `intel_8pmc3` → `intel_x86_pmc_gpr8`
 - `intel_bdw_cbo` → `intel_x86_uncore_cbo_bdw`
@@ -184,6 +186,7 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 
 - `Threads` → `threads`
 - `Uid` → `uid`
+- `VL15_dropped` → `vl15_dropped`
 - `VmData` → `vm_data`
 - `VmExe` → `vm_exe`
 - `VmHWM` → `vm_hwm`
@@ -198,6 +201,8 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 
 ## Removed legacy symbols (never re-emit)
 
+- `host_ib_ext`
+- `host_ib_sw`
 - `host_mic`
 - `intel_knl`
 - `intel_knl_edc`

@@ -41,7 +41,7 @@ $uptime 1
 !host_net rx_bytes,E,U=B tx_bytes,E,U=B rx_packets,E tx_packets,E
 !host_numa numa_hit,E numa_miss,E numa_foreign,E interleave_hit,E local_node,E other_node,E
 !lustre_llite {llite}
-!host_ib_ext port_xmit_data,E port_rcv_data,E port_xmit_pkts,E port_rcv_pkts,E
+!host_ib port_xmit_data,E port_rcv_data,E port_xmit_pkts,E port_rcv_pkts,E
 !host_lnet tx_bytes,E,U=B rx_bytes,E,U=B
 !host_opa PortXmitData,E PortRcvData,E PortXmitPkts,E PortRcvPkts,E PortXmitWait,E SwPortCongestion,E PortRcvFECN,E PortRcvBECN,E
 !host_nfs read_ops,E write_ops,E
@@ -103,7 +103,7 @@ def _llite_line(scale: int) -> str:
 def _ib_line(scale: int) -> str:
   d = 800000 + scale * 50000
   p = 900 + scale * 20
-  return "host_ib_ext mlx5_0 %d %d %d %d\n" % (d, d, p, p)
+  return "host_ib mlx5_0 %d %d %d %d\n" % (d, d, p, p)
 
 
 def _lnet_line(scale: int) -> str:

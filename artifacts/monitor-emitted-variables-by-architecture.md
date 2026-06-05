@@ -223,23 +223,35 @@ Present in every normal daemon build (`stats_registry.c`).
 - `tx_bytes`
 - `tx_msgs`
 
-### InfiniBand (sysfs port) — `host_ib` (per IB port)
+### InfiniBand — `host_ib` (per IB port; sysfs + MAD + switch counters)
 
+- `counter_select`
 - `excessive_buffer_overrun_errors`
 - `link_downed`
 - `link_error_recovery`
 - `local_link_integrity_errors`
+- `port_multicast_rcv_pkts`
+- `port_multicast_xmit_pkts`
 - `port_rcv_constraint_errors`
 - `port_rcv_data`
 - `port_rcv_errors`
 - `port_rcv_packets`
+- `port_rcv_pkts`
 - `port_rcv_remote_physical_errors`
 - `port_rcv_switch_relay_errors`
+- `port_select`
+- `port_unicast_rcv_pkts`
+- `port_unicast_xmit_pkts`
 - `port_xmit_constraint_errors`
 - `port_xmit_data`
 - `port_xmit_discards`
 - `port_xmit_packets`
+- `port_xmit_pkts`
 - `port_xmit_wait`
+- `sw_rx_bytes`
+- `sw_rx_packets`
+- `sw_tx_bytes`
+- `sw_tx_packets`
 - `symbol_error`
 - `vl15_dropped`
 
@@ -586,26 +598,6 @@ Requires `--with-cpu-counter-backend=dcgm` (non-x86 default) and `--enable-hardw
 - `temperature`
 - `tensor_active`
 
-### InfiniBand extended — `host_ib_ext` (`--enable-infiniband`)
-
-- `counter_select`
-- `port_multicast_rcv_pkts`
-- `port_multicast_xmit_pkts`
-- `port_rcv_data`
-- `port_rcv_pkts`
-- `port_select`
-- `port_unicast_rcv_pkts`
-- `port_unicast_xmit_pkts`
-- `port_xmit_data`
-- `port_xmit_pkts`
-
-### IB switch 64-bit — `host_ib_sw`
-
-- `rx_bytes`
-- `rx_packets`
-- `tx_bytes`
-- `tx_packets`
-
 ### Intel OPA — `host_opa` (`--enable-opa`)
 
 - `port_error_counter_summary`
@@ -690,7 +682,7 @@ Requires `--with-cpu-counter-backend=dcgm` (non-x86 default) and `--enable-hardw
 | `arm_aarch64_imc` | — | — | ✓ | — | ARM host + DCGM |
 | GPU / IB ext / Lustre / OPA / MIC | — | if configured | if configured | if configured | respective `--enable-*` |
 
-**Approximate scale:** ~173 keys in common types; x86 hardware adds ~145 more across Intel/AMD types (generation-specific; one variant active per machine); optional subsystems add ~131 more.
+**Approximate scale:** ~185 keys in common types; x86 hardware adds ~145 more across Intel/AMD types (generation-specific; one variant active per machine); optional subsystems add ~117 more.
 
 ---
 

@@ -117,8 +117,10 @@ TYPE_RENAMES: dict[str, str] = {
     "intel_pcu": "intel_x86_pcu",
     "arm_imc": "arm_aarch64_imc",
     "ib": "host_ib",
-    "ib_ext": "host_ib_ext",
-    "ib_sw": "host_ib_sw",
+    "ib_ext": "host_ib",
+    "ib_sw": "host_ib",
+    "host_ib_ext": "host_ib",
+    "host_ib_sw": "host_ib",
     "lnet": "host_lnet",
     "opa": "host_opa",
     "llite": "lustre_llite",
@@ -127,6 +129,8 @@ TYPE_RENAMES: dict[str, str] = {
 }
 
 RETIRED_TYPES = frozenset({
+    "host_ib_ext",
+    "host_ib_sw",
     "host_mic",
     "intel_knl",
     "intel_knl_edc",

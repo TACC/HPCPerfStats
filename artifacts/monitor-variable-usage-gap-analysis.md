@@ -12,9 +12,7 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `amd_x86_uncore_df`: emitted **4**, used **0**, unused **4**
 - `host_block`: emitted **11**, used **3**, unused **8**
 - `host_cpu`: emitted **7**, used **5**, unused **2**
-- `host_ib`: emitted **17**, used **13**, unused **4**
-- `host_ib_ext`: emitted **10**, used **4**, unused **6**
-- `host_ib_sw`: emitted **4**, used **4**, unused **0**
+- `host_ib`: emitted **29**, used **15**, unused **14**
 - `host_lnet`: emitted **11**, used **3**, unused **8**
 - `host_mem`: emitted **17**, used **5**, unused **12**
 - `host_net`: emitted **23**, used **17**, unused **6**
@@ -61,10 +59,10 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `osc`: emitted **10**, used **3**, unused **7**
 
 **Totals**
-- Total monitor types: **53**
-- Total emitted variables: **493**
-- Total explicitly used variables (quoted literals, global): **169**
-- Total unused variables: **324**
+- Total monitor types: **51**
+- Total emitted variables: **491**
+- Total explicitly used variables (quoted literals, global): **163**
+- Total unused variables: **328**
 
 ## 2) Total used variables
 
@@ -112,19 +110,21 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `iowait`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `softirq`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `host_ib` (4)
-- `port_rcv_packets`: monitor-emitted telemetry field. **Usefulness:** Medium / network
-- `port_xmit_packets`: monitor-emitted telemetry field. **Usefulness:** Medium / network
-- `port_xmit_wait`: monitor-emitted telemetry field. **Usefulness:** Medium / network
-- `vl15_dropped`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `host_ib_ext` (6)
+### `host_ib` (14)
 - `counter_select`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `port_multicast_rcv_pkts`: monitor-emitted telemetry field. **Usefulness:** Medium / network
 - `port_multicast_xmit_pkts`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_rcv_packets`: monitor-emitted telemetry field. **Usefulness:** Medium / network
 - `port_select`: monitor-emitted telemetry field. **Usefulness:** Medium / network
 - `port_unicast_rcv_pkts`: monitor-emitted telemetry field. **Usefulness:** Medium / network
 - `port_unicast_xmit_pkts`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_xmit_packets`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `port_xmit_wait`: monitor-emitted telemetry field. **Usefulness:** Medium / network
+- `sw_rx_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `sw_rx_packets`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `sw_tx_bytes`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `sw_tx_packets`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `vl15_dropped`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
 ### `host_lnet` (8)
 - `msgs_alloc`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -555,10 +555,10 @@ This section is a strict `host_data.type` inventory for variables actively wired
 - **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, roofline and node power estimate paths
 - **Figures/metrics/displays:** Job Detail Metrics (FLOP/vector/frequency/memory/power-derived rows), CPU roofline, Summary power/frequency/counter panels
 
-### `ib_ext`
-- **Used variables:** `port_xmit_data`, `port_rcv_data`, `port_xmit_pkts`, `port_rcv_pkts`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_ibbw`, `avg_packetsize`, `max_fabricbw`, `max_packetrate`, `fabric_node_imbalance`)
-- **Figures/metrics/displays:** Job Detail Metrics (fabric averages/peaks/imbalance/ratios), Summary plot (`ibbw`)
+### `host_ib`
+- **Used variables:** `port_xmit_data`, `port_rcv_data`, `port_xmit_pkts`, `port_rcv_pkts`, sysfs error counters, `sw_rx_bytes`, `sw_tx_bytes`, `sw_rx_packets`, `sw_tx_packets`, `vl15_dropped`
+- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_ibbw`, `avg_packetsize`, `max_fabricbw`, `max_packetrate`, `fabric_node_imbalance`), summary plot hardware error overlay
+- **Figures/metrics/displays:** Job Detail Metrics (fabric averages/peaks/imbalance/ratios), Summary plot (`ibbw`, IB error rates)
 
 ### `intel_4pmc3`
 - **Used variables:** `APERF`, `MPERF`, `INST_RETIRED`, `FP_ARITH_INST_RETIRED_SCALAR_DOUBLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_SCALAR_SINGLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE`, `SSE_DOUBLE_SCALAR`, `SSE_DOUBLE_PACKED`, `SIMD_DOUBLE_256`

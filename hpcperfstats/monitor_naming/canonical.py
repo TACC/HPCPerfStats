@@ -81,6 +81,8 @@ HOST_BLOCK_TYPE = "host_block"
 HOST_NET_TYPE = "host_net"
 HOST_NUMA_TYPE = "host_numa"
 HOST_NFS_TYPE = "host_nfs"
+HOST_IB_TYPE = "host_ib"
+# Retired separate collectors merged into HOST_IB_TYPE (monitor IB driver merge).
 HOST_IB_EXT_TYPE = "host_ib_ext"
 HOST_LNET_TYPE = "host_lnet"
 HOST_OPA_TYPE = "host_opa"

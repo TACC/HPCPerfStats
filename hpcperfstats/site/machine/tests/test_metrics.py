@@ -404,10 +404,10 @@ def test_job_arc_avg_sharedfs_bw_falls_back_to_nfs():
 
 
 def test_job_arc_avg_ibbw_falls_back_to_ethernet():
-  """avg_ibbw uses net rx/tx bytes when ib_ext/opa are unavailable."""
+  """avg_ibbw uses net rx/tx bytes when host_ib/opa are unavailable."""
 
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") in ("ib_ext", "opa"):
+    if kw.get("typename") in ("host_ib", "opa"):
       return None
     if kw.get("typename") == "net":
       return 12.0
@@ -453,7 +453,7 @@ def test_avg_packetsize_falls_back_to_ethernet_packets():
 
   class MockU:
     def get_type(self, typename):
-      if typename in ("ib_ext", "opa"):
+      if typename in ("host_ib", "opa"):
         return None, {}
       if typename == "net":
         return schema, {"h1": stats}
@@ -476,7 +476,7 @@ def test_max_fabricbw_falls_back_to_ethernet():
     job = type("J", (), {"cluster_mean_by_type": {}})()
 
     def get_type(self, typename):
-      if typename in ("ib_ext", "opa"):
+      if typename in ("host_ib", "opa"):
         return None, {}
       if typename == "net":
         return schema, {"h1": stats}
@@ -499,7 +499,7 @@ def test_max_packetrate_falls_back_to_ethernet():
     job = type("J", (), {"cluster_mean_by_type": {}})()
 
     def get_type(self, typename):
-      if typename in ("ib_ext", "opa"):
+      if typename in ("host_ib", "opa"):
         return None, {}
       if typename == "net":
         return schema, {"h1": stats}

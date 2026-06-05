@@ -14,6 +14,7 @@ SKIP_NAMES = frozenset({"uint32_t", "uint64_t", "k", "t", "m", "f", "n"})
 RETIRED_EVENT_NAMES = frozenset({
     "mem_uops_retired_all_loads_knl",
     "mem_uops_retired_l2_hit_loads_knl",
+    "VL15_dropped",
 })
 
 MARKERS = (
@@ -129,7 +130,11 @@ DESC: dict[str, str] = {
     "port_xmit_discards": "Packets not transmitted because the port was down or congested.",
     "port_xmit_wait": "Time waiting for credits or arbitration (vendor-specific units).",
     "symbol_error": "Minor link symbol errors on InfiniBand.",
-    "VL15_dropped": "InfiniBand VL 15 dropped frames.",
+    "vl15_dropped": "InfiniBand VL 15 dropped frames.",
+    "sw_rx_bytes": "IB switch-port received payload bytes (MAD extended 64-bit counters).",
+    "sw_rx_packets": "IB switch-port received packets.",
+    "sw_tx_bytes": "IB switch-port transmitted payload bytes.",
+    "sw_tx_packets": "IB switch-port transmitted packets.",
     "CAS_READS": "Memory-controller DRAM CAS read events (Intel uncore IMC or normalized ARM IMC), used for DRAM bandwidth.",
     "CAS_WRITES": "Memory-controller DRAM CAS write events.",
     "FLOPS": "AMD core performance counter: retired SSE/AVX floating-point operations (family-specific event encoding).",

@@ -156,8 +156,13 @@ def host_cpu_type_names() -> tuple[str, ...]:
     return _names_canonical_then_legacy(canon.HOST_CPU_TYPE, leg.LEGACY_HOST_CPU_TYPE)
 
 
+def host_ib_fabric_type_names() -> tuple[str, ...]:
+    """InfiniBand fabric typenames (unified host_ib first, then retired collectors)."""
+    return type_probe_names(canon.HOST_IB_TYPE)
+
+
 def host_ib_ext_type_names() -> tuple[str, ...]:
-    return _names_canonical_then_legacy(canon.HOST_IB_EXT_TYPE, leg.LEGACY_HOST_IB_EXT_TYPE)
+    return host_ib_fabric_type_names()
 
 
 def host_lnet_type_names() -> tuple[str, ...]:

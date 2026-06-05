@@ -31,3 +31,15 @@ def test_parse_stats_lines_host_cpu_and_mem():
   stats, _ = parse_stats_lines(lines, start_idx=0)
   assert ("host_cpu", "user", 10.0) in {(r["type"], r["event"], r["value"]) for r in stats}
   assert ("host_mem", "mem_used", 50000.0) in {(r["type"], r["event"], r["value"]) for r in stats}
+
+
+def test_parse_stats_lines_host_ib_not_excluded_by_default():
+  lines = [
+      "1709123456 1 host01\n",
+      "!host_ib port_xmit_data,E,U=4B port_rcv_data,E,U=4B\n",
+      "host_ib mlx5_0 1000 2000\n",
+  ]
+  stats, _ = parse_stats_lines(lines, start_idx=0)
+  events = {(r["type"], r["event"], r["value"]) for r in stats}
+  assert ("host_ib", "port_xmit_data", 1000.0) in events
+  assert ("host_ib", "port_rcv_data", 2000.0) in events

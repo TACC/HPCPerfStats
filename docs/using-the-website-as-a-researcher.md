@@ -1,7 +1,7 @@
 # Using HPCPerfStats on the Web — Guide for Researchers and HPC Users
 
 
-This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-05-07.
+This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-06-04.
 
 
 This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections.
@@ -85,7 +85,7 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 
 ### 4.1 Device data table (job page)
 
-Lists each `**host_data.type`** name present for the job (e.g. `cpu`, `mem`, `nvidia_gpu`, `ib_ext`, `llite`, PMC types) and the **event/column names** recorded. **Click the type name** to open the **type detail** page.
+Lists each `**host_data.type`** name present for the job (e.g. `cpu`, `mem`, `nvidia_gpu`, `host_ib`, `llite`, PMC types) and the **event/column names** recorded. **Click the type name** to open the **type detail** page.
 
 ### 4.2 Type detail page
 
@@ -292,5 +292,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-05-06 | Reorganized the guide for usability (index-first navigation and clearer section flow), aligned job-detail surfaces/metrics with current UI labels, and added paper-style concept citations with an appendix reference catalog for non-CS/HPC readers. |
 | 2026-05-07 | Job Detail summary hardware error overlay, screen-space Bokeh help on Job Detail plots, FSIO peak columns and catalog metrics, Resources layout (GPU summary above log links), expanded-search help note. |
 | 2026-05-07 | Added GPU precision activity catalog entries (`avg_fp16_active`, `avg_fp32_active`, `avg_fp64_active`) and documented that Multiprecision Mix pies render whatever precision widths are available per job/architecture. |
+| 2026-06-04 | Documented unified InfiniBand collector typename `host_ib` (replaces separate `ib_ext` / switch types in schema examples). |
 
 

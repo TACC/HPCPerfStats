@@ -16,8 +16,6 @@ from hpcperfstats.monitor_naming.resolve import schema_needs_legacy_hardware_dec
 
 # Types skipped on ingest (canonical monitor names).
 exclude_types = [
-    "host_ib",
-    "host_ib_sw",
     "intel_x86_uncore_cha_skx",
     "host_ps",
     "host_sysv_shm",

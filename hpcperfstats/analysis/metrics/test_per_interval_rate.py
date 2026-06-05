@@ -146,7 +146,7 @@ def test_fabric_node_imbalance_ib_ext_two_hosts():
 
   u = job_utils(_Job())
   val, typename, units = metrics.fabric_node_imbalance().compute_metric(u)
-  assert typename == "ib_ext"
+  assert typename == "host_ib"
   assert units == "%"
   assert val is not None
   assert val > 40.0

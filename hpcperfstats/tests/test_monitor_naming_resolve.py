@@ -35,3 +35,13 @@ def test_imc_types_probe_order_includes_legacy_knl_after_canonical():
   assert INGEST_LEGACY_KNL_IMC_TYPE in order
   assert MONITOR_LEGACY_KNL_IMC_TYPE in order
   assert order.index("intel_x86_uncore_imc_skx") < order.index(INGEST_LEGACY_KNL_IMC_TYPE)
+
+
+def test_type_probe_names_host_ib_includes_retired_collectors():
+  names = type_probe_names("host_ib")
+  assert names[0] == "host_ib"
+  assert "host_ib_ext" in names
+  assert "ib_ext" in names
+  assert "host_ib_sw" in names
+  assert "ib_sw" in names
+  assert "ib" in names
