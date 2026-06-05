@@ -1,6 +1,6 @@
 # Security audit memo (HPCPerfStats)
 
-Internal reference for security posture review. **Last reviewed:** 2026-05-06 (post-remediation update).
+Internal reference for security posture review. **Last reviewed:** 2026-06-05 (scheduled re-audit).
 
 ## Executive summary
 
@@ -9,26 +9,29 @@ HPCPerfStats combines a Django + DRF backend, session-based OAuth (Tapis) and ha
 ## Methodology
 
 1. Lightweight threat model: assets (sessions, API keys, DB, ingest payloads), trust boundaries (browser → nginx → Django → data stores), adversaries (anonymous abuse, authenticated users, stolen staff API keys).
-2. **pip-audit** on host `.venv` `pip freeze` (2026-05-06): 23 known vulnerabilities in 10 packages (includes dev/test tools; see table below).
-3. **npm audit** in `hpcperfstats/site/frontend` (2026-05-06): 0 reported vulnerabilities.
-4. **bandit** (`-ll`) on `hpcperfstats/`: 8 medium findings, mostly low-confidence B608 on SQL fragment builders; manual review indicates identifiers come from internal constants, not request input.
+2. **pip-audit** inside the production **web** Docker image (`docker run --rm hpcperfstats pip-audit`, 2026-06-05): **no known vulnerabilities** in installed runtime deps (Django 6.0.6, cryptography 48.0.0, requests 2.34.2, pillow 12.2.0). Host `.venv` freeze (dev/test extras) still reports low-severity **idna** / **pip** advisories not present in the production image.
+3. **npm audit** in `hpcperfstats/site/frontend` (2026-06-05): 0 reported vulnerabilities.
+4. **bandit** (`-ll`, excluding `*/tests/*`) on `hpcperfstats/` (2026-06-05): **no high** findings; **6** medium B608 on SQL fragment builders (same modules as prior review); manual review confirms table/column identifiers come from internal constants, not request input. One B108 on `wsgi.py` `MPLCONFIGDIR=/tmp/` (matplotlib cache path; accepted).
+5. **Security regression tests** (host pytest, 2026-06-05): 9 passed (`test_settings_security`, throttles, API-key page, HTTP headers/cache); 5 compose-backed modules skipped/errored on host (`db` hostname). CI and compose workflows remain the gate for DB-dependent security tests.
 5. Manual review of [`settings.py`](../hpcperfstats/site/hpcperfstats_site/settings.py), [`middleware.py`](../hpcperfstats/site/hpcperfstats_site/middleware.py), [`oauth2.py`](../hpcperfstats/site/machine/oauth2.py), [`api.py`](../hpcperfstats/site/machine/api.py) (auth and staff gates), [`views.py`](../hpcperfstats/site/hpcperfstats_site/views.py) (`csp_report`), nginx templates under [`services-conf/`](../services-conf/), and high-risk patterns (`subprocess`, `cursor.execute`).
 
-## Automated scan snapshot (2026-05-06)
+## Automated scan snapshot (2026-06-05)
 
-### pip-audit (full dev venv freeze)
+### pip-audit (production web image)
 
-Representative rows (upgrade targets depend on your pin policy; **Django** in `pyproject.toml` is `~=6.0` while this host venv showed 5.2.12—**reconcile deploy image with declared constraints**):
+| Package      | Version (image) | Result |
+|--------------|-----------------|--------|
+| django       | 6.0.6           | Clean |
+| cryptography | 48.0.0          | Clean |
+| requests     | 2.34.2          | Clean |
+| pillow       | 12.2.0          | Clean |
+| gunicorn     | 26.0.0          | Clean |
 
-| Package        | Version (venv) | Notes |
-|----------------|----------------|-------|
-| django         | 5.2.12         | Multiple CVEs; fixed in 5.2.13+ / 6.0.4+ per advisory DB |
-| cryptography   | 46.0.5         | Upgrade to 46.0.7+ |
-| requests       | 2.32.5         | Upgrade to 2.33.0+ |
-| pillow         | 12.1.1         | Upgrade to 12.2.0+ |
-| black, pytest, pygments, mistune, nbconvert, tornado | various | Mostly dev/docs tooling; reduce risk by scanning **production** install only |
+`pyproject.toml` runtime floors: `Django>=6.0.5,<7`, `requests>=2.34.2`, `cryptography>=48.0.0`, `pillow>=12.2.0`.
 
-`pip-audit` against `pyproject.toml` alone failed locally when resolving `mysqlclient` (missing `pkg-config` on the audit host). **Recommendation:** run `pip-audit` inside the same Docker build stage that installs production dependencies.
+**Host dev venv** (not shipped): `idna` 3.13 (CVE-2026-45409 → 3.15+), `pip` 26.1.1 (PYSEC-2026-196 → 26.1.2+). Treat as developer-workstation hygiene only.
+
+**Workflow note:** `tests/run_security_audit_workflow.sh` uses `docker-compose run web`. On machines with a local (gitignored) `docker-compose.app.yaml` but no `/opt/hpcperfstats_data/` bind mount, compose can fail before `pip-audit` runs. CI (no app overlay) is unaffected; direct `docker run --rm hpcperfstats pip-audit` is a valid local fallback.
 
 ### npm audit (frontend)
 
@@ -36,7 +39,7 @@ No vulnerabilities reported for the audited tree.
 
 ### bandit
 
-No high-severity issues; medium B608 on dynamic SQL helpers—treat as “verify no user-controlled identifiers” during changes to those modules.
+No high-severity issues. Production-code medium B608 locations (2026-06-05): `analysis/gen/jid_table.py`, `analysis/metrics/live_host_sample_count.py`, `analysis/metrics/update_metrics.py`, `site/machine/artifact_readiness_expressions.py`. Treat as “verify no user-controlled identifiers” when editing those modules.
 
 ## Findings table
 
@@ -50,6 +53,7 @@ No high-severity issues; medium B608 on dynamic SQL helpers—treat as “verify
 | F6 | Medium | Observability | `/csp-report/` returned **403** for browser-style POSTs when CSRF checks apply (no CSRF token on CSP reports). | **Fixed** (csrf_exempt + body cap; tests) |
 | F7 | Low | API keys | Stored as SHA-256 of high-entropy raw key; consider a pepper if policy requires. | Open (optional) |
 | F8 | Low | Subprocess/SQL | Ingest/archive uses subprocess and raw SQL with parameters; keep arguments non-user-controlled. | Ongoing review |
+| F9 | Low | Operations | Local `run_security_audit_workflow.sh` can fail when gitignored `docker-compose.app.yaml` is present without `hpcperfstatsdata` host path; CI path unaffected. | Open (workflow hardening optional) |
 
 ## Positive controls (summary)
 
@@ -77,3 +81,4 @@ No high-severity issues; medium B608 on dynamic SQL helpers—treat as “verify
 | 2026-05-06 | Anonymous **`GET /api/pub/monthly-metrics/`** documented with scoped throttle + selective **`robots.txt`** `Allow` entries for **`/pub/`** HTML only. |
 | 2026-05-07 | **`/pub/monthly-metrics`** and **`GET /api/pub/monthly-metrics/`** rebranded to **`/pub/cluster-dashboard`** and **`GET /api/pub/cluster-dashboard/`** (throttle scope **`public_cluster_dashboard`**; legacy env **`API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE`** still honored as fallback). |
 | 2026-05-07 | **`robots.txt`**: nginx serves a Vite-built static file; Allow-list registry is **`publicRobotsAllowPrefixes.js`** (edge headers in **`nginx-edge-security-headers.inc`**). |
+| 2026-06-05 | Scheduled re-audit: production-image **pip-audit** clean; **npm audit** clean; bandit unchanged (6 prod B608); dependency floors bumped in **`pyproject.toml`**; documented local compose-overlay audit workflow caveat (F9). |

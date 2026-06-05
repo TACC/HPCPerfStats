@@ -12,7 +12,7 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 
 ## P2 — Hardening and hygiene
 
-- No open P2 implementation tasks; remaining items are tracked as policy decisions and ongoing review notes in **Done**.
+- **Audit workflow compose overlay (F9):** optional hardening for `tests/run_security_audit_workflow.sh` — run `pip-audit` via `docker run --rm` on the built `hpcperfstats` image (no `hpcperfstatsdata` volume) so local machines with gitignored `docker-compose.app.yaml` do not block audits. CI behavior unchanged.
 
 ## Done
 
@@ -36,3 +36,4 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 | 2026-05-06 | Initial backlog; marked CSP report fix done. |
 | 2026-05-06 | Closed all P0/P1 items from initial memo and moved them to Done with implementation notes. |
 | 2026-05-07 | Anonymous public metrics Done row aligned with **`/api/pub/cluster-dashboard/`** throttle + legacy env fallback. |
+| 2026-06-05 | Re-audit: production deps clean; added optional P2 for local audit workflow vs `docker-compose.app.yaml` overlay (F9). |
