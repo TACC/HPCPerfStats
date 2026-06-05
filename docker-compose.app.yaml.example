@@ -10,7 +10,6 @@ services:
       - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
       - STATIC_ROOT=/home/hpcperfstats/staticfiles
     volumes:
-      - ./hpcperfstats.ini:/home/hpcperfstats/hpcperfstats.ini:ro
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
       - hpcperfstatsdata:/hpcperfstats/
@@ -31,7 +30,6 @@ services:
       - 514:514/udp
       - 514:514/tcp
     volumes:
-      - ./hpcperfstats.ini:/home/hpcperfstats/hpcperfstats.ini:ro
       - hpcperfstatsdata:/hpcperfstats/
       # Override HPCPERFSTATS_PIPELINE_SSH_DIR to a host path containing keys.
       - ${HPCPERFSTATS_PIPELINE_SSH_DIR:-/tmp/hpcperfstats-pipeline-ssh}:/hpcperfstats/.ssh/:ro
