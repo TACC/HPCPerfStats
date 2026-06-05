@@ -32,6 +32,15 @@ int main(void)
   assert(strstr(nvidia_schema_def, " sysio_power_usage,U=W") != NULL);
   assert(strstr(nvidia_schema_def, "tensor_imma_active") != NULL);
   assert(strstr(nvidia_schema_def, "tensor_hmma_active") != NULL);
+  assert(strstr(nvidia_schema_def, "tensor_dfma_active") != NULL);
+  assert(strstr(nvidia_schema_def, " gpu_mem_free_mb,U=MB") != NULL);
+  assert(strstr(nvidia_schema_def, " gpu_sm_clock") != NULL);
+  assert(strstr(nvidia_schema_def, " gpu_dram_active") != NULL);
+  assert(strstr(nvidia_schema_def, " gpu_pcie_tx_bytes,U=B") != NULL);
+  assert(strstr(nvidia_schema_def, " gpu_pcie_rx_bytes,U=B") != NULL);
+  assert(strstr(nvidia_schema_def, " gpu_nvlink_tx_bytes,U=B") != NULL);
+  assert(strstr(nvidia_schema_def, " gpu_nvlink_rx_bytes,U=B") != NULL);
+  assert(strstr(nvidia_schema_def, " gpu_pcie_replay_counter") != NULL);
   assert_common_gpu_roofline_keys(nvidia_schema_def);
   assert_common_gpu_roofline_keys(amd_schema_def);
   printf("test_gpu_schema_contract passed\n");

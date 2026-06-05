@@ -3,17 +3,19 @@
 
 #include <stdint.h>
 
-#define NVIDIA_GPU_NFIELDS 21
-/* DCGM field-group size without optional tensor IMMA/HMMA split (older host engines). */
-#define NVIDIA_GPU_DCGM_NCORE 19
+#define NVIDIA_GPU_NFIELDS 26
+/* DCGM field-group size without optional tensor IMMA/HMMA/DFMA split (older host engines). */
+#define NVIDIA_GPU_DCGM_NCORE 23
 /* Minimal non-PROF list for stacks where DCGM profiling watches are not permissioned/supported. */
-#define NVIDIA_GPU_DCGM_NBASIC 9
+#define NVIDIA_GPU_DCGM_NBASIC 12
 
 #define KEYS \
   X(gpu_util, "", "GPU utilization in %"), \
   X(gpu_mem_util, "", "Memory utilization in %"), \
   X(gpu_mem_total_mb, "U=MB", "Total GPU framebuffer memory (device-reported MB)"), \
   X(gpu_mem_used_mb, "U=MB", "Used GPU framebuffer memory (device-reported MB)"), \
+  X(gpu_mem_free_mb, "U=MB", "Free GPU framebuffer memory (device-reported MB)"), \
+  X(gpu_sm_clock, "", "SM clock from DCGM (device-reported units)"), \
   X(power_usage, "U=W", "Power draw in Watts"), \
   X(sysio_power_usage, "U=W", "DCGM SysIO instantaneous power (W) when exposed; do not sum with power_usage/module without vendor guidance"), \
   X(module_power_usage, "U=W", "DCGM module-scope power (W) on superchips when exposed; may overlap GPU+Grace readings—avoid double-counting in totals"), \
@@ -26,6 +28,13 @@
   X(tensor_active, "", "Ratio of cycles any tensor pipe is active (in %)"), \
   X(tensor_imma_active, "", "DCGM tensor IMMA pipe duty cycle (in %); int/low-precision tensor path — use as FP8-adjacent signal only, not dedicated FP8 FLOPs"), \
   X(tensor_hmma_active, "", "DCGM tensor HMMA pipe duty cycle (in %); overlaps tensor_active (1004) on some stacks — excluded from gpu_flops fp_mix with tensor_imma_active"), \
+  X(tensor_dfma_active, "", "DCGM tensor DFMA pipe duty cycle (in %); FP64 tensor path — excluded from gpu_flops fp_mix"), \
+  X(gpu_dram_active, "", "Ratio of cycles device memory interface is active (in %)"), \
+  X(gpu_pcie_tx_bytes, "U=B", "DCGM PROF PCIe transmit byte counter (GPU perspective)"), \
+  X(gpu_pcie_rx_bytes, "U=B", "DCGM PROF PCIe receive byte counter (GPU perspective)"), \
+  X(gpu_nvlink_tx_bytes, "U=B", "DCGM PROF NvLink transmit byte counter"), \
+  X(gpu_nvlink_rx_bytes, "U=B", "DCGM PROF NvLink receive byte counter"), \
+  X(gpu_pcie_replay_counter, "", "DCGM PCIe replay counter"), \
   X(clocks_event_reasons, "", "Bitmask of GPU clock slowdown reasons"), \
   X(gpu_flops_rate, "U=FLOP/s", "Estimated GPU floating-point rate (FLOP/s)"), \
   X(gpu_mem_bw_bytes_rate, "U=B/s", "Estimated GPU memory bandwidth (bytes/s)"), \
@@ -40,8 +49,11 @@ typedef struct dcgm_data {
   int64_t mem_util;
   int64_t fb_total_mb;
   int64_t fb_used_mb;
+  int64_t fb_free_mb;
   int64_t gpu_util;
   int64_t temperature;
+  int64_t sm_clock;
+  int64_t pcie_replay_counter;
   int64_t clocks_event_reasons;
   double power_usage;
   double sysio_power_usage;
@@ -49,6 +61,8 @@ typedef struct dcgm_data {
   double tensor_active;
   double tensor_imma_active;
   double tensor_hmma_active;
+  double tensor_dfma_active;
+  double dram_active;
   double fp64_active;
   double fp32_active;
   double fp16_active;

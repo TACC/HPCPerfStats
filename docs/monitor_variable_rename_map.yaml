@@ -134,6 +134,14 @@ events:
   mem_total_mb: gpu_mem_total_mb
   mem_used_mb: gpu_mem_used_mb
   mem_util: gpu_mem_util
+  fb_free: gpu_mem_free_mb
+  sm_clock: gpu_sm_clock
+  pcie_replay_counter: gpu_pcie_replay_counter
+  dram_active: gpu_dram_active
+  nvlink_rx_bytes: gpu_nvlink_rx_bytes
+  nvlink_tx_bytes: gpu_nvlink_tx_bytes
+  pcie_rx_bytes: gpu_pcie_rx_bytes
+  pcie_tx_bytes: gpu_pcie_tx_bytes
 file_event_overrides:
   intel_pcu.c:
     instr_retired: pcu_ctr0
