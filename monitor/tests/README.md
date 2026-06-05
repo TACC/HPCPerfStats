@@ -26,6 +26,8 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_stats_buffer_uts.c` | `stats_buffer_ensure_uts_cached` / `stats_buffer_uts_cache_reset` |
 | `test_stats_buffer_rows.c` | `stats_buffer_append_enabled_type_rows` (tier row assembly into `sf_data`) |
 | `test_stats_buffer_collect.c` | `stats_buffer_collect` fast/full tier payloads (`STATS_BUFFER_TEST_SEND_HOOK`; RabbitMQ build) |
+| `test_stats_buffer_debug_shm.c` | DEBUG shm write path (`fast`/`full` overwrite, legacy→full) |
+| `test_debug_shm_emit_golden.c` | Golden regression for assembled `@fast`/`@full` sample payloads via debug shm (`tests/expected/debug_shm_*.txt`; DEBUG + RabbitMQ); also validates per-driver row shape (type/dev/tier/value counts) |
 | `test_stats_runtime_collect.c` | `stats_runtime_collect_cycle`, `stats_schema_key_active_this_phase` |
 | `test_path_collect.c` | `path_collect_single` / `path_collect_list` (`open`/`read` path I/O) |
 | `test_path_read.c` | `path_read_small` / `path_read_alloc` (incl. `PATH_READ_ALLOC_MAX`, NULL guards) |
@@ -113,6 +115,16 @@ Or run with `check-local` by opting in:
 RUN_RMQ_INTEGRATION=1 make -C .build-static check
 ```
 
+### Debug shm golden regeneration
+
+When intentional changes alter sparse row assembly or tier tokens, refresh the checked-in expected files:
+
+```bash
+UPDATE_DEBUG_SHM_GOLDEN=1 make -C .build-static check TESTS=test_debug_shm_emit_golden
+```
+
+Requires a **DEBUG** configure (`--enable-debug`). Non-DEBUG builds skip this test.
+
 Environment knobs:
 
 - `INSTALL_ROOT` (default `~/.cache/hpcperfstats-rmq`) for downloaded/built Erlang + RabbitMQ artifacts.
@@ -149,7 +161,8 @@ Some drivers are omitted or skipped depending on the configured build:
 |-----------|----------------|
 | `CPU_BACKEND_DCGM` | `test_cpu_counter_dcgm_util`, `test_cpu_counter_dcgm_publish`, `test_dcgm_pkg_uniq` |
 | `LIKWID` | `test_likwid_rapl_scale` links production `likwid_rapl.c`; otherwise inline fallback |
-| `RABBITMQ` | `test_monitor_cli`, `test_ring_buffer`, `test_stats_buffer_collect`, `test_monitor_timing` |
+| `RABBITMQ` | `test_monitor_cli`, `test_ring_buffer`, `test_stats_buffer_collect`, `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden`, `test_monitor_timing` |
+| `DEBUG` | `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden` (meaningful assertions; otherwise skipped) |
 | `INFINIBAND` | `test_ib_mad_backoff`, `test_ib_mad_decode` |
 | Root / `/dev/mem` | `test_intel_mmconfig` skips open probe when not root (see file comment) |
 | Live broker | `test_rabbitmq_integration.sh` — opt-in via `RUN_RMQ_INTEGRATION=1` or `check-rabbitmq-integration` |

@@ -1,0 +1,8 @@
+
+1234567890.000000 job42 golden_host
+emit_extra dev0 @fast 10 11
+emit_fast dev0 @fast 10 11
+emit_mixed dev0 @fast 10 12
+host_mem mem @fast 10 11
+host_net eth0 @fast 10 11
+host_ps - @fast 10 11

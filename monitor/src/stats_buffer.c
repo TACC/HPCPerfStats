@@ -197,11 +197,16 @@ int stats_buffer_collect(struct stats_buffer *sf)
   int header_len;
   struct timespec time;
 
+#ifdef STATS_BUFFER_TEST_TIME_HOOK
+  time.tv_sec = 1234567890;
+  time.tv_nsec = 0;
+#else
   if (clock_gettime(CLOCK_REALTIME, &time) != 0) {
     monitor_log_error("cannot clock_gettime(): %m\n");
     rc = -1;
     goto out;
   }
+#endif
   header_len = snprintf(header, sizeof(header), "\n%f %s %s\n",
 			time.tv_sec + 1e-9 * time.tv_nsec, jobid, stats_buffer_cached_uts()->nodename);
   if (header_len < 0 || (size_t)header_len >= sizeof(header)

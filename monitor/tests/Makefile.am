@@ -50,7 +50,7 @@ if CPU_BACKEND_DCGM
 check_PROGRAMS += test_dcgm_pkg_uniq test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish
 endif
 if RABBITMQ
-check_PROGRAMS += test_monitor_cli test_ring_buffer test_stats_buffer_collect test_stats_buffer_debug_shm test_monitor_timing
+check_PROGRAMS += test_monitor_cli test_ring_buffer test_stats_buffer_collect test_stats_buffer_debug_shm test_debug_shm_emit_golden test_monitor_timing
 endif
 
 TESTS = $(check_PROGRAMS)
@@ -66,7 +66,7 @@ if RABBITMQ
 	fi
 endif
 
-EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_stats_buffer_collect.c test_stats_buffer_collect_stubs.c test_stats_buffer_collect_stubs.h test_stats_buffer_rows.c test_stats_runtime_collect.c test_ib_family.c test_ib_mad_backoff.c test_ib_mad_decode.c test_ib_mad_stubs.c test_nvidia_gpu_estimate.c test_roofline_detect_fixture.c test_daemonize.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_arm_aarch64_imc_schema.c test_amd_x86_pmc_schema.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh scripts/check_unsafe_c_patterns.sh scripts/check_unsafe_c_patterns.allowlist
+EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_stats_buffer_collect.c test_stats_buffer_collect_stubs.c test_stats_buffer_collect_stubs.h test_debug_shm_emit_fixture.c test_debug_shm_emit_fixture.h test_debug_shm_emit_validate.c test_debug_shm_emit_validate.h test_debug_shm_emit_golden.c expected/debug_shm_fast.txt expected/debug_shm_full.txt test_stats_buffer_rows.c test_stats_runtime_collect.c test_ib_family.c test_ib_mad_backoff.c test_ib_mad_decode.c test_ib_mad_stubs.c test_nvidia_gpu_estimate.c test_roofline_detect_fixture.c test_daemonize.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_arm_aarch64_imc_schema.c test_amd_x86_pmc_schema.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh scripts/check_unsafe_c_patterns.sh scripts/check_unsafe_c_patterns.allowlist
 
 if RABBITMQ
 .PHONY: check-rabbitmq-integration
@@ -413,6 +413,25 @@ test_stats_buffer_debug_shm_SOURCES = \
 	$(top_srcdir)/src/dict.c
 test_stats_buffer_debug_shm_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
 
+test_debug_shm_emit_golden_SOURCES = \
+	test_debug_shm_emit_golden.c \
+	test_debug_shm_emit_fixture.c \
+	test_debug_shm_emit_validate.c \
+	$(top_srcdir)/src/stats_buffer.c \
+	$(top_srcdir)/src/stats_buffer_debug_shm.c \
+	$(top_srcdir)/src/stats_buffer_rmq.c \
+	$(top_srcdir)/src/stats_buffer_rows.c \
+	$(top_srcdir)/src/stats_buffer_uts.c \
+	$(top_srcdir)/src/stats_buffer_data_append.c \
+	$(top_srcdir)/src/stats_text_format.c \
+	$(top_srcdir)/src/collect_tier.c \
+	$(top_srcdir)/src/monitor_log.c \
+	$(top_srcdir)/src/path_open_fail_once.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/dict.c
+test_debug_shm_emit_golden_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK -DSTATS_BUFFER_TEST_TIME_HOOK -DSTATS_BUFFER_TEST_UTS_HOOK
+
 test_monitor_timing_SOURCES = \
 	test_monitor_timing.c \
 	$(top_srcdir)/src/monitor_timing.c
@@ -485,5 +504,6 @@ test_monitor_cli_LDADD = $(LDADD)
 test_ring_buffer_LDADD = $(LDADD)
 test_stats_buffer_collect_LDADD = $(LDADD)
 test_stats_buffer_debug_shm_LDADD = $(LDADD)
+test_debug_shm_emit_golden_LDADD = $(LDADD)
 test_monitor_timing_LDADD = $(LDADD) -lm
 endif
