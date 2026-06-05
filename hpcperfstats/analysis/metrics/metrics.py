@@ -578,8 +578,8 @@ class _JobForMetrics:
             index="time", columns="event", values="value", aggfunc="mean"
         )
         pivot = pivot.reindex(
-            index=times_index, fill_value=0
-        ).reindex(columns=events, fill_value=0)
+            index=times_index, fill_value=np.nan
+        ).reindex(columns=events, fill_value=np.nan)
         stats = np.ascontiguousarray(pivot.values, dtype=np.float64)
         host_obj.stats.setdefault(typename, {})
         host_obj.stats[typename]["agg"] = stats

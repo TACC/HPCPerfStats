@@ -31,6 +31,46 @@ class _FakeJidTable:
     return df[columns]
 
 
+class _FakeJidTableSparseSlowTier:
+  """Slow-tier event sampled only on sparse timestamps (two-tier monitor cadence)."""
+
+  def __init__(self):
+    self.jid = 789
+    self.host_list = ["host1"]
+    self.schema = {"host_tt": ["a", "b"]}
+
+  def get_full_host_data_df(self, columns):
+    data = [
+        {"host": "host1", "time": "2024-01-01T00:00:00Z",
+         "type": "host_tt", "event": "a", "value": 1000.0},
+        {"host": "host1", "time": "2024-01-01T00:00:30Z",
+         "type": "host_tt", "event": "a", "value": 1100.0},
+        {"host": "host1", "time": "2024-01-01T00:10:00Z",
+         "type": "host_tt", "event": "a", "value": 2000.0},
+        {"host": "host1", "time": "2024-01-01T00:10:00Z",
+         "type": "host_tt", "event": "b", "value": 2500.0},
+    ]
+    return pd.DataFrame(data)[columns]
+
+
+def test_job_for_metrics_sparse_slow_tier_uses_nan_not_zero_fill():
+  """Missing slow-tier samples at fast timestamps must not become counter value 0."""
+  job = metrics._JobForMetrics(_FakeJidTableSparseSlowTier())
+  agg = job.hosts["host1"].stats["host_tt"]["agg"]
+  assert agg.shape == (3, 2)
+  # Fast event a present at all three global timestamps.
+  assert agg[0, 0] == 1000.0
+  assert agg[1, 0] == 1100.0
+  assert agg[2, 0] == 2000.0
+  # Slow event b only at the third timestamp; earlier slots NaN (not 0).
+  assert np.isnan(agg[0, 1])
+  assert np.isnan(agg[1, 1])
+  assert agg[2, 1] == 2500.0
+  rates = metrics._per_interval_rate(agg[:, 1], job.times)
+  assert np.isnan(rates[0])
+  assert np.isnan(rates[1])
+
+
 def test_job_for_metrics_builds_time_axis_and_host_stats():
   jt = _FakeJidTable()
 

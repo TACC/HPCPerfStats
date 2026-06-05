@@ -1,5 +1,6 @@
 """Pure parsing helpers for stats files (no Django). Used by sync_timedb and by unit tests."""
 import os
+import warnings
 import numpy as np
 import pandas as pd
 from pandas import DataFrame, concat, to_datetime
@@ -71,6 +72,31 @@ _HOST_CPU_HW_TYPES = frozenset({HOST_CPU_HW_TYPE, LEGACY_HOST_CPU_HW_TYPE})
 _COLLAPSE_GROUP_COLS = ["host", "type", "event", "unit", "time"]
 _NVIDIA_GROUP_KEY_EVENT_INDEX = _COLLAPSE_GROUP_COLS.index("event")
 
+_SLOW_TIER_OPT = "R=S"
+_TIER_MARKERS = frozenset({"@fast", "@full"})
+
+
+def _schema_token_is_slow_tier(token: str) -> bool:
+  """True when a schema entry is marked slow-tier via ,R=S (monitor two-tier collect)."""
+  return _SLOW_TIER_OPT in token.split(",")[1:]
+
+
+def _fast_schema_keys(full_events: list[str]) -> list[str]:
+  """Fast-tier schema keys in order (entries without ,R=S)."""
+  return [e for e in full_events if not _schema_token_is_slow_tier(e)]
+
+
+def _zip_schema_vals(schema_keys, vals, typ=None, dev=None):
+  """Zip value tokens to schema keys; None when counts disagree (no silent truncation)."""
+  if len(vals) != len(schema_keys):
+    warnings.warn(
+        "stats line value count %d != schema key count %d for type=%s dev=%s"
+        % (len(vals), len(schema_keys), typ, dev),
+        stacklevel=3,
+    )
+    return None
+  return dict(zip(schema_keys, vals))
+
 
 def _cluster_mean_sum_sorted(values, gap_threshold):
   v = np.asarray(values, dtype=np.float64)
@@ -137,15 +163,13 @@ def _collapse_nvidia_gpu_group(group):
   })
 
 
-def _vals_dict_from_line(typ, schema, vals, use_legacy_decode):
+def _vals_dict_from_line(typ, schema, schema_keys, vals, use_legacy_decode, dev=None):
   if use_legacy_decode:
     decoded = legacy_parsing.decode_counter_line(typ, schema, vals)
     if decoded is None:
       return None
     return decoded
-  if typ not in schema:
-    return None
-  return dict(zip(schema[typ], vals))
+  return _zip_schema_vals(schema_keys, vals, typ=typ, dev=dev)
 
 
 def _append_stats_rows(stats, rec, vals_dict):
@@ -247,6 +271,7 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
   exclude_types_list = exclude_types_list if exclude_types_list is not None else exclude_types
 
   schema = {}
+  schema_fast = {}
   stats = []
   proc_stats = []
   insert = False
@@ -273,8 +298,22 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
       if typ not in schema:
         continue
 
-      use_legacy = schema_needs_legacy_hardware_decode(typ, schema[typ])
-      vals_dict = _vals_dict_from_line(typ, schema, vals, use_legacy)
+      tier_marker = None
+      if vals and vals[0] in _TIER_MARKERS:
+        tier_marker = vals[0]
+        vals = vals[1:]
+
+      if tier_marker == "@fast":
+        if schema_needs_legacy_hardware_decode(typ, schema[typ]):
+          continue
+        schema_keys = schema_fast.get(typ, [])
+        use_legacy = False
+      else:
+        schema_keys = schema[typ]
+        use_legacy = schema_needs_legacy_hardware_decode(typ, schema[typ])
+
+      vals_dict = _vals_dict_from_line(
+          typ, schema, schema_keys, vals, use_legacy, dev=dev)
       if vals_dict is None:
         continue
 
@@ -291,6 +330,7 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
       label, events = s.split(maxsplit=1)
       typ, events = label[1:], events.split()
       schema[typ] = events
+      schema_fast[typ] = _fast_schema_keys(events)
 
   return stats, proc_stats
 

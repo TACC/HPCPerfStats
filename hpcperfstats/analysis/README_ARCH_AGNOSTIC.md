@@ -21,6 +21,8 @@ This note summarizes how CPU/GPU vendors are handled in `hpcperfstats/analysis` 
 
 Typenames must match the **shipped** monitor `st_name` values for new ingest. Historical rows may still use legacy names; analysis dual-reads via `resolve.py` without a DB migration.
 
+**Two-tier sparse rows:** when the monitor runs with `enable_slow_tier 1`, schema lines mark slow keys with `,R=S` and sample rows use `@fast` (fast keys only) or `@full` (all keys). Ingest in `sync_timedb_parsing.py` strips tier markers and zips values against the matching schema subset; legacy full-width rows (no `@` token) remain supported. Metrics pivot missing `(time, event)` pairs with NaN so slow-tier sparsity does not invent zero counter readings at fast sample times.
+
 ### Roofline nominal peaks (`roofline_peaks.py`)
 
 - **File**: `hpcperfstats/analysis/plot/roofline_peaks.py` — `ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS`, `infer_cpu_roofline_peak_flops_and_bw_gbps(jt)`.
