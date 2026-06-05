@@ -3,7 +3,7 @@
 
 /* Shared iteration helper for /sys/class/<x> and /sys/block style trees.
  *
- * Many TYPE drivers (block, net, ib, ib_ext, ib_sw, opa, numa, llite, mdc)
+ * Many TYPE drivers (block, net, ib family, opa, numa, llite, mdc)
  * repeated the same pattern:
  *
  *   dir = path_opendir_or_record_fail(base);

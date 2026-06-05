@@ -54,11 +54,6 @@ extern struct stats_type cpu_counter_metrics_stats_type;
 
 extern struct stats_type ib_stats_type;
 
-#if defined(MONITOR_WITH_INFINIBAND)
-extern struct stats_type ib_ext_stats_type;
-extern struct stats_type ib_sw_stats_type;
-#endif
-
 #if defined(MONITOR_WITH_LUSTRE)
 extern struct stats_type llite_stats_type;
 #endif
@@ -111,10 +106,6 @@ struct stats_type *const stats_type_table[] = {
   &cpu_counter_metrics_stats_type,
 #endif
   &ib_stats_type,
-#if defined(MONITOR_WITH_INFINIBAND)
-  &ib_ext_stats_type,
-  &ib_sw_stats_type,
-#endif
 #if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
   &intel_4pmc3_stats_type,
   &intel_8pmc3_stats_type,

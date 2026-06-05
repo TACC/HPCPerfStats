@@ -8,6 +8,7 @@
 #include <time.h>
 #include "stats.h"
 #include "trace.h"
+#include "ib_family.h"
 
 static void disable_type_if_present(const char *name)
 {
@@ -263,11 +264,8 @@ void auto_disable_optional_stats_by_lspci(void)
   }
   if (!has_amd_gpu)
     disable_type_if_present("amd_gpu");
-  if (!has_ib) {
-    disable_type_if_present("host_ib");
-    disable_type_if_present("host_ib_ext");
-    disable_type_if_present("host_ib_sw");
-  }
+  if (!has_ib)
+    ib_family_disable_all();
   if (!has_opa)
     disable_type_if_present("host_opa");
 }

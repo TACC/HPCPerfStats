@@ -11,6 +11,10 @@ struct stats_type *stats_type_get(const char *name)
   return NULL;
 }
 
+void ib_family_disable_all(void)
+{
+}
+
 static void test_default_disable_on_first_miss(void)
 {
   unsetenv("HPCPERFSTATS_NVIDIA_DISABLE_MISS_THRESHOLD");

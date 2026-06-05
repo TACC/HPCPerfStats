@@ -155,6 +155,8 @@ TYPES 	= \
 	block.c \
 	cpu.c \
 	ib.c \
+	ib_common.c \
+	ib_family.c \
 	lnet.c \
 	mem.c \
 	net.c \
@@ -255,8 +257,7 @@ endif
 
 if INFINIBAND
 TYPES	 += \
-	ib_ext.c \
-	ib_sw.c
+	ib_mad.c
 endif
 
 hpcperfstatsd_LDFLAGS =
@@ -280,6 +281,9 @@ endif
 
 hpcperfstatsd_SOURCES += \
 	ib.h \
+	ib_common.h \
+	ib_family.h \
+	ib_mad.h \
 	$(TYPES)
 
 hpcperfstatsd_LDFLAGS += \
