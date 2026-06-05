@@ -9,7 +9,8 @@ cd "$ROOT_DIR"
 . "$(dirname "${BASH_SOURCE[0]}")/colima_compose_teardown.sh"
 colima_export_docker_env
 
-LOG="${1:-docs/test_run_log_colima_compose.md}"
+mkdir -p test_runs
+LOG="${1:-test_runs/test_run_log_colima_compose.md}"
 : >"$LOG"
 
 log() { echo "$*" | tee -a "$LOG"; }

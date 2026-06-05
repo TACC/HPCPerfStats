@@ -35,7 +35,7 @@ from hpcperfstats.site.machine.cache_utils import (
     make_cache_key,
     make_cache_key_bounded,
 )
-from hpcperfstats.monitor_naming.resolve import type_probe_names
+from hpcperfstats.monitor_naming.resolve import events_probe_names, type_probe_names
 from hpcperfstats.site.machine.models import host_data, job_data
 
 # Chunk host__in on host_data for large jobs; single queries with thousands of
@@ -1163,7 +1163,8 @@ class jid_table:
     """Aggregate val_col (e.g. 'arc' or 'value') for given type and events. Returns DataFrame with columns host, time, sum_val (sum * conv). Result is cached per (jid, typ, val_col, events).
         """
     _incr_summary_aggregate_count_if_active()
-    events_key = ":".join(sorted(events))
+    probed_events = events_probe_names(events)
+    events_key = ":".join(sorted(probed_events))
 
     def _fn_pandas_groupby():
       hosts = [str(h) for h in self._base_filter.get("host__in") or []]
@@ -1181,7 +1182,7 @@ class jid_table:
               host__in=host_chunk,
               **tkw,
               type=candidate_typ,
-              event__in=list(events),
+              event__in=probed_events,
           ).values("host", "time", val_col)
           df_raw = queryset_to_dataframe(qs)
           if (
@@ -1234,18 +1235,25 @@ class jid_table:
         tkw = self._host_data_time_filter_kwargs()
         frames = []
         for host_chunk in _iter_acct_host_batches(hosts):
-          qs_sql = (
-              host_data.objects.filter(
-                  host__in=host_chunk,
-                  **tkw,
-                  type=typ,
-                  event__in=list(events),
-              )
-              .values("host", "time")
-              .annotate(sum_val=Coalesce(Sum(val_col), Value(0)))
-              .order_by("host", "time")
-          )
-          frames.append(queryset_to_dataframe(qs_sql))
+          chunk_frames = []
+          for candidate_typ in type_probe_names(typ):
+            qs_sql = (
+                host_data.objects.filter(
+                    host__in=host_chunk,
+                    **tkw,
+                    type=candidate_typ,
+                    event__in=probed_events,
+                )
+                .values("host", "time")
+                .annotate(sum_val=Coalesce(Sum(val_col), Value(0)))
+                .order_by("host", "time")
+            )
+            df_chunk = queryset_to_dataframe(qs_sql)
+            if not df_chunk.empty and "sum_val" in df_chunk.columns:
+              chunk_frames.append(df_chunk)
+              break
+          if chunk_frames:
+            frames.append(chunk_frames[0])
         if not frames:
           return pd.DataFrame(columns=["host", "time", "sum_val"])
         df_sql = pd.concat(frames, ignore_index=True)
@@ -1663,17 +1671,26 @@ class HostDataProvider:
     if val_col not in _ALLOWED_METRICS:
       val_col = "arc"
     from django.db.models import Sum
-    # Aggregate by host and time using ORM; host filter is already in _base_filter.
-    qs = (
-        self._host_data_qs(
-            type=typ,
-            event__in=list(events),
-        )
-        .values("host", "time")
-        .annotate(sum_val=Sum(val_col))
-        .order_by("host", "time")
-    )
-    df = queryset_to_dataframe(qs)
+
+    probed_events = events_probe_names(events)
+    df = None
+    for candidate_typ in type_probe_names(typ):
+      qs = (
+          self._host_data_qs(
+              type=candidate_typ,
+              event__in=probed_events,
+          )
+          .values("host", "time")
+          .annotate(sum_val=Sum(val_col))
+          .order_by("host", "time")
+      )
+      candidate = queryset_to_dataframe(qs)
+      if not candidate.empty and "sum_val" in candidate.columns:
+        df = candidate
+        break
+    if df is None:
+      import pandas as pd
+      df = pd.DataFrame(columns=["host", "time", "sum_val"])
     if not df.empty and "sum_val" in df.columns:
       df["sum_val"] = df["sum_val"] * conv
     return df

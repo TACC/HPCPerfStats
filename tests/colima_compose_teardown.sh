@@ -10,7 +10,7 @@ colima_export_docker_env() {
 }
 
 # Usage: colima_compose_teardown docker-compose [extra compose flags...]
-#        colima_compose_teardown docker-compose -f docker-compose.yaml -f tests/docker-compose.pipeline-e2e.yaml
+#        colima_compose_teardown docker-compose -f docker-compose.yaml -f tests/docker-compose.test-overlay.yaml
 colima_compose_teardown() {
   colima_export_docker_env
   if [[ $# -lt 1 ]]; then

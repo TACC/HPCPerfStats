@@ -13,9 +13,8 @@ This note summarizes how CPU/GPU vendors are handled in `hpcperfstats/analysis` 
 
 - **`utils.utils`**: Logical `pmc` uses `pmc_typename_priority()` (AMD and Intel GPR PMC before `host_cpu_hw`). IMC uses `imc_types_probe_order()`. CHA uses `cha_typename_priority()`.
 - **Summary plot**: Intel core metrics try `intel_x86_pmc_gpr8`, then `intel_x86_pmc_gpr4`, then `host_cpu_hw`. DRAM `mbw` walks `imc_types_probe_order()` with `dram_cas_read_write_pairs()`.
-- **Intel CHA (optional)**: When `intel_x86_uncore_cha_skx` is in the job schema, the summary grid may include combined CHA `arc` rates.
-- **Roofline**: Intel FLOPS from `core_pmc_types_probe_order()` (FP_ARITH or legacy SSE proxies). AMD needs `amd_x86_pmc` + `amd_x86_uncore_df` MBW channels when exposed.
-- **Heatmap CPI**: Candidate list includes Intel PMC types, `amd_x86_pmc`, and `host_cpu_hw`.
+- **Intel CHA (optional)**: When `intel_x86_uncore_cha_skx` is in the job schema, the summary grid may include combined CHA `arc` rates. New ingest excludes CHA typenames from `host_data` unless product policy changes.
+- **Roofline**: Intel FLOPS from `core_pmc_types_probe_order()` (FP_ARITH or legacy SSE proxies). AMD needs `amd_x86_pmc` + `amd_x86_uncore_df` MBW channels when exposed. Historical Intel KNL jobs may still have legacy IMC typenames in `host_data`, but KNL-specific nominal roofline peaks were retired from `roofline_peaks.py`.
 
 ### Monitor ↔ analysis contract (`host_data.type`)
 

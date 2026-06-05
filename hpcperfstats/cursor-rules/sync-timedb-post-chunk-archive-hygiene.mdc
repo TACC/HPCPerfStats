@@ -22,7 +22,7 @@ After a chunk of raw ingest and tar append, `sync_timedb` runs a non-blocking, p
 ## Non-blocking supervisor contract
 
 - Hygiene runs in a single-flight `ThreadPoolExecutor(max_workers=1)`; thread title `sync_timedb.py [thread:archive-post-chunk-hygiene]`.
-- The supervisor **never waits** on `post_chunk_hygiene_future`; it advances to the next chunk immediately. If a pass is still running, `_schedule_post_chunk_hygiene` is a no-op (single-flight). Interval maintenance remains the backstop if hygiene is starved.
+- The supervisor **never waits** on `post_chunk_hygiene_future`; it advances to the next chunk immediately. If a pass is still running, `_schedule_post_chunk_hygiene` is a no-op (single-flight). **Scheduled** maintenance must **defer** while `post_chunk_hygiene_future` is not `done()` to avoid overlapping seal/raw/`.tar` passes. Interval maintenance remains the backstop if hygiene is starved.
 - Schedule only when the chunk produced archival/finalize work.
 - `post_chunk_hygiene_executor.shutdown(wait=True)` on supervisor teardown.
 
@@ -55,7 +55,7 @@ Supervisor state is read under `archive_state_lock`; `heapq` push/pop on `pendin
 
 1. `close_old_connections()`; one `build_archive_maintenance_snapshot` per pass (no rescan between steps).
 2. Compute disqualified + unmapped closed raw; **preflight** — return early if no non-disqualified day is dirty-sealable and no removable raw exists (no zstd, no mutation).
-3. `seal_dirty_daily_archives(..., seal_immediately_if_dirty=False, skip_daily_tar_paths=disqualified)` — the **only** step that may run zstd this pass. Calendar-today waits `archive_seal_idle_seconds`; prior dirty days seal.
+3. `seal_dirty_daily_archives(..., seal_immediately_if_dirty=False, only_when_no_remaining_raw=True, skip_daily_tar_paths=disqualified)` — the **only** step that may run zstd this pass. Calendar-today waits `archive_seal_idle_seconds`; prior dirty days seal only when closed raw for that day is gone from disk.
 4. Recompute disqualified; `remove_verified_archived_raw_files(..., ingest_ready_fn=stats_file_head_ingested_in_db, allow_auto_seal=False, skip_daily_tar_paths=disqualified)`. `allow_auto_seal=False` prevents a second `atomic_seal_tar_to_zst`.
 5. Recompute disqualified; `remove_verified_uncompressed_daily_tars(..., force_remove_uncompressed_tar=False, skip_daily_tar_paths=disqualified)`.
 6. `close_old_connections()` in `finally`.

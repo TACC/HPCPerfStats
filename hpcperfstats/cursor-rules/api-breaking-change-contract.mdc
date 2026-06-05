@@ -1,0 +1,31 @@
+---
+description: API HTTP/status and route contract changes require client and doc sync
+alwaysApply: true
+---
+
+# API Breaking-Change Contract
+
+When changing **machine API** behavior visible to scripts, API keys, or external tools, treat it as a breaking contract change—not an SPA-only tweak.
+
+## Trigger conditions
+
+- Changing HTTP **status bands** for success paths (for example empty search 404 → 200).
+- **Removing or renaming** root or `/api/` routes (`api_urls.py`, `urls.py`).
+- Changing **empty-result** JSON shape (`nj`, `job_list`, `filter_summary`, error keys).
+- Changing auth/throttle semantics on expensive or staff endpoints.
+
+## Required actions (same task)
+
+1. **Clients:** update `hpcperfstats-tools` and any in-repo scripts that call the endpoint; grep for old paths/status handling.
+2. **Route catalog:** update `hpcperfstats/tests/urlconf_route_catalog.py` and pipeline endpoint matrix when routes change.
+3. **Docs:** add a short blurb to `HPCPerfStats/README.md` (REST API section) or release notes when status/route semantics change.
+4. **Tests:**
+   - Host mock matrix (`test_api_view_matrix.py`) for branch coverage.
+   - At least one **view-level** test for throttle/status contracts (for example `test_api_security_throttles.py`), not only throttle-class unit tests.
+   - When status behavior depends on DB/Redis, add or extend a compose-backed smoke test per `testing-best-practices.mdc`.
+
+## Overlap
+
+- **`end-to-end-feature-wiring-contract.mdc`** — multi-layer wiring for user-visible fields.
+- **`pipeline-endpoint-matrix-drift-guard.mdc`** — route snapshot and browser matrix.
+- **`security-posture-and-review-triggers.mdc`** — throttle and auth changes.

@@ -28,7 +28,7 @@
 an empty queryset).
 
 **Report:** ``stress_report_<utc>.json`` under ``HPCPERFSTATS_STRESS_REPORT_DIR``
-(default ``artifacts/stress/``). Includes **R_ref** from
+(default ``test_runs/stress/``). Includes **R_ref** from
 ``monitor_sample_density.analyze_monitor_sample_density`` and extrapolated
 ``6000 × 8640 × R_max`` row estimate.
 

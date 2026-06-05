@@ -29,6 +29,11 @@ The **hpcperfstats** package is split into two parts:
 
 **REST API note:** `GET /api/jobs/{jid}/{type_name}/` (type detail) returns a Bokeh **`tplot_item`** (`json_item` payload) plus `stats_data` / `schema`. Legacy **`tscript`** / **`tdiv`** fields were removed; clients should embed only `tplot_item` via Bokeh `embed_item`.
 
+**API contract changes (2026-06):**
+
+- `GET /api/jobs/` with filters that match **zero** jobs now returns **HTTP 200** with `nj: 0`, an empty `job_list`, and a `filter_summary` object. Do not treat HTTP 404 as “no matches” for successful searches (404 is reserved for database/unavailable errors on this endpoint).
+- `GET /api/search/` was **removed**; job-ID and host routing are handled in the React SPA. API clients should use `GET /api/jobs/?jid=…` (or open `/machine/job/{jid}/` in a browser) instead of the old search redirect endpoint.
+
 Building and installing the `hpcperfstatsd-3.0-1.el9.x86_64.rpm` package (via `monitor/hpcperfstats.spec`) installs a **systemd** service `hpcperfstats`. This service runs a daemon with ~3% overhead on a single core at 1 Hz sampling; it is typically configured for **5-minute** intervals, with samples at job start and end. The daemon **hpcperfstatsd** sends data to a **RabbitMQ** server over the administrative network. RabbitMQ must be installed and running on the server to receive data.
 
 The **hpcperfstats** container orchestration sets up a Django/PostgreSQL ingest and archival stack plus a RabbitMQ server to receive data from the monitor on the nodes.

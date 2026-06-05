@@ -85,6 +85,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_remaining_raw_stats_by_daily_gz,
     build_seal_disqualified_daily_tars,
     collect_days_with_unmapped_closed_raw,
+    merge_maintenance_skip_daily_tar_paths,
     collect_lock_sidecar_stats,
     daily_tar_paths_for_archive_job_tasks,
     daily_tar_paths_from_pending_archive_tasks,
@@ -1302,6 +1303,12 @@ def run_sync_timedb_supervisor_loop(
         tgz_archive_dir,
         log_fn=log_print,
     )
+    effective_skip_daily_tar_paths = merge_maintenance_skip_daily_tar_paths(
+        skip_daily_tar_paths,
+        closed_paths=snapshot.closed_paths,
+        mapping=snapshot.mapping,
+        tgz_archive_dir=tgz_archive_dir,
+    )
     if reason == "startup":
       log_archive_maintenance_snapshot_summary(snapshot, log_fn=log_print)
     validation_cache = {"hits": 0, "misses": 0}
@@ -1320,7 +1327,7 @@ def run_sync_timedb_supervisor_loop(
         log_fn=log_print,
         remaining_raw_by_gz=snapshot.remaining_raw_by_gz,
         force_remove_uncompressed_tar=force_remove_uncompressed_tar,
-        skip_daily_tar_paths=skip_daily_tar_paths,
+        skip_daily_tar_paths=effective_skip_daily_tar_paths,
         only_daily_tar_paths=only_daily_tar_paths,
     )
     remove_verified_archived_raw_files(
@@ -1332,7 +1339,7 @@ def run_sync_timedb_supervisor_loop(
         maintenance_snapshot=snapshot,
         validation_cache=validation_cache,
         validated_days_out=validated_days,
-        skip_daily_tar_paths=skip_daily_tar_paths,
+        skip_daily_tar_paths=effective_skip_daily_tar_paths,
         only_daily_tar_paths=only_daily_tar_paths,
     )
     remove_verified_uncompressed_daily_tars(
@@ -1342,7 +1349,7 @@ def run_sync_timedb_supervisor_loop(
         force_remove_uncompressed_tar=force_remove_uncompressed_tar,
         validation_cache=validation_cache,
         validated_days_out=validated_days,
-        skip_daily_tar_paths=skip_daily_tar_paths,
+        skip_daily_tar_paths=effective_skip_daily_tar_paths,
         only_daily_tar_paths=only_daily_tar_paths,
     )
     save_archive_maint_hints(
@@ -1637,6 +1644,7 @@ def run_sync_timedb_supervisor_loop(
           remaining_raw_by_gz=remaining_raw_by_gz,
           force_remove_uncompressed_tar=False,
           skip_daily_tar_paths=disqualified,
+          only_when_no_remaining_raw=True,
       )
       disqualified = _post_chunk_disqualified_daily_tars(
           snapshot, unmapped_closed_raw_tars)
@@ -1957,6 +1965,15 @@ def run_sync_timedb_supervisor_loop(
         )
         maintenance_overdue_warned = True
       if not _is_maintenance_due():
+        return False
+      hygiene_fut = post_chunk_hygiene_future
+      if hygiene_fut is not None and not hygiene_fut.done():
+        log_print(
+            "Archive maintenance due but deferred reason=post_chunk_hygiene_in_flight "
+            "context=%s elapsed_since_last_s=%.1f"
+            % (reason_label, elapsed),
+            flush=True,
+        )
         return False
       finalized = _finalize_archive_job_if_needed(
           force=True,

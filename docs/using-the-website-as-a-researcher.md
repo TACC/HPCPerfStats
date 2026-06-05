@@ -1,7 +1,7 @@
 # Using HPCPerfStats on the Web — Guide for Researchers and HPC Users
 
 
-This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-06-04.
+This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-06-05.
 
 
 This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections.
@@ -25,14 +25,20 @@ This document is ordered so the **most decision-relevant ideas come first**. Dee
 ## 1. Finding jobs and reading the job list
 
 - **Search home**: Browse by **year** or **date** to reach filtered job lists.
-- **Expanded search**: Use expanded search when you need to find specific jobs quickly (for example by job ID, host, user, project/account, queue, time window, node count, node-hours, or derived metric thresholds), then open the matching row from the filtered results. The **?** help icon next to each field defines the parameter. Derived metric choices match the **Metrics** tab on each job detail page, and those filters search prepared job-level metric summaries.
-- **Job list table**: Typical columns include job ID, submit/start/end times, **runtime**, **requested time (timelimit)**, resource shape (**nodes**, **cores**), **user**, **project/account**, **queue**, **state**, and **job name**. Row **background color** reflects completion state (e.g. completed vs failed vs other).
+- **Expanded search**: Use expanded search when you need to find specific jobs quickly (for example by job ID, host, user, **project**, queue, time window, node count, node-hours, or derived metric thresholds), then open the matching row from the filtered results. The **?** help icon next to each field defines the parameter. Derived metric choices match the **Metrics** tab on each job detail page, and those filters search prepared job-level metric summaries. Multiple criteria are combined with **AND** semantics (all active filters must match). **Job end time** fields filter on scheduler end time, not submit or start time alone.
+- **Find Job** (navbar): Enter a job ID to open that job’s detail page directly in the browser. Host-based lookup from the navbar routes to host-centric views in the SPA (there is no separate JSON redirect endpoint for search).
+- **Active filter summary**: When a list is filtered, a summary bar above the table shows the active criteria in plain language. Use **Modify search** to reopen expanded search with the same parameters pre-filled.
+- **Empty results**: When no jobs match the current filters, the list stays on the page with a **No jobs match these filters** message in the table (this is not an error page). Adjust filters via **Modify search** or clear criteria from expanded search.
+- **Job list table**: Typical columns include job ID, submit/start/end times, **runtime**, **requested time (timelimit)**, resource shape (**nodes**, **cores**), **user**, **project**, **queue**, **state**, and **job name**. Row **background color** reflects completion state (e.g. completed vs failed vs other).
 - **Histograms** (where configured): Distribution thumbnails for metrics such as **runtime**, **node count**, and **queue wait** help you see whether your job is typical for that filter.
 - **Performance Data** column: Short status labels (e.g. summary available, monitoring gaps, not summarized yet) indicate current data readiness for each row.
 
 ---
 
 ## 2. What you should do first on a job page
+
+- **Breadcrumbs** at the top link back to your filtered job list (when you arrived from search) and show where you are in the site. Use them instead of the browser back button when you want to return to the same filter context.
+- **Shareable analysis tabs**: Job data tabs (Summary plot, Roofline, Multiprecision Mix, and related analysis panels) sync to the URL as `?tab=…` so you can bookmark or share a link that opens the same tab. If a plot or metric panel fails to load on first try, the page offers **retry** actions for that section without reloading the whole job.
 
 1. **Read Job overview first** (status, runtime, queue, cores/nodes, user/project, start/end). This frames the run before touching telemetry.
 2. **Open the Summary plot tab** in **Job data**. It is the fastest way to see phase changes and node-to-node divergence across CPU, memory, I/O<sup>[11](#ref-11)</sup>, network, and GPU signals.
@@ -85,7 +91,7 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 
 ### 4.1 Device data table (job page)
 
-Lists each `**host_data.type`** name present for the job (e.g. `cpu`, `mem`, `nvidia_gpu`, `host_ib`, `llite`, PMC types) and the **event/column names** recorded. **Click the type name** to open the **type detail** page.
+Lists each monitor **type** name present for the job (for example `host_cpu`, `host_mem`, `nvidia_gpu`, `host_ib`, `llite`, and hardware counter families) and the **event/column names** recorded. Older jobs may still show legacy names such as `cpu` or `mem` alongside or instead of canonical names. **Click the type name** to open the **type detail** page. GPU memory counters may appear as `gpu_mem_util`, `gpu_mem_used_mb`, or legacy `mem_util` depending on when the job ran.
 
 ### 4.2 Type detail page
 
@@ -293,5 +299,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-05-07 | Job Detail summary hardware error overlay, screen-space Bokeh help on Job Detail plots, FSIO peak columns and catalog metrics, Resources layout (GPU summary above log links), expanded-search help note. |
 | 2026-05-07 | Added GPU precision activity catalog entries (`avg_fp16_active`, `avg_fp32_active`, `avg_fp64_active`) and documented that Multiprecision Mix pies render whatever precision widths are available per job/architecture. |
 | 2026-06-04 | Documented unified InfiniBand collector typename `host_ib` (replaces separate `ib_ext` / switch types in schema examples). |
+| 2026-06-05 | Job list filter summary, empty-result UX, expanded-search AND/end-time semantics, navbar Find Job, job-detail breadcrumbs, shareable `?tab=` analysis tabs, partial-load retry behavior, canonical vs legacy device type names in Device data. |
 
 

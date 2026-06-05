@@ -23,6 +23,10 @@ When asked to run "full tests" for this workspace, use the Docker Compose networ
  - for web/browser E2E workflow specifically, use: `tests/run_web_e2e_workflow.sh`
 7. Always clean up after the test run (pass or fail). Workflow scripts call **`colima_compose_teardown`** (compose **`down -v --remove-orphans`** then **`tests/colima_docker_cleanup.sh`**: prune containers, images, build cache, volumes, networks) unless **`--keep-env`**. Set **`COLIMA_DOCKER_CLEANUP_SKIP=1`** to skip the prune step only.
 
+## `run_all_compose_workflows.sh` scope
+
+The orchestrator is a **smoke subset** (DB pytest, Redis cache, web E2E, pipeline E2E). It does **not** run security audit, stress `host_data`, update_metrics diagnosis, or Bokeh embed browser E2E unless documented opt-in flags are added. Document excluded tiers in `docs/TESTING.md` when changing the orchestrator.
+
 ## Why this is required
 
 - Host-side pytest may fail with `failed to resolve host 'db'` because `db` is a compose-network alias, not a host DNS name.

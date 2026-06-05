@@ -7,7 +7,7 @@ cd /home/hpcperfstats
 export HPCPERFSTATS_COMPOSE_NETWORK=1
 export HPCPERFSTATS_STRESS_HOST_DATA=1
 export HPCPERFSTATS_STRESS_HOST_DATA_ROWS="${HPCPERFSTATS_STRESS_HOST_DATA_ROWS:-400000}"
-export HPCPERFSTATS_STRESS_REPORT_DIR="${HPCPERFSTATS_STRESS_REPORT_DIR:-/home/hpcperfstats/artifacts/stress}"
+export HPCPERFSTATS_STRESS_REPORT_DIR="${HPCPERFSTATS_STRESS_REPORT_DIR:-/home/hpcperfstats/test_runs/stress}"
 mkdir -p "${HPCPERFSTATS_STRESS_REPORT_DIR}"
 
 # Prefer editable install (matches local dev). Cloud-sync bind mounts can make

@@ -165,6 +165,24 @@ def daily_tar_paths_for_stats_paths(
   return frozenset(tar_paths)
 
 
+def merge_maintenance_skip_daily_tar_paths(
+    skip_daily_tar_paths,
+    *,
+    closed_paths,
+    mapping,
+    tgz_archive_dir,
+):
+  """Union caller skip paths with days that have unmapped closed raw on disk.
+
+  Scheduled/startup maintenance must apply the same unmapped-closed-raw gate as
+  post-chunk hygiene so a day cannot lose its ``.tar`` while closed raw remains.
+  """
+  skip_set = set(_normalize_daily_tar_path_set(skip_daily_tar_paths))
+  skip_set |= collect_days_with_unmapped_closed_raw(
+      closed_paths, mapping, tgz_archive_dir)
+  return frozenset(skip_set) if skip_set else None
+
+
 def collect_days_with_unmapped_closed_raw(closed_paths, mapping, tgz_archive_dir):
   """Daily ``.tar`` paths for closed raw stats not present in ``mapping``.
 

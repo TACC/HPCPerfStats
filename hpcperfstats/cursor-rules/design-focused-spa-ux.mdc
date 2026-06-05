@@ -62,4 +62,4 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 
 ## Overlap
 
-- `react-js-cursor-rule.mdc`, `wcag-aa-mobile-web.mdc`, `search-metric-artifact-sync.mdc`, `researcher-job-detail-doc-sync.mdc` when user-visible copy changes.
+- `react-js-cursor-rule.mdc`, `wcag-aa-mobile-web.mdc`, `search-metric-artifact-sync.mdc`, **`researcher-job-detail-doc-sync.mdc`** when user-visible copy changes — including job-list **filter summary**, **empty results** (200 + in-table message), **Modify search**, job-detail **breadcrumbs**, shareable **`?tab=`** URLs, and partial-load **retry** affordances (update `docs/using-the-website-as-a-researcher.md` §1–§2 in the same task).

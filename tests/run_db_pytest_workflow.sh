@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 # shellcheck source=colima_compose_teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/colima_compose_teardown.sh"
+# shellcheck source=compose_test_cmd.sh
+. "$(dirname "${BASH_SOURCE[0]}")/compose_test_cmd.sh"
 colima_export_docker_env
 
 SEED_CMD="${DB_TEST_SEED_CMD:-}"
@@ -97,7 +99,7 @@ cleanup() {
     echo "Keeping compose environment (--keep-env)."
     return
   fi
-  colima_compose_teardown docker-compose
+  colima_compose_teardown "${COMPOSE_TEST[@]}"
 }
 trap cleanup EXIT
 
@@ -115,22 +117,22 @@ else
 fi
 
 echo "Resetting Docker compose state and volumes..."
-docker-compose down -v --remove-orphans
+compose_test down -v --remove-orphans
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   echo "Rebuilding web image..."
-  docker-compose build web
+  compose_test build web
 fi
 
 echo "Starting db/redis..."
-docker-compose up -d db redis
+compose_test up -d db redis
 
 echo "Waiting for healthy db/redis..."
 db_health=""
 redis_health=""
 for _ in $(seq 1 60); do
-  db_id="$(docker-compose ps -q db)"
-  redis_id="$(docker-compose ps -q redis)"
+  db_id="$(compose_test ps -q db)"
+  redis_id="$(compose_test ps -q redis)"
 
   if [[ -n "$db_id" && -n "$redis_id" ]]; then
     db_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' "$db_id" 2>/dev/null || true)"
@@ -145,7 +147,7 @@ done
 
 if [[ "$db_health" != "healthy" || "$redis_health" != "healthy" ]]; then
   echo "Timed out waiting for db/redis health." >&2
-  docker-compose ps
+  compose_test ps
   exit 1
 fi
 
@@ -155,7 +157,7 @@ export DOCKER_PYTEST_SKIP_MIGRATE="$SKIP_MIGRATE"
 
 echo "Running pytest in web container..."
 # Mount repo so tests use current source (migrations, conftest) without rebuilding the image.
-docker-compose run --rm \
+compose_test run --rm \
   -e DOCKER_PYTEST_SEED_CMD \
   -e DOCKER_PYTEST_SKIP_BROWSER \
   -e DOCKER_PYTEST_SKIP_MIGRATE \

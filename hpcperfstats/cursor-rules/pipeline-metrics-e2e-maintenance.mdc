@@ -15,7 +15,7 @@ in the same task.
 - Changes under `hpcperfstats/analysis/metrics/` (especially `metrics.py`, `update_metrics.py`, or catalog helpers).
 - Changes to metric names/units/types, no-data behavior, or metric row-count expectations.
 - Changes to ingest/parser contracts that impact `host_data` typing/event mapping
-  (for example `sync_timedb*`, hardware event maps, schema/event naming).
+  (for example `sync_timedb*`, hardware event maps, schema/event naming, two-tier `@fast`/`@full` rows, `,R=S` slow schema keys, renamed GPU mem events).
 - Changes to GPU/FSIO metric detail paths used in job detail and metrics persistence.
 
 ## Required actions

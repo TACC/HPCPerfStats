@@ -44,8 +44,8 @@ Out of scope for the DB gate: `remove_verified_uncompressed_daily_tars` (`.tar` 
 
 Closed raw segments whose first timestamp cannot be parsed are omitted from `build_archive_mapping` and from `remaining_raw_by_gz`, yet still exist on disk. They must not make a day look empty:
 
-- Scheduled `.tar` removal already counts them via the filesystem gate footnote below.
-- **Post-chunk hygiene** disqualifies any such day from seal, raw removal, and `.tar` drop via `collect_days_with_unmapped_closed_raw` (bucketed by filename epoch / mtime fallback) folded into `build_seal_disqualified_daily_tars`, even though those files are absent from `remaining_raw_by_gz`. This is the same data-loss class as the scheduled `.tar` gate.
+- **Every** archive maintenance entry point (scheduled/startup `_archive_maintenance_pipeline`, forced two-phase maintenance, **and** post-chunk hygiene) must union those days into skip/disqualification via `merge_maintenance_skip_daily_tar_paths` / `collect_days_with_unmapped_closed_raw` — not hygiene alone.
+- **Post-chunk hygiene** also folds unmapped days into `build_seal_disqualified_daily_tars` with supervisor pending/in-flight state.
 
 ## Tar removal vs DB gate
 

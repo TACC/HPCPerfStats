@@ -1,0 +1,51 @@
+---
+description: Local test run logs and runtime artifacts go under test_runs/ (gitignored)
+alwaysApply: true
+---
+
+# Test Runs Output Directory
+
+Ephemeral **test execution artifacts** and **runtime verification notes** belong under **`HPCPerfStats/test_runs/`** (git checkout root with `pyproject.toml`). Do **not** add new run logs or local-only runtime reports under **`docs/`**.
+
+## What stays committed vs local
+
+| Committed (repo docs) | Local only (`test_runs/`) |
+|-----------------------|---------------------------|
+| **`docs/TESTING.md`** — how to run tests, prerequisites, workflow commands | Dated run summaries, pass/fail tables, agent verification notes |
+| **`docs/plans/`**, **`docs/artifacts/`** — design baselines and interpreted findings | Raw JSON/stdout captures from a specific machine run |
+| Test source (`test_*.py`, `tests/run_*_workflow.sh`) | Compose orchestrator transcripts, Colima/Docker env snapshots |
+
+## Required output paths
+
+Create **`test_runs/`** (and subdirs as needed) before writing. Prefer **UTC dates** in filenames.
+
+| Artifact | Canonical path |
+|----------|----------------|
+| Agent or manual verification log (per task/day) | **`test_runs/test_run_log_YYYY-MM-DD.md`** |
+| **`run_all_compose_workflows.sh`** default log | **`test_runs/test_run_log_colima_compose.md`** (or dated variant via script arg) |
+| Stress **`update_metrics`** JSON reports | **`test_runs/stress/`** (`HPCPERFSTATS_STRESS_REPORT_DIR`) |
+| **`update_metrics` diagnosis** JSON export | **`test_runs/diagnosis/`** (`HPCPERFSTATS_UM_DIAG_JSON_OUT`) |
+| Saved pytest/junit or workflow stdout | **`test_runs/pytest/`** or **`test_runs/workflows/`** |
+
+## Agent behavior
+
+When running compose workflows, reporting test outcomes in chat, or closing a task that executed tests:
+
+1. Write or append results to **`test_runs/test_run_log_<date>.md`** (command, exit code, blocker notes)—not **`docs/test_run_log_*.md`**.
+2. Point users to **`test_runs/`** for local artifacts; keep **`docs/TESTING.md`** limited to reproducible commands.
+3. Do not commit contents of **`test_runs/`** (directory is gitignored except **`test_runs/README.md`**).
+
+## Script defaults
+
+Workflow scripts should default artifact env vars and log paths under **`test_runs/`**:
+
+- **`tests/run_all_compose_workflows.sh`** → **`test_runs/test_run_log_colima_compose.md`**
+- **`tests/run_stress_host_data_inner.sh`** → **`test_runs/stress/`**
+- **`tests/run_update_metrics_diagnosis_inner.sh`** → **`test_runs/diagnosis/update_metrics_diagnosis.json`**
+
+Override paths via script arguments or env vars when comparing multiple runs on one machine.
+
+## Overlap
+
+- **`testing-doc-sync.mdc`** — update **`docs/TESTING.md`** when *workflow* changes; run *results* go here.
+- **`full-test-with-db-redis.mdc`**, **`web-pages-full-e2e-completion-gate.mdc`** — report pass/fail in chat and persist details under **`test_runs/`**.

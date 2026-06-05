@@ -6,6 +6,14 @@ description: Use Docker Compose workflows for integration, stress, E2E, and DB/R
 
 Host-side `pytest` often **cannot** resolve `db` / `redis`, match production DB settings, or provide Timescale behavior. **Do not** tell users to run integration-style tests with bare `pytest` on the Mac host unless the test is explicitly **unit-only** (mocks, `django_db(databases=[])`).
 
+## Test compose overlay
+
+All **`tests/run_*_workflow.sh`** scripts source **`tests/compose_test_cmd.sh`**, which runs:
+
+`docker-compose -f docker-compose.yaml -f tests/docker-compose.test-overlay.yaml`
+
+That overlay swaps the production **`hpcperfstatsdata`** bind mount (**`/opt/hpcperfstats_data/`** on the host) for a named volume so macOS/Colima dev machines and CI do not need operator paths under **`/opt`**. Production deploys still use **`docker-compose.app.yaml`** unchanged.
+
 ## Default runners (from `HPCPerfStats/` containing `docker-compose.yaml`)
 
 | Goal | Script |
@@ -19,7 +27,7 @@ Stress tests are **opt-in** (`HPCPERFSTATS_STRESS_HOST_DATA=1`); the workflow sc
 
 ## When adding or changing non-unit tests
 
-- Prefer a **workflow shell script** under `tests/run_*_workflow.sh` that: resets or documents compose state, starts required services, waits for health, runs `docker-compose run … web` with the repo mounted, and on exit calls **`colima_compose_teardown`** (from **`tests/colima_compose_teardown.sh`**: compose **`down -v --remove-orphans`** then **`tests/colima_docker_cleanup.sh`**) unless **`--keep-env`**.
+- Prefer a **workflow shell script** under `tests/run_*_workflow.sh` that: sources **`tests/compose_test_cmd.sh`** and uses **`compose_test`** (not bare **`docker-compose`**), resets or documents compose state, starts required services, waits for health, runs **`compose_test run … web`**, and on exit calls **`colima_compose_teardown "${COMPOSE_TEST[@]}"`** (compose **`down -v --remove-orphans`** then **`tests/colima_docker_cleanup.sh`**) unless **`--keep-env`**.
 - Document the script in `docs/TESTING.md` in the same change.
 - Keep `monitor/` read-only per workspace guardrails unless the user explicitly approves edits there.
 

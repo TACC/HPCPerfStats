@@ -123,6 +123,16 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
   assert host_data.objects.filter(type="amd_x86_uncore_df").exists()
   assert host_data.objects.filter(type="arm_aarch64_imc").exists()
   assert host_data.objects.filter(type="amd_gpu").exists()
+  assert host_data.objects.filter(
+      type="nvidia_gpu", event="gpu_mem_util",
+  ).exists()
+  assert host_data.objects.filter(
+      type="nvidia_gpu", event="gpu_util",
+  ).exists()
+  # Two-tier ingest: fast samples omit slow-tier events; full samples include them.
+  assert not host_data.objects.filter(
+      type="nvidia_gpu", event="gpu_mem_used_mb",
+  ).filter(value__isnull=True).exists()
   assert job_plot_artifact.objects.filter(jid_id=PIPELINE_E2E_JID).count() >= 1
 
   catalog_metrics = {e["metric"] for e in job_metrics_catalog_entries()}

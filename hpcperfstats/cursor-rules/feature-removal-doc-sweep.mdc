@@ -1,0 +1,28 @@
+---
+description: Removing user-visible features requires doc and artifact sweep in the same task
+alwaysApply: true
+---
+
+# Feature Removal Documentation Sweep
+
+When **removing** a plot module, API field, SPA tab, or analysis surface that users or operators could discover in docs, sweep related prose in the same task.
+
+## Trigger conditions
+
+- Deleting plot builders under `hpcperfstats/analysis/plot/` or removing API/SPA consumers.
+- Removing Job Detail tabs, Extended Search fields, or metric catalog entries.
+- Retiring architecture-specific surfaces (for example heatmap, KNL peaks) while leaving related metrics.
+
+## Required sweep (grep-driven)
+
+| Area | Action |
+|------|--------|
+| `docs/using-the-website-as-a-researcher.md` | Remove or rewrite sections that reference the retired surface; add history row when user-visible. |
+| `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md` | Remove stale capability bullets. |
+| `docs/`, `artifacts/` gap/compliance reports | Remove or update matrices that still list the feature. |
+| Frontend `variableMetadata*.js` | Remove tooltips/labels for retired fields when UI no longer shows them. |
+
+## Overlap
+
+- **`researcher-job-detail-doc-sync.mdc`** — additive job-detail changes.
+- **`end-to-end-feature-wiring-contract.mdc`** — wiring removal across layers.

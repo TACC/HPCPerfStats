@@ -26,6 +26,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_remaining_raw_stats_by_daily_gz,
     build_seal_disqualified_daily_tars,
     collect_days_with_unmapped_closed_raw,
+    merge_maintenance_skip_daily_tar_paths,
     daily_gz_has_remaining_raw_stats,
     daily_tar_paths_for_stats_paths,
     daily_tar_paths_from_pending_archive_tasks,
@@ -2818,6 +2819,45 @@ def test_daily_tar_paths_for_stats_paths_uses_first_ts_then_filename_epoch():
       [epoch_path, named_path], archive_dir, first_ts)
   assert os.path.normpath("/arch/2024-04-05.tar") in result
   assert os.path.normpath("/arch/2024-04-06.tar") in result
+
+
+def test_merge_maintenance_skip_daily_tar_paths_unions_unmapped_days():
+  archive_dir = "/arch"
+  unmapped_day = datetime(2024, 5, 2, 2, 0, 0)
+  unmapped_path = "/raw/host/%d" % int(unmapped_day.timestamp())
+  mapping = {"/arch/2024-05-01.tar.zst": ["/raw/host/1"]}
+  merged = merge_maintenance_skip_daily_tar_paths(
+      ["/arch/2024-05-09.tar"],
+      closed_paths=[unmapped_path],
+      mapping=mapping,
+      tgz_archive_dir=archive_dir,
+  )
+  assert os.path.normpath("/arch/2024-05-09.tar") in merged
+  assert os.path.normpath("/arch/2024-05-02.tar") in merged
+
+
+def test_remove_verified_uncompressed_daily_tars_skips_unmapped_day_via_skip_paths(
+    tmp_path,
+):
+  """Scheduled maintenance must not drop ``.tar`` when unmapped closed raw exists."""
+  day_tar = tmp_path / "2026-04-23.tar"
+  day_gz = tmp_path / "2026-04-23.tar.gz"
+  member = tmp_path / "member.txt"
+  member.write_text("same-content")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(member), arcname="member.txt")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(member), arcname="member.txt")
+
+  remove_verified_uncompressed_daily_tars(
+      str(tmp_path),
+      log_fn=None,
+      remaining_raw_by_gz={},
+      skip_daily_tar_paths=frozenset({os.path.normpath(str(day_tar))}),
+  )
+
+  assert day_tar.is_file()
+  assert day_gz.is_file()
 
 
 def test_collect_days_with_unmapped_closed_raw_buckets_unmapped_only():

@@ -61,7 +61,8 @@ Examples: `urlconf_route_catalog.py`, `extended-search-validation.test.js`, `job
 - Arrange–Act–Assert; one behavioral theme per test.
 - Deterministic: freeze time; no live network in unit tests.
 - Prefer semantic queries (`getByRole`) in RTL.
-- Coverage is a **gap-discovery signal**, not a global CI quota—except **`api.py`** maintains a phased **100% line** goal via `test_api_view_matrix.py`, `test_api_helpers.py`, and related modules.
+- Coverage is a **gap-discovery signal**, not a global CI quota—except **`api.py`** maintains a phased **100% line** goal via `test_api_view_matrix.py`, `test_api_helpers.py`, and related modules. **100% `api.py` line coverage on host mocks does not replace compose-backed tests** for DB semantics, throttles returning **429**, or sacct/filesystem integration.
+- When removing a throttled API view, migrate the **view-level** 429 regression to the replacement endpoint (`test_api_security_throttles.py` pattern).
 
 ## Pre-merge verification matrix
 

@@ -81,6 +81,8 @@ tacc_stats/pickler/*lock
 
 # Diagnosis workflow optional JSON (see docs/TESTING.md, HPCPERFSTATS_UM_DIAG_JSON_OUT)
 tmp/
+test_runs/*
+!test_runs/README.md
 
 # -----------------------------------------------------------------------------
 # Frontend build output (Vite → ../hpcperfstats_site/static/frontend). Never commit.
