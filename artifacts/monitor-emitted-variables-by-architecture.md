@@ -260,47 +260,6 @@ Present in every normal daemon build (`stats_registry.c`).
 
 Requires `--with-cpu-counter-backend=likwid` (x86 default) and `--enable-hardware`.
 
-### CPU counters — `host_cpu_hw` (per CPU)
-
-*LIKWID x86 path; schema includes ARM/DCGM placeholders.*
-
-- `aperf`
-- `arm_dram_bw_bytes`
-- `arm_est_flops`
-- `cpu_clock_est_cycles`
-- `cpu_util_irq_accum_us`
-- `cpu_util_nice_accum_us`
-- `cpu_util_sys_accum_us`
-- `cpu_util_total_accum_us`
-- `cpu_util_user_accum_us`
-- `cycles_unhalted_core`
-- `cycles_unhalted_ref`
-- `dcgm_cpu_power_limit_w`
-- `dcgm_cpu_power_util_w`
-- `dram_chan0_bytes`
-- `dram_chan1_bytes`
-- `dram_chan2_bytes`
-- `dram_chan3_bytes`
-- `fp_arith_inst_retired_128b_packed_double`
-- `fp_arith_inst_retired_128b_packed_single`
-- `fp_arith_inst_retired_256b_packed_double`
-- `fp_arith_inst_retired_256b_packed_single`
-- `fp_arith_inst_retired_512b_packed_double`
-- `fp_arith_inst_retired_512b_packed_single`
-- `fp_arith_inst_retired_scalar_double`
-- `fp_arith_inst_retired_scalar_single`
-- `instr_retired`
-- `instr_retired_any`
-- `l1d_replacement`
-- `ls_dispatch`
-- `mem_load_uops_retired_l1_hit`
-- `mem_load_uops_retired_l2_hit`
-- `mem_load_uops_retired_llc_hit`
-- `mperf`
-- `retired_branch_instr`
-- `retired_instructions`
-- `retired_misp_branch_instr`
-
 ### Energy — `intel_x86_rapl` (per socket, Intel)
 
 - `dram_energy`
@@ -336,16 +295,6 @@ Requires `--with-cpu-counter-backend=likwid` (x86 default) and `--enable-hardwar
 - `dram_chan2_bytes`
 - `dram_chan3_bytes`
 
-### Intel core PMC (4 GPR) — `intel_x86_pmc_gpr4` (per CPU)
-
-*Full schema in `intel_pmc3.h`.*
-
-- `aperf`
-- `instr_retired`
-- `mem_uops_retired_all_loads_knl`
-- `mem_uops_retired_l2_hit_loads_knl`
-- `mperf`
-
 ### Intel core PMC (8 GPR) — `intel_x86_pmc_gpr8` (per CPU)
 
 *Full schema in `intel_pmc3.h`.*
@@ -371,19 +320,9 @@ Requires `--with-cpu-counter-backend=likwid` (x86 default) and `--enable-hardwar
 - `mem_uncore_retired_local_dram`
 - `mem_uncore_retired_remote_dram`
 - `mem_uops_retired_all_loads`
-- `mem_uops_retired_all_loads_knl`
-- `mem_uops_retired_l2_hit_loads_knl`
 - `mperf`
 - `resource_stalls_any`
 - `simd_fp_256_packed_double`
-
-### Intel KNL core — `intel_x86_pmc_knl` (per CPU)
-
-- `aperf`
-- `instr_retired`
-- `mem_uops_retired_all_loads_knl`
-- `mem_uops_retired_l2_hit_loads_knl`
-- `mperf`
 
 ### Intel CBO SNB/IVB — `intel_x86_uncore_cbo_snb` (per core index)
 
@@ -460,19 +399,10 @@ Requires `--with-cpu-counter-backend=likwid` (x86 default) and `--enable-hardwar
 
 ### Intel IMC SKX — `intel_x86_uncore_imc_skx` (per PCI device)
 
+- `dram_act_count`
 - `dram_cas_reads`
 - `dram_cas_writes`
-
-### Intel KNL MC — `intel_x86_uncore_mc_knl` (per PCI device)
-
-- `dram_cas_reads`
-- `dram_cas_writes`
-
-### Intel KNL EDC — `intel_x86_uncore_edc_knl` (per PCI device)
-
-- `edc_hit_clean`
-- `edc_hit_dirty`
-- `rpq_inserts`
+- `dram_pre_count_miss`
 
 ### Intel QPI SNB — `intel_x86_uncore_qpi_snb`
 
@@ -581,52 +511,6 @@ Requires `--with-cpu-counter-backend=likwid` (x86 default) and `--enable-hardwar
 
 Requires `--with-cpu-counter-backend=dcgm` (non-x86 default) and `--enable-hardware`.
 
-### CPU counters — `host_cpu_hw` (per CPU)
-
-*DCGM backend; many x86 PMU schema slots may be zero.*
-
-- `aperf`
-- `arm_dram_bw_bytes`
-- `arm_est_flops`
-- `cpu_clock_est_cycles`
-- `cpu_util_irq_accum_us`
-- `cpu_util_nice_accum_us`
-- `cpu_util_sys_accum_us`
-- `cpu_util_total_accum_us`
-- `cpu_util_user_accum_us`
-- `cycles_unhalted_core`
-- `cycles_unhalted_ref`
-- `dcgm_cpu_power_limit_w`
-- `dcgm_cpu_power_util_w`
-- `dram_chan0_bytes`
-- `dram_chan1_bytes`
-- `dram_chan2_bytes`
-- `dram_chan3_bytes`
-- `fp_arith_inst_retired_128b_packed_double`
-- `fp_arith_inst_retired_128b_packed_single`
-- `fp_arith_inst_retired_256b_packed_double`
-- `fp_arith_inst_retired_256b_packed_single`
-- `fp_arith_inst_retired_512b_packed_double`
-- `fp_arith_inst_retired_512b_packed_single`
-- `fp_arith_inst_retired_scalar_double`
-- `fp_arith_inst_retired_scalar_single`
-- `instr_retired`
-- `instr_retired_any`
-- `l1d_replacement`
-- `ls_dispatch`
-- `mem_load_uops_retired_l1_hit`
-- `mem_load_uops_retired_l2_hit`
-- `mem_load_uops_retired_llc_hit`
-- `mperf`
-- `retired_branch_instr`
-- `retired_instructions`
-- `retired_misp_branch_instr`
-
-### ARM memory controller — `arm_aarch64_imc` (per PMU device)
-
-- `dram_cas_reads`
-- `dram_cas_writes`
-
 ---
 
 ## 4. ppc64 / riscv64 / other non-x86 (DCGM, non-ARM)
@@ -647,16 +531,24 @@ Requires `--with-cpu-counter-backend=dcgm` (non-x86 default) and `--enable-hardw
 - `fp32_active`
 - `fp64_active`
 - `gpu_count`
+- `gpu_dram_active`
 - `gpu_flops`
 - `gpu_flops_rate`
 - `gpu_io_link_total_bytes`
 - `gpu_mem_bw_bytes_rate`
+- `gpu_mem_free_mb`
 - `gpu_mem_read_bytes`
 - `gpu_mem_total_bytes`
 - `gpu_mem_total_mb`
 - `gpu_mem_used_mb`
 - `gpu_mem_util`
 - `gpu_mem_write_bytes`
+- `gpu_nvlink_rx_bytes`
+- `gpu_nvlink_tx_bytes`
+- `gpu_pcie_replay_counter`
+- `gpu_pcie_rx_bytes`
+- `gpu_pcie_tx_bytes`
+- `gpu_sm_clock`
 - `gpu_util`
 - `module_power_usage`
 - `power_usage`
@@ -665,6 +557,7 @@ Requires `--with-cpu-counter-backend=dcgm` (non-x86 default) and `--enable-hardw
 - `sysio_power_usage`
 - `temperature`
 - `tensor_active`
+- `tensor_dfma_active`
 - `tensor_hmma_active`
 - `tensor_imma_active`
 
@@ -785,16 +678,6 @@ Requires `--with-cpu-counter-backend=dcgm` (non-x86 default) and `--enable-hardw
 - `write`
 - `write_bytes`
 
-### Intel MIC — `host_mic` (`--enable-mic`)
-
-- `idle_sum`
-- `jiffy_counter`
-- `nice_sum`
-- `num_cores`
-- `sys_sum`
-- `threads_core`
-- `user_sum`
-
 ---
 
 ## Summary matrix
@@ -807,7 +690,7 @@ Requires `--with-cpu-counter-backend=dcgm` (non-x86 default) and `--enable-hardw
 | `arm_aarch64_imc` | — | — | ✓ | — | ARM host + DCGM |
 | GPU / IB ext / Lustre / OPA / MIC | — | if configured | if configured | if configured | respective `--enable-*` |
 
-**Approximate scale:** ~173 keys in common types; x86 hardware adds ~196 more across Intel/AMD types (generation-specific; one variant active per machine); optional subsystems add ~129 more.
+**Approximate scale:** ~173 keys in common types; x86 hardware adds ~145 more across Intel/AMD types (generation-specific; one variant active per machine); optional subsystems add ~131 more.
 
 ---
 

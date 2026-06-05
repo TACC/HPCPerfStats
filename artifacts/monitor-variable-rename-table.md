@@ -41,9 +41,6 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 - `intel_ivb_imc` → `intel_x86_uncore_imc_ivb`
 - `intel_ivb_qpi` → `intel_x86_uncore_qpi_ivb`
 - `intel_ivb_r2pci` → `intel_x86_uncore_r2pci_ivb`
-- `intel_knl` → `intel_x86_pmc_knl`
-- `intel_knl_edc` → `intel_x86_uncore_edc_knl`
-- `intel_knl_mc` → `intel_x86_uncore_mc_knl`
 - `intel_pcu` → `intel_x86_pcu`
 - `intel_rapl` → `intel_x86_rapl`
 - `intel_skx_cha` → `intel_x86_uncore_cha_skx`
@@ -57,7 +54,6 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 - `lnet` → `host_lnet`
 - `mdc` → `lustre_mdc`
 - `mem` → `host_mem`
-- `mic` → `host_mic`
 - `net` → `host_net`
 - `nfs` → `host_nfs`
 - `numa` → `host_numa`
@@ -147,9 +143,17 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 - `WRITE_rtt` → `write_rtt`
 - `WRITE_timeouts` → `write_timeouts`
 - `Writeback` → `writeback`
+- `dram_active` → `gpu_dram_active`
+- `fb_free` → `gpu_mem_free_mb`
 - `mem_total_mb` → `gpu_mem_total_mb`
 - `mem_used_mb` → `gpu_mem_used_mb`
 - `mem_util` → `gpu_mem_util`
+- `nvlink_rx_bytes` → `gpu_nvlink_rx_bytes`
+- `nvlink_tx_bytes` → `gpu_nvlink_tx_bytes`
+- `pcie_replay_counter` → `gpu_pcie_replay_counter`
+- `pcie_rx_bytes` → `gpu_pcie_rx_bytes`
+- `pcie_tx_bytes` → `gpu_pcie_tx_bytes`
+- `sm_clock` → `gpu_sm_clock`
 
 ## Host mem aliases (kernel → emit)
 

@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Monitor-Only Workspace Rule
 
-- Ignore all rules in `HPCPerfStats/hpcperfstats/cursor-rules/`. Do not apply or inherit guidance from those rule files.
+- Do **not** apply `HPCPerfStats/hpcperfstats/cursor-rules/` for default monitor-only work. When the user explicitly authorizes edits outside `HPCPerfStats/monitor/`, follow **out-of-monitor-hpcperfstats-rules** (those `.mdc` files become mandatory for that work).
 - Make code changes only under `HPCPerfStats/monitor/` (primarily `HPCPerfStats/monitor/src/` for C sources).
 - You may analyze files outside `HPCPerfStats/monitor/` when needed to understand interfaces, behavior, or integration points.
 - Do not modify non-monitor code unless the user explicitly overrides this rule in the current chat.
@@ -34,4 +34,4 @@ alwaysApply: true
 ## Precedence and overrides
 
 - This rule **does not** grant permission to edit `HPCPerfStats/hpcperfstats/listend.py` or other non-monitor code; those edits still require an **explicit user override in the current chat** (see first bullet list above).
-- If the user explicitly authorizes a given path or repo area in the current message, follow that authorization for that turn.
+- If the user explicitly authorizes a given path or repo area in the current message, follow that authorization for that turn and apply **out-of-monitor-hpcperfstats-rules** for implementation and verification in those areas.

@@ -18,7 +18,7 @@ C implementation of the **hpcperfstats** data collector: either a **RabbitMQ dae
 - **RabbitMQ build** (typical for `hpcperfstatsd`): `monitor.c`, `monitor_cli.c`, `monitor_daemon.c`, `stats_buffer.c`, AMQP + libev + LIKWID as configured.
 - **Non–RabbitMQ build**: `main.c`, `stats_file.c`, `stats_file_format.c` — local file client and archive I/O.
 
-Configure selects sources via Automake conditionals; use **`./configure --help`** for options (including **`--enable-all-static`**, **`--enable-legacy-pmcs`** / MIC linkage constraints, **`--enable-metric-profiler`**, and **`--with-metric-profiler-backend={none,ebpf}`**).
+Configure selects sources via Automake conditionals; use **`./configure --help`** for options (including **`--enable-all-static`**, **`--enable-legacy-pmcs`**, **`--enable-metric-profiler`**, and **`--with-metric-profiler-backend={none,ebpf}`**).
 
 ## Metric profiler build options
 
@@ -169,7 +169,7 @@ Use `scripts/cross_compile_test.sh` when you want one machine to run compile+tes
 - Foreign monitor builds pass **`--disable-all-static`** so tests link against the sysroot’s dynamic **`libc`/`libm`** (full **`--enable-all-static`** against glibc tends to fail under qemu-user smoke due to static **`libm`** IFUNC resolvers). Native triplets still use the canonical static-bundle flow.
 - **`make check`** for foreign triplets runs test binaries under **qemu-user** via Automake **`LOG_COMPILER`**; **`QEMU_LD_PREFIX`** (already set by the script from **`SYSROOT`**) resolves target **`ld-linux`** / **`libc`** for emulation—same semantics as **`qemu-* -L SYSROOT`**.
 - For deterministic foreign smoke, monitor configure also forces:
-  **`--disable-gpu --disable-amd-gpu --disable-infiniband --disable-opa --disable-mic --disable-lustre`**.
+  **`--disable-gpu --disable-amd-gpu --disable-infiniband --disable-opa --disable-lustre`**.
 
 Foreign prerequisites:
 

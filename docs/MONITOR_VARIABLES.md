@@ -12,7 +12,7 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 
 1. **Monitor** (C sources under `HPCPerfStats/monitor/`) samples counters and prints text lines (`t jid host` timestamps plus `type dev values` rows and `!type` schema lines).
 2. **`hpcperfstats/listend.py`** (`on_message`) appends payloads under the per-host archive directory (RabbitMQ consumer).
-3. **`hpcperfstats/dbload/sync_timedb.py`** (`add_stats_file_to_db`) reads archive files. The `sync_timedb` process rescans the archive directory after each ingest wave and, when nothing is pending, sleeps before scanning again, while still running scheduled daily-archive seal and raw removal on the configured interval. Before appending raw files to a daily `.tar` or deleting them from disk, **`sync_timedb_ingest_readiness`** requires at least one **`host_data`** row for the **hostname token in the file’s first stats timestamp line** (not the archive directory name) with `time` in the **same Unix second** as that line (monitor emits fractional seconds; ingest stores subsecond `time` values). Configurable via **`sync_archive_require_db_head_ingest`** (default on).
+3. **`hpcperfstats/dbload/sync_timedb.py`** (`add_stats_file_to_db`) reads archive files.
 4. **`hpcperfstats/dbload/sync_timedb_parsing.py`** (`parse_stats_lines`, `compute_deltas_and_arc`, `EVENTMAPS_BY_TYPE`) parses lines, maps raw PMC encodings to logical event names, collapses multi-GPU rows, and computes `delta` / `arc`.
 5. **`hpcperfstats/dbload/io_helpers.py`** (`host_data_instance_from_stats_row`) builds ORM rows.
 6. **`hpcperfstats/site/machine/models.py`** (`host_data` model) stores `time`, `host`, `type`, `dev`, `event`, `unit`, `value`, `delta`, `arc`.
@@ -55,7 +55,6 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `intel_4pmc3` | `intel_4pmc3.c` | Same decode map as `intel_8pmc3` |
 | `intel_8pmc3` | `intel_8pmc3.c` | FP_ARITH / fixed counters / legacy SSE FLOP proxies |
 | `intel_*_imc` | `intel_*_imc.c` | IMC generations → `CAS_READS` / `CAS_WRITES` |
-| `intel_knl_mc_dclk` | `intel_knl_mc.c + dbload normalization` | KNL DRAM CAS |
 | `intel_skx_cha` | `intel_skx_cha.c` | CHA uncore events (summary arc sum) |
 | `intel_rapl` | `intel_rapl.c` | RAPL MSRs |
 | `intel_pcu` | `intel_pcu.c` | Package control / uncore |
@@ -64,7 +63,6 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `lnet` | `lnet.c` | LNET counters |
 | `mdc` | `mdc.c` | Lustre MDC stats |
 | `mem` | `mem.c` | System memory |
-| `mic` | `mic.c` | Xeon Phi aggregate CPU |
 | `net` | `net.c` | Ethernet sysfs |
 | `nfs` | `nfs.c` | NFS mountstats |
 | `numa` | `numa.c` | NUMA hit/miss |
@@ -73,19 +71,18 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `osc` | `osc.c` | Lustre OSC |
 | `proc` | `proc.c` | Per-process `/proc` status |
 | `ps` | `ps.c` | Skipped by default ingest |
-| `roofline_hw_peak` | `roofline_hw_peak.c` | Host-level roofline peak metadata; emitted only on `$` schema/header changeover |
 | `sysv_shm` | `sysv_shm.c` | Skipped by default ingest |
 | `tmpfs` | `tmpfs.c` | Skipped by default ingest |
 | `vfs` | `vfs.c` | Skipped by default ingest |
 | `vm` | `vm.c` | VM stats |
 
-Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`). Some typenames are normalized during dbload (for example KNL memory controller).
+Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`).
 
 ### By functional domain (summary)
 
-- **CPU time & load:** `cpu`, `ps`, `mic` types — `user`, `system`, `load_*`, …
+- **CPU time & load:** `cpu`, `ps` types — `user`, `system`, `load_*`, …
 - **Core PMC / FLOPs / frequency:** `intel_*pmc3`, `amd64_pmc`, `cpu_counter_metrics` — `FP_ARITH_*`, `FLOPS`, `INST_RETIRED`, `APERF`, `MPERF`, …
-- **DRAM bandwidth:** `intel_*_imc`, `intel_knl_mc_dclk`, `arm_imc`, `amd64_df` — `CAS_READS` / `CAS_WRITES`, `MBW_CHANNEL_*`
+- **DRAM bandwidth:** `intel_*_imc`, `arm_imc`, `amd64_df` — `CAS_READS` / `CAS_WRITES`, `MBW_CHANNEL_*`
 - **GPU:** `nvidia_gpu`, `amd_gpu` — `gpu_util`, `tensor_active`, `power_usage`, …
 - **High-speed fabric:** `ib_ext`, `opa` — `port_*`, `Port*` counters
 - **Ethernet / LNET:** `net`, `lnet` — `rx_bytes`, `tx_bytes`, …
@@ -115,656 +112,68 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ## Variable catalog (alphabetical)
 
-### `APERF`
-
-- **Definition:** Actual frequency clock ticks (MSR); with MPERF yields effective CPU frequency.
-- **Domain:** CPU cycles / frequency
-- **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
-- **Tests:** hpcperfstats/analysis/gen/tests/test_utils_get_type.py; hpcperfstats/site/machine/tests/test_metrics.py
-
-### `ARM_DRAM_BW_BYTES`
-
-- **Definition:** Synthetic cumulative DRAM byte traffic estimate for ARM/DCGM-backed paths (monitor-derived).
-- **Domain:** cpu_counter_metrics (Grace / DCGM / synthetic)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/test_roofline_jid_table.py
-- **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
-
-### `ARM_EST_FLOPS`
-
-- **Definition:** Synthetic cumulative floating-point work estimate for ARM/DCGM-backed paths (monitor-derived).
-- **Domain:** CPU core performance (PMC)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/test_roofline_jid_table.py
-- **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
-
-### `Active`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `AnonHugePages`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `AnonPages`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `Bounce`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `CAS_READS`
-
-- **Definition:** Memory-controller DRAM CAS read events (Intel uncore IMC or normalized ARM IMC), used for DRAM bandwidth.
-- **Domain:** DRAM / memory controller
-- **Typical `host_data.type` values:** `intel_bdw_imc`, `intel_hsw_imc`, `intel_ivb_imc`, `intel_knl_mc_dclk`, `intel_skx_imc`, `intel_snb_imc`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_roofline_jid_table.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
-- **Tests:** hpcperfstats/analysis/gen/tests/test_utils_get_type.py; hpcperfstats/site/frontend/src/utils/variableMetadata.test.js; hpcperfstats/site/machine/tests/test_metrics.py
-
-### `CAS_WRITES`
-
-- **Definition:** Memory-controller DRAM CAS write events.
-- **Domain:** DRAM / memory controller
-- **Typical `host_data.type` values:** `intel_bdw_imc`, `intel_hsw_imc`, `intel_ivb_imc`, `intel_knl_mc_dclk`, `intel_skx_imc`, `intel_snb_imc`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_roofline_jid_table.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
-- **Tests:** hpcperfstats/analysis/gen/tests/test_utils_get_type.py; hpcperfstats/site/machine/tests/test_metrics.py
-
-### `CTL0`
-
-- **Definition:** Performance event select register (programs the paired general-purpose counter).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTL1`
-
-- **Definition:** Performance event select register (programs the paired general-purpose counter).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTL2`
-
-- **Definition:** Performance event select register (programs the paired general-purpose counter).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTL3`
-
-- **Definition:** Performance event select register (programs the paired general-purpose counter).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTL4`
-
-- **Definition:** Performance event select register (programs the paired general-purpose counter).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTL5`
-
-- **Definition:** Performance event select register (programs the paired general-purpose counter).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTL6`
-
-- **Definition:** Performance event select register (programs the paired general-purpose counter).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTL7`
-
-- **Definition:** Performance event select register (programs the paired general-purpose counter).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTR0`
-
-- **Definition:** General-purpose performance-monitoring counter value; meaning depends on paired CTL programming.
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTR1`
-
-- **Definition:** General-purpose performance-monitoring counter value; meaning depends on paired CTL programming.
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTR2`
-
-- **Definition:** General-purpose performance-monitoring counter value; meaning depends on paired CTL programming.
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTR3`
-
-- **Definition:** General-purpose performance-monitoring counter value; meaning depends on paired CTL programming.
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTR4`
-
-- **Definition:** General-purpose performance-monitoring counter value; meaning depends on paired CTL programming.
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTR5`
-
-- **Definition:** General-purpose performance-monitoring counter value; meaning depends on paired CTL programming.
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTR6`
-
-- **Definition:** General-purpose performance-monitoring counter value; meaning depends on paired CTL programming.
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `CTR7`
-
-- **Definition:** General-purpose performance-monitoring counter value; meaning depends on paired CTL programming.
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** These labels exist only in raw `!` schema lines; the database stores decoded event names. For diagnosis, use the decoded counters (for example cache, memory, or uop events) correlated with time and node to localize stalls or contention.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `DCGM_CPU_POWER_LIMIT_W`
-
-- **Definition:** Per-socket CPU power limit from DCGM when exposed (watts).
-- **Domain:** cpu_counter_metrics (Grace / DCGM / synthetic)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Compare against `DCGM_CPU_POWER_UTIL_W` to see headroom to the cap; sustained utilization near limit with performance loss may indicate power-governed frequency.
-- **Application / library code:** hpcperfstats/dbload/sync_timedb_parsing.py
-
-### `DCGM_CPU_POWER_UTIL_W`
-
-- **Definition:** Per-socket CPU power draw from DCGM on Grace/superchip hosts (watts; replicated per logical CPU in that socket).
-- **Domain:** cpu_counter_metrics (Grace / DCGM / synthetic)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/gen/node_power_est.py; hpcperfstats/analysis/gen/test_node_power_est.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/dbload/sync_timedb_parsing.py
-
-### `DF_CTR0`
-
-- **Definition:** AMD Data Fabric performance counter 0 (or zero-filled placeholder in unified schema).
-- **Domain:** DRAM / memory controller
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw Data Fabric counter slots; meaning depends on monitor programming. Use alongside decoded `MBW_CHANNEL_*` rates to validate DRAM traffic or debug counter setup.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `DF_CTR1`
-
-- **Definition:** AMD Data Fabric performance counter 1.
-- **Domain:** DRAM / memory controller
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw Data Fabric counter slots; meaning depends on monitor programming. Use alongside decoded `MBW_CHANNEL_*` rates to validate DRAM traffic or debug counter setup.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `DF_CTR2`
-
-- **Definition:** AMD Data Fabric performance counter 2.
-- **Domain:** DRAM / memory controller
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw Data Fabric counter slots; meaning depends on monitor programming. Use alongside decoded `MBW_CHANNEL_*` rates to validate DRAM traffic or debug counter setup.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `DF_CTR3`
-
-- **Definition:** AMD Data Fabric performance counter 3.
-- **Domain:** DRAM / memory controller
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw Data Fabric counter slots; meaning depends on monitor programming. Use alongside decoded `MBW_CHANNEL_*` rates to validate DRAM traffic or debug counter setup.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `Dirty`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `FIXED_CTR0`
-
-- **Definition:** Intel fixed counter 0 (typically instructions retired).
-- **Domain:** CPU cycles / frequency
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
-- **Application / library code:** hpcperfstats/dbload/sync_timedb_parsing.py
-
-### `FIXED_CTR1`
-
-- **Definition:** Intel fixed counter 1 (typically unhalted core cycles).
-- **Domain:** CPU cycles / frequency
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
-- **Application / library code:** hpcperfstats/dbload/sync_timedb_parsing.py
-
-### `FIXED_CTR2`
-
-- **Definition:** Intel fixed counter 2 (typically reference cycles).
-- **Domain:** CPU cycles / frequency
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
-- **Application / library code:** hpcperfstats/dbload/sync_timedb_parsing.py
-
-### `FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE`
-
-- **Definition:** Intel PMU: 128-bit packed double-precision FP arithmetic instructions retired.
-- **Domain:** CPU core performance (PMC)
-- **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/gen/utils.py; hpcperfstats/analysis/metrics/metrics.py
-
-### `FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE`
-
-- **Definition:** Intel PMU: 128-bit packed single-precision FP arithmetic instructions retired.
-- **Domain:** CPU core performance (PMC)
-- **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/gen/utils.py; hpcperfstats/analysis/metrics/metrics.py
-
-### `FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE`
-
-- **Definition:** Intel PMU: 256-bit packed double-precision FP arithmetic instructions retired.
-- **Domain:** CPU core performance (PMC)
-- **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/gen/utils.py; hpcperfstats/analysis/metrics/metrics.py
-
-### `FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE`
-
-- **Definition:** Intel PMU: 256-bit packed single-precision FP arithmetic instructions retired.
-- **Domain:** CPU core performance (PMC)
-- **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/gen/utils.py; hpcperfstats/analysis/metrics/metrics.py
-
-### `FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE`
-
-- **Definition:** Intel PMU: 512-bit packed double-precision FP arithmetic instructions retired.
-- **Domain:** CPU core performance (PMC)
-- **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/gen/utils.py; hpcperfstats/analysis/metrics/metrics.py
-
-### `FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE`
-
-- **Definition:** Intel PMU: 512-bit packed single-precision FP arithmetic instructions retired.
-- **Domain:** CPU core performance (PMC)
-- **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/gen/utils.py; hpcperfstats/analysis/metrics/metrics.py
-
-### `FP_ARITH_INST_RETIRED_SCALAR_DOUBLE`
-
-- **Definition:** Intel PMU: scalar double-precision floating-point arithmetic instructions retired (Intel SDM).
-- **Domain:** CPU core performance (PMC)
-- **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/gen/utils.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py
-
-### `FP_ARITH_INST_RETIRED_SCALAR_SINGLE`
-
-- **Definition:** Intel PMU: scalar single-precision FP arithmetic instructions retired.
-- **Domain:** CPU core performance (PMC)
-- **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/gen/utils.py; hpcperfstats/analysis/metrics/metrics.py
-
-### `FilePages`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py
-
-### `HugePages_Free`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `HugePages_Total`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `INST_RETIRED`
-
-- **Definition:** Instructions retired (fixed counter or MSR alias aligned with IA32_FIXED_CTR0).
-- **Domain:** CPU core performance (PMC)
-- **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
-- **Tests:** hpcperfstats/analysis/gen/tests/test_utils_get_type.py; hpcperfstats/site/machine/tests/test_metrics.py
-
-### `Inactive`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
 ### `MBW_CHANNEL_0`
 
 - **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_hover_tooltips.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_hover_tooltips.py; hpcperfstats/site/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_1`
 
 - **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/site/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_2`
 
 - **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/site/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_3`
 
 - **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/site/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_4`
 
 - **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/site/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_5`
 
 - **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/site/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_6`
 
 - **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/site/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_7`
 
 - **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py
-
-### `MPERF`
-
-- **Definition:** Reference clock ticks while the core is active; pairs with APERF for frequency.
-- **Domain:** CPU cycles / frequency
-- **Typical `host_data.type` values:** `intel_4pmc3`, `intel_8pmc3`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
-- **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
-
-### `MSR_CORE_ENERGY_STAT`
-
-- **Definition:** Intel RAPL-related core energy (platform-specific naming).
-- **Domain:** RAPL / energy MSRs
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** RAPL energy counters support power/cap diagnosis: compare package vs DRAM domain trends with workload phases; sudden plateaus may reflect power or thermal limits.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `MSR_DRAM_ENERGY_STATUS`
-
-- **Definition:** Intel RAPL MSR: DRAM domain energy status.
-- **Domain:** RAPL / energy MSRs
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** RAPL energy counters support power/cap diagnosis: compare package vs DRAM domain trends with workload phases; sudden plateaus may reflect power or thermal limits.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `MSR_PKG_ENERGY_STAT`
-
-- **Definition:** Intel RAPL package energy status (alternate MSR naming).
-- **Domain:** RAPL / energy MSRs
-- **Typical `host_data.type` values:** `amd64_rapl`
-- **Application / library code:** hpcperfstats/analysis/gen/node_power_est.py; hpcperfstats/analysis/gen/test_node_power_est.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
-
-### `MSR_PKG_ENERGY_STATUS`
-
-- **Definition:** Intel RAPL MSR: package energy status (raw units).
-- **Domain:** RAPL / energy MSRs
-- **Typical `host_data.type` values:** `intel_rapl`
-- **Application / library code:** hpcperfstats/analysis/gen/node_power_est.py; hpcperfstats/analysis/gen/test_node_power_est.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
-
-### `MSR_PP0_ENERGY_STATUS`
-
-- **Definition:** Intel RAPL MSR: PP0 (cores) energy status.
-- **Domain:** RAPL / energy MSRs
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** RAPL energy counters support power/cap diagnosis: compare package vs DRAM domain trends with workload phases; sudden plateaus may reflect power or thermal limits.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `MSR_PP1_ENERGY_STATUS`
-
-- **Definition:** Intel RAPL MSR: PP1 (uncore/GT when present) energy status.
-- **Domain:** RAPL / energy MSRs
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** RAPL energy counters support power/cap diagnosis: compare package vs DRAM domain trends with workload phases; sudden plateaus may reflect power or thermal limits.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `Mapped`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `MemFree`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `MemTotal`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** `mem`
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `MemUsed`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** `mem`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
-
-### `NFS_Unstable`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `PageTables`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `PortErrorCounterSummary`
-
-- **Definition:** OPA aggregated port error summary counter.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** FECN/BECN, congestion, and wait-style counters indicate fabric backpressure; compare with application all-to-all or IO bursts. Rising error summaries warrant port cleaning, firmware checks, or topology review.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `PortMarkFECN`
-
-- **Definition:** OPA FECN marks applied.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** FECN/BECN, congestion, and wait-style counters indicate fabric backpressure; compare with application all-to-all or IO bursts. Rising error summaries warrant port cleaning, firmware checks, or topology review.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `PortMulticastRcvPkts`
-
-- **Definition:** OPA multicast packets received.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** FECN/BECN, congestion, and wait-style counters indicate fabric backpressure; compare with application all-to-all or IO bursts. Rising error summaries warrant port cleaning, firmware checks, or topology review.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `PortMulticastXmitPkts`
-
-- **Definition:** OPA multicast packets transmitted.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** FECN/BECN, congestion, and wait-style counters indicate fabric backpressure; compare with application all-to-all or IO bursts. Rising error summaries warrant port cleaning, firmware checks, or topology review.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `PortRcvBECN`
-
-- **Definition:** OPA backward explicit congestion notifications received.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py
-
-### `PortRcvBubble`
-
-- **Definition:** OPA bubble / idle counter on receive path.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** FECN/BECN, congestion, and wait-style counters indicate fabric backpressure; compare with application all-to-all or IO bursts. Rising error summaries warrant port cleaning, firmware checks, or topology review.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `PortRcvData`
-
-- **Definition:** Intel Omni-Path port counter: data received.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py
-
-### `PortRcvFECN`
-
-- **Definition:** OPA forward explicit congestion notifications received.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py
-
-### `PortRcvPkts`
-
-- **Definition:** OPA packets received.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py
-
-### `PortXmitData`
-
-- **Definition:** Intel Omni-Path port counter: data transmitted.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py
-
-### `PortXmitPkts`
-
-- **Definition:** OPA packets transmitted.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py
-
-### `PortXmitTimeCong`
-
-- **Definition:** OPA time spent in congestion-related transmit delay.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** FECN/BECN, congestion, and wait-style counters indicate fabric backpressure; compare with application all-to-all or IO bursts. Rising error summaries warrant port cleaning, firmware checks, or topology review.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `PortXmitWait`
-
-- **Definition:** OPA wait or stall counter related to credits or arbitration.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/plot/summaryplot.py
-
-### `PortXmitWaitData`
-
-- **Definition:** OPA data-volume related wait counter.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** FECN/BECN, congestion, and wait-style counters indicate fabric backpressure; compare with application all-to-all or IO bursts. Rising error summaries warrant port cleaning, firmware checks, or topology review.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `PortXmitWastedBW`
-
-- **Definition:** OPA bandwidth lost to congestion or backpressure.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** FECN/BECN, congestion, and wait-style counters indicate fabric backpressure; compare with application all-to-all or IO bursts. Rising error summaries warrant port cleaning, firmware checks, or topology review.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/site/machine/job_plot_artifacts.py
 
 ### `READ_ops`
 
 - **Definition:** NFS READ RPC operation count (mountstats).
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** `nfs`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `READ_queue`
@@ -815,266 +224,12 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Application / library code:** hpcperfstats/analysis/gen/utils.py; hpcperfstats/analysis/metrics/metrics.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
-### `Slab`
-
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py
-
-### `SwPortCongestion`
-
-- **Definition:** OPA switch congestion indicator.
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py
-
-### `Threads`
-
-- **Definition:** Thread count from sampled process status.
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** `proc`
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `Uid`
-
-- **Definition:** User ID of sampled process.
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `V1_CTL0`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V1_CTL1`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V1_CTL2`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V1_CTL3`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V1_CTR0`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V1_CTR1`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V1_CTR2`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V1_CTR3`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V3_CTL0`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V3_CTL1`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V3_CTL2`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V3_CTL3`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V3_CTR0`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V3_CTR1`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V3_CTR2`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `V3_CTR3`
-
-- **Definition:** Intel uncore / mesh CHA counter or control register (Skylake-class naming).
-- **Domain:** PMC schema / programming (decoded before DB)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Uncore CHA/mesh programming placeholders in schema dumps. After decoding, use the logical uncore events (often cache or IMC-related) to relate LLC traffic, memory behavior, or cross-socket coherence to application phases.
-- **Additional references:** *(schema placeholders; logical event names are persisted after `map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*
-
-### `VL15_dropped`
-
-- **Definition:** InfiniBand VL 15 dropped frames.
-- **Domain:** InfiniBand / Omni-Path / HFI
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Physical-layer and VL15 drop counters warrant link quality checks; intermittent spikes often correlate with cable wear or switch port errors.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `VmData`
-
-- **Definition:** Data segment size (kB).
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `VmExe`
-
-- **Definition:** Executable code size (kB).
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `VmHWM`
-
-- **Definition:** Peak resident set size (kB)âused for memory high-water style metrics.
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** `proc`
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `VmLck`
-
-- **Definition:** Locked memory (kB).
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `VmLib`
-
-- **Definition:** Shared library mapping size (kB).
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `VmPTE`
-
-- **Definition:** Page table entries footprint (kB).
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `VmPeak`
-
-- **Definition:** Peak virtual memory size (kB) for a sampled process.
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `VmRSS`
-
-- **Definition:** Current resident set size (kB).
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** `proc`
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `VmSize`
-
-- **Definition:** Current virtual memory size (kB).
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `VmStk`
-
-- **Definition:** Stack size (kB).
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `VmSwap`
-
-- **Definition:** Swapped-out anonymous memory (kB).
-- **Domain:** Sampled process /proc status
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Process RSS/HWM and thread count expose memory leaks, unexpected fork bombs, or OpenMP oversubscription when sampled against job steps. Sudden `VmSwap` growth flags thrashing.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
 ### `WRITE_ops`
 
 - **Definition:** NFS WRITE RPC operation count.
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `WRITE_queue`
@@ -1101,20 +256,19 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Mountstats `delay` and RPC timing fields expose client-perceived NFS latency; compare timeouts and queue times with server or network events. Asymmetric read/write behavior helps separate metadata from data path problems.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `Writeback`
+### `active`
 
-- **Definition:** NUMA-node memory field from /sys/devices/system/node/nodeN/meminfo (kilobytes unless noted).
-- **Domain:** NUMA node memory (meminfo fields)
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Per-node meminfo fields diagnose memory pressure and reclaim: growing `Dirty`/`Writeback` with high `iowait` suggests flush backlog; `AnonPages` vs `Mapped` shows compute vs file-backed footprint. Compare across NUMA nodes for imbalance.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/site/frontend/src/pages/JobDetail.jsx; hpcperfstats/site/frontend/src/pages/JobList.jsx; hpcperfstats/site/frontend/src/pages/PageClusterDashboard.jsx; hpcperfstats/site/frontend/src/pages/Search.jsx; hpcperfstats/site/machine/management/commands/pg_connection_stats.py
 
 ### `alloc_inode`
 
 - **Definition:** Lustre llite: inode allocation operations counted in per-mount `/proc/fs/lustre/llite/*/stats`.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `allocstall`
 
@@ -1122,6 +276,86 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `anon_huge_pages`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `anon_pages`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `aperf`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `arm_dram_bw_bytes`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `arm_est_flops`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `bounce`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `branch_inst_retired`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `branch_inst_retired_miss`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `bypass_cha_imc_all`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `bytes_avail`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `bytes_used`
@@ -1144,7 +378,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: `close(2)` operation count per mount (`/proc/fs/lustre/llite/*/stats`).
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 - **Tests:** hpcperfstats/site/machine/tests/test_update_metrics.py
 
 ### `collisions`
@@ -1155,6 +389,22 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
+### `core_energy`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `counter0_occupancy`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
 ### `counter_select`
 
 - **Definition:** IB MAD extended counter query selector field.
@@ -1163,12 +413,82 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Configuration/metadata for counter queries rather than workload metrics. Use adjacent payload counters (`port_*`) for link health diagnosis.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
+### `cpu_clock_est_cycles`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `cpu_peak_dram_bw_bytes_per_s`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Application / library code:** hpcperfstats/analysis/plot/roofline_peaks.py; hpcperfstats/analysis/plot/test_roofline_peaks.py
+
+### `cpu_peak_fp64_flops_per_s`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Application / library code:** hpcperfstats/analysis/plot/roofline_peaks.py; hpcperfstats/analysis/plot/test_roofline_peaks.py
+
+### `cpu_peak_source`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `cpu_util_irq_accum_us`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `cpu_util_nice_accum_us`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `cpu_util_sys_accum_us`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `cpu_util_total_accum_us`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `cpu_util_user_accum_us`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
 ### `create`
 
 - **Definition:** Lustre llite: file create operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `ctxt`
 
@@ -1176,6 +496,38 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Load average and context-switch rates contextualize CPU contention: high `ctxt` with moderate CPU counters may indicate excessive threading or I/O wakeups.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `cycles_unhalted_core`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `cycles_unhalted_ref`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dcgm_cpu_power_limit_w`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dcgm_cpu_power_util_w`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `delay`
@@ -1199,14 +551,22 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS direct I/O read bytes.
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `direct_write`
 
 - **Definition:** NFS direct I/O write bytes.
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+
+### `dirty`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dirty_pages_hits`
 
@@ -1224,20 +584,123 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Lustre dirty-page cache hits/misses on the client; low hit rates with heavy write loads can push more work to OSS and increase observed write latency.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
+### `dispatch_stall_cycles0`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dispatch_stall_cycles1`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dram_act_count`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dram_cas_reads`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dram_cas_writes`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dram_chan0_bytes`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dram_chan1_bytes`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dram_chan2_bytes`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dram_chan3_bytes`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dram_energy`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dram_pre_count_miss`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `dtlb_load_misses_miss_causes_a_walk`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
 ### `errors`
 
 - **Definition:** LNET error counter.
 - **Domain:** Lustre LNET
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** LNET message and drop counters isolate router or NIC issues on Lustre networks; correlate drops with application I/O phases and remote mount health.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/sync_timedb_archive_maint.py
 
 ### `excessive_buffer_overrun_errors`
 
 - **Definition:** InfiniBand port counter: excessive buffer overruns (base IB sysfs counters).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** InfiniBand link state and reliability counters; correlate transitions with job start/end, cable reseats, or switch maintenance windows.
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
+
+### `file_pages`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `file_use`
@@ -1261,43 +724,173 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: advisory `flock` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `fp16_active`
 
 - **Definition:** FP16 pipe activity percent (DCGM PROF on NVIDIA; shared KEY on `amd_gpu`).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/dbload/sync_timedb_parsing.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/dbload/sync_timedb_parsing.py
+- **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `fp32_active`
 
 - **Definition:** FP32 pipe activity percent (DCGM PROF on NVIDIA; shared KEY on `amd_gpu`).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/dbload/sync_timedb_parsing.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/dbload/sync_timedb_parsing.py
+- **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `fp64_active`
 
 - **Definition:** FP64 pipe activity ratio as percent. DCGM PROF on `nvidia_gpu`; same semantic field on `amd_gpu` (wave/SM naming differs).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
-- **Application / library code:** hpcperfstats/dbload/sync_timedb_parsing.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/dbload/sync_timedb_parsing.py
+- **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
+
+### `fp_arith_inst_retired_128b_packed_double`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fp_arith_inst_retired_128b_packed_single`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fp_arith_inst_retired_256b_packed_double`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fp_arith_inst_retired_256b_packed_single`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fp_arith_inst_retired_512b_packed_double`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fp_arith_inst_retired_512b_packed_single`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fp_arith_inst_retired_scalar_double`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fp_arith_inst_retired_scalar_single`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fp_comp_ops_exe_sse_fp_packed`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fp_comp_ops_exe_sse_fp_scalar`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fp_ops_merge`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fp_ops_retired`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `freq_max_power_cycles`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `freq_max_temp_cycles`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `freq_min_io_cycles`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `freq_min_snoop_cycles`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `fsync`
 
 - **Definition:** Lustre llite: `fsync` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `getattr`
 
 - **Definition:** Lustre llite: getattr / stat-style metadata operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `getxattr`
 
@@ -1312,15 +905,23 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** GPU device count for the monitor row. DCGM-visible GPU count on `nvidia_gpu`; `amd_gpu` schema documents a stub row count (often 1).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/pages/JobDetail.jsx; hpcperfstats/site/machine/api.py; hpcperfstats/site/machine/cache_utils.py
-- **Tests:** hpcperfstats/site/machine/tests/test_job_detail_gpu.py
+- **Application / library code:** hpcperfstats/analysis/metrics/gpu_job_detail_summary.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/pages/JobDetail.jsx; hpcperfstats/site/machine/api.py; hpcperfstats/site/machine/cache_utils.py; hpcperfstats/site/machine/job_detail_artifacts.py
+- **Tests:** hpcperfstats/site/machine/tests/test_job_detail_artifacts_prewarm.py; hpcperfstats/site/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/machine/tests/test_job_detail_gpu.py
+
+### `gpu_dram_active`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `gpu_flops`
 
 - **Definition:** Cumulative estimated GPU FLOPs (monitor-integrated model; both GPU types).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/test_roofline_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/test_roofline_jid_table.py; hpcperfstats/site/machine/job_plot_artifacts.py
 
 ### `gpu_flops_rate`
 
@@ -1335,7 +936,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NVIDIA-only (`nvidia_gpu` / DCGM): cumulative PCIe plus NVLink bytes from DCGM PROF link counters (not HBM/VRAM traffic). This KEY is not in `amd_gpu.h`; the AMD monitor schema stops at `gpu_mem_total_bytes` plus `gpu_count`.
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_roofline_jid_table.py; hpcperfstats/dbload/sync_timedb_parsing.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/roofline.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_roofline_jid_table.py; hpcperfstats/dbload/sync_timedb_parsing.py; hpcperfstats/site/machine/job_plot_artifacts.py
 
 ### `gpu_mem_bw_bytes_rate`
 
@@ -1343,6 +944,14 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py
+
+### `gpu_mem_free_mb`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `gpu_mem_read_bytes`
 
@@ -1360,9 +969,110 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
+### `gpu_mem_total_mb`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `gpu_mem_used_mb`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `gpu_mem_util`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
 ### `gpu_mem_write_bytes`
 
 - **Definition:** Cumulative estimated GPU memory write bytes (model; shared schema).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `gpu_nvlink_rx_bytes`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `gpu_nvlink_tx_bytes`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `gpu_pcie_replay_counter`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `gpu_pcie_rx_bytes`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `gpu_pcie_tx_bytes`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `gpu_peak_fp64_flops_per_s`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Application / library code:** hpcperfstats/analysis/plot/roofline_peaks.py; hpcperfstats/analysis/plot/test_roofline_jid_table.py; hpcperfstats/analysis/plot/test_roofline_peaks.py
+
+### `gpu_peak_io_link_bw_bytes_per_s`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Application / library code:** hpcperfstats/analysis/plot/roofline_peaks.py; hpcperfstats/analysis/plot/test_roofline_jid_table.py; hpcperfstats/analysis/plot/test_roofline_peaks.py
+
+### `gpu_peak_mem_bw_bytes_per_s`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Application / library code:** hpcperfstats/analysis/plot/roofline_peaks.py; hpcperfstats/analysis/plot/test_roofline_jid_table.py; hpcperfstats/analysis/plot/test_roofline_peaks.py
+
+### `gpu_peak_source`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `gpu_sm_clock`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
@@ -1373,8 +1083,24 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** GPU utilization percent. Populated from DCGM on `nvidia_gpu`; from GPUPerfAPI (or stub zeros) on `amd_gpu`.
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** `amd_gpu`, `nvidia_gpu`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_hover_tooltips.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/dbload/sync_timedb_parsing.py; hpcperfstats/site/machine/api.py
+- **Application / library code:** hpcperfstats/analysis/metrics/gpu_job_detail_summary.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_gpu_job_detail_summary.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_hover_tooltips.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/dbload/sync_timedb_parsing.py
 - **Tests:** hpcperfstats/site/machine/tests/test_job_detail_gpu.py; hpcperfstats/site/machine/tests/test_metrics.py
+
+### `huge_pages_free`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `huge_pages_total`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `idle`
 
@@ -1382,15 +1108,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
 - **Diagnostic guidance:** Break down non-user CPU time to distinguish disk wait (`iowait`), interrupt storms (`irq`/`softirq`), and low-priority work (`nice`) from useful compute.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `idle_sum`
-
-- **Definition:** MIC: aggregate idle time.
-- **Domain:** Intel Xeon Phi (MIC)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Xeon Phi aggregate CPU counters support legacy KNC-style diagnosis: compare aggregated user/system/idle against expected offload utilization.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/site/machine/management/commands/pg_connection_stats.py
 
 ### `in_flight`
 
@@ -1398,6 +1116,14 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `inactive`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `inode_permission`
@@ -1414,6 +1140,22 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** VFS
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** VFS cache pressure can precede slow path lookups under millions of small files; compare with Lustre metadata rates.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `instr_retired`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `instr_retired_any`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `interleave_hit`
@@ -1454,15 +1196,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
 - **Diagnostic guidance:** Break down non-user CPU time to distinguish disk wait (`iowait`), interrupt storms (`irq`/`softirq`), and low-priority work (`nice`) from useful compute.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `jiffy_counter`
-
-- **Definition:** MIC: jiffy count at query time.
-- **Domain:** Intel Xeon Phi (MIC)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Xeon Phi aggregate CPU counters support legacy KNC-style diagnosis: compare aggregated user/system/idle against expected offload utilization.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/test_metrics_schema_guards.py
 
 ### `kswapd_inodesteal`
 
@@ -1480,43 +1214,81 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
+### `l1d_replacement`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `l2_lines_in_all`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
 ### `ldlm_cancel`
 
 - **Definition:** Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Tests:** hpcperfstats/site/machine/tests/test_jid_table.py
 
 ### `link`
 
 - **Definition:** Lustre llite: hard `link` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/pages/JobList.test.jsx
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/App.test.jsx; hpcperfstats/site/frontend/src/Layout.test.jsx; hpcperfstats/site/frontend/src/components/LayoutPub.test.jsx; hpcperfstats/site/frontend/src/pages/JobDetail.test.jsx; hpcperfstats/site/frontend/src/pages/JobList.test.jsx; hpcperfstats/site/frontend/src/pages/PageClusterDashboard.test.jsx
 
 ### `link_downed`
 
 - **Definition:** InfiniBand port counter: failed link error recoveries (link went down; monitor comment in ib.c).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** InfiniBand link state and reliability counters; correlate transitions with job start/end, cable reseats, or switch maintenance windows.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `link_error_recovery`
 
 - **Definition:** InfiniBand port counter: successful link error recovery events (monitor ib.c).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** InfiniBand link state and reliability counters; correlate transitions with job start/end, cable reseats, or switch maintenance windows.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `listxattr`
 
 - **Definition:** Lustre llite: `listxattr` syscall count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+
+### `llc_lookup_data_read`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `llc_lookup_data_read_local`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `llc_lookup_write`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `load_1`
 
@@ -1547,8 +1319,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** InfiniBand port counter: local link integrity errors (hardware / cable quality).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** InfiniBand link state and reliability counters; correlate transitions with job start/end, cable reseats, or switch maintenance windows.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `local_node`
 
@@ -1563,7 +1334,23 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: pathname `lookup` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+
+### `ls_dispatch`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `mapped`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mds_close`
 
@@ -1621,12 +1408,69 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `mem_total_mb`
+### `mem_free`
 
-- **Definition:** Total GPU framebuffer memory (MB), device-reported (shared `nvidia_gpu` / `amd_gpu` KEY).
-- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/dbload/sync_timedb_parsing.py
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `mem_load_uops_retired_l1_hit`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `mem_load_uops_retired_l2_hit`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `mem_load_uops_retired_llc_hit`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `mem_total`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `mem_uncore_retired_local_dram`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `mem_uncore_retired_remote_dram`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `mem_uops_retired_all_loads`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `mem_used`
 
@@ -1636,40 +1480,26 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** SysV shared memory usage can indicate legacy IPC or shared arrays; unexpected growth may leak segments across job steps.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `mem_used_mb`
-
-- **Definition:** Used GPU framebuffer memory (MB), device-reported (shared `nvidia_gpu` / `amd_gpu` KEY).
-- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/dbload/sync_timedb_parsing.py
-
-### `mem_util`
-
-- **Definition:** GPU memory copy/engine utilization percent. DCGM on `nvidia_gpu`; same field exists on `amd_gpu` when the backend is wired.
-- **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/dbload/sync_timedb_parsing.py
-
 ### `mkdir`
 
 - **Definition:** Lustre llite: `mkdir` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `mknod`
 
 - **Definition:** Lustre llite: `mknod` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `mmap`
 
 - **Definition:** Lustre llite: `mmap` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `module_power_usage`
 
@@ -1677,6 +1507,14 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/gen/node_power_est.py; hpcperfstats/analysis/gen/test_node_power_est.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/dbload/sync_timedb_parsing.py
+
+### `mperf`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `msgs_alloc`
 
@@ -1702,34 +1540,36 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
+### `nfs_unstable`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
 ### `nice`
 
 - **Definition:** Cumulative CPU time in low-priority user mode.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
-
-### `nice_sum`
-
-- **Definition:** MIC: aggregate nice time.
-- **Domain:** Intel Xeon Phi (MIC)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Xeon Phi aggregate CPU counters support legacy KNC-style diagnosis: compare aggregated user/system/idle against expected offload utilization.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_metrics_schema_guards.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/dbload/zstd_cli.py
 
 ### `normal_read`
 
 - **Definition:** NFS normal read bytes.
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** `nfs`
-- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Tests:** hpcperfstats/site/machine/tests/test_jid_table.py
 
 ### `normal_write`
 
 - **Definition:** NFS normal write bytes.
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Tests:** hpcperfstats/site/machine/tests/test_jid_table.py
 
 ### `nr_anon_transparent_hugepages`
 
@@ -1753,14 +1593,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Load average and context-switch rates contextualize CPU contention: high `ctxt` with moderate CPU counters may indicate excessive threading or I/O wakeups.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `num_cores`
-
-- **Definition:** MIC: number of cores.
-- **Domain:** Intel Xeon Phi (MIC)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Xeon Phi aggregate CPU counters support legacy KNC-style diagnosis: compare aggregated user/system/idle against expected offload utilization.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `numa_foreign`
@@ -1790,7 +1622,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: `open(2)` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `osc_read`
 
@@ -1863,12 +1695,44 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py
 
+### `page_tables`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
 ### `pageoutrun`
 
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
 - **Domain:** Kernel VM (/proc/vmstat)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `pcu_ctr0`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `pcu_ctr1`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `peak_calc_version`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `pgactivate`
@@ -1983,6 +1847,30 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** VM counters highlight reclaim and allocation stalls; rising `allocstall` or kswapd activity with flat RSS can mean memory overcommit or fragmentation. Correlate with OOM events and per-job `Vm*` process stats.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
+### `pkg_energy`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `port_error_counter_summary`
+
+- **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
+- **Domain:** InfiniBand / Omni-Path / HFI
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `port_mark_fecn`
+
+- **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
+- **Domain:** InfiniBand / Omni-Path / HFI
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
 ### `port_multicast_rcv_pkts`
 
 - **Definition:** Multicast packets received (IB extended).
@@ -1999,13 +1887,28 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `port_rcv_constraint_errors`
+### `port_rcv_becn`
 
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `port_rcv_bubble`
+
+- **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
+- **Domain:** InfiniBand / Omni-Path / HFI
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `port_rcv_constraint_errors`
+
+- **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
+- **Domain:** InfiniBand / Omni-Path / HFI
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `port_rcv_data`
 
@@ -2015,6 +1918,13 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `port_rcv_errors`
+
+- **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
+- **Domain:** InfiniBand / Omni-Path / HFI
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+
+### `port_rcv_fecn`
 
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
@@ -2042,16 +1952,14 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** InfiniBand inbound physical-layer error counter.
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `port_rcv_switch_relay_errors`
 
 - **Definition:** InfiniBand switch relay errors on received traffic.
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `port_select`
 
@@ -2082,8 +1990,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `port_xmit_data`
 
@@ -2098,8 +2005,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Packets not transmitted because the port was down or congested.
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `port_xmit_packets`
 
@@ -2114,11 +2020,35 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Packets transmitted (IB counters).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_metrics_schema_guards.py
+
+### `port_xmit_time_cong`
+
+- **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
+- **Domain:** InfiniBand / Omni-Path / HFI
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `port_xmit_wait`
 
 - **Definition:** Time waiting for credits or arbitration (vendor-specific units).
+- **Domain:** InfiniBand / Omni-Path / HFI
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `port_xmit_wait_data`
+
+- **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
+- **Domain:** InfiniBand / Omni-Path / HFI
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `port_xmit_wasted_bw`
+
+- **Definition:** Network or fabric port performance counter (InfiniBand sysfs, extended MAD, or Omni-Path).
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Use xmit vs rcv data and packet counters to find asymmetric communication patterns; error and discard counters flag link, credit, or congestion problems on the HFI.
@@ -2131,13 +2061,28 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/gen/node_power_est.py; hpcperfstats/analysis/gen/test_node_power_est.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/dbload/sync_timedb_parsing.py
 
+### `pp0_energy`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `pp1_energy`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
 ### `processes`
 
 - **Definition:** Processes created (forks) from /proc/stat.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Load average and context-switch rates contextualize CPU contention: high `ctxt` with moderate CPU counters may indicate excessive threading or I/O wakeups.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/site/frontend/src/pages/JobDetail.jsx
 
 ### `pswpin`
 
@@ -2176,7 +2121,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Sectors read from the block device (512-byte sectors, Linux sysfs block stat).
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** `block`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_metrics_schema_guards.py
 
 ### `rd_ticks`
 
@@ -2192,36 +2137,36 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/sync_timedb_archive_maint.py
 
 ### `read_bytes`
 
 - **Definition:** Cumulative bytes read on the Lustre client from llite or OSC `/proc/fs/lustre/*/stats` (llite counts requested read size per `read(2)`; OSC aggregates byte totals from OST RPCs).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** `llite`
-- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/machine/api.py
-- **Tests:** hpcperfstats/site/frontend/src/utils/variableMetadata.test.js; hpcperfstats/site/machine/tests/test_job_detail_fsio.py
+- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/machine/job_detail_artifacts.py
+- **Tests:** hpcperfstats/site/frontend/src/utils/variableMetadata.test.js; hpcperfstats/site/machine/tests/test_jid_table.py; hpcperfstats/site/machine/tests/test_job_detail_fsio.py
 
 ### `readdir`
 
 - **Definition:** Lustre llite: `readdir` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `removexattr`
 
 - **Definition:** Lustre llite: `removexattr` syscall count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `rename`
 
 - **Definition:** Lustre llite: `rename` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `reqs`
 
@@ -2231,12 +2176,52 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
+### `resource_stalls_any`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `retired_branch_instr`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `retired_instructions`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `retired_misp_branch_instr`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `ring_iv_used`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
 ### `rmdir`
 
 - **Definition:** Lustre llite: `rmdir` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `route_bytes`
 
@@ -2259,7 +2244,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Bytes received (Ethernet per-interface sysfs, or another typeâdisambiguate with host_data.type).
 - **Domain:** Ethernet (per-interface); LNET may reuse byte keys
 - **Typical `host_data.type` values:** `lnet`, `net`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `rx_bytes_dropped`
@@ -2283,8 +2268,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Linux netdev: frames received with CRC or FCS errors (physical layer or interference).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `rx_dropped`
 
@@ -2299,40 +2283,35 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Receive errors reported by the driver.
 - **Domain:** Ethernet (per-interface); LNET may reuse byte keys
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `rx_fifo_errors`
 
 - **Definition:** Linux netdev: receiver FIFO overrun errors.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `rx_frame_errors`
 
 - **Definition:** Linux netdev: framing errors (misaligned or malformed Ethernet frames).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `rx_length_errors`
 
 - **Definition:** Linux netdev: received frames with invalid length field.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `rx_missed_errors`
 
 - **Definition:** Linux netdev: packets missed by the receiver (often ring buffer exhaustion).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `rx_msgs`
 
@@ -2355,16 +2334,23 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Linux netdev: receiver overrun errors.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `rx_packets`
 
 - **Definition:** Packets received (per-interface sysfs).
 - **Domain:** Ethernet (per-interface); LNET may reuse byte keys
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_metrics_schema_guards.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
+
+### `rx_r_occupancy`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `seek`
 
@@ -2387,28 +2373,52 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** NFS server-side read bytes (mountstats accounting).
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `server_write`
 
 - **Definition:** NFS server-side write bytes.
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `setattr`
 
 - **Definition:** Lustre llite: `setattr` metadata updates (mode/owner/size, etc.).
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `setxattr`
 
 - **Definition:** Lustre llite: `setxattr` syscall count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+
+### `sf_evictions_mes`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `simd_fp_256_packed_double`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `slab`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `slabs_scanned`
 
@@ -2446,30 +2456,29 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: `statfs` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+
+### `sw_port_congestion`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `symbol_error`
 
 - **Definition:** Minor link symbol errors on InfiniBand.
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Physical-layer and VL15 drop counters warrant link quality checks; intermittent spikes often correlate with cable wear or switch port errors.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `symlink`
 
 - **Definition:** Lustre llite: `symlink` creation operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
-
-### `sys_sum`
-
-- **Definition:** MIC: aggregate system time.
-- **Domain:** Intel Xeon Phi (MIC)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Xeon Phi aggregate CPU counters support legacy KNC-style diagnosis: compare aggregated user/system/idle against expected offload utilization.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `sysio_power_usage`
 
@@ -2484,7 +2493,8 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative CPU time in kernel mode.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/metrics/test_job_for_metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/pages/JobDetail.jsx
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_for_metrics.py; hpcperfstats/analysis/metrics/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/pages/JobDetail.jsx
+- **Tests:** hpcperfstats/site/machine/tests/test_job_detail_fsio.py
 
 ### `temperature`
 
@@ -2500,6 +2510,30 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** `amd_gpu`, `nvidia_gpu`
 - **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/dbload/sync_timedb_parsing.py
+
+### `tensor_dfma_active`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `tensor_hmma_active`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `tensor_imma_active`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `thp_collapse_alloc`
 
@@ -2541,12 +2575,12 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Transparent hugepage counters show THP allocation success vs fallback/split; high `thp_fault_fallback` or `thp_split` with memory-bound jobs can mean fragmentation or conflicting `madvise` behavior—compare with `pgmajfault` and RSS from `proc`.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `threads_core`
+### `threads`
 
-- **Definition:** MIC: hardware threads per core.
-- **Domain:** Intel Xeon Phi (MIC)
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Xeon Phi aggregate CPU counters support legacy KNC-style diagnosis: compare aggregated user/system/idle against expected offload utilization.
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `time_in_queue`
@@ -2562,22 +2596,21 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: `truncate` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `tx_aborted_errors`
 
 - **Definition:** Linux netdev: aborted transmissions (driver or hardware abort).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `tx_bytes`
 
 - **Definition:** Bytes transmitted (Ethernet per-interface sysfs, Lustre LNET, or other typeâuse host_data.type).
 - **Domain:** Ethernet (per-interface); LNET may reuse byte keys
 - **Typical `host_data.type` values:** `lnet`, `net`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `tx_carrier_errors`
@@ -2585,8 +2618,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Linux netdev: loss of carrier during transmit (cable, duplex, or link partner).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `tx_compressed`
 
@@ -2609,24 +2641,21 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Transmit errors reported by the driver.
 - **Domain:** Ethernet (per-interface); LNET may reuse byte keys
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `tx_fifo_errors`
 
 - **Definition:** Linux netdev: transmit FIFO errors (underrun/overrun, driver dependent).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `tx_heartbeat_errors`
 
 - **Definition:** Linux netdev: heartbeat / half-duplex loss-of-carrier style errors.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
 
 ### `tx_msgs`
 
@@ -2641,7 +2670,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Packets transmitted.
 - **Domain:** Ethernet (per-interface); LNET may reuse byte keys
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_metrics_schema_guards.py
 - **Tests:** hpcperfstats/site/machine/tests/test_metrics.py
 
 ### `tx_window_errors`
@@ -2649,7 +2678,14 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Linux netdev: classic transmitter window errors on outbound frames.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Rising `rx_errors`, `tx_errors`, or drops alongside flat goodput points to driver, cable, or switch issues; packet rate vs byte rate helps distinguish small-message storms from bulk transfers. CRC/fifo/frame errors often indicate bad optics or duplex/speed mismatch. Correlate with MPI or TCP job phases.
+- **Application / library code:** hpcperfstats/analysis/plot/summaryplot.py
+
+### `uid`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `unlink`
@@ -2657,21 +2693,110 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: `unlink` operation count.
 - **Domain:** Lustre client (llite / mdc / osc)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py
 
 ### `user`
 
 - **Definition:** Cumulative CPU time in user mode (per-core counter; units per Linux /proc/stat, typically jiffies).
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/metrics/test_job_for_metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/pages/JobDetail.jsx; hpcperfstats/site/frontend/src/pages/JobList.jsx
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_for_metrics.py; hpcperfstats/analysis/metrics/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/test_per_interval_rate.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/frontend/src/pages/JobDetail.jsx
+- **Tests:** hpcperfstats/site/machine/tests/test_job_detail_artifacts_prewarm.py; hpcperfstats/site/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/machine/tests/test_update_metrics_diagnosis_compose.py
 
-### `user_sum`
+### `vl15_dropped`
 
-- **Definition:** Intel Xeon Phi (MIC): aggregate user time across cores.
-- **Domain:** Intel Xeon Phi (MIC)
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Xeon Phi aggregate CPU counters support legacy KNC-style diagnosis: compare aggregated user/system/idle against expected offload utilization.
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vm_data`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vm_exe`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vm_hwm`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vm_lck`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vm_lib`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vm_peak`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vm_pte`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vm_rss`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vm_size`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vm_stk`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vm_swap`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `wait`
@@ -2680,7 +2805,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Tests:** hpcperfstats/site/machine/tests/test_update_metrics.py
 
 ### `wr_ios`
 
@@ -2703,7 +2828,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Sectors written to the block device (512-byte sectors).
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** `block`
-- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py
+- **Application / library code:** hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_metrics_schema_guards.py
 
 ### `wr_ticks`
 
@@ -2726,8 +2851,16 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative bytes written on the Lustre client from llite or OSC `/proc/fs/lustre/*/stats`.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** `llite`
-- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/machine/api.py
-- **Tests:** hpcperfstats/site/machine/tests/test_job_detail_fsio.py
+- **Application / library code:** hpcperfstats/analysis/gen/jid_table.py; hpcperfstats/analysis/metrics/job_detail_fsio.py; hpcperfstats/analysis/metrics/metrics.py; hpcperfstats/analysis/metrics/test_job_detail_fsio.py; hpcperfstats/analysis/plot/summaryplot.py; hpcperfstats/analysis/plot/test_summaryplot_jid_table.py; hpcperfstats/site/machine/job_detail_artifacts.py
+- **Tests:** hpcperfstats/site/machine/tests/test_jid_table.py; hpcperfstats/site/machine/tests/test_job_detail_fsio.py
+
+### `writeback`
+
+- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `xprt_bad_xids`
 

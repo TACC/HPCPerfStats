@@ -89,11 +89,6 @@ processor_t signature(int *n_pmcs) {
       return BROADWELL;
     }
 
-    if (strncmp(sig, "06_57", 5) == 0) {
-      TRACE("Knights Landing %s\n", sig);
-      return KNL;
-    }
-
     if (strncmp(sig, "06_55", 5) == 0 ||
         strncmp(sig, "06_4e", 5) == 0 ||
         strncmp(sig, "06_5e", 5) == 0) {

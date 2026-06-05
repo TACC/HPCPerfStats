@@ -205,9 +205,6 @@ TYPES 	+= \
 	intel_ivb_imc.c \
 	intel_ivb_qpi.c \
 	intel_ivb_r2pci.c \
-	intel_knl.c \
-	intel_knl_edc.c \
-	intel_knl_mc.c \
 	intel_pcu.c \
 	intel_skx_cha.c \
 	intel_skx_imc.c \
@@ -279,13 +276,6 @@ hpcperfstatsd_SOURCES += \
 TYPES += \
 	mdc.c \
 	llite.c
-endif
-
-if MIC
-hpcperfstatsd_SOURCES += \
-	miclib.h 
-TYPES += \
-	mic.c
 endif
 
 hpcperfstatsd_SOURCES += \

@@ -1,0 +1,38 @@
+---
+description: When the user authorizes non-monitor edits, follow HPCPerfStats/hpcperfstats/cursor-rules
+alwaysApply: true
+---
+
+# Out-of-monitor work: hpcperfstats rules
+
+When the user **explicitly authorizes** code changes outside `HPCPerfStats/monitor/` in the current chat (paths, packages, or areas named in the request), that work is governed by **`HPCPerfStats/hpcperfstats/cursor-rules/`**, not only by monitor-focused rules in `.cursor/rules/`.
+
+## Trigger
+
+- Applies when the user overrides **monitor-workspace-contract** for a given turn (e.g. “fix `listend.py`”, “update Django …”, “change `docker-compose.yaml`”).
+- Does **not** apply to read-only inspection of non-monitor code for monitor integration (still monitor-default scope unless the user asks for edits there).
+
+## What to follow
+
+1. **Read** the relevant `.mdc` files under `HPCPerfStats/hpcperfstats/cursor-rules/` before implementing.
+2. Apply every rule there with **`alwaysApply: true`** for the session while that authorized work is in progress.
+3. Apply **file-scoped** rules whose **`globs`** match files you create or modify (e.g. `**/*.py`, `**/frontend/**`, compose/nginx paths).
+4. When several rules overlap, use their stated precedence; **`workspace-guardrails.mdc`** still forbids monitor edits unless the user separately authorizes monitor changes in the same chat.
+
+## Precedence vs monitor workspace rules
+
+| Context | Governing rules |
+|--------|------------------|
+| Edits under `HPCPerfStats/monitor/` | `.cursor/rules/` monitor rules (static bundle, dual verify, contract, etc.) |
+| Authorized edits outside `HPCPerfStats/monitor/` | `HPCPerfStats/hpcperfstats/cursor-rules/` |
+| Analysis only (no edit authorization) | Monitor contract; hpcperfstats rules optional unless needed for accuracy |
+
+Monitor build/verification rules (**monitor-static-build-verification**, **monitor-dual-verify-cross-and-static**, etc.) do **not** replace hpcperfstats test or compose gates for non-monitor changes.
+
+## Rule source location
+
+Authoritative copies live in the repo at:
+
+`HPCPerfStats/hpcperfstats/cursor-rules/*.mdc`
+
+In a full-stack checkout, `.cursor/rules` may symlink there; in this monitor-focused workspace, load rules from that path explicitly when doing authorized out-of-monitor work.

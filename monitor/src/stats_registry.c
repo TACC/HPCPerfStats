@@ -24,9 +24,6 @@ extern struct stats_type intel_ivb_hau_stats_type;
 extern struct stats_type intel_ivb_imc_stats_type;
 extern struct stats_type intel_ivb_qpi_stats_type;
 extern struct stats_type intel_ivb_r2pci_stats_type;
-extern struct stats_type intel_knl_stats_type;
-extern struct stats_type intel_knl_edc_stats_type;
-extern struct stats_type intel_knl_mc_stats_type;
 extern struct stats_type intel_pcu_stats_type;
 extern struct stats_type intel_rapl_stats_type;
 extern struct stats_type intel_skx_cha_stats_type;
@@ -73,10 +70,6 @@ extern struct stats_type mdc_stats_type;
 #endif
 
 extern struct stats_type mem_stats_type;
-
-#if defined(MONITOR_WITH_MIC)
-extern struct stats_type mic_stats_type;
-#endif
 
 extern struct stats_type net_stats_type;
 extern struct stats_type nfs_stats_type;
@@ -140,9 +133,6 @@ struct stats_type *const stats_type_table[] = {
   &intel_ivb_imc_stats_type,
   &intel_ivb_qpi_stats_type,
   &intel_ivb_r2pci_stats_type,
-  &intel_knl_stats_type,
-  &intel_knl_edc_stats_type,
-  &intel_knl_mc_stats_type,
   &intel_pcu_stats_type,
   &intel_rapl_stats_type,
   &intel_skx_cha_stats_type,
@@ -161,9 +151,6 @@ struct stats_type *const stats_type_table[] = {
   &mdc_stats_type,
 #endif
   &mem_stats_type,
-#if defined(MONITOR_WITH_MIC)
-  &mic_stats_type,
-#endif
   &net_stats_type,
   &nfs_stats_type,
   &numa_stats_type,

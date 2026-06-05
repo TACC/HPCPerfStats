@@ -1,6 +1,6 @@
 /*! \file intel_pmc3.h
  *  Intel x86 core PMU version 3: MSR layout, event macros, and emitted KEYS for
- *  intel_x86_pmc_gpr4, intel_x86_pmc_gpr8, and intel_x86_pmc_knl collectors.
+ *  intel_x86_pmc_gpr4 and intel_x86_pmc_gpr8 collectors.
  *
  *  \author Todd Evans
  *  \brief Counters for Intel Performance Monitoring Version 3
@@ -113,13 +113,6 @@
 
 #define HT_KEYS KEYS
 
-#define KNL_KEYS		 \
-  X(mem_uops_retired_all_loads_knl, "E,W=40", ""),	 \
-    X(mem_uops_retired_l2_hit_loads_knl, "E,W=40", ""),	 \
-    X(instr_retired, "E,W=40", ""), \
-    X(aperf, "E,W=40", ""), \
-    X(mperf, "E,W=40", "")
-
 /*! \brief Event select */
 // IA32_PERFEVTSELx MSR layout
 //   [0, 7] Event Select
@@ -159,10 +152,6 @@
 #define SSE_DOUBLE_SCALAR_PACKED       PERF_EVENT(0x10, 0x90)
 #define SIMD_FP_256_PACKED_DOUBLE      PERF_EVENT(0x11, 0x02)
 
-/* KNL */
-#define MEM_UOPS_RETIRED_ALL_LOADS_KNL     PERF_EVENT(0x04, 0x40)
-#define MEM_UOPS_RETIRED_L2_HIT_LOADS_KNL  PERF_EVENT(0x04, 0x02)
-
 /* SKX CLX */
 #define FP_ARITH_INST_RETIRED_SCALAR_DOUBLE      PERF_EVENT(0xC7, 0x01)
 #define FP_ARITH_INST_RETIRED_SCALAR_SINGLE      PERF_EVENT(0xC7, 0x02)
@@ -201,10 +190,6 @@ static uint64_t skx_events[] = {
   FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE,
   FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE,
 };
-static  uint64_t knl_events[] = {
-  MEM_UOPS_RETIRED_ALL_LOADS_KNL,
-  MEM_UOPS_RETIRED_L2_HIT_LOADS_KNL,
-};
 static  uint64_t hsw_events[] = {
   MEM_UOPS_RETIRED_ALL_LOADS,
   MEM_LOAD_UOPS_RETIRED_L1_HIT,
@@ -241,10 +226,6 @@ static const char *const skx_event_keys[] = {
   "fp_arith_inst_retired_128b_packed_single",
   "fp_arith_inst_retired_256b_packed_single",
   "fp_arith_inst_retired_512b_packed_single",
-};
-static const char *const knl_event_keys[] = {
-  "mem_uops_retired_all_loads_knl",
-  "mem_uops_retired_l2_hit_loads_knl",
 };
 static const char *const hsw_event_keys[] = {
   "mem_uops_retired_all_loads",
@@ -292,8 +273,6 @@ static const char *const *intel_pmc3_event_keys(size_t *nkeys)
   case HASWELL:
   case BROADWELL:
     keys = hsw_event_keys; n = sizeof(hsw_event_keys) / sizeof(hsw_event_keys[0]); break;
-  case KNL:
-    keys = knl_event_keys; n = sizeof(knl_event_keys) / sizeof(knl_event_keys[0]); break;
   case SKYLAKE:
     keys = skx_event_keys; n = sizeof(skx_event_keys) / sizeof(skx_event_keys[0]); break;
   default:
@@ -331,8 +310,6 @@ static int intel_pmc3_begin_cpu(char *cpu)
     events = hsw_events; break;
   case BROADWELL:
     events = hsw_events; break;
-  case KNL:
-    events = knl_events; break;
   case SKYLAKE:
     events = skx_events; break;
   default:

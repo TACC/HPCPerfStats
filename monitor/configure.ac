@@ -5,7 +5,7 @@ AC_PROG_CC
 AM_PROG_CC_C_O
 
 AC_ARG_ENABLE([all-static],
-[AS_HELP_STRING([--enable-all-static], [Link most third-party libraries as static archives (linker groups) (default: yes). Use --disable-all-static for dynamic linking where available. Requires static .a for ev, rabbitmq-c, and likwid (+ likwid-hwloc, likwid-lua for the static liblikwid link); for workspace .build/prefix run monitor/scripts/ensure_dotbuild_prefix_static.sh. Vendor stacks usually shipped as shared only (DCGM, RDMA/OPA, libibmad, MIC) are linked after -Wl,-Bdynamic. See monitor/scripts/build_static_bundle.sh.])],
+[AS_HELP_STRING([--enable-all-static], [Link most third-party libraries as static archives (linker groups) (default: yes). Use --disable-all-static for dynamic linking where available. Requires static .a for ev, rabbitmq-c, and likwid (+ likwid-hwloc, likwid-lua for the static liblikwid link); for workspace .build/prefix run monitor/scripts/ensure_dotbuild_prefix_static.sh. Vendor stacks usually shipped as shared only (DCGM, RDMA/OPA, libibmad) are linked after -Wl,-Bdynamic. See monitor/scripts/build_static_bundle.sh.])],
 [enable_all_static=$enableval],
 [enable_all_static=yes])
 
@@ -33,21 +33,6 @@ AC_DEFUN([MONITOR_CFG_INFINIBAND_LIBS], [
       AC_CHECK_HEADERS([infiniband/umad.h infiniband/mad.h], [infiniband=true],
         [AC_MSG_ERROR([Unable to find umad.h or mad.h on this system!])])
     fi
-  fi
-])
-
-AC_DEFUN([MONITOR_CFG_MIC_LIBS], [
-  if test "x$enable_all_static" = xyes; then
-    save_LIBS=$LIBS
-    LIBS=
-    AC_SEARCH_LIBS([mic_open_device], [micmgmt], [have_mic=yes],
-      [LIBS=$save_LIBS
-       AC_MSG_ERROR([Unable to find libmicmgmt!])])
-    MONITOR_SHARED_LIBS="$MONITOR_SHARED_LIBS $LIBS"
-    LIBS=$save_LIBS
-  else
-    AC_SEARCH_LIBS([mic_open_device], [micmgmt], [have_mic=yes],
-      [AC_MSG_ERROR([Unable to find libmicmgmt!])])
   fi
 ])
 
@@ -245,18 +230,6 @@ esac],
 [lustre=true])
 AM_CONDITIONAL([LUSTRE], [test x$lustre = xtrue])
 
-AC_ARG_ENABLE([mic],
-[  --enable-mic		Enable Intel MIC (Xeon Phi) support (default is false)],
-[case "${enableval}" in
-  yes) mic=true
-  MONITOR_CFG_MIC_LIBS
-  ;;
-  no)  mic=false ;;
-  *) AC_MSG_ERROR([bad value ${enableval} for --enable-mic]) ;;
-esac],
-[mic=false])
-AM_CONDITIONAL([MIC], [test x$mic = xtrue])
-
 AC_ARG_ENABLE([gpu],
 [  --enable-gpu		Enable Nvidia GPU support (default is auto-detect)],
 [case "${enableval}" in
@@ -408,7 +381,7 @@ AM_CONDITIONAL([METRIC_PROFILER_BACKEND_EBPF],
 
 AC_ARG_ENABLE([legacy-pmcs],
 [AS_HELP_STRING([--enable-legacy-pmcs],
-  [Enable legacy monitoring paths (AMD Family 10h PMC programming; required for --enable-mic)])],
+  [Enable legacy monitoring paths (AMD Family 10h PMC programming)])],
 [case "${enableval}" in
   yes) legacy_pmcs=true ;;
   no)  legacy_pmcs=false ;;
@@ -416,10 +389,6 @@ AC_ARG_ENABLE([legacy-pmcs],
 esac],
 [legacy_pmcs=false])
 AM_CONDITIONAL([LEGACY_PMCS], [test x$legacy_pmcs = xtrue])
-
-if test "x$mic" = xtrue && test "x$legacy_pmcs" != xtrue; then
-  AC_MSG_ERROR([--enable-mic requires --enable-legacy-pmcs (Intel MIC / Xeon Phi support is legacy-only)])
-fi
 
 AC_ARG_ENABLE([debug],
 [  --enable-debug	Turn on debugging (default is false)],

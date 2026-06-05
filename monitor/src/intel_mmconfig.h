@@ -3,9 +3,9 @@
 
 #include <stdint.h>
 
-/* /dev/mem MMCONFIG region helpers shared by Intel SKX/KNL drivers.
+/* /dev/mem MMCONFIG region helpers shared by Intel SKX uncore drivers.
  *
- * intel_skx_imc.c, intel_knl_edc.c and intel_knl_mc.c all repeated the same
+ * intel_skx_imc.c and related PCI MMIO collectors repeated the same
  * scaffolding to mmap the PCI MMCONFIG window, then unmap and close on the
  * way out. intel_mmconfig_open returns a populated struct that the caller
  * passes to intel_mmconfig_close.

@@ -494,7 +494,7 @@ EOF
   pieces become --disable-infiniband / --disable-gpu / --disable-amd-gpu so
   configure can succeed. Configure routes shared-only stacks after -Wl,-Bdynamic
   when using --enable-all-static: DCGM, Infiniband (libibmad), Omni-Path / OPA,
-  and Intel MIC when enabled. GPUPerfAPI (AMD) is dlopen'd at runtime.
+  and GPUPerfAPI (AMD) is dlopen'd at runtime.
 - A fully static executable (including glibc) needs musl or careful NSS
   handling; partial static linking (this script) avoids installing the
   third-party deps system-wide while still using the system C library.

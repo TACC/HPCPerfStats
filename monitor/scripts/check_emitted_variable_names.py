@@ -22,9 +22,9 @@ FORBIDDEN_KEY_RE = re.compile(
 )
 LEGACY_TYPE_RE = re.compile(
     r"^(?:cpu|mem|vm|ps|numa|block|net|proc|vfs|nfs|tmpfs|sysv_shm|"
-    r"cpu_counter_metrics|roofline_hw_peak|amd64_|intel_[0-9]|intel_knl$|intel_pcu$|"
+    r"cpu_counter_metrics|roofline_hw_peak|amd64_|intel_[0-9]|intel_pcu$|"
     r"intel_skx|intel_snb|intel_ivb|intel_hsw|intel_bdw|arm_imc$|ib$|ib_ext|ib_sw|"
-    r"lnet$|opa$|llite$|mdc$|osc$|mic$)$"
+    r"lnet$|opa$|llite$|mdc$|osc$)$"
 )
 KEY_SHAPE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 

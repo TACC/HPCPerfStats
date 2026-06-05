@@ -89,7 +89,7 @@ Notes:
   - Foreign x86 installs static LIKWID (.a only); configure probes perfmon_init with -llikwid-hwloc -llikwid-lua -lm first (see configure.ac).
   - For deterministic foreign smoke, monitor configure is passed:
       --disable-gpu --disable-amd-gpu --disable-infiniband --disable-opa
-      --disable-mic --disable-lustre
+      --disable-lustre
 EOF
   exit "${1:-0}"
 }
@@ -1053,7 +1053,6 @@ foreign_monitor_cfg_args() {
     --disable-amd-gpu
     --disable-infiniband
     --disable-opa
-    --disable-mic
     --disable-lustre
   )
 
