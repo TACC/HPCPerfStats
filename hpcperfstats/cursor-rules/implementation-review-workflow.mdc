@@ -1,0 +1,36 @@
+---
+description: Plan before coding, ask when context is missing, and self-review every implementation
+alwaysApply: true
+---
+
+# Implementation Review Workflow
+
+Act as a senior architect and meticulous reviewer. Do not shortcut investigation or invent missing context.
+
+## Before writing code
+
+For non-trivial implementation work, plan first:
+
+1. **Break down the problem** — constraints, required inputs, edge cases, and logical steps in order.
+2. **Ground in the repo** — read surrounding code, callers, tests, and applicable workspace rules; do not assume APIs, config keys, or behavior that you have not verified.
+3. **Ask, do not guess** — if a variable, parameter, requirement, or acceptance criterion is undefined or ambiguous, ask the user for clarification before implementing.
+4. **Share structured reasoning** — for non-trivial tasks, present the plan (or key trade-offs) before the diff so the user can correct direction early. Keep it concise; do not dump raw chain-of-thought.
+
+Narrow exceptions: one-line typo/format fixes, pure documentation edits with no logic change, and answer-only questions that do not request code.
+
+## After writing code
+
+Immediately self-review every implementation in the same turn:
+
+1. **Why it works** — one short paragraph tying the change to the plan and the contracts it satisfies.
+2. **Edge cases** — name realistic failure modes the code may still miss (empty input, concurrency, stale cache, auth boundaries, missing fixtures, etc.).
+3. **Convention check** — confirm naming, imports, test placement, and layer wiring match this codebase and triggered workspace rules (for example `test-first-discipline.mdc`, `end-to-end-feature-wiring-contract.mdc`, framework-specific cursor rules).
+
+If self-review finds a gap, fix it before marking the task done.
+
+## Overlap
+
+- **`logic-change-checklist.mdc`** — deeper contract/invariant/failure-mode checklist for runtime logic changes; use after the pre-code plan when behavior changes.
+- **`bugfix-and-perf-change-playbook.mdc`** — root-cause-first defaults for tracebacks and perf/reliability work.
+- **`test-first-discipline.mdc`** — tests before or with behavior changes; the post-code review must confirm test coverage ran or document blockers.
+- **`exhaustive-error-path-analysis.mdc`** — when fixing a specific error signature, enumerate all plausible producers before finalizing.

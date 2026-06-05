@@ -21,6 +21,10 @@ Treat every non-trivial change as test-first work.
 - **New modules** (Python package files, React components, utils) require a **colocated test file** in the same task.
 - Do not mark work complete without running the relevant tests for touched behavior.
 
+## Integration with implementation workflow
+
+- **`implementation-review-workflow.mdc`** — pre-code planning and post-code self-review; regression coverage and test runs are part of the post-implementation review.
+
 ## Integration with existing testing rules
 - **`testing-best-practices.mdc`** — canonical pyramid, mock boundaries, drift guards, refactor-for-testability.
 - Follow compose-network workflows for non-unit tests per `docker-compose-non-unit-testing.mdc` and `full-test-with-db-redis.mdc`.

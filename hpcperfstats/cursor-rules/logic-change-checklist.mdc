@@ -39,4 +39,5 @@ Use this checklist for every correctness/completeness change that affects runtim
 
 ## Overlap
 
+- **`implementation-review-workflow.mdc`** — general plan-before-code and post-implementation self-review; use this checklist when runtime logic changes.
 - Complements `runtime-resource-and-metrics-safety.mdc`, `bugfix-and-perf-change-playbook.mdc`, and test-maintenance rules.
