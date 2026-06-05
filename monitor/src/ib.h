@@ -19,7 +19,6 @@
   X(port_xmit_packets, "E,W=32", "packets transmitted"), \
   X(port_xmit_wait, "E,W=32,U=ms", "wait time for credits or arbitration"), \
   X(symbol_error, "E,W=32", "minor link errors"), \
-  X(vl15_dropped, "E,W=32", ""), \
   X(port_select, "c", ""), \
   X(counter_select, "c", ""), \
   X(port_xmit_pkts, "E", ""), \
