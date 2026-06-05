@@ -2,6 +2,8 @@
 #define _STATS_BUFFER_H_
 #include <stdio.h>
 
+#include "stats_text_format.h"
+
 struct stats_buffer {
   char *sf_mark;
   char *sf_data;
@@ -39,6 +41,7 @@ int stats_buffer_close(struct stats_buffer *sf);
 int stats_buffer_mark(struct stats_buffer *sf, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 int stats_buffer_write(struct stats_buffer *sf);
 int stats_buffer_collect(struct stats_buffer *sf);
+enum stats_row_tier stats_buffer_payload_row_tier(const struct stats_buffer *sf);
 int stats_wr_hdr(struct stats_buffer *sf);
 int stats_buffer_resend(struct stats_buffer *sf);
 int stats_buffer_write_file(struct stats_buffer *sf, char *path);

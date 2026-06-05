@@ -26,6 +26,7 @@
 #include "collect.h"
 #include "collect_tier.h"
 #include "stats_buffer.h"
+#include "stats_buffer_debug_shm.h"
 #include "metric_profiler.h"
 #include "trace.h"
 #include "pscanf.h"
@@ -427,6 +428,8 @@ static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_h
     free(sf);
     return;
   }
+  if (!write_hdr)
+    stats_buffer_debug_shm_write_sample(sf, stats_buffer_payload_row_tier(sf));
   rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
   if (rc < 0) {
     g_ring_insert_fail_count++;

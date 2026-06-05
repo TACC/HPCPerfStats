@@ -183,6 +183,13 @@ static enum stats_row_tier stats_buffer_collect_row_tier(const struct stats_buff
                                       (int) collect_tier_get_phase());
 }
 
+enum stats_row_tier stats_buffer_payload_row_tier(const struct stats_buffer *sf)
+{
+  return stats_buffer_row_tier_decide(stats_buffer_is_schema_payload(sf),
+				      collect_tier_enabled(),
+				      (int) collect_tier_get_phase());
+}
+
 int stats_buffer_collect(struct stats_buffer *sf)
 {
   int rc = 0;

@@ -14,6 +14,7 @@
 #include "monitor_daemon.h"
 #include "monitor_log.h"
 #include "stats_buffer.h"
+#include "stats_buffer_debug_shm.h"
 #include "stats_runtime.h"
 #include "string1.h"
 #include "stats.h"
@@ -167,6 +168,7 @@ int main(int argc, char *argv[])
   monitor_log_info("Started %s\n", app_name);
 
   monitor_try_mk_dumpdir();
+  stats_buffer_debug_shm_init();
   monitor_daemon_prime_file_mode_from_dumpdir();
 
   struct sf_ring_buffer ring_buffer;

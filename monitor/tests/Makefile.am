@@ -50,7 +50,7 @@ if CPU_BACKEND_DCGM
 check_PROGRAMS += test_dcgm_pkg_uniq test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish
 endif
 if RABBITMQ
-check_PROGRAMS += test_monitor_cli test_ring_buffer test_stats_buffer_collect test_monitor_timing
+check_PROGRAMS += test_monitor_cli test_ring_buffer test_stats_buffer_collect test_stats_buffer_debug_shm test_monitor_timing
 endif
 
 TESTS = $(check_PROGRAMS)
@@ -395,6 +395,24 @@ test_stats_buffer_collect_SOURCES = \
 	$(top_srcdir)/src/dict.c
 test_stats_buffer_collect_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
 
+test_stats_buffer_debug_shm_SOURCES = \
+	test_stats_buffer_debug_shm.c \
+	test_stats_buffer_collect_stubs.c \
+	$(top_srcdir)/src/stats_buffer.c \
+	$(top_srcdir)/src/stats_buffer_debug_shm.c \
+	$(top_srcdir)/src/stats_buffer_rmq.c \
+	$(top_srcdir)/src/stats_buffer_rows.c \
+	$(top_srcdir)/src/stats_buffer_uts.c \
+	$(top_srcdir)/src/stats_buffer_data_append.c \
+	$(top_srcdir)/src/stats_text_format.c \
+	$(top_srcdir)/src/collect_tier.c \
+	$(top_srcdir)/src/monitor_log.c \
+	$(top_srcdir)/src/path_open_fail_once.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/dict.c
+test_stats_buffer_debug_shm_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
+
 test_monitor_timing_SOURCES = \
 	test_monitor_timing.c \
 	$(top_srcdir)/src/monitor_timing.c
@@ -466,5 +484,6 @@ if RABBITMQ
 test_monitor_cli_LDADD = $(LDADD)
 test_ring_buffer_LDADD = $(LDADD)
 test_stats_buffer_collect_LDADD = $(LDADD)
+test_stats_buffer_debug_shm_LDADD = $(LDADD)
 test_monitor_timing_LDADD = $(LDADD) -lm
 endif
