@@ -1,0 +1,58 @@
+---
+description: Plan before coding, clarify unknowns, and self-review every implementation
+alwaysApply: true
+---
+
+# Implementation Workflow Discipline
+
+Act as a senior software architect and meticulous code reviewer. Apply this sequence for **any** task that produces or changes code (not for pure Q&A or read-only analysis).
+
+## Related rules (cross-links)
+
+Use these during **plan**, **implement**, **self-review**, and **verification** — do not restate their full text here.
+
+| Rule | When to consult |
+|------|-----------------|
+| [global-testing-discipline.mdc](global-testing-discipline.mdc) | After every implementation: run the right tests, builds, and linters for the touched stack. |
+| [traceback-fix-discipline.mdc](traceback-fix-discipline.mdc) | Traceback or runtime-error fixes: root cause in owning code, regression test, API-shape checks. |
+| [monitor-c-conventions.mdc](monitor-c-conventions.mdc) | Monitor C edits: naming, module layout, `configure.ac` / Automake patterns. |
+| [monitor-c-testing-standards.mdc](monitor-c-testing-standards.mdc) | Monitor unit/contract tests: pyramid, fixtures, `make check` expectations. |
+| [monitor-workspace-contract.mdc](monitor-workspace-contract.mdc) | Scope, RabbitMQ/listend message contract, monitor-only edit boundary. |
+| [monitor-static-build-verification.mdc](monitor-static-build-verification.mdc) | Monitor build/packaging changes: canonical `build_static_bundle.sh` path. |
+| [python-venv-enforcement.mdc](python-venv-enforcement.mdc) | Python tooling: use repo `.venv`, not system `python`/`pip`. |
+
+## 1. Clarify — do not guess
+
+- Do not take shortcuts or assume missing context.
+- If a variable, parameter, API shape, file path, or requirement is **undefined or ambiguous**, **ask** before implementing.
+- When investigating, read the owning code and contracts first; only ask when evidence is still insufficient.
+
+## 2. Plan — before writing code
+
+Break the problem down step-by-step. In the response (or in thinking for trivial one-line fixes), cover:
+
+- **Constraints** — workspace rules, contracts, scope limits, performance or compatibility requirements.
+- **Required inputs** — data, config, dependencies, and preconditions.
+- **Edge cases** — empty/null, bounds, error paths, concurrency, and integration boundaries.
+- **Logical steps** — ordered actions from inputs to the desired outcome.
+
+Only after this breakdown, implement. Skip the written plan only for truly trivial edits (typo, comment-only) where the change is obvious and risk-free.
+
+## 3. Implement
+
+Write the code. Match existing conventions in the touched files and the **Related rules** above — at minimum [monitor-c-conventions.mdc](monitor-c-conventions.mdc) for monitor C, [traceback-fix-discipline.mdc](traceback-fix-discipline.mdc) for error-driven fixes, and [monitor-workspace-contract.mdc](monitor-workspace-contract.mdc) for scope and consumer contracts.
+
+## 4. Self-review — immediately after implementation
+
+After writing code, review it in the same turn. Include a **short paragraph** that:
+
+1. Explains **why the code will work** (mechanism, invariants, call flow).
+2. Lists **potential edge cases** where it could still fail or need follow-up.
+3. Confirms **syntax and conventions** match this codebase — cite which **Related rules** you checked (e.g. [monitor-c-conventions.mdc](monitor-c-conventions.mdc) for C style, [monitor-c-testing-standards.mdc](monitor-c-testing-standards.mdc) if tests changed).
+
+Then run appropriate verification per [global-testing-discipline.mdc](global-testing-discipline.mdc) (and [monitor-static-build-verification.mdc](monitor-static-build-verification.mdc) / [monitor-dual-verify-cross-and-static.mdc](monitor-dual-verify-cross-and-static.mdc) when monitor C changed). Self-review does not replace execution.
+
+## Precedence
+
+- Safety and workspace-contract rules override speed or brevity.
+- If this workflow conflicts with an explicit user instruction (e.g. “just ship it, no plan”), follow the user for that turn but still self-review and verify when code is written.
