@@ -14,14 +14,12 @@
 #include "dcgm_fields.h"
 #include "dcgm_session.h"
 #include "nvidia_gpu.h"
+#include "nvidia_gpu_estimate.h"
 #include "monitor_log.h"
 #include "stats.h"
 #include "trace.h"
 #include "nvidia_gpu_dcgm_compat.h"
 #include "nvidia_gpu_dcgm_watch.h"
-
-#define NVIDIA_GPU_APPROX_PEAK_FLOPS_PER_S 60000000000000.0
-#define NVIDIA_GPU_APPROX_PEAK_MEM_BW_BYTES_PER_S 1000000000000.0
 
 static unsigned long long g_gpu_est_flops[DCGM_MAX_NUM_DEVICES];
 static unsigned long long g_gpu_est_mem_read_bytes[DCGM_MAX_NUM_DEVICES];
@@ -239,7 +237,7 @@ static int nvidia_gpu_collect_dev(struct stats *stats,
                                   int gpu_count,
                                   long long delta_us)
 {
-  double fp_mix;
+  struct nvidia_gpu_estimate_input est_in;
   double flops_rate;
   double mem_bw_rate;
   unsigned long long delta_flops = 0ULL;
@@ -252,15 +250,12 @@ static int nvidia_gpu_collect_dev(struct stats *stats,
    * tensor_hmma_active, and tensor_dfma_active are reported for multiprecision visibility
    * but omitted here: they overlap tensor_active (1004) on many stacks and would double-count.
    */
-  fp_mix = row->fp64_active + row->fp32_active + row->fp16_active + row->tensor_active;
-  if (fp_mix < 0.0)
-    fp_mix = 0.0;
-  if (fp_mix > 1.0)
-    fp_mix = 1.0;
-  flops_rate = fp_mix * NVIDIA_GPU_APPROX_PEAK_FLOPS_PER_S;
-  mem_bw_rate = ((double) row->mem_util / 100.0) * NVIDIA_GPU_APPROX_PEAK_MEM_BW_BYTES_PER_S;
-  if (mem_bw_rate < 0.0)
-    mem_bw_rate = 0.0;
+  est_in.fp64_active = row->fp64_active;
+  est_in.fp32_active = row->fp32_active;
+  est_in.fp16_active = row->fp16_active;
+  est_in.tensor_active = row->tensor_active;
+  est_in.mem_util = row->mem_util;
+  nvidia_gpu_estimate_rates(&est_in, &flops_rate, &mem_bw_rate);
 
   nvidia_gpu_io_link_accumulate(gid, row);
 

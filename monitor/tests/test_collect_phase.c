@@ -1,9 +1,48 @@
 /* Slow-boundary math (monitor_timing) and collect-phase gating (collect_tier). */
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 
+#include "collect.h"
 #include "collect_tier.h"
 #include "monitor_timing.h"
+#include "stats.h"
+#include "stats_runtime.h"
+
+void cpu_stats_invalidate_file_caches(void) {}
+void net_stats_invalidate_iface_cache(void) {}
+void auto_disable_optional_stats_by_lspci(void) {}
+void metric_profiler_collect_begin(const char *name) { (void) name; }
+void metric_profiler_collect_end(const char *name) { (void) name; }
+void metric_profiler_cycle_begin(void) {}
+void metric_profiler_cycle_end(FILE *stream) { (void) stream; }
+void monitor_log_error(const char *fmt, ...) { (void) fmt; }
+void monitor_log_warn(const char *fmt, ...) { (void) fmt; }
+void collect_set_key_active_hook(collect_key_active_fn fn, void *ctx)
+{
+  (void) fn;
+  (void) ctx;
+}
+
+int stats_type_init(struct stats_type *type)
+{
+  (void) type;
+  return 0;
+}
+
+void stats_type_destroy(struct stats_type *type) { (void) type; }
+
+struct stats_type *stats_type_for_each(size_t *i)
+{
+  (void) i;
+  return NULL;
+}
+
+struct stats_type *stats_type_get(const char *name)
+{
+  (void) name;
+  return NULL;
+}
 
 static void test_slow_slot_math(void)
 {
@@ -56,12 +95,38 @@ static void test_phase_get_set_and_effective(void)
   assert(collect_tier_effective_phase(0) == COLLECT_FULL);
 }
 
+static void test_runtime_collect_phase_for_tick(void)
+{
+  long long last_slot = -1;
+  enum collect_phase phase;
+
+  phase = stats_runtime_collect_phase_for_tick(0.0, &last_slot, 600.0);
+  assert(phase == COLLECT_FULL);
+  assert(last_slot == 0);
+  assert(collect_tier_get_phase() == COLLECT_FULL);
+
+  phase = stats_runtime_collect_phase_for_tick(30.0, &last_slot, 600.0);
+  assert(phase == COLLECT_FAST_ONLY);
+  assert(last_slot == 0);
+  assert(collect_tier_get_phase() == COLLECT_FAST_ONLY);
+
+  phase = stats_runtime_collect_phase_for_tick(599.0, &last_slot, 600.0);
+  assert(phase == COLLECT_FAST_ONLY);
+  assert(last_slot == 0);
+
+  phase = stats_runtime_collect_phase_for_tick(600.0, &last_slot, 600.0);
+  assert(phase == COLLECT_FULL);
+  assert(last_slot == 1);
+  assert(collect_tier_get_phase() == COLLECT_FULL);
+}
+
 int main(void)
 {
   test_slow_slot_math();
   test_should_run_slow();
   test_alignment_with_fast_ticks();
   test_phase_get_set_and_effective();
+  test_runtime_collect_phase_for_tick();
   printf("test_collect_phase passed\n");
   return 0;
 }

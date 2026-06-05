@@ -84,6 +84,14 @@ static void test_key_is_slow_helper(void)
   assert(collect_tier_key_is_slow("nonexistent_type", "whatever") == 0);
 }
 
+static void test_enabled_readback(void)
+{
+  collect_tier_set_enabled(1);
+  assert(collect_tier_enabled() == 1);
+  collect_tier_set_enabled(0);
+  assert(collect_tier_enabled() == 0);
+}
+
 static void test_key_active_by_phase(void)
 {
   struct stats_type type;
@@ -118,6 +126,7 @@ int main(void)
   test_enabled_applies_numa_table();
   test_error_suffix_rule();
   test_key_is_slow_helper();
+  test_enabled_readback();
   test_key_active_by_phase();
   collect_tier_set_enabled(0);
   printf("test_collect_tier_table passed\n");

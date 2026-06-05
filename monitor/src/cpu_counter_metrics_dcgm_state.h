@@ -3,6 +3,8 @@
 
 #ifdef MONITOR_CPU_BACKEND_DCGM
 
+#include "cpu_counter_metrics_dcgm_util.h"
+
 extern int g_dcgm_ncpu_entities;
 extern int *g_dcgm_logical_to_power_slot;
 extern double *g_dcgm_sock_power_util;
@@ -26,8 +28,6 @@ extern unsigned long long *g_dcgm_fp_sca_s;
 extern unsigned long long *g_dcgm_fp_128_s;
 extern unsigned long long *g_dcgm_fp_256_s;
 extern unsigned long long *g_dcgm_fp_512_s;
-
-unsigned long long dcgm_watts_dbl_to_ull(double v);
 
 #endif
 

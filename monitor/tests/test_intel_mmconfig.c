@@ -7,11 +7,13 @@
 
 #include "intel_mmconfig.h"
 
-/* intel_mmconfig_open hard-codes /dev/mem and the call requires CAP_SYS_RAWIO
- * so we can't fully exercise it from a non-root unit test. We instead exercise
- * intel_mmconfig_close on a manually constructed half-initialised struct (the
- * documented graceful-cleanup path) and verify intel_mmconfig_open fails as
- * expected on systems without /dev/mem access. */
+/* SKIP (non-root unit test): intel_mmconfig_open mmap()s /dev/mem and needs
+ * CAP_SYS_RAWIO. CI runners and developer laptops without /dev/mem access
+ * cannot exercise the happy path here — do not treat open() failure as a
+ * regression. Coverage in this driver is limited to:
+ *   - intel_mmconfig_close on never-opened / NULL structs (always run)
+ *   - intel_mmconfig_open best-effort probe (succeeds only when privileged)
+ */
 int main(void)
 {
   struct intel_mmconfig empty = { -1, MAP_FAILED, 0, 0 };

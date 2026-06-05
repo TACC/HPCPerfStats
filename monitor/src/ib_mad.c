@@ -70,8 +70,10 @@ int ib_mad_sw_collect_cycle_ok(void)
                                  "mad_sw");
 }
 
-static void ib_mad_ext_decode_counters(struct stats *stats, uint8_t *mad_buf)
+void ib_mad_ext_decode_counters(struct stats *stats, uint8_t *mad_buf)
 {
+  if (stats == NULL || mad_buf == NULL)
+    return;
 #define X(t, m, f) \
   do { \
     t m; \

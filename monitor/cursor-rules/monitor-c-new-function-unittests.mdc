@@ -17,3 +17,5 @@ When you **add a new function** or **extract** logic into a new named function u
 4. **Exceptions** (document in the PR/commit message if used): thin wrappers that only call `exit`, `abort`, or a single library entry with no testable logic may rely on a **subprocess test** (e.g. `fork` + exit status) or an existing shell integration test instead of a direct call from the parent test process.
 
 This is additive to the workspace **global-testing-discipline** rule: new monitor C functions are not done until `make check` covers them per the bullets above.
+
+For AAA structure, F.I.R.S.T. properties, anti-patterns, and verification flow, also follow [monitor-c-testing-standards.mdc](monitor-c-testing-standards.mdc).

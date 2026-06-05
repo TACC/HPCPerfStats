@@ -36,11 +36,21 @@ if RABBITMQ
 monitor_unit_cppflags += -DRABBITMQ $(MONITOR_AMQP_TIMEOUT_CPPFLAGS)
 endif
 
+if MONITOR_USE_DCGM_VENDOR_INCLUDES
+monitor_unit_cppflags += -I$(top_srcdir)/third_party/nvidia-dcgm
+endif
+
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_pscanf test_schema_parse test_stats_file_format test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_arm_aarch64_imc_schema test_amd_x86_pmc_schema test_metric_profiler test_hwdetect_policy test_stats_runtime_type_controls test_collect_tier_table test_collect_phase test_collect_tier_gate
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_opa_schema_contract test_lnet_schema_contract test_arm_aarch64_imc_schema test_amd_x86_pmc_schema test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_dict test_host_key_alias test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_daemonize
+if INFINIBAND
+check_PROGRAMS += test_ib_mad_backoff test_ib_mad_decode
+endif
+if CPU_BACKEND_DCGM
+check_PROGRAMS += test_dcgm_pkg_uniq test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish
+endif
 if RABBITMQ
-check_PROGRAMS += test_monitor_cli test_ring_buffer test_monitor_timing
+check_PROGRAMS += test_monitor_cli test_ring_buffer test_stats_buffer_collect test_monitor_timing
 endif
 
 TESTS = $(check_PROGRAMS)
@@ -56,7 +66,7 @@ if RABBITMQ
 	fi
 endif
 
-EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_arm_aarch64_imc_schema.c test_amd_x86_pmc_schema.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh scripts/check_unsafe_c_patterns.sh scripts/check_unsafe_c_patterns.allowlist
+EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_stats_buffer_collect.c test_stats_buffer_collect_stubs.c test_stats_buffer_collect_stubs.h test_stats_buffer_rows.c test_stats_runtime_collect.c test_ib_family.c test_ib_mad_backoff.c test_ib_mad_decode.c test_ib_mad_stubs.c test_nvidia_gpu_estimate.c test_roofline_detect_fixture.c test_daemonize.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_arm_aarch64_imc_schema.c test_amd_x86_pmc_schema.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh scripts/check_unsafe_c_patterns.sh scripts/check_unsafe_c_patterns.allowlist
 
 if RABBITMQ
 .PHONY: check-rabbitmq-integration
@@ -65,12 +75,67 @@ check-rabbitmq-integration:
 endif
 
 test_likwid_rapl_scale_SOURCES = test_likwid_rapl_scale.c
+if LIKWID
+test_likwid_rapl_scale_SOURCES += $(top_srcdir)/src/likwid_rapl.c
+endif
+
+test_dict_SOURCES = \
+	test_dict.c \
+	$(top_srcdir)/src/dict.c
+
+test_host_key_alias_SOURCES = \
+	test_host_key_alias.c \
+	test_stats_stub.c \
+	$(top_srcdir)/src/host_key_alias.c
+
+test_schema_emit_SOURCES = \
+	test_schema_emit.c \
+	$(top_srcdir)/src/stats_text_format.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/dict.c
+
+test_procfile_kv_SOURCES = \
+	test_procfile_kv.c \
+	test_stats_stub.c
+
+test_collect_str_SOURCES = \
+	test_collect_str.c \
+	test_stats_stub.c \
+	$(top_srcdir)/src/collect.c \
+	$(top_srcdir)/src/path_read.c \
+	$(top_srcdir)/src/path_open_fail_once.c
+
+test_cpu_counter_dcgm_util_SOURCES = \
+	test_cpu_counter_dcgm_util.c \
+	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
+
+test_cpu_counter_dcgm_publish_SOURCES = \
+	test_cpu_counter_dcgm_publish.c \
+	test_stats_stub.c \
+	$(top_srcdir)/src/cpu_counter_metrics_dcgm_publish.c \
+	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
 
 test_string1_SOURCES = test_string1.c
 
 test_stats_buffer_data_append_SOURCES = \
 	test_stats_buffer_data_append.c \
 	$(top_srcdir)/src/stats_buffer_data_append.c
+
+test_stats_buffer_uts_SOURCES = \
+	test_stats_buffer_uts.c \
+	$(top_srcdir)/src/stats_buffer_uts.c
+
+test_stats_buffer_rows_SOURCES = \
+	test_stats_buffer_rows.c \
+	test_stats_stub.c \
+	$(top_srcdir)/src/stats_buffer_rows.c \
+	$(top_srcdir)/src/stats_buffer_data_append.c \
+	$(top_srcdir)/src/stats_text_format.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/dict.c \
+	$(top_srcdir)/src/collect_tier.c
 
 test_path_collect_SOURCES = \
 	test_path_collect.c \
@@ -111,6 +176,12 @@ test_monitor_log_SOURCES = \
 	test_monitor_log.c \
 	$(top_srcdir)/src/monitor_log.c
 
+test_monitor_options_kv_SOURCES = \
+	test_monitor_options_kv.c \
+	$(top_srcdir)/src/monitor_options.c \
+	$(top_srcdir)/src/monitor_log.c \
+	$(top_srcdir)/src/monitor_cli.c
+
 test_pscanf_SOURCES = \
 	test_pscanf.c \
 	$(top_srcdir)/src/pscanf.c \
@@ -128,6 +199,11 @@ test_stats_file_format_SOURCES = \
 	$(top_srcdir)/src/stats_file_format.c \
 	$(top_srcdir)/src/stats_text_format.c
 
+test_stats_file_format_extra_SOURCES = \
+	test_stats_file_format_extra.c \
+	$(top_srcdir)/src/stats_file_format.c \
+	$(top_srcdir)/src/stats_text_format.c
+
 test_stats_text_format_SOURCES = \
 	test_stats_text_format.c \
 	$(top_srcdir)/src/stats_text_format.c \
@@ -138,7 +214,9 @@ test_stats_text_format_SOURCES = \
 test_gpu_schema_contract_SOURCES = \
 	test_gpu_schema_contract.c
 
-test_dcgm_pkg_uniq_SOURCES = test_dcgm_pkg_uniq.c
+test_dcgm_pkg_uniq_SOURCES = \
+	test_dcgm_pkg_uniq.c \
+	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
 
 test_cpu_counter_metrics_schema_SOURCES = test_cpu_counter_metrics_schema.c
 
@@ -150,9 +228,23 @@ test_roofline_hw_peak_changeover_SOURCES = \
 	$(top_srcdir)/src/roofline_hw_peak.c \
 	$(top_srcdir)/src/roofline_hw_peak_detect.c
 
+test_roofline_detect_fixture_SOURCES = \
+	test_roofline_detect_fixture.c \
+	$(top_srcdir)/src/roofline_hw_peak_detect.c
+
 test_nfs_schema_subset_SOURCES = \
 	test_nfs_schema_subset.c \
 	$(top_srcdir)/src/nfs.c
+
+test_ib_schema_contract_SOURCES = test_ib_schema_contract.c
+
+test_host_schema_contract_SOURCES = test_host_schema_contract.c
+
+test_lustre_schema_contract_SOURCES = test_lustre_schema_contract.c
+
+test_opa_schema_contract_SOURCES = test_opa_schema_contract.c
+
+test_lnet_schema_contract_SOURCES = test_lnet_schema_contract.c
 
 test_arm_aarch64_imc_schema_SOURCES = test_arm_aarch64_imc_schema.c
 
@@ -170,12 +262,74 @@ test_hwdetect_policy_SOURCES = \
 	test_hwdetect_policy.c \
 	$(top_srcdir)/src/hwdetect.c
 
+test_hwdetect_lspci_SOURCES = \
+	test_hwdetect_lspci.c \
+	$(top_srcdir)/src/hwdetect.c
+
+test_ib_port_state_SOURCES = \
+	test_ib_port_state.c \
+	$(top_srcdir)/src/ib_port_state.c
+
+test_ib_port_collectible_SOURCES = \
+	test_ib_port_collectible.c \
+	$(top_srcdir)/src/ib_common.c \
+	$(top_srcdir)/src/ib_port_state.c \
+	$(top_srcdir)/src/sys_iter.c \
+	$(top_srcdir)/src/path_open_fail_once.c
+
+test_ib_foreach_hca_port_SOURCES = \
+	test_ib_foreach_hca_port.c \
+	$(top_srcdir)/src/ib_common.c \
+	$(top_srcdir)/src/ib_port_state.c \
+	$(top_srcdir)/src/sys_iter.c \
+	$(top_srcdir)/src/path_open_fail_once.c
+
+test_ib_family_SOURCES = \
+	test_ib_family.c \
+	$(top_srcdir)/src/ib_family.c \
+	$(top_srcdir)/src/ib_common.c \
+	$(top_srcdir)/src/ib_port_state.c \
+	$(top_srcdir)/src/sys_iter.c \
+	$(top_srcdir)/src/path_open_fail_once.c
+
+if INFINIBAND
+test_ib_mad_backoff_SOURCES = \
+	test_ib_mad_backoff.c \
+	test_ib_mad_stubs.c \
+	test_stats_stub.c \
+	$(top_srcdir)/src/ib_mad.c
+
+test_ib_mad_decode_SOURCES = \
+	test_ib_mad_decode.c \
+	test_ib_mad_stubs.c \
+	test_stats_stub.c \
+	$(top_srcdir)/src/ib_mad.c
+endif
+
 test_stats_runtime_type_controls_SOURCES = \
 	test_stats_runtime_type_controls.c \
 	$(top_srcdir)/src/stats_runtime.c \
 	$(top_srcdir)/src/collect_tier.c \
 	$(top_srcdir)/src/monitor_timing.c \
 	$(top_srcdir)/src/dict.c
+
+test_stats_runtime_collect_SOURCES = \
+	test_stats_runtime_collect.c \
+	$(top_srcdir)/src/stats_runtime.c \
+	$(top_srcdir)/src/collect_tier.c \
+	$(top_srcdir)/src/monitor_timing.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/dict.c
+
+test_nvidia_gpu_estimate_SOURCES = \
+	test_nvidia_gpu_estimate.c \
+	$(top_srcdir)/src/nvidia_gpu_estimate.c
+
+test_daemonize_SOURCES = \
+	test_daemonize.c \
+	$(top_srcdir)/src/daemonize.c \
+	$(top_srcdir)/src/monitor_log.c
 
 test_collect_tier_table_SOURCES = \
 	test_collect_tier_table.c \
@@ -186,8 +340,12 @@ test_collect_tier_table_SOURCES = \
 
 test_collect_phase_SOURCES = \
 	test_collect_phase.c \
+	$(top_srcdir)/src/stats_runtime.c \
 	$(top_srcdir)/src/collect_tier.c \
-	$(top_srcdir)/src/monitor_timing.c
+	$(top_srcdir)/src/monitor_timing.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/dict.c
 
 test_collect_tier_gate_SOURCES = \
 	test_collect_tier_gate.c \
@@ -205,7 +363,7 @@ test_monitor_cli_SOURCES = \
 
 test_ring_buffer_SOURCES = \
 	test_ring_buffer.c \
-	test_ring_buffer_stubs.c \
+	test_stats_buffer_collect_stubs.c \
 	$(top_srcdir)/src/stats_buffer.c \
 	$(top_srcdir)/src/stats_buffer_rmq.c \
 	$(top_srcdir)/src/stats_buffer_rows.c \
@@ -214,8 +372,28 @@ test_ring_buffer_SOURCES = \
 	$(top_srcdir)/src/stats_text_format.c \
 	$(top_srcdir)/src/collect_tier.c \
 	$(top_srcdir)/src/monitor_log.c \
-	$(top_srcdir)/src/path_open_fail_once.c
+	$(top_srcdir)/src/path_open_fail_once.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/dict.c
 test_ring_buffer_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
+
+test_stats_buffer_collect_SOURCES = \
+	test_stats_buffer_collect.c \
+	test_stats_buffer_collect_stubs.c \
+	$(top_srcdir)/src/stats_buffer.c \
+	$(top_srcdir)/src/stats_buffer_rmq.c \
+	$(top_srcdir)/src/stats_buffer_rows.c \
+	$(top_srcdir)/src/stats_buffer_uts.c \
+	$(top_srcdir)/src/stats_buffer_data_append.c \
+	$(top_srcdir)/src/stats_text_format.c \
+	$(top_srcdir)/src/collect_tier.c \
+	$(top_srcdir)/src/monitor_log.c \
+	$(top_srcdir)/src/path_open_fail_once.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/dict.c
+test_stats_buffer_collect_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
 
 test_monitor_timing_SOURCES = \
 	test_monitor_timing.c \
@@ -224,8 +402,20 @@ endif
 
 # Link flags/libs match the configured tree (LDFLAGS/LIBS from configure).
 test_likwid_rapl_scale_LDADD = $(LDADD)
+if LIKWID
+test_likwid_rapl_scale_LDADD += -lm
+endif
+test_dict_LDADD = $(LDADD)
+test_host_key_alias_LDADD = $(LDADD)
+test_schema_emit_LDADD = $(LDADD)
+test_procfile_kv_LDADD = $(LDADD)
+test_collect_str_LDADD = $(LDADD)
+test_cpu_counter_dcgm_util_LDADD = $(LDADD)
+test_cpu_counter_dcgm_publish_LDADD = $(LDADD)
 test_string1_LDADD = $(LDADD)
 test_stats_buffer_data_append_LDADD = $(LDADD)
+test_stats_buffer_uts_LDADD = $(LDADD)
+test_stats_buffer_rows_LDADD = $(LDADD)
 test_path_collect_LDADD = $(LDADD)
 test_path_open_fail_once_LDADD = $(LDADD)
 test_path_read_LDADD = $(LDADD)
@@ -234,26 +424,47 @@ test_procfile_parse_LDADD = $(LDADD)
 test_msr_io_LDADD = $(LDADD)
 test_intel_mmconfig_LDADD = $(LDADD)
 test_monitor_log_LDADD = $(LDADD)
+test_monitor_options_kv_LDADD = $(LDADD) -lm
 test_pscanf_LDADD = $(LDADD)
 test_schema_parse_LDADD = $(LDADD)
 test_stats_file_format_LDADD = $(LDADD)
+test_stats_file_format_extra_LDADD = $(LDADD)
 test_stats_text_format_LDADD = $(LDADD)
 test_gpu_schema_contract_LDADD = $(LDADD)
 test_dcgm_pkg_uniq_LDADD = $(LDADD)
 test_cpu_counter_metrics_schema_LDADD = $(LDADD)
 test_roofline_hw_peak_schema_LDADD = $(LDADD)
 test_roofline_hw_peak_changeover_LDADD = $(LDADD)
+test_roofline_detect_fixture_LDADD = $(LDADD)
 test_nfs_schema_subset_LDADD = $(LDADD)
+test_ib_schema_contract_LDADD = $(LDADD)
+test_host_schema_contract_LDADD = $(LDADD)
+test_lustre_schema_contract_LDADD = $(LDADD)
+test_opa_schema_contract_LDADD = $(LDADD)
+test_lnet_schema_contract_LDADD = $(LDADD)
 test_arm_aarch64_imc_schema_LDADD = $(LDADD)
 test_amd_x86_pmc_schema_LDADD = $(LDADD)
 test_metric_profiler_LDADD = $(LDADD)
 test_hwdetect_policy_LDADD = $(LDADD)
+test_hwdetect_lspci_LDADD = $(LDADD)
+test_ib_port_state_LDADD = $(LDADD)
+test_ib_port_collectible_LDADD = $(LDADD)
+test_ib_foreach_hca_port_LDADD = $(LDADD)
+test_ib_family_LDADD = $(LDADD)
+if INFINIBAND
+test_ib_mad_backoff_LDADD = $(LDADD)
+test_ib_mad_decode_LDADD = $(LDADD)
+endif
 test_stats_runtime_type_controls_LDADD = $(LDADD) -lm
+test_stats_runtime_collect_LDADD = $(LDADD) -lm
+test_nvidia_gpu_estimate_LDADD = $(LDADD) -lm
+test_daemonize_LDADD = $(LDADD)
 test_collect_tier_table_LDADD = $(LDADD)
 test_collect_phase_LDADD = $(LDADD) -lm
 test_collect_tier_gate_LDADD = $(LDADD)
 if RABBITMQ
 test_monitor_cli_LDADD = $(LDADD)
 test_ring_buffer_LDADD = $(LDADD)
+test_stats_buffer_collect_LDADD = $(LDADD)
 test_monitor_timing_LDADD = $(LDADD) -lm
 endif

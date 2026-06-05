@@ -12,6 +12,7 @@
 #include "stats.h"
 #include "stats_buffer.h"
 #include "stats_buffer_rows.h"
+#include "test_stats_buffer_collect_stubs.h"
 
 char jobid[80] = "-";
 double send_freq = 1.0;
@@ -234,6 +235,30 @@ static void test_load_file_open_fails(void)
 }
 
 /* The `$`-always-full invariant and tier selection (stats_buffer_row_tier_decide). */
+static void test_collect_assembles_tier_rows(void)
+{
+  struct stats_buffer_collect_fixture fx;
+  struct stats_buffer *sf;
+  const unsigned long long vals[2] = { 5, 6 };
+
+  assert(stats_buffer_collect_fixture_init(&fx, "a,E b,E,R=S", vals, 2) == 0);
+  collect_tier_set_enabled(1);
+  collect_tier_set_phase(COLLECT_FAST_ONLY);
+  reset_hook();
+  sf = make_payload_buf("");
+  assert(stats_buffer_collect(sf) == 0);
+  assert(strstr(sf->sf_data, "host_tt dev0 @fast 5") != NULL);
+  assert(strstr(sf->sf_data, " 6") == NULL);
+  stats_buffer_close(sf);
+
+  collect_tier_set_phase(COLLECT_FULL);
+  sf = make_payload_buf("");
+  assert(stats_buffer_collect(sf) == 0);
+  assert(strstr(sf->sf_data, "host_tt dev0 @full 5 6") != NULL);
+  stats_buffer_close(sf);
+  stats_buffer_collect_fixture_teardown(&fx);
+}
+
 static void test_row_tier_decision(void)
 {
   /* Slow tier disabled -> legacy full-width rows regardless of phase/payload. */
@@ -252,6 +277,7 @@ static void test_row_tier_decision(void)
 int main(void)
 {
   test_row_tier_decision();
+  test_collect_assembles_tier_rows();
   test_insert_empty_and_append();
   test_insert_full_no_overwrite();
   test_insert_full_overwrite();

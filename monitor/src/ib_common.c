@@ -8,46 +8,7 @@
 #include "path_open_fail_once.h"
 #include "sys_iter.h"
 #include "ib_common.h"
-
-/* IB_PORT_ACTIVE == 4; sysfs may print "4: ACTIVE", "active", or "inactive". */
-static int ib_port_logic_active(const char *state_line)
-{
-  const char *p;
-  char *endp = NULL;
-  unsigned long v;
-
-  if (state_line == NULL)
-    return 0;
-  p = state_line;
-  while (*p != '\0' && isspace((unsigned char) *p))
-    p++;
-  v = strtoul(p, &endp, 10);
-  if (endp != p && v == 4)
-    return 1;
-  if (strstr(state_line, "active") != NULL)
-    return 1;
-  return 0;
-}
-
-/* IB_LINK_LAYER_ACTIVE / LinkUp wording varies by kernel. */
-static int ib_port_phys_link_up(const char *phys_line)
-{
-  const char *p;
-  char *endp = NULL;
-  unsigned long v;
-
-  if (phys_line == NULL)
-    return 0;
-  p = phys_line;
-  while (*p != '\0' && isspace((unsigned char) *p))
-    p++;
-  v = strtoul(p, &endp, 10);
-  if (endp != p && v == 5)
-    return 1;
-  if (strstr(phys_line, "link_up") != NULL || strstr(phys_line, "linkup") != NULL)
-    return 1;
-  return 0;
-}
+#include "ib_port_state.h"
 
 static int ib_port_read_state_file(const char *path, char *buf, size_t buf_len)
 {

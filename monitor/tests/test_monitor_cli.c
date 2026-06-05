@@ -165,6 +165,28 @@ static void test_conf_enable_slow_tier(void)
   assert(enable_slow_tier == 0);
 }
 
+static void test_usage_contains_sentinel_strings(void)
+{
+  FILE *tmp = tmpfile();
+  assert(tmp != NULL);
+  monitor_cli_print_usage(tmp);
+  fflush(tmp);
+  rewind(tmp);
+
+  {
+    char buf[8192];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, tmp);
+    buf[n] = '\0';
+    assert(strstr(buf, "Usage:") != NULL);
+    assert(strstr(buf, "--sample-frequency") != NULL);
+    assert(strstr(buf, "--send-frequency") != NULL);
+    assert(strstr(buf, "--collection-profile") != NULL);
+    assert(strstr(buf, "--disable-types") != NULL);
+    assert(strstr(buf, "5672 is the default") != NULL);
+  }
+  fclose(tmp);
+}
+
 static void test_conf_freq_alias_maps_to_sample_freq(void)
 {
   next_cli_test();
@@ -189,6 +211,7 @@ int main(void)
   test_tier_defaults();
   test_conf_sample_freq_slow();
   test_conf_enable_slow_tier();
+  test_usage_contains_sentinel_strings();
   test_conf_freq_alias_maps_to_sample_freq();
   test_monitor_cli_reset_globals();
   printf("test_monitor_cli passed\n");

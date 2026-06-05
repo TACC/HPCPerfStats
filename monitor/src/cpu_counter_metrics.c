@@ -20,6 +20,7 @@
 #include "dcgm_session.h"
 #include "cpu_counter_metrics_dcgm_state.h"
 #include "cpu_counter_metrics_dcgm_publish.h"
+#include "cpu_counter_metrics_dcgm_util.h"
 #else
 #include "amd64_pmc.h"
 #undef KEYS
@@ -127,10 +128,6 @@ static const unsigned short g_dcgm_cpu_power_field_ids[] = {
 #define ARM_APPROX_FP64_VECTOR_FLOP_SHARE 0.6
 #define ARM_APPROX_FP32_VECTOR_FLOP_SHARE 0.8
 
-struct dcgm_cpu_jifs {
-  unsigned long long u, nice, sys, idle, iow, irq, sft, stl, gu, gn;
-};
-
 static struct dcgm_cpu_jifs *g_dcjm_prev = NULL;
 static struct dcgm_cpu_jifs *g_dcjm_cur = NULL;
 static int g_dcgm_stat_seeded = 0;
@@ -146,15 +143,6 @@ static const unsigned short g_dcgm_cpu_field_ids[] = {
 };
 
 #define DCGM_CPU_NFIELDS ((unsigned int) (sizeof(g_dcgm_cpu_field_ids) / sizeof(g_dcgm_cpu_field_ids[0])))
-
-static double clamp_percent(double v)
-{
-  if (v < 0.0)
-    return 0.0;
-  if (v > 100.0)
-    return 100.0;
-  return v;
-}
 
 static double dcgm_cpu_read_khz_sysfs_path(const char *path)
 {
@@ -204,57 +192,6 @@ static double dcgm_cpu_nominal_freq_khz(int core_id)
   if (core_id != 0)
     return dcgm_cpu_nominal_freq_khz(0);
   return 0.0;
-}
-
-static unsigned long long dcgm_jifs_total(const struct dcgm_cpu_jifs *j)
-{
-  return j->u + j->nice + j->sys + j->idle + j->iow + j->irq + j->sft + j->stl + j->gu + j->gn;
-}
-
-static unsigned long long dcgm_jifs_nid(const struct dcgm_cpu_jifs *j)
-{
-  return j->u + j->nice + j->sys + j->irq + j->sft + j->stl + j->gu + j->gn;
-}
-
-static void dcgm_cpu_scale_util_if_fraction(struct dcgm_cpu_sample *s)
-{
-  if (s->util_total <= 0.0)
-    return;
-  if (s->util_total > 1.0001)
-    return;
-  s->util_total *= 100.0;
-  s->util_user *= 100.0;
-  s->util_nice *= 100.0;
-  s->util_sys *= 100.0;
-  s->util_irq *= 100.0;
-}
-
-static void dcgm_cpu_sample_from_jiffy_diff(struct dcgm_cpu_sample *s, const struct dcgm_cpu_jifs *cur,
-					    const struct dcgm_cpu_jifs *prev)
-{
-  unsigned long long pt = dcgm_jifs_total(prev);
-  unsigned long long ct = dcgm_jifs_total(cur);
-  unsigned long long pn = dcgm_jifs_nid(prev);
-  unsigned long long cn = dcgm_jifs_nid(cur);
-  unsigned long long d_tot, d_nid;
-  unsigned long long d_u, d_ni, d_sy, d_iq, d_sft;
-
-  if (ct < pt || cn < pn)
-    return;
-  d_tot = ct - pt;
-  d_nid = cn - pn;
-  if (d_tot == 0)
-    return;
-  s->util_total = clamp_percent(100.0 * (double) d_nid / (double) d_tot);
-  d_u = (cur->u >= prev->u) ? (cur->u - prev->u) : 0;
-  d_ni = (cur->nice >= prev->nice) ? (cur->nice - prev->nice) : 0;
-  d_sy = (cur->sys >= prev->sys) ? (cur->sys - prev->sys) : 0;
-  d_iq = (cur->irq >= prev->irq) ? (cur->irq - prev->irq) : 0;
-  d_sft = (cur->sft >= prev->sft) ? (cur->sft - prev->sft) : 0;
-  s->util_user = clamp_percent(100.0 * (double) (d_u + d_ni) / (double) d_tot);
-  s->util_sys = clamp_percent(100.0 * (double) d_sy / (double) d_tot);
-  s->util_irq = clamp_percent(100.0 * (double) (d_iq + d_sft) / (double) d_tot);
-  s->util_nice = 0.0;
 }
 
 static int dcgm_proc_stat_read_cpus(struct dcgm_cpu_jifs *out, int ncpus)
@@ -321,13 +258,13 @@ static int dcgm_cpu_fill_sample_from_v1(unsigned int nfields, const unsigned sho
       s->ts = values[f].ts;
     switch (field_ids[f]) {
       case DCGM_FI_DEV_CPU_UTIL_TOTAL:
-	s->util_total = clamp_percent(v);
+	s->util_total = dcgm_clamp_percent(v);
 	ok_util = 1;
 	break;
-      case DCGM_FI_DEV_CPU_UTIL_USER: s->util_user = clamp_percent(v); break;
-      case DCGM_FI_DEV_CPU_UTIL_NICE: s->util_nice = clamp_percent(v); break;
-      case DCGM_FI_DEV_CPU_UTIL_SYS: s->util_sys = clamp_percent(v); break;
-      case DCGM_FI_DEV_CPU_UTIL_IRQ: s->util_irq = clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_USER: s->util_user = dcgm_clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_NICE: s->util_nice = dcgm_clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_SYS: s->util_sys = dcgm_clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_IRQ: s->util_irq = dcgm_clamp_percent(v); break;
       case DCGM_FI_DEV_CPU_CLOCK_CURRENT:
 	s->clock_khz = (v < 0.0) ? 0.0 : v;
 	break;
@@ -354,13 +291,13 @@ static int dcgm_cpu_fill_sample_from_v1_any(const dcgmFieldValue_v1 *values, int
       s->ts = values[f].ts;
     switch (values[f].fieldId) {
       case DCGM_FI_DEV_CPU_UTIL_TOTAL:
-	s->util_total = clamp_percent(v);
+	s->util_total = dcgm_clamp_percent(v);
 	ok_util = 1;
 	break;
-      case DCGM_FI_DEV_CPU_UTIL_USER: s->util_user = clamp_percent(v); break;
-      case DCGM_FI_DEV_CPU_UTIL_NICE: s->util_nice = clamp_percent(v); break;
-      case DCGM_FI_DEV_CPU_UTIL_SYS: s->util_sys = clamp_percent(v); break;
-      case DCGM_FI_DEV_CPU_UTIL_IRQ: s->util_irq = clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_USER: s->util_user = dcgm_clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_NICE: s->util_nice = dcgm_clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_SYS: s->util_sys = dcgm_clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_IRQ: s->util_irq = dcgm_clamp_percent(v); break;
       case DCGM_FI_DEV_CPU_CLOCK_CURRENT:
 	s->clock_khz = (v < 0.0) ? 0.0 : v;
 	break;
@@ -387,13 +324,13 @@ static int dcgm_cpu_fill_sample_from_v2(const dcgmFieldValue_v2 *values, unsigne
       s->ts = values[f].ts;
     switch (values[f].fieldId) {
       case DCGM_FI_DEV_CPU_UTIL_TOTAL:
-	s->util_total = clamp_percent(v);
+	s->util_total = dcgm_clamp_percent(v);
 	ok_util = 1;
 	break;
-      case DCGM_FI_DEV_CPU_UTIL_USER: s->util_user = clamp_percent(v); break;
-      case DCGM_FI_DEV_CPU_UTIL_NICE: s->util_nice = clamp_percent(v); break;
-      case DCGM_FI_DEV_CPU_UTIL_SYS: s->util_sys = clamp_percent(v); break;
-      case DCGM_FI_DEV_CPU_UTIL_IRQ: s->util_irq = clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_USER: s->util_user = dcgm_clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_NICE: s->util_nice = dcgm_clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_SYS: s->util_sys = dcgm_clamp_percent(v); break;
+      case DCGM_FI_DEV_CPU_UTIL_IRQ: s->util_irq = dcgm_clamp_percent(v); break;
       case DCGM_FI_DEV_CPU_CLOCK_CURRENT:
 	s->clock_khz = (v < 0.0) ? 0.0 : v;
 	break;
@@ -519,15 +456,6 @@ static int dcgm_sysfs_physical_package_id(int cpu_idx, int *pkg_out)
     return -1;
   *pkg_out = (int) v;
   return 0;
-}
-
-unsigned long long dcgm_watts_dbl_to_ull(double v)
-{
-  if (v <= 0.0)
-    return 0ULL;
-  if (v >= (double) ULLONG_MAX)
-    return ULLONG_MAX;
-  return (unsigned long long) (v + 0.5);
 }
 
 static void dcgm_cpu_sock_watch_cleanup(void)

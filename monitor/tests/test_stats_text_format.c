@@ -46,6 +46,41 @@ static void free_test_stats(struct stats *s)
 	free(s);
 }
 
+static void test_snprintf_stats_row_sparse_tiers(void)
+{
+  struct stats_type type;
+  const unsigned long long vals[4] = { 100, 200, 300, 400 };
+  struct stats *s;
+  char buf[256];
+
+  memset(&type, 0, sizeof(type));
+  snprintf(type.st_name, sizeof(type.st_name), "%s", "host_tt");
+  assert(schema_init(&type.st_schema, "a,E b,E,R=S c,E d,E,R=S") == 0);
+  assert(type.st_schema.sc_len == 4);
+
+  s = make_test_stats(&type, "dev0", vals);
+
+  assert(stats_format_snprintf_stats_row_tier(buf, sizeof(buf), &type, s,
+                                              STATS_ROW_FAST) > 0);
+  assert(strcmp(buf, "host_tt dev0 @fast 100 300") == 0);
+
+  assert(stats_format_snprintf_stats_row_tier(buf, sizeof(buf), &type, s,
+                                              STATS_ROW_FULL) > 0);
+  assert(strcmp(buf, "host_tt dev0 @full 100 200 300 400") == 0);
+
+  assert(stats_format_snprintf_stats_row(buf, sizeof(buf), &type, s) > 0);
+  assert(strstr(buf, "@fast") == NULL);
+  assert(strstr(buf, "@full") == NULL);
+  assert(strcmp(buf, "host_tt dev0 100 200 300 400") == 0);
+
+  assert(stats_format_snprintf_stats_row(NULL, sizeof(buf), &type, s) == -1);
+  assert(stats_format_snprintf_stats_row(buf, sizeof(buf), NULL, s) == -1);
+  assert(stats_format_snprintf_stats_row(buf, sizeof(buf), &type, NULL) == -1);
+
+  free_test_stats(s);
+  schema_destroy(&type.st_schema);
+}
+
 /* Two fast keys (a, c) and two slow keys (b, d). */
 static void test_sparse_rows(void)
 {
@@ -154,6 +189,7 @@ int main(void)
 	}
 
 	test_sparse_rows();
+	test_snprintf_stats_row_sparse_tiers();
 	test_schema_line_with_slow_suffix();
 
 	printf("test_stats_text_format passed\n");

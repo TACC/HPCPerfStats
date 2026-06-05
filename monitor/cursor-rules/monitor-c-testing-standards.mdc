@@ -1,0 +1,73 @@
+---
+description: Industry-standard C unit test discipline for the monitor (make check drivers)
+globs:
+  - HPCPerfStats/monitor/tests/**
+  - HPCPerfStats/monitor/src/**
+alwaysApply: false
+---
+
+# Monitor C unit testing standards
+
+Complements [monitor-c-new-function-unittests.mdc](monitor-c-new-function-unittests.mdc) and workspace **global-testing-discipline**. Human-facing summary: [HPCPerfStats/monitor/tests/README.md](../HPCPerfStats/monitor/tests/README.md) “Writing unit tests”.
+
+## Test pyramid
+
+| Layer | Use when | Examples |
+|-------|----------|----------|
+| **Unit** | Default for new logic | `test_dict.c`, `test_path_read.c`, `test_ib_port_state.c` |
+| **Contract** | Compile-time / string invariants | `test_*_schema_contract.c`, `check_emitted_variable_names.py` |
+| **Integration** | Broker, root, live hardware | `test_rabbitmq_integration.sh` only |
+
+Do not duplicate integration scenarios as unit tests.
+
+## F.I.R.S.T. + AAA
+
+Every driver must be **Fast** (no `sleep`, no live IB/GPU/DCGM), **Independent** (no order dependency between `test_*.c` programs), **Repeatable** (deterministic inputs; env thresholds instead of wall clock when needed), **Self-validating** (`assert` / non-zero exit), **Timely** (same change as production).
+
+Structure each `static void test_*()` as **Arrange → Act → Assert**. Reset module globals in `main()` between groups (`collect_tier_set_enabled(0)`, cache invalidation helpers).
+
+## Link production code
+
+- Register drivers in **`tests/Makefile.am`**: `check_PROGRAMS`, `*_SOURCES`, `*_LDADD`.
+- Keep **`monitor_unit_cppflags`** aligned with `src/Makefile.am` `hpcperfstatsd_CPPFLAGS`.
+- **Never** copy production algorithms into test files to “verify the math”.
+- Prefer **extracting** helpers into linkable `.c`/`.h` over `#ifdef TEST` in production; documented hooks only (e.g. `STATS_BUFFER_TEST_SEND_HOOK`).
+
+## Required coverage per exported function
+
+1. Happy path (contract: return value, output, emitted keys/strings).
+2. At least one **NULL** or invalid-input path where production guards it.
+3. At least one **error/boundary** path (empty input, truncation, parse failure).
+4. **Regression** test for every bug fix ([traceback-fix-discipline.mdc](traceback-fix-discipline.mdc)).
+
+Test **behavior**, not static helper names.
+
+## C-specific hygiene
+
+- Save/restore **errno** when asserting failure paths.
+- Fixtures under **`TMPDIR`** / `mkstemp`; always clean up.
+- Stub **`stats_set`** via `test_stats_stub.c` or local recorder when linking units that emit stats without full `stats.c`.
+- Guard optional-backend tests with `#ifdef MONITOR_CPU_BACKEND_DCGM` / `LIKWID` / `RABBITMQ`; document skips in `tests/README.md`.
+
+## Naming
+
+- File: `tests/test_<module>.c`
+- Helpers: `static void test_<unit>_<scenario>(void)`
+- Update **`tests/README.md`** layout table when adding drivers.
+
+## Anti-patterns
+
+- Flaky tests (wall clock, races, host-specific `/sys` without skip).
+- Root-only or fabric-required **unit** tests.
+- Global state leakage without reset.
+- `printf`-only checks with no assertion.
+- Monolithic `main()` without helper functions.
+
+## Verification
+
+After substantive test or monitor C changes:
+
+1. `HPCPerfStats/monitor/scripts/build_static_bundle.sh` (canonical static bundle).
+2. `make check` in `.build-static`.
+3. `HPCPerfStats/monitor/scripts/cross_compile_test.sh` when production C changed.
+4. `make distclean` in the build dir after success.

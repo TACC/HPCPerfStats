@@ -94,6 +94,51 @@ int main(void)
   free(p);
   free(u);
 
+  /* PATH_READ_ALLOC_MAX edge: file larger than cap returns EFBIG. */
+  size_t over = PATH_READ_ALLOC_MAX + 256u;
+  char *o = malloc(over);
+
+  assert(o != NULL);
+  memset(o, 'z', over);
+  p = make_tmp(o, over);
+  all = NULL;
+  all_len = 0;
+  errno = 0;
+  rc = path_read_alloc(p, &all, &all_len, &pscanf_opts);
+  assert(rc == -1);
+  assert(errno == EFBIG);
+  assert(all == NULL);
+  unlink(p);
+  free(p);
+  free(o);
+
+  /* NULL parameter guards (use /dev/null as a stable path where needed). */
+  errno = 0;
+  assert(path_read_small(NULL, buf, sizeof(buf), &len, &pscanf_opts) == -1);
+  assert(errno == EINVAL);
+  errno = 0;
+  assert(path_read_small("/dev/null", NULL, sizeof(buf), &len, &pscanf_opts) == -1);
+  assert(errno == EINVAL);
+  errno = 0;
+  assert(path_read_small("/dev/null", buf, sizeof(buf), NULL, &pscanf_opts) == -1);
+  assert(errno == EINVAL);
+  errno = 0;
+  assert(path_read_small("/dev/null", buf, sizeof(buf), &len, NULL) == -1);
+  assert(errno == EINVAL);
+
+  errno = 0;
+  assert(path_read_alloc(NULL, &all, &all_len, &pscanf_opts) == -1);
+  assert(errno == EINVAL);
+  errno = 0;
+  assert(path_read_alloc("/dev/null", NULL, &all_len, &pscanf_opts) == -1);
+  assert(errno == EINVAL);
+  errno = 0;
+  assert(path_read_alloc("/dev/null", &all, NULL, &pscanf_opts) == -1);
+  assert(errno == EINVAL);
+  errno = 0;
+  assert(path_read_alloc("/dev/null", &all, &all_len, NULL) == -1);
+  assert(errno == EINVAL);
+
   puts("test_path_read passed");
   return 0;
 }

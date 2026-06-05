@@ -158,6 +158,7 @@ TYPES 	= \
 	cpu.c \
 	ib.c \
 	ib_common.c \
+	ib_port_state.c \
 	ib_family.c \
 	lnet.c \
 	mem.c \
@@ -237,7 +238,9 @@ TYPES += \
 	cpu_counter_metrics.c \
 	cpu_counter_metrics_dcgm_publish.c \
 	cpu_counter_metrics_dcgm_publish.h \
-	cpu_counter_metrics_dcgm_state.h
+	cpu_counter_metrics_dcgm_state.h \
+	cpu_counter_metrics_dcgm_util.c \
+	cpu_counter_metrics_dcgm_util.h
 if MONITOR_ARCH_ARM
 TYPES += \
 	arm_imc.c
@@ -284,6 +287,7 @@ endif
 hpcperfstatsd_SOURCES += \
 	ib.h \
 	ib_common.h \
+	ib_port_state.h \
 	ib_family.h \
 	ib_mad.h \
 	$(TYPES)
@@ -298,7 +302,9 @@ TYPES += \
 	nvidia_gpu_dcgm_watch.h \
 	nvidia_gpu_dcgm_compat.h
 hpcperfstatsd_SOURCES += \
-	nvidia_gpu.h
+	nvidia_gpu.h \
+	nvidia_gpu_estimate.c \
+	nvidia_gpu_estimate.h
 endif
 
 if AMD_GPU
