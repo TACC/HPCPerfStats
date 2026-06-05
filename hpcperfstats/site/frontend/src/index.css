@@ -453,9 +453,33 @@ body {
   pointer-events: auto;
 }
 .histogram-thumbnail-popover-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   font-weight: 600;
   margin-bottom: 8px;
   font-size: 1rem;
+}
+.histogram-thumbnail-popover-title-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.histogram-thumbnail-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  overflow: hidden;
+  background-color: #f8f9fa;
+}
+.histogram-thumbnail-actions {
+  display: flex;
+  justify-content: center;
+  padding: 0.35rem 0.5rem;
+  background-color: #fff;
+  border-top: 1px solid #dee2e6;
 }
 .histogram-thumbnail-popover-plot {
   position: relative;
@@ -483,12 +507,10 @@ body {
   display: flex;
   flex-direction: column;
   position: relative;
+  border: none !important;
+  border-radius: 0 !important;
 }
 .histogram-thumbnail-enlarge {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  z-index: 2;
   min-height: 34px;
 }
 .histogram-thumbnail-shell .histogram-thumbnail-bokeh {

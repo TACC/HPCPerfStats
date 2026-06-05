@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useId } from "react";
+import { createPortal } from "react-dom";
 import BokehPlotWithLimitation from "./BokehPlotWithLimitation";
 import LoadingMessage from "./LoadingMessage";
 import { useFocusTrap } from "../hooks/useFocusTrap";
@@ -141,100 +142,108 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
     );
   }
 
+  const popover =
+    showPopover && typeof document !== "undefined" ? (
+      <div
+        className="histogram-thumbnail-backdrop"
+        role="presentation"
+        onClick={collapseExpanded}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") collapseExpanded();
+        }}
+      >
+        <div
+          ref={popoverRef}
+          className="histogram-thumbnail-popover"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={popoverTitleId}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div id={popoverTitleId} className="histogram-thumbnail-popover-title">
+            <span className="histogram-thumbnail-popover-title-text">{title}</span>
+            <button
+              ref={closeButtonRef}
+              type="button"
+              className="btn btn-outline-secondary btn-sm histogram-thumbnail-close"
+              onClick={(e) => {
+                e.stopPropagation();
+                collapseExpanded();
+              }}
+              aria-label="Close full size view"
+            >
+              Close
+            </button>
+          </div>
+          <div
+            ref={popoverPlotRef}
+            className="histogram-thumbnail-popover-plot"
+            style={{
+              width: 600,
+              height: 400,
+              backgroundColor: "#fff",
+              border: "1px solid #dee2e6",
+              borderRadius: 4,
+            }}
+          >
+            {hasOpened && popoverLayoutReady ? (
+              <BokehPlotWithLimitation
+                item={plotItemFull}
+                id={fullId}
+                plotName={`${title} (full)`}
+                unavailableReason={unavailableReason}
+                deferEmbedUntilVisible={false}
+                intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
+              />
+            ) : null}
+          </div>
+        </div>
+      </div>
+    ) : null;
+
   return (
     <div className="histogram-thumbnail-wrapper">
       <div className="histogram-desktop-title">{title}</div>
       <div
-        className="histogram-thumbnail histogram-thumbnail-shell"
-        style={{
-          width: THUMB_SIZE.width,
-          height: THUMB_SIZE.height,
-          border: "1px solid #dee2e6",
-          borderRadius: 4,
-          overflow: "hidden",
-          backgroundColor: "#f8f9fa",
-        }}
+        className="histogram-thumbnail-card"
+        style={{ width: THUMB_SIZE.width }}
       >
-        <BokehPlotWithLimitation
-          item={plotItemThumb}
-          id={thumbId}
-          plotName={title}
-          unavailableReason={unavailableReason}
-          embedMinHeightPx={THUMB_SIZE.height}
-          deferEmbedUntilVisible={false}
-          wrapperClassName="histogram-thumbnail-bokeh"
-          intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
-        />
-        <button
-          ref={thumbActivatorRef}
-          type="button"
-          aria-label={`${title}: enlarge chart`}
-          aria-expanded={expanded}
-          className="btn btn-outline-secondary btn-sm histogram-thumbnail-enlarge"
-          onClick={handleThumbActivate}
-        >
-          Enlarge chart
-        </button>
-      </div>
-      {showPopover ? (
         <div
-          className="histogram-thumbnail-backdrop"
-          role="presentation"
-          onClick={collapseExpanded}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") collapseExpanded();
+          className="histogram-thumbnail histogram-thumbnail-shell"
+          style={{
+            width: THUMB_SIZE.width,
+            height: THUMB_SIZE.height,
+            border: "1px solid #dee2e6",
+            borderRadius: "4px 4px 0 0",
+            overflow: "hidden",
+            backgroundColor: "#f8f9fa",
           }}
         >
-          <div
-            ref={popoverRef}
-            className="histogram-thumbnail-popover"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={popoverTitleId}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div id={popoverTitleId} className="histogram-thumbnail-popover-title">
-              {title}
-              <button
-                ref={closeButtonRef}
-                type="button"
-                className="histogram-thumbnail-close"
-                onClick={() => collapseExpanded()}
-                aria-label="Close full size view"
-                style={{
-                  marginLeft: 8,
-                  padding: "2px 8px",
-                  fontSize: "0.875rem",
-                }}
-              >
-                Close
-              </button>
-            </div>
-            <div
-              ref={popoverPlotRef}
-              className="histogram-thumbnail-popover-plot"
-              style={{
-                width: 600,
-                height: 400,
-                backgroundColor: "#fff",
-                border: "1px solid #dee2e6",
-                borderRadius: 4,
-              }}
-            >
-              {hasOpened && popoverLayoutReady ? (
-                <BokehPlotWithLimitation
-                  item={plotItemFull}
-                  id={fullId}
-                  plotName={`${title} (full)`}
-                  unavailableReason={unavailableReason}
-                  deferEmbedUntilVisible={false}
-                  intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
-                />
-              ) : null}
-            </div>
-          </div>
+          <BokehPlotWithLimitation
+            item={plotItemThumb}
+            id={thumbId}
+            plotName={title}
+            unavailableReason={unavailableReason}
+            embedMinHeightPx={THUMB_SIZE.height}
+            deferEmbedUntilVisible={false}
+            wrapperClassName="histogram-thumbnail-bokeh"
+            intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
+          />
         </div>
-      ) : null}
+        <div className="histogram-thumbnail-actions">
+          <button
+            ref={thumbActivatorRef}
+            type="button"
+            aria-label={`${title}: enlarge chart`}
+            aria-expanded={expanded}
+            className="btn btn-outline-secondary btn-sm histogram-thumbnail-enlarge"
+            onClick={handleThumbActivate}
+          >
+            Enlarge chart
+          </button>
+        </div>
+      </div>
+      {popover && document.body ? createPortal(popover, document.body) : null}
     </div>
   );
 }
