@@ -6,9 +6,11 @@
 #include <time.h>
 
 #include "collect.h"
+#include "collect_tier.h"
 #include "hwdetect.h"
 #include "metric_profiler.h"
 #include "monitor_log.h"
+#include "monitor_timing.h"
 #include "stats.h"
 #include "string1.h"
 #include "trace.h"
@@ -16,6 +18,26 @@
 static int g_daemon_types_ready;
 static char *g_type_profile;
 static char *g_disabled_types_csv;
+
+/* collect.c read-gating hook: skip reads for keys inactive in the current phase. */
+static int stats_runtime_collect_key_active(void *ctx, struct stats *stats,
+                                            const char *key)
+{
+  int idx;
+
+  (void) ctx;
+  if (stats == NULL || key == NULL)
+    return 1;
+  idx = schema_ref(&stats->s_type->st_schema, key);
+  if (idx < 0)
+    return 1; /* unknown key: let stats_set drop it as before */
+  return collect_tier_key_active(stats->s_type, idx);
+}
+
+static void stats_runtime_install_collect_tier_hook(void)
+{
+  collect_set_key_active_hook(stats_runtime_collect_key_active, NULL);
+}
 
 static void stats_runtime_disable_one_type(const char *name)
 {
@@ -81,6 +103,7 @@ static void stats_runtime_init_enabled_type(struct stats_type *type)
     type->st_enabled = 0;
     return;
   }
+  collect_tier_apply_to_type(type);
   if (type->st_begin != NULL)
     (*type->st_begin)(type);
 }
@@ -107,6 +130,7 @@ void stats_runtime_daemon_prepare_types(void)
 
   auto_disable_optional_stats_by_lspci();
   stats_runtime_apply_profile_and_disables();
+  stats_runtime_install_collect_tier_hook();
 
   i = 0;
   while ((type = stats_type_for_each(&i)) != NULL) {
@@ -182,6 +206,7 @@ void stats_runtime_main_prepare_types(const stats_runtime_main_prepare_spec *spe
   if (spec == NULL)
     return;
 
+  stats_runtime_install_collect_tier_hook();
   auto_disable_optional_stats_by_lspci();
 
   if (spec->enable_all) {
@@ -200,6 +225,7 @@ void stats_runtime_main_prepare_types(const stats_runtime_main_prepare_spec *spe
       type->st_enabled = 0;
       continue;
     }
+    collect_tier_apply_to_type(type);
     if (spec->select_all)
       type->st_selected = 1;
     if (spec->call_begin && type->st_begin != NULL)
@@ -223,4 +249,35 @@ int stats_runtime_collect_cycle(FILE *profiler_stream, void *opaque,
 
   metric_profiler_cycle_end(prof_out);
   return rc;
+}
+
+void stats_runtime_set_collect_phase(enum collect_phase phase)
+{
+  collect_tier_set_phase(phase);
+}
+
+enum collect_phase stats_runtime_effective_collect_phase(int write_hdr)
+{
+  return collect_tier_effective_phase(write_hdr);
+}
+
+int stats_schema_key_active_this_phase(const struct stats_type *type, int idx)
+{
+  return collect_tier_key_active(type, idx);
+}
+
+enum collect_phase stats_runtime_collect_phase_for_tick(double now_sec,
+                                                        long long *last_slow_slot,
+                                                        double sample_freq_slow)
+{
+  enum collect_phase phase = COLLECT_FAST_ONLY;
+  long long prev = (last_slow_slot != NULL) ? *last_slow_slot : -1;
+
+  if (monitor_collect_should_run_slow(now_sec, prev, sample_freq_slow)) {
+    phase = COLLECT_FULL;
+    if (last_slow_slot != NULL)
+      *last_slow_slot = monitor_collect_slow_slot(now_sec, sample_freq_slow);
+  }
+  collect_tier_set_phase(phase);
+  return phase;
 }

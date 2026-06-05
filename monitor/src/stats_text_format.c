@@ -55,6 +55,14 @@ size_t stats_format_schema_entry_suffix(char *buf, size_t cap,
     else
       p = end;
   }
+  if (se->se_collect_tier == COLLECT_TIER_SLOW) {
+    int n = snprintf(p, (size_t) (end - p), ",R=S");
+
+    if (n > 0 && (size_t) n < (size_t) (end - p))
+      p += n;
+    else
+      p = end;
+  }
 
   {
     size_t len = (size_t) (p - tmp);
@@ -175,9 +183,19 @@ int stats_format_append_mark_va(char **markp, const char *fmt, va_list ap)
   return 0;
 }
 
+static int stats_format_row_key_emitted(struct stats_type *type, size_t k,
+                                        enum stats_row_tier tier)
+{
+  /* FAST rows carry only fast-tier keys; LEGACY/FULL carry every key. */
+  if (tier != STATS_ROW_FAST)
+    return 1;
+  return type->st_schema.sc_ent[k]->se_collect_tier == COLLECT_TIER_FAST;
+}
+
 static int stats_format_append_values(char *buf, size_t cap, size_t used,
                                       struct stats_type *type,
-                                      struct stats *stats)
+                                      struct stats *stats,
+                                      enum stats_row_tier tier)
 {
   size_t k;
   char *p = buf + used;
@@ -185,6 +203,8 @@ static int stats_format_append_values(char *buf, size_t cap, size_t used,
   int n;
 
   for (k = 0; k < type->st_schema.sc_len; k++) {
+    if (!stats_format_row_key_emitted(type, k, tier))
+      continue;
     n = snprintf(p, rem, " %llu",
                  (unsigned long long) stats->s_val[k]);
     if (n < 0)
@@ -198,22 +218,45 @@ static int stats_format_append_values(char *buf, size_t cap, size_t used,
   return (int) used;
 }
 
-int stats_format_snprintf_stats_row(char *buf, size_t cap,
-                                    struct stats_type *type,
-                                    struct stats *stats)
+static const char *stats_format_row_tier_token(enum stats_row_tier tier)
+{
+  switch (tier) {
+  case STATS_ROW_FAST:
+    return " @fast";
+  case STATS_ROW_FULL:
+    return " @full";
+  case STATS_ROW_LEGACY:
+  default:
+    return "";
+  }
+}
+
+int stats_format_snprintf_stats_row_tier(char *buf, size_t cap,
+                                         struct stats_type *type,
+                                         struct stats *stats,
+                                         enum stats_row_tier tier)
 {
   int n;
 
   if (buf == NULL || type == NULL || stats == NULL || cap == 0)
     return -1;
 
-  n = snprintf(buf, cap, "%s %s", type->st_name, stats->s_dev);
+  n = snprintf(buf, cap, "%s %s%s", type->st_name, stats->s_dev,
+               stats_format_row_tier_token(tier));
   if (n < 0)
     return -1;
   if ((size_t) n >= cap)
     return n + 64;
 
-  return stats_format_append_values(buf, cap, (size_t) n, type, stats);
+  return stats_format_append_values(buf, cap, (size_t) n, type, stats, tier);
+}
+
+int stats_format_snprintf_stats_row(char *buf, size_t cap,
+                                    struct stats_type *type,
+                                    struct stats *stats)
+{
+  return stats_format_snprintf_stats_row_tier(buf, cap, type, stats,
+                                              STATS_ROW_LEGACY);
 }
 
 void stats_format_fprint_stats_row(FILE *f, struct stats_type *type,

@@ -16,6 +16,23 @@
 
 #define COLLECT_SMALL_BUF 4096
 
+static collect_key_active_fn g_key_active_hook;
+static void *g_key_active_hook_ctx;
+
+void collect_set_key_active_hook(collect_key_active_fn fn, void *ctx)
+{
+  g_key_active_hook = fn;
+  g_key_active_hook_ctx = ctx;
+}
+
+static int collect_key_is_active(collect_key_active_fn active, void *ctx,
+                                 struct stats *stats, const char *key)
+{
+  if (active == NULL)
+    return 1;
+  return active(ctx, stats, key);
+}
+
 static const struct path_read_opts collect_read_opts = {
   .skip_known_bad  = 1,
   .report_errors   = 1,
@@ -244,23 +261,17 @@ int str_collect_prefix_key_list(const char *str, struct stats *stats,
   return rc;
 }
 
-int path_collect_key_list(const char *path, struct stats *stats, ...)
+static int vpath_collect_key_list(const char *path, struct stats *stats,
+                                  collect_key_active_fn active, void *ctx,
+                                  va_list key_list)
 {
   char buf[COLLECT_SMALL_BUF];
   size_t n;
-  va_list key_list;
   int rc = 0;
   const char *p;
 
-  if (path == NULL || stats == NULL)
+  if (collect_read_small(path, buf, sizeof(buf), &n) < 0)
     return -1;
-
-  va_start(key_list, stats);
-
-  if (collect_read_small(path, buf, sizeof(buf), &n) < 0) {
-    rc = -1;
-    goto out;
-  }
 
   p = buf;
   for (;;) {
@@ -270,20 +281,52 @@ int path_collect_key_list(const char *path, struct stats *stats, ...)
     if (key == NULL)
       break;
 
+    /* Positional format: always consume the value to stay aligned, but only
+     * store keys active in the current collection phase. */
     if (!collect_parse_one_ull(&p, &val)) {
       ERROR("%s: no value for key `%s'\n", path, key);
-      goto out;
+      return rc;
     }
-    stats_set(stats, key, val);
+    if (collect_key_is_active(active, ctx, stats, key))
+      stats_set(stats, key, val);
     rc++;
   }
 
- out:
+  return rc;
+}
+
+int path_collect_key_list(const char *path, struct stats *stats, ...)
+{
+  va_list key_list;
+  int rc;
+
+  if (path == NULL || stats == NULL)
+    return -1;
+
+  va_start(key_list, stats);
+  rc = vpath_collect_key_list(path, stats, g_key_active_hook,
+                              g_key_active_hook_ctx, key_list);
   va_end(key_list);
   return rc;
 }
 
-static void collect_apply_key_value_line(char *line, struct stats *stats)
+int path_collect_key_list_filtered(const char *path, struct stats *stats,
+                                   collect_key_active_fn active, void *ctx, ...)
+{
+  va_list key_list;
+  int rc;
+
+  if (path == NULL || stats == NULL)
+    return -1;
+
+  va_start(key_list, ctx);
+  rc = vpath_collect_key_list(path, stats, active, ctx, key_list);
+  va_end(key_list);
+  return rc;
+}
+
+static void collect_apply_key_value_line(char *line, struct stats *stats,
+                                         collect_key_active_fn active, void *ctx)
 {
   char *rest;
   char *key;
@@ -294,13 +337,17 @@ static void collect_apply_key_value_line(char *line, struct stats *stats)
   if (key == NULL || rest == NULL)
     return;
 
+  if (!collect_key_is_active(active, ctx, stats, key))
+    return;
+
   errno = 0;
   val = strtoull(rest, NULL, 0);
   if (errno == 0)
     stats_set(stats, key, val);
 }
 
-int path_collect_key_value(const char *path, struct stats *stats)
+int path_collect_key_value_filtered(const char *path, struct stats *stats,
+                                    collect_key_active_fn active, void *ctx)
 {
   char *content;
   char *ptr;
@@ -323,20 +370,31 @@ int path_collect_key_value(const char *path, struct stats *stats)
       ptr = line + strlen(line);
     }
 
-    collect_apply_key_value_line(line, stats);
+    collect_apply_key_value_line(line, stats, active, ctx);
   }
 
   free(content);
   return 0;
 }
 
+int path_collect_key_value(const char *path, struct stats *stats)
+{
+  return path_collect_key_value_filtered(path, stats, g_key_active_hook,
+                                         g_key_active_hook_ctx);
+}
+
 static int collect_one_dir_entry(const char *dir_path, struct dirent *ent,
-                                 struct stats *stats)
+                                 struct stats *stats,
+                                 collect_key_active_fn active, void *ctx)
 {
   char *path = NULL;
   unsigned long long val = 0;
 
   if (ent->d_name[0] == '.')
+    return 0;
+
+  /* Skip the per-file open/read entirely for keys inactive this phase. */
+  if (!collect_key_is_active(active, ctx, stats, ent->d_name))
     return 0;
 
   if (asprintf(&path, "%s/%s", dir_path, ent->d_name) < 0) {
@@ -351,7 +409,8 @@ static int collect_one_dir_entry(const char *dir_path, struct dirent *ent,
   return 0;
 }
 
-int path_collect_key_value_dir(const char *dir_path, struct stats *stats)
+int path_collect_key_value_dir_filtered(const char *dir_path, struct stats *stats,
+                                        collect_key_active_fn active, void *ctx)
 {
   int rc = 0;
   DIR *dir = NULL;
@@ -365,8 +424,14 @@ int path_collect_key_value_dir(const char *dir_path, struct stats *stats)
     return -1;
 
   while ((ent = readdir(dir)) != NULL)
-    (void) collect_one_dir_entry(dir_path, ent, stats);
+    (void) collect_one_dir_entry(dir_path, ent, stats, active, ctx);
 
   closedir(dir);
   return rc;
+}
+
+int path_collect_key_value_dir(const char *dir_path, struct stats *stats)
+{
+  return path_collect_key_value_dir_filtered(dir_path, stats, g_key_active_hook,
+                                             g_key_active_hook_ctx);
 }

@@ -35,6 +35,14 @@ static void schema_apply_one_option(struct schema_entry *se, char *opt)
     if (opt_arg != NULL)
       se->se_width = (unsigned int) strtoul(opt_arg, NULL, 0);
     break;
+  case 'R':
+    /* Rate/collection tier: R=S marks a slow-tier key; R=F (or anything else)
+     * leaves the default fast tier. */
+    if (opt_arg != NULL && toupper((unsigned char) *opt_arg) == 'S')
+      se->se_collect_tier = COLLECT_TIER_SLOW;
+    else
+      se->se_collect_tier = COLLECT_TIER_FAST;
+    break;
   }
 }
 

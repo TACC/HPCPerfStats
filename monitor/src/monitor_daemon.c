@@ -24,6 +24,7 @@
 #include "string1.h"
 #include "stats.h"
 #include "collect.h"
+#include "collect_tier.h"
 #include "stats_buffer.h"
 #include "metric_profiler.h"
 #include "trace.h"
@@ -45,9 +46,11 @@ char *rmq_user = (char *)monitor_cli_lit_rmq_user;
 char *rmq_password = (char *)monitor_cli_lit_rmq_password;
 char *dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
 char *jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
-double sample_freq = 300;
+double sample_freq = 30;
+double sample_freq_slow = 600;
 double send_freq = 300;
 double buffer_hours = 6.0;
+int enable_slow_tier = 1;
 char *collection_profile = NULL;
 char *disable_types = NULL;
 int max_buffer_size = 0;
@@ -289,6 +292,10 @@ void monitor_daemon_finalize_runtime_settings(void)
     sample_freq = 1.0;
   if (sample_freq < 0.1)
     sample_freq = 0.1;
+  if (!isfinite(sample_freq_slow) || sample_freq_slow <= 0.0)
+    sample_freq_slow = sample_freq;
+  if (sample_freq_slow < sample_freq)
+    sample_freq_slow = sample_freq;
   if (!isfinite(send_freq) || send_freq <= 0.0)
     send_freq = 1.0;
   if (send_freq < 0.1)
@@ -315,6 +322,7 @@ void monitor_daemon_finalize_runtime_settings(void)
   if (disable_types != NULL)
     str_trim_inplace(disable_types);
   stats_runtime_daemon_set_type_controls(collection_profile, disable_types);
+  collect_tier_set_enabled(enable_slow_tier);
   monitor_daemon_apply_dynamic_buffer_size_if_needed();
 }
 
@@ -399,6 +407,10 @@ static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_h
   int rc;
   if (sf == NULL)
     return;
+  /* `$`/schema and job-boundary payloads must be complete: force a full collect
+   * so every key (fast + slow) is present and emitted as @full. */
+  if (write_hdr)
+    stats_runtime_set_collect_phase(COLLECT_FULL);
   if (write_hdr)
     stats_wr_hdr(sf);
   if (mark_line != NULL)
@@ -687,10 +699,14 @@ void monitor_daemon_sample_timer_cb(struct ev_loop *loop, ev_timer *w_, int reve
 {
   (void)revents;
   static double last_sample_fire;
+  static long long last_slow_slot = -1;
   double now_s = monitor_daemon_get_realtime_now();
   /* jobid: refreshed on ev_stat (JOBID file) and at startup; avoids fopen/fclose each tick. */
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
   monitor_daemon_log_timer_drift("sample", now_s, sample_timer_period, &last_sample_fire);
+  /* Fast ticks collect only fast-tier keys; every sample_freq_slow seconds a
+   * full sample (fast + slow) is taken. No-op unless the slow tier is enabled. */
+  stats_runtime_collect_phase_for_tick(now_s, &last_slow_slot, sample_freq_slow);
   monitor_daemon_collect_to_ring(w, 0, NULL);
   monitor_daemon_reanchor_sample_timer(loop, sample_timer_period);
   print_buffer_status(w);

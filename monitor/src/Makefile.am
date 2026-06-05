@@ -55,6 +55,8 @@ hpcperfstatsd_SOURCES = \
 	amd64_df.h \
 	collect.h \
 	collect.c \
+	collect_tier.h \
+	collect_tier.c \
 	cpuid.h \
 	cpuid.c \
 	daemonize.h \

@@ -12,6 +12,7 @@
 
 #include "stats.h"
 #include "collect.h"
+#include "collect_tier.h"
 #include "fileio.h"
 #include "path_open_fail_once.h"
 #include "stats_buffer.h"
@@ -172,6 +173,16 @@ static void stats_buffer_append_mark_lines(struct stats_buffer *sf)
 				   sf->sf_mark);
 }
 
+/* Choose the sample-row tier for this payload. The `$`-always-full rule is
+ * enforced via stats_buffer_is_schema_payload() so schema/rotation messages
+ * never go sparse. */
+static enum stats_row_tier stats_buffer_collect_row_tier(const struct stats_buffer *sf)
+{
+  return stats_buffer_row_tier_decide(stats_buffer_is_schema_payload(sf),
+                                      collect_tier_enabled(),
+                                      (int) collect_tier_get_phase());
+}
+
 int stats_buffer_collect(struct stats_buffer *sf)
 {
   int rc = 0;
@@ -195,7 +206,7 @@ int stats_buffer_collect(struct stats_buffer *sf)
   }
 
   stats_buffer_append_mark_lines(sf);
-  stats_buffer_append_enabled_type_rows(sf);
+  stats_buffer_append_enabled_type_rows(sf, stats_buffer_collect_row_tier(sf));
  out:
   return rc;
 }

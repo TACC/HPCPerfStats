@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "collect.h"
 #include "stats.h"
 #include "stats_runtime.h"
 
@@ -28,6 +29,7 @@ void metric_profiler_cycle_begin(void) {}
 void metric_profiler_cycle_end(FILE *stream) {(void)stream;}
 void monitor_log_error(const char *fmt, ...) {(void)fmt;}
 void monitor_log_warn(const char *fmt, ...) {(void)fmt;}
+void collect_set_key_active_hook(collect_key_active_fn fn, void *ctx) {(void)fn;(void)ctx;}
 
 int stats_type_init(struct stats_type *type)
 {

@@ -44,6 +44,54 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Archive header / schema suffix / directive class / marks (file mode) | `stats_file_format.c`, `stats_file_format.h` (`stats_file_classify_header_directive`, `stats_file_fprint_mark_multiline`, …); orchestration in `stats_file.c`. |
 | RMQ text payloads | `stats_buffer.c` + `stats_buffer_data_append.c` (persistent AMQP; cached `uname` for header + sample lines; batched rows; declare `syslog` INFO in `DEBUG` only). |
 
+## Two-tier collection (fast/slow) and sparse rows
+
+The daemon supports a two-tier sampling scheme to reduce the volume of data sent
+without losing freshness on performance metrics. It is **on by default**
+(`enable_slow_tier 1`). Set `enable_slow_tier 0` to restore legacy single-tier
+behavior (every key collected and emitted full-width every `sample_freq`).
+
+| Config key | Default | Role |
+|-----------|---------|------|
+| `sample_freq` | `30` | Fast-tier collection interval (performance keys). |
+| `sample_freq_slow` | `600` | Full-collection interval; clamped to be `>= sample_freq`. |
+| `send_freq` | `300` | RabbitMQ drain interval (unchanged, independent of the tiers). |
+| `enable_slow_tier` | `1` | Master switch for tiering and sparse rows. |
+
+When `enable_slow_tier 1` (default):
+
+- **Key tiers** come from a static `(type, key)` table plus an auto-rule for any
+  key ending in `_error`/`_errors` (`collect_tier.c`). Slow keys carry a new
+  `,R=S` suffix on `!` schema lines so consumers can learn tier membership;
+  fast keys are unmarked. Use `R=S` directly in a `KEYS` macro to mark a key slow
+  at the schema level.
+- **Fast samples** (every `sample_freq`) collect and emit only fast-tier keys.
+- **Full samples** (every `sample_freq_slow`) collect and emit every key.
+- **Sample rows** gain a tier marker right after the device field:
+  - `type dev @fast v...` — fast-tier values only, in schema order.
+  - `type dev @full v...` — all values, in schema order.
+  - `type dev v...` (no `@` token) — legacy full-width row (slow tier disabled).
+
+### Invariant: `$` messages are always full
+
+Any payload whose first non-whitespace byte is `$` (schema/rotation message) is
+**always emitted full**: the schema block lists every key (with `,R=S` on slow
+keys) and the appended sample rows use `@full`, never `@fast`. This is enforced
+in `stats_buffer_row_tier_decide()` (`stats_buffer_rows.c`) and by forcing
+`COLLECT_FULL` on every `write_hdr=1` collect in `monitor_daemon.c`, preserving
+the `current`-file rotation semantics that `listend.py` relies on.
+
+### Consumer contract break (deferred follow-up)
+
+`@fast`/`@full` sample rows and the `,R=S` schema suffix are a **new monitor
+output contract**. Downstream parsers such as
+`HPCPerfStats/hpcperfstats/dbload/sync_timedb_parsing.py` currently assume a
+fixed column count (`dict(zip(schema[typ], vals))`) and will **mis-align**
+columns on sparse rows. Until the consumer is updated, set `enable_slow_tier 0`
+in production. A separate consumer-side plan covers updating
+`sync_timedb_parsing.py`, `listend.py`, and rate/delta metrics to parse the tier
+marker and zip values against the matching schema subset.
+
 ## Power telemetry (DCGM, RAPL, and interpretation)
 
 - **`cpu_counter_metrics` (DCGM CPU backend on Grace)**: publishes **`DCGM_CPU_POWER_UTIL_W`** and **`DCGM_CPU_POWER_LIMIT_W`** (DCGM fields 1130/1131 on **`DCGM_FE_CPU`**). Values are **per NVIDIA CPU entity** (socket); the monitor repeats the same watts on every **logical CPU row** belonging to that socket. Mapping pairs sorted **Linux `physical_package_id`** values from sysfs with sorted **`DCGM_FE_CPU`** entity IDs when counts match; otherwise these columns stay zero.

@@ -7,12 +7,22 @@
 #define SE_EVENT 1
 #define SE_CONTROL 2
 
+/* Collection/emission tier for a schema key (two-tier sampling).
+ * FAST keys are collected and emitted on every (fast) sample; SLOW keys are
+ * only collected/emitted on the slower full sample. Default is FAST so the
+ * schema behaves exactly as before unless a tier is assigned. */
+enum collect_tier {
+  COLLECT_TIER_FAST = 0,
+  COLLECT_TIER_SLOW = 1,
+};
+
 struct schema_entry {
   char *se_unit;
   char *se_desc;
   unsigned int se_index;
   unsigned int se_type;
   unsigned int se_width;
+  unsigned int se_collect_tier;
   char se_key[];
 };
 

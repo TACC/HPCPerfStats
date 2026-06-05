@@ -38,7 +38,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_pscanf test_schema_parse test_stats_file_format test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_arm_aarch64_imc_schema test_amd_x86_pmc_schema test_metric_profiler test_hwdetect_policy test_stats_runtime_type_controls
+check_PROGRAMS = test_likwid_rapl_scale test_string1 test_stats_buffer_data_append test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_pscanf test_schema_parse test_stats_file_format test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_dcgm_pkg_uniq test_nfs_schema_subset test_arm_aarch64_imc_schema test_amd_x86_pmc_schema test_metric_profiler test_hwdetect_policy test_stats_runtime_type_controls test_collect_tier_table test_collect_phase test_collect_tier_gate
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer test_monitor_timing
 endif
@@ -130,7 +130,10 @@ test_stats_file_format_SOURCES = \
 
 test_stats_text_format_SOURCES = \
 	test_stats_text_format.c \
-	$(top_srcdir)/src/stats_text_format.c
+	$(top_srcdir)/src/stats_text_format.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/dict.c
 
 test_gpu_schema_contract_SOURCES = \
 	test_gpu_schema_contract.c
@@ -169,7 +172,28 @@ test_hwdetect_policy_SOURCES = \
 
 test_stats_runtime_type_controls_SOURCES = \
 	test_stats_runtime_type_controls.c \
-	$(top_srcdir)/src/stats_runtime.c
+	$(top_srcdir)/src/stats_runtime.c \
+	$(top_srcdir)/src/collect_tier.c \
+	$(top_srcdir)/src/monitor_timing.c \
+	$(top_srcdir)/src/dict.c
+
+test_collect_tier_table_SOURCES = \
+	test_collect_tier_table.c \
+	$(top_srcdir)/src/collect_tier.c \
+	$(top_srcdir)/src/schema.c \
+	$(top_srcdir)/src/schema_entry_parse.c \
+	$(top_srcdir)/src/dict.c
+
+test_collect_phase_SOURCES = \
+	test_collect_phase.c \
+	$(top_srcdir)/src/collect_tier.c \
+	$(top_srcdir)/src/monitor_timing.c
+
+test_collect_tier_gate_SOURCES = \
+	test_collect_tier_gate.c \
+	$(top_srcdir)/src/collect.c \
+	$(top_srcdir)/src/path_read.c \
+	$(top_srcdir)/src/path_open_fail_once.c
 
 if RABBITMQ
 test_monitor_cli_SOURCES = \
@@ -188,6 +212,7 @@ test_ring_buffer_SOURCES = \
 	$(top_srcdir)/src/stats_buffer_uts.c \
 	$(top_srcdir)/src/stats_buffer_data_append.c \
 	$(top_srcdir)/src/stats_text_format.c \
+	$(top_srcdir)/src/collect_tier.c \
 	$(top_srcdir)/src/monitor_log.c \
 	$(top_srcdir)/src/path_open_fail_once.c
 test_ring_buffer_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK
@@ -223,7 +248,10 @@ test_arm_aarch64_imc_schema_LDADD = $(LDADD)
 test_amd_x86_pmc_schema_LDADD = $(LDADD)
 test_metric_profiler_LDADD = $(LDADD)
 test_hwdetect_policy_LDADD = $(LDADD)
-test_stats_runtime_type_controls_LDADD = $(LDADD)
+test_stats_runtime_type_controls_LDADD = $(LDADD) -lm
+test_collect_tier_table_LDADD = $(LDADD)
+test_collect_phase_LDADD = $(LDADD) -lm
+test_collect_tier_gate_LDADD = $(LDADD)
 if RABBITMQ
 test_monitor_cli_LDADD = $(LDADD)
 test_ring_buffer_LDADD = $(LDADD)

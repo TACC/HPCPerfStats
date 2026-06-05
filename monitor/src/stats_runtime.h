@@ -3,7 +3,11 @@
 
 #include <stdio.h>
 
+#include "collect_tier.h"
 #include "stats_sink.h"
+
+struct stats;
+struct stats_type;
 
 typedef struct stats_runtime_main_prepare_spec {
 	int enable_all;
@@ -33,5 +37,17 @@ void stats_runtime_collect_enabled_metrics(int require_selected);
 int stats_runtime_collect_cycle(FILE *profiler_stream, void *opaque,
 				const struct stats_sink_ops *sink,
 				int require_selected);
+
+/* Two-tier collect phase control (thin wrappers over collect_tier). */
+void stats_runtime_set_collect_phase(enum collect_phase phase);
+enum collect_phase stats_runtime_effective_collect_phase(int write_hdr);
+int stats_schema_key_active_this_phase(const struct stats_type *type, int idx);
+
+/*! Decide and apply the collect phase for one fast-timer tick. Updates
+ *  *last_slow_slot and the global phase; returns the chosen phase. Pass
+ *  *last_slow_slot < 0 on the first tick to force a full (slow) collection. */
+enum collect_phase stats_runtime_collect_phase_for_tick(double now_sec,
+							long long *last_slow_slot,
+							double sample_freq_slow);
 
 #endif

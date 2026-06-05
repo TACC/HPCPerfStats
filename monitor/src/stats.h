@@ -40,6 +40,9 @@ struct stats_type {
 struct stats {
   struct stats_type *s_type;
   unsigned long long *s_val;
+  /* Per-schema-index flag: set when the key was collected this phase. Drives
+   * two-tier sparse emission and lets tests confirm gating. May be NULL. */
+  unsigned char *s_val_present;
   char s_dev[];
 };
 
@@ -57,5 +60,7 @@ struct stats_type *stats_type_get(const char *name);
 struct stats *get_current_stats(struct stats_type *type, const char *dev);
 void stats_set(struct stats *stats, const char *key, unsigned long long val);
 void stats_inc(struct stats *stats, const char *key, unsigned long long val);
+/* Clear the per-key "collected this phase" flags for one device. */
+void stats_clear_present(struct stats *stats);
 
 #endif

@@ -7,6 +7,7 @@
 
 #include "monitor_cli.h"
 #include "monitor_daemon.h"
+#include "monitor_options.h"
 
 extern void test_monitor_cli_reset_globals(void);
 
@@ -139,6 +140,39 @@ static void test_free_heap_resets_queue_to_default(void)
   assert(conf_file_name == NULL);
 }
 
+static void test_tier_defaults(void)
+{
+  next_cli_test();
+  assert(sample_freq == 30);
+  assert(sample_freq_slow == 600);
+  assert(send_freq == 300);
+  assert(enable_slow_tier == 1);
+}
+
+static void test_conf_sample_freq_slow(void)
+{
+  next_cli_test();
+  monitor_options_apply_daemon_conf_kv("sample_freq_slow", "120");
+  assert(sample_freq_slow == 120);
+}
+
+static void test_conf_enable_slow_tier(void)
+{
+  next_cli_test();
+  monitor_options_apply_daemon_conf_kv("enable_slow_tier", "1");
+  assert(enable_slow_tier == 1);
+  monitor_options_apply_daemon_conf_kv("enable_slow_tier", "0");
+  assert(enable_slow_tier == 0);
+}
+
+static void test_conf_freq_alias_maps_to_sample_freq(void)
+{
+  next_cli_test();
+  monitor_options_apply_daemon_conf_kv("freq", "45");
+  assert(sample_freq == 45);
+  assert(sample_freq_slow == 600); /* alias must not touch the slow tier */
+}
+
 int main(void)
 {
   test_heap_dup_from_default_literal();
@@ -152,6 +186,10 @@ int main(void)
   test_parse_disable_types_option();
   test_help_invokes_usage_and_exits_zero();
   test_free_heap_resets_queue_to_default();
+  test_tier_defaults();
+  test_conf_sample_freq_slow();
+  test_conf_enable_slow_tier();
+  test_conf_freq_alias_maps_to_sample_freq();
   test_monitor_cli_reset_globals();
   printf("test_monitor_cli passed\n");
   return 0;

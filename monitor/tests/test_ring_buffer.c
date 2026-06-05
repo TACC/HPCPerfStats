@@ -8,8 +8,10 @@
 #include <string.h>
 
 #include "cpuid.h"
+#include "collect_tier.h"
 #include "stats.h"
 #include "stats_buffer.h"
+#include "stats_buffer_rows.h"
 
 char jobid[80] = "-";
 double send_freq = 1.0;
@@ -231,8 +233,25 @@ static void test_load_file_open_fails(void)
   fclose(f);
 }
 
+/* The `$`-always-full invariant and tier selection (stats_buffer_row_tier_decide). */
+static void test_row_tier_decision(void)
+{
+  /* Slow tier disabled -> legacy full-width rows regardless of phase/payload. */
+  assert(stats_buffer_row_tier_decide(0, 0, COLLECT_FAST_ONLY) == STATS_ROW_LEGACY);
+  assert(stats_buffer_row_tier_decide(1, 0, COLLECT_FULL) == STATS_ROW_LEGACY);
+
+  /* Enabled: regular fast/full samples follow the phase. */
+  assert(stats_buffer_row_tier_decide(0, 1, COLLECT_FAST_ONLY) == STATS_ROW_FAST);
+  assert(stats_buffer_row_tier_decide(0, 1, COLLECT_FULL) == STATS_ROW_FULL);
+
+  /* `$`/schema payloads are always full, even mid fast phase (never @fast). */
+  assert(stats_buffer_row_tier_decide(1, 1, COLLECT_FAST_ONLY) == STATS_ROW_FULL);
+  assert(stats_buffer_row_tier_decide(1, 1, COLLECT_FULL) == STATS_ROW_FULL);
+}
+
 int main(void)
 {
+  test_row_tier_decision();
   test_insert_empty_and_append();
   test_insert_full_no_overwrite();
   test_insert_full_overwrite();

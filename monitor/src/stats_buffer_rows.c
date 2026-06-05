@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "collect.h"
+#include "collect_tier.h"
 #include "stats.h"
 #include "stats_buffer.h"
 #include "stats_buffer_data_append.h"
@@ -26,7 +27,8 @@ static void stats_buffer_append_fmt(struct stats_buffer *sf, const char *fmt, ..
   va_end(ap);
 }
 
-static int stats_buffer_append_type_row(struct stats_buffer *sf, struct stats_type *type, struct stats *stats)
+static int stats_buffer_append_type_row(struct stats_buffer *sf, struct stats_type *type,
+					struct stats *stats, enum stats_row_tier tier)
 {
   int attempt;
 
@@ -48,8 +50,8 @@ static int stats_buffer_append_type_row(struct stats_buffer *sf, struct stats_ty
     }
 
     {
-      int total = stats_format_snprintf_stats_row(row_line_buf, row_line_cap,
-						  type, stats);
+      int total = stats_format_snprintf_stats_row_tier(row_line_buf, row_line_cap,
+						       type, stats, tier);
 
       if (total < 0)
 	return -1;
@@ -64,7 +66,36 @@ static int stats_buffer_append_type_row(struct stats_buffer *sf, struct stats_ty
   return -1;
 }
 
-void stats_buffer_append_enabled_type_rows(struct stats_buffer *sf)
+static void stats_buffer_append_type_row_fallback(struct stats_buffer *sf,
+						  struct stats_type *type,
+						  struct stats *stats,
+						  enum stats_row_tier tier)
+{
+  const char *tok = (tier == STATS_ROW_FAST) ? " @fast"
+		    : (tier == STATS_ROW_FULL) ? " @full" : "";
+
+  stats_buffer_append_fmt(sf, "%s %s%s", type->st_name, stats->s_dev, tok);
+  for (size_t k = 0; k < type->st_schema.sc_len; k++) {
+    if (tier == STATS_ROW_FAST
+	&& type->st_schema.sc_ent[k]->se_collect_tier != COLLECT_TIER_FAST)
+      continue;
+    stats_buffer_append_fmt(sf, " %llu", stats->s_val[k]);
+  }
+  stats_buffer_append_fmt(sf, "\n");
+}
+
+enum stats_row_tier stats_buffer_row_tier_decide(int is_schema_payload,
+						 int tier_enabled, int phase)
+{
+  if (!tier_enabled)
+    return STATS_ROW_LEGACY;
+  if (is_schema_payload || phase == COLLECT_FULL)
+    return STATS_ROW_FULL;
+  return STATS_ROW_FAST;
+}
+
+void stats_buffer_append_enabled_type_rows(struct stats_buffer *sf,
+					   enum stats_row_tier tier)
 {
   size_t i = 0;
   struct stats_type *type;
@@ -77,12 +108,8 @@ void stats_buffer_append_enabled_type_rows(struct stats_buffer *sf)
     while ((dev = dict_for_each(&type->st_current_dict, &j)) != NULL) {
       struct stats *stats = key_to_stats(dev);
 
-      if (stats_buffer_append_type_row(sf, type, stats) < 0) {
-	stats_buffer_append_fmt(sf, "%s %s", type->st_name, stats->s_dev);
-	for (size_t k = 0; k < type->st_schema.sc_len; k++)
-	  stats_buffer_append_fmt(sf, " %llu", stats->s_val[k]);
-	stats_buffer_append_fmt(sf, "\n");
-      }
+      if (stats_buffer_append_type_row(sf, type, stats, tier) < 0)
+	stats_buffer_append_type_row_fallback(sf, type, stats, tier);
     }
   }
 }

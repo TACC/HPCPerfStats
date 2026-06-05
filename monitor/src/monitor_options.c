@@ -41,7 +41,7 @@ void monitor_options_print_daemon_usage(FILE *stream)
           "  -t [TMP_DIR]    or --tmp        [TMP_DIR]    Directory for dumpfiles (/tmp/hpcperfstats is the default).\n"
           "  -b [BUFFER]     or --buffer     [BUFFER]     Max size (in # of stats) for temporary in-memory storage (4096 is the default).\n"
           "  -f [FREQUENCY]  or --frequency  [FREQUENCY]  Deprecated alias for --sample-frequency.\n"
-          "     [SECONDS]    or --sample-frequency [SECONDS] Sampling cadence in seconds (default 300).\n"
+          "     [SECONDS]    or --sample-frequency [SECONDS] Sampling cadence in seconds (default 30).\n"
           "     [SECONDS]    or --send-frequency   [SECONDS] RabbitMQ send cadence in seconds (default 300).\n"
           "     [PROFILE]    or --collection-profile [PROFILE] Type profile: default|minimal|full.\n"
           "     [CSV]        or --disable-types [CSV] Comma-separated stats types to disable.\n",
@@ -184,6 +184,19 @@ void monitor_options_apply_daemon_conf_kv(const char *key, const char *value_lin
     else
       monitor_log_warn("%s: ignoring invalid sample_freq `%s` in file %s\n",
                        app_name, value_line, conf_file_name);
+  }
+  if (strcmp(key, "sample_freq_slow") == 0) {
+    if (parse_double_arg(value_line, &sample_freq_slow) == 0)
+      monitor_log_info("%s: Setting slow sample frequency to %f based on file %s\n",
+                       app_name, sample_freq_slow, conf_file_name);
+    else
+      monitor_log_warn("%s: ignoring invalid sample_freq_slow `%s` in file %s\n",
+                       app_name, value_line, conf_file_name);
+  }
+  if (strcmp(key, "enable_slow_tier") == 0) {
+    enable_slow_tier = (atoi(value_line) != 0) ? 1 : 0;
+    monitor_log_info("%s: Setting enable_slow_tier to %d based on file %s\n",
+                     app_name, enable_slow_tier, conf_file_name);
   }
   if (strcmp(key, "send_freq") == 0) {
     if (parse_double_arg(value_line, &send_freq) == 0)

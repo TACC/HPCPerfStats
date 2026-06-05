@@ -128,6 +128,7 @@ static struct stats *stats_create(struct stats_type *type, const char *dev)
 {
   struct stats *stats = NULL;
   unsigned long long *val = NULL;
+  unsigned char *present = NULL;
   size_t dev_len;
 
   if (type == NULL || dev == NULL)
@@ -142,9 +143,14 @@ static struct stats *stats_create(struct stats_type *type, const char *dev)
   if (val == NULL && type->st_schema.sc_len != 0)
     goto err;
 
+  present = (unsigned char *) calloc(type->st_schema.sc_len, sizeof(*present));
+  if (present == NULL && type->st_schema.sc_len != 0)
+    goto err;
+
   memset(stats, 0, sizeof(*stats));
   stats->s_type = type;
   stats->s_val = val;
+  stats->s_val_present = present;
   if (stats_copy_device_name(stats, dev) < 0)
     goto err;
 
@@ -153,6 +159,7 @@ static struct stats *stats_create(struct stats_type *type, const char *dev)
  err:
   free(stats);
   free(val);
+  free(present);
   return NULL;
 }
 
@@ -161,7 +168,16 @@ static void stats_destroy(struct stats *stats)
   if (stats == NULL)
     return;
   free(stats->s_val);
+  free(stats->s_val_present);
   free(stats);
+}
+
+void stats_clear_present(struct stats *stats)
+{
+  if (stats == NULL || stats->s_val_present == NULL)
+    return;
+  memset(stats->s_val_present, 0,
+         stats->s_type->st_schema.sc_len * sizeof(*stats->s_val_present));
 }
 
 struct stats *get_current_stats(struct stats_type *type, const char *dev)
@@ -215,8 +231,11 @@ void stats_set(struct stats *stats, const char *key, unsigned long long val)
         stats->s_type->st_name, stats->s_dev, key,
         (unsigned long long) val, i);
 
-  if (i >= 0)
+  if (i >= 0) {
     stats->s_val[i] = val;
+    if (stats->s_val_present != NULL)
+      stats->s_val_present[i] = 1;
+  }
 #ifdef MONITOR_METRIC_PROFILER
   stats_record_metric_profile(stats, key, wall_begin_ns, cpu_begin_ns);
 #endif
@@ -239,8 +258,11 @@ void stats_inc(struct stats *stats, const char *key, unsigned long long val)
         stats->s_type->st_name, stats->s_dev, key,
         (unsigned long long) val, i);
 
-  if (i >= 0)
+  if (i >= 0) {
     stats->s_val[i] += val;
+    if (stats->s_val_present != NULL)
+      stats->s_val_present[i] = 1;
+  }
 #ifdef MONITOR_METRIC_PROFILER
   stats_record_metric_profile(stats, key, wall_begin_ns, cpu_begin_ns);
 #endif

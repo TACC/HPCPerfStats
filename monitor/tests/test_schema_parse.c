@@ -119,6 +119,42 @@ static void test_schema_flag_csv_strict(void)
   free_entry(se);
 }
 
+static void test_parse_tier_slow(void)
+{
+  char *line = strdup("rx_bytes,E,U=B,R=S");
+  struct schema_entry *se = parse_schema_entry(line);
+  free(line);
+
+  assert(se != NULL);
+  assert(strcmp(se->se_key, "rx_bytes") == 0);
+  assert(se->se_type == SE_EVENT);
+  assert(se->se_unit != NULL && strcmp(se->se_unit, "B") == 0);
+  assert(se->se_collect_tier == COLLECT_TIER_SLOW);
+  free_entry(se);
+}
+
+static void test_parse_tier_default_fast(void)
+{
+  char *line = strdup("rx_bytes,E,U=B");
+  struct schema_entry *se = parse_schema_entry(line);
+  free(line);
+
+  assert(se != NULL);
+  assert(se->se_collect_tier == COLLECT_TIER_FAST);
+  free_entry(se);
+}
+
+static void test_parse_tier_explicit_fast(void)
+{
+  char *line = strdup("k,E,R=F");
+  struct schema_entry *se = parse_schema_entry(line);
+  free(line);
+
+  assert(se != NULL);
+  assert(se->se_collect_tier == COLLECT_TIER_FAST);
+  free_entry(se);
+}
+
 static void test_parse_C_then_E_last_wins(void)
 {
   char *line = strdup("k,C,E");
@@ -151,6 +187,9 @@ int main(void)
   test_parse_W_hex();
   test_parse_U_empty_value();
   test_schema_flag_csv_strict();
+  test_parse_tier_slow();
+  test_parse_tier_default_fast();
+  test_parse_tier_explicit_fast();
   test_parse_C_then_E_last_wins();
   printf("test_schema_parse passed\n");
   return 0;
