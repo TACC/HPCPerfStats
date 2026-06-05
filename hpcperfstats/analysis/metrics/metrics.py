@@ -283,6 +283,17 @@ def _sanitize_metrics_compute_rows(rows):
   return out
 
 
+def _finite_amax(values):
+  """Return ``amax`` over finite entries, or ``None`` when none are finite."""
+  arr = np.asarray(values, dtype=np.float64)
+  if arr.size == 0:
+    return None
+  fin = arr[np.isfinite(arr)]
+  if fin.size == 0:
+    return None
+  return float(amax(fin))
+
+
 def _coerced_metric_name_set(metric_names):
   """Return a hash-safe set of metric names from any iterable."""
   out = set()
@@ -624,6 +635,20 @@ def _unwrap(args):
     return {
         "jid": _metrics_jid_value(job),
         "status": "worker_db_error",
+        "rows": [],
+        "distinct_time_count": None,
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+    }
+  except Exception as exc:
+    _log_exception_details(
+        "Skipping metrics for jid {0} after compute error".format(
+            getattr(job, "jid", "?")),
+        exc,
+    )
+    return {
+        "jid": _metrics_jid_value(job),
+        "status": "worker_compute_error",
         "rows": [],
         "distinct_time_count": None,
         "error_type": type(exc).__name__,
@@ -2425,8 +2450,9 @@ class mem_hwm():
       mem_arr = (stats[:, schema["MemUsed"].index] -
                  stats[:, schema["Slab"].index] -
                  stats[:, schema["FilePages"].index])
-      if mem_arr.size > 0:
-        max_memusage = max(max_memusage, amax(mem_arr))
+      peak = _finite_amax(mem_arr)
+      if peak is not None:
+        max_memusage = max(max_memusage, peak)
     if max_memusage == 0:
       return None, typename, 'GiB'
     value = max_memusage / (2.**30)
@@ -2630,8 +2656,9 @@ class max_gpu_power():
       j = schema["power_usage"].index
       for hostname, stats in _stats.items():
         col = stats[:, j].astype(float)
-        if col.size:
-          mx = max(mx, float(amax(col)))
+        peak = _finite_amax(col)
+        if peak is not None:
+          mx = max(mx, peak)
           used = typename
     if mx <= 0 or used is None:
       return None, "nvidia_gpu", "W"
@@ -2675,9 +2702,9 @@ class max_gpu_clock_event_reasons():
       j = schema["clocks_event_reasons"].index
       for hostname, stats in _stats.items():
         col = stats[:, j].astype(np.float64)
-        fin = col[np.isfinite(col)]
-        if fin.size:
-          cmax = int(amax(fin))
+        peak = _finite_amax(col)
+        if peak is not None:
+          cmax = int(peak)
           if cmax > mx:
             mx = cmax
             used = typename

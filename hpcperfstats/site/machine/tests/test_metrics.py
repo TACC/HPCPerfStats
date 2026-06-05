@@ -28,8 +28,10 @@ from hpcperfstats.analysis.metrics.metrics import (
     job_metrics_catalog_entries,
     max_fabricbw,
     max_gpu_clock_event_reasons,
+    max_gpu_power,
     max_mds,
     max_packetrate,
+    mem_hwm,
 )
 
 
@@ -622,6 +624,73 @@ def test_max_gpu_clock_event_reasons_skips_nan_hosts_uses_finite_max():
   assert value == 7.0
   assert typename == "nvidia_gpu"
   assert units == "#"
+
+
+@pytest.mark.machine_unit_mock
+def test_max_gpu_power_all_nan_returns_none():
+  schema = _Schema(["power_usage"])
+  stats = np.array([[np.nan], [np.nan]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = max_gpu_power().compute_metric(MockU())
+  assert value is None
+  assert units == "W"
+
+
+@pytest.mark.machine_unit_mock
+def test_max_gpu_power_skips_nan_hosts_uses_finite_max():
+  schema = _Schema(["power_usage"])
+  nan_stats = np.array([[np.nan]], dtype=np.float64)
+  good_stats = np.array([[10.0], [250.0]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema, {"nan_host": nan_stats, "good_host": good_stats}
+      return None, {}
+
+  value, typename, units = max_gpu_power().compute_metric(MockU())
+  assert value == pytest.approx(250.0)
+  assert typename == "nvidia_gpu"
+
+
+@pytest.mark.machine_unit_mock
+def test_mem_hwm_all_nan_returns_none():
+  schema = _Schema(["MemUsed", "Slab", "FilePages"])
+  stats = np.array([[np.nan, np.nan, np.nan]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "mem":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = mem_hwm().compute_metric(MockU())
+  assert value is None
+  assert units == "GiB"
+
+
+@pytest.mark.machine_unit_mock
+def test_mem_hwm_mixed_nan_uses_finite_peak():
+  schema = _Schema(["MemUsed", "Slab", "FilePages"])
+  nan_stats = np.array([[np.nan, np.nan, np.nan]], dtype=np.float64)
+  gi = 2**30
+  good_stats = np.array([[float(gi), 0.0, 0.0]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "mem":
+        return schema, {"nan_host": nan_stats, "good_host": good_stats}
+      return None, {}
+
+  value, typename, units = mem_hwm().compute_metric(MockU())
+  assert value == pytest.approx(1.0)
+  assert units == "GiB"
 
 
 def test_avg_ethbw_mean_across_hosts():

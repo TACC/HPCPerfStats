@@ -241,6 +241,50 @@ def test_drain_metrics_imap_returns_explicit_worker_failure_outcome():
   assert out[0]["error_type"] == "OperationalError"
 
 
+def test_unwrap_returns_worker_compute_error_on_value_error(monkeypatch):
+  class _Job:
+    jid = "j-bad"
+
+  class _Metrics:
+    def compute_metrics(self, job):
+      del job
+      raise ValueError("cannot convert float NaN to integer")
+
+  monkeypatch.setattr(metrics, "run_with_db_retry", lambda fn, attempts=2: fn())
+  out = metrics._unwrap((_Metrics(), _Job()))
+  assert out["status"] == "worker_compute_error"
+  assert out["jid"] == "j-bad"
+  assert out["error_type"] == "ValueError"
+  assert out["rows"] == []
+
+
+def test_drain_metrics_imap_returns_worker_compute_error_outcome():
+  class _FakePoolWorkerComputeFailure:
+    def imap_unordered(self, fn, tasks, chunksize=1):
+      del fn, tasks, chunksize
+      return iter([{
+          "jid": "j-compute",
+          "status": "worker_compute_error",
+          "rows": [],
+          "distinct_time_count": None,
+          "error_type": "ValueError",
+          "error_message": "cannot convert float NaN to integer",
+      }])
+
+  out = metrics._drain_metrics_imap(
+      _FakePoolWorkerComputeFailure(),
+      tasks=[("m", "j-compute")],
+      chunksize=1,
+      poll_timeout_s=0.0,
+      stall_timeout_s=0.5,
+  )
+  assert len(out) == 1
+  assert out[0]["jid"] == "j-compute"
+  assert out[0]["ok"] is False
+  assert out[0]["status"] == "worker_compute_error"
+  assert out[0]["error_type"] == "ValueError"
+
+
 def test_drain_metrics_imap_returns_parent_persist_timeout_outcome(monkeypatch):
   class _FakePoolPersistTimeout:
     def imap_unordered(self, fn, tasks, chunksize=1):

@@ -2,7 +2,15 @@
 
 import numpy as np
 
-from hpcperfstats.analysis.metrics.metrics import NUMEXPR_MIN_ARRAY_SIZE, _add_arrays
+from hpcperfstats.analysis.metrics.metrics import NUMEXPR_MIN_ARRAY_SIZE, _add_arrays, _finite_amax
+
+
+def test_finite_amax_returns_none_for_all_nan():
+  assert _finite_amax([np.nan, np.nan]) is None
+
+
+def test_finite_amax_ignores_nan():
+  assert _finite_amax([np.nan, 5.0, np.nan]) == 5.0
 
 
 def test_add_arrays_small_uses_numpy_add():
