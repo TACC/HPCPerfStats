@@ -35,6 +35,11 @@ extern double send_freq;
 #define RMQ_RECONNECT_BACKOFF_CAP_SEC 30
 #define RMQ_RECONNECT_BACKOFF_MIN_SEC 2
 
+static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buffer *sf,
+				  amqp_socket_t **socket_out, int *channel_opened_out);
+static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn,
+						  struct stats_buffer *sf);
+
 #ifdef DEBUG
 /* Decode rabbitmq-c failures for DEBUG builds (ERROR -> stdout when RABBITMQ+DEBUG). */
 static void rmq_debug_log_amqp_status(const char *ctx, int st)

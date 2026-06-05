@@ -130,13 +130,14 @@ if test "x$cpu_counter_backend" = "xlikwid" && test "x$is_x86" != "xtrue"; then
 fi
 
 if test "x$cpu_counter_backend" = "xlikwid"; then
-  dnl Static liblikwid.a needs hwloc/lua archives and -lm on the same link line; AC_SEARCH_LIBS
-  dnl probes with -llikwid only unless we pass other libs for the try link.
-  if test "x$enable_all_static" = xyes; then
-    AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
-      [AC_MSG_ERROR([Unable to find liblikwid!])],
-      [-llikwid-hwloc -llikwid-lua -lm])
-  else
+  dnl Static liblikwid.a (prefix-static, foreign cross deps) needs hwloc/lua archives and -lm on the
+  dnl probe link line. AC_SEARCH_LIBS only adds -llikwid to LIBS; extras are for the try link only.
+  dnl Try the static-bundle link first, then fall back to a shared-only -llikwid (distro packages).
+  have_likwid=no
+  likwid_static_bundle=no
+  AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes likwid_static_bundle=yes],
+    [], [-llikwid-hwloc -llikwid-lua -lm])
+  if test "x${have_likwid}" != xyes; then
     AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
       [AC_MSG_ERROR([Unable to find liblikwid!])])
   fi
@@ -146,8 +147,11 @@ if test "x$cpu_counter_backend" = "xlikwid"; then
   fi
   dnl Static LIKWID: nested liblikwid-hwloc.a provides likwid_hwloc_*; liblikwid-lua.a for Lua.
   dnl Do not append -lm here: final link uses shared libm outside -Wl,-Bstatic; probe above used -lm only for the try link.
-  if test "x$enable_all_static" = xyes; then
-    LIBS="$LIBS -llikwid-hwloc -llikwid-lua"
+  if test "x$enable_all_static" = xyes || test "x$likwid_static_bundle" = xyes; then
+    case " ${LIBS} " in
+      *" -llikwid-hwloc "*) ;;
+      *) LIBS="$LIBS -llikwid-hwloc -llikwid-lua" ;;
+    esac
   fi
 fi
 AM_CONDITIONAL([LIKWID], [test x$likwid = xtrue])
@@ -427,7 +431,14 @@ esac],
 [debug=false])
 AM_CONDITIONAL([DEBUG], [test x$debug = xtrue])
 
-AC_SEARCH_LIBS([ev_run], [ev], [libev=yes], [AC_MSG_ERROR([Failed to find libev])])
+dnl Static libev.a (prefix-static, foreign cross) needs -lm on the probe link; try that first.
+have_libev=no
+AC_SEARCH_LIBS([ev_run], [ev], [have_libev=yes libev=yes],
+  [], [-lm])
+if test "x${have_libev}" != xyes; then
+  AC_SEARCH_LIBS([ev_run], [ev], [libev=yes],
+    [AC_MSG_ERROR([Failed to find libev])])
+fi
 AC_CHECK_HEADERS([ev.h], [ev=true], [AC_MSG_ERROR([Failed to find header ev.h])])
 
 if test "x$enable_all_static" = xyes; then

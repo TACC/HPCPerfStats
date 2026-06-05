@@ -86,6 +86,7 @@ Notes:
   - Foreign mode is rootless: no sudo, no binfmt registration, no podman/docker.
   - Foreign mode uses host make/cmake/pkg-config with qemu-wrapped target tools.
   - Foreign monitor builds use --disable-all-static (dynamic libc/libm from sysroot); native path still uses the static bundle.
+  - Foreign x86 installs static LIKWID (.a only); configure probes perfmon_init with -llikwid-hwloc -llikwid-lua -lm first (see configure.ac).
   - For deterministic foreign smoke, monitor configure is passed:
       --disable-gpu --disable-amd-gpu --disable-infiniband --disable-opa
       --disable-mic --disable-lustre
