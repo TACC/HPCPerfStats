@@ -1043,9 +1043,29 @@ class TestSacctIngestErrorBranches:
         vs = MagicMock()
         vs.iterator.return_value = iter([])
         with patch.object(api, "_require_staff", return_value=None), patch.object(
+            api, "persist_accounting_daily_file"
+        ), patch.object(
             api, "sync_acct_from_content", side_effect=RuntimeError("ingest failed")
         ), patch.object(api.job_data.objects, "filter") as mock_filter:
             mock_filter.return_value.values_list.return_value = vs
             response = api.sacct_ingest(request)
         assert response.status_code == 500
         assert response.data["error"] == "Ingest failed"
+
+    def test_persist_failure_returns_500(self):
+        from hpcperfstats.site.machine import api
+        from hpcperfstats.site.machine.tests.test_api_coverage_gaps import _plain_post
+
+        body = "JobID|State\n123|COMPLETED\n"
+        request = _plain_post(
+            "/api/sacct/ingest/?date=2024-06-15",
+            body.encode("utf-8"),
+        )
+        with patch.object(api, "_require_staff", return_value=None), patch.object(
+            api, "persist_accounting_daily_file",
+            side_effect=OSError("permission denied"),
+        ), patch.object(api, "sync_acct_from_content") as mock_sync:
+            response = api.sacct_ingest(request)
+        assert response.status_code == 500
+        assert response.data["error"] == "Failed to write accounting file"
+        mock_sync.assert_not_called()

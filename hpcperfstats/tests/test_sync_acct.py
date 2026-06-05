@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -150,3 +151,83 @@ def test_insert_job_data_individually_skips_integrity_error(mock_from_row):
 
   assert inserted == 0
   assert saved == []
+
+
+def _sacct_content(*rows):
+  lines = [SACCT_HEADER] + list(rows)
+  return "\n".join(lines) + "\n"
+
+
+@patch("hpcperfstats.dbload.sync_acct.cfg.get_accounting_path")
+def test_persist_accounting_daily_file_creates_file(mock_acct_path, tmp_path):
+  from hpcperfstats.dbload.sync_acct import persist_accounting_daily_file
+
+  mock_acct_path.return_value = str(tmp_path)
+  content = _sacct_content(_sacct_row(jid="701"))
+  ingest_date = date(2024, 6, 15)
+
+  persist_accounting_daily_file(ingest_date, content)
+
+  path = tmp_path / "2024-06-15.txt"
+  assert path.read_text(encoding="utf-8") == content
+
+
+@patch("hpcperfstats.dbload.sync_acct.cfg.get_accounting_path")
+def test_persist_accounting_daily_file_overwrites_when_not_shrinking(mock_acct_path, tmp_path):
+  from hpcperfstats.dbload.sync_acct import persist_accounting_daily_file
+
+  mock_acct_path.return_value = str(tmp_path)
+  ingest_date = date(2024, 6, 15)
+  path = tmp_path / "2024-06-15.txt"
+  original = _sacct_content(_sacct_row(jid="801"), _sacct_row(jid="802"))
+  path.write_text(original, encoding="utf-8")
+  updated = _sacct_content(_sacct_row(jid="801"), _sacct_row(jid="803"))
+
+  persist_accounting_daily_file(ingest_date, updated)
+
+  assert path.read_text(encoding="utf-8") == updated
+
+
+@patch("hpcperfstats.dbload.sync_acct.cfg.get_accounting_path")
+def test_persist_accounting_daily_file_rejects_shrink(mock_acct_path, tmp_path):
+  from hpcperfstats.dbload.sync_acct import (
+      AccountingFileShrinkError,
+      persist_accounting_daily_file,
+  )
+
+  mock_acct_path.return_value = str(tmp_path)
+  ingest_date = date(2024, 6, 15)
+  path = tmp_path / "2024-06-15.txt"
+  original = _sacct_content(_sacct_row(jid="901"), _sacct_row(jid="902"))
+  path.write_text(original, encoding="utf-8")
+  shorter = _sacct_content(_sacct_row(jid="901"))
+
+  with pytest.raises(AccountingFileShrinkError) as exc_info:
+    persist_accounting_daily_file(ingest_date, shorter)
+
+  assert exc_info.value.existing_lines == 3
+  assert exc_info.value.incoming_lines == 2
+  assert path.read_text(encoding="utf-8") == original
+
+
+@patch("hpcperfstats.dbload.sync_acct._notify_job_cache_after_acct_ingest")
+@patch("hpcperfstats.dbload.sync_acct.job_data")
+@patch("hpcperfstats.dbload.sync_acct.cfg.get_accounting_path")
+def test_persisted_file_is_reingestible_by_sync_acct(
+    mock_acct_path, mock_jd, _notify, tmp_path,
+):
+  from hpcperfstats.dbload.sync_acct import persist_accounting_daily_file, sync_acct
+
+  mock_acct_path.return_value = str(tmp_path)
+  content = _sacct_content(_sacct_row(jid="1001"))
+  ingest_date = date(2024, 6, 15)
+  persist_accounting_daily_file(ingest_date, content)
+
+  filter_qs = MagicMock()
+  filter_qs.values_list.side_effect = [[], ["1001"]]
+  mock_jd.objects.filter.return_value = filter_qs
+
+  inserted = sync_acct(str(tmp_path / "2024-06-15.txt"), set())
+
+  assert inserted == 1
+  mock_jd.objects.bulk_create.assert_called_once()

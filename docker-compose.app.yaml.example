@@ -13,6 +13,7 @@ services:
       - ./hpcperfstats.ini:/home/hpcperfstats/hpcperfstats.ini:ro
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
+      - hpcperfstatsdata:/hpcperfstats/
     networks:
       hpcperfstats_net:
         aliases:

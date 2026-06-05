@@ -96,7 +96,11 @@ from hpcperfstats.analysis.metrics.metrics import (
     build_job_metrics_display_list,
     job_metrics_catalog_entries,
 )
-from hpcperfstats.dbload.sync_acct import sync_acct_from_content
+from hpcperfstats.dbload.sync_acct import (
+    AccountingFileShrinkError,
+    persist_accounting_daily_file,
+    sync_acct_from_content,
+)
 from .models import ApiKey, host_data, job_data, metrics_data
 from .oauth2 import check_for_tokens
 from .throttles import ExpensiveReadThrottle, StaffIngestThrottle
@@ -3005,9 +3009,6 @@ def sacct_ingest(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    if not body.strip():
-        return Response({"inserted": 0, "date": request.GET.get("date", "")})
-
     date_str = (request.GET.get("date") or "").strip()
     if not date_str:
         return Response(
@@ -3020,6 +3021,31 @@ def sacct_ingest(request):
         return Response(
             {"error": "Invalid date; use date=YYYY-MM-DD"},
             status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        persist_accounting_daily_file(ingest_date, body)
+    except AccountingFileShrinkError as e:
+        return Response(
+            {
+                "error": "Accounting file would shrink",
+                "date": date_str,
+                "existing_lines": e.existing_lines,
+                "incoming_lines": e.incoming_lines,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+    except Exception as e:
+        if settings.DEBUG:
+            raise
+        return Response(
+            {"error": "Failed to write accounting file", "detail": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    if not body.strip():
+        return Response(
+            {"inserted": 0, "date": date_str, "file_written": True},
         )
 
     searchdate = ingest_date - timedelta(days=2)
@@ -3039,4 +3065,6 @@ def sacct_ingest(request):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
-    return Response({"inserted": inserted, "date": date_str})
+    return Response(
+        {"inserted": inserted, "date": date_str, "file_written": True},
+    )

@@ -1,0 +1,39 @@
+---
+description: Keep docker-compose.app.yaml.example aligned when docker-compose.app.yaml changes
+globs: HPCPerfStats/docker-compose.app.yaml,HPCPerfStats/docker-compose.app.yaml.example
+alwaysApply: false
+---
+
+# docker-compose.app.yaml Example Sync
+
+Operators bootstrap site compose from a copy/edit flow documented in **`HPCPerfStats/README.md`**:
+
+```bash
+cp docker-compose.app.yaml.example docker-compose.app.yaml
+```
+
+Whenever **`HPCPerfStats/docker-compose.app.yaml`** changes in a way operators would need after `cp`, update **`HPCPerfStats/docker-compose.app.yaml.example` in the same task**.
+
+## Trigger conditions
+
+- Add, remove, or rename **`web`** or **`pipeline`** service fields that belong in the operator template: **`volumes`**, **`ports`**, **`environment`**, **`command`**, **`image`**, **`depends_on`** (between app services), **`networks`** / aliases.
+- Add, remove, or rename top-level **`volumes`** or **`networks`** entries referenced by those services.
+- Change bind-mount targets, named volume names, or **`hpcperfstatsdata`** `driver_opts.device` defaults that the example documents.
+
+## Required behavior
+
+1. Apply the **same structural change** to **`docker-compose.app.yaml.example`** (not only the tracked `docker-compose.app.yaml`).
+2. Keep the example **copy-pasteable**: no site-specific secrets; use documented placeholders and comments already used in the example file.
+3. The example may remain **slimmer** than the tracked file (for example omitting `container_name`, infra `depends_on` on `db`/`redis`, or dev-only overrides) **only when** those omissions are intentional and README still matches how operators run the stack. Do **not** omit new **volume mounts**, **published ports**, or **named volumes** operators need after `cp`.
+
+## Validation checklist
+
+- Every **`web`** / **`pipeline`** volume mount in the tracked file that operators must have for a correct deploy appears in the example (or README documents an explicit post-`cp` edit).
+- Top-level **`volumes:`** / **`networks:`** blocks stay consistent between the two files for entries the app services use.
+- If the change affects install steps, also update **`README.md`** per **`readme-installation-sync.mdc`**.
+
+## Overlap
+
+- **`readme-installation-sync.mdc`** — Installation prose when compose wiring or volume layout changes.
+- **`minimal-compose-install-footprint.mdc`** — prefer example + `cp` over instructing operators to hand-edit tracked compose when both files can carry the default.
+- **`local-compose-db-lifecycle-for-web-tests.mdc`** — web test lifecycle when app compose services or mounts change.

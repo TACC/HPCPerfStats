@@ -379,10 +379,22 @@ class TestSacctIngestApi:
     from hpcperfstats.site.machine import api
 
     request = _plain_post("/api/sacct/ingest/?date=2024-01-02", b"  \n")
-    with patch.object(api, "_require_staff", return_value=None):
+    with patch.object(api, "_require_staff", return_value=None), patch.object(
+        api, "persist_accounting_daily_file"
+    ) as mock_persist:
       response = api.sacct_ingest(request)
     assert response.status_code == 200
     assert response.data["inserted"] == 0
+    assert response.data["file_written"] is True
+    mock_persist.assert_called_once()
+
+  def test_empty_body_requires_date(self):
+    from hpcperfstats.site.machine import api
+
+    request = _plain_post("/api/sacct/ingest/", b"  \n")
+    with patch.object(api, "_require_staff", return_value=None):
+      response = api.sacct_ingest(request)
+    assert response.status_code == 400
 
   def test_missing_date_returns_400(self):
     from hpcperfstats.site.machine import api
@@ -412,13 +424,47 @@ class TestSacctIngestApi:
     vs = MagicMock()
     vs.iterator.return_value = iter([])
     jd.objects.filter.return_value.values_list.return_value = vs
+    call_order = []
+
+    def _persist(_ingest_date, _body):
+      call_order.append("persist")
+
+    def _sync(_body, _jobs):
+      call_order.append("sync")
+      return 3
+
     with patch.object(api, "_require_staff", return_value=None), patch.object(
-        api, "sync_acct_from_content", return_value=3
+        api, "persist_accounting_daily_file", side_effect=_persist
+    ) as mock_persist, patch.object(
+        api, "sync_acct_from_content", side_effect=_sync
     ) as mock_sync, patch.object(api, "job_data", jd):
       response = api.sacct_ingest(request)
     assert response.status_code == 200
     assert response.data["inserted"] == 3
+    assert response.data["file_written"] is True
+    mock_persist.assert_called_once()
     mock_sync.assert_called_once()
+    assert call_order == ["persist", "sync"]
+
+  def test_ingest_shrink_returns_409(self):
+    from hpcperfstats.dbload.sync_acct import AccountingFileShrinkError
+    from hpcperfstats.site.machine import api
+
+    body = "JobID|State\n123|COMPLETED\n"
+    request = _plain_post(
+        "/api/sacct/ingest/?date=2024-06-15",
+        body.encode("utf-8"),
+    )
+    shrink = AccountingFileShrinkError("/acct/2024-06-15.txt", 5, 2)
+    with patch.object(api, "_require_staff", return_value=None), patch.object(
+        api, "persist_accounting_daily_file", side_effect=shrink
+    ), patch.object(api, "sync_acct_from_content") as mock_sync:
+      response = api.sacct_ingest(request)
+    assert response.status_code == 409
+    assert response.data["error"] == "Accounting file would shrink"
+    assert response.data["existing_lines"] == 5
+    assert response.data["incoming_lines"] == 2
+    mock_sync.assert_not_called()
 
   @override_settings(SACCT_INGEST_MAX_BODY_BYTES=4)
   def test_ingest_rejects_oversized_body(self):

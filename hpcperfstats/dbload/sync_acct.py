@@ -23,7 +23,7 @@ from hpcperfstats.dbload.date_utils import (
     parse_start_end_dates,
 )
 from hpcperfstats.dbload.io_helpers import job_data_instance_from_acct_row
-from hpcperfstats.file_locking import file_read_lock_wait
+from hpcperfstats.file_locking import file_read_lock_wait, file_write_lock
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.shutdown_utils import (
     shutdown_requested,
@@ -57,6 +57,61 @@ COLUMNS_TO_READ = [
     'JobID', 'User', 'Account', 'Start', 'End', 'Submit', 'Partition',
     'Timelimit', 'JobName', 'State', 'NNodes', 'ReqCPUS', 'NodeList'
 ]
+
+
+class AccountingFileShrinkError(Exception):
+  """Incoming sacct payload has fewer lines than the on-disk daily file."""
+
+  def __init__(self, path, existing_lines, incoming_lines):
+    self.path = path
+    self.existing_lines = existing_lines
+    self.incoming_lines = incoming_lines
+    super().__init__(
+        "Accounting file would shrink: %s (%s -> %s lines)"
+        % (path, existing_lines, incoming_lines)
+    )
+
+
+def accounting_daily_file_path(ingest_date):
+  """Return ``{acct_path}/{YYYY-MM-DD}.txt`` for a calendar ingest date."""
+  date_str = ingest_date.strftime("%Y-%m-%d")
+  return os.path.join(cfg.get_accounting_path(), "%s.txt" % date_str)
+
+
+def count_accounting_content_lines(content):
+  """Count newline-separated lines in raw sacct text (header + data rows)."""
+  if isinstance(content, bytes):
+    content = content.decode("utf-8", errors="replace")
+  return len(content.splitlines())
+
+
+def _read_accounting_file_line_count(path):
+  with file_read_lock_wait(path):
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+      return len(fh.read().splitlines())
+
+
+def persist_accounting_daily_file(ingest_date, content):
+  """Create or overwrite the daily accounting file with raw sacct POST body.
+
+  Raises AccountingFileShrinkError when the incoming payload has fewer lines
+  than the existing file for that date.
+  """
+  if isinstance(content, bytes):
+    content = content.decode("utf-8", errors="replace")
+  path = accounting_daily_file_path(ingest_date)
+  incoming_lines = count_accounting_content_lines(content)
+  if os.path.isfile(path):
+    existing_lines = _read_accounting_file_line_count(path)
+    if incoming_lines < existing_lines:
+      raise AccountingFileShrinkError(path, existing_lines, incoming_lines)
+  parent = os.path.dirname(path) or "."
+  os.makedirs(parent, exist_ok=True)
+  tmp_path = "%s.tmp" % path
+  with file_write_lock(path):
+    with open(tmp_path, "w", encoding="utf-8") as fh:
+      fh.write(content)
+    os.replace(tmp_path, path)
 
 
 def sync_acct_from_content(content, jobs_in_db):
