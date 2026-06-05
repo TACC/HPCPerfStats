@@ -14,6 +14,7 @@ from hpcperfstats.process_title import apply_pool_worker_process_title
 
 import multiprocessing
 import sys
+import threading
 import time
 import traceback
 
@@ -26,6 +27,7 @@ from django.db import connections, transaction, close_old_connections
 from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.gen import jid_table
+from hpcperfstats.dbload.multiprocessing_pool_health import abort_if_pool_workers_dead
 from hpcperfstats.analysis.gen.utils import (
     INTEL_FP_ARITH_ALL_EVENTS,
     INTEL_LEGACY_SSE_FLOP_EVENTS,
@@ -797,6 +799,10 @@ def _drain_metrics_imap(
   # Larger chunks can block indefinitely on ``next(timeout=...)`` and bypass
   # stall detection (observed as inflight batches with zero completions).
   submit_chunksize = 1
+  abort_if_pool_workers_dead(
+      active_pool,
+      context="Metrics.run imap_unordered (preflight)",
+  )
   iterator = active_pool.imap_unordered(
       _unwrap,
       tasks,
@@ -809,6 +815,10 @@ def _drain_metrics_imap(
   last_progress_at = time.monotonic()
   outcomes = []
   while done < total:
+    abort_if_pool_workers_dead(
+        active_pool,
+        context="Metrics.run imap_unordered",
+    )
     try:
       if iterator_next_supports_timeout:
         payload = iterator_next(timeout=float(max(0.0, poll_timeout_s)))
@@ -1098,14 +1108,30 @@ class Metrics():
     self._shared_pool_kind = None
 
   def reset_pool_hard(self):
-    """Terminate retained worker pool immediately (used after compute stall)."""
-    if self._shared_pool is None:
+    """Terminate retained worker pool without blocking the scheduler thread.
+
+    Detach the pool reference first so ``ensure_pool()`` can create a fresh pool
+    while lingering workers are torn down in the background. Blocking on
+    ``terminate()``/``join()`` after a wedged worker caused indefinite stalls
+    after ``MetricsRunWorkerStallError`` was logged.
+    """
+    pool = self._shared_pool
+    if pool is None:
       return
-    try:
-      _terminate_pool_bounded(self._shared_pool, METRICS_POOL_JOIN_TIMEOUT_S)
-    finally:
-      self._shared_pool = None
-      self._shared_pool_kind = None
+    self._shared_pool = None
+    self._shared_pool_kind = None
+
+    def _terminate_background():
+      try:
+        _terminate_pool_bounded(pool, METRICS_POOL_JOIN_TIMEOUT_S)
+      except Exception:
+        pass
+
+    threading.Thread(
+        target=_terminate_background,
+        name="metrics-pool-terminate",
+        daemon=True,
+    ).start()
 
   # Compute metrics in parallel (Shared memory only)
   def run(self, job_list, pool=None):
@@ -1168,7 +1194,8 @@ class Metrics():
           pass
       else:
         self.reset_pool_hard()
-        reset_confirmed = True
+        # Pool handle is detached; scheduler may recreate workers immediately.
+        reset_confirmed = self._shared_pool is None
       raise MetricsRunWorkerStallError(
           stalled_for_s=exc.stalled_for_s,
           message=str(exc),

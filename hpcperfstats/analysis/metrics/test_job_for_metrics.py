@@ -1,9 +1,13 @@
+import threading
+import time
+
 import numpy as np
 import pandas as pd
 import pytest
 from types import SimpleNamespace
 
 from hpcperfstats.analysis.metrics import metrics
+from hpcperfstats.dbload.multiprocessing_pool_health import MultiprocessingWorkerExitError
 
 
 class _FakeJidTable:
@@ -319,6 +323,54 @@ def test_metrics_run_stall_with_owned_pool_confirms_reset(monkeypatch):
     m.run([SimpleNamespace(jid="j1")])
   assert fake_calls["terminate"] >= 1
   assert excinfo.value.pool_reset_confirmed is True
+
+
+def test_reset_pool_hard_detaches_pool_before_background_terminate(monkeypatch):
+  terminate_started = threading.Event()
+  terminate_release = threading.Event()
+
+  def slow_terminate(active_pool, timeout_s):
+    terminate_started.set()
+    terminate_release.wait(timeout=5.0)
+    return False
+
+  class _Pool:
+    def terminate(self):
+      return None
+
+    _pool = []
+
+  pool = _Pool()
+  m = metrics.Metrics()
+  m._shared_pool = pool
+  m._shared_pool_kind = "metrics-pool"
+  monkeypatch.setattr(metrics, "_terminate_pool_bounded", slow_terminate)
+
+  m.reset_pool_hard()
+  assert m._shared_pool is None
+  assert terminate_started.wait(timeout=2.0)
+  terminate_release.set()
+  time.sleep(0.05)
+
+
+def test_drain_metrics_imap_aborts_when_pool_worker_dead(monkeypatch):
+  class _DeadProc:
+    pid = 4242
+
+    def is_alive(self):
+      return False
+
+  class _Pool:
+    _pool = [_DeadProc()]
+
+  with pytest.raises(MultiprocessingWorkerExitError):
+    metrics._drain_metrics_imap(
+        _Pool(),
+        [("task",)],
+        1,
+        poll_timeout_s=0.01,
+        stall_timeout_s=60.0,
+    )
 
 
 def test_metrics_run_stall_with_shared_pool_calls_reset(monkeypatch):

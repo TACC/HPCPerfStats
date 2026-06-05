@@ -2758,7 +2758,7 @@ def test_prewarm_pipeline_finish_uses_global_timeout(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
-def test_prewarm_pipeline_submit_applies_backpressure_and_inline_fallback(monkeypatch):
+def test_prewarm_pipeline_submit_evicts_oldest_instead_of_inline_fallback(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 1)
@@ -2766,18 +2766,25 @@ def test_prewarm_pipeline_submit_applies_backpressure_and_inline_fallback(monkey
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
 
   class _PendingFuture:
+    def __init__(self, jid):
+      self.jid = jid
+      self.cancelled = False
+
     def done(self):
       return False
 
     def cancel(self):
+      self.cancelled = True
       return True
 
   pipeline = update_metrics._PrewarmPipeline()
-  fut = _PendingFuture()
-  pipeline._pending.add(fut)
-  pipeline._created_at[fut] = 10.0
+  stale = _PendingFuture("jid-stale")
+  pipeline._pending.add(stale)
+  pipeline._pending_jids[stale] = "jid-stale"
+  pipeline._created_at[stale] = 10.0
   drain_calls = []
   inline_jids = []
+  submitted = []
   logs = []
   monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 20.0)
   monkeypatch.setattr(
@@ -2786,18 +2793,25 @@ def test_prewarm_pipeline_submit_applies_backpressure_and_inline_fallback(monkey
       lambda force=False, wait_timeout_s=0.0: drain_calls.append((force, wait_timeout_s)),
   )
   monkeypatch.setattr(pipeline, "_run_inline_fallback", lambda jid: inline_jids.append(jid))
+  monkeypatch.setattr(
+      pipeline._executor,
+      "submit",
+      lambda fn, jid: submitted.append(jid) or _PendingFuture(jid),
+  )
   monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
 
   pipeline.submit("jid-backpressure")
 
   stats = pipeline.stats()
   assert drain_calls == [(False, 0.0)]
-  assert inline_jids == ["jid-backpressure"]
+  assert inline_jids == []
+  assert stale.cancelled is True
+  assert submitted == ["jid-backpressure"]
   assert stats["prewarm_backpressure_events"] == 2
-  assert stats["prewarm_inline_fallback_jobs"] == 1
+  assert stats["prewarm_evicted_pending_jobs"] == 1
   assert stats["prewarm_backlog_jobs"] == 1
-  assert stats["prewarm_oldest_pending_age_s"] == 10.0
-  assert any("oldest_pending_age_s=10.000" in msg for msg in logs)
+  assert stats["prewarm_oldest_pending_age_s"] == 0.0
+  assert any("action=evict_oldest" in msg for msg in logs)
   pipeline._executor.shutdown(wait=True)
 
 

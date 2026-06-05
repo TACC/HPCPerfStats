@@ -431,10 +431,12 @@ class _PrewarmPipeline:
     self._pending_lock = threading.Lock()
     self._executor = None
     self._pending = set()
+    self._pending_jids = {}
     self._done = 0
     self._failed = 0
     self._backpressure_events = 0
     self._inline_fallback_jobs = 0
+    self._evicted_pending_jobs = 0
     self._lag_samples = deque(maxlen=TELEMETRY_SAMPLE_LIMIT)
     self._created_at = {}
     self._last_backpressure_log_at = 0.0
@@ -518,12 +520,11 @@ class _PrewarmPipeline:
       return 0.0
     return max(0.0, now - oldest_start)
 
-  def _maybe_log_backpressure(self, *, jid, pending, oldest_age_s, inline_fallback):
+  def _maybe_log_backpressure(self, *, jid, pending, oldest_age_s, action):
     now = time.monotonic()
-    if (not inline_fallback) and ((now - self._last_backpressure_log_at) < 5.0):
+    if action == "drain_wait" and ((now - self._last_backpressure_log_at) < 5.0):
       return
     self._last_backpressure_log_at = now
-    action = "inline_fallback" if inline_fallback else "drain_wait"
     log_print(
         "plot artifact prewarm backlog pressure pending={0} cap={1} "
         "oldest_pending_age_s={2:.3f} jid={3} action={4}".format(
@@ -546,6 +547,33 @@ class _PrewarmPipeline:
         self._failed += 1
       log_print("plot artifact prewarm failed: {0}".format(exc))
 
+  def _evict_oldest_pending_locked(self):
+    """Cancel the oldest async prewarm task to make room (never blocks scheduler)."""
+    if not self._pending:
+      return None
+    oldest_fut = None
+    oldest_start = None
+    for fut in self._pending:
+      start = self._created_at.get(fut)
+      if start is None:
+        continue
+      if oldest_start is None or start < oldest_start:
+        oldest_start = start
+        oldest_fut = fut
+    if oldest_fut is None:
+      return None
+    evicted_jid = self._pending_jids.pop(oldest_fut, None)
+    self._pending.discard(oldest_fut)
+    self._created_at.pop(oldest_fut, None)
+    try:
+      oldest_fut.cancel()
+    except Exception:
+      pass
+    with self._counters_lock:
+      self._failed += 1
+      self._evicted_pending_jobs += 1
+    return evicted_jid
+
   def submit(self, jid):
     if self._mode == "inline":
       self._run_one(jid)
@@ -562,27 +590,39 @@ class _PrewarmPipeline:
           jid=jid,
           pending=pending_now,
           oldest_age_s=oldest_age_s,
-          inline_fallback=False,
+          action="drain_wait",
       )
       self.drain_some(wait_timeout_s=self._backpressure_wait_s)
       with self._pending_lock:
         pending_now = len(self._pending)
         oldest_age_s = self._oldest_pending_age_locked()
       if pending_now >= self._backlog_cap:
+        with self._pending_lock:
+          evicted_jid = self._evict_oldest_pending_locked()
+          pending_now = len(self._pending)
+          oldest_age_s = self._oldest_pending_age_locked()
         with self._counters_lock:
           self._backpressure_events += 1
-          self._inline_fallback_jobs += 1
         self._maybe_log_backpressure(
             jid=jid,
             pending=pending_now,
             oldest_age_s=oldest_age_s,
-            inline_fallback=True,
+            action="evict_oldest",
         )
-        self._run_inline_fallback(jid)
-        return
+        if evicted_jid is not None:
+          log_print(
+              "plot artifact prewarm evicted oldest pending jid={0} for jid={1}".format(
+                  evicted_jid,
+                  jid,
+              ),
+              flush=True,
+          )
     with self._pending_lock:
+      if len(self._pending) >= self._backlog_cap:
+        return
       fut = self._executor.submit(self._run_one, jid)
       self._created_at[fut] = time.monotonic()
+      self._pending_jids[fut] = jid
       self._pending.add(fut)
 
   def has_pending(self):
@@ -610,6 +650,7 @@ class _PrewarmPipeline:
         return
       self._pending.difference_update(done)
     for fut in done:
+      self._pending_jids.pop(fut, None)
       start = self._created_at.pop(fut, None)
       if start is not None:
         self._lag_samples.append(time.monotonic() - start)
@@ -644,7 +685,9 @@ class _PrewarmPipeline:
           for fut in list(self._pending):
             fut.cancel()
             self._created_at.pop(fut, None)
+            self._pending_jids.pop(fut, None)
           self._pending = set()
+          self._pending_jids = {}
         with self._counters_lock:
           self._failed += timed_out_count
         log_print(
@@ -673,6 +716,7 @@ class _PrewarmPipeline:
       lag_samples = list(self._lag_samples)
       backpressure_events = self._backpressure_events
       inline_fallback_jobs = self._inline_fallback_jobs
+      evicted_pending_jobs = self._evicted_pending_jobs
     total = done + failed
     p95_lag = 0.0
     if lag_samples:
@@ -687,6 +731,7 @@ class _PrewarmPipeline:
         "prewarm_failed_jobs": failed,
         "prewarm_backpressure_events": backpressure_events,
         "prewarm_inline_fallback_jobs": inline_fallback_jobs,
+        "prewarm_evicted_pending_jobs": evicted_pending_jobs,
     }
 
 
