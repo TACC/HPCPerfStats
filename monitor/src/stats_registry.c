@@ -28,6 +28,8 @@ extern struct stats_type intel_pcu_stats_type;
 extern struct stats_type intel_rapl_stats_type;
 extern struct stats_type intel_skx_cha_stats_type;
 extern struct stats_type intel_skx_imc_stats_type;
+extern struct stats_type intel_icx_imc_stats_type;
+extern struct stats_type intel_spr_imc_stats_type;
 extern struct stats_type intel_snb_cbo_stats_type;
 extern struct stats_type intel_snb_hau_stats_type;
 extern struct stats_type intel_snb_imc_stats_type;
@@ -128,6 +130,8 @@ struct stats_type *const stats_type_table[] = {
   &intel_rapl_stats_type,
   &intel_skx_cha_stats_type,
   &intel_skx_imc_stats_type,
+  &intel_icx_imc_stats_type,
+  &intel_spr_imc_stats_type,
   &intel_snb_cbo_stats_type,
   &intel_snb_hau_stats_type,
   &intel_snb_imc_stats_type,

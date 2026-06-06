@@ -13,6 +13,7 @@
 
 #include "intel_pmc3.h"
 #include "intel_pmc3_core.h"
+#include "cpu_counter_metrics_likwid_begin.h"
 #include "stats.h"
 #include "trace.h"
 #include "msr_io.h"
@@ -62,6 +63,10 @@ static void intel_4pmc3_collect(struct stats_type *type)
 
 static int intel_4pmc3_begin(struct stats_type *type)
 {
+  if (cpu_counter_metrics_likwid_ready()) {
+    type->st_enabled = 0;
+    return -1;
+  }
   return intel_pmc3_core_begin_if_pmcs(type, 4);
 }
 

@@ -5,6 +5,9 @@
 #ifndef _LIKWID_ARCH_MAP_H_
 #define _LIKWID_ARCH_MAP_H_
 
+#include "cpuid.h"
+
 const char *likwid_arch_eventset(void);
+const char *likwid_arch_eventset_for_processor(processor_t p, int n_pmcs);
 
 #endif

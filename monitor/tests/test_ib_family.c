@@ -6,6 +6,32 @@
 #include "ib_family.h"
 #include "stats.h"
 
+#if defined(MONITOR_WITH_INFINIBAND)
+int ib_mad_ext_collect_cycle_ok(void)
+{
+  return 0;
+}
+
+void ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
+{
+  (void) stats;
+  (void) hca;
+  (void) port;
+}
+
+int ib_mad_sw_collect_cycle_ok(void)
+{
+  return 0;
+}
+
+void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
+{
+  (void) stats;
+  (void) hca;
+  (void) port;
+}
+#endif
+
 static struct stats_type g_host_ib;
 static int g_stats_type_get_returns_null;
 

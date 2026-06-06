@@ -9,6 +9,7 @@
 #include "trace.h"
 #include "path_open_fail_once.h"
 #include "cpuid.h"
+#include "intel_cpuid_match.h"
 
 #if defined(__i386__) || defined(__x86_64__)
 
@@ -48,52 +49,10 @@ processor_t signature(int *n_pmcs) {
     *n_pmcs = (eax >> 8) & 0xFF;
     TRACE("Number of PMCs = %d\n", *n_pmcs);
 
-    if (strncmp(sig, "06_1a", 5) == 0 ||
-        strncmp(sig, "06_1e", 5) == 0 ||
-        strncmp(sig, "06_2e", 5) == 0) {
-      TRACE("Nehalem %s\n", sig);
-      return NEHALEM;
-    }
-
-    if (strncmp(sig, "06_25", 5) == 0 ||
-        strncmp(sig, "06_2c", 5) == 0 ||
-        strncmp(sig, "06_2f", 5) == 0) {
-      TRACE("Westmere %s\n", sig);
-      return WESTMERE;
-    }
-
-    if (strncmp(sig, "06_3a", 5) == 0 ||
-        strncmp(sig, "06_3e", 5) == 0) {
-      TRACE("Ivy Bridge %s\n", sig);
-      return IVYBRIDGE;
-    }
-
-    if (strncmp(sig, "06_2a", 5) == 0 ||
-        strncmp(sig, "06_2d", 5) == 0) {	
-      TRACE("Sandy Bridge %s\n", sig);
-      return SANDYBRIDGE;
-    }
-
-    if (strncmp(sig, "06_3c", 5) == 0 ||
-        strncmp(sig, "06_45", 5) == 0 ||
-        strncmp(sig, "06_46", 5) == 0 ||
-        strncmp(sig, "06_3f", 5) == 0) {
-      TRACE("Haswell %s\n", sig);
-      return HASWELL;
-    }
-
-    if (strncmp(sig, "06_3d", 5) == 0 ||
-        strncmp(sig, "06_47", 5) == 0 ||
-        strncmp(sig, "06_4f", 5) == 0) {
-      TRACE("Broadwell %s %d\n", sig);
-      return BROADWELL;
-    }
-
-    if (strncmp(sig, "06_55", 5) == 0 ||
-        strncmp(sig, "06_4e", 5) == 0 ||
-        strncmp(sig, "06_5e", 5) == 0) {
-      TRACE("Skylake %s\n", sig);
-      return SKYLAKE;
+    rc = intel_cpuid_sig_to_processor(vendor, sig);
+    if (rc != (processor_t)-1) {
+      TRACE("Intel processor sig %s -> %d\n", sig, (int)rc);
+      return rc;
     }
   }
   else if (strncmp(vendor, "AuthenticAMD", 12) == 0) {

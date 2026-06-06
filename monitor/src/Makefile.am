@@ -31,6 +31,7 @@ hpcperfstatsd_CPPFLAGS = \
 	-DSTATS_LOCK_PATH=\"$(STATS_LOCK_PATH)\" \
 	-DJOBID_FILE_PATH=\"$(JOBID_FILE_PATH)\" \
 	@CPU_COUNTER_BACKEND_CPPFLAG@ \
+	@MONITOR_FEATURE_CPPFLAGS@ \
 	@METRIC_PROFILER_CPPFLAG@ \
 	@METRIC_PROFILER_BACKEND_CPPFLAG@
 
@@ -59,6 +60,10 @@ hpcperfstatsd_SOURCES = \
 	collect_tier.c \
 	cpuid.h \
 	cpuid.c \
+	intel_cpuid_match.h \
+	intel_cpuid_match.c \
+	intel_processor.h \
+	intel_processor.c \
 	daemonize.h \
 	daemonize.c \
 	monitor_log.h \
@@ -200,6 +205,8 @@ TYPES 	+= \
 	intel_bdw_cbo.c \
 	intel_bdw_hau.c \
 	intel_bdw_imc.c \
+	intel_icx_imc.c \
+	intel_spr_imc.c \
 	intel_bdw_qpi.c \
 	intel_bdw_r2pci.c \
 	intel_hsw_cbo.c \
@@ -259,7 +266,15 @@ hpcperfstatsd_SOURCES += \
 	likwid_pmc_adapter.h \
 	likwid_pmc_adapter.c \
 	likwid_arch_map.h \
-	likwid_arch_map.c
+	likwid_arch_map.c \
+	likwid_uncore_adapter.h \
+	likwid_uncore_adapter.c \
+	likwid_uncore_profiles.h \
+	likwid_uncore_profiles.c \
+	intel_skx_imc.h \
+	intel_icx_imc.h \
+	intel_spr_imc.h \
+	intel_snb_imc.h
 endif
 
 if INFINIBAND

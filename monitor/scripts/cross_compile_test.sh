@@ -1048,7 +1048,6 @@ foreign_monitor_cfg_args() {
   local args=(
     --disable-all-static
     --with-systemduserunitdir=no
-    --with-cpu-counter-backend=auto
     --disable-gpu
     --disable-amd-gpu
     --disable-infiniband
@@ -1058,7 +1057,10 @@ foreign_monitor_cfg_args() {
 
   # Under emulation, /proc/cpuinfo may reflect host details. Keep x86 deterministic.
   if is_x86_triplet "${target}"; then
-    args+=(--with-monitor-arch=intel)
+    args+=(--with-monitor-arch=intel --with-cpu-counter-backend=auto)
+  else
+    # Non-x86 foreign smoke has no LIKWID and usually no libdcgm in the sysroot.
+    args+=(--disable-hardware)
   fi
   printf '%s\n' "${args[@]}"
 }

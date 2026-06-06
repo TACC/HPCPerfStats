@@ -40,6 +40,9 @@ likwid_rapl_is_supported_processor(void)
   case HASWELL:
   case BROADWELL:
   case SKYLAKE:
+  case CASCADE_LAKE:
+  case ICELAKE_SERVER:
+  case SAPPHIRE_RAPIDS:
     return 1;
   default:
     return 0;

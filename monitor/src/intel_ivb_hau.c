@@ -1,66 +1,28 @@
-/*! \file intel_ivb_hau.c
- *  Intel Ivy Bridge HA uncore (intel_x86_uncore_hau_ivb).
- */
-
 #include "stats.h"
 #include "JOIN.h"
-#include "intel_uncore_pci.h"
+#include "likwid_uncore_adapter.h"
 
-#define CTR_KEYS                                                             \
-  X(requests_reads, "E,W=48", ""),                                             \
-      X(requests_writes, "E,W=48", ""),                                       \
-      X(clockticks, "E,W=48", ""),                                            \
-      X(imc_writes, "E,W=48", "")
-
-#define KEYS CTR_KEYS
-
-#define PERF_EVENT(event, umask)                                             \
-  ((event) | (umask << 8) | (0UL << 18) | (1UL << 22) | (0UL << 23)           \
-   | (0x01UL << 24))
-
-#define REQUESTS_READS	 PERF_EVENT(0x01, 0x03)
-#define REQUESTS_WRITES PERF_EVENT(0x01, 0x0C)
-#define CLOCKTICKS	 PERF_EVENT(0x00, 0x00)
-#define IMC_WRITES	 PERF_EVENT(0x1A, 0x0F)
-
-static uint32_t events[] = {
-    REQUESTS_READS,
-    REQUESTS_WRITES,
-    CLOCKTICKS,
-    IMC_WRITES,
-};
-static const char *const event_keys[] = {
-    "requests_reads",
-    "requests_writes",
-    "clockticks",
-    "imc_writes",
-};
-static int dids[] = {0x0e30, 0x0e38};
-
-static const struct intel_uncore_pci_cfg intel_ivb_hau_pci_cfg = {
-    .pci_dids = dids,
-    .nr_pci_dids = 2,
-    .events = events,
-    .event_keys = event_keys,
-    .fixed_ctr_key = NULL,
-    .nr_events = 4,
-};
+#define KEYS \
+  X(requests_reads, "E,W=48", ""), \
+  X(requests_writes, "E,W=48", ""), \
+  X(clockticks, "E,W=48", ""), \
+  X(imc_writes, "E,W=48", "")
 
 static int intel_ivb_hau_begin(struct stats_type *type)
 {
-  return intel_uncore_pci_begin(&intel_ivb_hau_pci_cfg, type);
+  return likwid_uncore_adapter_begin(type, LIKWID_UNCORE_PROFILE_HAU_IVB);
 }
 
 static void intel_ivb_hau_collect(struct stats_type *type)
 {
-  intel_uncore_pci_collect(&intel_ivb_hau_pci_cfg, type);
+  likwid_uncore_adapter_collect(type, LIKWID_UNCORE_PROFILE_HAU_IVB);
 }
 
 struct stats_type intel_ivb_hau_stats_type = {
-    .st_name = "intel_x86_uncore_hau_ivb",
-    .st_begin = &intel_ivb_hau_begin,
-    .st_collect = &intel_ivb_hau_collect,
+  .st_name = "intel_x86_uncore_hau_ivb",
+  .st_begin = &intel_ivb_hau_begin,
+  .st_collect = &intel_ivb_hau_collect,
 #define X SCHEMA_DEF
-    .st_schema_def = JOIN(KEYS),
+  .st_schema_def = JOIN(KEYS),
 #undef X
 };

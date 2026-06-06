@@ -102,6 +102,15 @@ case "$host_cpu" in
   x86_64|i?86) is_x86=true ;;
 esac
 
+likwid=false
+dcgm_checked=false
+CPU_COUNTER_BACKEND_CPPFLAG=""
+MONITOR_ARCH_CPPFLAG=""
+
+if test "x$hardware" != "xtrue"; then
+  cpu_counter_backend="none"
+  AC_MSG_NOTICE([CPU counter backend: disabled (--disable-hardware)])
+else
 if test "x$cpu_counter_backend" = "xauto"; then
   if test "x$is_x86" = "xtrue"; then
     cpu_counter_backend="likwid"
@@ -139,11 +148,7 @@ if test "x$cpu_counter_backend" = "xlikwid"; then
     esac
   fi
 fi
-AM_CONDITIONAL([LIKWID], [test x$likwid = xtrue])
-AM_CONDITIONAL([CPU_BACKEND_LIKWID], [test x$cpu_counter_backend = xlikwid])
-AM_CONDITIONAL([CPU_BACKEND_DCGM], [test x$cpu_counter_backend = xdcgm])
 
-dcgm_checked=false
 if test "x$cpu_counter_backend" = "xdcgm"; then
   if test "x$enable_all_static" = xyes; then
     save_LIBS=$LIBS
@@ -168,8 +173,13 @@ if test "x$cpu_counter_backend" = "xdcgm"; then
   dcgm_checked=true
   CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_DCGM"
   MONITOR_ARCH_CPPFLAG=""
-else
+elif test "x$cpu_counter_backend" = "xlikwid"; then
   CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_LIKWID"
+fi
+
+if test "x$hardware" = "xtrue"; then
+  AC_MSG_NOTICE([CPU counter backend: ${cpu_counter_backend} (host_cpu=${host_cpu})])
+fi
 fi
 AC_SUBST([CPU_COUNTER_BACKEND_CPPFLAG])
 
@@ -207,7 +217,11 @@ case "$host_cpu" in
 esac
 AM_CONDITIONAL([MONITOR_ARCH_ARM], [test x$monitor_arch_arm = xtrue])
 
-AC_MSG_NOTICE([CPU counter backend: ${cpu_counter_backend} (host_cpu=${host_cpu})])
+AM_CONDITIONAL([LIKWID], [test x$likwid = xtrue])
+AM_CONDITIONAL([CPU_BACKEND_LIKWID],
+  [test x$hardware = xtrue -a x$cpu_counter_backend = xlikwid])
+AM_CONDITIONAL([CPU_BACKEND_DCGM],
+  [test x$hardware = xtrue -a x$cpu_counter_backend = xdcgm])
 
 AC_ARG_ENABLE([infiniband],
 [  --enable-infiniband	Enable Infiniband support (default is true)],
@@ -431,6 +445,30 @@ AS_IF([test "x$with_systemduserunitdir" = "xyes" -o "x$with_systemduserunitdir" 
 AS_IF([test "x$with_systemduserunitdir" != "xno"],
       [AC_SUBST([systemduserunitdir], [$with_systemduserunitdir])])
 AM_CONDITIONAL([HAVE_SYSTEMD], [test "x$with_systemduserunitdir" != "xno"])
+
+MONITOR_FEATURE_CPPFLAGS=""
+if test "x$hardware" = "xtrue"; then
+  MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_HARDWARE"
+fi
+if test "x$infiniband" = "xtrue"; then
+  MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_INFINIBAND"
+fi
+if test "x$lustre" = "xtrue"; then
+  MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_LUSTRE"
+fi
+if test "x$gpu" = "xtrue"; then
+  MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_GPU"
+fi
+if test "x$amd_gpu" = "xtrue"; then
+  MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_AMD_GPU"
+fi
+if test "x$opa" = "xtrue"; then
+  MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_OPA"
+fi
+if test "x$monitor_arch_arm" = "xtrue"; then
+  MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_HOST_IS_ARM"
+fi
+AC_SUBST([MONITOR_FEATURE_CPPFLAGS])
 
 AC_CONFIG_FILES([Makefile src/Makefile tests/Makefile])
 AC_OUTPUT

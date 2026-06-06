@@ -8,7 +8,10 @@ typedef enum {
   NEHALEM, WESTMERE, 
   SANDYBRIDGE, IVYBRIDGE, 
   HASWELL, BROADWELL,
-  SKYLAKE
+  SKYLAKE,
+  CASCADE_LAKE,
+  ICELAKE_SERVER,
+  SAPPHIRE_RAPIDS
 } processor_t;
   
 // Return 1 for true and 0 for false

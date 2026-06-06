@@ -58,6 +58,48 @@ static int cpu_vendor_is_amd_like(void)
   return 0;
 }
 
+static const char *intel_icx_eventset(void)
+{
+  return "INSTR_RETIRED_ANY:FIXC0,CPU_CLK_UNHALTED_CORE:FIXC1,CPU_CLK_UNHALTED_REF:FIXC2,"
+         "MEM_INST_RETIRED_ALL_LOADS:PMC0,L1D_REPLACEMENT:PMC1,"
+         "MEM_INST_RETIRED_ALL_STORES:PMC2";
+}
+
+static const char *intel_spr_eventset(int n_pmcs)
+{
+  if (n_pmcs >= 8) {
+    return "INSTR_RETIRED_ANY:FIXC0,CPU_CLK_UNHALTED_CORE:FIXC1,CPU_CLK_UNHALTED_REF:FIXC2,"
+           "MEM_LOAD_UOPS_RETIRED_L1_HIT:PMC0,MEM_LOAD_UOPS_RETIRED_L2_HIT:PMC1,"
+           "MEM_LOAD_UOPS_RETIRED_LLC_HIT:PMC2,L1D_REPLACEMENT:PMC3,"
+           "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE:PMC4,"
+           "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE:PMC5,"
+           "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE:PMC6,"
+           "FP_ARITH_INST_RETIRED_SCALAR_SINGLE:PMC7";
+  }
+  return intel_eventset();
+}
+
+const char *likwid_arch_eventset_for_processor(processor_t p, int n_pmcs)
+{
+  switch (p) {
+  case ICELAKE_SERVER:
+    return intel_icx_eventset();
+  case SAPPHIRE_RAPIDS:
+    return intel_spr_eventset(n_pmcs);
+  case SKYLAKE:
+  case CASCADE_LAKE:
+  case HASWELL:
+  case BROADWELL:
+  case SANDYBRIDGE:
+  case IVYBRIDGE:
+  case NEHALEM:
+  case WESTMERE:
+    return intel_eventset();
+  default:
+    return intel_eventset();
+  }
+}
+
 const char *likwid_arch_eventset(void)
 {
   const char *arch_env = getenv("HPCPERFSTATS_MONITOR_ARCH");

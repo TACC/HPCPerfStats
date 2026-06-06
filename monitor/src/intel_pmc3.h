@@ -274,7 +274,11 @@ static const char *const *intel_pmc3_event_keys(size_t *nkeys)
   case BROADWELL:
     keys = hsw_event_keys; n = sizeof(hsw_event_keys) / sizeof(hsw_event_keys[0]); break;
   case SKYLAKE:
+  case CASCADE_LAKE:
+  case SAPPHIRE_RAPIDS:
     keys = skx_event_keys; n = sizeof(skx_event_keys) / sizeof(skx_event_keys[0]); break;
+  case ICELAKE_SERVER:
+    keys = hsw_event_keys; n = sizeof(hsw_event_keys) / sizeof(hsw_event_keys[0]); break;
   default:
     break;
   }
@@ -311,7 +315,11 @@ static int intel_pmc3_begin_cpu(char *cpu)
   case BROADWELL:
     events = hsw_events; break;
   case SKYLAKE:
+  case CASCADE_LAKE:
+  case SAPPHIRE_RAPIDS:
     events = skx_events; break;
+  case ICELAKE_SERVER:
+    events = hsw_events; break;
   default:
     ERROR("Processor model/family not supported: %m\n");
     goto out;

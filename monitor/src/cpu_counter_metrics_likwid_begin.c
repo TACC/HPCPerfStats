@@ -13,6 +13,7 @@
 #include "cpu_counter_metrics_likwid_begin.h"
 
 #ifndef MONITOR_CPU_BACKEND_DCGM
+#include "cpuid.h"
 #include "likwid_pmc_adapter.h"
 #include "likwid_arch_map.h"
 
@@ -22,7 +23,8 @@ int likwid_backend_begin(struct stats_type *type)
 {
   (void)type;
   if (likwid_pmc_adapter_init(nr_cpus) == 0 &&
-      likwid_pmc_adapter_setup_events(likwid_arch_eventset()) == 0) {
+      likwid_pmc_adapter_setup_events(
+          likwid_arch_eventset_for_processor(processor, n_pmcs)) == 0) {
     g_likwid_ready = 1;
     return 0;
   }
