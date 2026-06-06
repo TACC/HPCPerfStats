@@ -1,3 +1,4 @@
+import signal
 import threading
 import time
 
@@ -285,6 +286,41 @@ def test_drain_metrics_imap_returns_worker_compute_error_outcome():
   assert out[0]["error_type"] == "ValueError"
 
 
+def test_run_compute_metrics_timed_raises_when_exceeded():
+  if not hasattr(signal, "SIGALRM"):
+    pytest.skip("SIGALRM unavailable")
+
+  class _Job:
+    jid = "slow"
+
+  class _Metrics:
+    def compute_metrics(self, job):
+      time.sleep(2.0)
+      return {"rows": [], "distinct_time_count": 0}
+
+  with pytest.raises(metrics.MetricsComputeJobTimeoutError):
+    metrics._run_compute_metrics_timed(_Metrics(), _Job(), 0.05)
+
+
+def test_unwrap_returns_worker_compute_error_on_per_job_timeout(monkeypatch):
+  if not hasattr(signal, "SIGALRM"):
+    pytest.skip("SIGALRM unavailable")
+
+  class _Job:
+    jid = "slow"
+
+  class _Metrics:
+    def compute_metrics(self, job):
+      time.sleep(2.0)
+      return {"rows": [], "distinct_time_count": 0}
+
+  monkeypatch.setattr(metrics, "run_with_db_retry", lambda fn, attempts=2: fn())
+  monkeypatch.setattr(metrics, "_resolve_metrics_run_per_job_timeout_s", lambda: 0.05)
+  out = metrics._unwrap((_Metrics(), _Job()))
+  assert out["status"] == "worker_compute_error"
+  assert out["error_type"] == "MetricsComputeJobTimeoutError"
+
+
 def test_drain_metrics_imap_returns_parent_persist_timeout_outcome(monkeypatch):
   class _FakePoolPersistTimeout:
     def imap_unordered(self, fn, tasks, chunksize=1):
@@ -327,12 +363,62 @@ def test_drain_metrics_imap_returns_parent_persist_timeout_outcome(monkeypatch):
   assert out[0]["error_type"] == "DatabaseError"
 
 
-def test_metrics_run_stall_with_owned_pool_confirms_reset(monkeypatch):
+def test_metrics_run_stall_with_owned_pool_returns_partial_outcomes(monkeypatch):
   fake_calls = {"terminate": 0}
 
   class _Proc:
     def __init__(self):
       self.pid = 111
+
+    def join(self, timeout=None):
+      return None
+
+    def is_alive(self):
+      return False
+
+  class _OwnedPool:
+    def __init__(self, processes=None, initializer=None, initargs=None, **kwargs):
+      del processes, initializer, initargs, kwargs
+      self._pool = [_Proc()]
+
+    def terminate(self):
+      fake_calls["terminate"] += 1
+
+    def close(self):
+      return None
+
+  monkeypatch.setattr(metrics.multiprocessing, "Pool", _OwnedPool)
+
+  partial = [
+      metrics._metrics_run_outcome("j-done", ok=True, status="ok", persisted_rows=3),
+  ]
+
+  def _raise_stall(*args, **kwargs):
+    raise metrics.MetricsRunWorkerStallError(
+        stalled_for_s=999.0,
+        message="stall",
+        pool_reset_confirmed=False,
+        partial_outcomes=partial,
+        pending_jobs=[SimpleNamespace(jid="j-pending")],
+    )
+
+  monkeypatch.setattr(metrics, "_drain_metrics_imap", _raise_stall)
+
+  m = metrics.Metrics()
+  outcomes = m.run([SimpleNamespace(jid="j-done"), SimpleNamespace(jid="j-pending")])
+  assert fake_calls["terminate"] >= 1
+  assert len(outcomes) == 2
+  by_jid = {o["jid"]: o for o in outcomes}
+  assert by_jid["j-done"]["ok"] is True
+  assert by_jid["j-pending"]["ok"] is False
+  assert by_jid["j-pending"]["status"] == "worker_stall_timeout"
+
+
+def test_metrics_run_stall_with_owned_pool_raises_when_no_partial_outcomes(monkeypatch):
+  fake_calls = {"terminate": 0}
+
+  class _Proc:
+    pid = 111
 
     def join(self, timeout=None):
       return None
@@ -421,11 +507,17 @@ def test_metrics_run_stall_with_shared_pool_calls_reset(monkeypatch):
   class _SharedPool:
     pass
 
+  partial = [
+      metrics._metrics_run_outcome("j2", ok=True, status="ok", persisted_rows=1),
+  ]
+
   def _raise_stall(*args, **kwargs):
     raise metrics.MetricsRunWorkerStallError(
         stalled_for_s=321.0,
         message="stall",
         pool_reset_confirmed=False,
+        partial_outcomes=partial,
+        pending_jobs=[SimpleNamespace(jid="j3")],
     )
 
   monkeypatch.setattr(metrics, "_drain_metrics_imap", _raise_stall)
@@ -438,8 +530,11 @@ def test_metrics_run_stall_with_shared_pool_calls_reset(monkeypatch):
 
   monkeypatch.setattr(m, "reset_pool_hard", _reset)
 
-  with pytest.raises(metrics.MetricsRunWorkerStallError) as excinfo:
-    m.run([SimpleNamespace(jid="j2")], pool=_SharedPool())
+  outcomes = m.run(
+      [SimpleNamespace(jid="j2"), SimpleNamespace(jid="j3")],
+      pool=_SharedPool(),
+  )
   assert called["n"] == 1
-  assert excinfo.value.pool_reset_confirmed is True
+  assert len(outcomes) == 2
+  assert outcomes[1]["status"] == "worker_stall_timeout"
 

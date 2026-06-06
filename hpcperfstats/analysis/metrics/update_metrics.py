@@ -3045,7 +3045,7 @@ def update_metrics_for_dates(dates, rerun=False):
               for o in jid_outcomes
               if (not o["ok"])
               and o.get("failure_kind")
-              in ("worker_db_error", "worker_compute_error")
+              in ("worker_db_error", "worker_compute_error", "worker_stall_timeout")
           )
           parent_persist_failures = sum(
               1

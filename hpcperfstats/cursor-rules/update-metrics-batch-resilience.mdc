@@ -1,0 +1,44 @@
+---
+description: update_metrics batch isolation — worker errors, NaN guards, stall partial recovery
+globs: hpcperfstats/analysis/metrics/**/*.py
+alwaysApply: false
+---
+
+# Update Metrics Batch Resilience
+
+When changing `hpcperfstats/analysis/metrics/metrics.py` (`Metrics.run`, `_unwrap`, `_drain_metrics_imap`, `compute_metric` classes) or scheduler batch compute in `update_metrics.py`, preserve the contracts below so one bad or slow job does not wedge the whole batch.
+
+## Worker isolation (`_unwrap`)
+
+- **DB errors:** catch `OperationalError` / `DatabaseError` → return `worker_db_error` (skip jid, batch continues).
+- **Compute errors:** catch any other `Exception` from `compute_metrics` → return `worker_compute_error` (skip jid, batch continues). Do not let `ValueError`, `IndexError`, etc. propagate through the pool.
+- **Per-job wall clock:** `_run_compute_metrics_timed` uses `SIGALRM` / `setitimer` with `_resolve_metrics_run_per_job_timeout_s()` (INI `metrics_run_per_job_timeout_s`, env `HPCPERFSTATS_METRICS_RUN_PER_JOB_TIMEOUT_S`; `0` → `metrics_run_stall_timeout_s`). Timeout → `MetricsComputeJobTimeoutError` → `worker_compute_error`.
+- **`DatabaseUnavailableExit`:** still re-raise for shutdown.
+
+## Numeric edge cases in `compute_metric`
+
+- Before `int(amax(...))` or similar on host_data columns, filter with `np.isfinite` or use `_finite_amax`. All-NaN GPU/telemetry columns must return metric `None`, not raise.
+- Apply the same pattern anywhere a single metric can abort `compute_metrics` for the whole jid.
+
+## Pool stall recovery (`_drain_metrics_imap` / `Metrics.run`)
+
+- Poll `imap_unordered` with `metrics_run_poll_timeout_s`; no progress for `metrics_run_stall_timeout_s` → `MetricsRunWorkerStallError` with `partial_outcomes` and `pending_jobs`.
+- **`Metrics.run` on stall:** terminate/reset pool, append `worker_stall_timeout` outcomes for pending jids, **return** combined outcomes when any partial work exists (do not re-raise if recoverable).
+- Re-raise stall only when zero outcomes were produced (true total wedge).
+
+## Scheduler accounting
+
+- Count `worker_db_error`, `worker_compute_error`, and `worker_stall_timeout` in `worker_failed_outcomes_total`.
+- Batch-level stall recovery (`STALL_RECOVERY_*`) remains the backstop when `Metrics.run` still raises.
+
+## Tests (same task)
+
+- `hpcperfstats/analysis/metrics/test_job_for_metrics.py` — `_unwrap`, stall partial return, per-job timeout.
+- `hpcperfstats/site/machine/tests/test_metrics.py` — NaN/`_finite_amax` regressions for affected metrics.
+- `hpcperfstats/tests/test_conf_parser.py` + `test_hpcperfstats_ini_example.py` when adding/changing INI knobs.
+
+## Overlap
+
+- **`runtime-resource-and-metrics-safety.mdc`** — pool labels, DB connection hygiene in workers.
+- **`bugfix-and-perf-change-playbook.mdc`** — root-cause-first on stall audits; tune `metrics_run_stall_timeout_s` / batch caps before disabling watchdogs.
+- **`every-error-regression-test.mdc`** — regression test for each new failure signature.

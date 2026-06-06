@@ -60,6 +60,7 @@ INI_OPTION_REGISTRY = (
     ("DEFAULT", "metrics_scheduler_compute_threads"),
     ("DEFAULT", "metrics_run_poll_timeout_s"),
     ("DEFAULT", "metrics_run_stall_timeout_s"),
+    ("DEFAULT", "metrics_run_per_job_timeout_s"),
     ("DEFAULT", "metrics_persist_statement_timeout_ms"),
     ("DEFAULT", "metrics_persist_lock_timeout_ms"),
     ("DEFAULT", "metrics_proxy_reject_jid_batch_size"),
@@ -1402,10 +1403,32 @@ def get_metrics_run_stall_timeout_s():
   try:
     return max(
         5.0,
-        float(cfg.get("DEFAULT", "metrics_run_stall_timeout_s", fallback="600")),
+        float(cfg.get("DEFAULT", "metrics_run_stall_timeout_s", fallback="900")),
     )
   except (TypeError, ValueError, OverflowError):
     return 600.0
+
+
+def get_metrics_run_per_job_timeout_s():
+  """Wall-clock cap for one ``compute_metrics`` call in a pool worker (0 → use stall timeout).
+
+  Env ``HPCPERFSTATS_METRICS_RUN_PER_JOB_TIMEOUT_S`` overrides INI
+  ``metrics_run_per_job_timeout_s``.
+  """
+  env = os.environ.get("HPCPERFSTATS_METRICS_RUN_PER_JOB_TIMEOUT_S", "").strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 0.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(cfg.get("DEFAULT", "metrics_run_per_job_timeout_s", fallback="0")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 0.0
 
 
 def get_metrics_persist_statement_timeout_ms():

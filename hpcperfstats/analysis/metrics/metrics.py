@@ -13,6 +13,7 @@ from hpcperfstats.print_utils import log_print
 from hpcperfstats.process_title import apply_pool_worker_process_title
 
 import multiprocessing
+import signal
 import sys
 import threading
 import time
@@ -101,10 +102,24 @@ _PARENT_PERSIST_TIMEOUT_MARKERS = (
 class MetricsRunWorkerStallError(TimeoutError):
   """Raised when ``Metrics.run`` makes no worker-result progress for too long."""
 
-  def __init__(self, stalled_for_s, message, pool_reset_confirmed=False):
+  def __init__(
+      self,
+      stalled_for_s,
+      message,
+      pool_reset_confirmed=False,
+      *,
+      partial_outcomes=None,
+      pending_jobs=None,
+  ):
     super().__init__(message)
     self.stalled_for_s = float(stalled_for_s)
     self.pool_reset_confirmed = bool(pool_reset_confirmed)
+    self.partial_outcomes = list(partial_outcomes or [])
+    self.pending_jobs = list(pending_jobs or [])
+
+
+class MetricsComputeJobTimeoutError(TimeoutError):
+  """One metrics worker exceeded the per-job compute wall clock."""
 
 
 def _metrics_jid_value(job_or_pk):
@@ -292,6 +307,45 @@ def _finite_amax(values):
   if fin.size == 0:
     return None
   return float(amax(fin))
+
+
+def _resolve_metrics_run_per_job_timeout_s():
+  """Per-job compute wall clock in pool workers (0 INI/env → ``metrics_run_stall_timeout_s``)."""
+  per_job = float(cfg.get_metrics_run_per_job_timeout_s())
+  if per_job > 0.0:
+    return per_job
+  return max(5.0, float(cfg.get_metrics_run_stall_timeout_s()))
+
+
+def _run_compute_metrics_timed(metrics_obj, job, timeout_s):
+  """Run ``compute_metrics`` with a Unix wall-clock cap (no-op when ``timeout_s <= 0``)."""
+  timeout_s = float(timeout_s)
+  if timeout_s <= 0.0:
+    return metrics_obj.compute_metrics(job)
+  if not hasattr(signal, "SIGALRM"):
+    return metrics_obj.compute_metrics(job)
+
+  jid = getattr(job, "jid", "?")
+
+  def _handler(signum, frame):
+    del signum, frame
+    raise MetricsComputeJobTimeoutError(
+        "compute_metrics exceeded {:.0f}s for jid {}".format(timeout_s, jid))
+
+  previous = signal.getsignal(signal.SIGALRM)
+  signal.signal(signal.SIGALRM, _handler)
+  try:
+    if hasattr(signal, "setitimer"):
+      signal.setitimer(signal.ITIMER_REAL, timeout_s)
+    else:
+      signal.alarm(max(1, int(timeout_s)))
+    return metrics_obj.compute_metrics(job)
+  finally:
+    if hasattr(signal, "setitimer"):
+      signal.setitimer(signal.ITIMER_REAL, 0)
+    else:
+      signal.alarm(0)
+    signal.signal(signal.SIGALRM, previous)
 
 
 def _coerced_metric_name_set(metric_names):
@@ -614,7 +668,12 @@ def _unwrap(args):
   # connection; on repeated failure, log and skip this job rather than
   # crashing the entire pool.
   try:
-    payload = run_with_db_retry(lambda: metrics_obj.compute_metrics(job), attempts=2)
+    per_job_timeout_s = _resolve_metrics_run_per_job_timeout_s()
+    payload = run_with_db_retry(
+        lambda: _run_compute_metrics_timed(
+            metrics_obj, job, per_job_timeout_s),
+        attempts=2,
+    )
     if not isinstance(payload, dict):
       payload = {}
     return {
@@ -838,6 +897,7 @@ def _drain_metrics_imap(
   total = len(tasks)
   done = 0
   last_progress_at = time.monotonic()
+  completed_jids = set()
   outcomes = []
   while done < total:
     abort_if_pool_workers_dead(
@@ -855,14 +915,27 @@ def _drain_metrics_imap(
     except multiprocessing.TimeoutError:
       stalled_for = time.monotonic() - last_progress_at
       if stalled_for >= max(0.0, float(stall_timeout_s)):
+        pending_jobs = [
+            job
+            for _metrics_obj, job in tasks
+            if _metrics_jid_value(job) not in completed_jids
+        ]
         raise MetricsRunWorkerStallError(
             stalled_for_s=stalled_for,
             message=(
                 "Metrics.run worker stall: no completed jobs for %.1fs "
-                "(tasks=%s chunksize=%s)"
+                "(tasks=%s chunksize=%s completed=%s pending=%s)"
             )
-            % (stalled_for, total, submit_chunksize),
+            % (
+                stalled_for,
+                total,
+                submit_chunksize,
+                done,
+                len(pending_jobs),
+            ),
             pool_reset_confirmed=False,
+            partial_outcomes=list(outcomes),
+            pending_jobs=pending_jobs,
         )
       continue
     except StopIteration:
@@ -881,6 +954,7 @@ def _drain_metrics_imap(
       )
       continue
     outcomes.append(_persist_metrics_payload(payload))
+    completed_jids.add(_metrics_jid_value(payload.get("jid")))
   return outcomes
 
 
@@ -1219,12 +1293,33 @@ class Metrics():
           pass
       else:
         self.reset_pool_hard()
-        # Pool handle is detached; scheduler may recreate workers immediately.
         reset_confirmed = self._shared_pool is None
+      outcomes.extend(exc.partial_outcomes)
+      for job in exc.pending_jobs:
+        outcomes.append(_metrics_run_outcome(
+            job,
+            ok=False,
+            status="worker_stall_timeout",
+            error_type="MetricsRunWorkerStallError",
+            error_message=str(exc),
+        ))
+      if outcomes:
+        log_print(
+            "Metrics.run: recovered after worker stall completed={0} "
+            "failed={1} pool_reset_confirmed={2}".format(
+                sum(1 for o in outcomes if o.get("ok")),
+                sum(1 for o in outcomes if not o.get("ok")),
+                1 if reset_confirmed else 0,
+            ),
+            flush=True,
+        )
+        return outcomes
       raise MetricsRunWorkerStallError(
           stalled_for_s=exc.stalled_for_s,
           message=str(exc),
           pool_reset_confirmed=reset_confirmed,
+          partial_outcomes=exc.partial_outcomes,
+          pending_jobs=exc.pending_jobs,
       )
     except Exception as exc:
       _log_exception_details("Metrics.run failure", exc)
