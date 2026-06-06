@@ -3,8 +3,8 @@ import { getJobMetricShortLabel, JOB_METRIC_SHORT_LABELS } from "./jobMetricDisp
 
 describe("getJobMetricShortLabel", () => {
   it("returns a known abbreviated label for catalog keys", () => {
-    expect(getJobMetricShortLabel("avg_freq")).toBe("CPU GHz");
-    expect(JOB_METRIC_SHORT_LABELS.avg_freq).toBe("CPU GHz");
+    expect(getJobMetricShortLabel("avg_freq")).toBe("Average effective CPU frequency");
+    expect(JOB_METRIC_SHORT_LABELS.avg_freq).toBe("Average effective CPU frequency");
   });
 
   it("falls back to the raw metric key when unknown", () => {

@@ -110,60 +110,60 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 
 | Metric key | Short label | What it summarizes | Diagnostic / performance interpretation |
 | ---------- | ----------- | ------------------ | --------------------------------------- |
-| `avg_blockbw` | Block GB/s | Mean local block-device throughput | High values indicate local scratch/checkpoint pressure; unexpected nonzero can reveal spill to local disk. |
-| `avg_cpuusage` | CPU cores | Mean CPU cores used (from user/system/nice) | Low vs allocated cores suggests under-subscription, waiting, serialization, or I/O/network stalls. |
-| `avg_sharedfs_iops` | FS IOPS | Mean shared filesystem metadata/op rate | High with low MB/s points to small-file metadata bottlenecks. |
-| `avg_sharedfs_bw` | FS MB/s | Mean shared filesystem bandwidth | Sustained high values indicate file I/O-heavy phases; correlate with runtime spikes/checkpoint windows. |
-| `avg_ibbw` | IB MB/s | Mean InfiniBand/fabric byte throughput | High values with modest FLOP rate imply communication-heavy behavior<sup>[15](#ref-15)</sup>. |
-| `avg_fabric_mb_per_gflops` | MB/GFLOP | Fabric MB per GFLOP | Communication intensity relative to compute; rising with scale often means weaker scaling efficiency. |
-| `avg_tensor_active` | Tensor % | Mean tensor pipeline activity | Low on expected tensor workloads suggests kernels not reaching tensor paths. |
-| `avg_fp16_active` | FP16 % | Mean GPU FP16 pipeline activity | Confirms whether mixed-precision execution is using FP16-heavy kernels as expected. |
-| `avg_fp32_active` | FP32 % | Mean GPU FP32 pipeline activity | Tracks single-precision dominant GPU phases and precision-policy drift across runs. |
-| `avg_fp64_active` | FP64 % | Mean GPU FP64 pipeline activity | Surfaces double-precision-heavy GPU work that may reduce peak throughput. |
-| `avg_gpu_mem_bw_gbps` | GPU HBM | Mean GPU memory-bandwidth rate | High with moderate utilization can indicate memory-bound kernels. |
-| `avg_fabric_mb_per_avg_tensor` | MB/tensor | Fabric MB per average tensor activity | Communication intensity normalized by tensor activity for GPU+MPI workloads. |
-| `avg_flops` | GFLOP/s | Mean achieved FLOP rate | Baseline compute throughput for CPU-side arithmetic. |
-| `avg_mbw` | DRAM GB/s | Mean DRAM bandwidth | High with low FLOPs suggests memory-bound CPU phases. |
-| `avg_freq` | CPU GHz | Mean CPU frequency | Drops may indicate power/thermal policy or throttling. |
-| `avg_ethbw` | Eth MB/s | Mean Ethernet bandwidth | Useful for TCP/object-store workflows that bypass IB paths<sup>[16](#ref-16)</sup>. |
-| `detail_gpu_active` | GPU active | Number of active GPUs | Lower than allocated GPUs usually means mapping/launcher inefficiency. |
-| `detail_gpu_util_max` | GPU max % | Max GPU utilization observed | Peak headroom check; high max with low mean often indicates bursty kernels. |
-| `detail_gpu_util_mean` | GPU mean % | Mean GPU utilization observed | Primary “are GPUs doing work?” scalar for the job. |
-| `detail_gpu_count` | GPU count | Total GPUs allocated | Sanity check against scheduler request and host topology. |
-| `detail_fsio_llite_read_mb` | FSIO llite read | Total Lustre llite read MB | Aggregate client-side read volume for Lustre path. |
-| `detail_fsio_llite_write_mb` | FSIO llite write | Total Lustre llite write MB | Aggregate client-side write volume for Lustre path. |
-| `detail_fsio_llite_peak_mb_s` | FSIO llite peak MB/s | Peak aggregate Lustre client MB/s | Short burst combined read+write throughput versus job-total MB. |
-| `detail_fsio_llite_peak_iops` | FSIO llite peak IOPS | Peak aggregate Lustre metadata IOPS | Burst metadata load versus sustained streaming. |
-| `detail_fsio_nfs_read_mb` | FSIO NFS read | Total NFS read MB | Aggregate client-side read volume for NFS-backed paths. |
-| `detail_fsio_nfs_write_mb` | FSIO NFS write | Total NFS write MB | Aggregate client-side write volume for NFS-backed paths. |
-| `detail_fsio_nfs_peak_mb_s` | FSIO NFS peak MB/s | Peak aggregate NFS client MB/s | Short burst NFS throughput when Lustre llite is absent. |
-| `detail_fsio_nfs_peak_iops` | FSIO NFS peak IOPS | Peak aggregate NFS read/write op rate | Burst small-file or metadata-heavy NFS phases. |
-| `avg_gpuutil` | GPU % | Mean GPU utilization (vendor-aware source priority) | Core accelerator utilization KPI; low values indicate feed/scheduling inefficiency. |
-| `avg_packetsize` | Pkt size | Mean network packet size | Small average packet sizes imply metadata/collective chatter overhead. |
-| `max_fabricbw` | Fab peak | Peak fabric bandwidth | Captures communication bursts that may not appear in averages. |
-| `max_lnetbw` | LNET peak | Peak Lustre LNet bandwidth | Peak parallel file-system network pressure. |
-| `max_mds` | MDS peak | Peak metadata operation rate | High peaks indicate metadata storms (create/unlink/readdir heavy phases). |
-| `max_packetrate` | Pkt/s peak | Peak packet rate | High with small packet size suggests message-rate overhead. |
-| `max_opa_congestion_rate` | OPA cong | Peak OPA congestion-related counter rate | OPA-specific network contention indicator. |
-| `max_numa_remote_rate` | NUMA rem | Peak NUMA remote-access rate | High values indicate locality/memory placement issues<sup>[4](#ref-4)</sup>. |
-| `max_gpu_power` | GPU W max | Peak GPU power draw | Detects power-cap proximity or thermal stress windows. |
-| `max_node_power_est_w` | Node W max | Peak estimated node power | Useful for peak power envelope checks and cooling stress. |
-| `avg_node_power_est_w` | Node W avg | Mean estimated node power | Energy-to-solution comparisons across runs/configurations. |
-| `max_gpu_link_gbps` | GPU link | Peak GPU link bandwidth (PCIe/NVLink aggregate path) | Host-device/device-device transfer pressure indicator. |
-| `max_gpu_clock_event_reasons` | GPU clk | Maximum clock event reason bitmask | Nonzero values suggest throttle/clock constraints; correlate with power/temp traces. |
-| `mem_hwm` | RSS HWM | High-water memory estimate (MemUsed-Slab-FilePages) | Compare with node RAM for host OOM risk<sup>[14](#ref-14)</sup>. |
-| `node_imbalance` | CPU imbal | Node-level CPU rate imbalance | High values indicate decomposition/rank imbalance. |
-| `time_imbalance` | Time imbal | Temporal CPU imbalance across job timeline | Flags long underutilized windows or phase imbalance over time. |
-| `flops_node_imbalance` | FLOP imbal | Node-level FLOP rate imbalance | Compute work unevenly distributed across nodes. |
-| `fabric_node_imbalance` | Fab imbal | Node-level fabric traffic imbalance | Some ranks/nodes communicate disproportionately. |
-| `dram_bw_node_imbalance` | DRAM imbal | Node-level DRAM bandwidth imbalance | Memory pressure concentrated on subset of nodes. |
-| `lnet_node_imbalance` | LNET imbal | Node-level LNet imbalance | Uneven filesystem/network load distribution. |
-| `gpu_util_node_imbalance` | GPU imbal | Node-level GPU utilization imbalance | Multi-node training/inference skew across nodes. |
-| `tensor_node_imbalance` | Tensor imbal | Node-level tensor-activity imbalance | Tensor kernels unevenly distributed across participating nodes. |
-| `vecpercent_64b` | Vec% DP | Percent of double-precision FLOPs done via vector widths > scalar | Low values on DP-heavy code suggest SIMD/vectorization opportunity<sup>[5](#ref-5)</sup>. |
-| `avg_vector_width_64b` | VW DP | Average effective DP vector width | Closer to scalar indicates weak SIMD utilization in DP paths. |
-| `vecpercent_32b` | Vec% SP | Percent of single-precision FLOPs done via vector widths > scalar | Low values on SP-heavy code suggest vectorization opportunity<sup>[5](#ref-5)</sup>. |
-| `avg_vector_width_32b` | VW SP | Average effective SP vector width | Low average width indicates scalar/short-vector dominated SP execution. |
+| `avg_blockbw` | Average local block-device throughput | Mean local block-device throughput | High values indicate local scratch/checkpoint pressure; unexpected nonzero can reveal spill to local disk. |
+| `avg_cpuusage` | Average CPU cores in use | Mean CPU cores used (from user/system/nice) | Low vs allocated cores suggests under-subscription, waiting, serialization, or I/O/network stalls. |
+| `avg_sharedfs_iops` | Average shared filesystem operation rate | Mean shared filesystem metadata/op rate | High with low MB/s points to small-file metadata bottlenecks. |
+| `avg_sharedfs_bw` | Average shared filesystem read+write bandwidth | Mean shared filesystem bandwidth | Sustained high values indicate file I/O-heavy phases; correlate with runtime spikes/checkpoint windows. |
+| `avg_ibbw` | Average high-speed fabric bandwidth | Mean InfiniBand/fabric byte throughput | High values with modest FLOP rate imply communication-heavy behavior<sup>[15](#ref-15)</sup>. |
+| `avg_fabric_mb_per_gflops` | Fabric traffic per floating-point work | Fabric MB per GFLOP | Communication intensity relative to compute; rising with scale often means weaker scaling efficiency. |
+| `avg_tensor_active` | Average GPU tensor-pipe activity | Mean tensor pipeline activity | Low on expected tensor workloads suggests kernels not reaching tensor paths. |
+| `avg_fp16_active` | Average GPU FP16 pipeline activity | Mean GPU FP16 pipeline activity | Confirms whether mixed-precision execution is using FP16-heavy kernels as expected. |
+| `avg_fp32_active` | Average GPU FP32 pipeline activity | Mean GPU FP32 pipeline activity | Tracks single-precision dominant GPU phases and precision-policy drift across runs. |
+| `avg_fp64_active` | Average GPU FP64 pipeline activity | Mean GPU FP64 pipeline activity | Surfaces double-precision-heavy GPU work that may reduce peak throughput. |
+| `avg_gpu_mem_bw_gbps` | Average GPU memory bandwidth | Mean GPU memory-bandwidth rate | High with moderate utilization can indicate memory-bound kernels. |
+| `avg_fabric_mb_per_avg_tensor` | Fabric bandwidth per tensor activity | Fabric MB per average tensor activity | Communication intensity normalized by tensor activity for GPU+MPI workloads. |
+| `avg_flops` | Average floating-point throughput | Mean achieved FLOP rate | Baseline compute throughput for CPU-side arithmetic. |
+| `avg_mbw` | Average DRAM memory bandwidth | Mean DRAM bandwidth | High with low FLOPs suggests memory-bound CPU phases. |
+| `avg_freq` | Average effective CPU frequency | Mean CPU frequency | Drops may indicate power/thermal policy or throttling. |
+| `avg_ethbw` | Average Ethernet bandwidth | Mean Ethernet bandwidth | Useful for TCP/object-store workflows that bypass IB paths<sup>[16](#ref-16)</sup>. |
+| `detail_gpu_active` | GPUs with non-zero utilization | Number of active GPUs | Lower than allocated GPUs usually means mapping/launcher inefficiency. |
+| `detail_gpu_util_max` | Sum of per-GPU peak utilization | Max GPU utilization observed | Peak headroom check; high max with low mean often indicates bursty kernels. |
+| `detail_gpu_util_mean` | Sum of per-GPU mean utilization | Mean GPU utilization observed | Primary “are GPUs doing work?” scalar for the job. |
+| `detail_gpu_count` | Total GPUs on job | Total GPUs allocated | Sanity check against scheduler request and host topology. |
+| `detail_fsio_llite_read_mb` | Total Lustre client read volume | Total Lustre llite read MB | Aggregate client-side read volume for Lustre path. |
+| `detail_fsio_llite_write_mb` | Total Lustre client write volume | Total Lustre llite write MB | Aggregate client-side write volume for Lustre path. |
+| `detail_fsio_llite_peak_mb_s` | Peak Lustre client read+write rate | Peak aggregate Lustre client MB/s | Short burst combined read+write throughput versus job-total MB. |
+| `detail_fsio_llite_peak_iops` | Peak Lustre client metadata operation rate | Peak aggregate Lustre metadata IOPS | Burst metadata load versus sustained streaming. |
+| `detail_fsio_nfs_read_mb` | Total NFS client read volume | Total NFS read MB | Aggregate client-side read volume for NFS-backed paths. |
+| `detail_fsio_nfs_write_mb` | Total NFS client write volume | Total NFS write MB | Aggregate client-side write volume for NFS-backed paths. |
+| `detail_fsio_nfs_peak_mb_s` | Peak NFS client read+write rate | Peak aggregate NFS client MB/s | Short burst NFS throughput when Lustre llite is absent. |
+| `detail_fsio_nfs_peak_iops` | Peak NFS client I/O operation rate | Peak aggregate NFS read/write op rate | Burst small-file or metadata-heavy NFS phases. |
+| `avg_gpuutil` | Job GPU utilization (aggregate) | Mean GPU utilization (vendor-aware source priority) | Core accelerator utilization KPI; low values indicate feed/scheduling inefficiency. |
+| `avg_packetsize` | Mean fabric packet payload size | Mean network packet size | Small average packet sizes imply metadata/collective chatter overhead. |
+| `max_fabricbw` | Peak fabric data rate | Peak fabric bandwidth | Captures communication bursts that may not appear in averages. |
+| `max_lnetbw` | Peak Lustre LNET client data rate | Peak Lustre LNet bandwidth | Peak parallel file-system network pressure. |
+| `max_mds` | Peak shared filesystem metadata operation rate | Peak metadata operation rate | High peaks indicate metadata storms (create/unlink/readdir heavy phases). |
+| `max_packetrate` | Peak fabric packet rate | Peak packet rate | High with small packet size suggests message-rate overhead. |
+| `max_opa_congestion_rate` | Peak Omni-Path congestion event rate | Peak OPA congestion-related counter rate | OPA-specific network contention indicator. |
+| `max_numa_remote_rate` | Peak non-local NUMA memory access rate | Peak NUMA remote-access rate | High values indicate locality/memory placement issues<sup>[4](#ref-4)</sup>. |
+| `max_gpu_power` | Maximum GPU power draw | Peak GPU power draw | Detects power-cap proximity or thermal stress windows. |
+| `max_node_power_est_w` | Peak estimated node power | Peak estimated node power | Useful for peak power envelope checks and cooling stress. |
+| `avg_node_power_est_w` | Mean estimated node power | Mean estimated node power | Energy-to-solution comparisons across runs/configurations. |
+| `max_gpu_link_gbps` | Peak GPU PCIe and NVLink data rate | Peak GPU link bandwidth (PCIe/NVLink aggregate path) | Host-device/device-device transfer pressure indicator. |
+| `max_gpu_clock_event_reasons` | Peak GPU clock throttling reason flags | Maximum clock event reason bitmask | Nonzero values suggest throttle/clock constraints; correlate with power/temp traces. |
+| `mem_hwm` | Peak process resident memory (high water mark) | High-water memory estimate (MemUsed-Slab-FilePages) | Compare with node RAM for host OOM risk<sup>[14](#ref-14)</sup>. |
+| `node_imbalance` | CPU utilization imbalance across nodes | Node-level CPU rate imbalance | High values indicate decomposition/rank imbalance. |
+| `time_imbalance` | CPU rate imbalance over job timeline | Temporal CPU imbalance across job timeline | Flags long underutilized windows or phase imbalance over time. |
+| `flops_node_imbalance` | Floating-point rate imbalance across nodes | Node-level FLOP rate imbalance | Compute work unevenly distributed across nodes. |
+| `fabric_node_imbalance` | Fabric bandwidth imbalance across nodes | Node-level fabric traffic imbalance | Some ranks/nodes communicate disproportionately. |
+| `dram_bw_node_imbalance` | DRAM bandwidth imbalance across nodes | Node-level DRAM bandwidth imbalance | Memory pressure concentrated on subset of nodes. |
+| `lnet_node_imbalance` | LNET bandwidth imbalance across nodes | Node-level LNet imbalance | Uneven filesystem/network load distribution. |
+| `gpu_util_node_imbalance` | GPU utilization imbalance across nodes | Node-level GPU utilization imbalance | Multi-node training/inference skew across nodes. |
+| `tensor_node_imbalance` | Tensor-pipe activity imbalance across nodes | Node-level tensor-activity imbalance | Tensor kernels unevenly distributed across participating nodes. |
+| `vecpercent_64b` | Share of double-precision FLOPs from vector instructions | Percent of double-precision FLOPs done via vector widths > scalar | Low values on DP-heavy code suggest SIMD/vectorization opportunity<sup>[5](#ref-5)</sup>. |
+| `avg_vector_width_64b` | Effective vector width (double precision) | Average effective DP vector width | Closer to scalar indicates weak SIMD utilization in DP paths. |
+| `vecpercent_32b` | Share of single-precision FLOPs from vector instructions | Percent of single-precision FLOPs done via vector widths > scalar | Low values on SP-heavy code suggest vectorization opportunity<sup>[5](#ref-5)</sup>. |
+| `avg_vector_width_32b` | Effective vector width (single precision) | Average effective SP vector width | Low average width indicates scalar/short-vector dominated SP execution. |
 
 ---
 
@@ -300,5 +300,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-05-07 | Added GPU precision activity catalog entries (`avg_fp16_active`, `avg_fp32_active`, `avg_fp64_active`) and documented that Multiprecision Mix pies render whatever precision widths are available per job/architecture. |
 | 2026-06-04 | Documented unified InfiniBand collector typename `host_ib` (replaces separate `ib_ext` / switch types in schema examples). |
 | 2026-06-05 | Job list filter summary, empty-result UX, expanded-search AND/end-time semantics, navbar Find Job, job-detail breadcrumbs, shareable `?tab=` analysis tabs, partial-load retry behavior, canonical vs legacy device type names in Device data. |
+| 2026-06-05 | Job detail Metrics tab short labels expanded to describe what is measured; units appear only in the bracket suffix beside each row (no unit tokens in label text). |
 
 
