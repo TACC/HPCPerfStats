@@ -188,6 +188,13 @@ describe("HistogramThumbnails", () => {
     expect(container.querySelector(".histogram-thumbnail-enlarge")).not.toHaveStyle({
       position: "absolute",
     });
+
+    const shell = container.querySelector(".histogram-thumbnail-shell");
+    const card = container.querySelector(".histogram-thumbnail-card");
+    expect(shell).toBeTruthy();
+    expect(card).toBeTruthy();
+    expect(shell.style.width).toBe("");
+    expect(shell).toHaveClass("histogram-thumbnail-shell");
   });
 
   it("has no serious axe violations for thumbnail and open popover", async () => {

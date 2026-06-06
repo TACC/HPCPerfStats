@@ -469,6 +469,7 @@ body {
 .histogram-thumbnail-card {
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
   border: 1px solid #dee2e6;
   border-radius: 4px;
   overflow: hidden;
@@ -483,9 +484,15 @@ body {
 }
 .histogram-thumbnail-popover-plot {
   position: relative;
+  box-sizing: border-box;
+  width: 600px;
+  max-width: 100%;
 }
 .histogram-thumbnail-popover-plot .bokeh-embed-wrapper {
   min-height: 400px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 .histogram-thumbnail-wrapper {
   display: flex;
@@ -507,6 +514,9 @@ body {
   display: flex;
   flex-direction: column;
   position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow: visible;
   border: none !important;
   border-radius: 0 !important;
 }
@@ -518,13 +528,27 @@ body {
   flex: 1 1 auto;
   align-self: stretch;
   width: 100%;
+  min-width: 0;
   min-height: 1px;
+  overflow: visible;
+}
+.histogram-thumbnail-shell .bokeh-embed-wrapper {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
 }
 .histogram-thumbnail-shell .bokeh-embed {
   flex: 1 1 auto;
   min-height: 180px;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   box-sizing: border-box;
+  overflow: visible;
+}
+.histogram-thumbnail-shell .bokeh-embed .bk-root {
+  max-width: 100% !important;
 }
 
 /* Browse home + job list (narrow): tab row sticks to viewport top while scrolling */

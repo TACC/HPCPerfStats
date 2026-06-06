@@ -179,7 +179,6 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
             ref={popoverPlotRef}
             className="histogram-thumbnail-popover-plot"
             style={{
-              width: 600,
               height: 400,
               backgroundColor: "#fff",
               border: "1px solid #dee2e6",
@@ -192,6 +191,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
                 id={fullId}
                 plotName={`${title} (full)`}
                 unavailableReason={unavailableReason}
+                maximizeInContainer="width"
                 deferEmbedUntilVisible={false}
                 intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
               />
@@ -211,11 +211,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
         <div
           className="histogram-thumbnail histogram-thumbnail-shell"
           style={{
-            width: THUMB_SIZE.width,
             height: THUMB_SIZE.height,
-            border: "1px solid #dee2e6",
-            borderRadius: "4px 4px 0 0",
-            overflow: "hidden",
             backgroundColor: "#f8f9fa",
           }}
         >
@@ -225,6 +221,7 @@ function HistogramThumbnail({ index, title, plotItemThumb, plotItemFull, unavail
             plotName={title}
             unavailableReason={unavailableReason}
             embedMinHeightPx={THUMB_SIZE.height}
+            maximizeInContainer="width"
             deferEmbedUntilVisible={false}
             wrapperClassName="histogram-thumbnail-bokeh"
             intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
