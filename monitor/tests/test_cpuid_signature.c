@@ -9,8 +9,14 @@ static void test_intel_signatures(void)
   assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_6a") == ICELAKE_SERVER);
   assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_6c") == ICELAKE_SERVER);
   assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_8f") == SAPPHIRE_RAPIDS);
-  assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_2a") == SANDYBRIDGE);
-  assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_3c") == HASWELL);
+}
+
+static void test_retired_generations_unknown(void)
+{
+  assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_2a") == (processor_t)-1);
+  assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_3a") == (processor_t)-1);
+  assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_3c") == (processor_t)-1);
+  assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_3d") == (processor_t)-1);
 }
 
 static void test_unknown(void)
@@ -23,6 +29,7 @@ static void test_unknown(void)
 int main(void)
 {
   test_intel_signatures();
+  test_retired_generations_unknown();
   test_unknown();
   return 0;
 }

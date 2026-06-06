@@ -19,25 +19,6 @@ processor_t intel_cpuid_sig_to_processor(const char *vendor, const char *sig)
       strncmp(sig, "06_2f", 5) == 0)
     return WESTMERE;
 
-  if (strncmp(sig, "06_3a", 5) == 0 ||
-      strncmp(sig, "06_3e", 5) == 0)
-    return IVYBRIDGE;
-
-  if (strncmp(sig, "06_2a", 5) == 0 ||
-      strncmp(sig, "06_2d", 5) == 0)
-    return SANDYBRIDGE;
-
-  if (strncmp(sig, "06_3c", 5) == 0 ||
-      strncmp(sig, "06_45", 5) == 0 ||
-      strncmp(sig, "06_46", 5) == 0 ||
-      strncmp(sig, "06_3f", 5) == 0)
-    return HASWELL;
-
-  if (strncmp(sig, "06_3d", 5) == 0 ||
-      strncmp(sig, "06_47", 5) == 0 ||
-      strncmp(sig, "06_4f", 5) == 0)
-    return BROADWELL;
-
   if (strncmp(sig, "06_4e", 5) == 0 ||
       strncmp(sig, "06_5e", 5) == 0)
     return SKYLAKE;

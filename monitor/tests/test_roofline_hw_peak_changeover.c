@@ -59,7 +59,7 @@ int main(void)
   assert(g_get_current_stats_calls == 1);
   assert(g_cpu_peak_fp64_flops_per_s > 0ULL);
   assert(g_cpu_peak_source == 1ULL);
-  assert(g_peak_calc_version == 1ULL);
+  assert(g_peak_calc_version == 2ULL);
 
   setenv("HPCPERFSTATS_ROOFLINE_MODE", "every_sample", 1);
   stats_collect_on_changeover = 0;

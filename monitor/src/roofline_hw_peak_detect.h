@@ -6,6 +6,7 @@ struct roofline_cached_peaks {
   unsigned long long gpu_source;
   unsigned long long cpu_flops;
   unsigned long long cpu_bw;
+  unsigned long long cpu_hbm_bw;
   unsigned long long gpu_flops;
   unsigned long long gpu_mem_bw;
   unsigned long long gpu_io_bw;

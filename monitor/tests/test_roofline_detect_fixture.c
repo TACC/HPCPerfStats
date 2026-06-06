@@ -21,6 +21,7 @@ static void test_skip_probe_uses_nr_cpus_fixture(void)
   assert(cache.initialized == 1);
   assert(cache.cpu_flops == 8000000000ULL);
   assert(cache.cpu_bw == 1000000000ULL);
+  assert(cache.cpu_hbm_bw == 0ULL);
   assert(cache.gpu_flops == 0ULL);
   assert(cache.gpu_mem_bw == 0ULL);
 }

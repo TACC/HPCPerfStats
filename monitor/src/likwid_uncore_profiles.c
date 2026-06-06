@@ -53,45 +53,27 @@
 
 #define SPR_DDR_HBM_EVENTS MBOX16_IMC_EVENTS "," HBM16_EVENTS
 
+#define CHA_SKX_CBOX_EVENTS \
+  "CBOX0C0 LLC_LOOKUP_DATA_READ,CBOX1C0 LLC_LOOKUP_DATA_READ," \
+  "CBOX2C0 LLC_LOOKUP_DATA_READ,CBOX3C0 LLC_LOOKUP_DATA_READ," \
+  "CBOX4C0 LLC_LOOKUP_DATA_READ,CBOX5C0 LLC_LOOKUP_DATA_READ," \
+  "CBOX6C0 LLC_LOOKUP_DATA_READ,CBOX7C0 LLC_LOOKUP_DATA_READ," \
+  "CBOX0C1 LLC_VICTIMS_M_STATE,CBOX1C1 LLC_VICTIMS_M_STATE," \
+  "CBOX2C1 LLC_VICTIMS_M_STATE,CBOX3C1 LLC_VICTIMS_M_STATE," \
+  "CBOX4C1 LLC_VICTIMS_M_STATE,CBOX5C1 LLC_VICTIMS_M_STATE," \
+  "CBOX6C1 LLC_VICTIMS_M_STATE,CBOX7C1 LLC_VICTIMS_M_STATE"
+
 static const char *const profile_events[LIKWID_UNCORE_PROFILE_COUNT] = {
-  [LIKWID_UNCORE_PROFILE_IMC_SNB] = MBOX4_IMC_EVENTS,
-  [LIKWID_UNCORE_PROFILE_IMC_IVB] = MBOX4_IMC_EVENTS,
-  [LIKWID_UNCORE_PROFILE_IMC_HSW] = MBOX4_IMC_EVENTS,
-  [LIKWID_UNCORE_PROFILE_IMC_BDW] = MBOX4_IMC_EVENTS,
   [LIKWID_UNCORE_PROFILE_IMC_SKX] = MBOX6_IMC_EVENTS,
   [LIKWID_UNCORE_PROFILE_IMC_ICX] = MDEV4_ICX_EVENTS,
   [LIKWID_UNCORE_PROFILE_IMC_SPR] = SPR_DDR_HBM_EVENTS,
-  [LIKWID_UNCORE_PROFILE_CBO_SNB] = NULL,
-  [LIKWID_UNCORE_PROFILE_CBO_IVB] = NULL,
-  [LIKWID_UNCORE_PROFILE_CBO_HSW] = NULL,
-  [LIKWID_UNCORE_PROFILE_CBO_BDW] = NULL,
-  [LIKWID_UNCORE_PROFILE_CHA_SKX] = NULL,
-  [LIKWID_UNCORE_PROFILE_QPI_SNB] = NULL,
-  [LIKWID_UNCORE_PROFILE_QPI_IVB] = NULL,
-  [LIKWID_UNCORE_PROFILE_QPI_HSW] = NULL,
-  [LIKWID_UNCORE_PROFILE_QPI_BDW] = NULL,
-  [LIKWID_UNCORE_PROFILE_HAU_SNB] = NULL,
-  [LIKWID_UNCORE_PROFILE_HAU_IVB] = NULL,
-  [LIKWID_UNCORE_PROFILE_HAU_HSW] = NULL,
-  [LIKWID_UNCORE_PROFILE_HAU_BDW] = NULL,
-  [LIKWID_UNCORE_PROFILE_R2PCI_SNB] = NULL,
-  [LIKWID_UNCORE_PROFILE_R2PCI_IVB] = NULL,
-  [LIKWID_UNCORE_PROFILE_R2PCI_HSW] = NULL,
-  [LIKWID_UNCORE_PROFILE_R2PCI_BDW] = NULL,
+  [LIKWID_UNCORE_PROFILE_CHA_SKX] = CHA_SKX_CBOX_EVENTS,
 };
 
 int likwid_uncore_profile_matches_processor(likwid_uncore_profile_t profile,
                                             processor_t p)
 {
   switch (profile) {
-  case LIKWID_UNCORE_PROFILE_IMC_SNB:
-    return intel_processor_is_snb_ep(p);
-  case LIKWID_UNCORE_PROFILE_IMC_IVB:
-    return intel_processor_is_ivb_ep(p);
-  case LIKWID_UNCORE_PROFILE_IMC_HSW:
-    return intel_processor_is_hsw_ep(p);
-  case LIKWID_UNCORE_PROFILE_IMC_BDW:
-    return intel_processor_is_bdw_ep(p);
   case LIKWID_UNCORE_PROFILE_IMC_SKX:
   case LIKWID_UNCORE_PROFILE_CHA_SKX:
     return intel_processor_is_skx_server(p);
@@ -99,38 +81,6 @@ int likwid_uncore_profile_matches_processor(likwid_uncore_profile_t profile,
     return intel_processor_is_icx(p);
   case LIKWID_UNCORE_PROFILE_IMC_SPR:
     return intel_processor_is_spr(p);
-  case LIKWID_UNCORE_PROFILE_CBO_SNB:
-    return p == SANDYBRIDGE;
-  case LIKWID_UNCORE_PROFILE_CBO_IVB:
-    return p == IVYBRIDGE;
-  case LIKWID_UNCORE_PROFILE_CBO_HSW:
-    return p == HASWELL;
-  case LIKWID_UNCORE_PROFILE_CBO_BDW:
-    return p == BROADWELL;
-  case LIKWID_UNCORE_PROFILE_QPI_SNB:
-    return p == SANDYBRIDGE;
-  case LIKWID_UNCORE_PROFILE_QPI_IVB:
-    return p == IVYBRIDGE;
-  case LIKWID_UNCORE_PROFILE_QPI_HSW:
-    return p == HASWELL;
-  case LIKWID_UNCORE_PROFILE_QPI_BDW:
-    return p == BROADWELL;
-  case LIKWID_UNCORE_PROFILE_HAU_SNB:
-    return p == SANDYBRIDGE;
-  case LIKWID_UNCORE_PROFILE_HAU_IVB:
-    return p == IVYBRIDGE;
-  case LIKWID_UNCORE_PROFILE_HAU_HSW:
-    return p == HASWELL;
-  case LIKWID_UNCORE_PROFILE_HAU_BDW:
-    return p == BROADWELL;
-  case LIKWID_UNCORE_PROFILE_R2PCI_SNB:
-    return p == SANDYBRIDGE;
-  case LIKWID_UNCORE_PROFILE_R2PCI_IVB:
-    return p == IVYBRIDGE;
-  case LIKWID_UNCORE_PROFILE_R2PCI_HSW:
-    return p == HASWELL;
-  case LIKWID_UNCORE_PROFILE_R2PCI_BDW:
-    return p == BROADWELL;
   default:
     return 0;
   }
@@ -143,17 +93,35 @@ const char *likwid_uncore_profile_eventset(likwid_uncore_profile_t profile)
   return profile_events[profile];
 }
 
+static const char *counter_name_base(const char *counter_name, char *work,
+                                     size_t work_len)
+{
+  const char *state;
+
+  if (counter_name == NULL)
+    return NULL;
+  state = strstr(counter_name, ":STATE=");
+  if (state == NULL)
+    return counter_name;
+  if ((size_t) (state - counter_name) >= work_len)
+    return counter_name;
+  memcpy(work, counter_name, (size_t) (state - counter_name));
+  work[state - counter_name] = '\0';
+  return work;
+}
+
 static int map_mbox_hbm_mdev(const char *counter_name, char *dev_out,
                              size_t dev_len, const char **key_out)
 {
   unsigned int idx = 0;
-  char kind[8];
   char ch[4];
+  char work[128];
+  const char *base = counter_name_base(counter_name, work, sizeof(work));
 
-  if (counter_name == NULL || dev_out == NULL || key_out == NULL)
+  if (base == NULL || dev_out == NULL || key_out == NULL)
     return -1;
 
-  if (sscanf(counter_name, "MBOX%uC%1s", &idx, ch) == 2) {
+  if (sscanf(base, "MBOX%uC%1s", &idx, ch) == 2) {
     snprintf(dev_out, dev_len, "mbox%u", idx);
     if (strcmp(ch, "0") == 0)
       *key_out = "dram_cas_reads";
@@ -161,7 +129,7 @@ static int map_mbox_hbm_mdev(const char *counter_name, char *dev_out,
       *key_out = "dram_cas_writes";
     return 0;
   }
-  if (sscanf(counter_name, "HBM%uC%1s", &idx, ch) == 2) {
+  if (sscanf(base, "HBM%uC%1s", &idx, ch) == 2) {
     snprintf(dev_out, dev_len, "hbm%u", idx);
     if (strcmp(ch, "0") == 0)
       *key_out = "hbm_cas_reads";
@@ -169,7 +137,7 @@ static int map_mbox_hbm_mdev(const char *counter_name, char *dev_out,
       *key_out = "hbm_cas_writes";
     return 0;
   }
-  if (sscanf(counter_name, "MDEV%uC%1s", &idx, ch) == 2) {
+  if (sscanf(base, "MDEV%uC%1s", &idx, ch) == 2) {
     snprintf(dev_out, dev_len, "mdev%u", idx);
     if (strcmp(ch, "0") == 0)
       *key_out = "dram_cas_reads";
@@ -177,8 +145,31 @@ static int map_mbox_hbm_mdev(const char *counter_name, char *dev_out,
       *key_out = "dram_cas_writes";
     return 0;
   }
-  (void)kind;
   return -1;
+}
+
+static int map_cbox(const char *counter_name, char *dev_out, size_t dev_len,
+                    const char **key_out)
+{
+  unsigned int idx = 0;
+  char ch[4];
+  char work[128];
+  const char *base = counter_name_base(counter_name, work, sizeof(work));
+
+  if (base == NULL || dev_out == NULL || key_out == NULL)
+    return -1;
+
+  if (sscanf(base, "CBOX%uC%1s", &idx, ch) != 2)
+    return -1;
+
+  snprintf(dev_out, dev_len, "cbox%u", idx);
+  if (strcmp(ch, "0") == 0)
+    *key_out = "llc_lookup_data_read_local";
+  else if (strcmp(ch, "1") == 0)
+    *key_out = "sf_evictions_mes";
+  else
+    return -1;
+  return 0;
 }
 
 int likwid_uncore_profile_map_counter(likwid_uncore_profile_t profile,
@@ -186,6 +177,14 @@ int likwid_uncore_profile_map_counter(likwid_uncore_profile_t profile,
                                       char *dev_out, size_t dev_len,
                                       const char **key_out)
 {
-  (void)profile;
-  return map_mbox_hbm_mdev(counter_name, dev_out, dev_len, key_out);
+  switch (profile) {
+  case LIKWID_UNCORE_PROFILE_CHA_SKX:
+    return map_cbox(counter_name, dev_out, dev_len, key_out);
+  case LIKWID_UNCORE_PROFILE_IMC_SKX:
+  case LIKWID_UNCORE_PROFILE_IMC_ICX:
+  case LIKWID_UNCORE_PROFILE_IMC_SPR:
+    return map_mbox_hbm_mdev(counter_name, dev_out, dev_len, key_out);
+  default:
+    return -1;
+  }
 }

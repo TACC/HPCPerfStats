@@ -35,10 +35,6 @@ likwid_rapl_is_supported_processor(void)
   switch (processor) {
   case AMD_17H:
   case AMD_19H:
-  case SANDYBRIDGE:
-  case IVYBRIDGE:
-  case HASWELL:
-  case BROADWELL:
   case SKYLAKE:
   case CASCADE_LAKE:
   case ICELAKE_SERVER:

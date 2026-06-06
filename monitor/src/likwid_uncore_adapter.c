@@ -93,6 +93,25 @@ err:
 #endif
 }
 
+void likwid_uncore_adapter_emit_counter(struct stats_type *type,
+                                        likwid_uncore_profile_t profile,
+                                        const char *counter_name,
+                                        unsigned long long val)
+{
+  char dev[32];
+  const char *key = NULL;
+  struct stats *stats = NULL;
+
+  if (type == NULL || counter_name == NULL)
+    return;
+  if (likwid_uncore_profile_map_counter(profile, counter_name, dev,
+                                        sizeof(dev), &key) < 0)
+    return;
+  stats = get_current_stats(type, dev);
+  if (stats != NULL && key != NULL)
+    stats_set(stats, key, val);
+}
+
 void likwid_uncore_adapter_collect(struct stats_type *type,
                                    likwid_uncore_profile_t profile)
 {
@@ -112,19 +131,11 @@ void likwid_uncore_adapter_collect(struct stats_type *type,
   for (i = 0; i < n_events; i++) {
     const char *counter_name =
         perfmon_getCounterName(g_profile_group[profile], i);
-    char dev[32];
-    const char *key = NULL;
-    struct stats *stats = NULL;
     unsigned long long val;
 
-    if (likwid_uncore_profile_map_counter(profile, counter_name, dev,
-                                          sizeof(dev), &key) < 0)
-      continue;
     val = (unsigned long long)perfmon_getResult(g_profile_group[profile], i,
                                                 thread_id);
-    stats = get_current_stats(type, dev);
-    if (stats != NULL && key != NULL)
-      stats_set(stats, key, val);
+    likwid_uncore_adapter_emit_counter(type, profile, counter_name, val);
   }
 #else
   (void)type;

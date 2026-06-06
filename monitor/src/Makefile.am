@@ -202,31 +202,10 @@ TYPES 	+= \
 	intel_pmc3_core.c \
 	intel_uncore_msr_box.c \
 	intel_uncore_pci.c \
-	intel_bdw_cbo.c \
-	intel_bdw_hau.c \
-	intel_bdw_imc.c \
 	intel_icx_imc.c \
 	intel_spr_imc.c \
-	intel_bdw_qpi.c \
-	intel_bdw_r2pci.c \
-	intel_hsw_cbo.c \
-	intel_hsw_hau.c \
-	intel_hsw_imc.c \
-	intel_hsw_qpi.c \
-	intel_hsw_r2pci.c \
-	intel_ivb_cbo.c \
-	intel_ivb_hau.c \
-	intel_ivb_imc.c \
-	intel_ivb_qpi.c \
-	intel_ivb_r2pci.c \
-	intel_pcu.c \
 	intel_skx_cha.c \
-	intel_skx_imc.c \
-	intel_snb_cbo.c \
-	intel_snb_hau.c \
-	intel_snb_imc.c \
-	intel_snb_qpi.c \
-	intel_snb_r2pci.c
+	intel_skx_imc.c
 hpcperfstatsd_SOURCES += \
 	amd64_event_tables.h \
 	amd64_event_tables.c \
@@ -273,8 +252,7 @@ hpcperfstatsd_SOURCES += \
 	likwid_uncore_profiles.c \
 	intel_skx_imc.h \
 	intel_icx_imc.h \
-	intel_spr_imc.h \
-	intel_snb_imc.h
+	intel_spr_imc.h
 endif
 
 if INFINIBAND

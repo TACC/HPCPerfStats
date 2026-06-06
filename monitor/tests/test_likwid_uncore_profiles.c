@@ -7,6 +7,8 @@ static void test_profile_processor_match(void)
 {
   assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_SKX,
                                                  CASCADE_LAKE));
+  assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_CHA_SKX,
+                                                 CASCADE_LAKE));
   assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_ICX,
                                                  ICELAKE_SERVER));
   assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_SPR,
@@ -37,21 +39,35 @@ static void test_counter_map(void)
                                            &key) == 0);
   assert(strcmp(dev, "mdev1") == 0);
   assert(strcmp(key, "dram_cas_reads") == 0);
+
+  assert(likwid_uncore_profile_map_counter(LIKWID_UNCORE_PROFILE_CHA_SKX,
+                                           "CBOX4C0", dev, sizeof(dev),
+                                           &key) == 0);
+  assert(strcmp(dev, "cbox4") == 0);
+  assert(strcmp(key, "llc_lookup_data_read_local") == 0);
+
+  assert(likwid_uncore_profile_map_counter(LIKWID_UNCORE_PROFILE_CHA_SKX,
+                                           "CBOX4C1", dev, sizeof(dev),
+                                           &key) == 0);
+  assert(strcmp(dev, "cbox4") == 0);
+  assert(strcmp(key, "sf_evictions_mes") == 0);
 }
 
-static void test_eventset_nonempty_for_imc(void)
+static void test_eventset_nonempty(void)
 {
-  assert(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_SNB) != NULL);
   assert(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_SKX) != NULL);
   assert(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_ICX) != NULL);
+  assert(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_CHA_SKX) != NULL);
   assert(strstr(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_SPR),
                 "HBM0C0") != NULL);
+  assert(strstr(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_CHA_SKX),
+                "CBOX0C0") != NULL);
 }
 
 int main(void)
 {
   test_profile_processor_match();
   test_counter_map();
-  test_eventset_nonempty_for_imc();
+  test_eventset_nonempty();
   return 0;
 }

@@ -192,14 +192,24 @@ static int parse_link_width(const char *s)
   return (int) strtol(s, NULL, 10);
 }
 
-static double detect_cpu_peak_dram_bw_bytes_per_s(void)
+static int dimm_mem_type_is_hbm(const char *mem_type)
+{
+  if (mem_type == NULL || mem_type[0] == '\0')
+    return 0;
+  return strstr(mem_type, "HBM") != NULL || strstr(mem_type, "hbm") != NULL;
+}
+
+static void detect_cpu_peak_edac_bw_bytes_per_s(double *ddr_bw, double *hbm_bw)
 {
   DIR *mcdir = opendir("/sys/devices/system/edac/mc");
   struct dirent *mc;
-  double bw = 0.0;
 
+  if (ddr_bw != NULL)
+    *ddr_bw = 0.0;
+  if (hbm_bw != NULL)
+    *hbm_bw = 0.0;
   if (mcdir == NULL)
-    return 0.0;
+    return;
   while ((mc = readdir(mcdir)) != NULL) {
     DIR *dimm_dir;
     struct dirent *dimm;
@@ -212,19 +222,42 @@ static double detect_cpu_peak_dram_bw_bytes_per_s(void)
     if (dimm_dir == NULL)
       continue;
     while ((dimm = readdir(dimm_dir)) != NULL) {
-      char p[384];
+      char speed_path[384];
+      char type_path[384];
+      char type_line[128];
       long long mtps = 0;
+      double dimm_bw;
       if (strncmp(dimm->d_name, "dimm", 4) != 0)
         continue;
-      if (roofline_path_join3(p, sizeof(p), mcpath, dimm->d_name, "dimm_mem_speed") != 0)
+      if (roofline_path_join3(speed_path, sizeof(speed_path), mcpath, dimm->d_name,
+                              "dimm_mem_speed") != 0)
         continue;
-      if (read_long_long_from_file(p, &mtps) == 0 && mtps > 0)
-        bw += (double) mtps * 1000000.0 * 8.0;
+      if (read_long_long_from_file(speed_path, &mtps) != 0 || mtps <= 0)
+        continue;
+      dimm_bw = (double) mtps * 1000000.0 * 8.0;
+      if (roofline_path_join3(type_path, sizeof(type_path), mcpath, dimm->d_name,
+                              "dimm_mem_type") == 0
+          && read_first_line(type_path, type_line, sizeof(type_line)) == 0
+          && dimm_mem_type_is_hbm(type_line)) {
+        if (hbm_bw != NULL)
+          *hbm_bw += dimm_bw;
+      } else if (ddr_bw != NULL) {
+        *ddr_bw += dimm_bw;
+      }
     }
     closedir(dimm_dir);
   }
   closedir(mcdir);
-  return bw;
+}
+
+static double detect_cpu_peak_dram_bw_bytes_per_s(void)
+{
+  double ddr_bw = 0.0;
+  double hbm_bw = 0.0;
+
+  detect_cpu_peak_edac_bw_bytes_per_s(&ddr_bw, &hbm_bw);
+  (void) hbm_bw;
+  return ddr_bw;
 }
 
 static double parse_max_mhz_from_dpm_table(const char *path)
@@ -555,6 +588,7 @@ void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
 {
   double cpu_flops = 0.0;
   double cpu_bw = 0.0;
+  double cpu_hbm_bw = 0.0;
   double gpu_flops = 0.0;
   double gpu_mem_bw = 0.0;
   double gpu_io_bw = 0.0;
@@ -565,9 +599,10 @@ void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
   if (getenv("HPCPERFSTATS_SKIP_HW_PROBE") != NULL) {
     cpu_flops = (nr_cpus > 0) ? (double) nr_cpus * 1.0e9 : 1.0e9;
     cpu_bw = 1.0e9;
+    cpu_hbm_bw = 0.0;
   } else {
     cpu_flops = detect_cpu_peak_flops_per_s();
-    cpu_bw = detect_cpu_peak_dram_bw_bytes_per_s();
+    detect_cpu_peak_edac_bw_bytes_per_s(&cpu_bw, &cpu_hbm_bw);
     detect_gpu_peaks_from_sysfs(&gpu_flops, &gpu_mem_bw, &gpu_io_bw);
     if (gpu_flops <= 0.0) {
       gpu_flops = detect_gpu_fp64_peak_vendor_runtime();
@@ -577,6 +612,7 @@ void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
   }
   cache->cpu_flops = clamp_rate(cpu_flops);
   cache->cpu_bw = clamp_rate(cpu_bw);
+  cache->cpu_hbm_bw = clamp_rate(cpu_hbm_bw);
   cache->gpu_flops = clamp_rate(gpu_flops);
   cache->gpu_mem_bw = clamp_rate(gpu_mem_bw);
   cache->gpu_io_bw = clamp_rate(gpu_io_bw);

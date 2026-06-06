@@ -9,32 +9,11 @@ extern struct stats_type amd64_pmc_stats_type;
 extern struct stats_type amd64_rapl_stats_type;
 extern struct stats_type intel_4pmc3_stats_type;
 extern struct stats_type intel_8pmc3_stats_type;
-extern struct stats_type intel_bdw_cbo_stats_type;
-extern struct stats_type intel_bdw_hau_stats_type;
-extern struct stats_type intel_bdw_imc_stats_type;
-extern struct stats_type intel_bdw_qpi_stats_type;
-extern struct stats_type intel_bdw_r2pci_stats_type;
-extern struct stats_type intel_hsw_cbo_stats_type;
-extern struct stats_type intel_hsw_hau_stats_type;
-extern struct stats_type intel_hsw_imc_stats_type;
-extern struct stats_type intel_hsw_qpi_stats_type;
-extern struct stats_type intel_hsw_r2pci_stats_type;
-extern struct stats_type intel_ivb_cbo_stats_type;
-extern struct stats_type intel_ivb_hau_stats_type;
-extern struct stats_type intel_ivb_imc_stats_type;
-extern struct stats_type intel_ivb_qpi_stats_type;
-extern struct stats_type intel_ivb_r2pci_stats_type;
-extern struct stats_type intel_pcu_stats_type;
 extern struct stats_type intel_rapl_stats_type;
 extern struct stats_type intel_skx_cha_stats_type;
 extern struct stats_type intel_skx_imc_stats_type;
 extern struct stats_type intel_icx_imc_stats_type;
 extern struct stats_type intel_spr_imc_stats_type;
-extern struct stats_type intel_snb_cbo_stats_type;
-extern struct stats_type intel_snb_hau_stats_type;
-extern struct stats_type intel_snb_imc_stats_type;
-extern struct stats_type intel_snb_qpi_stats_type;
-extern struct stats_type intel_snb_r2pci_stats_type;
 #endif
 
 #if defined(MONITOR_WITH_AMD_GPU)
@@ -111,32 +90,11 @@ struct stats_type *const stats_type_table[] = {
 #if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
   &intel_4pmc3_stats_type,
   &intel_8pmc3_stats_type,
-  &intel_bdw_cbo_stats_type,
-  &intel_bdw_hau_stats_type,
-  &intel_bdw_imc_stats_type,
-  &intel_bdw_qpi_stats_type,
-  &intel_bdw_r2pci_stats_type,
-  &intel_hsw_cbo_stats_type,
-  &intel_hsw_hau_stats_type,
-  &intel_hsw_imc_stats_type,
-  &intel_hsw_qpi_stats_type,
-  &intel_hsw_r2pci_stats_type,
-  &intel_ivb_cbo_stats_type,
-  &intel_ivb_hau_stats_type,
-  &intel_ivb_imc_stats_type,
-  &intel_ivb_qpi_stats_type,
-  &intel_ivb_r2pci_stats_type,
-  &intel_pcu_stats_type,
   &intel_rapl_stats_type,
   &intel_skx_cha_stats_type,
   &intel_skx_imc_stats_type,
   &intel_icx_imc_stats_type,
   &intel_spr_imc_stats_type,
-  &intel_snb_cbo_stats_type,
-  &intel_snb_hau_stats_type,
-  &intel_snb_imc_stats_type,
-  &intel_snb_qpi_stats_type,
-  &intel_snb_r2pci_stats_type,
 #endif
 #if defined(MONITOR_WITH_LUSTRE)
   &llite_stats_type,

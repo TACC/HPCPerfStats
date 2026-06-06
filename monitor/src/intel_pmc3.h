@@ -267,12 +267,6 @@ static const char *const *intel_pmc3_event_keys(size_t *nkeys)
   case NEHALEM:
   case WESTMERE:
     keys = nhm_event_keys; n = sizeof(nhm_event_keys) / sizeof(nhm_event_keys[0]); break;
-  case SANDYBRIDGE:
-  case IVYBRIDGE:
-    keys = snb_event_keys; n = sizeof(snb_event_keys) / sizeof(snb_event_keys[0]); break;
-  case HASWELL:
-  case BROADWELL:
-    keys = hsw_event_keys; n = sizeof(hsw_event_keys) / sizeof(hsw_event_keys[0]); break;
   case SKYLAKE:
   case CASCADE_LAKE:
   case SAPPHIRE_RAPIDS:
@@ -306,14 +300,6 @@ static int intel_pmc3_begin_cpu(char *cpu)
     events = nhm_events; break;
   case WESTMERE:
     events = nhm_events; break;
-  case SANDYBRIDGE:
-    events = snb_events; break;
-  case IVYBRIDGE:
-    events = snb_events; break;
-  case HASWELL:
-    events = hsw_events; break;
-  case BROADWELL:
-    events = hsw_events; break;
   case SKYLAKE:
   case CASCADE_LAKE:
   case SAPPHIRE_RAPIDS:

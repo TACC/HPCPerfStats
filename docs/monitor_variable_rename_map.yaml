@@ -20,31 +20,10 @@ types:
   amd64_df: amd_x86_uncore_df
   amd64_rapl: amd_x86_rapl
   intel_rapl: intel_x86_rapl
-  intel_snb_imc: intel_x86_uncore_imc_snb
-  intel_ivb_imc: intel_x86_uncore_imc_ivb
-  intel_hsw_imc: intel_x86_uncore_imc_hsw
-  intel_bdw_imc: intel_x86_uncore_imc_bdw
   intel_skx_imc: intel_x86_uncore_imc_skx
   intel_icx_imc: intel_x86_uncore_imc_icx
   intel_spr_imc: intel_x86_uncore_imc_spr
-  intel_snb_cbo: intel_x86_uncore_cbo_snb
-  intel_ivb_cbo: intel_x86_uncore_cbo_ivb
-  intel_hsw_cbo: intel_x86_uncore_cbo_hsw
-  intel_bdw_cbo: intel_x86_uncore_cbo_bdw
   intel_skx_cha: intel_x86_uncore_cha_skx
-  intel_snb_qpi: intel_x86_uncore_qpi_snb
-  intel_ivb_qpi: intel_x86_uncore_qpi_ivb
-  intel_hsw_qpi: intel_x86_uncore_qpi_hsw
-  intel_bdw_qpi: intel_x86_uncore_qpi_bdw
-  intel_snb_hau: intel_x86_uncore_hau_snb
-  intel_ivb_hau: intel_x86_uncore_hau_ivb
-  intel_hsw_hau: intel_x86_uncore_hau_hsw
-  intel_bdw_hau: intel_x86_uncore_hau_bdw
-  intel_snb_r2pci: intel_x86_uncore_r2pci_snb
-  intel_ivb_r2pci: intel_x86_uncore_r2pci_ivb
-  intel_hsw_r2pci: intel_x86_uncore_r2pci_hsw
-  intel_bdw_r2pci: intel_x86_uncore_r2pci_bdw
-  intel_pcu: intel_x86_pcu
   arm_imc: arm_aarch64_imc
   ib: host_ib
   ib_ext: host_ib
@@ -68,6 +47,7 @@ events:
   Bounce: bounce
   CAS_READS: dram_cas_reads
   CAS_WRITES: dram_cas_writes
+  CPU_PEAK_HBM_BW_BYTES_PER_S: cpu_peak_hbm_bw_bytes_per_s
   HBM_CAS_READS: hbm_cas_reads
   HBM_CAS_WRITES: hbm_cas_writes
   CPU_CLK_UNHALTED_CORE: cycles_unhalted_core
@@ -148,10 +128,6 @@ events:
   tx_bytes: sw_tx_bytes
   rx_packets: sw_rx_packets
   tx_packets: sw_tx_packets
-file_event_overrides:
-  intel_pcu.c:
-    instr_retired: pcu_ctr0
-    aperf: pcu_ctr1
 host_mem_aliases:
   MemTotal: mem_total
   MemFree: mem_free

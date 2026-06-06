@@ -48,8 +48,12 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | LIKWID core + uncore PMU | `likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`, `likwid_uncore_profiles.c` |
 
 Intel PMU collection uses **LIKWID only** on x86 (see [LIKWID_MIGRATION.md](LIKWID_MIGRATION.md)).
-Detected generations include Cascade Lake (`06_55`), Ice Lake server (`06_6a`/`06_6c`),
-and Sapphire Rapids (`06_8f`), with SPR DDR+HBM uncore keys (`dram_*`, `hbm_*`).
+**Uncore collectors (IMC/CHA)** target SKX+ server parts only: Cascade Lake
+(`06_55`), Ice Lake server (`06_6a`/`06_6c`), and Sapphire Rapids (`06_8f`).
+Sandybridge, Ivybridge, Haswell, and Broadwell are no longer classified or
+registered (`intel_x86_pcu` and pre-SKX uncore types removed). SPR exposes DDR
+and HBM uncore keys (`dram_*`, `hbm_*`); `host_roofline_peak` adds
+`cpu_peak_hbm_bw_bytes_per_s` (EDAC HBM/DDR split, `peak_calc_version` 2).
 
 ## Two-tier collection (fast/slow) and sparse rows
 

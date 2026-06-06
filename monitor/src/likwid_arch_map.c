@@ -88,10 +88,6 @@ const char *likwid_arch_eventset_for_processor(processor_t p, int n_pmcs)
     return intel_spr_eventset(n_pmcs);
   case SKYLAKE:
   case CASCADE_LAKE:
-  case HASWELL:
-  case BROADWELL:
-  case SANDYBRIDGE:
-  case IVYBRIDGE:
   case NEHALEM:
   case WESTMERE:
     return intel_eventset();
