@@ -196,7 +196,7 @@ def test_infer_gpu_roofline_returns_none_when_peak_flops_is_zero():
   assert infer_gpu_roofline_peak_flops_and_bw_gbps(jt) == (None, None)
 
 
-def test_infer_cpu_host_roofline_peak_zero_dram_returns_none_not_tuple_with_zero():
+def test_infer_cpu_host_roofline_peak_zero_dram_and_no_hbm_returns_none():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = _make_jt(
       {"host_roofline_peak": []},
@@ -210,3 +210,48 @@ def test_infer_cpu_host_roofline_peak_zero_dram_returns_none_not_tuple_with_zero
       },
   )
   assert infer_cpu_roofline_peak_flops_and_bw_gbps(jt) == (None, None)
+
+
+def test_infer_cpu_roofline_spr_hbm_adds_ddr_and_hbm():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  dram_bytes_per_s = 200_000_000_000.0
+  hbm_bytes_per_s = 800_000_000_000.0
+  jt = _make_jt(
+      {"host_roofline_peak": []},
+      {
+          ("host_roofline_peak", "value", ("cpu_peak_fp64_flops_per_s",)): [
+              ("n1.cluster", t0, 12_800_000_000_000.0),
+          ],
+          ("host_roofline_peak", "value", ("cpu_peak_dram_bw_bytes_per_s",)): [
+              ("n1.cluster", t0, dram_bytes_per_s),
+          ],
+          ("host_roofline_peak", "value", ("cpu_peak_hbm_bw_bytes_per_s",)): [
+              ("n1.cluster", t0, hbm_bytes_per_s),
+          ],
+      },
+  )
+  gf, bw = infer_cpu_roofline_peak_flops_and_bw_gbps(jt)
+  assert gf == pytest.approx(12800.0)
+  assert bw == pytest.approx((dram_bytes_per_s + hbm_bytes_per_s) / (1024 ** 3))
+
+
+def test_infer_cpu_roofline_hbm_only_when_dram_zero():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  hbm_bytes_per_s = 900_000_000_000.0
+  jt = _make_jt(
+      {"host_roofline_peak": []},
+      {
+          ("host_roofline_peak", "value", ("cpu_peak_fp64_flops_per_s",)): [
+              ("n1.cluster", t0, 6_400_000_000_000.0),
+          ],
+          ("host_roofline_peak", "value", ("cpu_peak_dram_bw_bytes_per_s",)): [
+              ("n1.cluster", t0, 0.0),
+          ],
+          ("host_roofline_peak", "value", ("cpu_peak_hbm_bw_bytes_per_s",)): [
+              ("n1.cluster", t0, hbm_bytes_per_s),
+          ],
+      },
+  )
+  gf, bw = infer_cpu_roofline_peak_flops_and_bw_gbps(jt)
+  assert gf == pytest.approx(6400.0)
+  assert bw == pytest.approx(hbm_bytes_per_s / (1024 ** 3))

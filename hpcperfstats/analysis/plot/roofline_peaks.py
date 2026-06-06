@@ -15,6 +15,9 @@ They are **not** guaranteed to match any specific SKU, socket count, or turbo st
 
 If inference returns ``(None, None)``, :mod:`hpcperfstats.analysis.plot.roofline` keeps
 using its built-in numeric defaults.
+
+When ``host_roofline_peak`` is present, CPU memory roof bandwidth sums
+``cpu_peak_dram_bw_bytes_per_s`` (DDR) and ``cpu_peak_hbm_bw_bytes_per_s`` (HBM when > 0).
 """
 from __future__ import annotations
 
@@ -76,6 +79,27 @@ def _max_converted_sum_val(
   return None
 
 
+_BYTES_TO_GB = 1 / (1024 ** 3)
+
+
+def _cpu_peak_memory_bw_gb_from_host_data(jt: Any) -> Optional[float]:
+  """DDR + HBM peak bytes/s from host_roofline_peak (HBM omitted when absent or zero)."""
+  peak_dram_gb = _max_converted_sum_val(
+      jt, "cpu_peak_dram_bw_bytes_per_s", _BYTES_TO_GB
+  )
+  peak_hbm_gb = _max_converted_sum_val(
+      jt, "cpu_peak_hbm_bw_bytes_per_s", _BYTES_TO_GB
+  )
+  if peak_dram_gb is None and peak_hbm_gb is None:
+    return None
+  dram = peak_dram_gb if peak_dram_gb is not None and peak_dram_gb > 0 else 0.0
+  hbm = peak_hbm_gb if peak_hbm_gb is not None and peak_hbm_gb > 0 else 0.0
+  total = dram + hbm
+  if not (np.isfinite(total) and total > 0):
+    return None
+  return float(total)
+
+
 def _infer_cpu_roofline_peak_from_host_data(jt: Any) -> Tuple[Optional[float], Optional[float]]:
   schema = getattr(jt, "schema", None)
   if not isinstance(schema, dict):
@@ -84,7 +108,7 @@ def _infer_cpu_roofline_peak_from_host_data(jt: Any) -> Tuple[Optional[float], O
     return (None, None)
 
   peak_flops_gf = _max_converted_sum_val(jt, "cpu_peak_fp64_flops_per_s", 1e-9)
-  peak_bw_gb = _max_converted_sum_val(jt, "cpu_peak_dram_bw_bytes_per_s", 1 / (1024 ** 3))
+  peak_bw_gb = _cpu_peak_memory_bw_gb_from_host_data(jt)
   if peak_flops_gf is None or peak_bw_gb is None:
     return (None, None)
   if not (

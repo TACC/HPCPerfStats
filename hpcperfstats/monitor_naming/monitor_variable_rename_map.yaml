@@ -25,6 +25,8 @@ types:
   intel_hsw_imc: intel_x86_uncore_imc_hsw
   intel_bdw_imc: intel_x86_uncore_imc_bdw
   intel_skx_imc: intel_x86_uncore_imc_skx
+  intel_icx_imc: intel_x86_uncore_imc_icx
+  intel_spr_imc: intel_x86_uncore_imc_spr
   intel_snb_cbo: intel_x86_uncore_cbo_snb
   intel_ivb_cbo: intel_x86_uncore_cbo_ivb
   intel_hsw_cbo: intel_x86_uncore_cbo_hsw
@@ -66,6 +68,9 @@ events:
   Bounce: bounce
   CAS_READS: dram_cas_reads
   CAS_WRITES: dram_cas_writes
+  CPU_PEAK_HBM_BW_BYTES_PER_S: cpu_peak_hbm_bw_bytes_per_s
+  HBM_CAS_READS: hbm_cas_reads
+  HBM_CAS_WRITES: hbm_cas_writes
   CPU_CLK_UNHALTED_CORE: cycles_unhalted_core
   CPU_CLK_UNHALTED_REF: cycles_unhalted_ref
   DCGM_CPU_POWER_LIMIT_W: dcgm_cpu_power_limit_w
@@ -140,6 +145,10 @@ events:
   nvlink_tx_bytes: gpu_nvlink_tx_bytes
   pcie_rx_bytes: gpu_pcie_rx_bytes
   pcie_tx_bytes: gpu_pcie_tx_bytes
+  rx_bytes: sw_rx_bytes
+  tx_bytes: sw_tx_bytes
+  rx_packets: sw_rx_packets
+  tx_packets: sw_tx_packets
 file_event_overrides:
   intel_pcu.c:
     instr_retired: pcu_ctr0
