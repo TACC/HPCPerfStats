@@ -510,12 +510,16 @@ export default function JobDetail() {
     return list.map((obj) => (
       <tr key={obj.metric}>
         <th scope="row">
-          <VariableInfoLabel
-            variableName={obj.metric}
-            labelText={getJobMetricShortLabel(obj.metric)}
-            enableHelp
-          />{" "}
-          [{obj.units}]
+          <span className="job-detail-metric-name">
+            <VariableInfoLabel
+              variableName={obj.metric}
+              labelText={getJobMetricShortLabel(obj.metric)}
+              enableHelp
+            />
+            {obj.units ? (
+              <span className="job-detail-metric-units">[{obj.units}]</span>
+            ) : null}
+          </span>
         </th>
         <td className={obj.value != null && obj.value !== "" ? "" : "text-muted"}>
           {formatJobMetricCell(obj, isStaff)}
@@ -652,7 +656,7 @@ export default function JobDetail() {
             <span className="text-muted small fw-normal"> — all accounting columns</span>
           </summary>
           <div className="table-responsive mt-2">
-            <table className="table table-sm table-bordered">
+            <table className="table table-sm table-bordered job-detail-compact-table">
               <caption className="visually-hidden">
                 Full scheduling record for job {job.jid}
               </caption>
@@ -1006,7 +1010,7 @@ export default function JobDetail() {
               <p className="text-muted mb-0">Data not available.</p>
             ) : metricsTableRight.length === 0 ? (
               <div className="table-responsive">
-                <table className="table table-sm table-bordered job-detail-metrics-table mb-0">
+                <table className="table table-sm table-bordered job-detail-metrics-table job-detail-compact-table mb-0">
                   <caption className="visually-hidden">Job-level metrics for job {job.jid}</caption>
                   <tbody>{metricTableRows(metricsTableLeft)}</tbody>
                 </table>
@@ -1015,7 +1019,7 @@ export default function JobDetail() {
               <div className="row g-3 job-detail-metrics-two-col">
                 <div className="col-12 col-lg-6">
                   <div className="table-responsive">
-                    <table className="table table-sm table-bordered job-detail-metrics-table mb-0">
+                    <table className="table table-sm table-bordered job-detail-metrics-table job-detail-compact-table mb-0">
                       <caption className="visually-hidden">
                         Job-level metrics for job {job.jid} (column 1)
                       </caption>
@@ -1025,7 +1029,7 @@ export default function JobDetail() {
                 </div>
                 <div className="col-12 col-lg-6">
                   <div className="table-responsive">
-                    <table className="table table-sm table-bordered job-detail-metrics-table mb-0">
+                    <table className="table table-sm table-bordered job-detail-metrics-table job-detail-compact-table mb-0">
                       <caption className="visually-hidden">
                         Job-level metrics for job {job.jid} (column 2)
                       </caption>
@@ -1241,7 +1245,7 @@ export default function JobDetail() {
                 </p>
               ) : (
                 <div className="table-responsive">
-                  <table className="table table-sm table-bordered">
+                  <table className="table table-sm table-bordered job-detail-compact-table">
                     <caption className="visually-hidden">
                       Device types and events for job {job.jid}
                     </caption>

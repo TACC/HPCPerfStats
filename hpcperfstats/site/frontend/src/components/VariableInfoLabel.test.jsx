@@ -13,6 +13,7 @@ describe("VariableInfoLabel", () => {
     );
     expect(screen.getByText("avg_cpuusage")).toBeInTheDocument();
     expect(screen.getByTestId("variable-info-help")).toHaveTextContent("?");
+    expect(screen.getByText("avg_cpuusage").closest(".variable-info-label")).toBeTruthy();
   });
 
   it("does not render a help marker unless enabled", () => {

@@ -114,8 +114,8 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
   ) : null;
 
   return (
-    <>
-      {text}
+    <span className="variable-info-label">
+      <span className="variable-info-label-text">{text}</span>
       <span
         className="variable-info-help-wrap"
         onMouseEnter={() => setHoverOpen(true)}
@@ -137,6 +137,6 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
         </button>
       </span>
       {tooltipNode && document.body ? createPortal(tooltipNode, document.body) : null}
-    </>
+    </span>
   );
 }

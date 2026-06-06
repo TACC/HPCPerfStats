@@ -41,21 +41,34 @@ body {
 }
 
 /* Variable help marker (Job Detail only via component prop) */
+.variable-info-label {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.1rem;
+  max-width: 100%;
+  line-height: 1.3;
+}
+.variable-info-label-text {
+  min-width: 0;
+}
 .variable-info-help-wrap {
-  display: inline-block;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: baseline;
 }
 .variable-info-help {
   display: inline;
-  margin-left: 0.15em;
+  margin: 0;
   padding: 0;
   border: none;
   background: none;
   font: inherit;
-  font-size: 0.75em;
+  font-size: 0.72em;
   font-weight: 600;
   color: #0d6efd; /* Bootstrap primary blue */
   cursor: pointer;
-  vertical-align: super;
+  vertical-align: baseline;
   line-height: 1;
   user-select: none;
 }
@@ -590,6 +603,24 @@ body {
 /* Job detail: metrics tab — two columns from lg breakpoint when multiple rows */
 .job-detail-metrics-two-col .job-detail-metrics-table {
   width: 100%;
+}
+.job-detail-compact-table th,
+.job-detail-compact-table td {
+  padding: 0.2rem 0.45rem;
+  line-height: 1.3;
+  vertical-align: middle;
+}
+.job-detail-metric-name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.25rem;
+  max-width: 100%;
+}
+.job-detail-metric-units {
+  color: var(--bs-secondary-color);
+  font-weight: 400;
+  white-space: nowrap;
 }
 
 /* Job detail: host-level Bokeh (one plot per tab, width-stretched) */
