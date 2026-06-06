@@ -50,6 +50,23 @@ describe("VariableInfoLabel", () => {
     expect(panel.classList.contains("variable-info-tooltip-portal")).toBe(true);
   });
 
+  it("renders suffix before the help control when suffixBeforeHelp is set", () => {
+    render(
+      <VariableInfoLabel
+        variableName="avg_freq"
+        labelText="Average effective CPU frequency"
+        enableHelp
+        suffixBeforeHelp={<span className="job-detail-metric-units">[GHz]</span>}
+      />,
+    );
+    const label = screen.getByText("Average effective CPU frequency").closest(".variable-info-label");
+    expect(label).toBeTruthy();
+    const children = Array.from(label.children).map((el) => el.className);
+    expect(children[0]).toBe("variable-info-label-text");
+    expect(children[1]).toBe("job-detail-metric-units");
+    expect(children[2]).toBe("variable-info-help-wrap");
+  });
+
   it("renders a separator between definition and researcher guidance when both exist", () => {
     render(
       <VariableInfoLabel variableName="avg_cpuusage" labelText="avg_cpuusage" enableHelp />

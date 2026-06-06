@@ -515,10 +515,12 @@ export default function JobDetail() {
               variableName={obj.metric}
               labelText={getJobMetricShortLabel(obj.metric)}
               enableHelp
+              suffixBeforeHelp={
+                obj.units ? (
+                  <span className="job-detail-metric-units">[{obj.units}]</span>
+                ) : null
+              }
             />
-            {obj.units ? (
-              <span className="job-detail-metric-units">[{obj.units}]</span>
-            ) : null}
           </span>
         </th>
         <td className={obj.value != null && obj.value !== "" ? "" : "text-muted"}>

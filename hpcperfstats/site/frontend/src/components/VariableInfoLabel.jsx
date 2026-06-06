@@ -45,8 +45,15 @@ function placeTooltipNearButton(buttonEl, tooltipEl) {
  * @param {string} props.variableName
  * @param {string} [props.labelText] — If omitted, variableName is shown (still normalized for lookup via variableName).
  * @param {boolean} [props.enableHelp] — Must be true to render the help control (keeps usage scoped to Job Detail).
+ * @param {import("react").ReactNode} [props.suffixBeforeHelp] — Optional content between label text and the help
+ *   control (for example metric units in brackets on the Job detail Metrics tab).
  */
-export function VariableInfoLabel({ variableName, labelText, enableHelp = false }) {
+export function VariableInfoLabel({
+  variableName,
+  labelText,
+  enableHelp = false,
+  suffixBeforeHelp = null,
+}) {
   const text = labelText != null ? labelText : variableName;
   const tooltipBody = enableHelp ? getVariableTooltipContent(variableName) : null;
   const panelId = useId();
@@ -89,7 +96,12 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
   }, [showTooltip, variableName, enableHelp]);
 
   if (!tooltipBody) {
-    return <>{text}</>;
+    return (
+      <>
+        {text}
+        {suffixBeforeHelp}
+      </>
+    );
   }
 
   const { description, researcherUse } = tooltipBody;
@@ -116,6 +128,7 @@ export function VariableInfoLabel({ variableName, labelText, enableHelp = false 
   return (
     <span className="variable-info-label">
       <span className="variable-info-label-text">{text}</span>
+      {suffixBeforeHelp}
       <span
         className="variable-info-help-wrap"
         onMouseEnter={() => setHoverOpen(true)}
