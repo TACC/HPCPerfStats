@@ -16,7 +16,7 @@ _ACTIVE_CONFIG_PATH = None
 # Canonical (section, option) pairs read from hpcperfstats.ini. Used by
 # test_hpcperfstats_ini_example drift guards; keep in sync when adding getters.
 INI_OPTION_REGISTRY = (
-    # [DEFAULT] — required for minimal deploy
+    # [DEFAULT] — install, site-wide, PostgreSQL connection, cpuset pinning (last in example)
     ("DEFAULT", "machine"),
     ("DEFAULT", "host_name_ext"),
     ("DEFAULT", "data_dir"),
@@ -25,113 +25,113 @@ INI_OPTION_REGISTRY = (
     ("DEFAULT", "debug"),
     ("DEFAULT", "staff_email_domain"),
     ("DEFAULT", "timezone"),
-    ("DEFAULT", "total_cores"),
     ("DEFAULT", "secret_key"),
-    # [DEFAULT] — optional tuning
-    ("DEFAULT", "cors_origin_scheme"),
-    ("DEFAULT", "max_gunicorn_workers"),
-    ("DEFAULT", "metrics_pool_process_cap"),
-    ("DEFAULT", "parallel_db_prefetch_max"),
-    ("DEFAULT", "api_small_executor_max_workers"),
-    ("DEFAULT", "db_conn_max_age"),
-    ("DEFAULT", "db_statement_timeout_ms"),
-    ("DEFAULT", "db_idle_in_transaction_session_timeout_ms"),
+    ("DEFAULT", "total_cores"),
+    ("DEFAULT", "engine_name"),
+    ("DEFAULT", "dbname"),
+    ("DEFAULT", "username"),
+    ("DEFAULT", "password"),
+    ("DEFAULT", "host"),
+    ("DEFAULT", "port"),
     ("DEFAULT", "cpuset_pin_min_total_cores"),
     ("DEFAULT", "cpuset_pin_min_cores_per_node"),
     ("DEFAULT", "numa_pin_max_nodes_auto"),
     ("DEFAULT", "pin_proxy_in_compose"),
     ("DEFAULT", "web_numa_node"),
     ("DEFAULT", "pipeline_numa_node"),
-    ("DEFAULT", "pipeline_overlap_mode"),
-    ("DEFAULT", "metrics_ingest_priority_scale"),
-    ("DEFAULT", "metrics_min_processes"),
-    ("DEFAULT", "metrics_scheduler_mode"),
-    ("DEFAULT", "metrics_scheduler_prefetch_chunks"),
-    ("DEFAULT", "metrics_scheduler_ready_queue_target"),
-    ("DEFAULT", "metrics_plot_prewarm_mode"),
-    ("DEFAULT", "metrics_scheduler_skip_prewarm"),
-    ("DEFAULT", "metrics_prewarm_workers"),
-    ("DEFAULT", "metrics_prewarm_backlog_cap"),
-    ("DEFAULT", "metrics_prewarm_backpressure_wait_s"),
-    ("DEFAULT", "metrics_prewarm_drain_batch_budget_s"),
-    ("DEFAULT", "metrics_prewarm_drain_batch_budget_max_s"),
-    ("DEFAULT", "metrics_prewarm_drain_per_job_s"),
-    ("DEFAULT", "metrics_prewarm_retry_attempts"),
-    ("DEFAULT", "metrics_scheduler_compute_threads"),
-    ("DEFAULT", "metrics_run_poll_timeout_s"),
-    ("DEFAULT", "metrics_run_stall_timeout_s"),
-    ("DEFAULT", "metrics_run_per_job_timeout_s"),
-    ("DEFAULT", "metrics_persist_statement_timeout_ms"),
-    ("DEFAULT", "metrics_persist_lock_timeout_ms"),
-    ("DEFAULT", "metrics_proxy_reject_jid_batch_size"),
-    ("DEFAULT", "metrics_compute_batch_max_window_s"),
-    ("DEFAULT", "metrics_compute_batch_max_single_job_s"),
-    ("DEFAULT", "metrics_compute_batch_unknown_runtime_s"),
-    ("DEFAULT", "metrics_compute_watchdog_s"),
-    ("DEFAULT", "metrics_compute_total_watchdog_s"),
-    ("DEFAULT", "metrics_deferred_not_ready_retry_s"),
-    ("DEFAULT", "metrics_deferred_not_ready_max_retries"),
-    ("DEFAULT", "metrics_deferred_not_ready_max_age_s"),
-    ("DEFAULT", "metrics_deferred_not_ready_quarantine_s"),
-    ("DEFAULT", "sync_pool_process_cap"),
-    ("DEFAULT", "archive_pool_process_cap"),
-    ("DEFAULT", "sync_enable_cpuset_priority_budget"),
-    ("DEFAULT", "sync_budget_ingest_ratio"),
-    ("DEFAULT", "sync_budget_archive_ratio"),
-    ("DEFAULT", "sync_budget_metrics_ratio"),
-    ("DEFAULT", "sync_budget_reserve_ratio"),
-    ("DEFAULT", "sync_budget_min_metrics_percent"),
-    ("DEFAULT", "sync_budget_min_archive_percent"),
-    ("DEFAULT", "sync_enable_overprovision_mode"),
-    ("DEFAULT", "sync_budget_overcommit_factor"),
-    ("DEFAULT", "sync_overprovision_ingest_multiplier"),
-    ("DEFAULT", "sync_overprovision_archive_multiplier"),
-    ("DEFAULT", "sync_overprovision_metrics_multiplier"),
-    ("DEFAULT", "sync_ingest_queue_max_size"),
-    ("DEFAULT", "sync_archive_queue_max_size"),
-    ("DEFAULT", "sync_archive_retry_max_attempts"),
-    ("DEFAULT", "sync_archive_retry_backoff_base_seconds"),
-    ("DEFAULT", "sync_archive_retry_backoff_max_seconds"),
-    ("DEFAULT", "sync_checkpoint_flush_batch_size"),
-    ("DEFAULT", "sync_host_itimes_cache_max_timestamps_per_entry"),
-    ("DEFAULT", "sync_pool_poll_timeout_s"),
-    ("DEFAULT", "sync_write_lock_shards"),
-    ("DEFAULT", "sync_enable_db_writer_pipeline"),
-    ("DEFAULT", "sync_db_writer_combined_task"),
-    ("DEFAULT", "sync_db_writer_stage_max_batch"),
-    ("DEFAULT", "sync_ingest_chunk_size"),
-    ("DEFAULT", "sync_supervisor_rss_limit_mb"),
-    ("DEFAULT", "sync_supervisor_rss_check_every_n_chunks"),
-    ("DEFAULT", "sync_db_writer_pool_multiplier"),
-    ("DEFAULT", "sync_db_writer_pool_cap"),
-    ("DEFAULT", "sync_adaptive_dispatch_enabled"),
-    ("DEFAULT", "sync_dispatch_burst_factor"),
-    ("DEFAULT", "sync_dispatch_archive_backoff_ratio"),
-    ("DEFAULT", "sync_dispatch_step_size"),
-    ("DEFAULT", "sync_enable_ingest_first_durability_mode"),
-    ("DEFAULT", "sync_archive_require_db_head_ingest"),
-    ("DEFAULT", "sync_archive_maint_hints"),
-    ("PORTAL", "sync_archive_discovery_workers"),
-    # [PORTAL]
-    ("PORTAL", "acct_path"),
-    ("PORTAL", "archive_dir"),
-    ("PORTAL", "dbname"),
-    ("PORTAL", "daily_archive_dir"),
-    ("PORTAL", "archive_keep_uncompressed_tar"),
-    ("PORTAL", "archive_seal_idle_seconds"),
-    ("PORTAL", "archive_zstd_threads"),
-    ("PORTAL", "archive_zstd_level"),
-    ("PORTAL", "archive_zstd_nice"),
-    ("PORTAL", "archive_zstd_ionice_class"),
-    ("PORTAL", "archive_zstd_ionice_level"),
-    ("PORTAL", "archive_seal_parallel_workers"),
-    ("PORTAL", "archive_maintenance_interval_seconds"),
-    ("PORTAL", "archive_maintenance_max_defer_seconds"),
-    ("PORTAL", "engine_name"),
-    ("PORTAL", "username"),
-    ("PORTAL", "password"),
-    ("PORTAL", "host"),
-    ("PORTAL", "port"),
+    # [PORTAL] — Gunicorn / Django web stack tuning
+    ("PORTAL", "cors_origin_scheme"),
+    ("PORTAL", "max_gunicorn_workers"),
+    ("PORTAL", "parallel_db_prefetch_max"),
+    ("PORTAL", "api_small_executor_max_workers"),
+    ("PORTAL", "db_conn_max_age"),
+    ("PORTAL", "db_statement_timeout_ms"),
+    ("PORTAL", "db_idle_in_transaction_session_timeout_ms"),
+    # [PIPELINE] — sync_timedb, update_metrics, sync_acct, archive paths/tuning
+    ("PIPELINE", "pipeline_overlap_mode"),
+    ("PIPELINE", "metrics_pool_process_cap"),
+    ("PIPELINE", "metrics_ingest_priority_scale"),
+    ("PIPELINE", "metrics_min_processes"),
+    ("PIPELINE", "metrics_scheduler_mode"),
+    ("PIPELINE", "metrics_scheduler_prefetch_chunks"),
+    ("PIPELINE", "metrics_scheduler_ready_queue_target"),
+    ("PIPELINE", "metrics_plot_prewarm_mode"),
+    ("PIPELINE", "metrics_scheduler_skip_prewarm"),
+    ("PIPELINE", "metrics_prewarm_workers"),
+    ("PIPELINE", "metrics_prewarm_backlog_cap"),
+    ("PIPELINE", "metrics_prewarm_backpressure_wait_s"),
+    ("PIPELINE", "metrics_prewarm_drain_batch_budget_s"),
+    ("PIPELINE", "metrics_prewarm_drain_batch_budget_max_s"),
+    ("PIPELINE", "metrics_prewarm_drain_per_job_s"),
+    ("PIPELINE", "metrics_prewarm_retry_attempts"),
+    ("PIPELINE", "metrics_scheduler_compute_threads"),
+    ("PIPELINE", "metrics_run_poll_timeout_s"),
+    ("PIPELINE", "metrics_run_stall_timeout_s"),
+    ("PIPELINE", "metrics_run_per_job_timeout_s"),
+    ("PIPELINE", "metrics_persist_statement_timeout_ms"),
+    ("PIPELINE", "metrics_persist_lock_timeout_ms"),
+    ("PIPELINE", "metrics_proxy_reject_jid_batch_size"),
+    ("PIPELINE", "metrics_compute_batch_max_window_s"),
+    ("PIPELINE", "metrics_compute_batch_max_single_job_s"),
+    ("PIPELINE", "metrics_compute_batch_unknown_runtime_s"),
+    ("PIPELINE", "metrics_compute_watchdog_s"),
+    ("PIPELINE", "metrics_compute_total_watchdog_s"),
+    ("PIPELINE", "metrics_deferred_not_ready_retry_s"),
+    ("PIPELINE", "metrics_deferred_not_ready_max_retries"),
+    ("PIPELINE", "metrics_deferred_not_ready_max_age_s"),
+    ("PIPELINE", "metrics_deferred_not_ready_quarantine_s"),
+    ("PIPELINE", "sync_pool_process_cap"),
+    ("PIPELINE", "archive_pool_process_cap"),
+    ("PIPELINE", "sync_enable_cpuset_priority_budget"),
+    ("PIPELINE", "sync_budget_ingest_ratio"),
+    ("PIPELINE", "sync_budget_archive_ratio"),
+    ("PIPELINE", "sync_budget_metrics_ratio"),
+    ("PIPELINE", "sync_budget_reserve_ratio"),
+    ("PIPELINE", "sync_budget_min_metrics_percent"),
+    ("PIPELINE", "sync_budget_min_archive_percent"),
+    ("PIPELINE", "sync_enable_overprovision_mode"),
+    ("PIPELINE", "sync_budget_overcommit_factor"),
+    ("PIPELINE", "sync_overprovision_ingest_multiplier"),
+    ("PIPELINE", "sync_overprovision_archive_multiplier"),
+    ("PIPELINE", "sync_overprovision_metrics_multiplier"),
+    ("PIPELINE", "sync_ingest_queue_max_size"),
+    ("PIPELINE", "sync_archive_queue_max_size"),
+    ("PIPELINE", "sync_archive_retry_max_attempts"),
+    ("PIPELINE", "sync_archive_retry_backoff_base_seconds"),
+    ("PIPELINE", "sync_archive_retry_backoff_max_seconds"),
+    ("PIPELINE", "sync_checkpoint_flush_batch_size"),
+    ("PIPELINE", "sync_host_itimes_cache_max_timestamps_per_entry"),
+    ("PIPELINE", "sync_pool_poll_timeout_s"),
+    ("PIPELINE", "sync_write_lock_shards"),
+    ("PIPELINE", "sync_enable_db_writer_pipeline"),
+    ("PIPELINE", "sync_db_writer_combined_task"),
+    ("PIPELINE", "sync_db_writer_stage_max_batch"),
+    ("PIPELINE", "sync_ingest_chunk_size"),
+    ("PIPELINE", "sync_supervisor_rss_limit_mb"),
+    ("PIPELINE", "sync_supervisor_rss_check_every_n_chunks"),
+    ("PIPELINE", "sync_db_writer_pool_multiplier"),
+    ("PIPELINE", "sync_db_writer_pool_cap"),
+    ("PIPELINE", "sync_adaptive_dispatch_enabled"),
+    ("PIPELINE", "sync_dispatch_burst_factor"),
+    ("PIPELINE", "sync_dispatch_archive_backoff_ratio"),
+    ("PIPELINE", "sync_dispatch_step_size"),
+    ("PIPELINE", "sync_enable_ingest_first_durability_mode"),
+    ("PIPELINE", "sync_archive_require_db_head_ingest"),
+    ("PIPELINE", "sync_archive_maint_hints"),
+    ("PIPELINE", "sync_archive_discovery_workers"),
+    ("PIPELINE", "acct_path"),
+    ("PIPELINE", "archive_dir"),
+    ("PIPELINE", "daily_archive_dir"),
+    ("PIPELINE", "archive_keep_uncompressed_tar"),
+    ("PIPELINE", "archive_seal_idle_seconds"),
+    ("PIPELINE", "archive_zstd_threads"),
+    ("PIPELINE", "archive_zstd_level"),
+    ("PIPELINE", "archive_zstd_nice"),
+    ("PIPELINE", "archive_zstd_ionice_class"),
+    ("PIPELINE", "archive_zstd_ionice_level"),
+    ("PIPELINE", "archive_seal_parallel_workers"),
+    ("PIPELINE", "archive_maintenance_interval_seconds"),
+    ("PIPELINE", "archive_maintenance_max_defer_seconds"),
     # [OAUTH2]
     ("OAUTH2", "client_id"),
     ("OAUTH2", "client_key"),
@@ -222,6 +222,75 @@ def _get(section, option):
   return cfg.get(section, option)
 
 
+def _ini_has_option(section, option):
+  """Return True when *option* is set under *section* (DEFAULT always exists)."""
+  _ensure_cfg_loaded()
+  if section == "DEFAULT":
+    return cfg.has_option("DEFAULT", option)
+  return cfg.has_section(section) and cfg.has_option(section, option)
+
+
+def _ini_option(primary_section, option, legacy_sections=()):
+  """Read *option* from *primary_section*, then legacy sections in order."""
+  _ensure_cfg_loaded()
+  if _ini_has_option(primary_section, option):
+    return cfg.get(primary_section, option)
+  for legacy in legacy_sections:
+    if _ini_has_option(legacy, option):
+      return cfg.get(legacy, option)
+  if not cfg.has_section(primary_section) and primary_section != "DEFAULT":
+    raise configparser.NoSectionError(
+        "Missing section '%s' in %s" % (primary_section, _ACTIVE_CONFIG_PATH)
+    )
+  raise configparser.NoOptionError(option, primary_section)
+
+
+def _ini_get(primary_section, option, *, fallback=None, legacy_sections=()):
+  """Like ``_ini_option`` but returns *fallback* when absent everywhere."""
+  _ensure_cfg_loaded()
+  if _ini_has_option(primary_section, option):
+    return cfg.get(primary_section, option)
+  for legacy in legacy_sections:
+    if _ini_has_option(legacy, option):
+      return cfg.get(legacy, option)
+  if fallback is not None:
+    return str(fallback)
+  return _ini_option(primary_section, option, legacy_sections=legacy_sections)
+
+
+def _ini_getint(primary_section, option, *, legacy_sections=()):
+  return int(_ini_option(primary_section, option, legacy_sections=legacy_sections))
+
+
+def _ini_has_option_any(primary_section, option, legacy_sections=()):
+  if _ini_has_option(primary_section, option):
+    return True
+  return any(_ini_has_option(legacy, option) for legacy in legacy_sections)
+
+
+_PIPELINE_LEGACY = ("DEFAULT",)
+_PIPELINE_ARCHIVE_LEGACY = ("PORTAL",)
+
+
+def _pipeline_get(option, *, fallback):
+  """Read a PIPELINE option with DEFAULT legacy fallback."""
+  return _ini_get(
+      "PIPELINE", option, fallback=str(fallback), legacy_sections=_PIPELINE_LEGACY,
+  )
+
+
+def _pipeline_has_option(option):
+  return _ini_has_option_any("PIPELINE", option, _PIPELINE_LEGACY)
+
+
+def _pipeline_getint(option, *, fallback):
+  return int(_pipeline_get(option, fallback=fallback))
+
+
+def _pipeline_getfloat(option, *, fallback):
+  return float(_pipeline_get(option, fallback=fallback))
+
+
 def _parse_bool(raw, *, default=False):
   if raw is None:
     return default
@@ -233,45 +302,60 @@ def _parse_bool(raw, *, default=False):
   return default
 
 
-def _env_or_cfg_int(env_key, section, option, fallback):
+def _env_or_cfg_int(env_key, section, option, fallback, legacy_sections=()):
   env = os.environ.get(env_key, "").strip()
   if env:
     return int(env)
   _ensure_cfg_loaded()
-  return int(cfg.get(section, option, fallback=str(fallback)))
+  return int(_ini_get(
+      section, option, fallback=str(fallback), legacy_sections=legacy_sections,
+  ))
 
 
-def _env_or_cfg_bounded_float(env_key, section, option, fallback, *, lower, upper):
+def _env_or_cfg_bounded_float(
+    env_key, section, option, fallback, *, lower, upper, legacy_sections=(),
+):
   env = os.environ.get(env_key, "").strip()
   if env:
     return max(lower, min(upper, float(env)))
   _ensure_cfg_loaded()
   return max(
       lower,
-      min(upper, float(cfg.get(section, option, fallback=str(fallback)))),
+      min(upper, float(_ini_get(
+          section, option, fallback=str(fallback), legacy_sections=legacy_sections,
+      ))),
   )
 
 
-def _optional_default_int_option(option_name):
+def _optional_default_int_option(option_name, *, legacy_sections=()):
   _ensure_cfg_loaded()
-  if not cfg.has_option("DEFAULT", option_name):
+  if not _ini_has_option_any("DEFAULT", option_name, legacy_sections):
     return None
-  value = cfg.get("DEFAULT", option_name).strip()
+  value = _ini_get(
+      "DEFAULT",
+      option_name,
+      legacy_sections=legacy_sections,
+  ).strip()
   if not value:
     return None
   return int(value)
 
 
 def get_db_connection_string():
-  """Return a PostgreSQL connection string from PORTAL config (dbname, user, password, port, host)."""
+  """Return a PostgreSQL connection string from DEFAULT config (legacy: PORTAL)."""
+  legacy = ("PORTAL",)
   return "dbname={0} user={1} password={2} port={3} host={4}".format(
-      _get('PORTAL', 'dbname'), _get('PORTAL', 'username'),
-      _get('PORTAL', 'password'), _get('PORTAL', 'port'), _get('PORTAL', 'host'))
+      _ini_option("DEFAULT", "dbname", legacy_sections=legacy),
+      _ini_option("DEFAULT", "username", legacy_sections=legacy),
+      _ini_option("DEFAULT", "password", legacy_sections=legacy),
+      _ini_option("DEFAULT", "port", legacy_sections=legacy),
+      _ini_option("DEFAULT", "host", legacy_sections=legacy),
+  )
 
 
 def get_db_name():
-  """Return the database name from PORTAL config."""
-  return _get('PORTAL', 'dbname')
+  """Return the database name from DEFAULT config (legacy: PORTAL)."""
+  return _ini_option("DEFAULT", "dbname", legacy_sections=("PORTAL",))
 
 
 def get_debug():
@@ -297,8 +381,8 @@ def get_secret_key():
 
 
 def get_archive_dir_path():
-  """Return the archive directory path from PORTAL config."""
-  raw = _get('PORTAL', 'archive_dir').strip()
+  """Return the archive directory path from PIPELINE config (legacy: PORTAL)."""
+  raw = _ini_option("PIPELINE", "archive_dir", legacy_sections=("PORTAL",)).strip()
   return os.path.normpath(raw) if raw else raw
 
 
@@ -313,13 +397,15 @@ def get_restricted_queue_keywords():
 
 
 def get_accounting_path():
-  """Return the accounting (sacct) file path from PORTAL config."""
-  return _get('PORTAL', 'acct_path')
+  """Return the accounting (sacct) file path from PIPELINE config (legacy: PORTAL)."""
+  return _ini_option("PIPELINE", "acct_path", legacy_sections=("PORTAL",))
 
 
 def get_daily_archive_dir_path():
-  """Return the daily archive directory path from PORTAL config."""
-  raw = _get('PORTAL', 'daily_archive_dir').strip()
+  """Return the daily archive directory path from PIPELINE config (legacy: PORTAL)."""
+  raw = _ini_option(
+      "PIPELINE", "daily_archive_dir", legacy_sections=("PORTAL",),
+  ).strip()
   return os.path.normpath(raw) if raw else raw
 
 
@@ -329,9 +415,13 @@ def get_archive_keep_uncompressed_tar():
   If False, only ``.tar.gz`` remains; the next append will decompress again.
   """
   _ensure_cfg_loaded()
-  return cfg.get(
-      'PORTAL', 'archive_keep_uncompressed_tar', fallback='yes',
-  ).lower() in ('yes', 'true', '1')
+  raw = _ini_get(
+      "PIPELINE",
+      "archive_keep_uncompressed_tar",
+      fallback="yes",
+      legacy_sections=("PORTAL",),
+  )
+  return raw.lower() in ('yes', 'true', '1')
 
 
 def get_archive_seal_idle_seconds():
@@ -340,7 +430,12 @@ def get_archive_seal_idle_seconds():
   Prior calendar days seal as soon as the tar/gz pair is dirty (no idle wait).
   """
   _ensure_cfg_loaded()
-  return float(cfg.get('PORTAL', 'archive_seal_idle_seconds', fallback='60'))
+  return float(_ini_get(
+      "PIPELINE",
+      "archive_seal_idle_seconds",
+      fallback="60",
+      legacy_sections=("PORTAL",),
+  ))
 
 
 def _ini_bool(value, default=False):
@@ -352,7 +447,9 @@ def _ini_bool(value, default=False):
 def get_archive_zstd_level():
   """Native zstd compression level (1--19) for sealing ``.tar.zst``. Default 7."""
   _ensure_cfg_loaded()
-  raw = cfg.get('PORTAL', 'archive_zstd_level', fallback='7')
+  raw = _ini_get(
+      "PIPELINE", "archive_zstd_level", fallback="7", legacy_sections=("PORTAL",),
+  )
   level = int(raw)
   return max(1, min(19, level))
 
@@ -360,35 +457,54 @@ def get_archive_zstd_level():
 def get_archive_zstd_threads():
   """zstd ``-T`` thread count for archive compress/decompress. Default 0 (-T0)."""
   _ensure_cfg_loaded()
-  raw = cfg.get('PORTAL', 'archive_zstd_threads', fallback='0')
+  raw = _ini_get(
+      "PIPELINE", "archive_zstd_threads", fallback="0", legacy_sections=("PORTAL",),
+  )
   return max(0, int(raw))
 
 
 def get_archive_zstd_nice():
   """Added nice for archive zstd child processes (0 disables). Default 10."""
   _ensure_cfg_loaded()
-  raw = cfg.get('PORTAL', 'archive_zstd_nice', fallback='10')
+  raw = _ini_get(
+      "PIPELINE", "archive_zstd_nice", fallback="10", legacy_sections=("PORTAL",),
+  )
   return max(0, int(raw))
 
 
 def get_archive_zstd_ionice_class():
   """I/O scheduling class for archive zstd (0=none, 2=best-effort, 3=idle). Default 2."""
   _ensure_cfg_loaded()
-  raw = cfg.get('PORTAL', 'archive_zstd_ionice_class', fallback='2')
+  raw = _ini_get(
+      "PIPELINE",
+      "archive_zstd_ionice_class",
+      fallback="2",
+      legacy_sections=("PORTAL",),
+  )
   return max(0, min(3, int(raw)))
 
 
 def get_archive_zstd_ionice_level():
   """I/O priority level within class for archive zstd (0-7). Default 6."""
   _ensure_cfg_loaded()
-  raw = cfg.get('PORTAL', 'archive_zstd_ionice_level', fallback='6')
+  raw = _ini_get(
+      "PIPELINE",
+      "archive_zstd_ionice_level",
+      fallback="6",
+      legacy_sections=("PORTAL",),
+  )
   return max(0, min(7, int(raw)))
 
 
 def get_archive_seal_parallel_workers():
   """Max concurrent daily tar seals during maintenance. Default 4."""
   _ensure_cfg_loaded()
-  raw = cfg.get('PORTAL', 'archive_seal_parallel_workers', fallback='4')
+  raw = _ini_get(
+      "PIPELINE",
+      "archive_seal_parallel_workers",
+      fallback="4",
+      legacy_sections=("PORTAL",),
+  )
   return max(1, int(raw))
 
 
@@ -396,10 +512,11 @@ def get_archive_maintenance_interval_seconds():
   """Seconds between zstd seal runs and verified raw removal (default 8h)."""
   _ensure_cfg_loaded()
   default_interval = float(8 * 3600)
-  raw_value = cfg.get(
-      'PORTAL',
-      'archive_maintenance_interval_seconds',
+  raw_value = _ini_get(
+      "PIPELINE",
+      "archive_maintenance_interval_seconds",
       fallback=str(default_interval),
+      legacy_sections=("PORTAL",),
   )
   try:
     interval = float(raw_value)
@@ -414,10 +531,11 @@ def get_archive_maintenance_max_defer_seconds():
   """Max seconds to defer scheduled maintenance while archive append is in flight (default 1h)."""
   _ensure_cfg_loaded()
   default_max_defer = float(3600)
-  raw_value = cfg.get(
-      'PORTAL',
-      'archive_maintenance_max_defer_seconds',
+  raw_value = _ini_get(
+      "PIPELINE",
+      "archive_maintenance_max_defer_seconds",
       fallback=str(default_max_defer),
+      legacy_sections=("PORTAL",),
   )
   try:
     max_defer = float(raw_value)
@@ -451,11 +569,16 @@ def get_server_name():
 def get_cors_origin_scheme():
   """Return ``http`` or ``https`` when building CORS origins from ``[DEFAULT] server``.
 
-  Optional ``[DEFAULT] cors_origin_scheme`` may be set to ``http`` or ``https``.
-  When omitted, defaults to ``https`` (TLS-terminated deployments).
+  Optional ``[PORTAL] cors_origin_scheme`` may be set to ``http`` or ``https``
+  (legacy: ``[DEFAULT]``). When omitted, defaults to ``https``.
   """
   _ensure_cfg_loaded()
-  raw = cfg.get('DEFAULT', 'cors_origin_scheme', fallback='').strip().lower()
+  raw = _ini_get(
+      "PORTAL",
+      "cors_origin_scheme",
+      fallback="",
+      legacy_sections=("DEFAULT",),
+  ).strip().lower()
   if raw in ('http', 'https'):
     return raw
   return 'https'
@@ -571,28 +694,28 @@ def get_syslog_generated_config_path():
 
 
 def get_engine_name():
-  """Return the Django database engine name from PORTAL config."""
-  return _get('PORTAL', 'engine_name')
+  """Return the Django database engine name from DEFAULT config (legacy: PORTAL)."""
+  return _ini_option("DEFAULT", "engine_name", legacy_sections=("PORTAL",))
 
 
 def get_username():
-  """Return the portal DB username from PORTAL config."""
-  return _get('PORTAL', 'username')
+  """Return the portal DB username from DEFAULT config (legacy: PORTAL)."""
+  return _ini_option("DEFAULT", "username", legacy_sections=("PORTAL",))
 
 
 def get_password():
-  """Return the portal DB password from PORTAL config."""
-  return _get('PORTAL', 'password')
+  """Return the portal DB password from DEFAULT config (legacy: PORTAL)."""
+  return _ini_option("DEFAULT", "password", legacy_sections=("PORTAL",))
 
 
 def get_host():
-  """Return the portal DB host from PORTAL config."""
-  return _get('PORTAL', 'host')
+  """Return the portal DB host from DEFAULT config (legacy: PORTAL)."""
+  return _ini_option("DEFAULT", "host", legacy_sections=("PORTAL",))
 
 
 def get_port():
-  """Return the portal DB port from PORTAL config."""
-  return _get('PORTAL', 'port')
+  """Return the portal DB port from DEFAULT config (legacy: PORTAL)."""
+  return _ini_option("DEFAULT", "port", legacy_sections=("PORTAL",))
 
 
 def get_xalt_engine():
@@ -689,7 +812,12 @@ def get_max_gunicorn_workers_cap():
   PostgreSQL ``max_connections`` (Compose default **500**) alongside metrics/sync pools.
   """
   _ensure_cfg_loaded()
-  return int(cfg.get("DEFAULT", "max_gunicorn_workers", fallback="32"))
+  return int(_ini_get(
+      "PORTAL",
+      "max_gunicorn_workers",
+      fallback="32",
+      legacy_sections=("DEFAULT",),
+  ))
 
 
 def get_metrics_pool_process_cap():
@@ -698,7 +826,12 @@ def get_metrics_pool_process_cap():
   if env:
     return int(env)
   _ensure_cfg_loaded()
-  return int(cfg.get("DEFAULT", "metrics_pool_process_cap", fallback="32"))
+  return int(_ini_get(
+      "PIPELINE",
+      "metrics_pool_process_cap",
+      fallback="32",
+      legacy_sections=("DEFAULT",),
+  ))
 
 
 def get_metrics_pool_process_count():
@@ -722,12 +855,12 @@ def get_metrics_pool_process_count():
 
 def get_cpuset_pin_min_total_cores():
   _ensure_cfg_loaded()
-  return int(cfg.get("DEFAULT", "cpuset_pin_min_total_cores", fallback="32"))
+  return _pipeline_getint("cpuset_pin_min_total_cores", fallback=32)
 
 
 def get_cpuset_pin_min_cores_per_node():
   _ensure_cfg_loaded()
-  return int(cfg.get("DEFAULT", "cpuset_pin_min_cores_per_node", fallback="16"))
+  return _pipeline_getint("cpuset_pin_min_cores_per_node", fallback=16)
 
 
 def get_web_numa_node():
@@ -743,13 +876,13 @@ def get_pipeline_numa_node():
 def get_pin_proxy_for_compose():
   """If True, NUMA pinning script also sets ``cpuset`` on ``proxy`` (match web node)."""
   _ensure_cfg_loaded()
-  return _parse_bool(cfg.get("DEFAULT", "pin_proxy_in_compose", fallback="no"))
+  return _parse_bool(_pipeline_get("pin_proxy_in_compose", fallback="no"))
 
 
 def get_numa_pin_max_nodes_auto():
   """Auto compose pinning supports up to this many NUMA nodes without explicit ids."""
   _ensure_cfg_loaded()
-  return int(cfg.get("DEFAULT", "numa_pin_max_nodes_auto", fallback="16"))
+  return _pipeline_getint("numa_pin_max_nodes_auto", fallback=16)
 
 
 def get_parallel_db_prefetch_max_workers():
@@ -758,46 +891,61 @@ def get_parallel_db_prefetch_max_workers():
   Default **4** (INI ``parallel_db_prefetch_max``); summary aggregate prefetch also applies a
   hard cap in ``summaryplot`` so nested pools do not multiply against the API executor.
 
-  Override with ``[DEFAULT] parallel_db_prefetch_max`` or env ``PARALLEL_DB_PREFETCH_MAX``.
+  Override with ``[PORTAL] parallel_db_prefetch_max`` or env ``PARALLEL_DB_PREFETCH_MAX``.
   """
   env = os.environ.get("PARALLEL_DB_PREFETCH_MAX", "").strip()
   if env:
     return max(1, int(env))
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "parallel_db_prefetch_max", fallback="4")))
+  return max(1, int(_ini_get(
+      "PORTAL",
+      "parallel_db_prefetch_max",
+      fallback="4",
+      legacy_sections=("DEFAULT",),
+  )))
 
 
 def get_api_small_executor_max_workers():
   """Max workers for shared ``ThreadPoolExecutor`` in ``site.machine.api``.
 
-  If ``[DEFAULT] api_small_executor_max_workers`` is set, it wins; otherwise
+  If ``[PORTAL] api_small_executor_max_workers`` is set, it wins; otherwise
   ``get_parallel_db_prefetch_max_workers()`` (default **4**).
   """
   _ensure_cfg_loaded()
-  if cfg.has_option("DEFAULT", "api_small_executor_max_workers"):
-    return max(1, int(cfg.get("DEFAULT", "api_small_executor_max_workers")))
+  if _ini_has_option_any(
+      "PORTAL", "api_small_executor_max_workers", ("DEFAULT",),
+  ):
+    return max(1, int(_ini_get(
+        "PORTAL",
+        "api_small_executor_max_workers",
+        legacy_sections=("DEFAULT",),
+    )))
   return get_parallel_db_prefetch_max_workers()
 
 
 def get_db_conn_max_age():
   """Django ``CONN_MAX_AGE`` in seconds (default **90**).
 
-  Env ``DJANGO_CONN_MAX_AGE`` overrides ``[DEFAULT] db_conn_max_age``.
+  Env ``DJANGO_CONN_MAX_AGE`` overrides ``[PORTAL] db_conn_max_age``.
   """
-  return _env_or_cfg_int("DJANGO_CONN_MAX_AGE", "DEFAULT", "db_conn_max_age", 90)
+  return _env_or_cfg_int(
+      "DJANGO_CONN_MAX_AGE", "PORTAL", "db_conn_max_age", 90,
+      legacy_sections=("DEFAULT",),
+  )
 
 
 def get_db_statement_timeout_ms():
   """``statement_timeout`` in milliseconds for PostgreSQL session options.
 
   ``0`` means do not set (omit from Django ``OPTIONS``). Default **120000** (2 minutes).
-  Env ``DJANGO_DB_STATEMENT_TIMEOUT_MS`` overrides ``[DEFAULT] db_statement_timeout_ms``.
+  Env ``DJANGO_DB_STATEMENT_TIMEOUT_MS`` overrides ``[PORTAL] db_statement_timeout_ms``.
   """
   return _env_or_cfg_int(
       "DJANGO_DB_STATEMENT_TIMEOUT_MS",
-      "DEFAULT",
+      "PORTAL",
       "db_statement_timeout_ms",
       120000,
+      legacy_sections=("DEFAULT",),
   )
 
 
@@ -805,9 +953,10 @@ def get_db_idle_in_transaction_session_timeout_ms():
   """``idle_in_transaction_session_timeout`` in ms; ``0`` = omit. Default **300000** (5 min)."""
   return _env_or_cfg_int(
       "DJANGO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS",
-      "DEFAULT",
+      "PORTAL",
       "db_idle_in_transaction_session_timeout_ms",
       300000,
+      legacy_sections=("DEFAULT",),
   )
 
 
@@ -844,8 +993,8 @@ def get_sync_pool_process_cap():
   if env:
     return int(env)
   _ensure_cfg_loaded()
-  if cfg.has_option("DEFAULT", "sync_pool_process_cap"):
-    return cfg.getint("DEFAULT", "sync_pool_process_cap")
+  if _pipeline_has_option("sync_pool_process_cap"):
+    return _pipeline_getint("sync_pool_process_cap", fallback=1)
   return None
 
 
@@ -855,8 +1004,8 @@ def get_archive_pool_process_cap():
   if env:
     return int(env)
   _ensure_cfg_loaded()
-  if cfg.has_option("DEFAULT", "archive_pool_process_cap"):
-    return cfg.getint("DEFAULT", "archive_pool_process_cap")
+  if _pipeline_has_option("archive_pool_process_cap"):
+    return _pipeline_getint("archive_pool_process_cap", fallback=1)
   return None
 
 
@@ -882,13 +1031,11 @@ def get_sync_archive_pool_processes():
 
 
 def _budget_ratio(name, fallback):
-  _ensure_cfg_loaded()
-  return float(cfg.get("DEFAULT", name, fallback=str(fallback)))
+  return _pipeline_getfloat(name, fallback=fallback)
 
 
 def _budget_floor_percent(name, fallback):
-  _ensure_cfg_loaded()
-  return int(cfg.get("DEFAULT", name, fallback=str(fallback)))
+  return _pipeline_getint(name, fallback=fallback)
 
 
 def get_pipeline_overlap_mode():
@@ -897,7 +1044,7 @@ def get_pipeline_overlap_mode():
   if env in ("balanced", "ingest_priority"):
     return env
   _ensure_cfg_loaded()
-  mode = cfg.get("DEFAULT", "pipeline_overlap_mode", fallback="balanced").strip().lower()
+  mode = _pipeline_get("pipeline_overlap_mode", fallback="balanced").strip().lower()
   return mode if mode in ("balanced", "ingest_priority") else "balanced"
 
 
@@ -906,14 +1053,14 @@ def get_metrics_ingest_priority_scale():
   _ensure_cfg_loaded()
   return max(
       0.10,
-      min(1.00, float(cfg.get("DEFAULT", "metrics_ingest_priority_scale", fallback="0.75"))),
+      min(1.00, _pipeline_getfloat("metrics_ingest_priority_scale", fallback=0.75)),
   )
 
 
 def get_metrics_min_processes():
   """Minimum metrics worker count under ingest-priority overlap mode."""
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "metrics_min_processes", fallback="1")))
+  return max(1, _pipeline_getint("metrics_min_processes", fallback=1))
 
 
 def get_metrics_scheduler_mode():
@@ -922,8 +1069,8 @@ def get_metrics_scheduler_mode():
   if env in ("strict_date", "global_fifo", "global_priority"):
     return env
   _ensure_cfg_loaded()
-  mode = cfg.get(
-      "DEFAULT", "metrics_scheduler_mode", fallback="global_priority"
+  mode = _pipeline_get(
+      "metrics_scheduler_mode", fallback="global_priority",
   ).strip().lower()
   if mode in ("strict_date", "global_fifo", "global_priority"):
     return mode
@@ -933,13 +1080,13 @@ def get_metrics_scheduler_mode():
 def get_metrics_scheduler_prefetch_chunks():
   """Max chunk descriptors prefetched ahead for global scheduler."""
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "metrics_scheduler_prefetch_chunks", fallback="8")))
+  return max(1, _pipeline_getint("metrics_scheduler_prefetch_chunks", fallback=8))
 
 
 def get_metrics_scheduler_ready_queue_target():
   """Target ready-jid queue depth before compute dispatch."""
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "metrics_scheduler_ready_queue_target", fallback="2000")))
+  return max(1, _pipeline_getint("metrics_scheduler_ready_queue_target", fallback=2000))
 
 
 def get_metrics_plot_prewarm_mode():
@@ -948,8 +1095,8 @@ def get_metrics_plot_prewarm_mode():
   if env in ("inline", "pipeline_required"):
     return env
   _ensure_cfg_loaded()
-  mode = cfg.get(
-      "DEFAULT", "metrics_plot_prewarm_mode", fallback="pipeline_required"
+  mode = _pipeline_get(
+      "metrics_plot_prewarm_mode", fallback="pipeline_required",
   ).strip().lower()
   if mode in ("inline", "pipeline_required"):
     return mode
@@ -963,7 +1110,7 @@ def get_metrics_scheduler_skip_prewarm():
     return _parse_bool(env)
   _ensure_cfg_loaded()
   return _parse_bool(
-      cfg.get("DEFAULT", "metrics_scheduler_skip_prewarm", fallback="no"),
+      _pipeline_get("metrics_scheduler_skip_prewarm", fallback="no"),
   )
 
 
@@ -980,7 +1127,7 @@ def get_metrics_per_jid_phase_diagnostics_enabled():
 def get_metrics_prewarm_workers():
   """Thread workers for required plot prewarm stage."""
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "metrics_prewarm_workers", fallback="4")))
+  return max(1, _pipeline_getint("metrics_prewarm_workers", fallback=4))
 
 
 def get_metrics_prewarm_backlog_cap():
@@ -995,7 +1142,7 @@ def get_metrics_prewarm_backlog_cap():
   try:
     return max(
         1,
-        int(cfg.get("DEFAULT", "metrics_prewarm_backlog_cap", fallback="32")),
+        int(_pipeline_get("metrics_prewarm_backlog_cap", fallback="32")),
     )
   except (TypeError, ValueError, OverflowError):
     return 32
@@ -1015,13 +1162,7 @@ def get_metrics_prewarm_backpressure_wait_s():
   try:
     return max(
         0.0,
-        float(
-            cfg.get(
-                "DEFAULT",
-                "metrics_prewarm_backpressure_wait_s",
-                fallback="0.25",
-            )
-        ),
+        _pipeline_getfloat("metrics_prewarm_backpressure_wait_s", fallback=0.25),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.25
@@ -1045,13 +1186,7 @@ def get_metrics_prewarm_drain_batch_budget_base_s():
   try:
     return max(
         0.0,
-        float(
-            cfg.get(
-                "DEFAULT",
-                "metrics_prewarm_drain_batch_budget_s",
-                fallback="2.0",
-            )
-        ),
+        _pipeline_getfloat("metrics_prewarm_drain_batch_budget_s", fallback=2.0),
     )
   except (TypeError, ValueError, OverflowError):
     return 2.0
@@ -1071,13 +1206,7 @@ def get_metrics_prewarm_drain_batch_budget_max_s():
   try:
     return max(
         0.0,
-        float(
-            cfg.get(
-                "DEFAULT",
-                "metrics_prewarm_drain_batch_budget_max_s",
-                fallback="60.0",
-            )
-        ),
+        _pipeline_getfloat("metrics_prewarm_drain_batch_budget_max_s", fallback=60.0),
     )
   except (TypeError, ValueError, OverflowError):
     return 60.0
@@ -1097,13 +1226,7 @@ def get_metrics_prewarm_drain_budget_per_successful_job_s():
   try:
     return max(
         0.0,
-        float(
-            cfg.get(
-                "DEFAULT",
-                "metrics_prewarm_drain_per_job_s",
-                fallback="0.5",
-            )
-        ),
+        _pipeline_getfloat("metrics_prewarm_drain_per_job_s", fallback=0.5),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.5
@@ -1128,13 +1251,7 @@ def get_metrics_compute_batch_max_window_seconds():
   try:
     return max(
         0.0,
-        float(
-            cfg.get(
-                "DEFAULT",
-                "metrics_compute_batch_max_window_s",
-                fallback="0",
-            )
-        ),
+        _pipeline_getfloat("metrics_compute_batch_max_window_s", fallback=0.0),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.0
@@ -1158,13 +1275,7 @@ def get_metrics_compute_batch_max_single_job_runtime_seconds():
   try:
     return max(
         0.0,
-        float(
-            cfg.get(
-                "DEFAULT",
-                "metrics_compute_batch_max_single_job_s",
-                fallback="0",
-            )
-        ),
+        _pipeline_getfloat("metrics_compute_batch_max_single_job_s", fallback=0.0),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.0
@@ -1184,13 +1295,7 @@ def get_metrics_compute_batch_unknown_runtime_seconds():
   try:
     return max(
         0.0,
-        float(
-            cfg.get(
-                "DEFAULT",
-                "metrics_compute_batch_unknown_runtime_s",
-                fallback="172800",
-            )
-        ),
+        _pipeline_getfloat("metrics_compute_batch_unknown_runtime_s", fallback=172800.0),
     )
   except (TypeError, ValueError, OverflowError):
     return 172800.0
@@ -1210,13 +1315,7 @@ def get_metrics_compute_watchdog_seconds():
   try:
     return max(
         1.0,
-        float(
-            cfg.get(
-                "DEFAULT",
-                "metrics_compute_watchdog_s",
-                fallback="120",
-            )
-        ),
+        _pipeline_getfloat("metrics_compute_watchdog_s", fallback=120.0),
     )
   except (TypeError, ValueError, OverflowError):
     return 120.0
@@ -1240,13 +1339,7 @@ def get_metrics_compute_total_watchdog_seconds():
   try:
     return max(
         0.0,
-        float(
-            cfg.get(
-                "DEFAULT",
-                "metrics_compute_total_watchdog_s",
-                fallback="0",
-            )
-        ),
+        _pipeline_getfloat("metrics_compute_total_watchdog_s", fallback=0.0),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.0
@@ -1265,13 +1358,7 @@ def get_metrics_deferred_not_ready_retry_seconds():
   try:
     return max(
         0.1,
-        float(
-            cfg.get(
-                "DEFAULT",
-                "metrics_deferred_not_ready_retry_s",
-                fallback="10",
-            )
-        ),
+        _pipeline_getfloat("metrics_deferred_not_ready_retry_s", fallback=10.0),
     )
   except (TypeError, ValueError, OverflowError):
     return 10.0
@@ -1290,7 +1377,7 @@ def get_metrics_deferred_not_ready_max_retries():
   try:
     return max(
         1,
-        int(cfg.get("DEFAULT", "metrics_deferred_not_ready_max_retries", fallback="30")),
+        _pipeline_getint("metrics_deferred_not_ready_max_retries", fallback=30),
     )
   except (TypeError, ValueError, OverflowError):
     return 30
@@ -1309,13 +1396,7 @@ def get_metrics_deferred_not_ready_max_age_seconds():
   try:
     return max(
         1.0,
-        float(
-            cfg.get(
-                "DEFAULT",
-                "metrics_deferred_not_ready_max_age_s",
-                fallback="900",
-            )
-        ),
+        _pipeline_getfloat("metrics_deferred_not_ready_max_age_s", fallback=900.0),
     )
   except (TypeError, ValueError, OverflowError):
     return 900.0
@@ -1334,13 +1415,7 @@ def get_metrics_deferred_not_ready_quarantine_seconds():
   try:
     return max(
         1.0,
-        float(
-            cfg.get(
-                "DEFAULT",
-                "metrics_deferred_not_ready_quarantine_s",
-                fallback="300",
-            )
-        ),
+        _pipeline_getfloat("metrics_deferred_not_ready_quarantine_s", fallback=300.0),
     )
   except (TypeError, ValueError, OverflowError):
     return 300.0
@@ -1351,7 +1426,7 @@ def get_metrics_scheduler_compute_threads():
   _ensure_cfg_loaded()
   return max(
       1,
-      int(cfg.get("DEFAULT", "metrics_scheduler_compute_threads", fallback="4")),
+      _pipeline_getint("metrics_scheduler_compute_threads", fallback=4),
   )
 
 
@@ -1367,7 +1442,7 @@ def get_metrics_run_poll_timeout_s():
   try:
     return max(
         0.1,
-        float(cfg.get("DEFAULT", "metrics_run_poll_timeout_s", fallback="5")),
+        float(_pipeline_get("metrics_run_poll_timeout_s", fallback="5")),
     )
   except (TypeError, ValueError, OverflowError):
     return 5.0
@@ -1385,7 +1460,7 @@ def get_sync_pool_poll_timeout_s():
   try:
     return max(
         0.05,
-        float(cfg.get("DEFAULT", "sync_pool_poll_timeout_s", fallback="5")),
+        float(_pipeline_get("sync_pool_poll_timeout_s", fallback="5")),
     )
   except (TypeError, ValueError, OverflowError):
     return 5.0
@@ -1403,7 +1478,7 @@ def get_metrics_run_stall_timeout_s():
   try:
     return max(
         5.0,
-        float(cfg.get("DEFAULT", "metrics_run_stall_timeout_s", fallback="900")),
+        float(_pipeline_get("metrics_run_stall_timeout_s", fallback="900")),
     )
   except (TypeError, ValueError, OverflowError):
     return 600.0
@@ -1425,7 +1500,7 @@ def get_metrics_run_per_job_timeout_s():
   try:
     return max(
         0.0,
-        float(cfg.get("DEFAULT", "metrics_run_per_job_timeout_s", fallback="0")),
+        float(_pipeline_get("metrics_run_per_job_timeout_s", fallback="0")),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.0
@@ -1445,13 +1520,7 @@ def get_metrics_persist_statement_timeout_ms():
   try:
     return max(
         1000,
-        int(
-            cfg.get(
-                "DEFAULT",
-                "metrics_persist_statement_timeout_ms",
-                fallback="120000",
-            )
-        ),
+        int(_pipeline_get("metrics_persist_statement_timeout_ms", fallback="120000")),
     )
   except (TypeError, ValueError, OverflowError):
     return 120000
@@ -1469,13 +1538,7 @@ def get_metrics_persist_lock_timeout_ms():
   try:
     return max(
         1000,
-        int(
-            cfg.get(
-                "DEFAULT",
-                "metrics_persist_lock_timeout_ms",
-                fallback="10000",
-            )
-        ),
+        int(_pipeline_get("metrics_persist_lock_timeout_ms", fallback="10000")),
     )
   except (TypeError, ValueError, OverflowError):
     return 10000
@@ -1484,13 +1547,13 @@ def get_metrics_persist_lock_timeout_ms():
 def get_metrics_prewarm_retry_attempts():
   """Retry attempts for plot artifact prewarm tasks."""
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "metrics_prewarm_retry_attempts", fallback="2")))
+  return max(1, _pipeline_getint("metrics_prewarm_retry_attempts", fallback=2))
 
 
 def get_metrics_proxy_reject_jid_batch_size():
   """Max jids per DB round-trip in ``update_metrics`` proxy readiness (PostgreSQL)."""
   _ensure_cfg_loaded()
-  return max(8, int(cfg.get("DEFAULT", "metrics_proxy_reject_jid_batch_size", fallback="48")))
+  return max(8, _pipeline_getint("metrics_proxy_reject_jid_batch_size", fallback=48))
 
 
 def get_sync_enable_cpuset_priority_budget():
@@ -1500,7 +1563,7 @@ def get_sync_enable_cpuset_priority_budget():
     return _parse_bool(env)
   _ensure_cfg_loaded()
   return _parse_bool(
-      cfg.get("DEFAULT", "sync_enable_cpuset_priority_budget", fallback="yes"),
+      _pipeline_get("sync_enable_cpuset_priority_budget", fallback="yes"),
       default=True,
   )
 
@@ -1574,51 +1637,55 @@ def get_sync_enable_overprovision_mode():
     return _parse_bool(env)
   _ensure_cfg_loaded()
   return _parse_bool(
-      cfg.get("DEFAULT", "sync_enable_overprovision_mode", fallback="no"),
+      _pipeline_get("sync_enable_overprovision_mode", fallback="no"),
   )
 
 
 def get_sync_overprovision_ingest_multiplier():
   return _env_or_cfg_bounded_float(
       "SYNC_OVERPROVISION_INGEST_MULTIPLIER",
-      "DEFAULT",
+      "PIPELINE",
       "sync_overprovision_ingest_multiplier",
       1.00,
       lower=1.00,
       upper=2.50,
+      legacy_sections=_PIPELINE_LEGACY,
   )
 
 
 def get_sync_overprovision_archive_multiplier():
   return _env_or_cfg_bounded_float(
       "SYNC_OVERPROVISION_ARCHIVE_MULTIPLIER",
-      "DEFAULT",
+      "PIPELINE",
       "sync_overprovision_archive_multiplier",
       1.00,
       lower=1.00,
       upper=2.50,
+      legacy_sections=_PIPELINE_LEGACY,
   )
 
 
 def get_sync_overprovision_metrics_multiplier():
   return _env_or_cfg_bounded_float(
       "SYNC_OVERPROVISION_METRICS_MULTIPLIER",
-      "DEFAULT",
+      "PIPELINE",
       "sync_overprovision_metrics_multiplier",
       1.00,
       lower=0.10,
       upper=2.50,
+      legacy_sections=_PIPELINE_LEGACY,
   )
 
 
 def get_sync_budget_overcommit_factor():
   return _env_or_cfg_bounded_float(
       "SYNC_BUDGET_OVERCOMMIT_FACTOR",
-      "DEFAULT",
+      "PIPELINE",
       "sync_budget_overcommit_factor",
       1.00,
       lower=1.00,
       upper=2.00,
+      legacy_sections=_PIPELINE_LEGACY,
   )
 
 
@@ -1647,37 +1714,37 @@ def pipeline_cpu_process_buckets(include_browser_phase=False, include_rsync=Fals
 def get_sync_ingest_queue_max_size():
   """Bound for in-memory ingest work queue (default 2000)."""
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "sync_ingest_queue_max_size", fallback="2000")))
+  return max(1, _pipeline_getint("sync_ingest_queue_max_size", fallback=2000))
 
 
 def get_sync_archive_queue_max_size():
   """Bound for in-memory archive work queue (default 1000)."""
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "sync_archive_queue_max_size", fallback="1000")))
+  return max(1, _pipeline_getint("sync_archive_queue_max_size", fallback=1000))
 
 
 def get_sync_archive_retry_max_attempts():
   """Maximum archive retries before dead-letter behavior (default 5)."""
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "sync_archive_retry_max_attempts", fallback="5")))
+  return max(1, _pipeline_getint("sync_archive_retry_max_attempts", fallback=5))
 
 
 def get_sync_archive_retry_backoff_base_seconds():
   """Base archive retry backoff in seconds (default 1)."""
   _ensure_cfg_loaded()
-  return max(0.0, float(cfg.get("DEFAULT", "sync_archive_retry_backoff_base_seconds", fallback="1")))
+  return max(0.0, float(_pipeline_get("sync_archive_retry_backoff_base_seconds", fallback="1")))
 
 
 def get_sync_archive_retry_backoff_max_seconds():
   """Ceiling archive retry backoff in seconds (default 60)."""
   _ensure_cfg_loaded()
-  return max(0.0, float(cfg.get("DEFAULT", "sync_archive_retry_backoff_max_seconds", fallback="60")))
+  return max(0.0, float(_pipeline_get("sync_archive_retry_backoff_max_seconds", fallback="60")))
 
 
 def get_sync_checkpoint_flush_batch_size():
   """Number of processed-file state transitions between checkpoint writes (default 100)."""
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "sync_checkpoint_flush_batch_size", fallback="100")))
+  return max(1, _pipeline_getint("sync_checkpoint_flush_batch_size", fallback=100))
 
 
 def get_sync_host_itimes_cache_max_timestamps_per_entry():
@@ -1685,11 +1752,7 @@ def get_sync_host_itimes_cache_max_timestamps_per_entry():
   _ensure_cfg_loaded()
   return max(
       1,
-      int(cfg.get(
-          "DEFAULT",
-          "sync_host_itimes_cache_max_timestamps_per_entry",
-          fallback="100000",
-      )),
+      _pipeline_getint("sync_host_itimes_cache_max_timestamps_per_entry", fallback=100000),
   )
 
 
@@ -1699,8 +1762,8 @@ def get_sync_write_lock_shards():
   if env:
     return max(1, int(env))
   _ensure_cfg_loaded()
-  if cfg.has_option("DEFAULT", "sync_write_lock_shards"):
-    return max(1, int(cfg.get("DEFAULT", "sync_write_lock_shards")))
+  if _pipeline_has_option("sync_write_lock_shards"):
+    return max(1, _pipeline_getint("sync_write_lock_shards", fallback=1))
   # Default scales modestly with cores to reduce write serialization without
   # exploding contention on smaller systems (40 effective cores -> 8 shards).
   return max(1, min(8, get_effective_cores() // 5))
@@ -1709,13 +1772,13 @@ def get_sync_write_lock_shards():
 def get_sync_enable_db_writer_pipeline():
   """Feature flag for optional parse-worker -> DB-writer queue pipeline (default disabled)."""
   _ensure_cfg_loaded()
-  return _parse_bool(cfg.get("DEFAULT", "sync_enable_db_writer_pipeline", fallback="no"))
+  return _parse_bool(_pipeline_get("sync_enable_db_writer_pipeline", fallback="no"))
 
 
 def get_sync_db_writer_combined_task():
   """Parse+write in one ingest worker (no parent DataFrame staging; default no)."""
   _ensure_cfg_loaded()
-  return _parse_bool(cfg.get("DEFAULT", "sync_db_writer_combined_task", fallback="no"))
+  return _parse_bool(_pipeline_get("sync_db_writer_combined_task", fallback="no"))
 
 
 def get_sync_db_writer_stage_max_batch():
@@ -1723,30 +1786,26 @@ def get_sync_db_writer_stage_max_batch():
   _ensure_cfg_loaded()
   return max(
       1,
-      int(cfg.get("DEFAULT", "sync_db_writer_stage_max_batch", fallback="8")),
+      _pipeline_getint("sync_db_writer_stage_max_batch", fallback=8),
   )
 
 
 def get_sync_ingest_chunk_size():
   """Stats files processed per ingest chunk (default 1000)."""
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "sync_ingest_chunk_size", fallback="1000")))
+  return max(1, _pipeline_getint("sync_ingest_chunk_size", fallback=1000))
 
 
 def get_sync_supervisor_rss_limit_mb():
   """Supervisor RSS limit in MiB; 0 disables fail-fast exit (default 0)."""
   _ensure_cfg_loaded()
-  return max(0, int(cfg.get("DEFAULT", "sync_supervisor_rss_limit_mb", fallback="0")))
+  return max(0, _pipeline_getint("sync_supervisor_rss_limit_mb", fallback=0))
 
 
 def get_sync_supervisor_rss_check_every_n_chunks():
   """Check supervisor RSS every N processed chunks (default 1)."""
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get(
-      "DEFAULT",
-      "sync_supervisor_rss_check_every_n_chunks",
-      fallback="1",
-  )))
+  return max(1, _pipeline_getint("sync_supervisor_rss_check_every_n_chunks", fallback=1))
 
 
 def get_sync_db_writer_pool_multiplier():
@@ -1754,7 +1813,7 @@ def get_sync_db_writer_pool_multiplier():
   _ensure_cfg_loaded()
   return max(
       0.10,
-      min(2.00, float(cfg.get("DEFAULT", "sync_db_writer_pool_multiplier", fallback="0.80"))),
+      min(2.00, float(_pipeline_get("sync_db_writer_pool_multiplier", fallback="0.80"))),
   )
 
 
@@ -1763,8 +1822,8 @@ def get_sync_db_writer_pool_cap():
   if env:
     return max(1, int(env))
   _ensure_cfg_loaded()
-  if cfg.has_option("DEFAULT", "sync_db_writer_pool_cap"):
-    return max(1, int(cfg.get("DEFAULT", "sync_db_writer_pool_cap")))
+  if _pipeline_has_option("sync_db_writer_pool_cap"):
+    return max(1, _pipeline_getint("sync_db_writer_pool_cap", fallback=1))
   return None
 
 
@@ -1780,7 +1839,7 @@ def get_sync_db_writer_pool_processes(ingest_processes=None):
 def get_sync_adaptive_dispatch_enabled():
   _ensure_cfg_loaded()
   return _parse_bool(
-      cfg.get("DEFAULT", "sync_adaptive_dispatch_enabled", fallback="yes"),
+      _pipeline_get("sync_adaptive_dispatch_enabled", fallback="yes"),
       default=True,
   )
 
@@ -1789,7 +1848,7 @@ def get_sync_dispatch_burst_factor():
   _ensure_cfg_loaded()
   return max(
       1.0,
-      min(4.0, float(cfg.get("DEFAULT", "sync_dispatch_burst_factor", fallback="2.0"))),
+      min(4.0, float(_pipeline_get("sync_dispatch_burst_factor", fallback="2.0"))),
   )
 
 
@@ -1797,13 +1856,13 @@ def get_sync_dispatch_archive_backoff_ratio():
   _ensure_cfg_loaded()
   return max(
       0.1,
-      min(1.0, float(cfg.get("DEFAULT", "sync_dispatch_archive_backoff_ratio", fallback="0.50"))),
+      min(1.0, float(_pipeline_get("sync_dispatch_archive_backoff_ratio", fallback="0.50"))),
   )
 
 
 def get_sync_dispatch_step_size():
   _ensure_cfg_loaded()
-  return max(1, int(cfg.get("DEFAULT", "sync_dispatch_step_size", fallback="8")))
+  return max(1, _pipeline_getint("sync_dispatch_step_size", fallback=8))
 
 
 def get_conf_parser_defaults_audit_snapshot():
@@ -1858,7 +1917,7 @@ def get_sync_enable_ingest_first_durability_mode():
   """Feature flag for ingest-first durability semantics (default disabled)."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      cfg.get("DEFAULT", "sync_enable_ingest_first_durability_mode", fallback="no"),
+      _pipeline_get("sync_enable_ingest_first_durability_mode", fallback="no"),
   )
 
 
@@ -1866,7 +1925,7 @@ def get_sync_archive_require_db_head_ingest():
   """Require head timestamp in host_data before tar append or raw stats removal."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      cfg.get("DEFAULT", "sync_archive_require_db_head_ingest", fallback="yes"),
+      _pipeline_get("sync_archive_require_db_head_ingest", fallback="yes"),
   )
 
 
@@ -1874,14 +1933,19 @@ def get_sync_archive_maint_hints():
   """Persist host-dir/path hints for faster archive maintenance restarts (default on)."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      cfg.get("DEFAULT", "sync_archive_maint_hints", fallback="yes"),
+      _pipeline_get("sync_archive_maint_hints", fallback="yes"),
   )
 
 
 def get_sync_archive_discovery_workers():
   """Max concurrent raw stats head-line reads during maintenance snapshot."""
   _ensure_cfg_loaded()
-  raw = cfg.get("PORTAL", "sync_archive_discovery_workers", fallback="")
+  raw = _ini_get(
+      "PIPELINE",
+      "sync_archive_discovery_workers",
+      fallback="",
+      legacy_sections=("PORTAL",),
+  )
   if str(raw).strip():
     try:
       return max(1, int(raw))

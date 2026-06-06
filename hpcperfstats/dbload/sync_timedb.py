@@ -146,7 +146,7 @@ local_timezone = cfg.get_local_timezone()
 
 # Thread count for database loading and archival (optional ini caps; see conf_parser).
 thread_count = cfg.get_sync_ingest_pool_processes()
-# zstd ``-T`` for archive decompress/seal (``PORTAL`` / ``archive_zstd_threads``; 0 → ``-T0``).
+# zstd ``-T`` for archive decompress/seal (``[PIPELINE]`` / ``archive_zstd_threads``; 0 → ``-T0``).
 
 archive_thread_count = cfg.get_sync_archive_pool_processes()
 
@@ -177,7 +177,7 @@ MAINTENANCE_OVERDUE_WARN_MULTIPLIER = 1.5
 MAINTENANCE_OVERDUE_WARN_MIN_SECONDS = 300.0
 
 # Set to 1/yes/true so ingest runs in the parent process (no spawn pool). Required
-# for pytest-django: pool workers would reconnect with default PORTAL.dbname instead
+# for pytest-django: pool workers would reconnect with default [DEFAULT] dbname instead
 # of the test database created for the session.
 _SYNC_TIMEDB_INGEST_INLINE_ENV = "HPCPERFSTATS_SYNC_TIMEDB_INGEST_INLINE"
 
@@ -2646,7 +2646,7 @@ def run_ingest_entire_archive_once_for_tests():
   """In-process equivalent of ``python sync_timedb.py once all``.
 
   Uses the active Django database (e.g. pytest-django ``test_*``), unlike a
-  subprocess which would connect to ``PORTAL.dbname`` from ini only. Forces
+  subprocess which would connect to ``[DEFAULT] dbname`` from ini only. Forces
   single-process ingest so spawn workers do not open the non-test database.
   """
   old_inline = os.environ.get(_SYNC_TIMEDB_INGEST_INLINE_ENV)

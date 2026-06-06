@@ -1084,3 +1084,84 @@ def test_format_cors_allowed_origins_preserves_full_url_token(temp_ini, monkeypa
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.format_cors_allowed_origins_csv_from_ini() == "https://already.example"
+
+
+def test_legacy_portal_fallback_for_dbname(tmp_path, monkeypatch):
+  ini = tmp_path / "legacy-portal-db.ini"
+  ini.write_text(
+      "[DEFAULT]\n"
+      "machine = test\nserver = test\ndata_dir = /tmp\n"
+      "staff_email_domain = local\ntimezone = UTC\ndebug = no\n"
+      "host_name_ext = local\nrestricted_queue_keywords =\n"
+      "total_cores = 4\n"
+      "[PORTAL]\n"
+      "dbname = legacydb\nusername = u\npassword = p\nport = 5432\n"
+      "host = legacy-host\nengine_name = django.db.backends.postgresql\n"
+      "[PIPELINE]\narchive_dir = /tmp\nacct_path = /tmp\ndaily_archive_dir = /tmp\n"
+      "[RMQ]\nrmq_server = localhost\nrmq_queue = test\n"
+      "[XALT]\nxalt_engine = django.db.backends.sqlite3\nxalt_name = xalt\n"
+      "xalt_user = u\nxalt_password = p\nxalt_host = localhost\n"
+      "[OAUTH2]\nclient_id = id\nclient_key = key\n"
+      "authorize_url = http://localhost\noauth_base_url = http://localhost\n",
+      encoding="utf-8",
+  )
+  monkeypatch.setenv("HPCPERFSTATS_INI", str(ini))
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_db_name() == "legacydb"
+  assert cfg.get_host() == "legacy-host"
+
+
+def test_legacy_default_fallback_for_moved_pipeline_key(tmp_path, monkeypatch):
+  ini = tmp_path / "legacy-default-pipeline.ini"
+  ini.write_text(
+      "[DEFAULT]\n"
+      "machine = test\nserver = test\ndata_dir = /tmp\n"
+      "staff_email_domain = local\ntimezone = UTC\ndebug = no\n"
+      "host_name_ext = local\nrestricted_queue_keywords =\n"
+      "total_cores = 4\n"
+      "sync_archive_require_db_head_ingest = no\n"
+      "engine_name = django.db.backends.postgresql\n"
+      "dbname = test\nusername = u\npassword = p\nport = 5432\nhost = localhost\n"
+      "[PIPELINE]\narchive_dir = /tmp\nacct_path = /tmp\ndaily_archive_dir = /tmp\n"
+      "[RMQ]\nrmq_server = localhost\nrmq_queue = test\n"
+      "[XALT]\nxalt_engine = django.db.backends.sqlite3\nxalt_name = xalt\n"
+      "xalt_user = u\nxalt_password = p\nxalt_host = localhost\n"
+      "[OAUTH2]\nclient_id = id\nclient_key = key\n"
+      "authorize_url = http://localhost\noauth_base_url = http://localhost\n",
+      encoding="utf-8",
+  )
+  monkeypatch.setenv("HPCPERFSTATS_INI", str(ini))
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_sync_archive_require_db_head_ingest() is False
+
+
+def test_legacy_portal_fallback_for_archive_dir(tmp_path, monkeypatch):
+  ini = tmp_path / "legacy-portal-archive.ini"
+  ini.write_text(
+      "[DEFAULT]\n"
+      "machine = test\nserver = test\ndata_dir = /tmp\n"
+      "staff_email_domain = local\ntimezone = UTC\ndebug = no\n"
+      "host_name_ext = local\nrestricted_queue_keywords =\n"
+      "total_cores = 4\n"
+      "engine_name = django.db.backends.postgresql\n"
+      "dbname = test\nusername = u\npassword = p\nport = 5432\nhost = localhost\n"
+      "[PORTAL]\narchive_dir = /legacy/archive\n"
+      "acct_path = /legacy/acct\ndaily_archive_dir = /legacy/daily\n"
+      "[RMQ]\nrmq_server = localhost\nrmq_queue = test\n"
+      "[XALT]\nxalt_engine = django.db.backends.sqlite3\nxalt_name = xalt\n"
+      "xalt_user = u\nxalt_password = p\nxalt_host = localhost\n"
+      "[OAUTH2]\nclient_id = id\nclient_key = key\n"
+      "authorize_url = http://localhost\noauth_base_url = http://localhost\n",
+      encoding="utf-8",
+  )
+  monkeypatch.setenv("HPCPERFSTATS_INI", str(ini))
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_archive_dir_path() == "/legacy/archive"
+  assert cfg.get_accounting_path() == "/legacy/acct"
+  assert cfg.get_daily_archive_dir_path() == "/legacy/daily"

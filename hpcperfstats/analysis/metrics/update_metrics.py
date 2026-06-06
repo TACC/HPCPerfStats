@@ -2404,7 +2404,7 @@ def _compute_jid_outcomes_batch(
 
   A single ``Metrics.run(job_refs, …)`` saturates the process pool; prewarm
   uses ``_PrewarmPipeline.submit`` + ``drain_some`` when ``pipeline_required``,
-  or runs inline when configured. Set ``[DEFAULT] metrics_scheduler_skip_prewarm``
+  or runs inline when configured. Set ``[PIPELINE] metrics_scheduler_skip_prewarm``
   (or env ``HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM``) to skip plot/detail
   persistence for catch-up runs.
 

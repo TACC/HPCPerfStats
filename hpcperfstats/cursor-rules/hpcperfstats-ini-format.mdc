@@ -1,6 +1,6 @@
 ---
 description: Format and wiring contract for hpcperfstats.ini and hpcperfstats.ini.example
-globs: HPCPerfStats/hpcperfstats.ini.example,HPCPerfStats/hpcperfstats.ini,HPCPerfStats/hpcperfstats/conf_parser.py
+globs: HPCPerfStats/hpcperfstats.ini.example,HPCPerfStats/hpcperfstats.ini,HPCPerfStats/hpcperfstats/conf_parser.py,HPCPerfStats/hpcperfstats/ini_section_placement.py
 alwaysApply: false
 ---
 
@@ -25,24 +25,52 @@ option_name = value
 next_option = value
 ```
 
+## Section taxonomy
+
+| Section | Put keys here when… | Examples |
+|---------|---------------------|----------|
+| **`[DEFAULT]`** | Install/site identity; PostgreSQL connection; compose NUMA/cpuset pinning (pinning keys **last**) | `machine`, `server`, `secret_key`, `engine_name`, `dbname`, `cpuset_pin_min_*`, `web_numa_node` |
+| **`[PORTAL]`** | Gunicorn, Django web stack, CORS, API thread pools, Django session PG timeouts — **not** ingest/archive/metrics | `max_gunicorn_workers`, `db_conn_max_age`, `cors_origin_scheme` |
+| **`[PIPELINE]`** | `sync_timedb`, archive/seal, `update_metrics`, `sync_acct`, `listend` paths and tuning | `sync_*`, `metrics_*`, `archive_*`, `acct_path`, `pipeline_overlap_mode` |
+| **`[OAUTH2]`** | OAuth2 client/tenant URLs only | `client_id`, `authorize_url`, … |
+| **`[RMQ]`** | RabbitMQ monitor ingest only | `rmq_server`, `rmq_queue` |
+| **`[SYSLOG]`** | Pipeline syslog-ng allowlist/listeners only | `allow_from`, `listen_tcp`, … |
+| **`[CACHE]`** | Django Redis cache URL only | `redis_location` |
+| **`[XALT]`** | Optional XALT DB integration only | `xalt_*` |
+
+**`[DEFAULT]` block order:** install/site identity → PostgreSQL connection → cpuset/NUMA pinning (six keys, always last; optional keys commented in example).
+
 ## Section placement
 
-- Each option must live in the **same `[section]`** as its `conf_parser` reader (`cfg.get(section, option)` or `_get(section, option)`).
-- Example: **`sync_archive_require_db_head_ingest`** is **`[DEFAULT]`**, not `[PORTAL]`.
+- Each option must live in the **same `[section]`** as its `conf_parser` reader and **`ini_section_placement.expected_section()`**.
+- Example: **`sync_archive_require_db_head_ingest`** is **`[PIPELINE]`**, not `[DEFAULT]` or `[PORTAL]`.
 
-## Registry and drift tests
+**Prefix heuristics (enforced in `ini_section_placement.py`):**
 
-- **`hpcperfstats/conf_parser.py`** → **`INI_OPTION_REGISTRY`**: every ini-backed `(section, option)` pair.
-- **`hpcperfstats/tests/test_hpcperfstats_ini_example.py`**: example must document every registry entry (active or `# key =`) and must not document unknown keys.
+- `sync_*`, `metrics_*` → **`[PIPELINE]`**
+- `archive_*` → **`[PIPELINE]`**
+- `max_gunicorn_*`, `parallel_db_*`, `api_small_*`, `db_conn_*`, `db_statement_*`, `db_idle_*`, `cors_*` → **`[PORTAL]`**
+- `xalt_*` → **`[XALT]`**; `rmq_*` → **`[RMQ]`**
+
+When ambiguous, ask the operator/product owner; do not guess.
 
 ## When adding or changing a tunable
 
 In the **same task**:
 
-1. Add or update the getter in **`conf_parser.py`** (or extend an existing reader).
-2. Append **`(section, option)`** to **`INI_OPTION_REGISTRY`**.
-3. Document the key in **`hpcperfstats.ini.example`** (uncommented if required for deploy; `# key = default` if optional).
-4. Run **`pytest hpcperfstats/tests/test_hpcperfstats_ini_example.py`** and relevant **`test_conf_parser.py`** cases.
+1. Classify using the taxonomy above.
+2. Add or update the getter in **`conf_parser.py`** with primary section + legacy fallback in **`_ini_option()`** when migrating keys.
+3. Append **`(section, option)`** to **`INI_OPTION_REGISTRY`**.
+4. Ensure **`ini_section_placement.py`** covers the option (explicit map or prefix rule).
+5. Document the key in **`hpcperfstats.ini.example`** in the correct section and **`[DEFAULT]`** order.
+6. Run **`test_hpcperfstats_ini_example.py`**, **`test_ini_section_placement_contract.py`**, and relevant **`test_conf_parser.py`** cases.
+
+## Registry and drift tests
+
+- **`hpcperfstats/conf_parser.py`** → **`INI_OPTION_REGISTRY`**: every ini-backed `(section, option)` pair.
+- **`hpcperfstats/ini_section_placement.py`** → **`expected_section()`** / **`validate_registry_sections()`**.
+- **`hpcperfstats/tests/test_hpcperfstats_ini_example.py`**: example documents every registry entry; pinning keys last in `[DEFAULT]`.
+- **`hpcperfstats/tests/test_ini_section_placement_contract.py`**: registry matches placement contract.
 
 ## Env-only overrides (not ini keys)
 

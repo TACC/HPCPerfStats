@@ -2,6 +2,8 @@
 
 This document summarizes how **thread/process counts** and **Docker Compose CPU sets** relate to **PostgreSQL `max_connections`** and large hosts (including multi-NUMA systems).
 
+**Ini sections:** **`[DEFAULT]`** — install identity, PostgreSQL connection, compose NUMA/cpuset (pinning keys last). **`[PORTAL]`** — Gunicorn/Django web tuning. **`[PIPELINE]`** — `sync_timedb`, archive/seal, `update_metrics`, and accounting paths. Integration sections **`[RMQ]`**, **`[SYSLOG]`**, **`[CACHE]`**, **`[XALT]`**, **`[OAUTH2]`** are unchanged. See **`hpcperfstats.ini.example`** and **`hpcperfstats/cursor-rules/hpcperfstats-ini-format.mdc`**.
+
 ## Services and parallelism (compose)
 
 | Service | Role | Parallelism | DB impact |
@@ -22,7 +24,7 @@ This document summarizes how **thread/process counts** and **Docker Compose CPU 
 
 Daily monitor archives are sealed inside the **`pipeline`** container. On hosts **without** Docker CPU pinning, **`web`**, **`db`**, and **`pipeline`** share the same CPU scheduler and often the same physical disk (`postgres_data` vs `/opt/hpcperfstats_data/`).
 
-| `[PORTAL]` key | Default | Role |
+| `[PIPELINE]` key | Default | Role |
 |----------------|---------|------|
 | **`archive_zstd_threads`** | **`0`** | **`0`** → zstd **`-T0`** (all logical cores per zstd process); **`N>0`** → explicit **`-TN`** override |
 | **`archive_seal_parallel_workers`** | **`4`** | Max concurrent daily tar seals during maintenance |
@@ -44,7 +46,7 @@ Compose sets **`max_connections=500`** with **reduced `work_mem` / parallel gath
 
 ## Connection lifetime, query timeouts, and staggered pipeline
 
-- **`CONN_MAX_AGE`:** Default **90** seconds (`[DEFAULT] db_conn_max_age` or **`DJANGO_CONN_MAX_AGE`**). Lowers how long idle Gunicorn workers hold a backend. Does not cap peak concurrency under full load; pairs with the caps above.
+- **`CONN_MAX_AGE`:** Default **90** seconds (`[PORTAL] db_conn_max_age` or **`DJANGO_CONN_MAX_AGE`**). Lowers how long idle Gunicorn workers hold a backend. Does not cap peak concurrency under full load; pairs with the caps above.
 - **`statement_timeout` / `idle_in_transaction_session_timeout`:** Defaults **120000 ms** and **300000 ms** for PostgreSQL sessions via Django **`OPTIONS`** (`conf_parser.build_postgres_connection_options()`). The **`db`** service in **`docker-compose.yaml`** sets the same server parameters so non-Django clients inherit them. Disable per-session timeouts by setting **`DJANGO_DB_STATEMENT_TIMEOUT_MS=0`** and **`DJANGO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS=0`** (and adjust compose if you remove server defaults). Tune upward only if legitimate bulk jobs hit the limit.
 - **Staggered supervisord jobs:** [`services-conf/supervisord.conf.example`](../services-conf/supervisord.conf.example) starts **`listend`** first (higher priority), then **`sync_timedb`** after **20s**, then **`update_metrics`** after **90s**, so restarts do not open every DB pool at the same instant. Adjust sleeps and **`priority`** for your site.
 
@@ -65,7 +67,7 @@ Priority buckets used for accounting and deprioritization:
 - `normal`: sync archive/retries + update_metrics + startup migrations/bootstrap
 - `best_effort`: `syslog-ng`, `seal_syslog_daily.py`, optional `rsync_data`, optional browser/API test traffic
 
-Relevant ini keys:
+Relevant ini keys (all under **`[PIPELINE]`** unless noted):
 
 - `sync_enable_cpuset_priority_budget`
 - `sync_budget_ingest_ratio`

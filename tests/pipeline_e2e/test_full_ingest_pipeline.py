@@ -107,7 +107,7 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
   assert drained == len(bodies)
 
   # In-process ingest so workers use pytest-django's test DB (a subprocess would
-  # follow PORTAL.dbname from ini and write to the non-test database).
+  # follow [DEFAULT] dbname from ini and write to the non-test database).
   run_ingest_entire_archive_once_for_tests()
 
   local_end = django_timezone.localtime(end_job)

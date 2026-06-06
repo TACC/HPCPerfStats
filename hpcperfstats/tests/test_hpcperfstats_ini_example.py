@@ -6,6 +6,10 @@ from pathlib import Path
 import pytest
 
 from hpcperfstats import conf_parser as cfg
+from hpcperfstats.ini_section_placement import (
+    DEFAULT_PINNING_OPTIONS,
+    validate_registry_sections,
+)
 
 
 def _repo_ini_example_path():
@@ -60,22 +64,62 @@ def test_ini_example_has_no_unknown_options():
   )
 
 
-def test_sync_archive_require_db_head_ingest_not_under_portal():
+def test_ini_example_registry_matches_section_placement_contract():
+  violations = validate_registry_sections(cfg.INI_OPTION_REGISTRY)
+  assert not violations, violations
+
+
+def test_sync_archive_require_db_head_ingest_under_pipeline_not_portal():
   path = _repo_ini_example_path()
   text = path.read_text(encoding="utf-8")
-  in_portal = False
+  current = None
   for line in text.splitlines():
     stripped = line.strip()
-    if stripped == "[PORTAL]":
-      in_portal = True
-      continue
     if stripped.startswith("[") and stripped.endswith("]"):
-      in_portal = stripped == "[PORTAL]"
+      current = stripped[1:-1].strip()
       continue
-    if in_portal and "sync_archive_require_db_head_ingest" in line:
-      pytest.fail(
-          "sync_archive_require_db_head_ingest must be under [DEFAULT], not [PORTAL]",
-      )
+    if "sync_archive_require_db_head_ingest" not in line:
+      continue
+    assert current == "PIPELINE", (
+        "sync_archive_require_db_head_ingest must be under [PIPELINE], not [%s]"
+        % current
+    )
+
+
+def test_default_pinning_keys_are_last_in_section():
+  path = _repo_ini_example_path()
+  lines = path.read_text(encoding="utf-8").splitlines()
+  in_default = False
+  default_keys = []
+  for line in lines:
+    stripped = line.strip()
+    if stripped == "[DEFAULT]":
+      in_default = True
+      continue
+    if in_default and stripped.startswith("[") and stripped.endswith("]"):
+      break
+    match = _OPTION_LINE_RE.match(line)
+    if in_default and match:
+      default_keys.append(match.group(1))
+  assert default_keys, "expected documented keys under [DEFAULT]"
+  pinning = [k for k in default_keys if k in DEFAULT_PINNING_OPTIONS]
+  non_pinning = [k for k in default_keys if k not in DEFAULT_PINNING_OPTIONS]
+  assert pinning, "expected cpuset/pinning keys documented in [DEFAULT]"
+  assert default_keys[-len(pinning):] == pinning, (
+      "cpuset/pinning keys must be last in [DEFAULT]; order was %s"
+      % default_keys
+  )
+  assert not any(k in DEFAULT_PINNING_OPTIONS for k in non_pinning[len(non_pinning):])
+
+
+def test_no_duplicate_options_across_sections_in_example():
+  path = _repo_ini_example_path()
+  documented = _parse_documented_ini_options(path)
+  by_option = {}
+  for section, option in documented:
+    by_option.setdefault(option, set()).add(section)
+  duplicates = {opt: sections for opt, sections in by_option.items() if len(sections) > 1}
+  assert not duplicates, "options documented in multiple sections: %s" % duplicates
 
 
 def test_ini_example_option_blocks_have_preceding_comment():

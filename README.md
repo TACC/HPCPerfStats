@@ -254,7 +254,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    The host bind mount for `hpcperfstatsdata` maps to **`/hpcperfstats/`** in the `pipeline` and `web` containers (for example `/hpcperfstats/accounting`, `/hpcperfstats/archive`, `/hpcperfstats/daily_archive`, and **`/hpcperfstats/logs/`** for cluster syslog).
 
-   **Daily monitor archive compression:** `sync_timedb` seals each day’s `YYYY-MM-DD.tar` to **`YYYY-MM-DD.tar.zst`** with **zstd**. Defaults: **`archive_zstd_threads=0`** (**`-T0`**, all cores per zstd job), **`archive_seal_parallel_workers=4`** (concurrent daily seals), **`nice`/`ionice`** deprioritization for web/db on unpinned hosts — see **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** (Archive zstd priority). Other `[PORTAL]` keys: `archive_zstd_level`, `archive_zstd_nice`, `archive_zstd_ionice_class`, `archive_zstd_ionice_level` in `hpcperfstats.ini.example`. When inspecting archives by hand, use for example `zstd -d -o YYYY-MM-DD.tar YYYY-MM-DD.tar.zst` (legacy `.tar.gz` uses `zstd -d --format=gzip`). Before raising `archive_zstd_level` above **9** on production data, benchmark a representative daily tar on the pipeline host: `zstd -b3 -e12 -T0 -S -- ./YYYY-MM-DD.tar`.
+   **Daily monitor archive compression:** `sync_timedb` seals each day’s `YYYY-MM-DD.tar` to **`YYYY-MM-DD.tar.zst`** with **zstd**. Defaults: **`archive_zstd_threads=0`** (**`-T0`**, all cores per zstd job), **`archive_seal_parallel_workers=4`** (concurrent daily seals), **`nice`/`ionice`** deprioritization for web/db on unpinned hosts — see **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** (Archive zstd priority). Other **`[PIPELINE]`** keys: `archive_zstd_level`, `archive_zstd_nice`, `archive_zstd_ionice_class`, `archive_zstd_ionice_level` in `hpcperfstats.ini.example`. When inspecting archives by hand, use for example `zstd -d -o YYYY-MM-DD.tar YYYY-MM-DD.tar.zst` (legacy `.tar.gz` uses `zstd -d --format=gzip`). Before raising `archive_zstd_level` above **9** on production data, benchmark a representative daily tar on the pipeline host: `zstd -b3 -e12 -T0 -S -- ./YYYY-MM-DD.tar`.
 
    **Cluster syslog (optional but typical on production clusters):** the **`pipeline`** service publishes **TCP and UDP port 514** on the Docker host. Compute or login nodes should forward syslog to **`<docker-host>:514`** (rsyslog examples: TCP `@@host:514`, UDP `@host:514`). Ingest runs in **`syslog-ng`** inside `pipeline` (not `web`). Live files are written under **`/hpcperfstats/logs/current/`** as **`$HOST.$R_YEAR$R_MONTH$R_DAY.log`** (one file per host per calendar day). After local midnight, **`seal_syslog_daily`** (supervisord) packs the previous day’s files into **`/hpcperfstats/logs/log_archive/YYYY-MM-DD-syslog.tar.gz`** and removes the sealed sources. This mirrors the “`current` vs sealed archive” story used for monitor data under `archive_dir` / `daily_archive`.
 
@@ -270,7 +270,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    cp hpcperfstats.ini.example hpcperfstats.ini
    ```
 
-   In `hpcperfstats.ini` under `[DEFAULT]`:
+   In `hpcperfstats.ini` under **`[DEFAULT]`** (install-required and site-wide):
 
    - `machine` — cluster name  
    - `host_name_ext` — FQDN of the cluster  
@@ -279,16 +279,21 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    - `staff_email_domain` - the email domain of the institution/organization so authorized staff can see all jobs
    - `timezone` - your machine's local timezone
    - `total_cores` - CPU budget for app parallelism (omit to use code default **40**; see `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`)
-   - `max_gunicorn_workers`, `parallel_db_prefetch_max`, `api_small_executor_max_workers` - web/API memory pressure controls (override `WEB_CONCURRENCY` in compose for Gunicorn worker count)
-   - `db_conn_max_age` / `DJANGO_CONN_MAX_AGE` - how long idle Django workers keep a PostgreSQL backend open (shorter frees slots faster at the cost of connect overhead)
-   - `metrics_pool_process_cap`, `metrics_scheduler_prefetch_chunks`, `metrics_scheduler_ready_queue_target`, `metrics_prewarm_workers`, `metrics_scheduler_compute_threads`, optional `metrics_compute_batch_max_window_s` / `metrics_compute_batch_max_single_job_s`, `metrics_prewarm_drain_batch_budget_s` / `metrics_prewarm_drain_per_job_s` / `metrics_prewarm_drain_batch_budget_max_s`, `metrics_compute_watchdog_s` / `metrics_compute_total_watchdog_s`, and `metrics_deferred_not_ready_*` — update_metrics memory, batching, prewarm drain, watchdog, and deferred-readiness backoff controls
-   - `sync_pool_process_cap`, `archive_pool_process_cap`, `sync_ingest_queue_max_size`, `sync_archive_queue_max_size`, `sync_checkpoint_flush_batch_size` - ingest/archive memory controls (including `sync_timedb_archive.py`, which derives workers from sync ingest pool settings)
    - `secret_key` - a random string
+   - PostgreSQL connection: `engine_name`, `dbname`, `username`, `password`, `host`, `port` (Compose uses `host=db` in the image-built ini)
+   - Optional compose NUMA/cpuset overrides (`cpuset_pin_min_*`, `web_numa_node`, `pipeline_numa_node`, …) appear **last** in `[DEFAULT]` in the example file
 
-   You will only need to edit the `[DEFAULT]` section as detailed above. The `[RMQ]` and `[PORTAL]` sections have been configured to work for the docker installation, and we do not recommend changing any of the variables in these sections.
-   If you need to edit some of those variables, please note that a lot of them are tied to the docker yaml file. For **cluster syslog**, add or edit the optional **`[SYSLOG]`** section (see `hpcperfstats.ini.example` and the compose step above).
+   Optional tuning lives in other sections (see `hpcperfstats.ini.example`):
 
-   **`hpcperfstats.ini.example` layout:** each setting has a one-line `#` comment directly above it; optional tuning keys appear commented with defaults matching `conf_parser`. Pipeline/archive behavior (zstd seal, DB-before-append gate **`sync_archive_require_db_head_ingest`** under **`[DEFAULT]`**, syslog allowlist) is described in the bullets above and in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**.
+   - **`[PORTAL]`** — Gunicorn/Django web stack only: `max_gunicorn_workers`, `parallel_db_prefetch_max`, `api_small_executor_max_workers`, `db_conn_max_age`, `db_statement_timeout_ms`, `db_idle_in_transaction_timeout_ms`, `cors_origin_scheme`
+   - **`[PIPELINE]`** — ingest, archive, and metrics: required paths `acct_path`, `archive_dir`, `daily_archive_dir`; optional `sync_*`, `metrics_*`, `archive_*`, `pipeline_overlap_mode`, and related keys
+   - **`[RMQ]`**, **`[OAUTH2]`**, optional **`[CACHE]`**, **`[SYSLOG]`**, **`[XALT]`** — integration sections unchanged
+
+   For a fresh Docker install you typically edit **`[DEFAULT]`** as above; **`[RMQ]`** and PostgreSQL defaults in the example are already wired for Compose. Do not change **`[RMQ]`** hostnames unless your RabbitMQ layout differs. For **cluster syslog**, add or edit the optional **`[SYSLOG]`** section (see `hpcperfstats.ini.example` and the compose step above).
+
+   **`hpcperfstats.ini.example` layout:** each setting has a one-line `#` comment directly above it; optional tuning keys appear commented with defaults matching `conf_parser`. Pipeline/archive behavior (zstd seal, DB-before-append gate **`sync_archive_require_db_head_ingest`** under **`[PIPELINE]`**, syslog allowlist) is described in the bullets above and in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**.
+
+   **Upgrading from an older ini layout:** PostgreSQL keys moved from **`[PORTAL]`** to **`[DEFAULT]`**; ingest/archive/metrics keys moved from **`[DEFAULT]`** / **`[PORTAL]`** to **`[PIPELINE]`**. Existing deployments keep working via legacy section fallbacks in `conf_parser` until you migrate keys into the new sections.
 
    **PostgreSQL container (`docker-compose.yaml` `db` service):** `max_connections` is **500** so overlapping Gunicorn workers, threaded API routes (`job_plots`, `home_options`, `job_detail` aux tasks), and pipeline pools rarely hit `too many clients`. **Memory spikes** are controlled in the same `command:` block by a **lower `work_mem`**, **tighter `max_parallel_workers` / `max_parallel_workers_per_gather`**, **smaller maintenance/autovacuum work mem**, **`temp_buffers`**, and a **slightly lower `shared_buffers`** than the prior profile—see inline comments there. Summary plot aggregate prefetch uses at most **two** inner threads (see `summaryplot.compute_summary_aggregate_prefetch_pool_size`) so nested thread pools do not stack against the shared API executor. If legitimate bulk jobs slow down, prefer raising `work_mem` only during batch windows or increasing the `db` container `mem_limit` rather than unconstrained per-query memory.
 
