@@ -152,6 +152,21 @@ STRICT_READINESS_DB_LOCK_TIMEOUT_MS = int(
     os.environ.get("HPCPERFSTATS_STRICT_READINESS_DB_LOCK_TIMEOUT_MS", "10000")
 )
 
+# Non-zero exit so supervisord ``autorestart`` replaces a wedged scheduler pass.
+METRICS_SCHEDULER_STALL_EXIT_CODE = 1
+
+
+class MetricsSchedulerStallExit(BaseException):
+  """Scheduler hit ``STALL_EXIT_AFTER_SECONDS`` with no ready progress; restart."""
+
+  exit_code = METRICS_SCHEDULER_STALL_EXIT_CODE
+
+  def __init__(self, *, stall_reason=None):
+    self.stall_reason = stall_reason or "unknown"
+    super().__init__(
+        "metrics scheduler stalled ({0})".format(self.stall_reason)
+    )
+
 
 def _job_window_runtime_seconds(start_time, end_time):
   """Return job accounting-window length in seconds, or None if not computable."""
@@ -3306,6 +3321,18 @@ def update_metrics_for_dates(dates, rerun=False):
             "scheduler_mode": scheduler_mode,
         }
 
+      if snap.get("stall_exit_triggered"):
+        log_print(
+            "metrics scheduler: stall exit triggered (stall_reason={0}); "
+            "exiting for supervisor restart.".format(
+                snap.get("stall_reason") or "unknown"
+            ),
+            flush=True,
+        )
+        raise MetricsSchedulerStallExit(
+            stall_reason=snap.get("stall_reason"),
+        )
+
   run_with_db_retry(
       _run,
       attempts=2,
@@ -3404,6 +3431,8 @@ if __name__ == "__main__":
       sys.exit(143)
   except DatabaseUnavailableExit:
     sys.exit(2)
+  except MetricsSchedulerStallExit as exc:
+    sys.exit(exc.exit_code)
   finally:
     _shutdown_db_best_effort()
     _notify_parent_if_sigterm(sigterm_received)

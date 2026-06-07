@@ -1772,7 +1772,9 @@ def test_update_metrics_for_dates_sets_stall_diagnostics_on_no_progress(monkeypa
   monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
   update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS = None
-  update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  with pytest.raises(update_metrics.MetricsSchedulerStallExit) as excinfo:
+    update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  assert excinfo.value.stall_reason == "no_ready_candidates"
   diag = update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS
   assert diag is not None
   assert diag["stats"]["stall_exit_triggered"] == 1
@@ -2874,6 +2876,37 @@ def test_compute_and_prewarm_jid_logs_when_full_pipeline_succeeds(monkeypatch):
   joined = " ".join(" ".join(str(x) for x in tup) for tup in recorded)
   assert "jid-x" in joined and "compute complete" in joined
   assert "metrics=" in joined and "job_detail=" in joined and "job_plots=" in joined
+
+
+@pytest.mark.machine_unit_mock
+def test_main_exits_on_scheduler_stall_without_sleep(monkeypatch):
+  """Stall exit should terminate the process path and skip legacy post-run sleep."""
+  monkeypatch.setattr(update_metrics, "_default_metrics_date_range", lambda: (
+      datetime(2025, 4, 1), datetime(2025, 4, 1)))
+  monkeypatch.setattr(
+      update_metrics,
+      "parse_start_end_dates",
+      lambda argv, default_start, default_end: (default_start, default_end),
+  )
+  monkeypatch.setattr(update_metrics, "log_date_range", lambda *args, **kwargs: None)
+  monkeypatch.setattr(update_metrics, "log_print", lambda *args, **kwargs: None)
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_sync_enable_cpuset_priority_budget", lambda: False
+  )
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  update_metrics.shutdown_requested[0] = False
+  sleeps = []
+  monkeypatch.setattr(update_metrics, "sleep_until_shutdown", lambda secs: sleeps.append(secs))
+
+  def _raise_stall(_dates):
+    raise update_metrics.MetricsSchedulerStallExit(stall_reason="no_ready_candidates")
+
+  monkeypatch.setattr(update_metrics, "update_metrics_for_dates", _raise_stall)
+
+  with pytest.raises(update_metrics.MetricsSchedulerStallExit):
+    update_metrics.main(argv=["update_metrics.py"], sleep_after=True)
+
+  assert sleeps == []
 
 
 @pytest.mark.machine_unit_mock

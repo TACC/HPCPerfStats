@@ -30,6 +30,7 @@ When changing `hpcperfstats/analysis/metrics/metrics.py` (`Metrics.run`, `_unwra
 
 - Count `worker_db_error`, `worker_compute_error`, and `worker_stall_timeout` in `worker_failed_outcomes_total`.
 - Batch-level stall recovery (`STALL_RECOVERY_*`) remains the backstop when `Metrics.run` still raises.
+- Producer no-progress stall (`STALL_EXIT_AFTER_SECONDS`, ``stall_exit_triggered=1``) must raise ``MetricsSchedulerStallExit`` after cleanup so ``update_metrics.py`` exits (code **1**) and **supervisord** restarts—do not fall through to the legacy post-run sleep.
 
 ## Tests (same task)
 
