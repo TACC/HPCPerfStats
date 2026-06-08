@@ -204,7 +204,15 @@ The background **`ArchiveJanitor`** processes up to **`archive_janitor_days_per_
 
 **Validation read locks:** parallel raw-remove validation defaults to **`sync_archive_validation_max_workers=2`** (INI `[PIPELINE]`). Raise only when append/read-lock contention is acceptable.
 
-**Pool stall guard:** `sync_pool_stall_abort_after_timeouts` (default **120** poll intervals) aborts `imap_unordered_watch_pool` when a worker is alive but stuck; supervisor may exit and supervisord restarts the tree.
+**Pool stall guard (exit 124):** When `imap_unordered_watch_pool` sees **N** consecutive poll timeouts with **no** completed task while all workers are still alive, it raises `MultiprocessingPoolStallError` and `sync_timedb` exits with status **124** (not OOM **137**, not parse errors). Default wall time is `sync_pool_stall_abort_after_timeouts` × `sync_pool_poll_timeout_s` (**120** × **5s** ≈ **10 minutes**). Logs now include an **`ERROR: Pool imap stalled`** line before exit, plus **`WARN: pool imap stall progress`** at 50%/75% of the abort threshold with an **`in_flight_sample`** of paths still in the chunk.
+
+| Knob | Default | Effect |
+|------|---------|--------|
+| `sync_pool_poll_timeout_s` | 5 | Poll interval between imap progress checks |
+| `sync_pool_stall_abort_after_timeouts` | 120 | Consecutive timeouts before exit **124** |
+| `sync_ingest_per_file_timeout_s` | 0 (off) | Wall-clock cap per ingest worker task; on expiry the file returns `ingest_ok=False` for retry instead of blocking the chunk |
+
+For large DB sites with slow duplicate-detection or bulk writes, prefer enabling **`sync_ingest_per_file_timeout_s`** (for example **900**) so one straggler path does not hold the whole chunk until the pool stall abort. Raising only `sync_pool_stall_abort_after_timeouts` prolongs hangs without identifying the path. Ingest-time DLO quarantine for permanently corrupt raw is separate from exit **124**.
 
 **Unmapped closed raw:** when ingest backlog prevents full accrual snapshots, the supervisor unions a cached unmapped-closed-raw scan into janitor disqualification so `.tar` drop cannot proceed while unparseable closed raw remains on disk.
 

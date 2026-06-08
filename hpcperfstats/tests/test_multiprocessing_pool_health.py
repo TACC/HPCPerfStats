@@ -156,8 +156,58 @@ def test_imap_unordered_watch_pool_aborts_on_stuck_worker_stall(monkeypatch):
       poll_timeout_s=0.01,
       context="test_stall",
   )
+  with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
+    next(iterator)
+  assert excinfo.value.exit_code == 124
+
+
+def test_imap_stall_logs_before_raise(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      lambda: 2,
+  )
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  pool = _BlockingPool()
+  iterator = mph.imap_unordered_watch_pool(
+      pool,
+      lambda x: x,
+      [1],
+      poll_timeout_s=0.01,
+      context="test_stall_log",
+  )
   with pytest.raises(mph.MultiprocessingPoolStallError):
     next(iterator)
+  assert any("ERROR:" in line and "Pool imap stalled" in line for line in logs)
+  assert any("test_stall_log" in line for line in logs)
+
+
+def test_imap_stall_warning_callback(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      lambda: 4,
+  )
+  warnings = []
+
+  def on_stall_warning(consecutive, abort_after, poll_timeout_s, context):
+    warnings.append(
+        (consecutive, abort_after, poll_timeout_s, context),
+    )
+
+  pool = _BlockingPool()
+  iterator = mph.imap_unordered_watch_pool(
+      pool,
+      lambda x: x,
+      [1],
+      poll_timeout_s=0.01,
+      context="test_warn",
+      on_stall_warning=on_stall_warning,
+  )
+  with pytest.raises(mph.MultiprocessingPoolStallError):
+    next(iterator)
+  assert warnings[0][0] == 2
+  assert warnings[1][0] == 3
+  assert warnings[-1][0] == 4
 
 
 def test_close_pool_bounded_closes_alive_workers():

@@ -180,6 +180,128 @@ EMPTY_QUEUE_RESCAN_SLEEP_SECONDS = 30
 LOCK_WAIT_LOG_THRESHOLD_SECONDS = 30.0
 FINALIZE_POLL_TIMEOUT_SECONDS = 0.05
 
+
+class IngestPerFileTimeoutError(TimeoutError):
+  """Raised when one ingest pool task exceeds ``sync_ingest_per_file_timeout_s``."""
+
+  def __init__(self, path, stage, elapsed_s):
+    self.path = str(path)
+    self.stage = str(stage)
+    self.elapsed_s = float(elapsed_s)
+    super().__init__(
+        "ingest per-file timeout path=%s stage=%s elapsed_s=%.3f"
+        % (self.path, self.stage, self.elapsed_s)
+    )
+
+
+class _IngestPoolInFlightTracker:
+  """Tracks paths dispatched to an ingest pool but not yet returned via imap."""
+
+  def __init__(self, paths):
+    self._pending = {
+        os.path.normpath(p)
+        for p in (paths or ())
+        if p
+    }
+
+  def complete(self, path):
+    if path:
+      self._pending.discard(os.path.normpath(path))
+
+  def sample_in_flight(self, max_n=10):
+    return sorted(self._pending)[: max(0, int(max_n))]
+
+
+def _resolve_sync_ingest_per_file_timeout_s():
+  return float(cfg.get_sync_ingest_per_file_timeout_s())
+
+
+def _run_ingest_timed(stats_file, stage, fn):
+  """Run ingest worker body with optional Unix wall-clock cap."""
+  timeout_s = _resolve_sync_ingest_per_file_timeout_s()
+  if timeout_s <= 0.0:
+    return fn()
+  if not hasattr(signal, "SIGALRM"):
+    return fn()
+
+  path_label = str(stats_file)
+  t0 = time.monotonic()
+
+  def _handler(signum, frame):
+    del signum, frame
+    raise IngestPerFileTimeoutError(path_label, stage, time.monotonic() - t0)
+
+  previous = signal.getsignal(signal.SIGALRM)
+  signal.signal(signal.SIGALRM, _handler)
+  try:
+    if hasattr(signal, "setitimer"):
+      signal.setitimer(signal.ITIMER_REAL, timeout_s)
+    else:
+      signal.alarm(max(1, int(timeout_s)))
+    return fn()
+  finally:
+    if hasattr(signal, "setitimer"):
+      signal.setitimer(signal.ITIMER_REAL, 0)
+    else:
+      signal.alarm(0)
+    signal.signal(signal.SIGALRM, previous)
+
+
+def _log_ingest_per_file_timeout(exc):
+  log_print(
+      "ERROR: ingest per-file timeout path=%s elapsed=%.1fs stage=%s"
+      % (exc.path, exc.elapsed_s, exc.stage),
+      flush=True,
+  )
+
+
+def _make_ingest_stall_warning_fn(tracker, *, chunk_counter, pending_count):
+  def on_stall_warning(consecutive, abort_after, poll_timeout_s, context):
+    sample = tracker.sample_in_flight() if tracker is not None else []
+    log_print(
+        "WARN: pool imap stall progress consecutive_timeouts=%d/%d "
+        "poll_timeout_s=%.3f estimated_stall_s=%.1f context=%s chunk=%d "
+        "pending=%d in_flight_sample=%s"
+        % (
+            consecutive,
+            abort_after,
+            poll_timeout_s,
+            consecutive * poll_timeout_s,
+            context or "pool",
+            int(chunk_counter),
+            int(pending_count),
+            sample,
+        ),
+        flush=True,
+    )
+
+  return on_stall_warning
+
+
+def _imap_ingest_pool(
+    pool,
+    fn,
+    paths,
+    *,
+    context,
+    tracker,
+    chunk_counter,
+    pending_count,
+):
+  if pool is None:
+    return iter(())
+  return imap_unordered_watch_pool(
+      pool,
+      fn,
+      paths,
+      context=context,
+      on_stall_warning=_make_ingest_stall_warning_fn(
+          tracker,
+          chunk_counter=chunk_counter,
+          pending_count=pending_count,
+      ),
+  )
+
 # Set to 1/yes/true so ingest runs in the parent process (no spawn pool). Required
 # for pytest-django: pool workers would reconnect with default [DEFAULT] dbname instead
 # of the test database created for the session.
@@ -350,6 +472,7 @@ def _drain_db_write_tasks(
     files_to_be_archived,
     chunk_ingest_finished,
     pending_total,
+    chunk_counter=0,
 ):
   """Write queued parse payloads and return updated finished count."""
   if not parse_tasks:
@@ -357,18 +480,30 @@ def _drain_db_write_tasks(
   writer_fn = partial(_db_writer_worker, manager_lock)
   task_batch = list(parse_tasks)
   parse_tasks.clear()
+  task_paths = [task.path for task in task_batch]
+  write_tracker = (
+      _IngestPoolInFlightTracker(task_paths)
+      if db_writer_pool is not None
+      and not _sync_timedb_ingest_inline_requested()
+      else None
+  )
   if _sync_timedb_ingest_inline_requested() or db_writer_pool is None:
     write_results_iter = (writer_fn(_db_write_task_tuple(task)) for task in task_batch)
   else:
-    write_results_iter = imap_unordered_watch_pool(
+    write_results_iter = _imap_ingest_pool(
         db_writer_pool,
         writer_fn,
         [_db_write_task_tuple(task) for task in task_batch],
         context="sync_timedb ingest db_writer pool",
+        tracker=write_tracker,
+        chunk_counter=chunk_counter,
+        pending_count=pending_total,
     )
   try:
     for result in write_results_iter:
       stats_fname, need_archival, ingest_ok, elapsed_s = result
+      if write_tracker is not None:
+        write_tracker.complete(stats_fname)
       if ingest_ok:
         _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
         successful_paths.append(stats_fname)
@@ -649,6 +784,21 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
 
   Returns (stats_file, payload, need_archival, ingest_ok, parse_elapsed_s).
   """
+  try:
+    return _run_ingest_timed(
+        stats_file,
+        "parse",
+        lambda: _parse_stats_file_payload_impl(
+            stats_file, stats_file_contents=stats_file_contents
+        ),
+    )
+  except IngestPerFileTimeoutError as exc:
+    _log_ingest_per_file_timeout(exc)
+    return (stats_file, None, False, False, exc.elapsed_s)
+
+
+def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
+  """Implementation for :func:`_parse_stats_file_payload` (parse stage only)."""
   lines = None
   parse_t0 = time.time()
 
@@ -737,6 +887,21 @@ def _db_writer_worker(lock, db_task):
   db_task is (stats_file, payload, need_archival, parse_elapsed_s).
   Returns (stats_file, need_archival, ingest_ok, total_elapsed_s).
   """
+  stats_file = db_task[0] if db_task else ""
+  try:
+    return _run_ingest_timed(
+        stats_file,
+        "write",
+        lambda: _db_writer_worker_impl(lock, db_task),
+    )
+  except IngestPerFileTimeoutError as exc:
+    _log_ingest_per_file_timeout(exc)
+    need_archival = db_task[2] if db_task and len(db_task) >= 3 else False
+    return (stats_file, need_archival, False, exc.elapsed_s)
+
+
+def _db_writer_worker_impl(lock, db_task):
+  """Implementation for :func:`_db_writer_worker` (DB write stage only)."""
   stats = None
   proc_stats = None
   with _sync_worker_db_task():
@@ -778,6 +943,21 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   seconds for the attempted ingest path. Uses lock for DB writes.
 
     """
+  try:
+    return _run_ingest_timed(
+        stats_file,
+        "ingest",
+        lambda: _add_stats_file_to_db_impl(
+            lock, stats_file, stats_file_contents=stats_file_contents
+        ),
+    )
+  except IngestPerFileTimeoutError as exc:
+    _log_ingest_per_file_timeout(exc)
+    return (stats_file, False, False, exc.elapsed_s)
+
+
+def _add_stats_file_to_db_impl(lock, stats_file, stats_file_contents=None):
+  """Implementation for :func:`add_stats_file_to_db` (parse + write combined)."""
   stats = None
   proc_stats = None
   payload = None
@@ -2034,6 +2214,7 @@ def run_sync_timedb_supervisor_loop(
               ingest_queue_high,
           )
           parse_envelopes = [ParseTask(path=path) for path in stats_files_chunk]
+          parse_tracker = None
           try:
             if _sync_timedb_ingest_inline_requested():
               parse_results_iter = (
@@ -2042,14 +2223,21 @@ def run_sync_timedb_supervisor_loop(
             elif ingest_pool is None:
               parse_results_iter = iter(())
             else:
-              parse_results_iter = imap_unordered_watch_pool(
+              parse_paths = [task.path for task in parse_envelopes]
+              parse_tracker = _IngestPoolInFlightTracker(parse_paths)
+              parse_results_iter = _imap_ingest_pool(
                   ingest_pool,
                   _parse_stats_file_payload,
-                  [task.path for task in parse_envelopes],
+                  parse_paths,
                   context="sync_timedb ingest parse pool",
+                  tracker=parse_tracker,
+                  chunk_counter=chunk_counter,
+                  pending_count=len(pending_stats_files),
               )
             for parsed in parse_results_iter:
               stats_fname, payload, need_archival, ingest_ok, parse_elapsed_s = parsed
+              if parse_tracker is not None:
+                parse_tracker.complete(stats_fname)
               k += 1
               active_workers = max(active_workers, min(thread_count, k))
               if not ingest_ok:
@@ -2081,6 +2269,7 @@ def run_sync_timedb_supervisor_loop(
                     files_to_be_archived=files_to_be_archived,
                     chunk_ingest_finished=chunk_ingest_finished,
                     pending_total=len(pending_stats_files),
+                    chunk_counter=chunk_counter,
                 )
           except MultiprocessingWorkerExitError:
             pool_worker_exit = True
@@ -2107,6 +2296,7 @@ def run_sync_timedb_supervisor_loop(
                   files_to_be_archived=files_to_be_archived,
                   chunk_ingest_finished=chunk_ingest_finished,
                   pending_total=len(pending_stats_files),
+                  chunk_counter=chunk_counter,
               )
             except MultiprocessingWorkerExitError:
               pool_worker_exit = True
@@ -2123,6 +2313,7 @@ def run_sync_timedb_supervisor_loop(
               raise
         elif db_writer_combined_task:
           add_combined = partial(_ingest_parse_and_write_file, manager_lock)
+          combined_tracker = None
           try:
             if _sync_timedb_ingest_inline_requested():
               results_iter = (
@@ -2131,11 +2322,15 @@ def run_sync_timedb_supervisor_loop(
             elif ingest_pool is None:
               results_iter = iter(())
             else:
-              results_iter = imap_unordered_watch_pool(
+              combined_tracker = _IngestPoolInFlightTracker(stats_files_chunk)
+              results_iter = _imap_ingest_pool(
                   ingest_pool,
                   add_combined,
                   stats_files_chunk,
                   context="sync_timedb ingest pool",
+                  tracker=combined_tracker,
+                  chunk_counter=chunk_counter,
+                  pending_count=len(pending_stats_files),
               )
             for result in results_iter:
               ingest_ok = True
@@ -2146,6 +2341,8 @@ def run_sync_timedb_supervisor_loop(
                 stats_fname, need_archival, ingest_ok = result[:3]
               else:
                 stats_fname, need_archival = result
+              if combined_tracker is not None:
+                combined_tracker.complete(stats_fname)
               k += 1
               active_workers = max(active_workers, min(thread_count, k))
               if ingest_ok:
@@ -2170,17 +2367,22 @@ def run_sync_timedb_supervisor_loop(
             raise
         else:
           add_stats_file = partial(add_stats_file_to_db, manager_lock)
+          ingest_tracker = None
           try:
             if _sync_timedb_ingest_inline_requested():
               results_iter = (add_stats_file(path) for path in stats_files_chunk)
             elif ingest_pool is None:
               results_iter = iter(())
             else:
-              results_iter = imap_unordered_watch_pool(
+              ingest_tracker = _IngestPoolInFlightTracker(stats_files_chunk)
+              results_iter = _imap_ingest_pool(
                   ingest_pool,
                   add_stats_file,
                   stats_files_chunk,
                   context="sync_timedb ingest pool",
+                  tracker=ingest_tracker,
+                  chunk_counter=chunk_counter,
+                  pending_count=len(pending_stats_files),
               )
             for result in results_iter:
               ingest_ok = True
@@ -2191,6 +2393,8 @@ def run_sync_timedb_supervisor_loop(
                 stats_fname, need_archival, ingest_ok = result[:3]
               else:
                 stats_fname, need_archival = result
+              if ingest_tracker is not None:
+                ingest_tracker.complete(stats_fname)
               k += 1
               active_workers = max(active_workers, min(thread_count, k))
               if ingest_ok:

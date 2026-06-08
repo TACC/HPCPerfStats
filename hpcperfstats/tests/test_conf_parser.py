@@ -881,6 +881,9 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_retry_backoff_base_seconds() == 1.0
   assert cfg.get_sync_archive_retry_backoff_max_seconds() == 60.0
   assert cfg.get_sync_checkpoint_flush_batch_size() == 100
+  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 120
+  assert cfg.get_sync_pool_poll_timeout_s() == 5.0
+  assert cfg.get_sync_ingest_per_file_timeout_s() == 0.0
 
   with open(temp_ini) as f:
     content = f.read()
@@ -892,7 +895,10 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
       "sync_archive_retry_max_attempts = 7\n"
       "sync_archive_retry_backoff_base_seconds = 2.5\n"
       "sync_archive_retry_backoff_max_seconds = 12.5\n"
-      "sync_checkpoint_flush_batch_size = 42",
+      "sync_checkpoint_flush_batch_size = 42\n"
+      "sync_pool_stall_abort_after_timeouts = 90\n"
+      "sync_pool_poll_timeout_s = 2.5\n"
+      "sync_ingest_per_file_timeout_s = 900",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
@@ -904,6 +910,11 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_retry_backoff_base_seconds() == 2.5
   assert cfg.get_sync_archive_retry_backoff_max_seconds() == 12.5
   assert cfg.get_sync_checkpoint_flush_batch_size() == 42
+  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 90
+  assert cfg.get_sync_pool_poll_timeout_s() == 2.5
+  assert cfg.get_sync_ingest_per_file_timeout_s() == 900.0
+  monkeypatch.setenv("HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S", "45")
+  assert cfg.get_sync_ingest_per_file_timeout_s() == 45.0
 
 
 def test_sync_host_itimes_cache_max_timestamps_per_entry(temp_ini, monkeypatch):

@@ -136,6 +136,15 @@ def close_pool_bounded(active_pool, timeout_s=30.0, *, force_terminate=False):
   return all_done
 
 
+def _stall_warning_thresholds(stall_abort_after):
+  """50% and 75% poll-timeout counts for one-shot stall warnings."""
+  abort_after = max(1, int(stall_abort_after))
+  return (
+      max(1, abort_after // 2),
+      max(1, (abort_after * 3) // 4),
+  )
+
+
 def imap_unordered_watch_pool(
     pool,
     fn,
@@ -143,6 +152,7 @@ def imap_unordered_watch_pool(
     *,
     poll_timeout_s=None,
     context="",
+    on_stall_warning=None,
 ):
   """Like ``pool.imap_unordered`` but abort when a worker dies (OOM-safe)."""
   if pool is None:
@@ -166,6 +176,8 @@ def imap_unordered_watch_pool(
   import hpcperfstats.conf_parser as cfg
 
   stall_abort_after = cfg.get_sync_pool_stall_abort_after_timeouts()
+  warn_thresholds = _stall_warning_thresholds(stall_abort_after)
+  warned_thresholds = set()
   consecutive_timeouts = 0
   while True:
     abort_if_pool_workers_dead(pool, context=context)
@@ -175,10 +187,41 @@ def imap_unordered_watch_pool(
       break
     except multiprocessing.TimeoutError:
       consecutive_timeouts += 1
+      for threshold in warn_thresholds:
+        if (
+            consecutive_timeouts >= threshold
+            and threshold not in warned_thresholds
+            and on_stall_warning is not None
+        ):
+          warned_thresholds.add(threshold)
+          on_stall_warning(
+              consecutive_timeouts,
+              stall_abort_after,
+              poll_timeout_s,
+              context,
+          )
       if consecutive_timeouts >= stall_abort_after:
+        estimated_stall_s = consecutive_timeouts * poll_timeout_s
+        message = (
+            "Pool imap stalled after %d consecutive poll timeouts "
+            "(context=%s poll_timeout_s=%.3f estimated_stall_s=%.1f)"
+            % (
+                consecutive_timeouts,
+                context or "pool",
+                poll_timeout_s,
+                estimated_stall_s,
+            )
+        )
+        log_print("ERROR: %s" % message, flush=True)
+        if on_stall_warning is not None:
+          on_stall_warning(
+              consecutive_timeouts,
+              stall_abort_after,
+              poll_timeout_s,
+              context,
+          )
         raise MultiprocessingPoolStallError(
-            "Pool imap stalled after %d consecutive poll timeouts (context=%s)"
-            % (consecutive_timeouts, context or "pool"),
+            message,
             dead_pids=[],
             context=context,
             exit_code=124,

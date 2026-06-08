@@ -1862,6 +1862,39 @@ def test_parse_payload_quarantines_permanent_failures(
   assert not raw_path.exists()
 
 
+def test_parse_payload_per_file_timeout_returns_failure(monkeypatch):
+  import signal
+  import time
+
+  if not hasattr(signal, "SIGALRM"):
+    pytest.skip("SIGALRM not available")
+
+  target = "/fake/slow-stats"
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.05)
+
+  def slow_impl(*_args, **_kwargs):
+    time.sleep(1.0)
+    return (target, None, False, True, 0.0)
+
+  monkeypatch.setattr(st, "_parse_stats_file_payload_impl", slow_impl)
+  stats_file, payload, need_archival, ingest_ok, elapsed_s = st._parse_stats_file_payload(
+      target,
+  )
+  assert stats_file == target
+  assert payload is None
+  assert need_archival is False
+  assert ingest_ok is False
+  assert elapsed_s >= 0.0
+
+
+def test_ingest_in_flight_tracker_sample_and_complete():
+  tracker = st._IngestPoolInFlightTracker(
+      ["/a/one", "/a/two", "/a/three"],
+  )
+  tracker.complete("/a/two")
+  assert tracker.sample_in_flight(max_n=10) == ["/a/one", "/a/three"]
+
+
 def test_parse_payload_skips_archival_when_db_complete_and_in_tar(monkeypatch):
   target = "/tmp/stats-in-tar"
   monkeypatch.setattr(st, "close_old_connections", lambda: None)
@@ -2221,8 +2254,10 @@ def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
     return []
   fake_rescan.calls = 0
 
-  def failing_watch_pool(pool, fn, iterable, *, context="", poll_timeout_s=None):
-    del pool, fn, iterable, context, poll_timeout_s
+  def failing_watch_pool(
+      pool, fn, iterable, *, context="", poll_timeout_s=None, on_stall_warning=None,
+  ):
+    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning
     raise MultiprocessingWorkerExitError(
         "worker dead",
         dead_pids=(999,),
@@ -2301,8 +2336,10 @@ def test_combined_db_writer_task_uses_single_pool_path(monkeypatch):
 
   watch_calls = []
 
-  def capture_watch(pool, fn, iterable, *, context="", poll_timeout_s=None):
-    del pool, poll_timeout_s
+  def capture_watch(
+      pool, fn, iterable, *, context="", poll_timeout_s=None, on_stall_warning=None,
+  ):
+    del pool, poll_timeout_s, on_stall_warning
     paths = list(iterable)
     watch_calls.append((fn, context, paths))
     return (fn(path) for path in paths)

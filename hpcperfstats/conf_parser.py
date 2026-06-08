@@ -105,6 +105,8 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_checkpoint_flush_batch_size"),
     ("PIPELINE", "sync_host_itimes_cache_max_timestamps_per_entry"),
     ("PIPELINE", "sync_pool_poll_timeout_s"),
+    ("PIPELINE", "sync_pool_stall_abort_after_timeouts"),
+    ("PIPELINE", "sync_ingest_per_file_timeout_s"),
     ("PIPELINE", "sync_write_lock_shards"),
     ("PIPELINE", "sync_enable_db_writer_pipeline"),
     ("PIPELINE", "sync_db_writer_combined_task"),
@@ -1567,6 +1569,24 @@ def get_sync_pool_poll_timeout_s():
     )
   except (TypeError, ValueError, OverflowError):
     return 5.0
+
+
+def get_sync_ingest_per_file_timeout_s():
+  """Wall-clock cap per ingest pool task in seconds (0 = disabled)."""
+  env = os.environ.get("HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S", "").strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 0.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(_pipeline_get("sync_ingest_per_file_timeout_s", fallback="0")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 0.0
 
 
 def get_metrics_run_stall_timeout_s():
