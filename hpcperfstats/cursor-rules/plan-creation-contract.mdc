@@ -25,7 +25,13 @@ Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, m
 2. **Approach** — ordered steps with trade-offs tied to the best-practice callouts above.
 3. **Testing** — every behavior change must include at least one **regression test and/or unit test** at the narrowest layer that proves the contract. Cite existing test modules or name new ones. For fixes, follow **`every-error-regression-test.mdc`** and **`test-first-discipline.mdc`**.
 4. **Implementation** — what will change (files/layers). Omit for answer-only or doc-only work with no logic change.
-5. **Final code review (mandatory last step)** — before the plan is complete, review for:
+5. **Cursor rules** — enshrine modalities, best practices, contracts, and failure modes that should guide future work:
+   - When this plan introduces or clarifies a **recurring** pattern (layer wiring, config contract, test workflow, safety invariant, domain modality), **add or update** a focused **`.mdc`** rule in **`hpcperfstats/cursor-rules/`** (authoritative; symlinked from **`.cursor/rules/`**). Monitor-only patterns belong in **`monitor/cursor-rules/`** when they do not apply repo-wide.
+   - **Prefer updating** an existing rule over creating a duplicate; cross-link related rules in an **Overlap** section.
+   - Keep rules narrow and actionable; base content on **verified facts** from this plan, not assumptions.
+   - If nothing merits a new or updated rule, state **no rule change needed** with one sentence of rationale.
+   - If rule scope or wording is unclear, **ask the user** before writing the **`.mdc`** text.
+6. **Final code review (mandatory last step)** — before the plan is complete, review for:
    - new edge cases
    - correctness regressions
    - performance regressions
@@ -37,6 +43,7 @@ Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, m
 A plan — and the work it describes — is **not complete** until:
 
 - tests are added or extended and executed (or blockers documented per **`test-first-discipline.mdc`**),
+- the Cursor rules step is done (rule added/updated, or explicit no-rule rationale),
 - the final code review step is done with no unfixed findings,
 - conclusions trace to verified facts.
 
@@ -52,3 +59,4 @@ A plan — and the work it describes — is **not complete** until:
 - **`testing-best-practices.mdc`**, **`test-first-discipline.mdc`**, **`every-error-regression-test.mdc`** — test layer selection and mandatory regression coverage.
 - **`monitor-consumer-side-plan.mdc`** — consumer handoff plans must include testing and final review sections.
 - **`test-runs-output-directory.mdc`** — committed **`docs/plans/`** hold design baselines; run artifacts stay under **`test_runs/`**.
+- **`chat-analysis-for-rules.mdc`** — on-demand transcript mining for rule ideas; this rule requires enshrining patterns discovered during implementation plans in the same task when clear.
