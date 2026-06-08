@@ -335,6 +335,7 @@ npm run test:coverage -- --run
 | `hpcperfstats/tests/test_monitor_naming_resolve.py` | Dual-read probe order for `monitor_naming/resolve.py`. |
 | `hpcperfstats/tests/test_monitor_analysis_typename_contract.py` | Monitor `.st_name` coverage vs `canonical.py` and roofline peak rows. |
 | `hpcperfstats/tests/test_archive_compress.py` | Pure path helpers in `archive_compress.py` (detect format, tar/zst/gz siblings, member maps). |
+| `hpcperfstats/tests/test_sync_timedb_startup_raw_removal.py` | Startup raw removal preflight: async sealed-only verify manifest, DB head gate, gated delete (host unit; no compose). Pair with `test_sync_timedb_supervisor.py` tests `test_supervisor_*_startup_*` for delete gate + post-delete rescan. |
 | `hpcperfstats/tests/test_sync_acct.py` | Accounting ingest (`sync_acct_from_content`, restricted queues, bulk fallback, cache notify) with mocked ORM. |
 | `hpcperfstats/tests/test_listend_drain.py` | RabbitMQ drain loop (ack/nack, empty queue) with mocked pika. |
 | `hpcperfstats/site/machine/tests/test_update_metrics_telemetry_coverage.py` | Window-coverage readiness helpers and legacy fallback (host unit mocks). |

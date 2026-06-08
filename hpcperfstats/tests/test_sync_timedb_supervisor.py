@@ -2531,3 +2531,247 @@ def test_sustained_ingest_backlog_skips_full_accrual_but_prior_days_progress(mon
   assert janitor.maybe_accrue_partial_debt_if_due(1.0)
   assert partial_called["n"] == 1
   assert full_called["n"] == 0
+
+
+def _supervisor_startup_preflight_patches(monkeypatch, preflight_obj):
+  import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
+
+  class _FakePreflight:
+    def __init__(self, **_kwargs):
+      self._delegate = preflight_obj
+
+    def __getattr__(self, name):
+      return getattr(self._delegate, name)
+
+  monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _FakePreflight)
+  monkeypatch.setattr(st, "StartupRawRemovalPreflight", _FakePreflight)
+
+
+def test_supervisor_ingest_continues_during_verification(monkeypatch):
+  shutdown_requested[0] = False
+  ingest_calls = {"n": 0}
+
+  class _Preflight:
+    enabled = True
+
+    def phase(self):
+      return "verifying"
+
+    def verification_complete(self):
+      return False
+
+    def needs_delete_phase(self):
+      return False
+
+    def delete_phase_done(self):
+      return False
+
+    def paths_pending_startup_delete(self):
+      return set()
+
+    def consumed_paths(self):
+      return set()
+
+    def start_async_verify(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  try:
+    target = "/fake/statsA"
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      ingest_calls["n"] += 1
+      if ingest_calls["n"] == 1:
+        return [target]
+      shutdown_requested[0] = True
+      return []
+    fake_rescan.calls = 0
+
+    def fake_add(_lock, path, _contents=None):
+      return (path, True, True, 0.0)
+
+    _supervisor_startup_preflight_patches(monkeypatch, _Preflight())
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert ingest_calls["n"] >= 1
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_waits_for_chunk_before_startup_deletes(monkeypatch):
+  shutdown_requested[0] = False
+
+  class _Preflight:
+    enabled = True
+    _phase = "verification_complete"
+
+    def phase(self):
+      return self._phase
+
+    def verification_complete(self):
+      return True
+
+    def needs_delete_phase(self):
+      return self._phase in ("verification_complete", "deleting")
+
+    def delete_phase_done(self):
+      return self._phase == "done"
+
+    def paths_pending_startup_delete(self):
+      return {"/fake/statsA"}
+
+    def consumed_paths(self):
+      return set()
+
+    def start_async_verify(self):
+      return None
+
+    def begin_deleting(self):
+      self._phase = "deleting"
+
+    def apply_deletes_from_manifest(self):
+      self._phase = "done"
+      return 1
+
+    def shutdown(self, wait=True):
+      del wait
+
+  try:
+    target = "/fake/statsA"
+    seen_chunk_in_progress = {"during_delete": None}
+
+    class _PreflightTrack(_Preflight):
+      def apply_deletes_from_manifest(self):
+        seen_chunk_in_progress["during_delete"] = chunk_flag["value"]
+        return super().apply_deletes_from_manifest()
+
+    chunk_flag = {"value": False}
+
+    def fake_add(_lock, path, _contents=None):
+      chunk_flag["value"] = True
+      return (path, True, True, 0.0)
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return [target]
+      shutdown_requested[0] = True
+      return []
+    fake_rescan.calls = 0
+
+    _supervisor_startup_preflight_patches(monkeypatch, _PreflightTrack())
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert seen_chunk_in_progress["during_delete"] is False
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_rescans_pending_after_startup_delete_complete(monkeypatch):
+  shutdown_requested[0] = False
+  deleted_path = "/fake/statsA"
+
+  class _Preflight:
+    enabled = True
+    _phase = "verification_complete"
+
+    def phase(self):
+      return self._phase
+
+    def verification_complete(self):
+      return True
+
+    def needs_delete_phase(self):
+      return self._phase != "done"
+
+    def delete_phase_done(self):
+      return self._phase == "done"
+
+    def paths_pending_startup_delete(self):
+      return {deleted_path} if self._phase != "done" else set()
+
+    def consumed_paths(self):
+      return {deleted_path} if self._phase == "done" else set()
+
+    def start_async_verify(self):
+      return None
+
+    def begin_deleting(self):
+      self._phase = "deleting"
+
+    def apply_deletes_from_manifest(self):
+      self._phase = "done"
+      return 1
+
+    def shutdown(self, wait=True):
+      del wait
+
+  try:
+    preflight = _Preflight()
+    captured_rescans = []
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      if preflight.delete_phase_done():
+        captured_rescans.append([])
+        shutdown_requested[0] = True
+        return []
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return [deleted_path]
+      shutdown_requested[0] = True
+      return []
+    fake_rescan.calls = 0
+
+    def fake_add(_lock, path, _contents=None):
+      return (path, True, True, 0.0)
+
+    _supervisor_startup_preflight_patches(monkeypatch, preflight)
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert preflight.delete_phase_done()
+    assert captured_rescans
+    assert deleted_path not in captured_rescans[-1]
+  finally:
+    shutdown_requested[0] = False

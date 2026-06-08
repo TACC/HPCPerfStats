@@ -1183,6 +1183,62 @@ def _record_validated_day_hint(validated_days_out, gz_path, members):
   validated_days_out[normalize_daily_compressed_path(gz_path)] = entry
 
 
+def classify_removable_raw_paths_for_members(
+    stats_paths,
+    members,
+    *,
+    ingest_ready_fn=None,
+):
+  """Classify raw paths against a validated member map without deleting."""
+  results = []
+  for stats_path in stats_paths:
+    if ingest_ready_fn is not None and not ingest_ready_fn(stats_path):
+      results.append(
+          (stats_path, "skipped_not_head_ingested", "not_head_ingested"))
+      continue
+    removable = get_verified_files_to_remove([stats_path], members)
+    if stats_path in removable:
+      results.append((stats_path, "verified", ""))
+      continue
+    member_name = get_tar_member_name(stats_path)
+    if member_name not in members:
+      results.append(
+          (stats_path, "skipped_not_in_archive", "not_in_sealed_archive"))
+    else:
+      results.append((stats_path, "skipped_size_mismatch", "size_mismatch"))
+  return results
+
+
+def classify_removable_raw_paths_for_daily_gz(
+    gz_path,
+    stats_paths,
+    *,
+    ingest_ready_fn=None,
+    allow_auto_seal=False,
+    log_fn=log_print,
+    validation_cache=None,
+):
+  """Classify raw paths for a daily compressed archive without deleting."""
+  if not stats_paths:
+    return []
+  ok, members = validate_sealed_daily_archive_for_raw_removal(
+      gz_path,
+      log_fn=log_fn,
+      validation_cache=validation_cache,
+      allow_auto_seal=allow_auto_seal,
+  )
+  if not ok or members is None:
+    return [
+        (path, "skipped_seal_invalid", "seal_validation_failed")
+        for path in stats_paths
+    ]
+  return classify_removable_raw_paths_for_members(
+      stats_paths,
+      members,
+      ingest_ready_fn=ingest_ready_fn,
+  )
+
+
 def remove_verified_archived_raw_files(
     archive_data_dir,
     host_name_ext,
@@ -1311,8 +1367,12 @@ def remove_verified_archived_raw_files(
     _record_validated_day_hint(validated_days_out, gz_path, members)
     deletes_this_pass = 0
     for stats_path in stats_paths_by_gz.get(gz_path, []):
-      for path in get_verified_files_to_remove([stats_path], members):
-        if not _path_ingest_ready(path):
+      for path, status, _reason in classify_removable_raw_paths_for_members(
+          [stats_path],
+          members,
+          ingest_ready_fn=_path_ingest_ready,
+      ):
+        if status != "verified":
           continue
         if (
             max_deletes_per_pass is not None

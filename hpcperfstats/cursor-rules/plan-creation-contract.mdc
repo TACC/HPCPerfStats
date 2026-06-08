@@ -38,6 +38,37 @@ Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, m
    - test gaps  
    **Fix anything found** and re-run relevant tests. The plan is **not complete** while open review items remain.
 
+## Plan YAML todos (required shape)
+
+Include a **final** todo the agent cannot skip:
+
+```yaml
+- id: post-implementation-review
+  content: "Structured self-review in chat (why it works, edge cases, convention check); fix gaps before close"
+  status: pending
+```
+
+Copy the full todo block from **`docs/plans/PLAN_TEMPLATE.md`** when authoring new plans.
+
+## Post-implementation review (completion bar section)
+
+Every implementation plan must end with this section (checkboxes for the implementing agent):
+
+```markdown
+## Post-implementation review (required before close)
+
+Per `plan-completion-gate.mdc` and `implementation-review-workflow.mdc`:
+
+- [ ] **Why it works** — one paragraph, contracts cited
+- [ ] **Edge cases** — ≥3 realistic failure modes named
+- [ ] **Convention check** — tests, triggered rules, layer wiring
+- [ ] Regression tests for any fixed/discovered errors (`every-error-regression-test.mdc`)
+- [ ] Test run logged under `test_runs/` when tests executed (`test-runs-output-directory.mdc`)
+- [ ] Runtime logic: `logic-change-checklist.mdc` satisfied (if applicable)
+```
+
+The implementing agent writes the three narrative sections (**Why it works**, **Edge cases**, **Convention check**) in chat when closing the task—not only checking boxes in the plan file.
+
 ## Completion bar
 
 A plan — and the work it describes — is **not complete** until:
@@ -45,6 +76,7 @@ A plan — and the work it describes — is **not complete** until:
 - tests are added or extended and executed (or blockers documented per **`test-first-discipline.mdc`**),
 - the Cursor rules step is done (rule added/updated, or explicit no-rule rationale),
 - the final code review step is done with no unfixed findings,
+- **`post-implementation-review`** todo is completed only after the structured chat review is delivered,
 - conclusions trace to verified facts.
 
 ## Narrow exceptions
@@ -54,6 +86,7 @@ A plan — and the work it describes — is **not complete** until:
 
 ## Overlap
 
+- **`plan-completion-gate.mdc`** — agent execution gate: no task close without structured chat self-review.
 - **`implementation-review-workflow.mdc`** — pre-code breakdown and post-code self-review; this rule adds mandatory plan structure, test requirement, and review-as-final-step.
 - **`logic-change-checklist.mdc`** — use during the final review step for runtime logic.
 - **`testing-best-practices.mdc`**, **`test-first-discipline.mdc`**, **`every-error-regression-test.mdc`** — test layer selection and mandatory regression coverage.

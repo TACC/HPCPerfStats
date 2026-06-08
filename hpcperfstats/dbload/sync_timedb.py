@@ -102,6 +102,10 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
 from hpcperfstats.file_locking import file_write_lock
 from hpcperfstats.dbload.sync_timedb_archive_dispatch import ArchiveDispatchCoordinator
 from hpcperfstats.dbload.sync_timedb_archive_janitor import ArchiveJanitor
+from hpcperfstats.dbload.sync_timedb_startup_raw_removal import (
+    PHASE_VERIFICATION_COMPLETE,
+    StartupRawRemovalPreflight,
+)
 
 # Supervisor tests monkeypatch these names; cold-path maintenance lives in ArchiveJanitor.
 def seal_dirty_daily_archives(*args, **kwargs):
@@ -1436,12 +1440,18 @@ def run_sync_timedb_supervisor_loop(
               pending_archive_tasks),
       }
 
+  startup_preflight = None
+  delete_phase_active = False
+  chunk_in_progress = False
+
   def _get_quarantine_skip_paths():
     captured = _capture_disqualification_inputs()
     skip_paths = set(captured["pending_stats_paths"])
     skip_paths |= set(captured["inflight_paths"])
     for paths in captured["pending_append_by_daily_tar"].values():
       skip_paths |= set(paths)
+    if startup_preflight is not None:
+      skip_paths |= startup_preflight.paths_pending_startup_delete()
     return skip_paths
 
   def _janitor_disqualified_daily_tars():
@@ -1759,6 +1769,64 @@ def run_sync_timedb_supervisor_loop(
   try:
     _ensure_daily_archive_dir_exists()
     archive_janitor.enqueue_startup_debt()
+    startup_preflight = StartupRawRemovalPreflight(
+        archive_data_dir=directory,
+        host_name_ext=host_name_ext,
+        tgz_archive_dir=tgz_archive_dir,
+        log_fn=log_print,
+        get_disqualified_daily_tars=_janitor_disqualified_daily_tars,
+        get_quarantine_skip_paths=_get_quarantine_skip_paths,
+        ingest_ready_fn=stats_file_head_ingested_in_db,
+        process_title=SYNC_TIMEDB_PROCESS_TITLE,
+    )
+    startup_preflight.start_async_verify()
+
+    def _post_startup_raw_removal_rescan():
+      nonlocal pending_stats_files
+      if startup_preflight is None:
+        return
+      removed = startup_preflight.consumed_paths()
+      for path in removed:
+        file_states.pop(path, None)
+        if isinstance(host_scan_hints, dict):
+          host_scan_hints.pop(path, None)
+      pending_stats_files = _cap_pending_stats_files_list(
+          rescan_pending_stats_files(
+              directory,
+              startdate,
+              enddate,
+              host_name_ext,
+              processed_files | inflight_archive_paths,
+              host_scan_hints=host_scan_hints,
+          ),
+          ingest_queue_max,
+      )
+      log_print(
+          "Startup raw removal preflight done; rescanned pending=%d"
+          % len(pending_stats_files),
+          flush=True,
+      )
+
+    def _maybe_handle_startup_raw_removal_delete_phase():
+      nonlocal delete_phase_active, pending_stats_files
+      if startup_preflight is None or not startup_preflight.enabled:
+        return False
+      if startup_preflight.delete_phase_done():
+        return False
+      if startup_preflight.needs_delete_phase():
+        delete_phase_active = True
+      if not delete_phase_active:
+        return False
+      if chunk_in_progress:
+        sleep_until_shutdown(0.1)
+        return True
+      if startup_preflight.phase() == PHASE_VERIFICATION_COMPLETE:
+        startup_preflight.begin_deleting()
+      startup_preflight.apply_deletes_from_manifest()
+      if startup_preflight.delete_phase_done():
+        delete_phase_active = False
+        _post_startup_raw_removal_rescan()
+      return True
 
     def _run_debt_accrual_if_due(reason_label):
       if not _is_maintenance_due():
@@ -1784,6 +1852,8 @@ def run_sync_timedb_supervisor_loop(
 
     while not shutdown_requested[0]:
       _run_debt_accrual_if_due("outer_loop")
+      if _maybe_handle_startup_raw_removal_delete_phase():
+        continue
 
       if not pending_stats_files:
         if idle_since_empty_queue is None:
@@ -1863,6 +1933,8 @@ def run_sync_timedb_supervisor_loop(
           break
 
       while pending_stats_files:
+        if _maybe_handle_startup_raw_removal_delete_phase():
+          continue
         idle_since_empty_queue = None
         prior_pending_daily_tars = daily_tar_paths_for_stats_paths(
             pending_stats_files,
@@ -1892,6 +1964,7 @@ def run_sync_timedb_supervisor_loop(
         if not stats_files_chunk:
           continue
 
+        chunk_in_progress = True
         files_to_be_archived = []
         successful_paths = []
         chunk_ingest_finished = 0
@@ -2224,6 +2297,7 @@ def run_sync_timedb_supervisor_loop(
           archive_janitor.signal_work_available()
 
         _dispatch_due_archive_retries()
+        chunk_in_progress = False
 
         if chunk_counter % rescan_every_chunks == 0:
           _finalize_archive_slots_if_needed(
@@ -2276,6 +2350,9 @@ def run_sync_timedb_supervisor_loop(
       close_old_connections()
       connections.close_all()
   finally:
+    chunk_in_progress = False
+    if startup_preflight is not None:
+      startup_preflight.shutdown(wait=True)
     archive_janitor.shutdown(wait=True)
     _finalize_archive_slots_if_needed(force=True)
     _persist_dead_letters_if_needed(force=True)

@@ -15,13 +15,25 @@ alwaysApply: true
 | Multi-slot append dispatch | `hpcperfstats/dbload/sync_timedb_archive_dispatch.py` → `ArchiveDispatchCoordinator` |
 | Hints v2 (`day_phases`, `debt_queue`) | `hpcperfstats/dbload/sync_timedb_archive_maint.py` |
 | Per-day tar retention | `effective_keep_uncompressed_tar` in `sync_timedb_archive_helpers.py` |
+| Startup raw removal preflight | `hpcperfstats/dbload/sync_timedb_startup_raw_removal.py` → `StartupRawRemovalPreflight` |
 | Supervisor wiring | `hpcperfstats/dbload/sync_timedb.py` → `run_sync_timedb_supervisor_loop` |
+
+## Startup raw removal preflight (one-shot at process start)
+
+When **`sync_startup_raw_removal_preflight=yes`** (default), the supervisor starts a **single-flight** background thread (`sync_timedb.py [thread:startup-raw-removal-preflight]`) immediately after `enqueue_startup_debt()`:
+
+1. **Phase 1 (parallel with ingest):** verify all closed raw by calendar day against **existing sealed** archives only (`allow_auto_seal=False`); append results to **`{archive_data_dir}/.sync_timedb_startup_raw_removal.json`**; no deletes.
+2. **Phase 2 (gated):** when `phase=verification_complete`, supervisor sets `delete_phase_active`, stops new ingest chunks, waits for `chunk_in_progress==0`, then `apply_deletes_from_manifest()`; on `phase=done`, **`rescan_pending_stats_files`** rebuilds `pending_stats_files` and prunes deleted paths from supervisor state.
+
+Verified paths pending delete are unioned into **`get_quarantine_skip_paths()`** so the janitor does not race startup deletes. The janitor remains the ongoing backstop for raw not covered by the startup manifest or new closed raw after `phase=done`.
+
+Disable with **`sync_startup_raw_removal_preflight=no`**.
 
 ## Supervisor hot-path rules
 
 - **Ingest order (oldest first):** `collect_stats_files_in_range` → `rescan_pending_stats_files` → `pending_stats_files` must be **oldest-first** (effective timestamp ascending: filename epoch when numeric, else mtime; `None` sort keys last). The supervisor ingests from the queue head (`pending_stats_files[:chunk_size]`). `cap_pending_stats_file_list` must retain the **oldest** `max_size` entries when truncating (drop newer paths). Do not reverse to newest-first without an explicit product decision and regression tests.
 - **No blocking maintenance** on the supervisor thread: do not reintroduce `_archive_maintenance_pipeline`, forced two-phase maintenance, or supervisor-driven seal/raw/`.tar` bursts.
-- **Startup:** `archive_janitor.enqueue_startup_debt()` runs bounded unparsable quarantine scan then mtime seal debt enqueue.
+- **Startup:** `archive_janitor.enqueue_startup_debt()` runs bounded unparsable quarantine scan then mtime seal debt enqueue; **`StartupRawRemovalPreflight.start_async_verify()`** runs in parallel (optional via INI).
 - **Interval:** `archive_maintenance_interval_seconds` is **debt accrual interval**, not blocking maintenance on the supervisor.
 - **Chunk end:** capture `prior_pending_daily_tars` before ingest; after chunk call `enqueue_day_close_for_drained_days(prior, current)` when pending daily tars shrink, then `enqueue_completed_prior_days_reclaim(chunk_daily_tars=…)` for mapping-derived prior days; `archive_janitor.signal_work_available()` when drain or mapping produced work.
 - **Ingest backlog:** full accrual when `pending_stats_files == 0`; **partial** prior-day accrual (`maybe_accrue_partial_debt_if_due`) is the backstop during backlog—not the only reclaim path.
@@ -99,7 +111,8 @@ This must **not** wait for an empty global ingest queue.
 - `hpcperfstats/tests/test_sync_timedb_janitor.py` (`DAY_CLOSE`, days-per-tick calendar cap, day-drain, defer persist, partial raw ticks)
 - `hpcperfstats/tests/test_sync_timedb_hints.py`
 - `hpcperfstats/tests/test_sync_timedb_archive_dispatch.py`
-- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (day-drain + chunk reclaim; oldest-first ingest order)
+- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (day-drain + chunk reclaim; oldest-first ingest order; startup preflight delete gate + post-delete rescan)
+- `hpcperfstats/tests/test_sync_timedb_startup_raw_removal.py` (async verify manifest, sealed-only skip, DB gate, gated delete)
 - `hpcperfstats/tests/test_sync_timedb_archive.py` (`effective_keep_uncompressed_tar`, seal drop-at-seal)
 
 ## Overlap

@@ -144,6 +144,10 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "archive_janitor_debt_max_entries"),
     ("PIPELINE", "archive_janitor_raw_paths_per_tick"),
     ("PIPELINE", "sync_unparsable_raw_quarantine_max_per_tick"),
+    ("PIPELINE", "sync_startup_raw_removal_preflight"),
+    ("PIPELINE", "sync_startup_raw_removal_verify_budget_seconds"),
+    ("PIPELINE", "sync_startup_raw_removal_verify_days_per_slice"),
+    ("PIPELINE", "sync_startup_raw_removal_max_deletes_per_pass"),
     ("PIPELINE", "sync_archive_max_inflight_jobs"),
     ("PIPELINE", "sync_archive_worker_stall_seconds"),
     # [OAUTH2]
@@ -2072,6 +2076,45 @@ def get_sync_unparsable_raw_quarantine_max_per_tick():
   """Max unparsable closed raw files quarantined per janitor scan (default 50)."""
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_unparsable_raw_quarantine_max_per_tick", fallback=50))
+
+
+def get_sync_startup_raw_removal_preflight():
+  """Enable startup async verify + gated delete for sealed archived raw (default on)."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_startup_raw_removal_preflight", fallback="yes"),
+  )
+
+
+def get_sync_startup_raw_removal_verify_budget_seconds():
+  """Wall-clock budget per startup raw-removal verification slice (default 60s)."""
+  _ensure_cfg_loaded()
+  return max(
+      1.0,
+      float(_pipeline_get(
+          "sync_startup_raw_removal_verify_budget_seconds",
+          fallback="60",
+      )),
+  )
+
+
+def get_sync_startup_raw_removal_verify_days_per_slice():
+  """Max calendar days verified per startup raw-removal slice (default 5)."""
+  _ensure_cfg_loaded()
+  return max(
+      1,
+      _pipeline_getint("sync_startup_raw_removal_verify_days_per_slice", fallback=5),
+  )
+
+
+def get_sync_startup_raw_removal_max_deletes_per_pass():
+  """Max deletes per gated startup delete pass; 0 means unlimited (default 0)."""
+  _ensure_cfg_loaded()
+  raw = _pipeline_get("sync_startup_raw_removal_max_deletes_per_pass", fallback="0")
+  try:
+    return max(0, int(raw))
+  except (TypeError, ValueError):
+    return 0
 
 
 def get_sync_archive_max_inflight_jobs():
