@@ -197,9 +197,9 @@ When [`should_apply_numa_pinning`](../hpcperfstats/numa_topology.py) is true **a
 
 ## Archive janitor and seal/append lock contention
 
-The background **`ArchiveJanitor`** consumes **debt items** per tick (`archive_janitor_days_per_tick`), not calendar days. Day-complete reclaim enqueues up to **three** items per prior day (SEAL, RAW_REMOVE, TAR_DROP). Tune **`archive_janitor_budget_seconds`**, **`archive_janitor_raw_paths_per_tick`**, and **`archive_janitor_debt_high_watermark`** / **`archive_janitor_debt_burst_factor`** on sites ingesting **~15k raw files/day**.
+The background **`ArchiveJanitor`** processes up to **`archive_janitor_days_per_tick`** **distinct calendar days** per tick via **`DAY_CLOSE`** debt (full seal → raw → `.tar` pipeline per day). Tune **`archive_janitor_budget_seconds`**, **`archive_janitor_raw_paths_per_tick`**, and **`archive_janitor_debt_high_watermark`** / **`archive_janitor_debt_burst_factor`** on sites ingesting **~15k raw files/day**.
 
-**Seal vs append:** `atomic_seal_tar_to_zst` holds an exclusive **`file_write_lock`** on the daily `.tar` for the full compress/replace window. Hot-path append uses the same lock (default **60s** timeout). Large-day seals during ingest can surface append **`TimeoutError`** (fail-closed). Mitigations: keep **`archive_keep_uncompressed_tar=yes`** during heavy ingest, isolate **`sync_timedb`** archive work on a dedicated cpuset (see above), and rely on janitor disqualification for in-flight days.
+**Seal vs append:** `atomic_seal_tar_to_zst` holds an exclusive **`file_write_lock`** on the daily `.tar` for the full compress/replace window. Hot-path append uses the same lock (default **60s** timeout). Large-day seals during ingest can surface append **`TimeoutError`** (fail-closed). Mitigations: use **`archive_keep_uncompressed_tar=yes`** (or rely on today's grace window) during heavy same-day append, isolate **`sync_timedb`** archive work on a dedicated cpuset (see above), and rely on janitor disqualification for in-flight days.
 
 **Validation read locks:** parallel raw-remove validation defaults to **`sync_archive_validation_max_workers=2`** (INI `[PIPELINE]`). Raise only when append/read-lock contention is acceptable.
 
