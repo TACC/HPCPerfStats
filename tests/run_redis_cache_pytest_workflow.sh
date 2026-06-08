@@ -73,6 +73,7 @@ done
 
 cleanup() {
   cleanup_args_file
+  compose_cleanup_bind_mount
   if [[ "$KEEP_ENV" -eq 1 ]]; then
     echo "Keeping compose environment (--keep-env)."
     return
@@ -93,6 +94,9 @@ if [[ ${#PYTEST_EXTRA[@]} -gt 0 ]]; then
 else
   : > "$ARGS_FILE"
 fi
+
+compose_prepare_bind_mount
+compose_run_inner_script_prepare_env
 
 echo "Resetting Docker compose state and volumes..."
 compose_test down -v --remove-orphans
@@ -130,10 +134,7 @@ if [[ "$db_health" != "healthy" || "$redis_health" != "healthy" ]]; then
 fi
 
 echo "Running live Redis cache tests in web container..."
-compose_test run --rm \
-  -v "$ROOT_DIR:/home/hpcperfstats:rw" \
-  -v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro" \
-  --entrypoint bash \
-  web /home/hpcperfstats/tests/run_redis_cache_pytest_inner.sh
+compose_run_inner_script tests/run_redis_cache_pytest_inner.sh \
+  -v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro"
 
 echo "Redis cache pytest workflow completed."

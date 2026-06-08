@@ -1,7 +1,12 @@
 """Detect dead multiprocessing pool workers and fail fast instead of hanging.
 
-Linux OOM kills workers with SIGKILL; the parent can block forever on
-``imap_unordered`` or ``AsyncResult.get()`` unless it polls worker liveness.
+Linux OOM can kill either the supervisor or a pool worker. When a **worker** dies
+first, the parent must poll liveness (``abort_if_pool_workers_dead``) or block
+forever on ``imap_unordered`` / ``AsyncResult.get()``. When the **supervisor**
+is SIGKILL'd first, spawn workers without parent-death handling become orphans;
+``apply_pool_worker_process_title`` sets ``PR_SET_PDEATHSIG`` (SIGKILL) on Linux
+so the full ``sync_timedb`` tree exits and supervisord can restart cleanly.
+
 Spawned workers should use distinct ``setproctitle`` names such as
 ``sync_timedb.py [worker:ingest-pool]`` so ``top``/``ps`` and kernel OOM logs
 can be matched to the pool kind, not confused with the ``[main]`` supervisor.
@@ -24,6 +29,10 @@ class MultiprocessingWorkerExitError(RuntimeError):
     self.dead_pids = tuple(int(p) for p in dead_pids if p is not None)
     self.context = str(context or "")
     self.exit_code = int(exit_code)
+
+
+class MultiprocessingPoolStallError(MultiprocessingWorkerExitError):
+  """Raised when a pool worker is alive but imap progress stalls too long."""
 
 
 def get_sync_pool_poll_timeout_s():
@@ -154,14 +163,29 @@ def imap_unordered_watch_pool(
       abort_if_pool_workers_dead(pool, context=context)
       yield item
     return
+  import hpcperfstats.conf_parser as cfg
+
+  stall_abort_after = cfg.get_sync_pool_stall_abort_after_timeouts()
+  consecutive_timeouts = 0
   while True:
     abort_if_pool_workers_dead(pool, context=context)
     try:
-      yield iterator_next(timeout=poll_timeout_s)
+      item = iterator_next(timeout=poll_timeout_s)
     except StopIteration:
       break
     except multiprocessing.TimeoutError:
+      consecutive_timeouts += 1
+      if consecutive_timeouts >= stall_abort_after:
+        raise MultiprocessingPoolStallError(
+            "Pool imap stalled after %d consecutive poll timeouts (context=%s)"
+            % (consecutive_timeouts, context or "pool"),
+            dead_pids=[],
+            context=context,
+            exit_code=124,
+        )
       continue
+    consecutive_timeouts = 0
+    yield item
 
 
 def async_result_get_watch_pool(

@@ -908,7 +908,8 @@ def test_sync_phase2_feature_flags_and_shards(temp_ini, monkeypatch):
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 16)
   assert cfg.get_sync_write_lock_shards() == 1
   assert cfg.get_sync_enable_db_writer_pipeline() is False
-  assert cfg.get_sync_enable_ingest_first_durability_mode() is False
+  # Ingest-first durability is on by default (fallback=yes in conf_parser).
+  assert cfg.get_sync_enable_ingest_first_durability_mode() is True
 
   with open(temp_ini) as f:
     content = f.read()
@@ -1137,6 +1138,22 @@ def test_legacy_default_fallback_for_moved_pipeline_key(tmp_path, monkeypatch):
   import hpcperfstats.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_sync_archive_require_db_head_ingest() is False
+
+
+def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_archive_janitor_budget_seconds() == 30.0
+  assert cfg.get_archive_janitor_days_per_tick() == 2
+  assert cfg.get_archive_janitor_debt_high_watermark() == 50
+  assert cfg.get_archive_janitor_debt_burst_factor() == 1.5
+  assert cfg.get_archive_janitor_debt_max_entries() == 200
+  assert cfg.get_archive_janitor_raw_paths_per_tick() == 1000
+  assert cfg.get_archive_maintenance_idle_seconds() == 300.0
+  assert cfg.get_sync_archive_max_inflight_jobs() == 2
+  assert cfg.get_sync_archive_worker_stall_seconds() == 600.0
+  assert cfg.get_sync_enable_ingest_first_durability_mode() is True
 
 
 def test_legacy_portal_fallback_for_archive_dir(tmp_path, monkeypatch):

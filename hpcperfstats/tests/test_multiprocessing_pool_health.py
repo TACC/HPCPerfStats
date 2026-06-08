@@ -143,6 +143,23 @@ def test_close_pool_bounded_terminates_when_worker_dead():
   assert pool.terminated is True
 
 
+def test_imap_unordered_watch_pool_aborts_on_stuck_worker_stall(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      lambda: 2,
+  )
+  pool = _BlockingPool()
+  iterator = mph.imap_unordered_watch_pool(
+      pool,
+      lambda x: x,
+      [1],
+      poll_timeout_s=0.01,
+      context="test_stall",
+  )
+  with pytest.raises(mph.MultiprocessingPoolStallError):
+    next(iterator)
+
+
 def test_close_pool_bounded_closes_alive_workers():
   pool = _CloseablePool([_AliveWorker()])
   assert mph.close_pool_bounded(pool, timeout_s=0.1) is True

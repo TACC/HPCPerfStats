@@ -3,11 +3,9 @@ from __future__ import annotations
 
 # Intel IMC types exposing dram_cas_reads / dram_cas_writes (roofline, mbw).
 INTEL_IMC_STATS_TYPES = (
-    "intel_x86_uncore_imc_snb",
-    "intel_x86_uncore_imc_ivb",
-    "intel_x86_uncore_imc_hsw",
-    "intel_x86_uncore_imc_bdw",
     "intel_x86_uncore_imc_skx",
+    "intel_x86_uncore_imc_icx",
+    "intel_x86_uncore_imc_spr",
 )
 
 ARM_IMC_STATS_TYPES = ("arm_aarch64_imc",)

@@ -13,13 +13,7 @@ mkdir -p "${HPCPERFSTATS_STRESS_REPORT_DIR}"
 # Prefer editable install (matches local dev). Cloud-sync bind mounts can make
 # egg-info writes fail (Errno 35). Then use repo root on PYTHONPATH and only
 # install test extras (no writes under the project tree).
-export PYTHONPATH="/home/hpcperfstats${PYTHONPATH:+:$PYTHONPATH}"
-if ! pip install -e ".[test]" -q 2>/dev/null; then
-  echo "pip install -e failed on mount; using PYTHONPATH=/home/hpcperfstats and pip install test extras only."
-  # shellcheck source=tests/pip_compose_test_extras_fallback.sh
-  source tests/pip_compose_test_extras_fallback.sh
-  pip_compose_test_extras_fallback
-fi
+compose_inner_pip_install
 
 cd /home/hpcperfstats
 

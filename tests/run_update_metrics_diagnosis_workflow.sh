@@ -81,6 +81,7 @@ done
 
 cleanup() {
   cleanup_args_file
+  compose_cleanup_bind_mount
   if [[ "$KEEP_ENV" -eq 1 ]]; then
     echo "Keeping compose environment (--keep-env)."
     return
@@ -101,6 +102,9 @@ if [[ ${#PYTEST_EXTRA[@]} -gt 0 ]]; then
 else
   : > "$ARGS_FILE"
 fi
+
+compose_prepare_bind_mount
+compose_run_inner_script_prepare_env
 
 echo "Resetting Docker compose state and volumes..."
 compose_test down -v --remove-orphans
@@ -138,7 +142,7 @@ if [[ "$db_health" != "healthy" || "$redis_health" != "healthy" ]]; then
 fi
 
 echo "Running update_metrics diagnosis pytest in web container..."
-compose_test run --rm \
+compose_run_inner_script tests/run_update_metrics_diagnosis_inner.sh \
   -e HPCPERFSTATS_UM_DIAG_SMALL_HOSTS \
   -e HPCPERFSTATS_UM_DIAG_SMALL_STEPS \
   -e HPCPERFSTATS_UM_DIAG_LARGE_HOSTS \
@@ -147,9 +151,6 @@ compose_test run --rm \
   -e HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM \
   -e HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS \
   -e HPCPERFSTATS_UM_DIAG_JSON_OUT \
-  -v "$ROOT_DIR:/home/hpcperfstats:rw" \
-  -v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro" \
-  --entrypoint bash \
-  web /home/hpcperfstats/tests/run_update_metrics_diagnosis_inner.sh
+  -v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro"
 
 echo "update_metrics diagnosis workflow completed."

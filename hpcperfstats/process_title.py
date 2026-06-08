@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import signal
 import sys
+
+_PR_SET_PDEATHSIG = 1
 
 # ``python3 -m hpcperfstats.<module>`` — basename for top when argv[0] is the interpreter.
 _MODULE_PROCESS_TITLES: dict[str, str] = {
@@ -115,12 +118,28 @@ def set_daemon_process_title(
   return _apply_setproctitle(title)
 
 
+def enable_parent_death_signal(sig=None):
+  """Linux: deliver *sig* when the pool parent dies (prevents OOM orphan workers)."""
+  if sys.platform != "linux":
+    return False
+  if sig is None:
+    sig = signal.SIGKILL
+  try:
+    import ctypes
+
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    return libc.prctl(_PR_SET_PDEATHSIG, ctypes.c_ulong(sig)) == 0
+  except Exception:
+    return False
+
+
 def apply_pool_worker_process_title(script_name, pool_kind):
   """Picklable ``multiprocessing.Pool`` initializer for spawn/fork workers.
 
   ``Pool`` invokes ``initializer(*initargs)``, so ``initargs`` must be a
   ``(script_name, pool_kind)`` tuple of two positional arguments.
   """
+  enable_parent_death_signal()
   set_daemon_process_title(name=script_name, role="worker", pool_kind=pool_kind)
 
 

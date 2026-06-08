@@ -17,7 +17,11 @@ colima_compose_teardown() {
     echo "colima_compose_teardown: missing compose command" >&2
     return 1
   fi
+  local project_args=()
+  if [[ -n "${COMPOSE_BIND_MOUNT_DIR:-}" ]]; then
+    project_args=(--project-directory "${COMPOSE_BIND_MOUNT_DIR}")
+  fi
   echo "Tearing down compose services and volumes..."
-  "$@" down -v --remove-orphans || true
+  "$@" "${project_args[@]}" down -v --remove-orphans || true
   bash "${_colima_teardown_script_dir}/colima_docker_cleanup.sh"
 }

@@ -330,8 +330,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Dispatch step size (default 8).
 # sync_dispatch_step_size = 8
 
-# Ingest-first durability semantics (default no).
-# sync_enable_ingest_first_durability_mode = no
+# Ingest-first durability semantics: checkpoint after DB even if append fails (default yes).
+# sync_enable_ingest_first_durability_mode = yes
 
 # Require head host_data row before tar append or raw delete (default yes).
 # sync_archive_require_db_head_ingest = yes
@@ -366,11 +366,38 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # zstd compression level 1-19 for .tar.zst (default 7; benchmark before raising above 9).
 # archive_zstd_level = 7
 
-# Seconds between seal maintenance and verified raw removal (default 28800).
+# Seconds between archive debt accrual scans (not blocking maintenance; default 28800).
 # archive_maintenance_interval_seconds = 28800
 
-# Max seconds to defer scheduled maintenance while archive append is in flight (default 3600).
+# Max seconds to defer scheduled maintenance while archive append is in flight (legacy; default 3600).
 # archive_maintenance_max_defer_seconds = 3600
+
+# Optional idle dwell before janitor tick budget bonus (default 300).
+# archive_maintenance_idle_seconds = 300
+
+# Archive janitor micro-batch wall budget per tick seconds (default 30).
+# archive_janitor_budget_seconds = 30
+
+# Max calendar days processed per janitor tick (default 2).
+# archive_janitor_days_per_tick = 2
+
+# Debt queue depth before temporary burst scaling (default 50).
+# archive_janitor_debt_high_watermark = 50
+
+# Budget multiplier when debt exceeds high watermark (default 1.5).
+# archive_janitor_debt_burst_factor = 1.5
+
+# Cap in-memory janitor debt queue entries (default 200).
+# archive_janitor_debt_max_entries = 200
+
+# Max raw stats file deletes per janitor RAW_REMOVE debt item per tick (default 1000).
+# archive_janitor_raw_paths_per_tick = 1000
+
+# Max concurrent disjoint daily-tar archive append jobs (default 2).
+# sync_archive_max_inflight_jobs = 2
+
+# Seconds before logging an archive pool job as stalled (default 600).
+# sync_archive_worker_stall_seconds = 600
 
 [CACHE]
 # Redis URL for Django cache (compose default uses redis service).

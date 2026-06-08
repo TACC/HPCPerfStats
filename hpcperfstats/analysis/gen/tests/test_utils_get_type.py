@@ -111,7 +111,7 @@ def test_imc_first_match_follows_intel_imc_stats_order():
   u = utils(job)
   expected_first = next(t for t in imc_types_probe_order() if t in job.schemas)
   assert u.imc == expected_first
-  assert u.imc == "intel_x86_uncore_imc_hsw"
+  assert u.imc == "intel_x86_uncore_imc_skx"
 
 
 def test_pick_pmc_typename_set_build_handles_sequence_typenames():

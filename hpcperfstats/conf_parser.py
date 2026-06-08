@@ -132,6 +132,15 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "archive_seal_parallel_workers"),
     ("PIPELINE", "archive_maintenance_interval_seconds"),
     ("PIPELINE", "archive_maintenance_max_defer_seconds"),
+    ("PIPELINE", "archive_maintenance_idle_seconds"),
+    ("PIPELINE", "archive_janitor_budget_seconds"),
+    ("PIPELINE", "archive_janitor_days_per_tick"),
+    ("PIPELINE", "archive_janitor_debt_high_watermark"),
+    ("PIPELINE", "archive_janitor_debt_burst_factor"),
+    ("PIPELINE", "archive_janitor_debt_max_entries"),
+    ("PIPELINE", "archive_janitor_raw_paths_per_tick"),
+    ("PIPELINE", "sync_archive_max_inflight_jobs"),
+    ("PIPELINE", "sync_archive_worker_stall_seconds"),
     # [OAUTH2]
     ("OAUTH2", "client_id"),
     ("OAUTH2", "client_key"),
@@ -1448,6 +1457,42 @@ def get_metrics_run_poll_timeout_s():
     return 5.0
 
 
+def get_sync_archive_validation_max_workers():
+  """Max parallel threads for archive sealed/tar validation (read-lock scope)."""
+  env = os.environ.get("HPCPERFSTATS_SYNC_ARCHIVE_VALIDATION_MAX_WORKERS", "").strip()
+  if env:
+    try:
+      return max(1, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return 2
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1,
+        int(_pipeline_get("sync_archive_validation_max_workers", fallback="2")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 2
+
+
+def get_sync_pool_stall_abort_after_timeouts():
+  """Consecutive pool poll timeouts without progress before aborting imap wait."""
+  env = os.environ.get("HPCPERFSTATS_SYNC_POOL_STALL_ABORT_AFTER_TIMEOUTS", "").strip()
+  if env:
+    try:
+      return max(1, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return 120
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1,
+        int(_pipeline_get("sync_pool_stall_abort_after_timeouts", fallback="120")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 120
+
+
 def get_sync_pool_poll_timeout_s():
   """Poll interval for sync_timedb pool waits (worker-death / OOM detection)."""
   env = os.environ.get("HPCPERFSTATS_SYNC_POOL_POLL_TIMEOUT_S", "").strip()
@@ -1914,10 +1959,76 @@ def get_conf_parser_defaults_audit_snapshot():
 
 
 def get_sync_enable_ingest_first_durability_mode():
-  """Feature flag for ingest-first durability semantics (default disabled)."""
+  """Checkpoint after DB write even when tar append fails (default on)."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_enable_ingest_first_durability_mode", fallback="no"),
+      _pipeline_get("sync_enable_ingest_first_durability_mode", fallback="yes"),
+  )
+
+
+def get_archive_maintenance_idle_seconds():
+  """Optional idle dwell before janitor tick budget bonus (default 300s)."""
+  _ensure_cfg_loaded()
+  return max(
+      0.0,
+      float(_pipeline_get("archive_maintenance_idle_seconds", fallback="300")),
+  )
+
+
+def get_archive_janitor_budget_seconds():
+  """Max wall seconds per archive janitor micro-batch tick (default 30)."""
+  _ensure_cfg_loaded()
+  return max(
+      1.0,
+      float(_pipeline_get("archive_janitor_budget_seconds", fallback="30")),
+  )
+
+
+def get_archive_janitor_days_per_tick():
+  """Max calendar days processed per janitor tick (default 2)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("archive_janitor_days_per_tick", fallback=2))
+
+
+def get_archive_janitor_debt_high_watermark():
+  """Debt queue depth before temporary burst scaling (default 50)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("archive_janitor_debt_high_watermark", fallback=50))
+
+
+def get_archive_janitor_debt_burst_factor():
+  """Budget multiplier when debt exceeds high watermark (default 1.5)."""
+  _ensure_cfg_loaded()
+  return max(
+      1.0,
+      min(4.0, float(_pipeline_get("archive_janitor_debt_burst_factor", fallback="1.5"))),
+  )
+
+
+def get_archive_janitor_debt_max_entries():
+  """Cap in-memory janitor debt queue size (default 200)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("archive_janitor_debt_max_entries", fallback=200))
+
+
+def get_archive_janitor_raw_paths_per_tick():
+  """Max raw stats file deletes per janitor RAW_REMOVE debt item (default 1000)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("archive_janitor_raw_paths_per_tick", fallback=1000))
+
+
+def get_sync_archive_max_inflight_jobs():
+  """Max concurrent disjoint daily-tar archive append jobs (default 2)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_archive_max_inflight_jobs", fallback=2))
+
+
+def get_sync_archive_worker_stall_seconds():
+  """Seconds before treating an archive pool job as stalled (default 600)."""
+  _ensure_cfg_loaded()
+  return max(
+      60.0,
+      float(_pipeline_get("sync_archive_worker_stall_seconds", fallback="600")),
   )
 
 

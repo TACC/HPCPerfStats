@@ -60,7 +60,7 @@ You are an expert in Python, Django, and scalable web application development.
   4. **Deduplication law:** substantive logic repeated in three or more places must use a shared helper—see `duplicate-threshold-helper-mandate.mdc` and `refactor-dedup-priorities.mdc`.
 
   Python Rules
-   - For **host-side** Python/pip/pytest, use **only** the virtualenv at the **Cursor workspace root**: `<workspace_root>/.venv/bin/python` (see **`workspace-layout-and-python-env.mdc`**). Do not create disposable venvs under `/tmp` or elsewhere unless the user explicitly requests it.
+   - For **host-side** Python/pip/pytest, use **only** the virtualenv at the **Cursor workspace root**: `<workspace_root>/.venv/bin/python3` (not `.venv/bin/python` — see **`workspace-layout-and-python-env.mdc`**). Do not create disposable venvs under `/tmp` or elsewhere unless the user explicitly requests it.
    - **`pip install -e` / compose / pytest cwd** for the Django package: the inner git directory `HPCPerfStats/` (contains `pyproject.toml` and `docker-compose.yaml`), not the workspace root alone.
 
   Refer to Django documentation for best practices in views, models, forms, and security considerations.

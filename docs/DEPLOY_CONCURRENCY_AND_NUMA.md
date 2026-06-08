@@ -12,7 +12,7 @@ This document summarizes how **thread/process counts** and **Docker Compose CPU 
 | **web** | `api.py` | `ThreadPoolExecutor` size = **`api_small_executor_max_workers`**, or **`parallel_db_prefetch_max`** (default **4**) when the API key is unset | Extra concurrent ORM work per worker |
 | **web** | `summaryplot.py` | Aggregate prefetch uses **`compute_summary_aggregate_prefetch_pool_size()`**: at most **2** inner threads, then **`parallel_db_prefetch_max`** (default **4**) | Prevents nested pools from multiplying against `api.py` under `job_plots` |
 | **pipeline** | `update_metrics.py` | `multiprocessing.Pool` size = **`get_metrics_pool_process_count()`** (≤ **`metrics_pool_process_cap`**) | Many concurrent readers during metrics passes |
-| **pipeline** | `sync_timedb.py` / archive | Ingest pool = **`get_sync_ingest_pool_processes()`**; archive pool = **`get_sync_archive_pool_processes()`**; daily seal uses up to **`archive_seal_parallel_workers`** (default **4**) concurrent **`atomic_seal_tar_to_zst`** jobs, each zstd **`-T0`** when **`archive_zstd_threads=0`** (default), with **`nice`/`ionice`** wrappers | Load spikes during seal maintenance; see **Archive zstd priority** below |
+| **pipeline** | `sync_timedb.py` / archive | Ingest pool = **`get_sync_ingest_pool_processes()`**; archive append pool = **`get_sync_archive_pool_processes()`** with up to **`sync_archive_max_inflight_jobs`** (default **2**) disjoint daily-tar slots; **cold-path** seal/raw/`.tar` work runs in the background **`ArchiveJanitor`** (time-sliced; does not block ingest) | Seal load is spread across janitor ticks; see **Archive janitor** and **Archive zstd priority** below |
 | **pipeline** | `listend.py` | Pika + a few daemon threads; no Django DB in this module | Low |
 | **db** | PostgreSQL | `max_connections=500`; lowered `work_mem`, parallel worker caps, and maintenance buffers in `docker-compose.yaml` to limit RAM spikes | Hard slot ceiling; per-query memory bounded by GUCs |
 
@@ -32,9 +32,56 @@ Daily monitor archives are sealed inside the **`pipeline`** container. On hosts 
 | **`archive_zstd_ionice_class`** / **`archive_zstd_ionice_level`** | **`2`** / **`6`** | Best-effort I/O class; higher level yields disk to Postgres |
 | **`archive_zstd_level`** | **`7`** | Compression level; benchmark before raising above **9** |
 
-**Tuning:** If seals are too slow, raise **`archive_seal_parallel_workers`** slightly. If web/API or Postgres latency spikes during maintenance, lower parallel workers first, then raise **`archive_zstd_nice`** or **`archive_zstd_ionice_level`**. Override env **`SYNC_ARCHIVE_SEAL_WORKERS`** mirrors validation fanout.
+**Tuning:** If seals are too slow, raise **`archive_janitor_days_per_tick`** or **`archive_janitor_budget_seconds`** slightly (still bounded per tick). If web/API or Postgres latency spikes during maintenance, lower janitor budget first, then raise **`archive_zstd_nice`** or **`archive_zstd_ionice_level`**. Override env **`SYNC_ARCHIVE_SEAL_WORKERS`** mirrors validation fanout.
 
-**Hard isolation (recommended long-term):** run [`scripts/apply_compose_cpu_pinning.py`](../scripts/apply_compose_cpu_pinning.py) so **`pipeline`** gets a dedicated cpuset; you can then run zstd at lower nice/ionice and/or raise parallel workers with less impact on **`web`**/**`db`**.
+## Archive janitor (continuous ingest)
+
+Ingest is treated as always-on: the supervisor no longer runs blocking seal/raw/`.tar` maintenance bursts. Cold-path archive work accrues as **day debt** and is consumed in background **micro-batches** (`ArchiveJanitor` thread).
+
+| `[PIPELINE]` key | Default | Role |
+|----------------|---------|------|
+| **`archive_maintenance_interval_seconds`** | **`28800`** | Debt **accrual** scan interval (not blocking maintenance execution) |
+| **`archive_janitor_budget_seconds`** | **`30`** | Max wall time per janitor tick |
+| **`archive_janitor_days_per_tick`** | **`2`** | Max calendar days processed per tick |
+| **`archive_janitor_debt_high_watermark`** | **`50`** | Debt depth before temporary burst scaling |
+| **`archive_janitor_debt_burst_factor`** | **`1.5`** | Budget/days multiplier under high debt |
+| **`archive_janitor_debt_max_entries`** | **`200`** | In-memory debt cap; lowest-priority entries evicted with a warning when full |
+| **`archive_janitor_raw_paths_per_tick`** | **`1000`** | Incremental raw deletes per `RAW_REMOVE` debt item (large-day safety) |
+| **`archive_maintenance_idle_seconds`** | **`300`** | Optional idle-only 2× budget bonus (not required for progress) |
+| **`sync_archive_max_inflight_jobs`** | **`2`** | Concurrent disjoint daily-tar append jobs |
+| **`sync_archive_worker_stall_seconds`** | **`600`** | Log stalled append workers (observability) |
+| **`sync_enable_ingest_first_durability_mode`** | **`yes`** | Checkpoint after DB even when append is deferred |
+
+Progress and resume state persist in **`.sync_archive_maint_hints.json`** (version **2**: `debt_queue`, `day_phases`, `validated_days`). Under ingest backlog, **full** accrual waits for an empty ingest queue; **partial** prior-day accrual and **day-complete reclaim** (chunk-end enqueue of seal → raw → `.tar` for completed prior calendar days) keep disk reclaim moving. Janitor ticks continue whenever debt exists; budget/exception paths re-queue unprocessed debt (no silent loss).
+
+**Multi-week backlog / disk pressure:** raise **`archive_janitor_days_per_tick`** and **`archive_janitor_budget_seconds`** modestly; keep **`archive_janitor_raw_paths_per_tick`** high enough for your daily file count (e.g. 15k/day may need several ticks per day). Set **`archive_keep_uncompressed_tar=no`** after verifying sealed `.tar.zst` if disk is tight.
+
+**Hard isolation (recommended long-term):** run [`scripts/apply_compose_cpu_pinning.py`](../scripts/apply_compose_cpu_pinning.py) so **`pipeline`** gets a dedicated cpuset; you can then run zstd at lower nice/ionice and/or raise janitor budget with less impact on **`web`**/**`db`**.
+
+## OOM and `sync_timedb` process tree
+
+Kernel OOM may kill the **`sync_timedb.py [main]`** supervisor before proactive RSS limits trigger. Spawn pool workers (`[worker:ingest-pool]`, `[worker:archive-pool]`, etc.) used to survive as orphans and leave ingest/archive in an indeterminate state.
+
+| Mitigation | Role |
+|------------|------|
+| **`PR_SET_PDEATHSIG` (SIGKILL)** on pool workers | Workers exit when the supervisor dies so **supervisord** can restart a clean tree |
+| **`sync_supervisor_rss_limit_mb`** / **`sync_supervisor_rss_check_interval_s`** | Exit **137** before kernel OOM when RSS is trending over limit |
+| **`abort_if_pool_workers_dead`** | Parent exits **137** when a worker is OOM-killed first (fail-fast vs hang) |
+
+Tune RSS limits for your container memory cap; grep kernel logs for `oom-kill` + `sync_timedb.py` and correlate with `pending_stats` / janitor debt in application logs.
+
+## Archive recovery (operators)
+
+Raw stats on disk remain the **source of truth** until validated archive membership, DB head-ingest gate (when enabled), and janitor raw removal all succeed.
+
+| Symptom | Safe recovery |
+|---------|----------------|
+| **Bad `.tar.zst`, good legacy `.tar.gz`** | Remove or rename the corrupt `.tar.zst`; restore sibling `.tar` from gzip (`decompress_compressed_to_tar` / `zstd -d --format=gzip`). Raw stats stay until validation passes. |
+| **Missing `.tar` after mistaken drop** | Decompress sealed `.tar.zst` (or legacy `.tar.gz`) to sibling `.tar` before append; never delete raw while tar/zst validation fails closed. |
+| **Stuck janitor debt after crash** | Inspect **`.sync_archive_maint_hints.json`** v2 (`debt_queue`, `day_phases`); restart **`sync_timedb`** (startup mtime scan re-enqueues seal debt) or wait for interval accrual when the ingest queue is idle. |
+| **Corrupt daily `.tar` before append** | `replace_corrupt_tar_from_compressed_backup` tries zst then gz; append stays fail-closed (`False`) if restore fails—raw files remain. |
+| **`ingest_first_archive_abandoned_raw` in logs** | With **`sync_enable_ingest_first_durability_mode=yes`**, exhausted append retries checkpoint paths as processed while raw may never reach tar; janitor/partial accrual must eventually enqueue raw debt—grep logs for this marker and verify raw still on disk until cold path succeeds. |
+| **Head ingested, tail missing (M2)** | DB head-ingest gate does not prove full-file ingest; truncated raw with matching archive size could pass validation—treat unexpected raw deletion as incident-driven review, not routine ops. |
 
 ## PostgreSQL connection budget (operator)
 
@@ -132,6 +179,18 @@ docker compose -f docker-compose.yaml up -d
 Topology is read from **Linux sysfs**: `/sys/devices/system/node/node*/cpulist` (not hardcoded).
 
 When [`should_apply_numa_pinning`](../hpcperfstats/numa_topology.py) is true **and** **two different** NUMA nodes are selected for web vs pipeline, the generator **replaces** the linear **`web`**, **`pipeline`**, and optionally **`proxy`** cpusets with those nodes’ sysfs **`cpulist`** values. On a **single** NUMA node, web and pipeline would otherwise each get the **full** socket and erase the db/web/pipeline split — the script **keeps** the **linear** layout from [`compose_cpu_layout.py`](../hpcperfstats/compose_cpu_layout.py) instead. **`db`**, **Redis**, and **RabbitMQ** always use the linear layout in this phase — on multi-NUMA hosts their cpusets may **overlap** numerically with the web node’s CPUs; Docker allows overlapping `cpuset`s between containers. Tighter **Postgres-on-socket** placement is a possible future refinement.
+
+## Archive janitor and seal/append lock contention
+
+The background **`ArchiveJanitor`** consumes **debt items** per tick (`archive_janitor_days_per_tick`), not calendar days. Day-complete reclaim enqueues up to **three** items per prior day (SEAL, RAW_REMOVE, TAR_DROP). Tune **`archive_janitor_budget_seconds`**, **`archive_janitor_raw_paths_per_tick`**, and **`archive_janitor_debt_high_watermark`** / **`archive_janitor_debt_burst_factor`** on sites ingesting **~15k raw files/day**.
+
+**Seal vs append:** `atomic_seal_tar_to_zst` holds an exclusive **`file_write_lock`** on the daily `.tar` for the full compress/replace window. Hot-path append uses the same lock (default **60s** timeout). Large-day seals during ingest can surface append **`TimeoutError`** (fail-closed). Mitigations: keep **`archive_keep_uncompressed_tar=yes`** during heavy ingest, isolate **`sync_timedb`** archive work on a dedicated cpuset (see above), and rely on janitor disqualification for in-flight days.
+
+**Validation read locks:** parallel raw-remove validation defaults to **`sync_archive_validation_max_workers=2`** (INI `[PIPELINE]`). Raise only when append/read-lock contention is acceptable.
+
+**Pool stall guard:** `sync_pool_stall_abort_after_timeouts` (default **120** poll intervals) aborts `imap_unordered_watch_pool` when a worker is alive but stuck; supervisor may exit and supervisord restarts the tree.
+
+**Unmapped closed raw:** when ingest backlog prevents full accrual snapshots, the supervisor unions a cached unmapped-closed-raw scan into janitor disqualification so `.tar` drop cannot proceed while unparseable closed raw remains on disk.
 
 ## Related files
 

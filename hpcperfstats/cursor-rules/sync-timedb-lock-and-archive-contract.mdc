@@ -20,30 +20,27 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
 - Keep **zstd** parallelism bounded by **`archive_seal_parallel_workers`** (default **4** concurrent daily seals) and per-process **`-T`**: **`archive_zstd_threads=0`** (default) → **`-T0`**; **`N>0`** → **`-TN`**. All archive zstd subprocesses may be wrapped with configured **`nice`/`ionice`**. Legacy `.tar.gz` reads use `zstd -d --format=gzip` only.
 - **Parallel multi-day seal:** `seal_dirty_daily_archives` collects all seal-ready days, then seals via a bounded `ThreadPoolExecutor`; per-day failures must not abort other days. Do not seal the same path from two workers.
 - **Per-day seal lock timeout:** `_seal_one_daily_tar` catches `TimeoutError` from `file_write_lock` (same as `CalledProcessError` / `RuntimeError`) so one contended daily `.tar` does not abort the whole maintenance pass.
-- **Scheduled maintenance max defer:** when maintenance is due but `archive_pool` append is not `ready()`, defer until `archive_maintenance_max_defer_seconds` (default 1h) since first defer, then run a **two-phase** partial pass without finalize: phase 1 skips in-flight daily `.tar` paths from `archive_job_deferred_paths`; phase 2 retries the pipeline once on those paths only (`scheduled_forced` / `scheduled_forced_retry`). Does not require an empty ingest queue. Startup `force_remove_uncompressed_tar` and idle `pre_rescan` full maintenance are unchanged.
+- **Supervisor blocking maintenance retired:** seal/raw/`.tar` execution runs only in **`ArchiveJanitor`** ticks (`sync-timedb-archive-janitor-contract.mdc`). `archive_maintenance_interval_seconds` triggers **debt accrual** when the ingest queue is empty, not a supervisor `_archive_maintenance_pipeline` burst. High debt uses janitor burst scaling (`archive_janitor_debt_high_watermark` / `archive_janitor_debt_burst_factor`), not forced two-phase supervisor passes.
 - **Legacy ``.tar.gz`` drop:** after sealing to ``.tar.zst``, remove the gzip sibling when every gzip member path exists in the zst archive with the same byte size (extra zst-only members are allowed).
 - **Safe decompress:** `decompress_compressed_to_tar` writes to a temp tar, verifies with `tar tf`, replaces the sibling `.tar`, and only then unlinks the compressed file. Do not use in-place `zstd -d --rm` on archive paths.
 - **Fail-closed append:** when a sealed sibling exists but `.tar` is missing, abort append if decompress/restore fails; never `tar -c` over a missing tar when `.tar.zst` / `.tar.gz` is present.
 - **Seal shrink guard:** refuse to replace an existing `.tar.zst` when the new tar has fewer file members or a lower member byte sum than the existing sealed archive.
 - If archival batching/chunking behavior changes, keep recovery semantics deterministic and test-covered.
 - **Daily `.tar` removal (scheduled):** after seal, unlink `YYYY-MM-DD.tar` only when `build_remaining_raw_stats_by_daily_gz` reports no closed raw stats paths for that day (every archive maintenance pass: seal → verified raw removal → gated `.tar` removal). Require tar + sealed archive (`.tar.zst` or legacy `.tar.gz`) integrity validation before unlink.
-- **Daily `.tar` removal (startup):** when `_run_scheduled_archive_maintenance(reason="startup")` runs, remove verified `.tar` siblings after seal/validation even when raw stats remain (`force_remove_uncompressed_tar`). Scheduled/idle maintenance keeps the raw-presence gate.
-- **Maintenance snapshot:** `_archive_maintenance_pipeline` builds one `ArchiveMaintenanceSnapshot` per pass (`sync_timedb_archive_maint.py`): single `collect_stats_files_in_range`, bounded parallel head reads (`sync_archive_discovery_workers` / `SYNC_ARCHIVE_DISCOVERY_WORKERS`), optional `.sync_archive_maint_hints.json` under `archive_dir`. Do not rescan the raw tree between seal, raw removal, and `.tar` removal in the same pass.
+- **Daily `.tar` removal:** janitor `TAR_DROP` debt uses `remaining_raw_by_gz` (no closed raw for day) and validation hints; never `force_remove_uncompressed_tar=True` on the janitor path. Legacy `_archive_maintenance_pipeline` helpers remain for tests/tooling only — not scheduled on the supervisor hot path.
+- **Maintenance snapshot:** full `build_archive_maintenance_snapshot` at **janitor accrual interval** only (not per tick). Per-tick janitor work is day-scoped. Hints v2 (`debt_queue`, `day_phases`, `validated_days`) under `archive_dir`. Do not rescan the raw tree between seal, raw removal, and `.tar` removal within one accrual pass.
 - **Idempotent seal:** `atomic_seal_tar_to_zst` skips recompress when `zstd -t` passes and tar/zst member count and byte-sum match (or tar absent with valid zst).
 
-## Post-chunk archive hygiene (non-blocking)
+## Janitor cold path (replaces post-chunk hygiene)
 
-- **Entry points:** `_schedule_post_chunk_hygiene` / `_run_post_chunk_hygiene_body` (closures in `run_sync_timedb_supervisor_loop`). Scheduled at chunk end whenever the chunk produced archival/finalize work; runs in a single-flight `ThreadPoolExecutor(max_workers=1)` and **never** blocks ingest (the supervisor advances to the next chunk without waiting on `post_chunk_hygiene_future`).
-- **Pipeline order (canonical, loss-safe):** one `build_archive_maintenance_snapshot` per pass → `seal_dirty_daily_archives` → `remove_verified_archived_raw_files` → `remove_verified_uncompressed_daily_tars`. Same seal-before-delete order as `_archive_maintenance_pipeline`; do not rescan the raw tree between steps (reuse the snapshot).
-- **Seal once per pass:** exactly **one** `seal_dirty_daily_archives` call (the only step that may run zstd). Raw removal passes **`allow_auto_seal=False`** so `validate_sealed_daily_archive_for_raw_removal` does not invoke a second `atomic_seal_tar_to_zst`. Interval maintenance stays the backstop and hits `_seal_skip_existing_zst_equivalent` / non-dirty checks (no recompress) for days hygiene already sealed.
-- **Preflight skip:** `_post_chunk_hygiene_has_work` returns early (no seal/raw/`.tar` mutation) when no non-disqualified day is dirty-sealable and no removable raw exists.
-- **Today policy:** post-chunk seal uses `seal_immediately_if_dirty=False`; calendar-today waits `archive_seal_idle_seconds` since `.tar` mtime, prior days seal when dirty. **Never** sets `force_remove_uncompressed_tar=True`; **never** resets `last_archive_maint`; **never** `finalize(force=True)`.
-- **Locks / re-disqualify:** shared supervisor state (`pending_stats_files`, `inflight_archive_paths`, `pending_append_by_daily_tar`, `pending_archive_tasks`) is read/mutated under `archive_state_lock`; `build_seal_disqualified_daily_tars` is recomputed under the lock immediately before each mutating step. `skip_daily_tar_paths=disqualified` is passed to seal, raw removal, and `.tar` removal, so no seal/verify/lock/delete touches a day with pending ingest, in-flight or queued append, a non-empty append cache, or unmapped closed raw.
-- **Parallel seal safety:** the post-chunk `seal_dirty_daily_archives` still uses the bounded multi-day workers; disqualification (in-flight `archive_job` + `pending_archive_tasks` heap + `pending_append_by_daily_tar`) guarantees a `tar_path` is never sealed by hygiene and an `archive_pool` append at the same time.
+- **Entry point:** `archive_janitor.signal_work_available()` at chunk end; **`ArchiveJanitor._run_tick_body`** in `sync_timedb_archive_janitor.py`. Single-flight background thread; supervisor never waits on janitor completion.
+- **Pipeline order (canonical, loss-safe):** per debt item: seal (if `SEAL_PRIOR_DAY`) → raw remove / validate → `.tar` drop; **`allow_auto_seal=False`** on raw removal. Seal tries `_seal_skip_existing_zst_equivalent` before compress; at most one compress per day per debt cycle.
+- **Today policy:** prior days seal when dirty; calendar-today waits `archive_seal_idle_seconds` and disqualification clears. Janitor never sets `force_remove_uncompressed_tar=True`.
+- **Locks / re-disqualify:** `get_disqualified_daily_tars()` unions pending ingest, in-flight append, heap tasks, append cache, and unmapped closed raw — recomputed before each mutating janitor step.
 
 ## Required tests when behavior changes
 
-- Supervisor defer/forced maintenance under pending `archive_job`: `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_periodic_maintenance_logs_deferred_when_archive_finalize_pending`, `test_periodic_maintenance_runs_forced_two_phase_when_defer_cap_exceeded`, `test_continuous_backlog_triggers_forced_maintenance`). Tests must enable maintenance only after a never-ready `map_async` job exists (`get_sync_ingest_chunk_size`, not module-level `chunk_size`).
+- Janitor + hot path: `test_sync_timedb_janitor.py`, `test_sync_timedb_supervisor.py` (debt accrual skip under backlog, finalize defer, no forced two-phase maintenance, janitor `signal_work_available` on chunk archival).
 - Extend/add focused tests around:
  - lock path normalization/idempotence
  - lock file cleanup after success and exceptions
@@ -52,12 +49,12 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
  - zstd thread-count selection (`-T0` default, explicit `-TN` override) and parallel seal worker cap
  - parallel multi-day seal isolation (one day's failure does not abort others)
  - safe decompress, fail-closed append, seal shrink guard, startup vs scheduled `.tar` removal
- - scheduled maintenance max defer cap and two-phase forced partial pass
+ - janitor debt burst scaling under high watermark (no supervisor forced two-phase)
  - seal `TimeoutError` isolation during multi-day maintenance
- - post-chunk hygiene: canonical seal-before-delete order, preflight skip with no eligible work, `allow_auto_seal=False`, disqualified day passed as `skip_daily_tar_paths`, single-flight scheduling that does not block the next chunk
+ - janitor ticks: budget/days-per-tick caps, `allow_auto_seal=False`, disqualification skip set, RSS defer, hints persistence
 
 ## Overlap
 
 - Complements `runtime-resource-and-metrics-safety.mdc` (resource limits) and `pipeline-metrics-e2e-maintenance.mdc` (pipeline-level regression coverage).
 - Complements **`sync-timedb-db-before-archive-contract.mdc`** — head-timestamp DB `exists()` gate before raw stats tar append or filesystem removal (when `sync_archive_require_db_head_ingest` is enabled).
-- Complements **`sync-timedb-post-chunk-archive-hygiene.mdc`** — per-day append cache, disqualification union, and non-blocking supervisor scheduling for the post-chunk pass.
+- Complements **`sync-timedb-archive-janitor-contract.mdc`** — canonical hot/cold split and debt queue.

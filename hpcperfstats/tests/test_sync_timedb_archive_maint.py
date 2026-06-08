@@ -95,7 +95,7 @@ def test_save_and_load_archive_maint_hints_roundtrip(tmp_path, monkeypatch):
       validated_days={"/z/day.tar.zst": {"mtime_ns": 1, "size": 2, "ok": True, "member_count": 1, "member_byte_sum": 10}},
   )
   loaded = maint.load_archive_maint_hints(archive_dir)
-  assert loaded["version"] == 1
+  assert loaded["version"] == 2
   assert "/h/host" in loaded["host_dirs"]
   assert "/z/day.tar.zst" in loaded["validated_days"]
 

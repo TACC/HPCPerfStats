@@ -7,6 +7,8 @@ import json
 from unittest.mock import MagicMock, patch
 
 import hpcperfstats.dbload.sync_timedb as st
+import hpcperfstats.dbload.sync_timedb_archive_helpers as archive_helpers
+import hpcperfstats.dbload.sync_timedb_archive_janitor as janitor_mod
 import pandas as pd
 import pytest
 from hpcperfstats.shutdown_utils import shutdown_requested
@@ -103,7 +105,7 @@ def _empty_maintenance_snapshot(*_a, **_k):
 
 
 class _InlineThreadPoolExecutor:
-  """Run post-chunk hygiene inline so supervisor unit tests do not hang."""
+  """Run archive-janitor ticks inline so supervisor unit tests do not hang."""
 
   def __init__(self, *args, **kwargs):
     del args, kwargs
@@ -127,33 +129,62 @@ def _default_startup_daily_tar_count(monkeypatch):
   monkeypatch.setattr(st, "_count_daily_tars", lambda *_a, **_k: 0)
   monkeypatch.setattr(st.cfg, "get_sync_archive_maint_hints", lambda: False)
   monkeypatch.setattr(
-      st,
+      janitor_mod,
       "build_archive_maintenance_snapshot",
       _empty_maintenance_snapshot,
   )
-  monkeypatch.setattr(st, "save_archive_maint_hints", lambda *_a, **_k: None)
+  monkeypatch.setattr(janitor_mod, "save_archive_maint_hints", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+  monkeypatch.setattr(janitor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+  monkeypatch.setattr(janitor_mod, "build_remaining_raw_stats_by_daily_gz", lambda *a, **k: {})
+  monkeypatch.setattr(archive_helpers, "build_remaining_raw_stats_by_daily_gz", lambda *a, **k: {})
+  monkeypatch.setattr(janitor_mod, "build_remaining_raw_for_daily_tar", lambda *a, **k: {})
+  monkeypatch.setattr(archive_helpers, "build_remaining_raw_for_daily_tar", lambda *a, **k: {})
+  monkeypatch.setattr(janitor_mod, "iter_daily_tar_paths", lambda *a, **k: [])
 
 
 def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch):
-  """Every archive maintenance pass invokes remove_verified_uncompressed_daily_tars."""
+  """Janitor debt accrual and ticks invoke remove_verified_uncompressed_daily_tars."""
   shutdown_requested[0] = False
   try:
+    from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
     tar_removal_calls = []
 
     def fake_rescan(*_a, **_k):
       return []
 
+    def snapshot_with_tar_debt(*_a, **_k):
+      return ArchiveMaintenanceSnapshot(
+          closed_paths=[],
+          remaining_raw_by_gz={"/tmp/2026-01-01.tar.gz": ["/tmp/raw-a"]},
+          mapping={},
+          ready_paths=set(),
+      )
+
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
-    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
-    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(
         st,
+        "get_unmapped_closed_raw_daily_tars_cached",
+        lambda *_a, **_k: frozenset(),
+    )
+    monkeypatch.setattr(janitor_mod, "build_archive_maintenance_snapshot", snapshot_with_tar_debt)
+    monkeypatch.setattr(janitor_mod, "atomic_seal_tar_to_zst", lambda *a, **k: None)
+    monkeypatch.setattr(janitor_mod, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(
+        janitor_mod,
         "remove_verified_uncompressed_daily_tars",
         lambda *a, **k: tar_removal_calls.append(1),
     )
-    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    clock = {"t": 10_000.0}
+
+    def fake_time():
+      clock["t"] += 2.0
+      return clock["t"]
+
+    monkeypatch.setattr(st.time, "time", fake_time)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 1.0)
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
@@ -181,6 +212,8 @@ def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch):
 def test_maintenance_passes_ingest_ready_fn_to_raw_removal(monkeypatch):
   shutdown_requested[0] = False
   try:
+    from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
     captured = {}
 
     def fake_raw_removal(*_a, **kwargs):
@@ -189,12 +222,28 @@ def test_maintenance_passes_ingest_ready_fn_to_raw_removal(monkeypatch):
     def fake_rescan(*_a, **_k):
       return []
 
+    def snapshot_with_raw_debt(*_a, **_k):
+      return ArchiveMaintenanceSnapshot(
+          closed_paths=[],
+          remaining_raw_by_gz={"/tmp/2026-01-01.tar.gz": ["/tmp/raw-a"]},
+          mapping={},
+          ready_paths=set(),
+      )
+
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
-    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
-    monkeypatch.setattr(st, "remove_verified_archived_raw_files", fake_raw_removal)
-    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
-    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(janitor_mod, "build_archive_maintenance_snapshot", snapshot_with_raw_debt)
+    monkeypatch.setattr(janitor_mod, "remove_verified_archived_raw_files", fake_raw_removal)
+    monkeypatch.setattr(janitor_mod, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
+    monkeypatch.setattr(janitor_mod, "atomic_seal_tar_to_zst", lambda *a, **k: None)
+    clock = {"t": 10_000.0}
+
+    def fake_time():
+      clock["t"] += 2.0
+      return clock["t"]
+
+    monkeypatch.setattr(st.time, "time", fake_time)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 1.0)
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
@@ -430,10 +479,9 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
       archive_pool.__exit__(None, None, None)
 
     assert sleeps == [st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS]
-    # Maintenance now runs only after an empty rescan. A non-empty first rescan
-    # goes straight to ingest, then a single maintenance pass runs on final idle.
-    assert final_maintenance["calls"] == 1
-    assert final_maintenance["remove_verified_tars_calls"] == 1
+    # Blocking supervisor maintenance is gone; janitor owns cold-path cleanup.
+    assert final_maintenance["calls"] == 0
+    assert final_maintenance["remove_verified_tars_calls"] == 0
   finally:
     shutdown_requested[0] = False
 
@@ -479,7 +527,8 @@ def test_supervisor_runs_full_archive_maintenance_before_rescan_when_idle(monkey
       archive_pool.__exit__(None, None, None)
 
     assert events[0] == "rescan"
-    assert events[1:3] == ["maintenance", "tar_removal"]
+    assert "maintenance" not in events
+    assert "tar_removal" not in events
     assert events[-1] == "rescan"
   finally:
     shutdown_requested[0] = False
@@ -531,37 +580,34 @@ def test_supervisor_rescans_before_full_maintenance_when_queue_empty(monkeypatch
       archive_pool.__exit__(None, None, None)
 
     assert events[:2] == ["rescan", "rescan"]
-    assert "maintenance" in events
+    assert "maintenance" not in events
   finally:
     shutdown_requested[0] = False
 
 
 def test_supervisor_runs_startup_archive_maintenance_when_daily_tars_above_threshold(monkeypatch):
+  """Startup no longer blocks on maintenance; janitor enqueue runs before first rescan."""
   shutdown_requested[0] = False
   try:
     events = []
-    seal_kwargs = []
-    tar_removal_kwargs = []
+    janitor_signals = {"n": 0}
 
     def fake_rescan(*_a, **_k):
       events.append("rescan")
       return []
 
-    def fake_seal(*a, **k):
-      events.append("maintenance")
-      seal_kwargs.append(k)
+    original_signal = janitor_mod.ArchiveJanitor.signal_work_available
 
-    def fake_tar_removal(*a, **k):
-      events.append("tar_removal")
-      tar_removal_kwargs.append(k)
+    def counting_signal(self):
+      janitor_signals["n"] += 1
+      return original_signal(self)
 
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor, "signal_work_available", counting_signal)
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
     monkeypatch.setattr(st, "_count_daily_tars", lambda *_a, **_k: 4)
-    monkeypatch.setattr(st, "seal_dirty_daily_archives", fake_seal)
-    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
-    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", fake_tar_removal)
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
@@ -582,17 +628,8 @@ def test_supervisor_runs_startup_archive_maintenance_when_daily_tars_above_thres
     finally:
       archive_pool.__exit__(None, None, None)
 
-    assert events == [
-        "maintenance",
-        "tar_removal",
-        "rescan",
-        "maintenance",
-        "tar_removal",
-        "rescan",
-    ]
-    assert all(k.get("force_remove_uncompressed_tar") is True for k in seal_kwargs[:1])
-    assert all(k.get("force_remove_uncompressed_tar") is True for k in tar_removal_kwargs[:1])
-    assert seal_kwargs[1].get("force_remove_uncompressed_tar") is not True
+    assert events[0] == "rescan"
+    assert janitor_signals["n"] >= 1
   finally:
     shutdown_requested[0] = False
 
@@ -743,7 +780,7 @@ def test_supervisor_logs_completed_file_with_global_remaining(monkeypatch):
 
 
 def test_periodic_maintenance_runs_with_backlog_and_logs_context(monkeypatch):
-  """Periodic maintenance should still run at chunk boundaries under backlog."""
+  """Debt accrual is skipped at chunk boundaries while ingest backlog is non-empty."""
   shutdown_requested[0] = False
   try:
     calls = {"n": 0}
@@ -764,7 +801,6 @@ def test_periodic_maintenance_runs_with_backlog_and_logs_context(monkeypatch):
         return self.t
 
     clock = _Clock()
-    maintenance_calls = {"n": 0}
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (_a[1], True, True, 0.0))
@@ -772,19 +808,12 @@ def test_periodic_maintenance_runs_with_backlog_and_logs_context(monkeypatch):
     monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
     monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 0.5)
     monkeypatch.setattr(st, "chunk_size", 1)
-    monkeypatch.setattr(st.time, "time", clock)
+    monkeypatch.setattr("hpcperfstats.dbload.sync_timedb.time.time", clock)
     monkeypatch.setattr(
         st,
         "log_print",
         lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
     )
-    monkeypatch.setattr(
-        st,
-        "seal_dirty_daily_archives",
-        lambda *a, **k: maintenance_calls.__setitem__("n", maintenance_calls["n"] + 1),
-    )
-    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
-    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
@@ -805,8 +834,12 @@ def test_periodic_maintenance_runs_with_backlog_and_logs_context(monkeypatch):
     finally:
       archive_pool.__exit__(None, None, None)
 
-    assert maintenance_calls["n"] >= 2  # periodic + final idle (no startup pass)
-    assert any("context=chunk_boundary" in line for line in logs)
+    assert any(
+        "Archive debt accrual deferred reason=ingest_backlog context=chunk_boundary"
+        in line
+        or "Archive janitor accrue reason=interval_partial" in line
+        for line in logs
+    )
   finally:
     shutdown_requested[0] = False
 
@@ -1364,13 +1397,14 @@ def test_archive_dispatch_by_tgz_groups_respects_archive_queue_max(monkeypatch):
     assert len(first_batch) == 2
     assert first_batch[0][0] == "/tmp/2026-03-01.tar.gz"
     assert first_batch[1][0] == "/tmp/2026-03-02.tar.gz"
-    assert any("Archive dispatch by tgz groups submitted=2 deferred_groups=1" in ln for ln in logs)
+    assert any("Archive dispatch submitted=2 queued=1 inflight_slots=1" in ln for ln in logs)
   finally:
     shutdown_requested[0] = False
 
 
 def test_periodic_maintenance_logs_deferred_when_archive_finalize_pending(
     monkeypatch, tmp_path):
+  """Finalize stays soft-deferred; janitor replaces blocking supervisor maintenance."""
   shutdown_requested[0] = False
   archive_dir = tmp_path / "archive"
   archive_dir.mkdir()
@@ -1409,9 +1443,9 @@ def test_periodic_maintenance_logs_deferred_when_archive_finalize_pending(
       line = " ".join(str(a) for a in args)
       logs.append(line)
       log_lines["n"] += 1
-      if "Archive dispatch by tgz groups" in line:
+      if "Archive dispatch submitted=" in line:
         archive_dispatched[0] = True
-      if "Archive maintenance due but deferred" in line:
+      if "Archive finalize deferred" in line:
         shutdown_requested[0] = True
       if log_lines["n"] > 120:
         shutdown_requested[0] = True
@@ -1422,17 +1456,12 @@ def test_periodic_maintenance_logs_deferred_when_archive_finalize_pending(
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
     monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 0.5)
-    monkeypatch.setattr(
-        st.cfg, "get_archive_maintenance_max_defer_seconds", lambda: 86400.0)
     monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
     monkeypatch.setattr(
         st,
         "build_archive_mapping",
         lambda files, *_a, **_k: {"/tmp/day.tar.gz": list(files[:1])},
     )
-    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
-    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
-    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
@@ -1451,11 +1480,11 @@ def test_periodic_maintenance_logs_deferred_when_archive_finalize_pending(
         ".hpc",
         object(),
         _ArchivePoolNeverReady(),
-        run_once=False,
+        run_once=True,
     )
 
     assert any("Archive finalize deferred" in line for line in logs)
-    assert any("Archive maintenance due but deferred" in line for line in logs)
+    assert not any("Archive maintenance due but deferred" in line for line in logs)
     assert not any("forced two-phase archive maintenance" in line for line in logs)
   finally:
     shutdown_requested[0] = False
@@ -1465,74 +1494,59 @@ def test_periodic_maintenance_runs_forced_two_phase_when_defer_cap_exceeded(
     monkeypatch,
     tmp_path,
 ):
+  """Forced two-phase supervisor maintenance is retired; janitor signals continue."""
   shutdown_requested[0] = False
   archive_dir = tmp_path / "archive"
   archive_dir.mkdir()
   try:
     logs = []
-    clock = {"t": 2000.0}
-    pending = ["/tmp/stats-a", "/tmp/stats-b", "/tmp/stats-c"]
-    archive_dispatched = [False]
+    janitor_signals = {"n": 0}
+    original_signal = janitor_mod.ArchiveJanitor.signal_work_available
 
-    def fake_time():
-      if not archive_dispatched[0]:
-        return clock["t"]
-      clock["t"] += 0.25
-      return clock["t"]
+    def counting_signal(self):
+      janitor_signals["n"] += 1
+      return original_signal(self)
+
+    rescan_calls = {"n": 0}
 
     def fake_rescan(*_a, **_k):
-      return list(pending)
+      if rescan_calls["n"] == 0:
+        rescan_calls["n"] += 1
+        return ["/tmp/stats-a"]
+      return []
 
-    class _NeverReady:
-      def ready(self):
-        return False
-
-      def get(self):
-        return [True]
-
-    class _ArchivePoolNeverReady:
-      def map_async(self, _fn, _items):
-        return _NeverReady()
-
-    log_lines = {"n": 0}
-
-    def log_print_capture(*args, **kwargs):
-      line = " ".join(str(a) for a in args)
-      logs.append(line)
-      log_lines["n"] += 1
-      if "Archive dispatch by tgz groups" in line:
-        archive_dispatched[0] = True
-      if "forced two-phase archive maintenance" in line:
-        shutdown_requested[0] = True
-      if log_lines["n"] > 120:
-        shutdown_requested[0] = True
-
-    monkeypatch.setattr(st.time, "time", fake_time)
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor, "signal_work_available", counting_signal)
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (_a[1], True, True, 0.0))
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
     monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 0.5)
-    monkeypatch.setattr(st.cfg, "get_archive_maintenance_max_defer_seconds", lambda: 0.001)
     monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
     monkeypatch.setattr(
         st,
         "build_archive_mapping",
         lambda files, *_a, **_k: {"/tmp/day.tar.zst": list(files[:1])},
     )
-    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
-    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
-    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
     monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
-    monkeypatch.setattr(st, "log_print", log_print_capture)
     monkeypatch.setattr(
         st,
-        "async_result_get_watch_pool",
-        lambda *_a, **_k: [True],
+        "log_print",
+        lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
     )
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda _s: None)
+
+    class _ReadyArchivePool:
+      def map_async(self, _fn, _items):
+        class _R:
+          def ready(self):
+            return True
+
+          def get(self):
+            return [True]
+        return _R()
 
     st.run_sync_timedb_supervisor_loop(
         str(archive_dir),
@@ -1540,36 +1554,54 @@ def test_periodic_maintenance_runs_forced_two_phase_when_defer_cap_exceeded(
         None,
         ".hpc",
         object(),
-        _ArchivePoolNeverReady(),
-        run_once=False,
+        _ReadyArchivePool(),
+        run_once=True,
     )
 
-    assert any("reason=scheduled_forced cycle=" in line for line in logs)
-    assert any("reason=scheduled_forced_retry cycle=" in line for line in logs)
-    assert any("forced two-phase archive maintenance" in line for line in logs)
+    assert janitor_signals["n"] >= 1
+    assert not any("forced two-phase archive maintenance" in line for line in logs)
   finally:
     shutdown_requested[0] = False
 
 
 def test_continuous_backlog_triggers_forced_maintenance(monkeypatch, tmp_path):
+  """Continuous ingest backlog skips debt accrual but still signals the janitor."""
   shutdown_requested[0] = False
   archive_dir = tmp_path / "archive"
   archive_dir.mkdir()
   try:
     logs = []
-    clock = {"t": 2000.0}
     backlog = ["/tmp/stats-a", "/tmp/stats-b", "/tmp/stats-c"]
-    archive_dispatched = [False]
-    log_lines = {"n": 0}
-
-    def fake_time():
-      if not archive_dispatched[0]:
-        return clock["t"]
-      clock["t"] += 0.25
-      return clock["t"]
 
     def fake_rescan(*_a, **_k):
       return list(backlog)
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (_a[1], True, True, 0.0))
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 0.5)
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
+    monkeypatch.setattr(
+        st,
+        "build_archive_mapping",
+        lambda files, *_a, **_k: {"/tmp/day.tar.zst": list(files[:1])},
+    )
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    def log_print_capture(*args, **kwargs):
+      line = " ".join(str(a) for a in args)
+      logs.append(line)
+      if (
+          "Archive debt accrual deferred reason=ingest_backlog context=chunk_boundary"
+          in line
+          or "Archive janitor accrue reason=interval_partial" in line
+      ):
+        shutdown_requested[0] = True
+
+    monkeypatch.setattr(st, "log_print", log_print_capture)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda _s: None)
 
     class _NeverReady:
       def ready(self):
@@ -1582,44 +1614,6 @@ def test_continuous_backlog_triggers_forced_maintenance(monkeypatch, tmp_path):
       def map_async(self, _fn, _items):
         return _NeverReady()
 
-    def log_print_capture(*args, **kwargs):
-      line = " ".join(str(a) for a in args)
-      logs.append(line)
-      log_lines["n"] += 1
-      if "Archive dispatch by tgz groups" in line:
-        archive_dispatched[0] = True
-      if "forced two-phase archive maintenance" in line:
-        shutdown_requested[0] = True
-      if log_lines["n"] > 120:
-        shutdown_requested[0] = True
-
-    monkeypatch.setattr(st.time, "time", fake_time)
-    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
-    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (_a[1], True, True, 0.0))
-    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
-    monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
-    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 0.5)
-    monkeypatch.setattr(st.cfg, "get_archive_maintenance_max_defer_seconds", lambda: 0.05)
-    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
-    monkeypatch.setattr(
-        st,
-        "build_archive_mapping",
-        lambda files, *_a, **_k: {"/tmp/day.tar.zst": list(files[:1])},
-    )
-    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
-    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
-    monkeypatch.setattr(st, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
-    monkeypatch.setattr(st, "close_old_connections", lambda: None)
-    monkeypatch.setattr(st.connections, "close_all", lambda: None)
-    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
-    monkeypatch.setattr(st, "log_print", log_print_capture)
-    monkeypatch.setattr(
-        st,
-        "async_result_get_watch_pool",
-        lambda *_a, **_k: [True],
-    )
-    monkeypatch.setattr(st, "sleep_until_shutdown", lambda _s: None)
-
     st.run_sync_timedb_supervisor_loop(
         str(archive_dir),
         "all",
@@ -1630,12 +1624,12 @@ def test_continuous_backlog_triggers_forced_maintenance(monkeypatch, tmp_path):
         run_once=False,
     )
 
-    assert any("forced two-phase archive maintenance" in line for line in logs)
     assert any(
-        "Archive maintenance due but deferred" in line
-        or "Archive finalize deferred" in line
+        "Archive debt accrual deferred reason=ingest_backlog" in line
+        or "Archive janitor accrue reason=interval_partial" in line
         for line in logs
     )
+    assert not any("forced two-phase archive maintenance" in line for line in logs)
   finally:
     shutdown_requested[0] = False
 
@@ -2099,7 +2093,8 @@ def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
   finally:
     archive_pool.__exit__(None, None, None)
   assert excinfo.value.exit_code == 137
-  assert terminate_calls
+  assert ingest_pool in terminate_calls
+  assert archive_pool in terminate_calls
 
 
 def test_combined_db_writer_task_uses_single_pool_path(monkeypatch):
@@ -2295,26 +2290,30 @@ class _CapturingHygieneExecutor:
 
 
 def test_post_chunk_hygiene_scheduled_and_runs_seal_before_delete(monkeypatch):
-  """A chunk that appends to tars schedules single-flight hygiene that runs the
-  canonical seal -> remove-raw -> remove-tar pipeline, skips disqualified days,
-  and disables auto-seal so only the dedicated seal step compresses."""
+  """Chunk archival signals the janitor; raw removal uses allow_auto_seal=False."""
   shutdown_requested[0] = False
   try:
+    from hpcperfstats.dbload.sync_timedb_archive_janitor import DebtKind
+
     target = "/fake/statsA"
-    holder = {}
     events = []
+    janitor = None
 
     def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
-      if not holder.get("served"):
-        holder["served"] = True
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
         return [target]
       shutdown_requested[0] = True
       return []
+    fake_rescan.calls = 0
 
     def fake_add(_lock, path, _contents=None):
       return (path, True, True, 0.0)
 
     class _NeverDone:
+      def ready(self):
+        return False
+
       def get(self):
         return None
 
@@ -2322,27 +2321,32 @@ def test_post_chunk_hygiene_scheduled_and_runs_seal_before_delete(monkeypatch):
       def map_async(self, _fn, _items):
         return _NeverDone()
 
-    def _factory(*_a, **_k):
-      ex = _CapturingHygieneExecutor()
-      holder["executor"] = ex
-      return ex
+    original_init = janitor_mod.ArchiveJanitor.__init__
 
-    monkeypatch.setattr(st, "ThreadPoolExecutor", _factory)
+    def capturing_init(self, *args, **kwargs):
+      nonlocal janitor
+      original_init(self, *args, **kwargs)
+      janitor = self
+      janitor._enqueue_debt(DebtKind.RAW_REMOVE, "/tmp/2024-01-01.tar", persist=False)
+
+    monkeypatch.setattr(janitor_mod.ArchiveJanitor, "__init__", capturing_init)
+    monkeypatch.setattr(janitor_mod, "atomic_seal_tar_to_zst", lambda *a, **k: events.append(("seal", k)))
+    monkeypatch.setattr(
+        janitor_mod,
+        "remove_verified_archived_raw_files",
+        lambda *a, **k: events.append(("raw", k)),
+    )
+    monkeypatch.setattr(
+        janitor_mod,
+        "remove_verified_uncompressed_daily_tars",
+        lambda *a, **k: events.append(("tar", k)),
+    )
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(
         st, "build_archive_mapping",
         lambda *_a, **_k: {"/tmp/2024-01-01.tar.gz": [target]})
-    monkeypatch.setattr(
-        st, "seal_dirty_daily_archives",
-        lambda *a, **k: events.append(("seal", k)))
-    monkeypatch.setattr(
-        st, "remove_verified_archived_raw_files",
-        lambda *a, **k: events.append(("raw", k)))
-    monkeypatch.setattr(
-        st, "remove_verified_uncompressed_daily_tars",
-        lambda *a, **k: events.append(("tar", k)))
     monkeypatch.setattr(
         st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
@@ -2354,30 +2358,112 @@ def test_post_chunk_hygiene_scheduled_and_runs_seal_before_delete(monkeypatch):
         st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
 
     st.run_sync_timedb_supervisor_loop(
-        "/tmp/archive", "all", None, ".hpc", object(), _ArchivePool())
+        "/tmp/archive", "all", None, ".hpc", object(), _ArchivePool(), run_once=True)
 
-    executor = holder["executor"]
-    assert executor.submitted, "post-chunk hygiene was not scheduled"
-
-    # Preflight skip: no dirty-sealable day and no removable raw -> the body must
-    # return before any seal/raw/.tar mutation (no redundant zstd).
-    monkeypatch.setattr(st, "iter_daily_tar_paths", lambda *_a, **_k: [])
-    monkeypatch.setattr(st, "should_seal_daily_tar", lambda *a, **k: False)
-    events.clear()
-    executor.submitted[0]()
-    assert events == [], "hygiene mutated archives despite no eligible work"
-
-    # Force the hygiene preflight to find a sealable, non-disqualified day, then
-    # run the captured hygiene body in isolation and assert pipeline order.
-    monkeypatch.setattr(st, "iter_daily_tar_paths", lambda *_a, **_k: ["/tmp/2024-01-02.tar"])
-    monkeypatch.setattr(st, "should_seal_daily_tar", lambda *a, **k: True)
-    events.clear()
-    executor.submitted[0]()
-
-    assert [name for name, _ in events] == ["seal", "raw", "tar"]
-    seal_kwargs = events[0][1]
-    raw_kwargs = events[1][1]
-    assert "skip_daily_tar_paths" in seal_kwargs
-    assert raw_kwargs.get("allow_auto_seal") is False
+    assert janitor is not None
+    assert janitor._ticks_completed >= 1
+    raw_events = [entry for entry in events if entry[0] == "raw"]
+    assert raw_events
+    assert raw_events[0][1].get("allow_auto_seal") is False
   finally:
     shutdown_requested[0] = False
+
+
+def test_supervisor_module_has_no_live_archive_maintenance_pipeline_calls():
+  import inspect
+
+  src = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  forbidden = (
+      "_run_scheduled_archive_maintenance",
+      "_run_forced_two_phase_archive_maintenance",
+      "_maybe_run_forced_maintenance_before_archive_dispatch",
+      "_archive_maintenance_pipeline",
+  )
+  for name in forbidden:
+    assert name not in src
+
+
+def test_day_complete_enqueues_seal_raw_tar_debt_while_ingest_backlog(monkeypatch):
+  shutdown_requested[0] = False
+  reclaim_calls = []
+  try:
+    original = janitor_mod.ArchiveJanitor.enqueue_completed_prior_days_reclaim
+
+    def spy_reclaim(self, **kwargs):
+      reclaim_calls.append(kwargs.get("chunk_daily_tars"))
+      return original(self, **kwargs)
+
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "enqueue_completed_prior_days_reclaim",
+        spy_reclaim,
+    )
+    target = "/fake/statsA"
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return [target, "/fake/statsB"]
+      shutdown_requested[0] = True
+      return ["/fake/statsB"]
+    fake_rescan.calls = 0
+
+    def fake_add(_lock, path, _contents=None):
+      return (path, True, True, 0.0)
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(
+        st, "build_archive_mapping",
+        lambda *_a, **_k: {"/tmp/2024-01-01.tar.gz": [target]})
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert reclaim_calls
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_sustained_ingest_backlog_skips_full_accrual_but_prior_days_progress(monkeypatch):
+  janitor = janitor_mod.ArchiveJanitor(
+      archive_data_dir="/tmp/archive",
+      host_name_ext=".hpc",
+      tgz_archive_dir="/tmp/daily",
+      local_tz=datetime.now().astimezone().tzinfo,
+      log_fn=MagicMock(),
+      get_disqualified_daily_tars=lambda: set(),
+      get_ingest_backlog_high=lambda: True,
+      get_pending_stats_count=lambda: 100,
+      get_idle_seconds=lambda: 0.0,
+  )
+  janitor._persist_hints = MagicMock()
+  janitor._last_accrual_at = 0.0
+  full_called = {"n": 0}
+  partial_called = {"n": 0}
+  original_full = janitor._accrue_debt_full
+  original_partial = janitor._accrue_debt_partial_prior_days
+
+  def spy_full(*a, **k):
+    full_called["n"] += 1
+    return original_full(*a, **k)
+
+  def spy_partial(*a, **k):
+    partial_called["n"] += 1
+    return original_partial(*a, **k)
+
+  monkeypatch.setattr(janitor, "_accrue_debt_full", spy_full)
+  monkeypatch.setattr(janitor, "_accrue_debt_partial_prior_days", spy_partial)
+  monkeypatch.setattr(janitor_mod, "build_remaining_raw_stats_by_daily_gz", lambda *a, **k: {})
+  assert janitor.maybe_accrue_partial_debt_if_due(1.0)
+  assert partial_called["n"] == 1
+  assert full_called["n"] == 0

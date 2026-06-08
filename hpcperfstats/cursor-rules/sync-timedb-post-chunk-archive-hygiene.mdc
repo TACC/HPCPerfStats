@@ -5,7 +5,9 @@ alwaysApply: true
 
 # sync_timedb post-chunk archive hygiene
 
-After a chunk of raw ingest and tar append, `sync_timedb` runs a non-blocking, per-day hygiene pass that seals complete daily archives and removes verified raw / uncompressed `.tar` without stalling ingest. When changing this path in `hpcperfstats/dbload/sync_timedb.py` or its helpers in `sync_timedb_archive_helpers.py`, preserve the contracts below.
+**Superseded by `sync-timedb-archive-janitor-contract.mdc`.** Post-chunk hygiene (`_schedule_post_chunk_hygiene` / `_run_post_chunk_hygiene_body`) was removed; chunk-end `archive_janitor.signal_work_available()` plus the janitor debt queue owns the same seal → raw → `.tar` order off the supervisor thread.
+
+The contracts below remain valid for **janitor ticks** and shared helpers. When changing cold-path behavior, edit `sync_timedb_archive_janitor.py` and preserve these invariants.
 
 ## Canonical entry points
 

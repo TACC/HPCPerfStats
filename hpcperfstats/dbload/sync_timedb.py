@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; zstd seal to ``.tar.zst`` and raw-file removal on ``archive_maintenance_interval_seconds``, default 8h). Runs in parallel with configurable chunk size.
+"""Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; seal to ``.tar.zst`` and raw/``.tar`` cleanup via the background ``ArchiveJanitor``). Runs in parallel with configurable chunk size.
 
-Archive maintenance (on maintenance interval and when idle) seals dirty daily tars to ``.tar.zst``, removes verified raw stats (DB head-ingest gate when enabled), then removes uncompressed ``.tar`` siblings when no closed raw stats remain for that calendar day (startup maintenance removes verified ``.tar`` after seal even when raw stats remain). Append and raw delete stay DB-gated; scheduled ``.tar`` unlink uses filesystem presence only.
+**Hot path (supervisor thread):** discover → ingest → checkpoint → dispatch append (up to ``sync_archive_max_inflight_jobs`` disjoint daily-tar slots). Ingest never blocks on seal, zstd, raw delete, or uncompressed ``.tar`` removal.
 
-Scheduled maintenance defers while an in-flight ``archive_pool`` append job is not ready, but not longer than ``archive_maintenance_max_defer_seconds`` (default 1h): then a two-phase partial pass seals/cleans all days except in-flight daily ``.tar`` paths, retries once on those paths, without waiting for finalize.
+**Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Full accrual runs on ``archive_maintenance_interval_seconds`` (default 8h) when the ingest queue is empty; partial prior-day accrual and chunk-end ``enqueue_completed_prior_days_reclaim()`` run during ingest backlog. ``signal_work_available()`` schedules ticks without waiting. Seal → raw remove (``allow_auto_seal=False``) → ``.tar`` drop per day; DB head-ingest gate and disqualification union unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
-Post-chunk hygiene: after a chunk appends files to their daily ``.tar``, a single-flight background worker (``_run_post_chunk_hygiene_body``) runs the same canonical pipeline (seal dirty days -> remove verified raw with ``allow_auto_seal=False`` -> remove uncompressed ``.tar``) on completed days only. Ingest never waits on it. Days with raw still to ingest/append (pending ingest, in-flight or queued append, the per-day ``pending_append_by_daily_tar`` cache) and days with closed raw that cannot be mapped to a calendar day are disqualified and left untouched. The disqualification set is recomputed under ``archive_state_lock`` before each mutating step; one snapshot per pass (no rescan between steps); the dedicated seal is the only zstd compress per pass. This proactively seals/cleans finished days between the periodic full maintenance passes, which remain the backstop.
+Append and raw delete stay DB-gated when ``sync_archive_require_db_head_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
-When the ingest queue is empty, runs a **full** archive maintenance pass (dedupe cadence on idle) **before** rescanning for new stats files. After a rescan still finds nothing pending, it sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exits the loop iteration (continuous mode repeats).
+When the ingest queue is empty, rescans for new stats files. After a rescan still finds nothing pending, it sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exits the loop iteration (continuous mode repeats).
 
 CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once all``.
 
@@ -82,40 +82,39 @@ from hpcperfstats.shutdown_utils import (
 )
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
-    build_remaining_raw_stats_by_daily_gz,
     build_seal_disqualified_daily_tars,
     collect_days_with_unmapped_closed_raw,
-    merge_maintenance_skip_daily_tar_paths,
-    collect_lock_sidecar_stats,
+    daily_tar_path_from_compressed,
+    get_unmapped_closed_raw_daily_tars_cached,
     daily_tar_paths_for_archive_job_tasks,
     daily_tar_paths_from_pending_archive_tasks,
-    dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
     iter_daily_tar_paths,
-    remove_verified_archived_raw_files,
-    remove_verified_uncompressed_daily_tars,
     replace_corrupt_tar_from_compressed_backup,
     cap_pending_stats_file_list,
     rescan_pending_stats_files,
-    seal_dirty_daily_archives,
     should_seal_daily_tar,
     stats_file_is_active_segment,
-    tar_has_duplicate_file_members,
     verify_tar_archive_readable,
 )
-from hpcperfstats.file_locking import (
-    cleanup_stale_fnctl_lock_sidecars,
-    file_write_lock,
-)
-from hpcperfstats.dbload.sync_timedb_archive_maint import (
-    build_archive_maintenance_snapshot,
-    load_archive_maint_hints,
-    log_archive_maintenance_snapshot_summary,
-    save_archive_maint_hints,
-    snapshot_host_dirs_from_paths,
-    snapshot_paths_hint_entries,
-)
+from hpcperfstats.file_locking import file_write_lock
+from hpcperfstats.dbload.sync_timedb_archive_dispatch import ArchiveDispatchCoordinator
+from hpcperfstats.dbload.sync_timedb_archive_janitor import ArchiveJanitor
+
+# Supervisor tests monkeypatch these names; cold-path maintenance lives in ArchiveJanitor.
+def seal_dirty_daily_archives(*args, **kwargs):
+  raise RuntimeError("seal_dirty_daily_archives is janitor-only; supervisor must not call this")
+
+
+def remove_verified_archived_raw_files(*args, **kwargs):
+  raise RuntimeError(
+      "remove_verified_archived_raw_files is janitor-only; supervisor must not call this")
+
+
+def remove_verified_uncompressed_daily_tars(*args, **kwargs):
+  raise RuntimeError(
+      "remove_verified_uncompressed_daily_tars is janitor-only; supervisor must not call this")
 from hpcperfstats.dbload.sync_timedb_ingest_readiness import (
     filter_paths_head_ingested,
     head_timestamp_present_in_db,
@@ -171,10 +170,6 @@ EMPTY_QUEUE_RESCAN_SLEEP_SECONDS = 30
 # Emit DB lock-wait logs only for sustained contention.
 LOCK_WAIT_LOG_THRESHOLD_SECONDS = 30.0
 FINALIZE_POLL_TIMEOUT_SECONDS = 0.05
-MAINTENANCE_LOCK_STATS_EVERY = 3
-MAINTENANCE_DEDUPE_EVERY = 6
-MAINTENANCE_OVERDUE_WARN_MULTIPLIER = 1.5
-MAINTENANCE_OVERDUE_WARN_MIN_SECONDS = 300.0
 
 # Set to 1/yes/true so ingest runs in the parent process (no spawn pool). Required
 # for pytest-django: pool workers would reconnect with default [DEFAULT] dbname instead
@@ -302,11 +297,36 @@ def _maybe_exit_on_supervisor_rss_limit(chunk_counter):
   raise SystemExit(137)
 
 
-def _reraise_or_handle_pool_worker_exit(exc, *, ingest_pool, db_writer_pool):
-  """Terminate ingest pools and re-raise worker death."""
+def _prior_day_tars_from_archive_mapping(ar_file_mapping, *, local_tz):
+  """Normalized prior-calendar daily ``.tar`` paths referenced by chunk mapping."""
+  today_local = datetime.now(local_tz).date()
+  chunk_tars = set()
+  for archive_path in ar_file_mapping:
+    tar_path = os.path.normpath(daily_tar_path_from_compressed(archive_path))
+    base = os.path.basename(tar_path)
+    if not base.endswith(".tar"):
+      continue
+    try:
+      day_date = datetime.strptime(base[:-4], "%Y-%m-%d").date()
+    except ValueError:
+      continue
+    if day_date < today_local:
+      chunk_tars.add(tar_path)
+  return chunk_tars
+
+
+def _reraise_or_handle_pool_worker_exit(
+    exc,
+    *,
+    ingest_pool,
+    db_writer_pool,
+    archive_pool=None,
+):
+  """Terminate ingest/archive pools and re-raise worker death."""
   if isinstance(exc, MultiprocessingWorkerExitError):
     terminate_pool_bounded(ingest_pool)
     terminate_pool_bounded(db_writer_pool)
+    terminate_pool_bounded(archive_pool)
     raise
   raise exc
 
@@ -1121,7 +1141,7 @@ def _archive_stats_files_body(archive_info):
             "files in place" % archive_fname,
             flush=True,
         )
-        return
+        return False
       existing_after = (
           get_existing_archive_members(archive_tar_fname)
           if os.path.exists(archive_tar_fname)
@@ -1249,7 +1269,6 @@ def run_sync_timedb_supervisor_loop(
   maint_interval, maint_interval_warning = (
       _resolve_archive_maintenance_interval_seconds(maint_interval_raw)
   )
-  maint_max_defer = float(cfg.get_archive_maintenance_max_defer_seconds())
   ingest_queue_max = max(1, int(cfg.get_sync_ingest_queue_max_size()))
   archive_queue_max = max(1, int(cfg.get_sync_archive_queue_max_size()))
   ingest_queue_high = ingest_queue_max
@@ -1263,224 +1282,20 @@ def run_sync_timedb_supervisor_loop(
   last_archive_maint = time.time()
   ingest_t0 = time.time()
 
-  maintenance_cycle = 0
-  maintenance_overdue_warned = False
-  maintenance_last_reason = "init"
-  maintenance_due_since = None
-
   def _maintenance_elapsed_s():
     return max(0.0, time.time() - last_archive_maint)
 
   def _is_maintenance_due():
     return _maintenance_elapsed_s() >= maint_interval
 
-  def _maintenance_overdue_warn_threshold():
-    return max(
-        MAINTENANCE_OVERDUE_WARN_MIN_SECONDS,
-        float(maint_interval) * MAINTENANCE_OVERDUE_WARN_MULTIPLIER,
-    )
-
   def _complete_maintenance_timer_reset():
     nonlocal last_archive_maint
-    nonlocal maintenance_due_since
-    nonlocal maintenance_overdue_warned
     last_archive_maint = time.time()
-    maintenance_due_since = None
-    maintenance_overdue_warned = False
     close_old_connections()
     connections.close_all()
 
-  def _archive_maintenance_pipeline(
-      *,
-      reason,
-      skip_daily_tar_paths=None,
-      only_daily_tar_paths=None,
-      force_remove_uncompressed_tar=False,
-  ):
-    snapshot = build_archive_maintenance_snapshot(
-        directory,
-        host_name_ext,
-        tgz_archive_dir,
-        log_fn=log_print,
-    )
-    effective_skip_daily_tar_paths = merge_maintenance_skip_daily_tar_paths(
-        skip_daily_tar_paths,
-        closed_paths=snapshot.closed_paths,
-        mapping=snapshot.mapping,
-        tgz_archive_dir=tgz_archive_dir,
-    )
-    if reason == "startup":
-      log_archive_maintenance_snapshot_summary(snapshot, log_fn=log_print)
-    validation_cache = {"hits": 0, "misses": 0}
-    validated_days = {}
-    if cfg.get_sync_archive_maint_hints():
-      prior = load_archive_maint_hints(directory) or {}
-      validated_days.update(prior.get("validated_days") or {})
-    seal_dirty_daily_archives(
-        tgz_archive_dir,
-        local_tz=local_timezone,
-        zstd_threads=cfg.get_archive_zstd_threads(),
-        compress_level=cfg.get_archive_zstd_level(),
-        keep_uncompressed_tar=cfg.get_archive_keep_uncompressed_tar(),
-        idle_seconds=cfg.get_archive_seal_idle_seconds(),
-        seal_immediately_if_dirty=True,
-        log_fn=log_print,
-        remaining_raw_by_gz=snapshot.remaining_raw_by_gz,
-        force_remove_uncompressed_tar=force_remove_uncompressed_tar,
-        skip_daily_tar_paths=effective_skip_daily_tar_paths,
-        only_daily_tar_paths=only_daily_tar_paths,
-    )
-    remove_verified_archived_raw_files(
-        directory,
-        host_name_ext,
-        tgz_archive_dir,
-        log_fn=log_print,
-        ingest_ready_fn=stats_file_head_ingested_in_db,
-        maintenance_snapshot=snapshot,
-        validation_cache=validation_cache,
-        validated_days_out=validated_days,
-        skip_daily_tar_paths=effective_skip_daily_tar_paths,
-        only_daily_tar_paths=only_daily_tar_paths,
-    )
-    remove_verified_uncompressed_daily_tars(
-        tgz_archive_dir,
-        log_fn=log_print,
-        remaining_raw_by_gz=snapshot.remaining_raw_by_gz,
-        force_remove_uncompressed_tar=force_remove_uncompressed_tar,
-        validation_cache=validation_cache,
-        validated_days_out=validated_days,
-        skip_daily_tar_paths=effective_skip_daily_tar_paths,
-        only_daily_tar_paths=only_daily_tar_paths,
-    )
-    save_archive_maint_hints(
-        directory,
-        host_dirs=snapshot_host_dirs_from_paths(snapshot.closed_paths),
-        paths=snapshot_paths_hint_entries(
-            snapshot.closed_paths,
-            snapshot.first_timestamp_by_path,
-            snapshot.head_identity_by_path,
-        ),
-        validated_days=validated_days,
-    )
-
-  def _run_scheduled_archive_maintenance(
-      force_full=False,
-      *,
-      reason="scheduled",
-      elapsed_since_last_s=0.0,
-      skip_daily_tar_paths=None,
-      only_daily_tar_paths=None,
-      run_prep_steps=True,
-  ):
-    nonlocal maintenance_cycle
-    nonlocal maintenance_last_reason
-    maintenance_cycle += 1
-    cycle_start = time.time()
-    log_print(
-        "Archive maintenance start reason=%s cycle=%d elapsed_since_last_s=%.1f interval_s=%.1f"
-        % (reason, maintenance_cycle, float(elapsed_since_last_s), float(maint_interval)),
-        flush=True,
-    )
-    if run_prep_steps:
-      run_lock_stats = force_full or (maintenance_cycle % MAINTENANCE_LOCK_STATS_EVERY == 0)
-      run_dedupe = force_full or (maintenance_cycle % MAINTENANCE_DEDUPE_EVERY == 0)
-      removed_raw = cleanup_stale_fnctl_lock_sidecars(directory)
-      removed_arch = cleanup_stale_fnctl_lock_sidecars(tgz_archive_dir)
-      if removed_raw or removed_arch:
-        log_print(
-            "Removed stale advisory lock sidecars: raw_dir=%d daily_archive=%d"
-            % (removed_raw, removed_arch),
-            flush=True,
-        )
-      if run_lock_stats:
-        lock_stats_raw = collect_lock_sidecar_stats(directory)
-        lock_stats_archive = collect_lock_sidecar_stats(tgz_archive_dir)
-        log_print(
-            "Lock sidecar diagnostics raw=(count=%d stale=%d oldest_age_s=%.1f) "
-            "archive=(count=%d stale=%d oldest_age_s=%.1f)"
-            % (
-                lock_stats_raw["lock_files"],
-                lock_stats_raw["stale_lock_files"],
-                lock_stats_raw["oldest_lock_age_seconds"],
-                lock_stats_archive["lock_files"],
-                lock_stats_archive["stale_lock_files"],
-                lock_stats_archive["oldest_lock_age_seconds"],
-            ),
-            flush=True,
-        )
-      if run_dedupe:
-        for tar_path in sorted(iter_daily_tar_paths(tgz_archive_dir)):
-          if not tar_has_duplicate_file_members(tar_path):
-            continue
-          log_print(
-              "Duplicate member paths in daily tar; rewriting (keep largest per path): "
-              "%s" % tar_path,
-              flush=True,
-          )
-          if not dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
-            log_print(
-                "ERROR: tar dedupe failed during scheduled maintenance: %s" % tar_path,
-                flush=True,
-            )
-    force_remove_uncompressed_tar = reason == "startup"
-    _ensure_daily_archive_dir_exists()
-    _archive_maintenance_pipeline(
-        reason=reason,
-        skip_daily_tar_paths=skip_daily_tar_paths,
-        only_daily_tar_paths=only_daily_tar_paths,
-        force_remove_uncompressed_tar=force_remove_uncompressed_tar,
-    )
-    maintenance_last_reason = reason
-    log_print(
-        "Archive maintenance done reason=%s cycle=%d duration_s=%.3f"
-        % (reason, maintenance_cycle, max(0.0, time.time() - cycle_start)),
-        flush=True,
-    )
-
-  def _run_forced_two_phase_archive_maintenance(in_flight, *, elapsed_since_last_s, context):
-    """Seal/cleanup when scheduled maintenance exceeded max defer (continuous ingest)."""
-    log_print(
-        "Running forced two-phase archive maintenance context=%s in_flight_days=%d "
-        "elapsed_since_last_s=%.1f max_defer_s=%.1f"
-        % (context, len(in_flight), float(elapsed_since_last_s), float(maint_max_defer)),
-        flush=True,
-    )
-    _run_scheduled_archive_maintenance(
-        reason="scheduled_forced",
-        elapsed_since_last_s=elapsed_since_last_s,
-        skip_daily_tar_paths=in_flight,
-    )
-    if in_flight:
-      log_print(
-          "Forced archive maintenance phase 2 retry on %d in-flight daily tar(s)"
-          % len(in_flight),
-          flush=True,
-      )
-      _run_scheduled_archive_maintenance(
-          reason="scheduled_forced_retry",
-          elapsed_since_last_s=elapsed_since_last_s,
-          only_daily_tar_paths=in_flight,
-          run_prep_steps=False,
-      )
-
-  def _maintenance_force_due():
-    if maintenance_due_since is None:
-      return False
-    return (time.time() - float(maintenance_due_since)) >= float(maint_max_defer)
-
-  def _maybe_run_forced_maintenance_before_archive_dispatch(context):
-    if not _maintenance_force_due() or not _is_maintenance_due():
-      return False
-    in_flight = daily_tar_paths_for_archive_job_tasks(archive_job_deferred_paths)
-    _run_forced_two_phase_archive_maintenance(
-        in_flight,
-        elapsed_since_last_s=_maintenance_elapsed_s(),
-        context=context,
-    )
-    _complete_maintenance_timer_reset()
-    return True
-
   pending_archive_tasks = []
+  _archive_heap_seq = itertools.count()
   dead_letter_dirty = False
   perf_stats = {
       "archive_finalize_wait_s": 0.0,
@@ -1488,6 +1303,7 @@ def run_sync_timedb_supervisor_loop(
       "archive_dispatch_count": 0,
       "archive_dispatch_items": 0,
       "archive_dispatch_s": 0.0,
+      "archive_worker_stall_events": 0,
   }
 
   def _retry_delay(attempt):
@@ -1520,7 +1336,12 @@ def run_sync_timedb_supervisor_loop(
     with archive_state_lock:
       heapq.heappush(
           pending_archive_tasks,
-          (item["retry_at"], int(item["task"].attempt), time.time(), item),
+          (
+              item["retry_at"],
+              int(item["task"].attempt),
+              next(_archive_heap_seq),
+              item,
+          ),
       )
     if item["task"].attempt > archive_retry_max_attempts:
       dead_letter_dirty = True
@@ -1531,6 +1352,55 @@ def run_sync_timedb_supervisor_loop(
       for compressed_path, paths in groups:
         tar_path = os.path.normpath(daily_tar_path_from_compressed(compressed_path))
         pending_append_by_daily_tar.setdefault(tar_path, set()).update(paths)
+
+  def _build_deferred_paths_for_items(items):
+    return [
+        {
+            "task": ArchiveTask(archive_info=item, attempt=1),
+            "paths": list(item[1]),
+            "retry_at": time.time(),
+        }
+        for item in items
+    ]
+
+  def _dispatch_due_archive_retries():
+    if not pending_archive_tasks or not archive_dispatch.has_capacity():
+      return
+    due_tasks = []
+    now = time.time()
+    with archive_state_lock:
+      while pending_archive_tasks and len(due_tasks) < archive_queue_max:
+        retry_at, _attempt, _seq, task_payload = pending_archive_tasks[0]
+        if retry_at > now:
+          break
+        heapq.heappop(pending_archive_tasks)
+        due_tasks.append(task_payload)
+    if not due_tasks:
+      return
+    archive_items = [d["task"].archive_info for d in due_tasks]
+
+    def _enqueue_overflow(item):
+      _enqueue_archive_task({
+          "task": ArchiveTask(archive_info=item, attempt=1),
+          "paths": list(item[1]),
+          "retry_at": time.time(),
+      })
+
+    stats = archive_dispatch.dispatch_disjoint_items(
+        archive_items,
+        archive_queue_max=archive_queue_max,
+        build_deferred_paths_fn=lambda items: [
+            next(d for d in due_tasks if d["task"].archive_info == item)
+            for item in items
+        ],
+        track_pending_append_fn=_track_pending_append_groups,
+        transition_queued_fn=lambda p: _transition_file_state(
+            file_states, p, SyncFileState.ARCHIVE_QUEUED),
+        enqueue_overflow_fn=_enqueue_overflow,
+    )
+    perf_stats["archive_dispatch_s"] += stats.get("dispatch_s", 0.0)
+    perf_stats["archive_dispatch_count"] += 1
+    perf_stats["archive_dispatch_items"] += stats.get("submitted", 0)
 
   def _discard_inflight_archive_path(p):
     """Drop a path from in-flight tracking and its per-day append cache bucket."""
@@ -1543,6 +1413,12 @@ def run_sync_timedb_supervisor_loop(
             del pending_append_by_daily_tar[tar_path]
           break
 
+  def _in_flight_archive_daily_tars():
+    tars = set(daily_tar_paths_from_pending_archive_tasks(pending_archive_tasks))
+    for slot in archive_dispatch.slots:
+      tars.update(slot.daily_tars)
+    return tars
+
   def _capture_disqualification_inputs():
     """Snapshot supervisor archive state for day disqualification (under lock)."""
     with archive_state_lock:
@@ -1554,23 +1430,27 @@ def run_sync_timedb_supervisor_loop(
               for tar_path, paths in pending_append_by_daily_tar.items()
               if paths
           },
-          "in_flight_archive_tars": daily_tar_paths_for_archive_job_tasks(
-              archive_job_deferred_paths),
+          "in_flight_archive_tars": _in_flight_archive_daily_tars(),
           "pending_archive_task_tars": daily_tar_paths_from_pending_archive_tasks(
               pending_archive_tasks),
       }
 
-  def _post_chunk_disqualified_daily_tars(snapshot, unmapped_closed_raw_tars):
-    """Recompute the day-disqualification set from fresh supervisor state.
-
-    ``remaining_raw_by_gz`` is intentionally not a skip source here: closed,
-    already-archived raws on disk are exactly what the raw-removal and ``.tar``
-    removal steps must act on. Disqualification covers only days with raw still to
-    be ingested/appended (pending ingest, in-flight/queued append, append cache)
-    plus closed raw that could not be mapped to a day.
-    """
+  def _janitor_disqualified_daily_tars():
     captured = _capture_disqualification_inputs()
-    return build_seal_disqualified_daily_tars(
+    unmapped = set()
+    with archive_janitor._accrual_snapshot_lock:
+      snap = archive_janitor._accrual_snapshot
+    if snap is not None:
+      unmapped = collect_days_with_unmapped_closed_raw(
+          snap.closed_paths, snap.mapping, tgz_archive_dir)
+    else:
+      unmapped = get_unmapped_closed_raw_daily_tars_cached(
+          directory,
+          host_name_ext,
+          tgz_archive_dir,
+          log_fn=log_print,
+      )
+    return set(build_seal_disqualified_daily_tars(
         tgz_archive_dir=tgz_archive_dir,
         remaining_raw_by_gz=None,
         pending_stats_paths=captured["pending_stats_paths"],
@@ -1578,157 +1458,22 @@ def run_sync_timedb_supervisor_loop(
         pending_append_by_daily_tar=captured["pending_append_by_daily_tar"],
         in_flight_archive_tars=captured["in_flight_archive_tars"],
         pending_archive_task_tars=captured["pending_archive_task_tars"],
-        unmapped_closed_raw_tars=unmapped_closed_raw_tars,
-        first_timestamp_by_path=snapshot.first_timestamp_by_path,
-    )
+        unmapped_closed_raw_tars=set(unmapped or ()),
+    ))
 
-  def _post_chunk_hygiene_has_work(disqualified, remaining_raw_by_gz):
-    """Preflight: a non-disqualified day is dirty-sealable or has removable raw."""
-    today_local = datetime.now(local_timezone).date()
-    idle_seconds = cfg.get_archive_seal_idle_seconds()
-    for tar_path in iter_daily_tar_paths(tgz_archive_dir):
-      if os.path.normpath(tar_path) in disqualified:
-        continue
-      zst_path, gz_path = compressed_sibling_paths(tar_path)
-      if should_seal_daily_tar(
-          tar_path, zst_path, idle_seconds, today_local,
-          seal_immediately_if_dirty=False, gz_path=gz_path,
-      ):
-        return True
-    for gz_key, stats_paths in (remaining_raw_by_gz or {}).items():
-      if not stats_paths:
-        continue
-      if os.path.normpath(daily_tar_path_from_compressed(gz_key)) in disqualified:
-        continue
-      return True
-    return False
-
-  def _run_post_chunk_hygiene_body():
-    """Non-blocking per-day seal/raw/.tar cleanup (canonical seal-before-delete).
-
-    Single snapshot per pass (no rescan between steps, per DB-before-archive
-    contract). One ``seal_dirty_daily_archives`` call (the only zstd in this pass);
-    raw removal runs with ``allow_auto_seal=False`` so no second compress occurs.
-    """
-    set_daemon_thread_title(
-        "", script_name=SYNC_TIMEDB_PROCESS_TITLE,
-        role="archive-post-chunk-hygiene")
-    if not should_archive or not tgz_archive_dir:
-      return
-    try:
-      close_old_connections()
-      snapshot = build_archive_maintenance_snapshot(
-          directory, host_name_ext, tgz_archive_dir, log_fn=log_print)
-      remaining_raw_by_gz = snapshot.remaining_raw_by_gz
-      unmapped_closed_raw_tars = collect_days_with_unmapped_closed_raw(
-          snapshot.closed_paths, snapshot.mapping, tgz_archive_dir)
-      disqualified = _post_chunk_disqualified_daily_tars(
-          snapshot, unmapped_closed_raw_tars)
-      if not _post_chunk_hygiene_has_work(disqualified, remaining_raw_by_gz):
-        log_print(
-            "Post-chunk archive hygiene: no eligible dirty days or removable raw; "
-            "skipping",
-            flush=True,
-        )
-        return
-      validation_cache = {"hits": 0, "misses": 0}
-      seal_dirty_daily_archives(
-          tgz_archive_dir,
-          local_tz=local_timezone,
-          zstd_threads=cfg.get_archive_zstd_threads(),
-          compress_level=cfg.get_archive_zstd_level(),
-          keep_uncompressed_tar=cfg.get_archive_keep_uncompressed_tar(),
-          idle_seconds=cfg.get_archive_seal_idle_seconds(),
-          seal_immediately_if_dirty=False,
-          log_fn=log_print,
-          remaining_raw_by_gz=remaining_raw_by_gz,
-          force_remove_uncompressed_tar=False,
-          skip_daily_tar_paths=disqualified,
-          only_when_no_remaining_raw=True,
-      )
-      disqualified = _post_chunk_disqualified_daily_tars(
-          snapshot, unmapped_closed_raw_tars)
-      remove_verified_archived_raw_files(
-          directory,
-          host_name_ext,
-          tgz_archive_dir,
-          log_fn=log_print,
-          ingest_ready_fn=stats_file_head_ingested_in_db,
-          maintenance_snapshot=snapshot,
-          validation_cache=validation_cache,
-          skip_daily_tar_paths=disqualified,
-          allow_auto_seal=False,
-      )
-      disqualified = _post_chunk_disqualified_daily_tars(
-          snapshot, unmapped_closed_raw_tars)
-      remove_verified_uncompressed_daily_tars(
-          tgz_archive_dir,
-          log_fn=log_print,
-          remaining_raw_by_gz=remaining_raw_by_gz,
-          force_remove_uncompressed_tar=False,
-          validation_cache=validation_cache,
-          skip_daily_tar_paths=disqualified,
-      )
-    except Exception as exc:
-      log_print("Post-chunk archive hygiene error: %s" % exc, flush=True)
-    finally:
-      close_old_connections()
-
-  def _schedule_post_chunk_hygiene():
-    """Submit a single-flight background hygiene pass (never blocks the chunk)."""
-    nonlocal post_chunk_hygiene_future
-    if not should_archive:
-      return
-    fut = post_chunk_hygiene_future
-    if fut is not None and not fut.done():
-      return
-    try:
-      post_chunk_hygiene_future = post_chunk_hygiene_executor.submit(
-          _run_post_chunk_hygiene_body)
-    except RuntimeError:
-      post_chunk_hygiene_future = None
-
-  def _finalize_archive_job_if_needed(force=False, allow_defer=False, context=""):
-    nonlocal archive_job
-    nonlocal archive_job_deferred_paths
+  def _apply_archive_finalize_results(deferred_paths, results):
     nonlocal checkpoint_dirty_count
     nonlocal dead_letter_dirty
-    if archive_job is None:
-      return False
-    ready_fn = getattr(archive_job, "ready", None)
-    if callable(ready_fn):
-      try:
-        if not ready_fn():
-          if allow_defer:
-            log_print(
-                "Archive finalize deferred context=%s reason=not_ready"
-                % (context or "unknown"),
-                flush=True,
-            )
-            return False
-          if not force:
-            return False
-      except Exception:
-        pass
-    finalize_t0 = time.time()
-    results = async_result_get_watch_pool(
-        archive_job,
-        archive_pool,
-        poll_timeout_s=FINALIZE_POLL_TIMEOUT_SECONDS,
-        context="archive_finalize",
-    )
-    perf_stats["archive_finalize_wait_s"] += max(0.0, time.time() - finalize_t0)
-    perf_stats["archive_finalize_calls"] += 1
     if not isinstance(results, list):
       results = [results]
-    if len(results) != len(archive_job_deferred_paths):
+    if len(results) != len(deferred_paths):
       log_print(
           "Archive result cardinality mismatch: deferred=%d results=%d; "
           "unmatched paths will be retried"
-          % (len(archive_job_deferred_paths), len(results)),
+          % (len(deferred_paths), len(results)),
           flush=True,
       )
-    for task_payload, result in zip(archive_job_deferred_paths, results):
+    for task_payload, result in zip(deferred_paths, results):
       archive_task = task_payload["task"]
       archive_paths = task_payload["paths"]
       if result:
@@ -1773,6 +1518,12 @@ def run_sync_timedb_supervisor_loop(
           _enqueue_archive_task(dead_letter_entry)
           if ingest_first_durability:
             for p in archive_paths:
+              log_print(
+                  "ingest_first_archive_abandoned_raw path=%s "
+                  "reason=archive_retries_exhausted"
+                  % p,
+                  flush=True,
+              )
               _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
               added = _add_processed_path(
                   p, processed_files, processed_files_order, checkpoint_entries,
@@ -1785,8 +1536,8 @@ def run_sync_timedb_supervisor_loop(
               _transition_file_state(file_states, p, SyncFileState.ARCHIVE_FAILED_RETRYABLE)
               _discard_inflight_archive_path(p)
           _persist_dead_letters_if_needed()
-    if len(archive_job_deferred_paths) > len(results):
-      for task_payload in archive_job_deferred_paths[len(results):]:
+    if len(deferred_paths) > len(results):
+      for task_payload in deferred_paths[len(results):]:
         archive_task = task_payload["task"]
         archive_paths = task_payload["paths"]
         next_attempt = archive_task.attempt + 1
@@ -1810,9 +1561,55 @@ def run_sync_timedb_supervisor_loop(
             _transition_file_state(file_states, p, SyncFileState.ARCHIVE_FAILED_RETRYABLE)
             _discard_inflight_archive_path(p)
     _flush_checkpoint_if_needed()
-    archive_job = None
-    archive_job_deferred_paths = []
+
+  def _finalize_archive_slot(slot, *, force=False, allow_defer=False, context=""):
+    ready_fn = getattr(slot.async_result, "ready", None)
+    if callable(ready_fn):
+      try:
+        if not ready_fn():
+          if allow_defer:
+            log_print(
+                "Archive finalize deferred context=%s reason=not_ready"
+                % (context or "unknown"),
+                flush=True,
+            )
+            return False
+          if not force:
+            return False
+      except Exception:
+        pass
+    finalize_t0 = time.time()
+    results = async_result_get_watch_pool(
+        slot.async_result,
+        archive_pool,
+        poll_timeout_s=FINALIZE_POLL_TIMEOUT_SECONDS,
+        context="archive_finalize",
+    )
+    perf_stats["archive_finalize_wait_s"] += max(0.0, time.time() - finalize_t0)
+    perf_stats["archive_finalize_calls"] += 1
+    _apply_archive_finalize_results(slot.deferred_paths, results)
     return True
+
+  def _finalize_archive_slots_if_needed(force=False, allow_defer=False, context=""):
+    if not archive_dispatch.slots:
+      return False
+    perf_stats["archive_worker_stall_events"] += (
+        archive_dispatch.log_stalled_slots())
+    if not force:
+      archive_dispatch.prune_finished_slots(
+          lambda slot: _finalize_archive_slot(
+              slot, force=True, context=context or "prune_ready"))
+      return bool(archive_dispatch.slots)
+
+    finalized_any = False
+    for slot in list(archive_dispatch.slots):
+      if _finalize_archive_slot(
+          slot, force=True, allow_defer=allow_defer, context=context):
+        finalized_any = True
+        archive_dispatch.slots = [
+            s for s in archive_dispatch.slots if s is not slot
+        ]
+    return finalized_any
 
   def _flush_checkpoint_if_needed(force=False):
     nonlocal checkpoint_dirty_count
@@ -1834,11 +1631,10 @@ def run_sync_timedb_supervisor_loop(
         flush=True,
     )
   log_print(
-      "sync_timedb continuous mode: archive maintenance interval %.1f s; "
-      "max defer %.1f s; idle rescan sleep %s s"
+      "sync_timedb continuous mode: archive janitor accrual interval %.1f s; "
+      "idle rescan sleep %s s"
       % (
           float(maint_interval),
-          float(maint_max_defer),
           int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS),
       ),
       flush=True,
@@ -1849,9 +1645,8 @@ def run_sync_timedb_supervisor_loop(
       flush=True,
   )
 
-  archive_job = None
-  archive_job_deferred_paths = []
   host_scan_hints = {}
+  idle_since_empty_queue = None
   worker_idle_loops = 0
   ingest_pool = None
   db_writer_pool = None
@@ -1873,18 +1668,15 @@ def run_sync_timedb_supervisor_loop(
   pending_stats_files = []
   chunk_counter = 0
   # Per-day cache of raw paths queued/in-flight for tar append (loss-safe
-  # disqualification source for background post-chunk hygiene). Mirrors the
+  # disqualification source for ArchiveJanitor ticks). Mirrors the
   # archive lifecycle: populated when groups are dispatched/queued, pruned when a
   # path leaves ``inflight_archive_paths`` on finalize. Never used to mark a path
   # ARCHIVED before its archive job finalizes successfully.
   pending_append_by_daily_tar = {}
   # Guards cross-thread reads of supervisor archive state by the single-flight
-  # post-chunk hygiene worker. Critical sections are tiny (copy/heap mutate only);
+  # janitor background thread. Critical sections are tiny (copy/heap mutate only);
   # file locks + sealed-archive validation remain the data-loss safety net.
   archive_state_lock = threading.Lock()
-  post_chunk_hygiene_executor = ThreadPoolExecutor(
-      max_workers=1, thread_name_prefix="archive-post-chunk-hygiene")
-  post_chunk_hygiene_future = None
   checkpoint_path = os.path.join(directory, SYNC_TIMEDB_CHECKPOINT_BASENAME)
   dead_letter_path = os.path.join(directory, SYNC_TIMEDB_DEAD_LETTER_BASENAME)
 
@@ -1927,126 +1719,73 @@ def run_sync_timedb_supervisor_loop(
           flush=True,
       )
 
-  try:
-    startup_daily_tar_count = _count_daily_tars(tgz_archive_dir)
-    if startup_daily_tar_count > 3:
-      log_print(
-          "Running startup archive maintenance before initial scan "
-          "(daily_tar_files=%d threshold=3); validating tar vs any sealed "
-          "counterparts before full maintenance"
-          % startup_daily_tar_count,
-          flush=True,
-      )
-      _ensure_daily_archive_dir_exists()
-      _run_scheduled_archive_maintenance(
-          reason="startup",
-          elapsed_since_last_s=0.0,
-      )
-      last_archive_maint = time.time()
-      close_old_connections()
-      connections.close_all()
-    else:
-      log_print(
-          "Skipping startup archive maintenance before initial scan "
-          "(daily_tar_files=%d threshold=3)"
-          % startup_daily_tar_count,
-          flush=True,
-      )
+  archive_dispatch = ArchiveDispatchCoordinator(
+      archive_pool=archive_pool,
+      max_inflight=cfg.get_sync_archive_max_inflight_jobs(),
+      archive_stats_files_fn=archive_stats_files,
+      log_fn=log_print,
+      get_ingest_backlog_high=lambda: len(pending_stats_files) > ingest_queue_low,
+      ingest_queue_low=ingest_queue_low,
+      pending_stats_count_fn=lambda: len(pending_stats_files),
+  )
+  archive_janitor = ArchiveJanitor(
+      archive_data_dir=directory,
+      host_name_ext=host_name_ext,
+      tgz_archive_dir=tgz_archive_dir,
+      local_tz=local_timezone,
+      log_fn=log_print,
+      get_disqualified_daily_tars=_janitor_disqualified_daily_tars,
+      get_ingest_backlog_high=lambda: len(pending_stats_files) > ingest_queue_low,
+      get_pending_stats_count=lambda: len(pending_stats_files),
+      get_idle_seconds=lambda: (
+          max(0.0, time.time() - float(idle_since_empty_queue))
+          if idle_since_empty_queue is not None else 0.0
+      ),
+      ingest_ready_fn=stats_file_head_ingested_in_db,
+      archive_stats_files_fn=archive_stats_files,
+      process_title=SYNC_TIMEDB_PROCESS_TITLE,
+  )
 
-    def _run_periodic_maintenance_if_due(reason_label):
-      nonlocal maintenance_due_since
-      elapsed = _maintenance_elapsed_s()
-      overdue_threshold = _maintenance_overdue_warn_threshold()
-      if elapsed >= overdue_threshold and not maintenance_overdue_warned:
-        log_print(
-            "Archive maintenance overdue elapsed_s=%.1f threshold_s=%.1f last_reason=%s"
-            % (elapsed, overdue_threshold, maintenance_last_reason),
-            flush=True,
-        )
-        maintenance_overdue_warned = True
+  try:
+    _ensure_daily_archive_dir_exists()
+    archive_janitor.enqueue_startup_debt()
+
+    def _run_debt_accrual_if_due(reason_label):
       if not _is_maintenance_due():
         return False
-      hygiene_fut = post_chunk_hygiene_future
-      if hygiene_fut is not None and not hygiene_fut.done():
-        log_print(
-            "Archive maintenance due but deferred reason=post_chunk_hygiene_in_flight "
-            "context=%s elapsed_since_last_s=%.1f"
-            % (reason_label, elapsed),
-            flush=True,
-        )
-        return False
-      finalized = _finalize_archive_job_if_needed(
-          force=True,
-          allow_defer=True,
-          context=reason_label,
-      )
-      if not finalized and archive_job is not None:
-        if maintenance_due_since is None:
-          maintenance_due_since = time.time()
-        defer_elapsed = max(0.0, time.time() - float(maintenance_due_since))
-        if defer_elapsed >= float(maint_max_defer):
-          in_flight = daily_tar_paths_for_archive_job_tasks(
-              archive_job_deferred_paths)
-          _run_forced_two_phase_archive_maintenance(
-              in_flight,
-              elapsed_since_last_s=elapsed,
-              context=reason_label,
-          )
+      if len(pending_stats_files) > 0:
+        if archive_janitor.maybe_accrue_partial_debt_if_due(maint_interval):
           _complete_maintenance_timer_reset()
+          archive_janitor.signal_work_available()
           return True
-        log_print(
-            "Archive maintenance due but deferred reason=archive_finalize_pending "
-            "elapsed_since_last_s=%.1f defer_elapsed_s=%.1f max_defer_s=%.1f context=%s"
-            % (elapsed, defer_elapsed, float(maint_max_defer), reason_label),
-            flush=True,
-        )
+        if _is_maintenance_due():
+          log_print(
+              "Archive debt accrual deferred reason=ingest_backlog context=%s "
+              "pending=%d"
+              % (reason_label, len(pending_stats_files)),
+              flush=True,
+          )
         return False
-      maintenance_due_since = None
-      log_print(
-          "Running scheduled daily-archive zstd seal and raw file removal context=%s elapsed_since_last_s=%.1f"
-          % (reason_label, elapsed),
-          flush=True,
-      )
-      _run_scheduled_archive_maintenance(
-          reason="scheduled",
-          elapsed_since_last_s=elapsed,
-      )
-      _complete_maintenance_timer_reset()
-      return True
+      if archive_janitor.maybe_accrue_debt_if_due(maint_interval):
+        _complete_maintenance_timer_reset()
+        archive_janitor.signal_work_available()
+        return True
+      return False
 
     while not shutdown_requested[0]:
-      _run_periodic_maintenance_if_due("outer_loop")
+      _run_debt_accrual_if_due("outer_loop")
 
       if not pending_stats_files:
-        if archive_job is None and pending_archive_tasks:
-          due_tasks = []
-          now = time.time()
-          with archive_state_lock:
-            while pending_archive_tasks and len(due_tasks) < archive_queue_max:
-              retry_at, _attempt, _seq, task_payload = pending_archive_tasks[0]
-              if retry_at > now:
-                break
-              heapq.heappop(pending_archive_tasks)
-              due_tasks.append(task_payload)
-          if due_tasks:
-            archive_items = [d["task"].archive_info for d in due_tasks]
-            dispatch_t0 = time.time()
-            archive_job = archive_pool.map_async(archive_stats_files, archive_items)
-            perf_stats["archive_dispatch_s"] += max(0.0, time.time() - dispatch_t0)
-            perf_stats["archive_dispatch_count"] += 1
-            perf_stats["archive_dispatch_items"] += len(archive_items)
-            archive_job_deferred_paths = due_tasks
-            log_print(
-                "Processing %d tgz archive retry task(s)" % len(due_tasks),
-                flush=True,
-            )
+        if idle_since_empty_queue is None:
+          idle_since_empty_queue = time.time()
+        _dispatch_due_archive_retries()
         if len(pending_archive_tasks) > archive_queue_high:
           log_print(
               "Archive backlog above high watermark pending=%d high=%d"
               % (len(pending_archive_tasks), archive_queue_high),
               flush=True,
           )
-        _finalize_archive_job_if_needed(force=True, context="pre_rescan")
+        _finalize_archive_slots_if_needed(force=True, context="pre_rescan")
         pending_stats_files = _cap_pending_stats_files_list(
             rescan_pending_stats_files(
                 directory,
@@ -2069,20 +1808,8 @@ def run_sync_timedb_supervisor_loop(
           chunk_counter = 0
           worker_idle_loops = 0
           continue
-        log_print(
-            "Full archive maintenance before rescan (ingest queue empty)",
-            flush=True,
-        )
-        _ensure_daily_archive_dir_exists()
-        _run_scheduled_archive_maintenance(
-            force_full=True,
-            reason="pre_rescan",
-            elapsed_since_last_s=_maintenance_elapsed_s(),
-        )
-        last_archive_maint = time.time()
-        maintenance_overdue_warned = False
-        close_old_connections()
-        connections.close_all()
+        _run_debt_accrual_if_due("pre_rescan")
+        archive_janitor.signal_work_available()
         pending_stats_files = _cap_pending_stats_files_list(
             rescan_pending_stats_files(
                 directory,
@@ -2095,6 +1822,7 @@ def run_sync_timedb_supervisor_loop(
             ingest_queue_max,
         )
         if pending_stats_files:
+          idle_since_empty_queue = None
           for p in pending_stats_files:
             _transition_file_state(file_states, p, SyncFileState.DISCOVERED)
           log_print(
@@ -2107,8 +1835,8 @@ def run_sync_timedb_supervisor_loop(
         else:
           worker_idle_loops += 1
           log_print("Worker idle loops while waiting for pending files: %d" % worker_idle_loops)
-          log_print("No pending stats files after full rescan", flush=True)
-          _finalize_archive_job_if_needed(force=True)
+          log_print("No pending stats files after rescan", flush=True)
+          _finalize_archive_slots_if_needed(force=True)
           log_print(
               "Sleeping %s s before exiting sync_timedb"
               % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
@@ -2125,7 +1853,13 @@ def run_sync_timedb_supervisor_loop(
           break
 
       while pending_stats_files:
-        _run_periodic_maintenance_if_due("chunk_boundary")
+        idle_since_empty_queue = None
+        _run_debt_accrual_if_due("chunk_boundary")
+        _finalize_archive_slots_if_needed(
+            force=True,
+            allow_defer=True,
+            context="chunk_boundary",
+        )
         if shutdown_requested[0]:
           log_print("Exiting due to SIGTERM")
           break
@@ -2209,6 +1943,7 @@ def run_sync_timedb_supervisor_loop(
             pool_worker_exit = True
             terminate_pool_bounded(ingest_pool)
             terminate_pool_bounded(db_writer_pool)
+            terminate_pool_bounded(archive_pool)
             raise
           except DatabaseUnavailableExit:
             raise
@@ -2234,6 +1969,7 @@ def run_sync_timedb_supervisor_loop(
               pool_worker_exit = True
               terminate_pool_bounded(ingest_pool)
               terminate_pool_bounded(db_writer_pool)
+              terminate_pool_bounded(archive_pool)
               raise
             except DatabaseUnavailableExit:
               raise
@@ -2280,6 +2016,7 @@ def run_sync_timedb_supervisor_loop(
           except MultiprocessingWorkerExitError:
             pool_worker_exit = True
             terminate_pool_bounded(ingest_pool)
+            terminate_pool_bounded(archive_pool)
             raise
           except DatabaseUnavailableExit:
             raise
@@ -2324,6 +2061,7 @@ def run_sync_timedb_supervisor_loop(
           except MultiprocessingWorkerExitError:
             pool_worker_exit = True
             terminate_pool_bounded(ingest_pool)
+            terminate_pool_bounded(archive_pool)
             raise
           except DatabaseUnavailableExit:
             raise
@@ -2380,7 +2118,7 @@ def run_sync_timedb_supervisor_loop(
                 flush=True,
             )
 
-        _finalize_archive_job_if_needed()
+        _finalize_archive_slots_if_needed(force=False)
 
         archived_candidates = set(files_to_be_archived)
         immediate_paths = [
@@ -2409,57 +2147,28 @@ def run_sync_timedb_supervisor_loop(
           _track_pending_append_groups(archive_items_all)
           for p in deferred_paths:
             _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
-          if archive_job is None:
-            _maybe_run_forced_maintenance_before_archive_dispatch(
-                "pre_archive_dispatch",
-            )
-            archive_items = archive_items_all[:archive_queue_max]
-            overflow_items = archive_items_all[archive_queue_max:]
-            dispatch_t0 = time.time()
-            archive_job = archive_pool.map_async(
-                archive_stats_files, archive_items)
-            perf_stats["archive_dispatch_s"] += max(0.0, time.time() - dispatch_t0)
-            perf_stats["archive_dispatch_count"] += 1
-            perf_stats["archive_dispatch_items"] += len(archive_items)
-            archive_job_deferred_paths = [
-                {
-                    "task": ArchiveTask(archive_info=item, attempt=1),
-                    "paths": list(item[1]),
-                    "retry_at": time.time(),
-                }
-                for item in archive_items
-            ]
-            log_print(
-                "Archive dispatch by tgz groups submitted=%d deferred_groups=%d"
-                % (len(archive_items), len(overflow_items)),
-                flush=True,
-            )
-            for item in overflow_items:
-              _enqueue_archive_task({
-                  "task": ArchiveTask(archive_info=item, attempt=1),
-                  "paths": list(item[1]),
-                  "retry_at": time.time(),
-              })
-              for p in item[1]:
-                _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
-            log_print(
-                "Archival running in the background (threaded by tgz groups)",
-                flush=True,
-            )
-          else:
-            for item in archive_items_all:
-              _enqueue_archive_task({
-                  "task": ArchiveTask(archive_info=item, attempt=1),
-                  "paths": list(item[1]),
-                  "retry_at": time.time(),
-              })
-              for p in item[1]:
-                _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
-            log_print(
-                "Queued %d tgz archive task(s); archival worker still busy"
-                % len(archive_items_all),
-                flush=True,
-            )
+          def _enqueue_overflow_item(item):
+            _enqueue_archive_task({
+                "task": ArchiveTask(archive_info=item, attempt=1),
+                "paths": list(item[1]),
+                "retry_at": time.time(),
+            })
+            for p in item[1]:
+              _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
+
+          dispatch_stats = archive_dispatch.dispatch_disjoint_items(
+              archive_items_all,
+              archive_queue_max=archive_queue_max,
+              build_deferred_paths_fn=_build_deferred_paths_for_items,
+              track_pending_append_fn=_track_pending_append_groups,
+              transition_queued_fn=lambda p: _transition_file_state(
+                  file_states, p, SyncFileState.ARCHIVE_QUEUED),
+              enqueue_overflow_fn=_enqueue_overflow_item,
+          )
+          perf_stats["archive_dispatch_s"] += dispatch_stats.get("dispatch_s", 0.0)
+          perf_stats["archive_dispatch_count"] += 1
+          perf_stats["archive_dispatch_items"] += dispatch_stats.get("submitted", 0)
+          _dispatch_due_archive_retries()
         elif deferred_paths:
           log_print(
               "Deferring processed marker for %d file(s): archival mapping missing"
@@ -2482,12 +2191,20 @@ def run_sync_timedb_supervisor_loop(
         # raw stats / uncompressed .tar. Ingest advances to the next chunk
         # immediately; days with raw still to ingest/append are disqualified.
         if ar_file_mapping:
-          _schedule_post_chunk_hygiene()
+          archive_janitor.enqueue_completed_prior_days_reclaim(
+              chunk_daily_tars=_prior_day_tars_from_archive_mapping(
+                  ar_file_mapping,
+                  local_tz=local_timezone,
+              ),
+          )
+          archive_janitor.signal_work_available()
+
+        _dispatch_due_archive_retries()
 
         if chunk_counter % rescan_every_chunks == 0:
-          _finalize_archive_job_if_needed(
+          _finalize_archive_slots_if_needed(
               force=True,
-              allow_defer=True,
+              allow_defer=bool(pending_stats_files),
               context="rescan_every_chunks",
           )
           pending_stats_files = _cap_pending_stats_files_list(
@@ -2505,28 +2222,38 @@ def run_sync_timedb_supervisor_loop(
               "Rescanned after %d chunks; pending files (newest first): %d"
               % (rescan_every_chunks, len(pending_stats_files)))
 
-      _finalize_archive_job_if_needed(force=True)
+      _finalize_archive_slots_if_needed(
+          force=True,
+          allow_defer=bool(pending_stats_files),
+          context="end_of_batch",
+      )
       _persist_dead_letters_if_needed(force=True)
       _flush_checkpoint_if_needed(force=True)
-      if perf_stats["archive_finalize_calls"] or perf_stats["archive_dispatch_count"]:
+      janitor_stats = archive_janitor.stats()
+      if (perf_stats["archive_finalize_calls"] or perf_stats["archive_dispatch_count"]
+          or janitor_stats["janitor_ticks_completed"]):
         log_print(
-            "Archive perf telemetry finalize_calls=%d finalize_wait_s=%.3f dispatch_calls=%d dispatch_items=%d dispatch_submit_s=%.3f"
+            "Archive perf telemetry finalize_calls=%d finalize_wait_s=%.3f "
+            "dispatch_calls=%d dispatch_items=%d dispatch_submit_s=%.3f "
+            "stall_events=%d janitor_debt=%d janitor_ticks=%d janitor_throttled=%d"
             % (
                 perf_stats["archive_finalize_calls"],
                 perf_stats["archive_finalize_wait_s"],
                 perf_stats["archive_dispatch_count"],
                 perf_stats["archive_dispatch_items"],
                 perf_stats["archive_dispatch_s"],
+                perf_stats["archive_worker_stall_events"],
+                janitor_stats["janitor_debt_depth"],
+                janitor_stats["janitor_ticks_completed"],
+                janitor_stats["janitor_budget_throttled"],
             ),
             flush=True,
         )
       close_old_connections()
       connections.close_all()
   finally:
-    if post_chunk_hygiene_executor is not None:
-      post_chunk_hygiene_executor.shutdown(wait=True)
-    if archive_job is not None:
-      _finalize_archive_job_if_needed(force=True)
+    archive_janitor.shutdown(wait=True)
+    _finalize_archive_slots_if_needed(force=True)
     _persist_dead_letters_if_needed(force=True)
     _flush_checkpoint_if_needed(force=True)
     _shutdown_ingest_pools(

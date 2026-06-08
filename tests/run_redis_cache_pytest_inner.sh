@@ -6,7 +6,7 @@ cd /home/hpcperfstats
 export HPCPERFSTATS_COMPOSE_NETWORK=1
 export HPCPERFSTATS_PYTEST_LIVE_REDIS=1
 
-pip install -e ".[test]"
+compose_inner_pip_install
 
 ARGS=()
 if [[ -s /tmp/hpcperfstats_pytest_extra_args ]]; then

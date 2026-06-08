@@ -175,12 +175,65 @@ def merge_maintenance_skip_daily_tar_paths(
   """Union caller skip paths with days that have unmapped closed raw on disk.
 
   Scheduled/startup maintenance must apply the same unmapped-closed-raw gate as
-  post-chunk hygiene so a day cannot lose its ``.tar`` while closed raw remains.
+  ArchiveJanitor ``TAR_DROP`` ticks so a day cannot lose its ``.tar`` while closed raw remains.
   """
   skip_set = set(_normalize_daily_tar_path_set(skip_daily_tar_paths))
   skip_set |= collect_days_with_unmapped_closed_raw(
       closed_paths, mapping, tgz_archive_dir)
   return frozenset(skip_set) if skip_set else None
+
+
+_UNMAPPED_DISQUALIFY_CACHE = {"at": 0.0, "key": None, "tars": frozenset()}
+_UNMAPPED_DISQUALIFY_TTL_S = 60.0
+
+
+def collect_unmapped_closed_raw_daily_tars(
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+    *,
+    log_fn=log_print,
+):
+  """Daily ``.tar`` paths with closed raw on disk not present in archive mapping.
+
+  Bounded scan used when the janitor has no accrual snapshot (long ingest backlog)
+  so unmapped closed segments still disqualify seal / ``.tar`` removal.
+  """
+  closed_paths = collect_stats_files_in_range(
+      archive_data_dir, "all", None, host_name_ext)
+  if not closed_paths:
+    return frozenset()
+  mapping = build_archive_mapping(closed_paths, tgz_archive_dir)
+  return collect_days_with_unmapped_closed_raw(
+      closed_paths, mapping, tgz_archive_dir)
+
+
+def get_unmapped_closed_raw_daily_tars_cached(
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+    *,
+    log_fn=log_print,
+    ttl_s=_UNMAPPED_DISQUALIFY_TTL_S,
+):
+  """TTL cache wrapper for :func:`collect_unmapped_closed_raw_daily_tars`."""
+  cache_key = (archive_data_dir, host_name_ext, tgz_archive_dir)
+  now = time.time()
+  if (
+      _UNMAPPED_DISQUALIFY_CACHE.get("key") == cache_key
+      and now - float(_UNMAPPED_DISQUALIFY_CACHE.get("at", 0.0)) < float(ttl_s)
+  ):
+    return _UNMAPPED_DISQUALIFY_CACHE["tars"]
+  tars = collect_unmapped_closed_raw_daily_tars(
+      archive_data_dir,
+      host_name_ext,
+      tgz_archive_dir,
+      log_fn=log_fn,
+  )
+  _UNMAPPED_DISQUALIFY_CACHE["key"] = cache_key
+  _UNMAPPED_DISQUALIFY_CACHE["at"] = now
+  _UNMAPPED_DISQUALIFY_CACHE["tars"] = tars
+  return tars
 
 
 def collect_days_with_unmapped_closed_raw(closed_paths, mapping, tgz_archive_dir):
@@ -218,7 +271,7 @@ def build_seal_disqualified_daily_tars(
     unmapped_closed_raw_tars=None,
     first_timestamp_by_path=None,
 ):
-  """Union of daily ``.tar`` paths post-chunk hygiene must not seal/verify/remove.
+  """Union of daily ``.tar`` paths the janitor must not seal/verify/remove.
 
   See plan ``Per-day disqualification (complete set)``. Pure function over already
   snapshotted supervisor state so it can be recomputed cheaply before each
@@ -270,9 +323,9 @@ def _get_archive_validation_worker_count(total_items):
     try:
       configured = max(1, int(env))
     except ValueError:
-      configured = max(1, int(cfg.get_sync_archive_pool_processes()))
+      configured = max(1, int(cfg.get_sync_archive_validation_max_workers()))
   else:
-    configured = max(1, int(cfg.get_sync_archive_pool_processes()))
+    configured = max(1, int(cfg.get_sync_archive_validation_max_workers()))
   return max(1, min(total_items, configured))
 
 
@@ -652,9 +705,9 @@ def validate_sealed_daily_archive_for_raw_removal(
   (3) if both exist, dicts must be equal. Returns ``(True, members)`` for use
   with ``get_verified_files_to_remove``, or ``(False, None)``.
 
-  When ``allow_auto_seal`` is false (post-chunk hygiene, which already ran a seal
-  pass), a missing sealed archive is not created here; the day is skipped instead,
-  so a single hygiene invocation never triggers a second zstd compress.
+  When ``allow_auto_seal`` is false (janitor raw-remove ticks, which must not run a
+  second seal in the same pass), a missing sealed archive is not created here; the
+  day is skipped instead.
   """
   fmt = detect_compressed_format(archive_compressed_path)
   if fmt not in ("zst", "gz"):
@@ -679,12 +732,25 @@ def validate_sealed_daily_archive_for_raw_removal(
   members_tar = None
   if os.path.isfile(tar_path):
     if not verify_tar_archive_readable(tar_path):
-      if log_fn:
+      zst_restore, gz_restore = compressed_sibling_paths(tar_path)
+      if replace_corrupt_tar_from_compressed_backup(
+          tar_path,
+          zst_restore,
+          gz_restore,
+          get_archive_zstd_thread_count(),
+      ) and verify_tar_archive_readable(tar_path):
+        if log_fn:
+          log_fn(
+              "Restored unreadable tar from sealed backup before removal: %s"
+              % tar_path,
+              flush=True,
+          )
+      elif log_fn:
         log_fn(
             "Skipping removal: uncompressed tar failed check: %s" % tar_path,
             flush=True,
         )
-      return False, None
+        return False, None
     members_tar = get_existing_archive_members(tar_path)
     if not members_tar:
       if log_fn:
@@ -707,7 +773,7 @@ def validate_sealed_daily_archive_for_raw_removal(
       if log_fn:
         log_fn(
             "Skipping removal: sealed archive missing and auto-seal disabled "
-            "(post-chunk hygiene seal already ran): %s" % tar_path,
+            "(janitor seal already ran this pass): %s" % tar_path,
             flush=True,
         )
       return False, None
@@ -804,16 +870,14 @@ def replace_corrupt_tar_from_compressed_backup(
     with file_write_lock(tar_path):
       if os.path.isfile(tar_path):
         os.remove(tar_path)
+      if os.path.isfile(zst_path):
+        if decompress_compressed_to_tar(zst_path, tar_path, zstd_threads):
+          return True
+      if os.path.isfile(gz_path):
+        return decompress_compressed_to_tar(gz_path, tar_path, zstd_threads)
+      return True
   except OSError:
     return False
-  backup_path = zst_path if os.path.isfile(zst_path) else gz_path
-  if not backup_path or not os.path.isfile(backup_path):
-    return True
-  return decompress_compressed_to_tar(
-      backup_path,
-      tar_path,
-      zstd_threads,
-  )
 
 
 def get_existing_archive_members(tar_path):
@@ -872,13 +936,22 @@ def _record_validated_day_hint(validated_days_out, gz_path, members):
   identity = _archive_file_identity(gz_path)
   if identity is None:
     return
-  validated_days_out[normalize_daily_compressed_path(gz_path)] = {
+  entry = {
       "mtime_ns": identity[0],
       "size": identity[1],
       "ok": True,
       "member_count": len(members),
       "member_byte_sum": sum_member_bytes(members),
   }
+  tar_path = daily_tar_path_from_compressed(gz_path)
+  try:
+    if os.path.isfile(tar_path):
+      st = os.stat(tar_path)
+      entry["tar_mtime_ns"] = int(st.st_mtime_ns)
+      entry["tar_size"] = int(st.st_size)
+  except OSError:
+    pass
+  validated_days_out[normalize_daily_compressed_path(gz_path)] = entry
 
 
 def remove_verified_archived_raw_files(
@@ -895,6 +968,7 @@ def remove_verified_archived_raw_files(
     skip_daily_tar_paths=None,
     only_daily_tar_paths=None,
     allow_auto_seal=True,
+    max_deletes_per_pass=None,
 ):
   """Remove raw stats files only after tar + sealed archive validation.
 
@@ -982,7 +1056,6 @@ def remove_verified_archived_raw_files(
 
   if validation_targets:
     workers = _get_archive_validation_worker_count(len(validation_targets))
-    validation_cache["misses"] += len(validation_targets)
     validation_started = time.time()
     success_count = 0
     failed_count = 0
@@ -1000,15 +1073,23 @@ def remove_verified_archived_raw_files(
       validation_cache=validation_cache if workers <= 1 else None,
       allow_auto_seal=allow_auto_seal,
   ):
+    if workers > 1:
+      validation_cache["misses"] = int(validation_cache.get("misses", 0)) + 1
     if not ok or members is None:
       failed_count += 1
       continue
     success_count += 1
     _record_validated_day_hint(validated_days_out, gz_path, members)
+    deletes_this_pass = 0
     for stats_path in stats_paths_by_gz.get(gz_path, []):
       for path in get_verified_files_to_remove([stats_path], members):
         if not _path_ingest_ready(path):
           continue
+        if (
+            max_deletes_per_pass is not None
+            and deletes_this_pass >= max_deletes_per_pass
+        ):
+          return
         if log_fn:
           log_fn(
               "removing stats file (scheduled archive maintenance): " + path,
@@ -1017,6 +1098,7 @@ def remove_verified_archived_raw_files(
         try:
           with file_write_lock(path):
             os.remove(path)
+          deletes_this_pass += 1
         except OSError as exc:
           if log_fn:
             log_fn("Could not remove %s: %s" % (path, exc), flush=True)
@@ -1058,6 +1140,28 @@ def build_remaining_raw_stats_by_daily_gz(
       log_fn=None,
   )
   return snapshot.remaining_raw_by_gz
+
+
+def build_remaining_raw_for_daily_tar(
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+    tar_path,
+):
+  """Day-scoped ``remaining_raw_by_gz`` for one daily ``.tar`` path."""
+  full = build_remaining_raw_stats_by_daily_gz(
+      archive_data_dir,
+      host_name_ext,
+      tgz_archive_dir,
+  )
+  tar_norm = os.path.normpath(tar_path)
+  scoped = {}
+  for gz_key, paths in (full or {}).items():
+    if not paths:
+      continue
+    if os.path.normpath(daily_tar_path_from_compressed(gz_key)) == tar_norm:
+      scoped[gz_key] = paths
+  return scoped
 
 
 def daily_gz_has_remaining_raw_stats(gz_path, remaining_by_gz):
@@ -1113,7 +1217,6 @@ def remove_verified_uncompressed_daily_tars(
 
   if validation_targets:
     workers = _get_archive_validation_worker_count(len(validation_targets))
-    validation_cache["misses"] += len(validation_targets)
     validation_started = time.time()
     success_count = 0
     failed_count = 0
@@ -1128,6 +1231,8 @@ def remove_verified_uncompressed_daily_tars(
       log_fn=log_fn,
       validation_cache=validation_cache if workers <= 1 else None,
   ):
+    if workers > 1:
+      validation_cache["misses"] = int(validation_cache.get("misses", 0)) + 1
     if not ok or members is None:
       failed_count += 1
       continue
@@ -1306,19 +1411,26 @@ def iter_tar_file_tasks(tar_path):
     zst_path, gz_path, tar_out = _compressed_backup_and_uncompressed_targets(
         open_path,
     )
-    backup_path = zst_path if os.path.isfile(zst_path) else gz_path
-    if not backup_path or not os.path.exists(backup_path):
-      return False
     try:
-      if os.path.exists(tar_out):
-        os.remove(tar_out)
+      with file_write_lock(tar_out):
+        if os.path.isfile(tar_out):
+          os.remove(tar_out)
+        if os.path.isfile(zst_path):
+          if decompress_compressed_to_tar(
+              zst_path,
+              tar_out,
+              get_archive_zstd_thread_count(),
+          ):
+            return True
+        if os.path.isfile(gz_path):
+          return decompress_compressed_to_tar(
+              gz_path,
+              tar_out,
+              get_archive_zstd_thread_count(),
+          )
     except OSError:
       return False
-    return decompress_compressed_to_tar(
-        backup_path,
-        tar_out,
-        get_archive_zstd_thread_count(),
-    )
+    return False
 
   try:
     yield from _iter_members()
@@ -1374,6 +1486,12 @@ def is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path):
     return os.path.getmtime(tar_path) > os.path.getmtime(zst_path)
   except OSError:
     return True
+
+
+def tar_day_dirty_by_mtime(tar_path):
+  """Cheap mtime check for accrual enqueue (no zstd)."""
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  return is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path)
 
 
 def should_seal_daily_tar(
@@ -1534,10 +1652,8 @@ def _seal_skip_existing_zst_equivalent(
   if not existing_ok:
     return False
   tar_members = get_existing_archive_members(tar_path)
-  if (
-      len(existing_members) == len(tar_members)
-      and sum_member_bytes(existing_members) == sum_member_bytes(tar_members)
-  ):
+  from hpcperfstats.dbload.archive_compress import archive_member_maps_equivalent
+  if archive_member_maps_equivalent(existing_members, tar_members):
     if log_fn:
       log_fn(
           "Seal skipped: tar and zst already equivalent (members=%d): %s"
@@ -1710,7 +1826,7 @@ def seal_dirty_daily_archives(
 ):
   """Seal every dirty ``YYYY-MM-DD.tar`` under ``daily_archive_dir`` per policy.
 
-  When ``only_when_no_remaining_raw`` is true (post-chunk hygiene), a dirty day is
+  When ``only_when_no_remaining_raw`` is true (janitor seal ticks), a dirty day is
   skipped while ``remaining_raw_by_gz`` still lists closed raw stats for that day,
   so the expensive zstd seal runs only once the day's raw stats are gone.
   """

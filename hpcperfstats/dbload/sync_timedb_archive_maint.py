@@ -1,4 +1,11 @@
-"""Archive maintenance snapshot, hints, and parallel head metadata discovery."""
+"""Archive maintenance snapshot, hints, and parallel head metadata discovery.
+
+Path hints in ``.sync_archive_maint_hints.json`` are a performance cache keyed on
+``(mtime, size)`` per raw stats file (see ``_path_fingerprint``). In-place content
+changes that leave metadata unchanged are not detected; correctness is restored
+when mtime/size drift, the host-dir fingerprint changes, or head metadata is
+re-read on a cache miss.
+"""
 from __future__ import annotations
 
 import json
@@ -19,7 +26,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
 from hpcperfstats.print_utils import log_print
 
 SYNC_ARCHIVE_MAINT_HINTS_BASENAME = ".sync_archive_maint_hints.json"
-_MAINT_HINTS_VERSION = 1
+_MAINT_HINTS_VERSION = 2
 
 
 @dataclass
@@ -54,6 +61,7 @@ def _get_archive_discovery_worker_count(total_tasks: int) -> int:
 
 
 def _path_fingerprint(path: str) -> Optional[Tuple[int, int]]:
+  """Return ``(mtime, size)`` hint key; does not hash file contents."""
   try:
     st = os.stat(path)
     return int(st.st_mtime), int(st.st_size)
@@ -84,9 +92,92 @@ def load_archive_maint_hints(archive_data_dir: str) -> Optional[Dict[str, Any]]:
       data = json.load(handle)
   except (OSError, json.JSONDecodeError):
     return None
-  if not isinstance(data, dict) or data.get("version") != _MAINT_HINTS_VERSION:
+  if not isinstance(data, dict):
+    return None
+  version = data.get("version")
+  if version not in (_MAINT_HINTS_VERSION, 1):
     return None
   return data
+
+
+def _daily_tar_hint_identity(tar_path: str):
+  if not tar_path or not os.path.isfile(tar_path):
+    return None
+  try:
+    st = os.stat(tar_path)
+    return int(st.st_mtime_ns), int(st.st_size)
+  except OSError:
+    return None
+
+
+def prune_validated_days_hints(validated_days: Dict[str, Any]) -> Dict[str, Any]:
+  """Drop validated-day entries when sealed or sibling tar identity changed."""
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      _archive_file_identity,
+      daily_tar_path_from_compressed,
+  )
+
+  pruned: Dict[str, Any] = {}
+  for gz_path, entry in (validated_days or {}).items():
+    if not isinstance(entry, dict):
+      continue
+    gz_identity = _archive_file_identity(gz_path)
+    if gz_identity is None:
+      continue
+    if (
+        int(entry.get("mtime_ns", -1)) != gz_identity[0]
+        or int(entry.get("size", -1)) != gz_identity[1]
+    ):
+      continue
+    tar_path = daily_tar_path_from_compressed(gz_path)
+    tar_identity = _daily_tar_hint_identity(tar_path)
+    if tar_identity is not None and entry.get("tar_mtime_ns") is not None:
+      if (
+          int(entry.get("tar_mtime_ns", -1)) != tar_identity[0]
+          or int(entry.get("tar_size", -1)) != tar_identity[1]
+      ):
+        continue
+    pruned[gz_path] = entry
+  return pruned
+
+
+def prune_day_phases_hints(day_phases: Dict[str, Any]) -> Dict[str, Any]:
+  """Drop day-phase entries when the daily ``.tar`` fingerprint changed."""
+  pruned: Dict[str, Any] = {}
+  for tar_path, value in (day_phases or {}).items():
+    if isinstance(value, dict):
+      phase = value.get("phase", "")
+      stored_mtime = value.get("tar_mtime_ns")
+      stored_size = value.get("tar_size")
+    else:
+      phase = value
+      stored_mtime = None
+      stored_size = None
+    if not phase:
+      continue
+    tar_identity = _daily_tar_hint_identity(tar_path)
+    if tar_identity is None:
+      continue
+    if stored_mtime is not None:
+      if (
+          int(stored_mtime) != tar_identity[0]
+          or int(stored_size or -1) != tar_identity[1]
+      ):
+        continue
+    pruned[tar_path] = value
+  return pruned
+
+
+def day_phase_hint_entry(tar_path: str, phase: str):
+  """Build a hint entry with sibling ``.tar`` fingerprint for invalidation."""
+  tar_identity = _daily_tar_hint_identity(tar_path)
+  if tar_identity is None:
+    return phase
+  return {
+      "phase": phase,
+      "tar_mtime_ns": tar_identity[0],
+      "tar_size": tar_identity[1],
+  }
 
 
 def _prune_hints_paths(hints_paths: Dict[str, Any]) -> Dict[str, Any]:
@@ -112,6 +203,8 @@ def save_archive_maint_hints(
     host_dirs: Dict[str, Dict[str, int]],
     paths: Dict[str, Dict[str, Any]],
     validated_days: Dict[str, Dict[str, Any]],
+    day_phases: Optional[Dict[str, str]] = None,
+    debt_queue: Optional[list] = None,
 ) -> None:
   if not cfg.get_sync_archive_maint_hints():
     return
@@ -121,6 +214,8 @@ def save_archive_maint_hints(
       "host_dirs": host_dirs,
       "paths": _prune_hints_paths(paths),
       "validated_days": validated_days or {},
+      "day_phases": day_phases or {},
+      "debt_queue": list(debt_queue or []),
   }
   tmp_path = "%s.tmp" % path
   try:
@@ -144,7 +239,12 @@ def _split_paths_by_hints(
     list,
     Dict[str, Dict[str, int]],
 ]:
-  """Return (first_ts, head_identity, needs_read, host_dirs_fingerprints)."""
+  """Return (first_ts, head_identity, needs_read, host_dirs_fingerprints).
+
+  Reuses stored path hints only when host-dir and per-path ``(mtime, size)``
+  fingerprints still match (content-only edits with stable metadata are not
+  invalidated here).
+  """
   first_ts: Dict[str, str] = {}
   head_identity: Dict[str, Tuple[str, int]] = {}
   needs_read: list = []

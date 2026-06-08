@@ -8,6 +8,7 @@ import pytest
 
 from hpcperfstats.process_title import (
     apply_pool_worker_process_title,
+    enable_parent_death_signal,
     format_daemon_process_title,
     format_daemon_thread_title,
     resolve_script_process_title_name,
@@ -140,6 +141,7 @@ def test_set_script_process_title_without_setproctitle(monkeypatch):
 
 def test_apply_pool_worker_process_title(monkeypatch):
   calls = []
+  pdeath_calls = []
 
   def fake_setproctitle(title):
     calls.append(title)
@@ -147,6 +149,10 @@ def test_apply_pool_worker_process_title(monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.process_title.running_under_gunicorn",
       lambda: False,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.process_title.enable_parent_death_signal",
+      lambda sig=None: pdeath_calls.append(sig),
   )
   monkeypatch.setitem(
       sys.modules,
@@ -159,6 +165,12 @@ def test_apply_pool_worker_process_title(monkeypatch):
   # Pool calls initializer(*initargs), not initializer(initargs).
   apply_pool_worker_process_title("sync_timedb.py", "ingest-pool")
   assert calls == ["sync_timedb.py [worker:ingest-pool]"]
+  assert len(pdeath_calls) == 1
+
+
+def test_enable_parent_death_signal_noop_off_linux(monkeypatch):
+  monkeypatch.setattr("hpcperfstats.process_title.sys.platform", "darwin")
+  assert enable_parent_death_signal() is False
 
 
 def test_import_sync_acct_does_not_set_process_title(monkeypatch):

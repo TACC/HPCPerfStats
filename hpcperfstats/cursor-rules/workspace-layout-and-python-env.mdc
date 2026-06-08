@@ -15,7 +15,7 @@ Example shape:
 
 ```text
 <workspace_root>/
-  .venv/                 ← use THIS for python/pip on the host
+  .venv/                 ← use THIS for python3/pip3 on the host
   .cursor/rules          ← symlink → HPCPerfStats/hpcperfstats/cursor-rules
   HPCPerfStats/          ← cd here for compose, pip install -e, pytest paths in docs
     pyproject.toml
@@ -40,17 +40,18 @@ Do **not** treat `HPCPerfStats/HPCPerfStats/` alone as “project root” for `.
 
 ## Host Python and pip (agents)
 
-- **Interpreter:** `<workspace_root>/.venv/bin/python`
-- **Pip:** `<workspace_root>/.venv/bin/pip`
+- **Interpreter (mandatory):** `<workspace_root>/.venv/bin/python3` — on this machine the venv exposes **`python3`** / **`python3.12`** only; **do not** invoke `<workspace_root>/.venv/bin/python` (missing or non-functional here).
+- **Pip:** `<workspace_root>/.venv/bin/pip3` (or `pip3.12` when matching the venv minor version).
+- **Verification before host pytest:** confirm `python3 --version` succeeds on the venv interpreter; if `python3` is missing, repair with `python3.12 -m venv --upgrade "<workspace_root>/.venv"` (or recreate at the same path) before claiming the venv is unavailable.
 - **Install editable app (from git checkout dir):**
 
 ```bash
-cd "<workspace_root>/HPCPerfStats" && "<workspace_root>/.venv/bin/pip" install -e ".[test]"
+cd "<workspace_root>/HPCPerfStats" && "<workspace_root>/.venv/bin/pip3" install -e ".[test]"
 ```
 
-- **Forbidden unless the user explicitly asks:** creating ad hoc envs under `/tmp`, `python -m venv` in random paths, `pip install --break-system-packages` on the system interpreter, or implying there is no usable venv when `<workspace_root>/.venv` exists.
+- **Forbidden unless the user explicitly asks:** creating ad hoc envs under `/tmp`, `python -m venv` in random paths, `pip install --break-system-packages` on the system interpreter, using **`.venv/bin/python`** or bare **`python`** for host-side runs, or implying there is no usable venv when `<workspace_root>/.venv/bin/python3` works.
 
-If `<workspace_root>/.venv` is missing, **ask** whether to create it at that path only; do not silently use another location.
+If `<workspace_root>/.venv` is missing or `python3` cannot be restored, **ask** whether to create/repair it at that path only; do not silently use another location.
 
 ## Docker vs host venv
 

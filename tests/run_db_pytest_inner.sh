@@ -5,13 +5,7 @@ cd /home/hpcperfstats
 
 export HPCPERFSTATS_COMPOSE_NETWORK=1
 
-if ! pip install -q -e ".[test]"; then
-  echo "pip install -e failed on mount; using PYTHONPATH fallback and test extras only."
-  export PYTHONPATH=/home/hpcperfstats
-  # shellcheck source=tests/pip_compose_test_extras_fallback.sh
-  source tests/pip_compose_test_extras_fallback.sh
-  pip_compose_test_extras_fallback
-fi
+compose_inner_pip_install
 
 if [[ "${DOCKER_PYTEST_SKIP_BROWSER:-0}" != "1" ]]; then
   python -m playwright install --with-deps chromium
@@ -27,12 +21,23 @@ fi
 
 IGNORE=()
 if [[ "${DOCKER_PYTEST_SKIP_BROWSER:-0}" == "1" ]]; then
-  IGNORE+=(--ignore=hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py)
+  IGNORE+=(
+    --ignore=hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py
+    --ignore=hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py
+  )
 fi
 
 ARGS=()
-if [[ -s /tmp/hpcperfstats_pytest_extra_args ]]; then
-  mapfile -t ARGS < /tmp/hpcperfstats_pytest_extra_args
+_pytest_args_file="/tmp/hpcperfstats_pytest_extra_args.list"
+if [[ -f "$_pytest_args_file" && -s "$_pytest_args_file" ]]; then
+  while IFS= read -r _pytest_arg || [[ -n "${_pytest_arg:-}" ]]; do
+    [[ -n "$_pytest_arg" ]] && ARGS+=("$_pytest_arg")
+  done < "$_pytest_args_file"
+elif [[ -d "$_pytest_args_file" ]]; then
+  echo "WARNING: ${_pytest_args_file} is a directory; ignoring forwarded pytest args" >&2
 fi
 
-exec python -m pytest -q hpcperfstats "${IGNORE[@]}" "${ARGS[@]}"
+if [[ ${#ARGS[@]} -gt 0 ]]; then
+  exec python -m pytest -q "${IGNORE[@]}" "${ARGS[@]}"
+fi
+exec python -m pytest -q hpcperfstats "${IGNORE[@]}"

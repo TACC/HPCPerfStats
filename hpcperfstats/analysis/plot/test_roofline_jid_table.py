@@ -59,8 +59,8 @@ def test_roofline_intel_succeeds_with_non_skx_imc_bandwidth():
   """Intel roofline uses first IMC type in INTEL_IMC_STATS_TYPES with CAS data (e.g. HSW)."""
   import pandas as pd
   from unittest.mock import MagicMock
-  from hpcperfstats.analysis.gen.utils import INTEL_IMC_STATS_TYPES
   from hpcperfstats.analysis.plot.roofline import plot_and_reason_roofline_from_jid_table
+  from hpcperfstats.monitor_naming.resolve import imc_types_probe_order
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
@@ -102,7 +102,7 @@ def test_roofline_intel_succeeds_with_non_skx_imc_bandwidth():
   fig, reason = plot_and_reason_roofline_from_jid_table(jt)
   assert fig is not None
   assert reason is None
-  assert hsw_canon in INTEL_IMC_STATS_TYPES
+  assert hsw_canon in imc_types_probe_order()
 
 
 def test_roofline_succeeds_with_cpu_counter_metrics_flops_and_imc_bw():

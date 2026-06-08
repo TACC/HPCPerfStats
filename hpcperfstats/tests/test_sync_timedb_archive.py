@@ -257,6 +257,91 @@ def test_replace_corrupt_tar_from_compressed_backup_restores_via_zstd(monkeypatc
   assert verify_tar_archive_readable(str(tar_path))
 
 
+def test_replace_corrupt_tar_falls_back_to_gz_when_zst_bad(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2020-01-03.tar"
+  zst_path = tmp_path / "2020-01-03.tar.zst"
+  gz_path = tmp_path / "2020-01-03.tar.gz"
+  tar_path.write_text("bad")
+  zst_path.write_text("bad-zst")
+  gz_path.write_text("good-gz-placeholder")
+
+  calls = []
+
+  def _fake_decomp(compressed_path, out_tar_path, thread_count, *, remove_compressed=True):
+    del thread_count, remove_compressed
+    calls.append(compressed_path)
+    if str(compressed_path).endswith(".tar.zst"):
+      return False
+    inner = tmp_path / "inn.txt"
+    inner.write_text("ok")
+    with tarfile.open(str(out_tar_path), "w") as tf:
+      tf.add(str(inner), arcname="only.txt")
+    return True
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decomp)
+  assert replace_corrupt_tar_from_compressed_backup(
+      str(tar_path), str(zst_path), str(gz_path), 1)
+  assert verify_tar_archive_readable(str(tar_path))
+  assert str(zst_path) in calls
+  assert str(gz_path) in calls
+
+
+def test_seal_skip_rejects_same_aggregate_different_members(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2020-01-04.tar"
+  zst_path = tmp_path / "2020-01-04.tar.zst"
+  tar_path.write_text("tar")
+  zst_path.write_text("zst")
+  tar_members = {"a.txt": 10, "b.txt": 20}
+  zst_members = {"c.txt": 30}
+
+  monkeypatch.setattr(helpers, "zstd_test", lambda *a, **k: None)
+  monkeypatch.setattr(
+      helpers,
+      "_scan_compressed_archive_members_and_readable",
+      lambda path: (True, dict(zst_members)),
+  )
+  monkeypatch.setattr(helpers, "get_existing_archive_members", lambda path: dict(tar_members))
+  assert helpers._seal_skip_existing_zst_equivalent(
+      str(tar_path), str(zst_path), 0, log_fn=None) is False
+
+
+def test_archive_stats_files_returns_false_when_corrupt_tar_restore_fails(monkeypatch, tmp_path):
+  from hpcperfstats.dbload.sync_timedb import _archive_stats_files_body
+
+  raw_dir = tmp_path / "host.hpc"
+  raw_dir.mkdir()
+  raw_file = raw_dir / "stats.txt"
+  raw_file.write_text("1234567890 host event 1\n")
+  gz_path = str(tmp_path / "daily" / "2020-01-05.tar.gz")
+  os.makedirs(os.path.dirname(gz_path), exist_ok=True)
+  tar_path = gz_path.replace(".tar.gz", ".tar")
+  open(tar_path, "wb").write(b"corrupt")
+  open(gz_path, "wb").write(b"bad")
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb.filter_paths_head_ingested",
+      lambda paths, log_fn=None: (paths, []),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb.verify_tar_archive_readable",
+      lambda path: False,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb.replace_corrupt_tar_from_compressed_backup",
+      lambda *a, **k: False,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb._append_to_tar",
+      lambda *a, **k: None,
+  )
+  result = _archive_stats_files_body((gz_path, [str(raw_file)]))
+  assert result is False
+
+
 # --- parse_archive_date_from_daily_tar_path ---
 
 
@@ -907,12 +992,13 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
 
   zst_path = "%s.zst" % tar_path[:-4]  # broken.tar.zst
   monkeypatch.setattr(helpers, "file_read_lock_wait", lambda _p: _NoOpLock())
+  monkeypatch.setattr(helpers, "file_write_lock", lambda _p: _NoOpLock())
   monkeypatch.setattr(helpers.tarfile, "open", _open_mock)
   monkeypatch.setattr(helpers.os.path, "exists", lambda p: p in (tar_path, gz_path))
   monkeypatch.setattr(
       helpers.os.path,
       "isfile",
-      lambda p: p == gz_path,
+      lambda p: p in (tar_path, gz_path),
   )
   monkeypatch.setattr(
       helpers.os,
@@ -1495,6 +1581,43 @@ def test_validate_sealed_daily_archive_validation_cache_hits(monkeypatch, tmp_pa
   assert cache["hits"] == 1
 
 
+def test_batch_raw_removal_parallel_validation_counts_misses_once_per_archive(
+    monkeypatch, tmp_path,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  monkeypatch.setattr(helpers, "_get_archive_validation_worker_count", lambda n: 2)
+  mapping = {}
+  for day in ("2022-02-01", "2022-02-02"):
+    gz = tmp_path / ("%s.tar.gz" % day)
+    member = tmp_path / ("%s.txt" % day)
+    member.write_text(day)
+    tar_path = daily_tar_path_from_compressed(str(gz))
+    with tarfile.open(tar_path, "w") as tf:
+      tf.add(str(member), arcname="%s.txt" % day)
+    with tarfile.open(gz, "w:gz") as tf:
+      tf.add(str(member), arcname="%s.txt" % day)
+    mapping[str(gz)] = []
+
+  snapshot = ArchiveMaintenanceSnapshot(
+      closed_paths=[str(tmp_path / "closed-segment-placeholder")],
+      mapping=mapping,
+      ready_paths=set(),
+  )
+  cache = {"hits": 0, "misses": 0}
+  remove_verified_archived_raw_files(
+      str(tmp_path),
+      "suffix",
+      str(tmp_path),
+      log_fn=None,
+      maintenance_snapshot=snapshot,
+      validation_cache=cache,
+  )
+  assert cache["misses"] == 2
+  assert cache["hits"] == 0
+
+
 def test_validate_sealed_daily_archive_validation_cache_invalidates_on_mtime_change(
     monkeypatch, tmp_path
 ):
@@ -1550,7 +1673,7 @@ def test_get_file_member_sizes_from_gzip_archive_reads_gz_only(tmp_path):
 def test_get_archive_validation_worker_count_bounds(monkeypatch):
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 
-  monkeypatch.setattr(helpers.cfg, "get_sync_archive_pool_processes", lambda: 6)
+  monkeypatch.setattr(helpers.cfg, "get_sync_archive_validation_max_workers", lambda: 6)
   monkeypatch.delenv("SYNC_ARCHIVE_VALIDATION_WORKERS", raising=False)
   assert helpers._get_archive_validation_worker_count(0) == 1
   assert helpers._get_archive_validation_worker_count(3) == 3
@@ -2418,11 +2541,12 @@ def test_archive_stats_files_skips_dedupe_in_append_path(monkeypatch, tmp_path):
   monkeypatch.setattr(
       st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
   monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
-  monkeypatch.setattr(st, "tar_has_duplicate_file_members", lambda *_a, **_k: True)
+
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 
   dedupe_calls = {"count": 0}
   monkeypatch.setattr(
-      st,
+      helpers,
       "dedupe_tar_keep_largest_file_per_member",
       lambda *_a, **_k: dedupe_calls.__setitem__("count", dedupe_calls["count"] + 1) or True,
   )
@@ -2858,6 +2982,118 @@ def test_remove_verified_uncompressed_daily_tars_skips_unmapped_day_via_skip_pat
 
   assert day_tar.is_file()
   assert day_gz.is_file()
+
+
+def test_archive_validation_worker_count_respects_max_workers(monkeypatch):
+  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  monkeypatch.setattr(cfg, "get_sync_archive_validation_max_workers", lambda: 2)
+  assert helpers._get_archive_validation_worker_count(8) == 2
+
+
+def test_collect_unmapped_closed_raw_daily_tars_finds_unmapped_on_disk(tmp_path):
+  archive_dir = tmp_path / "archive"
+  host_dir = archive_dir / "host.hpc"
+  host_dir.mkdir(parents=True)
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  raw_path = host_dir / "bad_raw"
+  raw_path.write_text("no-timestamp-here\n")
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      collect_unmapped_closed_raw_daily_tars,
+  )
+
+  result = collect_unmapped_closed_raw_daily_tars(
+      str(archive_dir), ".hpc", str(daily_dir),
+  )
+  assert result
+
+
+def test_iter_tar_file_tasks_falls_back_to_gz_when_zst_corrupt(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2020-01-04.tar"
+  zst_path = tmp_path / "2020-01-04.tar.zst"
+  gz_path = tmp_path / "2020-01-04.tar.gz"
+  tar_path.write_text("bad")
+  zst_path.write_text("bad-zst")
+  gz_path.write_text("good-gz-placeholder")
+  calls = []
+
+  def _fake_decomp(compressed_path, out_tar_path, thread_count, *, remove_compressed=True):
+    del thread_count, remove_compressed
+    calls.append(str(compressed_path))
+    if str(compressed_path).endswith(".tar.zst"):
+      return False
+    inner = tmp_path / "inn.txt"
+    inner.write_text("ok")
+    with tarfile.open(str(out_tar_path), "w") as tf:
+      tf.add(str(inner), arcname="only.txt")
+    return True
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decomp)
+  members = list(helpers.iter_tar_file_tasks(str(tar_path)))
+  assert members
+  assert str(zst_path) in calls
+  assert str(gz_path) in calls
+
+
+def test_validate_sealed_restores_corrupt_tar_before_fail_closed(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2020-01-05.tar"
+  zst_path = tmp_path / "2020-01-05.tar.zst"
+  tar_path.write_text("bad")
+  zst_path.write_bytes(b"sealed-placeholder")
+  members = {"member.txt": 7}
+
+  def _fake_decomp(compressed_path, out_tar_path, thread_count, *, remove_compressed=True):
+    del compressed_path, thread_count, remove_compressed
+    inner = tmp_path / "member.txt"
+    inner.write_text("payload")
+    with tarfile.open(str(out_tar_path), "w") as tf:
+      tf.add(str(inner), arcname="member.txt")
+    return True
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decomp)
+  monkeypatch.setattr(
+      helpers,
+      "_scan_compressed_archive_members_and_readable",
+      lambda _path: (True, dict(members)),
+  )
+  ok, members_out = helpers.validate_sealed_daily_archive_for_raw_removal(
+      str(zst_path),
+      log_fn=None,
+      allow_auto_seal=False,
+  )
+  assert ok is True
+  assert members_out == members
+
+
+def test_replace_corrupt_tar_does_not_clobber_concurrent_append(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2020-01-06.tar"
+  zst_path = tmp_path / "2020-01-06.tar.zst"
+  gz_path = tmp_path / "2020-01-06.tar.gz"
+  tar_path.write_text("corrupt")
+  zst_path.write_text("zst-placeholder")
+  appended = tmp_path / "appended.txt"
+  appended.write_text("new-append")
+
+  def _fake_decomp(compressed_path, out_tar_path, thread_count, *, remove_compressed=True):
+    del compressed_path, thread_count, remove_compressed
+    with tarfile.open(str(out_tar_path), "w") as tf:
+      tf.add(str(appended), arcname="appended.txt")
+    return True
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decomp)
+  assert helpers.replace_corrupt_tar_from_compressed_backup(
+      str(tar_path), str(zst_path), str(gz_path), 1)
+  with tarfile.open(str(tar_path), "r") as tf:
+    names = [m.name for m in tf.getmembers() if m.isfile()]
+  assert "appended.txt" in names
 
 
 def test_collect_days_with_unmapped_closed_raw_buckets_unmapped_only():

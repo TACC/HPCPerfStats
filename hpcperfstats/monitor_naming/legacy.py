@@ -23,6 +23,10 @@ EVENT_LEGACY_TO_CANONICAL: dict[str, str] = dict(event_renames())
 
 # Intel IMC types in legacy DB / archives (probe order matches old utils.py).
 LEGACY_INTEL_IMC_STATS_TYPES = (
+    "intel_x86_uncore_imc_snb",
+    "intel_x86_uncore_imc_ivb",
+    "intel_x86_uncore_imc_hsw",
+    "intel_x86_uncore_imc_bdw",
     "intel_snb_imc",
     "intel_ivb_imc",
     "intel_hsw_imc",

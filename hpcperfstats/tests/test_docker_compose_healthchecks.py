@@ -73,5 +73,5 @@ def test_docker_compose_app_uses_configurable_pipeline_ssh_mount():
 
   for content in (app_content, app_example_content):
     assert "HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini" in content
-    assert "./hpcperfstats.ini:/home/hpcperfstats/hpcperfstats.ini:ro" in content
+    assert "./hpcperfstats.ini:/home/hpcperfstats/hpcperfstats.ini:ro" not in content
 

@@ -95,6 +95,7 @@ done
 
 cleanup() {
   cleanup_args_file
+  compose_cleanup_bind_mount
   if [[ "$KEEP_ENV" -eq 1 ]]; then
     echo "Keeping compose environment (--keep-env)."
     return
@@ -115,6 +116,10 @@ if [[ ${#PYTEST_EXTRA[@]} -gt 0 ]]; then
 else
   : > "$ARGS_FILE"
 fi
+
+export COMPOSE_BIND_MOUNT_SKIP_BUILD="$SKIP_BUILD"
+compose_prepare_bind_mount
+compose_run_inner_script_prepare_env
 
 echo "Resetting Docker compose state and volumes..."
 compose_test down -v --remove-orphans
@@ -156,14 +161,11 @@ export DOCKER_PYTEST_SKIP_BROWSER="$SKIP_BROWSER_E2E"
 export DOCKER_PYTEST_SKIP_MIGRATE="$SKIP_MIGRATE"
 
 echo "Running pytest in web container..."
-# Mount repo so tests use current source (migrations, conftest) without rebuilding the image.
-compose_test run --rm \
+# Mount repo (or virtiofs-safe work copy) so tests use current source without rebuilding the image.
+compose_run_inner_script tests/run_db_pytest_inner.sh \
   -e DOCKER_PYTEST_SEED_CMD \
   -e DOCKER_PYTEST_SKIP_BROWSER \
   -e DOCKER_PYTEST_SKIP_MIGRATE \
-  -v "$ROOT_DIR:/home/hpcperfstats:rw" \
-  -v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro" \
-  --entrypoint bash \
-  web /home/hpcperfstats/tests/run_db_pytest_inner.sh
+  -v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args.list:ro"
 
 echo "DB pytest workflow completed."

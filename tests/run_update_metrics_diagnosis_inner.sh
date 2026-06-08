@@ -8,13 +8,7 @@ export HPCPERFSTATS_COMPOSE_NETWORK=1
 export HPCPERFSTATS_UM_DIAG_JSON_OUT="${HPCPERFSTATS_UM_DIAG_JSON_OUT:-/home/hpcperfstats/test_runs/diagnosis/update_metrics_diagnosis.json}"
 mkdir -p "$(dirname "${HPCPERFSTATS_UM_DIAG_JSON_OUT}")"
 
-export PYTHONPATH="/home/hpcperfstats${PYTHONPATH:+:$PYTHONPATH}"
-if ! pip install -e ".[test]" -q 2>/dev/null; then
-  echo "pip install -e failed on mount; using PYTHONPATH=/home/hpcperfstats and pip install test extras only."
-  # shellcheck source=tests/pip_compose_test_extras_fallback.sh
-  source tests/pip_compose_test_extras_fallback.sh
-  pip_compose_test_extras_fallback
-fi
+compose_inner_pip_install
 
 python hpcperfstats/site/manage.py migrate --noinput
 

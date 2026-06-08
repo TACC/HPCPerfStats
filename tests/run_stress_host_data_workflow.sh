@@ -94,6 +94,7 @@ done
 
 cleanup() {
   cleanup_args_file
+  compose_cleanup_bind_mount
   if [[ "$KEEP_ENV" -eq 1 ]]; then
     echo "Keeping compose environment (--keep-env)."
     return
@@ -116,6 +117,9 @@ else
 fi
 
 export HPCPERFSTATS_STRESS_HOST_DATA_ROWS="${HPCPERFSTATS_STRESS_HOST_DATA_ROWS:-400000}"
+
+compose_prepare_bind_mount
+compose_run_inner_script_prepare_env
 
 echo "Resetting Docker compose state and volumes..."
 compose_test down -v --remove-orphans
@@ -153,7 +157,7 @@ if [[ "$db_health" != "healthy" || "$redis_health" != "healthy" ]]; then
 fi
 
 echo "Running stress_host_data tests in web container (HPCPERFSTATS_STRESS_HOST_DATA_ROWS=${HPCPERFSTATS_STRESS_HOST_DATA_ROWS})..."
-compose_test run --rm \
+compose_run_inner_script tests/run_stress_host_data_inner.sh \
   -e HPCPERFSTATS_STRESS_HOST_DATA_ROWS \
   -e HPCPERFSTATS_STRESS_USE_TIME_SCALE \
   -e HPCPERFSTATS_STRESS_N_HOSTS \
@@ -169,9 +173,6 @@ compose_test run --rm \
   -e HPCPERFSTATS_STRESS_SAMPLE_PATH \
   -e HPCPERFSTATS_LARGE_JOB_HOST_DATA_ROWS \
   -e HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS \
-  -v "$ROOT_DIR:/home/hpcperfstats:rw" \
-  -v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro" \
-  --entrypoint bash \
-  web /home/hpcperfstats/tests/run_stress_host_data_inner.sh
+  -v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro"
 
 echo "Stress host_data workflow completed."

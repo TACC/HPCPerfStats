@@ -42,10 +42,10 @@ def test_infer_roofline_peaks_intel_skx_legacy_typename_dual_read():
 
 
 def test_infer_roofline_peaks_intel_prefers_earlier_imc_generation_in_list():
-  """First INTEL_IMC_STATS_TYPES present in schema wins (same order as roofline IMC scan)."""
+  """First imc_types_probe_order() entry present in schema wins (canonical before legacy)."""
   jt = _make_jt({"intel_x86_uncore_imc_hsw": [], "intel_x86_uncore_imc_skx": []})
   gf, bw = infer_cpu_roofline_peak_flops_and_bw_gbps(jt)
-  assert (gf, bw) == ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS["intel_x86_uncore_imc_hsw"]
+  assert (gf, bw) == ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS["intel_x86_uncore_imc_skx"]
 
 
 def test_infer_roofline_peaks_amd_default_when_amd_counters_present():
