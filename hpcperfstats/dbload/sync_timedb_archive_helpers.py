@@ -2280,7 +2280,7 @@ def collect_stats_files_in_range(
 
   When startdate is ``'all'``, every eligible file is returned (no date
   filtering). Otherwise files are included if mtime or filename epoch falls in
-  (startdate - 1 day, enddate]. Returns paths sorted newest-first (by filename
+  (startdate - 1 day, enddate]. Returns paths sorted oldest-first (by filename
   epoch when numeric, else mtime). If ``host_name_ext`` is empty after strip,
   returns an empty list.
   """
@@ -2347,9 +2347,9 @@ def collect_stats_files_in_range(
         continue
       stats_files.append((stats_file.path, sort_epoch))
 
-  # Sort by effective timestamp descending (newest files first); None values
+  # Sort by effective timestamp ascending (oldest files first); None values
   # sort last. Then return just the paths.
-  stats_files.sort(key=lambda item: (item[1] is None, item[1]), reverse=True)
+  stats_files.sort(key=lambda item: (item[1] is None, item[1]))
   return [path for path, _ in stats_files]
 
 
@@ -2362,7 +2362,7 @@ def rescan_pending_stats_files(
     host_scan_hints=None,
     full_rescan_every=10,
 ):
-  """Return newest-first files still pending after excluding processed files."""
+  """Return oldest-first files still pending after excluding processed files."""
   should_force_full = True
   if isinstance(host_scan_hints, dict):
     should_force_full = (
@@ -2387,7 +2387,11 @@ def rescan_pending_stats_files(
 
 
 def cap_pending_stats_file_list(paths, max_size, log_fn=log_print):
-  """Return newest-first pending paths capped to ``max_size`` (memory bound)."""
+  """Return oldest-first pending paths capped to ``max_size`` (memory bound).
+
+  When truncating, newer paths are dropped and the oldest ``max_size`` entries
+  are retained (supervisor ingest order).
+  """
   max_size = max(1, int(max_size))
   if len(paths) <= max_size:
     return paths

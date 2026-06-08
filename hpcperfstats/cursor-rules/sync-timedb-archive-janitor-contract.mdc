@@ -18,6 +18,7 @@ alwaysApply: true
 
 ## Supervisor hot-path rules
 
+- **Ingest order (oldest first):** `collect_stats_files_in_range` → `rescan_pending_stats_files` → `pending_stats_files` must be **oldest-first** (effective timestamp ascending: filename epoch when numeric, else mtime; `None` sort keys last). The supervisor ingests from the queue head (`pending_stats_files[:chunk_size]`). `cap_pending_stats_file_list` must retain the **oldest** `max_size` entries when truncating (drop newer paths). Do not reverse to newest-first without an explicit product decision and regression tests.
 - **No blocking maintenance** on the supervisor thread: do not reintroduce `_archive_maintenance_pipeline`, forced two-phase maintenance, or supervisor-driven seal/raw/`.tar` bursts.
 - **Startup:** `archive_janitor.enqueue_startup_debt()` (mtime scan only).
 - **Interval:** `archive_maintenance_interval_seconds` is **debt accrual interval**, not blocking maintenance on the supervisor.
@@ -87,8 +88,8 @@ This must **not** wait for an empty global ingest queue. Chunk-end reclaim is th
 - `hpcperfstats/tests/test_sync_timedb_janitor.py` (debt re-queue, fresh raw, day-complete, partial accrual, 15k raw ticks)
 - `hpcperfstats/tests/test_sync_timedb_hints.py`
 - `hpcperfstats/tests/test_sync_timedb_archive_dispatch.py`
-- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (no live maintenance pipeline; chunk reclaim)
-- `hpcperfstats/tests/test_sync_timedb_archive.py` (gz fallback, append `return False`)
+- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (no live maintenance pipeline; chunk reclaim; oldest-first ingest order)
+- `hpcperfstats/tests/test_sync_timedb_archive.py` (gz fallback, append `return False`; `collect_stats_files_in_range` / rescan oldest-first sort)
 
 ## Overlap
 

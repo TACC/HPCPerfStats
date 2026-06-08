@@ -4,6 +4,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import hpcperfstats.dbload.sync_timedb as st
@@ -1997,6 +1998,69 @@ def test_cap_pending_stats_files_list_truncates():
   paths = ["/a/%d" % i for i in range(10)]
   capped = cap_pending_stats_file_list(paths, 4, log_fn=lambda *_a, **_k: None)
   assert capped == paths[:4]
+
+
+def test_cap_pending_stats_file_list_retains_oldest_when_truncating():
+  """Pending queue cap drops newer paths; oldest-first ingest order is preserved."""
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      cap_pending_stats_file_list,
+  )
+
+  base_ts = 1_591_123_200
+  paths = ["/host/%d" % (base_ts + i * 60) for i in range(5)]
+  capped = cap_pending_stats_file_list(paths, 3, log_fn=lambda *_a, **_k: None)
+  assert capped == paths[:3]
+  assert int(os.path.basename(capped[0])) < int(os.path.basename(capped[-1]))
+
+
+def test_supervisor_ingests_oldest_pending_paths_first(monkeypatch):
+  """Supervisor chunks from the head of the oldest-first pending queue."""
+  shutdown_requested[0] = False
+  try:
+    base_ts = 1_591_123_200
+    pending = ["/host/%d" % (base_ts + i * 60) for i in range(3)]
+    ingested_order = []
+    rescan_calls = {"n": 0}
+
+    def fake_rescan(*_a, **_k):
+      if rescan_calls["n"] == 0:
+        rescan_calls["n"] += 1
+        return list(pending)
+      return []
+
+    def fake_ingest(_lock, path, _c=None):
+      ingested_order.append(path)
+      return (path, True, True, 0.01)
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_ingest)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+
+    archive_pool = _FakeArchivePool()
+    archive_pool.__enter__()
+    try:
+      st.run_sync_timedb_supervisor_loop(
+          "/tmp/archive",
+          "all",
+          None,
+          ".hpc",
+          object(),
+          archive_pool,
+          run_once=True,
+      )
+    finally:
+      archive_pool.__exit__(None, None, None)
+
+    assert ingested_order == pending
+  finally:
+    shutdown_requested[0] = False
 
 
 def test_rescan_pending_stats_files_reuses_set_without_copy(monkeypatch):
