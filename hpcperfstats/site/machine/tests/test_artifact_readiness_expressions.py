@@ -1,5 +1,7 @@
 """Regression: SQL artifact fingerprints match Python helpers (PostgreSQL)."""
 
+from datetime import timedelta
+
 import pytest
 from django.db import connection
 from django.utils import timezone
@@ -22,6 +24,8 @@ def test_plot_sql_fingerprint_matches_python_helper():
   if connection.vendor != "postgresql":
     pytest.skip("PostgreSQL-only SQL fingerprint")
   now = timezone.now()
+  t_first = now - timedelta(minutes=30)
+  t_last = now - timedelta(minutes=5)
   j = job_data.objects.create(
       jid="sqlfp_plot1",
       submit_time=now,
@@ -31,6 +35,8 @@ def test_plot_sql_fingerprint_matches_python_helper():
       host_list=["b.example.com", "a.example.com"],
       metrics_distinct_time_count=7,
       host_data_schema_json={"t1": {}},
+      telemetry_first_time=t_first,
+      telemetry_last_time=t_last,
   )
   live = get_live_distinct_time_count_for_jid(j.jid)
   py_fp = compute_plot_input_fingerprint(j, live)

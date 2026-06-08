@@ -24,7 +24,8 @@ import numexpr as ne
 from numpy import amax, diff, isnan, maximum, mean, zeros
 from pandas import to_datetime
 
-from django.db import connections, transaction, close_old_connections
+from django.db import close_old_connections, connections, transaction
+from django.db.models import Max, Min
 from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.gen import jid_table
@@ -72,7 +73,7 @@ from hpcperfstats.monitor_naming.resolve import (
     resolve_get_type,
     type_probe_names,
 )
-from hpcperfstats.site.machine.models import job_data, metrics_data
+from hpcperfstats.site.machine.models import host_data, job_data, metrics_data
 
 from hpcperfstats.analysis.metrics.job_detail_fsio import (
     compute_job_detail_fsio_metric_rows,
@@ -551,6 +552,53 @@ class _Host:
     self.stats = {}
 
 
+def _fqdn_hosts_for_job_model(job):
+  suffix = "." + cfg.get_host_name_ext()
+  hosts = []
+  for host in (job.host_list or []):
+    h = str(host or "").strip()
+    if not h:
+      continue
+    hosts.append(h if "." in h else (h + suffix))
+  return hosts
+
+
+def _in_window_telemetry_bounds_for_job(job):
+  """Return ``(telemetry_first_time, telemetry_last_time)`` for accounting hosts."""
+  start_time = getattr(job, "start_time", None)
+  end_time = getattr(job, "end_time", None)
+  host_list = getattr(job, "host_list", None)
+  if start_time is None or end_time is None or host_list is None:
+    row = (
+        job_data.objects.filter(jid=_metrics_jid_value(job))
+        .values("start_time", "end_time", "host_list")
+        .first()
+    )
+    if not row:
+      return None, None
+    start_time = row.get("start_time")
+    end_time = row.get("end_time")
+    host_list = row.get("host_list")
+  suffix = "." + cfg.get_host_name_ext()
+  hosts = []
+  for host in (host_list or []):
+    h = str(host or "").strip()
+    if not h:
+      continue
+    hosts.append(h if "." in h else (h + suffix))
+  if not hosts or start_time is None or end_time is None:
+    return None, None
+  agg = (
+      host_data.objects.filter(
+          host__in=hosts,
+          time__gte=start_time,
+          time__lte=end_time,
+      )
+      .aggregate(mn=Min("time"), mx=Max("time"))
+  )
+  return agg.get("mn"), agg.get("mx")
+
+
 class _JobForMetrics:
   """Minimal job-like object compatible with hpcperfstats.analysis.gen.utils.utils. Built from jid_table full host_data DataFrame.
 
@@ -681,6 +729,8 @@ def _unwrap(args):
         "status": "ok",
         "rows": payload.get("rows") or [],
         "distinct_time_count": payload.get("distinct_time_count"),
+        "telemetry_first_time": payload.get("telemetry_first_time"),
+        "telemetry_last_time": payload.get("telemetry_last_time"),
         "error_type": None,
         "error_message": None,
     }
@@ -715,7 +765,12 @@ def _unwrap(args):
     }
 
 
-def _persist_metrics_batch(job_results, distinct_time_count):
+def _persist_metrics_batch(
+    job_results,
+    distinct_time_count,
+    telemetry_first_time=None,
+    telemetry_last_time=None,
+):
   """Upsert metrics_data rows for job_results; set job_data.metrics_distinct_time_count.
 
   Uses bulk_create(..., update_conflicts=...) so we do not rely on INSERT RETURNING
@@ -773,9 +828,18 @@ def _persist_metrics_batch(job_results, distinct_time_count):
       )
     if distinct_time_count is not None and jids:
       jobs_up = list(job_data.objects.filter(pk__in=jids))
+      update_fields = ["metrics_distinct_time_count"]
       for jo in jobs_up:
         jo.metrics_distinct_time_count = distinct_time_count
-      job_data.objects.bulk_update(jobs_up, ["metrics_distinct_time_count"])
+        if telemetry_first_time is not None:
+          jo.telemetry_first_time = telemetry_first_time
+        if telemetry_last_time is not None:
+          jo.telemetry_last_time = telemetry_last_time
+      if telemetry_first_time is not None:
+        update_fields.append("telemetry_first_time")
+      if telemetry_last_time is not None:
+        update_fields.append("telemetry_last_time")
+      job_data.objects.bulk_update(jobs_up, update_fields)
 
   if wrote_metrics:
     try:
@@ -811,6 +875,8 @@ def _persist_metrics_payload(payload):
     )
   job_rows = payload.get("rows") or []
   distinct_n = payload.get("distinct_time_count")
+  telemetry_first_time = payload.get("telemetry_first_time")
+  telemetry_last_time = payload.get("telemetry_last_time")
   if not job_rows:
     return _metrics_run_outcome(
         jid,
@@ -823,7 +889,12 @@ def _persist_metrics_payload(payload):
   persist_started_at = time.monotonic()
   try:
     run_with_db_retry(
-        lambda: _persist_metrics_batch(job_rows, distinct_n),
+        lambda: _persist_metrics_batch(
+            job_rows,
+            distinct_n,
+            telemetry_first_time=telemetry_first_time,
+            telemetry_last_time=telemetry_last_time,
+        ),
         attempts=2,
     )
   except (OperationalError, DatabaseError) as exc:
@@ -1736,6 +1807,13 @@ class Metrics():
         """
     results = []
 
+    telemetry_first_time = getattr(job, "telemetry_first_time", None)
+    telemetry_last_time = getattr(job, "telemetry_last_time", None)
+    if telemetry_first_time is None and telemetry_last_time is None:
+      telemetry_first_time, telemetry_last_time = (
+          _in_window_telemetry_bounds_for_job(job)
+      )
+
     # Job-scoped host_data via ORM (no temp table)
     with jid_table.jid_table(job.jid) as jt:
       simple_metric_cache = {}
@@ -1822,6 +1900,8 @@ class Metrics():
         return {
             "rows": _sanitize_metrics_compute_rows(results),
             "distinct_time_count": distinct_time_count,
+            "telemetry_first_time": telemetry_first_time,
+            "telemetry_last_time": telemetry_last_time,
         }
 
       for metric_name, metric_obj in self.simple_metrics_list.items():
@@ -2064,6 +2144,8 @@ class Metrics():
     return {
         "rows": _sanitize_metrics_compute_rows(results),
         "distinct_time_count": distinct_time_count,
+        "telemetry_first_time": telemetry_first_time,
+        "telemetry_last_time": telemetry_last_time,
     }
 
 

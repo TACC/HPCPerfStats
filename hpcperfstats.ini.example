@@ -225,6 +225,16 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Quarantine time for repeatedly deferred jid seconds (default 300).
 # metrics_deferred_not_ready_quarantine_s = 300
 
+# Defer update_metrics until in-window host_data samples exist within margins of
+# Slurm start and end (job aggregate, any accounting host). Default yes.
+# metrics_readiness_require_window_coverage = yes
+
+# Start edge tolerance seconds (default 600): MIN(time) in window must be <= start + margin.
+# metrics_readiness_start_margin_seconds = 600
+
+# End edge tolerance seconds (default 600): MAX(time) in window must be >= end - margin.
+# metrics_readiness_end_margin_seconds = 600
+
 # Cap sync_timedb ingest pool processes when set.
 # sync_pool_process_cap =
 

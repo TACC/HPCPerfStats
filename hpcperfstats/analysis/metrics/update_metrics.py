@@ -29,7 +29,7 @@ import traceback
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from datetime import datetime, timedelta
-from collections import deque
+from collections import defaultdict, deque
 from concurrent.futures import CancelledError, FIRST_COMPLETED, ThreadPoolExecutor, wait
 from hpcperfstats.django_bootstrap import ensure_django
 
@@ -39,7 +39,7 @@ UPDATE_METRICS_PROCESS_TITLE = "update_metrics.py"
 
 from django.db import close_old_connections, connections, transaction
 from django.utils import timezone as django_timezone
-from django.db.models import BooleanField, Case, Count, Exists, F, IntegerField, Max, OuterRef, Q, Subquery, Value, When
+from django.db.models import BooleanField, Case, Count, Exists, F, IntegerField, Max, Min, OuterRef, Q, Subquery, Value, When
 from django.db.models.query import QuerySet
 from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, DatabaseError
@@ -971,6 +971,7 @@ def _pg_local_readiness_timeouts():
           "SET LOCAL lock_timeout = %s",
           [max(1, int(STRICT_READINESS_DB_LOCK_TIMEOUT_MS))],
       )
+      cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
     yield
 
 
@@ -1238,10 +1239,20 @@ def _iter_chunked_pks(queryset, chunk_size):
     offset += chunk_size
 
 
-def _candidate_ref(jid, artifact_only=False, runtime_s=None):
+def _candidate_ref(
+    jid,
+    artifact_only=False,
+    runtime_s=None,
+    telemetry_first_time=None,
+    telemetry_last_time=None,
+):
   ns = SimpleNamespace(jid=jid, artifact_only=bool(artifact_only))
   if runtime_s is not None:
     ns.runtime_s = float(runtime_s)
+  if telemetry_first_time is not None:
+    ns.telemetry_first_time = telemetry_first_time
+  if telemetry_last_time is not None:
+    ns.telemetry_last_time = telemetry_last_time
   return ns
 
 
@@ -1256,14 +1267,31 @@ def _job_refs_from_jids(jids):
   for item in jids:
     if hasattr(item, "jid"):
       rt = getattr(item, "runtime_s", None)
+      tft = getattr(item, "telemetry_first_time", None)
+      tlt = getattr(item, "telemetry_last_time", None)
       refs.append(_candidate_ref(
           item.jid,
           getattr(item, "artifact_only", False),
           runtime_s=rt,
+          telemetry_first_time=tft,
+          telemetry_last_time=tlt,
       ))
     else:
       refs.append(_candidate_ref(item))
   return refs
+
+
+def _attach_telemetry_bounds_to_candidate(candidate, bounds_by_jid):
+  """Set precomputed in-window bounds on a candidate ref when available."""
+  bounds = bounds_by_jid.get(candidate.jid)
+  if not bounds:
+    return candidate
+  min_t, max_t = bounds
+  if min_t is not None:
+    candidate.telemetry_first_time = min_t
+  if max_t is not None:
+    candidate.telemetry_last_time = max_t
+  return candidate
 
 
 def _fqdn_hosts_for_job(job_row):
@@ -1276,6 +1304,210 @@ def _fqdn_hosts_for_job(job_row):
       continue
     hosts.append(h if "." in h else (h + suffix))
   return hosts
+
+
+_COVERAGE_DEFER_LOGGED = set()
+_COVERAGE_DEFER_LOGGED_CAP = 10000
+
+
+def reset_metrics_coverage_defer_log_session():
+  """Clear once-per-session coverage defer logs (scheduler startup)."""
+  global _COVERAGE_MARGIN_WARN_LOGGED
+  _COVERAGE_DEFER_LOGGED.clear()
+  _COVERAGE_MARGIN_WARN_LOGGED = False
+
+
+_COVERAGE_MARGIN_WARN_LOGGED = False
+_COVERAGE_MARGIN_WARN_CAP_SECONDS = 86400.0 * 7
+
+
+def _datetimes_mixed_naive_aware(*values):
+  """Return True when any non-null datetimes disagree on aware vs naive."""
+  flags = []
+  for value in values:
+    if value is None:
+      continue
+    flags.append(django_timezone.is_aware(value))
+  return len(set(flags)) > 1
+
+
+def evaluate_job_window_coverage_ready(
+    start_time,
+    end_time,
+    first_in_window,
+    last_in_window,
+    *,
+    start_margin_s=None,
+    end_margin_s=None,
+):
+  """Return ``(ready, reason)`` for dual-edge in-window coverage (job aggregate)."""
+  if start_margin_s is None:
+    start_margin_s = float(cfg.get_metrics_readiness_start_margin_seconds())
+  else:
+    start_margin_s = float(start_margin_s)
+  if end_margin_s is None:
+    end_margin_s = float(cfg.get_metrics_readiness_end_margin_seconds())
+  else:
+    end_margin_s = float(end_margin_s)
+  reason = {
+      "start_ok": False,
+      "end_ok": False,
+      "start_lag_s": None,
+      "end_lag_s": None,
+      "start_margin_s": start_margin_s,
+      "end_margin_s": end_margin_s,
+      "mixed_naive_aware": False,
+      "margin_exceeds_duration": False,
+  }
+  if start_time is None or end_time is None:
+    return False, reason
+  if first_in_window is None or last_in_window is None:
+    return False, reason
+  if _datetimes_mixed_naive_aware(
+      start_time, end_time, first_in_window, last_in_window):
+    reason["mixed_naive_aware"] = True
+    return False, reason
+  duration_s = (end_time - start_time).total_seconds()
+  if duration_s > 0 and (start_margin_s + end_margin_s) > duration_s:
+    reason["margin_exceeds_duration"] = True
+    global _COVERAGE_MARGIN_WARN_LOGGED
+    if not _COVERAGE_MARGIN_WARN_LOGGED:
+      _COVERAGE_MARGIN_WARN_LOGGED = True
+      if start_margin_s + end_margin_s > _COVERAGE_MARGIN_WARN_CAP_SECONDS:
+        log_print(
+            "metrics_readiness: start_margin_s + end_margin_s exceeds job "
+            "duration (and margins are very large); jobs may never become ready",
+            flush=True,
+        )
+  start_deadline = start_time + timedelta(seconds=start_margin_s)
+  end_floor = end_time - timedelta(seconds=end_margin_s)
+  reason["start_lag_s"] = (first_in_window - start_time).total_seconds()
+  reason["end_lag_s"] = (end_time - last_in_window).total_seconds()
+  reason["start_ok"] = first_in_window <= start_deadline
+  reason["end_ok"] = last_in_window >= end_floor
+  return reason["start_ok"] and reason["end_ok"], reason
+
+
+def _log_metrics_deferred_coverage_once(jid, reason):
+  if jid in _COVERAGE_DEFER_LOGGED:
+    return
+  if len(_COVERAGE_DEFER_LOGGED) >= _COVERAGE_DEFER_LOGGED_CAP:
+    return
+  _COVERAGE_DEFER_LOGGED.add(jid)
+  log_print(
+      "metrics_deferred_coverage jid={0} start_ok={1} end_ok={2} "
+      "start_lag_s={3} end_lag_s={4} start_margin_s={5} end_margin_s={6}".format(
+          jid,
+          reason.get("start_ok"),
+          reason.get("end_ok"),
+          reason.get("start_lag_s"),
+          reason.get("end_lag_s"),
+          reason.get("start_margin_s"),
+          reason.get("end_margin_s"),
+      ),
+      flush=True,
+  )
+
+
+def _legacy_all_hosts_sample_after_end(end_time, hosts, latest_by_host):
+  if end_time is None or not hosts:
+    return False
+  return all(
+      (latest_by_host.get(host) is not None and latest_by_host[host] > end_time)
+      for host in hosts
+  )
+
+
+def _aggregate_bounds_from_host_map(hosts, host_min, host_max):
+  """Combine per-host in-window bounds into one ``(min_time, max_time)``."""
+  min_time = None
+  max_time = None
+  for host in hosts:
+    chunk_min = host_min.get(host)
+    chunk_max = host_max.get(host)
+    if chunk_min is not None:
+      min_time = chunk_min if min_time is None else min(min_time, chunk_min)
+    if chunk_max is not None:
+      max_time = chunk_max if max_time is None else max(max_time, chunk_max)
+  return min_time, max_time
+
+
+def _in_window_per_host_bounds(hosts, start_time, end_time):
+  """Return ``(host_min_map, host_max_map)`` for ``hosts`` in ``[start, end]``."""
+  host_min = {}
+  host_max = {}
+  if not hosts or start_time is None or end_time is None:
+    return host_min, host_max
+  host_list = sorted(set(hosts))
+  batch = max(1, int(HOST_LAST_TIME_LOOKUP_BATCH))
+  for i in range(0, len(host_list), batch):
+    chunk = host_list[i:i + batch]
+    qs = (
+        host_data.objects.filter(
+            host__in=chunk,
+            time__gte=start_time,
+            time__lte=end_time,
+        )
+        .values("host")
+        .annotate(mn=Min("time"), mx=Max("time"))
+    )
+    for row in qs:
+      host = row.get("host")
+      if row.get("mn") is not None:
+        host_min[host] = row["mn"]
+      if row.get("mx") is not None:
+        host_max[host] = row["mx"]
+  return host_min, host_max
+
+
+def _in_window_min_max_for_hosts(hosts, start_time, end_time):
+  """Return ``(min_time, max_time)`` for host_data in ``[start_time, end_time]``."""
+  if not hosts or start_time is None or end_time is None:
+    return None, None
+  host_min, host_max = _in_window_per_host_bounds(hosts, start_time, end_time)
+  return _aggregate_bounds_from_host_map(hosts, host_min, host_max)
+
+
+def _in_window_min_max_by_job_rows_reference(jobs):
+  """Reference per-job loop (tests); prefer :func:`_in_window_min_max_by_job_rows`."""
+  bounds = {}
+  for row in jobs:
+    jid = row["jid"]
+    bounds[jid] = _in_window_min_max_for_hosts(
+        _fqdn_hosts_for_job(row),
+        row.get("start_time"),
+        row.get("end_time"),
+    )
+  return bounds
+
+
+def _in_window_min_max_by_job_rows(jobs):
+  """Map jid -> ``(min_time, max_time)`` using batched host aggregates per window."""
+  bounds = {}
+  if not jobs:
+    return bounds
+  window_groups = defaultdict(list)
+  for row in jobs:
+    start_time = row.get("start_time")
+    end_time = row.get("end_time")
+    if start_time is None or end_time is None:
+      bounds[row["jid"]] = (None, None)
+      continue
+    window_groups[(start_time, end_time)].append(row)
+  for (start_time, end_time), group_rows in window_groups.items():
+    jid_to_hosts = {}
+    unique_hosts = set()
+    for row in group_rows:
+      hosts = _fqdn_hosts_for_job(row)
+      jid_to_hosts[row["jid"]] = hosts
+      unique_hosts.update(hosts)
+    host_min, host_max = _in_window_per_host_bounds(
+        unique_hosts, start_time, end_time)
+    for jid, hosts in jid_to_hosts.items():
+      bounds[jid] = _aggregate_bounds_from_host_map(hosts, host_min, host_max)
+  for row in jobs:
+    bounds.setdefault(row["jid"], (None, None))
+  return bounds
 
 
 def _latest_sample_time_by_host(hosts):
@@ -1326,15 +1558,45 @@ def _latest_sample_time_by_host(hosts):
 
 
 def _ready_jids_from_job_rows(jobs):
-  """Return ready jids from pre-fetched job rows (jid/end_time/host_list)."""
+  """Return ready jids from pre-fetched job rows (jid/start/end/host_list)."""
+  ready, _bounds = _ready_jids_and_bounds_from_job_rows(jobs)
+  return ready
+
+
+def _ready_jids_and_bounds_from_job_rows(jobs):
+  """Return ``(ready_jids, bounds_by_jid)`` for pre-fetched job rows."""
   if not jobs:
-    return []
+    return [], {}
+
+  if cfg.get_metrics_readiness_require_window_coverage():
+    start_margin_s = float(cfg.get_metrics_readiness_start_margin_seconds())
+    end_margin_s = float(cfg.get_metrics_readiness_end_margin_seconds())
+    bounds_by_jid = _in_window_min_max_by_job_rows(jobs)
+    ready = []
+    for row in jobs:
+      jid = row["jid"]
+      start_time = row.get("start_time")
+      end_time = row.get("end_time")
+      if start_time is None or end_time is None:
+        continue
+      min_t, max_t = bounds_by_jid.get(jid, (None, None))
+      is_ready, reason = evaluate_job_window_coverage_ready(
+          start_time,
+          end_time,
+          min_t,
+          max_t,
+          start_margin_s=start_margin_s,
+          end_margin_s=end_margin_s,
+      )
+      if is_ready:
+        ready.append(jid)
+      else:
+        _log_metrics_deferred_coverage_once(jid, reason)
+    return ready, bounds_by_jid
 
   unique_hosts = set()
   job_hosts = {}
   for row in jobs:
-    # De-duplicate host_list entries; gating is based on unique hosts and each
-    # unique host must have data strictly after job end.
     hosts = set(_fqdn_hosts_for_job(row))
     job_hosts[row["jid"]] = hosts
     unique_hosts.update(hosts)
@@ -1342,31 +1604,75 @@ def _ready_jids_from_job_rows(jobs):
   latest_by_host = _latest_sample_time_by_host(unique_hosts)
 
   ready = []
+  bounds_by_jid = {}
   for row in jobs:
     jid = row["jid"]
     end_time = row.get("end_time")
     hosts = job_hosts.get(jid) or set()
-    if end_time is None or not hosts:
-      continue
-    if all(
-        (latest_by_host.get(host) is not None and latest_by_host[host] > end_time)
-        for host in hosts
-    ):
+    bounds_by_jid[jid] = (None, None)
+    if _legacy_all_hosts_sample_after_end(end_time, hosts, latest_by_host):
       ready.append(jid)
-  return ready
+  return ready, bounds_by_jid
 
 
 def _filter_jids_with_samples_after_end(jids):
-  """Keep jids where every job host has latest host_data.time strictly after end_time."""
+  """Keep jids that pass readiness (window coverage or legacy post-end per host)."""
   if not jids:
     return []
 
   jobs = list(
       job_data.objects.filter(jid__in=jids)
       .order_by("jid")
-      .values("jid", "end_time", "host_list")
+      .values("jid", "start_time", "end_time", "host_list")
   )
-  return _ready_jids_from_job_rows(jobs)
+  ready, _bounds = _ready_jids_and_bounds_from_job_rows(jobs)
+  return ready
+
+
+def _filter_jids_with_samples_after_end_and_bounds(jids):
+  """Like :func:`_filter_jids_with_samples_after_end` but also return bounds map."""
+  if not jids:
+    return [], {}
+
+  jobs = list(
+      job_data.objects.filter(jid__in=jids)
+      .order_by("jid")
+      .values("jid", "start_time", "end_time", "host_list")
+  )
+  return _ready_jids_and_bounds_from_job_rows(jobs)
+
+
+def _strict_host_list_coverage_bucket(
+    start_time,
+    end_time,
+    min_in_window,
+    max_in_window,
+    *,
+    start_margin_s=None,
+    end_margin_s=None,
+):
+  """Classify host_list-scoped in-window bounds (canonical strict/proxy semantics)."""
+  if start_time is None or end_time is None:
+    return "unknown"
+  if min_in_window is None and max_in_window is None:
+    return "unknown"
+  ready, _reason = evaluate_job_window_coverage_ready(
+      start_time,
+      end_time,
+      min_in_window,
+      max_in_window,
+      start_margin_s=start_margin_s,
+      end_margin_s=end_margin_s,
+  )
+  if not ready:
+    return "reject"
+  return "unknown"
+
+
+def _proxy_window_coverage_bucket(start_time, end_time, min_in_window, max_in_window):
+  """Reject when host_list in-window min/max proves coverage failure."""
+  return _strict_host_list_coverage_bucket(
+      start_time, end_time, min_in_window, max_in_window)
 
 
 def _proxy_readiness_has_any_and_post_end(end_time, max_time):
@@ -1399,14 +1705,29 @@ def _proxy_readiness_bucket(end_time, max_time):
 def _proxy_readiness_for_jid(jid):
   """ORM proxy for one jid: same semantics as bulk :func:`_proxy_reject_not_ready_jids`.
 
-  Returns ``'reject'`` when jid-keyed ``host_data`` proves not-ready, or
+  Returns ``'reject'`` when host_list-scoped in-window data proves not-ready, or
   ``'unknown'`` when the strict host_list probe must decide (including
   non-PostgreSQL, where bulk code treats every jid as unknown).
   """
   if connections["default"].vendor != "postgresql":
     return "unknown"
-  end_row = job_data.objects.filter(jid=jid).values("jid", "end_time").first()
-  end_time = None if not end_row else end_row["end_time"]
+  end_row = (
+      job_data.objects.filter(jid=jid)
+      .values("jid", "start_time", "end_time", "host_list")
+      .first()
+  )
+  if not end_row:
+    return "unknown"
+  start_time = end_row.get("start_time")
+  end_time = end_row.get("end_time")
+  if cfg.get_metrics_readiness_require_window_coverage():
+    min_t, max_t = _in_window_min_max_for_hosts(
+        _fqdn_hosts_for_job(end_row),
+        start_time,
+        end_time,
+    )
+    return _proxy_window_coverage_bucket(
+        start_time, end_time, min_t, max_t)
   max_time = (
       host_data.objects.filter(jid=jid)
       .aggregate(max_time=Max("time"))
@@ -1416,25 +1737,51 @@ def _proxy_readiness_for_jid(jid):
 
 
 def _proxy_reject_not_ready_jids(jids):
-  """Cheap jid-level prefilter: reject only when jid-keyed host_data proves not-ready.
+  """Cheap jid-level prefilter: reject only when host_list in-window data proves not-ready.
 
-  Some ingest paths may not populate ``host_data.jid`` for every row. In that
-  case, keep the jid in the ``unknown`` set and let the full readiness probe
-  decide using host_list/time-window logic.
+  Uses the same host_list + window aggregate as strict readiness (not ``host_data.jid``).
+  When ingest does not tag ``host_data.jid``, or jid-scoped rows lag host_list samples,
+  keep the jid in the ``unknown`` set and let the full readiness probe decide.
 
-  Uses bounded ``jid__in`` batches and ``Max(time)`` aggregates (no correlated
+  Uses bounded ``jid__in`` batches and batched host aggregates (no correlated
   ``Exists`` per row) to avoid PostgreSQL ``statement_timeout`` on large chunks.
   """
   if not jids:
     return set(), []
   if connections["default"].vendor != "postgresql":
     return set(), list(jids)
+  use_coverage = cfg.get_metrics_readiness_require_window_coverage()
   batch = max(1, int(cfg.get_metrics_proxy_reject_jid_batch_size()))
   reject = set()
   unknown = []
   for sub in _iter_subbatches(jids, batch):
-    end_rows = job_data.objects.filter(jid__in=sub).values("jid", "end_time")
-    end_by_jid = {r["jid"]: r["end_time"] for r in end_rows}
+    job_rows = list(
+        job_data.objects.filter(jid__in=sub)
+        .values("jid", "start_time", "end_time", "host_list")
+    )
+    job_by_jid = {r["jid"]: r for r in job_rows}
+    if use_coverage:
+      sub_rows = [job_by_jid[jid] for jid in sub if jid in job_by_jid]
+      bounds_by_jid = _in_window_min_max_by_job_rows(sub_rows)
+      for jid in sub:
+        row = job_by_jid.get(jid)
+        if row is None:
+          unknown.append(jid)
+          continue
+        start_time = row.get("start_time")
+        end_time = row.get("end_time")
+        if start_time is None or end_time is None:
+          unknown.append(jid)
+          continue
+        min_t, max_t = bounds_by_jid.get(jid, (None, None))
+        bucket = _proxy_window_coverage_bucket(
+            start_time, end_time, min_t, max_t)
+        if bucket == "reject":
+          reject.add(jid)
+        else:
+          unknown.append(jid)
+      continue
+    end_by_jid = {jid: row.get("end_time") for jid, row in job_by_jid.items()}
     max_rows = (
         host_data.objects.filter(jid__in=sub)
         .values("jid")
@@ -1578,7 +1925,7 @@ def _fill_ready_queue(
       )
       stats["strict_batch_size_current"] = strict_check_state["batch_size"]
 
-  def _strict_ready_fallback_one(jid):
+  def _strict_ready_fallback_one(jid, candidate_by_jid=None):
     """Single-jid strict readiness after batch failure (same semantics as legacy path)."""
     with scheduler_shared_lock:
       if strict_check_cooldown_until.get(jid, 0.0) > time.monotonic():
@@ -1587,28 +1934,23 @@ def _fill_ready_queue(
     try:
       with phase_timer.phase("readiness_s"):
         with _pg_local_readiness_timeouts():
-          strict_ready = _filter_jids_with_samples_after_end([jid])
+          strict_ready, bounds_by_jid = (
+              _filter_jids_with_samples_after_end_and_bounds([jid])
+          )
     except (OperationalError, DatabaseError) as exc:
       if is_database_unavailable_error(exc):
         log_and_raise_database_unavailable(
             exc, context="update_metrics strict readiness (single)"
-        )
-      with scheduler_shared_lock:
-        _handle_strict_readiness_db_error(
-            stats=stats,
-            strict_check_state=strict_check_state,
-            elapsed_s=(time.monotonic() - t0),
-            batch_size_seen=1,
-            exc=exc,
-            strict_check_cooldown_until=strict_check_cooldown_until,
-            cooldown_jids=[jid],
         )
       return None
     latency = time.monotonic() - t0
     _strict_ready_record_latency(latency, 1)
     if not strict_ready:
       return None
-    return strict_ready[0]
+    ready_jid = strict_ready[0]
+    lookup = candidate_by_jid if candidate_by_jid is not None else {}
+    candidate = lookup.get(ready_jid, _candidate_ref(ready_jid))
+    return _attach_telemetry_bounds_to_candidate(candidate, bounds_by_jid)
 
   def _process_pk_chunk(state, pk_chunk):
     """Process ``pk_chunk`` in order; set ``pending_tail`` if prefetch fills mid-chunk.
@@ -1677,27 +2019,23 @@ def _fill_ready_queue(
       try:
         with phase_timer.phase("readiness_s"):
           with _pg_local_readiness_timeouts():
-            ready_list = _filter_jids_with_samples_after_end(
-                [candidate.jid for candidate in work]
+            ready_list, bounds_by_jid = (
+                _filter_jids_with_samples_after_end_and_bounds(
+                    [candidate.jid for candidate in work]
+                )
             )
       except (OperationalError, DatabaseError) as exc:
         if is_database_unavailable_error(exc):
           log_and_raise_database_unavailable(
               exc, context="update_metrics strict readiness (batch)"
           )
-        with scheduler_shared_lock:
-          _handle_strict_readiness_db_error(
-              stats=stats,
-              strict_check_state=strict_check_state,
-              elapsed_s=(time.monotonic() - batch_mono),
-              batch_size_seen=len(work),
-              exc=exc,
-              strict_check_cooldown_until=strict_check_cooldown_until,
-              cooldown_jids=[candidate.jid for candidate in work],
-          )
+        failed_fallback_jids = []
+        prefetch_stop = False
         for candidate in work:
-          ready_jid = _strict_ready_fallback_one(candidate.jid)
-          if ready_jid is None:
+          ready_candidate = _strict_ready_fallback_one(
+              candidate.jid, candidate_by_jid)
+          if ready_candidate is None:
+            failed_fallback_jids.append(candidate.jid)
             if on_not_ready_jid is not None:
               on_not_ready_jid(candidate.jid, candidate)
             with scheduler_shared_lock:
@@ -1706,12 +2044,12 @@ def _fill_ready_queue(
           else:
             with scheduler_shared_lock:
               stats["strict_ready_jids"] += 1
-            ready_queue.append(candidate_by_jid.get(ready_jid, _candidate_ref(ready_jid)))
+            ready_queue.append(ready_candidate)
             if len(ready_queue) >= prefetch_chunks:
               tail = []
               seen = False
               for j2 in work:
-                if j2.jid == ready_jid:
+                if j2.jid == ready_candidate.jid:
                   seen = True
                   continue
                 if seen:
@@ -1719,7 +2057,19 @@ def _fill_ready_queue(
               tail.extend(unknown_ordered[pos:])
               if tail:
                 state["pending_tail"] = tail
-              return True
+              prefetch_stop = True
+        with scheduler_shared_lock:
+          _handle_strict_readiness_db_error(
+              stats=stats,
+              strict_check_state=strict_check_state,
+              elapsed_s=(time.monotonic() - batch_mono),
+              batch_size_seen=len(work),
+              exc=exc,
+              strict_check_cooldown_until=strict_check_cooldown_until,
+              cooldown_jids=failed_fallback_jids,
+          )
+        if prefetch_stop:
+          return True
         continue
 
       latency = time.monotonic() - batch_mono
@@ -1729,6 +2079,7 @@ def _fill_ready_queue(
         if candidate.jid in ready_set:
           with scheduler_shared_lock:
             stats["strict_ready_jids"] += 1
+          _attach_telemetry_bounds_to_candidate(candidate, bounds_by_jid)
           ready_queue.append(candidate)
           if len(ready_queue) >= prefetch_chunks:
             tail = work[k + 1:] + unknown_ordered[pos:]
@@ -2749,6 +3100,7 @@ def update_metrics_for_dates(dates, rerun=False):
   global LAST_UPDATE_METRICS_DIAGNOSTICS
   LAST_UPDATE_METRICS_DIAGNOSTICS = None
   close_old_connections()
+  reset_metrics_coverage_defer_log_session()
   min_time = 300
   phase_timer = _PhaseTimer()
   scheduler_mode = cfg.get_metrics_scheduler_mode()

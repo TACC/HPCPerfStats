@@ -1,6 +1,7 @@
 """Tests for persisted job plot artifacts (gzip json_item + fingerprint)."""
 
 import pytest
+from datetime import timedelta
 from django.utils import timezone
 
 from hpcperfstats.site.machine.cache_utils import invalidate_job_plot_cache_keys_for_jids
@@ -62,6 +63,37 @@ def test_fingerprint_stable_for_same_job_fields():
   j.save(update_fields=["host_list"])
   fp3 = compute_plot_input_fingerprint(j, 100)
   assert fp3 != fp1
+
+
+@pytest.mark.django_db
+def test_fingerprint_changes_when_telemetry_first_time_moves():
+  from hpcperfstats.site.machine import job_plot_artifacts as plot_cfg
+
+  start = timezone.now() - timedelta(hours=2)
+  end = timezone.now()
+  j = job_data.objects.create(
+      jid="fptel1",
+      submit_time=start,
+      start_time=start,
+      end_time=end,
+      username="u1",
+      host_list=["n1"],
+      metrics_distinct_time_count=5,
+      telemetry_first_time=start + timedelta(minutes=5),
+      telemetry_last_time=end - timedelta(minutes=5),
+  )
+  fp1 = compute_plot_input_fingerprint(j, 5)
+  j.telemetry_first_time = start + timedelta(minutes=1)
+  j.save(update_fields=["telemetry_first_time"])
+  fp2 = compute_plot_input_fingerprint(j, 5)
+  assert fp2 != fp1
+
+
+@pytest.mark.machine_unit_mock
+def test_app_plot_artifact_schema_version_bumped_for_telemetry_bounds():
+  from hpcperfstats.site.machine import job_plot_artifacts as plot_cfg
+
+  assert plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION == 10
 
 
 @pytest.mark.django_db

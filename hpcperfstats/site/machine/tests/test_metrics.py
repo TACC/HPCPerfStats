@@ -875,7 +875,7 @@ def test_metrics_run_uses_supplied_pool(monkeypatch):
   m = Metrics()
   monkeypatch.setattr(
       "hpcperfstats.analysis.metrics.metrics._persist_metrics_batch",
-      lambda rows, distinct_n: None,
+      lambda rows, distinct_n, **kwargs: None,
   )
   monkeypatch.setattr(
       m,

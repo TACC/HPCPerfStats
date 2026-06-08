@@ -343,8 +343,8 @@ def test_drain_metrics_imap_returns_parent_persist_timeout_outcome(monkeypatch):
 
   monkeypatch.setattr(metrics, "run_with_db_retry", lambda fn, attempts=2: fn())
 
-  def _raise_timeout(job_rows, distinct_time_count):
-    del job_rows, distinct_time_count
+  def _raise_timeout(job_rows, distinct_time_count, **kwargs):
+    del job_rows, distinct_time_count, kwargs
     raise metrics.DatabaseError("canceling statement due to statement timeout")
 
   monkeypatch.setattr(metrics, "_persist_metrics_batch", _raise_timeout)

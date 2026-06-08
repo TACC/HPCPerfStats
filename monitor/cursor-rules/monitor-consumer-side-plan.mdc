@@ -32,4 +32,4 @@ Keep the plan actionable for a separate session or authorized consumer edit; it 
 
 In the monitor implementation summary, state explicitly: **consumer plan attached** or **no consumer changes required**, with one sentence of rationale.
 
-Cross-links: **monitor-workspace-contract**, **monitor-consumer-schema-migration**, **implementation-workflow-discipline**.
+Cross-links: **monitor-workspace-contract**, **monitor-consumer-schema-migration**, **implementation-workflow-discipline**, **plan-creation-contract** (testing + final code review as last plan step).

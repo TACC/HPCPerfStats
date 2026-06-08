@@ -80,6 +80,9 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "metrics_deferred_not_ready_max_retries"),
     ("PIPELINE", "metrics_deferred_not_ready_max_age_s"),
     ("PIPELINE", "metrics_deferred_not_ready_quarantine_s"),
+    ("PIPELINE", "metrics_readiness_require_window_coverage"),
+    ("PIPELINE", "metrics_readiness_start_margin_seconds"),
+    ("PIPELINE", "metrics_readiness_end_margin_seconds"),
     ("PIPELINE", "sync_pool_process_cap"),
     ("PIPELINE", "archive_pool_process_cap"),
     ("PIPELINE", "sync_enable_cpuset_priority_budget"),
@@ -1428,6 +1431,42 @@ def get_metrics_deferred_not_ready_quarantine_seconds():
     )
   except (TypeError, ValueError, OverflowError):
     return 300.0
+
+
+def get_metrics_readiness_require_window_coverage():
+  """When True, defer metrics until in-window host_data covers start and end margins."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("metrics_readiness_require_window_coverage", fallback="yes"),
+  )
+
+
+def get_metrics_readiness_start_margin_seconds():
+  """Seconds after job start_time; first in-window sample must be at or before this."""
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(
+            _pipeline_get("metrics_readiness_start_margin_seconds", fallback="600"),
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 600.0
+
+
+def get_metrics_readiness_end_margin_seconds():
+  """Seconds before job end_time; last in-window sample must be at or after this."""
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(
+            _pipeline_get("metrics_readiness_end_margin_seconds", fallback="600"),
+        ),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 600.0
 
 
 def get_metrics_scheduler_compute_threads():

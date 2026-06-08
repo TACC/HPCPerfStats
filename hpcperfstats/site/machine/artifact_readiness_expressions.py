@@ -71,6 +71,8 @@ class PlotArtifactInputFingerprintHex(Expression):
             "host_list",
             "jid",
             "metrics_distinct_time_count",
+            "telemetry_first_time",
+            "telemetry_last_time",
         )
     )
 
@@ -89,6 +91,8 @@ class PlotArtifactInputFingerprintHex(Expression):
     hl = ops.quote_name("host_list")
     jcol = ops.quote_name("jid")
     mdc = ops.quote_name("metrics_distinct_time_count")
+    tft = ops.quote_name("telemetry_first_time")
+    tlt = ops.quote_name("telemetry_last_time")
     hosts_json = (
         f"COALESCE((SELECT json_agg(trim(elem) ORDER BY trim(elem)) "
         f"FILTER (WHERE trim(elem) <> '')::text "
@@ -101,6 +105,8 @@ class PlotArtifactInputFingerprintHex(Expression):
     )
     et_iso = iso_ts.format(tbl=jt, col=et)
     st_iso = iso_ts.format(tbl=jt, col=st)
+    tft_iso = iso_ts.format(tbl=jt, col=tft)
+    tlt_iso = iso_ts.format(tbl=jt, col=tlt)
     inner = (
         f"'{{\"artifact_schema\":' || %s::text || "
         f"',\"bokeh\":' || to_json(%s::text)::text || "
@@ -110,7 +116,9 @@ class PlotArtifactInputFingerprintHex(Expression):
         f"',\"live_distinct\":' || ({live_sql})::text || "
         f"',\"mdc\":' || (CASE WHEN {jt}.{mdc} IS NULL THEN 'null' "
         f"ELSE {jt}.{mdc}::text END) || "
-        f"',\"st\":' || {st_iso} || '}}'"
+        f"',\"st\":' || {st_iso} || "
+        f"',\"tft\":' || {tft_iso} || "
+        f"',\"tlt\":' || {tlt_iso} || '}}'"
     )
     sql = "encode(sha256(convert_to(({})::text, 'UTF8')), 'hex')".format(inner)
     params = [plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION, bokeh.__version__]

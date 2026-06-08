@@ -47,5 +47,6 @@ Override paths via script arguments or env vars when comparing multiple runs on 
 
 ## Overlap
 
+- **`plan-creation-contract.mdc`** — committed **`docs/plans/`** docs must follow the plan structure (facts, tests, final code review); ephemeral run logs still belong here in **`test_runs/`**.
 - **`testing-doc-sync.mdc`** — update **`docs/TESTING.md`** when *workflow* changes; run *results* go here.
 - **`full-test-with-db-redis.mdc`**, **`web-pages-full-e2e-completion-gate.mdc`** — report pass/fail in chat and persist details under **`test_runs/`**.

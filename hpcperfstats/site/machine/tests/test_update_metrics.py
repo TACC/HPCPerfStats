@@ -7,7 +7,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import Future
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -28,6 +28,23 @@ def _ready_queue_jids(ready_queue):
   for item in ready_queue:
     out.append(item.jid if hasattr(item, "jid") else item)
   return out
+
+
+def _patch_strict_readiness_batch(monkeypatch, fn):
+  """Patch batched strict readiness in ``_fill_ready_queue`` (jid list + bounds map)."""
+
+  def _wrapped(jids):
+    result = fn(jids)
+    if isinstance(result, tuple) and len(result) == 2:
+      return result
+    ready = list(result or [])
+    return ready, {j: (None, None) for j in ready}
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_filter_jids_with_samples_after_end_and_bounds",
+      _wrapped,
+  )
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +86,7 @@ def _enqueue_chunks_from_date_states(**kwargs):
               item.jid if hasattr(item, "jid") else item
               for item in pk_chunk
           ]
-          ready = update_metrics._filter_jids_with_samples_after_end(jids)
+          ready, _bounds = update_metrics._filter_jids_with_samples_after_end_and_bounds(jids)
           for jid in ready:
             kwargs["ready_queue"].append(update_metrics._candidate_ref(jid))
       except StopIteration:
@@ -108,6 +125,21 @@ def _patch_machine_unit_mock_scheduler_flow(monkeypatch, request):
       },
   )
   monkeypatch.setattr(update_metrics, "refresh_public_expansion_factor_artifacts_safe", lambda: None)
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_start_margin_seconds",
+      lambda: 600.0,
+  )
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_end_margin_seconds",
+      lambda: 600.0,
+  )
 
 
 def _patch_connections_vendor(monkeypatch, vendor):
@@ -434,7 +466,7 @@ def test_update_metrics_stops_between_chunks_on_shutdown(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
 
   update_metrics.shutdown_requested[0] = False
   seen = []
@@ -497,7 +529,7 @@ def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
 
   # If a regression re-introduces ORM fetches, fail loudly.
   class _NoQueryManager:
@@ -543,9 +575,8 @@ def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
-  monkeypatch.setattr(
-      update_metrics,
-      "_filter_jids_with_samples_after_end",
+  _patch_strict_readiness_batch(
+      monkeypatch,
       lambda jids: [jid for jid in jids if jid in (101, 103)],
   )
 
@@ -586,7 +617,7 @@ def test_update_metrics_reuses_shared_pool_per_date(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
 
   pool_token = object()
   pool_calls = []
@@ -619,29 +650,40 @@ def test_update_metrics_reuses_shared_pool_per_date(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
-def test_filter_jids_with_samples_after_end_requires_all_hosts(monkeypatch):
-  """A job is ready only when every host has latest sample strictly after end_time."""
+def test_window_coverage_ready_requires_start_and_end_margins_job_aggregate(monkeypatch):
+  """Ready when in-window MIN/MAX meet start and end margins (job aggregate, any host)."""
   _patch_connections_vendor(monkeypatch, "sqlite")
-  end = datetime(2025, 4, 10, 12, 0, 0)
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: True,
+  )
+  start = datetime(2026, 6, 5, 22, 58, 35, tzinfo=timezone.utc)
+  end = datetime(2026, 6, 6, 13, 39, 44, tzinfo=timezone.utc)
   jobs_rows = [
       {
-          "jid": 101,
+          "jid": "101",
+          "start_time": start,
           "end_time": end,
           "host_list": ["n1.example.org", "n2.example.org"],
       },
       {
-          "jid": 102,
+          "jid": "102",
+          "start_time": start,
           "end_time": end,
-          "host_list": ["n3.example.org", "n4.example.org"],
+          "host_list": ["n3.example.org"],
       },
   ]
-  # n2 does not meet strict > end_time, so jid 101 must be excluded.
-  latest_rows = [
-      {"host": "n1.example.org", "last_time": datetime(2025, 4, 10, 12, 0, 1)},
-      {"host": "n2.example.org", "last_time": datetime(2025, 4, 10, 12, 0, 0)},
-      {"host": "n3.example.org", "last_time": datetime(2025, 4, 10, 12, 0, 5)},
-      {"host": "n4.example.org", "last_time": datetime(2025, 4, 10, 12, 0, 2)},
-  ]
+  window_rows = {
+      "101": (
+          datetime(2026, 6, 5, 23, 0, 0, tzinfo=timezone.utc),
+          datetime(2026, 6, 6, 13, 39, 0, tzinfo=timezone.utc),
+      ),
+      "102": (
+          datetime(2026, 6, 6, 4, 57, 32, tzinfo=timezone.utc),
+          datetime(2026, 6, 6, 13, 39, 30, tzinfo=timezone.utc),
+      ),
+  }
 
   class _JobManager:
     def filter(self, **kwargs):
@@ -653,60 +695,70 @@ def test_filter_jids_with_samples_after_end_requires_all_hosts(monkeypatch):
           return jobs_rows
       return _Qs()
 
-  class _HostManager:
-    def filter(self, **kwargs):
-      class _Qs:
-        def values(self, *fields):
-          class _Annotate:
-            def annotate(self, **ann):
-              return latest_rows
-          return _Annotate()
-      return _Qs()
+  def _fake_bounds(jobs):
+    return {row["jid"]: window_rows[row["jid"]] for row in jobs}
 
   monkeypatch.setattr(update_metrics.job_data, "objects", _JobManager())
-  monkeypatch.setattr(update_metrics.host_data, "objects", _HostManager())
+  monkeypatch.setattr(update_metrics, "_in_window_min_max_by_job_rows", _fake_bounds)
 
-  ready = update_metrics._filter_jids_with_samples_after_end([101, 102])
-  assert ready == [102]
+  ready = update_metrics._filter_jids_with_samples_after_end(["101", "102"])
+  assert ready == ["101"]
 
 
 @pytest.mark.machine_unit_mock
-def test_ready_jids_batches_host_last_time_lookups(monkeypatch):
-  """Large host unions should query host_data in bounded host__in batches."""
+def test_ready_jids_batches_in_window_min_max_lookups(monkeypatch):
+  """Window readiness queries host_data with time__gte/time__lte, not global max."""
   _patch_connections_vendor(monkeypatch, "sqlite")
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: True,
+  )
   monkeypatch.setattr(update_metrics, "HOST_LAST_TIME_LOOKUP_BATCH", 2)
   filter_batches = []
+  time_filters = []
+  start = datetime(2025, 4, 10, 11, 0, 0, tzinfo=timezone.utc)
+  end = datetime(2025, 4, 10, 12, 0, 0, tzinfo=timezone.utc)
 
   class _HostManager:
     def filter(self, **kwargs):
-      filter_batches.append(tuple(sorted(kwargs["host__in"])))
-      class _Qs:
-        def values(self, *fields):
-          class _Annotate:
-            def annotate(self, **ann):
-              return [
-                  {
-                      "host": h,
-                      "last_time": datetime(2025, 4, 10, 13, 0, 0),
-                  }
-                  for h in kwargs["host__in"]
-              ]
-          return _Annotate()
-      return _Qs()
+      filter_batches.append(tuple(sorted(kwargs.get("host__in") or ())))
+      time_filters.append(
+          (kwargs.get("time__gte"), kwargs.get("time__lte"))
+      )
 
-  monkeypatch.setattr(update_metrics, "_host_name_suffix", lambda: "")
+      class _Agg:
+        def values(self, *_names, **_kw):
+          return self
+
+        def annotate(self, **_ann):
+          return self
+
+        def __iter__(self):
+          for host in kwargs.get("host__in") or ():
+            yield {
+                "host": host,
+                "mn": start + timedelta(minutes=5),
+                "mx": end - timedelta(minutes=5),
+            }
+
+      return _Agg()
+
+  monkeypatch.setattr(update_metrics, "_host_name_suffix", lambda: ".example.org")
   monkeypatch.setattr(update_metrics.host_data, "objects", _HostManager())
 
   jobs = [
       {
-          "jid": 1,
-          "end_time": datetime(2025, 4, 10, 12, 0, 0),
+          "jid": "1",
+          "start_time": start,
+          "end_time": end,
           "host_list": ["n1", "n2", "n3"],
       },
   ]
   ready = update_metrics._ready_jids_from_job_rows(jobs)
-  assert ready == [1]
-  assert filter_batches == [("n1", "n2"), ("n3",)]
+  assert ready == ["1"]
+  assert filter_batches == [("n1.example.org", "n2.example.org"), ("n3.example.org",)]
+  assert all(tf == (start, end) for tf in time_filters)
 
 
 @pytest.mark.machine_unit_mock
@@ -1214,6 +1266,11 @@ def test_proxy_readiness_has_any_and_post_end_semantics():
 def test_proxy_reject_not_ready_jids_batches_host_aggregates(monkeypatch):
   """Each jid sub-batch issues its own host_data aggregate (bounded queries)."""
   _patch_connections_vendor(monkeypatch, "postgresql")
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_proxy_reject_jid_batch_size", lambda: 2)
   host_batches = []
 
@@ -1258,6 +1315,11 @@ def test_proxy_reject_not_ready_jids_batches_host_aggregates(monkeypatch):
 def test_proxy_reject_not_ready_jids_partitions(monkeypatch):
   """Reject vs unknown split matches legacy four-corner classification."""
   _patch_connections_vendor(monkeypatch, "postgresql")
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_proxy_reject_jid_batch_size", lambda: 99)
   t_end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
   t_after = datetime(2025, 4, 1, 14, 0, 0, tzinfo=timezone.utc)
@@ -1302,9 +1364,149 @@ def test_proxy_reject_not_ready_jids_partitions(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
+def test_proxy_reject_legacy_end_by_jid_not_double_consumed(monkeypatch):
+  """Legacy proxy path must not re-iterate exhausted job_rows for end_time lookup."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
+  t_end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+  t_after = datetime(2025, 4, 1, 14, 0, 0, tzinfo=timezone.utc)
+  job_values_calls = []
+
+  def host_filter(*_a, jid__in=None, **_k):
+    class _HostAgg:
+      def values(self, *_names, **_kw):
+        return self
+
+      def annotate(self, **_kw):
+        return self
+
+      def __iter__(self):
+        for j in jid__in:
+          yield {"jid": j, "max_time": t_after if j == "j1" else t_end}
+
+    return _HostAgg()
+
+  def job_filter(*_a, jid__in=None, **_k):
+    class _JobVals:
+      def values(self, *_names, **_kw):
+        job_values_calls.append(tuple(jid__in))
+        for j in jid__in:
+          yield {"jid": j, "end_time": t_end}
+
+    return _JobVals()
+
+  monkeypatch.setattr(update_metrics.host_data.objects, "filter", host_filter)
+  monkeypatch.setattr(update_metrics.job_data.objects, "filter", job_filter)
+
+  reject, unknown = update_metrics._proxy_reject_not_ready_jids(["j1", "j2"])
+  assert job_values_calls == [("j1", "j2")]
+  assert reject == {"j2"}
+  assert unknown == ["j1"]
+
+
+@pytest.mark.machine_unit_mock
+def test_proxy_window_coverage_reject_buckets_match_singleton(monkeypatch):
+  """Coverage proxy bulk classification matches host_list window bounds helper."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: True,
+  )
+  start = datetime(2025, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
+  end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+  first_ok = start + timedelta(minutes=5)
+  last_ok = end - timedelta(minutes=5)
+  first_bad = start + timedelta(hours=1)
+  host = "n1.example.org"
+
+  bounds_by_jid = {
+      "ok": (first_ok, last_ok),
+      "bad_start": (first_bad, last_ok),
+      "no_rows": (None, None),
+  }
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_in_window_min_max_by_job_rows",
+      lambda rows: {r["jid"]: bounds_by_jid.get(r["jid"], (None, None)) for r in rows},
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_in_window_min_max_for_hosts",
+      lambda hosts, st, et: bounds_by_jid.get("ok", (None, None))
+      if hosts else (None, None),
+  )
+
+  def job_filter(*_a, jid=None, jid__in=None, **_k):
+    if jid is not None:
+      rows = [{
+          "jid": jid,
+          "start_time": start,
+          "end_time": end,
+          "host_list": [host],
+      }]
+    else:
+      rows = [
+          {
+              "jid": j,
+              "start_time": start,
+              "end_time": end,
+              "host_list": [host],
+          }
+          for j in (jid__in or [])
+      ]
+
+    class _JobVals:
+      def __init__(self, job_rows):
+        self._rows = job_rows
+
+      def values(self, *_names, **_kw):
+        return self
+
+      def first(self):
+        return self._rows[0] if self._rows else None
+
+      def __iter__(self):
+        for row in self._rows:
+          yield row
+
+    return _JobVals(rows)
+
+  monkeypatch.setattr(update_metrics.job_data.objects, "filter", job_filter)
+
+  for jid, expected in (
+      ("ok", "unknown"),
+      ("bad_start", "reject"),
+      ("no_rows", "unknown"),
+  ):
+    monkeypatch.setattr(
+        update_metrics,
+        "_in_window_min_max_for_hosts",
+        lambda hosts, st, et, j=jid: bounds_by_jid[j],
+    )
+    assert update_metrics._proxy_readiness_for_jid(jid) == expected
+
+  reject, unknown = update_metrics._proxy_reject_not_ready_jids(
+      ["ok", "bad_start", "no_rows"]
+  )
+  assert reject == {"bad_start"}
+  assert unknown == ["ok", "no_rows"]
+
+
+@pytest.mark.machine_unit_mock
 def test_proxy_readiness_for_jid_matches_bulk_singletons(monkeypatch):
   """Single-jid proxy helper matches one-element bulk classification."""
   _patch_connections_vendor(monkeypatch, "postgresql")
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
   t_end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
   t_after = datetime(2025, 4, 1, 14, 0, 0, tzinfo=timezone.utc)
 
@@ -1371,6 +1573,7 @@ def test_proxy_readiness_for_jid_matches_bulk_singletons(monkeypatch):
     assert (bucket == "unknown") == (jid in unk)
 
 
+@pytest.mark.machine_unit_mock
 @pytest.mark.django_db(databases=[])
 def test_fill_ready_queue_prefetch_one_leaves_pending_tail(monkeypatch):
   """When prefetch is satisfied, remaining jids in the chunk are deferred via pending_tail."""
@@ -1388,7 +1591,7 @@ def test_fill_ready_queue_prefetch_one_leaves_pending_tail(monkeypatch):
       "_proxy_reject_not_ready_jids",
       lambda jids: (set(), list(jids)),
   )
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", _strict)
+  _patch_strict_readiness_batch(monkeypatch, _strict)
   monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 0.0)
 
   states = [{
@@ -1493,6 +1696,7 @@ def test_adjust_strict_check_batch_size_backoff_and_growth():
   assert same == 64
 
 
+@pytest.mark.machine_unit_mock
 @pytest.mark.django_db(databases=[])
 def test_fill_ready_queue_strict_subbatch_timeout_does_not_abort(monkeypatch):
   """Per-jid strict timeouts should not prevent a later jid in the same chunk."""
@@ -1542,7 +1746,7 @@ def test_fill_ready_queue_strict_subbatch_timeout_does_not_abort(monkeypatch):
       return ["j3"]
     return []
 
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", _strict)
+  _patch_strict_readiness_batch(monkeypatch, _strict)
   monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 100.0)
 
   update_metrics._fill_ready_queue(
@@ -1628,7 +1832,7 @@ def test_update_metrics_for_dates_global_scheduler_interleaves_dates(monkeypatch
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 8)
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
   monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
   monkeypatch.setattr(
       update_metrics,
@@ -1687,7 +1891,7 @@ def test_update_metrics_for_dates_exhausts_when_readiness_filters_all(monkeypatc
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 8)
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: [])
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: [])
   monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.1)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
@@ -1737,7 +1941,7 @@ def test_update_metrics_for_dates_sets_stall_diagnostics_on_no_progress(monkeypa
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: [])
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: [])
   monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
   monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.1)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
@@ -1791,7 +1995,7 @@ def test_update_metrics_for_dates_records_queue_and_attempt_counters(monkeypatch
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
   monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
@@ -1846,7 +2050,7 @@ def test_update_metrics_for_dates_records_explicit_worker_and_parent_persist_fai
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
   monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
@@ -1959,7 +2163,7 @@ def test_update_metrics_for_dates_rescan_picks_up_new_mid_run_jid(monkeypatch):
       return []
     return list(jids)
 
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", _strict)
+  _patch_strict_readiness_batch(monkeypatch, _strict)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_seconds", lambda: 0.0)
@@ -2057,7 +2261,7 @@ def test_update_metrics_refreshes_pub_dashboards_before_first_compute(monkeypatc
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
   monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
   monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
   monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
@@ -2258,7 +2462,7 @@ def test_update_metrics_for_dates_rechecks_deferred_not_ready_jid_until_ready(mo
       return []
     return list(jids)
 
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", _strict)
+  _patch_strict_readiness_batch(monkeypatch, _strict)
 
   seen = []
 
@@ -2294,7 +2498,7 @@ def test_update_metrics_pub_parallel_once_then_safe_in_finally(monkeypatch):
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
   monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
   monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
   monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_base_s", lambda: 0.0)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_budget_per_successful_job_s", lambda: 0.0)
@@ -2373,7 +2577,7 @@ def test_update_metrics_scheduler_runs_real_detail_prewarm_with_jid_table_stub(m
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
   monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
   monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
   monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
@@ -2524,7 +2728,7 @@ def test_update_metrics_for_dates_per_jid_failure_does_not_stop_progress(monkeyp
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 1)
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
-  monkeypatch.setattr(update_metrics, "_filter_jids_with_samples_after_end", lambda jids: list(jids))
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
   monkeypatch.setattr(update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown")
   monkeypatch.setattr(
       update_metrics,
@@ -3003,3 +3207,409 @@ def test_main_env_false_disables_default_sleep(monkeypatch):
   update_metrics.main(argv=["update_metrics.py"])
 
   assert sleeps == []
+
+
+@pytest.mark.machine_unit_mock
+def test_proxy_coverage_matches_strict_host_list_bucket(monkeypatch):
+  """Proxy and strict host_list bucket helpers stay aligned."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: True,
+  )
+  start = datetime(2025, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
+  end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+  cases = (
+      (start + timedelta(minutes=5), end - timedelta(minutes=5), "unknown"),
+      (start + timedelta(hours=1), end - timedelta(minutes=5), "reject"),
+      (None, None, "unknown"),
+  )
+  for first, last, expected in cases:
+    strict = update_metrics._strict_host_list_coverage_bucket(
+        start, end, first, last)
+    proxy = update_metrics._proxy_window_coverage_bucket(start, end, first, last)
+    assert strict == expected
+    assert proxy == expected
+
+
+@pytest.mark.machine_unit_mock
+def test_proxy_coverage_does_not_reject_when_host_list_bounds_pass(monkeypatch):
+  """Host_list in-window pass must not land in proxy reject (jid column irrelevant)."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: True,
+  )
+  start = datetime(2025, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
+  end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+  first_ok = start + timedelta(minutes=5)
+  last_ok = end - timedelta(minutes=5)
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_in_window_min_max_by_job_rows",
+      lambda rows: {r["jid"]: (first_ok, last_ok) for r in rows},
+  )
+
+  def job_filter(*_a, jid__in=None, **_k):
+    class _JobVals:
+      def values(self, *_names, **_kw):
+        return [
+            {
+                "jid": j,
+                "start_time": start,
+                "end_time": end,
+                "host_list": ["n1.example.org"],
+            }
+            for j in (jid__in or [])
+        ]
+    return _JobVals()
+
+  monkeypatch.setattr(update_metrics.job_data.objects, "filter", job_filter)
+  reject, unknown = update_metrics._proxy_reject_not_ready_jids(["j_pass"])
+  assert reject == set()
+  assert unknown == ["j_pass"]
+
+
+@pytest.mark.machine_unit_mock
+def test_process_pk_chunk_proxy_reject_still_runs_strict_when_host_list_passes(monkeypatch):
+  """When proxy leaves jid unknown, strict probe enqueues jobs with passing host_list bounds."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: True,
+  )
+  strict_calls = []
+  start = datetime(2025, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
+  end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+  first_ok = start + timedelta(minutes=5)
+  last_ok = end - timedelta(minutes=5)
+
+  def _strict_and_bounds(jids):
+    strict_calls.append(list(jids))
+    return list(jids), {j: (first_ok, last_ok) for j in jids}
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_filter_jids_with_samples_after_end_and_bounds",
+      _strict_and_bounds,
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_in_window_min_max_by_job_rows",
+      lambda rows: {r["jid"]: (first_ok, last_ok) for r in rows},
+  )
+
+  def job_filter(*_a, jid__in=None, **_k):
+    class _JobVals:
+      def values(self, *_names, **_kw):
+        return [
+            {
+                "jid": j,
+                "start_time": start,
+                "end_time": end,
+                "host_list": ["n1.example.org"],
+            }
+            for j in (jid__in or [])
+        ]
+    return _JobVals()
+
+  monkeypatch.setattr(update_metrics.job_data.objects, "filter", job_filter)
+
+  ready_queue = deque()
+  stats = {
+      "candidate_jids": 0,
+      "skipped_not_ready": 0,
+      "proxy_not_ready_jids": 0,
+      "proxy_rejected_jids": 0,
+      "proxy_checked_chunks": 0,
+      "strict_ready_jids": 0,
+      "strict_not_ready_jids": 0,
+      "strict_cooldown_skips": 0,
+      "strict_check_calls": 0,
+      "strict_check_avg_latency_ms": 0.0,
+      "strict_batch_size_current": 32,
+      "readiness_error_chunks": 0,
+  }
+  strict_check_state = {"batch_size": 32, "max_batch_size": 32}
+  strict_check_cooldown_until = {}
+  scheduler_shared_lock = threading.Lock()
+  phase_timer = update_metrics._PhaseTimer()
+  state = {
+      "date": datetime(2025, 4, 10),
+      "iter": iter([([update_metrics._candidate_ref("j_pass")], 1)]),
+      "done": False,
+      "pending_tail": None,
+  }
+
+  update_metrics._fill_ready_queue(
+      [state],
+      ready_queue,
+      "strict_date",
+      prefetch_chunks=1,
+      phase_timer=phase_timer,
+      stats=stats,
+      strict_check_state=strict_check_state,
+      strict_check_cooldown_until=strict_check_cooldown_until,
+      rr_cursor=[0],
+      scheduler_shared_lock=scheduler_shared_lock,
+  )
+  assert strict_calls == [["j_pass"]]
+  assert _ready_queue_jids(ready_queue) == ["j_pass"]
+  assert getattr(ready_queue[0], "telemetry_first_time", None) == first_ok
+  assert getattr(ready_queue[0], "telemetry_last_time", None) == last_ok
+
+
+@pytest.mark.machine_unit_mock
+def test_strict_in_window_bounds_query_count_bounded(monkeypatch):
+  """Batched strict bounds use O(unique_hosts/64) queries, not O(jobs*hosts/64)."""
+  monkeypatch.setattr(update_metrics, "HOST_LAST_TIME_LOOKUP_BATCH", 64)
+  query_count = [0]
+
+  class _HostManager:
+    def filter(self, **kwargs):
+      query_count[0] += 1
+
+      class _Agg:
+        def values(self, *_a, **_k):
+          return self
+
+        def annotate(self, **_k):
+          return self
+
+        def __iter__(self):
+          for host in kwargs.get("host__in") or ():
+            yield {
+                "host": host,
+                "mn": kwargs.get("time__gte"),
+                "mx": kwargs.get("time__lte"),
+            }
+
+      return _Agg()
+
+  monkeypatch.setattr(update_metrics.host_data, "objects", _HostManager())
+  monkeypatch.setattr(update_metrics, "_host_name_suffix", lambda: ".example.org")
+  start = datetime(2025, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
+  end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+  jobs = []
+  for j in range(32):
+    hosts = ["n{:02d}".format(i) for i in range(128)]
+    jobs.append({
+        "jid": str(j),
+        "start_time": start,
+        "end_time": end,
+        "host_list": hosts,
+    })
+  update_metrics._in_window_min_max_by_job_rows(jobs)
+  assert query_count[0] == 2
+
+
+@pytest.mark.machine_unit_mock
+def test_ready_jids_from_job_rows_batched_matches_per_job_reference(monkeypatch):
+  """Batched in-window bounds match the per-job reference implementation."""
+  monkeypatch.setattr(update_metrics, "HOST_LAST_TIME_LOOKUP_BATCH", 2)
+  start = datetime(2025, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
+  end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+  end2 = end + timedelta(hours=1)
+  jobs = [
+      {
+          "jid": "a",
+          "start_time": start,
+          "end_time": end,
+          "host_list": ["n1", "n2"],
+      },
+      {
+          "jid": "b",
+          "start_time": start,
+          "end_time": end2,
+          "host_list": ["n2", "n3"],
+      },
+  ]
+
+  class _HostManager:
+    def filter(self, **kwargs):
+      st = kwargs.get("time__gte")
+      et = kwargs.get("time__lte")
+
+      class _Agg:
+        def values(self, *_a, **_k):
+          return self
+
+        def annotate(self, **_k):
+          return self
+
+        def __iter__(self):
+          for host in kwargs.get("host__in") or ():
+            yield {
+                "host": host,
+                "mn": st + timedelta(minutes=1) if st else None,
+                "mx": et - timedelta(minutes=1) if et else None,
+            }
+
+      return _Agg()
+
+  monkeypatch.setattr(update_metrics.host_data, "objects", _HostManager())
+  monkeypatch.setattr(update_metrics, "_host_name_suffix", lambda: ".example.org")
+  batched = update_metrics._in_window_min_max_by_job_rows(jobs)
+  reference = update_metrics._in_window_min_max_by_job_rows_reference(jobs)
+  assert batched == reference
+
+
+@pytest.mark.machine_unit_mock
+def test_proxy_coverage_batch_query_count_bounded(monkeypatch):
+  """Coverage proxy sub-batch uses batched bounds, not one aggregate per jid."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: True,
+  )
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_proxy_reject_jid_batch_size", lambda: 48)
+  bounds_calls = [0]
+
+  def _bounds(rows):
+    bounds_calls[0] += 1
+    return {r["jid"]: (None, None) for r in rows}
+
+  monkeypatch.setattr(update_metrics, "_in_window_min_max_by_job_rows", _bounds)
+
+  def job_filter(*_a, jid__in=None, **_k):
+    class _JobVals:
+      def values(self, *_names, **_kw):
+        return [
+            {
+                "jid": j,
+                "start_time": datetime(2025, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
+                "end_time": datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc),
+                "host_list": ["n1.example.org"],
+            }
+            for j in (jid__in or [])
+        ]
+    return _JobVals()
+
+  monkeypatch.setattr(update_metrics.job_data.objects, "filter", job_filter)
+  jids = ["j{:02d}".format(i) for i in range(10)]
+  update_metrics._proxy_reject_not_ready_jids(jids)
+  assert bounds_calls[0] == 1
+
+
+@pytest.mark.machine_unit_mock
+def test_deferred_not_ready_quarantine_timing_unchanged(monkeypatch):
+  """Defer/quarantine retry contract unchanged under coverage gate work."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_seconds", lambda: 10.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_max_retries", lambda: 2)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_max_age_seconds", lambda: 900.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_quarantine_seconds", lambda: 300.0)
+  deferred_not_ready = {}
+  deferred_meta = {}
+  stats = {"deferred_quarantined_jids": 0}
+  scheduler_shared_lock = threading.Lock()
+  times = iter([100.0, 110.0, 120.0, 430.0])
+
+  def _mono():
+    return next(times)
+
+  monkeypatch.setattr(update_metrics.time, "monotonic", _mono)
+
+  def _defer(jid):
+    now = update_metrics.time.monotonic()
+    meta = deferred_meta.setdefault(
+        jid, {"first_seen": now, "attempts": 0, "artifact_only": False})
+    meta["attempts"] += 1
+    age_s = max(0.0, now - float(meta["first_seen"]))
+    max_retries = int(update_metrics.cfg.get_metrics_deferred_not_ready_max_retries())
+    use_quarantine = (
+        meta["attempts"] >= max_retries
+        or age_s >= float(update_metrics.cfg.get_metrics_deferred_not_ready_max_age_seconds())
+    )
+    retry_after = (
+        float(update_metrics.cfg.get_metrics_deferred_not_ready_quarantine_seconds())
+        if use_quarantine
+        else float(update_metrics.cfg.get_metrics_deferred_not_ready_retry_seconds())
+    )
+    if use_quarantine:
+      with scheduler_shared_lock:
+        stats["deferred_quarantined_jids"] += 1
+    deferred_not_ready[jid] = now + retry_after
+
+  _defer("j1")
+  assert deferred_not_ready["j1"] == 110.0
+  _defer("j1")
+  assert deferred_not_ready["j1"] == 410.0
+  assert stats["deferred_quarantined_jids"] == 1
+
+
+@pytest.mark.machine_unit_mock
+def test_strict_readiness_batch_timeout_falls_back_per_jid_without_dropping(monkeypatch):
+  """Batch strict DB failure triggers per-jid fallback without dropping jids."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  call_state = {"batch": 0}
+
+  def _strict(jids):
+    if call_state["batch"] == 0:
+      call_state["batch"] = 1
+      raise OperationalError("statement timeout")
+    start = datetime(2025, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
+    end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+    return jids, {jids[0]: (start, end)}
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_filter_jids_with_samples_after_end_and_bounds",
+      _strict,
+  )
+
+  ready_queue = deque()
+  stats = {
+      "candidate_jids": 0,
+      "skipped_not_ready": 0,
+      "proxy_not_ready_jids": 0,
+      "proxy_rejected_jids": 0,
+      "proxy_checked_chunks": 0,
+      "strict_ready_jids": 0,
+      "strict_not_ready_jids": 0,
+      "strict_cooldown_skips": 0,
+      "strict_check_calls": 0,
+      "strict_check_avg_latency_ms": 0.0,
+      "strict_batch_size_current": 32,
+      "readiness_error_chunks": 0,
+      "strict_check_timeouts": 0,
+  }
+  strict_check_state = {"batch_size": 32, "max_batch_size": 32}
+  strict_check_cooldown_until = {}
+  scheduler_shared_lock = threading.Lock()
+  phase_timer = update_metrics._PhaseTimer()
+  state = {
+      "date": datetime(2025, 4, 10),
+      "iter": iter([([update_metrics._candidate_ref("j1")], 1)]),
+      "done": False,
+      "pending_tail": None,
+  }
+  update_metrics._fill_ready_queue(
+      [state],
+      ready_queue,
+      "strict_date",
+      prefetch_chunks=1,
+      phase_timer=phase_timer,
+      stats=stats,
+      strict_check_state=strict_check_state,
+      strict_check_cooldown_until=strict_check_cooldown_until,
+      rr_cursor=[0],
+      scheduler_shared_lock=scheduler_shared_lock,
+  )
+  assert _ready_queue_jids(ready_queue) == ["j1"]
+  assert stats["strict_check_timeouts"] >= 1
+
+
+@pytest.mark.django_db(databases=[])
+def test_strict_readiness_sets_max_parallel_workers_when_configured():
+  """PostgreSQL strict readiness disables parallel gather workers per batch."""
+  import inspect
+
+  src = inspect.getsource(update_metrics._pg_local_readiness_timeouts)
+  assert "SET LOCAL statement_timeout" in src
+  assert "max_parallel_workers_per_gather = 0" in src

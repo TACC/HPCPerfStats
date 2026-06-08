@@ -30,6 +30,7 @@ If self-review finds a gap, fix it before marking the task done.
 
 ## Overlap
 
+- **`plan-creation-contract.mdc`** — mandatory plan structure (facts, best practices, tests, final code review as last step); applies to all plan output including chat and **`docs/plans/`**.
 - **`logic-change-checklist.mdc`** — deeper contract/invariant/failure-mode checklist for runtime logic changes; use after the pre-code plan when behavior changes.
 - **`bugfix-and-perf-change-playbook.mdc`** — root-cause-first defaults for tracebacks and perf/reliability work.
 - **`test-first-discipline.mdc`** — tests before or with behavior changes; the post-code review must confirm test coverage ran or document blockers.

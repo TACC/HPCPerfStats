@@ -71,7 +71,7 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 
 # Bump when plot artifact semantics change (independent of Bokeh version).
 # See hpcperfstats/cursor-rules/job-plot-artifacts-caching.mdc and machine/tests/test_job_plot_artifacts.py.
-APP_PLOT_ARTIFACT_SCHEMA_VERSION = 9
+APP_PLOT_ARTIFACT_SCHEMA_VERSION = 10
 
 JOB_PLOT_JSON_KEYS: Dict[str, Tuple[str, str]] = {
     kind: (spec.json_item_key, spec.unavailable_reason_key)
@@ -164,6 +164,8 @@ def compute_plot_input_fingerprint(job: job_data, live_distinct_time_count: int)
       "live_distinct": int(live_distinct_time_count),
       "mdc": job.metrics_distinct_time_count,
       "st": _utc_iso_for_plot_fingerprint(job.start_time),
+      "tft": _utc_iso_for_plot_fingerprint(job.telemetry_first_time),
+      "tlt": _utc_iso_for_plot_fingerprint(job.telemetry_last_time),
   }
   canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
   return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

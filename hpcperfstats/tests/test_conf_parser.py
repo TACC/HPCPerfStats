@@ -682,6 +682,9 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_deferred_not_ready_max_retries() == 30
   assert cfg.get_metrics_deferred_not_ready_max_age_seconds() == 900.0
   assert cfg.get_metrics_deferred_not_ready_quarantine_seconds() == 300.0
+  assert cfg.get_metrics_readiness_require_window_coverage() is True
+  assert cfg.get_metrics_readiness_start_margin_seconds() == 600.0
+  assert cfg.get_metrics_readiness_end_margin_seconds() == 600.0
 
   with open(temp_ini) as f:
     content = f.read()
@@ -746,6 +749,45 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_compute_watchdog_seconds() == 90.0
   assert cfg.get_metrics_compute_total_watchdog_seconds() == 600.0
   assert cfg.get_metrics_deferred_not_ready_retry_seconds() == 15.0
+
+
+def test_get_metrics_readiness_window_coverage_defaults(temp_ini, monkeypatch):
+  """Default coverage gate: require=yes, margins=600s."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_metrics_readiness_require_window_coverage() is True
+  assert cfg.get_metrics_readiness_start_margin_seconds() == 600.0
+  assert cfg.get_metrics_readiness_end_margin_seconds() == 600.0
+
+
+def test_get_metrics_readiness_window_coverage_ini_override(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_metrics_readiness_require_window_coverage() is True
+  assert cfg.get_metrics_readiness_start_margin_seconds() == 600.0
+  assert cfg.get_metrics_readiness_end_margin_seconds() == 600.0
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\n"
+      "metrics_readiness_require_window_coverage = no\n"
+      "metrics_readiness_start_margin_seconds = 120\n"
+      "metrics_readiness_end_margin_seconds = 90",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_metrics_readiness_require_window_coverage() is False
+  assert cfg.get_metrics_readiness_start_margin_seconds() == 120.0
+  assert cfg.get_metrics_readiness_end_margin_seconds() == 90.0
 
 
 def test_get_metrics_per_jid_phase_diagnostics_enabled_env(monkeypatch):

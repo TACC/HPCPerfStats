@@ -163,7 +163,7 @@ def seed_update_metrics_diagnosis_jobs():
 
   jid_small = os.environ.get("HPCPERFSTATS_UM_DIAG_JID_SMALL", "um_diag_s1").strip()[:32]
   jid_large = os.environ.get("HPCPERFSTATS_UM_DIAG_JID_LARGE", "um_diag_l1").strip()[:32]
-  margin_sec = int(os.environ.get("HPCPERFSTATS_UM_DIAG_END_MARGIN_SEC", "3600"))
+  margin_sec = int(os.environ.get("HPCPERFSTATS_UM_DIAG_END_MARGIN_SEC", "300"))
   probe_after_sec = int(os.environ.get("HPCPERFSTATS_UM_DIAG_PROBE_AFTER_END_SEC", "120"))
   interval_sec = int(os.environ.get("HPCPERFSTATS_UM_DIAG_INTERVAL_SEC", "60"))
 

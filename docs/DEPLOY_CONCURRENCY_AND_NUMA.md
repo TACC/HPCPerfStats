@@ -141,6 +141,18 @@ Relevant ini keys (all under **`[PIPELINE]`** unless noted):
 Default alignment note:
 - `conf_parser` now exposes `get_conf_parser_defaults_audit_snapshot()` to provide a categorized default/fallback accounting for platform constraints, sync throughput, overlap contention, and stability guardrails.
 
+### Metrics window-coverage readiness (summary plots)
+
+By default **`update_metrics`** defers each job until in-window `host_data` samples exist within configurable margins of Slurm **`start_time`** and **`end_time`** (job aggregate: any accounting host may satisfy each edge). Defaults: **`metrics_readiness_require_window_coverage = yes`**, **`metrics_readiness_start_margin_seconds = 600`**, **`metrics_readiness_end_margin_seconds = 600`**.
+
+Jobs with long monitor prolog gaps (telemetry begins hours after Slurm start) stay deferred until early-window data exists or an operator disables the gate. Set **`metrics_readiness_require_window_coverage = no`** in **`[PIPELINE]`** only for recovery/backfill emergencies. When metrics run, **`telemetry_first_time`** / **`telemetry_last_time`** on **`job_data`** and plot artifact fingerprints (schema version **10**) incorporate those bounds so backfill invalidates stale summary plots.
+
+**Scoping:** strict readiness and the coverage proxy both use **`job_data.host_list`** hostnames (FQDN) and the Slurm window — not **`host_data.jid`**. Any in-window sample on an accounting host may satisfy a margin (including samples from other jobs on shared nodes during overlapping wall-clock windows). That trade-off fixes tail-only false-ready bugs but is weaker than per-jid isolation.
+
+**Permanent defer / stall watchdog:** jobs whose telemetry never reaches both margins (for example multi-hour prolog gaps with default 600s margins) remain in the deferred-not-ready map with 10s retries, then quarantine intervals — they are not dropped from candidacy while still in range. Large historical backfills of such jobs increase readiness-thread DB load and can keep compute workers idle; disable the gate or reduce margins for emergency backfill, and watch scheduler stall metrics.
+
+**Performance:** readiness batches dedupe host aggregates across jobs sharing the same window; precomputed bounds are passed into **`Metrics.run`** to avoid a second in-window aggregate during persist.
+
 ## Observability
 
 - Run **`python hpcperfstats/site/manage.py pg_connection_stats`** from the repo root (with **`HPCPERFSTATS_INI`** / config and DB reachable) to print **`pg_stat_activity`** totals for the current database (`machine` app management command).

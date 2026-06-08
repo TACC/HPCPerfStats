@@ -102,6 +102,9 @@ def pytest_collection_modifyitems(config, items):
       continue
     if list(item.iter_markers("django_db")):
       continue
+    if item.get_closest_marker("machine_unit_mock"):
+      item.add_marker(pytest.mark.django_db(databases=[]))
+      continue
     if _compose_network_enabled():
       item.add_marker(pytest.mark.django_db)
     else:

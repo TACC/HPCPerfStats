@@ -1,0 +1,54 @@
+---
+description: Mandatory structure, testing, and completion bar for every implementation plan
+alwaysApply: true
+---
+
+# Plan Creation Contract
+
+Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, monitor **Consumer follow-up plan** sections, and Cursor Plan mode output.
+
+## Grounding (no guessing)
+
+- Base every claim on **verified facts** from the repo (code, tests, logs, committed docs) — not assumptions.
+- Read callers, tests, and applicable workspace rules before stating current behavior or scope.
+- If a requirement, API, config key, acceptance criterion, or best-practice choice is unclear: **ask the user**; **do not guess** or invent context.
+
+## Industry best practices
+
+- Anchor the approach in recognized standards for the relevant expertise (e.g. Django/DRF, PostgreSQL/Timescale, React/a11y, HPC ingest, Docker ops).
+- **Call out** which guidelines inform the plan (name the practice or source briefly, e.g. test pyramid — unit before compose E2E).
+- Prefer project rules (`testing-best-practices.mdc`, framework cursor rules) where they already encode local best practice.
+
+## Required plan steps (in order)
+
+1. **Problem and facts** — constraints, verified current behavior, affected layers.
+2. **Approach** — ordered steps with trade-offs tied to the best-practice callouts above.
+3. **Testing** — every behavior change must include at least one **regression test and/or unit test** at the narrowest layer that proves the contract. Cite existing test modules or name new ones. For fixes, follow **`every-error-regression-test.mdc`** and **`test-first-discipline.mdc`**.
+4. **Implementation** — what will change (files/layers). Omit for answer-only or doc-only work with no logic change.
+5. **Final code review (mandatory last step)** — before the plan is complete, review for:
+   - new edge cases
+   - correctness regressions
+   - performance regressions
+   - test gaps  
+   **Fix anything found** and re-run relevant tests. The plan is **not complete** while open review items remain.
+
+## Completion bar
+
+A plan — and the work it describes — is **not complete** until:
+
+- tests are added or extended and executed (or blockers documented per **`test-first-discipline.mdc`**),
+- the final code review step is done with no unfixed findings,
+- conclusions trace to verified facts.
+
+## Narrow exceptions
+
+- Answer-only questions with no implementation.
+- Trivial typo or comment-only edits with no behavioral contract change.
+
+## Overlap
+
+- **`implementation-review-workflow.mdc`** — pre-code breakdown and post-code self-review; this rule adds mandatory plan structure, test requirement, and review-as-final-step.
+- **`logic-change-checklist.mdc`** — use during the final review step for runtime logic.
+- **`testing-best-practices.mdc`**, **`test-first-discipline.mdc`**, **`every-error-regression-test.mdc`** — test layer selection and mandatory regression coverage.
+- **`monitor-consumer-side-plan.mdc`** — consumer handoff plans must include testing and final review sections.
+- **`test-runs-output-directory.mdc`** — committed **`docs/plans/`** hold design baselines; run artifacts stay under **`test_runs/`**.
