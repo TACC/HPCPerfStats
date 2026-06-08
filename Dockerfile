@@ -43,6 +43,12 @@ COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
     /tmp/frontend-static \
     /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
 
+# Cloud-synced checkouts may not preserve host execute bits; compose invokes these
+# scripts directly as container commands.
+RUN chmod +x \
+    /home/hpcperfstats/services-conf/django_startup.sh \
+    /home/hpcperfstats/services-conf/supervisor_startup.sh
+
 # Default syslog-ng allowlist fragment (render overwrites at container start).
 # Keep this self-contained so image builds do not depend on optional files in
 # services-conf/ that may be absent in some checkouts.
