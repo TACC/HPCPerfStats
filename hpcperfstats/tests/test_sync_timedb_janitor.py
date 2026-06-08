@@ -60,6 +60,7 @@ def _make_janitor(**kwargs):
       "get_idle_seconds": lambda: 0.0,
       "ingest_ready_fn": None,
       "archive_stats_files_fn": None,
+      "day_raw_removal_coordinator": None,
   }
   defaults.update(kwargs)
   janitor = ArchiveJanitor(**defaults)
@@ -1006,6 +1007,47 @@ def test_day_complete_reclaim_enqueues_only_newly_completed_days(tmp_path):
   kinds = {debt.kind for debt in janitor._debt_heap}
   assert kinds == {DebtKind.DAY_CLOSE}
   assert janitor.debt_depth() == 1
+
+
+def test_day_close_with_preflight_skips_incremental_raw_tar(monkeypatch, tmp_path):
+  from hpcperfstats.dbload.sync_timedb_day_raw_removal import DayRawRemovalCoordinator
+
+  tar_path = str(tmp_path / "2026-01-01.tar")
+  open(tar_path, "wb").close()
+  open(tar_path.replace(".tar", ".tar.zst"), "wb").close()
+  coord = DayRawRemovalCoordinator(
+      archive_data_dir=str(tmp_path / "archive"),
+      host_name_ext=".hpc",
+      tgz_archive_dir=str(tmp_path),
+      log_fn=MagicMock(),
+      get_quarantine_skip_paths=lambda: set(),
+  )
+  coord.enabled = True
+  janitor = _make_janitor(
+      tgz_archive_dir=str(tmp_path),
+      day_raw_removal_coordinator=coord,
+  )
+  janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
+  raw_calls = {"n": 0}
+  monkeypatch.setattr(janitor_mod, "build_remaining_raw_for_daily_tar", lambda *a, **k: {})
+  monkeypatch.setattr(janitor_mod, "atomic_seal_tar_to_zst", lambda *a, **k: None)
+  monkeypatch.setattr(
+      janitor_mod,
+      "remove_verified_archived_raw_files",
+      lambda *a, **k: raw_calls.__setitem__("n", raw_calls["n"] + 1),
+  )
+  verify_calls = {"n": 0}
+
+  def _sync_verify(tar):
+    verify_calls["n"] += 1
+    coord._get_or_create_day(tar)._verify_body()
+
+  monkeypatch.setattr(coord, "start_async_verify", _sync_verify)
+  janitor._run_tick_body()
+  assert raw_calls["n"] == 0
+  assert verify_calls["n"] == 1
+  assert not coord.delete_phase_done(tar_path)
+  assert janitor.debt_depth() >= 1
 
 
 def test_close_one_day_runs_seal_raw_tar_in_single_debt_item(monkeypatch, tmp_path):

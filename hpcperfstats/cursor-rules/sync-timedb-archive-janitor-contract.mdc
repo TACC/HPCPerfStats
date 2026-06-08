@@ -17,6 +17,7 @@ alwaysApply: true
 | Per-day tar retention / seal calendar policy | `effective_keep_uncompressed_tar`, `daily_tar_seal_calendar_eligible` in `sync_timedb_archive_helpers.py` |
 | DB-complete tar backfill check | `raw_stats_path_needs_tar_append` in `sync_timedb_archive_helpers.py`; wired from `_parse_stats_file_payload` when `start_idx == -1` |
 | Startup raw removal preflight | `hpcperfstats/dbload/sync_timedb_startup_raw_removal.py` → `StartupRawRemovalPreflight` |
+| Per-day post-seal raw removal | `hpcperfstats/dbload/sync_timedb_day_raw_removal.py` → `DayRawRemovalCoordinator` |
 | Supervisor wiring | `hpcperfstats/dbload/sync_timedb.py` → `run_sync_timedb_supervisor_loop` |
 
 ## Startup raw removal preflight (one-shot at process start)

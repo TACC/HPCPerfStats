@@ -148,6 +148,9 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_startup_raw_removal_verify_budget_seconds"),
     ("PIPELINE", "sync_startup_raw_removal_verify_days_per_slice"),
     ("PIPELINE", "sync_startup_raw_removal_max_deletes_per_pass"),
+    ("PIPELINE", "sync_day_close_raw_removal_preflight"),
+    ("PIPELINE", "sync_day_close_raw_removal_verify_budget_seconds"),
+    ("PIPELINE", "sync_day_close_raw_removal_max_deletes_per_pass"),
     ("PIPELINE", "sync_archive_max_inflight_jobs"),
     ("PIPELINE", "sync_archive_worker_stall_seconds"),
     # [OAUTH2]
@@ -2111,6 +2114,36 @@ def get_sync_startup_raw_removal_max_deletes_per_pass():
   """Max deletes per gated startup delete pass; 0 means unlimited (default 0)."""
   _ensure_cfg_loaded()
   raw = _pipeline_get("sync_startup_raw_removal_max_deletes_per_pass", fallback="0")
+  try:
+    return max(0, int(raw))
+  except (TypeError, ValueError):
+    return 0
+
+
+def get_sync_day_close_raw_removal_preflight():
+  """Enable per-day async verify + chunk-boundary batch delete after DAY_CLOSE seal."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_day_close_raw_removal_preflight", fallback="yes"),
+  )
+
+
+def get_sync_day_close_raw_removal_verify_budget_seconds():
+  """Reserved wall-clock budget knob for day-close verify slices (default 30s)."""
+  _ensure_cfg_loaded()
+  return max(
+      1.0,
+      float(_pipeline_get(
+          "sync_day_close_raw_removal_verify_budget_seconds",
+          fallback="30",
+      )),
+  )
+
+
+def get_sync_day_close_raw_removal_max_deletes_per_pass():
+  """Max deletes per day-close batch delete; 0 means unlimited (default 0)."""
+  _ensure_cfg_loaded()
+  raw = _pipeline_get("sync_day_close_raw_removal_max_deletes_per_pass", fallback="0")
   try:
     return max(0, int(raw))
   except (TypeError, ValueError):

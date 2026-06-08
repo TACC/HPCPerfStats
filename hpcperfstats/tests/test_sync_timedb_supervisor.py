@@ -2798,3 +2798,130 @@ def test_supervisor_rescans_pending_after_startup_delete_complete(monkeypatch):
     assert deleted_path not in captured_rescans[-1]
   finally:
     shutdown_requested[0] = False
+
+
+def _supervisor_day_raw_removal_patches(monkeypatch, coord_obj):
+  import hpcperfstats.dbload.sync_timedb_day_raw_removal as day_mod
+
+  class _FakeDayCoord:
+    def __init__(self, **_kwargs):
+      self._delegate = coord_obj
+
+    def __getattr__(self, name):
+      return getattr(self._delegate, name)
+
+  monkeypatch.setattr(day_mod, "DayRawRemovalCoordinator", _FakeDayCoord)
+  monkeypatch.setattr(st, "DayRawRemovalCoordinator", _FakeDayCoord)
+
+
+def _supervisor_startup_preflight_disabled(monkeypatch):
+  import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
+
+  class _DonePreflight:
+    enabled = False
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def delete_phase_done(self):
+      return True
+
+    def needs_delete_phase(self):
+      return False
+
+    def paths_pending_startup_delete(self):
+      return set()
+
+    def consumed_paths(self):
+      return set()
+
+    def start_async_verify(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _DonePreflight)
+  monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DonePreflight)
+
+
+def test_supervisor_day_raw_removal_waits_for_chunk_before_delete(monkeypatch):
+  shutdown_requested[0] = False
+  seen_chunk_in_progress = {"during_delete": None}
+  tar_path = "/tmp/daily/2026-01-01.tar"
+
+  class _DayCoord:
+    enabled = True
+    _ready = True
+
+    def oldest_day_needing_delete(self):
+      return tar_path if self._ready else None
+
+    def needs_delete_phase(self, _tar):
+      return True
+
+    def phase(self, _tar):
+      return "verification_complete"
+
+    def begin_deleting(self, _tar):
+      return None
+
+    def apply_batch_delete(self, _tar):
+      return 1
+
+    def delete_phase_done(self, _tar):
+      return True
+
+    def paths_pending_delete(self):
+      return set()
+
+    def consumed_paths(self):
+      return set()
+
+    def shutdown(self, wait=True):
+      del wait
+
+  try:
+    target = "/fake/statsA"
+    chunk_flag = {"value": False}
+
+    def fake_add(_lock, path, _contents=None):
+      chunk_flag["value"] = True
+      return (path, True, True, 0.0)
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return [target]
+      shutdown_requested[0] = True
+      return []
+    fake_rescan.calls = 0
+
+    coord = _DayCoord()
+
+    def apply_batch_delete(_tar):
+      seen_chunk_in_progress["during_delete"] = chunk_flag["value"]
+      return 1
+
+    coord.apply_batch_delete = apply_batch_delete
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    _supervisor_day_raw_removal_patches(monkeypatch, coord)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp/daily")
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert seen_chunk_in_progress["during_delete"] is False
+  finally:
+    shutdown_requested[0] = False

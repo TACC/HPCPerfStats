@@ -142,6 +142,7 @@ class ArchiveJanitor:
       get_quarantine_skip_paths: Optional[Callable[[], Set[str]]] = None,
       ingest_ready_fn=None,
       archive_stats_files_fn=None,
+      day_raw_removal_coordinator=None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -156,6 +157,7 @@ class ArchiveJanitor:
     self.get_quarantine_skip_paths = get_quarantine_skip_paths or (lambda: set())
     self.ingest_ready_fn = ingest_ready_fn
     self.archive_stats_files_fn = archive_stats_files_fn
+    self.day_raw_removal_coordinator = day_raw_removal_coordinator
     self.process_title = process_title
 
     self._executor = ThreadPoolExecutor(
@@ -854,6 +856,10 @@ class ArchiveJanitor:
       return False
     return order[phase_name] >= order[target]
 
+  def _day_close_raw_removal_enabled(self) -> bool:
+    coord = self.day_raw_removal_coordinator
+    return coord is not None and bool(getattr(coord, "enabled", False))
+
   def _close_one_day(
       self,
       tar_path: str,
@@ -866,6 +872,16 @@ class ArchiveJanitor:
     if not self._day_phase_at_least(tar_norm, "sealed"):
       if not self._seal_one_day(tar_norm, ignore_remaining_raw=True):
         return False
+    if self._day_close_raw_removal_enabled():
+      coord = self.day_raw_removal_coordinator
+      coord.start_async_verify(tar_norm)
+      if not coord.delete_phase_done(tar_norm):
+        self._enqueue_day_close(tar_norm, persist=False)
+        self._persist_hints()
+        return False
+      with self._hints_state_lock:
+        self._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, "tar_dropped")
+      return True
     if not self._day_phase_at_least(tar_norm, "raw_removed"):
       if not self._raw_remove_one_day(
           tar_norm,
