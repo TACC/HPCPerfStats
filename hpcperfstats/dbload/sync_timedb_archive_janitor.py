@@ -25,6 +25,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     collect_days_with_unmapped_closed_raw,
     daily_gz_has_remaining_raw_stats,
     daily_tar_path_from_compressed,
+    daily_tar_seal_calendar_eligible,
     dedupe_tar_keep_largest_file_per_member,
     drop_legacy_gz_if_equivalent_to_zst,
     effective_keep_uncompressed_tar,
@@ -425,8 +426,14 @@ class ArchiveJanitor:
     if not drained:
       return
     disqualified = set(self.get_disqualified_daily_tars())
+    now_local = datetime.now(self.local_tz)
     candidates = sorted(
-        (t for t in drained if t not in disqualified),
+        (
+            t for t in drained
+            if t not in disqualified
+            and daily_tar_seal_calendar_eligible(
+                t, self.local_tz, now=now_local)
+        ),
         key=lambda t: _calendar_date_from_daily_tar(t) or date.max,
     )
     if not candidates:
@@ -499,6 +506,8 @@ class ArchiveJanitor:
         if not tar_day_dirty_by_mtime(tar_path):
           continue
         zst_path, gz_path = compressed_sibling_paths(tar_path)
+        if not daily_tar_seal_calendar_eligible(tar_path, self.local_tz):
+          continue
         if not should_seal_daily_tar(
             tar_path,
             zst_path,
@@ -553,13 +562,16 @@ class ArchiveJanitor:
           continue
         if tar_day_dirty_by_mtime(tar_path):
           zst_path, gz_path = compressed_sibling_paths(tar_path)
-          if should_seal_daily_tar(
-              tar_path,
-              zst_path,
-              cfg.get_archive_seal_idle_seconds(),
-              today_local,
-              seal_immediately_if_dirty=False,
-              gz_path=gz_path,
+          if (
+              daily_tar_seal_calendar_eligible(tar_path, self.local_tz)
+              and should_seal_daily_tar(
+                  tar_path,
+                  zst_path,
+                  cfg.get_archive_seal_idle_seconds(),
+                  today_local,
+                  seal_immediately_if_dirty=False,
+                  gz_path=gz_path,
+              )
           ):
             self._enqueue_day_close_locked(tar_norm, persist=False)
 
@@ -852,7 +864,7 @@ class ArchiveJanitor:
   ) -> bool:
     tar_norm = os.path.normpath(tar_path)
     if not self._day_phase_at_least(tar_norm, "sealed"):
-      if not self._seal_one_day(tar_norm):
+      if not self._seal_one_day(tar_norm, ignore_remaining_raw=True):
         return False
     if not self._day_phase_at_least(tar_norm, "raw_removed"):
       if not self._raw_remove_one_day(
@@ -873,10 +885,21 @@ class ArchiveJanitor:
         return False
     return True
 
-  def _seal_one_day(self, tar_path: str) -> bool:
+  def _seal_one_day(self, tar_path: str, *, ignore_remaining_raw: bool = False) -> bool:
+    if not daily_tar_seal_calendar_eligible(tar_path, self.local_tz):
+      self.log_fn(
+          "Janitor seal deferred (calendar-today grace): %s" % tar_path,
+          flush=True,
+      )
+      self._enqueue_day_close(tar_path, persist=False)
+      self._persist_hints()
+      return False
     remaining_raw_by_gz = self._fresh_remaining_raw_by_gz_for_tar(tar_path)
     zst_path, gz_path = compressed_sibling_paths(tar_path)
-    if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz):
+    if (
+        not ignore_remaining_raw
+        and daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz)
+    ):
       self.log_fn(
           "Janitor seal deferred (raw stats still present for day): %s"
           % tar_path,

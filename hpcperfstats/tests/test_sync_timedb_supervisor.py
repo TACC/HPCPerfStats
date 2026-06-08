@@ -1749,12 +1749,35 @@ def test_parse_payload_marks_fully_duplicate_file_for_archival(monkeypatch):
       })())
   })())
   monkeypatch.setattr(st, "find_processing_start_index", lambda *_a, **_k: (-1, True))
+  monkeypatch.setattr(st, "raw_stats_path_needs_tar_append", lambda *_a, **_k: True)
   stats_file, payload, need_archival, ingest_ok, parse_elapsed_s = st._parse_stats_file_payload(target)
   assert stats_file == target
   assert payload is None
   assert need_archival is True
   assert ingest_ok is True
   assert parse_elapsed_s >= 0.0
+
+
+def test_parse_payload_skips_archival_when_db_complete_and_in_tar(monkeypatch):
+  target = "/tmp/stats-in-tar"
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st, "parse_stats_file_path", lambda _p: ("h1", "123"))
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "load_stats_file_lines", lambda *_a, **_k: (["100 job1 h1\n"], None))
+  monkeypatch.setattr(st, "parse_first_timestamp_line", lambda _lines: ("100", "job1", "h1"))
+  monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda *_a, **_k: True)
+  monkeypatch.setattr(st.host_data, "objects", type("_Mgr", (), {
+      "filter": staticmethod(lambda **_k: type("_QS", (), {
+          "values_list": staticmethod(lambda *a, **k: type("_V", (), {"distinct": staticmethod(lambda: type("_I", (), {"iterator": staticmethod(lambda: iter([]))})())})())
+      })())
+  })())
+  monkeypatch.setattr(st, "find_processing_start_index", lambda *_a, **_k: (-1, True))
+  monkeypatch.setattr(st, "raw_stats_path_needs_tar_append", lambda *_a, **_k: False)
+  stats_file, payload, need_archival, ingest_ok, parse_elapsed_s = st._parse_stats_file_payload(target)
+  assert stats_file == target
+  assert payload is None
+  assert need_archival is False
+  assert ingest_ok is True
 
 
 def test_empty_primary_mapping_falls_back_to_mtime_archive(monkeypatch, tmp_path):

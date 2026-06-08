@@ -94,6 +94,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     iter_daily_tar_paths,
     replace_corrupt_tar_from_compressed_backup,
     cap_pending_stats_file_list,
+    raw_stats_path_needs_tar_append,
     rescan_pending_stats_files,
     should_seal_daily_tar,
     stats_file_is_active_segment,
@@ -665,7 +666,12 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
         start_idx, need_archival = find_processing_start_index(lines, itimes_set)
       if start_idx == -1:
         log_print("No missing timestamps found for %s" % stats_file)
-        return (stats_file, None, True, True, _parse_elapsed())
+        need_archival = raw_stats_path_needs_tar_append(
+            stats_file,
+            tgz_archive_dir,
+            first_ts=t,
+        )
+        return (stats_file, None, need_archival, True, _parse_elapsed())
       lines = lines[start_idx:]
       try:
         stats_list, proc_stats_list = parse_stats_lines(

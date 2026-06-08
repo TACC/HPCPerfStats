@@ -33,6 +33,7 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 | Entry point | Gate |
 |-------------|------|
 | `sync_timedb.archive_stats_files` | `filter_paths_head_ingested` before `filter_files_to_add_to_archive` |
+| `_parse_stats_file_payload` when `start_idx == -1` (DB-complete) | `need_archival` from `raw_stats_path_needs_tar_append` (tar member+size); append dispatch still passes `filter_paths_head_ingested` |
 | `remove_verified_archived_raw_files` bootstrap | only `ingest_ready_fn`-true paths passed to `archive_stats_files_fn` |
 | `remove_verified_archived_raw_files` raw removal | `ingest_ready_fn` after archive member/size match |
 | `ArchiveJanitor` raw removal (`_raw_remove_one_day`) | `ingest_ready_fn=stats_file_head_ingested_in_db`; `allow_auto_seal=False` so validation never triggers a second `atomic_seal_tar_to_zst` |

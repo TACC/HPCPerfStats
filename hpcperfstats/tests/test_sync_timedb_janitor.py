@@ -228,11 +228,15 @@ def test_janitor_concurrent_accrual_and_tick_preserves_debt_heap(monkeypatch):
       assert (debt.kind.value, debt.tar_path) in janitor._debt_seen
 
 
-def test_janitor_seal_prior_day_defers_when_closed_raw_remains(monkeypatch, tmp_path):
+def test_janitor_legacy_seal_prior_day_coalesces_to_day_close_and_seals(
+    monkeypatch, tmp_path,
+):
+  """Enqueued SEAL_PRIOR_DAY becomes DAY_CLOSE; seal runs despite on-disk raw."""
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
   janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
   janitor._enqueue_debt(DebtKind.SEAL_PRIOR_DAY, tar_path, persist=False)
+  assert janitor._debt_heap[0].kind == DebtKind.DAY_CLOSE
   monkeypatch.setattr(
       janitor_mod,
       "build_remaining_raw_for_daily_tar",
@@ -244,7 +248,30 @@ def test_janitor_seal_prior_day_defers_when_closed_raw_remains(monkeypatch, tmp_
       "atomic_seal_tar_to_zst",
       lambda *a, **k: called.__setitem__("seal", called["seal"] + 1),
   )
+  monkeypatch.setattr(janitor_mod, "remove_verified_archived_raw_files", lambda *a, **k: None)
+  monkeypatch.setattr(janitor_mod, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
   janitor._run_tick_body()
+  assert called["seal"] == 1
+
+
+def test_seal_one_day_direct_call_defers_when_closed_raw_remains(monkeypatch, tmp_path):
+  """Non-DAY_CLOSE path: _seal_one_day without ignore_remaining_raw still defers."""
+  tar_path = str(tmp_path / "2026-01-01.tar")
+  open(tar_path, "wb").close()
+  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
+  zst_path = _zst_path_for_tar(tar_path)
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: {zst_path: ["/tmp/raw"]},
+  )
+  called = {"seal": 0}
+  monkeypatch.setattr(
+      janitor_mod,
+      "atomic_seal_tar_to_zst",
+      lambda *a, **k: called.__setitem__("seal", called["seal"] + 1),
+  )
+  assert janitor._seal_one_day(tar_path) is False
   assert called["seal"] == 0
   assert janitor.debt_depth() >= 1
 
@@ -1067,6 +1094,51 @@ def test_enqueue_day_close_for_drained_days(tmp_path):
   debt = janitor._debt_heap[0]
   assert debt.kind == DebtKind.DAY_CLOSE
   assert debt.tar_path == os.path.normpath(tar_old)
+
+
+def test_enqueue_day_close_skips_calendar_today_inside_grace(monkeypatch, tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  today = datetime.now(timezone.utc).date()
+  tar_today = str(daily_dir / f"{today.isoformat()}.tar")
+  tar_prior = str(daily_dir / "2026-01-01.tar")
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir), local_tz=timezone.utc)
+  monkeypatch.setattr(
+      janitor_mod.cfg, "get_archive_today_uncompressed_tar_grace_hours", lambda: 8.0)
+  monkeypatch.setattr(
+      janitor_mod,
+      "daily_tar_seal_calendar_eligible",
+      lambda tar_path, _tz, now=None: tar_path != os.path.normpath(tar_today),
+  )
+  janitor.enqueue_day_close_for_drained_days(
+      {tar_today, tar_prior},
+      set(),
+  )
+  assert janitor.debt_depth() == 1
+  assert janitor._debt_heap[0].tar_path == os.path.normpath(tar_prior)
+
+
+def test_close_one_day_seals_despite_remaining_raw_on_disk(monkeypatch, tmp_path):
+  events = []
+  tar_path = str(tmp_path / "2026-01-01.tar")
+  open(tar_path, "wb").close()
+  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
+  janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
+  zst_path = _zst_path_for_tar(tar_path)
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: {zst_path: ["/tmp/raw-still-on-disk"]},
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "atomic_seal_tar_to_zst",
+      lambda tp, *a, **k: events.append(("seal", tp)),
+  )
+  monkeypatch.setattr(janitor_mod, "remove_verified_archived_raw_files", lambda *a, **k: None)
+  monkeypatch.setattr(janitor_mod, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
+  janitor._run_tick_body()
+  assert ("seal", os.path.normpath(tar_path)) in events
 
 
 def test_janitor_persist_hints_snapshots_day_phases_under_lock(monkeypatch, tmp_path):

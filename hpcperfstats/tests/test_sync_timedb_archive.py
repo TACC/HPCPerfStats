@@ -29,6 +29,8 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     merge_maintenance_skip_daily_tar_paths,
     daily_gz_has_remaining_raw_stats,
     daily_tar_paths_for_stats_paths,
+    daily_tar_seal_calendar_eligible,
+    raw_stats_path_needs_tar_append,
     daily_tar_paths_from_pending_archive_tasks,
     collect_lock_sidecar_stats,
     collect_stats_files_in_range,
@@ -3085,6 +3087,87 @@ def test_effective_keep_uncompressed_tar_prior_day_false_today_grace(monkeypatch
       today_tar,
       local_tz=tz,
       now=datetime(2026, 6, 7, 9, 0, tzinfo=tz),
+  )
+
+
+def test_daily_tar_seal_calendar_eligible_prior_day_and_today_grace(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from datetime import timezone
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  prior_tar = str(daily_dir / "2026-01-01.tar")
+  today_tar = str(daily_dir / "2026-06-07.tar")
+  tz = timezone.utc
+  monkeypatch.setattr(
+      helpers.cfg, "get_archive_today_uncompressed_tar_grace_hours", lambda: 8.0)
+  assert daily_tar_seal_calendar_eligible(
+      prior_tar, tz, now=datetime(2026, 6, 7, 1, 0, tzinfo=tz))
+  assert not daily_tar_seal_calendar_eligible(
+      today_tar, tz, now=datetime(2026, 6, 7, 7, 59, tzinfo=tz))
+  assert daily_tar_seal_calendar_eligible(
+      today_tar, tz, now=datetime(2026, 6, 7, 8, 0, tzinfo=tz))
+
+
+def _local_day_epoch(day_str):
+  """Unix second for noon on ``YYYY-MM-DD`` in local timezone (stable tar bucket)."""
+  day = datetime.strptime(day_str, "%Y-%m-%d")
+  return str(int(day.replace(hour=12).timestamp()))
+
+
+def test_raw_stats_path_needs_tar_append_no_tar_yet(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = _local_day_epoch("2024-01-01")
+  raw_path = host_dir / ts
+  raw_path.write_text(f"{ts} job1 node1\n")
+  assert raw_stats_path_needs_tar_append(
+      str(raw_path),
+      str(daily_dir),
+      first_ts=ts,
+  )
+
+
+def test_raw_stats_path_needs_tar_append_skips_matching_member(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = _local_day_epoch("2024-01-01")
+  raw_path = host_dir / ts
+  payload = f"{ts} job1 node1\n".encode()
+  raw_path.write_bytes(payload)
+  tar_path = daily_dir / "2024-01-01.tar"
+  member_name = get_tar_member_name(str(raw_path))
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(raw_path), arcname=member_name)
+  assert not raw_stats_path_needs_tar_append(
+      str(raw_path),
+      str(daily_dir),
+      first_ts=ts,
+  )
+
+
+def test_raw_stats_path_needs_tar_append_when_member_size_differs(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = _local_day_epoch("2024-01-01")
+  raw_path = host_dir / ts
+  raw_path.write_text(f"{ts} job1 node1\nextra")
+  tar_path = daily_dir / "2024-01-01.tar"
+  member_name = get_tar_member_name(str(raw_path))
+  with tarfile.open(tar_path, "w") as tf:
+    info = tarfile.TarInfo(name=member_name)
+    info.size = 4
+    tf.addfile(info, io.BytesIO(b"tiny"))
+  assert raw_stats_path_needs_tar_append(
+      str(raw_path),
+      str(daily_dir),
+      first_ts=ts,
   )
 
 

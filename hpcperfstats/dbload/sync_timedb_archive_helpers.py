@@ -186,6 +186,56 @@ def effective_keep_uncompressed_tar(tar_path, *, local_tz, now=None):
   return now < grace_end
 
 
+def daily_tar_seal_calendar_eligible(tar_path, local_tz, now=None):
+  """Whether sealing may start for ``tar_path`` by calendar policy.
+
+  Prior calendar days are eligible immediately (subject to dirty/disqualified
+  checks elsewhere). Calendar-today is eligible only after local midnight plus
+  ``archive_today_uncompressed_tar_grace_hours``. This governs **when** sealing
+  may begin, distinct from ``effective_keep_uncompressed_tar`` (whether the
+  uncompressed ``.tar`` is retained after seal).
+  """
+  day_date = calendar_date_from_daily_tar_path(tar_path)
+  if day_date is None:
+    return True
+  if now is None:
+    now = datetime.now(local_tz)
+  today_local = now.date()
+  if day_date < today_local:
+    return True
+  if day_date > today_local:
+    return False
+  grace_h = float(cfg.get_archive_today_uncompressed_tar_grace_hours())
+  midnight = datetime.combine(today_local, dt_time.min, tzinfo=local_tz)
+  grace_end = midnight + timedelta(hours=grace_h)
+  return now >= grace_end
+
+
+def raw_stats_path_needs_tar_append(
+    stats_path,
+    tgz_archive_dir,
+    *,
+    first_ts=None,
+):
+  """True when closed raw exists on disk but is not a matching tar member.
+
+  Uses the same member-name and byte-size rules as
+  ``filter_files_to_add_to_archive``. Returns ``False`` when the path is
+  missing, active (same inode as ``current``), or its calendar day cannot be
+  resolved.
+  """
+  if not stats_path or not os.path.isfile(stats_path):
+    return False
+  if stats_file_is_active_segment(stats_path):
+    return False
+  file_date = _derive_stats_path_date(stats_path, first_ts)
+  if file_date is None:
+    return False
+  compressed_path = daily_compressed_path_for_date(tgz_archive_dir, file_date)
+  existing_members = get_existing_archive_members_for_daily_archive(compressed_path)
+  return bool(filter_files_to_add_to_archive([stats_path], existing_members))
+
+
 def daily_tar_paths_for_stats_paths(
     paths, tgz_archive_dir, first_timestamp_by_path=None,
 ):
