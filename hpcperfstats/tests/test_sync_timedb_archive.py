@@ -3062,6 +3062,60 @@ def test_unparsable_unmapped_does_not_disqualify_day(tmp_path):
   assert not result
 
 
+def test_effective_keep_uncompressed_tar_prior_day_false_today_grace(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from datetime import timezone
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  prior_tar = str(daily_dir / "2026-01-01.tar")
+  today_tar = str(daily_dir / "2026-06-07.tar")
+  tz = timezone.utc
+  monkeypatch.setattr(helpers.cfg, "get_archive_keep_uncompressed_tar", lambda: False)
+  monkeypatch.setattr(
+      helpers.cfg, "get_archive_today_uncompressed_tar_grace_hours", lambda: 8.0)
+  assert not helpers.effective_keep_uncompressed_tar(
+      prior_tar, local_tz=tz, now=datetime(2026, 6, 7, 12, 0, tzinfo=tz))
+  assert helpers.effective_keep_uncompressed_tar(
+      today_tar,
+      local_tz=tz,
+      now=datetime(2026, 6, 7, 6, 0, tzinfo=tz),
+  )
+  assert not helpers.effective_keep_uncompressed_tar(
+      today_tar,
+      local_tz=tz,
+      now=datetime(2026, 6, 7, 9, 0, tzinfo=tz),
+  )
+
+
+def test_prior_day_tar_removed_at_seal_when_keep_false(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2026-01-01.tar"
+  zst_path = tmp_path / "2026-01-01.tar.zst"
+  tar_path.write_bytes(b"tar-payload")
+  monkeypatch.setattr(helpers.shutil, "which", lambda _cmd: "/usr/bin/zstd")
+
+  def fake_compress(_tar, out_path, *_a, **_k):
+    open(out_path, "wb").write(b"z")
+
+  monkeypatch.setattr(helpers, "zstd_compress_tar_to_file", fake_compress)
+  monkeypatch.setattr(helpers, "zstd_test", lambda *a, **k: None)
+  monkeypatch.setattr(helpers, "_seal_skip_existing_zst_equivalent", lambda *a, **k: False)
+  monkeypatch.setattr(helpers, "get_existing_archive_members", lambda _p: {})
+  helpers.atomic_seal_tar_to_zst(
+      str(tar_path),
+      str(zst_path),
+      1,
+      3,
+      False,
+      log_fn=lambda *_a, **_k: None,
+      remaining_raw_by_gz={},
+  )
+  assert not tar_path.exists()
+  assert zst_path.is_file()
+
+
 def test_iter_tar_file_tasks_falls_back_to_gz_when_zst_corrupt(monkeypatch, tmp_path):
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 

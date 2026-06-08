@@ -87,6 +87,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     daily_tar_path_from_compressed,
     get_unmapped_closed_raw_daily_tars_cached,
     daily_tar_paths_for_archive_job_tasks,
+    daily_tar_paths_for_stats_paths,
     daily_tar_paths_from_pending_archive_tasks,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
@@ -1863,6 +1864,10 @@ def run_sync_timedb_supervisor_loop(
 
       while pending_stats_files:
         idle_since_empty_queue = None
+        prior_pending_daily_tars = daily_tar_paths_for_stats_paths(
+            pending_stats_files,
+            tgz_archive_dir,
+        )
         _run_debt_accrual_if_due("chunk_boundary")
         _finalize_archive_slots_if_needed(
             force=True,
@@ -2199,6 +2204,14 @@ def run_sync_timedb_supervisor_loop(
         # single-flight background pass to seal completed days and remove their
         # raw stats / uncompressed .tar. Ingest advances to the next chunk
         # immediately; days with raw still to ingest/append are disqualified.
+        current_pending_daily_tars = daily_tar_paths_for_stats_paths(
+            pending_stats_files,
+            tgz_archive_dir,
+        )
+        archive_janitor.enqueue_day_close_for_drained_days(
+            prior_pending_daily_tars,
+            current_pending_daily_tars,
+        )
         if ar_file_mapping:
           archive_janitor.enqueue_completed_prior_days_reclaim(
               chunk_daily_tars=_prior_day_tars_from_archive_mapping(
@@ -2206,6 +2219,8 @@ def run_sync_timedb_supervisor_loop(
                   local_tz=local_timezone,
               ),
           )
+          archive_janitor.signal_work_available()
+        elif prior_pending_daily_tars != current_pending_daily_tars:
           archive_janitor.signal_work_available()
 
         _dispatch_due_archive_retries()

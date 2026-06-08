@@ -10,7 +10,7 @@ import tarfile
 import tempfile
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, time as dt_time, timedelta
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.archive_compress import (
@@ -148,6 +148,42 @@ def _daily_tar_path_for_date(tgz_archive_dir, file_date):
           daily_compressed_path_for_date(tgz_archive_dir, file_date),
       )
   )
+
+
+def calendar_date_from_daily_tar_path(tar_path):
+  """Return ``date`` parsed from ``YYYY-MM-DD.tar`` basename, or ``None``."""
+  base = os.path.basename(str(tar_path or ""))
+  if not base.endswith(".tar"):
+    return None
+  try:
+    return datetime.strptime(base[:-4], "%Y-%m-%d").date()
+  except ValueError:
+    return None
+
+
+def effective_keep_uncompressed_tar(tar_path, *, local_tz, now=None):
+  """Whether to retain uncompressed ``.tar`` after seal for ``tar_path``.
+
+  When global ``archive_keep_uncompressed_tar`` is yes, always keep. Otherwise
+  prior calendar days drop at seal when raw is gone; calendar-today keeps until
+  local midnight plus ``archive_today_uncompressed_tar_grace_hours``.
+  """
+  if cfg.get_archive_keep_uncompressed_tar():
+    return True
+  day_date = calendar_date_from_daily_tar_path(tar_path)
+  if day_date is None:
+    return True
+  if now is None:
+    now = datetime.now(local_tz)
+  today_local = now.date()
+  if day_date < today_local:
+    return False
+  if day_date > today_local:
+    return False
+  grace_h = float(cfg.get_archive_today_uncompressed_tar_grace_hours())
+  midnight = datetime.combine(today_local, dt_time.min, tzinfo=local_tz)
+  grace_end = midnight + timedelta(hours=grace_h)
+  return now < grace_end
 
 
 def daily_tar_paths_for_stats_paths(

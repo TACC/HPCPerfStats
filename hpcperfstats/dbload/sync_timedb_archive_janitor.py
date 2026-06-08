@@ -8,7 +8,7 @@ import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Any, Callable, Dict, Optional, Set
 
@@ -21,11 +21,13 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     atomic_seal_tar_to_zst,
     build_remaining_raw_for_daily_tar,
     build_remaining_raw_stats_by_daily_gz,
+    calendar_date_from_daily_tar_path,
     collect_days_with_unmapped_closed_raw,
     daily_gz_has_remaining_raw_stats,
     daily_tar_path_from_compressed,
     dedupe_tar_keep_largest_file_per_member,
     drop_legacy_gz_if_equivalent_to_zst,
+    effective_keep_uncompressed_tar,
     iter_daily_tar_paths,
     remove_verified_archived_raw_files,
     remove_verified_uncompressed_daily_tars,
@@ -51,6 +53,7 @@ _LOCK_CLEANUP_TAR_SENTINEL = "__lock_cleanup__"
 
 
 class DebtKind(str, Enum):
+  DAY_CLOSE = "day_close"
   SEAL_PRIOR_DAY = "seal_prior_day"
   RAW_REMOVE = "raw_remove"
   TAR_DROP = "tar_drop"
@@ -59,7 +62,21 @@ class DebtKind(str, Enum):
   LOCK_CLEANUP = "lock_cleanup"
 
 
+_DAY_PIPELINE_KINDS = frozenset({
+    DebtKind.DAY_CLOSE,
+    DebtKind.SEAL_PRIOR_DAY,
+    DebtKind.RAW_REMOVE,
+    DebtKind.TAR_DROP,
+})
+
+_LEGACY_DAY_PIPELINE_KINDS = frozenset({
+    DebtKind.SEAL_PRIOR_DAY,
+    DebtKind.RAW_REMOVE,
+    DebtKind.TAR_DROP,
+})
+
 _DEBT_PRIORITY = {
+    DebtKind.DAY_CLOSE: 0,
     DebtKind.SEAL_PRIOR_DAY: 0,
     DebtKind.RAW_REMOVE: 1,
     DebtKind.VALIDATE: 2,
@@ -91,13 +108,19 @@ def _tar_to_gz_path(tar_path: str) -> str:
 
 
 def _calendar_date_from_daily_tar(tar_path: str):
-  base = os.path.basename(tar_path)
-  if not base.endswith(".tar"):
-    return None
-  try:
-    return datetime.strptime(base[:-4], "%Y-%m-%d").date()
-  except ValueError:
-    return None
+  return calendar_date_from_daily_tar_path(tar_path)
+
+
+def _normalize_day_pipeline_debt(debt: DayDebt) -> DayDebt:
+  if debt.kind not in _LEGACY_DAY_PIPELINE_KINDS:
+    return debt
+  tar_norm = os.path.normpath(debt.tar_path)
+  return DayDebt(
+      sort_index=_debt_sort_key(DebtKind.DAY_CLOSE, tar_norm),
+      kind=DebtKind.DAY_CLOSE,
+      tar_path=tar_norm,
+      gz_path=debt.gz_path,
+  )
 
 
 class ArchiveJanitor:
@@ -162,6 +185,7 @@ class ArchiveJanitor:
       self._day_phases.update(
           prune_day_phases_hints(prior.get("day_phases") or {}))
     with self._debt_lock:
+      day_close_loaded = set()
       for entry in prior.get("debt_queue") or []:
         if not isinstance(entry, dict):
           continue
@@ -171,6 +195,13 @@ class ArchiveJanitor:
           continue
         tar_path = str(entry.get("tar_path", "")).strip()
         if not tar_path:
+          continue
+        if kind in _DAY_PIPELINE_KINDS:
+          tar_norm = os.path.normpath(tar_path)
+          if tar_norm in day_close_loaded:
+            continue
+          day_close_loaded.add(tar_norm)
+          self._enqueue_day_close_locked(tar_norm, persist=False)
           continue
         self._enqueue_debt_locked(kind, tar_path, persist=False)
       self._trim_heap_to_max_entries_locked()
@@ -236,7 +267,60 @@ class ArchiveJanitor:
     if persist:
       self._persist_hints()
 
+  def _day_pipeline_queued_locked(self, tar_norm: str) -> bool:
+    if (DebtKind.DAY_CLOSE.value, tar_norm) in self._debt_seen:
+      return True
+    for kind in _LEGACY_DAY_PIPELINE_KINDS:
+      if (kind.value, tar_norm) in self._debt_seen:
+        return True
+    return False
+
+  def _remove_day_pipeline_debts_for_tar_locked(self, tar_norm: str):
+    if not self._debt_heap:
+      return
+    kept = []
+    for debt in self._debt_heap:
+      if debt.tar_path == tar_norm and debt.kind in _DAY_PIPELINE_KINDS:
+        self._debt_seen.discard((debt.kind.value, tar_norm))
+        continue
+      kept.append(debt)
+    if len(kept) != len(self._debt_heap):
+      self._debt_heap = kept
+      heapq.heapify(self._debt_heap)
+
+  def _enqueue_day_close_locked(self, tar_path: str, *, persist: bool = True):
+    tar_norm = os.path.normpath(tar_path) if tar_path else tar_path
+    if not tar_norm or tar_norm == _LOCK_CLEANUP_TAR_SENTINEL:
+      return
+    if self._day_pipeline_queued_locked(tar_norm):
+      return
+    self._remove_day_pipeline_debts_for_tar_locked(tar_norm)
+    key = (DebtKind.DAY_CLOSE.value, tar_norm)
+    self._evict_lowest_priority_debt_if_full_locked()
+    gz_path = _tar_to_gz_path(tar_norm)
+    debt = DayDebt(
+        sort_index=_debt_sort_key(DebtKind.DAY_CLOSE, tar_norm),
+        kind=DebtKind.DAY_CLOSE,
+        tar_path=tar_norm,
+        gz_path=gz_path,
+    )
+    heapq.heappush(self._debt_heap, debt)
+    self._debt_seen.add(key)
+    if persist:
+      self._trim_heap_to_max_entries_locked()
+
+  def _enqueue_day_close(self, tar_path: str, *, persist: bool = True):
+    with self._debt_lock:
+      self._enqueue_day_close_locked(tar_path, persist=False)
+      if persist:
+        self._trim_heap_to_max_entries_locked()
+    if persist:
+      self._persist_hints()
+
   def _enqueue_debt_locked(self, kind: DebtKind, tar_path: str, *, persist: bool = True):
+    if kind in _DAY_PIPELINE_KINDS:
+      self._enqueue_day_close_locked(tar_path, persist=persist)
+      return
     tar_norm = os.path.normpath(tar_path) if tar_path else tar_path
     key = (kind.value, tar_norm)
     if key in self._debt_seen:
@@ -321,6 +405,43 @@ class ArchiveJanitor:
   def _calendar_today_local(self):
     return datetime.now(self.local_tz).date()
 
+  def enqueue_day_close_for_drained_days(
+      self,
+      prior_pending_tars,
+      current_pending_tars,
+  ):
+    """Enqueue ``DAY_CLOSE`` for calendar days that left the pending-ingest set."""
+    prior = {
+        os.path.normpath(p)
+        for p in (prior_pending_tars or ())
+        if p
+    }
+    current = {
+        os.path.normpath(p)
+        for p in (current_pending_tars or ())
+        if p
+    }
+    drained = prior - current
+    if not drained:
+      return
+    disqualified = set(self.get_disqualified_daily_tars())
+    candidates = sorted(
+        (t for t in drained if t not in disqualified),
+        key=lambda t: _calendar_date_from_daily_tar(t) or date.max,
+    )
+    if not candidates:
+      return
+    with self._debt_lock:
+      for tar_norm in candidates:
+        self._enqueue_day_close_locked(tar_norm, persist=False)
+      self._trim_heap_to_max_entries_locked()
+    self._persist_hints()
+    self.log_fn(
+        "Archive janitor day-drain reclaim enqueued days=%d debt_depth=%d"
+        % (len(candidates), self.debt_depth()),
+        flush=True,
+    )
+
   def enqueue_completed_prior_days_reclaim(self, *, chunk_daily_tars=None):
     """Enqueue seal/raw/tar debt for completed prior calendar days (oldest first).
 
@@ -355,9 +476,7 @@ class ArchiveJanitor:
     candidates.sort(key=lambda item: item[0])
     with self._debt_lock:
       for _, tar_norm in candidates:
-        self._enqueue_debt_locked(DebtKind.SEAL_PRIOR_DAY, tar_norm, persist=False)
-        self._enqueue_debt_locked(DebtKind.RAW_REMOVE, tar_norm, persist=False)
-        self._enqueue_debt_locked(DebtKind.TAR_DROP, tar_norm, persist=False)
+        self._enqueue_day_close_locked(tar_norm, persist=False)
       self._trim_heap_to_max_entries_locked()
     self._persist_hints()
     self.log_fn(
@@ -389,7 +508,7 @@ class ArchiveJanitor:
             gz_path=gz_path,
         ):
           continue
-        self._enqueue_debt_locked(DebtKind.SEAL_PRIOR_DAY, tar_norm, persist=False)
+        self._enqueue_day_close_locked(tar_norm, persist=False)
         enqueued += 1
       self._trim_heap_to_max_entries_locked()
     if enqueued:
@@ -442,7 +561,7 @@ class ArchiveJanitor:
               seal_immediately_if_dirty=False,
               gz_path=gz_path,
           ):
-            self._enqueue_debt_locked(DebtKind.SEAL_PRIOR_DAY, tar_norm, persist=False)
+            self._enqueue_day_close_locked(tar_norm, persist=False)
 
       for gz_key, raw_paths in (snapshot.remaining_raw_by_gz or {}).items():
         if not raw_paths:
@@ -450,8 +569,7 @@ class ArchiveJanitor:
         tar_norm = os.path.normpath(daily_tar_path_from_compressed(gz_key))
         if tar_norm in disqualified:
           continue
-        self._enqueue_debt_locked(DebtKind.RAW_REMOVE, tar_norm, persist=False)
-        self._enqueue_debt_locked(DebtKind.TAR_DROP, tar_norm, persist=False)
+        self._enqueue_day_close_locked(tar_norm, persist=False)
 
       self._accrue_maintenance_extras()
       self._trim_heap_to_max_entries_locked()
@@ -491,8 +609,7 @@ class ArchiveJanitor:
         day_date = _calendar_date_from_daily_tar(tar_norm)
         if day_date is None or day_date >= self._calendar_today_local():
           continue
-        self._enqueue_debt_locked(DebtKind.RAW_REMOVE, tar_norm, persist=False)
-        self._enqueue_debt_locked(DebtKind.TAR_DROP, tar_norm, persist=False)
+        self._enqueue_day_close_locked(tar_norm, persist=False)
         enqueued += 1
       self._trim_heap_to_max_entries_locked()
     if enqueued:
@@ -530,13 +647,24 @@ class ArchiveJanitor:
 
   def _pop_eligible_debt_locked(self, disqualified: Set[str], max_days: int) -> list:
     selected = []
+    selected_day_tars = set()
     deferred = []
-    while self._debt_heap and len(selected) < max_days:
+    while self._debt_heap:
       debt = heapq.heappop(self._debt_heap)
       key = (debt.kind.value, debt.tar_path)
       self._debt_seen.discard(key)
       if debt.tar_path in disqualified:
         deferred.append(debt)
+        continue
+      if debt.kind in _DAY_PIPELINE_KINDS:
+        if len(selected_day_tars) >= max_days:
+          deferred.append(debt)
+          continue
+        norm_debt = _normalize_day_pipeline_debt(debt)
+        if norm_debt.tar_path in selected_day_tars:
+          continue
+        selected.append(norm_debt)
+        selected_day_tars.add(norm_debt.tar_path)
         continue
       selected.append(debt)
     for debt in deferred:
@@ -614,6 +742,7 @@ class ArchiveJanitor:
           processed_index = i + 1
           tick_mutated = True
           if success and debt.kind in (
+              DebtKind.DAY_CLOSE,
               DebtKind.SEAL_PRIOR_DAY,
               DebtKind.RAW_REMOVE,
               DebtKind.VALIDATE,
@@ -669,6 +798,13 @@ class ArchiveJanitor:
       validation_cache,
       disqualified: Set[str],
   ) -> bool:
+    if debt.kind == DebtKind.DAY_CLOSE:
+      return self._close_one_day(
+          debt.tar_path,
+          snapshot=snapshot,
+          validation_cache=validation_cache,
+          disqualified=disqualified,
+      )
     if debt.kind == DebtKind.SEAL_PRIOR_DAY:
       return self._seal_one_day(debt.tar_path)
     if debt.kind in (DebtKind.RAW_REMOVE, DebtKind.VALIDATE):
@@ -693,6 +829,50 @@ class ArchiveJanitor:
       return True
     return False
 
+  def _day_phase_name(self, tar_path: str):
+    phase = self._day_phases.get(os.path.normpath(tar_path))
+    if isinstance(phase, dict):
+      return phase.get("phase")
+    return phase
+
+  def _day_phase_at_least(self, tar_path: str, target: str) -> bool:
+    order = {"sealed": 1, "raw_removed": 2, "tar_dropped": 3}
+    phase_name = self._day_phase_name(tar_path)
+    if phase_name not in order:
+      return False
+    return order[phase_name] >= order[target]
+
+  def _close_one_day(
+      self,
+      tar_path: str,
+      *,
+      snapshot,
+      validation_cache,
+      disqualified: Set[str],
+  ) -> bool:
+    tar_norm = os.path.normpath(tar_path)
+    if not self._day_phase_at_least(tar_norm, "sealed"):
+      if not self._seal_one_day(tar_norm):
+        return False
+    if not self._day_phase_at_least(tar_norm, "raw_removed"):
+      if not self._raw_remove_one_day(
+          tar_norm,
+          snapshot,
+          validation_cache,
+          disqualified,
+      ):
+        self._enqueue_day_close(tar_norm, persist=False)
+        return False
+    if not self._day_phase_at_least(tar_norm, "tar_dropped"):
+      if not self._tar_drop_one_day(
+          tar_norm,
+          validation_cache,
+          disqualified,
+      ):
+        self._enqueue_day_close(tar_norm, persist=False)
+        return False
+    return True
+
   def _seal_one_day(self, tar_path: str) -> bool:
     remaining_raw_by_gz = self._fresh_remaining_raw_by_gz_for_tar(tar_path)
     zst_path, gz_path = compressed_sibling_paths(tar_path)
@@ -702,15 +882,19 @@ class ArchiveJanitor:
           % tar_path,
           flush=True,
       )
-      self._enqueue_debt(DebtKind.SEAL_PRIOR_DAY, tar_path, persist=False)
+      self._enqueue_day_close(tar_path, persist=False)
       self._persist_hints()
       return False
+    keep_tar = effective_keep_uncompressed_tar(
+        tar_path,
+        local_tz=self.local_tz,
+    )
     atomic_seal_tar_to_zst(
         tar_path,
         zst_path,
         cfg.get_archive_zstd_threads(),
         cfg.get_archive_zstd_level(),
-        cfg.get_archive_keep_uncompressed_tar(),
+        keep_tar,
         log_fn=self.log_fn,
         remaining_raw_by_gz=remaining_raw_by_gz,
         force_remove_uncompressed_tar=False,
@@ -750,7 +934,7 @@ class ArchiveJanitor:
     after_remaining = self._fresh_remaining_raw_by_gz_for_tar(tar_path)
     zst_path, _gz_path = compressed_sibling_paths(tar_path)
     if daily_gz_has_remaining_raw_stats(zst_path, after_remaining):
-      self._enqueue_debt(DebtKind.RAW_REMOVE, tar_path, persist=False)
+      self._enqueue_day_close(tar_path, persist=False)
       self._persist_hints()
       if before_remaining != after_remaining:
         with self._hints_state_lock:
@@ -774,7 +958,7 @@ class ArchiveJanitor:
           % tar_path,
           flush=True,
       )
-      self._enqueue_debt(DebtKind.TAR_DROP, tar_path, persist=False)
+      self._enqueue_day_close(tar_path, persist=False)
       self._persist_hints()
       return False
     tar_existed = os.path.isfile(tar_path)

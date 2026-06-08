@@ -352,8 +352,12 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max concurrent raw stats head-line reads during maintenance snapshot (default sync_archive_pool_processes).
 # sync_archive_discovery_workers = 8
 
-# Keep uncompressed YYYY-MM-DD.tar after sealing to .tar.zst (default yes).
-# archive_keep_uncompressed_tar = yes
+# Keep uncompressed YYYY-MM-DD.tar after sealing globally (default no).
+# Prior days drop at seal when raw is gone; calendar-today uses grace hours below.
+# archive_keep_uncompressed_tar = no
+
+# Hours after local midnight to retain today's uncompressed .tar when global keep is off (default 8).
+# archive_today_uncompressed_tar_grace_hours = 8
 
 # Seconds idle before sealing today's tar; prior days seal immediately (default 60).
 # archive_seal_idle_seconds = 60
@@ -388,7 +392,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Archive janitor micro-batch wall budget per tick seconds (default 30).
 # archive_janitor_budget_seconds = 30
 
-# Max calendar days processed per janitor tick (default 2).
+# Max distinct calendar days (DAY_CLOSE pipeline) per janitor tick (default 2).
 # archive_janitor_days_per_tick = 2
 
 # Debt queue depth before temporary burst scaling (default 50).

@@ -126,6 +126,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "archive_dir"),
     ("PIPELINE", "daily_archive_dir"),
     ("PIPELINE", "archive_keep_uncompressed_tar"),
+    ("PIPELINE", "archive_today_uncompressed_tar_grace_hours"),
     ("PIPELINE", "archive_seal_idle_seconds"),
     ("PIPELINE", "archive_zstd_threads"),
     ("PIPELINE", "archive_zstd_level"),
@@ -423,18 +424,28 @@ def get_daily_archive_dir_path():
 
 
 def get_archive_keep_uncompressed_tar():
-  """Return True if daily ``.tar`` should be kept after sealing (default True).
+  """Return True if daily ``.tar`` should always be kept after sealing.
 
-  If False, only ``.tar.gz`` remains; the next append will decompress again.
+  Default False; calendar-today grace is handled by
+  ``effective_keep_uncompressed_tar`` unless this global override is yes.
   """
   _ensure_cfg_loaded()
   raw = _ini_get(
       "PIPELINE",
       "archive_keep_uncompressed_tar",
-      fallback="yes",
+      fallback="no",
       legacy_sections=("PORTAL",),
   )
   return raw.lower() in ('yes', 'true', '1')
+
+
+def get_archive_today_uncompressed_tar_grace_hours():
+  """Hours after local midnight to retain today's uncompressed ``.tar`` when global keep is off."""
+  _ensure_cfg_loaded()
+  return max(
+      0.0,
+      _pipeline_getfloat("archive_today_uncompressed_tar_grace_hours", fallback=8.0),
+  )
 
 
 def get_archive_seal_idle_seconds():

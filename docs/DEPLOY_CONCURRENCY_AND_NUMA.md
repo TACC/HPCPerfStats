@@ -42,7 +42,9 @@ Ingest is treated as always-on: the supervisor no longer runs blocking seal/raw/
 |----------------|---------|------|
 | **`archive_maintenance_interval_seconds`** | **`28800`** | Debt **accrual** scan interval (not blocking maintenance execution) |
 | **`archive_janitor_budget_seconds`** | **`30`** | Max wall time per janitor tick |
-| **`archive_janitor_days_per_tick`** | **`2`** | Max calendar days processed per tick |
+| **`archive_janitor_days_per_tick`** | **`2`** | Max **distinct calendar days** (`DAY_CLOSE` pipeline) per tick—not raw heap entry count |
+| **`archive_keep_uncompressed_tar`** | **`no`** | Drop prior-day `.tar` at seal when raw is gone; global `yes` retains until tar-drop |
+| **`archive_today_uncompressed_tar_grace_hours`** | **`8`** | Keep calendar-today `.tar` after local midnight (hours) when global keep is `no` |
 | **`archive_janitor_debt_high_watermark`** | **`50`** | Debt depth before temporary burst scaling |
 | **`archive_janitor_debt_burst_factor`** | **`1.5`** | Budget/days multiplier under high debt |
 | **`archive_janitor_debt_max_entries`** | **`200`** | In-memory debt cap; lowest-priority entries evicted with a warning when full |
@@ -52,9 +54,9 @@ Ingest is treated as always-on: the supervisor no longer runs blocking seal/raw/
 | **`sync_archive_worker_stall_seconds`** | **`600`** | Log stalled append workers (observability) |
 | **`sync_enable_ingest_first_durability_mode`** | **`yes`** | Checkpoint after DB even when append is deferred |
 
-Progress and resume state persist in **`.sync_archive_maint_hints.json`** (version **2**: `debt_queue`, `day_phases`, `validated_days`). Under ingest backlog, **full** accrual waits for an empty ingest queue; **partial** prior-day accrual and **day-complete reclaim** (chunk-end enqueue of seal → raw → `.tar` for completed prior calendar days) keep disk reclaim moving. Janitor ticks continue whenever debt exists; budget/exception paths re-queue unprocessed debt (no silent loss).
+Progress and resume state persist in **`.sync_archive_maint_hints.json`** (version **2**: `debt_queue`, `day_phases`, `validated_days`). Under ingest backlog, **full** accrual waits for an empty ingest queue; **partial** prior-day accrual, **day-drain** enqueue (pending daily tars cleared), and **chunk-end reclaim** enqueue **`DAY_CLOSE`** debt (one item per day: seal → raw → `.tar`) for completed prior calendar days. Legacy triple `SEAL`/`RAW`/`TAR` hints coalesce to `DAY_CLOSE` on load. Janitor ticks continue whenever debt exists; budget/exception paths re-queue unprocessed debt (no silent loss).
 
-**Multi-week backlog / disk pressure:** raise **`archive_janitor_days_per_tick`** and **`archive_janitor_budget_seconds`** modestly; keep **`archive_janitor_raw_paths_per_tick`** high enough for your daily file count (e.g. 15k/day may need several ticks per day). Set **`archive_keep_uncompressed_tar=no`** after verifying sealed `.tar.zst` if disk is tight.
+**Multi-week backlog / disk pressure:** raise **`archive_janitor_days_per_tick`** and **`archive_janitor_budget_seconds`** modestly; keep **`archive_janitor_raw_paths_per_tick`** high enough for your daily file count (e.g. 15k/day may need several ticks per day). Default **`archive_keep_uncompressed_tar=no`** drops prior-day `.tar` at seal once raw is gone; calendar-today keeps `.tar` for **`archive_today_uncompressed_tar_grace_hours`** (default 8h after local midnight). Set global **`archive_keep_uncompressed_tar=yes`** during heavy same-day append if you need the uncompressed `.tar` for late raw appends.
 
 **Hard isolation (recommended long-term):** run [`scripts/apply_compose_cpu_pinning.py`](../scripts/apply_compose_cpu_pinning.py) so **`pipeline`** gets a dedicated cpuset; you can then run zstd at lower nice/ionice and/or raise janitor budget with less impact on **`web`**/**`db`**.
 

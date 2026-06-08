@@ -1193,6 +1193,8 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert cfg.get_archive_janitor_debt_max_entries() == 200
   assert cfg.get_archive_janitor_raw_paths_per_tick() == 1000
   assert cfg.get_sync_unparsable_raw_quarantine_max_per_tick() == 50
+  assert cfg.get_archive_keep_uncompressed_tar() is False
+  assert cfg.get_archive_today_uncompressed_tar_grace_hours() == 8.0
   assert cfg.get_archive_maintenance_idle_seconds() == 300.0
   assert cfg.get_sync_archive_max_inflight_jobs() == 2
   assert cfg.get_sync_archive_worker_stall_seconds() == 600.0
