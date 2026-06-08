@@ -94,6 +94,8 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     iter_daily_tar_paths,
     replace_corrupt_tar_from_compressed_backup,
     cap_pending_stats_file_list,
+    INGEST_PARSE_FAILED_QUARANTINE_REASON,
+    quarantine_ingest_failed_raw_path,
     raw_stats_path_needs_tar_append,
     rescan_pending_stats_files,
     should_seal_daily_tar,
@@ -622,6 +624,26 @@ def _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining):
   )
 
 
+def _quarantine_failed_ingest_parse(stats_file, error_detail=None):
+  """Move permanently unparseable closed raw into DLO; return True when handled."""
+  archive_dir = cfg.get_archive_dir_path()
+  if not archive_dir:
+    return False
+  return quarantine_ingest_failed_raw_path(
+      stats_file,
+      archive_dir,
+      INGEST_PARSE_FAILED_QUARANTINE_REASON,
+      error_detail=error_detail,
+  )
+
+
+def _parse_failure_after_quarantine(stats_file, parse_elapsed, error_detail=None):
+  """Quarantine on permanent parse failure; ingest_ok=True when DLO move succeeds."""
+  if _quarantine_failed_ingest_parse(stats_file, error_detail=error_detail):
+    return (stats_file, None, False, True, parse_elapsed)
+  return (stats_file, None, False, False, parse_elapsed)
+
+
 def _parse_stats_file_payload(stats_file, stats_file_contents=None):
   """Parse stats file into payload for deferred DB writer stage.
 
@@ -646,14 +668,20 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
       lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)
       if load_err is not None:
         log_print(load_err)
-        return (stats_file, None, False, False, _parse_elapsed())
+        return _parse_failure_after_quarantine(
+            stats_file, _parse_elapsed(), error_detail=load_err,
+        )
       t, _jid, host = parse_first_timestamp_line(lines)
       if t is None:
         log_print("initial timestamp not found")
-        return (stats_file, None, False, False, _parse_elapsed())
+        return _parse_failure_after_quarantine(
+            stats_file, _parse_elapsed(), error_detail="initial timestamp not found",
+        )
       if not host:
         log_print("initial host not found in %s" % stats_file)
-        return (stats_file, None, False, False, _parse_elapsed())
+        return _parse_failure_after_quarantine(
+            stats_file, _parse_elapsed(), error_detail="initial host not found",
+        )
       host = str(host).strip()
       timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
       head_present = head_timestamp_present_in_db(host, timestamp_utc)
@@ -684,14 +712,18 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
       except Exception as e:
         log_print("error: process data failed: ", str(e))
         log_print("Possibly corrupt file: %s" % stats_file)
-        return (stats_file, None, False, False, _parse_elapsed())
+        return _parse_failure_after_quarantine(
+            stats_file, _parse_elapsed(), error_detail=str(e),
+        )
       stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
       del stats_list
       del proc_stats_list
       if stats.empty and proc_stats.empty:
         if DEBUG:
           log_print("Unable to process stats file %s" % stats_file)
-        return (stats_file, None, False, False, _parse_elapsed())
+        return _parse_failure_after_quarantine(
+            stats_file, _parse_elapsed(), error_detail="empty stats and proc_stats",
+        )
       stats = compute_deltas_and_arc(stats)
       return (stats_file, (stats, proc_stats), need_archival, True, _parse_elapsed())
     finally:
@@ -1646,6 +1678,11 @@ def run_sync_timedb_supervisor_loop(
   )
   log_print(
       "sync_timedb: archive_maintenance_interval_seconds is deprecated and ignored",
+      flush=True,
+  )
+  log_print(
+      "sync_timedb: sync_unparsable_raw_quarantine_max_per_tick is deprecated; "
+      "unparseable closed raw is quarantined at ingest parse failure",
       flush=True,
   )
   log_print(

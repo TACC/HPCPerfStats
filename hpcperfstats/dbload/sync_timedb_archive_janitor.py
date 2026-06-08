@@ -31,7 +31,6 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     iter_daily_tar_paths,
     remove_verified_archived_raw_files,
     remove_verified_uncompressed_daily_tars,
-    scan_and_quarantine_unparsable_closed_raw,
     tar_day_dirty_by_mtime,
     tar_has_duplicate_file_members,
 )
@@ -372,25 +371,8 @@ class ArchiveJanitor:
     except RuntimeError:
       self._future = None
 
-  def _run_unparsable_quarantine_scan(self):
-    skip_paths = set(self.get_quarantine_skip_paths() or ())
-    moved = scan_and_quarantine_unparsable_closed_raw(
-        self.archive_data_dir,
-        self.host_name_ext,
-        skip_paths=skip_paths,
-        log_fn=self.log_fn,
-        max_per_pass=cfg.get_sync_unparsable_raw_quarantine_max_per_tick(),
-    )
-    if moved:
-      self.log_fn(
-          "Archive janitor quarantined unparsable_raw count=%d" % moved,
-          flush=True,
-      )
-    return moved
-
   def enqueue_startup_debt(self):
-    """Startup quarantine scan only; DAY_CLOSE scheduling is supervisor-driven."""
-    self._run_unparsable_quarantine_scan()
+    """Signal janitor work at startup; DAY_CLOSE scheduling is supervisor-driven."""
     self.signal_work_available()
 
   def signal_scheduled_maintenance_pass(self, *, reason: str):
@@ -613,7 +595,6 @@ class ArchiveJanitor:
         self._pending_maintenance_pass_reason = None
       if pass_reason:
         self.run_scheduled_maintenance_pass(reason=pass_reason)
-      self._run_unparsable_quarantine_scan()
       disqualified = set(self.get_disqualified_daily_tars())
       self._tick_remaining_raw_cache = {}
       with self._debt_lock:

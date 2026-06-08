@@ -45,11 +45,12 @@ Out of scope for the DB gate: `remove_verified_uncompressed_daily_tars` (`.tar` 
 
 ## Unparsable closed raw (dead-letter quarantine)
 
-Closed raw segments whose **first timestamp cannot be parsed** are omitted from `build_archive_mapping` and `remaining_raw_by_gz`. They must **not** disqualify janitor days indefinitely:
+Closed raw segments that **cannot be ingested** (missing head, load error, `parse_stats_lines` failure, empty dataframes) are moved off the hot tree at **ingest parse failure** and omitted from `build_archive_mapping` / `remaining_raw_by_gz` once quarantined. They must **not** disqualify janitor days indefinitely:
 
-- **Quarantine DLO:** move to `{archive_data_dir}/.sync_timedb_unparsable_raw/` with manifest `{archive_data_dir}/.sync_timedb_unparsable_raw.json` (`scan_and_quarantine_unparsable_closed_raw` in `sync_timedb_archive_helpers.py`).
-- **When:** bounded scan at **janitor tick start** and **startup** (`enqueue_startup_debt`), before debt pop; skip paths from `get_quarantine_skip_paths()` (pending + inflight + append-cache raw).
-- **Cap:** `sync_unparsable_raw_quarantine_max_per_tick` (default 50). Invalidate `get_unmapped_closed_raw_daily_tars_cached` TTL after successful moves.
+- **Quarantine DLO:** move to `{archive_data_dir}/.sync_timedb_unparsable_raw/` with manifest `{archive_data_dir}/.sync_timedb_unparsable_raw.json` via `quarantine_ingest_failed_raw_path` in `sync_timedb_archive_helpers.py` (called from `_parse_stats_file_payload` in `sync_timedb.py`).
+- **When:** synchronously in the **ingest pool worker** on permanent parse failure; on successful move return `ingest_ok=True` / `need_archival=False` so the supervisor does not rescan forever. On move failure keep `ingest_ok=False` for retry.
+- **Manifest:** `reason` (`ingest_parse_failed` or legacy `unparsable_first_timestamp` for predicate-only batch helper); optional `error_detail` for operator forensics.
+- **Deprecated:** `sync_unparsable_raw_quarantine_max_per_tick` and janitor tree scans—no longer used for DLO. Invalidate `get_unmapped_closed_raw_daily_tars_cached` TTL after successful moves.
 
 ## Unmapped closed raw (parsable, not in mapping)
 

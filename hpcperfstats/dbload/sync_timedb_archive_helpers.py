@@ -326,8 +326,8 @@ def get_unmapped_closed_raw_daily_tars_cached(
 def collect_days_with_unmapped_closed_raw(closed_paths, mapping, tgz_archive_dir):
   """Daily ``.tar`` paths for closed **parsable** raw stats not present in ``mapping``.
 
-  Unparsable closed segments are janitor-quarantine candidates (see
-  ``scan_and_quarantine_unparsable_closed_raw``); they do not disqualify days here.
+  Unparsable closed segments are moved to DLO at ingest parse failure (see
+  ``quarantine_ingest_failed_raw_path``); they do not disqualify days here.
   Parsable unmapped paths still block seal / ``.tar`` removal (data-gap safety).
   """
   if not closed_paths:
@@ -351,6 +351,7 @@ def collect_days_with_unmapped_closed_raw(closed_paths, mapping, tgz_archive_dir
 SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME = ".sync_timedb_unparsable_raw"
 SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME = ".sync_timedb_unparsable_raw.json"
 UNPARSABLE_RAW_QUARANTINE_REASON = "unparsable_first_timestamp"
+INGEST_PARSE_FAILED_QUARANTINE_REASON = "ingest_parse_failed"
 
 
 def quarantine_dir_for_archive(archive_data_dir):
@@ -430,6 +431,111 @@ def is_unparsable_closed_stats_path(path):
   return timestamp_utc is None
 
 
+def _closed_raw_eligible_for_quarantine(path_norm):
+  """True when ``path_norm`` is a closed raw stats file that may be quarantined."""
+  if not path_norm:
+    return False
+  base = os.path.basename(path_norm)
+  if base.startswith("current"):
+    return False
+  if stats_file_is_active_segment(path_norm):
+    return False
+  return True
+
+
+def _quarantine_one_closed_raw_path(
+    path_norm,
+    archive_data_dir,
+    reason,
+    *,
+    manifest_path,
+    manifest_entries,
+    already_quarantined,
+    quarantine_root,
+    log_fn=log_print,
+    error_detail=None,
+):
+  """Move one closed raw path into DLO when present on disk. Return True if handled."""
+  if path_norm in already_quarantined:
+    return True
+  if not _closed_raw_eligible_for_quarantine(path_norm):
+    return False
+  dest_path = _quarantine_dest_path(archive_data_dir, quarantine_root, path_norm)
+  try:
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    with file_write_lock(path_norm):
+      if not os.path.isfile(path_norm):
+        return path_norm in already_quarantined
+      if os.path.exists(dest_path):
+        if log_fn:
+          log_fn(
+              "Unparsable raw quarantine skipped existing dest: %s"
+              % dest_path,
+              flush=True,
+          )
+        return False
+      shutil.move(path_norm, dest_path)
+    entry = {
+        "original_path": path_norm,
+        "quarantined_path": os.path.normpath(dest_path),
+        "quarantined_at": time.time(),
+        "reason": reason,
+    }
+    if error_detail:
+      entry["error_detail"] = str(error_detail)
+    manifest_entries.append(entry)
+    already_quarantined.add(path_norm)
+    if log_fn:
+      log_fn(
+          "Quarantined unparsable raw stats %s -> %s"
+          % (path_norm, dest_path),
+          flush=True,
+      )
+    return True
+  except OSError as exc:
+    if log_fn:
+      log_fn(
+          "Unparsable raw quarantine failed path=%s: %s"
+          % (path_norm, exc),
+          flush=True,
+      )
+    return False
+
+
+def quarantine_ingest_failed_raw_path(
+    path,
+    archive_data_dir,
+    reason,
+    *,
+    log_fn=log_print,
+    error_detail=None,
+):
+  """Move one ingest-failed closed raw path into DLO; return True when handled."""
+  if not path or not archive_data_dir:
+    return False
+  path_norm = os.path.normpath(path)
+  manifest_path = manifest_path_for_archive(archive_data_dir)
+  manifest_entries = _load_unparsable_raw_manifest(manifest_path)
+  already_quarantined = _quarantined_original_paths_from_manifest(manifest_entries)
+  quarantine_root = quarantine_dir_for_archive(archive_data_dir)
+  manifest_len_before = len(manifest_entries)
+  handled = _quarantine_one_closed_raw_path(
+      path_norm,
+      archive_data_dir,
+      reason,
+      manifest_path=manifest_path,
+      manifest_entries=manifest_entries,
+      already_quarantined=already_quarantined,
+      quarantine_root=quarantine_root,
+      log_fn=log_fn,
+      error_detail=error_detail,
+  )
+  if handled and len(manifest_entries) > manifest_len_before:
+    _save_unparsable_raw_manifest_atomic(manifest_path, manifest_entries)
+    invalidate_unmapped_disqualify_cache()
+  return handled
+
+
 def quarantine_unparsable_closed_raw_paths(
     paths,
     archive_data_dir,
@@ -468,72 +574,20 @@ def quarantine_unparsable_closed_raw_paths(
       continue
     if not is_unparsable_closed_stats_path(path_norm):
       continue
-    dest_path = _quarantine_dest_path(archive_data_dir, quarantine_root, path_norm)
-    try:
-      os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-      with file_write_lock(path_norm):
-        if not os.path.isfile(path_norm):
-          continue
-        if os.path.exists(dest_path):
-          if log_fn:
-            log_fn(
-                "Unparsable raw quarantine skipped existing dest: %s"
-                % dest_path,
-                flush=True,
-            )
-          continue
-        shutil.move(path_norm, dest_path)
-      entry = {
-          "original_path": path_norm,
-          "quarantined_path": os.path.normpath(dest_path),
-          "quarantined_at": time.time(),
-          "reason": UNPARSABLE_RAW_QUARANTINE_REASON,
-      }
-      manifest_entries.append(entry)
-      already_quarantined.add(path_norm)
+    if _quarantine_one_closed_raw_path(
+        path_norm,
+        archive_data_dir,
+        UNPARSABLE_RAW_QUARANTINE_REASON,
+        manifest_path=manifest_path,
+        manifest_entries=manifest_entries,
+        already_quarantined=already_quarantined,
+        quarantine_root=quarantine_root,
+        log_fn=log_fn,
+    ):
       moved += 1
-      if log_fn:
-        log_fn(
-            "Quarantined unparsable raw stats %s -> %s"
-            % (path_norm, dest_path),
-            flush=True,
-        )
-    except OSError as exc:
-      if log_fn:
-        log_fn(
-            "Unparsable raw quarantine failed path=%s: %s"
-            % (path_norm, exc),
-            flush=True,
-        )
 
   if moved:
     _save_unparsable_raw_manifest_atomic(manifest_path, manifest_entries)
-  return moved
-
-
-def scan_and_quarantine_unparsable_closed_raw(
-    archive_data_dir,
-    host_name_ext,
-    *,
-    skip_paths=None,
-    log_fn=log_print,
-    max_per_pass=None,
-):
-  """Scan closed raw tree and quarantine unparsable segments (bounded)."""
-  if not archive_data_dir:
-    return 0
-  closed_paths = collect_stats_files_in_range(
-      archive_data_dir, "all", None, host_name_ext)
-  if not closed_paths:
-    return 0
-  moved = quarantine_unparsable_closed_raw_paths(
-      closed_paths,
-      archive_data_dir,
-      skip_paths=skip_paths,
-      log_fn=log_fn,
-      max_moves=max_per_pass,
-  )
-  if moved:
     invalidate_unmapped_disqualify_cache()
   return moved
 

@@ -2076,7 +2076,7 @@ def get_archive_janitor_raw_paths_per_tick():
 
 
 def get_sync_unparsable_raw_quarantine_max_per_tick():
-  """Max unparsable closed raw files quarantined per janitor scan (default 50)."""
+  """Deprecated: ingest quarantines unparseable raw at parse failure (default 50)."""
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_unparsable_raw_quarantine_max_per_tick", fallback=50))
 

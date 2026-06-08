@@ -1749,6 +1749,119 @@ def test_parse_payload_marks_fully_duplicate_file_for_archival(monkeypatch):
   assert parse_elapsed_s >= 0.0
 
 
+def _parse_payload_quarantine_fixture(monkeypatch, tmp_path, *, lines, parse_side_effect=None):
+  archive_dir = tmp_path / "archive"
+  host_dir = archive_dir / "host.hpc"
+  host_dir.mkdir(parents=True)
+  raw_path = host_dir / "1778200758"
+  raw_path.write_text("".join(lines), encoding="utf-8")
+  target = str(raw_path)
+
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.cfg, "get_archive_dir_path", lambda: str(archive_dir))
+  monkeypatch.setattr(st, "parse_stats_file_path", lambda _p: ("host.hpc", "1778200758"))
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "load_stats_file_lines", lambda *_a, **_k: (list(lines), None))
+  monkeypatch.setattr(
+      st,
+      "parse_first_timestamp_line",
+      lambda _lines: ("1778200758", "job1", "cn001"),
+  )
+  monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda *_a, **_k: False)
+  if parse_side_effect is not None:
+    monkeypatch.setattr(st, "parse_stats_lines", parse_side_effect)
+  return target, archive_dir, raw_path
+
+
+def test_parse_payload_quarantines_on_parse_exception(monkeypatch, tmp_path):
+  lines = ["1778200758 job1 cn001\n", "bad\n"]
+  target, archive_dir, raw_path = _parse_payload_quarantine_fixture(
+      monkeypatch,
+      tmp_path,
+      lines=lines,
+      parse_side_effect=lambda *_a, **_k: (_ for _ in ()).throw(
+          ValueError("not enough values to unpack (expected 3, got 2)")
+      ),
+  )
+  stats_file, payload, need_archival, ingest_ok, parse_elapsed_s = st._parse_stats_file_payload(
+      target,
+  )
+  assert stats_file == target
+  assert payload is None
+  assert need_archival is False
+  assert ingest_ok is True
+  assert parse_elapsed_s >= 0.0
+  assert not raw_path.exists()
+  quarantine_path = (
+      archive_dir / archive_helpers.SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME
+      / "host.hpc" / "1778200758"
+  )
+  assert quarantine_path.is_file()
+
+
+@pytest.mark.parametrize(
+    "failure_kind,lines,load_err,first_ts,host,empty_df",
+    [
+        ("load_err", [], "read failed", None, None, False),
+        ("no_timestamp", ["not-a-stats-line\n"], None, None, None, False),
+        ("no_host", ["1778200758 job1\n"], None, "1778200758", "", False),
+        ("empty_df", ["1778200758 job1 cn001\n"], None, "1778200758", "cn001", True),
+    ],
+)
+def test_parse_payload_quarantines_permanent_failures(
+    monkeypatch,
+    tmp_path,
+    failure_kind,
+    lines,
+    load_err,
+    first_ts,
+    host,
+    empty_df,
+):
+  archive_dir = tmp_path / "archive"
+  host_dir = archive_dir / "host.hpc"
+  host_dir.mkdir(parents=True)
+  raw_path = host_dir / "bad_raw"
+  raw_path.write_text("".join(lines) if lines else "x", encoding="utf-8")
+  target = str(raw_path)
+
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.cfg, "get_archive_dir_path", lambda: str(archive_dir))
+  monkeypatch.setattr(st, "parse_stats_file_path", lambda _p: ("host.hpc", "bad_raw"))
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(
+      st,
+      "load_stats_file_lines",
+      lambda *_a, **_k: (list(lines), load_err),
+  )
+  if first_ts is None and host is None:
+    monkeypatch.setattr(st, "parse_first_timestamp_line", lambda _lines: (None, None, None))
+  elif host == "":
+    monkeypatch.setattr(st, "parse_first_timestamp_line", lambda _lines: (first_ts, "job1", ""))
+  else:
+    monkeypatch.setattr(
+        st,
+        "parse_first_timestamp_line",
+        lambda _lines: (first_ts, "job1", host),
+    )
+    monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda *_a, **_k: False)
+    monkeypatch.setattr(st, "parse_stats_lines", lambda *_a, **_k: ([], []))
+    empty_stats = pd.DataFrame()
+    empty_proc = pd.DataFrame(columns=["jid", "host", "proc"])
+    monkeypatch.setattr(
+        st,
+        "build_stats_dataframes",
+        lambda *_a, **_k: (empty_stats, empty_proc),
+    )
+    monkeypatch.setattr(st, "compute_deltas_and_arc", lambda s: s)
+
+  stats_file, payload, need_archival, ingest_ok, _elapsed = st._parse_stats_file_payload(target)
+  assert ingest_ok is True, failure_kind
+  assert payload is None
+  assert need_archival is False
+  assert not raw_path.exists()
+
+
 def test_parse_payload_skips_archival_when_db_complete_and_in_tar(monkeypatch):
   target = "/tmp/stats-in-tar"
   monkeypatch.setattr(st, "close_old_connections", lambda: None)

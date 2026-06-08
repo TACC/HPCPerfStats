@@ -3012,6 +3012,44 @@ def test_collect_unmapped_closed_raw_daily_tars_ignores_unparsable_on_disk(tmp_p
   assert not result
 
 
+def test_quarantine_ingest_failed_raw_path_valid_head_corrupt_body(tmp_path):
+  import json
+
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  archive_dir = tmp_path / "archive"
+  host_dir = archive_dir / "host.hpc"
+  host_dir.mkdir(parents=True)
+  day_epoch = 1704067200
+  raw_path = host_dir / str(day_epoch)
+  raw_path.write_text(
+      "%d job1 cn001\n"
+      "bad line with only two tokens\n" % day_epoch,
+      encoding="utf-8",
+  )
+
+  moved = helpers.quarantine_ingest_failed_raw_path(
+      str(raw_path),
+      str(archive_dir),
+      helpers.INGEST_PARSE_FAILED_QUARANTINE_REASON,
+      error_detail="not enough values to unpack (expected 3, got 2)",
+      log_fn=lambda *_a, **_k: None,
+  )
+  assert moved is True
+  assert not raw_path.exists()
+  quarantine_path = (
+      archive_dir / helpers.SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME
+      / "host.hpc" / str(day_epoch)
+  )
+  assert quarantine_path.is_file()
+  manifest = json.loads(
+      (archive_dir / helpers.SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME).read_text()
+  )
+  assert len(manifest) == 1
+  assert manifest[0]["reason"] == helpers.INGEST_PARSE_FAILED_QUARANTINE_REASON
+  assert "unpack" in manifest[0]["error_detail"]
+
+
 def test_quarantine_unparsable_closed_raw_moves_file_and_writes_manifest(tmp_path):
   import json
 

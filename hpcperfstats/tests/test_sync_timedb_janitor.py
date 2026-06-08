@@ -721,7 +721,6 @@ def test_janitor_raw_remove_skips_not_head_ingested_raw(monkeypatch, tmp_path):
   janitor._accrual_snapshot = snapshot
   _mark_day_sealed(janitor, tar_path)
   janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
-  monkeypatch.setattr(janitor_mod, "scan_and_quarantine_unparsable_closed_raw", lambda *a, **k: 0)
   monkeypatch.setattr(
       janitor_mod,
       "build_remaining_raw_for_daily_tar",
@@ -812,6 +811,8 @@ def test_janitor_tar_drop_blocked_when_parsable_unmapped_closed_raw(
 def test_janitor_tar_drop_proceeds_after_unparsable_quarantine(
     monkeypatch, tmp_path,
 ):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
   archive_dir = tmp_path / "archive"
   host_dir = archive_dir / "host.hpc"
   host_dir.mkdir(parents=True)
@@ -823,6 +824,11 @@ def test_janitor_tar_drop_proceeds_after_unparsable_quarantine(
   day_epoch = int(datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc).timestamp())
   raw_path = host_dir / str(day_epoch)
   raw_path.write_text("not-a-stats-line\n")
+  helpers.quarantine_unparsable_closed_raw_paths(
+      [str(raw_path)],
+      str(archive_dir),
+      log_fn=lambda *_a, **_k: None,
+  )
 
   def disqualify():
     from hpcperfstats.dbload.sync_timedb_archive_helpers import (
@@ -858,23 +864,15 @@ def test_janitor_tar_drop_proceeds_after_unparsable_quarantine(
   assert called["drop"] is True
 
 
-def test_janitor_skips_quarantine_for_pending_inflight_path(tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
-
-  archive_dir = tmp_path / "archive"
-  host_dir = archive_dir / "host.hpc"
-  host_dir.mkdir(parents=True)
-  raw_path = host_dir / "bad_raw"
-  raw_path.write_text("no-timestamp-here\n")
-  janitor = _make_janitor(
-      archive_data_dir=str(archive_dir),
-      host_name_ext=".hpc",
-      get_quarantine_skip_paths=lambda: {str(raw_path)},
-  )
-  janitor._run_unparsable_quarantine_scan()
-  assert raw_path.is_file()
-  quarantine_root = archive_dir / helpers.SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME
-  assert not (quarantine_root / "host.hpc" / "bad_raw").exists()
+def test_janitor_tick_does_not_scan_unparsable_tree(monkeypatch):
+  janitor = _make_janitor()
+  assert not hasattr(janitor, "_run_unparsable_quarantine_scan")
+  assert "scan_and_quarantine_unparsable_closed_raw" not in dir(janitor_mod)
+  janitor._enqueue_debt(DebtKind.VALIDATE, "/tmp/2026-01-01.tar", persist=False)
+  monkeypatch.setattr(janitor, "_process_debt_item", lambda *a, **k: True)
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 9999)
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_days_per_tick", lambda: 10)
+  janitor._run_tick_body()
 
 
 def test_janitor_raw_remove_deletes_new_closed_raw_after_accrual_snapshot_stale(
