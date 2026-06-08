@@ -3,7 +3,7 @@
 
 **Hot path (supervisor thread):** discover → ingest → checkpoint → dispatch append (up to ``sync_archive_max_inflight_jobs`` disjoint daily-tar slots). Ingest never blocks on seal, zstd, raw delete, or uncompressed ``.tar`` removal.
 
-**Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). ``DAY_CLOSE`` debt is scheduled at supervisor startup and every ``rescan_every_chunks`` ingest chunks (default 10). Full interval accrual enqueues LOCK_CLEANUP/DEDUPE only when the ingest queue is empty. ``signal_work_available()`` schedules ticks without waiting. Per-day seal → async verify+delete (``DayRawRemovalCoordinator``) or incremental raw/tar ticks when preflight is off; DB head-ingest gate and disqualification union unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
+**Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Snapshot/hints refresh and ``DAY_CLOSE`` scheduling run at supervisor startup, every ``rescan_every_chunks`` ingest chunks (default 10), and when the ingest queue drains to zero after chunk processing—all on the janitor thread. Per-day lock cleanup (once per tick), dedupe-before-seal, seal → async verify+delete (``DayRawRemovalCoordinator``) or incremental raw/tar when preflight is off; DB head-ingest gate and disqualification union unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
 Append and raw delete stay DB-gated when ``sync_archive_require_db_head_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
@@ -1050,8 +1050,8 @@ def _append_to_tar(tar_path, file_paths):
 def archive_stats_files(archive_info):
   """Append stats files to a daily ``.tar`` (verify, recover, dedupe).
 
-  zstd sealing and removal of raw stats run on ``archive_maintenance_interval_seconds``
-  (see main loop), not after each append.
+  zstd sealing and removal of raw stats run on the ``ArchiveJanitor`` cold path
+  (startup + every ``rescan_every_chunks`` ingest chunks), not after each append.
   """
   with _sync_worker_db_task():
     return _archive_stats_files_body(archive_info)
@@ -1270,17 +1270,11 @@ def run_sync_timedb_supervisor_loop(
     archive_pool,
     run_once=False,
 ):
-  """Rescan archive, ingest pending files in chunks, run zstd seal/removal on interval.
+  """Rescan archive, ingest pending files in chunks; cold-path work on janitor thread.
 
-  Whenever the ingest queue is empty, runs full archive maintenance before
-  ``rescan_pending_stats_files``. If ``run_once`` is True, exit after the first
-  rescan that finds no pending files (no ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS``
-  idle wait). Used by pipeline E2E tests.
+  If ``run_once`` is True, exit after the first rescan that finds no pending files
+  (no ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` idle wait). Used by pipeline E2E tests.
   """
-  maint_interval_raw = cfg.get_archive_maintenance_interval_seconds()
-  maint_interval, maint_interval_warning = (
-      _resolve_archive_maintenance_interval_seconds(maint_interval_raw)
-  )
   ingest_queue_max = max(1, int(cfg.get_sync_ingest_queue_max_size()))
   archive_queue_max = max(1, int(cfg.get_sync_archive_queue_max_size()))
   ingest_queue_high = ingest_queue_max
@@ -1291,20 +1285,7 @@ def run_sync_timedb_supervisor_loop(
   archive_retry_backoff_base = max(0.0, float(cfg.get_sync_archive_retry_backoff_base_seconds()))
   archive_retry_backoff_max = max(0.0, float(cfg.get_sync_archive_retry_backoff_max_seconds()))
   ingest_first_durability = bool(cfg.get_sync_enable_ingest_first_durability_mode())
-  last_archive_maint = time.time()
   ingest_t0 = time.time()
-
-  def _maintenance_elapsed_s():
-    return max(0.0, time.time() - last_archive_maint)
-
-  def _is_maintenance_due():
-    return _maintenance_elapsed_s() >= maint_interval
-
-  def _complete_maintenance_timer_reset():
-    nonlocal last_archive_maint
-    last_archive_maint = time.time()
-    close_old_connections()
-    connections.close_all()
 
   pending_archive_tasks = []
   _archive_heap_seq = itertools.count()
@@ -1654,19 +1635,17 @@ def run_sync_timedb_supervisor_loop(
     except OSError:
       pass
 
-  if maint_interval_warning is not None:
-    log_print(
-        "Invalid archive_maintenance_interval_seconds=%r reason=%s; using default %.1fs"
-        % (maint_interval_raw, maint_interval_warning, float(maint_interval)),
-        flush=True,
-    )
   log_print(
-      "sync_timedb continuous mode: archive janitor accrual interval %.1f s; "
-      "idle rescan sleep %s s"
+      "sync_timedb: day_close schedule startup + every %d ingest chunks + "
+      "on ingest queue drain; idle rescan sleep %s s"
       % (
-          float(maint_interval),
+          int(rescan_every_chunks),
           int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS),
       ),
+      flush=True,
+  )
+  log_print(
+      "sync_timedb: archive_maintenance_interval_seconds is deprecated and ignored",
       flush=True,
   )
   log_print(
@@ -1821,10 +1800,20 @@ def run_sync_timedb_supervisor_loop(
         flush=True,
     )
 
+  def _signal_maintenance_pass_if_queue_drained(*, had_pending_before_chunk: bool):
+    if not had_pending_before_chunk or pending_stats_files:
+      return
+    log_print(
+        "sync_timedb: maintenance pass reason=ingest_queue_empty",
+        flush=True,
+    )
+    archive_janitor.signal_scheduled_maintenance_pass(reason="ingest_queue_empty")
+
   try:
     _ensure_daily_archive_dir_exists()
+    log_print("sync_timedb: maintenance pass reason=startup", flush=True)
+    archive_janitor.signal_scheduled_maintenance_pass(reason="startup")
     archive_janitor.enqueue_startup_debt()
-    archive_janitor.enqueue_scheduled_day_close(reason="startup")
     startup_preflight = StartupRawRemovalPreflight(
         archive_data_dir=directory,
         host_name_ext=host_name_ext,
@@ -1884,30 +1873,7 @@ def run_sync_timedb_supervisor_loop(
         _post_startup_raw_removal_rescan()
       return True
 
-    def _run_debt_accrual_if_due(reason_label):
-      if not _is_maintenance_due():
-        return False
-      if len(pending_stats_files) > 0:
-        if archive_janitor.maybe_accrue_partial_debt_if_due(maint_interval):
-          _complete_maintenance_timer_reset()
-          archive_janitor.signal_work_available()
-          return True
-        if _is_maintenance_due():
-          log_print(
-              "Archive debt accrual deferred reason=ingest_backlog context=%s "
-              "pending=%d"
-              % (reason_label, len(pending_stats_files)),
-              flush=True,
-          )
-        return False
-      if archive_janitor.maybe_accrue_debt_if_due(maint_interval):
-        _complete_maintenance_timer_reset()
-        archive_janitor.signal_work_available()
-        return True
-      return False
-
     while not shutdown_requested[0]:
-      _run_debt_accrual_if_due("outer_loop")
       if _maybe_handle_startup_raw_removal_delete_phase():
         continue
       _maybe_apply_day_close_rescan()
@@ -1945,7 +1911,6 @@ def run_sync_timedb_supervisor_loop(
           chunk_counter = 0
           worker_idle_loops = 0
           continue
-        _run_debt_accrual_if_due("pre_rescan")
         archive_janitor.signal_work_available()
         pending_stats_files = _cap_pending_stats_files_list(
             rescan_pending_stats_files(
@@ -1994,7 +1959,6 @@ def run_sync_timedb_supervisor_loop(
           continue
         _maybe_apply_day_close_rescan()
         idle_since_empty_queue = None
-        _run_debt_accrual_if_due("chunk_boundary")
         _finalize_archive_slots_if_needed(
             force=True,
             allow_defer=True,
@@ -2014,6 +1978,7 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         target_chunk_size = min(chunk_size, ingest_queue_high)
+        had_pending_before_chunk = bool(pending_stats_files)
         stats_files_chunk = pending_stats_files[:target_chunk_size]
         if not stats_files_chunk:
           continue
@@ -2336,7 +2301,13 @@ def run_sync_timedb_supervisor_loop(
               allow_defer=bool(pending_stats_files),
               context="rescan_every_chunks",
           )
-          archive_janitor.enqueue_scheduled_day_close(reason="every_n_chunks")
+          log_print(
+              "sync_timedb: maintenance pass reason=every_n_chunks",
+              flush=True,
+          )
+          archive_janitor.signal_scheduled_maintenance_pass(
+              reason="every_n_chunks",
+          )
           archive_janitor.signal_work_available()
           pending_stats_files = _cap_pending_stats_files_list(
               rescan_pending_stats_files(
@@ -2352,6 +2323,10 @@ def run_sync_timedb_supervisor_loop(
           log_print(
               "Rescanned after %d chunks; pending files (oldest first): %d"
               % (rescan_every_chunks, len(pending_stats_files)))
+
+        _signal_maintenance_pass_if_queue_drained(
+            had_pending_before_chunk=had_pending_before_chunk,
+        )
 
       _finalize_archive_slots_if_needed(
           force=True,

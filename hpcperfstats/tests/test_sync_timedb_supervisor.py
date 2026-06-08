@@ -477,8 +477,12 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch, 
     shutdown_requested[0] = False
 
 
-def test_supervisor_runs_full_archive_maintenance_before_rescan_when_idle(monkeypatch):
+def test_supervisor_runs_full_archive_maintenance_before_rescan_when_idle(
+    monkeypatch, tmp_path,
+):
   shutdown_requested[0] = False
+  archive_dir = tmp_path / "archive"
+  archive_dir.mkdir()
   try:
     events = []
 
@@ -486,6 +490,7 @@ def test_supervisor_runs_full_archive_maintenance_before_rescan_when_idle(monkey
       events.append("rescan")
       return []
 
+    _supervisor_startup_preflight_disabled(monkeypatch)
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
@@ -506,7 +511,7 @@ def test_supervisor_runs_full_archive_maintenance_before_rescan_when_idle(monkey
     archive_pool.__enter__()
     try:
       st.run_sync_timedb_supervisor_loop(
-          "/tmp/archive",
+          str(archive_dir),
           "all",
           None,
           ".hpc",
@@ -525,8 +530,12 @@ def test_supervisor_runs_full_archive_maintenance_before_rescan_when_idle(monkey
     shutdown_requested[0] = False
 
 
-def test_supervisor_rescans_before_full_maintenance_when_queue_empty(monkeypatch):
+def test_supervisor_rescans_before_full_maintenance_when_queue_empty(
+    monkeypatch, tmp_path,
+):
   shutdown_requested[0] = False
+  archive_dir = tmp_path / "archive"
+  archive_dir.mkdir()
   try:
     events = []
     rescans = deque([["/fake/stats0"], []])
@@ -537,6 +546,7 @@ def test_supervisor_rescans_before_full_maintenance_when_queue_empty(monkeypatch
         return list(rescans.popleft())
       return []
 
+    _supervisor_startup_preflight_disabled(monkeypatch)
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
@@ -560,7 +570,7 @@ def test_supervisor_rescans_before_full_maintenance_when_queue_empty(monkeypatch
     archive_pool.__enter__()
     try:
       st.run_sync_timedb_supervisor_loop(
-          "/tmp/archive",
+          str(archive_dir),
           "all",
           None,
           ".hpc",
@@ -771,7 +781,7 @@ def test_supervisor_logs_completed_file_with_global_remaining(monkeypatch):
 
 
 def test_periodic_maintenance_runs_with_backlog_and_logs_context(monkeypatch):
-  """Debt accrual is skipped at chunk boundaries while ingest backlog is non-empty."""
+  """Ingest backlog does not run removed interval accrual at chunk boundaries."""
   shutdown_requested[0] = False
   try:
     calls = {"n": 0}
@@ -825,12 +835,8 @@ def test_periodic_maintenance_runs_with_backlog_and_logs_context(monkeypatch):
     finally:
       archive_pool.__exit__(None, None, None)
 
-    assert any(
-        "Archive debt accrual deferred reason=ingest_backlog context=chunk_boundary"
-        in line
-        or "Archive janitor accrue reason=interval_partial" in line
-        for line in logs
-    )
+    assert not any("Archive debt accrual deferred" in line for line in logs)
+    assert not any("Archive janitor accrue reason=" in line for line in logs)
   finally:
     shutdown_requested[0] = False
 
@@ -1556,7 +1562,7 @@ def test_periodic_maintenance_runs_forced_two_phase_when_defer_cap_exceeded(
 
 
 def test_continuous_backlog_triggers_forced_maintenance(monkeypatch, tmp_path):
-  """Continuous ingest backlog skips debt accrual but still signals the janitor."""
+  """Continuous ingest backlog still signals the janitor without interval accrual."""
   shutdown_requested[0] = False
   archive_dir = tmp_path / "archive"
   archive_dir.mkdir()
@@ -1584,11 +1590,7 @@ def test_continuous_backlog_triggers_forced_maintenance(monkeypatch, tmp_path):
     def log_print_capture(*args, **kwargs):
       line = " ".join(str(a) for a in args)
       logs.append(line)
-      if (
-          "Archive debt accrual deferred reason=ingest_backlog context=chunk_boundary"
-          in line
-          or "Archive janitor accrue reason=interval_partial" in line
-      ):
+      if "sync_timedb: maintenance pass reason=startup" in line:
         shutdown_requested[0] = True
 
     monkeypatch.setattr(st, "log_print", log_print_capture)
@@ -1616,10 +1618,9 @@ def test_continuous_backlog_triggers_forced_maintenance(monkeypatch, tmp_path):
     )
 
     assert any(
-        "Archive debt accrual deferred reason=ingest_backlog" in line
-        or "Archive janitor accrue reason=interval_partial" in line
-        for line in logs
-    )
+        "sync_timedb: maintenance pass reason=startup" in line for line in logs)
+    assert not any("Archive debt accrual deferred" in line for line in logs)
+    assert not any("Archive janitor accrue reason=" in line for line in logs)
     assert not any("forced two-phase archive maintenance" in line for line in logs)
   finally:
     shutdown_requested[0] = False
@@ -2367,11 +2368,11 @@ class _CapturingHygieneExecutor:
 
 
 def test_post_chunk_hygiene_scheduled_and_runs_seal_before_delete(monkeypatch):
-  """Every rescan_every_chunks boundary schedules DAY_CLOSE via enqueue_scheduled_day_close."""
+  """Every rescan_every_chunks boundary signals a janitor maintenance pass."""
   shutdown_requested[0] = False
   scheduled_reasons = []
   try:
-    original = janitor_mod.ArchiveJanitor.enqueue_scheduled_day_close
+    original = janitor_mod.ArchiveJanitor.signal_scheduled_maintenance_pass
 
     def spy_scheduled(self, *, reason):
       scheduled_reasons.append(reason)
@@ -2379,7 +2380,7 @@ def test_post_chunk_hygiene_scheduled_and_runs_seal_before_delete(monkeypatch):
 
     monkeypatch.setattr(
         janitor_mod.ArchiveJanitor,
-        "enqueue_scheduled_day_close",
+        "signal_scheduled_maintenance_pass",
         spy_scheduled,
     )
 
@@ -2439,7 +2440,7 @@ def test_supervisor_scheduled_day_close_at_startup(monkeypatch, tmp_path):
     daily_dir = tmp_path / "daily"
     archive_dir.mkdir()
     daily_dir.mkdir()
-    original = janitor_mod.ArchiveJanitor.enqueue_scheduled_day_close
+    original = janitor_mod.ArchiveJanitor.signal_scheduled_maintenance_pass
 
     def spy_scheduled(self, *, reason):
       scheduled_calls.append(reason)
@@ -2447,7 +2448,7 @@ def test_supervisor_scheduled_day_close_at_startup(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         janitor_mod.ArchiveJanitor,
-        "enqueue_scheduled_day_close",
+        "signal_scheduled_maintenance_pass",
         spy_scheduled,
     )
 
@@ -2477,39 +2478,206 @@ def test_supervisor_scheduled_day_close_at_startup(monkeypatch, tmp_path):
     shutdown_requested[0] = False
 
 
-def test_sustained_ingest_backlog_skips_full_accrual_but_prior_days_progress(monkeypatch):
-  janitor = janitor_mod.ArchiveJanitor(
-      archive_data_dir="/tmp/archive",
-      host_name_ext=".hpc",
-      tgz_archive_dir="/tmp/daily",
-      local_tz=datetime.now().astimezone().tzinfo,
-      log_fn=MagicMock(),
-      get_disqualified_daily_tars=lambda: set(),
-      get_ingest_backlog_high=lambda: True,
-      get_pending_stats_count=lambda: 100,
-      get_idle_seconds=lambda: 0.0,
-  )
-  janitor._persist_hints = MagicMock()
-  janitor._last_accrual_at = 0.0
-  full_called = {"n": 0}
-  partial_called = {"n": 0}
-  original_full = janitor._accrue_debt_full
-  original_partial = janitor._accrue_debt_partial_prior_days
+def test_supervisor_startup_log_no_accrual_interval(monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  logs = []
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
 
-  def spy_full(*a, **k):
-    full_called["n"] += 1
-    return original_full(*a, **k)
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      shutdown_requested[0] = True
+      return []
 
-  def spy_partial(*a, **k):
-    partial_called["n"] += 1
-    return original_partial(*a, **k)
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+    monkeypatch.setattr(
+        st,
+        "log_print",
+        lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+    )
 
-  monkeypatch.setattr(janitor, "_accrue_debt_full", spy_full)
-  monkeypatch.setattr(janitor, "_accrue_debt_partial_prior_days", spy_partial)
-  monkeypatch.setattr(janitor_mod, "build_remaining_raw_stats_by_daily_gz", lambda *a, **k: {})
-  assert janitor.maybe_accrue_partial_debt_if_due(1.0)
-  assert partial_called["n"] == 1
-  assert full_called["n"] == 0
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+
+    assert any("sync_timedb: day_close schedule startup" in line for line in logs)
+    assert any("on ingest queue drain" in line for line in logs)
+    assert any(
+        "archive_maintenance_interval_seconds is deprecated and ignored"
+        in line
+        for line in logs
+    )
+    assert not any("archive janitor accrual interval" in line for line in logs)
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_signals_maintenance_pass_when_queue_drains(
+    monkeypatch, tmp_path,
+):
+  shutdown_requested[0] = False
+  scheduled_reasons = []
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    original = janitor_mod.ArchiveJanitor.signal_scheduled_maintenance_pass
+
+    def spy_scheduled(self, *, reason):
+      scheduled_reasons.append(reason)
+      return original(self, reason=reason)
+
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_scheduled_maintenance_pass",
+        spy_scheduled,
+    )
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return ["/fake/stats%d" % i for i in range(3)]
+      shutdown_requested[0] = True
+      return []
+    fake_rescan.calls = 0
+
+    def fake_add(_lock, path, _contents=None):
+      return (path, True, True, 0.0)
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+
+    assert "startup" in scheduled_reasons
+    assert "ingest_queue_empty" in scheduled_reasons
+    assert "every_n_chunks" not in scheduled_reasons
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_idle_loop_does_not_signal_queue_empty_pass(
+    monkeypatch, tmp_path,
+):
+  shutdown_requested[0] = False
+  scheduled_reasons = []
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    original = janitor_mod.ArchiveJanitor.signal_scheduled_maintenance_pass
+
+    def spy_scheduled(self, *, reason):
+      scheduled_reasons.append(reason)
+      return original(self, reason=reason)
+
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_scheduled_maintenance_pass",
+        spy_scheduled,
+    )
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      return []
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+
+    assert scheduled_reasons == ["startup"]
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_startup_empty_queue_no_duplicate_drain_pass(
+    monkeypatch, tmp_path,
+):
+  shutdown_requested[0] = False
+  scheduled_reasons = []
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    original = janitor_mod.ArchiveJanitor.signal_scheduled_maintenance_pass
+
+    def spy_scheduled(self, *, reason):
+      scheduled_reasons.append(reason)
+      return original(self, reason=reason)
+
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_scheduled_maintenance_pass",
+        spy_scheduled,
+    )
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      shutdown_requested[0] = True
+      return []
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+
+    assert scheduled_reasons == ["startup"]
+  finally:
+    shutdown_requested[0] = False
 
 
 def _supervisor_startup_preflight_patches(monkeypatch, preflight_obj):
@@ -2863,7 +3031,7 @@ def test_supervisor_scheduled_day_close_every_n_chunks(monkeypatch, tmp_path):
     daily_dir = tmp_path / "daily"
     archive_dir.mkdir()
     daily_dir.mkdir()
-    original = janitor_mod.ArchiveJanitor.enqueue_scheduled_day_close
+    original = janitor_mod.ArchiveJanitor.signal_scheduled_maintenance_pass
 
     def spy_scheduled(self, *, reason):
       scheduled_reasons.append(reason)
@@ -2871,7 +3039,7 @@ def test_supervisor_scheduled_day_close_every_n_chunks(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         janitor_mod.ArchiveJanitor,
-        "enqueue_scheduled_day_close",
+        "signal_scheduled_maintenance_pass",
         spy_scheduled,
     )
 

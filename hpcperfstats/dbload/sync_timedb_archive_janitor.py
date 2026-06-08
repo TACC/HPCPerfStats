@@ -22,7 +22,6 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_remaining_raw_for_daily_tar,
     build_remaining_raw_stats_by_daily_gz,
     calendar_date_from_daily_tar_path,
-    collect_days_with_unmapped_closed_raw,
     daily_gz_has_remaining_raw_stats,
     daily_tar_path_from_compressed,
     daily_tar_seal_calendar_eligible,
@@ -33,7 +32,6 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     remove_verified_archived_raw_files,
     remove_verified_uncompressed_daily_tars,
     scan_and_quarantine_unparsable_closed_raw,
-    should_seal_daily_tar,
     tar_day_dirty_by_mtime,
     tar_has_duplicate_file_members,
 )
@@ -171,7 +169,8 @@ class ArchiveJanitor:
     self._day_phases: Dict[str, str] = {}
     self._accrual_snapshot = None
     self._accrual_snapshot_lock = threading.Lock()
-    self._last_accrual_at = 0.0
+    self._maintenance_pass_lock = threading.Lock()
+    self._pending_maintenance_pass_reason: Optional[str] = None
     self._ticks_completed = 0
     self._budget_throttled_count = 0
     self._pending_signal = False
@@ -198,6 +197,13 @@ class ArchiveJanitor:
           continue
         tar_path = str(entry.get("tar_path", "")).strip()
         if not tar_path:
+          continue
+        if kind in (DebtKind.LOCK_CLEANUP, DebtKind.DEDUPE):
+          self.log_fn(
+              "janitor: dropped legacy debt kind=%s tar=%s"
+              % (kind.value, tar_path),
+              flush=True,
+          )
           continue
         if kind in _DAY_PIPELINE_KINDS:
           tar_norm = os.path.normpath(tar_path)
@@ -387,22 +393,39 @@ class ArchiveJanitor:
     self._run_unparsable_quarantine_scan()
     self.signal_work_available()
 
-  def maybe_accrue_debt_if_due(self, interval_seconds: float) -> bool:
-    elapsed = max(0.0, time.time() - float(self._last_accrual_at))
-    if elapsed < float(interval_seconds):
-      return False
-    self._accrue_debt_full(reason="interval")
-    self._last_accrual_at = time.time()
-    return True
+  def signal_scheduled_maintenance_pass(self, *, reason: str):
+    """Queue snapshot+hints+day_close scan on the janitor thread (non-blocking)."""
+    with self._maintenance_pass_lock:
+      self._pending_maintenance_pass_reason = reason
+    self.signal_work_available()
 
-  def maybe_accrue_partial_debt_if_due(self, interval_seconds: float) -> bool:
-    """Bounded prior-day RAW/TAR accrual while ingest backlog is non-empty."""
-    elapsed = max(0.0, time.time() - float(self._last_accrual_at))
-    if elapsed < float(interval_seconds):
-      return False
-    self._accrue_debt_partial_prior_days(reason="interval_partial")
-    self._last_accrual_at = time.time()
-    return True
+  def run_scheduled_maintenance_pass(self, *, reason: str):
+    """Janitor-thread: refresh snapshot/hints and enqueue eligible DAY_CLOSE debt."""
+    if not self.tgz_archive_dir:
+      return
+    snap_t0 = time.time()
+    snapshot = build_archive_maintenance_snapshot(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        log_fn=self.log_fn,
+    )
+    with self._accrual_snapshot_lock:
+      self._accrual_snapshot = snapshot
+    self._persist_hints(
+        paths_hint=snapshot_paths_hint_entries(
+            snapshot.closed_paths,
+            snapshot.first_timestamp_by_path,
+            snapshot.head_identity_by_path,
+        ),
+        host_dirs_hint=snapshot_host_dirs_from_paths(snapshot.closed_paths),
+    )
+    self.log_fn(
+        "janitor: snapshot refreshed closed_paths=%d duration_s=%.3f"
+        % (len(snapshot.closed_paths), time.time() - snap_t0),
+        flush=True,
+    )
+    self.enqueue_scheduled_day_close(reason=reason)
 
   def _calendar_today_local(self):
     return datetime.now(self.local_tz).date()
@@ -481,62 +504,21 @@ class ArchiveJanitor:
       self._trim_heap_to_max_entries_locked()
     self._persist_hints()
     self.log_fn(
-        "Archive janitor scheduled day_close reason=%s days=%d debt_depth=%d"
+        "janitor: day_close scheduled reason=%s days=%d debt_depth=%d"
         % (reason, len(candidates), self.debt_depth()),
         flush=True,
     )
 
-  def _accrue_maintenance_extras(self):
-    self._enqueue_debt_locked(
-        DebtKind.LOCK_CLEANUP, _LOCK_CLEANUP_TAR_SENTINEL, persist=False)
-    if self.tgz_archive_dir and os.path.isdir(self.tgz_archive_dir):
-      for tar_path in iter_daily_tar_paths(self.tgz_archive_dir):
-        if tar_has_duplicate_file_members(tar_path):
-          self._enqueue_debt_locked(
-              DebtKind.DEDUPE, os.path.normpath(tar_path), persist=False)
+  def _heap_has_day_close_work_locked(self) -> bool:
+    for debt in self._debt_heap:
+      if debt.kind in _DAY_PIPELINE_KINDS:
+        return True
+    return False
 
-  def _accrue_debt_full(self, *, reason: str):
-    """Full snapshot accrual at interval only (not per tick)."""
-    if not self.tgz_archive_dir:
-      return
-    snapshot = build_archive_maintenance_snapshot(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        log_fn=self.log_fn,
-    )
-    with self._accrual_snapshot_lock:
-      self._accrual_snapshot = snapshot
-    disqualified = set(self.get_disqualified_daily_tars())
-    unmapped = collect_days_with_unmapped_closed_raw(
-        snapshot.closed_paths, snapshot.mapping, self.tgz_archive_dir)
-    disqualified |= set(unmapped or ())
-
-    with self._debt_lock:
-      self._accrue_maintenance_extras()
-      self._trim_heap_to_max_entries_locked()
-
-    self._persist_hints(
-        paths_hint=snapshot_paths_hint_entries(
-            snapshot.closed_paths,
-            snapshot.first_timestamp_by_path,
-            snapshot.head_identity_by_path,
-        ),
-        host_dirs_hint=snapshot_host_dirs_from_paths(snapshot.closed_paths),
-    )
-    self.log_fn(
-        "Archive janitor accrue reason=%s debt_depth=%d (full snapshot)"
-        % (reason, self.debt_depth()),
-        flush=True,
-    )
-
-  def _accrue_debt_partial_prior_days(self, *, reason: str):
-    """No-op: DAY_CLOSE is scheduled at startup and every N ingest chunks."""
-    self.log_fn(
-        "Archive janitor accrue reason=%s skipped (scheduled day_close only)"
-        % reason,
-        flush=True,
-    )
+  def _run_tick_lock_cleanup(self) -> int:
+    removed = cleanup_stale_fnctl_lock_sidecars(self.archive_data_dir)
+    removed += cleanup_stale_fnctl_lock_sidecars(self.tgz_archive_dir)
+    return removed
 
   def _effective_tick_limits(self):
     budget = float(cfg.get_archive_janitor_budget_seconds())
@@ -625,9 +607,24 @@ class ArchiveJanitor:
 
       budget_s, max_days = self._effective_tick_limits()
       tick_t0 = time.time()
+      pass_reason = None
+      with self._maintenance_pass_lock:
+        pass_reason = self._pending_maintenance_pass_reason
+        self._pending_maintenance_pass_reason = None
+      if pass_reason:
+        self.run_scheduled_maintenance_pass(reason=pass_reason)
       self._run_unparsable_quarantine_scan()
       disqualified = set(self.get_disqualified_daily_tars())
       self._tick_remaining_raw_cache = {}
+      with self._debt_lock:
+        has_day_work = self._heap_has_day_close_work_locked()
+      if has_day_work:
+        removed = self._run_tick_lock_cleanup()
+        if removed:
+          self.log_fn(
+              "janitor: lock_cleanup removed=%d" % removed,
+              flush=True,
+          )
       with self._debt_lock:
         work_items = self._pop_eligible_debt_locked(disqualified, max_days)
       if not work_items:
@@ -738,12 +735,12 @@ class ArchiveJanitor:
           validation_cache,
           disqualified,
       )
-    if debt.kind == DebtKind.DEDUPE:
-      self._dedupe_one_day(debt.tar_path)
-      return True
-    if debt.kind == DebtKind.LOCK_CLEANUP:
-      cleanup_stale_fnctl_lock_sidecars(self.archive_data_dir)
-      cleanup_stale_fnctl_lock_sidecars(self.tgz_archive_dir)
+    if debt.kind in (DebtKind.DEDUPE, DebtKind.LOCK_CLEANUP):
+      self.log_fn(
+          "janitor: ignored legacy debt kind=%s tar=%s"
+          % (debt.kind.value, debt.tar_path),
+          flush=True,
+      )
       return True
     return False
 
@@ -774,10 +771,20 @@ class ArchiveJanitor:
   ) -> bool:
     tar_norm = os.path.normpath(tar_path)
     if not self._day_phase_at_least(tar_norm, "sealed"):
+      if tar_has_duplicate_file_members(tar_norm):
+        self.log_fn(
+            "janitor: day_close dedupe tar=%s" % tar_norm,
+            flush=True,
+        )
+        dedupe_tar_keep_largest_file_per_member(tar_norm, log_fn=self.log_fn)
       if not self._seal_one_day(tar_norm, ignore_remaining_raw=True):
         return False
     if self._day_close_raw_removal_enabled():
       coord = self.day_raw_removal_coordinator
+      self.log_fn(
+          "janitor: day_close async_pipeline start tar=%s" % tar_norm,
+          flush=True,
+      )
       coord.start_async_day_pipeline(tar_norm)
       if not coord.delete_phase_done(tar_norm):
         self._enqueue_day_close(tar_norm, persist=False)
@@ -832,6 +839,10 @@ class ArchiveJanitor:
         tar_path,
         local_tz=self.local_tz,
     )
+    self.log_fn(
+        "janitor: day_close seal start tar=%s" % tar_path,
+        flush=True,
+    )
     atomic_seal_tar_to_zst(
         tar_path,
         zst_path,
@@ -844,6 +855,10 @@ class ArchiveJanitor:
     )
     drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=self.log_fn)
     if os.path.isfile(zst_path) or os.path.isfile(gz_path):
+      self.log_fn(
+          "janitor: day_close seal done tar=%s" % tar_path,
+          flush=True,
+      )
       with self._hints_state_lock:
         self._day_phases[tar_path] = day_phase_hint_entry(tar_path, "sealed")
       return True
@@ -922,11 +937,6 @@ class ArchiveJanitor:
         self._day_phases[tar_path] = day_phase_hint_entry(tar_path, "tar_dropped")
       return True
     return False
-
-  def _dedupe_one_day(self, tar_path: str):
-    if not tar_has_duplicate_file_members(tar_path):
-      return
-    dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=self.log_fn)
 
   def shutdown(self, wait: bool = True):
     self._executor.shutdown(wait=wait)

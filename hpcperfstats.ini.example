@@ -380,7 +380,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # zstd compression level 1-19 for .tar.zst (default 7; benchmark before raising above 9).
 # archive_zstd_level = 7
 
-# Seconds between archive debt accrual scans (not blocking maintenance; default 28800).
+# Deprecated: ignored by sync_timedb (day-close runs at startup + every rescan_every_chunks).
 # archive_maintenance_interval_seconds = 28800
 
 # Max seconds to defer scheduled maintenance while archive append is in flight (legacy; default 3600).

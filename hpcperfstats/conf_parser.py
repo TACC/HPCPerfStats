@@ -540,7 +540,7 @@ def get_archive_seal_parallel_workers():
 
 
 def get_archive_maintenance_interval_seconds():
-  """Seconds between zstd seal runs and verified raw removal (default 8h)."""
+  """Deprecated: retained for INI compatibility; sync_timedb ignores this value."""
   _ensure_cfg_loaded()
   default_interval = float(8 * 3600)
   raw_value = _ini_get(

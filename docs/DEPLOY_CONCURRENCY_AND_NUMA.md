@@ -40,7 +40,7 @@ Ingest is treated as always-on: the supervisor no longer runs blocking seal/raw/
 
 | `[PIPELINE]` key | Default | Role |
 |----------------|---------|------|
-| **`archive_maintenance_interval_seconds`** | **`28800`** | Debt **accrual** scan interval (not blocking maintenance execution) |
+| **`archive_maintenance_interval_seconds`** | **`28800`** | **Deprecated** (ignored); maintenance pass runs at startup, every N ingest chunks, and on ingest queue drain |
 | **`archive_janitor_budget_seconds`** | **`30`** | Max wall time per janitor tick |
 | **`archive_janitor_days_per_tick`** | **`2`** | Max **distinct calendar days** (`DAY_CLOSE` pipeline) per tick—not raw heap entry count |
 | **`archive_keep_uncompressed_tar`** | **`no`** | Drop prior-day `.tar` at seal when raw is gone; global `yes` retains until tar-drop |

@@ -17,7 +17,10 @@ In the **same final turn** that reports implementation done, include these three
 2. **Edge cases** — at least **three** realistic failure modes still possible (concurrency, stale state, partial ingest, auth, missing fixtures, operator misconfig).
 3. **Convention check** — naming, imports, test placement, docs/`test_runs/` logging, and every **triggered** workspace rule (cite rule names when non-obvious).
 
+In the self-review look for new edge cases and performance regressions.
+
 If self-review finds a gap, **fix it before** marking todos complete or telling the user the task is done.
+
 
 ## Plan todos (mandatory last item)
 

@@ -35,10 +35,10 @@ Disable with **`sync_startup_raw_removal_preflight=no`**.
 
 - **Ingest order (oldest first):** `collect_stats_files_in_range` → `rescan_pending_stats_files` → `pending_stats_files` must be **oldest-first** (effective timestamp ascending: filename epoch when numeric, else mtime; `None` sort keys last). The supervisor ingests from the queue head (`pending_stats_files[:chunk_size]`). `cap_pending_stats_file_list` must retain the **oldest** `max_size` entries when truncating (drop newer paths). Do not reverse to newest-first without an explicit product decision and regression tests.
 - **No blocking maintenance** on the supervisor thread: do not reintroduce `_archive_maintenance_pipeline`, forced two-phase maintenance, or supervisor-driven seal/raw/`.tar` bursts.
-- **Startup:** `archive_janitor.enqueue_startup_debt()` runs bounded unparsable quarantine scan only; then `enqueue_scheduled_day_close(reason="startup")`; **`StartupRawRemovalPreflight.start_async_verify()`** runs in parallel (optional via INI).
-- **Interval:** `archive_maintenance_interval_seconds` is **debt accrual interval** (LOCK_CLEANUP/DEDUPE when ingest queue empty), not blocking maintenance on the supervisor.
-- **Every N chunks:** when `chunk_counter % rescan_every_chunks == 0` (default 10), call `enqueue_scheduled_day_close(reason="every_n_chunks")` and `signal_work_available()`.
-- **Ingest backlog:** full accrual when `pending_stats_files == 0`; partial accrual during backlog is a no-op for `DAY_CLOSE` (scheduled scan only).
+- **Startup:** `archive_janitor.enqueue_startup_debt()` runs bounded unparsable quarantine scan only; then `signal_scheduled_maintenance_pass(reason="startup")`; **`StartupRawRemovalPreflight.start_async_verify()`** runs in parallel (optional via INI).
+- **Every N chunks:** when `chunk_counter % rescan_every_chunks == 0` (default 10), call `signal_scheduled_maintenance_pass(reason="every_n_chunks")` and `signal_work_available()`.
+- **Ingest queue drain:** after a chunk that had pending files and leaves `pending_stats_files` empty, call `signal_scheduled_maintenance_pass(reason="ingest_queue_empty")` (edge-triggered only—not on repeated idle rescans while queue stays empty).
+- **`archive_maintenance_interval_seconds`:** deprecated and ignored; do not reintroduce interval accrual on the supervisor.
 - **Finalize:** `force=True` with `allow_defer=True` when backlog present; log `Archive finalize deferred` instead of blocking ingest.
 - **Shutdown:** `archive_janitor.shutdown(wait=True)` in supervisor `finally`.
 
@@ -48,9 +48,8 @@ Canonical per-calendar-day pipeline debt is **`DebtKind.DAY_CLOSE`**: one heap i
 
 **Enqueue paths (oldest first where applicable):**
 
-- **Scheduled scan:** `enqueue_scheduled_day_close` at supervisor **startup** and every **`rescan_every_chunks`** ingest chunks (default 10). Eligible days: prior calendar days (or calendar today when `daily_tar_seal_calendar_eligible`), not disqualified, and needs work (hints phase `< tar_dropped`, dirty mtime, or `remaining_raw_by_gz` has paths).
+- **Scheduled scan:** `enqueue_scheduled_day_close` via `run_scheduled_maintenance_pass` at supervisor **startup**, every **`rescan_every_chunks`** ingest chunks (default 10), and when the ingest queue **drains to zero** after chunk processing. Eligible days: prior calendar days (or calendar today when `daily_tar_seal_calendar_eligible`), not disqualified, and needs work (hints phase `< tar_dropped`, dirty mtime, or `remaining_raw_by_gz` has paths).
 - **In-progress pipeline:** janitor re-enqueues `DAY_CLOSE` while `DayRawRemovalCoordinator` async verify+delete is incomplete for that day.
-- **Accrual:** interval full accrual enqueues LOCK_CLEANUP/DEDUPE only—not `DAY_CLOSE`.
 
 **Legacy hints/debt:** persisted `SEAL_PRIOR_DAY` / `RAW_REMOVE` / `TAR_DROP` for the same `tar_path` coalesce to one `DAY_CLOSE` on load and when popped for a tick.
 
@@ -75,15 +74,18 @@ This must **not** wait for an empty global ingest queue.
 - **Fresh per-day raw:** `build_remaining_raw_for_daily_tar` before seal deferral and `TAR_DROP`.
 - **Seal:** `DAY_CLOSE` calls `_seal_one_day(..., ignore_remaining_raw=True)` so seal proceeds after pending ingest drains even when closed raw remains on disk; raw remove and `.tar` drop follow in the same debt item. Non-`DAY_CLOSE` seal paths still defer when closed raw remains. Pass `effective_keep_uncompressed_tar` into `atomic_seal_tar_to_zst`. Re-check `daily_tar_seal_calendar_eligible` in `_seal_one_day` (defense in depth).
 - **day_phases:** set only on verified success (sealed, raw gone, tar dropped).
-- **Full** `build_archive_maintenance_snapshot` only on **full accrual**, not every tick.
+- **Full** `build_archive_maintenance_snapshot` on **scheduled maintenance passes** (startup + every N chunks + ingest queue drain), not every tick.
+- **Lock cleanup:** once per janitor tick when the heap has day-pipeline work, before popping `DAY_CLOSE` debt.
+- **Dedupe:** inline in `_close_one_day` before `_seal_one_day` when `tar_has_duplicate_file_members`.
 - Persist hints after progress; trim heap to `archive_janitor_debt_max_entries` before persist.
 - `close_old_connections()` at tick entry and in `finally`.
 
-## Debt accrual
+## Scheduled maintenance pass
 
-- **Startup / interval mtime scan:** enqueue `DAY_CLOSE` when dirty by mtime, `daily_tar_seal_calendar_eligible`, and `should_seal_daily_tar`.
-- **Full accrual (interval, ingest queue empty):** snapshot once → enqueue `DAY_CLOSE` from dirty seals and `remaining_raw_by_gz`; enqueue `LOCK_CLEANUP` and `DEDUPE` maintenance debt.
-- **Partial accrual (interval, ingest backlog):** prior-calendar-day `DAY_CLOSE` from `build_remaining_raw_stats_by_daily_gz`.
+- **Supervisor signals only:** `signal_scheduled_maintenance_pass(reason)` sets a pending flag and `signal_work_available()`; no snapshot on the supervisor thread.
+- **Janitor thread:** `run_scheduled_maintenance_pass` → `build_archive_maintenance_snapshot` + persist hints → `enqueue_scheduled_day_close(reason)`.
+- **Triggers:** `reason=startup` at process start; `reason=every_n_chunks` when `chunk_counter % rescan_every_chunks == 0`; `reason=ingest_queue_empty` when a chunk drains `pending_stats_files` to zero (after the every-N-chunks hook on the same chunk, if both apply).
+- **Legacy debt:** `LOCK_CLEANUP` / `DEDUPE` hint rows are dropped on load; lock cleanup and dedupe run inline (per-tick / per-day) instead of separate heap kinds.
 - **Burst:** when `debt_depth >= archive_janitor_debt_high_watermark`, scale budget/days by `archive_janitor_debt_burst_factor`.
 - **Idle bonus (optional):** 2× budget when queue empty for `archive_maintenance_idle_seconds`.
 
