@@ -419,13 +419,14 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max deletes per gated startup delete pass; 0 = unlimited during delete window (default 0).
 # sync_startup_raw_removal_max_deletes_per_pass = 0
 
-# Per-day async verify + chunk-boundary batch delete after DAY_CLOSE seal (default yes).
+# Per-day async verify+delete pipeline after DAY_CLOSE seal (default yes). DAY_CLOSE debt
+# is scheduled at supervisor startup and every rescan_every_chunks ingest chunks (default 10).
 # sync_day_close_raw_removal_preflight = yes
 
-# Reserved wall-clock budget knob for day-close verify slices (default 30 seconds).
+# Wall-clock budget for day-close verify slices in the async pipeline (default 30 seconds).
 # sync_day_close_raw_removal_verify_budget_seconds = 30
 
-# Max deletes per day-close batch delete pass; 0 = unlimited at chunk boundary (default 0).
+# Max deletes per day-close delete loop iteration; 0 = unlimited per iteration (default 0).
 # sync_day_close_raw_removal_max_deletes_per_pass = 0
 
 # Max unparsable closed raw files moved to .sync_timedb_unparsable_raw/ per janitor scan (default 50).

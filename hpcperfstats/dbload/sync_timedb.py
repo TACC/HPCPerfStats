@@ -3,7 +3,7 @@
 
 **Hot path (supervisor thread):** discover → ingest → checkpoint → dispatch append (up to ``sync_archive_max_inflight_jobs`` disjoint daily-tar slots). Ingest never blocks on seal, zstd, raw delete, or uncompressed ``.tar`` removal.
 
-**Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Full accrual runs on ``archive_maintenance_interval_seconds`` (default 8h) when the ingest queue is empty; partial prior-day accrual and chunk-end ``enqueue_completed_prior_days_reclaim()`` run during ingest backlog. ``signal_work_available()`` schedules ticks without waiting. Seal → raw remove (``allow_auto_seal=False``) → ``.tar`` drop per day; DB head-ingest gate and disqualification union unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
+**Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). ``DAY_CLOSE`` debt is scheduled at supervisor startup and every ``rescan_every_chunks`` ingest chunks (default 10). Full interval accrual enqueues LOCK_CLEANUP/DEDUPE only when the ingest queue is empty. ``signal_work_available()`` schedules ticks without waiting. Per-day seal → async verify+delete (``DayRawRemovalCoordinator``) or incremental raw/tar ticks when preflight is off; DB head-ingest gate and disqualification union unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
 Append and raw delete stay DB-gated when ``sync_archive_require_db_head_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
@@ -1450,7 +1450,7 @@ def run_sync_timedb_supervisor_loop(
   startup_preflight = None
   day_raw_removal = None
   delete_phase_active = False
-  day_delete_phase_active = False
+  day_close_rescan_pending = False
   chunk_in_progress = False
 
   def _get_quarantine_skip_paths():
@@ -1787,9 +1787,44 @@ def run_sync_timedb_supervisor_loop(
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
 
+  def _on_day_close_pipeline_complete(_tar_path):
+    nonlocal day_close_rescan_pending
+    day_close_rescan_pending = True
+    archive_janitor.signal_work_available()
+
+  day_raw_removal.on_pipeline_complete = _on_day_close_pipeline_complete
+
+  def _maybe_apply_day_close_rescan():
+    nonlocal day_close_rescan_pending, pending_stats_files
+    if not day_close_rescan_pending or day_raw_removal is None:
+      return
+    removed = day_raw_removal.consumed_paths()
+    for path in removed:
+      file_states.pop(path, None)
+      if isinstance(host_scan_hints, dict):
+        host_scan_hints.pop(path, None)
+    pending_stats_files = _cap_pending_stats_files_list(
+        rescan_pending_stats_files(
+            directory,
+            startdate,
+            enddate,
+            host_name_ext,
+            processed_files | inflight_archive_paths,
+            host_scan_hints=host_scan_hints,
+        ),
+        ingest_queue_max,
+    )
+    day_close_rescan_pending = False
+    log_print(
+        "Day raw removal pipeline complete; rescanned pending=%d"
+        % len(pending_stats_files),
+        flush=True,
+    )
+
   try:
     _ensure_daily_archive_dir_exists()
     archive_janitor.enqueue_startup_debt()
+    archive_janitor.enqueue_scheduled_day_close(reason="startup")
     startup_preflight = StartupRawRemovalPreflight(
         archive_data_dir=directory,
         host_name_ext=host_name_ext,
@@ -1849,64 +1884,6 @@ def run_sync_timedb_supervisor_loop(
         _post_startup_raw_removal_rescan()
       return True
 
-    def _post_day_raw_removal_rescan(completed_tar_path):
-      nonlocal pending_stats_files
-      if day_raw_removal is None:
-        return
-      removed = day_raw_removal.consumed_paths()
-      for path in removed:
-        file_states.pop(path, None)
-        if isinstance(host_scan_hints, dict):
-          host_scan_hints.pop(path, None)
-      pending_stats_files = _cap_pending_stats_files_list(
-          rescan_pending_stats_files(
-              directory,
-              startdate,
-              enddate,
-              host_name_ext,
-              processed_files | inflight_archive_paths,
-              host_scan_hints=host_scan_hints,
-          ),
-          ingest_queue_max,
-      )
-      log_print(
-          "Day raw removal preflight done tar=%s; rescanned pending=%d"
-          % (completed_tar_path, len(pending_stats_files)),
-          flush=True,
-      )
-
-    def _maybe_handle_day_raw_removal_delete_phase():
-      nonlocal day_delete_phase_active, pending_stats_files
-      if day_raw_removal is None or not day_raw_removal.enabled:
-        return False
-      if delete_phase_active:
-        return False
-      if startup_preflight is not None and startup_preflight.enabled:
-        if startup_preflight.needs_delete_phase() and not startup_preflight.delete_phase_done():
-          return False
-      tar_path = day_raw_removal.oldest_day_needing_delete()
-      if tar_path is None and not day_delete_phase_active:
-        return False
-      if tar_path is not None and day_raw_removal.needs_delete_phase(tar_path):
-        day_delete_phase_active = True
-      if not day_delete_phase_active:
-        return False
-      if chunk_in_progress:
-        sleep_until_shutdown(0.1)
-        return True
-      active_tar = tar_path or day_raw_removal.oldest_day_needing_delete()
-      if active_tar is None:
-        day_delete_phase_active = False
-        return False
-      if day_raw_removal.phase(active_tar) == PHASE_VERIFICATION_COMPLETE:
-        day_raw_removal.begin_deleting(active_tar)
-      day_raw_removal.apply_batch_delete(active_tar)
-      if day_raw_removal.delete_phase_done(active_tar):
-        day_delete_phase_active = False
-        _post_day_raw_removal_rescan(active_tar)
-        archive_janitor.signal_work_available()
-      return True
-
     def _run_debt_accrual_if_due(reason_label):
       if not _is_maintenance_due():
         return False
@@ -1933,8 +1910,7 @@ def run_sync_timedb_supervisor_loop(
       _run_debt_accrual_if_due("outer_loop")
       if _maybe_handle_startup_raw_removal_delete_phase():
         continue
-      if _maybe_handle_day_raw_removal_delete_phase():
-        continue
+      _maybe_apply_day_close_rescan()
 
       if not pending_stats_files:
         if idle_since_empty_queue is None:
@@ -2016,13 +1992,8 @@ def run_sync_timedb_supervisor_loop(
       while pending_stats_files:
         if _maybe_handle_startup_raw_removal_delete_phase():
           continue
-        if _maybe_handle_day_raw_removal_delete_phase():
-          continue
+        _maybe_apply_day_close_rescan()
         idle_since_empty_queue = None
-        prior_pending_daily_tars = daily_tar_paths_for_stats_paths(
-            pending_stats_files,
-            tgz_archive_dir,
-        )
         _run_debt_accrual_if_due("chunk_boundary")
         _finalize_archive_slots_if_needed(
             force=True,
@@ -2356,29 +2327,6 @@ def run_sync_timedb_supervisor_loop(
         chunk_counter += 1
         _maybe_exit_on_supervisor_rss_limit(chunk_counter)
 
-        # Non-blocking: after files were added to their tars this chunk, kick a
-        # single-flight background pass to seal completed days and remove their
-        # raw stats / uncompressed .tar. Ingest advances to the next chunk
-        # immediately; days with raw still to ingest/append are disqualified.
-        current_pending_daily_tars = daily_tar_paths_for_stats_paths(
-            pending_stats_files,
-            tgz_archive_dir,
-        )
-        archive_janitor.enqueue_day_close_for_drained_days(
-            prior_pending_daily_tars,
-            current_pending_daily_tars,
-        )
-        if ar_file_mapping:
-          archive_janitor.enqueue_completed_prior_days_reclaim(
-              chunk_daily_tars=_prior_day_tars_from_archive_mapping(
-                  ar_file_mapping,
-                  local_tz=local_timezone,
-              ),
-          )
-          archive_janitor.signal_work_available()
-        elif prior_pending_daily_tars != current_pending_daily_tars:
-          archive_janitor.signal_work_available()
-
         _dispatch_due_archive_retries()
         chunk_in_progress = False
 
@@ -2388,6 +2336,8 @@ def run_sync_timedb_supervisor_loop(
               allow_defer=bool(pending_stats_files),
               context="rescan_every_chunks",
           )
+          archive_janitor.enqueue_scheduled_day_close(reason="every_n_chunks")
+          archive_janitor.signal_work_available()
           pending_stats_files = _cap_pending_stats_files_list(
               rescan_pending_stats_files(
                   directory,

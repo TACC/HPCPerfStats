@@ -38,7 +38,7 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 | `remove_verified_archived_raw_files` raw removal | `ingest_ready_fn` after archive member/size match |
 | `ArchiveJanitor` raw removal (`_raw_remove_one_day`) | `ingest_ready_fn=stats_file_head_ingested_in_db`; `allow_auto_seal=False` so validation never triggers a second `atomic_seal_tar_to_zst` |
 | `StartupRawRemovalPreflight` verify + gated delete (`sync_timedb_startup_raw_removal.py`) | `classify_removable_raw_paths_for_daily_gz` with `allow_auto_seal=False`; `stats_file_head_ingested_in_db` when gate enabled; manifest at `{archive_data_dir}/.sync_timedb_startup_raw_removal.json` |
-| `DayRawRemovalCoordinator` verify + chunk-boundary batch delete (`sync_timedb_day_raw_removal.py`) | per-day manifest `{archive_data_dir}/.sync_timedb_day_raw_removal/YYYY-MM-DD.json`; same classify contract; supervisor-owned delete after `verification_complete` |
+| `DayRawRemovalCoordinator` async verify+delete (`sync_timedb_day_raw_removal.py`) | per-day manifest `{archive_data_dir}/.sync_timedb_day_raw_removal/YYYY-MM-DD.json`; same classify contract; coordinator-owned delete on background thread; non-blocking supervisor rescan on `on_pipeline_complete` |
 | Production wiring | `ingest_ready_fn=stats_file_head_ingested_in_db` passed into `ArchiveJanitor` and `StartupRawRemovalPreflight` from `run_sync_timedb_supervisor_loop` |
 
 Out of scope for the DB gate: `remove_verified_uncompressed_daily_tars` (`.tar` only), tar dedupe/seal/recovery without raw stats paths.

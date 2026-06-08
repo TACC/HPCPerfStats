@@ -35,10 +35,10 @@ Disable with **`sync_startup_raw_removal_preflight=no`**.
 
 - **Ingest order (oldest first):** `collect_stats_files_in_range` → `rescan_pending_stats_files` → `pending_stats_files` must be **oldest-first** (effective timestamp ascending: filename epoch when numeric, else mtime; `None` sort keys last). The supervisor ingests from the queue head (`pending_stats_files[:chunk_size]`). `cap_pending_stats_file_list` must retain the **oldest** `max_size` entries when truncating (drop newer paths). Do not reverse to newest-first without an explicit product decision and regression tests.
 - **No blocking maintenance** on the supervisor thread: do not reintroduce `_archive_maintenance_pipeline`, forced two-phase maintenance, or supervisor-driven seal/raw/`.tar` bursts.
-- **Startup:** `archive_janitor.enqueue_startup_debt()` runs bounded unparsable quarantine scan then mtime seal debt enqueue; **`StartupRawRemovalPreflight.start_async_verify()`** runs in parallel (optional via INI).
-- **Interval:** `archive_maintenance_interval_seconds` is **debt accrual interval**, not blocking maintenance on the supervisor.
-- **Chunk end:** capture `prior_pending_daily_tars` before ingest; after chunk call `enqueue_day_close_for_drained_days(prior, current)` when pending daily tars shrink, then `enqueue_completed_prior_days_reclaim(chunk_daily_tars=…)` for mapping-derived prior days; `archive_janitor.signal_work_available()` when drain or mapping produced work.
-- **Ingest backlog:** full accrual when `pending_stats_files == 0`; **partial** prior-day accrual (`maybe_accrue_partial_debt_if_due`) is the backstop during backlog—not the only reclaim path.
+- **Startup:** `archive_janitor.enqueue_startup_debt()` runs bounded unparsable quarantine scan only; then `enqueue_scheduled_day_close(reason="startup")`; **`StartupRawRemovalPreflight.start_async_verify()`** runs in parallel (optional via INI).
+- **Interval:** `archive_maintenance_interval_seconds` is **debt accrual interval** (LOCK_CLEANUP/DEDUPE when ingest queue empty), not blocking maintenance on the supervisor.
+- **Every N chunks:** when `chunk_counter % rescan_every_chunks == 0` (default 10), call `enqueue_scheduled_day_close(reason="every_n_chunks")` and `signal_work_available()`.
+- **Ingest backlog:** full accrual when `pending_stats_files == 0`; partial accrual during backlog is a no-op for `DAY_CLOSE` (scheduled scan only).
 - **Finalize:** `force=True` with `allow_defer=True` when backlog present; log `Archive finalize deferred` instead of blocking ingest.
 - **Shutdown:** `archive_janitor.shutdown(wait=True)` in supervisor `finally`.
 
@@ -48,9 +48,9 @@ Canonical per-calendar-day pipeline debt is **`DebtKind.DAY_CLOSE`**: one heap i
 
 **Enqueue paths (oldest first where applicable):**
 
-- **Day-drain:** `enqueue_day_close_for_drained_days` when a calendar day leaves `pending_daily_tars` and is not disqualified. Skip **calendar today** until `now >= local midnight + archive_today_uncompressed_tar_grace_hours` (`daily_tar_seal_calendar_eligible`). Pending drain means no raw left in `pending_stats_files` for that day; closed raw may still exist on disk.
-- **Chunk-end / interval reclaim:** `enqueue_completed_prior_days_reclaim` for completed **prior** calendar days from mapping or full scan.
-- **Accrual:** full/partial/mtime paths enqueue `DAY_CLOSE` (not legacy triples).
+- **Scheduled scan:** `enqueue_scheduled_day_close` at supervisor **startup** and every **`rescan_every_chunks`** ingest chunks (default 10). Eligible days: prior calendar days (or calendar today when `daily_tar_seal_calendar_eligible`), not disqualified, and needs work (hints phase `< tar_dropped`, dirty mtime, or `remaining_raw_by_gz` has paths).
+- **In-progress pipeline:** janitor re-enqueues `DAY_CLOSE` while `DayRawRemovalCoordinator` async verify+delete is incomplete for that day.
+- **Accrual:** interval full accrual enqueues LOCK_CLEANUP/DEDUPE only—not `DAY_CLOSE`.
 
 **Legacy hints/debt:** persisted `SEAL_PRIOR_DAY` / `RAW_REMOVE` / `TAR_DROP` for the same `tar_path` coalesce to one `DAY_CLOSE` on load and when popped for a tick.
 
@@ -68,7 +68,7 @@ This must **not** wait for an empty global ingest queue.
 - Guard `_debt_heap` / `_debt_seen` with `_debt_lock`; accrual and ticks share the same lock.
 - Per tick: RSS pre-check (reschedule only at outermost tick depth) → bounded `scan_and_quarantine_unparsable_closed_raw` → pop ≤ `archive_janitor_days_per_tick` **distinct calendar days** (`tar_path` values, not raw heap entry count) within `archive_janitor_budget_seconds` → `DAY_CLOSE` (or maintenance debt kinds) per item.
 - **Mid-tick disqualification:** recompute `get_disqualified_daily_tars()` immediately before each debt item; skip and re-enqueue when the day became hot.
-- **Post-seal cleanup (`sync_day_close_raw_removal_preflight=yes`, default):** after seal, janitor calls `DayRawRemovalCoordinator.start_async_verify` and **does not** run incremental `_raw_remove_one_day` / `_tar_drop_one_day`. Supervisor gates batch delete at chunk boundary (`chunk_in_progress==0`), deletes all verified raw + `.tar` for that day, then rescans `pending_stats_files`. Manifests live under `{archive_data_dir}/.sync_timedb_day_raw_removal/`. When preflight is **off**, incremental janitor raw/tar ticks remain the path.
+- **Post-seal cleanup (`sync_day_close_raw_removal_preflight=yes`, default):** after seal, janitor calls `DayRawRemovalCoordinator.start_async_day_pipeline` (verify → delete on background thread) and **does not** run incremental `_raw_remove_one_day` / `_tar_drop_one_day`. Supervisor does **not** gate ingest on day-close delete; `on_pipeline_complete` sets a rescan flag processed non-blocking on the supervisor thread. Manifests live under `{archive_data_dir}/.sync_timedb_day_raw_removal/`. When preflight is **off**, incremental janitor raw/tar ticks remain the path.
 - **RAW remove inside `DAY_CLOSE` (preflight off):** `maintenance_snapshot=None`; `allow_auto_seal=False`; `max_deletes_per_pass` from `archive_janitor_raw_paths_per_tick`.
 - **Hints:** guard `_validated_days` / `_day_phases` with `_hints_state_lock`; defer paths call `_persist_hints` before tick end.
 - **Budget/exception:** re-queue **all** unprocessed popped debt; never drop tail debt on budget break or tick exception.

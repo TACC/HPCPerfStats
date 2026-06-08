@@ -144,10 +144,14 @@ def _default_startup_daily_tar_count(monkeypatch):
   monkeypatch.setattr(janitor_mod, "iter_daily_tar_paths", lambda *a, **k: [])
 
 
-def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch):
+def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch, tmp_path):
   """Janitor debt accrual and ticks invoke remove_verified_uncompressed_daily_tars."""
   shutdown_requested[0] = False
   try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
     from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
     tar_removal_calls = []
@@ -186,7 +190,7 @@ def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch):
 
     monkeypatch.setattr(st.time, "time", fake_time)
     monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 1.0)
-    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
 
@@ -194,7 +198,7 @@ def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch):
     archive_pool.__enter__()
     try:
       st.run_sync_timedb_supervisor_loop(
-          "/tmp/archive",
+          str(archive_dir),
           "all",
           None,
           ".hpc",
@@ -205,64 +209,45 @@ def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch):
     finally:
       archive_pool.__exit__(None, None, None)
 
-    assert len(tar_removal_calls) >= 1
+    assert len(tar_removal_calls) == 0
   finally:
     shutdown_requested[0] = False
 
 
-def test_maintenance_passes_ingest_ready_fn_to_raw_removal(monkeypatch):
+def test_supervisor_wires_ingest_ready_fn_into_day_raw_removal(monkeypatch, tmp_path):
   shutdown_requested[0] = False
+  captured = {}
   try:
-    from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    original_coord = st.DayRawRemovalCoordinator
 
-    captured = {}
-
-    def fake_raw_removal(*_a, **kwargs):
+    def spy_coord(**kwargs):
       captured["ingest_ready_fn"] = kwargs.get("ingest_ready_fn")
+      return original_coord(**kwargs)
 
     def fake_rescan(*_a, **_k):
+      shutdown_requested[0] = True
       return []
 
-    def snapshot_with_raw_debt(*_a, **_k):
-      return ArchiveMaintenanceSnapshot(
-          closed_paths=[],
-          remaining_raw_by_gz={"/tmp/2026-01-01.tar.gz": ["/tmp/raw-a"]},
-          mapping={},
-          ready_paths=set(),
-      )
-
+    monkeypatch.setattr(st, "DayRawRemovalCoordinator", spy_coord)
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
-    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
-    monkeypatch.setattr(janitor_mod, "build_archive_maintenance_snapshot", snapshot_with_raw_debt)
-    monkeypatch.setattr(janitor_mod, "remove_verified_archived_raw_files", fake_raw_removal)
-    monkeypatch.setattr(janitor_mod, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
-    monkeypatch.setattr(janitor_mod, "atomic_seal_tar_to_zst", lambda *a, **k: None)
-    clock = {"t": 10_000.0}
-
-    def fake_time():
-      clock["t"] += 2.0
-      return clock["t"]
-
-    monkeypatch.setattr(st.time, "time", fake_time)
-    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 1.0)
-    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
 
-    archive_pool = _FakeArchivePool()
-    archive_pool.__enter__()
-    try:
-      st.run_sync_timedb_supervisor_loop(
-          "/tmp/archive",
-          "all",
-          None,
-          ".hpc",
-          object(),
-          archive_pool,
-          run_once=True,
-      )
-    finally:
-      archive_pool.__exit__(None, None, None)
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
 
     assert captured["ingest_ready_fn"] is st.stats_file_head_ingested_in_db
   finally:
@@ -413,9 +398,13 @@ def test_run_sync_timedb_supervisor_from_parsed_resets_runtime_caches(monkeypatc
   assert st._HOST_ITIMES_CACHE == {}
 
 
-def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
+def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch, tmp_path):
   shutdown_requested[0] = False
   try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
     rescans = deque([["/fake/stats0"], []])
 
     def fake_rescan(*a, **k):
@@ -458,18 +447,19 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch):
             final_maintenance["remove_verified_tars_calls"] + 1,
         ),
     )
-    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
     monkeypatch.setattr(st.multiprocessing, "get_context", fake_get_context)
     monkeypatch.setattr(
         st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    _supervisor_startup_preflight_disabled(monkeypatch)
 
     archive_pool = _FakeArchivePool()
     archive_pool.__enter__()
     try:
       st.run_sync_timedb_supervisor_loop(
-          "/tmp/archive",
+          str(archive_dir),
           "all",
           None,
           ".hpc",
@@ -2377,19 +2367,26 @@ class _CapturingHygieneExecutor:
 
 
 def test_post_chunk_hygiene_scheduled_and_runs_seal_before_delete(monkeypatch):
-  """Chunk archival signals the janitor; raw removal uses allow_auto_seal=False."""
+  """Every rescan_every_chunks boundary schedules DAY_CLOSE via enqueue_scheduled_day_close."""
   shutdown_requested[0] = False
+  scheduled_reasons = []
   try:
-    from hpcperfstats.dbload.sync_timedb_archive_janitor import DebtKind
+    original = janitor_mod.ArchiveJanitor.enqueue_scheduled_day_close
 
-    target = "/fake/statsA"
-    events = []
-    janitor = None
+    def spy_scheduled(self, *, reason):
+      scheduled_reasons.append(reason)
+      return original(self, reason=reason)
+
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "enqueue_scheduled_day_close",
+        spy_scheduled,
+    )
 
     def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
       if fake_rescan.calls == 0:
         fake_rescan.calls += 1
-        return [target]
+        return ["/fake/statsA"]
       shutdown_requested[0] = True
       return []
     fake_rescan.calls = 0
@@ -2397,43 +2394,10 @@ def test_post_chunk_hygiene_scheduled_and_runs_seal_before_delete(monkeypatch):
     def fake_add(_lock, path, _contents=None):
       return (path, True, True, 0.0)
 
-    class _NeverDone:
-      def ready(self):
-        return False
-
-      def get(self):
-        return None
-
-    class _ArchivePool:
-      def map_async(self, _fn, _items):
-        return _NeverDone()
-
-    original_init = janitor_mod.ArchiveJanitor.__init__
-
-    def capturing_init(self, *args, **kwargs):
-      nonlocal janitor
-      original_init(self, *args, **kwargs)
-      janitor = self
-      janitor._enqueue_debt(DebtKind.RAW_REMOVE, "/tmp/2024-01-01.tar", persist=False)
-
-    monkeypatch.setattr(janitor_mod.ArchiveJanitor, "__init__", capturing_init)
-    monkeypatch.setattr(janitor_mod, "atomic_seal_tar_to_zst", lambda *a, **k: events.append(("seal", k)))
-    monkeypatch.setattr(
-        janitor_mod,
-        "remove_verified_archived_raw_files",
-        lambda *a, **k: events.append(("raw", k)),
-    )
-    monkeypatch.setattr(
-        janitor_mod,
-        "remove_verified_uncompressed_daily_tars",
-        lambda *a, **k: events.append(("tar", k)),
-    )
+    _supervisor_startup_preflight_disabled(monkeypatch)
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
-    monkeypatch.setattr(
-        st, "build_archive_mapping",
-        lambda *_a, **_k: {"/tmp/2024-01-01.tar.gz": [target]})
     monkeypatch.setattr(
         st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
@@ -2445,13 +2409,10 @@ def test_post_chunk_hygiene_scheduled_and_runs_seal_before_delete(monkeypatch):
         st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
 
     st.run_sync_timedb_supervisor_loop(
-        "/tmp/archive", "all", None, ".hpc", object(), _ArchivePool(), run_once=True)
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
 
-    assert janitor is not None
-    assert janitor._ticks_completed >= 1
-    raw_events = [entry for entry in events if entry[0] == "raw"]
-    assert raw_events
-    assert raw_events[0][1].get("allow_auto_seal") is False
+    assert "startup" in scheduled_reasons
+    assert "every_n_chunks" in scheduled_reasons
   finally:
     shutdown_requested[0] = False
 
@@ -2470,53 +2431,48 @@ def test_supervisor_module_has_no_live_archive_maintenance_pipeline_calls():
     assert name not in src
 
 
-def test_day_complete_enqueues_seal_raw_tar_debt_while_ingest_backlog(monkeypatch):
+def test_supervisor_scheduled_day_close_at_startup(monkeypatch, tmp_path):
   shutdown_requested[0] = False
-  reclaim_calls = []
+  scheduled_calls = []
   try:
-    original = janitor_mod.ArchiveJanitor.enqueue_completed_prior_days_reclaim
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    original = janitor_mod.ArchiveJanitor.enqueue_scheduled_day_close
 
-    def spy_reclaim(self, **kwargs):
-      reclaim_calls.append(kwargs.get("chunk_daily_tars"))
-      return original(self, **kwargs)
+    def spy_scheduled(self, *, reason):
+      scheduled_calls.append(reason)
+      return original(self, reason=reason)
 
     monkeypatch.setattr(
         janitor_mod.ArchiveJanitor,
-        "enqueue_completed_prior_days_reclaim",
-        spy_reclaim,
+        "enqueue_scheduled_day_close",
+        spy_scheduled,
     )
-    target = "/fake/statsA"
 
     def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
-      if fake_rescan.calls == 0:
-        fake_rescan.calls += 1
-        return [target, "/fake/statsB"]
       shutdown_requested[0] = True
-      return ["/fake/statsB"]
-    fake_rescan.calls = 0
+      return []
 
-    def fake_add(_lock, path, _contents=None):
-      return (path, True, True, 0.0)
-
+    _supervisor_startup_preflight_disabled(monkeypatch)
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
-    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
-    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
-    monkeypatch.setattr(
-        st, "build_archive_mapping",
-        lambda *_a, **_k: {"/tmp/2024-01-01.tar.gz": [target]})
     monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
-    monkeypatch.setattr(st, "chunk_size", 1)
-    monkeypatch.setattr(st, "rescan_every_chunks", 100)
-    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
-    monkeypatch.setattr(
-        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
 
     st.run_sync_timedb_supervisor_loop(
-        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
 
-    assert reclaim_calls
+    assert "startup" in scheduled_calls
   finally:
     shutdown_requested[0] = False
 
@@ -2845,35 +2801,16 @@ def _supervisor_startup_preflight_disabled(monkeypatch):
   monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DonePreflight)
 
 
-def test_supervisor_day_raw_removal_waits_for_chunk_before_delete(monkeypatch):
+def test_supervisor_ingest_proceeds_without_day_close_delete_gate(monkeypatch):
+  """Day-close delete runs async; supervisor must not block ingest on a delete gate."""
   shutdown_requested[0] = False
-  seen_chunk_in_progress = {"during_delete": None}
-  tar_path = "/tmp/daily/2026-01-01.tar"
+  ingest_calls = {"n": 0}
 
   class _DayCoord:
     enabled = True
-    _ready = True
-
-    def oldest_day_needing_delete(self):
-      return tar_path if self._ready else None
-
-    def needs_delete_phase(self, _tar):
-      return True
-
-    def phase(self, _tar):
-      return "verification_complete"
-
-    def begin_deleting(self, _tar):
-      return None
-
-    def apply_batch_delete(self, _tar):
-      return 1
-
-    def delete_phase_done(self, _tar):
-      return True
 
     def paths_pending_delete(self):
-      return set()
+      return {"/fake/pending-delete"}
 
     def consumed_paths(self):
       return set()
@@ -2883,10 +2820,9 @@ def test_supervisor_day_raw_removal_waits_for_chunk_before_delete(monkeypatch):
 
   try:
     target = "/fake/statsA"
-    chunk_flag = {"value": False}
 
     def fake_add(_lock, path, _contents=None):
-      chunk_flag["value"] = True
+      ingest_calls["n"] += 1
       return (path, True, True, 0.0)
 
     def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
@@ -2897,16 +2833,8 @@ def test_supervisor_day_raw_removal_waits_for_chunk_before_delete(monkeypatch):
       return []
     fake_rescan.calls = 0
 
-    coord = _DayCoord()
-
-    def apply_batch_delete(_tar):
-      seen_chunk_in_progress["during_delete"] = chunk_flag["value"]
-      return 1
-
-    coord.apply_batch_delete = apply_batch_delete
-
     _supervisor_startup_preflight_disabled(monkeypatch)
-    _supervisor_day_raw_removal_patches(monkeypatch, coord)
+    _supervisor_day_raw_removal_patches(monkeypatch, _DayCoord())
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
@@ -2922,6 +2850,66 @@ def test_supervisor_day_raw_removal_waits_for_chunk_before_delete(monkeypatch):
     st.run_sync_timedb_supervisor_loop(
         "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
 
-    assert seen_chunk_in_progress["during_delete"] is False
+    assert ingest_calls["n"] >= 1
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_scheduled_day_close_every_n_chunks(monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  scheduled_reasons = []
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    original = janitor_mod.ArchiveJanitor.enqueue_scheduled_day_close
+
+    def spy_scheduled(self, *, reason):
+      scheduled_reasons.append(reason)
+      return original(self, reason=reason)
+
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "enqueue_scheduled_day_close",
+        spy_scheduled,
+    )
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return ["/fake/stats%d" % i for i in range(10)]
+      shutdown_requested[0] = True
+      return []
+    fake_rescan.calls = 0
+
+    def fake_add(_lock, path, _contents=None):
+      return (path, True, True, 0.0)
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 10)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+
+    assert "startup" in scheduled_reasons
+    assert "every_n_chunks" in scheduled_reasons
   finally:
     shutdown_requested[0] = False

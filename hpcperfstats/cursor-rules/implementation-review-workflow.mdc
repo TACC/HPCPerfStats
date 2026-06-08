@@ -30,6 +30,7 @@ If self-review finds a gap, fix it before marking the task done.
 
 ## Overlap
 
+- **`plan-template-enforcement.mdc`** — always-on reminder: use **`PLAN_TEMPLATE.md`**, no task close before **`post-implementation-review`**.
 - **`plan-completion-gate.mdc`** — when implementing a plan, the three post-code sections above must appear in the closing chat message; **`post-implementation-review`** todo must be last.
 - **`plan-creation-contract.mdc`** — mandatory plan structure (facts, best practices, tests, final code review as last step); applies to all plan output including chat and **`docs/plans/`**; template at **`docs/plans/PLAN_TEMPLATE.md`**.
 - **`logic-change-checklist.mdc`** — deeper contract/invariant/failure-mode checklist for runtime logic changes; use after the pre-code plan when behavior changes.

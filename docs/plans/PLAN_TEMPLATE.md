@@ -2,11 +2,31 @@
 
 One-line overview of the outcome.
 
-**Governed by:** `plan-creation-contract.mdc`, `plan-completion-gate.mdc`, `implementation-review-workflow.mdc`.
+**Governed by:** `plan-template-enforcement.mdc`, `plan-creation-contract.mdc`, `plan-completion-gate.mdc`, `implementation-review-workflow.mdc`.
 
 **Applies to:** pre-code chat plans, committed design docs in `docs/plans/`, monitor **Consumer follow-up plan** sections, and Cursor Plan mode output.
 
 **Artifact placement:** this file is a **committed design baseline** (`test-runs-output-directory.mdc`). Ephemeral run logs and pytest captures go under **`test_runs/`**, not `docs/`.
+
+---
+
+## How to request a plan (user phrasing)
+
+Use any of these when you want the agent to follow this template and the close gate:
+
+- **“Create a plan per PLAN_TEMPLATE.md”**
+- **“Include final code review per plan-creation-contract”**
+- **“Implement this plan”** (with attached plan or Cursor Plan todos)
+
+The agent must read this file, include **Final code review** and **Post-implementation review** sections, and add the **`post-implementation-review`** todo last. See **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`**.
+
+**Do not mark implementation done** until the **`post-implementation-review`** todo is complete and the agent has delivered structured chat self-review (**Why it works**, **Edge cases**, **Convention check**).
+
+### Recommended Cursor User Rule (optional, highest signal)
+
+Paste into **Cursor Settings → Rules → User Rules**:
+
+> Every implementation plan must follow plan-creation-contract.mdc and docs/plans/PLAN_TEMPLATE.md, including the post-implementation-review todo and the Final code review + Post-implementation review sections. Do not mark done until post-implementation-review is complete.
 
 ---
 

@@ -1,4 +1,4 @@
-"""Per-day post-seal raw removal: async verify manifest, gated batch delete."""
+"""Per-day post-seal raw removal: async verify+delete pipeline per calendar day."""
 from __future__ import annotations
 
 import json
@@ -134,7 +134,7 @@ class _DayRawRemovalState:
     self._lock = threading.Lock()
     self._manifest = _load_manifest(self._manifest_path, self.tar_path)
     self._validation_cache = {"hits": 0, "misses": 0}
-    self._verify_future = None
+    self._pipeline_future = None
 
   def phase(self) -> str:
     with self._lock:
@@ -381,6 +381,7 @@ class DayRawRemovalCoordinator:
       get_quarantine_skip_paths: Callable[[], Set[str]],
       ingest_ready_fn: Optional[Callable[[str], bool]] = None,
       process_title: str = "sync_timedb.py",
+      on_pipeline_complete: Optional[Callable[[str], None]] = None,
   ):
     self.archive_data_dir = archive_data_dir
     self.host_name_ext = host_name_ext
@@ -389,6 +390,7 @@ class DayRawRemovalCoordinator:
     self.get_quarantine_skip_paths = get_quarantine_skip_paths
     self.ingest_ready_fn = ingest_ready_fn
     self.process_title = process_title
+    self.on_pipeline_complete = on_pipeline_complete
     self.enabled = cfg.get_sync_day_close_raw_removal_preflight()
     self._days: Dict[str, _DayRawRemovalState] = {}
     self._days_lock = threading.Lock()
@@ -457,16 +459,78 @@ class DayRawRemovalCoordinator:
     candidates.sort(key=lambda item: item[0])
     return candidates[0][1]
 
+  def _ensure_executor(self) -> ThreadPoolExecutor:
+    if self._executor is None:
+      self._executor = ThreadPoolExecutor(max_workers=1)
+    return self._executor
+
+  def _pipeline_body(self, state: _DayRawRemovalState) -> None:
+    close_old_connections()
+    if state.delete_phase_done():
+      return
+    verify_started = time.time()
+    verify_budget = cfg.get_sync_day_close_raw_removal_verify_budget_seconds()
+    if not state.verification_complete():
+      while not shutdown_requested[0]:
+        if verify_budget > 0 and time.time() - verify_started >= verify_budget:
+          break
+        state._verify_body()
+        if state.verification_complete():
+          break
+        time.sleep(0.1)
+    if shutdown_requested[0] or not state.verification_complete():
+      return
+    state.begin_deleting()
+    while not shutdown_requested[0] and not state.delete_phase_done():
+      state.apply_batch_delete()
+      if state.delete_phase_done():
+        break
+      time.sleep(0.05)
+    if state.delete_phase_done() and self.on_pipeline_complete is not None:
+      try:
+        self.on_pipeline_complete(state.tar_path)
+      except Exception:
+        if self.log_fn:
+          self.log_fn(
+              "Day raw removal on_complete failed day=%s"
+              % state.day_date.isoformat(),
+              flush=True,
+          )
+
+  def start_async_day_pipeline(self, tar_path: str) -> None:
+    """Run verify then delete for one calendar day on a background thread."""
+    if not self.enabled:
+      return
+    state = self._get_or_create_day(tar_path)
+    if state.delete_phase_done():
+      return
+    if state._pipeline_future is not None and not state._pipeline_future.done():
+      return
+    executor = self._ensure_executor()
+
+    def _run():
+      set_daemon_thread_title(
+          "",
+          script_name=self.process_title,
+          role="day-raw-removal-pipeline",
+      )
+      try:
+        self._pipeline_body(state)
+      finally:
+        close_old_connections()
+
+    state._pipeline_future = executor.submit(_run)
+
   def start_async_verify(self, tar_path: str) -> None:
+    """Legacy entry: verify-only slice (tests); production uses start_async_day_pipeline."""
     if not self.enabled:
       return
     state = self._get_or_create_day(tar_path)
     if state.verification_complete():
       return
-    if self._executor is None:
-      self._executor = ThreadPoolExecutor(max_workers=1)
-    if state._verify_future is not None and not state._verify_future.done():
+    if state._pipeline_future is not None and not state._pipeline_future.done():
       return
+    executor = self._ensure_executor()
 
     def _run():
       set_daemon_thread_title(
@@ -479,7 +543,7 @@ class DayRawRemovalCoordinator:
       finally:
         close_old_connections()
 
-    state._verify_future = self._executor.submit(_run)
+    state._pipeline_future = executor.submit(_run)
 
   def begin_deleting(self, tar_path: str) -> None:
     self._get_or_create_day(tar_path).begin_deleting()
@@ -491,4 +555,14 @@ class DayRawRemovalCoordinator:
     executor = self._executor
     if executor is None:
       return
+    if wait:
+      with self._days_lock:
+        states = list(self._days.values())
+      for state in states:
+        future = state._pipeline_future
+        if future is not None:
+          try:
+            future.result(timeout=30.0)
+          except Exception:
+            pass
     executor.shutdown(wait=wait)

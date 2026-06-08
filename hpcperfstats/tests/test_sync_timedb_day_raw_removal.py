@@ -144,7 +144,25 @@ def test_day_raw_removal_start_async_verify_eventually_completes(tmp_path):
   coord = _make_coordinator(tmp_path)
   coord.start_async_verify(tar_path)
   state = coord._get_or_create_day(tar_path)
-  assert state._verify_future is not None
-  state._verify_future.result(timeout=10.0)
+  assert state._pipeline_future is not None
+  state._pipeline_future.result(timeout=10.0)
   assert coord.verification_complete(tar_path)
   assert coord.phase(tar_path) == PHASE_VERIFICATION_COMPLETE
+
+
+def test_start_async_day_pipeline_completes_verify_and_delete(tmp_path, monkeypatch):
+  day = datetime(2022, 6, 6)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  completed = []
+  coord = _make_coordinator(
+      tmp_path,
+      on_pipeline_complete=lambda tar: completed.append(tar),
+  )
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  coord.start_async_day_pipeline(tar_path)
+  state = coord._get_or_create_day(tar_path)
+  state._pipeline_future.result(timeout=10.0)
+  assert coord.phase(tar_path) == PHASE_DONE
+  assert not seg.is_file()
+  assert completed == [os.path.normpath(tar_path)]

@@ -7,6 +7,8 @@ alwaysApply: true
 
 Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, monitor **Consumer follow-up plan** sections, and Cursor Plan mode output.
 
+**Authoring entrypoint:** read and match **`docs/plans/PLAN_TEMPLATE.md`**. **`plan-template-enforcement.mdc`** restates the non-skippable close gate (final review sections + **`post-implementation-review`** todo).
+
 ## Grounding (no guessing)
 
 - Base every claim on **verified facts** from the repo (code, tests, logs, committed docs) — not assumptions.
@@ -86,6 +88,7 @@ A plan — and the work it describes — is **not complete** until:
 
 ## Overlap
 
+- **`plan-template-enforcement.mdc`** — always-on enforcement reminder and user-request phrasing (“per PLAN_TEMPLATE.md”, “include final code review”).
 - **`plan-completion-gate.mdc`** — agent execution gate: no task close without structured chat self-review.
 - **`implementation-review-workflow.mdc`** — pre-code breakdown and post-code self-review; this rule adds mandatory plan structure, test requirement, and review-as-final-step.
 - **`logic-change-checklist.mdc`** — use during the final review step for runtime logic.

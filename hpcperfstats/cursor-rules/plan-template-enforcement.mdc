@@ -1,0 +1,61 @@
+---
+description: Hard gate — every plan uses PLAN_TEMPLATE.md; no task close without post-implementation-review
+alwaysApply: true
+---
+
+# Plan Template And Close Enforcement
+
+Agents must not treat plan structure or post-implementation review as optional under time pressure. This rule is the **short enforcement reminder**; detail lives in **`plan-creation-contract.mdc`**, **`plan-completion-gate.mdc`**, and **`docs/plans/PLAN_TEMPLATE.md`**.
+
+## Every implementation plan must include
+
+1. All required sections in order per **`plan-creation-contract.mdc`** (Problem and facts → Approach → Testing → Implementation → Cursor rules → Final code review).
+2. **`Final code review (mandatory before implementation close)`** per **`PLAN_TEMPLATE.md`**.
+3. **`Post-implementation review (required before close)`** per **`PLAN_TEMPLATE.md`**.
+4. Final YAML todo:
+
+```yaml
+- id: post-implementation-review
+  content: "Structured self-review in chat (why it works, edge cases, convention check); fix gaps before close"
+  status: pending
+```
+
+Copy the full frontmatter/todo block from **`docs/plans/PLAN_TEMPLATE.md`** when authoring new plans.
+
+## When the user asks for a plan
+
+Unless they explicitly request a **narrow exception** (answer-only, trivial typo/comment with no behavior change):
+
+1. **Read** **`docs/plans/PLAN_TEMPLATE.md`** before authoring.
+2. **Match** that structure in chat, Cursor Plan mode, or **`docs/plans/`** commits.
+3. **End** with **`post-implementation-review`** as the **last** todo.
+
+**Treat as full-plan requests** (use PLAN_TEMPLATE + final review sections):
+
+- “Create a plan per PLAN_TEMPLATE.md”
+- “Include final code review per plan-creation-contract”
+- “Implement this plan” / attached plan file / Cursor Plan todos
+- “Plan mode” output for non-trivial implementation work
+
+## When implementing or closing
+
+Per **`plan-completion-gate.mdc`** and **`implementation-review-workflow.mdc`**:
+
+- **Do not mark the task, plan, or todos done** until **`post-implementation-review`** is complete.
+- In the **same final turn** that reports implementation done, write in chat:
+  - **Why it works**
+  - **Edge cases** (≥3 realistic failure modes)
+  - **Convention check** (tests, triggered rules, layer wiring, **`test_runs/`** logging)
+- **Fix** gaps found in final code review or self-review **before** close.
+
+## Recommended Cursor User Rule (paste in Settings → Rules)
+
+For highest signal across sessions, the user may also add this **User Rule**:
+
+> Every implementation plan must follow plan-creation-contract.mdc and docs/plans/PLAN_TEMPLATE.md, including the post-implementation-review todo and the Final code review + Post-implementation review sections. Do not mark done until post-implementation-review is complete.
+
+## Overlap
+
+- **`plan-creation-contract.mdc`** — mandatory plan authoring structure and completion bar.
+- **`plan-completion-gate.mdc`** — execution gate: structured chat self-review before close.
+- **`implementation-review-workflow.mdc`** — pre-code planning and post-code review content.

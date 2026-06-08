@@ -383,9 +383,8 @@ class ArchiveJanitor:
     return moved
 
   def enqueue_startup_debt(self):
-    """Mtime-only scan at startup; no blocking maintenance."""
+    """Startup quarantine scan only; DAY_CLOSE scheduling is supervisor-driven."""
     self._run_unparsable_quarantine_scan()
-    self._accrue_debt_mtime_scan(reason="startup")
     self.signal_work_available()
 
   def maybe_accrue_debt_if_due(self, interval_seconds: float) -> bool:
@@ -408,78 +407,71 @@ class ArchiveJanitor:
   def _calendar_today_local(self):
     return datetime.now(self.local_tz).date()
 
-  def enqueue_day_close_for_drained_days(
+  def _day_needs_scheduled_close(
       self,
-      prior_pending_tars,
-      current_pending_tars,
-  ):
-    """Enqueue ``DAY_CLOSE`` for calendar days that left the pending-ingest set."""
-    prior = {
-        os.path.normpath(p)
-        for p in (prior_pending_tars or ())
-        if p
-    }
-    current = {
-        os.path.normpath(p)
-        for p in (current_pending_tars or ())
-        if p
-    }
-    drained = prior - current
-    if not drained:
-      return
-    disqualified = set(self.get_disqualified_daily_tars())
-    now_local = datetime.now(self.local_tz)
-    candidates = sorted(
-        (
-            t for t in drained
-            if t not in disqualified
-            and daily_tar_seal_calendar_eligible(
-                t, self.local_tz, now=now_local)
-        ),
-        key=lambda t: _calendar_date_from_daily_tar(t) or date.max,
-    )
-    if not candidates:
-      return
-    with self._debt_lock:
-      for tar_norm in candidates:
-        self._enqueue_day_close_locked(tar_norm, persist=False)
-      self._trim_heap_to_max_entries_locked()
-    self._persist_hints()
-    self.log_fn(
-        "Archive janitor day-drain reclaim enqueued days=%d debt_depth=%d"
-        % (len(candidates), self.debt_depth()),
-        flush=True,
-    )
+      tar_norm: str,
+      *,
+      remaining_raw_by_gz,
+      disqualified: Set[str],
+  ) -> bool:
+    if tar_norm in disqualified:
+      return False
+    day_date = _calendar_date_from_daily_tar(tar_norm)
+    if day_date is None:
+      return False
+    today_local = self._calendar_today_local()
+    if day_date >= today_local and not daily_tar_seal_calendar_eligible(
+        tar_norm, self.local_tz):
+      return False
+    if not self._day_phase_at_least(tar_norm, "tar_dropped"):
+      return True
+    if os.path.isfile(tar_norm) and tar_day_dirty_by_mtime(tar_norm):
+      return True
+    zst_path, _gz_path = compressed_sibling_paths(tar_norm)
+    if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz):
+      return True
+    return False
 
-  def enqueue_completed_prior_days_reclaim(self, *, chunk_daily_tars=None):
-    """Enqueue seal/raw/tar debt for completed prior calendar days (oldest first).
-
-    When ``chunk_daily_tars`` is set (chunk-end reclaim), only those normalized
-    daily ``.tar`` paths are considered instead of scanning all prior days.
-    """
+  def enqueue_scheduled_day_close(self, *, reason: str):
+    """Enqueue ``DAY_CLOSE`` for eligible calendar days (startup + every N chunks)."""
     if not self.tgz_archive_dir or not os.path.isdir(self.tgz_archive_dir):
       return
     disqualified = set(self.get_disqualified_daily_tars())
-    today_local = self._calendar_today_local()
+    remaining = build_remaining_raw_stats_by_daily_gz(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+    )
+    seen = set()
     candidates = []
-    if chunk_daily_tars:
-      for tar_path in chunk_daily_tars:
-        tar_norm = os.path.normpath(tar_path)
-        if tar_norm in disqualified:
-          continue
-        day_date = _calendar_date_from_daily_tar(tar_norm)
-        if day_date is None or day_date >= today_local:
-          continue
-        candidates.append((day_date, tar_norm))
-    else:
-      for tar_path in iter_daily_tar_paths(self.tgz_archive_dir):
-        tar_norm = os.path.normpath(tar_path)
-        if tar_norm in disqualified:
-          continue
-        day_date = _calendar_date_from_daily_tar(tar_norm)
-        if day_date is None or day_date >= today_local:
-          continue
-        candidates.append((day_date, tar_norm))
+    for tar_path in iter_daily_tar_paths(self.tgz_archive_dir):
+      tar_norm = os.path.normpath(tar_path)
+      if tar_norm in seen:
+        continue
+      seen.add(tar_norm)
+      if not self._day_needs_scheduled_close(
+          tar_norm,
+          remaining_raw_by_gz=remaining,
+          disqualified=disqualified,
+      ):
+        continue
+      day_date = _calendar_date_from_daily_tar(tar_norm) or date.max
+      candidates.append((day_date, tar_norm))
+    for gz_key, raw_paths in (remaining or {}).items():
+      if not raw_paths:
+        continue
+      tar_norm = os.path.normpath(daily_tar_path_from_compressed(gz_key))
+      if tar_norm in seen:
+        continue
+      seen.add(tar_norm)
+      if not self._day_needs_scheduled_close(
+          tar_norm,
+          remaining_raw_by_gz=remaining,
+          disqualified=disqualified,
+      ):
+        continue
+      day_date = _calendar_date_from_daily_tar(tar_norm) or date.max
+      candidates.append((day_date, tar_norm))
     if not candidates:
       return
     candidates.sort(key=lambda item: item[0])
@@ -489,46 +481,10 @@ class ArchiveJanitor:
       self._trim_heap_to_max_entries_locked()
     self._persist_hints()
     self.log_fn(
-        "Archive janitor day-complete reclaim enqueued days=%d debt_depth=%d"
-        % (len(candidates), self.debt_depth()),
+        "Archive janitor scheduled day_close reason=%s days=%d debt_depth=%d"
+        % (reason, len(candidates), self.debt_depth()),
         flush=True,
     )
-
-  def _accrue_debt_mtime_scan(self, *, reason: str):
-    if not self.tgz_archive_dir or not os.path.isdir(self.tgz_archive_dir):
-      return
-    today_local = self._calendar_today_local()
-    enqueued = 0
-    disqualified = set(self.get_disqualified_daily_tars())
-    with self._debt_lock:
-      for tar_path in iter_daily_tar_paths(self.tgz_archive_dir):
-        tar_norm = os.path.normpath(tar_path)
-        if tar_norm in disqualified:
-          continue
-        if not tar_day_dirty_by_mtime(tar_path):
-          continue
-        zst_path, gz_path = compressed_sibling_paths(tar_path)
-        if not daily_tar_seal_calendar_eligible(tar_path, self.local_tz):
-          continue
-        if not should_seal_daily_tar(
-            tar_path,
-            zst_path,
-            cfg.get_archive_seal_idle_seconds(),
-            today_local,
-            seal_immediately_if_dirty=False,
-            gz_path=gz_path,
-        ):
-          continue
-        self._enqueue_day_close_locked(tar_norm, persist=False)
-        enqueued += 1
-      self._trim_heap_to_max_entries_locked()
-    if enqueued:
-      self._persist_hints()
-      self.log_fn(
-          "Archive janitor accrue reason=%s debt_depth=%d (mtime scan)"
-          % (reason, self.debt_depth()),
-          flush=True,
-      )
 
   def _accrue_maintenance_extras(self):
     self._enqueue_debt_locked(
@@ -556,35 +512,7 @@ class ArchiveJanitor:
         snapshot.closed_paths, snapshot.mapping, self.tgz_archive_dir)
     disqualified |= set(unmapped or ())
 
-    today_local = self._calendar_today_local()
     with self._debt_lock:
-      for tar_path in iter_daily_tar_paths(self.tgz_archive_dir):
-        tar_norm = os.path.normpath(tar_path)
-        if tar_norm in disqualified:
-          continue
-        if tar_day_dirty_by_mtime(tar_path):
-          zst_path, gz_path = compressed_sibling_paths(tar_path)
-          if (
-              daily_tar_seal_calendar_eligible(tar_path, self.local_tz)
-              and should_seal_daily_tar(
-                  tar_path,
-                  zst_path,
-                  cfg.get_archive_seal_idle_seconds(),
-                  today_local,
-                  seal_immediately_if_dirty=False,
-                  gz_path=gz_path,
-              )
-          ):
-            self._enqueue_day_close_locked(tar_norm, persist=False)
-
-      for gz_key, raw_paths in (snapshot.remaining_raw_by_gz or {}).items():
-        if not raw_paths:
-          continue
-        tar_norm = os.path.normpath(daily_tar_path_from_compressed(gz_key))
-        if tar_norm in disqualified:
-          continue
-        self._enqueue_day_close_locked(tar_norm, persist=False)
-
       self._accrue_maintenance_extras()
       self._trim_heap_to_max_entries_locked()
 
@@ -603,34 +531,10 @@ class ArchiveJanitor:
     )
 
   def _accrue_debt_partial_prior_days(self, *, reason: str):
-    """Prior-day RAW/TAR debt while ingest backlog continues (backstop)."""
-    if not self.tgz_archive_dir:
-      return
-    disqualified = set(self.get_disqualified_daily_tars())
-    remaining = build_remaining_raw_stats_by_daily_gz(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-    )
-    enqueued = 0
-    with self._debt_lock:
-      for gz_key, raw_paths in (remaining or {}).items():
-        if not raw_paths:
-          continue
-        tar_norm = os.path.normpath(daily_tar_path_from_compressed(gz_key))
-        if tar_norm in disqualified:
-          continue
-        day_date = _calendar_date_from_daily_tar(tar_norm)
-        if day_date is None or day_date >= self._calendar_today_local():
-          continue
-        self._enqueue_day_close_locked(tar_norm, persist=False)
-        enqueued += 1
-      self._trim_heap_to_max_entries_locked()
-    if enqueued:
-      self._persist_hints()
+    """No-op: DAY_CLOSE is scheduled at startup and every N ingest chunks."""
     self.log_fn(
-        "Archive janitor accrue reason=%s debt_depth=%d (partial prior days=%d)"
-        % (reason, self.debt_depth(), enqueued),
+        "Archive janitor accrue reason=%s skipped (scheduled day_close only)"
+        % reason,
         flush=True,
     )
 
@@ -874,7 +778,7 @@ class ArchiveJanitor:
         return False
     if self._day_close_raw_removal_enabled():
       coord = self.day_raw_removal_coordinator
-      coord.start_async_verify(tar_norm)
+      coord.start_async_day_pipeline(tar_norm)
       if not coord.delete_phase_done(tar_norm):
         self._enqueue_day_close(tar_norm, persist=False)
         self._persist_hints()
