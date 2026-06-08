@@ -20,7 +20,7 @@ alwaysApply: true
 
 - **Ingest order (oldest first):** `collect_stats_files_in_range` → `rescan_pending_stats_files` → `pending_stats_files` must be **oldest-first** (effective timestamp ascending: filename epoch when numeric, else mtime; `None` sort keys last). The supervisor ingests from the queue head (`pending_stats_files[:chunk_size]`). `cap_pending_stats_file_list` must retain the **oldest** `max_size` entries when truncating (drop newer paths). Do not reverse to newest-first without an explicit product decision and regression tests.
 - **No blocking maintenance** on the supervisor thread: do not reintroduce `_archive_maintenance_pipeline`, forced two-phase maintenance, or supervisor-driven seal/raw/`.tar` bursts.
-- **Startup:** `archive_janitor.enqueue_startup_debt()` (mtime scan only).
+- **Startup:** `archive_janitor.enqueue_startup_debt()` runs bounded unparsable quarantine scan then mtime seal debt enqueue.
 - **Interval:** `archive_maintenance_interval_seconds` is **debt accrual interval**, not blocking maintenance on the supervisor.
 - **Chunk end:** `enqueue_completed_prior_days_reclaim(chunk_daily_tars=…)` (mapping-derived prior days only) then `archive_janitor.signal_work_available()` when archival mapping produced work.
 - **Ingest backlog:** full accrual when `pending_stats_files == 0`; **partial** prior-day accrual (`maybe_accrue_partial_debt_if_due`) is the backstop during backlog—not the only reclaim path.
@@ -41,7 +41,7 @@ This must **not** wait for an empty global ingest queue. Chunk-end reclaim is th
 
 - Single-flight `ThreadPoolExecutor(max_workers=1)`; thread title `sync_timedb.py [thread:archive-janitor]`.
 - Guard `_debt_heap` / `_debt_seen` with `_debt_lock`; accrual and ticks share the same lock.
-- Per tick: RSS pre-check (reschedule only at outermost tick depth to avoid inline-executor recursion) → pop ≤ `archive_janitor_days_per_tick` **debt items** within `archive_janitor_budget_seconds` → seal/raw/tar per item.
+- Per tick: RSS pre-check (reschedule only at outermost tick depth to avoid inline-executor recursion) → bounded `scan_and_quarantine_unparsable_closed_raw` (skip `get_quarantine_skip_paths()`; cap `sync_unparsable_raw_quarantine_max_per_tick`) → pop ≤ `archive_janitor_days_per_tick` **debt items** within `archive_janitor_budget_seconds` → seal/raw/tar per item.
 - **Mid-tick disqualification:** recompute `get_disqualified_daily_tars()` immediately before each debt item; skip and re-enqueue when the day became hot.
 - **RAW_REMOVE live scan:** pass `maintenance_snapshot=None` so `ingest_ready_fn` is always live (never frozen `ready_paths` alone).
 - **Hints (NL1/NL2):** guard `_validated_days` / `_day_phases` with `_hints_state_lock`; `_persist_hints` snapshots under lock; defer re-enqueues call `_persist_hints` before tick end.

@@ -1,6 +1,7 @@
 """Pure helpers for sync_timedb archiving, tar utilities, and file discovery (no Django). Used by sync_timedb and by unit tests."""
 import contextlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
 import os
 import re
 import shutil
@@ -237,11 +238,11 @@ def get_unmapped_closed_raw_daily_tars_cached(
 
 
 def collect_days_with_unmapped_closed_raw(closed_paths, mapping, tgz_archive_dir):
-  """Daily ``.tar`` paths for closed raw stats not present in ``mapping``.
+  """Daily ``.tar`` paths for closed **parsable** raw stats not present in ``mapping``.
 
-  Files with no parseable first timestamp are omitted from ``build_archive_mapping``
-  yet may still be on disk. They must not let a day look empty: bucket each by
-  filename epoch / mtime and disqualify that day from seal / ``.tar`` removal.
+  Unparsable closed segments are janitor-quarantine candidates (see
+  ``scan_and_quarantine_unparsable_closed_raw``); they do not disqualify days here.
+  Parsable unmapped paths still block seal / ``.tar`` removal (data-gap safety).
   """
   if not closed_paths:
     return frozenset()
@@ -252,11 +253,203 @@ def collect_days_with_unmapped_closed_raw(closed_paths, mapping, tgz_archive_dir
   for path in closed_paths:
     if path in mapped:
       continue
+    if is_unparsable_closed_stats_path(path):
+      continue
     file_date = _derive_stats_path_date(path, None)
     if file_date is None:
       continue
     tar_paths.add(_daily_tar_path_for_date(tgz_archive_dir, file_date))
   return frozenset(tar_paths)
+
+
+SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME = ".sync_timedb_unparsable_raw"
+SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME = ".sync_timedb_unparsable_raw.json"
+UNPARSABLE_RAW_QUARANTINE_REASON = "unparsable_first_timestamp"
+
+
+def quarantine_dir_for_archive(archive_data_dir):
+  """Root directory for quarantined unparsable closed raw stats."""
+  return os.path.join(
+      os.path.normpath(archive_data_dir or ""),
+      SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME,
+  )
+
+
+def manifest_path_for_archive(archive_data_dir):
+  """JSON manifest path for unparsable raw quarantine moves."""
+  return os.path.join(
+      os.path.normpath(archive_data_dir or ""),
+      SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME,
+  )
+
+
+def invalidate_unmapped_disqualify_cache():
+  """Drop TTL cache for ``get_unmapped_closed_raw_daily_tars_cached``."""
+  _UNMAPPED_DISQUALIFY_CACHE["at"] = 0.0
+  _UNMAPPED_DISQUALIFY_CACHE["key"] = None
+  _UNMAPPED_DISQUALIFY_CACHE["tars"] = frozenset()
+
+
+def _load_unparsable_raw_manifest(path):
+  try:
+    with open(path, "r", encoding="utf-8") as fh:
+      raw = json.load(fh)
+  except (OSError, ValueError, TypeError):
+    return []
+  if not isinstance(raw, list):
+    return []
+  return [item for item in raw if isinstance(item, dict)]
+
+
+def _save_unparsable_raw_manifest_atomic(path, entries):
+  parent = os.path.dirname(str(path))
+  if parent:
+    os.makedirs(parent, exist_ok=True)
+  tmp_path = "%s.tmp" % path
+  with open(tmp_path, "w", encoding="utf-8") as fh:
+    json.dump(entries, fh)
+  os.replace(tmp_path, path)
+
+
+def _quarantined_original_paths_from_manifest(manifest_entries):
+  originals = set()
+  for item in manifest_entries or []:
+    original = str(item.get("original_path", "")).strip()
+    if original:
+      originals.add(os.path.normpath(original))
+  return originals
+
+
+def _quarantine_dest_path(archive_data_dir, quarantine_root, original_path):
+  archive_norm = os.path.normpath(archive_data_dir)
+  original_norm = os.path.normpath(original_path)
+  prefix = archive_norm + os.sep
+  if original_norm.startswith(prefix):
+    rel = original_norm[len(prefix):]
+  else:
+    rel = os.path.basename(original_norm)
+  return os.path.join(quarantine_root, rel)
+
+
+def is_unparsable_closed_stats_path(path):
+  """True when ``path`` is a closed raw stats file with no parseable first timestamp."""
+  if not path or not os.path.isfile(path):
+    return False
+  base = os.path.basename(path)
+  if base.startswith("current"):
+    return False
+  if stats_file_is_active_segment(path):
+    return False
+  _host, timestamp_utc = read_stats_file_head_identity(path)
+  return timestamp_utc is None
+
+
+def quarantine_unparsable_closed_raw_paths(
+    paths,
+    archive_data_dir,
+    *,
+    skip_paths=None,
+    log_fn=log_print,
+    max_moves=None,
+):
+  """Move unparsable closed raw paths into the dead-letter office; return move count."""
+  if not paths or not archive_data_dir:
+    return 0
+  if max_moves is None:
+    max_moves = cfg.get_sync_unparsable_raw_quarantine_max_per_tick()
+  max_moves = max(0, int(max_moves))
+  if max_moves <= 0:
+    return 0
+
+  skip_norm = {
+      os.path.normpath(p)
+      for p in (skip_paths or ())
+      if p
+  }
+  manifest_path = manifest_path_for_archive(archive_data_dir)
+  manifest_entries = _load_unparsable_raw_manifest(manifest_path)
+  already_quarantined = _quarantined_original_paths_from_manifest(manifest_entries)
+  quarantine_root = quarantine_dir_for_archive(archive_data_dir)
+  moved = 0
+
+  for path in paths:
+    if moved >= max_moves:
+      break
+    path_norm = os.path.normpath(path)
+    if path_norm in skip_norm:
+      continue
+    if path_norm in already_quarantined:
+      continue
+    if not is_unparsable_closed_stats_path(path_norm):
+      continue
+    dest_path = _quarantine_dest_path(archive_data_dir, quarantine_root, path_norm)
+    try:
+      os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+      with file_write_lock(path_norm):
+        if not os.path.isfile(path_norm):
+          continue
+        if os.path.exists(dest_path):
+          if log_fn:
+            log_fn(
+                "Unparsable raw quarantine skipped existing dest: %s"
+                % dest_path,
+                flush=True,
+            )
+          continue
+        shutil.move(path_norm, dest_path)
+      entry = {
+          "original_path": path_norm,
+          "quarantined_path": os.path.normpath(dest_path),
+          "quarantined_at": time.time(),
+          "reason": UNPARSABLE_RAW_QUARANTINE_REASON,
+      }
+      manifest_entries.append(entry)
+      already_quarantined.add(path_norm)
+      moved += 1
+      if log_fn:
+        log_fn(
+            "Quarantined unparsable raw stats %s -> %s"
+            % (path_norm, dest_path),
+            flush=True,
+        )
+    except OSError as exc:
+      if log_fn:
+        log_fn(
+            "Unparsable raw quarantine failed path=%s: %s"
+            % (path_norm, exc),
+            flush=True,
+        )
+
+  if moved:
+    _save_unparsable_raw_manifest_atomic(manifest_path, manifest_entries)
+  return moved
+
+
+def scan_and_quarantine_unparsable_closed_raw(
+    archive_data_dir,
+    host_name_ext,
+    *,
+    skip_paths=None,
+    log_fn=log_print,
+    max_per_pass=None,
+):
+  """Scan closed raw tree and quarantine unparsable segments (bounded)."""
+  if not archive_data_dir:
+    return 0
+  closed_paths = collect_stats_files_in_range(
+      archive_data_dir, "all", None, host_name_ext)
+  if not closed_paths:
+    return 0
+  moved = quarantine_unparsable_closed_raw_paths(
+      closed_paths,
+      archive_data_dir,
+      skip_paths=skip_paths,
+      log_fn=log_fn,
+      max_moves=max_per_pass,
+  )
+  if moved:
+    invalidate_unmapped_disqualify_cache()
+  return moved
 
 
 def build_seal_disqualified_daily_tars(

@@ -1435,6 +1435,14 @@ def run_sync_timedb_supervisor_loop(
               pending_archive_tasks),
       }
 
+  def _get_quarantine_skip_paths():
+    captured = _capture_disqualification_inputs()
+    skip_paths = set(captured["pending_stats_paths"])
+    skip_paths |= set(captured["inflight_paths"])
+    for paths in captured["pending_append_by_daily_tar"].values():
+      skip_paths |= set(paths)
+    return skip_paths
+
   def _janitor_disqualified_daily_tars():
     captured = _capture_disqualification_inputs()
     unmapped = set()
@@ -1741,6 +1749,7 @@ def run_sync_timedb_supervisor_loop(
           max(0.0, time.time() - float(idle_since_empty_queue))
           if idle_since_empty_queue is not None else 0.0
       ),
+      get_quarantine_skip_paths=_get_quarantine_skip_paths,
       ingest_ready_fn=stats_file_head_ingested_in_db,
       archive_stats_files_fn=archive_stats_files,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,

@@ -403,6 +403,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max raw stats file deletes per janitor RAW_REMOVE debt item per tick (default 1000).
 # archive_janitor_raw_paths_per_tick = 1000
 
+# Max unparsable closed raw files moved to .sync_timedb_unparsable_raw/ per janitor scan (default 50).
+# sync_unparsable_raw_quarantine_max_per_tick = 50
+
 # Max concurrent disjoint daily-tar archive append jobs (default 2).
 # sync_archive_max_inflight_jobs = 2
 

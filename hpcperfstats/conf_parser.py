@@ -142,6 +142,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "archive_janitor_debt_burst_factor"),
     ("PIPELINE", "archive_janitor_debt_max_entries"),
     ("PIPELINE", "archive_janitor_raw_paths_per_tick"),
+    ("PIPELINE", "sync_unparsable_raw_quarantine_max_per_tick"),
     ("PIPELINE", "sync_archive_max_inflight_jobs"),
     ("PIPELINE", "sync_archive_worker_stall_seconds"),
     # [OAUTH2]
@@ -2054,6 +2055,12 @@ def get_archive_janitor_raw_paths_per_tick():
   """Max raw stats file deletes per janitor RAW_REMOVE debt item (default 1000)."""
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("archive_janitor_raw_paths_per_tick", fallback=1000))
+
+
+def get_sync_unparsable_raw_quarantine_max_per_tick():
+  """Max unparsable closed raw files quarantined per janitor scan (default 50)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_unparsable_raw_quarantine_max_per_tick", fallback=50))
 
 
 def get_sync_archive_max_inflight_jobs():

@@ -40,12 +40,20 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 
 Out of scope for the DB gate: `remove_verified_uncompressed_daily_tars` (`.tar` only), tar dedupe/seal/recovery without raw stats paths.
 
-## Unmapped closed raw (no parseable first timestamp)
+## Unparsable closed raw (dead-letter quarantine)
 
-Closed raw segments whose first timestamp cannot be parsed are omitted from `build_archive_mapping` and from `remaining_raw_by_gz`, yet still exist on disk. They must not make a day look empty:
+Closed raw segments whose **first timestamp cannot be parsed** are omitted from `build_archive_mapping` and `remaining_raw_by_gz`. They must **not** disqualify janitor days indefinitely:
 
-- **Janitor accrual and ticks** must union unmapped closed raw days into disqualification via `collect_days_with_unmapped_closed_raw` plus `get_disqualified_daily_tars()` (pending ingest, in-flight append, heap, append cache).
-- When `_accrual_snapshot` is absent during backlog, `_janitor_disqualified_daily_tars` must also union `get_unmapped_closed_raw_daily_tars_cached()` (TTL-bounded closed-path scan).
+- **Quarantine DLO:** move to `{archive_data_dir}/.sync_timedb_unparsable_raw/` with manifest `{archive_data_dir}/.sync_timedb_unparsable_raw.json` (`scan_and_quarantine_unparsable_closed_raw` in `sync_timedb_archive_helpers.py`).
+- **When:** bounded scan at **janitor tick start** and **startup** (`enqueue_startup_debt`), before debt pop; skip paths from `get_quarantine_skip_paths()` (pending + inflight + append-cache raw).
+- **Cap:** `sync_unparsable_raw_quarantine_max_per_tick` (default 50). Invalidate `get_unmapped_closed_raw_daily_tars_cached` TTL after successful moves.
+
+## Unmapped closed raw (parsable, not in mapping)
+
+**Parsable** closed raw still not in `build_archive_mapping` is a data-gap: disqualify via `collect_days_with_unmapped_closed_raw` (unparsable paths excluded there).
+
+- **Janitor accrual and ticks** union parsable-unmapped days into `get_disqualified_daily_tars()` with pending ingest, in-flight append, heap, append cache.
+- When `_accrual_snapshot` is absent during backlog, `_janitor_disqualified_daily_tars` also unions `get_unmapped_closed_raw_daily_tars_cached()` (TTL-bounded closed-path scan).
 
 ## Tar removal vs DB gate
 

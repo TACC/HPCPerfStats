@@ -82,6 +82,7 @@ Raw stats on disk remain the **source of truth** until validated archive members
 | **Corrupt daily `.tar` before append** | `replace_corrupt_tar_from_compressed_backup` tries zst then gz; append stays fail-closed (`False`) if restore fails—raw files remain. |
 | **`ingest_first_archive_abandoned_raw` in logs** | With **`sync_enable_ingest_first_durability_mode=yes`**, exhausted append retries checkpoint paths as processed while raw may never reach tar; janitor/partial accrual must eventually enqueue raw debt—grep logs for this marker and verify raw still on disk until cold path succeeds. |
 | **Head ingested, tail missing (M2)** | DB head-ingest gate does not prove full-file ingest; truncated raw with matching archive size could pass validation—treat unexpected raw deletion as incident-driven review, not routine ops. |
+| **Unparsable closed raw blocking a day** | Inspect **`{archive_data_dir}/.sync_timedb_unparsable_raw.json`** and **`{archive_data_dir}/.sync_timedb_unparsable_raw/`**; janitor moves closed segments with no parseable first timestamp off the hot tree (bounded per tick). Restore only after fixing content or deliberate operator review—do not delete manifest entries casually. Parsable-but-unmapped raw still blocks until ingest/archive catches up. |
 
 ## PostgreSQL connection budget (operator)
 

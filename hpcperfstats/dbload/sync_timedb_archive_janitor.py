@@ -29,6 +29,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     iter_daily_tar_paths,
     remove_verified_archived_raw_files,
     remove_verified_uncompressed_daily_tars,
+    scan_and_quarantine_unparsable_closed_raw,
     should_seal_daily_tar,
     tar_day_dirty_by_mtime,
     tar_has_duplicate_file_members,
@@ -114,6 +115,7 @@ class ArchiveJanitor:
       get_ingest_backlog_high: Callable[[], bool],
       get_pending_stats_count: Callable[[], int],
       get_idle_seconds: Callable[[], float],
+      get_quarantine_skip_paths: Optional[Callable[[], Set[str]]] = None,
       ingest_ready_fn=None,
       archive_stats_files_fn=None,
       process_title: str = "sync_timedb.py",
@@ -127,6 +129,7 @@ class ArchiveJanitor:
     self.get_ingest_backlog_high = get_ingest_backlog_high
     self.get_pending_stats_count = get_pending_stats_count
     self.get_idle_seconds = get_idle_seconds
+    self.get_quarantine_skip_paths = get_quarantine_skip_paths or (lambda: set())
     self.ingest_ready_fn = ingest_ready_fn
     self.archive_stats_files_fn = archive_stats_files_fn
     self.process_title = process_title
@@ -276,8 +279,25 @@ class ArchiveJanitor:
     except RuntimeError:
       self._future = None
 
+  def _run_unparsable_quarantine_scan(self):
+    skip_paths = set(self.get_quarantine_skip_paths() or ())
+    moved = scan_and_quarantine_unparsable_closed_raw(
+        self.archive_data_dir,
+        self.host_name_ext,
+        skip_paths=skip_paths,
+        log_fn=self.log_fn,
+        max_per_pass=cfg.get_sync_unparsable_raw_quarantine_max_per_tick(),
+    )
+    if moved:
+      self.log_fn(
+          "Archive janitor quarantined unparsable_raw count=%d" % moved,
+          flush=True,
+      )
+    return moved
+
   def enqueue_startup_debt(self):
     """Mtime-only scan at startup; no blocking maintenance."""
+    self._run_unparsable_quarantine_scan()
     self._accrue_debt_mtime_scan(reason="startup")
     self.signal_work_available()
 
@@ -559,6 +579,7 @@ class ArchiveJanitor:
 
       budget_s, max_days = self._effective_tick_limits()
       tick_t0 = time.time()
+      self._run_unparsable_quarantine_scan()
       disqualified = set(self.get_disqualified_daily_tars())
       self._tick_remaining_raw_cache = {}
       with self._debt_lock:

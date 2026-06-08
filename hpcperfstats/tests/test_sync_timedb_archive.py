@@ -2992,7 +2992,7 @@ def test_archive_validation_worker_count_respects_max_workers(monkeypatch):
   assert helpers._get_archive_validation_worker_count(8) == 2
 
 
-def test_collect_unmapped_closed_raw_daily_tars_finds_unmapped_on_disk(tmp_path):
+def test_collect_unmapped_closed_raw_daily_tars_ignores_unparsable_on_disk(tmp_path):
   archive_dir = tmp_path / "archive"
   host_dir = archive_dir / "host.hpc"
   host_dir.mkdir(parents=True)
@@ -3007,7 +3007,59 @@ def test_collect_unmapped_closed_raw_daily_tars_finds_unmapped_on_disk(tmp_path)
   result = collect_unmapped_closed_raw_daily_tars(
       str(archive_dir), ".hpc", str(daily_dir),
   )
-  assert result
+  assert not result
+
+
+def test_quarantine_unparsable_closed_raw_moves_file_and_writes_manifest(tmp_path):
+  import json
+
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  archive_dir = tmp_path / "archive"
+  host_dir = archive_dir / "host.hpc"
+  host_dir.mkdir(parents=True)
+  raw_path = host_dir / "bad_raw"
+  raw_path.write_text("no-timestamp-here\n")
+
+  moved = helpers.quarantine_unparsable_closed_raw_paths(
+      [str(raw_path)],
+      str(archive_dir),
+      log_fn=lambda *_a, **_k: None,
+  )
+  assert moved == 1
+  assert not raw_path.exists()
+  quarantine_path = (
+      archive_dir / helpers.SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME / "host.hpc" / "bad_raw"
+  )
+  assert quarantine_path.is_file()
+  manifest = json.loads(
+      (archive_dir / helpers.SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME).read_text()
+  )
+  assert len(manifest) == 1
+  assert manifest[0]["original_path"] == str(raw_path)
+  assert manifest[0]["reason"] == helpers.UNPARSABLE_RAW_QUARANTINE_REASON
+  discovered = helpers.collect_stats_files_in_range(
+      str(archive_dir), "all", None, ".hpc")
+  assert str(raw_path) not in discovered
+
+
+def test_unparsable_unmapped_does_not_disqualify_day(tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  archive_dir = tmp_path / "archive"
+  host_dir = archive_dir / "host.hpc"
+  host_dir.mkdir(parents=True)
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  day_epoch = int(datetime(2026, 1, 1, 12, 0, 0).timestamp())
+  raw_path = host_dir / str(day_epoch)
+  raw_path.write_text("not-a-stats-line\n")
+  closed_paths = helpers.collect_stats_files_in_range(
+      str(archive_dir), "all", None, ".hpc")
+  mapping = helpers.build_archive_mapping(closed_paths, str(daily_dir))
+  result = helpers.collect_days_with_unmapped_closed_raw(
+      closed_paths, mapping, str(daily_dir))
+  assert not result
 
 
 def test_iter_tar_file_tasks_falls_back_to_gz_when_zst_corrupt(monkeypatch, tmp_path):

@@ -664,7 +664,68 @@ def test_janitor_persist_hints_once_per_tick_with_multiple_debt_items(monkeypatc
   assert persist_mock.call_count == 1
 
 
-def test_janitor_tar_drop_blocked_when_unmapped_closed_raw_and_no_accrual_snapshot(
+def test_janitor_tar_drop_blocked_when_parsable_unmapped_closed_raw(
+    monkeypatch, tmp_path,
+):
+  archive_dir = tmp_path / "archive"
+  host_dir = archive_dir / "host.hpc"
+  host_dir.mkdir(parents=True)
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = str(daily_dir / "2026-01-01.tar")
+  open(tar_path, "wb").close()
+  open(str(daily_dir / "2026-01-01.tar.zst"), "wb").close()
+  day_epoch = int(datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc).timestamp())
+  raw_path = host_dir / str(day_epoch)
+  raw_path.write_text("%d job1 cn001\n" % day_epoch)
+
+  def disqualify():
+    from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+        collect_days_with_unmapped_closed_raw,
+        collect_stats_files_in_range,
+    )
+    closed_paths = collect_stats_files_in_range(
+        str(archive_dir), "all", None, ".hpc",
+    )
+    # Parsable closed raw absent from a stale/partial mapping still blocks the day.
+    return collect_days_with_unmapped_closed_raw(
+        closed_paths, {}, str(daily_dir),
+    )
+
+  janitor = _make_janitor(
+      archive_data_dir=str(archive_dir),
+      tgz_archive_dir=str(daily_dir),
+      host_name_ext=".hpc",
+      get_disqualified_daily_tars=disqualify,
+  )
+  janitor._accrual_snapshot = None
+  janitor._enqueue_debt(DebtKind.TAR_DROP, tar_path, persist=False)
+  monkeypatch.setattr(janitor_mod, "build_remaining_raw_for_daily_tar", lambda *_a, **_k: {})
+  called = {"drop": False}
+
+  tar_norm = os.path.normpath(tar_path)
+  unmapped = disqualify()
+  assert tar_norm in unmapped
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      is_unparsable_closed_stats_path,
+  )
+  assert not is_unparsable_closed_stats_path(str(raw_path))
+
+  def fake_drop(*_a, **kwargs):
+    skip = {
+        os.path.normpath(p)
+        for p in (kwargs.get("skip_daily_tar_paths") or ())
+    }
+    if tar_norm not in skip:
+      called["drop"] = True
+
+  monkeypatch.setattr(janitor_mod, "remove_verified_uncompressed_daily_tars", fake_drop)
+  janitor._run_tick_body()
+  assert os.path.isfile(tar_path)
+  assert called["drop"] is False
+
+
+def test_janitor_tar_drop_proceeds_after_unparsable_quarantine(
     monkeypatch, tmp_path,
 ):
   archive_dir = tmp_path / "archive"
@@ -697,10 +758,7 @@ def test_janitor_tar_drop_blocked_when_unmapped_closed_raw_and_no_accrual_snapsh
   janitor._enqueue_debt(DebtKind.TAR_DROP, tar_path, persist=False)
   monkeypatch.setattr(janitor_mod, "build_remaining_raw_for_daily_tar", lambda *_a, **_k: {})
   called = {"drop": False}
-
   tar_norm = os.path.normpath(tar_path)
-  unmapped = disqualify()
-  assert tar_norm in unmapped
 
   def fake_drop(*_a, **kwargs):
     skip = {
@@ -712,8 +770,27 @@ def test_janitor_tar_drop_blocked_when_unmapped_closed_raw_and_no_accrual_snapsh
 
   monkeypatch.setattr(janitor_mod, "remove_verified_uncompressed_daily_tars", fake_drop)
   janitor._run_tick_body()
-  assert os.path.isfile(tar_path)
-  assert called["drop"] is False
+  assert not raw_path.exists()
+  assert called["drop"] is True
+
+
+def test_janitor_skips_quarantine_for_pending_inflight_path(tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  archive_dir = tmp_path / "archive"
+  host_dir = archive_dir / "host.hpc"
+  host_dir.mkdir(parents=True)
+  raw_path = host_dir / "bad_raw"
+  raw_path.write_text("no-timestamp-here\n")
+  janitor = _make_janitor(
+      archive_data_dir=str(archive_dir),
+      host_name_ext=".hpc",
+      get_quarantine_skip_paths=lambda: {str(raw_path)},
+  )
+  janitor._run_unparsable_quarantine_scan()
+  assert raw_path.is_file()
+  quarantine_root = archive_dir / helpers.SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME
+  assert not (quarantine_root / "host.hpc" / "bad_raw").exists()
 
 
 def test_janitor_raw_remove_deletes_new_closed_raw_after_accrual_snapshot_stale(
