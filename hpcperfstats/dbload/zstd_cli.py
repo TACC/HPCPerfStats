@@ -287,6 +287,8 @@ def zstd_decompress_stdout(
 def zstd_test(
     zst_path: str,
     thread_count: int,
+    *,
+    apply_priority_wrap: bool = True,
 ) -> subprocess.CompletedProcess:
   cmd = [
       zstd_executable(),
@@ -295,7 +297,13 @@ def zstd_test(
       "-q",
       zst_path,
   ]
-  result = _run_zstd(cmd, capture_output=True, text=True, check=False)
+  result = _run_zstd(
+      cmd,
+      capture_output=True,
+      text=True,
+      check=False,
+      apply_priority_wrap=apply_priority_wrap,
+  )
   if result.returncode != 0:
     raise subprocess.CalledProcessError(
         result.returncode,

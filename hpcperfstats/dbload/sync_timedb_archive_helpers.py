@@ -244,8 +244,12 @@ def raw_stats_path_needs_tar_append(
       return False
   except Exception as exc:
     from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        ArchiveDayIngestSkipError,
         ArchiveMembersRedisUnavailableError,
     )
+    if isinstance(exc, ArchiveDayIngestSkipError):
+      _log_archive_day_ingest_skip_once(exc)
+      return False
     if isinstance(exc, ArchiveMembersRedisUnavailableError):
       return _member_lookup_failed_assume_append(stats_path, exc)
     raise
@@ -1036,6 +1040,8 @@ _DAILY_ARCHIVE_MEMBERS_CACHE = {}
 def clear_daily_archive_members_cache():
   """Clear per-process daily archive member maps (tests and worker reset)."""
   _DAILY_ARCHIVE_MEMBERS_CACHE.clear()
+  _INGEST_SKIPPED_CALENDAR_DAYS.clear()
+  _LOGGED_ARCHIVE_DAY_INGEST_SKIP.clear()
 
 
 def invalidate_daily_archive_members_cache(compressed_path):
@@ -1184,7 +1190,7 @@ def _sealed_archive_member_has_exact_size(sealed_path, member_name, expected_siz
       raise _MemberStreamEarlyExit()
 
   try:
-    readable, _, _ = _stream_compressed_archive_members(
+    readable, _, _, _stream_error = _stream_compressed_archive_members(
         sealed_path,
         on_member,
         apply_priority_wrap=False,
@@ -1198,6 +1204,111 @@ def _sealed_archive_member_has_exact_size(sealed_path, member_name, expected_siz
 
 _INGEST_SEALED_LOOKUP_WARNED = set()
 _INGEST_SEALED_LOOKUP_WARNED_MAX = 256
+_INGEST_SKIPPED_CALENDAR_DAYS = {}
+_INGEST_SKIPPED_CALENDAR_DAYS_MAX = 512
+_LOGGED_ARCHIVE_DAY_INGEST_SKIP = set()
+_LOGGED_ARCHIVE_DAY_INGEST_SKIP_MAX = 256
+
+SKIP_KIND_ZST_FRAME_INVALID = "zst_frame_invalid"
+SKIP_KIND_TAR_TRUNCATED = "tar_truncated_or_unreadable"
+SKIP_KIND_READ_ERROR = "read_error"
+
+
+def classify_sealed_archive_stream_failure(sealed_path, stream_error=None):
+  """Classify sealed archive stream failure (single-flight populate winner only)."""
+  import subprocess
+
+  from hpcperfstats.dbload import zstd_cli
+
+  stream_detail = ""
+  if stream_error is not None:
+    stream_detail = str(stream_error).strip()[:500]
+
+  is_zst = (
+      detect_compressed_format(sealed_path) == DAILY_ARCHIVE_ZST_SUFFIX
+      or str(sealed_path).endswith(DAILY_ARCHIVE_ZST_SUFFIX)
+  )
+  if is_zst:
+    try:
+      zstd_cli.zstd_test(
+          sealed_path,
+          get_archive_zstd_thread_count(),
+          apply_priority_wrap=False,
+      )
+      detail = stream_detail or "tar stream unreadable"
+      return SKIP_KIND_TAR_TRUNCATED, detail
+    except subprocess.CalledProcessError as exc:
+      zst_err = (getattr(exc, "stderr", None) or str(exc)).strip()[:500]
+      return SKIP_KIND_ZST_FRAME_INVALID, zst_err
+    except Exception as exc:
+      return SKIP_KIND_READ_ERROR, str(exc)[:500]
+
+  if stream_detail:
+    lowered = stream_detail.lower()
+    if "unexpected end" in lowered or "eof" in lowered or "tarerror" in lowered:
+      return SKIP_KIND_TAR_TRUNCATED, stream_detail
+  return SKIP_KIND_READ_ERROR, stream_detail or "archive stream unreadable"
+
+
+def _cache_ingest_skipped_calendar_day(day_token, kind, detail, sealed_path):
+  if len(_INGEST_SKIPPED_CALENDAR_DAYS) >= _INGEST_SKIPPED_CALENDAR_DAYS_MAX:
+    _INGEST_SKIPPED_CALENDAR_DAYS.clear()
+  _INGEST_SKIPPED_CALENDAR_DAYS[day_token] = (kind, detail, sealed_path)
+
+
+def _raise_if_ingest_day_skipped(keys, sealed_path, client):
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      ArchiveDayIngestSkipError,
+      get_archive_day_ingest_skip,
+  )
+
+  cached = _INGEST_SKIPPED_CALENDAR_DAYS.get(keys.day_token)
+  if cached is not None:
+    kind, detail, cached_path = cached
+    raise ArchiveDayIngestSkipError(
+        keys.day_token, cached_path or sealed_path, kind, detail,
+    )
+  skip = get_archive_day_ingest_skip(keys, client=client)
+  if skip is not None:
+    kind, detail = skip
+    _cache_ingest_skipped_calendar_day(keys.day_token, kind, detail, sealed_path)
+    raise ArchiveDayIngestSkipError(keys.day_token, sealed_path, kind, detail)
+
+
+def mark_archive_day_ingest_skip_and_raise(sealed_path, keys, client, stream_error=None):
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      ArchiveDayIngestSkipError,
+      set_archive_day_ingest_skip,
+  )
+
+  kind, detail = classify_sealed_archive_stream_failure(sealed_path, stream_error)
+  set_archive_day_ingest_skip(client, keys, kind, detail)
+  _cache_ingest_skipped_calendar_day(keys.day_token, kind, detail, sealed_path)
+  raise ArchiveDayIngestSkipError(keys.day_token, sealed_path, kind, detail)
+
+
+def _log_archive_day_ingest_skip_once(exc):
+  if len(_LOGGED_ARCHIVE_DAY_INGEST_SKIP) >= _LOGGED_ARCHIVE_DAY_INGEST_SKIP_MAX:
+    _LOGGED_ARCHIVE_DAY_INGEST_SKIP.clear()
+  if exc.day_token in _LOGGED_ARCHIVE_DAY_INGEST_SKIP:
+    return
+  _LOGGED_ARCHIVE_DAY_INGEST_SKIP.add(exc.day_token)
+  if exc.kind == SKIP_KIND_TAR_TRUNCATED:
+    reason_phrase = (
+        "tar_truncated_or_unreadable (zstd -t passed; tar stream: %s)"
+        % exc.detail
+    )
+  elif exc.kind == SKIP_KIND_ZST_FRAME_INVALID:
+    reason_phrase = "zst_frame_invalid (zstd -t failed: %s)" % exc.detail
+  else:
+    reason_phrase = "%s (%s)" % (exc.kind, exc.detail)
+  log_print(
+      "ERROR: daily sealed archive unusable for ingest lookup: sealed_path=%s day=%s "
+      "reason=%s; skipping tar-append duplicate-check for all raw stats files on this "
+      "day until the archive is repaired"
+      % (exc.sealed_path, exc.day_token, reason_phrase),
+      flush=True,
+  )
 
 
 def _log_ingest_sealed_lookup_issue(sealed_path, message):
@@ -1220,31 +1331,14 @@ def _member_match_via_redis_or_sealed_point(
     client,
 ):
   from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      ArchiveDayIngestSkipError,
       ArchiveMembersRedisUnavailableError,
       populate_degraded_is_set,
       wait_for_member_match,
   )
 
   expected_size = int(expected_size)
-
-  def _point_lookup_fallback(reason):
-    _log_ingest_sealed_lookup_issue(
-        sealed_path,
-        "WARNING: %s for %s; using local sealed point lookup"
-        % (reason, sealed_path),
-    )
-    point = _sealed_archive_member_has_exact_size(
-        sealed_path, member_name, expected_size,
-    )
-    return point if point is not None else False
-
-  def _wait_or_fallback():
-    try:
-      return wait_for_member_match(keys, member_name, expected_size)
-    except ArchiveMembersRedisUnavailableError as exc:
-      return _point_lookup_fallback(
-          "Redis archive member wait failed: %s" % exc,
-      )
+  _raise_if_ingest_day_skipped(keys, sealed_path, client)
 
   raw_size = client.hget(keys.hash_key, member_name)
   if raw_size is not None:
@@ -1258,24 +1352,29 @@ def _member_match_via_redis_or_sealed_point(
     return False
 
   if populate_degraded_is_set(keys, client=client):
-    return _point_lookup_fallback("archive members populate degraded")
+    _raise_if_ingest_day_skipped(keys, sealed_path, client)
+    raise ArchiveMembersRedisUnavailableError(
+        "archive members populate degraded for %s" % keys.day_token,
+    )
 
   if client.exists(keys.lock_key):
-    return _wait_or_fallback()
+    return wait_for_member_match(
+        keys, member_name, expected_size, sealed_path=sealed_path,
+    )
 
   try:
     members = _populate_redis_members_from_sealed_scan(sealed_path, cache_key)
     _store_daily_archive_members_cache(canonical, members)
     return members.get(member_name) == expected_size
-  except ArchiveMembersRedisUnavailableError as exc:
+  except ArchiveDayIngestSkipError:
+    raise
+  except ArchiveMembersRedisUnavailableError:
+    _raise_if_ingest_day_skipped(keys, sealed_path, client)
     if client.exists(keys.lock_key) or client.get(keys.complete_key) == "1":
-      return _wait_or_fallback()
-    cached = client.get(keys.complete_key)
-    if cached == "1":
-      return False
-    return _point_lookup_fallback(
-        "Redis archive member populate failed: %s" % exc,
-    )
+      return wait_for_member_match(
+          keys, member_name, expected_size, sealed_path=sealed_path,
+      )
+    raise
 
 
 def _stream_compressed_archive_members(
@@ -1287,12 +1386,12 @@ def _stream_compressed_archive_members(
   """Stream file members from a sealed archive.
 
   ``on_member(name, size)`` is invoked for each file member when provided.
-  Returns ``(readable, members_dict, saw_duplicate_names)``.
+  Returns ``(readable, members_dict, saw_duplicate_names, stream_error)``.
   """
   if detect_compressed_format(compressed_path) is None or not os.path.isfile(
       compressed_path,
   ):
-    return False, {}, False
+    return False, {}, False, None
   try:
     with file_read_lock_wait(compressed_path):
       with _open_tarfile_for_read(
@@ -1313,7 +1412,7 @@ def _stream_compressed_archive_members(
           if on_member is not None:
             on_member(m.name, m.size)
         members = {name: max(sizes) for name, sizes in by_name.items()}
-        return True, members, saw_duplicates
+        return True, members, saw_duplicates, None
   except _MemberStreamEarlyExit:
     raise
   except Exception as exc:
@@ -1327,7 +1426,7 @@ def _stream_compressed_archive_members(
         % (compressed_path, exc),
         flush=True,
     )
-    return False, {}, False
+    return False, {}, False, exc
 
 
 def _scan_compressed_archive_members_and_readable(
@@ -1336,7 +1435,7 @@ def _scan_compressed_archive_members_and_readable(
     apply_priority_wrap=True,
 ):
   """Return ``(readable, members)`` from one streamed zstd/gzip pass."""
-  readable, members, _duplicates = _stream_compressed_archive_members(
+  readable, members, _duplicates, _stream_error = _stream_compressed_archive_members(
       compressed_path,
       apply_priority_wrap=apply_priority_wrap,
   )
@@ -1583,12 +1682,14 @@ def _populate_redis_members_from_sealed_scan(sealed_path, cache_key):
   keys = build_archive_members_redis_keys(cache_key)
 
   def _scan_fn(on_member):
-    readable, _members, saw_duplicates = _stream_compressed_archive_members(
-        sealed_path,
-        on_member,
-        apply_priority_wrap=False,
+    readable, _members, saw_duplicates, stream_error = (
+        _stream_compressed_archive_members(
+            sealed_path,
+            on_member,
+            apply_priority_wrap=False,
+        )
     )
-    return readable, saw_duplicates
+    return readable, saw_duplicates, stream_error
 
   return populate_archive_members_redis(keys, _scan_fn, sealed_path=sealed_path)
 
@@ -1643,6 +1744,11 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
         if client.exists(keys.lock_key):
           members = wait_for_complete_members(keys)
         elif populate_degraded_is_set(keys, client=client):
+          from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+              get_archive_day_ingest_skip,
+          )
+          if get_archive_day_ingest_skip(keys, client=client) is not None:
+            return {}
           members = None
         else:
           members = _populate_redis_members_from_sealed_scan(

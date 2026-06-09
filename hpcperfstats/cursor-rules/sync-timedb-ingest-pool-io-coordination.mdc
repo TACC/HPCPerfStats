@@ -19,14 +19,17 @@ When code on the **ingest pool worker** hot path can read or decompress the **sa
 1. **Pool parallelism review (mandatory before merge):** ask: “If `sync_ingest_pool_processes=N` and a chunk has N DB-complete files for the **same calendar day** with cold caches, do N workers each open the same sealed path?” If yes, the change is **not complete** without cross-worker coordination.
 2. **Per-process L1 is not cluster dedupe:** `sync_archive_members_cache_*` dedupes only within one worker process; it does **not** prevent N× parallel `zstd` across the ingest pool.
 3. **Redis L2 enabled (`sync_archive_members_redis_enabled=yes`):** on ingest duplicate-check, order MUST be:
-   - L1 → Redis HGET / complete map → wait while populate lock held → **single-flight populate** (at most one decompress per daily archive identity) → local sealed scan **only** when Redis disabled, `populate_degraded`, or documented last-resort after `ArchiveMembersRedisUnavailableError`.
-   - **Forbidden:** local `_sealed_archive_member_has_exact_size` or full sealed stream **before** Redis lock/wait/populate when Redis is enabled and the day is not yet `complete=1`.
-4. **Waiter semantics:** waiters block on incremental HASH + `complete=1` or stall detection (`populate_stall_seconds`); see `sync_timedb_archive_members_redis.py`.
-5. **Operator-visible goal:** at most **one** `zstd -d` (or equivalent sealed stream) per calendar day per site at a time during ingest catch-up, not one per ingest worker.
+   - L1 skip cache → Redis `archive_day_ingest_skip` → L1 member map → Redis HGET / complete map → wait while populate lock held → **single-flight populate** (at most one decompress per daily archive identity).
+   - **Forbidden:** local `_sealed_archive_member_has_exact_size` or full sealed stream when Redis is enabled and the day is not yet `complete=1` — including after populate failure (`populate_degraded`) or waiter timeout. Waiters must read `archive_day_ingest_skip` and raise `ArchiveDayIngestSkipError` immediately.
+   - Local sealed scan only when **Redis is disabled** (no cross-worker guarantee).
+4. **Unreadable sealed day (populate winner only):** classify once with `zstd -t` vs tar stream error → set Redis `archive_day_ingest_skip:v1:{day}` **before** populate lock release → log once per calendar day. All DB-complete raw for that day: `raw_stats_path_needs_tar_append` returns **`False`** (`need_archival=False`); ingest continues for other days.
+5. **Waiter semantics:** waiters block on incremental HASH + `complete=1`, `archive_day_ingest_skip`, or stall detection (`populate_stall_seconds`); see `sync_timedb_archive_members_redis.py`.
+6. **Operator-visible goal:** at most **one** `zstd -d` (or equivalent sealed stream) per calendar day per site at a time during ingest catch-up, not one per ingest worker — including failure/diagnostic paths.
 
 ## Tests (same task, non-optional)
 
 - Add or extend a **concurrent** regression test (threads or processes + `FakeRedis`) that invokes the ingest duplicate-check path N times on the same cold sealed day and asserts the sealed stream / populate entrypoint runs **once** (e.g. `test_ingest_sealed_single_flight_one_zstd_scan`).
+- Add **`test_concurrent_waiters_no_zstd_after_day_skip`**: after `archive_day_ingest_skip` is set, N ingest workers issue **zero** sealed streams.
 - When changing coordination order, grep all callers per `exhaustive-error-path-analysis.mdc` and extend tests for each ingest entrypoint affected.
 
 ## Overlap

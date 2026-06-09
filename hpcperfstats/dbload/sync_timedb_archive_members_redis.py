@@ -15,6 +15,7 @@ _COMPLETE_PREFIX = "%s:archive_members:complete:v1" % _KEY_PREFIX
 _LOCK_PREFIX = "%s:archive_members:lock:v1" % _KEY_PREFIX
 _DEDUPE_HINT_PREFIX = "%s:archive_dedupe_hint:v1" % _KEY_PREFIX
 _DEGRADED_PREFIX = "%s:archive_populate_degraded:v1" % _KEY_PREFIX
+_DAY_SKIP_PREFIX = "%s:archive_day_ingest_skip:v1" % _KEY_PREFIX
 _PROGRESS_SUFFIX = ":progress"
 
 _REDIS_CLIENT = None
@@ -23,6 +24,20 @@ _REDIS_CLIENT_URL = None
 
 class ArchiveMembersRedisUnavailableError(RuntimeError):
   """Raised when Redis is required for archive member cache but unreachable."""
+
+
+class ArchiveDayIngestSkipError(RuntimeError):
+  """Sealed daily archive unreadable; ingest skips tar-append checks for the day."""
+
+  def __init__(self, day_token, sealed_path, kind, detail):
+    self.day_token = day_token
+    self.sealed_path = sealed_path
+    self.kind = kind
+    self.detail = detail
+    super().__init__(
+        "archive day ingest skip day=%s sealed_path=%s kind=%s detail=%s"
+        % (day_token, sealed_path, kind, detail),
+    )
 
 
 @dataclass(frozen=True)
@@ -40,6 +55,10 @@ class ArchiveMembersRedisKeys:
   @property
   def degraded_key(self) -> str:
     return "%s:%s" % (_DEGRADED_PREFIX, self.day_token)
+
+  @property
+  def day_skip_key(self) -> str:
+    return "%s:%s" % (_DAY_SKIP_PREFIX, self.day_token)
 
 
 def archive_members_redis_enabled() -> bool:
@@ -225,6 +244,70 @@ def _set_populate_degraded(client, keys: ArchiveMembersRedisKeys):
   client.set(keys.degraded_key, "1", ex=ttl if ttl > 0 else None)
 
 
+def _encode_day_skip_value(kind: str, detail: str) -> str:
+  safe_detail = (detail or "").replace(":", ";")[:500]
+  return "%s:%s" % (kind, safe_detail)
+
+
+def set_archive_day_ingest_skip(
+    client,
+    keys: ArchiveMembersRedisKeys,
+    kind: str,
+    detail: str,
+):
+  if keys.day_token == "unknown":
+    return
+  ttl = _redis_ttl_seconds()
+  client.set(
+      keys.day_skip_key,
+      _encode_day_skip_value(kind, detail),
+      ex=ttl if ttl > 0 else None,
+  )
+
+
+def get_archive_day_ingest_skip(
+    keys: ArchiveMembersRedisKeys,
+    client=None,
+) -> Optional[tuple]:
+  if keys.day_token == "unknown":
+    return None
+  if client is None:
+    client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return None
+  raw = client.get(keys.day_skip_key)
+  if not raw:
+    return None
+  kind, _, detail = str(raw).partition(":")
+  if not kind:
+    return None
+  return kind, detail
+
+
+def archive_day_ingest_skip_error_from_redis(
+    keys: ArchiveMembersRedisKeys,
+    sealed_path: str,
+    client=None,
+) -> Optional[ArchiveDayIngestSkipError]:
+  skip = get_archive_day_ingest_skip(keys, client=client)
+  if skip is None:
+    return None
+  kind, detail = skip
+  return ArchiveDayIngestSkipError(keys.day_token, sealed_path, kind, detail)
+
+
+def _raise_if_archive_day_ingest_skip(
+    keys: ArchiveMembersRedisKeys,
+    sealed_path: str,
+    client,
+):
+  skip_exc = archive_day_ingest_skip_error_from_redis(
+      keys, sealed_path, client=client,
+  )
+  if skip_exc is not None:
+    raise skip_exc
+
+
 def redis_lookup_full_members(keys: ArchiveMembersRedisKeys) -> Optional[dict]:
   """Return member map when ``complete=1``, else ``None``."""
   if not archive_members_redis_enabled():
@@ -309,7 +392,9 @@ def _check_populate_wait_limits(
     *,
     started_monotonic,
     last_progress_monotonic,
+    sealed_path="",
 ):
+  _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
   max_seconds = _populate_max_seconds()
   if max_seconds > 0 and (time.monotonic() - started_monotonic) >= max_seconds:
     raise ArchiveMembersRedisUnavailableError(
@@ -345,10 +430,10 @@ def populate_archive_members_redis(
     *,
     sealed_path=None,
 ) -> dict:
-  """Single-flight populate: ``scan_fn(on_member)`` returns ``(readable, saw_duplicates)``.
+  """Single-flight populate: ``scan_fn(on_member)`` returns ``(readable, saw_duplicates)`` or
+  ``(readable, saw_duplicates, stream_error)``.
 
-  ``scan_fn`` must return exactly two values; member sizes are collected via
-  ``on_member`` callbacks during the scan (not from a third return value).
+  Member sizes are collected via ``on_member`` callbacks during the scan.
   """
   client = get_archive_members_redis_client(required=True)
   acquire_deadline = time.monotonic() + float(_populate_lock_seconds())
@@ -390,12 +475,19 @@ def populate_archive_members_redis(
           pending_batch.clear()
 
     try:
-      readable, scan_duplicates = scan_fn(_on_member)
+      scan_result = scan_fn(_on_member)
+      stream_error = None
+      if len(scan_result) == 3:
+        readable, scan_duplicates, stream_error = scan_result
+      else:
+        readable, scan_duplicates = scan_result
       if not readable:
-        msg = "Archive member scan failed for %s" % keys.hash_key
-        if sealed_path:
-          msg = "%s (sealed_path=%s)" % (msg, sealed_path)
-        raise ArchiveMembersRedisUnavailableError(msg)
+        from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+            mark_archive_day_ingest_skip_and_raise,
+        )
+        mark_archive_day_ingest_skip_and_raise(
+            sealed_path or "", keys, client, stream_error,
+        )
       if scan_duplicates:
         saw_duplicates = True
       _flush_hset_batch(client, keys, pending_batch, lock_token=token)
@@ -423,6 +515,8 @@ def wait_for_member_match(
     keys: ArchiveMembersRedisKeys,
     member_name: str,
     expected_size: int,
+    *,
+    sealed_path="",
 ) -> bool:
   """Wait for populate completion or incremental HASH hit; stall if no progress."""
   client = get_archive_members_redis_client(required=True)
@@ -433,6 +527,7 @@ def wait_for_member_match(
   last_progress_monotonic = started
 
   while True:
+    _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
     complete = client.get(keys.complete_key)
     raw_size = client.hget(keys.hash_key, member_name)
     if raw_size is not None:
@@ -458,6 +553,7 @@ def wait_for_member_match(
         keys,
         started_monotonic=started,
         last_progress_monotonic=last_progress_monotonic,
+        sealed_path=sealed_path,
     )
 
     if not client.exists(keys.lock_key):
@@ -468,7 +564,11 @@ def wait_for_member_match(
     time.sleep(_wait_poll_seconds())
 
 
-def wait_for_complete_members(keys: ArchiveMembersRedisKeys) -> dict:
+def wait_for_complete_members(
+    keys: ArchiveMembersRedisKeys,
+    *,
+    sealed_path="",
+) -> dict:
   """Block until ``complete=1`` and return full member map."""
   client = get_archive_members_redis_client(required=True)
   started = time.monotonic()
@@ -477,6 +577,7 @@ def wait_for_complete_members(keys: ArchiveMembersRedisKeys) -> dict:
   last_progress_monotonic = started
 
   while True:
+    _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
     members = _hgetall_members(client, keys)
     if members is not None:
       return members
@@ -495,6 +596,7 @@ def wait_for_complete_members(keys: ArchiveMembersRedisKeys) -> dict:
         keys,
         started_monotonic=started,
         last_progress_monotonic=last_progress_monotonic,
+        sealed_path=sealed_path,
     )
 
     time.sleep(_wait_poll_seconds())
@@ -543,6 +645,7 @@ def invalidate_archive_members_redis(cache_key):
       keys.dedupe_hint_key,
       keys.progress_key,
       keys.degraded_key,
+      keys.day_skip_key,
   )
 
 

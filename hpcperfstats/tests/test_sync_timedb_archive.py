@@ -3550,6 +3550,167 @@ def test_ingest_waiters_no_local_zstd_while_lock_held(
   assert point_calls["n"] == 0
 
 
+def _compress_bytes_to_zst(payload: bytes, zst_path: Path):
+  import subprocess
+
+  from hpcperfstats.dbload.zstd_cli import zstd_executable
+
+  raw_path = zst_path.with_suffix(".raw")
+  raw_path.write_bytes(payload)
+  subprocess.run(
+      [zstd_executable(), "-q", "-T0", "-f", str(raw_path), "-o", str(zst_path)],
+      check=True,
+  )
+  raw_path.unlink(missing_ok=True)
+
+
+def _make_valid_zst_truncated_tar(tmp_path) -> str:
+  tar_path = tmp_path / "inner.tar"
+  inner = tmp_path / "payload.txt"
+  inner.write_text("hello")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(inner), arcname="host/payload")
+  tar_bytes = tar_path.read_bytes()
+  truncated = tar_bytes[: max(512, len(tar_bytes) // 2)]
+  zst_path = tmp_path / "2026-05-09.tar.zst"
+  _compress_bytes_to_zst(truncated, zst_path)
+  return str(zst_path)
+
+
+@pytest.mark.skipif(
+    __import__("shutil").which("zstd") is None,
+    reason="zstd binary required",
+)
+def test_classify_stream_failure_zst_valid_tar_eof(tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  sealed = _make_valid_zst_truncated_tar(tmp_path)
+  kind, detail = helpers.classify_sealed_archive_stream_failure(
+      sealed, EOFError("unexpected end of data"),
+  )
+  assert kind == helpers.SKIP_KIND_TAR_TRUNCATED
+  assert "unexpected end" in detail.lower() or detail
+
+
+def test_classify_stream_failure_zst_invalid(tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  sealed = tmp_path / "2026-05-09.tar.zst"
+  sealed.write_bytes(b"not-valid-zstd")
+  kind, _detail = helpers.classify_sealed_archive_stream_failure(
+      str(sealed), EOFError("unexpected end of data"),
+  )
+  assert kind == helpers.SKIP_KIND_ZST_FRAME_INVALID
+
+
+def test_concurrent_waiters_no_zstd_after_day_skip(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import threading
+
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      ArchiveDayIngestSkipError,
+      build_archive_members_redis_keys,
+      set_archive_day_ingest_skip,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  day_gz = tmp_path / "2024-06-13.tar.gz"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  sealed = str(day_gz)
+  stream_calls = {"n": 0}
+  fake = FakeRedis()
+
+  def _forbidden_stream(*_a, **_k):
+    stream_calls["n"] += 1
+    raise AssertionError("must not stream sealed archive after day skip")
+
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      helpers, "_stream_compressed_archive_members", _forbidden_stream,
+  )
+
+  canonical = helpers.normalize_daily_compressed_path(sealed)
+  cache_key = helpers._daily_archive_members_cache_key(canonical)
+  keys = build_archive_members_redis_keys(cache_key)
+  set_archive_day_ingest_skip(
+      fake, keys, "tar_truncated_or_unreadable", "unexpected end of data",
+  )
+  fake.set(keys.degraded_key, "1")
+
+  errors = []
+  results = []
+
+  def _lookup():
+    try:
+      results.append(
+          helpers.daily_archive_has_member_with_size(
+              sealed, "host/raw", 4,
+          ),
+      )
+    except ArchiveDayIngestSkipError as exc:
+      errors.append(exc)
+
+  threads = [threading.Thread(target=_lookup) for _ in range(8)]
+  for t in threads:
+    t.start()
+  for t in threads:
+    t.join(timeout=5)
+  assert stream_calls["n"] == 0
+  assert len(errors) == 8
+  assert not results
+
+
+def test_raw_stats_needs_append_false_when_day_skipped(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      ArchiveDayIngestSkipError,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = _local_day_epoch("2026-05-09")
+  raw_path = host_dir / ts
+  raw_path.write_bytes(("%s job1 node1\n" % ts).encode())
+
+  def _raise_skip(*_a, **_k):
+    raise ArchiveDayIngestSkipError(
+        "2026-05-09",
+        str(daily_dir / "2026-05-09.tar.zst"),
+        helpers.SKIP_KIND_TAR_TRUNCATED,
+        "unexpected end of data",
+    )
+
+  monkeypatch.setattr(
+      helpers, "daily_archive_has_member_with_size", _raise_skip,
+  )
+  assert helpers.raw_stats_path_needs_tar_append(
+      str(raw_path),
+      str(daily_dir),
+      first_ts=ts,
+  ) is False
+
+
 def test_raw_stats_path_needs_tar_append_conservative_on_redis_failure(
     monkeypatch, tmp_path,
 ):

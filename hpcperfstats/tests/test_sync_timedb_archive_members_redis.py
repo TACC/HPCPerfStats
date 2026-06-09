@@ -10,15 +10,18 @@ from unittest.mock import patch
 import pytest
 
 from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+    ArchiveDayIngestSkipError,
     ArchiveMembersRedisUnavailableError,
     build_archive_members_redis_keys,
     clear_dedupe_hint,
     dedupe_hint_is_set,
+    get_archive_day_ingest_skip,
     get_archive_members_redis_client,
     invalidate_archive_members_redis,
     list_dedupe_hint_day_tokens,
     populate_archive_members_redis,
     reset_archive_members_redis_client_for_tests,
+    set_archive_day_ingest_skip,
     store_complete_members_in_redis,
     verify_archive_members_redis_startup,
     wait_for_member_match,
@@ -380,19 +383,76 @@ def test_populate_redis_members_from_sealed_scan_wires_stream_fn(
   assert members == {"host/payload": 5}
 
 
-def test_populate_scan_failed_includes_sealed_path(_redis_test_env, tmp_path):
+def test_populate_scan_failed_sets_day_skip(_redis_test_env, tmp_path):
   keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
   sealed = str(tmp_path / "2024-06-10.tar.zst")
-  Path(sealed).write_bytes(b"z")
+  Path(sealed).write_bytes(b"not-a-zst-frame")
 
   def _unreadable_scan(_on_member):
-    return False, False
+    return False, False, EOFError("unexpected end of data")
 
-  with pytest.raises(ArchiveMembersRedisUnavailableError) as exc_info:
+  with pytest.raises(ArchiveDayIngestSkipError) as exc_info:
     populate_archive_members_redis(
         keys, _unreadable_scan, sealed_path=sealed,
     )
-  assert sealed in str(exc_info.value)
+  assert exc_info.value.kind == "zst_frame_invalid"
+  assert get_archive_day_ingest_skip(keys, client=_redis_test_env) is not None
+  assert _redis_test_env.exists(keys.lock_key) == 0
+  assert _redis_test_env.get(keys.degraded_key) == "1"
+
+
+def test_populate_failure_sets_day_skip_before_lock_release(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  sealed = str(tmp_path / "2024-06-10.tar.zst")
+  Path(sealed).write_bytes(b"bad")
+  scanned = threading.Event()
+  waiter_errors = []
+
+  def _slow_unreadable_scan(_on_member):
+    scanned.set()
+    time.sleep(0.05)
+    return False, False, EOFError("unexpected end of data")
+
+  def _waiter():
+    try:
+      wait_for_member_match(
+          keys, "host/member", 99, sealed_path=sealed,
+      )
+    except ArchiveDayIngestSkipError as exc:
+      waiter_errors.append(exc)
+
+  def _run_populate():
+    try:
+      populate_archive_members_redis(
+          keys, _slow_unreadable_scan, sealed_path=sealed,
+      )
+    except ArchiveDayIngestSkipError as exc:
+      pop_error["exc"] = exc
+
+  pop_error = {}
+  t_pop = threading.Thread(target=_run_populate)
+  t_pop.start()
+  scanned.wait(timeout=2)
+  assert _redis_test_env.exists(keys.lock_key)
+  t_wait = threading.Thread(target=_waiter)
+  t_wait.start()
+  t_pop.join(timeout=2)
+  t_wait.join(timeout=2)
+  assert pop_error.get("exc") is not None
+  assert pop_error["exc"].kind == "zst_frame_invalid"
+  assert len(waiter_errors) == 1
+  assert waiter_errors[0].kind == "zst_frame_invalid"
+  assert get_archive_day_ingest_skip(keys, client=_redis_test_env) is not None
+
+
+def test_wait_for_member_exits_immediately_on_day_skip(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  set_archive_day_ingest_skip(
+      _redis_test_env, keys, "tar_truncated_or_unreadable", "unexpected end of data",
+  )
+  with pytest.raises(ArchiveDayIngestSkipError) as exc_info:
+    wait_for_member_match(keys, "host/member", 4, sealed_path="/sealed/day.tar.zst")
+  assert exc_info.value.kind == "tar_truncated_or_unreadable"
 
 
 def test_stream_re_raises_archive_members_redis_unavailable_from_on_member(
@@ -510,10 +570,11 @@ def test_stream_logs_generic_failure(tmp_path, capsys, monkeypatch):
     yield
 
   monkeypatch.setattr(helpers, "file_read_lock_wait", _fail_read_lock)
-  readable, members, dups = _stream_compressed_archive_members(str(day_gz))
+  readable, members, dups, stream_error = _stream_compressed_archive_members(str(day_gz))
   assert readable is False
   assert members == {}
   assert dups is False
+  assert stream_error is not None
   captured = capsys.readouterr()
   assert "sealed archive member stream failed" in captured.out
   assert "disk read error" in captured.out
