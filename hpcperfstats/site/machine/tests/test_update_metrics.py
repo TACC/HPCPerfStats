@@ -21,6 +21,8 @@ from hpcperfstats.analysis.metrics.update_metrics import (
 )
 from hpcperfstats.analysis.metrics import update_metrics
 
+_PG_SESSION_TIMEOUT_CM = update_metrics._pg_session_statement_timeout_for_metrics_batch
+
 
 def _ready_queue_jids(ready_queue):
   """Normalize scheduler ready-queue entries (jid str or candidate ref)."""
@@ -1984,6 +1986,110 @@ def test_update_metrics_for_dates_sets_stall_diagnostics_on_no_progress(monkeypa
   assert diag["stats"]["stall_exit_triggered"] == 1
   assert diag["stats"]["strict_not_ready_jids"] >= 1
   assert diag["stats"]["stall_reason"] == "no_ready_candidates"
+
+
+@pytest.mark.machine_unit_mock
+def test_pg_session_statement_timeout_restore_swallows_closed_connection(monkeypatch):
+  """Closed connection during timeout restore must not raise."""
+  monkeypatch.setattr(
+      update_metrics,
+      "_pg_session_statement_timeout_for_metrics_batch",
+      _PG_SESSION_TIMEOUT_CM,
+  )
+  monkeypatch.setattr(update_metrics.cfg, "get_db_statement_timeout_ms", lambda: 120000)
+
+  class FakeCursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args, **kwargs):
+      return False
+
+    def execute(self, sql, params=None):
+      if params is not None and "statement_timeout" in sql:
+        raise OperationalError("the connection is closed")
+
+  fake_conn = MagicMock()
+  fake_conn.vendor = "postgresql"
+  fake_conn.cursor = lambda: FakeCursor()
+  handler = MagicMock()
+  handler.__getitem__ = lambda self, name: fake_conn
+  monkeypatch.setattr(update_metrics, "connections", handler)
+
+  with update_metrics._pg_session_statement_timeout_for_metrics_batch():
+    pass
+
+
+@pytest.mark.django_db(databases=[])
+def test_stall_exit_survives_closed_connection_on_timeout_restore(monkeypatch):
+  """Stall exit must propagate when statement_timeout restore hits a dead connection."""
+  monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(
+      update_metrics,
+      "_pg_session_statement_timeout_for_metrics_batch",
+      _PG_SESSION_TIMEOUT_CM,
+  )
+  monkeypatch.setattr(update_metrics.cfg, "get_db_statement_timeout_ms", lambda: 120000)
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: [])
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.1)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  class FakeCursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args, **kwargs):
+      return False
+
+    def execute(self, sql, params=None):
+      if params is not None and "statement_timeout" in sql:
+        raise OperationalError("the connection is closed")
+
+  fake_conn = MagicMock()
+  fake_conn.vendor = "postgresql"
+  fake_conn.cursor = lambda: FakeCursor()
+  handler = MagicMock()
+  handler.__getitem__ = lambda self, name: fake_conn
+  monkeypatch.setattr(update_metrics, "connections", handler)
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  by_day = {10: [([1001], 1)]}
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs(list(by_day[d.day])),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      raise AssertionError("metrics run should not execute when all jobs are not-ready")
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+  update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS = None
+  with pytest.raises(update_metrics.MetricsSchedulerStallExit) as excinfo:
+    update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  assert excinfo.value.stall_reason == "no_ready_candidates"
 
 
 @pytest.mark.django_db(databases=[])

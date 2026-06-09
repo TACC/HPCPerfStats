@@ -941,11 +941,14 @@ def _pg_session_statement_timeout_for_metrics_batch():
   try:
     yield
   finally:
-    with conn.cursor() as cursor:
-      if restore_ms > 0:
-        cursor.execute("SET statement_timeout = %s", [restore_ms])
-      else:
-        cursor.execute("SET statement_timeout = 0")
+    try:
+      with conn.cursor() as cursor:
+        if restore_ms > 0:
+          cursor.execute("SET statement_timeout = %s", [restore_ms])
+        else:
+          cursor.execute("SET statement_timeout = 0")
+    except (OperationalError, DatabaseError):
+      pass
 
 
 def _today_datetime():
@@ -3114,6 +3117,7 @@ def update_metrics_for_dates(dates, rerun=False):
     # so retries report one scheduler pass, not cumulative counters.
     phase_timer = _PhaseTimer()
     stats = _new_scheduler_stats()
+    scheduled_stall_exit = None
     with _pg_session_statement_timeout_for_metrics_batch():
       metrics_manager = metrics.Metrics()
       prewarm_pipeline = _PrewarmPipeline()
@@ -3681,9 +3685,11 @@ def update_metrics_for_dates(dates, rerun=False):
             ),
             flush=True,
         )
-        raise MetricsSchedulerStallExit(
+        scheduled_stall_exit = MetricsSchedulerStallExit(
             stall_reason=snap.get("stall_reason"),
         )
+    if scheduled_stall_exit is not None:
+      raise scheduled_stall_exit
 
   run_with_db_retry(
       _run,
