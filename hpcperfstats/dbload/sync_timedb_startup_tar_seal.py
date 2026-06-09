@@ -15,16 +15,15 @@ from django.db import close_old_connections
 from hpcperfstats.dbload.archive_compress import compressed_sibling_paths
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     atomic_seal_tar_to_zst,
-    build_remaining_raw_for_daily_tar,
-    build_remaining_raw_stats_by_daily_gz,
     calendar_date_from_daily_tar_path,
-    daily_gz_has_remaining_raw_stats,
-    daily_tar_path_from_compressed,
+    collect_stats_files_in_range,
+    daily_tar_path_for_stats_path,
     daily_tar_seal_calendar_eligible,
     drop_legacy_gz_if_equivalent_to_zst,
     effective_keep_uncompressed_tar,
     is_daily_tar_sealed_dirty,
     iter_daily_tar_paths,
+    stats_file_is_active_segment,
 )
 from hpcperfstats.process_title import set_daemon_thread_title
 from hpcperfstats.shutdown_utils import shutdown_requested
@@ -87,19 +86,31 @@ def _tar_sort_key(tar_path: str) -> date:
   return day if day is not None else date.max
 
 
-def _scoped_remaining_for_daily_tar(
-    full_remaining_by_gz,
-    tar_path: str,
+def _build_remaining_raw_paths_by_daily_tar(
+    archive_data_dir: str,
+    host_name_ext: str,
+    tgz_archive_dir: str,
 ) -> Dict[str, List[str]]:
-  """Day-scoped slice of a precomputed ``remaining_raw_by_gz`` map."""
-  tar_norm = os.path.normpath(tar_path)
-  scoped: Dict[str, List[str]] = {}
-  for gz_key, paths in (full_remaining_by_gz or {}).items():
-    if not paths:
+  """Closed raw paths grouped by daily ``.tar`` without head-metadata reads."""
+  remaining_by_tar: Dict[str, List[str]] = {}
+  closed_paths = collect_stats_files_in_range(
+      archive_data_dir,
+      "all",
+      None,
+      host_name_ext,
+  )
+  for path in closed_paths:
+    if stats_file_is_active_segment(path):
       continue
-    if os.path.normpath(daily_tar_path_from_compressed(gz_key)) == tar_norm:
-      scoped[gz_key] = paths
-  return scoped
+    tar_path = daily_tar_path_for_stats_path(
+        path,
+        tgz_archive_dir,
+        first_ts=None,
+    )
+    if not tar_path:
+      continue
+    remaining_by_tar.setdefault(os.path.normpath(tar_path), []).append(path)
+  return remaining_by_tar
 
 
 def _any_dirty_daily_tar_on_disk(tgz_archive_dir: str) -> bool:
@@ -138,6 +149,7 @@ class StartupTarSealPreflight:
     self._manifest = _load_manifest(self._manifest_path)
     self._executor: Optional[ThreadPoolExecutor] = None
     self._seal_future = None
+    self._remaining_by_tar: Optional[Dict[str, List[str]]] = None
     self.enabled = cfg.get_sync_startup_tar_seal_preflight()
 
   def phase(self) -> str:
@@ -223,12 +235,13 @@ class StartupTarSealPreflight:
   def _discover_pending_tar_paths(self) -> List[str]:
     pending = []
     skip_counts: Dict[str, int] = {}
+    discover_started = time.time()
     if self.log_fn:
       self.log_fn(
           "sync_timedb: startup tar seal discover begin",
           flush=True,
       )
-    full_remaining = build_remaining_raw_stats_by_daily_gz(
+    self._remaining_by_tar = _build_remaining_raw_paths_by_daily_tar(
         self.archive_data_dir,
         self.host_name_ext,
         self.tgz_archive_dir,
@@ -258,8 +271,7 @@ class StartupTarSealPreflight:
         )
         skip_counts["calendar_grace"] = skip_counts.get("calendar_grace", 0) + 1
         continue
-      remaining = _scoped_remaining_for_daily_tar(full_remaining, tar_path)
-      if daily_gz_has_remaining_raw_stats(zst_path, remaining):
+      if (self._remaining_by_tar or {}).get(tar_norm):
         self._record_entry(tar_norm, "skipped_remaining_raw", "raw_on_disk")
         skip_counts["remaining_raw"] = skip_counts.get("remaining_raw", 0) + 1
         continue
@@ -270,8 +282,13 @@ class StartupTarSealPreflight:
       pending.append(tar_norm)
     if self.log_fn:
       self.log_fn(
-          "sync_timedb: startup tar seal discover done pending=%d skips=%s"
-          % (len(pending), skip_counts or "{}"),
+          "sync_timedb: startup tar seal discover done pending=%d skips=%s "
+          "elapsed_s=%d"
+          % (
+              len(pending),
+              skip_counts or "{}",
+              int(time.time() - discover_started),
+          ),
           flush=True,
       )
     return pending
@@ -279,13 +296,13 @@ class StartupTarSealPreflight:
   def _seal_one_tar(self, tar_path: str) -> bool:
     tar_norm = os.path.normpath(tar_path)
     zst_path, gz_path = compressed_sibling_paths(tar_norm)
-    remaining_raw_by_gz = build_remaining_raw_for_daily_tar(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        tar_norm,
-    )
-    if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz):
+    if self._remaining_by_tar is None:
+      self._remaining_by_tar = _build_remaining_raw_paths_by_daily_tar(
+          self.archive_data_dir,
+          self.host_name_ext,
+          self.tgz_archive_dir,
+      )
+    if (self._remaining_by_tar or {}).get(tar_norm):
       self._record_entry(tar_norm, "skipped_remaining_raw", "raw_on_disk")
       return False
     if self.has_active_append_for_tar(tar_norm):
@@ -323,6 +340,8 @@ class StartupTarSealPreflight:
       return False
     if os.path.isfile(zst_path) or os.path.isfile(gz_path):
       self._record_entry(tar_norm, "sealed", "ok")
+      if self._remaining_by_tar is not None:
+        self._remaining_by_tar.pop(tar_norm, None)
       if self.log_fn:
         self.log_fn(
             "sync_timedb: startup tar seal done tar=%s" % tar_norm,
@@ -339,6 +358,13 @@ class StartupTarSealPreflight:
       if phase == PHASE_DONE:
         return True
       pending = list(self._manifest.get("pending_tar_paths") or [])
+    if pending:
+      if self.log_fn:
+        self.log_fn(
+            "sync_timedb: startup tar seal resuming pending=%d"
+            % len(pending),
+            flush=True,
+        )
     if not pending:
       pending = self._discover_pending_tar_paths()
       with self._lock:
@@ -383,6 +409,13 @@ class StartupTarSealPreflight:
       if shutdown_requested[0]:
         return False
       if time.time() - slice_started >= budget:
+        if self.log_fn:
+          self.log_fn(
+              "sync_timedb: startup tar seal slice budget reached "
+              "processed=%d pending_left=%d budget_s=%.0f"
+              % (processed_days, len(pending), budget),
+              flush=True,
+          )
         break
       tar_path = pending.pop(0)
       self._seal_one_tar(tar_path)
@@ -421,11 +454,26 @@ class StartupTarSealPreflight:
     try:
       with self._lock:
         phase = str(self._manifest.get("phase") or "")
+        pending_n = len(self._manifest.get("pending_tar_paths") or [])
+      if self.log_fn:
+        self.log_fn(
+            "sync_timedb: startup tar seal thread running phase=%s "
+            "manifest_pending=%d"
+            % (phase, pending_n),
+            flush=True,
+        )
       if phase == PHASE_DONE:
         return
       while not shutdown_requested[0]:
         if self._seal_slice():
           break
         time.sleep(0.25)
+    except Exception as exc:
+      if self.log_fn:
+        self.log_fn(
+            "sync_timedb: startup tar seal thread failed err=%s" % exc,
+            flush=True,
+        )
+      raise
     finally:
       close_old_connections()
