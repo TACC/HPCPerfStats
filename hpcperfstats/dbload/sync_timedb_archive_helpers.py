@@ -1221,37 +1221,61 @@ def _member_match_via_redis_or_sealed_point(
 ):
   from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
       ArchiveMembersRedisUnavailableError,
+      populate_degraded_is_set,
       wait_for_member_match,
   )
 
-  point = _sealed_archive_member_has_exact_size(
-      sealed_path, member_name, expected_size,
-  )
-  if point is not None:
-    return point
+  expected_size = int(expected_size)
 
-  if client.exists(keys.lock_key):
+  def _point_lookup_fallback(reason):
+    _log_ingest_sealed_lookup_issue(
+        sealed_path,
+        "WARNING: %s for %s; using local sealed point lookup"
+        % (reason, sealed_path),
+    )
+    point = _sealed_archive_member_has_exact_size(
+        sealed_path, member_name, expected_size,
+    )
+    return point if point is not None else False
+
+  def _wait_or_fallback():
     try:
       return wait_for_member_match(keys, member_name, expected_size)
     except ArchiveMembersRedisUnavailableError as exc:
-      _log_ingest_sealed_lookup_issue(
-          sealed_path,
-          "WARNING: Redis archive member wait failed for %s: %s; "
-          "using safe duplicate-check fallback"
-          % (sealed_path, exc),
+      return _point_lookup_fallback(
+          "Redis archive member wait failed: %s" % exc,
       )
-      point = _sealed_archive_member_has_exact_size(
-          sealed_path, member_name, expected_size,
-      )
-      if point is not None:
-        return point
 
-  _log_ingest_sealed_lookup_issue(
-      sealed_path,
-      "WARNING: sealed archive point lookup unreadable for %s"
-      % sealed_path,
-  )
-  return False
+  raw_size = client.hget(keys.hash_key, member_name)
+  if raw_size is not None:
+    size = int(raw_size)
+    if size == expected_size:
+      return True
+    if size > expected_size:
+      return False
+
+  if client.get(keys.complete_key) == "1":
+    return False
+
+  if populate_degraded_is_set(keys, client=client):
+    return _point_lookup_fallback("archive members populate degraded")
+
+  if client.exists(keys.lock_key):
+    return _wait_or_fallback()
+
+  try:
+    members = _populate_redis_members_from_sealed_scan(sealed_path, cache_key)
+    _store_daily_archive_members_cache(canonical, members)
+    return members.get(member_name) == expected_size
+  except ArchiveMembersRedisUnavailableError as exc:
+    if client.exists(keys.lock_key) or client.get(keys.complete_key) == "1":
+      return _wait_or_fallback()
+    cached = client.get(keys.complete_key)
+    if cached == "1":
+      return False
+    return _point_lookup_fallback(
+        "Redis archive member populate failed: %s" % exc,
+    )
 
 
 def _stream_compressed_archive_members(

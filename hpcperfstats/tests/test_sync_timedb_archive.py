@@ -3348,7 +3348,7 @@ def test_daily_archive_has_member_falls_back_when_populate_raises(
   ) is False
 
 
-def test_ingest_sealed_path_skips_populate(
+def test_ingest_sealed_path_uses_populate_not_parallel_point(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
@@ -3363,10 +3363,15 @@ def test_ingest_sealed_path_skips_populate(
     tf.add(str(inner), arcname="host/raw")
   sealed = str(day_gz)
   populate_calls = {"n": 0}
+  point_calls = {"n": 0}
 
   def _track_populate(_sealed_path, _cache_key):
     populate_calls["n"] += 1
-    raise AssertionError("ingest must not run full Redis populate")
+    return {"host/raw": 4}
+
+  def _forbidden_point_lookup(*_a, **_k):
+    point_calls["n"] += 1
+    raise AssertionError("ingest must not run local point lookup before Redis populate")
 
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
@@ -3382,10 +3387,167 @@ def test_ingest_sealed_path_skips_populate(
   monkeypatch.setattr(
       helpers, "_populate_redis_members_from_sealed_scan", _track_populate,
   )
+  monkeypatch.setattr(
+      helpers, "_sealed_archive_member_has_exact_size", _forbidden_point_lookup,
+  )
   assert helpers.daily_archive_has_member_with_size(
       sealed, "host/raw", 4,
   ) is True
-  assert populate_calls["n"] == 0
+  assert populate_calls["n"] == 1
+  assert point_calls["n"] == 0
+
+
+def test_ingest_sealed_single_flight_one_zstd_scan(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import threading
+
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  day_gz = tmp_path / "2024-06-13.tar.gz"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  sealed = str(day_gz)
+  stream_calls = {"n": 0}
+  stream_lock = threading.Lock()
+  original_stream = helpers._stream_compressed_archive_members
+  fake = FakeRedis()
+
+  def _counting_stream(compressed_path, on_member=None, **kwargs):
+    with stream_lock:
+      stream_calls["n"] += 1
+    return original_stream(compressed_path, on_member, **kwargs)
+
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
+      lambda: 30,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      helpers, "_stream_compressed_archive_members", _counting_stream,
+  )
+
+  results = []
+  errors = []
+
+  def _lookup(member):
+    try:
+      results.append(
+          helpers.daily_archive_has_member_with_size(
+              sealed, member, 4 if member == "host/raw" else 99,
+          ),
+      )
+    except Exception as exc:
+      errors.append(exc)
+
+  threads = [
+      threading.Thread(target=_lookup, args=("host/raw",))
+      for _ in range(8)
+  ] + [
+      threading.Thread(target=_lookup, args=("host/missing",))
+      for _ in range(8)
+  ]
+  for t in threads:
+    t.start()
+  for t in threads:
+    t.join(timeout=10)
+  assert not errors
+  assert stream_calls["n"] == 1
+  assert results.count(True) == 8
+  assert results.count(False) == 8
+
+
+def test_ingest_waiters_no_local_zstd_while_lock_held(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import threading
+  import time
+
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      build_archive_members_redis_keys,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  day_gz = tmp_path / "2024-06-13.tar.gz"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  sealed = str(day_gz)
+  point_calls = {"n": 0}
+  fake = FakeRedis()
+
+  def _forbidden_point_lookup(*_a, **_k):
+    point_calls["n"] += 1
+    raise AssertionError("waiters must not run local point lookup while lock held")
+
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      helpers, "_sealed_archive_member_has_exact_size", _forbidden_point_lookup,
+  )
+  def _forbidden_populate(*_a, **_k):
+    raise AssertionError("must wait, not populate while lock held")
+
+  monkeypatch.setattr(
+      helpers, "_populate_redis_members_from_sealed_scan", _forbidden_populate,
+  )
+
+  canonical = helpers.normalize_daily_compressed_path(sealed)
+  cache_key = helpers._daily_archive_members_cache_key(canonical)
+  keys = build_archive_members_redis_keys(cache_key)
+  fake.set(keys.lock_key, "tok", ex=30)
+  fake.set(keys.complete_key, "0")
+  fake.set(keys.progress_key, str(time.time()))
+
+  done = {"ok": None, "exc": None}
+
+  def _waiter():
+    try:
+      done["ok"] = helpers.daily_archive_has_member_with_size(
+          sealed, "host/raw", 4,
+      )
+    except Exception as exc:
+      done["exc"] = exc
+
+  t_wait = threading.Thread(target=_waiter)
+  t_wait.start()
+  time.sleep(0.05)
+  assert point_calls["n"] == 0
+  fake.hset(keys.hash_key, "host/raw", "4")
+  fake.delete(keys.lock_key)
+  fake.set(keys.complete_key, "1")
+  t_wait.join(timeout=2)
+  assert done["exc"] is None
+  assert done["ok"] is True
+  assert point_calls["n"] == 0
 
 
 def test_raw_stats_path_needs_tar_append_conservative_on_redis_failure(
