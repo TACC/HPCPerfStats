@@ -67,6 +67,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 cleanup() {
+  compose_cleanup_bind_mount
   if [[ "$KEEP_ENV" -eq 1 ]]; then
     echo "Keeping compose environment (--keep-env)."
     return
@@ -74,6 +75,9 @@ cleanup() {
   colima_compose_teardown "${COMPOSE_TEST[@]}"
 }
 trap cleanup EXIT
+
+export COMPOSE_BIND_MOUNT_SKIP_BUILD="$SKIP_BUILD"
+compose_prepare_bind_mount
 
 echo "Resetting Docker compose state and volumes..."
 compose_test down -v --remove-orphans
@@ -117,10 +121,11 @@ echo "Running migrations..."
 compose_test run --rm web python hpcperfstats/site/manage.py migrate --noinput
 
 echo "Running pipeline ingest pytest (phase 1)..."
+compose_web_repo_bind_mount_args
 compose_test run --rm \
   -e HPCPERFSTATS_PIPELINE_E2E=1 \
   -e HPCPERFSTATS_COMPOSE_NETWORK=1 \
-  -v "$ROOT_DIR:/home/hpcperfstats:rw" \
+  "${compose_web_repo_bind_mount_args[@]}" \
   --entrypoint bash \
   web -lc 'cd /home/hpcperfstats && if ! pip install -q -e ".[test]"; then echo "pip install -e failed; using PYTHONPATH fallback for pipeline e2e."; export PYTHONPATH=/home/hpcperfstats; source tests/pip_compose_test_extras_fallback.sh; pip_compose_test_extras_fallback; pip install -q pika; fi; python -m pytest -q tests/pipeline_e2e/test_full_ingest_pipeline.py'
 
@@ -155,11 +160,12 @@ if [[ "$WITH_BROWSER" -eq 1 ]]; then
   fi
 
   echo "Running browser + endpoint matrix pytest (phase 2)..."
+  compose_web_repo_bind_mount_args
   compose_test run --rm \
     -e HPCPERFSTATS_PIPELINE_E2E=1 \
     -e HPCPERFSTATS_COMPOSE_NETWORK=1 \
     -e HPCPERFSTATS_PIPELINE_E2E_BASE_URL=http://web:8000 \
-    -v "$ROOT_DIR:/home/hpcperfstats:rw" \
+    "${compose_web_repo_bind_mount_args[@]}" \
     --entrypoint bash \
     web -lc "cd /home/hpcperfstats && if ! pip install -q -e '.[test]'; then echo 'pip install -e failed; using PYTHONPATH fallback for pipeline browser phase.'; export PYTHONPATH=/home/hpcperfstats; source tests/pip_compose_test_extras_fallback.sh; pip_compose_test_extras_fallback; pip install -q 'playwright>=1.60.0'; fi; ${PLAYWRIGHT_SETUP}python -m pytest -q tests/pipeline_e2e/test_job_detail_browser.py tests/pipeline_e2e/test_all_endpoints_browser.py tests/pipeline_e2e/test_a11y_axe_browser.py"
 fi

@@ -3609,7 +3609,14 @@ def test_strict_readiness_batch_timeout_falls_back_per_jid_without_dropping(monk
 def test_strict_readiness_sets_max_parallel_workers_when_configured():
   """PostgreSQL strict readiness disables parallel gather workers per batch."""
   import inspect
+  from pathlib import Path
 
-  src = inspect.getsource(update_metrics._pg_local_readiness_timeouts)
+  # conftest autouse replaces the runtime symbol for django_db(databases=[]);
+  # assert contract against the on-disk module definition.
+  module_path = Path(inspect.getfile(update_metrics))
+  text = module_path.read_text(encoding="utf-8")
+  start = text.index("def _pg_local_readiness_timeouts")
+  end = text.index("def _metrics_telemetry_enabled", start)
+  src = text[start:end]
   assert "SET LOCAL statement_timeout" in src
   assert "max_parallel_workers_per_gather = 0" in src

@@ -4,6 +4,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 STARTUP_SCRIPTS = (
   "services-conf/django_startup.sh",
   "services-conf/supervisor_startup.sh",
@@ -24,6 +26,16 @@ def test_dockerfile_chmods_compose_startup_scripts():
 
 def test_startup_scripts_are_executable_in_git_index():
   repo_root = _repo_root()
+  try:
+    subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+  except (FileNotFoundError, subprocess.CalledProcessError):
+    pytest.skip("git repository not available (e.g. compose bind mount without .git)")
   for script in STARTUP_SCRIPTS:
     line = subprocess.check_output(
       ["git", "ls-files", "-s", script],

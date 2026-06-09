@@ -12,6 +12,11 @@ _INNER_WORKFLOWS = (
     "tests/run_update_metrics_diagnosis_workflow.sh",
 )
 
+_E2E_WORKFLOWS = (
+    "tests/run_web_e2e_workflow.sh",
+    "tests/run_pipeline_e2e_workflow.sh",
+)
+
 
 @pytest.mark.parametrize("workflow_rel", _INNER_WORKFLOWS)
 def test_inner_workflows_use_compose_run_inner_script(workflow_rel):
@@ -20,6 +25,27 @@ def test_inner_workflows_use_compose_run_inner_script(workflow_rel):
   assert "compose_prepare_bind_mount" in text
   assert "compose_prepare_bind_mount" in text
   assert "web /home/hpcperfstats/tests/" not in text
+
+@pytest.mark.parametrize("workflow_rel", _E2E_WORKFLOWS)
+def test_e2e_workflows_use_compose_bind_mount_work_copy(workflow_rel):
+  text = (_REPO_ROOT / workflow_rel).read_text(encoding="utf-8")
+  assert "compose_prepare_bind_mount" in text
+  assert "compose_cleanup_bind_mount" in text
+  assert "compose_web_repo_bind_mount_args" in text
+  assert '$ROOT_DIR:/home/hpcperfstats' not in text
+
+
+def test_compose_work_copy_base_dir_colima_safe_default():
+  text = (_REPO_ROOT / "tests/compose_test_cmd.sh").read_text(encoding="utf-8")
+  assert "COMPOSE_BIND_MOUNT_BASE_DIR" in text
+  assert "COMPOSE_BIND_MOUNT_USE_TMP" in text
+  assert "${HOME}/.cache/hpcperfstats-compose" in text
+  assert "/tmp/hpcperfstats-compose" in text
+
+
+def test_compose_web_repo_bind_mount_args_helper():
+  text = (_REPO_ROOT / "tests/compose_test_cmd.sh").read_text(encoding="utf-8")
+  assert "compose_web_repo_bind_mount_args" in text
 
 
 def test_compose_run_inner_script_streams_from_host_stdin():

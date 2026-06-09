@@ -67,6 +67,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 cleanup() {
+  compose_cleanup_bind_mount
   if [[ "$KEEP_ENV" -eq 1 ]]; then
     echo "Keeping compose environment (--keep-env)."
     return
@@ -74,6 +75,9 @@ cleanup() {
   colima_compose_teardown "${COMPOSE_TEST[@]}"
 }
 trap cleanup EXIT
+
+export COMPOSE_BIND_MOUNT_SKIP_BUILD="$SKIP_BUILD"
+compose_prepare_bind_mount
 
 echo "Resetting Docker compose state and volumes..."
 compose_test down -v --remove-orphans
@@ -119,9 +123,10 @@ if [[ "$SKIP_PLAYWRIGHT_INSTALL" -eq 0 ]]; then
 fi
 
 echo "Running web E2E, browser E2E, and nginx/WSGI contract tests..."
+compose_web_repo_bind_mount_args
 compose_test run --rm \
   -e HPCPERFSTATS_COMPOSE_NETWORK=1 \
-  -v "$ROOT_DIR:/home/hpcperfstats:rw" \
+  "${compose_web_repo_bind_mount_args[@]}" \
   --entrypoint "sh -lc 'pip install -e \".[test]\"${PLAYWRIGHT_SETUP} && python hpcperfstats/site/manage.py migrate --noinput && python -m pytest -q hpcperfstats/site/machine/tests/test_web_pages_e2e.py hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py'" \
   web
 

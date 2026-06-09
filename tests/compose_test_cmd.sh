@@ -12,9 +12,21 @@ compose_repo_root() {
 }
 
 # virtiofs bind mounts from ProtonDrive/cloud-sync paths can deny listdir/open in
-# the Linux VM (pip, bash, cp all hit EPERM). Rsync to a host work tree under
-# $HOME/.cache first (Colima mounts $HOME into the VM; macOS /tmp often does not).
+# the Linux VM (pip, bash, cp all hit EPERM). Rsync to a host work tree first,
+# then bind-mount that tree (not the cloud-sync checkout). Default work copy:
+# $HOME/.cache/hpcperfstats-compose (Colima shares $HOME into the VM). macOS /tmp
+# is not bind-mountable unless Colima is started with --mount /tmp:w; use
+# COMPOSE_BIND_MOUNT_USE_TMP=1 or COMPOSE_BIND_MOUNT_BASE_DIR=/tmp/hpcperfstats-compose
+# only when /tmp is VM-visible.
 compose_work_copy_base_dir() {
+  if [[ -n "${COMPOSE_BIND_MOUNT_BASE_DIR:-}" ]]; then
+    echo "${COMPOSE_BIND_MOUNT_BASE_DIR}"
+    return
+  fi
+  if [[ "${COMPOSE_BIND_MOUNT_USE_TMP:-0}" == "1" ]]; then
+    echo "/tmp/hpcperfstats-compose"
+    return
+  fi
   mkdir -p "${HOME}/.cache"
   echo "${HOME}/.cache/hpcperfstats-compose"
 }
@@ -66,6 +78,8 @@ compose_rsync_repo_to_work_copy() {
       "${repo_root}/hpcperfstats/" "${dest}/hpcperfstats/"
     rsync -a --delete --timeout=120 "${excludes[@]}" \
       "${repo_root}/tests/" "${dest}/tests/"
+    rsync -a --delete --timeout=120 "${excludes[@]}" \
+      "${repo_root}/scripts/" "${dest}/scripts/"
     rsync -a --timeout=120 "${excludes[@]}" \
       "${repo_root}/services-conf/" "${dest}/services-conf/"
     compose_rsync_docs_contract_files "$repo_root" "$dest"
@@ -101,6 +115,9 @@ compose_prepare_bind_mount() {
         use_work_copy=1
         ;;
     esac
+  fi
+  if [[ "$use_work_copy" != "1" && "${COMPOSE_BIND_MOUNT_FORCE_WORK_COPY:-0}" == "1" ]]; then
+    use_work_copy=1
   fi
   if [[ "$use_work_copy" == "1" ]]; then
     local work_base attempt
@@ -208,5 +225,21 @@ compose_run_inner_script_prepare_env() {
   compose_run_inner_script_bind_mount_env=()
   if [[ "${COMPOSE_BIND_MOUNT_DIR:-$repo_root}" == "$repo_root" ]]; then
     compose_run_inner_script_bind_mount_env=(-e DOCKER_PYTEST_BIND_MOUNT=1)
+  fi
+}
+
+# Volume args for compose_test run invocations that mount the repo into web.
+compose_web_repo_bind_mount_args() {
+  if [[ -z "${COMPOSE_BIND_MOUNT_DIR:-}" ]]; then
+    echo "compose_web_repo_bind_mount_args: call compose_prepare_bind_mount first" >&2
+    return 1
+  fi
+  compose_web_repo_bind_mount_args=(
+    -v "${COMPOSE_BIND_MOUNT_DIR}:/home/hpcperfstats:rw"
+  )
+  if [[ -f "${COMPOSE_BIND_MOUNT_DIR}/hpcperfstats.ini" ]]; then
+    compose_web_repo_bind_mount_args+=(
+      -v "${COMPOSE_BIND_MOUNT_DIR}/hpcperfstats.ini:/home/hpcperfstats/hpcperfstats.ini:ro"
+    )
   fi
 }
