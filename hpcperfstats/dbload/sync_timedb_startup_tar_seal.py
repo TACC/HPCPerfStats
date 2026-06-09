@@ -10,7 +10,6 @@ from datetime import date
 from typing import Any, Callable, Dict, List, Optional
 
 import hpcperfstats.conf_parser as cfg
-from django.db import close_old_connections
 
 from hpcperfstats.dbload.archive_compress import compressed_sibling_paths
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
@@ -196,6 +195,7 @@ class StartupTarSealPreflight:
         return
       self._executor = ThreadPoolExecutor(max_workers=1)
       self._seal_future = self._executor.submit(self._seal_loop)
+      self._seal_future.add_done_callback(self._on_seal_future_done)
     if self.log_fn:
       self.log_fn(
           "sync_timedb: startup tar seal pass started",
@@ -207,6 +207,33 @@ class StartupTarSealPreflight:
     if executor is None:
       return
     executor.shutdown(wait=wait)
+
+  def _on_seal_future_done(self, future) -> None:
+    try:
+      exc = future.exception()
+    except Exception as callback_exc:
+      exc = callback_exc
+    if exc is None:
+      return
+    self._touch_manifest_progress("thread_failed", detail=str(exc))
+    if self.log_fn:
+      self.log_fn(
+          "sync_timedb: startup tar seal thread failed err=%s" % exc,
+          flush=True,
+      )
+
+  def _touch_manifest_progress(
+      self,
+      stage: str,
+      *,
+      detail: str = "",
+  ) -> None:
+    with self._lock:
+      self._manifest["last_progress"] = stage
+      self._manifest["last_progress_at"] = time.time()
+      if detail:
+        self._manifest["last_progress_detail"] = detail
+      _save_manifest(self._manifest_path, self._manifest)
 
   def _record_entry(self, tar_path: str, status: str, reason: str) -> None:
     tar_norm = os.path.normpath(tar_path)
@@ -236,6 +263,7 @@ class StartupTarSealPreflight:
     pending = []
     skip_counts: Dict[str, int] = {}
     discover_started = time.time()
+    self._touch_manifest_progress("discover_begin")
     if self.log_fn:
       self.log_fn(
           "sync_timedb: startup tar seal discover begin",
@@ -280,6 +308,11 @@ class StartupTarSealPreflight:
         skip_counts["active_append"] = skip_counts.get("active_append", 0) + 1
         continue
       pending.append(tar_norm)
+    self._touch_manifest_progress(
+        "discover_done",
+        detail="pending=%d skips=%s"
+        % (len(pending), skip_counts or "{}"),
+    )
     if self.log_fn:
       self.log_fn(
           "sync_timedb: startup tar seal discover done pending=%d skips=%s "
@@ -446,15 +479,19 @@ class StartupTarSealPreflight:
     return False
 
   def _seal_loop(self) -> None:
+    with self._lock:
+      phase = str(self._manifest.get("phase") or "")
+      pending_n = len(self._manifest.get("pending_tar_paths") or [])
+    self._touch_manifest_progress(
+        "thread_running",
+        detail="phase=%s manifest_pending=%d" % (phase, pending_n),
+    )
     set_daemon_thread_title(
+        "",
         script_name=self.process_title,
         role="startup-tar-seal-preflight",
     )
-    close_old_connections()
     try:
-      with self._lock:
-        phase = str(self._manifest.get("phase") or "")
-        pending_n = len(self._manifest.get("pending_tar_paths") or [])
       if self.log_fn:
         self.log_fn(
             "sync_timedb: startup tar seal thread running phase=%s "
@@ -469,11 +506,10 @@ class StartupTarSealPreflight:
           break
         time.sleep(0.25)
     except Exception as exc:
+      self._touch_manifest_progress("thread_failed", detail=str(exc))
       if self.log_fn:
         self.log_fn(
             "sync_timedb: startup tar seal thread failed err=%s" % exc,
             flush=True,
         )
       raise
-    finally:
-      close_old_connections()

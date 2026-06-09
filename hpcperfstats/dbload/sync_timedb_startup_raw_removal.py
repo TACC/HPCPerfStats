@@ -439,6 +439,7 @@ class StartupRawRemovalPreflight:
 
   def _verify_loop(self) -> None:
     set_daemon_thread_title(
+        "",
         script_name=self.process_title,
         role="startup-raw-removal-preflight",
     )

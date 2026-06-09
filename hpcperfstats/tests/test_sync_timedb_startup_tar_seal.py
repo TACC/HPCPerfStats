@@ -211,3 +211,12 @@ def test_start_async_seal_resumes_when_manifest_done_but_dirty_tar_remains(
   preflight2.start_async_seal()
   assert preflight2.phase() == PHASE_SEALING
   preflight2.shutdown(wait=True)
+  with open(manifest_path(str(tmp_path)), encoding="utf-8") as handle:
+    saved = json.load(handle)
+  assert saved.get("last_progress") != "thread_failed"
+  assert saved.get("last_progress") in (
+      "discover_done",
+      "discover_begin",
+      "thread_running",
+      PHASE_DONE,
+  )
