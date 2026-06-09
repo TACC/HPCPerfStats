@@ -1,6 +1,7 @@
 """Tests for Redis L2 daily archive member cache (no Django)."""
 from __future__ import annotations
 
+import tarfile
 import threading
 import time
 from unittest.mock import patch
@@ -334,6 +335,30 @@ def test_populate_sets_dedupe_hint_when_duplicates(_redis_test_env, tmp_path):
 
   populate_archive_members_redis(keys, _scan)
   assert dedupe_hint_is_set("2026-05-09", client=_redis_test_env)
+
+
+def test_populate_redis_members_from_sealed_scan_wires_stream_fn(
+    _redis_test_env, tmp_path,
+):
+  """Regression: _stream_compressed_archive_members returns 3-tuple; populate expects 2."""
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      _daily_archive_members_cache_key,
+      _populate_redis_members_from_sealed_scan,
+      normalize_daily_compressed_path,
+  )
+
+  day_gz = tmp_path / "2024-06-10.tar.gz"
+  inner = tmp_path / "payload.txt"
+  inner.write_text("hello")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/payload")
+
+  sealed_path = str(day_gz)
+  canonical = normalize_daily_compressed_path(sealed_path)
+  cache_key = _daily_archive_members_cache_key(canonical)
+
+  members = _populate_redis_members_from_sealed_scan(sealed_path, cache_key)
+  assert members == {"host/payload": 5}
 
 
 def test_verify_archive_members_redis_startup(_redis_test_env):

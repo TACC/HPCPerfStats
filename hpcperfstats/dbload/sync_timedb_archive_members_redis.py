@@ -215,7 +215,11 @@ def populate_archive_members_redis(
     keys: ArchiveMembersRedisKeys,
     scan_fn: Callable[[Callable[[str, int], None]], tuple],
 ) -> dict:
-  """Single-flight populate: ``scan_fn(on_member)`` returns ``(readable, saw_duplicates)``."""
+  """Single-flight populate: ``scan_fn(on_member)`` returns ``(readable, saw_duplicates)``.
+
+  ``scan_fn`` must return exactly two values; member sizes are collected via
+  ``on_member`` callbacks during the scan (not from a third return value).
+  """
   client = get_archive_members_redis_client(required=True)
   deadline = time.monotonic() + float(_populate_lock_seconds())
   while time.monotonic() < deadline:

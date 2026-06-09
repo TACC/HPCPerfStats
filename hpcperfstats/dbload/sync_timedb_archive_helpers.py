@@ -1442,11 +1442,12 @@ def _populate_redis_members_from_sealed_scan(sealed_path, cache_key):
   keys = build_archive_members_redis_keys(cache_key)
 
   def _scan_fn(on_member):
-    return _stream_compressed_archive_members(
+    readable, _members, saw_duplicates = _stream_compressed_archive_members(
         sealed_path,
         on_member,
         apply_priority_wrap=False,
     )
+    return readable, saw_duplicates
 
   return populate_archive_members_redis(keys, _scan_fn)
 
